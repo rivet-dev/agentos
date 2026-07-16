@@ -19,6 +19,10 @@ describe("agentOS actor", () => {
 		expect(definition.config.actions).toHaveProperty("increment");
 		expect(definition.config.actions).toHaveProperty("readFile");
 		expect(definition.config.actions).toHaveProperty("createSession");
+		expect(definition.config.actions).toHaveProperty("cancelPrompt");
+		expect(definition.config.actions).toHaveProperty("destroySession");
+		expect(definition.config.actions).toHaveProperty("setModel");
+		expect(definition.config.actions).toHaveProperty("listSessions");
 		expect(definition.config.events).toHaveProperty("countChanged");
 		expect(definition.config.events).toHaveProperty("vmBooted");
 		expect(definition.config.events).toHaveProperty("sessionEvent");
@@ -93,6 +97,7 @@ describe("agentOS actor", () => {
 			permissionId: "permission-1",
 			params: {},
 		});
+		expect(context.db.execute).not.toHaveBeenCalled();
 	});
 
 	test("rejects collisions with AgentOS defaults", () => {

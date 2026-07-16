@@ -126,6 +126,9 @@ importers:
 
   examples/agentos-typecheck:
     dependencies:
+      '@agentos-software/pi':
+        specifier: workspace:*
+        version: link:../../registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1417,6 +1420,25 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
+  examples/quickstart/bindings:
+    dependencies:
+      '@rivet-dev/agentos-core':
+        specifier: workspace:*
+        version: link:../../../packages/core
+      zod:
+        specifier: ^4.1.11
+        version: 4.3.6
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.0
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
   examples/quickstart/cron:
     dependencies:
       '@agentos-software/claude-code':
@@ -1859,55 +1881,6 @@ importers:
         version: 5.9.3
 
   examples/quickstart/sandbox:
-    dependencies:
-      '@agentos-software/claude-code':
-        specifier: workspace:*
-        version: link:../../../software/claude
-      '@agentos-software/git':
-        specifier: workspace:*
-        version: link:../../../software/git
-      '@agentos-software/opencode':
-        specifier: workspace:*
-        version: link:../../../software/opencode
-      '@agentos-software/pi':
-        specifier: workspace:*
-        version: link:../../../software/pi
-      '@rivet-dev/agentos':
-        specifier: workspace:*
-        version: link:../../../packages/agentos
-      '@rivet-dev/agentos-core':
-        specifier: workspace:*
-        version: link:../../../packages/core
-      '@rivet-dev/agentos-sandbox':
-        specifier: workspace:*
-        version: link:../../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
-      rivetkit:
-        specifier: catalog:rivetkit
-        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
-      zod:
-        specifier: ^4.1.11
-        version: 4.3.6
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      tsx:
-        specifier: ^4.19.0
-        version: 4.21.0
-      typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
-
-  examples/quickstart/tools:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*

@@ -346,11 +346,11 @@ interface NativeSidecarKernelProxyOptions {
 	 * `configure_vm` rebuilds the whole VM configuration from each payload, so
 	 * every runtime mount reconfigure must resend these or a post-boot
 	 * `mountFs()` silently drops the `/opt/agentos` package projections and
-	 * tool shim commands applied at boot.
+	 * binding shim commands applied at boot.
 	 */
 	packages?: Parameters<SidecarProcess["configureVm"]>[2]["packages"];
 	packagesMountAt?: string;
-	toolShimCommands?: string[];
+	bindingShimCommands?: string[];
 	commandGuestPaths: ReadonlyMap<string, string>;
 	onWasmCommandResolved?: (command: string) => void;
 	onDispose?: () => Promise<void>;
@@ -389,7 +389,7 @@ export class NativeSidecarKernelProxy {
 		Parameters<SidecarProcess["configureVm"]>[2]["packages"]
 	>;
 	private readonly packagesMountAt: string | undefined;
-	private readonly toolShimCommands: string[] | undefined;
+	private readonly bindingShimCommands: string[] | undefined;
 	private readonly commandDrivers: Map<string, string>;
 	private readonly onWasmCommandResolved:
 		| ((command: string) => void)
@@ -441,7 +441,7 @@ export class NativeSidecarKernelProxy {
 		this.loopbackExemptPorts = options.loopbackExemptPorts;
 		this.packages = options.packages ? [...options.packages] : [];
 		this.packagesMountAt = options.packagesMountAt;
-		this.toolShimCommands = options.toolShimCommands;
+		this.bindingShimCommands = options.bindingShimCommands;
 		this.commandDrivers = buildCommandMap(options.commandGuestPaths);
 		this.onWasmCommandResolved = options.onWasmCommandResolved;
 		this.onDispose = options.onDispose;
@@ -1598,8 +1598,8 @@ export class NativeSidecarKernelProxy {
 				return;
 			}
 			// Rust `configure_vm` rebuilds the whole VM configuration from this
-			// payload, so resend the boot packages / tool shim commands too —
-			// omitting them here strips the `/opt/agentos` projections and tool
+			// payload, so resend the boot packages / binding shim commands too —
+			// omitting them here strips the `/opt/agentos` projections and binding
 			// shims from the VM as a side effect of a runtime mount change.
 			await this.client.configureVm(this.session, this.vm, {
 				mounts: this.desiredSidecarMounts(),
@@ -1608,7 +1608,7 @@ export class NativeSidecarKernelProxy {
 				loopbackExemptPorts: this.loopbackExemptPorts,
 				packages: this.packages,
 				packagesMountAt: this.packagesMountAt,
-				toolShimCommands: this.toolShimCommands,
+				bindingShimCommands: this.bindingShimCommands,
 			});
 		};
 		const previous = this.mountReconfigurePromise ?? Promise.resolve();

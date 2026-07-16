@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { z } from "zod";
-import { AgentOs, hostTool, toolKit } from "../src/index.js";
+import { AgentOs, binding, bindings } from "../src/index.js";
 import {
 	createProjectedAgentPackage,
 	type ProjectedAgentPackage,
@@ -46,11 +46,11 @@ process.stdin.on('data', (chunk) => {
 });
 `;
 
-const mathToolKit = toolKit({
+const mathBindings = bindings({
 	name: "math",
 	description: "Math utilities",
-	tools: {
-		add: hostTool({
+	bindings: {
+		add: binding({
 			description: "Add two numbers",
 			inputSchema: z.object({
 				a: z.number(),
@@ -67,7 +67,7 @@ const mathToolKit = toolKit({
 	},
 });
 
-describe("tool reference registration", () => {
+describe("binding reference registration", () => {
 	let vm: AgentOs;
 	let agentPackage: ProjectedAgentPackage;
 
@@ -79,7 +79,7 @@ describe("tool reference registration", () => {
 		vm = await AgentOs.create({
 			defaultSoftware: false,
 			software: [agentPackage.software],
-			toolKits: [mathToolKit],
+			bindings: [mathBindings],
 		});
 	});
 
@@ -88,23 +88,23 @@ describe("tool reference registration", () => {
 		agentPackage.cleanup();
 	});
 
-	test("stores generated tool reference markdown on the VM", () => {
-		const toolReference = (vm as unknown as { _toolReference: string })
-			._toolReference;
+	test("stores generated binding reference markdown on the VM", () => {
+		const bindingReference = (vm as unknown as { _bindingReference: string })
+			._bindingReference;
 
-		expect(toolReference).toContain("## Available Host Tools");
-		expect(toolReference).toContain(
-			"Run `agentos list-tools` to see all available tools.",
+		expect(bindingReference).toContain("## Available Host Bindings");
+		expect(bindingReference).toContain(
+			"Run `agentos list-bindings` to see all available bindings.",
 		);
-		expect(toolReference).toContain("### math");
-		expect(toolReference).toContain("Math utilities");
-		expect(toolReference).toContain(
+		expect(bindingReference).toContain("### math");
+		expect(bindingReference).toContain("Math utilities");
+		expect(bindingReference).toContain(
 			"`agentos-math add --a <number> --b <number>`",
 		);
-		expect(toolReference).toContain("Add 1 and 2");
+		expect(bindingReference).toContain("Add 1 and 2");
 	});
 
-	test("createSession injects the registered tool reference into the system prompt", async () => {
+	test("createSession injects the registered binding reference into the system prompt", async () => {
 		const { sessionId } = await vm.createSession("pi");
 		const agentInfo = vm.getSessionAgentInfo(sessionId) as {
 			argv?: string[];
@@ -114,7 +114,7 @@ describe("tool reference registration", () => {
 		const argIndex = argv.indexOf("--append-system-prompt");
 		expect(argIndex).toBeGreaterThan(-1);
 		const prompt = argv[argIndex + 1];
-		expect(prompt).toContain("## Available Host Tools");
+		expect(prompt).toContain("## Available Host Bindings");
 		expect(prompt).toContain("`agentos-math add --a <number> --b <number>`");
 		expect(prompt).toContain("### math");
 

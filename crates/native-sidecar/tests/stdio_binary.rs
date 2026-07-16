@@ -914,7 +914,7 @@ fn native_sidecar_binary_supports_js_bridge_host_filesystem_access() {
                 packages: Vec::new(),
                 packages_mount_at: String::new(),
                 bootstrap_commands: Vec::new(),
-                tool_shim_commands: Vec::new(),
+                binding_shim_commands: Vec::new(),
             }),
         ),
     );

@@ -108,7 +108,7 @@ describe("generated sidecar protocol", () => {
 						packages: [],
 						packagesMountAt: "",
 						bootstrapCommands: [],
-						toolShimCommands: [],
+						bindingShimCommands: [],
 					},
 				},
 			},
@@ -147,16 +147,16 @@ describe("generated sidecar protocol", () => {
 				packages: [],
 				packages_mount_at: "",
 				bootstrap_commands: [],
-				tool_shim_commands: [],
+				binding_shim_commands: [],
 			},
 		};
 
-		expect(
-			Buffer.from(encodeBareProtocolFrame(authFrameForNative())),
-		).toEqual(Buffer.from(encodeProtocolFrame(authFrame())));
-		expect(
-			Buffer.from(encodeBareProtocolFrame(nativeConfigureFrame)),
-		).toEqual(Buffer.from(encodeProtocolFrame(generatedConfigureFrame)));
+		expect(Buffer.from(encodeBareProtocolFrame(authFrameForNative()))).toEqual(
+			Buffer.from(encodeProtocolFrame(authFrame())),
+		);
+		expect(Buffer.from(encodeBareProtocolFrame(nativeConfigureFrame))).toEqual(
+			Buffer.from(encodeProtocolFrame(generatedConfigureFrame)),
+		);
 
 		const extPayload = new Uint8Array([1, 2, 3, 4]);
 		const generatedExtFrame: ProtocolFrame = {
@@ -191,9 +191,9 @@ describe("generated sidecar protocol", () => {
 			},
 		};
 
-		expect(
-			Buffer.from(encodeBareProtocolFrame(nativeExtFrame)),
-		).toEqual(Buffer.from(encodeProtocolFrame(generatedExtFrame)));
+		expect(Buffer.from(encodeBareProtocolFrame(nativeExtFrame))).toEqual(
+			Buffer.from(encodeProtocolFrame(generatedExtFrame)),
+		);
 	});
 
 	test("live TypeScript BARE decoder accepts generated response bytes", () => {
@@ -222,7 +222,9 @@ describe("generated sidecar protocol", () => {
 			},
 		};
 
-		expect(decodeBareProtocolFrame(encodeProtocolFrame(generatedFrame))).toEqual({
+		expect(
+			decodeBareProtocolFrame(encodeProtocolFrame(generatedFrame)),
+		).toEqual({
 			frame_type: "response",
 			schema: { name: "agentos-native-sidecar", version: PROTOCOL_VERSION },
 			request_id: 9,
@@ -319,7 +321,7 @@ describe("generated sidecar protocol", () => {
 						packages: [],
 						packagesMountAt: "",
 						bootstrapCommands: [],
-						toolShimCommands: [],
+						bindingShimCommands: [],
 					},
 				},
 			},

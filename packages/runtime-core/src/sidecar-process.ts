@@ -355,9 +355,7 @@ export class SidecarProcess {
 		return new SidecarProcess(protocolClient);
 	}
 
-	static spawn(
-		options: SidecarSpawnOptions = {},
-	): SidecarProcess {
+	static spawn(options: SidecarSpawnOptions = {}): SidecarProcess {
 		if (!sidecarProcessSpawnFactory) {
 			throw new Error(
 				"native sidecar spawn is not registered; import @rivet-dev/agentos-runtime-core/native-client before calling SidecarProcess.spawn, or use SidecarProcess.fromClient",
@@ -502,7 +500,7 @@ export class SidecarProcess {
 			packages?: SidecarPackageDescriptor[];
 			packagesMountAt?: string;
 			bootstrapCommands?: string[];
-			toolShimCommands?: string[];
+			bindingShimCommands?: string[];
 		},
 	): Promise<SidecarVmConfiguredResponse> {
 		const response = await this.sendRequest({
@@ -531,7 +529,7 @@ export class SidecarProcess {
 					? { packages_mount_at: options.packagesMountAt }
 					: {}),
 				bootstrap_commands: options.bootstrapCommands ?? [],
-				tool_shim_commands: options.toolShimCommands ?? [],
+				binding_shim_commands: options.bindingShimCommands ?? [],
 			},
 		});
 		if (response.payload.type !== "vm_configured") {
@@ -1252,7 +1250,8 @@ export class SidecarProcess {
 			payload: {
 				type: "write_stdin",
 				process_id: processId,
-				chunk: typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk,
+				chunk:
+					typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk,
 			},
 		});
 		if (response.payload.type !== "stdin_written") {
@@ -1284,7 +1283,9 @@ export class SidecarProcess {
 			},
 		});
 		if (response.payload.type !== "pty_resized") {
-			throw new Error(`unexpected resize_pty response: ${response.payload.type}`);
+			throw new Error(
+				`unexpected resize_pty response: ${response.payload.type}`,
+			);
 		}
 	}
 
@@ -1564,38 +1565,87 @@ export class SidecarProcess {
 	async hostFilesystemCall(
 		session: AuthenticatedSession,
 		vm: CreatedVm,
-		request: { operation: LiveFilesystemOperation; path: string; payloadSizeBytes: number },
+		request: {
+			operation: LiveFilesystemOperation;
+			path: string;
+			payloadSizeBytes: number;
+		},
 	): Promise<SidecarFilesystemResult> {
 		const response = await this.sendRequest({
-			ownership: { scope: "vm", connection_id: session.connectionId, session_id: session.sessionId, vm_id: vm.vmId },
-			payload: { type: "host_filesystem_call", operation: request.operation, path: request.path, payload_size_bytes: request.payloadSizeBytes },
+			ownership: {
+				scope: "vm",
+				connection_id: session.connectionId,
+				session_id: session.sessionId,
+				vm_id: vm.vmId,
+			},
+			payload: {
+				type: "host_filesystem_call",
+				operation: request.operation,
+				path: request.path,
+				payload_size_bytes: request.payloadSizeBytes,
+			},
 		});
 		if (response.payload.type !== "filesystem_result") {
-			throw new Error(`unexpected host_filesystem_call response: ${response.payload.type}`);
+			throw new Error(
+				`unexpected host_filesystem_call response: ${response.payload.type}`,
+			);
 		}
-		return { operation: response.payload.operation, status: response.payload.status, payloadSizeBytes: response.payload.payload_size_bytes };
+		return {
+			operation: response.payload.operation,
+			status: response.payload.status,
+			payloadSizeBytes: response.payload.payload_size_bytes,
+		};
 	}
 
-	async persistenceLoad(session: AuthenticatedSession, key: string): Promise<SidecarPersistenceState> {
+	async persistenceLoad(
+		session: AuthenticatedSession,
+		key: string,
+	): Promise<SidecarPersistenceState> {
 		const response = await this.sendRequest({
-			ownership: { scope: "session", connection_id: session.connectionId, session_id: session.sessionId },
+			ownership: {
+				scope: "session",
+				connection_id: session.connectionId,
+				session_id: session.sessionId,
+			},
 			payload: { type: "persistence_load", key },
 		});
 		if (response.payload.type !== "persistence_state") {
-			throw new Error(`unexpected persistence_load response: ${response.payload.type}`);
+			throw new Error(
+				`unexpected persistence_load response: ${response.payload.type}`,
+			);
 		}
-		return { key: response.payload.key, found: response.payload.found, payloadSizeBytes: response.payload.payload_size_bytes };
+		return {
+			key: response.payload.key,
+			found: response.payload.found,
+			payloadSizeBytes: response.payload.payload_size_bytes,
+		};
 	}
 
-	async persistenceFlush(session: AuthenticatedSession, request: { key: string; payloadSizeBytes: number }): Promise<SidecarPersistenceFlushed> {
+	async persistenceFlush(
+		session: AuthenticatedSession,
+		request: { key: string; payloadSizeBytes: number },
+	): Promise<SidecarPersistenceFlushed> {
 		const response = await this.sendRequest({
-			ownership: { scope: "session", connection_id: session.connectionId, session_id: session.sessionId },
-			payload: { type: "persistence_flush", key: request.key, payload_size_bytes: request.payloadSizeBytes },
+			ownership: {
+				scope: "session",
+				connection_id: session.connectionId,
+				session_id: session.sessionId,
+			},
+			payload: {
+				type: "persistence_flush",
+				key: request.key,
+				payload_size_bytes: request.payloadSizeBytes,
+			},
 		});
 		if (response.payload.type !== "persistence_flushed") {
-			throw new Error(`unexpected persistence_flush response: ${response.payload.type}`);
+			throw new Error(
+				`unexpected persistence_flush response: ${response.payload.type}`,
+			);
 		}
-		return { key: response.payload.key, committedBytes: response.payload.committed_bytes };
+		return {
+			key: response.payload.key,
+			committedBytes: response.payload.committed_bytes,
+		};
 	}
 
 	async waitForEvent(

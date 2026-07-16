@@ -83,7 +83,7 @@ export type LiveRequestPayload =
 			packages?: LivePackageDescriptor[];
 			packages_mount_at?: string;
 			bootstrap_commands?: string[];
-			tool_shim_commands?: string[];
+			binding_shim_commands?: string[];
 	  }
 	| {
 			type: "link_package";
@@ -299,12 +299,10 @@ export function toGeneratedRequestPayload(
 					loopbackExemptPorts: new Uint16Array(
 						payload.loopback_exempt_ports ?? [],
 					),
-					packages: (payload.packages ?? []).map(
-						toGeneratedPackageDescriptor,
-					),
+					packages: (payload.packages ?? []).map(toGeneratedPackageDescriptor),
 					packagesMountAt: payload.packages_mount_at ?? "",
 					bootstrapCommands: payload.bootstrap_commands ?? [],
-					toolShimCommands: payload.tool_shim_commands ?? [],
+					bindingShimCommands: payload.binding_shim_commands ?? [],
 				},
 			};
 		case "link_package":

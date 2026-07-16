@@ -98,7 +98,7 @@ fn resolve_execute_request(
         guest_cwd,
         host_cwd,
         wasm_permission_tier: payload.wasm_permission_tier,
-        tool_command: false,
+        binding_command: false,
     })
 }
 
@@ -115,8 +115,8 @@ fn resolve_command_execution(
     env.extend(extra_env.clone());
     let args = apply_shell_cwd_prefix(command, args.to_vec(), &guest_cwd);
 
-    if is_tool_command(vm, command) {
-        let command = normalized_tool_command_name(command).unwrap_or_else(|| command.to_owned());
+    if is_binding_command(vm, command) {
+        let command = normalized_binding_command_name(command).unwrap_or_else(|| command.to_owned());
         return Ok(ResolvedChildProcessExecution {
             command: command.clone(),
             process_args: std::iter::once(command.clone())
@@ -129,7 +129,7 @@ fn resolve_command_execution(
             guest_cwd,
             host_cwd,
             wasm_permission_tier: None,
-            tool_command: true,
+            binding_command: true,
         });
     }
 
@@ -166,7 +166,7 @@ fn resolve_command_execution(
                 guest_cwd,
                 host_cwd,
                 wasm_permission_tier: None,
-                tool_command: false,
+                binding_command: false,
             });
         }
 
@@ -184,7 +184,7 @@ fn resolve_command_execution(
                 guest_cwd,
                 host_cwd,
                 wasm_permission_tier: None,
-                tool_command: false,
+                binding_command: false,
             });
         }
 
@@ -205,7 +205,7 @@ fn resolve_command_execution(
                 guest_cwd,
                 host_cwd,
                 wasm_permission_tier: None,
-                tool_command: false,
+                binding_command: false,
             });
         }
 
@@ -266,7 +266,7 @@ fn resolve_command_execution(
             guest_cwd,
             host_cwd,
             wasm_permission_tier: None,
-            tool_command: false,
+            binding_command: false,
         });
     }
 
@@ -313,7 +313,7 @@ fn resolve_command_execution(
             guest_cwd,
             host_cwd,
             wasm_permission_tier: None,
-            tool_command: false,
+            binding_command: false,
         });
     }
 
@@ -361,7 +361,7 @@ fn resolve_command_execution(
             guest_cwd,
             host_cwd,
             wasm_permission_tier: None,
-            tool_command: false,
+            binding_command: false,
         });
     }
     prepare_guest_runtime_env(
@@ -384,7 +384,7 @@ fn resolve_command_execution(
         guest_cwd,
         host_cwd,
         wasm_permission_tier,
-        tool_command: false,
+        binding_command: false,
     })
 }
 
@@ -1581,7 +1581,7 @@ pub(super) fn resolve_python_command_execution(
         guest_cwd,
         host_cwd,
         wasm_permission_tier: None,
-        tool_command: false,
+        binding_command: false,
     })
 }
 
@@ -3066,7 +3066,7 @@ mod kernel_poll_sync_rpc_tests {
         parse_kernel_poll_args, parse_kernel_stdin_read_args,
         service_javascript_kernel_poll_sync_rpc, ActiveExecution, ActiveExecutionEvent,
         ActiveProcess, JavascriptSyncRpcRequest, KernelPollFdResponse, SidecarKernel,
-        ToolExecution, EXECUTION_DRIVER_NAME, JAVASCRIPT_COMMAND,
+        BindingExecution, EXECUTION_DRIVER_NAME, JAVASCRIPT_COMMAND,
     };
     use agentos_kernel::command_registry::CommandDriver;
     use agentos_kernel::kernel::{KernelVmConfig, SpawnOptions};
@@ -3151,7 +3151,7 @@ mod kernel_poll_sync_rpc_tests {
             crate::limits::VmLimits::default(),
             agentos_runtime::DEFAULT_PROTOCOL_MAX_PROCESS_EVENTS,
             super::GuestRuntimeKind::JavaScript,
-            ActiveExecution::Tool(ToolExecution::default()),
+            ActiveExecution::Binding(BindingExecution::default()),
         );
 
         kernel
@@ -3232,7 +3232,7 @@ mod kernel_poll_sync_rpc_tests {
             crate::limits::VmLimits::default(),
             agentos_runtime::DEFAULT_PROTOCOL_MAX_PROCESS_EVENTS,
             super::GuestRuntimeKind::JavaScript,
-            ActiveExecution::Tool(ToolExecution::default()),
+            ActiveExecution::Binding(BindingExecution::default()),
         )
         .with_event_notify(Arc::clone(&event_notify));
 
@@ -3331,7 +3331,7 @@ pub(super) fn stage_agentos_package_command(
     resolved: &mut ResolvedChildProcessExecution,
 ) -> Result<(), SidecarError> {
     const WASM_MAGIC: &[u8] = b"\0asm";
-    if resolved.tool_command
+    if resolved.binding_command
         || !matches!(
             resolved.runtime,
             GuestRuntimeKind::JavaScript | GuestRuntimeKind::WebAssembly
@@ -4295,8 +4295,8 @@ where
         }
 
         if let Some(command) = payload.command.as_deref() {
-            if let Some(tool_resolution) =
-                resolve_tool_command(vm, command, &payload.args, payload.cwd.as_deref())?
+            if let Some(binding_resolution) =
+                resolve_binding_command(vm, command, &payload.args, payload.cwd.as_deref())?
             {
                 let guest_cwd = payload
                     .cwd
@@ -4307,7 +4307,7 @@ where
                     .kernel
                     .create_virtual_process(
                         EXECUTION_DRIVER_NAME,
-                        TOOL_DRIVER_NAME,
+                        BINDING_DRIVER_NAME,
                         command,
                         std::iter::once(command.to_owned())
                             .chain(payload.args.iter().cloned())
@@ -4320,19 +4320,19 @@ where
                     )
                     .map_err(kernel_error)?;
                 let kernel_pid = kernel_handle.pid();
-                let tool_execution = ToolExecution::with_event_notify(
+                let binding_execution = BindingExecution::with_event_notify(
                     Arc::clone(&self.process_event_notify),
                     process_event_capacity,
                 );
-                let cancelled = tool_execution.cancelled.clone();
-                let pending_events = tool_execution.pending_events.clone();
-                let event_overflow_reason = tool_execution.event_overflow_reason.clone();
-                let pending_event_bytes = tool_execution.pending_event_bytes.clone();
-                let pending_event_count_limit = tool_execution.pending_event_count_limit.clone();
-                let pending_event_bytes_limit = tool_execution.pending_event_bytes_limit.clone();
-                let tool_vm_pending_event_bytes_budget =
-                    tool_execution.vm_pending_event_bytes_budget.clone();
-                let event_notify = tool_execution.event_notify.clone();
+                let cancelled = binding_execution.cancelled.clone();
+                let pending_events = binding_execution.pending_events.clone();
+                let event_overflow_reason = binding_execution.event_overflow_reason.clone();
+                let pending_event_bytes = binding_execution.pending_event_bytes.clone();
+                let pending_event_count_limit = binding_execution.pending_event_count_limit.clone();
+                let pending_event_bytes_limit = binding_execution.pending_event_bytes_limit.clone();
+                let binding_vm_pending_event_bytes_budget =
+                    binding_execution.vm_pending_event_bytes_budget.clone();
+                let event_notify = binding_execution.event_notify.clone();
                 vm.active_processes.insert(
                     payload.process_id.clone(),
                     ActiveProcess::new(
@@ -4342,27 +4342,27 @@ where
                         vm.limits.clone(),
                         process_event_capacity,
                         GuestRuntimeKind::JavaScript,
-                        ActiveExecution::Tool(tool_execution),
+                        ActiveExecution::Binding(binding_execution),
                     )
                     .with_event_notify(Arc::clone(&self.process_event_notify))
                     .with_guest_cwd(guest_cwd.clone())
                     .with_host_cwd(resolve_vm_guest_path_to_host(vm, &guest_cwd)),
                 );
                 self.bridge.emit_lifecycle(&vm_id, LifecycleState::Busy)?;
-                spawn_tool_process_events(ToolProcessEventRequest {
+                spawn_binding_process_events(BindingProcessEventRequest {
                     runtime_context: vm.runtime_context.clone(),
                     sidecar_requests: self.sidecar_requests.clone(),
                     connection_id: connection_id.clone(),
                     session_id: session_id.clone(),
                     vm_id: vm_id.clone(),
-                    tool_resolution,
+                    binding_resolution,
                     cancelled,
                     pending_events,
                     event_overflow_reason,
                     pending_event_bytes,
                     pending_event_count_limit,
                     pending_event_bytes_limit,
-                    vm_pending_event_bytes_budget: tool_vm_pending_event_bytes_budget,
+                    vm_pending_event_bytes_budget: binding_vm_pending_event_bytes_budget,
                     event_notify,
                 });
 

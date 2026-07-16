@@ -9,10 +9,8 @@ export interface SoftwareBundle {
 	binaries: string[]; // command names the package ships (from SoftwareInfo.commands)
 }
 export interface SoftwareInfo {
-	package: string;
-	kind: "wasm-commands" | "agent" | "tool";
-	version: string | null;
-	/** Command names this package ships (wasm-commands only; [] for agent/tool). */
+	packageName: string;
+	/** Command names projected from this package. */
 	commands: string[];
 }
 
@@ -81,37 +79,22 @@ export interface MountInfo {
 }
 
 // ── Sessions / transcript ─────────────────────────────────────────────
-export interface PersistedSessionRecord {
+export interface SessionInfo {
 	sessionId: string;
 	agentType: string;
-	createdAt: number;
-	/** VM-liveness activity status: "running" = loaded in the VM, "idle" =
-	 * persisted but hibernated (resumable). */
-	status: "running" | "idle";
 }
 export interface JsonRpcNotification {
 	jsonrpc: "2.0";
 	method: string;
 	params?: unknown;
 }
-/** Live `sessionEvent` broadcast payload (the websocket stream). Unlike the
- * persisted record it carries no `seq`/`createdAt`. */
+/** Live `sessionEvent` broadcast payload. */
 export interface SessionEventPayload {
 	sessionId: string;
 	event: JsonRpcNotification;
 }
-/** Raw `getSessionEvents` row — the full persisted event, not just the bare
- * notification, so we keep `seq` (ordering/keys) and `createdAt` (timestamps). */
-export interface PersistedSessionEvent {
-	sessionId: string;
-	seq: number;
-	event: JsonRpcNotification;
-	createdAt: number;
-}
-/** Mapped, displayable transcript event (defensive; unknown → "raw"). Carries
- * the source `seq` for stable keys/ordering. */
-export type TranscriptEvent = { seq: number } & (
+/** Mapped, displayable live transcript event (defensive; unknown → "raw"). */
+export type TranscriptEvent =
 	| { kind: "user" | "assistant" | "thinking"; text: string }
 	| { kind: "tool"; tool: string; status?: string }
-	| { kind: "raw"; label: string; json: unknown }
-);
+	| { kind: "raw"; label: string; json: unknown };

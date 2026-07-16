@@ -1,127 +1,64 @@
 ---
 title: "Persistence & Sleep"
-description: "How agentOS persists data and manages sleep/wake cycles."
+description: "How agentOS persists files and manages sleep/wake cycles."
 skill: true
 ---
 
-<Note>These internal architecture docs are mostly generated and maintained by LLMs, then reviewed by humans. They are intentionally verbose; use your preferred LLM to ask focused questions about the architecture as needed.</Note>
-
-agentOS automatically persists the `/home/agentos` filesystem and session transcripts (with sequence numbers for replay) across sleep/wake, sleeping after a configurable grace period (15 minutes by default) and waking automatically when a client connects.
+agentOS persists the `/home/agentos` filesystem across actor sleep and wakes the VM automatically when a client calls it. Live sessions, processes, shells, and session events do not survive VM shutdown.
 
 ## What persists across sleep
 
 | Data | Storage | Persists? |
 |------|---------|-----------|
-| Files in `/home/agentos` | Persistent filesystem | Yes |
-| Session records | SQLite (`agent_os_sessions`) | Yes |
-| Session event history | SQLite (`agent_os_session_events`) | Yes |
-| Preview URL tokens | SQLite (`agent_os_preview_tokens`) | Yes |
+| Files in `/home/agentos` | Actor SQLite over UDS | Yes |
+| Preview URL tokens | Actor SQLite | Yes |
+| Active agent sessions | VM memory | No |
+| Session event history | Live event stream | No |
 | Cron job definitions | VM memory | No |
 | Running processes | VM kernel | No |
 | Active shells | VM kernel | No |
 | In-memory mounts | VM memory | No |
-| VM kernel state | VM memory | No |
+
+The native sidecar reads and writes filesystem chunks directly through the actor's authenticated SQLite Unix socket. File contents do not pass through the TypeScript or JavaScript actor layer.
 
 ## What prevents sleep
 
-The actor stays awake as long as any of these are active:
+The actor stays awake while sessions, processes, shells, or server-side hooks are active. Once activity stops, the configured sleep grace period begins.
 
-- **Active sessions** (created but not closed/destroyed)
-- **Running processes** (spawned but not exited)
-- **Active shells** (opened but not closed)
-- **Pending hooks** (server-side callbacks still executing)
+```text
+Activity stops -> grace period -> actor sleeps and the VM shuts down
 
-When all activity stops, the sleep grace period begins.
-
-## Sleep grace period
-
-After all activity stops, the actor waits 15 minutes before sleeping. This allows for brief pauses between interactions without restarting the VM.
-
-```
-Activity stops ──> 15 min grace period ──> Actor sleeps
-                                           (VM shutdown, processes killed)
-
-New client connects ──> Actor wakes ──> VM boots ──> Filesystem restored
+New call -> actor wakes -> VM boots -> filesystem restored from actor SQLite
 ```
 
-## Timeouts
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| Action timeout | 15 minutes | Maximum time for any single action |
-| Sleep grace period | 15 minutes | Time before sleeping after all activity stops |
-
-These defaults can be tightened through the actor's `options` config.
+The default action timeout and sleep grace period are both 15 minutes. They can be tightened through the actor's `options` configuration.
 
 ## Sleep vs destroy
 
 | | Sleep | Destroy |
 |-|-------|---------|
 | Filesystem | Preserved | Deleted |
-| Session records | Preserved | Deleted |
-| Event history | Preserved | Deleted |
 | Preview tokens | Preserved | Deleted |
-| VM state | Lost | Lost |
-| Processes | Killed | Killed |
+| Live sessions and events | Lost | Lost |
+| Processes and shells | Lost | Lost |
 
-## VM boot and shutdown events
+## VM lifecycle events
 
-Subscribe to `vmBooted` and `vmShutdown` events to track VM lifecycle.
+Subscribe to `vmBooted` and `vmShutdown` to observe VM lifecycle changes.
 
 <CodeGroup>
 <CodeSnippet file="examples/persistence/lifecycle-client.ts" />
-
 <CodeSnippet file="examples/persistence/server.ts" />
 </CodeGroup>
 
-## Resuming after sleep
+## Reading files after sleep
 
-When the actor wakes up, the VM boots and the filesystem is restored from SQLite, session records and event history are immediately available, and processes and shells from the previous session are gone. Clients can reconnect, list prior work with `listPersistedSessions` (which works without a running VM), and replay a session's persisted transcript with `getSessionEvents`.
+When the actor wakes, a fresh VM is created and its durable filesystem is restored. Create a new session and read or continue work from the files under `/home/agentos`; do not expect the previous session or missed event stream to return.
 
-<CodeGroup>
-<CodeSnippet file="examples/persistence/resume-client.ts" />
-</CodeGroup>
+<CodeSnippet file="examples/persistence/restore-filesystem.ts" />
 
+## SQLite tables
 
-## Persisted tables schema
+`agentos_vfs_metadata_heads` and `agentos_vfs_metadata_chunks` store the chunked inode and directory metadata for each filesystem namespace. `agentos_vfs_blocks` stores content-addressed file chunks. The sidecar owns these schemas and accesses them directly over UDS.
 
-### `agentos_vfs_metadata`
-
-Stores a compact BARE metadata snapshot for each filesystem namespace.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `namespace` | TEXT PRIMARY KEY | Filesystem namespace |
-| `dump` | BLOB | Encoded inode and directory metadata |
-
-### `agentos_vfs_blocks`
-
-Stores chunked file contents. The sidecar reads and writes both VFS tables directly over the authenticated actor SQLite Unix socket; filesystem data does not cross the TypeScript actor layer.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `namespace` | TEXT | Filesystem namespace |
-| `block_key` | TEXT | Content-addressed chunk key |
-| `content` | BLOB | Chunk bytes |
-
-### `agent_os_sessions`
-
-Stores session metadata.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `session_id` | TEXT PRIMARY KEY | Unique session identifier |
-| `agent_type` | TEXT | Agent type (e.g. "pi") |
-| `created_at` | INTEGER | Creation timestamp (ms) |
-
-### `agent_os_session_events`
-
-Stores session event history.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | INTEGER PRIMARY KEY | Auto-incrementing ID |
-| `session_id` | TEXT | Session reference |
-| `seq` | INTEGER | Sequence number within session |
-| `event` | TEXT (JSON) | JSON-RPC notification |
-| `created_at` | INTEGER | Timestamp (ms) |
+`agent_os_preview_tokens` is actor-owned metadata used for signed preview URLs. Agent session records and transcripts are intentionally not persisted by the actor.

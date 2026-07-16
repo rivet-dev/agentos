@@ -34,7 +34,7 @@ The current protocol still has several fields modeled as `serde_json::Value` on 
 - canonicalized by the codec before hashing/comparison in tests
 - intentionally temporary until later protocol work replaces them with BARE-native typed payloads
 
-This applies to fields such as session config blobs, ACP notifications, mount plugin configs, tool schemas/inputs, JS bridge arguments, and tool results.
+This applies to fields such as session config blobs, ACP notifications, mount plugin configs, binding schemas/inputs, JS bridge arguments, and binding results.
 
 ## Rollout Plan
 

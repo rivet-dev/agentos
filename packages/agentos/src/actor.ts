@@ -23,8 +23,6 @@ import type {
 	AgentOsEvents,
 	CronEventPayload,
 	PermissionRequestPayload,
-	PersistedSessionEvent,
-	PersistedSessionRecord,
 	ProcessExitPayload,
 	ProcessOutputPayload,
 	SerializableCronJobInfo,
@@ -68,7 +66,6 @@ type AnyContext = ActorContext<any, any, any, any, any, ActorDb, any, any>;
 
 interface RuntimeState {
 	vm: Promise<AgentOs> | null;
-	sessions: Set<string>;
 	sessionHolds: Map<string, () => void>;
 }
 
@@ -77,7 +74,7 @@ const runtimes = new Map<string, RuntimeState>();
 function runtimeFor(c: AnyContext): RuntimeState {
 	let runtime = runtimes.get(c.actorId);
 	if (!runtime) {
-		runtime = { vm: null, sessions: new Set(), sessionHolds: new Map() };
+		runtime = { vm: null, sessionHolds: new Map() };
 		runtimes.set(c.actorId, runtime);
 	}
 	return runtime;
@@ -170,21 +167,6 @@ async function migrateAgentOsTables(database: RawAccess): Promise<void> {
 		);
 		CREATE INDEX IF NOT EXISTS idx_agent_os_preview_tokens_expires_at
 			ON agent_os_preview_tokens(expires_at);
-		CREATE TABLE IF NOT EXISTS agent_os_sessions (
-			session_id TEXT PRIMARY KEY,
-			agent_type TEXT NOT NULL,
-			created_at INTEGER NOT NULL
-		);
-		CREATE TABLE IF NOT EXISTS agent_os_session_events (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			session_id TEXT NOT NULL,
-			seq INTEGER NOT NULL,
-			event TEXT NOT NULL,
-			created_at INTEGER NOT NULL,
-			FOREIGN KEY (session_id) REFERENCES agent_os_sessions(session_id) ON DELETE CASCADE
-		);
-		CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_os_session_events_session_seq
-			ON agent_os_session_events(session_id, seq);
 	`);
 }
 
@@ -240,6 +222,68 @@ export interface AgentOsEventHooks<TContext = AnyContext> {
 		sessionId: string,
 		request: PermissionRequest,
 	) => void | Promise<void>;
+}
+
+function trackLiveSession(
+	c: AnyContext,
+	vm: AgentOs,
+	sessionId: string,
+	hooks: AgentOsEventHooks,
+): void {
+	const runtime = runtimeFor(c);
+	if (!runtime.sessionHolds.has(sessionId)) {
+		const sessionHold = new Promise<void>((resolve) => {
+			runtime.sessionHolds.set(sessionId, resolve);
+		});
+		void c.keepAwake(sessionHold).catch((error) =>
+			c.log.error({
+				msg: "agent-os session hold failed",
+				sessionId,
+				error,
+			}),
+		);
+	}
+	vm.onSessionEvent(sessionId, (notification: JsonRpcNotification) => {
+		const serialized = JSON.parse(
+			JSON.stringify(notification),
+		) as JsonRpcNotification;
+		c.broadcast("sessionEvent", { sessionId, event: serialized });
+		if (hooks.onSessionEvent) {
+			c.waitUntil(
+				Promise.resolve()
+					.then(() => hooks.onSessionEvent?.(c, sessionId, serialized))
+					.catch((error) =>
+						c.log.error({
+							msg: "agent-os session event hook failed",
+							sessionId,
+							error,
+						}),
+					),
+			);
+		}
+	});
+	vm.onPermissionRequest(sessionId, (request: PermissionRequest) => {
+		c.broadcast("permissionRequest", { sessionId, request });
+		if (hooks.onPermissionRequest) {
+			c.waitUntil(
+				Promise.resolve()
+					.then(() => hooks.onPermissionRequest?.(c, sessionId, request))
+					.catch((error) =>
+						c.log.error({
+							msg: "agent-os permission hook failed",
+							sessionId,
+							error,
+						}),
+					),
+			);
+		}
+	});
+}
+
+function releaseLiveSession(c: AnyContext, sessionId: string): void {
+	const runtime = runtimeFor(c);
+	runtime.sessionHolds.get(sessionId)?.();
+	runtime.sessionHolds.delete(sessionId);
 }
 
 export function createAgentOsActions(
@@ -481,81 +525,32 @@ export function createAgentOsActions(
 		) => {
 			const vm = await ensureVm(c, options);
 			const { sessionId } = await vm.createSession(...args);
-			const runtime = runtimeFor(c);
-			runtime.sessions.add(sessionId);
-			const sessionHold = new Promise<void>((resolve) => {
-				runtime.sessionHolds.set(sessionId, resolve);
-			});
-			void c.keepAwake(sessionHold).catch((error) =>
-				c.log.error({
-					msg: "agent-os session hold failed",
-					sessionId,
-					error,
-				}),
-			);
-			await c.db.execute(
-				"INSERT OR REPLACE INTO agent_os_sessions (session_id, agent_type, created_at) VALUES (?, ?, ?)",
-				sessionId,
-				String(args[0]),
-				Date.now(),
-			);
-			let seq = 0;
-			vm.onSessionEvent(sessionId, (notification: JsonRpcNotification) => {
-				const serialized = JSON.parse(
-					JSON.stringify(notification),
-				) as JsonRpcNotification;
-				seq += 1;
-				const task = c.db
-					.execute(
-						"INSERT INTO agent_os_session_events (session_id, seq, event, created_at) VALUES (?, ?, ?, ?)",
-						sessionId,
-						seq,
-						JSON.stringify(serialized),
-						Date.now(),
-					)
-					.then(async () => {
-						c.broadcast("sessionEvent", { sessionId, event: serialized });
-						await hooks.onSessionEvent?.(c, sessionId, serialized);
-					});
-				c.waitUntil(
-					task.catch((error) =>
-						c.log.error({
-							msg: "agent-os session event persistence failed",
-							sessionId,
-							error,
-						}),
-					),
-				);
-			});
-			vm.onPermissionRequest(sessionId, (request: PermissionRequest) => {
-				c.broadcast("permissionRequest", { sessionId, request });
-				if (hooks.onPermissionRequest) {
-					c.waitUntil(
-						Promise.resolve()
-							.then(() => hooks.onPermissionRequest?.(c, sessionId, request))
-							.catch((error) =>
-								c.log.error({
-									msg: "agent-os permission hook failed",
-									sessionId,
-									error,
-								}),
-							),
-					);
-				}
-			});
+			trackLiveSession(c, vm, sessionId, hooks);
 			return sessionId;
+		},
+		resumeSession: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["resumeSession"]>
+		) => {
+			const vm = await ensureVm(c, options);
+			const result = await vm.resumeSession(...args);
+			trackLiveSession(c, vm, result.sessionId, hooks);
+			return result;
 		},
 		sendPrompt: async (c: AnyContext, sessionId: string, text: string) => {
 			const promise = (await ensureVm(c, options)).prompt(sessionId, text);
 			return c.keepAwake(promise);
 		},
+		cancelPrompt: async (c: AnyContext, sessionId: string) =>
+			(await ensureVm(c, options)).cancelSession(sessionId),
 		closeSession: async (c: AnyContext, sessionId: string) => {
 			const vm = await ensureVm(c, options);
 			vm.closeSession(sessionId);
-			const runtime = runtimeFor(c);
-			runtime.sessions.delete(sessionId);
-			runtime.sessionHolds.get(sessionId)?.();
-			runtime.sessionHolds.delete(sessionId);
+			releaseLiveSession(c, sessionId);
+		},
+		destroySession: async (c: AnyContext, sessionId: string) => {
+			await (await ensureVm(c, options)).destroySession(sessionId);
+			releaseLiveSession(c, sessionId);
 		},
 		respondPermission: async (
 			c: AnyContext,
@@ -568,42 +563,26 @@ export function createAgentOsActions(
 				permissionId,
 				reply,
 			),
-		listPersistedSessions: async (
+		listSessions: async (c: AnyContext) =>
+			(await ensureVm(c, options)).listSessions(),
+		setMode: async (c: AnyContext, sessionId: string, modeId: string) =>
+			(await ensureVm(c, options)).setSessionMode(sessionId, modeId),
+		getModes: async (c: AnyContext, sessionId: string) =>
+			(await ensureVm(c, options)).getSessionModes(sessionId),
+		setModel: async (c: AnyContext, sessionId: string, model: string) =>
+			(await ensureVm(c, options)).setSessionModel(sessionId, model),
+		setThoughtLevel: async (c: AnyContext, sessionId: string, level: string) =>
+			(await ensureVm(c, options)).setSessionThoughtLevel(sessionId, level),
+		getSessionConfigOptions: async (c: AnyContext, sessionId: string) =>
+			(await ensureVm(c, options)).getSessionConfigOptions(sessionId),
+		getSessionCapabilities: async (c: AnyContext, sessionId: string) =>
+			(await ensureVm(c, options)).getSessionCapabilities(sessionId),
+		getSessionAgentInfo: async (c: AnyContext, sessionId: string) =>
+			(await ensureVm(c, options)).getSessionAgentInfo(sessionId),
+		rawSessionSend: async (
 			c: AnyContext,
-		): Promise<PersistedSessionRecord[]> => {
-			const rows = await c.db.execute<{
-				session_id: string;
-				agent_type: string;
-				created_at: number;
-			}>(
-				"SELECT session_id, agent_type, created_at FROM agent_os_sessions ORDER BY created_at DESC",
-			);
-			return rows.map((row) => ({
-				sessionId: row.session_id,
-				agentType: row.agent_type,
-				createdAt: row.created_at,
-				status: runtimeFor(c).sessions.has(row.session_id) ? "running" : "idle",
-			}));
-		},
-		getSessionEvents: async (
-			c: AnyContext,
-			sessionId: string,
-		): Promise<PersistedSessionEvent[]> => {
-			const rows = await c.db.execute<{
-				seq: number;
-				event: string;
-				created_at: number;
-			}>(
-				"SELECT seq, event, created_at FROM agent_os_session_events WHERE session_id = ? ORDER BY seq",
-				sessionId,
-			);
-			return rows.map((row) => ({
-				sessionId,
-				seq: row.seq,
-				event: JSON.parse(row.event),
-				createdAt: row.created_at,
-			}));
-		},
+			...args: Parameters<AgentOs["rawSessionSend"]>
+		) => (await ensureVm(c, options)).rawSessionSend(...args),
 		createSignedPreviewUrl: async (
 			c: AnyContext,
 			port: number,
@@ -719,7 +698,7 @@ const agentOsOptionKeys = [
 	"mounts",
 	"additionalInstructions",
 	"scheduleDriver",
-	"toolKits",
+	"bindings",
 	"permissions",
 	"sidecar",
 	"limits",

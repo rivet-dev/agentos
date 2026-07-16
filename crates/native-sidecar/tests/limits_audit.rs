@@ -339,7 +339,7 @@ fn limit_constants_are_classified() {
 #[test]
 fn match_rule_unit_assertions() {
     // Qualifying names.
-    assert!(name_qualifies("MAX_TOOL_SCHEMA_BYTES"));
+    assert!(name_qualifies("MAX_BINDING_SCHEMA_BYTES"));
     assert!(name_qualifies("VM_FETCH_BUFFER_LIMIT_BYTES"));
     assert!(name_qualifies("SESSION_OUTPUT_CHANNEL_CAPACITY"));
     assert!(name_qualifies("ACP_SESSION_EVENT_RETENTION_LIMIT"));
@@ -358,8 +358,8 @@ fn match_rule_unit_assertions() {
 
     // Declaration extraction.
     assert_eq!(
-        rust_const_name("pub(crate) const MAX_TOOL_TIMEOUT_MS: u64 = 300_000;"),
-        Some("MAX_TOOL_TIMEOUT_MS")
+        rust_const_name("pub(crate) const MAX_BINDING_TIMEOUT_MS: u64 = 300_000;"),
+        Some("MAX_BINDING_TIMEOUT_MS")
     );
     assert_eq!(
         rust_const_name("    const MAX_FRAME_SIZE: usize = 64 * 1024 * 1024;"),

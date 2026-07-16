@@ -354,7 +354,7 @@ fn configure_mock_agent_package(
                 }],
                 packages_mount_at: String::from("/opt/agentos"),
                 bootstrap_commands: Vec::new(),
-                tool_shim_commands: Vec::new(),
+                binding_shim_commands: Vec::new(),
             }),
         })
         .expect("configure crashing ACP package");

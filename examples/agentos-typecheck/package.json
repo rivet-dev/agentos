@@ -8,6 +8,7 @@
 		"check-types": "tsc --noEmit"
 	},
 	"dependencies": {
+		"@agentos-software/pi": "workspace:*",
 		"@rivet-dev/agentos": "workspace:*",
 		"rivetkit": "catalog:rivetkit"
 	},

@@ -46,14 +46,14 @@ describe("AgentOsOptions validation", () => {
 		).toThrow(/createOptions/);
 	});
 
-	test("accepts toolKits as the public name for host tool groups", () => {
+	test("accepts bindings as the public name for host binding collections", () => {
 		expect(
 			agentOsOptionsSchema.safeParse({
-				toolKits: [
+				bindings: [
 					{
 						name: "weather",
 						description: "Weather bindings",
-						tools: {},
+						bindings: {},
 					},
 				],
 			}).success,
@@ -78,7 +78,7 @@ describe("AgentOsOptions validation", () => {
 		} as never);
 		expect(options).not.toHaveProperty("sandbox");
 		expect(options.mounts?.[0]?.path).toBe("/mnt/sandbox");
-		expect(options.toolKits?.[0]?.name).toBe("sandbox");
+		expect(options.bindings?.[0]?.name).toBe("sandbox");
 
 		for (const hook of getSandboxDisposeHooks(options)) {
 			await hook();

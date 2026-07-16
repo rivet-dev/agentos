@@ -1,14 +1,14 @@
 import common from "@agentos-software/common";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { z } from "zod";
-import { AgentOs, hostTool, toolKit } from "../src/index.js";
+import { AgentOs, binding, bindings } from "../src/index.js";
 import { ALLOW_ALL_VM_PERMISSIONS } from "./helpers/permissions.js";
 
-const mathToolKit = toolKit({
+const mathBindings = bindings({
 	name: "math",
 	description: "Math utilities",
-	tools: {
-		add: hostTool({
+	bindings: {
+		add: binding({
 			description: "Add two numbers",
 			inputSchema: z.object({
 				a: z.number(),
@@ -38,13 +38,13 @@ async function runCommand(vm: AgentOs, command: string, args: string[]) {
 	};
 }
 
-describe("native sidecar tool dispatch", () => {
+describe("native sidecar binding dispatch", () => {
 	let vm: AgentOs;
 
 	beforeEach(async () => {
 		vm = await AgentOs.create({
 			software: [common],
-			toolKits: [mathToolKit],
+			bindings: [mathBindings],
 			permissions: ALLOW_ALL_VM_PERMISSIONS,
 		});
 	}, 20_000);
@@ -53,24 +53,24 @@ describe("native sidecar tool dispatch", () => {
 		await vm?.dispose();
 	});
 
-	test("agentos list-tools returns registered toolkits", async () => {
-		const result = await runCommand(vm, "agentos", ["list-tools"]);
+	test("agentos list-bindings returns registered binding collections", async () => {
+		const result = await runCommand(vm, "agentos", ["list-bindings"]);
 		expect(result.exitCode).toBe(0);
 		expect(JSON.parse(result.stdout)).toEqual({
 			ok: true,
 			result: {
-				toolkits: [
+				bindings: [
 					{
 						name: "math",
 						description: "Math utilities",
-						tools: ["add"],
+						bindings: ["add"],
 					},
 				],
 			},
 		});
 	});
 
-	test("agentos-<toolkit> executes the tool through the sidecar", async () => {
+	test("agentos-<binding collection> executes the binding through the sidecar", async () => {
 		const result = await runCommand(vm, "agentos-math", [
 			"add",
 			"--a",
@@ -87,16 +87,16 @@ describe("native sidecar tool dispatch", () => {
 
 	test("guest shell scripts can invoke agentos-* commands through PATH", async () => {
 		await vm.writeFile(
-			"/tmp/run-tool.sh",
+			"/tmp/run-binding.sh",
 			[
 				"#!/bin/sh",
 				"set -eu",
-				"agentos-math add --a 2 --b 3 > /tmp/tool-output.json",
+				"agentos-math add --a 2 --b 3 > /tmp/binding-output.json",
 			].join("\n"),
 		);
 
 		const result = await vm.exec(
-			"sh /tmp/run-tool.sh && cat /tmp/tool-output.json",
+			"sh /tmp/run-binding.sh && cat /tmp/binding-output.json",
 		);
 		expect(result.exitCode).toBe(0);
 		expect(JSON.parse(result.stdout)).toEqual({
@@ -105,7 +105,7 @@ describe("native sidecar tool dispatch", () => {
 		});
 	});
 
-	test("invalid tool input exits non-zero and writes the error to stderr", async () => {
+	test("invalid binding input exits non-zero and writes the error to stderr", async () => {
 		const result = await runCommand(vm, "agentos-math", ["add", "--a", "5"]);
 		expect(result.exitCode).toBe(1);
 		expect(result.stderr).toContain("Missing required flag");

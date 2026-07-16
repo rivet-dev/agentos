@@ -1131,7 +1131,7 @@ fn bootstrap_mock_agents(
                 }],
                 packages_mount_at: String::from("/opt/agentos"),
                 bootstrap_commands: Vec::new(),
-                tool_shim_commands: Vec::new(),
+                binding_shim_commands: Vec::new(),
             }),
         })
         .expect("configure mock ACP package");

@@ -469,7 +469,7 @@ where
                 command_guest_paths,
                 provided_commands: BTreeMap::new(),
                 command_permissions: BTreeMap::new(),
-                toolkits: BTreeMap::new(),
+                bindings: BTreeMap::new(),
                 active_processes: BTreeMap::new(),
                 exited_process_snapshots: VecDeque::new(),
                 detached_child_processes: BTreeSet::new(),
@@ -623,7 +623,7 @@ where
             let mut execution_commands =
                 vec![String::from(JAVASCRIPT_COMMAND), String::from(WASM_COMMAND)];
             execution_commands.extend(payload.bootstrap_commands.iter().cloned());
-            execution_commands.extend(payload.tool_shim_commands.iter().cloned());
+            execution_commands.extend(payload.binding_shim_commands.iter().cloned());
             execution_commands.extend(vm.command_guest_paths.keys().cloned());
             vm.kernel
                 .register_driver(CommandDriver::new(

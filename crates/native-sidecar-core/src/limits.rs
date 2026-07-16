@@ -17,14 +17,14 @@ use crate::SidecarCoreError;
 /// cap; decoupled here but still validated to stay within the negotiated frame budget.
 pub const DEFAULT_MAX_FETCH_RESPONSE_BYTES: usize = 1024 * 1024;
 
-pub const DEFAULT_TOOL_TIMEOUT_MS: u64 = 30_000;
-pub const MAX_TOOL_TIMEOUT_MS: u64 = 300_000;
-pub const MAX_REGISTERED_TOOLKITS: usize = 64;
-pub const MAX_REGISTERED_TOOLS_PER_VM: usize = 256;
-pub const MAX_TOOLS_PER_TOOLKIT: usize = 64;
-pub const MAX_TOOL_SCHEMA_BYTES: usize = 16 * 1024;
-pub const MAX_TOOL_EXAMPLES_PER_TOOL: usize = 16;
-pub const MAX_TOOL_EXAMPLE_INPUT_BYTES: usize = 4 * 1024;
+pub const DEFAULT_BINDING_TIMEOUT_MS: u64 = 30_000;
+pub const MAX_BINDING_TIMEOUT_MS: u64 = 300_000;
+pub const MAX_REGISTERED_BINDING_COLLECTIONS: usize = 64;
+pub const MAX_REGISTERED_BINDINGS_PER_VM: usize = 256;
+pub const MAX_BINDINGS_PER_COLLECTION: usize = 64;
+pub const MAX_BINDING_SCHEMA_BYTES: usize = 16 * 1024;
+pub const MAX_EXAMPLES_PER_BINDING: usize = 16;
+pub const MAX_BINDING_EXAMPLE_INPUT_BYTES: usize = 4 * 1024;
 
 pub const MAX_PERSISTED_MANIFEST_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_PERSISTED_MANIFEST_FILE_BYTES: u64 = 1024 * 1024 * 1024;
@@ -107,7 +107,7 @@ pub struct VmLimits {
     pub udp: UdpLimits,
     pub tls: TlsLimits,
     pub http2: Http2Limits,
-    pub tools: ToolLimits,
+    pub bindings: BindingLimits,
     pub plugins: PluginLimits,
     pub acp: AcpLimits,
     pub js_runtime: JsRuntimeLimits,
@@ -217,15 +217,15 @@ pub struct Http2Limits {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ToolLimits {
-    pub default_tool_timeout_ms: u64,
-    pub max_tool_timeout_ms: u64,
-    pub max_registered_toolkits: usize,
-    pub max_registered_tools_per_vm: usize,
-    pub max_tools_per_toolkit: usize,
-    pub max_tool_schema_bytes: usize,
-    pub max_tool_examples_per_tool: usize,
-    pub max_tool_example_input_bytes: usize,
+pub struct BindingLimits {
+    pub default_binding_timeout_ms: u64,
+    pub max_binding_timeout_ms: u64,
+    pub max_registered_collections: usize,
+    pub max_registered_bindings_per_vm: usize,
+    pub max_bindings_per_collection: usize,
+    pub max_binding_schema_bytes: usize,
+    pub max_examples_per_binding: usize,
+    pub max_binding_example_input_bytes: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -344,17 +344,17 @@ impl Default for Http2Limits {
     }
 }
 
-impl Default for ToolLimits {
+impl Default for BindingLimits {
     fn default() -> Self {
         Self {
-            default_tool_timeout_ms: DEFAULT_TOOL_TIMEOUT_MS,
-            max_tool_timeout_ms: MAX_TOOL_TIMEOUT_MS,
-            max_registered_toolkits: MAX_REGISTERED_TOOLKITS,
-            max_registered_tools_per_vm: MAX_REGISTERED_TOOLS_PER_VM,
-            max_tools_per_toolkit: MAX_TOOLS_PER_TOOLKIT,
-            max_tool_schema_bytes: MAX_TOOL_SCHEMA_BYTES,
-            max_tool_examples_per_tool: MAX_TOOL_EXAMPLES_PER_TOOL,
-            max_tool_example_input_bytes: MAX_TOOL_EXAMPLE_INPUT_BYTES,
+            default_binding_timeout_ms: DEFAULT_BINDING_TIMEOUT_MS,
+            max_binding_timeout_ms: MAX_BINDING_TIMEOUT_MS,
+            max_registered_collections: MAX_REGISTERED_BINDING_COLLECTIONS,
+            max_registered_bindings_per_vm: MAX_REGISTERED_BINDINGS_PER_VM,
+            max_bindings_per_collection: MAX_BINDINGS_PER_COLLECTION,
+            max_binding_schema_bytes: MAX_BINDING_SCHEMA_BYTES,
+            max_examples_per_binding: MAX_EXAMPLES_PER_BINDING,
+            max_binding_example_input_bytes: MAX_BINDING_EXAMPLE_INPUT_BYTES,
         }
     }
 }
@@ -464,46 +464,46 @@ pub fn vm_limits_from_config(
     if let Some(http2) = config.http2.as_ref() {
         apply_http2_limits_config(&mut limits.http2, http2)?;
     }
-    if let Some(tools) = config.tools.as_ref() {
+    if let Some(bindings) = config.bindings.as_ref() {
         set_u64(
-            &mut limits.tools.default_tool_timeout_ms,
-            tools.default_tool_timeout_ms,
-            "limits.tools.defaultToolTimeoutMs",
+            &mut limits.bindings.default_binding_timeout_ms,
+            bindings.default_binding_timeout_ms,
+            "limits.bindings.defaultBindingTimeoutMs",
         )?;
         set_u64(
-            &mut limits.tools.max_tool_timeout_ms,
-            tools.max_tool_timeout_ms,
-            "limits.tools.maxToolTimeoutMs",
+            &mut limits.bindings.max_binding_timeout_ms,
+            bindings.max_binding_timeout_ms,
+            "limits.bindings.maxBindingTimeoutMs",
         )?;
         set_usize(
-            &mut limits.tools.max_registered_toolkits,
-            tools.max_registered_toolkits,
-            "limits.tools.maxRegisteredToolkits",
+            &mut limits.bindings.max_registered_collections,
+            bindings.max_registered_collections,
+            "limits.bindings.maxRegisteredCollections",
         )?;
         set_usize(
-            &mut limits.tools.max_registered_tools_per_vm,
-            tools.max_registered_tools_per_vm,
-            "limits.tools.maxRegisteredToolsPerVm",
+            &mut limits.bindings.max_registered_bindings_per_vm,
+            bindings.max_registered_bindings_per_vm,
+            "limits.bindings.maxRegisteredBindingsPerVm",
         )?;
         set_usize(
-            &mut limits.tools.max_tools_per_toolkit,
-            tools.max_tools_per_toolkit,
-            "limits.tools.maxToolsPerToolkit",
+            &mut limits.bindings.max_bindings_per_collection,
+            bindings.max_bindings_per_collection,
+            "limits.bindings.maxBindingsPerCollection",
         )?;
         set_usize(
-            &mut limits.tools.max_tool_schema_bytes,
-            tools.max_tool_schema_bytes,
-            "limits.tools.maxToolSchemaBytes",
+            &mut limits.bindings.max_binding_schema_bytes,
+            bindings.max_binding_schema_bytes,
+            "limits.bindings.maxBindingSchemaBytes",
         )?;
         set_usize(
-            &mut limits.tools.max_tool_examples_per_tool,
-            tools.max_tool_examples_per_tool,
-            "limits.tools.maxToolExamplesPerTool",
+            &mut limits.bindings.max_examples_per_binding,
+            bindings.max_examples_per_binding,
+            "limits.bindings.maxExamplesPerBinding",
         )?;
         set_usize(
-            &mut limits.tools.max_tool_example_input_bytes,
-            tools.max_tool_example_input_bytes,
-            "limits.tools.maxToolExampleInputBytes",
+            &mut limits.bindings.max_binding_example_input_bytes,
+            bindings.max_binding_example_input_bytes,
+            "limits.bindings.maxBindingExampleInputBytes",
         )?;
     }
     if let Some(plugins) = config.plugins.as_ref() {
@@ -1314,33 +1314,33 @@ pub fn validate_vm_limits(
         limits.js_runtime.v8_ipc_max_frame_bytes as usize,
     )?;
 
-    if limits.tools.default_tool_timeout_ms > limits.tools.max_tool_timeout_ms {
+    if limits.bindings.default_binding_timeout_ms > limits.bindings.max_binding_timeout_ms {
         return Err(SidecarCoreError::new(format!(
-            "limits.tools.default_tool_timeout_ms ({}) must be <= limits.tools.max_tool_timeout_ms ({})",
-            limits.tools.default_tool_timeout_ms, limits.tools.max_tool_timeout_ms
+            "limits.bindings.default_binding_timeout_ms ({}) must be <= limits.bindings.max_binding_timeout_ms ({})",
+            limits.bindings.default_binding_timeout_ms, limits.bindings.max_binding_timeout_ms
         )));
     }
 
     let nonzero_usize: [(&str, usize); 19] = [
         (
-            "limits.tools.max_registered_toolkits",
-            limits.tools.max_registered_toolkits,
+            "limits.bindings.max_registered_collections",
+            limits.bindings.max_registered_collections,
         ),
         (
-            "limits.tools.max_registered_tools_per_vm",
-            limits.tools.max_registered_tools_per_vm,
+            "limits.bindings.max_registered_bindings_per_vm",
+            limits.bindings.max_registered_bindings_per_vm,
         ),
         (
-            "limits.tools.max_tools_per_toolkit",
-            limits.tools.max_tools_per_toolkit,
+            "limits.bindings.max_bindings_per_collection",
+            limits.bindings.max_bindings_per_collection,
         ),
         (
-            "limits.tools.max_tool_schema_bytes",
-            limits.tools.max_tool_schema_bytes,
+            "limits.bindings.max_binding_schema_bytes",
+            limits.bindings.max_binding_schema_bytes,
         ),
         (
-            "limits.tools.max_tool_example_input_bytes",
-            limits.tools.max_tool_example_input_bytes,
+            "limits.bindings.max_binding_example_input_bytes",
+            limits.bindings.max_binding_example_input_bytes,
         ),
         (
             "limits.plugins.max_persisted_manifest_bytes",

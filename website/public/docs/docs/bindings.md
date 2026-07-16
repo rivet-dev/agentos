@@ -30,14 +30,12 @@ When bindings are registered, CLI shims are installed at `/usr/local/bin/agentos
 
 The agent interacts with bindings as shell commands:
 
-The listing subcommand is still named `list-tools` for CLI compatibility.
-
 ```bash
-# List all available bindings groups
-agentos list-tools
+# List all available binding collections
+agentos list-bindings
 
 # List bindings in a specific group
-agentos list-tools weather
+agentos list-bindings weather
 
 # Get help for a binding
 agentos-weather forecast --help

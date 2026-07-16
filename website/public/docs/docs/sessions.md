@@ -2,7 +2,7 @@
 
 Create agent sessions, send prompts, stream responses, and subscribe to events.
 
-Sessions launch an agent inside the VM, stream its responses in real time over `sessionEvent`, and persist a replayable ACP transcript that survives sleep/wake.
+Sessions launch an agent inside the VM and stream its responses in real time over `sessionEvent`. Session events are live-only: subscribe before sending a prompt because missed events are not replayed.
 
 ## Create a session
 
@@ -32,21 +32,16 @@ Use `cancelPrompt` to stop an in-progress prompt.
 
 ## Close and destroy sessions
 
-- `closeSession` gracefully closes a session without removing persisted data
-- `destroySession` removes the session and all persisted data
-- To reconnect to a previously created session and replay its history, see [Replay events](#replay-events) and [Resuming a suspended session](/docs/architecture/agent-sessions#resuming-a-suspended-session)
+- `closeSession` gracefully closes a live session
+- `destroySession` terminates a live session and releases its resources
 
 ## Runtime configuration
 
 Change model, mode, and thought level on a live session.
 
-## Replay events
+## List live sessions
 
-Use `getSessionEvents` to replay a session's persisted events, including for VMs that are not currently running. Pair it with `listPersistedSessions` to find earlier sessions.
-
-## Persisted session history
-
-Query session history from SQLite. Works even when the VM is not running.
+Use `listSessions` to inspect the sessions currently running in the VM. The list is runtime state and is cleared when the VM shuts down.
 
 ## Multiple sessions
 

@@ -1,112 +1,47 @@
-# Agent Sessions
+---
+title: "Agent Sessions"
+description: "How live agent sessions, prompts, permissions, and events flow through agentOS."
+---
 
-Internals of agent sessions: how a session is created and bound to a VM, how prompts and events flow from client to sidecar to agent adapter and back, the session lifecycle, and where session state lives.
+An agent session is a live conversation with an ACP adapter running inside a VM. The RivetKit actor exposes the core SDK session API without adding a second session state machine.
 
-<Note>These internal architecture docs are mostly generated and maintained by LLMs, then reviewed by humans. They are intentionally verbose; use your preferred LLM to ask focused questions about the architecture as needed.</Note>
+## Components
 
-This page is an internals deep-dive on how agent sessions work under the hood. For the usage API (creating sessions, sending prompts, streaming responses, replaying events), see [Sessions](/docs/sessions).
+- **Actor:** ordinary RivetKit lifecycle and connection hooks plus AgentOS actions and events.
+- **Core SDK:** thin transport client used by the actor.
+- **Sidecar:** trusted enforcement point that owns the VM, ACP adapter process, permissions, and session registry.
+- **Agent:** untrusted guest process whose filesystem, process, and network access is enforced by the sidecar.
 
-A session is a long-lived conversation with an agent (such as [Pi](https://github.com/mariozechner/pi-coding-agent)) running inside a VM. Where a bare `exec()` / `run()` starts a fresh guest process and returns when it exits, a session keeps an agent process alive across many prompts, streams its output back as events, and persists a transcript that survives sleep/wake cycles. Everything below describes the machinery that makes that possible while keeping the agent inside the same isolation boundary as any other guest.
+## Creating and prompting
 
-## Where a session sits in the component model
+`createSession(agentType, options)` boots the VM if necessary, launches the selected ACP adapter, performs its handshake, and returns the live session id. `env`, `cwd`, `mcpServers`, and instruction options are forwarded to the sidecar.
 
-The [three components](/docs/architecture#the-big-picture) are unchanged for sessions: a trusted **client**, the trusted **sidecar** that owns the kernel, and the untrusted **executor** that runs guest code. An agent session adds one more layer on the guest side of the boundary:
+`sendPrompt(sessionId, text)` routes the prompt to that live adapter. ACP notifications flow back through the core SDK, then the actor broadcasts `sessionEvent` and invokes `onSessionEvent`. Permission requests are broadcast as `permissionRequest` and invoke `onPermissionRequest`.
 
-- **Client.** Calls `createSession`, `sendPrompt`, and the rest of the session API. It never runs the agent itself; it drives the session over the wire protocol.
-- **Sidecar / kernel.** Spawns the agent as a kernel-managed process inside the VM, owns the session's I/O, applies the permission policy on every syscall the agent makes, and persists the transcript.
-- **Agent adapter.** A per-agent-type shim, inside the VM, that translates between the session protocol and the specific agent's native interface. It normalizes the agent's output into the [Agent Communication Protocol (ACP)](/docs/sessions) so every agent type produces the same event shape.
-- **Executor.** The agent process itself plus any tools it spawns. It is untrusted guest code like any other: its file reads, child processes, and network calls all flow through the kernel.
-
-The key consequence: an agent is not privileged. It is a guest process that happens to be long-lived and conversational. Its capabilities are exactly the VM's [permission policy](/docs/permissions), nothing more.
-
-## Creating a session and binding it to a VM
-
-A session is always created against an existing VM. The client resolves a VM handle (for example `client.vm.getOrCreate([...])`) and calls `createSession(agentType, options)` on it. Under the hood:
-
-1. **The request crosses the wire** (client to sidecar) carrying the agent type and the session options: `env`, `cwd`, `mcpServers`, `additionalInstructions`, and `skipOsInstructions`.
-2. **The kernel boots the VM** if it is not already running, with its bootstrapped virtual filesystem.
-3. **The sidecar selects the agent adapter** for the requested type and spawns the agent as a kernel-managed process inside that VM. Because the VM does not inherit the host `process.env`, the agent only sees the `env` passed in the options (this is why API keys must be supplied explicitly). The process starts in `cwd` (default `/home/agentos`).
-4. **The session is registered** in the VM with a `sessionId`, and the adapter performs its handshake with the agent to discover `capabilities` and `agentInfo`.
-5. **The handle returns** that metadata to the client.
-
-The session is bound to that VM for its lifetime. The agent process, its working directory, and its persisted transcript all live inside the VM's isolation domain. A VM can host several sessions at once: each gets its own agent process, but they share the one VM's filesystem (see [Multiple sessions](/docs/sessions#multiple-sessions)). Two sessions in two different VMs share nothing, exactly as described in the [isolation model](/docs/architecture).
-
-<Note>MCP servers configured on a session follow the same boundary. A `local` MCP server runs as a child process inside the VM (kernel-managed, gated by the permission policy); a `remote` MCP server is reached over the network, so its traffic flows through the kernel socket table and is subject to the network allowlist.</Note>
-
-## How a prompt flows: client to agent and back
-
-Sending a prompt is a request in one direction with a stream of events flowing back in the other. The lifecycle of a single prompt extends the general [lifecycle of a request](/docs/architecture):
-
-1. **The client calls `sendPrompt(sessionId, text)`.** The request crosses the wire to the sidecar (hop one).
-2. **The sidecar routes it to the session's agent adapter,** which translates the prompt into the agent's native input and writes it to the running agent process.
-3. **The agent works the turn.** As it thinks, calls tools, edits files, and produces output, every action it takes is a guest syscall back into the kernel (hop two): file reads/writes hit the VFS, tool subprocesses are kernel-managed, and network calls go through the socket table under the allowlist.
-4. **The adapter normalizes the agent's output into ACP events.** Each event is assigned a monotonically increasing sequence number, appended to the session's event log, and persisted.
-5. **Events stream back to the client** as `sessionEvent` notifications, carrying the `sessionId` and the ACP `event` (its `method` and `params`). This is why the docs recommend subscribing to `sessionEvent` before calling `sendPrompt`: events emitted early in the turn would otherwise be missed.
-6. **The turn resolves.** When the agent finishes the turn, `sendPrompt` resolves with the reply.
-
-`cancelPrompt(sessionId)` interrupts an in-progress turn: the request crosses to the sidecar, which signals the agent process to stop the current turn through the adapter, leaving the session itself alive for the next prompt.
-
-```
-client                 sidecar / kernel              agent adapter        agent (executor)
-  |  sendPrompt           |                              |                    |
-  | --------------------> |  route to session            |                    |
-  |                       | ---------------------------> |  native input ---> |
-  |                       |                              |                    | (thinks, calls
-  |                       |  <--- syscalls (VFS, procs, sockets) ------------ |  tools, edits)
-  |                       |                              |  <-- native output |
-  |  sessionEvent (ACP)   |  persist + assign seq        |                    |
-  |  <------------------- |  <-------- ACP events ------- |                    |
-  |  ...stream...         |                              |                    |
-  |  resolve(reply)       |                              |                    |
-  |  <------------------- |                              |                    |
+```text
+client -> Rivet actor -> core SDK -> sidecar -> ACP adapter
+client <- live actor event <- core SDK <- ACP notification
 ```
 
-## Session lifecycle
+The actor does not assign sequence numbers, persist transcripts, or offer cursor recovery. Register event listeners before sending a prompt.
 
-A session moves through these states, all driven by client calls over the wire:
+## Lifecycle
 
-- **Active.** Created and bound to a running VM, with a live agent process. Prompts can be sent and events stream back.
-- **Suspended.** When the VM sleeps, the agent process is torn down but the session's persisted transcript remains in storage. `resumeSession(sessionId)` reconnects: the kernel wakes the VM, re-spawns the agent, and rebinds the session so prompts can continue.
-- **Closed.** `closeSession(sessionId)` gracefully shuts down the agent process and releases its in-VM resources, but leaves the persisted transcript intact so history can still be queried.
-- **Destroyed.** `destroySession(sessionId)` removes the session and all of its persisted events. This is irreversible.
+- **Active:** the adapter process is running and accepts prompts.
+- **Closed:** `closeSession` gracefully stops the live session.
+- **Destroyed:** `destroySession` terminates the session and releases its runtime resources.
+- **VM shutdown:** all live sessions and their event streams end.
 
-Because the transcript is persisted, closing or suspending a session is not the same as losing it: the event history can be read back later, even when the VM is not running.
+Runtime configuration such as `setModel`, `setMode`, and `setThoughtLevel` applies to an active session. `listSessions` returns only sessions currently known to the running sidecar.
 
-Runtime configuration (`setModel`, `setMode`, `setThoughtLevel`) mutates an active session in place by sending the change through the adapter to the live agent, without restarting the session.
+The durable boundary is the VM filesystem, not the ACP event stream. Files under `/home/agentos` are restored after actor sleep through the sidecar's direct SQLite-over-UDS connection. A caller creates a new live session after wake and continues from those files.
 
-## Resuming a suspended session
+## Adapter crashes
 
-When a VM sleeps the agent process is destroyed, but the session registry and the transcript survive in SQLite. `resumeSession(sessionId)` (or simply prompting a suspended session) rebinds the stable, client-facing `sessionId` to a freshly spawned agent. Resume is **lazy** (it runs on the first prompt to a non-live session) and **capability-driven** (the orchestrator never special-cases an agent by name, only by what it advertises). There are two paths:
+If an adapter exits unexpectedly, the sidecar reports the crash and applies its bounded native restart policy. The interrupted prompt still fails because replaying a turn could repeat side effects. Crash diagnostics are available through the SDK and actor events.
 
-- **Native ACP resume (optimization).** If the agent advertises ACP `loadSession`/`resume` and its own store survived on the durable root, the sidecar issues `session/load` and the agent restores its full context itself. The `sessionId` is unchanged.
-- **Universal transcript fallback.** If the agent has no native resume, or its store did not survive, the sidecar reconstructs a Markdown transcript from the recorded events, writes it into the VM (for example `/root/.agentos/threads/<sessionId>.md`), starts a fresh agent, and prefixes the next prompt with a pointer to that file. Because this needs only file-read tools it works for any agent with no per-agent code, at the cost of pointing the agent at the transcript rather than pre-loading it into context.
+## Next
 
-Resume depends on a **durable root filesystem**. The RivetKit actor configures one automatically (its SQLite-backed root), so transcript capture and resume work out of the box. A direct `AgentOs` SDK user on the default in-memory root has no durable store: transcript capture is a no-op and context cannot be restored, so configure a durable root explicitly if you need resume outside the actor.
-
-## Adapter crashes and bounded auto-restart
-
-If the agent process exits without `closeSession()` — any spontaneous exit, including exit code 0 — the sidecar treats it as a crash, not a lifecycle transition. Crashes are detected both mid-request (the exchange loop observes the process exit) and while idle (the next write to the dead adapter fails). The sidecar logs the exit with its code and a stderr tail, emits an `AcpAgentExitedEvent` to the host (`onAgentExit` in the SDK, `agentCrashed` on the actor), and attempts an **in-place restart, bounded to 3 attempts per session**:
-
-- **Native re-attach only.** The restart relaunches the adapter with the exact parameters of the original launch, re-probes capabilities with a fresh `initialize`, and — if the agent advertises `loadSession`/`resume` — re-attaches the **same `sessionId`** via `session/load`. Clients keep their handle and the session stays active. There is deliberately no `session/new` fallback tier here: a fallback would produce a different live session id that an in-place restart cannot remap transparently. That path belongs to lazy resume (above), which owns the external→live remap.
-- **Eviction otherwise.** If the adapter has no native resume capability, the restart fails, or the budget is exhausted, the session record is evicted — the same teardown as before auto-restart existed. The persisted transcript is untouched, so the actor's lazy resume can still recover the conversation on the next prompt.
-- **The interrupted request still fails.** A prompt in flight when the adapter died is never replayed (the turn may have had side effects); its error names the restart outcome so the caller knows whether a retry will succeed.
-
-Each event carries `{ exitCode, restart, restartCount, maxRestarts }`, where `restart` is `"restarted"`, `"unsupported"`, `"failed"`, or `"exhausted"`; only `"restarted"` leaves the session usable. See [Debugging](/docs/debugging#agent-crashes-onagentexit) for capturing these from the SDK.
-
-## Where session state lives
-
-Session state spans two tiers:
-
-- **In-memory, while the VM runs.** The running agent process holds the live conversation, and the sidecar keeps the session's recent event log with sequence numbers, the basis for live reconnection: a client tracks the last sequence number it processed and asks for everything after it, so no events are dropped or duplicated across a reconnect.
-- **Persisted in SQLite, independent of the VM.** Every ACP event is written to a SQLite-backed transcript store inside the VM, keyed by `sessionId` and sequence number. This tier survives sleep/wake and VM shutdown. `listPersistedSessions()` and `getSessionEvents(sessionId)` read from it and work even when the VM is not running, which is what makes transcript-history UIs possible without keeping a VM warm.
-
-See [Replay events](/docs/sessions#replay-events) for replaying a session's persisted events.
-
-The transcript living inside the VM keeps session state on the same side of the boundary as the agent that produced it: it is part of the VM's isolation domain, not the client's. The client only ever sees it by asking the sidecar for it over the wire.
-
-## Where to go next
-
-- [Sessions](/docs/sessions): the usage API for creating sessions, sending prompts, and replaying events.
-- [Architecture](/docs/architecture): the component model, request lifecycle, and isolation model that sessions build on.
-- [Permissions](/docs/permissions): the policy the kernel enforces on every syscall an agent makes.
-- [Replay events](/docs/sessions#replay-events): in-memory versus persisted event replay.
+- [Sessions](/docs/sessions) for the public API
+- [Sessions & Persistence](/docs/architecture/sessions-persistence) for the durable filesystem boundary
+- [Permissions](/docs/permissions) for guest enforcement

@@ -22,6 +22,7 @@ export type {
 	DirEntry,
 	NodeModulesMountConfig,
 	PromptResult,
+	SessionInfo,
 } from "@rivet-dev/agentos-core";
 export { defineSoftware, nodeModulesMount } from "@rivet-dev/agentos-core";
 export type {
@@ -44,8 +45,6 @@ export type {
 	AgentOsEvents,
 	CronEventPayload,
 	PermissionRequestPayload,
-	PersistedSessionEvent,
-	PersistedSessionRecord,
 	ProcessExitPayload,
 	ProcessOutputPayload,
 	SerializableCronAction,
@@ -53,7 +52,6 @@ export type {
 	SerializableCronJobInfo,
 	SerializableCronJobOptions,
 	SessionEventPayload,
-	SessionRecord,
 	ShellDataPayload,
 	VmBootedPayload,
 	VmShutdownPayload,

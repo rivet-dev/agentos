@@ -68,7 +68,7 @@ Many subsystems span more than one file, and some very large files contain multi
     - VM lifecycle, rootfs bootstrap, layers, overlays, and snapshots
     - Guest filesystem API
     - Shadow-root reconciliation and kernel/writeback sync
-    - Tool registration and virtual-process dispatch
+    - Binding registration and virtual-process dispatch
     - Process/runtime dispatch and runtime env assembly
     - Networking policy, DNS, and loopback translation
     - TCP/UDP/Unix socket transports and socket state
@@ -170,7 +170,7 @@ What lives here:
 - Kernel-managed pipes with blocking and non-blocking semantics.
 - PTY master/slave pairs, termios state, canonical mode, echo, signal-generating control characters, and resize handling.
 - `poll()` style readiness bits and notifier generation counters.
-- The command registry that seeds `/bin/*` driver stubs for sidecar/tool commands.
+- The command registry that seeds `/bin/*` driver stubs for sidecar/binding commands.
 - Direct command resolution, direct path execution, and shebang parsing in `kernel.rs`.
 
 ### Permissions, resource limits, and user identity
@@ -336,8 +336,8 @@ Relevant files:
 
 What lives here:
 - The top-level sidecar composition surface in `lib.rs`.
-- The request/response/event wire schema, ownership scopes, VM/session/process payloads, permission policy payloads, root filesystem descriptors, tool payloads, and sidecar callback frames in `protocol.rs`.
-- The long-lived in-memory state model for VMs, contexts, processes, listeners, sockets, sidecar callbacks, and tool executions in `state.rs`.
+- The request/response/event wire schema, ownership scopes, VM/session/process payloads, permission policy payloads, root filesystem descriptors, binding payloads, and sidecar callback frames in `protocol.rs`.
+- The long-lived in-memory state model for VMs, contexts, processes, listeners, sockets, sidecar callbacks, and binding executions in `state.rs`.
 - The framed stdio host transport, callback routing, and event pump in `stdio.rs`.
 
 ### Native sidecar dispatch hub
@@ -397,20 +397,20 @@ What lives here:
 - Host-directory, host-file, and host-symlink reconciliation into the kernel tree.
 - Process-exit writeback and shadow-root bootstrap behavior that affects guest-visible state.
 
-### Native sidecar tool virtualization
+### Native sidecar binding virtualization
 
-This is the subsystem that makes registered toolkits show up as VM commands.
+This is the subsystem that makes registered binding collections show up as VM commands.
 
 Relevant files:
-- `crates/sidecar/src/tools.rs`
-- `crates/sidecar/src/execution.rs`
-- `crates/sidecar/src/protocol.rs`
+- `crates/native-sidecar/src/bindings.rs`
+- `crates/native-sidecar/src/execution.rs`
+- `crates/sidecar-protocol/`
 
 What lives here:
-- Toolkit registration.
-- Prompt/reference markdown generation for toolkits.
+- Binding collection registration.
+- Prompt/reference markdown generation for bindings.
 - CLI-style flag parsing from JSON Schema.
-- Resolution of `agentos`, toolkit commands, and tool invocations into sidecar-dispatched virtual processes.
+- Resolution of `agentos`, collection commands, and binding invocations into sidecar-dispatched virtual processes.
 
 ### Native sidecar process/runtime dispatch
 
@@ -420,7 +420,7 @@ Relevant files:
 - `crates/sidecar/src/execution.rs`
 
 What lives here:
-- Runtime dispatch for JavaScript, Python, WASM, and sidecar-virtual tool processes.
+- Runtime dispatch for JavaScript, Python, WASM, and sidecar-virtual binding processes.
 - Runtime env assembly, entrypoint resolution, guest/host path mapping, and shadow materialization.
 - JS child-process RPC handling and nested process management.
 

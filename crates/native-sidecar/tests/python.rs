@@ -1801,7 +1801,7 @@ if (mode === 'write') {
                 packages: Vec::new(),
                 packages_mount_at: String::new(),
                 bootstrap_commands: Vec::new(),
-                tool_shim_commands: Vec::new(),
+                binding_shim_commands: Vec::new(),
             }),
         ))
         .expect("configure host_dir workspace mount through wire");
@@ -3674,7 +3674,7 @@ process.stdout.write('status=' + result.status + ';out=' + (result.stdout || '')
                 packages: Vec::new(),
                 packages_mount_at: String::new(),
                 bootstrap_commands: Vec::new(),
-                tool_shim_commands: Vec::new(),
+                binding_shim_commands: Vec::new(),
             }),
         ))
         .expect("configure host_dir workspace mount through wire");

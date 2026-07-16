@@ -154,14 +154,15 @@ An agent (such as [Pi](https://github.com/mariozechner/pi-coding-agent)) is just
   <text x="410" y="98" text-anchor="middle" font-family="var(--sl-font)" font-size="13" font-weight="600" fill="#1b1916">Agent session</text>
   <text x="410" y="116" text-anchor="middle" font-family="var(--sl-font)" font-size="10" fill="#56524a">long-lived agent process</text>
 
-  <text x="619" y="100" text-anchor="middle" font-family="var(--sl-font)" font-size="12" font-weight="600" fill="#1b1916">Transcript</text>
-  <text x="619" y="118" text-anchor="middle" font-family="var(--sl-font)" font-size="10" fill="#56524a">persisted, replayable</text>
+  <text x="619" y="100" text-anchor="middle" font-family="var(--sl-font)" font-size="12" font-weight="600" fill="#1b1916">Filesystem</text>
+  <text x="619" y="118" text-anchor="middle" font-family="var(--sl-font)" font-size="10" fill="#56524a">SQLite over UDS</text>
 
-### Sessions & transcripts
+### Sessions & durable files
 
 - **Long-lived.** Where a bare `exec()` runs once and exits, a session keeps an agent alive across many prompts.
 - **Streamed.** The agent's output flows back to your app in real time as `sessionEvent`s.
-- **Replayable.** Each session persists a transcript (with sequence numbers) that survives sleep/wake, so you can replay the conversation later.
+- **Live-only events.** Subscribe before prompting; actor session events are not persisted or replayed.
+- **Durable files.** Files under `/home/agentos` survive sleep through the sidecar's direct SQLite-over-UDS connection.
 - **Context injected.** agentOS adds a system prompt describing the VM environment and available commands and bindings, layered on top of the agent's own instructions. See [System Prompt](/docs/system-prompt).
 - See [Agent Sessions](/docs/architecture/agent-sessions) for the internals.
 
@@ -189,7 +190,7 @@ The `agentOS()` actor (from `@rivet-dev/agentos`) wraps the raw VM in a [Rivet A
 ### What are actors?
 
 - **Durable server objects.** A Rivet Actor is a long-lived, addressable object with its own state. You reach a specific VM by name (`vm.getOrCreate("my-agent")`).
-- **Stateful by default.** Unlike the bare core package, the actor keeps its filesystem and sessions persistent and handles distributed state for you.
+- **Stateful by default.** Unlike the bare core package, the actor persists its filesystem and actor state while keeping sessions live-only.
 - **The portable runtime.** Actors give you a consistent way to run `agentOS()` on any infrastructure, with persistence, networking, and orchestration built in.
 
 ### Cron
@@ -208,7 +209,7 @@ The `agentOS()` actor (from `@rivet-dev/agentos`) wraps the raw VM in a [Rivet A
 
 - **Sleeps when idle.** After a grace period (15 minutes by default) with no activity, the VM sleeps to free resources.
 - **Wakes on demand.** It wakes automatically when a client connects or a cron job fires.
-- **What survives.** The `/home/agentos` filesystem, session records, transcripts, preview tokens, and cron definitions all persist. In-memory kernel state (running processes, open shells) does not. See [Persistence & Sleep](/docs/persistence).
+- **What survives.** The `/home/agentos` filesystem, actor state, and preview tokens persist. Sessions, transcripts, cron definitions, running processes, and open shells are live-only. See [Persistence & Sleep](/docs/persistence).
 
 ## Going deeper
 

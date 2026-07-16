@@ -1,15 +1,15 @@
 ---
 title: "Persistence"
-description: "Session persistence: lifecycle management and resuming a session after disconnect."
+description: "Filesystem persistence and VM sleep/wake lifecycle management."
 category: "Sessions & Permissions"
 order: 7
 ---
 
-VMs sleep when idle and wake on demand, so sessions outlive any single connection. Reach for this when an agent needs to survive client disconnects, restarts, or long gaps between turns without losing its transcript.
+VMs sleep when idle and wake on demand while files under `/home/agentos` remain durable. Reach for this when agent work must survive client disconnects, actor sleep, or long gaps between turns.
 
 ## How it works
 
-The server registers a VM with `agentOS({ software: [pi] })` and `setup`. On the client, `connect()` surfaces `vmBooted` and `vmShutdown` lifecycle events — the shutdown payload's `reason` (`"sleep"`, `"destroy"`, or `"error"`) tells you why the VM stopped. Sessions are written to durable storage as they run, so even with no VM running you can call `vm.listPersistedSessions()` to enumerate past sessions and `vm.getSessionEvents(sessionId)` to replay a session's ordered event transcript after a disconnect.
+The server registers a VM with `agentOS({ software: [pi] })` and `setup`. On the client, `connect()` surfaces `vmBooted` and `vmShutdown` lifecycle events—the shutdown payload's `reason` (`"sleep"`, `"destroy"`, or `"error"`) tells you why the VM stopped. Files under `/home/agentos` are stored by the sidecar directly in the actor's SQLite database over its authenticated Unix socket. Live sessions and event streams end when the VM shuts down.
 
 ## Run it
 
@@ -17,10 +17,10 @@ The server registers a VM with `agentOS({ software: [pi] })` and `setup`. On the
 npm install
 npx tsx examples/persistence/server.ts   # terminal 1: start the registry
 npx tsx examples/persistence/lifecycle-client.ts   # terminal 2: watch boot/shutdown events
-npx tsx examples/persistence/resume-client.ts       # later: list and replay persisted sessions
+npx tsx examples/persistence/restore-filesystem.ts  # later: verify persisted files
 ```
 
-The lifecycle client logs `VM is ready` then shutdown reasons; the resume client prints prior session counts and replays the latest transcript.
+The lifecycle client logs `VM is ready` then shutdown reasons; the restore client reads a file created before the actor slept.
 
 ## Source
 

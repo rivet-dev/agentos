@@ -3,26 +3,26 @@ use crate::protocol::{
     RequestFrame, ResponsePayload,
 };
 use crate::service::{kernel_error, normalize_path, DispatchResult};
-use crate::state::{BridgeError, VmState, TOOL_DRIVER_NAME};
+use crate::state::{BridgeError, VmState, BINDING_DRIVER_NAME};
 use crate::{NativeSidecar, NativeSidecarBridge, SidecarError};
 use agentos_kernel::command_registry::CommandDriver;
-use agentos_native_sidecar_core::permissions::{
-    allow_all_policy, deny_all_policy, evaluate_permissions_policy,
-};
-use agentos_native_sidecar_core::tools::{
+use agentos_native_sidecar_core::bindings::{
+    ensure_binding_registry_capacity as core_ensure_binding_registry_capacity,
+    ensure_collection_name_available as core_ensure_collection_name_available,
     ensure_command_aliases_available as core_ensure_command_aliases_available,
-    ensure_toolkit_name_available as core_ensure_toolkit_name_available,
-    ensure_toolkit_registry_capacity as core_ensure_toolkit_registry_capacity,
-    registered_tool_command_names,
-    validate_toolkit_registration as core_validate_toolkit_registration, ToolRegistrationError,
-    DEFAULT_TOOL_TIMEOUT_MS,
+    registered_binding_command_names,
+    validate_bindings_registration as core_validate_bindings_registration,
+    BindingRegistrationError, DEFAULT_BINDING_TIMEOUT_MS,
 };
 #[cfg(test)]
 #[allow(unused_imports)]
-pub(crate) use agentos_native_sidecar_core::tools::{
-    MAX_REGISTERED_TOOLKITS, MAX_REGISTERED_TOOLS_PER_VM, MAX_TOOLS_PER_TOOLKIT,
-    MAX_TOOL_DESCRIPTION_LENGTH, MAX_TOOL_EXAMPLES_PER_TOOL, MAX_TOOL_EXAMPLE_INPUT_BYTES,
-    MAX_TOOL_SCHEMA_BYTES, MAX_TOOL_SCHEMA_DEPTH, MAX_TOOL_TIMEOUT_MS,
+pub(crate) use agentos_native_sidecar_core::bindings::{
+    MAX_BINDINGS_PER_COLLECTION, MAX_BINDING_DESCRIPTION_LENGTH, MAX_BINDING_EXAMPLE_INPUT_BYTES,
+    MAX_BINDING_SCHEMA_BYTES, MAX_BINDING_SCHEMA_DEPTH, MAX_BINDING_TIMEOUT_MS,
+    MAX_EXAMPLES_PER_BINDING, MAX_REGISTERED_BINDINGS_PER_VM, MAX_REGISTERED_BINDING_COLLECTIONS,
+};
+use agentos_native_sidecar_core::permissions::{
+    allow_all_policy, deny_all_policy, evaluate_permissions_policy,
 };
 use agentos_vm_config::PermissionMode;
 use serde_json::{json, Map, Number, Value};
@@ -32,7 +32,7 @@ use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[derive(Debug)]
-pub(crate) enum ToolCommandResolution {
+pub(crate) enum BindingCommandResolution {
     Invoke {
         request: HostCallbackRequest,
         timeout: Duration,
@@ -40,7 +40,7 @@ pub(crate) enum ToolCommandResolution {
     Failure(String),
 }
 
-pub(crate) fn format_tool_failure_output(message: &str) -> Vec<u8> {
+pub(crate) fn format_binding_failure_output(message: &str) -> Vec<u8> {
     let mut output = message.as_bytes().to_vec();
     if !output.ends_with(b"\n") {
         output.push(b'\n');
@@ -60,14 +60,14 @@ where
     let (connection_id, session_id, vm_id) = sidecar.vm_scope_for(&request.ownership)?;
     sidecar.require_owned_vm(&connection_id, &session_id, &vm_id)?;
 
-    validate_toolkit_registration(&payload)?;
+    validate_bindings_registration(&payload)?;
 
     let registered_name = payload.name.clone();
-    let (original_permissions, original_toolkits, original_command_guest_paths) = {
+    let (original_permissions, original_bindings, original_command_guest_paths) = {
         let vm = sidecar.vms.get(&vm_id).expect("owned VM should exist");
         (
             vm.configuration.permissions.clone(),
-            vm.toolkits.clone(),
+            vm.bindings.clone(),
             vm.command_guest_paths.clone(),
         )
     };
@@ -76,12 +76,12 @@ where
         .set_vm_permissions(&vm_id, &allow_all_policy())?;
     let registration_result = (|| -> Result<_, SidecarError> {
         let vm = sidecar.vms.get_mut(&vm_id).expect("owned VM should exist");
-        ensure_toolkit_name_available(&vm.toolkits, &registered_name)?;
-        ensure_command_aliases_available(&vm.toolkits, &payload)?;
-        ensure_toolkit_registry_capacity(&vm.toolkits, &payload)?;
-        vm.toolkits.insert(registered_name.clone(), payload);
-        refresh_tool_registry(vm)?;
-        Ok::<_, SidecarError>(tool_command_names(vm).len() as u32)
+        ensure_collection_name_available(&vm.bindings, &registered_name)?;
+        ensure_command_aliases_available(&vm.bindings, &payload)?;
+        ensure_binding_registry_capacity(&vm.bindings, &payload)?;
+        vm.bindings.insert(registered_name.clone(), payload);
+        refresh_binding_registry(vm)?;
+        Ok::<_, SidecarError>(binding_command_names(vm).len() as u32)
     })();
     let command_count = match registration_result {
         Ok(result) => {
@@ -92,12 +92,12 @@ where
         }
         Err(error) => {
             let vm = sidecar.vms.get_mut(&vm_id).expect("owned VM should exist");
-            vm.toolkits = original_toolkits;
+            vm.bindings = original_bindings;
             vm.command_guest_paths = original_command_guest_paths;
             match sidecar.bridge.restore_vm_permissions_fail_closed(
                 &vm_id,
                 &original_permissions,
-                "toolkit registration rollback",
+                "collection registration rollback",
                 &error,
             ) {
                 Ok(()) => return Err(error),
@@ -121,11 +121,11 @@ where
     })
 }
 
-fn refresh_tool_registry(vm: &mut VmState) -> Result<(), SidecarError> {
-    let commands = tool_command_names(vm);
+fn refresh_binding_registry(vm: &mut VmState) -> Result<(), SidecarError> {
+    let commands = binding_command_names(vm);
     vm.kernel
         .register_driver(CommandDriver::new(
-            TOOL_DRIVER_NAME,
+            BINDING_DRIVER_NAME,
             commands.iter().cloned(),
         ))
         .map_err(kernel_error)?;
@@ -137,63 +137,65 @@ fn refresh_tool_registry(vm: &mut VmState) -> Result<(), SidecarError> {
     Ok(())
 }
 
-pub(crate) fn resolve_tool_command(
+pub(crate) fn resolve_binding_command(
     vm: &mut VmState,
     command: &str,
     args: &[String],
     cwd: Option<&str>,
-) -> Result<Option<ToolCommandResolution>, SidecarError> {
-    let Some(kind) = identify_tool_command(vm, command) else {
+) -> Result<Option<BindingCommandResolution>, SidecarError> {
+    let Some(kind) = identify_binding_command(vm, command) else {
         return Ok(None);
     };
     let guest_cwd = cwd
         .map(normalize_path)
         .unwrap_or_else(|| vm.guest_cwd.clone());
     let resolution = match kind {
-        ToolCommand::Registry(command_name) => {
+        BindingCommand::Registry(command_name) => {
             resolve_registry_command(vm, &command_name, args, &guest_cwd)?
         }
-        ToolCommand::Toolkit { toolkit_name } => {
-            resolve_toolkit_command(vm, &toolkit_name, args, &guest_cwd)?
+        BindingCommand::Collection { collection_name } => {
+            resolve_binding_collection_command(vm, &collection_name, args, &guest_cwd)?
         }
     };
     Ok(Some(resolution))
 }
 
-pub(crate) fn is_tool_command(vm: &VmState, command: &str) -> bool {
-    identify_tool_command(vm, command).is_some()
+pub(crate) fn is_binding_command(vm: &VmState, command: &str) -> bool {
+    identify_binding_command(vm, command).is_some()
 }
 
-pub(crate) fn normalized_tool_command_name(command: &str) -> Option<String> {
-    tool_command_name_from_specifier(command).map(ToOwned::to_owned)
+pub(crate) fn normalized_binding_command_name(command: &str) -> Option<String> {
+    binding_command_name_from_specifier(command).map(ToOwned::to_owned)
 }
 
-fn identify_tool_command(vm: &VmState, command: &str) -> Option<ToolCommand> {
-    let command_name = tool_command_name_from_specifier(command).unwrap_or(command);
+fn identify_binding_command(vm: &VmState, command: &str) -> Option<BindingCommand> {
+    let command_name = binding_command_name_from_specifier(command).unwrap_or(command);
 
-    if vm.toolkits.values().any(|toolkit| {
-        toolkit
+    if vm.bindings.values().any(|collection| {
+        collection
             .registry_command_aliases
             .iter()
             .any(|alias| alias == command_name)
     }) {
-        return Some(ToolCommand::Registry(command_name.to_owned()));
+        return Some(BindingCommand::Registry(command_name.to_owned()));
     }
 
-    vm.toolkits
+    vm.bindings
         .iter()
-        .find(|(_toolkit_name, toolkit)| {
-            toolkit
+        .find(|(_collection_name, collection)| {
+            collection
                 .command_aliases
                 .iter()
                 .any(|alias| alias == command_name)
         })
-        .map(|(toolkit_name, _toolkit)| ToolCommand::Toolkit {
-            toolkit_name: toolkit_name.to_owned(),
-        })
+        .map(
+            |(collection_name, _collection)| BindingCommand::Collection {
+                collection_name: collection_name.to_owned(),
+            },
+        )
 }
 
-fn tool_command_name_from_specifier(command: &str) -> Option<&str> {
+fn binding_command_name_from_specifier(command: &str) -> Option<&str> {
     let file_name = Path::new(command).file_name()?.to_str()?;
     let normalized = normalize_path(command);
     let registered_internal_path = normalized
@@ -217,9 +219,9 @@ fn resolve_registry_command(
     command_name: &str,
     args: &[String],
     guest_cwd: &str,
-) -> Result<ToolCommandResolution, SidecarError> {
+) -> Result<BindingCommandResolution, SidecarError> {
     let timeout_ms =
-        command_callback_timeout_ms(vm, &ToolCommand::Registry(command_name.to_owned()));
+        command_callback_timeout_ms(vm, &BindingCommand::Registry(command_name.to_owned()));
     Ok(build_command_callback_resolution(
         command_name,
         build_registry_command_input(command_name, args, guest_cwd),
@@ -227,26 +229,26 @@ fn resolve_registry_command(
     ))
 }
 
-fn resolve_toolkit_command(
+fn resolve_binding_collection_command(
     vm: &mut VmState,
-    toolkit_name: &str,
+    collection_name: &str,
     args: &[String],
     _guest_cwd: &str,
-) -> Result<ToolCommandResolution, SidecarError> {
-    let Some((tool_name, tool_args)) = args.split_first() else {
-        return Ok(ToolCommandResolution::Failure(format!(
-            "toolkit command {toolkit_name} requires a tool name"
+) -> Result<BindingCommandResolution, SidecarError> {
+    let Some((binding_name, binding_args)) = args.split_first() else {
+        return Ok(BindingCommandResolution::Failure(format!(
+            "collection command {collection_name} requires a binding name"
         )));
     };
-    let callback_key = format!("{toolkit_name}:{tool_name}");
-    let Some(tool) = vm
-        .toolkits
-        .get(toolkit_name)
-        .and_then(|toolkit| toolkit.callbacks.get(tool_name))
+    let callback_key = format!("{collection_name}:{binding_name}");
+    let Some(binding) = vm
+        .bindings
+        .get(collection_name)
+        .and_then(|collection| collection.callbacks.get(binding_name))
         .cloned()
     else {
-        return Ok(ToolCommandResolution::Failure(format!(
-            "unknown tool callback {callback_key}"
+        return Ok(BindingCommandResolution::Failure(format!(
+            "unknown binding callback {callback_key}"
         )));
     };
     if !matches!(
@@ -258,24 +260,24 @@ fn resolve_toolkit_command(
         ),
         PermissionMode::Allow
     ) {
-        return Ok(ToolCommandResolution::Failure(format!(
+        return Ok(BindingCommandResolution::Failure(format!(
             "blocked by binding.invoke policy for {callback_key}"
         )));
     }
 
-    let input_schema: Value = serde_json::from_str(&tool.input_schema).map_err(|error| {
+    let input_schema: Value = serde_json::from_str(&binding.input_schema).map_err(|error| {
         SidecarError::InvalidState(format!(
-            "tool {callback_key} input schema is not valid JSON: {error}"
+            "binding {callback_key} input schema is not valid JSON: {error}"
         ))
     })?;
-    let input = match parse_toolkit_command_input(vm, &input_schema, tool_args) {
+    let input = match parse_binding_command_input(vm, &input_schema, binding_args) {
         Ok(input) => input,
-        Err(message) => return Ok(ToolCommandResolution::Failure(message)),
+        Err(message) => return Ok(BindingCommandResolution::Failure(message)),
     };
-    if let Err(message) = validate_tool_input_schema(&input_schema, &input) {
-        return Ok(ToolCommandResolution::Failure(message));
+    if let Err(message) = validate_binding_input_schema(&input_schema, &input) {
+        return Ok(BindingCommandResolution::Failure(message));
     }
-    let timeout_ms = tool.timeout_ms.unwrap_or(DEFAULT_TOOL_TIMEOUT_MS);
+    let timeout_ms = binding.timeout_ms.unwrap_or(DEFAULT_BINDING_TIMEOUT_MS);
 
     Ok(build_command_callback_resolution(
         &callback_key,
@@ -288,13 +290,13 @@ fn build_command_callback_resolution(
     command_name: &str,
     input: Value,
     timeout_ms: u64,
-) -> ToolCommandResolution {
+) -> BindingCommandResolution {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
 
-    ToolCommandResolution::Invoke {
+    BindingCommandResolution::Invoke {
         request: HostCallbackRequest {
             invocation_id: format!("{command_name}:{nonce}"),
             callback_key: command_name.to_owned(),
@@ -314,16 +316,15 @@ fn build_registry_command_input(command_name: &str, args: &[String], guest_cwd: 
     })
 }
 
-fn parse_toolkit_command_input(
+fn parse_binding_command_input(
     vm: &mut VmState,
     schema: &Value,
     args: &[String],
 ) -> Result<Value, String> {
     match args {
         [] => Ok(Value::Object(Map::new())),
-        [flag, raw] if flag == "--json" => {
-            serde_json::from_str(raw).map_err(|error| format!("invalid --json tool input: {error}"))
-        }
+        [flag, raw] if flag == "--json" => serde_json::from_str(raw)
+            .map_err(|error| format!("invalid --json binding input: {error}")),
         [flag, path] if flag == "--json-file" => {
             let bytes = vm
                 .kernel
@@ -334,11 +335,11 @@ fn parse_toolkit_command_input(
             serde_json::from_str(&raw)
                 .map_err(|error| format!("invalid JSON in --json-file {path}: {error}"))
         }
-        _ => parse_toolkit_command_flags(schema, args),
+        _ => parse_binding_command_flags(schema, args),
     }
 }
 
-fn parse_toolkit_command_flags(schema: &Value, args: &[String]) -> Result<Value, String> {
+fn parse_binding_command_flags(schema: &Value, args: &[String]) -> Result<Value, String> {
     let Some(schema_object) = schema.as_object() else {
         return Ok(json!({ "args": args }));
     };
@@ -397,7 +398,7 @@ fn parse_toolkit_command_flags(schema: &Value, args: &[String]) -> Result<Value,
         let Some(value) = args.get(index + 1) else {
             return Err(format!("Flag --{raw_flag} requires a value"));
         };
-        let parsed_value = parse_tool_flag_value(raw_flag, field_schema, value)?;
+        let parsed_value = parse_binding_flag_value(raw_flag, field_schema, value)?;
         if field_type == Some("array") {
             let entry = input
                 .entry((*field_name).clone())
@@ -424,7 +425,7 @@ fn parse_toolkit_command_flags(schema: &Value, args: &[String]) -> Result<Value,
     Ok(Value::Object(input))
 }
 
-fn parse_tool_flag_value(
+fn parse_binding_flag_value(
     raw_flag: &str,
     field_schema: &Value,
     value: &str,
@@ -478,7 +479,7 @@ fn camel_to_kebab(value: &str) -> String {
     output
 }
 
-fn validate_tool_input_schema(schema: &Value, input: &Value) -> Result<(), String> {
+fn validate_binding_input_schema(schema: &Value, input: &Value) -> Result<(), String> {
     let Some(schema_object) = schema.as_object() else {
         return Ok(());
     };
@@ -487,7 +488,7 @@ fn validate_tool_input_schema(schema: &Value, input: &Value) -> Result<(), Strin
     }
     let Some(input_object) = input.as_object() else {
         return Err(String::from(
-            "ToolInputSchemaViolation at $: expected object",
+            "BindingInputSchemaViolation at $: expected object",
         ));
     };
 
@@ -495,7 +496,7 @@ fn validate_tool_input_schema(schema: &Value, input: &Value) -> Result<(), Strin
         for name in required.iter().filter_map(Value::as_str) {
             if !input_object.contains_key(name) {
                 return Err(format!(
-                    "ToolInputSchemaViolation at $.{name}: missing required property"
+                    "BindingInputSchemaViolation at $.{name}: missing required property"
                 ));
             }
         }
@@ -508,7 +509,7 @@ fn validate_tool_input_schema(schema: &Value, input: &Value) -> Result<(), Strin
         .unwrap_or_default();
     for (name, property_schema) in &properties {
         if let Some(value) = input_object.get(name) {
-            validate_tool_input_value_type(value, property_schema, &format!("$.{name}"))?;
+            validate_binding_input_value_type(value, property_schema, &format!("$.{name}"))?;
         }
     }
     if schema_object
@@ -519,7 +520,7 @@ fn validate_tool_input_schema(schema: &Value, input: &Value) -> Result<(), Strin
         for name in input_object.keys() {
             if !properties.contains_key(name) {
                 return Err(format!(
-                    "ToolInputSchemaViolation at $.{name}: unexpected property"
+                    "BindingInputSchemaViolation at $.{name}: unexpected property"
                 ));
             }
         }
@@ -528,7 +529,11 @@ fn validate_tool_input_schema(schema: &Value, input: &Value) -> Result<(), Strin
     Ok(())
 }
 
-fn validate_tool_input_value_type(value: &Value, schema: &Value, path: &str) -> Result<(), String> {
+fn validate_binding_input_value_type(
+    value: &Value,
+    schema: &Value,
+    path: &str,
+) -> Result<(), String> {
     let Some(expected) = schema.get("type").and_then(Value::as_str) else {
         return Ok(());
     };
@@ -545,28 +550,30 @@ fn validate_tool_input_value_type(value: &Value, schema: &Value, path: &str) -> 
         Ok(())
     } else {
         Err(format!(
-            "ToolInputSchemaViolation at {path}: expected {expected}"
+            "BindingInputSchemaViolation at {path}: expected {expected}"
         ))
     }
 }
 
-fn command_callback_timeout_ms(vm: &VmState, kind: &ToolCommand) -> u64 {
+fn command_callback_timeout_ms(vm: &VmState, kind: &BindingCommand) -> u64 {
     let callbacks = match kind {
-        ToolCommand::Registry(command_name) => vm
-            .toolkits
+        BindingCommand::Registry(command_name) => vm
+            .bindings
             .values()
-            .filter(|toolkit| {
-                toolkit
+            .filter(|collection| {
+                collection
                     .registry_command_aliases
                     .iter()
                     .any(|alias| alias == command_name)
             })
-            .flat_map(|toolkit| toolkit.callbacks.values())
+            .flat_map(|collection| collection.callbacks.values())
             .collect::<Vec<_>>(),
-        ToolCommand::Toolkit { toolkit_name, .. } => vm
-            .toolkits
-            .get(toolkit_name)
-            .map(|toolkit| toolkit.callbacks.values().collect::<Vec<_>>())
+        BindingCommand::Collection {
+            collection_name, ..
+        } => vm
+            .bindings
+            .get(collection_name)
+            .map(|collection| collection.callbacks.values().collect::<Vec<_>>())
             .unwrap_or_default(),
     };
 
@@ -574,50 +581,51 @@ fn command_callback_timeout_ms(vm: &VmState, kind: &ToolCommand) -> u64 {
         .into_iter()
         .filter_map(|callback| callback.timeout_ms)
         .max()
-        .unwrap_or(DEFAULT_TOOL_TIMEOUT_MS)
+        .unwrap_or(DEFAULT_BINDING_TIMEOUT_MS)
 }
 
-fn ensure_toolkit_name_available(
-    toolkits: &BTreeMap<String, RegisterHostCallbacksRequest>,
-    toolkit_name: &str,
+fn ensure_collection_name_available(
+    bindings: &BTreeMap<String, RegisterHostCallbacksRequest>,
+    collection_name: &str,
 ) -> Result<(), SidecarError> {
-    core_ensure_toolkit_name_available(toolkits, toolkit_name).map_err(tool_registration_error)
+    core_ensure_collection_name_available(bindings, collection_name)
+        .map_err(binding_registration_error)
 }
 
 fn ensure_command_aliases_available(
-    toolkits: &BTreeMap<String, RegisterHostCallbacksRequest>,
+    bindings: &BTreeMap<String, RegisterHostCallbacksRequest>,
     payload: &RegisterHostCallbacksRequest,
 ) -> Result<(), SidecarError> {
-    core_ensure_command_aliases_available(toolkits, payload).map_err(tool_registration_error)
+    core_ensure_command_aliases_available(bindings, payload).map_err(binding_registration_error)
 }
 
-fn ensure_toolkit_registry_capacity(
-    toolkits: &BTreeMap<String, RegisterHostCallbacksRequest>,
+fn ensure_binding_registry_capacity(
+    bindings: &BTreeMap<String, RegisterHostCallbacksRequest>,
     payload: &RegisterHostCallbacksRequest,
 ) -> Result<(), SidecarError> {
-    core_ensure_toolkit_registry_capacity(toolkits, payload).map_err(tool_registration_error)
+    core_ensure_binding_registry_capacity(bindings, payload).map_err(binding_registration_error)
 }
 
-fn tool_command_names(vm: &VmState) -> Vec<String> {
-    registered_tool_command_names(&vm.toolkits)
+fn binding_command_names(vm: &VmState) -> Vec<String> {
+    registered_binding_command_names(&vm.bindings)
 }
 
-fn validate_toolkit_registration(
+fn validate_bindings_registration(
     payload: &RegisterHostCallbacksRequest,
 ) -> Result<(), SidecarError> {
-    core_validate_toolkit_registration(payload).map_err(tool_registration_error)
+    core_validate_bindings_registration(payload).map_err(binding_registration_error)
 }
 
-fn tool_registration_error(error: ToolRegistrationError) -> SidecarError {
+fn binding_registration_error(error: BindingRegistrationError) -> SidecarError {
     match error {
-        ToolRegistrationError::InvalidState(message) => SidecarError::InvalidState(message),
-        ToolRegistrationError::Conflict(message) => SidecarError::Conflict(message),
+        BindingRegistrationError::InvalidState(message) => SidecarError::InvalidState(message),
+        BindingRegistrationError::Conflict(message) => SidecarError::Conflict(message),
     }
 }
 
-enum ToolCommand {
+enum BindingCommand {
     Registry(String),
-    Toolkit { toolkit_name: String },
+    Collection { collection_name: String },
 }
 
 #[cfg(test)]
@@ -640,7 +648,7 @@ mod tests {
         })
     }
 
-    fn registered_tool(description: String) -> RegisteredHostCallbackDefinition {
+    fn registered_binding(description: String) -> RegisteredHostCallbackDefinition {
         RegisteredHostCallbackDefinition {
             description,
             input_schema: screenshot_schema().to_string(),
@@ -649,35 +657,35 @@ mod tests {
         }
     }
 
-    fn toolkit_with_descriptions(
-        toolkit_description: String,
-        tool_description: String,
+    fn bindings_with_descriptions(
+        collection_description: String,
+        binding_description: String,
     ) -> RegisterHostCallbacksRequest {
-        toolkit_with_schema(
+        bindings_with_schema(
             String::from("browser"),
-            toolkit_description,
+            collection_description,
             String::from("screenshot"),
-            tool_description,
+            binding_description,
             screenshot_schema(),
         )
     }
 
-    fn toolkit_with_schema(
-        toolkit_name: String,
-        toolkit_description: String,
-        tool_name: String,
-        tool_description: String,
+    fn bindings_with_schema(
+        collection_name: String,
+        collection_description: String,
+        binding_name: String,
+        binding_description: String,
         input_schema: Value,
     ) -> RegisterHostCallbacksRequest {
         RegisterHostCallbacksRequest {
-            name: toolkit_name.clone(),
-            description: toolkit_description,
-            command_aliases: vec![format!("agentos-{toolkit_name}")],
+            name: collection_name.clone(),
+            description: collection_description,
+            command_aliases: vec![format!("agentos-{collection_name}")],
             registry_command_aliases: vec![String::from("agentos")],
             callbacks: std::collections::HashMap::from([(
-                tool_name,
+                binding_name,
                 RegisteredHostCallbackDefinition {
-                    description: tool_description,
+                    description: binding_description,
                     input_schema: input_schema.to_string(),
                     timeout_ms: None,
                     examples: Vec::new(),
@@ -687,92 +695,92 @@ mod tests {
     }
 
     #[test]
-    fn accepts_toolkit_and_tool_descriptions_at_length_limit() {
-        let description = "a".repeat(MAX_TOOL_DESCRIPTION_LENGTH);
-        let payload = toolkit_with_descriptions(description.clone(), description);
+    fn accepts_collection_and_binding_descriptions_at_length_limit() {
+        let description = "a".repeat(MAX_BINDING_DESCRIPTION_LENGTH);
+        let payload = bindings_with_descriptions(description.clone(), description);
 
-        validate_toolkit_registration(&payload).expect("description at limit should pass");
+        validate_bindings_registration(&payload).expect("description at limit should pass");
     }
 
     #[test]
-    fn rejects_toolkit_registration_over_shape_limits() {
-        let too_many_tools = RegisterHostCallbacksRequest {
+    fn rejects_binding_collection_registration_over_shape_limits() {
+        let too_many_bindings = RegisterHostCallbacksRequest {
             name: String::from("browser"),
             description: String::from("Browser automation"),
             command_aliases: vec![String::from("agentos-browser")],
             registry_command_aliases: vec![String::from("agentos")],
-            callbacks: (0..=MAX_TOOLS_PER_TOOLKIT)
+            callbacks: (0..=MAX_BINDINGS_PER_COLLECTION)
                 .map(|index| {
                     (
-                        format!("tool-{index}"),
-                        registered_tool(String::from("Run a bounded test tool")),
+                        format!("binding-{index}"),
+                        registered_binding(String::from("Run a bounded test binding")),
                     )
                 })
                 .collect(),
         };
-        assert!(validate_toolkit_registration(&too_many_tools)
-            .expect_err("toolkit should reject too many tools")
+        assert!(validate_bindings_registration(&too_many_bindings)
+            .expect_err("collection should reject too many bindings")
             .to_string()
             .contains("max is 64"));
 
-        let mut long_timeout = toolkit_with_descriptions(
+        let mut long_timeout = bindings_with_descriptions(
             String::from("Browser automation"),
             String::from("Take a screenshot"),
         );
         long_timeout
             .callbacks
             .get_mut("screenshot")
-            .expect("test tool")
-            .timeout_ms = Some(MAX_TOOL_TIMEOUT_MS + 1);
-        assert!(validate_toolkit_registration(&long_timeout)
-            .expect_err("toolkit should reject long timeouts")
+            .expect("test binding")
+            .timeout_ms = Some(MAX_BINDING_TIMEOUT_MS + 1);
+        assert!(validate_bindings_registration(&long_timeout)
+            .expect_err("collection should reject long timeouts")
             .to_string()
             .contains("timeout is"));
 
-        let mut too_many_examples = toolkit_with_descriptions(
+        let mut too_many_examples = bindings_with_descriptions(
             String::from("Browser automation"),
             String::from("Take a screenshot"),
         );
         too_many_examples
             .callbacks
             .get_mut("screenshot")
-            .expect("test tool")
-            .examples = (0..=MAX_TOOL_EXAMPLES_PER_TOOL)
+            .expect("test binding")
+            .examples = (0..=MAX_EXAMPLES_PER_BINDING)
             .map(|index| crate::protocol::RegisteredHostCallbackExample {
                 description: format!("example {index}"),
                 input: json!({ "url": "https://example.com" }).to_string(),
             })
             .collect();
-        assert!(validate_toolkit_registration(&too_many_examples)
-            .expect_err("toolkit should reject too many examples")
+        assert!(validate_bindings_registration(&too_many_examples)
+            .expect_err("collection should reject too many examples")
             .to_string()
             .contains("examples"));
     }
 
     #[test]
     fn validates_host_callback_command_aliases() {
-        let mut payload = toolkit_with_descriptions(
+        let mut payload = bindings_with_descriptions(
             String::from("Browser automation"),
             String::from("Take a screenshot"),
         );
         payload.command_aliases = vec![String::from("agentos-browser"), String::from("bad/path")];
-        assert!(validate_toolkit_registration(&payload)
+        assert!(validate_bindings_registration(&payload)
             .expect_err("slashes should be rejected")
             .to_string()
             .contains("invalid host callback command alias"));
 
         payload.command_aliases = vec![String::from("agentos-browser")];
         payload.registry_command_aliases = vec![String::from("agentos-browser")];
-        assert!(validate_toolkit_registration(&payload)
+        assert!(validate_bindings_registration(&payload)
             .expect_err("ambiguous aliases should be rejected")
             .to_string()
             .contains("must not also be a registry command alias"));
 
         payload.registry_command_aliases = vec![String::from("agentos")];
-        validate_toolkit_registration(&payload).expect("distinct aliases should pass");
+        validate_bindings_registration(&payload).expect("distinct aliases should pass");
 
         let existing = BTreeMap::from([(String::from("browser"), payload.clone())]);
-        let mut next = toolkit_with_schema(
+        let mut next = bindings_with_schema(
             String::from("files"),
             String::from("File utilities"),
             String::from("read"),
@@ -791,8 +799,8 @@ mod tests {
     }
 
     #[test]
-    fn parses_toolkit_command_flags_from_schema() {
-        let input = parse_toolkit_command_flags(
+    fn parses_binding_collection_command_flags_from_schema() {
+        let input = parse_binding_command_flags(
             &screenshot_schema(),
             &[
                 String::from("--url"),
@@ -820,114 +828,116 @@ mod tests {
     }
 
     #[test]
-    fn parse_toolkit_command_flags_reports_missing_required_flags() {
-        let error = parse_toolkit_command_flags(&screenshot_schema(), &[])
+    fn parse_binding_command_flags_reports_missing_required_flags() {
+        let error = parse_binding_command_flags(&screenshot_schema(), &[])
             .expect_err("missing required flag");
 
         assert_eq!(error, "Missing required flag: --url");
     }
 
     #[test]
-    fn rejects_toolkit_registration_with_oversized_schema_or_example_input() {
+    fn rejects_binding_collection_registration_with_oversized_schema_or_example_input() {
         let mut deep_schema = Value::Null;
-        for _ in 0..=MAX_TOOL_SCHEMA_DEPTH {
+        for _ in 0..=MAX_BINDING_SCHEMA_DEPTH {
             deep_schema = json!({ "items": deep_schema });
         }
-        let deep_schema_payload = toolkit_with_schema(
+        let deep_schema_payload = bindings_with_schema(
             String::from("browser"),
             String::from("Browser automation"),
             String::from("screenshot"),
             String::from("Take a screenshot"),
             deep_schema,
         );
-        assert!(validate_toolkit_registration(&deep_schema_payload)
-            .expect_err("toolkit should reject deep schemas")
+        assert!(validate_bindings_registration(&deep_schema_payload)
+            .expect_err("collection should reject deep schemas")
             .to_string()
             .contains("max JSON depth"));
 
-        let mut oversized_schema_payload = toolkit_with_schema(
+        let mut oversized_schema_payload = bindings_with_schema(
             String::from("browser"),
             String::from("Browser automation"),
             String::from("screenshot"),
             String::from("Take a screenshot"),
-            json!({ "description": "a".repeat(MAX_TOOL_SCHEMA_BYTES) }),
+            json!({ "description": "a".repeat(MAX_BINDING_SCHEMA_BYTES) }),
         );
-        assert!(validate_toolkit_registration(&oversized_schema_payload)
-            .expect_err("toolkit should reject oversized schemas")
+        assert!(validate_bindings_registration(&oversized_schema_payload)
+            .expect_err("collection should reject oversized schemas")
             .to_string()
             .contains("input schema is"));
 
         oversized_schema_payload
             .callbacks
             .get_mut("screenshot")
-            .expect("test tool")
+            .expect("test binding")
             .input_schema = screenshot_schema().to_string();
         let oversized_example_input = crate::protocol::RegisteredHostCallbackExample {
             description: String::from("large example"),
-            input: json!({ "payload": "a".repeat(MAX_TOOL_EXAMPLE_INPUT_BYTES) }).to_string(),
+            input: json!({ "payload": "a".repeat(MAX_BINDING_EXAMPLE_INPUT_BYTES) }).to_string(),
         };
         oversized_schema_payload
             .callbacks
             .get_mut("screenshot")
-            .expect("test tool")
+            .expect("test binding")
             .examples = vec![oversized_example_input];
-        assert!(validate_toolkit_registration(&oversized_schema_payload)
-            .expect_err("toolkit should reject oversized example inputs")
+        assert!(validate_bindings_registration(&oversized_schema_payload)
+            .expect_err("collection should reject oversized example inputs")
             .to_string()
             .contains("example 0 input is"));
     }
 
     #[test]
-    fn rejects_toolkit_description_longer_than_limit() {
-        let payload = toolkit_with_descriptions(
-            "a".repeat(MAX_TOOL_DESCRIPTION_LENGTH + 1),
+    fn rejects_collection_description_longer_than_limit() {
+        let payload = bindings_with_descriptions(
+            "a".repeat(MAX_BINDING_DESCRIPTION_LENGTH + 1),
             String::from("Take a screenshot"),
         );
 
-        let error = validate_toolkit_registration(&payload).expect_err("long toolkit rejected");
+        let error = validate_bindings_registration(&payload).expect_err("long collection rejected");
         assert_eq!(
             error.to_string(),
             format!(
-                "Toolkit \"browser\" description is {} characters, max is {}",
-                MAX_TOOL_DESCRIPTION_LENGTH + 1,
-                MAX_TOOL_DESCRIPTION_LENGTH
+                "Binding collection \"browser\" description is {} characters, max is {}",
+                MAX_BINDING_DESCRIPTION_LENGTH + 1,
+                MAX_BINDING_DESCRIPTION_LENGTH
             )
         );
     }
 
     #[test]
-    fn rejects_tool_description_longer_than_limit() {
-        let payload = toolkit_with_descriptions(
+    fn rejects_binding_description_longer_than_limit() {
+        let payload = bindings_with_descriptions(
             String::from("Browser automation"),
-            "a".repeat(MAX_TOOL_DESCRIPTION_LENGTH + 1),
+            "a".repeat(MAX_BINDING_DESCRIPTION_LENGTH + 1),
         );
 
-        let error = validate_toolkit_registration(&payload).expect_err("long tool rejected");
+        let error = validate_bindings_registration(&payload).expect_err("long binding rejected");
         assert_eq!(
             error.to_string(),
             format!(
-                "Tool \"browser/screenshot\" description is {} characters, max is {}",
-                MAX_TOOL_DESCRIPTION_LENGTH + 1,
-                MAX_TOOL_DESCRIPTION_LENGTH
+                "Binding \"browser/screenshot\" description is {} characters, max is {}",
+                MAX_BINDING_DESCRIPTION_LENGTH + 1,
+                MAX_BINDING_DESCRIPTION_LENGTH
             )
         );
     }
 
     #[test]
-    fn tools_reject_duplicate_toolkit_registration() {
-        let toolkits = BTreeMap::from([(
+    fn bindings_reject_duplicate_collection_registration() {
+        let bindings = BTreeMap::from([(
             String::from("browser"),
-            toolkit_with_descriptions(
+            bindings_with_descriptions(
                 String::from("Browser automation"),
                 String::from("Take a screenshot"),
             ),
         )]);
 
         let error =
-            ensure_toolkit_name_available(&toolkits, "browser").expect_err("duplicate rejected");
+            ensure_collection_name_available(&bindings, "browser").expect_err("duplicate rejected");
         assert_eq!(
             error,
-            SidecarError::Conflict(String::from("toolkit already registered: browser"))
+            SidecarError::Conflict(String::from(
+                "binding collection already registered: browser",
+            ))
         );
     }
 }

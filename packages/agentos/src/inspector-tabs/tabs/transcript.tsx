@@ -1,6 +1,6 @@
-import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
+import { useSuspenseQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { AgentOsEmpty, relativeTime, StatusDot } from "../common";
+import { AgentOsEmpty, StatusDot } from "../common";
 import { cn } from "../lib/cn";
 import { useAgentOsActor } from "../lib/rivet";
 import { agentOsSource, mapNotification } from "../lib/source";
@@ -56,26 +56,19 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 	const { data: sessions } = useSuspenseQuery(agentOsSource.sessionsQueryOptions(actorId));
 	const [selected, setSelected] = useState<string | null>(null);
 	const sessionId = selected ?? sessions[0]?.sessionId ?? null;
-	// Persisted history (one-off) + live tail (websocket `sessionEvent` stream).
-	const { data: backfill = [] } = useQuery(agentOsSource.transcriptQueryOptions(actorId, sessionId));
-
-	// Live tail via the typed useActor connection. `sessionEvent` isn't in the
-	// actor's TS event schema (Rust owns broadcasts), so `useEvent` is typed with
-	// `never` event names — cast to subscribe to the real runtime event.
+	// Live-only transcript via the actor event stream.
 	const actor = useAgentOsActor();
 	const useAgentEvent = actor.useEvent as (
 		name: string,
 		handler: (payload: SessionEventPayload) => void,
 	) => void;
 	const [live, setLive] = useState<TranscriptEvent[]>([]);
-	// Synthetic monotonic seq (broadcasts carry none); latest sessionId via ref so
-	// the (ref-stable) event handler never filters against a stale value.
-	const seqRef = useRef(0);
+	// Keep the latest session id in a ref so the event handler never filters
+	// against a stale selection.
 	const sessionIdRef = useRef(sessionId);
 	sessionIdRef.current = sessionId;
 	useEffect(() => {
 		setLive([]);
-		seqRef.current = 0;
 	}, [sessionId]);
 	useAgentEvent("sessionEvent", (payload) => {
 		const cur = sessionIdRef.current;
@@ -85,7 +78,7 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 		const notification: JsonRpcNotification | undefined =
 			payload?.event ?? (payload as unknown as JsonRpcNotification);
 		if (!notification) return;
-		setLive((prev) => [...prev, mapNotification(notification, seqRef.current++)]);
+		setLive((prev) => [...prev, mapNotification(notification)]);
 	});
 	return (
 		<div className="flex h-full min-h-0">
@@ -111,12 +104,10 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 										s.sessionId === sessionId ? "bg-muted" : "hover:bg-muted/50",
 									)}
 								>
-									<StatusDot color={s.status === "running" ? "green" : "muted"} />
+									<StatusDot color="green" />
 									<div className="min-w-0 flex-1">
 										<div className="truncate font-mono text-xs">{s.sessionId}</div>
-										<div className="text-[11px] text-muted-foreground">
-											{s.agentType} · {relativeTime(s.createdAt)}
-										</div>
+										<div className="text-[11px] text-muted-foreground">{s.agentType}</div>
 									</div>
 								</button>
 							))}
@@ -132,22 +123,16 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 						<div className="border-b px-4 py-3">
 							<div className="font-mono text-sm">{sessionId}</div>
 							<div className="text-xs text-muted-foreground">
-								{backfill.length + live.length} event
-								{backfill.length + live.length === 1 ? "" : "s"}
+								{live.length} event{live.length === 1 ? "" : "s"}
 							</div>
 						</div>
 						<ScrollArea className="min-h-0 flex-1">
-							{backfill.length + live.length === 0 ? (
-								<AgentOsEmpty>This session has no events yet.</AgentOsEmpty>
+							{live.length === 0 ? (
+								<AgentOsEmpty>Events appear here while this tab is connected.</AgentOsEmpty>
 							) : (
-								<>
-									{backfill.map((e) => (
-										<TranscriptEventView key={`b-${e.seq}`} event={e} />
-									))}
-									{live.map((e) => (
-										<TranscriptEventView key={`l-${e.seq}`} event={e} />
-									))}
-								</>
+								live.map((event, index) => (
+									<TranscriptEventView key={index} event={event} />
+								))
 							)}
 						</ScrollArea>
 					</>

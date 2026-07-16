@@ -27,7 +27,7 @@ use agentos_protocol::ACP_EXTENSION_NAMESPACE;
 use agentos_sidecar_client::wire;
 
 use crate::agent_os::{AgentOs, SessionEntry};
-use crate::config::ToolKit;
+use crate::config::Bindings;
 use crate::error::ClientError;
 use crate::json_rpc::{JsonRpcError, JsonRpcId, JsonRpcNotification, JsonRpcResponse};
 use crate::stream::Subscription;
@@ -759,14 +759,14 @@ fn unexpected_acp_response(operation: &str, response: AcpResponse) -> ClientErro
     ClientError::Sidecar(format!("unexpected response to {operation}: {response:?}"))
 }
 
-fn combine_instructions(additional: Option<&str>, tool_reference: &str) -> Option<String> {
+fn combine_instructions(additional: Option<&str>, binding_reference: &str) -> Option<String> {
     let mut parts = Vec::new();
     if let Some(additional) = additional.map(str::trim).filter(|value| !value.is_empty()) {
         parts.push(additional.to_string());
     }
-    let tool_reference = tool_reference.trim();
-    if !tool_reference.is_empty() {
-        parts.push(tool_reference.to_string());
+    let binding_reference = binding_reference.trim();
+    if !binding_reference.is_empty() {
+        parts.push(binding_reference.to_string());
     }
     if parts.is_empty() {
         None
@@ -775,25 +775,25 @@ fn combine_instructions(additional: Option<&str>, tool_reference: &str) -> Optio
     }
 }
 
-fn build_host_tool_reference(tool_kits: &[ToolKit]) -> String {
-    if tool_kits.is_empty() {
+fn build_binding_reference(bindings: &[Bindings]) -> String {
+    if bindings.is_empty() {
         return String::new();
     }
 
     let mut lines = vec![
-        String::from("## Available Host Tools"),
+        String::from("## Available Host Bindings"),
         String::new(),
-        String::from("Run `agentos list-tools` to see all available tools."),
+        String::from("Run `agentos list-bindings` to see all available bindings."),
         String::new(),
     ];
 
-    for kit in tool_kits {
-        lines.push(format!("### {}", kit.name));
+    for collection in bindings {
+        lines.push(format!("### {}", collection.name));
         lines.push(String::new());
-        lines.push(kit.description.clone());
+        lines.push(collection.description.clone());
         lines.push(String::new());
-        for tool in &kit.tools {
-            let signature = build_tool_flag_signature(&tool.input_schema);
+        for binding in &collection.bindings {
+            let signature = build_binding_flag_signature(&binding.input_schema);
             let suffix = if signature.is_empty() {
                 String::new()
             } else {
@@ -801,13 +801,13 @@ fn build_host_tool_reference(tool_kits: &[ToolKit]) -> String {
             };
             lines.push(format!(
                 "- `agentos-{} {}{}` — {}",
-                kit.name, tool.name, suffix, tool.description
+                collection.name, binding.name, suffix, binding.description
             ));
         }
         lines.push(String::new());
         lines.push(format!(
-            "Run `agentos-{} <tool> --help` for details.",
-            kit.name
+            "Run `agentos-{} <binding> --help` for details.",
+            collection.name
         ));
         lines.push(String::new());
     }
@@ -815,8 +815,8 @@ fn build_host_tool_reference(tool_kits: &[ToolKit]) -> String {
     lines.join("\n")
 }
 
-fn build_tool_flag_signature(schema: &Value) -> String {
-    describe_tool_flags(schema)
+fn build_binding_flag_signature(schema: &Value) -> String {
+    describe_binding_flags(schema)
         .into_iter()
         .map(|flag| {
             if flag.required {
@@ -829,13 +829,13 @@ fn build_tool_flag_signature(schema: &Value) -> String {
         .join(" ")
 }
 
-struct ToolFlagDescription {
+struct BindingFlagDescription {
     name: String,
     value_type: String,
     required: bool,
 }
 
-fn describe_tool_flags(schema: &Value) -> Vec<ToolFlagDescription> {
+fn describe_binding_flags(schema: &Value) -> Vec<BindingFlagDescription> {
     let properties = schema
         .get("properties")
         .and_then(Value::as_object)
@@ -855,15 +855,15 @@ fn describe_tool_flags(schema: &Value) -> Vec<ToolFlagDescription> {
 
     properties
         .into_iter()
-        .map(|(field_name, field_schema)| ToolFlagDescription {
+        .map(|(field_name, field_schema)| BindingFlagDescription {
             name: format!("--{}", camel_to_kebab(&field_name)),
-            value_type: describe_tool_flag_type(&field_schema),
+            value_type: describe_binding_flag_type(&field_schema),
             required: required.contains(&field_name),
         })
         .collect()
 }
 
-fn describe_tool_flag_type(schema: &Value) -> String {
+fn describe_binding_flag_type(schema: &Value) -> String {
     match json_schema_type(schema) {
         Some("array") => {
             let item_type = schema
@@ -1157,7 +1157,7 @@ impl AgentOs {
 
     /// Create an ACP session. Resolves the agent config, merges env (user wins), creates the session
     /// via the sidecar (`runtime: java_script`, protocol v1, default client caps), and hydrates
-    /// state. Agent OS owns dynamic tool-reference instructions and forwards them as additional
+    /// state. Agent OS owns dynamic binding-reference instructions and forwards them as additional
     /// instructions; the sidecar owns final base-prompt assembly and agent-specific injection. On
     /// hydration failure the session is removed and the error rethrown. Returns the session id only.
     pub async fn create_session(
@@ -1183,9 +1183,11 @@ impl AgentOs {
             "fs": { "readTextFile": true, "writeTextFile": true },
             "terminal": true,
         });
-        let tool_reference = build_host_tool_reference(&self.config().tool_kits);
-        let additional_instructions =
-            combine_instructions(options.additional_instructions.as_deref(), &tool_reference);
+        let binding_reference = build_binding_reference(&self.config().bindings);
+        let additional_instructions = combine_instructions(
+            options.additional_instructions.as_deref(),
+            &binding_reference,
+        );
 
         let response = self
             .send_acp_request(AcpRequest::AcpCreateSessionRequest(

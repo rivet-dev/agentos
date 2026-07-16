@@ -1436,7 +1436,7 @@ export type ConfigureVmRequest = {
     readonly packages: readonly PackageDescriptor[]
     readonly packagesMountAt: string
     readonly bootstrapCommands: readonly string[]
-    readonly toolShimCommands: readonly string[]
+    readonly bindingShimCommands: readonly string[]
 }
 
 export function readConfigureVmRequest(bc: bare.ByteCursor): ConfigureVmRequest {
@@ -1452,7 +1452,7 @@ export function readConfigureVmRequest(bc: bare.ByteCursor): ConfigureVmRequest 
         packages: read20(bc),
         packagesMountAt: bare.readString(bc),
         bootstrapCommands: read6(bc),
-        toolShimCommands: read6(bc),
+        bindingShimCommands: read6(bc),
     }
 }
 
@@ -1468,7 +1468,7 @@ export function writeConfigureVmRequest(bc: bare.ByteCursor, x: ConfigureVmReque
     write20(bc, x.packages)
     bare.writeString(bc, x.packagesMountAt)
     write6(bc, x.bootstrapCommands)
-    write6(bc, x.toolShimCommands)
+    write6(bc, x.bindingShimCommands)
 }
 
 export type RegisteredHostCallbackExample = {

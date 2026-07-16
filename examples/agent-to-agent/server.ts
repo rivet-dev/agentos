@@ -9,46 +9,48 @@ const reviewer = agentOS({});
 // sends the full file contents; the bridge writes them into the reviewer's VM
 // and asks the reviewer to review. Runs on the host.
 async function reviewCode(code: string): Promise<string> {
-  const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
-  const reviewerHandle = client.reviewer.getOrCreate("my-project");
+	const client = createClient<typeof registry>({
+		endpoint: "http://localhost:6420",
+	});
+	const reviewerHandle = client.reviewer.getOrCreate("my-project");
 
-  // Write the submitted contents into the reviewer's VM.
-  await reviewerHandle.writeFile("/home/agentos/review.ts", code);
+	// Write the submitted contents into the reviewer's VM.
+	await reviewerHandle.writeFile("/home/agentos/review.ts", code);
 
-  // Ask the reviewer to review.
-  const sessionId = await reviewerHandle.createSession("claude", {
-    env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
-  });
-  const result = await reviewerHandle.sendPrompt(
-    sessionId,
-    "Review the code at /home/agentos/review.ts and list any issues.",
-  );
-  await reviewerHandle.closeSession(sessionId);
+	// Ask the reviewer to review.
+	const sessionId = await reviewerHandle.createSession("claude", {
+		env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
+	});
+	const result = await reviewerHandle.sendPrompt(
+		sessionId,
+		"Review the code at /home/agentos/review.ts and list any issues.",
+	);
+	await reviewerHandle.closeSession(sessionId);
 
-  return result.text;
+	return result.text;
 }
 
-// The writer agent gets a `review` toolkit. When the writer runs
+// The writer agent gets a `review` binding collection. When the writer runs
 // `agentos-review submit`, the bridge above executes on the host.
 const writer = agentOS({
-  toolKits: [
-    {
-      name: "review",
-      description: "Send code to the reviewer agent and get back a review.",
-      tools: {
-        submit: {
-          description:
-            "Submit the full contents of a file to the reviewer agent for review. Returns the reviewer's feedback as text.",
-          inputSchema: z.object({
-            code: z.string().describe("The full source code to review."),
-          }),
-          execute: async (input: { code: string }) => ({
-            review: await reviewCode(input.code),
-          }),
-        },
-      },
-    },
-  ],
+	bindings: [
+		{
+			name: "review",
+			description: "Send code to the reviewer agent and get back a review.",
+			bindings: {
+				submit: {
+					description:
+						"Submit the full contents of a file to the reviewer agent for review. Returns the reviewer's feedback as text.",
+					inputSchema: z.object({
+						code: z.string().describe("The full source code to review."),
+					}),
+					execute: async (input: { code: string }) => ({
+						review: await reviewCode(input.code),
+					}),
+				},
+			},
+		},
+	],
 });
 
 export const registry = setup({ use: { writer, reviewer } });

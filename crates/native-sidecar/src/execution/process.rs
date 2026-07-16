@@ -59,10 +59,10 @@ impl ActiveProcess {
             process_event_capacity.min(limits.process.pending_event_count);
         let pending_stdin_bytes_limit = limits.process.pending_stdin_bytes;
         let pending_event_bytes_limit = limits.process.pending_event_bytes;
-        if let ActiveExecution::Tool(tool) = &execution {
-            tool.pending_event_count_limit
+        if let ActiveExecution::Binding(binding) = &execution {
+            binding.pending_event_count_limit
                 .store(pending_event_count_limit, Ordering::Release);
-            tool.pending_event_bytes_limit
+            binding.pending_event_bytes_limit
                 .store(pending_event_bytes_limit, Ordering::Release);
         }
         Self {
@@ -348,8 +348,8 @@ impl ActiveProcess {
         &mut self,
         timeout: Duration,
     ) -> Result<Option<PolledExecutionEvent>, SidecarError> {
-        if let ActiveExecution::Tool(execution) = &mut self.execution {
-            return poll_tool_process_event_leased(execution);
+        if let ActiveExecution::Binding(execution) = &mut self.execution {
+            return poll_binding_process_event_leased(execution);
         }
         self.execution
             .poll_event(timeout)
@@ -360,8 +360,8 @@ impl ActiveProcess {
     pub(super) fn try_poll_execution_event(
         &mut self,
     ) -> Result<Option<PolledExecutionEvent>, SidecarError> {
-        if let ActiveExecution::Tool(execution) = &mut self.execution {
-            return poll_tool_process_event_leased(execution);
+        if let ActiveExecution::Binding(execution) = &mut self.execution {
+            return poll_binding_process_event_leased(execution);
         }
         self.execution
             .try_poll_event()
@@ -375,7 +375,7 @@ impl ActiveProcess {
         self.pending_execution_event_count_limit =
             self.process_event_capacity.min(limits.pending_event_count);
         self.pending_execution_event_bytes_limit = limits.pending_event_bytes;
-        if let ActiveExecution::Tool(execution) = &self.execution {
+        if let ActiveExecution::Binding(execution) = &self.execution {
             execution
                 .pending_event_count_limit
                 .store(self.pending_execution_event_count_limit, Ordering::Release);
@@ -407,7 +407,7 @@ impl ActiveProcess {
         debug_assert_eq!(self.pending_execution_event_bytes, 0);
         self.vm_pending_stdin_bytes_budget = stdin;
         self.vm_pending_event_bytes_budget = Arc::clone(&events);
-        if let ActiveExecution::Tool(execution) = &mut self.execution {
+        if let ActiveExecution::Binding(execution) = &mut self.execution {
             if !Arc::ptr_eq(&execution.vm_pending_event_bytes_budget, &events) {
                 debug_assert_eq!(execution.pending_event_bytes.load(Ordering::Acquire), 0);
                 execution.vm_pending_event_bytes_budget = events;
@@ -772,7 +772,7 @@ mod pending_event_reservation_tests {
             crate::limits::VmLimits::default(),
             agentos_runtime::DEFAULT_PROTOCOL_MAX_PROCESS_EVENTS,
             GuestRuntimeKind::WebAssembly,
-            ActiveExecution::Tool(ToolExecution::default()),
+            ActiveExecution::Binding(BindingExecution::default()),
         )
         .with_vm_pending_byte_budgets(
             VmPendingByteBudget::new(
@@ -906,7 +906,7 @@ mod pending_event_reservation_tests {
             crate::limits::VmLimits::default(),
             agentos_runtime::DEFAULT_PROTOCOL_MAX_PROCESS_EVENTS,
             GuestRuntimeKind::WebAssembly,
-            ActiveExecution::Tool(ToolExecution::default()),
+            ActiveExecution::Binding(BindingExecution::default()),
         );
         let key = NativeCapabilityKey::UdpSocket(String::from("same-key"));
         process
@@ -935,7 +935,7 @@ mod pending_event_reservation_tests {
     }
 }
 
-impl ToolExecution {
+impl BindingExecution {
     pub(crate) fn with_vm_pending_event_bytes_budget(
         mut self,
         budget: Arc<VmPendingByteBudget>,
@@ -951,7 +951,7 @@ impl ToolExecution {
     }
 }
 
-impl Drop for ToolExecution {
+impl Drop for BindingExecution {
     fn drop(&mut self) {
         // Stop a background callback producer before reclaiming the queue. The
         // producer checks this flag while holding the same queue lock, so it
@@ -1130,15 +1130,15 @@ impl ProcessEventEnvelope {
     }
 }
 
-fn poll_tool_process_event(
-    execution: &ToolExecution,
+fn poll_binding_process_event(
+    execution: &BindingExecution,
 ) -> Result<Option<ActiveExecutionEvent>, SidecarError> {
-    poll_tool_process_event_leased(execution)
+    poll_binding_process_event_leased(execution)
         .map(|event| event.map(PolledExecutionEvent::into_event))
 }
 
-fn poll_tool_process_event_leased(
-    execution: &ToolExecution,
+fn poll_binding_process_event_leased(
+    execution: &BindingExecution,
 ) -> Result<Option<PolledExecutionEvent>, SidecarError> {
     let event = execution
         .pending_events
@@ -1205,7 +1205,7 @@ impl ActiveExecution {
             Self::Javascript(execution) => execution.is_prepared_for_start(),
             Self::Python(execution) => execution.is_prepared_for_start(),
             Self::Wasm(execution) => execution.is_prepared_for_start(),
-            Self::Tool(_) => false,
+            Self::Binding(_) => false,
         }
     }
 
@@ -1220,8 +1220,8 @@ impl ActiveExecution {
             Self::Wasm(execution) => execution
                 .start_prepared()
                 .map_err(|error| SidecarError::Execution(error.to_string())),
-            Self::Tool(_) => Err(SidecarError::InvalidState(String::from(
-                "tool execution cannot be a prepared execve image",
+            Self::Binding(_) => Err(SidecarError::InvalidState(String::from(
+                "binding execution cannot be a prepared execve image",
             ))),
         }
     }
@@ -1249,8 +1249,8 @@ impl ActiveExecution {
             Self::Wasm(execution) => execution
                 .claim_sync_rpc_response(id)
                 .map_err(|error| SidecarError::Execution(error.to_string())),
-            Self::Tool(_) => Err(SidecarError::InvalidState(String::from(
-                "tool executions cannot claim JavaScript sync RPC responses",
+            Self::Binding(_) => Err(SidecarError::InvalidState(String::from(
+                "binding executions cannot claim JavaScript sync RPC responses",
             ))),
         }
     }
@@ -1270,8 +1270,8 @@ impl ActiveExecution {
             Self::Wasm(execution) => execution
                 .respond_claimed_sync_rpc_success(id, result)
                 .map_err(|error| SidecarError::Execution(error.to_string())),
-            Self::Tool(_) => Err(SidecarError::InvalidState(String::from(
-                "tool executions cannot service claimed JavaScript sync RPC responses",
+            Self::Binding(_) => Err(SidecarError::InvalidState(String::from(
+                "binding executions cannot service claimed JavaScript sync RPC responses",
             ))),
         }
     }
@@ -1294,8 +1294,8 @@ impl ActiveExecution {
             Self::Wasm(execution) => execution
                 .respond_claimed_sync_rpc_error(id, code, message)
                 .map_err(|error| SidecarError::Execution(error.to_string())),
-            Self::Tool(_) => Err(SidecarError::InvalidState(String::from(
-                "tool executions cannot service claimed JavaScript sync RPC errors",
+            Self::Binding(_) => Err(SidecarError::InvalidState(String::from(
+                "binding executions cannot service claimed JavaScript sync RPC errors",
             ))),
         }
     }
@@ -1305,7 +1305,7 @@ impl ActiveExecution {
             Self::Javascript(execution) => execution.uses_shared_v8_runtime(),
             Self::Python(execution) => execution.uses_shared_v8_runtime(),
             Self::Wasm(execution) => execution.uses_shared_v8_runtime(),
-            Self::Tool(_) => false,
+            Self::Binding(_) => false,
         }
     }
 
@@ -1314,7 +1314,7 @@ impl ActiveExecution {
             Self::Javascript(execution) => execution.child_pid(),
             Self::Python(execution) => execution.child_pid(),
             Self::Wasm(execution) => execution.child_pid(),
-            Self::Tool(_) => 0,
+            Self::Binding(_) => 0,
         }
     }
 
@@ -1334,7 +1334,7 @@ impl ActiveExecution {
             Self::Wasm(execution) => execution
                 .write_stdin_kernel_only(chunk)
                 .map_err(|error| SidecarError::Execution(error.to_string())),
-            Self::Tool(_) => Ok(()),
+            Self::Binding(_) => Ok(()),
         }
     }
 
@@ -1349,7 +1349,7 @@ impl ActiveExecution {
             Self::Wasm(execution) => execution
                 .close_stdin()
                 .map_err(|error| SidecarError::Execution(error.to_string())),
-            Self::Tool(_) => Ok(()),
+            Self::Binding(_) => Ok(()),
         }
     }
 
@@ -1421,7 +1421,7 @@ impl ActiveExecution {
             Self::Wasm(execution) => execution
                 .terminate()
                 .map_err(|error| SidecarError::Execution(error.to_string())),
-            Self::Tool(_) => Ok(()),
+            Self::Binding(_) => Ok(()),
         }
     }
 
@@ -1436,7 +1436,7 @@ impl ActiveExecution {
             Self::Wasm(execution) => execution
                 .pause()
                 .map_err(|error| SidecarError::Execution(error.to_string())),
-            Self::Tool(_) => Ok(()),
+            Self::Binding(_) => Ok(()),
         }
     }
 
@@ -1451,7 +1451,7 @@ impl ActiveExecution {
             Self::Wasm(execution) => execution
                 .resume()
                 .map_err(|error| SidecarError::Execution(error.to_string())),
-            Self::Tool(_) => Ok(()),
+            Self::Binding(_) => Ok(()),
         }
     }
 
@@ -1620,9 +1620,9 @@ impl ActiveExecution {
                     })
                 })
                 .map_err(|error| SidecarError::Execution(error.to_string())),
-            Self::Tool(execution) => {
+            Self::Binding(execution) => {
                 let _ = timeout;
-                poll_tool_process_event(execution)
+                poll_binding_process_event(execution)
             }
         }
     }
@@ -1693,7 +1693,7 @@ impl ActiveExecution {
                     })
                 })
                 .map_err(|error| SidecarError::Execution(error.to_string())),
-            Self::Tool(execution) => poll_tool_process_event(execution),
+            Self::Binding(execution) => poll_binding_process_event(execution),
         }
     }
 }

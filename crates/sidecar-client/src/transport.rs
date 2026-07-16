@@ -355,7 +355,7 @@ impl SidecarTransport {
     }
 
     /// Dispatch a sidecar-initiated request to its registered callback. The callback runs in a
-    /// spawned task so long-running host callbacks (tool execution, permission prompts) cannot stall
+    /// spawned task so long-running host callbacks (binding execution, permission prompts) cannot stall
     /// the reader loop, which must keep draining responses for any requests the callback itself
     /// issues through this transport.
     async fn dispatch_sidecar_request(self: &Arc<Self>, frame: wire::SidecarRequestFrame) {

@@ -7,7 +7,7 @@ export interface RegistryEntryBase {
 	category?: string;
 	types: (
 		| "file-system"
-		| "tool"
+		| "binding"
 		| "agent"
 		| "sandbox-extension"
 		| "software"
@@ -85,7 +85,7 @@ export type RegistryEntry =
 // by scripts/gen-registry.mjs — a package is listed iff its
 // agentos-package.json has a `registry` block with title + description. Run
 // `pnpm dev`/`pnpm build` (or the script directly) to refresh after editing a
-// package. Only non-package capabilities (file systems, tools, sandbox
+// package. Only non-package capabilities (file systems, bindings, sandbox
 // mounting) are curated by hand below.
 import generated from "../generated/registry.json";
 import { DEPLOY_TARGETS } from "./deploy-targets";
@@ -232,15 +232,15 @@ const vm = agentOS({
 
 export const registry = setup({ use: { vm } });`,
 	},
-	// Tools
+	// Bindings
 	{
 		slug: "sandbox",
 		title: "Sandbox",
 		status: "available",
 		package: "@rivet-dev/agentos-sandbox",
 		description:
-			"Mount a sandbox filesystem and expose process management tools. Works with any Sandbox Agent provider.",
-		types: ["tool", "file-system"],
+			"Mount a sandbox filesystem and expose process management bindings. Works with any Sandbox Agent provider.",
+		types: ["binding", "file-system"],
 		icon: "Monitor",
 		docsHref: "/docs/sandbox",
 	},

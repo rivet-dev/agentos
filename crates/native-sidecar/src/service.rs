@@ -1,3 +1,4 @@
+use crate::bindings::register_host_callbacks;
 use crate::bridge::{build_mount_plugin_registry, MountPluginContext};
 pub(crate) use crate::execution::{
     apply_active_process_default_signal, build_javascript_socket_path_context,
@@ -36,7 +37,6 @@ use crate::state::{
     SharedBridge, SharedEventSink, SharedSidecarRequestClient, SidecarRequestTransport, VmState,
     EXECUTION_DRIVER_NAME,
 };
-use crate::tools::register_host_callbacks;
 use crate::NativeSidecarBridge;
 use agentos_bridge::queue_tracker::{register_queue, QueueGauge, TrackedLimit};
 use agentos_bridge::{

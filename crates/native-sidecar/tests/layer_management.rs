@@ -522,7 +522,7 @@ fn vm_layer_rpcs_and_module_access_mounts_are_scoped_per_vm() {
                 packages: Vec::new(),
                 packages_mount_at: String::new(),
                 bootstrap_commands: Vec::new(),
-                tool_shim_commands: Vec::new(),
+                binding_shim_commands: Vec::new(),
             }),
         ))
         .expect("configure vm");

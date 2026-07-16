@@ -51,7 +51,7 @@ const CATEGORY_ORDER: {
 		type: "sandbox-extension",
 		label: "Sandbox Mounting",
 		description:
-			"agentOS is a hybrid OS. Mount sandbox file systems and interact with them via tools for heavier workloads. Use agentOS natively for lightweight tasks.",
+			"agentOS is a hybrid OS. Mount sandbox file systems and interact with them via bindings for heavier workloads. Use agentOS natively for lightweight tasks.",
 	},
 	{
 		type: "software",
@@ -60,10 +60,10 @@ const CATEGORY_ORDER: {
 			"Wasm command packages that run inside the agent's environment. Install individually or use meta-packages.",
 	},
 	{
-		type: "tool",
+		type: "binding",
 		label: "Bindings",
 		description:
-			"Host-side tools and integrations that extend agent capabilities.",
+			"Host-side bindings and integrations that extend agent capabilities.",
 	},
 	{
 		type: "deploy",

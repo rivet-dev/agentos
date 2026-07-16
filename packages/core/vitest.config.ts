@@ -22,7 +22,7 @@ const SLOW_E2E_FILES = [
 	"tests/pi-tool-llmock.test.ts",
 	"tests/native-sidecar-process-permissions.test.ts",
 	"tests/pi-extensions.test.ts",
-	"tests/sidecar-tool-dispatch.test.ts",
+	"tests/sidecar-binding-dispatch.test.ts",
 	"tests/child-process-detached.test.ts",
 	"tests/readdir-recursive.test.ts",
 	"tests/cron-integration.test.ts",

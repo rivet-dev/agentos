@@ -41,8 +41,8 @@ pub struct AgentOsConfig {
     pub additional_instructions: Option<String>,
     /// Schedule driver used by the cron manager. Default: [`TimerScheduleDriver`].
     pub schedule_driver: Option<Arc<dyn ScheduleDriver>>,
-    /// Tool kits to register.
-    pub tool_kits: Vec<ToolKit>,
+    /// Binding collections to register.
+    pub bindings: Vec<Bindings>,
     /// Rust-only sidecar callback handler for `js_bridge`-style plugin requests.
     pub sidecar_js_bridge_callback: Option<SidecarJsBridgeCallback>,
     /// Permission policy. Default: allow-all.
@@ -109,8 +109,8 @@ impl AgentOsConfigBuilder {
         self
     }
 
-    pub fn tool_kits(mut self, tool_kits: Vec<ToolKit>) -> Self {
-        self.config.tool_kits = tool_kits;
+    pub fn bindings(mut self, bindings: Vec<Bindings>) -> Self {
+        self.config.bindings = bindings;
         self
     }
 
@@ -155,8 +155,8 @@ pub enum SoftwareKind {
     WasmCommands,
     /// An agent SDK/adapter package. Not mounted as a command directory.
     Agent,
-    /// A host-tool package. Not mounted as a command directory.
-    Tool,
+    /// A host-binding package. Not mounted as a command directory.
+    Binding,
 }
 
 /// A flattened software package input.
@@ -181,10 +181,10 @@ pub struct PackageRef {
     pub path: String,
 }
 
-/// A host-side tool execute callback. Receives the validated JSON input, returns a JSON result or an
+/// A host-side binding execute callback. Receives the validated JSON input, returns a JSON result or an
 /// error string. Stays host-side (never crosses to the guest); the guest invokes it by name via the
 /// sidecar host-callback channel.
-pub type ToolCallback = Arc<
+pub type BindingCallback = Arc<
     dyn Fn(
             serde_json::Value,
         ) -> futures::future::BoxFuture<'static, Result<serde_json::Value, String>>
@@ -215,26 +215,26 @@ pub type SidecarJsBridgeCallback = Arc<
         + Sync,
 >;
 
-/// A single host tool within a [`ToolKit`].
+/// A single host binding within a [`Bindings`].
 #[derive(Clone)]
-pub struct HostTool {
+pub struct Binding {
     pub name: String,
     pub description: String,
-    /// JSON Schema for the tool input (forwarded to the sidecar `register_host_callbacks` definition).
+    /// JSON Schema for the binding input (forwarded to the sidecar `register_host_callbacks` definition).
     pub input_schema: serde_json::Value,
     pub timeout_ms: Option<u64>,
-    /// Host-side implementation, invoked when the guest calls `<toolkit>:<tool>`.
-    pub execute: ToolCallback,
+    /// Host-side implementation, invoked when the guest calls `<collection>:<binding>`.
+    pub execute: BindingCallback,
 }
 
-/// A registered tool kit (in-process; tool implementations stay host-side). Tools are exposed to the
-/// guest as `<toolkit>:<tool>` and dispatched back to [`HostTool::execute`] via the sidecar
+/// A registered binding collection (in-process; implementations stay host-side). Bindings are exposed to the
+/// guest as `<collection>:<binding>` and dispatched back to [`Binding::execute`] via the sidecar
 /// host-callback channel.
 #[derive(Clone)]
-pub struct ToolKit {
+pub struct Bindings {
     pub name: String,
     pub description: String,
-    pub tools: Vec<HostTool>,
+    pub bindings: Vec<Binding>,
 }
 
 // ---------------------------------------------------------------------------
@@ -250,7 +250,7 @@ pub struct AgentOsLimits {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub http: Option<HttpLimits>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tools: Option<ToolLimits>,
+    pub bindings: Option<BindingLimits>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plugins: Option<PluginLimits>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -388,55 +388,55 @@ pub struct HttpLimits {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ToolLimits {
+pub struct BindingLimits {
     #[serde(
         default,
-        rename = "defaultToolTimeoutMs",
+        rename = "defaultBindingTimeoutMs",
         skip_serializing_if = "Option::is_none"
     )]
-    pub default_tool_timeout_ms: Option<u64>,
+    pub default_binding_timeout_ms: Option<u64>,
     #[serde(
         default,
-        rename = "maxToolTimeoutMs",
+        rename = "maxBindingTimeoutMs",
         skip_serializing_if = "Option::is_none"
     )]
-    pub max_tool_timeout_ms: Option<u64>,
+    pub max_binding_timeout_ms: Option<u64>,
     #[serde(
         default,
-        rename = "maxRegisteredToolkits",
+        rename = "maxRegisteredCollections",
         skip_serializing_if = "Option::is_none"
     )]
-    pub max_registered_toolkits: Option<u64>,
+    pub max_registered_collections: Option<u64>,
     #[serde(
         default,
-        rename = "maxRegisteredToolsPerVm",
+        rename = "maxRegisteredBindingsPerVm",
         skip_serializing_if = "Option::is_none"
     )]
-    pub max_registered_tools_per_vm: Option<u64>,
+    pub max_registered_bindings_per_vm: Option<u64>,
     #[serde(
         default,
-        rename = "maxToolsPerToolkit",
+        rename = "maxBindingsPerCollection",
         skip_serializing_if = "Option::is_none"
     )]
-    pub max_tools_per_toolkit: Option<u64>,
+    pub max_bindings_per_collection: Option<u64>,
     #[serde(
         default,
-        rename = "maxToolSchemaBytes",
+        rename = "maxBindingSchemaBytes",
         skip_serializing_if = "Option::is_none"
     )]
-    pub max_tool_schema_bytes: Option<u64>,
+    pub max_binding_schema_bytes: Option<u64>,
     #[serde(
         default,
-        rename = "maxToolExamplesPerTool",
+        rename = "maxExamplesPerBinding",
         skip_serializing_if = "Option::is_none"
     )]
-    pub max_tool_examples_per_tool: Option<u64>,
+    pub max_examples_per_binding: Option<u64>,
     #[serde(
         default,
-        rename = "maxToolExampleInputBytes",
+        rename = "maxBindingExampleInputBytes",
         skip_serializing_if = "Option::is_none"
     )]
-    pub max_tool_example_input_bytes: Option<u64>,
+    pub max_binding_example_input_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

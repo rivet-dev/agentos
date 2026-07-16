@@ -79,7 +79,10 @@ const KERNEL_POSIX_BOOTSTRAP_DIRS = [
 	"/var/tmp",
 ] as const;
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
-const SIDECAR_BINARY = path.join(REPO_ROOT, "target/debug/agentos-native-sidecar");
+const SIDECAR_BINARY = path.join(
+	REPO_ROOT,
+	"target/debug/agentos-native-sidecar",
+);
 const SIDECAR_BUILD_INPUTS = [
 	path.join(REPO_ROOT, "Cargo.toml"),
 	path.join(REPO_ROOT, "Cargo.lock"),
@@ -318,7 +321,7 @@ export interface Permissions {
 }
 
 /** A worked example shown alongside a registered binding. */
-export interface HostToolExample {
+export interface BindingExample {
 	/** What this example demonstrates. */
 	description: string;
 	/** Example input matching the binding's input schema. */
@@ -341,7 +344,7 @@ export interface BindingDefinition {
 	/** Abort the invocation after this many milliseconds. */
 	timeoutMs?: number;
 	/** Worked examples shown alongside the binding. */
-	examples?: HostToolExample[];
+	examples?: BindingExample[];
 	/**
 	 * Extra command names the guest can use to invoke this binding, in addition
 	 * to the key it is registered under.
@@ -504,7 +507,7 @@ export interface Kernel extends KernelInterface {
 		headersJson: string;
 		body?: string;
 	}): Promise<string>;
-	registerHostTools(tools: Record<string, BindingDefinition>): Promise<void>;
+	registerBindings(bindings: Record<string, BindingDefinition>): Promise<void>;
 	getResourceSnapshot(): Promise<{
 		runningProcesses: number;
 		exitedProcesses: number;
@@ -1942,8 +1945,8 @@ class WasmVmRuntimeDescriptor implements KernelRuntimeDriver {
 		const normalized = normalizeCommandLookup(command);
 		if (
 			this._commandPaths.has(normalized) ||
-			(!this.commandDirs || this.commandDirs.length === 0) &&
-				this.commands.includes(normalized)
+			((!this.commandDirs || this.commandDirs.length === 0) &&
+				this.commands.includes(normalized))
 		) {
 			this._moduleCache.set(normalized, true);
 		}
@@ -2020,15 +2023,23 @@ function ensureNativeSidecarBinary(): string {
 	if (sidecarBinaryNeedsBuild()) {
 		const cargoBinary = findCargoBinary();
 		if (cargoBinary) {
-			execFileSync(cargoBinary, ["build", "-q", "-p", "agentos-native-sidecar"], {
-				cwd: REPO_ROOT,
-				stdio: "pipe",
-			});
+			execFileSync(
+				cargoBinary,
+				["build", "-q", "-p", "agentos-native-sidecar"],
+				{
+					cwd: REPO_ROOT,
+					stdio: "pipe",
+				},
+			);
 		} else if (!fsSync.existsSync(SIDECAR_BINARY)) {
-			execFileSync(resolveCargoBinary(), ["build", "-q", "-p", "agentos-native-sidecar"], {
-				cwd: REPO_ROOT,
-				stdio: "pipe",
-			});
+			execFileSync(
+				resolveCargoBinary(),
+				["build", "-q", "-p", "agentos-native-sidecar"],
+				{
+					cwd: REPO_ROOT,
+					stdio: "pipe",
+				},
+			);
 		}
 	}
 	ensuredSidecarBinary = SIDECAR_BINARY;
@@ -2191,7 +2202,9 @@ async function materializeSnapshotEntriesIntoVm(
 	}
 }
 
-function decodeRootFilesystemEntryContent(entry: RootFilesystemEntry): Uint8Array {
+function decodeRootFilesystemEntryContent(
+	entry: RootFilesystemEntry,
+): Uint8Array {
 	const content = entry.content ?? "";
 	if (entry.encoding === "base64") {
 		return new Uint8Array(Buffer.from(content, "base64"));
@@ -2457,7 +2470,9 @@ async function ensureBoundParentDirectory(
 	if (parent === targetPath) {
 		return;
 	}
-	await callBoundFilesystemMethod(methods, "mkdir", parent, { recursive: true });
+	await callBoundFilesystemMethod(methods, "mkdir", parent, {
+		recursive: true,
+	});
 }
 
 async function syncLiveFilesystemToBoundMethods(
@@ -2468,8 +2483,8 @@ async function syncLiveFilesystemToBoundMethods(
 ): Promise<void> {
 	const snapshot: LiveFilesystemSnapshotEntry[] = [];
 	const usage = { bytes: 0 };
-	for (const targetPath of [...new Set(paths.map(normalizePath))].sort((left, right) =>
-		left.localeCompare(right),
+	for (const targetPath of [...new Set(paths.map(normalizePath))].sort(
+		(left, right) => left.localeCompare(right),
 	)) {
 		if (!(await live.exists(targetPath).catch(() => false))) {
 			continue;
@@ -2636,12 +2651,12 @@ class NativeKernel implements Kernel {
 	private readonly loopbackExemptPorts: number[];
 	// Bindings registered with the VM, keyed by the callback key the sidecar
 	// sends back on a host_callback request (the binding name). Installed lazily
-	// on the first registerHostTools call.
-	private readonly hostToolHandlers = new Map<
+	// on the first registerBindings call.
+	private readonly bindingHandlers = new Map<
 		string,
 		(input: unknown) => unknown | Promise<unknown>
 	>();
-	private hostToolRequestHandlerInstalled = false;
+	private bindingRequestHandlerInstalled = false;
 
 	constructor(
 		private readonly options: {
@@ -2939,8 +2954,8 @@ class NativeKernel implements Kernel {
 		return this.proxy!.vmFetch(request);
 	}
 
-	async registerHostTools(
-		tools: Record<string, BindingDefinition>,
+	async registerBindings(
+		bindings: Record<string, BindingDefinition>,
 	): Promise<void> {
 		await this.ensureReady();
 		if (!this.client || !this.session || !this.vm) {
@@ -2950,15 +2965,15 @@ class NativeKernel implements Kernel {
 		// Install the dispatcher once. It routes every host_callback request the
 		// sidecar emits to the matching registered handler and replies with a
 		// host_callback_result frame.
-		if (!this.hostToolRequestHandlerInstalled) {
+		if (!this.bindingRequestHandlerInstalled) {
 			this.client.setSidecarRequestHandler((request: SidecarRequestFrame) =>
-				this.dispatchHostToolRequest(request),
+				this.dispatchBindingRequest(request),
 			);
-			this.hostToolRequestHandlerInstalled = true;
+			this.bindingRequestHandlerInstalled = true;
 		}
 
-		for (const [name, binding] of Object.entries(tools)) {
-			this.hostToolHandlers.set(name, binding.handler);
+		for (const [name, binding] of Object.entries(bindings)) {
+			this.bindingHandlers.set(name, binding.handler);
 			const definition: SidecarRegisteredHostCallbackDefinition = {
 				description: binding.description,
 				inputSchema: binding.inputSchema,
@@ -2974,9 +2989,9 @@ class NativeKernel implements Kernel {
 						}
 					: {}),
 			};
-			// Register each binding as its own single-callback toolkit so the guest
+			// Register each binding as its own single-callback binding collection so the guest
 			// can invoke it directly by name (or by any caller-provided alias). The
-			// sidecar exposes the toolkit name as a guest command; the single
+			// sidecar exposes the binding collection name as a guest command; the single
 			// callback carries the binding's schema and gates the `binding`
 			// permission.
 			await this.client.registerHostCallbacks(this.session, this.vm, {
@@ -2992,7 +3007,7 @@ class NativeKernel implements Kernel {
 		}
 	}
 
-	private async dispatchHostToolRequest(
+	private async dispatchBindingRequest(
 		request: SidecarRequestFrame,
 	): Promise<SidecarResponsePayload> {
 		const { payload } = request;
@@ -3001,17 +3016,17 @@ class NativeKernel implements Kernel {
 				`unsupported sidecar request for bindings: ${payload.type}`,
 			);
 		}
-		// Callback keys arrive as `${toolkit}:${tool}` for toolkit invocations and
-		// as the bare command name otherwise. The toolkit name and tool name are
-		// the same here, so the registered tool name is the segment after the last
+		// Callback keys arrive as `${collection}:${binding}` for collection invocations
+		// and as the bare command name otherwise. The collection and binding name are
+		// the same here, so the registered binding name is the segment after the last
 		// colon (or the whole key when no colon is present).
 		const callbackKey = payload.callback_key;
-		const toolName = callbackKey.includes(":")
+		const bindingName = callbackKey.includes(":")
 			? callbackKey.slice(callbackKey.lastIndexOf(":") + 1)
 			: callbackKey;
 		const handler =
-			this.hostToolHandlers.get(toolName) ??
-			this.hostToolHandlers.get(callbackKey);
+			this.bindingHandlers.get(bindingName) ??
+			this.bindingHandlers.get(callbackKey);
 		if (!handler) {
 			return {
 				type: "host_callback_result",
@@ -3138,13 +3153,10 @@ class NativeKernel implements Kernel {
 			this.options.filesystem,
 			this.pendingLocalMounts,
 		);
-		const snapshotEntries = await this.measureBoot(
-			"filesystem_snapshot",
-			() =>
-				snapshotFilesystemEntries(this.options.filesystem, "/", [], {
-					passthroughDirectories:
-						rootPassthroughPlan.passthroughDirectories,
-				}),
+		const snapshotEntries = await this.measureBoot("filesystem_snapshot", () =>
+			snapshotFilesystemEntries(this.options.filesystem, "/", [], {
+				passthroughDirectories: rootPassthroughPlan.passthroughDirectories,
+			}),
 		);
 		this.liveFilesystemSyncRoots =
 			collectLiveFilesystemSyncRoots(snapshotEntries);
@@ -3187,7 +3199,9 @@ class NativeKernel implements Kernel {
 				config: {
 					env: createVmEnv,
 					rootFilesystem,
-					...(bootstrapPermissions ? { permissions: bootstrapPermissions } : {}),
+					...(bootstrapPermissions
+						? { permissions: bootstrapPermissions }
+						: {}),
 					loopbackExemptPorts: this.loopbackExemptPorts,
 					...(this.options.jsRuntime
 						? { jsRuntime: this.options.jsRuntime as JsRuntimeConfig }

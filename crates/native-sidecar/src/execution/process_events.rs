@@ -1,12 +1,12 @@
 use super::*;
 
-pub(super) struct ToolProcessEventRequest {
+pub(super) struct BindingProcessEventRequest {
     pub(super) runtime_context: agentos_runtime::RuntimeContext,
     pub(super) sidecar_requests: SharedSidecarRequestClient,
     pub(super) connection_id: String,
     pub(super) session_id: String,
     pub(super) vm_id: String,
-    pub(super) tool_resolution: ToolCommandResolution,
+    pub(super) binding_resolution: BindingCommandResolution,
     pub(super) cancelled: Arc<AtomicBool>,
     pub(super) pending_events: Arc<Mutex<VecDeque<ActiveExecutionEvent>>>,
     pub(super) event_overflow_reason: Arc<Mutex<Option<String>>>,
@@ -20,7 +20,7 @@ pub(super) struct ToolProcessEventRequest {
 // The producer owns these independent atomics/queues; keeping them explicit
 // avoids introducing another partially initialized shared-state wrapper.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn send_tool_process_event(
+pub(crate) fn send_binding_process_event(
     cancelled: &AtomicBool,
     pending_events: &Arc<Mutex<VecDeque<ActiveExecutionEvent>>>,
     event_overflow_reason: &Mutex<Option<String>>,
@@ -83,7 +83,7 @@ pub(crate) fn send_tool_process_event(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn send_tool_process_event_and_notify(
+fn send_binding_process_event_and_notify(
     cancelled: &AtomicBool,
     pending_events: &Arc<Mutex<VecDeque<ActiveExecutionEvent>>>,
     event_overflow_reason: &Mutex<Option<String>>,
@@ -94,7 +94,7 @@ fn send_tool_process_event_and_notify(
     event_notify: &tokio::sync::Notify,
     event: ActiveExecutionEvent,
 ) -> bool {
-    let sent = send_tool_process_event(
+    let sent = send_binding_process_event(
         cancelled,
         pending_events,
         event_overflow_reason,
@@ -110,14 +110,14 @@ fn send_tool_process_event_and_notify(
     sent
 }
 
-pub(super) fn spawn_tool_process_events(request: ToolProcessEventRequest) {
-    let ToolProcessEventRequest {
+pub(super) fn spawn_binding_process_events(request: BindingProcessEventRequest) {
+    let BindingProcessEventRequest {
         runtime_context,
         sidecar_requests,
         connection_id,
         session_id,
         vm_id,
-        tool_resolution,
+        binding_resolution,
         cancelled,
         pending_events,
         event_overflow_reason,
@@ -138,9 +138,9 @@ pub(super) fn spawn_tool_process_events(request: ToolProcessEventRequest) {
     let submit_result =
         runtime_context
             .blocking()
-            .submit(TOOL_HOST_CALL_BLOCKING_JOB_BYTES, move || {
+            .submit(BINDING_HOST_CALL_BLOCKING_JOB_BYTES, move || {
                 let enqueue = |event| {
-                    send_tool_process_event_and_notify(
+                    send_binding_process_event_and_notify(
                         &cancelled,
                         &pending_events,
                         &event_overflow_reason,
@@ -152,15 +152,15 @@ pub(super) fn spawn_tool_process_events(request: ToolProcessEventRequest) {
                         event,
                     )
                 };
-                match tool_resolution {
-                    ToolCommandResolution::Failure(message) => {
-                        if enqueue(ActiveExecutionEvent::Stderr(format_tool_failure_output(
+                match binding_resolution {
+                    BindingCommandResolution::Failure(message) => {
+                        if enqueue(ActiveExecutionEvent::Stderr(format_binding_failure_output(
                             &message,
                         ))) {
                             let _ = enqueue(ActiveExecutionEvent::Exited(1));
                         }
                     }
-                    ToolCommandResolution::Invoke { request, timeout } => {
+                    BindingCommandResolution::Invoke { request, timeout } => {
                         let response = sidecar_requests.invoke(
                             OwnershipScope::vm(connection_id, session_id, vm_id),
                             SidecarRequestPayload::HostCallback(request),
@@ -181,25 +181,25 @@ pub(super) fn spawn_tool_process_events(request: ToolProcessEventRequest) {
                                         "result": value,
                                     }))
                                     .unwrap_or_else(|error| {
-                                        format_tool_failure_output(&format!(
-                                            "failed to serialize tool result: {error}"
+                                        format_binding_failure_output(&format!(
+                                            "failed to serialize binding result: {error}"
                                         ))
                                     });
                                     (output, 0, true)
                                 } else {
                                     let message = result.error.unwrap_or_else(|| {
-                                        String::from("tool invocation returned no result")
+                                        String::from("binding invocation returned no result")
                                     });
-                                    (format_tool_failure_output(&message), 1, false)
+                                    (format_binding_failure_output(&message), 1, false)
                                 }
                             }
                             Ok(_) => (
-                                format_tool_failure_output("unexpected sidecar tool response"),
+                                format_binding_failure_output("unexpected sidecar binding response"),
                                 1,
                                 false,
                             ),
                             Err(error) => {
-                                (format_tool_failure_output(&error.to_string()), 1, false)
+                                (format_binding_failure_output(&error.to_string()), 1, false)
                             }
                         };
                         let output_event = if stdout {
@@ -215,7 +215,7 @@ pub(super) fn spawn_tool_process_events(request: ToolProcessEventRequest) {
             });
     if let Err(error) = submit_result {
         let enqueue_failure = |event| {
-            send_tool_process_event_and_notify(
+            send_binding_process_event_and_notify(
                 &failure_cancelled,
                 &failure_events,
                 &failure_overflow_reason,
@@ -227,7 +227,7 @@ pub(super) fn spawn_tool_process_events(request: ToolProcessEventRequest) {
                 event,
             )
         };
-        if enqueue_failure(ActiveExecutionEvent::Stderr(format_tool_failure_output(
+        if enqueue_failure(ActiveExecutionEvent::Stderr(format_binding_failure_output(
             &error.to_string(),
         ))) {
             let _ = enqueue_failure(ActiveExecutionEvent::Exited(1));

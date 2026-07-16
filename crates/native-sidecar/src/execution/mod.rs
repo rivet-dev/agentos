@@ -17,7 +17,7 @@ use self::process::*;
 mod process_events;
 #[cfg(test)]
 #[allow(unused_imports)]
-pub(crate) use self::process_events::send_tool_process_event;
+pub(crate) use self::process_events::send_binding_process_event;
 use self::process_events::*;
 pub(crate) use self::process_events::{
     mark_execute_exit_event_queued, record_execute_exit_event_queue_wait, record_execute_phase,
@@ -128,16 +128,16 @@ use crate::state::{
     PythonTcpReadBuffer, QueuedHttp2Command, QueuedHttp2Event, ReactorIoLimits,
     ResolvedChildProcessExecution, ResolvedTcpConnectAddr, ShadowNodeType,
     ShadowSyncInventoryEntry, SharedBridge, SharedSidecarRequestClient, SidecarKernel,
-    SocketQueryKind, TlsWritePayload, ToolExecution, VmDnsConfig, VmListenPolicy,
+    SocketQueryKind, TlsWritePayload, BindingExecution, VmDnsConfig, VmListenPolicy,
     VmPendingByteBudget, VmState, DEFAULT_JAVASCRIPT_NET_BACKLOG, EXECUTION_DRIVER_NAME,
     EXECUTION_SANDBOX_ROOT_ENV, JAVASCRIPT_COMMAND, LOOPBACK_EXEMPT_PORTS_ENV,
-    MAPPED_HOST_FD_START, PYTHON_COMMAND, TOOL_DRIVER_NAME,
+    MAPPED_HOST_FD_START, PYTHON_COMMAND, BINDING_DRIVER_NAME,
     VM_LISTEN_ALLOW_PRIVILEGED_METADATA_KEY, WASM_COMMAND, WASM_EXEC_COMMIT_RPC_ENV,
     WASM_STDIO_SYNC_RPC_ENV,
 };
-use crate::tools::{
-    format_tool_failure_output, is_tool_command, normalized_tool_command_name,
-    resolve_tool_command, ToolCommandResolution,
+use crate::bindings::{
+    format_binding_failure_output, is_binding_command, normalized_binding_command_name,
+    resolve_binding_command, BindingCommandResolution,
 };
 use crate::wire::{ProtocolFrame as WireProtocolFrame, WireFrameCodec};
 use crate::{DispatchResult, NativeSidecar, NativeSidecarBridge, SidecarError};
@@ -300,7 +300,7 @@ fn listener_accept_capacity(backlog: Option<u32>, limits: ReactorIoLimits) -> us
         .min(socket_completion_capacity(limits))
 }
 
-const TOOL_HOST_CALL_BLOCKING_JOB_BYTES: usize = 64 * 1024;
+const BINDING_HOST_CALL_BLOCKING_JOB_BYTES: usize = 64 * 1024;
 
 pub(crate) const MAX_PER_PROCESS_STATE_HANDLES: usize = 1024;
 const HTTP_LOOPBACK_REQUEST_TIMEOUT_MS_ENV: &str = "AGENTOS_TEST_HTTP_LOOPBACK_REQUEST_TIMEOUT_MS";

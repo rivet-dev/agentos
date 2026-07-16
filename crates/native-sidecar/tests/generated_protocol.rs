@@ -112,7 +112,7 @@ fn live_bare_codec_matches_generated_request_bytes() {
             packages: Vec::new(),
             packages_mount_at: String::new(),
             bootstrap_commands: Vec::new(),
-            tool_shim_commands: Vec::new(),
+            binding_shim_commands: Vec::new(),
         }),
     ));
     let live_configure_payload =
@@ -281,7 +281,7 @@ fn generated_configure_frame() -> ProtocolFrame {
             packages: Vec::new(),
             packages_mount_at: String::new(),
             bootstrap_commands: Vec::new(),
-            tool_shim_commands: Vec::new(),
+            binding_shim_commands: Vec::new(),
         }),
     })
 }

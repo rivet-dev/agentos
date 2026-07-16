@@ -76,7 +76,7 @@ its parent terminal in raw mode.
   terminal during reap.
 
 `SIGWINCH` forwarding is limited to embedded JavaScript and WASM V8 executions;
-Python and tool executions retain the kernel resize without receiving an invalid
+Python and binding executions retain the kernel resize without receiving an invalid
 JavaScript stream event.
 
 The kernel PTY tests cover nested/out-of-order owners, stale-generation

@@ -19,7 +19,7 @@ agent.on("sessionEvent", (data) => console.log(data.event));
 const session = await agent.createSession("pi", { env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! } });
 await agent.sendPrompt(session.sessionId, "Write a Python script that calculates pi");` },
 
-	{ key: 'tools', fileName: 'tools.ts', code: `// server.ts
+	{ key: 'bindings', fileName: 'bindings.ts', code: `// server.ts
 import { agentOS, setup } from "@rivet-dev/agentos";
 import common from "@agentos-software/common";
 import { z } from "zod";

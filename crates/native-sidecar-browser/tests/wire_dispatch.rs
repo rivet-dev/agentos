@@ -855,7 +855,7 @@ fn browser_wire_dispatcher_configures_vm_permissions() {
                 packages: Vec::new(),
                 packages_mount_at: String::new(),
                 bootstrap_commands: Vec::new(),
-                tool_shim_commands: Vec::new(),
+                binding_shim_commands: Vec::new(),
             }),
         },
     );
@@ -1222,7 +1222,7 @@ fn browser_wire_dispatcher_configures_wasm_command_permissions() {
                 packages: Vec::new(),
                 packages_mount_at: String::new(),
                 bootstrap_commands: Vec::new(),
-                tool_shim_commands: Vec::new(),
+                binding_shim_commands: Vec::new(),
             }),
         },
     );
@@ -1304,16 +1304,16 @@ fn browser_wire_dispatcher_configures_wasm_command_permissions() {
 fn browser_wire_dispatcher_registers_host_callbacks() {
     let codec = WireFrameCodec::default();
     let mut dispatcher = BrowserWireDispatcher::new(RecordingBridge::default());
-    let mut config = KernelVmConfig::new("vm-tools");
+    let mut config = KernelVmConfig::new("vm-bindings");
     config.permissions = Permissions::allow_all();
     dispatcher
         .sidecar_mut()
         .create_vm(config)
-        .expect("create tools vm");
+        .expect("create bindings vm");
     let ownership = OwnershipScope::VmOwnership(VmOwnership {
         connection_id: String::from("conn"),
         session_id: String::from("session"),
-        vm_id: String::from("vm-tools"),
+        vm_id: String::from("vm-bindings"),
     });
 
     let response = dispatch(
@@ -1323,7 +1323,7 @@ fn browser_wire_dispatcher_registers_host_callbacks() {
             schema: protocol_schema(),
             request_id: 1,
             ownership: ownership.clone(),
-            payload: RequestPayload::RegisterHostCallbacksRequest(test_toolkit_payload(
+            payload: RequestPayload::RegisterHostCallbacksRequest(test_bindings_payload(
                 "browser",
                 "agentos-browser",
             )),
@@ -1342,7 +1342,7 @@ fn browser_wire_dispatcher_registers_host_callbacks() {
             schema: protocol_schema(),
             request_id: 2,
             ownership,
-            payload: RequestPayload::RegisterHostCallbacksRequest(test_toolkit_payload(
+            payload: RequestPayload::RegisterHostCallbacksRequest(test_bindings_payload(
                 "browser",
                 "agentos-browser-2",
             )),
@@ -1352,7 +1352,7 @@ fn browser_wire_dispatcher_registers_host_callbacks() {
         panic!("unexpected duplicate response: {:?}", duplicate.payload);
     };
     assert_eq!(rejected.code, "register_host_callbacks_failed");
-    assert!(rejected.message.contains("toolkit already registered"));
+    assert!(rejected.message.contains("collection already registered"));
 }
 
 #[test]
@@ -1675,7 +1675,7 @@ fn browser_wire_dispatcher_vm_fetch_enters_kernel_loopback_when_listener_exists(
     );
 }
 
-fn test_toolkit_payload(name: &str, alias: &str) -> RegisterHostCallbacksRequest {
+fn test_bindings_payload(name: &str, alias: &str) -> RegisterHostCallbacksRequest {
     RegisterHostCallbacksRequest {
         name: name.to_string(),
         description: format!("{name} automation"),

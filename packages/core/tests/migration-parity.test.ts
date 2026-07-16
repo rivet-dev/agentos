@@ -4,7 +4,7 @@ import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import common from "@agentos-software/common";
 import { afterEach, describe, expect, test } from "vitest";
 import { z } from "zod";
-import { AgentOs, hostTool, toolKit } from "../src/index.js";
+import { AgentOs, binding, bindings } from "../src/index.js";
 import { createProjectedAgentPackage } from "./helpers/projected-agent-package.js";
 
 const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
@@ -127,11 +127,11 @@ process.stdin.on("data", (chunk) => {
 });
 `.trim();
 
-const mathToolKit = toolKit({
+const mathBindings = bindings({
 	name: "math",
 	description: "Math utilities",
-	tools: {
-		add: hostTool({
+	bindings: {
+		add: binding({
 			description: "Add two numbers",
 			inputSchema: z.object({
 				a: z.number(),
@@ -246,10 +246,10 @@ describe("native sidecar migration parity gate", () => {
 		).toBe("filesystem-ok");
 	}, 60_000);
 
-	test("covers registered host tools through guest command dispatch on the Rust sidecar path", async () => {
+	test("covers registered bindings through guest command dispatch on the Rust sidecar path", async () => {
 		const vm = await AgentOs.create({
 			software: [common],
-			toolKits: [mathToolKit],
+			bindings: [mathBindings],
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
@@ -261,16 +261,16 @@ describe("native sidecar migration parity gate", () => {
 		});
 		assertNativeSidecar(vm);
 
-		const listed = await runSpawnedProcess(vm, "agentos", ["list-tools"]);
+		const listed = await runSpawnedProcess(vm, "agentos", ["list-bindings"]);
 		expect(listed.exitCode).toBe(0);
 		expect(JSON.parse(listed.stdout)).toEqual({
 			ok: true,
 			result: {
-				toolkits: [
+				bindings: [
 					{
 						name: "math",
 						description: "Math utilities",
-						tools: ["add"],
+						bindings: ["add"],
 					},
 				],
 			},

@@ -713,7 +713,7 @@ fn configure_mock_agent_packages(
                 packages,
                 packages_mount_at: String::from("/opt/agentos"),
                 bootstrap_commands: Vec::new(),
-                tool_shim_commands: Vec::new(),
+                binding_shim_commands: Vec::new(),
             }),
         })
         .expect("configure restart ACP packages");

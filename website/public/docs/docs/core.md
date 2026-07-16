@@ -51,7 +51,7 @@ Long-running process output is delivered through the `onStdout`/`onStderr` callb
 
 ## Agent sessions
 
-`createSession` resolves to a session record; all session operations take its `sessionId`. Session events and permission requests are delivered through per-session callbacks (`onSessionEvent` / `onPermissionRequest`):
+`createSession` resolves to a session ID string, which is passed directly to the other session actions. Session events and permission requests are delivered through per-session callbacks (`onSessionEvent` / `onPermissionRequest`):
 
 Register `onSessionEvent` right after `createSession` so you do not miss the live stream — core session events are live-only and are not replayed.
 

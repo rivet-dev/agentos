@@ -14,8 +14,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use agentos_client::config::{
-    node_modules_mount, AgentOsConfig, AgentOsSidecarConfig, FsPermissions, HostTool, PackageRef,
-    PatternPermissions, PermissionMode, Permissions, ToolKit,
+    node_modules_mount, AgentOsConfig, AgentOsSidecarConfig, Binding, Bindings, FsPermissions,
+    PackageRef, PatternPermissions, PermissionMode, Permissions,
 };
 use agentos_client::{AgentOs, CreateSessionOptions};
 use serde_json::json;
@@ -109,13 +109,13 @@ async fn launch_pi_session_and_read_argv(options: CreateSessionOptions) -> Vec<S
 
 async fn launch_pi_session_with_tools_and_read_argv(
     options: CreateSessionOptions,
-    tool_kits: Vec<ToolKit>,
+    bindings: Vec<Bindings>,
 ) -> Vec<String> {
     let module_access_dir =
         std::env::temp_dir().join(format!("agentos-client-os-instructions-{}", Uuid::new_v4()));
     let package_dir = write_mock_pi_adapter(&module_access_dir);
 
-    let argv = run_session(&module_access_dir, &package_dir, options, tool_kits).await;
+    let argv = run_session(&module_access_dir, &package_dir, options, bindings).await;
 
     std::fs::remove_dir_all(&module_access_dir).ok();
     argv
@@ -125,7 +125,7 @@ async fn run_session(
     module_access_dir: &Path,
     package_dir: &Path,
     options: CreateSessionOptions,
-    tool_kits: Vec<ToolKit>,
+    bindings: Vec<Bindings>,
 ) -> Vec<String> {
     let os = AgentOs::create(AgentOsConfig {
         mounts: vec![node_modules_mount(
@@ -140,7 +140,7 @@ async fn run_session(
         sidecar: Some(AgentOsSidecarConfig::Shared {
             pool: Some(format!("os-instructions-{}", Uuid::new_v4())),
         }),
-        tool_kits,
+        bindings,
         permissions: Some(allow_all_permissions()),
         ..Default::default()
     })
@@ -205,20 +205,20 @@ async fn create_session_injects_assembled_system_prompt() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn create_session_injects_host_tool_reference_from_client_config() {
+async fn create_session_injects_binding_reference_from_client_config() {
     if !common::sidecar_available() {
         panic!(
-            "create_session_injects_host_tool_reference_from_client_config: sidecar binary is not built; build it with `cargo build -p agentos-sidecar`"
+            "create_session_injects_binding_reference_from_client_config: sidecar binary is not built; build it with `cargo build -p agentos-sidecar`"
         );
     }
     common::ensure_sidecar_env();
 
     let argv = launch_pi_session_with_tools_and_read_argv(
         CreateSessionOptions::default(),
-        vec![ToolKit {
+        vec![Bindings {
             name: "weather".to_string(),
             description: "Weather lookup tools.".to_string(),
-            tools: vec![HostTool {
+            bindings: vec![Binding {
                 name: "forecast".to_string(),
                 description: "Get a forecast.".to_string(),
                 input_schema: json!({
@@ -237,7 +237,7 @@ async fn create_session_injects_host_tool_reference_from_client_config() {
 
     let prompt = injected_prompt(&argv);
     assert!(
-        prompt.contains("## Available Host Tools"),
+        prompt.contains("## Available Host Bindings"),
         "client-generated tool reference is injected: {prompt:?}"
     );
     assert!(

@@ -1,7 +1,5 @@
 import type {
-	AgentCapabilities,
 	AgentExitEvent,
-	AgentInfo,
 	JsonRpcNotification,
 	PermissionRequest,
 } from "@rivet-dev/agentos-core";
@@ -76,31 +74,6 @@ export interface AgentOsEvents {
 	/** Shell process exit (mirrors `waitShell` resolution). */
 	shellExit: ShellExitPayload;
 	cronEvent: CronEventPayload;
-}
-
-// --- Session serialization ---
-
-export interface SessionRecord {
-	sessionId: string;
-	agentType: string;
-	capabilities: AgentCapabilities;
-	agentInfo: AgentInfo | null;
-}
-
-// --- Persisted session types ---
-
-export interface PersistedSessionRecord {
-	sessionId: string;
-	agentType: string;
-	createdAt: number;
-	status: "running" | "idle";
-}
-
-export interface PersistedSessionEvent {
-	sessionId: string;
-	seq: number;
-	event: JsonRpcNotification;
-	createdAt: number;
 }
 
 // --- Serializable cron action (excludes callback type) ---

@@ -4,7 +4,7 @@ import type {
 	MountConfigJsonObject,
 	NativeMountPluginDescriptor,
 } from "./agent-os.js";
-import type { HostTool, ToolKit } from "./host-tools.js";
+import type { Binding, Bindings } from "./bindings.js";
 
 export interface AgentOsSandboxProcessResult {
 	stdout?: string;
@@ -77,12 +77,14 @@ export interface AgentOsSandboxCommonOptions {
 	readOnly?: boolean;
 }
 
-export interface AgentOsSandboxProviderOptions extends AgentOsSandboxCommonOptions {
+export interface AgentOsSandboxProviderOptions
+	extends AgentOsSandboxCommonOptions {
 	/** Provider used to start a Sandbox Agent client for this VM. */
 	provider: AgentOsSandboxProvider;
 }
 
-export interface AgentOsSandboxClientOptions extends AgentOsSandboxCommonOptions {
+export interface AgentOsSandboxClientOptions
+	extends AgentOsSandboxCommonOptions {
 	/** Externally provisioned Sandbox Agent-compatible client instance. */
 	client: AgentOsSandboxClient;
 	/**
@@ -104,7 +106,7 @@ type SandboxDisposeHook = () => void | Promise<void>;
 
 export type AgentOsSandboxExpandedOptions = {
 	mounts?: MountConfig[];
-	toolKits?: ToolKit[];
+	bindings?: Bindings[];
 	[sandboxDisposeHooks]?: SandboxDisposeHook[];
 };
 
@@ -128,8 +130,8 @@ interface SerializableSandboxClient {
 }
 
 function binding<INPUT, OUTPUT>(
-	def: HostTool<INPUT, OUTPUT>,
-): HostTool<INPUT, OUTPUT> {
+	def: Binding<INPUT, OUTPUT>,
+): Binding<INPUT, OUTPUT> {
 	return def;
 }
 
@@ -145,9 +147,7 @@ function normalizeHeaders(
 	}
 
 	if (Array.isArray(headers)) {
-		return Object.fromEntries(
-			headers as Iterable<readonly [string, string]>,
-		);
+		return Object.fromEntries(headers as Iterable<readonly [string, string]>);
 	}
 
 	return Object.fromEntries(
@@ -155,10 +155,9 @@ function normalizeHeaders(
 	);
 }
 
-function getSerializableClientConfig(client: AgentOsSandboxClient): Pick<
-	SandboxMountPluginConfig,
-	"baseUrl" | "token" | "headers"
-> {
+function getSerializableClientConfig(
+	client: AgentOsSandboxClient,
+): Pick<SandboxMountPluginConfig, "baseUrl" | "token" | "headers"> {
 	const serializable = client as unknown as SerializableSandboxClient;
 	const baseUrl = serializable.baseUrl?.trim().replace(/\/+$/, "");
 	if (!baseUrl) {
@@ -195,7 +194,7 @@ export function createSandboxFs(
 
 export function createSandboxBindings(
 	input: ResolvedSandboxOptions | AgentOsSandboxClientOptions,
-): ToolKit {
+): Bindings {
 	const options = input;
 	const { client } = options;
 
@@ -203,7 +202,7 @@ export function createSandboxBindings(
 		name: "sandbox",
 		description:
 			"Execute commands and manage processes in a remote sandbox environment.",
-		tools: {
+		bindings: {
 			"run-command": binding({
 				description:
 					"Run a command synchronously in the sandbox and return its stdout, stderr, and exit code.",
@@ -424,12 +423,16 @@ export function getSandboxDisposeHooks(
 		: [];
 }
 
-export async function resolveSandboxOptions<T extends { sandbox?: AgentOsSandboxInput }>(
+export async function resolveSandboxOptions<
+	T extends { sandbox?: AgentOsSandboxInput },
+>(
 	options: T,
-): Promise<Omit<T, "sandbox"> & {
-	mounts?: MountConfig[];
-	toolKits?: ToolKit[];
-}> {
+): Promise<
+	Omit<T, "sandbox"> & {
+		mounts?: MountConfig[];
+		bindings?: Bindings[];
+	}
+> {
 	const { sandbox, ...rest } = options;
 	if (!sandbox) {
 		return rest;
@@ -439,7 +442,7 @@ export async function resolveSandboxOptions<T extends { sandbox?: AgentOsSandbox
 	const sandboxOptions = normalizedSandbox.options;
 	const expanded = rest as Omit<T, "sandbox"> & {
 		mounts?: MountConfig[];
-		toolKits?: ToolKit[];
+		bindings?: Bindings[];
 	};
 	const mountPath = sandboxOptions.mountPath ?? "/mnt/sandbox";
 	const mounts = [
@@ -450,14 +453,17 @@ export async function resolveSandboxOptions<T extends { sandbox?: AgentOsSandbox
 			readOnly: sandboxOptions.readOnly,
 		},
 	];
-	const toolKits = [
-		...(expanded.toolKits ?? []),
+	const bindings = [
+		...(expanded.bindings ?? []),
 		createSandboxBindings(sandboxOptions),
 	];
 
-	return attachSandboxDisposeHooks({
-		...expanded,
-		mounts,
-		toolKits,
-	}, normalizedSandbox.dispose ? [normalizedSandbox.dispose] : []);
+	return attachSandboxDisposeHooks(
+		{
+			...expanded,
+			mounts,
+			bindings,
+		},
+		normalizedSandbox.dispose ? [normalizedSandbox.dispose] : [],
+	);
 }

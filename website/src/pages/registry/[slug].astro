@@ -25,7 +25,7 @@ const { entry } = Astro.props;
 
 const TYPE_LABELS: Record<string, string> = {
 	"file-system": "File System",
-	tool: "Bindings",
+	binding: "Bindings",
 	agent: "Agent",
 	"sandbox-extension": "Sandbox Mounting",
 	software: "Software",
@@ -46,11 +46,11 @@ const isSoftware =
 	(entry.types.includes("software") || entry.types.includes("browser"));
 const isSandboxExt =
 	entry.status === "available" && entry.types.includes("sandbox-extension");
-const isTool =
+const isBinding =
 	entry.status === "available" &&
 	!isSoftware &&
 	!isSandboxExt &&
-	entry.types.includes("tool");
+	entry.types.includes("binding");
 const isAvailableAgent =
 	entry.status === "available" &&
 	entry.types.includes("agent") &&
@@ -89,7 +89,7 @@ const vm = agentOS({ software: [${ident}] });
 export const registry = setup({ use: { vm } });`;
 } else if (isSandboxExt) {
 	exampleSource = `import { agentOS, setup } from "@rivet-dev/agentos";
-import { createSandboxFs, createSandboxToolkit } from "@rivet-dev/agentos-sandbox";
+import { createSandboxFs, createSandboxBindings } from "@rivet-dev/agentos-sandbox";
 import { SandboxAgent } from "sandbox-agent";
 import { ${entry.slug} } from "sandbox-agent/${entry.slug}";
 
@@ -98,22 +98,22 @@ const sandbox = await SandboxAgent.start({ sandbox: ${entry.slug}() });
 
 const vm = agentOS({
   mounts: [{ path: "/home/agentos/sandbox", plugin: createSandboxFs({ client: sandbox }) }],
-  toolKits: [createSandboxToolkit({ client: sandbox })],
+  bindings: [createSandboxBindings({ client: sandbox })],
 });
 
 export const registry = setup({ use: { vm } });`;
-} else if (isTool) {
+} else if (isBinding) {
 	exampleSource = `import { agentOS, setup } from "@rivet-dev/agentos";
-import { createSandboxFs, createSandboxToolkit } from "@rivet-dev/agentos-sandbox";
+import { createSandboxFs, createSandboxBindings } from "@rivet-dev/agentos-sandbox";
 import { SandboxAgent } from "sandbox-agent";
 import { docker } from "sandbox-agent/docker";
 
-// Mount the sandbox filesystem and expose its process tools to the VM
+// Mount the sandbox filesystem and expose its process bindings to the VM
 const sandbox = await SandboxAgent.start({ sandbox: docker() });
 
 const vm = agentOS({
   mounts: [{ path: "/home/agentos/sandbox", plugin: createSandboxFs({ client: sandbox }) }],
-  toolKits: [createSandboxToolkit({ client: sandbox })],
+  bindings: [createSandboxBindings({ client: sandbox })],
 });
 
 export const registry = setup({ use: { vm } });`;
@@ -151,7 +151,7 @@ const exampleHtml = exampleSource
 // The install command shown in step 1; the inline Copy button copies it.
 const installCommand =
 	entry.status === "available"
-		? isSandboxExt || isTool
+		? isSandboxExt || isBinding
 			? "npm install @rivet-dev/agentos-sandbox sandbox-agent"
 			: `npm install ${entry.package}`
 		: null;
@@ -340,7 +340,7 @@ const ribbon: MetaCell[] = [
 								<div class="overflow-x-auto px-5 py-4 font-mono text-[13px] leading-relaxed" set:html={exampleHtml} />
 							</InkPanel>
 						</>
-					) : isSandboxExt || isTool ? (
+					) : isSandboxExt || isBinding ? (
 						<>
 							<h2 class="mb-3 text-xl font-medium text-ink">1. Install</h2>
 							<InstallRow command={installCommand!} class="mb-8" />

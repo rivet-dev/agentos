@@ -222,7 +222,7 @@ fn permission_flags_reject_empty_paths_and_patterns_on_configure() {
                 packages: Vec::new(),
                 packages_mount_at: String::new(),
                 bootstrap_commands: Vec::new(),
-                tool_shim_commands: Vec::new(),
+                binding_shim_commands: Vec::new(),
             }),
         ))
         .expect("dispatch configure vm with empty fs paths");
@@ -264,7 +264,7 @@ fn permission_flags_reject_empty_paths_and_patterns_on_configure() {
                 packages: Vec::new(),
                 packages_mount_at: String::new(),
                 bootstrap_commands: Vec::new(),
-                tool_shim_commands: Vec::new(),
+                binding_shim_commands: Vec::new(),
             }),
         ))
         .expect("dispatch configure vm with empty network patterns");
@@ -306,7 +306,7 @@ fn permission_flags_reject_empty_paths_and_patterns_on_configure() {
                 packages: Vec::new(),
                 packages_mount_at: String::new(),
                 bootstrap_commands: Vec::new(),
-                tool_shim_commands: Vec::new(),
+                binding_shim_commands: Vec::new(),
             }),
         ))
         .expect("dispatch configure vm with empty network operations");

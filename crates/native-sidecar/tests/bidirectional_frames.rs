@@ -14,7 +14,7 @@ const SIDECAR_CALLBACK_LIMIT: usize = 10_000;
 fn host_callback(index: usize) -> SidecarRequestPayload {
     SidecarRequestPayload::HostCallbackRequest(HostCallbackRequest {
         invocation_id: format!("invoke-{index}"),
-        callback_key: "toolkit:tool".to_string(),
+        callback_key: "collection:binding".to_string(),
         input: json!({ "prompt": "ping", "index": index }).to_string(),
         timeout_ms: 1_000,
     })

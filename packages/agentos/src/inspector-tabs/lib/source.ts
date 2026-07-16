@@ -10,21 +10,24 @@ import type {
 	FsEntry,
 	JsonRpcNotification,
 	MountInfo,
-	PersistedSessionEvent,
-	PersistedSessionRecord,
 	ProcessInfo,
 	ReaddirEntry,
+	SessionInfo,
 	SoftwareBundle,
 	SoftwareInfo,
 	TranscriptEvent,
 	VirtualStat,
 } from "./types";
 
-const k = (actorId: string, ...rest: string[]) => ["agent-os", actorId, ...rest];
+const k = (actorId: string, ...rest: string[]) => [
+	"agent-os",
+	actorId,
+	...rest,
+];
 
 // ── Software ──────────────────────────────────────────────────────────
 function softwareInfoToBundle(info: SoftwareInfo): SoftwareBundle {
-	const pkg = info.package;
+	const pkg = info.packageName;
 	const scopeIdx = pkg.lastIndexOf("@");
 	let name: string;
 	if (scopeIdx > 0) name = pkg.slice(scopeIdx).split("/").slice(0, 2).join("/");
@@ -36,8 +39,8 @@ function softwareInfoToBundle(info: SoftwareInfo): SoftwareBundle {
 			? "rivet-dev"
 			: "user";
 	return {
-		name: `${name} · ${info.kind}`,
-		version: info.version ?? "—",
+		name,
+		version: "—",
 		source,
 		binaries: info.commands ?? [],
 	};
@@ -52,7 +55,11 @@ function decodeActionBytes(output: unknown): Uint8Array {
 	// rivetkit's json decoder may already hand back a real Uint8Array.
 	if (output instanceof Uint8Array) return output;
 	// JSON encoding wraps Uint8Array as ["$Uint8Array", base64].
-	if (Array.isArray(output) && output[0] === "$Uint8Array" && typeof output[1] === "string") {
+	if (
+		Array.isArray(output) &&
+		output[0] === "$Uint8Array" &&
+		typeof output[1] === "string"
+	) {
 		const bin = atob(output[1]);
 		const bytes = new Uint8Array(bin.length);
 		for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
@@ -80,41 +87,33 @@ function bytesToDisplay(bytes: Uint8Array): string | null {
 }
 
 // ── Transcript mapper (defensive: unknown ACP updates → "raw") ─────────
-// Map a raw JSON-RPC session notification + its ordering seq to a display event.
-// Shared by the persisted backfill (`getSessionEvents` → seq from the record)
-// and the live stream (`sessionEvent` broadcast → synthetic seq), which both
-// carry the same `JsonRpcNotification` shape.
-export function mapNotification(n: JsonRpcNotification, seq: number): TranscriptEvent {
+// Map a raw JSON-RPC session notification to a display event.
+export function mapNotification(n: JsonRpcNotification): TranscriptEvent {
 	const params = (n?.params ?? {}) as { update?: Record<string, unknown> };
 	const u = params.update;
 	if (n?.method === "session/update" && u && typeof u === "object") {
 		const kind = u.sessionUpdate as string | undefined;
-		const text = ((u.content as { text?: string } | undefined)?.text ?? "") as string;
+		const text = ((u.content as { text?: string } | undefined)?.text ??
+			"") as string;
 		switch (kind) {
 			case "user_message_chunk":
-				return { kind: "user", seq, text };
+				return { kind: "user", text };
 			case "agent_message_chunk":
-				return { kind: "assistant", seq, text };
+				return { kind: "assistant", text };
 			case "agent_thought_chunk":
-				return { kind: "thinking", seq, text };
+				return { kind: "thinking", text };
 			case "tool_call":
 			case "tool_call_update":
 				return {
 					kind: "tool",
-					seq,
 					tool: (u.title as string) ?? (u.toolCallId as string) ?? "tool",
 					status: u.status as string | undefined,
 				};
 			default:
-				return { kind: "raw", seq, label: kind ?? n.method, json: u };
+				return { kind: "raw", label: kind ?? n.method, json: u };
 		}
 	}
-	return { kind: "raw", seq, label: n?.method ?? "event", json: n?.params };
-}
-
-// Persisted-event adapter: unwrap the record and reuse the notification mapper.
-function mapTranscriptEvent(pe: PersistedSessionEvent): TranscriptEvent {
-	return mapNotification(pe.event, pe.seq);
+	return { kind: "raw", label: n?.method ?? "event", json: n?.params };
 }
 
 // ── Query options ─────────────────────────────────────────────────────
@@ -123,7 +122,9 @@ export const agentOsSource = {
 		queryOptions({
 			queryKey: k(actorId, "software"),
 			queryFn: async () =>
-				(await callAction<SoftwareInfo[]>("listSoftware", [])).map(softwareInfoToBundle),
+				(await callAction<SoftwareInfo[]>("listSoftware", [])).map(
+					softwareInfoToBundle,
+				),
 		}),
 
 	processesQueryOptions: (actorId: string) =>
@@ -144,9 +145,13 @@ export const agentOsSource = {
 			// directory (does not exist / is a file); surface that as `null` so
 			// callers can show "not found", distinct from `[]` (empty dir).
 			queryFn: async (): Promise<FsEntry[] | null> => {
-				const raw = await callAction<ReaddirEntry[] | null>("readdirEntries", [path], {
-					timeoutMs: 10_000,
-				});
+				const raw = await callAction<ReaddirEntry[] | null>(
+					"readdirEntries",
+					[path],
+					{
+						timeoutMs: 10_000,
+					},
+				);
 				if (raw === null) return null;
 				const entries = raw
 					.filter((e) => e.name !== "." && e.name !== "..")
@@ -162,7 +167,8 @@ export const agentOsSource = {
 						};
 					});
 				return entries.sort(
-					(a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name),
+					(a, b) =>
+						Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name),
 				);
 			},
 		}),
@@ -195,21 +201,8 @@ export const agentOsSource = {
 	sessionsQueryOptions: (actorId: string) =>
 		queryOptions({
 			queryKey: k(actorId, "sessions"),
-			queryFn: () => callAction<PersistedSessionRecord[]>("listPersistedSessions", []),
-			// Poll so newly created sessions and running/idle status dots stay current.
+			queryFn: () => callAction<SessionInfo[]>("listSessions", []),
+			// Poll so newly created and closed sessions stay current.
 			refetchInterval: 10_000,
-		}),
-
-	// One-off persisted backfill. Live events after this snapshot arrive via the
-	// `sessionEvent` websocket stream (see `useLiveSessionEvents`), so this no
-	// longer polls.
-	transcriptQueryOptions: (actorId: string, sessionId: string | null) =>
-		queryOptions({
-			queryKey: k(actorId, "transcript", sessionId ?? ""),
-			enabled: !!sessionId,
-			queryFn: async () =>
-				(await callAction<PersistedSessionEvent[]>("getSessionEvents", [sessionId])).map(
-					mapTranscriptEvent,
-				),
 		}),
 };

@@ -789,11 +789,11 @@
 		"wired": "VmLimits.tls.max_buffered_bytes"
 	},
 	{
-		"name": "DEFAULT_TOOL_TIMEOUT_MS",
+		"name": "DEFAULT_BINDING_TIMEOUT_MS",
 		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
-		"rationale": "Default tool invocation timeout.",
-		"wired": "VmLimits.tools.default_tool_timeout_ms"
+		"rationale": "Default binding invocation timeout.",
+		"wired": "VmLimits.bindings.default_binding_timeout_ms"
 	},
 	{
 		"name": "DEFAULT_UDP_MAX_BUFFERED_BYTES",
@@ -893,133 +893,133 @@
 		"wired": "VmLimits.plugins.max_persisted_manifest_file_bytes"
 	},
 	{
-		"name": "MAX_REGISTERED_TOOLKITS",
+		"name": "MAX_REGISTERED_BINDING_COLLECTIONS",
 		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
-		"rationale": "Toolkit registration capacity.",
-		"wired": "VmLimits.tools.max_registered_toolkits"
+		"rationale": "BindingCollection registration capacity.",
+		"wired": "VmLimits.bindings.max_registered_collections"
 	},
 	{
-		"name": "MAX_REGISTERED_TOOLS_PER_VM",
+		"name": "MAX_REGISTERED_BINDINGS_PER_VM",
 		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
-		"rationale": "Tool registration capacity.",
-		"wired": "VmLimits.tools.max_registered_tools_per_vm"
+		"rationale": "Binding registration capacity.",
+		"wired": "VmLimits.bindings.max_registered_bindings_per_vm"
 	},
 	{
-		"name": "MAX_TOOL_EXAMPLE_INPUT_BYTES",
+		"name": "MAX_BINDING_EXAMPLE_INPUT_BYTES",
 		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
-		"rationale": "Tool example input size.",
-		"wired": "VmLimits.tools.max_tool_example_input_bytes"
+		"rationale": "Binding example input size.",
+		"wired": "VmLimits.bindings.max_binding_example_input_bytes"
 	},
 	{
-		"name": "MAX_TOOL_EXAMPLES_PER_TOOL",
+		"name": "MAX_EXAMPLES_PER_BINDING",
 		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
-		"rationale": "Tool example count.",
-		"wired": "VmLimits.tools.max_tool_examples_per_tool"
+		"rationale": "Binding example count.",
+		"wired": "VmLimits.bindings.max_examples_per_binding"
 	},
 	{
-		"name": "MAX_TOOL_SCHEMA_BYTES",
+		"name": "MAX_BINDING_SCHEMA_BYTES",
 		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
-		"rationale": "Tool schema payload size.",
-		"wired": "VmLimits.tools.max_tool_schema_bytes"
+		"rationale": "Binding schema payload size.",
+		"wired": "VmLimits.bindings.max_binding_schema_bytes"
 	},
 	{
-		"name": "MAX_TOOL_TIMEOUT_MS",
+		"name": "MAX_BINDING_TIMEOUT_MS",
 		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
-		"rationale": "Max tool invocation timeout.",
-		"wired": "VmLimits.tools.max_tool_timeout_ms"
+		"rationale": "Max binding invocation timeout.",
+		"wired": "VmLimits.bindings.max_binding_timeout_ms"
 	},
 	{
-		"name": "MAX_TOOLS_PER_TOOLKIT",
+		"name": "MAX_BINDINGS_PER_COLLECTION",
 		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
-		"rationale": "Tools-per-toolkit capacity.",
-		"wired": "VmLimits.tools.max_tools_per_toolkit"
+		"rationale": "Bindings-per-binding collection capacity.",
+		"wired": "VmLimits.bindings.max_bindings_per_collection"
 	},
 	{
-		"name": "DEFAULT_TOOL_TIMEOUT_MS",
-		"path": "crates/native-sidecar-core/src/tools.rs",
+		"name": "DEFAULT_BINDING_TIMEOUT_MS",
+		"path": "crates/native-sidecar-core/src/bindings.rs",
 		"class": "policy",
-		"rationale": "Tool invocation timeout policy.",
-		"wired": "VmLimits.tools.default_tool_timeout_ms"
+		"rationale": "Binding invocation timeout policy.",
+		"wired": "VmLimits.bindings.default_binding_timeout_ms"
 	},
 	{
-		"name": "MAX_REGISTERED_TOOLKITS",
-		"path": "crates/native-sidecar-core/src/tools.rs",
+		"name": "MAX_REGISTERED_BINDING_COLLECTIONS",
+		"path": "crates/native-sidecar-core/src/bindings.rs",
 		"class": "policy",
-		"rationale": "Tool registration capacity policy.",
-		"wired": "VmLimits.tools.max_registered_toolkits"
+		"rationale": "Binding registration capacity policy.",
+		"wired": "VmLimits.bindings.max_registered_collections"
 	},
 	{
-		"name": "MAX_REGISTERED_TOOLS_PER_VM",
-		"path": "crates/native-sidecar-core/src/tools.rs",
+		"name": "MAX_REGISTERED_BINDINGS_PER_VM",
+		"path": "crates/native-sidecar-core/src/bindings.rs",
 		"class": "policy",
-		"rationale": "Tool registration capacity policy.",
-		"wired": "VmLimits.tools.max_registered_tools_per_vm"
+		"rationale": "Binding registration capacity policy.",
+		"wired": "VmLimits.bindings.max_registered_bindings_per_vm"
 	},
 	{
-		"name": "MAX_TOOL_DESCRIPTION_LENGTH",
-		"path": "crates/native-sidecar-core/src/tools.rs",
+		"name": "MAX_BINDING_DESCRIPTION_LENGTH",
+		"path": "crates/native-sidecar-core/src/bindings.rs",
 		"class": "policy-deferred",
 		"rationale": "Cross-boundary contract with packages/core/src/bindings.ts; both sides must change together."
 	},
 	{
-		"name": "MAX_TOOL_EXAMPLE_INPUT_BYTES",
-		"path": "crates/native-sidecar-core/src/tools.rs",
+		"name": "MAX_BINDING_EXAMPLE_INPUT_BYTES",
+		"path": "crates/native-sidecar-core/src/bindings.rs",
 		"class": "policy",
 		"rationale": "Example input size policy.",
-		"wired": "VmLimits.tools.max_tool_example_input_bytes"
+		"wired": "VmLimits.bindings.max_binding_example_input_bytes"
 	},
 	{
-		"name": "MAX_TOOL_EXAMPLES_PER_TOOL",
-		"path": "crates/native-sidecar-core/src/tools.rs",
+		"name": "MAX_EXAMPLES_PER_BINDING",
+		"path": "crates/native-sidecar-core/src/bindings.rs",
 		"class": "policy",
 		"rationale": "Example count policy.",
-		"wired": "VmLimits.tools.max_tool_examples_per_tool"
+		"wired": "VmLimits.bindings.max_examples_per_binding"
 	},
 	{
-		"name": "MAX_TOOL_NAME_LENGTH",
-		"path": "crates/native-sidecar-core/src/tools.rs",
+		"name": "MAX_BINDING_NAME_LENGTH",
+		"path": "crates/native-sidecar-core/src/bindings.rs",
 		"class": "policy-deferred",
 		"rationale": "Cross-boundary contract with packages/core/src/bindings.ts; both sides must change together."
 	},
 	{
-		"name": "MAX_TOOL_SCHEMA_BYTES",
-		"path": "crates/native-sidecar-core/src/tools.rs",
+		"name": "MAX_BINDING_SCHEMA_BYTES",
+		"path": "crates/native-sidecar-core/src/bindings.rs",
 		"class": "policy",
 		"rationale": "Schema payload size policy.",
-		"wired": "VmLimits.tools.max_tool_schema_bytes"
+		"wired": "VmLimits.bindings.max_binding_schema_bytes"
 	},
 	{
-		"name": "MAX_TOOL_SCHEMA_DEPTH",
-		"path": "crates/native-sidecar-core/src/tools.rs",
+		"name": "MAX_BINDING_SCHEMA_DEPTH",
+		"path": "crates/native-sidecar-core/src/bindings.rs",
 		"class": "invariant",
 		"rationale": "JSON recursion guard for schema validation; parser-safety."
 	},
 	{
-		"name": "MAX_TOOL_TIMEOUT_MS",
-		"path": "crates/native-sidecar-core/src/tools.rs",
+		"name": "MAX_BINDING_TIMEOUT_MS",
+		"path": "crates/native-sidecar-core/src/bindings.rs",
 		"class": "policy",
-		"rationale": "Tool invocation timeout policy.",
-		"wired": "VmLimits.tools.max_tool_timeout_ms"
+		"rationale": "Binding invocation timeout policy.",
+		"wired": "VmLimits.bindings.max_binding_timeout_ms"
 	},
 	{
-		"name": "MAX_TOOLKIT_NAME_LENGTH",
-		"path": "crates/native-sidecar-core/src/tools.rs",
+		"name": "MAX_BINDING_COLLECTION_NAME_LENGTH",
+		"path": "crates/native-sidecar-core/src/bindings.rs",
 		"class": "policy-deferred",
 		"rationale": "Cross-boundary contract with packages/core/src/bindings.ts; both sides must change together."
 	},
 	{
-		"name": "MAX_TOOLS_PER_TOOLKIT",
-		"path": "crates/native-sidecar-core/src/tools.rs",
+		"name": "MAX_BINDINGS_PER_COLLECTION",
+		"path": "crates/native-sidecar-core/src/bindings.rs",
 		"class": "policy",
-		"rationale": "Tool registration capacity policy.",
-		"wired": "VmLimits.tools.max_tools_per_toolkit"
+		"rationale": "Binding registration capacity policy.",
+		"wired": "VmLimits.bindings.max_bindings_per_collection"
 	},
 	{
 		"name": "VM_FETCH_BUFFER_LIMIT_BYTES",
@@ -1843,13 +1843,13 @@
 	},
 	{
 		"name": "MAX_SYMLINK_DEPTH",
-		"path": "packages/build-tools/bridge-src/builtins/fs.ts",
+		"path": "packages/build-bindings/bridge-src/builtins/fs.ts",
 		"class": "invariant",
 		"rationale": "Linux ELOOP mirror of the kernel invariant."
 	},
 	{
 		"name": "NET_BRIDGE_MAX_RAW_WRITE_BYTES",
-		"path": "packages/build-tools/bridge-src/builtins/net.ts",
+		"path": "packages/build-bindings/bridge-src/builtins/net.ts",
 		"class": "invariant",
 		"rationale": "Internal socket bridge flush granularity that preserves backpressure under the wired socket buffered-byte limit; not an operator policy cap."
 	},
@@ -1866,8 +1866,8 @@
 		"rationale": "Bounded TypeScript client retention set; expose through client configuration if operators need to tune it."
 	},
 	{
-		"name": "MAX_TOOL_DESCRIPTION_LENGTH",
-		"path": "packages/core/src/host-tools.ts",
+		"name": "MAX_BINDING_DESCRIPTION_LENGTH",
+		"path": "packages/core/src/host-bindings.ts",
 		"class": "policy-deferred",
 		"rationale": "Cross-boundary contract with packages/core/src/bindings.ts; both sides must change together."
 	},

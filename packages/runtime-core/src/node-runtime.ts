@@ -42,7 +42,7 @@ import { parseNodeRuntimeCreateOptions } from "./node-runtime-options-schema.js"
 
 export type {
 	BindingDefinition,
-	HostToolExample,
+	BindingExample,
 	VirtualDirEntry,
 } from "./test-runtime.js";
 export { resolveNodeRuntimeSidecarBinary } from "./test-runtime.js";
@@ -552,8 +552,7 @@ let nextResidentRequestId = 0;
  * sync-RPC path cannot be used: it runs on the sidecar's main sync-RPC thread and
  * a host round-trip would block it); that is a separate, test-gated change.
  */
-const BINDING_PREAMBLE =
-	`globalThis.callBinding = (name, input = {}) => import("node:child_process").then(({ execFile }) => new Promise((resolve, reject) => { execFile(name, [name, "--json", JSON.stringify(input)], { maxBuffer: 64 * 1024 * 1024 }, (error, stdout, stderr) => { if (error) { reject(new Error(String(stderr || "").trim() || error.message)); return; } const text = String(stdout ?? "").trim(); let reply; try { reply = text ? JSON.parse(text) : undefined; } catch { reject(new Error("binding returned invalid JSON: " + text)); return; } if (reply && reply.ok === false) { reject(new Error(reply.error || "binding failed")); return; } resolve(reply && typeof reply === "object" && "result" in reply ? reply.result : reply); }); }));`;
+const BINDING_PREAMBLE = `globalThis.callBinding = (name, input = {}) => import("node:child_process").then(({ execFile }) => new Promise((resolve, reject) => { execFile(name, [name, "--json", JSON.stringify(input)], { maxBuffer: 64 * 1024 * 1024 }, (error, stdout, stderr) => { if (error) { reject(new Error(String(stderr || "").trim() || error.message)); return; } const text = String(stdout ?? "").trim(); let reply; try { reply = text ? JSON.parse(text) : undefined; } catch { reject(new Error("binding returned invalid JSON: " + text)); return; } if (reply && reply.ok === false) { reject(new Error(reply.error || "binding failed")); return; } resolve(reply && typeof reply === "object" && "result" in reply ? reply.result : reply); }); }));`;
 
 /** Prepend the binding helper preamble to guest program source. */
 function withBindingPreamble(code: string): string {
@@ -672,7 +671,7 @@ export class NodeRuntime {
 			const bindings = options.bindings;
 			if (bindings && Object.keys(bindings).length > 0) {
 				await measureBootTiming("bindings", options.onBootTiming, () =>
-					kernel.registerHostTools(bindings),
+					kernel.registerBindings(bindings),
 				);
 			}
 		} catch (error) {
@@ -1116,7 +1115,7 @@ export class NodeRuntime {
 	async registerBindings(
 		bindings: Record<string, BindingDefinition>,
 	): Promise<void> {
-		await this.kernel.registerHostTools(bindings);
+		await this.kernel.registerBindings(bindings);
 	}
 
 	/**

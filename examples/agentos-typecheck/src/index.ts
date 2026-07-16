@@ -12,12 +12,10 @@ import {
 	agentOS,
 	type NodeModulesMountConfig,
 	nodeModulesMount,
-	type PersistedSessionEvent,
-	type PersistedSessionRecord,
 	type PromptResult,
 	type SerializableCronJobInfo,
 	type SerializableCronJobOptions,
-	type SessionRecord,
+	type SessionInfo,
 	setup,
 } from "@rivet-dev/agentos";
 import { createClient } from "@rivet-dev/agentos/client";
@@ -64,12 +62,7 @@ const client = createClient<typeof registry>({
 	endpoint: "http://localhost:6420",
 });
 
-type PublicDomainTypes =
-	| PersistedSessionEvent
-	| PersistedSessionRecord
-	| PromptResult
-	| SerializableCronJobInfo
-	| SessionRecord;
+type PublicDomainTypes = PromptResult | SerializableCronJobInfo | SessionInfo;
 
 function acceptPublicDomainType(value: PublicDomainTypes): PublicDomainTypes {
 	return value;
@@ -112,8 +105,6 @@ async function main(): Promise<void> {
 	acceptPublicDomainType({
 		sessionId: "session-1",
 		agentType: "pi",
-		capabilities: {},
-		agentInfo: null,
 	});
 }
 

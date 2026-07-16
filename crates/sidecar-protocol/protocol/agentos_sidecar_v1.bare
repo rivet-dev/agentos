@@ -264,7 +264,7 @@ type ConfigureVmRequest struct {
   packages: list<PackageDescriptor>
   packagesMountAt: str
   bootstrapCommands: list<str>
-  toolShimCommands: list<str>
+  bindingShimCommands: list<str>
 }
 
 type RegisteredHostCallbackExample struct {

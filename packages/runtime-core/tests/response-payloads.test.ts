@@ -264,7 +264,7 @@ describe("response payload conversion", () => {
 		});
 	});
 
-	it("maps generated toolkit registration to host callback registration", () => {
+	it("maps generated binding collection registration to host callback registration", () => {
 		expect(
 			fromGeneratedResponsePayload({
 				tag: "HostCallbacksRegisteredResponse",

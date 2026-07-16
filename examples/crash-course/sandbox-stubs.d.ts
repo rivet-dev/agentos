@@ -26,7 +26,7 @@ declare module "sandbox-agent/docker" {
 declare module "@rivet-dev/agentos-sandbox" {
 	import type {
 		NativeMountPluginDescriptor,
-		ToolKit,
+		Bindings,
 	} from "@rivet-dev/agentos-core";
 	import type { SandboxAgent } from "sandbox-agent";
 
@@ -40,7 +40,7 @@ declare module "@rivet-dev/agentos-sandbox" {
 		/** Maximum file size allowed for buffered pread/truncate fallbacks. */
 		maxFullReadBytes?: number;
 	}
-	export interface SandboxToolkitOptions {
+	export interface SandboxBindingsOptions {
 		/** A connected SandboxAgent client instance. */
 		client: SandboxAgent;
 	}
@@ -51,6 +51,8 @@ declare module "@rivet-dev/agentos-sandbox" {
 	export function createSandboxFs(
 		options: SandboxFsOptions,
 	): NativeMountPluginDescriptor;
-	/** Build a toolkit that exposes the sandbox's process management. */
-	export function createSandboxBindings(options: SandboxToolkitOptions): ToolKit;
+	/** Build a binding collection that exposes the sandbox's process management. */
+	export function createSandboxBindings(
+		options: SandboxBindingsOptions,
+	): Bindings;
 }

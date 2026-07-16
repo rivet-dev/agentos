@@ -459,7 +459,7 @@ const orchestrationTabMeta: HeroTabMeta[] = [
 	{ key: 'agent-agent', icon: Layers, label: 'Agent-Agent', docsHref: '/docs/agent-to-agent' },
 	{ key: 'workflows', icon: Workflow, label: 'Workflows', docsHref: '/docs/workflows' },
 	{ key: 'multiplayer', icon: Users, label: 'Multiplayer', docsHref: '/docs/multiplayer' },
-	{ key: 'tools', icon: Wrench, label: 'Bindings', docsHref: '/docs/bindings' },
+	{ key: 'bindings', icon: Wrench, label: 'Bindings', docsHref: '/docs/bindings' },
 	{ key: 'permissions', icon: ShieldCheck, label: 'Permissions', docsHref: '/docs/permissions' },
 ];
 

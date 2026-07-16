@@ -44,8 +44,8 @@ mod protocol {
 #[path = "../src/state.rs"]
 mod state;
 #[allow(dead_code)]
-#[path = "../src/tools.rs"]
-mod tools;
+#[path = "../src/bindings.rs"]
+mod bindings;
 #[allow(dead_code)]
 #[path = "../src/vm.rs"]
 mod vm;
@@ -112,7 +112,7 @@ mod service {
             ActiveCipherSession, ActiveDiffieHellmanSession, ActiveEcdhSession, ActiveExecution,
             ActiveExecutionEvent, ActiveProcess, ActiveSqliteDatabase, ActiveSqliteStatement,
             ActiveTcpListener, ActiveUdpSocket, PendingHttpRequest, ProcessEventEnvelope,
-            SidecarKernel, ToolExecution, VmPendingByteBudget, EXECUTION_SANDBOX_ROOT_ENV,
+            SidecarKernel, BindingExecution, VmPendingByteBudget, EXECUTION_SANDBOX_ROOT_ENV,
             JAVASCRIPT_COMMAND, LOOPBACK_EXEMPT_PORTS_ENV, PYTHON_COMMAND,
             VM_DNS_SERVERS_METADATA_KEY, VM_LISTEN_ALLOW_PRIVILEGED_METADATA_KEY,
             VM_LISTEN_PORT_MAX_METADATA_KEY, VM_LISTEN_PORT_MIN_METADATA_KEY, WASM_COMMAND,
@@ -450,7 +450,7 @@ ykAheWCsAteSEWVc0w==\n\
             }
         }
 
-        fn insert_tool_process(
+        fn insert_binding_process(
             sidecar: &mut NativeSidecar<RecordingBridge>,
             vm_id: &str,
             process_id: &str,
@@ -467,7 +467,7 @@ ykAheWCsAteSEWVc0w==\n\
                 runtime_context,
                 limits,
                 GuestRuntimeKind::JavaScript,
-                ActiveExecution::Tool(ToolExecution::default()),
+                ActiveExecution::Binding(BindingExecution::default()),
             )
             .with_vm_pending_byte_budgets(stdin_budget, event_budget);
             sidecar
@@ -729,29 +729,29 @@ ykAheWCsAteSEWVc0w==\n\
             assert_eq!(preserved.process_id, expected_process_id);
         }
 
-        fn tool_execution_event_overflow_is_reported() {
-            let tool_execution = ToolExecution::default();
-            tool_execution
+        fn binding_execution_event_overflow_is_reported() {
+            let binding_execution = BindingExecution::default();
+            binding_execution
                 .pending_event_count_limit
                 .store(1, Ordering::Release);
-            assert!(crate::execution::send_tool_process_event(
-                &tool_execution.cancelled,
-                &tool_execution.pending_events,
-                &tool_execution.event_overflow_reason,
-                &tool_execution.pending_event_bytes,
-                &tool_execution.pending_event_count_limit,
-                &tool_execution.pending_event_bytes_limit,
-                &tool_execution.vm_pending_event_bytes_budget,
+            assert!(crate::execution::send_binding_process_event(
+                &binding_execution.cancelled,
+                &binding_execution.pending_events,
+                &binding_execution.event_overflow_reason,
+                &binding_execution.pending_event_bytes,
+                &binding_execution.pending_event_count_limit,
+                &binding_execution.pending_event_bytes_limit,
+                &binding_execution.vm_pending_event_bytes_budget,
                 ActiveExecutionEvent::Stdout(Vec::new()),
             ));
-            assert!(!crate::execution::send_tool_process_event(
-                &tool_execution.cancelled,
-                &tool_execution.pending_events,
-                &tool_execution.event_overflow_reason,
-                &tool_execution.pending_event_bytes,
-                &tool_execution.pending_event_count_limit,
-                &tool_execution.pending_event_bytes_limit,
-                &tool_execution.vm_pending_event_bytes_budget,
+            assert!(!crate::execution::send_binding_process_event(
+                &binding_execution.cancelled,
+                &binding_execution.pending_events,
+                &binding_execution.event_overflow_reason,
+                &binding_execution.pending_event_bytes,
+                &binding_execution.pending_event_count_limit,
+                &binding_execution.pending_event_bytes_limit,
+                &binding_execution.vm_pending_event_bytes_budget,
                 ActiveExecutionEvent::Exited(0),
             ));
 
@@ -761,18 +761,18 @@ ykAheWCsAteSEWVc0w==\n\
                 .expect("create tokio runtime");
             let local = tokio::task::LocalSet::new();
             runtime.block_on(local.run_until(async move {
-                let mut execution = ActiveExecution::Tool(tool_execution);
+                let mut execution = ActiveExecution::Binding(binding_execution);
                 assert!(matches!(
                     execution
                         .poll_event(Duration::ZERO)
                         .await
-                        .expect("poll queued tool event"),
+                        .expect("poll queued binding event"),
                     Some(ActiveExecutionEvent::Stdout(_))
                 ));
                 let error = execution
                     .poll_event(Duration::ZERO)
                     .await
-                    .expect_err("tool event overflow should be reported");
+                    .expect_err("binding event overflow should be reported");
                 assert!(
                     error
                         .to_string()
@@ -781,18 +781,18 @@ ykAheWCsAteSEWVc0w==\n\
                 );
             }));
 
-            let tool_execution = ToolExecution::default();
-            tool_execution
+            let binding_execution = BindingExecution::default();
+            binding_execution
                 .pending_event_bytes_limit
                 .store(8, Ordering::Release);
-            assert!(!crate::execution::send_tool_process_event(
-                &tool_execution.cancelled,
-                &tool_execution.pending_events,
-                &tool_execution.event_overflow_reason,
-                &tool_execution.pending_event_bytes,
-                &tool_execution.pending_event_count_limit,
-                &tool_execution.pending_event_bytes_limit,
-                &tool_execution.vm_pending_event_bytes_budget,
+            assert!(!crate::execution::send_binding_process_event(
+                &binding_execution.cancelled,
+                &binding_execution.pending_events,
+                &binding_execution.event_overflow_reason,
+                &binding_execution.pending_event_bytes,
+                &binding_execution.pending_event_count_limit,
+                &binding_execution.pending_event_bytes_limit,
+                &binding_execution.vm_pending_event_bytes_budget,
                 ActiveExecutionEvent::Stdout(vec![0; 9]),
             ));
             let runtime = tokio::runtime::Builder::new_current_thread()
@@ -800,11 +800,11 @@ ykAheWCsAteSEWVc0w==\n\
                 .build()
                 .expect("create tokio runtime");
             runtime.block_on(async move {
-                let mut execution = ActiveExecution::Tool(tool_execution);
+                let mut execution = ActiveExecution::Binding(binding_execution);
                 let error = execution
                     .poll_event(Duration::ZERO)
                     .await
-                    .expect_err("tool byte overflow should be reported");
+                    .expect_err("binding byte overflow should be reported");
                 assert!(
                     error
                         .to_string()
@@ -836,7 +836,7 @@ ykAheWCsAteSEWVc0w==\n\
                     kernel_handle.pid(),
                     kernel_handle,
                     GuestRuntimeKind::WebAssembly,
-                    ActiveExecution::Tool(ToolExecution::default()),
+                    ActiveExecution::Binding(BindingExecution::default()),
                 )
                 .with_process_event_limits(&limits)
                 .with_vm_pending_byte_budgets(Arc::clone(&stdin_budget), Arc::clone(&event_budget))
@@ -847,7 +847,7 @@ ykAheWCsAteSEWVc0w==\n\
                     kernel_handle.pid(),
                     kernel_handle,
                     GuestRuntimeKind::WebAssembly,
-                    ActiveExecution::Tool(ToolExecution::default()),
+                    ActiveExecution::Binding(BindingExecution::default()),
                 )
                 .with_process_event_limits(&limits)
                 .with_vm_pending_byte_budgets(Arc::clone(&stdin_budget), Arc::clone(&event_budget))
@@ -891,47 +891,47 @@ ykAheWCsAteSEWVc0w==\n\
                 "process teardown must reclaim all of its pending events"
             );
 
-            let tool_one = ToolExecution::default()
+            let binding_one = BindingExecution::default()
                 .with_vm_pending_event_bytes_budget(Arc::clone(&event_budget));
-            let tool_two = ToolExecution::default()
+            let binding_two = BindingExecution::default()
                 .with_vm_pending_event_bytes_budget(Arc::clone(&event_budget));
-            assert!(crate::execution::send_tool_process_event(
-                &tool_one.cancelled,
-                &tool_one.pending_events,
-                &tool_one.event_overflow_reason,
-                &tool_one.pending_event_bytes,
-                &tool_one.pending_event_count_limit,
-                &tool_one.pending_event_bytes_limit,
-                &tool_one.vm_pending_event_bytes_budget,
+            assert!(crate::execution::send_binding_process_event(
+                &binding_one.cancelled,
+                &binding_one.pending_events,
+                &binding_one.event_overflow_reason,
+                &binding_one.pending_event_bytes,
+                &binding_one.pending_event_count_limit,
+                &binding_one.pending_event_bytes_limit,
+                &binding_one.vm_pending_event_bytes_budget,
                 ActiveExecutionEvent::Stdout(vec![5; 6]),
             ));
-            assert!(crate::execution::send_tool_process_event(
-                &tool_two.cancelled,
-                &tool_two.pending_events,
-                &tool_two.event_overflow_reason,
-                &tool_two.pending_event_bytes,
-                &tool_two.pending_event_count_limit,
-                &tool_two.pending_event_bytes_limit,
-                &tool_two.vm_pending_event_bytes_budget,
+            assert!(crate::execution::send_binding_process_event(
+                &binding_two.cancelled,
+                &binding_two.pending_events,
+                &binding_two.event_overflow_reason,
+                &binding_two.pending_event_bytes,
+                &binding_two.pending_event_count_limit,
+                &binding_two.pending_event_bytes_limit,
+                &binding_two.vm_pending_event_bytes_budget,
                 ActiveExecutionEvent::Stdout(vec![6; 4]),
             ));
-            assert!(!crate::execution::send_tool_process_event(
-                &tool_two.cancelled,
-                &tool_two.pending_events,
-                &tool_two.event_overflow_reason,
-                &tool_two.pending_event_bytes,
-                &tool_two.pending_event_count_limit,
-                &tool_two.pending_event_bytes_limit,
-                &tool_two.vm_pending_event_bytes_budget,
+            assert!(!crate::execution::send_binding_process_event(
+                &binding_two.cancelled,
+                &binding_two.pending_events,
+                &binding_two.event_overflow_reason,
+                &binding_two.pending_event_bytes,
+                &binding_two.pending_event_count_limit,
+                &binding_two.pending_event_bytes_limit,
+                &binding_two.vm_pending_event_bytes_budget,
                 ActiveExecutionEvent::Stdout(vec![7]),
             ));
-            drop(tool_one);
+            drop(binding_one);
             assert_eq!(event_budget.used(), event_envelope_bytes + 4);
-            drop(tool_two);
+            drop(binding_two);
             assert_eq!(
                 event_budget.used(),
                 0,
-                "tool teardown must reclaim background-produced events"
+                "binding teardown must reclaim background-produced events"
             );
         }
 
@@ -984,7 +984,7 @@ ykAheWCsAteSEWVc0w==\n\
                 first_pid,
                 first_handle,
                 GuestRuntimeKind::WebAssembly,
-                ActiveExecution::Tool(ToolExecution::default()),
+                ActiveExecution::Binding(BindingExecution::default()),
             )
             .with_process_event_limits(&limits)
             .with_vm_pending_byte_budgets(Arc::clone(&stdin_budget), Arc::clone(&event_budget));
@@ -992,7 +992,7 @@ ykAheWCsAteSEWVc0w==\n\
                 second_pid,
                 second_handle,
                 GuestRuntimeKind::WebAssembly,
-                ActiveExecution::Tool(ToolExecution::default()),
+                ActiveExecution::Binding(BindingExecution::default()),
             )
             .with_process_event_limits(&limits)
             .with_vm_pending_byte_budgets(Arc::clone(&stdin_budget), Arc::clone(&event_budget));
@@ -1072,7 +1072,7 @@ ykAheWCsAteSEWVc0w==\n\
                 kernel_handle.pid(),
                 kernel_handle,
                 GuestRuntimeKind::WebAssembly,
-                ActiveExecution::Tool(ToolExecution::default()),
+                ActiveExecution::Binding(BindingExecution::default()),
             );
             for _ in 0..(MAX_PROCESS_EVENT_QUEUE * 2) {
                 process
@@ -1099,7 +1099,7 @@ ykAheWCsAteSEWVc0w==\n\
                 PermissionsPolicy::allow_all(),
             )
             .expect("create vm");
-            insert_tool_process(&mut sidecar, &vm_id, "proc-single-event");
+            insert_binding_process(&mut sidecar, &vm_id, "proc-single-event");
 
             let process = sidecar
                 .vms
@@ -1108,13 +1108,13 @@ ykAheWCsAteSEWVc0w==\n\
                 .active_processes
                 .get_mut("proc-single-event")
                 .expect("test process");
-            let ActiveExecution::Tool(execution) = &mut process.execution else {
-                panic!("expected tool execution");
+            let ActiveExecution::Binding(execution) = &mut process.execution else {
+                panic!("expected binding execution");
             };
             execution
                 .pending_events
                 .lock()
-                .expect("tool event queue")
+                .expect("binding event queue")
                 .push_back(ActiveExecutionEvent::Stdout(b"single-edge".to_vec()));
 
             // Deliberately do not notify. poll_event's first probe pumps this
@@ -1145,14 +1145,14 @@ ykAheWCsAteSEWVc0w==\n\
                 BTreeMap::new(),
             )
             .expect("create vm");
-            insert_tool_process(&mut sidecar, &vm_id, "root-proc");
+            insert_binding_process(&mut sidecar, &vm_id, "root-proc");
             let child = {
                 let kernel_handle = create_kernel_process_handle_for_tests();
                 let mut child = active_process_for_tests(
                     kernel_handle.pid(),
                     kernel_handle,
                     GuestRuntimeKind::JavaScript,
-                    ActiveExecution::Tool(ToolExecution::default()),
+                    ActiveExecution::Binding(BindingExecution::default()),
                 );
                 for _ in 0..MAX_PROCESS_EVENT_QUEUE {
                     child
@@ -1215,7 +1215,7 @@ ykAheWCsAteSEWVc0w==\n\
                 BTreeMap::new(),
             )
             .expect("create vm");
-            insert_tool_process(&mut sidecar, &vm_id, "root-proc");
+            insert_binding_process(&mut sidecar, &vm_id, "root-proc");
 
             let existing = ActiveExecutionEvent::Stdout(Vec::new());
             let limits = agentos_native_sidecar_core::limits::ProcessLimits {
@@ -1227,7 +1227,7 @@ ykAheWCsAteSEWVc0w==\n\
                 kernel_handle.pid(),
                 kernel_handle,
                 GuestRuntimeKind::JavaScript,
-                ActiveExecution::Tool(ToolExecution::default()),
+                ActiveExecution::Binding(BindingExecution::default()),
             )
             .with_process_event_limits(&limits);
             child
@@ -1322,7 +1322,7 @@ ykAheWCsAteSEWVc0w==\n\
                 BTreeMap::new(),
             )
             .expect("create vm");
-            insert_tool_process(&mut sidecar, &vm_id, "proc-exit");
+            insert_binding_process(&mut sidecar, &vm_id, "proc-exit");
 
             for index in 0..(MAX_PROCESS_EVENT_QUEUE - 1) {
                 sidecar
@@ -1472,7 +1472,7 @@ ykAheWCsAteSEWVc0w==\n\
                 BTreeMap::new(),
             )
             .expect("create vm");
-            insert_tool_process(&mut sidecar, &vm_id, "proc-sqlite-handles");
+            insert_binding_process(&mut sidecar, &vm_id, "proc-sqlite-handles");
             (sidecar, vm_id)
         }
 
@@ -1703,7 +1703,7 @@ ykAheWCsAteSEWVc0w==\n\
                 kernel_handle.pid(),
                 kernel_handle,
                 GuestRuntimeKind::JavaScript,
-                ActiveExecution::Tool(ToolExecution::default()),
+                ActiveExecution::Binding(BindingExecution::default()),
             )
         }
 
@@ -2220,7 +2220,7 @@ ykAheWCsAteSEWVc0w==\n\
                         packages: Vec::new(),
                         packages_mount_at: String::new(),
                         bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        binding_shim_commands: Vec::new(),
                     }),
                 ))
                 .expect("configure registry command mount");
@@ -2935,15 +2935,15 @@ console.log(JSON.stringify({ status: "ok", summary }));
             policy
         }
 
-        fn test_toolkit_payload(
+        fn test_bindings_payload(
             name: &str,
             description: &str,
-            tool_name: &str,
+            binding_name: &str,
         ) -> RegisterHostCallbacksRequest {
-            test_toolkit_payload_with_schema(
+            test_bindings_payload_with_schema(
                 name,
                 description,
-                tool_name,
+                binding_name,
                 json!({
                     "type": "object",
                     "properties": {},
@@ -2952,10 +2952,10 @@ console.log(JSON.stringify({ status: "ok", summary }));
             )
         }
 
-        fn test_toolkit_payload_with_schema(
+        fn test_bindings_payload_with_schema(
             name: &str,
             description: &str,
-            tool_name: &str,
+            binding_name: &str,
             input_schema: Value,
         ) -> RegisterHostCallbacksRequest {
             RegisterHostCallbacksRequest {
@@ -2964,9 +2964,9 @@ console.log(JSON.stringify({ status: "ok", summary }));
                 command_aliases: vec![format!("agentos-{name}")],
                 registry_command_aliases: vec![String::from("agentos")],
                 callbacks: std::collections::HashMap::from([(
-                    String::from(tool_name),
+                    String::from(binding_name),
                     RegisteredHostCallbackDefinition {
-                        description: format!("{tool_name} tool"),
+                        description: format!("{binding_name} binding"),
                         input_schema: input_schema.to_string(),
                         timeout_ms: None,
                         examples: Vec::new(),
@@ -3109,7 +3109,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                 ActiveExecution::Javascript(execution) => execution.uses_shared_v8_runtime(),
                 ActiveExecution::Python(execution) => execution.uses_shared_v8_runtime(),
                 ActiveExecution::Wasm(_) => false,
-                ActiveExecution::Tool(_) => false,
+                ActiveExecution::Binding(_) => false,
             };
             if !uses_shared_v8_runtime {
                 let _ = signal_runtime_process(child_pid, SIGTERM);
@@ -3959,7 +3959,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     kernel_handle.pid(),
                     kernel_handle,
                     GuestRuntimeKind::JavaScript,
-                    ActiveExecution::Tool(ToolExecution::default()),
+                    ActiveExecution::Binding(BindingExecution::default()),
                 )
                 .with_env(guest_env)
                 .with_host_cwd(cwd.to_path_buf()),
@@ -8357,7 +8357,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         packages: Vec::new(),
                         packages_mount_at: String::new(),
                         bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        binding_shim_commands: Vec::new(),
                     }),
                 ))
                 .expect("configure mounts");
@@ -8434,7 +8434,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         packages: Vec::new(),
                         packages_mount_at: String::new(),
                         bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        binding_shim_commands: Vec::new(),
                     }),
                 ))
                 .expect("configure readonly mount");
@@ -8511,7 +8511,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         packages: Vec::new(),
                         packages_mount_at: String::new(),
                         bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        binding_shim_commands: Vec::new(),
                     }),
                 ))
                 .expect("configure host_dir mount");
@@ -8586,7 +8586,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         packages: Vec::new(),
                         packages_mount_at: String::new(),
                         bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        binding_shim_commands: Vec::new(),
                     }),
                 ))
                 .expect("configure host_dir mount");
@@ -8645,7 +8645,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         packages: Vec::new(),
                         packages_mount_at: String::new(),
                         bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        binding_shim_commands: Vec::new(),
                     }),
                 ))
                 .expect("configure module_access mount");
@@ -8873,7 +8873,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         packages: Vec::new(),
                         packages_mount_at: String::new(),
                         bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        binding_shim_commands: Vec::new(),
                     }),
                 ))
                 .expect("configure module_access mount");
@@ -8942,7 +8942,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         packages: Vec::new(),
                         packages_mount_at: String::new(),
                         bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        binding_shim_commands: Vec::new(),
                     }),
                 ))
                 .expect("configure js_bridge mount");
@@ -9079,7 +9079,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         packages: Vec::new(),
                         packages_mount_at: String::new(),
                         bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        binding_shim_commands: Vec::new(),
                     }),
                 ))
                 .expect("configure js_bridge mount");
@@ -9169,7 +9169,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         packages: Vec::new(),
                         packages_mount_at: String::new(),
                         bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        binding_shim_commands: Vec::new(),
                     }),
                 ))
                 .expect("configure js_bridge mount");
@@ -9288,7 +9288,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         packages: Vec::new(),
                         packages_mount_at: String::new(),
                         bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        binding_shim_commands: Vec::new(),
                     }),
                 ))
                 .expect("configure js_bridge mount");
@@ -9373,7 +9373,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         packages: Vec::new(),
                         packages_mount_at: String::new(),
                         bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        binding_shim_commands: Vec::new(),
                     }),
                 ))
                 .expect("configure js_bridge mount");
@@ -9472,7 +9472,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         packages: Vec::new(),
                         packages_mount_at: String::new(),
                         bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        binding_shim_commands: Vec::new(),
                     }),
                 ))
                 .expect("configure sandbox_agent mount");
@@ -9579,7 +9579,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         packages: Vec::new(),
                         packages_mount_at: String::new(),
                         bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        binding_shim_commands: Vec::new(),
                     }),
                 ))
                 .expect("configure s3 mount");
@@ -9678,7 +9678,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         packages: Vec::new(),
                         packages_mount_at: String::new(),
                         bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        binding_shim_commands: Vec::new(),
                     }),
                 ))
                 .expect("configure object_s3 mount");
@@ -9761,7 +9761,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         packages: Vec::new(),
                         packages_mount_at: String::new(),
                         bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        binding_shim_commands: Vec::new(),
                     }),
                 ))
                 .expect("configure chunked_local mount");
@@ -10316,7 +10316,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         packages: Vec::new(),
                         packages_mount_at: String::new(),
                         bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        binding_shim_commands: Vec::new(),
                     }),
                 ))
                 .expect("dispatch configure_vm failure");
@@ -10374,7 +10374,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                 "guest writes under deny-all fallback should not fall through to bridge callbacks"
             );
         }
-        fn toolkit_registration_rollback_restore_failure_keeps_registry_consistent() {
+        fn binding_registration_rollback_restore_failure_keeps_registry_consistent() {
             let mut sidecar = create_test_sidecar();
             let (connection_id, session_id) =
                 authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
@@ -10386,49 +10386,49 @@ console.log(JSON.stringify({ status: "ok", summary }));
             )
             .expect("create vm");
 
-            let original_toolkit =
-                test_toolkit_payload("browser", "Browser automation", "screenshot");
+            let original_bindingkit =
+                test_bindings_payload("browser", "Browser automation", "screenshot");
             sidecar
                 .dispatch_blocking(request(
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
-                    RequestPayload::RegisterHostCallbacks(original_toolkit.clone()),
+                    RequestPayload::RegisterHostCallbacks(original_bindingkit.clone()),
                 ))
-                .expect("register original toolkit");
+                .expect("register original binding collection");
 
-            let (toolkits_before, command_paths_before) = {
+            let (bindings_before, command_paths_before) = {
                 let vm = sidecar.vms.get(&vm_id).expect("configured vm");
-                (vm.toolkits.clone(), vm.command_guest_paths.clone())
+                (vm.bindings.clone(), vm.command_guest_paths.clone())
             };
 
             sidecar
                 .bridge
                 .queue_set_vm_permissions_result(Ok(()))
-                .expect("queue allow-all toolkit refresh");
+                .expect("queue allow-all binding collection refresh");
             sidecar
                 .bridge
                 .queue_set_vm_permissions_result(Err(SidecarError::Bridge(String::from(
                     "injected restore failure",
                 ))))
-                .expect("queue toolkit restore failure");
+                .expect("queue binding collection restore failure");
 
             let response = sidecar
                 .dispatch_blocking(request(
                     5,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
-                    RequestPayload::RegisterHostCallbacks(test_toolkit_payload(
+                    RequestPayload::RegisterHostCallbacks(test_bindings_payload(
                         "browser",
-                        "Replacement browser toolkit",
+                        "Replacement browser binding collection",
                         "click",
                     )),
                 ))
-                .expect("dispatch toolkit registration failure");
+                .expect("dispatch binding collection registration failure");
 
             match response.response.payload {
                 ResponsePayload::Rejected(rejected) => {
                     assert_eq!(rejected.code, "invalid_state");
                     let message = rejected.message;
-                    assert!(message.contains("toolkit registration rollback failed"));
+                    assert!(message.contains("binding collection registration rollback failed"));
                     assert!(message.contains("injected restore failure"));
                     assert!(message.contains("applied deny-all fallback"));
                 }
@@ -10453,7 +10453,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                 vm.configuration.permissions,
                 agentos_native_sidecar_core::permissions::deny_all_policy()
             );
-            assert_eq!(vm.toolkits, toolkits_before);
+            assert_eq!(vm.bindings, bindings_before);
             assert_eq!(vm.command_guest_paths, command_paths_before);
         }
         fn create_vm_rejects_permission_rules_with_empty_operations() {
@@ -10546,7 +10546,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         packages: Vec::new(),
                         packages_mount_at: String::new(),
                         bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        binding_shim_commands: Vec::new(),
                     }),
                 ))
                 .expect("dispatch fs configure vm");
@@ -10596,7 +10596,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         packages: Vec::new(),
                         packages_mount_at: String::new(),
                         bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        binding_shim_commands: Vec::new(),
                     }),
                 ))
                 .expect("dispatch network configure vm");
@@ -10659,7 +10659,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         packages: Vec::new(),
                         packages_mount_at: String::new(),
                         bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        binding_shim_commands: Vec::new(),
                     }),
                 ))
                 .expect("dispatch configure vm");
@@ -10869,7 +10869,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         packages: Vec::new(),
                         packages_mount_at: String::new(),
                         bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        binding_shim_commands: Vec::new(),
                     }),
                 ))
                 .expect("dispatch configure vm");
@@ -10938,7 +10938,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         packages: Vec::new(),
                         packages_mount_at: String::new(),
                         bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        binding_shim_commands: Vec::new(),
                     }),
                 ))
                 .expect("configure operator mount");
@@ -11099,7 +11099,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         packages: Vec::new(),
                         packages_mount_at: String::new(),
                         bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        binding_shim_commands: Vec::new(),
                     }),
                 ))
                 .expect("configure host_dir mount");
@@ -11246,7 +11246,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         packages: Vec::new(),
                         packages_mount_at: String::new(),
                         bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        binding_shim_commands: Vec::new(),
                     }),
                 ))
                 .expect("configure command mount");
@@ -11346,7 +11346,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         packages: Vec::new(),
                         packages_mount_at: String::new(),
                         bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        binding_shim_commands: Vec::new(),
                     }),
                 ))
                 .expect("configure command mount");
@@ -11742,7 +11742,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         packages: Vec::new(),
                         packages_mount_at: String::new(),
                         bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        binding_shim_commands: Vec::new(),
                     }),
                 ))
                 .expect("configure command-path mounts");
@@ -11953,7 +11953,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                 kernel_pid,
                 kernel_handle,
                 GuestRuntimeKind::WebAssembly,
-                ActiveExecution::Tool(ToolExecution::default()),
+                ActiveExecution::Binding(BindingExecution::default()),
             )
             .with_guest_cwd(String::from("/"))
             .with_env(BTreeMap::from([(
@@ -12220,7 +12220,7 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                 kernel_pid,
                 kernel_handle,
                 GuestRuntimeKind::WebAssembly,
-                ActiveExecution::Tool(ToolExecution::default()),
+                ActiveExecution::Binding(BindingExecution::default()),
             )
             .with_guest_cwd(String::from("/work"))
             .with_host_cwd(host_cwd)
@@ -12621,7 +12621,7 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                 nested_pid,
                 nested_handle,
                 GuestRuntimeKind::JavaScript,
-                ActiveExecution::Tool(ToolExecution::default()),
+                ActiveExecution::Binding(BindingExecution::default()),
             )
             .with_guest_cwd(String::from("/"))
             .with_env(nested_env)
@@ -12798,7 +12798,7 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                         nested_pid,
                         nested_handle,
                         GuestRuntimeKind::JavaScript,
-                        ActiveExecution::Tool(ToolExecution::default()),
+                        ActiveExecution::Binding(BindingExecution::default()),
                     )
                     .with_guest_cwd(String::from("/"))
                     .with_env(nested_env)
@@ -12810,9 +12810,9 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
             for (path, contents, mode) in [
                 ("/empty.wasm", wasm.as_slice(), 0o755),
                 ("/ spaced /space.wasm", wasm.as_slice(), 0o755),
-                ("/denied/tool", wasm.as_slice(), 0o644),
-                ("/allowed/tool", wasm.as_slice(), 0o755),
-                ("/denied2/tool", wasm.as_slice(), 0o644),
+                ("/denied/binding", wasm.as_slice(), 0o644),
+                ("/allowed/binding", wasm.as_slice(), 0o755),
+                ("/denied2/binding", wasm.as_slice(), 0o644),
                 ("/interpreter.wasm", wasm.as_slice(), 0o755),
             ] {
                 write_posix_spawnp_fixture(&mut sidecar, &vm_id, path, contents, mode);
@@ -12889,18 +12889,18 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                     &mut sidecar,
                     &vm_id,
                     nested,
-                    posix_spawnp_request("tool", "/denied:/allowed", &[]),
+                    posix_spawnp_request("binding", "/denied:/allowed", &[]),
                 )
                 .unwrap_or_else(|error| {
                     panic!("{scope} EACCES continuation to valid candidate failed: {error}")
                 });
-                assert_eq!(allowed_after_denied["command"], json!("/allowed/tool"));
+                assert_eq!(allowed_after_denied["command"], json!("/allowed/binding"));
 
                 let error = spawn_posix_spawnp_fixture(
                     &mut sidecar,
                     &vm_id,
                     nested,
-                    posix_spawnp_request("tool", "/denied:/denied2", &[]),
+                    posix_spawnp_request("binding", "/denied:/denied2", &[]),
                 )
                 .expect_err("all denied PATH candidates must fail");
                 assert!(
@@ -13112,7 +13112,7 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                         nested_pid,
                         nested_handle,
                         GuestRuntimeKind::JavaScript,
-                        ActiveExecution::Tool(ToolExecution::default()),
+                        ActiveExecution::Binding(BindingExecution::default()),
                     )
                     .with_guest_cwd(String::from("/"))
                     .with_env(nested_env)
@@ -13277,7 +13277,7 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                 "missing-sh error should mention /bin/sh: {error}"
             );
         }
-        fn javascript_child_process_spawns_path_resolved_tool_commands() {
+        fn javascript_child_process_spawns_path_resolved_binding_commands() {
             let mut sidecar = create_test_sidecar();
             let (connection_id, session_id) =
                 authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
@@ -13293,22 +13293,22 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                 .dispatch_blocking(request(
                     5,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
-                    RequestPayload::RegisterHostCallbacks(test_toolkit_payload(
+                    RequestPayload::RegisterHostCallbacks(test_bindings_payload(
                         "math",
                         "Math utilities",
                         "add",
                     )),
                 ))
-                .expect("register math toolkit");
+                .expect("register math binding collection");
 
-            let cwd = temp_dir("agentos-native-sidecar-tool-command-child-process");
+            let cwd = temp_dir("agentos-native-sidecar-binding-command-child-process");
             write_fixture(&cwd.join("entry.mjs"), "setInterval(() => {}, 1000);");
-            start_fake_javascript_process(&mut sidecar, &vm_id, &cwd, "proc-js-tool-child");
+            start_fake_javascript_process(&mut sidecar, &vm_id, &cwd, "proc-js-binding-child");
 
             let spawned = spawn_javascript_child_process_for_test(
                 &mut sidecar,
                 &vm_id,
-                "proc-js-tool-child",
+                "proc-js-binding-child",
                 crate::protocol::JavascriptChildProcessSpawnRequest {
                     command: String::from("/usr/local/bin/agentos-math"),
                     args: vec![
@@ -13321,7 +13321,7 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                     options: crate::protocol::JavascriptChildProcessSpawnOptions::default(),
                 },
             )
-            .expect("spawn toolkit child process");
+            .expect("spawn binding collection child process");
 
             assert_eq!(
                 spawned["command"],
@@ -13332,7 +13332,7 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                 json!(["agentos-math", "add", "--a", "2", "--b", "3"])
             );
         }
-        fn javascript_child_process_resolves_path_resolved_tool_commands_as_tools() {
+        fn javascript_child_process_resolves_path_resolved_binding_commands_as_bindings() {
             let mut sidecar = create_test_sidecar();
             let (connection_id, session_id) =
                 authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
@@ -13348,13 +13348,13 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                 .dispatch_blocking(request(
                     6,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
-                    RequestPayload::RegisterHostCallbacks(test_toolkit_payload(
+                    RequestPayload::RegisterHostCallbacks(test_bindings_payload(
                         "math",
                         "Math utilities",
                         "add",
                     )),
                 ))
-                .expect("register math toolkit");
+                .expect("register math binding collection");
 
             let vm = sidecar.vms.get(&vm_id).expect("configured vm");
             let resolved = sidecar
@@ -13375,11 +13375,11 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                         options: crate::protocol::JavascriptChildProcessSpawnOptions::default(),
                     },
                 )
-                .expect("resolve toolkit child process");
+                .expect("resolve binding collection child process");
 
             assert!(
-                resolved.tool_command,
-                "tool command should stay on the tool path"
+                resolved.binding_command,
+                "binding command should stay on the binding path"
             );
             assert_eq!(resolved.command, "agentos-math");
             assert_eq!(
@@ -13394,7 +13394,7 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                 ]
             );
         }
-        fn javascript_child_process_spawns_internal_tool_command_paths() {
+        fn javascript_child_process_spawns_internal_binding_command_paths() {
             let mut sidecar = create_test_sidecar();
             let (connection_id, session_id) =
                 authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
@@ -13410,22 +13410,22 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                 .dispatch_blocking(request(
                     7,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
-                    RequestPayload::RegisterHostCallbacks(test_toolkit_payload(
+                    RequestPayload::RegisterHostCallbacks(test_bindings_payload(
                         "math",
                         "Math utilities",
                         "add",
                     )),
                 ))
-                .expect("register math toolkit");
+                .expect("register math binding collection");
 
-            let cwd = temp_dir("agentos-native-sidecar-tool-command-sync-rpc");
+            let cwd = temp_dir("agentos-native-sidecar-binding-command-sync-rpc");
             write_fixture(&cwd.join("entry.mjs"), "setInterval(() => {}, 1000);");
-            start_fake_javascript_process(&mut sidecar, &vm_id, &cwd, "proc-js-tool-rpc");
+            start_fake_javascript_process(&mut sidecar, &vm_id, &cwd, "proc-js-binding-rpc");
 
             let spawned = spawn_javascript_child_process_for_test(
                 &mut sidecar,
                 &vm_id,
-                "proc-js-tool-rpc",
+                "proc-js-binding-rpc",
                 crate::protocol::JavascriptChildProcessSpawnRequest {
                     command: String::from("/__secure_exec/commands/0/agentos-math"),
                     args: vec![
@@ -13438,7 +13438,7 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                     options: crate::protocol::JavascriptChildProcessSpawnOptions::default(),
                 },
             )
-            .expect("spawn toolkit child process over internal command path");
+            .expect("spawn binding collection child process over internal command path");
 
             assert_eq!(
                 spawned["command"],
@@ -13449,7 +13449,7 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                 json!(["agentos-math", "add", "--a", "2", "--b", "3"])
             );
         }
-        fn javascript_child_process_resolves_internal_tool_command_paths_as_tools() {
+        fn javascript_child_process_resolves_internal_binding_command_paths_as_bindings() {
             let mut sidecar = create_test_sidecar();
             let (connection_id, session_id) =
                 authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
@@ -13465,13 +13465,13 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                 .dispatch_blocking(request(
                     8,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
-                    RequestPayload::RegisterHostCallbacks(test_toolkit_payload(
+                    RequestPayload::RegisterHostCallbacks(test_bindings_payload(
                         "math",
                         "Math utilities",
                         "add",
                     )),
                 ))
-                .expect("register math toolkit");
+                .expect("register math binding collection");
 
             let vm = sidecar.vms.get(&vm_id).expect("configured vm");
             let resolved = sidecar
@@ -13492,11 +13492,11 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                         options: crate::protocol::JavascriptChildProcessSpawnOptions::default(),
                     },
                 )
-                .expect("resolve toolkit child process");
+                .expect("resolve binding collection child process");
 
             assert!(
-                resolved.tool_command,
-                "tool command should stay on the tool path"
+                resolved.binding_command,
+                "binding command should stay on the binding path"
             );
             assert_eq!(resolved.command, "agentos-math");
             assert_eq!(
@@ -13511,7 +13511,7 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                 ]
             );
         }
-        fn tools_register_host_callbacks_rejects_duplicate_names_without_replacing_existing_toolkit(
+        fn bindings_register_host_callbacks_rejects_duplicate_names_without_replacing_existing_bindingkit(
         ) {
             let mut sidecar = create_test_sidecar();
             let (connection_id, session_id) =
@@ -13524,26 +13524,26 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
             )
             .expect("create vm");
 
-            let original_toolkit = test_toolkit_payload("math", "Math utilities", "add");
+            let original_bindingkit = test_bindings_payload("math", "Math utilities", "add");
             sidecar
                 .dispatch_blocking(request(
                     9,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
-                    RequestPayload::RegisterHostCallbacks(original_toolkit.clone()),
+                    RequestPayload::RegisterHostCallbacks(original_bindingkit.clone()),
                 ))
-                .expect("register original toolkit");
+                .expect("register original binding collection");
 
             let duplicate_response = sidecar
                 .dispatch_blocking(request(
                     10,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
-                    RequestPayload::RegisterHostCallbacks(test_toolkit_payload(
+                    RequestPayload::RegisterHostCallbacks(test_bindings_payload(
                         "math",
-                        "Replacement math toolkit",
+                        "Replacement math binding collection",
                         "subtract",
                     )),
                 ))
-                .expect("dispatch duplicate toolkit registration");
+                .expect("dispatch duplicate binding collection registration");
 
             match duplicate_response.response.payload {
                 ResponsePayload::Rejected(rejected) => {
@@ -13551,7 +13551,7 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                     assert!(
                         rejected
                             .message
-                            .contains("toolkit already registered: math"),
+                            .contains("binding collection already registered: math"),
                         "unexpected rejection: {rejected:?}"
                     );
                 }
@@ -13559,9 +13559,9 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
             }
 
             let vm = sidecar.vms.get(&vm_id).expect("configured vm");
-            assert_eq!(vm.toolkits.get("math"), Some(&original_toolkit));
+            assert_eq!(vm.bindings.get("math"), Some(&original_bindingkit));
         }
-        fn tools_register_host_callbacks_rejects_registry_overflow_without_mutating_vm() {
+        fn bindings_register_host_callbacks_rejects_registry_overflow_without_mutating_vm() {
             let mut sidecar = create_test_sidecar();
             let (connection_id, session_id) =
                 authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
@@ -13573,43 +13573,43 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
             )
             .expect("create vm");
 
-            for index in 0..crate::tools::MAX_REGISTERED_TOOLKITS {
+            for index in 0..crate::bindings::MAX_REGISTERED_BINDING_COLLECTIONS {
                 sidecar
                     .dispatch_blocking(request(
                         20 + index as i64,
                         OwnershipScope::vm(&connection_id, &session_id, &vm_id),
-                        RequestPayload::RegisterHostCallbacks(test_toolkit_payload(
-                            &format!("toolkit-{index}"),
-                            "Bounded test toolkit",
+                        RequestPayload::RegisterHostCallbacks(test_bindings_payload(
+                            &format!("collection-{index}"),
+                            "Bounded test binding collection",
                             "run",
                         )),
                     ))
-                    .expect("register toolkit");
+                    .expect("register binding collection");
             }
 
-            let (toolkits_before, command_paths_before) = {
+            let (bindings_before, command_paths_before) = {
                 let vm = sidecar.vms.get(&vm_id).expect("configured vm");
-                assert_eq!(vm.toolkits.len(), crate::tools::MAX_REGISTERED_TOOLKITS);
-                (vm.toolkits.clone(), vm.command_guest_paths.clone())
+                assert_eq!(vm.bindings.len(), crate::bindings::MAX_REGISTERED_BINDING_COLLECTIONS);
+                (vm.bindings.clone(), vm.command_guest_paths.clone())
             };
 
             let overflow_response = sidecar
                 .dispatch_blocking(request(
                     100,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
-                    RequestPayload::RegisterHostCallbacks(test_toolkit_payload(
+                    RequestPayload::RegisterHostCallbacks(test_bindings_payload(
                         "overflow",
-                        "Overflow toolkit",
+                        "Overflow binding collection",
                         "run",
                     )),
                 ))
-                .expect("dispatch overflow toolkit registration");
+                .expect("dispatch overflow binding collection registration");
 
             match overflow_response.response.payload {
                 ResponsePayload::Rejected(rejected) => {
                     assert_eq!(rejected.code, "invalid_state");
                     assert!(
-                        rejected.message.contains("registered toolkits"),
+                        rejected.message.contains("registered bindings"),
                         "unexpected rejection: {rejected:?}"
                     );
                 }
@@ -13617,14 +13617,14 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
             }
 
             let vm = sidecar.vms.get(&vm_id).expect("configured vm");
-            assert_eq!(vm.toolkits, toolkits_before);
+            assert_eq!(vm.bindings, bindings_before);
             assert_eq!(vm.command_guest_paths, command_paths_before);
             assert!(
                 !vm.command_guest_paths.contains_key("agentos-overflow"),
                 "overflow command path should not be registered"
             );
         }
-        fn tools_register_host_callbacks_rejects_total_tool_overflow_without_mutating_vm() {
+        fn bindings_register_host_callbacks_rejects_total_binding_overflow_without_mutating_vm() {
             let mut sidecar = create_test_sidecar();
             let (connection_id, session_id) =
                 authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
@@ -13636,13 +13636,13 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
             )
             .expect("create vm");
 
-            for toolkit_index in 0..4 {
-                let tools = (0..crate::tools::MAX_TOOLS_PER_TOOLKIT)
-                    .map(|tool_index| {
+            for collection_index in 0..4 {
+                let bindings = (0..crate::bindings::MAX_BINDINGS_PER_COLLECTION)
+                    .map(|binding_index| {
                         (
-                            format!("tool-{tool_index}"),
+                            format!("binding-{binding_index}"),
                             RegisteredHostCallbackDefinition {
-                                description: format!("tool {tool_index}"),
+                                description: format!("binding {binding_index}"),
                                 input_schema: json!({
                                     "type": "object",
                                     "properties": {},
@@ -13658,43 +13658,43 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
 
                 sidecar
                     .dispatch_blocking(request(
-                        120 + toolkit_index as i64,
+                        120 + collection_index as i64,
                         OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                         RequestPayload::RegisterHostCallbacks(RegisterHostCallbacksRequest {
-                            name: format!("toolkit-{toolkit_index}"),
-                            description: String::from("Bounded test toolkit"),
-                            command_aliases: vec![format!("agentos-toolkit-{toolkit_index}")],
-                            registry_command_aliases: vec![format!("agentos-{toolkit_index}")],
-                            callbacks: tools,
+                            name: format!("collection-{collection_index}"),
+                            description: String::from("Bounded test binding collection"),
+                            command_aliases: vec![format!("agentos-binding-{collection_index}")],
+                            registry_command_aliases: vec![format!("agentos-{collection_index}")],
+                            callbacks: bindings,
                         }),
                     ))
-                    .expect("register toolkit");
+                    .expect("register binding collection");
             }
 
-            let (toolkits_before, command_paths_before) = {
+            let (bindings_before, command_paths_before) = {
                 let vm = sidecar.vms.get(&vm_id).expect("configured vm");
-                assert_eq!(vm.toolkits.len(), 4);
+                assert_eq!(vm.bindings.len(), 4);
                 assert_eq!(
-                    vm.toolkits
+                    vm.bindings
                         .values()
-                        .map(|toolkit| toolkit.callbacks.len())
+                        .map(|collection| collection.callbacks.len())
                         .sum::<usize>(),
-                    crate::tools::MAX_REGISTERED_TOOLS_PER_VM
+                    crate::bindings::MAX_REGISTERED_BINDINGS_PER_VM
                 );
-                (vm.toolkits.clone(), vm.command_guest_paths.clone())
+                (vm.bindings.clone(), vm.command_guest_paths.clone())
             };
 
             let overflow_response = sidecar
                 .dispatch_blocking(request(
                     200,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
-                    RequestPayload::RegisterHostCallbacks(test_toolkit_payload(
+                    RequestPayload::RegisterHostCallbacks(test_bindings_payload(
                         "overflow",
-                        "Overflow toolkit",
+                        "Overflow binding collection",
                         "run",
                     )),
                 ))
-                .expect("dispatch total-tool overflow toolkit registration");
+                .expect("dispatch total-binding overflow binding collection registration");
 
             match overflow_response.response.payload {
                 ResponsePayload::Rejected(rejected) => {
@@ -13708,14 +13708,14 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
             }
 
             let vm = sidecar.vms.get(&vm_id).expect("configured vm");
-            assert_eq!(vm.toolkits, toolkits_before);
+            assert_eq!(vm.bindings, bindings_before);
             assert_eq!(vm.command_guest_paths, command_paths_before);
             assert!(
                 !vm.command_guest_paths.contains_key("agentos-overflow"),
                 "overflow command path should not be registered"
             );
         }
-        fn tools_javascript_child_process_denies_host_callback_without_permission() {
+        fn bindings_javascript_child_process_denies_host_callback_without_permission() {
             let mut sidecar = create_test_sidecar();
             let (connection_id, session_id) =
                 authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
@@ -13740,26 +13740,26 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                 .dispatch_blocking(request(
                     11,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
-                    RequestPayload::RegisterHostCallbacks(test_toolkit_payload(
+                    RequestPayload::RegisterHostCallbacks(test_bindings_payload(
                         "math",
                         "Math utilities",
                         "add",
                     )),
                 ))
-                .expect("register math toolkit");
+                .expect("register math binding collection");
 
-            let cwd = temp_dir("agentos-native-sidecar-tool-command-denied");
+            let cwd = temp_dir("agentos-native-sidecar-binding-command-denied");
             insert_fake_javascript_parent_process(
                 &mut sidecar,
                 &vm_id,
                 &cwd,
-                "proc-js-tool-denied",
+                "proc-js-binding-denied",
             );
 
             let result = spawn_javascript_child_process_sync_for_test(
                 &mut sidecar,
                 &vm_id,
-                "proc-js-tool-denied",
+                "proc-js-binding-denied",
                 crate::protocol::JavascriptChildProcessSpawnRequest {
                     command: String::from("/usr/local/bin/agentos-math"),
                     args: vec![String::from("add")],
@@ -13767,7 +13767,7 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                 },
                 None,
             )
-            .expect("spawn denied tool command");
+            .expect("spawn denied binding command");
 
             assert_eq!(result["code"], json!(1));
             assert!(
@@ -13783,7 +13783,7 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                 "unexpected denied stderr: {stderr:?}"
             );
         }
-        fn tools_javascript_child_process_invokes_tool_with_matching_permission() {
+        fn bindings_javascript_child_process_invokes_binding_with_matching_permission() {
             let mut sidecar = create_test_sidecar();
             let (connection_id, session_id) =
                 authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
@@ -13813,13 +13813,13 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                 .dispatch_blocking(request(
                     12,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
-                    RequestPayload::RegisterHostCallbacks(test_toolkit_payload(
+                    RequestPayload::RegisterHostCallbacks(test_bindings_payload(
                         "math",
                         "Math utilities",
                         "add",
                     )),
                 ))
-                .expect("register math toolkit");
+                .expect("register math binding collection");
 
             sidecar.set_sidecar_request_handler(|request| match request.payload {
                 SidecarRequestPayload::HostCallback(invocation) => {
@@ -13839,18 +13839,18 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                 other => panic!("unexpected sidecar request payload: {other:?}"),
             });
 
-            let cwd = temp_dir("agentos-native-sidecar-tool-command-allowed");
+            let cwd = temp_dir("agentos-native-sidecar-binding-command-allowed");
             insert_fake_javascript_parent_process(
                 &mut sidecar,
                 &vm_id,
                 &cwd,
-                "proc-js-tool-allowed",
+                "proc-js-binding-allowed",
             );
 
             let result = spawn_javascript_child_process_sync_for_test(
                 &mut sidecar,
                 &vm_id,
-                "proc-js-tool-allowed",
+                "proc-js-binding-allowed",
                 crate::protocol::JavascriptChildProcessSpawnRequest {
                     command: String::from("/usr/local/bin/agentos-math"),
                     args: vec![String::from("add")],
@@ -13858,7 +13858,7 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                 },
                 None,
             )
-            .expect("spawn allowed tool command");
+            .expect("spawn allowed binding command");
 
             assert_eq!(result["code"], json!(0));
             assert_eq!(result["stderr"], json!(""));
@@ -13866,7 +13866,7 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                 .as_str()
                 .expect("stdout should be captured as a string");
             let payload: Value =
-                serde_json::from_str(stdout).expect("parse successful tool invocation payload");
+                serde_json::from_str(stdout).expect("parse successful binding invocation payload");
             assert_eq!(
                 payload,
                 json!({
@@ -13875,7 +13875,7 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                 })
             );
         }
-        fn tools_javascript_child_process_rejects_invalid_json_file_input_before_dispatch() {
+        fn bindings_javascript_child_process_rejects_invalid_json_file_input_before_dispatch() {
             let mut sidecar = create_test_sidecar();
             let (connection_id, session_id) =
                 authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
@@ -13905,7 +13905,7 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                 .dispatch_blocking(request(
                     13,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
-                    RequestPayload::RegisterHostCallbacks(test_toolkit_payload_with_schema(
+                    RequestPayload::RegisterHostCallbacks(test_bindings_payload_with_schema(
                         "math",
                         "Math utilities",
                         "add",
@@ -13920,16 +13920,16 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                         }),
                     )),
                 ))
-                .expect("register math toolkit");
+                .expect("register math binding collection");
 
             {
                 let vm = sidecar.vms.get_mut(&vm_id).expect("configured vm");
                 vm.kernel
                     .write_file(
-                        "/workspace/invalid-tool-input.json",
+                        "/workspace/invalid-binding-input.json",
                         br#"{"count":"oops","label":4}"#.to_vec(),
                     )
-                    .expect("write invalid tool input");
+                    .expect("write invalid binding input");
             }
 
             let invocation_count = Arc::new(AtomicUsize::new(0));
@@ -13938,36 +13938,36 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                 SidecarRequestPayload::HostCallback(_) => {
                     seen_invocation_count.fetch_add(1, Ordering::SeqCst);
                     Err(SidecarError::InvalidState(String::from(
-                        "tool invocation should not run for invalid JSON-file input",
+                        "binding invocation should not run for invalid JSON-file input",
                     )))
                 }
                 other => panic!("unexpected sidecar request payload: {other:?}"),
             });
 
-            let cwd = temp_dir("agentos-native-sidecar-tool-command-invalid-json-file");
+            let cwd = temp_dir("agentos-native-sidecar-binding-command-invalid-json-file");
             insert_fake_javascript_parent_process(
                 &mut sidecar,
                 &vm_id,
                 &cwd,
-                "proc-js-tool-invalid-json-file",
+                "proc-js-binding-invalid-json-file",
             );
 
             let result = spawn_javascript_child_process_sync_for_test(
                 &mut sidecar,
                 &vm_id,
-                "proc-js-tool-invalid-json-file",
+                "proc-js-binding-invalid-json-file",
                 crate::protocol::JavascriptChildProcessSpawnRequest {
                     command: String::from("/usr/local/bin/agentos-math"),
                     args: vec![
                         String::from("add"),
                         String::from("--json-file"),
-                        String::from("/workspace/invalid-tool-input.json"),
+                        String::from("/workspace/invalid-binding-input.json"),
                     ],
                     options: crate::protocol::JavascriptChildProcessSpawnOptions::default(),
                 },
                 None,
             )
-            .expect("spawn invalid json-file tool command");
+            .expect("spawn invalid json-file binding command");
 
             assert_eq!(result["code"], json!(1));
             assert_eq!(result["stdout"], json!(""));
@@ -13975,7 +13975,7 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                 .as_str()
                 .expect("stderr should be captured as a string");
             assert!(
-                stderr.contains("ToolInputSchemaViolation at $.count"),
+                stderr.contains("BindingInputSchemaViolation at $.count"),
                 "unexpected schema violation stderr: {stderr:?}"
             );
             assert!(
@@ -13984,7 +13984,7 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
             );
             assert_eq!(invocation_count.load(Ordering::SeqCst), 0);
         }
-        fn tools_javascript_child_process_accepts_valid_json_input() {
+        fn bindings_javascript_child_process_accepts_valid_json_input() {
             let mut sidecar = create_test_sidecar();
             let (connection_id, session_id) =
                 authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
@@ -14014,7 +14014,7 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                 .dispatch_blocking(request(
                     14,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
-                    RequestPayload::RegisterHostCallbacks(test_toolkit_payload_with_schema(
+                    RequestPayload::RegisterHostCallbacks(test_bindings_payload_with_schema(
                         "math",
                         "Math utilities",
                         "add",
@@ -14029,7 +14029,7 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                         }),
                     )),
                 ))
-                .expect("register math toolkit");
+                .expect("register math binding collection");
 
             let invocation_count = Arc::new(AtomicUsize::new(0));
             let seen_invocation_count = Arc::clone(&invocation_count);
@@ -14052,18 +14052,18 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                 other => panic!("unexpected sidecar request payload: {other:?}"),
             });
 
-            let cwd = temp_dir("agentos-native-sidecar-tool-command-valid-json");
+            let cwd = temp_dir("agentos-native-sidecar-binding-command-valid-json");
             insert_fake_javascript_parent_process(
                 &mut sidecar,
                 &vm_id,
                 &cwd,
-                "proc-js-tool-valid-json",
+                "proc-js-binding-valid-json",
             );
 
             let result = spawn_javascript_child_process_sync_for_test(
                 &mut sidecar,
                 &vm_id,
-                "proc-js-tool-valid-json",
+                "proc-js-binding-valid-json",
                 crate::protocol::JavascriptChildProcessSpawnRequest {
                     command: String::from("/usr/local/bin/agentos-math"),
                     args: vec![
@@ -14075,7 +14075,7 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                 },
                 None,
             )
-            .expect("spawn valid json tool command");
+            .expect("spawn valid json binding command");
 
             assert_eq!(result["code"], json!(0));
             assert_eq!(result["stderr"], json!(""));
@@ -14083,7 +14083,7 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                 .as_str()
                 .expect("stdout should be captured as a string");
             let payload: Value =
-                serde_json::from_str(stdout).expect("parse successful tool invocation payload");
+                serde_json::from_str(stdout).expect("parse successful binding invocation payload");
             assert_eq!(
                 payload,
                 json!({
@@ -14148,7 +14148,7 @@ process.stdout.write(`${JSON.stringify({
                         packages: Vec::new(),
                         packages_mount_at: String::new(),
                         bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        binding_shim_commands: Vec::new(),
                     }),
                 ))
                 .expect("configure workspace mount");
@@ -14373,7 +14373,7 @@ if (child.status !== 0) {
                         }],
                         packages_mount_at: String::from("/opt/agentos"),
                         bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        binding_shim_commands: Vec::new(),
                     }),
                 ))
                 .expect("configure agentos package mount")
@@ -15094,7 +15094,7 @@ await new Promise(() => {});
                 kernel_pid,
                 kernel_handle,
                 GuestRuntimeKind::JavaScript,
-                ActiveExecution::Tool(ToolExecution::default()),
+                ActiveExecution::Binding(BindingExecution::default()),
             );
 
             let link = service_javascript_fs_sync_rpc(
@@ -17906,7 +17906,7 @@ await new Promise(() => {});
                     kernel_handle.pid(),
                     kernel_handle,
                     GuestRuntimeKind::JavaScript,
-                    ActiveExecution::Tool(ToolExecution::default()),
+                    ActiveExecution::Binding(BindingExecution::default()),
                 )
                 .with_host_cwd(cwd.clone()),
             );
@@ -21426,7 +21426,7 @@ console.log(JSON.stringify(summary));
                         packages: Vec::new(),
                         packages_mount_at: String::new(),
                         bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        binding_shim_commands: Vec::new(),
                     }),
                 ))
                 .expect("configure loopback-exempt host listener port");
@@ -24482,7 +24482,7 @@ console.log(JSON.stringify({
                         kernel_handle.pid(),
                         kernel_handle,
                         GuestRuntimeKind::JavaScript,
-                        ActiveExecution::Tool(ToolExecution::default()),
+                        ActiveExecution::Binding(BindingExecution::default()),
                     ),
                 );
             }
@@ -24547,14 +24547,14 @@ console.log(JSON.stringify({
                 root_kernel_handle.pid(),
                 root_kernel_handle,
                 GuestRuntimeKind::WebAssembly,
-                ActiveExecution::Tool(ToolExecution::default()),
+                ActiveExecution::Binding(BindingExecution::default()),
             );
             let child_kernel_handle = create_kernel_process_handle_for_tests();
             let mut child = active_process_for_tests(
                 child_kernel_handle.pid(),
                 child_kernel_handle,
                 GuestRuntimeKind::WebAssembly,
-                ActiveExecution::Tool(ToolExecution::default()),
+                ActiveExecution::Binding(BindingExecution::default()),
             );
             child
                 .queue_pending_execution_event(ActiveExecutionEvent::Stdout(b"pull-owned".to_vec()))
@@ -24707,7 +24707,7 @@ console.log(JSON.stringify({
             create_vm_applies_filesystem_permission_descriptors_to_kernel_access();
             create_vm_without_permissions_defaults_to_static_deny_all();
             configure_vm_rollback_restore_failure_falls_back_to_static_deny_all();
-            toolkit_registration_rollback_restore_failure_keeps_registry_consistent();
+            binding_registration_rollback_restore_failure_keeps_registry_consistent();
             create_vm_rejects_permission_rules_with_empty_operations();
             configure_vm_rejects_permission_rules_with_empty_paths_or_patterns();
             configure_vm_mounts_bypass_guest_fs_write_policy();
@@ -24727,17 +24727,17 @@ console.log(JSON.stringify({
             wasm_fd_write_sync_rpc_routes_stdout_into_kernel_pty();
             javascript_child_process_searches_path_for_mounted_wasm_commands();
             javascript_child_process_shell_mode_without_guest_sh_fails_loudly();
-            javascript_child_process_spawns_path_resolved_tool_commands();
-            javascript_child_process_resolves_path_resolved_tool_commands_as_tools();
-            javascript_child_process_spawns_internal_tool_command_paths();
-            javascript_child_process_resolves_internal_tool_command_paths_as_tools();
-            tools_register_host_callbacks_rejects_duplicate_names_without_replacing_existing_toolkit();
-            tools_register_host_callbacks_rejects_registry_overflow_without_mutating_vm();
-            tools_register_host_callbacks_rejects_total_tool_overflow_without_mutating_vm();
-            tools_javascript_child_process_denies_host_callback_without_permission();
-            tools_javascript_child_process_invokes_tool_with_matching_permission();
-            tools_javascript_child_process_rejects_invalid_json_file_input_before_dispatch();
-            tools_javascript_child_process_accepts_valid_json_input();
+            javascript_child_process_spawns_path_resolved_binding_commands();
+            javascript_child_process_resolves_path_resolved_binding_commands_as_bindings();
+            javascript_child_process_spawns_internal_binding_command_paths();
+            javascript_child_process_resolves_internal_binding_command_paths_as_bindings();
+            bindings_register_host_callbacks_rejects_duplicate_names_without_replacing_existing_bindingkit();
+            bindings_register_host_callbacks_rejects_registry_overflow_without_mutating_vm();
+            bindings_register_host_callbacks_rejects_total_binding_overflow_without_mutating_vm();
+            bindings_javascript_child_process_denies_host_callback_without_permission();
+            bindings_javascript_child_process_invokes_binding_with_matching_permission();
+            bindings_javascript_child_process_rejects_invalid_json_file_input_before_dispatch();
+            bindings_javascript_child_process_accepts_valid_json_input();
             command_resolution_executes_javascript_path_command_with_sidecar_mappings();
             command_resolution_executes_node_eval_command();
             command_resolution_rejects_unknown_command();
@@ -24794,7 +24794,7 @@ console.log(JSON.stringify({
             configured_protocol_queue_limits_drive_admission_and_gauges();
             pending_process_events_are_bounded();
             process_event_receiver_overflow_preserves_queued_event();
-            tool_execution_event_overflow_is_reported();
+            binding_execution_event_overflow_is_reported();
             wasm_signal_queue_is_bounded();
             poll_event_rechecks_durable_queue_after_pump();
             descendant_transfer_overflow_preserves_global_queue();
@@ -24813,9 +24813,9 @@ console.log(JSON.stringify({
         }
 
         #[test]
-        fn service_toolkit_registry_is_bounded() {
-            tools_register_host_callbacks_rejects_registry_overflow_without_mutating_vm();
-            tools_register_host_callbacks_rejects_total_tool_overflow_without_mutating_vm();
+        fn service_bindingkit_registry_is_bounded() {
+            bindings_register_host_callbacks_rejects_registry_overflow_without_mutating_vm();
+            bindings_register_host_callbacks_rejects_total_binding_overflow_without_mutating_vm();
         }
 
         #[test]
@@ -24836,7 +24836,7 @@ console.log(JSON.stringify({
             configured_protocol_queue_limits_drive_admission_and_gauges();
             pending_process_events_are_bounded();
             process_event_receiver_overflow_preserves_queued_event();
-            tool_execution_event_overflow_is_reported();
+            binding_execution_event_overflow_is_reported();
             wasm_signal_queue_is_bounded();
             poll_event_rechecks_durable_queue_after_pump();
             descendant_transfer_overflow_preserves_global_queue();

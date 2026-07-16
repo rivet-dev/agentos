@@ -26,9 +26,9 @@ use agentos_sidecar_client::wire;
 use agentos_vm_config as vm_config;
 
 use crate::config::{
-    AgentOsConfig, AgentOsLimits, HostTool, MountConfig, PermissionMode, Permissions,
+    AgentOsConfig, AgentOsLimits, Binding, Bindings, MountConfig, PermissionMode, Permissions,
     RootFilesystemConfig, RootFilesystemKind, RootFilesystemMode as ConfigRootFilesystemMode,
-    RootLowerInput, SidecarJsBridgeCall, SidecarJsBridgeCallback, TimerScheduleDriver, ToolKit,
+    RootLowerInput, SidecarJsBridgeCall, SidecarJsBridgeCallback, TimerScheduleDriver,
 };
 use crate::cron::CronManager;
 use crate::error::ClientError;
@@ -422,7 +422,7 @@ impl AgentOs {
                     packages,
                     packages_mount_at: config.packages_mount_at.clone().unwrap_or_default(),
                     bootstrap_commands: Vec::new(),
-                    tool_shim_commands: Vec::new(),
+                    binding_shim_commands: Vec::new(),
                 }),
             )
             .await?
@@ -477,38 +477,41 @@ impl AgentOs {
             }
         };
 
-        // 6b. Register host tool kits (if any): forward each tool definition via `register_host_callbacks`,
+        // 6b. Register host binding kits (if any): forward each binding definition via `register_host_callbacks`,
         //     record the host execute callbacks in the per-VM registry, and install the shared
-        //     host-callback that routes guest tool calls back to the host by VM.
-        if !config.tool_kits.is_empty() {
-            let mut tool_map: HashMap<String, HostTool> = HashMap::new();
-            for kit in &config.tool_kits {
-                let mut tools = HashMap::new();
-                for tool in &kit.tools {
-                    tools.insert(
-                        tool.name.clone(),
+        //     host-callback that routes guest binding calls back to the host by VM.
+        if !config.bindings.is_empty() {
+            let mut binding_map: HashMap<String, Binding> = HashMap::new();
+            for collection in &config.bindings {
+                let mut bindings = HashMap::new();
+                for binding in &collection.bindings {
+                    bindings.insert(
+                        binding.name.clone(),
                         wire::RegisteredHostCallbackDefinition {
-                            description: tool.description.clone(),
+                            description: binding.description.clone(),
                             input_schema: json_utf8(
-                                &tool.input_schema,
+                                &binding.input_schema,
                                 "host callback input schema",
                             )?,
-                            timeout_ms: tool.timeout_ms,
+                            timeout_ms: binding.timeout_ms,
                             examples: Vec::new(),
                         },
                     );
-                    tool_map.insert(format!("{}:{}", kit.name, tool.name), tool.clone());
+                    binding_map.insert(
+                        format!("{}:{}", collection.name, binding.name),
+                        binding.clone(),
+                    );
                 }
                 match transport
                     .request_wire(
                         wire_vm_ownership(&connection_id, &session_id, &vm_id),
                         wire::RequestPayload::RegisterHostCallbacksRequest(
                             wire::RegisterHostCallbacksRequest {
-                                name: kit.name.clone(),
-                                description: kit.description.clone(),
-                                command_aliases: vec![format!("agentos-{}", kit.name)],
+                                name: collection.name.clone(),
+                                description: collection.description.clone(),
+                                command_aliases: vec![format!("agentos-{}", collection.name)],
                                 registry_command_aliases: vec![String::from("agentos")],
-                                callbacks: tools,
+                                callbacks: bindings,
                             },
                         ),
                     )
@@ -557,11 +560,11 @@ impl AgentOs {
                     }
                 }
             }
-            let _ = vm_tools().insert(
+            let _ = vm_bindings().insert(
                 vm_id.clone(),
-                Arc::new(VmHostToolRegistry {
-                    tool_kits: config.tool_kits.clone(),
-                    tool_map,
+                Arc::new(VmBindingRegistry {
+                    bindings: config.bindings.clone(),
+                    binding_map,
                     permissions: config.permissions.clone(),
                 }),
             );
@@ -620,7 +623,7 @@ impl AgentOs {
             inner: Arc::new(inner),
         };
         // Register the permission router and callback unconditionally (unlike `host_callback`,
-        // which is gated on configured tool kits): any agent session can raise a permission
+        // which is gated on configured binding kits): any agent session can raise a permission
         // request. Re-registering on a shared transport replaces an identical stateless callback,
         // same as the `host_callback` pattern.
         let _ = vm_permission_routers()
@@ -813,7 +816,7 @@ impl AgentOs {
                 }),
             )
             .await;
-        let _ = vm_tools().remove(&self.inner.vm_id);
+        let _ = vm_bindings().remove(&self.inner.vm_id);
         let _ = vm_permission_routers().remove(&self.inner.vm_id);
         let _ = session_js_bridge_callbacks().remove(&sidecar_session_key(
             &self.inner.connection_id,
@@ -1437,19 +1440,19 @@ async fn wait_for_vm_ready(
         })?
 }
 
-/// Process-global per-VM host-tool registry. The shared transport's single host-callback routes to
-/// the right VM's toolkits by frame ownership.
-static VM_TOOLS: OnceCell<SccHashMap<String, Arc<VmHostToolRegistry>>> = OnceCell::new();
+/// Process-global per-VM binding registry. The shared transport's single host callback routes to
+/// the right VM's bindings by frame ownership.
+static VM_BINDINGS: OnceCell<SccHashMap<String, Arc<VmBindingRegistry>>> = OnceCell::new();
 
 #[derive(Clone)]
-struct VmHostToolRegistry {
-    tool_kits: Vec<ToolKit>,
-    tool_map: HashMap<String, HostTool>,
+struct VmBindingRegistry {
+    bindings: Vec<Bindings>,
+    binding_map: HashMap<String, Binding>,
     permissions: Option<Permissions>,
 }
 
-fn vm_tools() -> &'static SccHashMap<String, Arc<VmHostToolRegistry>> {
-    VM_TOOLS.get_or_init(SccHashMap::new)
+fn vm_bindings() -> &'static SccHashMap<String, Arc<VmBindingRegistry>> {
+    VM_BINDINGS.get_or_init(SccHashMap::new)
 }
 
 /// Process-global map of vm id -> client inner, so the shared `permission_request` transport
@@ -2451,7 +2454,7 @@ fn acp_terminal_shell_id(agent: &AgentOs, terminal_id: &str) -> Result<String, A
         })
 }
 
-/// The transport callback that answers guest tool invocations by running the matching host tool.
+/// The transport callback that answers guest binding invocations by running the matching host binding.
 fn host_callback_callback() -> WireSidecarCallback {
     Arc::new(|payload, ownership| {
         Box::pin(async move {
@@ -2462,7 +2465,7 @@ fn host_callback_callback() -> WireSidecarCallback {
                         wire::HostCallbackResultResponse {
                             invocation_id: "unknown".to_string(),
                             result: None,
-                            error: Some("host-callback received a non-tool request".to_string()),
+                            error: Some("host-callback received a non-binding request".to_string()),
                         },
                     ));
                 }
@@ -2482,8 +2485,8 @@ fn host_callback_callback() -> WireSidecarCallback {
     })
 }
 
-/// Run a single tool invocation against the per-VM host-tool registry, honoring the timeout. Mirrors
-/// TS `handleHostCallback` (unknown-tool + timeout + error shapes).
+/// Run a single binding invocation against the per-VM host-binding registry, honoring the timeout. Mirrors
+/// TS `handleHostCallback` (unknown-binding + timeout + error shapes).
 async fn run_host_callback(
     ownership: &wire::OwnershipScope,
     request: wire::HostCallbackRequest,
@@ -2499,12 +2502,12 @@ async fn run_host_callback(
         }
     };
     let vm_id = wire_ownership_vm_id(ownership).unwrap_or("");
-    let registry = vm_tools().read(vm_id, |_, registry| registry.clone());
+    let registry = vm_bindings().read(vm_id, |_, registry| registry.clone());
     let Some(registry) = registry else {
         return wire::HostCallbackResultResponse {
             invocation_id: request.invocation_id,
             result: None,
-            error: Some(format!("Unknown tool \"{}\"", request.callback_key)),
+            error: Some(format!("Unknown binding \"{}\"", request.callback_key)),
         };
     };
 
@@ -2530,16 +2533,16 @@ async fn run_host_callback(
         };
     }
 
-    let tool = registry.tool_map.get(&request.callback_key).cloned();
-    let Some(tool) = tool else {
+    let binding = registry.binding_map.get(&request.callback_key).cloned();
+    let Some(binding) = binding else {
         return wire::HostCallbackResultResponse {
             invocation_id: request.invocation_id,
             result: None,
-            error: Some(format!("Unknown tool \"{}\"", request.callback_key)),
+            error: Some(format!("Unknown binding \"{}\"", request.callback_key)),
         };
     };
     let timeout = Duration::from_millis(request.timeout_ms.max(1));
-    match tokio::time::timeout(timeout, (tool.execute)(input)).await {
+    match tokio::time::timeout(timeout, (binding.execute)(input)).await {
         Ok(Ok(value)) => match host_callback_json_result(value) {
             Ok(result) => wire::HostCallbackResultResponse {
                 invocation_id: request.invocation_id,
@@ -2561,7 +2564,7 @@ async fn run_host_callback(
             invocation_id: request.invocation_id,
             result: None,
             error: Some(format!(
-                "Tool \"{}\" timed out after {}ms",
+                "Binding \"{}\" timed out after {}ms",
                 request.callback_key, request.timeout_ms
             )),
         },
@@ -2589,35 +2592,35 @@ fn parse_host_command_callback_input(input: &Value) -> Option<HostCommandCallbac
 
 async fn run_host_command_callback(
     ownership: &wire::OwnershipScope,
-    registry: &VmHostToolRegistry,
+    registry: &VmBindingRegistry,
     command: HostCommandCallbackInput,
 ) -> Result<Value, String> {
     if command.command == "agentos" {
         return handle_agentos_registry_command(ownership, registry, &command).await;
     }
-    let Some(toolkit) = registry
-        .tool_kits
+    let Some(collection) = registry
+        .bindings
         .iter()
-        .find(|toolkit| format!("agentos-{}", toolkit.name) == command.command)
+        .find(|collection| format!("agentos-{}", collection.name) == command.command)
     else {
         return Err(format!(
             "Unknown host callback command \"{}\"",
             command.command
         ));
     };
-    handle_agentos_toolkit_command(ownership, registry, &command, toolkit).await
+    handle_agentos_binding_command(ownership, registry, &command, collection).await
 }
 
 async fn handle_agentos_registry_command(
     ownership: &wire::OwnershipScope,
-    registry: &VmHostToolRegistry,
+    registry: &VmBindingRegistry,
     command: &HostCommandCallbackInput,
 ) -> Result<Value, String> {
     let Some(subcommand) = command.args.first() else {
         return Ok(json_object([(
             "usage",
             Value::String(String::from(
-                "agentos <command>: list-tools [toolkit], <toolkit> --help, or <toolkit> <tool> ...",
+                "agentos <command>: list-bindings [collection], <collection> --help, or <collection> <binding> ...",
             )),
         )]));
     };
@@ -2625,114 +2628,116 @@ async fn handle_agentos_registry_command(
         return Ok(json_object([(
             "usage",
             Value::String(String::from(
-                "agentos <command>: list-tools [toolkit], <toolkit> --help, or <toolkit> <tool> ...",
+                "agentos <command>: list-bindings [collection], <collection> --help, or <collection> <binding> ...",
             )),
         )]));
     }
-    if subcommand == "list-tools" {
+    if subcommand == "list-bindings" {
         return match command.args.get(1) {
-            Some(toolkit_name) => describe_toolkit_payload(&registry.tool_kits, toolkit_name),
-            None => Ok(list_toolkits_payload(&registry.tool_kits)),
+            Some(collection_name) => describe_bindings_payload(&registry.bindings, collection_name),
+            None => Ok(list_bindings_payload(&registry.bindings)),
         };
     }
 
-    let Some(toolkit) = registry
-        .tool_kits
+    let Some(collection) = registry
+        .bindings
         .iter()
-        .find(|toolkit| toolkit.name == *subcommand)
+        .find(|collection| collection.name == *subcommand)
     else {
         return Err(format!(
-            "No toolkit \"{subcommand}\". Available: {}",
-            toolkit_names(&registry.tool_kits)
+            "No collection \"{subcommand}\". Available: {}",
+            bindings_names(&registry.bindings)
         ));
     };
 
-    let Some(tool_name) = command.args.get(1) else {
-        return describe_toolkit_payload(&registry.tool_kits, subcommand);
+    let Some(binding_name) = command.args.get(1) else {
+        return describe_bindings_payload(&registry.bindings, subcommand);
     };
-    if is_help_flag(tool_name) {
-        return describe_toolkit_payload(&registry.tool_kits, subcommand);
+    if is_help_flag(binding_name) {
+        return describe_bindings_payload(&registry.bindings, subcommand);
     }
     if command.args.get(2).is_some_and(|value| is_help_flag(value)) {
-        return describe_tool_payload(toolkit, tool_name);
+        return describe_binding_payload(collection, binding_name);
     }
-    invoke_host_tool(
+    invoke_binding(
         ownership,
         registry,
-        toolkit,
-        tool_name,
+        collection,
+        binding_name,
         command.args.get(2..).unwrap_or_default(),
         &command.cwd,
     )
     .await
 }
 
-async fn handle_agentos_toolkit_command(
+async fn handle_agentos_binding_command(
     ownership: &wire::OwnershipScope,
-    registry: &VmHostToolRegistry,
+    registry: &VmBindingRegistry,
     command: &HostCommandCallbackInput,
-    toolkit: &ToolKit,
+    collection: &Bindings,
 ) -> Result<Value, String> {
-    let Some(tool_name) = command.args.first() else {
-        return describe_toolkit_payload(&registry.tool_kits, &toolkit.name);
+    let Some(binding_name) = command.args.first() else {
+        return describe_bindings_payload(&registry.bindings, &collection.name);
     };
-    if is_help_flag(tool_name) {
-        return describe_toolkit_payload(&registry.tool_kits, &toolkit.name);
+    if is_help_flag(binding_name) {
+        return describe_bindings_payload(&registry.bindings, &collection.name);
     }
     if command.args.get(1).is_some_and(|value| is_help_flag(value)) {
-        return describe_tool_payload(toolkit, tool_name);
+        return describe_binding_payload(collection, binding_name);
     }
-    invoke_host_tool(
+    invoke_binding(
         ownership,
         registry,
-        toolkit,
-        tool_name,
+        collection,
+        binding_name,
         command.args.get(1..).unwrap_or_default(),
         &command.cwd,
     )
     .await
 }
 
-async fn invoke_host_tool(
+async fn invoke_binding(
     ownership: &wire::OwnershipScope,
-    registry: &VmHostToolRegistry,
-    toolkit: &ToolKit,
-    tool_name: &str,
+    registry: &VmBindingRegistry,
+    collection: &Bindings,
+    binding_name: &str,
     args: &[String],
     cwd: &str,
 ) -> Result<Value, String> {
-    let callback_key = format!("{}:{tool_name}", toolkit.name);
-    let Some(tool) = registry.tool_map.get(&callback_key).cloned() else {
+    let callback_key = format!("{}:{binding_name}", collection.name);
+    let Some(binding) = registry.binding_map.get(&callback_key).cloned() else {
         return Err(format!(
-            "No tool \"{tool_name}\" in toolkit \"{}\". Available: {}",
-            toolkit.name,
-            tool_names(toolkit)
+            "No binding \"{binding_name}\" in collection \"{}\". Available: {}",
+            collection.name,
+            binding_names(collection)
         ));
     };
 
-    if tool_permission_mode(registry.permissions.as_ref(), &callback_key) != PermissionMode::Allow {
+    if binding_permission_mode(registry.permissions.as_ref(), &callback_key)
+        != PermissionMode::Allow
+    {
         return Err(format!(
             "EACCES: blocked by binding.invoke policy for {callback_key}"
         ));
     }
 
-    let input = parse_host_tool_input(ownership, &tool, args, cwd).await?;
-    validate_tool_input(&tool.input_schema, &input).map_err(|error| error.to_string())?;
+    let input = parse_binding_input(ownership, &binding, args, cwd).await?;
+    validate_binding_input(&binding.input_schema, &input).map_err(|error| error.to_string())?;
 
-    let timeout = Duration::from_millis(tool.timeout_ms.unwrap_or(30_000).max(1));
-    match tokio::time::timeout(timeout, (tool.execute)(input)).await {
+    let timeout = Duration::from_millis(binding.timeout_ms.unwrap_or(30_000).max(1));
+    match tokio::time::timeout(timeout, (binding.execute)(input)).await {
         Ok(Ok(value)) => Ok(value),
         Ok(Err(error)) => Err(error),
         Err(_) => Err(format!(
-            "Tool \"{callback_key}\" timed out after {}ms",
-            tool.timeout_ms.unwrap_or(30_000)
+            "Binding \"{callback_key}\" timed out after {}ms",
+            binding.timeout_ms.unwrap_or(30_000)
         )),
     }
 }
 
-async fn parse_host_tool_input(
+async fn parse_binding_input(
     ownership: &wire::OwnershipScope,
-    tool: &HostTool,
+    binding: &Binding,
     args: &[String],
     cwd: &str,
 ) -> Result<Value, String> {
@@ -2767,14 +2772,14 @@ async fn parse_host_tool_input(
         return serde_json::from_str(&text).map_err(|error| format!("Invalid JSON file: {error}"));
     }
 
-    parse_tool_argv(&tool.input_schema, args)
+    parse_binding_argv(&binding.input_schema, args)
 }
 
 fn host_callback_json_result(value: Value) -> Result<String, String> {
     serde_json::to_string(&value).map_err(|error| format!("Invalid host callback result: {error}"))
 }
 
-fn parse_tool_argv(schema: &Value, argv: &[String]) -> Result<Value, String> {
+fn parse_binding_argv(schema: &Value, argv: &[String]) -> Result<Value, String> {
     let properties = schema
         .get("properties")
         .and_then(Value::as_object)
@@ -2901,13 +2906,13 @@ fn parse_tool_argv(schema: &Value, argv: &[String]) -> Result<Value, String> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct ToolInputSchemaViolation {
+struct BindingInputSchemaViolation {
     path: String,
     expected: String,
     actual: String,
 }
 
-impl ToolInputSchemaViolation {
+impl BindingInputSchemaViolation {
     fn new(
         path: impl Into<String>,
         expected: impl Into<String>,
@@ -2921,25 +2926,28 @@ impl ToolInputSchemaViolation {
     }
 }
 
-impl std::fmt::Display for ToolInputSchemaViolation {
+impl std::fmt::Display for BindingInputSchemaViolation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "ToolInputSchemaViolation at {}: expected {}, got {}",
+            "BindingInputSchemaViolation at {}: expected {}, got {}",
             self.path, self.expected, self.actual
         )
     }
 }
 
-fn validate_tool_input(schema: &Value, input: &Value) -> Result<(), ToolInputSchemaViolation> {
-    validate_tool_input_at_path(schema, input, "$")
+fn validate_binding_input(
+    schema: &Value,
+    input: &Value,
+) -> Result<(), BindingInputSchemaViolation> {
+    validate_binding_input_at_path(schema, input, "$")
 }
 
-fn validate_tool_input_at_path(
+fn validate_binding_input_at_path(
     schema: &Value,
     input: &Value,
     path: &str,
-) -> Result<(), ToolInputSchemaViolation> {
+) -> Result<(), BindingInputSchemaViolation> {
     if schema.is_null() || schema.as_object().is_some_and(|object| object.is_empty()) {
         return Ok(());
     }
@@ -2953,7 +2961,7 @@ fn validate_tool_input_at_path(
         if enum_values.iter().any(|candidate| candidate == input) {
             return Ok(());
         }
-        return Err(ToolInputSchemaViolation::new(
+        return Err(BindingInputSchemaViolation::new(
             path,
             format!(
                 "one of {}",
@@ -2970,7 +2978,7 @@ fn validate_tool_input_at_path(
         if expected == input {
             return Ok(());
         }
-        return Err(ToolInputSchemaViolation::new(
+        return Err(BindingInputSchemaViolation::new(
             path,
             format!("constant {}", compact_json(expected)),
             describe_value(input),
@@ -2979,19 +2987,19 @@ fn validate_tool_input_at_path(
 
     match schema.get("type") {
         Some(Value::String(expected_type)) => {
-            validate_typed_tool_input(schema, input, path, expected_type)
+            validate_typed_binding_input(schema, input, path, expected_type)
         }
         Some(Value::Array(expected_types)) => {
             let mut first_error = None;
             for expected_type in expected_types.iter().filter_map(Value::as_str) {
-                match validate_typed_tool_input(schema, input, path, expected_type) {
+                match validate_typed_binding_input(schema, input, path, expected_type) {
                     Ok(()) => return Ok(()),
                     Err(error) if first_error.is_none() => first_error = Some(error),
                     Err(_) => {}
                 }
             }
             Err(first_error.unwrap_or_else(|| {
-                ToolInputSchemaViolation::new(
+                BindingInputSchemaViolation::new(
                     path,
                     describe_expected(schema),
                     describe_value(input),
@@ -3000,7 +3008,7 @@ fn validate_tool_input_at_path(
         }
         Some(_) => Ok(()),
         None if has_object_keywords(schema) => {
-            validate_typed_tool_input(schema, input, path, "object")
+            validate_typed_binding_input(schema, input, path, "object")
         }
         None => Ok(()),
     }
@@ -3011,17 +3019,17 @@ fn validate_schema_branches(
     input: &Value,
     path: &str,
     keyword: &str,
-) -> Result<(), ToolInputSchemaViolation> {
+) -> Result<(), BindingInputSchemaViolation> {
     let mut first_error = None;
     for branch in branches {
-        match validate_tool_input_at_path(branch, input, path) {
+        match validate_binding_input_at_path(branch, input, path) {
             Ok(()) => return Ok(()),
             Err(error) if first_error.is_none() => first_error = Some(error),
             Err(_) => {}
         }
     }
     Err(first_error.unwrap_or_else(|| {
-        ToolInputSchemaViolation::new(
+        BindingInputSchemaViolation::new(
             path,
             format!(
                 "{keyword} branch ({})",
@@ -3036,37 +3044,37 @@ fn validate_schema_branches(
     }))
 }
 
-fn validate_typed_tool_input(
+fn validate_typed_binding_input(
     schema: &Value,
     input: &Value,
     path: &str,
     expected_type: &str,
-) -> Result<(), ToolInputSchemaViolation> {
+) -> Result<(), BindingInputSchemaViolation> {
     match expected_type {
         "null" if input.is_null() => Ok(()),
         "null" => Err(type_violation(path, expected_type, input)),
         "boolean" if input.is_boolean() => Ok(()),
         "boolean" => Err(type_violation(path, expected_type, input)),
-        "string" => validate_string_tool_input(schema, input, path),
-        "number" => validate_number_tool_input(schema, input, path, false),
-        "integer" => validate_number_tool_input(schema, input, path, true),
-        "array" => validate_array_tool_input(schema, input, path),
-        "object" => validate_object_tool_input(schema, input, path),
+        "string" => validate_string_binding_input(schema, input, path),
+        "number" => validate_number_binding_input(schema, input, path, false),
+        "integer" => validate_number_binding_input(schema, input, path, true),
+        "array" => validate_array_binding_input(schema, input, path),
+        "object" => validate_object_binding_input(schema, input, path),
         _ => Ok(()),
     }
 }
 
-fn validate_string_tool_input(
+fn validate_string_binding_input(
     schema: &Value,
     input: &Value,
     path: &str,
-) -> Result<(), ToolInputSchemaViolation> {
+) -> Result<(), BindingInputSchemaViolation> {
     let Some(value) = input.as_str() else {
         return Err(type_violation(path, "string", input));
     };
     if let Some(min_length) = schema.get("minLength").and_then(Value::as_u64) {
         if value.chars().count() < min_length as usize {
-            return Err(ToolInputSchemaViolation::new(
+            return Err(BindingInputSchemaViolation::new(
                 path,
                 format!("string with minLength {min_length}"),
                 format!("string length {}", value.chars().count()),
@@ -3075,7 +3083,7 @@ fn validate_string_tool_input(
     }
     if let Some(max_length) = schema.get("maxLength").and_then(Value::as_u64) {
         if value.chars().count() > max_length as usize {
-            return Err(ToolInputSchemaViolation::new(
+            return Err(BindingInputSchemaViolation::new(
                 path,
                 format!("string with maxLength {max_length}"),
                 format!("string length {}", value.chars().count()),
@@ -3085,12 +3093,12 @@ fn validate_string_tool_input(
     Ok(())
 }
 
-fn validate_number_tool_input(
+fn validate_number_binding_input(
     schema: &Value,
     input: &Value,
     path: &str,
     expect_integer: bool,
-) -> Result<(), ToolInputSchemaViolation> {
+) -> Result<(), BindingInputSchemaViolation> {
     let Some(number) = input.as_f64() else {
         return Err(type_violation(
             path,
@@ -3103,7 +3111,7 @@ fn validate_number_tool_input(
     }
     if let Some(minimum) = schema.get("minimum").and_then(Value::as_f64) {
         if number < minimum {
-            return Err(ToolInputSchemaViolation::new(
+            return Err(BindingInputSchemaViolation::new(
                 path,
                 format!(
                     "{} >= {}",
@@ -3116,7 +3124,7 @@ fn validate_number_tool_input(
     }
     if let Some(minimum) = schema.get("exclusiveMinimum").and_then(Value::as_f64) {
         if number <= minimum {
-            return Err(ToolInputSchemaViolation::new(
+            return Err(BindingInputSchemaViolation::new(
                 path,
                 format!(
                     "{} > {}",
@@ -3129,7 +3137,7 @@ fn validate_number_tool_input(
     }
     if let Some(maximum) = schema.get("maximum").and_then(Value::as_f64) {
         if number > maximum {
-            return Err(ToolInputSchemaViolation::new(
+            return Err(BindingInputSchemaViolation::new(
                 path,
                 format!(
                     "{} <= {}",
@@ -3142,7 +3150,7 @@ fn validate_number_tool_input(
     }
     if let Some(maximum) = schema.get("exclusiveMaximum").and_then(Value::as_f64) {
         if number >= maximum {
-            return Err(ToolInputSchemaViolation::new(
+            return Err(BindingInputSchemaViolation::new(
                 path,
                 format!(
                     "{} < {}",
@@ -3156,17 +3164,17 @@ fn validate_number_tool_input(
     Ok(())
 }
 
-fn validate_array_tool_input(
+fn validate_array_binding_input(
     schema: &Value,
     input: &Value,
     path: &str,
-) -> Result<(), ToolInputSchemaViolation> {
+) -> Result<(), BindingInputSchemaViolation> {
     let Some(items) = input.as_array() else {
         return Err(type_violation(path, "array", input));
     };
     if let Some(min_items) = schema.get("minItems").and_then(Value::as_u64) {
         if items.len() < min_items as usize {
-            return Err(ToolInputSchemaViolation::new(
+            return Err(BindingInputSchemaViolation::new(
                 path,
                 format!("array with minItems {min_items}"),
                 format!("array length {}", items.len()),
@@ -3175,7 +3183,7 @@ fn validate_array_tool_input(
     }
     if let Some(max_items) = schema.get("maxItems").and_then(Value::as_u64) {
         if items.len() > max_items as usize {
-            return Err(ToolInputSchemaViolation::new(
+            return Err(BindingInputSchemaViolation::new(
                 path,
                 format!("array with maxItems {max_items}"),
                 format!("array length {}", items.len()),
@@ -3184,17 +3192,17 @@ fn validate_array_tool_input(
     }
     if let Some(item_schema) = schema.get("items") {
         for (index, item) in items.iter().enumerate() {
-            validate_tool_input_at_path(item_schema, item, &format!("{path}[{index}]"))?;
+            validate_binding_input_at_path(item_schema, item, &format!("{path}[{index}]"))?;
         }
     }
     Ok(())
 }
 
-fn validate_object_tool_input(
+fn validate_object_binding_input(
     schema: &Value,
     input: &Value,
     path: &str,
-) -> Result<(), ToolInputSchemaViolation> {
+) -> Result<(), BindingInputSchemaViolation> {
     let Some(object) = input.as_object() else {
         return Err(type_violation(path, "object", input));
     };
@@ -3215,7 +3223,7 @@ fn validate_object_tool_input(
                 .get(field)
                 .map(describe_expected)
                 .unwrap_or_else(|| String::from("required value"));
-            return Err(ToolInputSchemaViolation::new(
+            return Err(BindingInputSchemaViolation::new(
                 field_path,
                 expected,
                 "missing value",
@@ -3225,19 +3233,19 @@ fn validate_object_tool_input(
     for (field, value) in object {
         let field_path = format!("{path}.{field}");
         if let Some(field_schema) = properties.get(field) {
-            validate_tool_input_at_path(field_schema, value, &field_path)?;
+            validate_binding_input_at_path(field_schema, value, &field_path)?;
             continue;
         }
         match schema.get("additionalProperties") {
             Some(Value::Bool(false)) => {
-                return Err(ToolInputSchemaViolation::new(
+                return Err(BindingInputSchemaViolation::new(
                     field_path,
                     "no additional properties",
                     describe_value(value),
                 ));
             }
             Some(additional_schema) => {
-                validate_tool_input_at_path(additional_schema, value, &field_path)?;
+                validate_binding_input_at_path(additional_schema, value, &field_path)?;
             }
             None => {}
         }
@@ -3251,8 +3259,8 @@ fn has_object_keywords(schema: &Value) -> bool {
         || schema.get("additionalProperties").is_some()
 }
 
-fn type_violation(path: &str, expected: &str, input: &Value) -> ToolInputSchemaViolation {
-    ToolInputSchemaViolation::new(path, expected, describe_value(input))
+fn type_violation(path: &str, expected: &str, input: &Value) -> BindingInputSchemaViolation {
+    BindingInputSchemaViolation::new(path, expected, describe_value(input))
 }
 
 fn describe_expected(schema: &Value) -> String {
@@ -3305,23 +3313,23 @@ fn compact_json(value: &Value) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| String::from("<invalid json>"))
 }
 
-fn list_toolkits_payload(tool_kits: &[ToolKit]) -> Value {
+fn list_bindings_payload(bindings: &[Bindings]) -> Value {
     Value::Object(Map::from_iter([(
-        String::from("toolkits"),
+        String::from("bindings"),
         Value::Array(
-            tool_kits
+            bindings
                 .iter()
-                .map(|toolkit| {
+                .map(|collection| {
                     json_object([
-                        ("name", Value::String(toolkit.name.clone())),
-                        ("description", Value::String(toolkit.description.clone())),
+                        ("name", Value::String(collection.name.clone())),
+                        ("description", Value::String(collection.description.clone())),
                         (
-                            "tools",
+                            "bindings",
                             Value::Array(
-                                toolkit
-                                    .tools
+                                collection
+                                    .bindings
                                     .iter()
-                                    .map(|tool| Value::String(tool.name.clone()))
+                                    .map(|binding| Value::String(binding.name.clone()))
                                     .collect(),
                             ),
                         ),
@@ -3332,29 +3340,32 @@ fn list_toolkits_payload(tool_kits: &[ToolKit]) -> Value {
     )]))
 }
 
-fn describe_toolkit_payload(tool_kits: &[ToolKit], toolkit_name: &str) -> Result<Value, String> {
-    let Some(toolkit) = tool_kits
+fn describe_bindings_payload(
+    bindings: &[Bindings],
+    collection_name: &str,
+) -> Result<Value, String> {
+    let Some(collection) = bindings
         .iter()
-        .find(|toolkit| toolkit.name == toolkit_name)
+        .find(|collection| collection.name == collection_name)
     else {
         return Err(format!(
-            "No toolkit \"{toolkit_name}\". Available: {}",
-            toolkit_names(tool_kits)
+            "No collection \"{collection_name}\". Available: {}",
+            bindings_names(bindings)
         ));
     };
     Ok(json_object([
-        ("name", Value::String(toolkit.name.clone())),
-        ("description", Value::String(toolkit.description.clone())),
+        ("name", Value::String(collection.name.clone())),
+        ("description", Value::String(collection.description.clone())),
         (
-            "tools",
-            Value::Object(Map::from_iter(toolkit.tools.iter().map(|tool| {
+            "bindings",
+            Value::Object(Map::from_iter(collection.bindings.iter().map(|binding| {
                 (
-                    tool.name.clone(),
+                    binding.name.clone(),
                     json_object([
-                        ("description", Value::String(tool.description.clone())),
+                        ("description", Value::String(binding.description.clone())),
                         (
                             "flags",
-                            Value::Array(describe_tool_flags(&tool.input_schema)),
+                            Value::Array(describe_binding_flags(&binding.input_schema)),
                         ),
                     ]),
                 )
@@ -3363,27 +3374,31 @@ fn describe_toolkit_payload(tool_kits: &[ToolKit], toolkit_name: &str) -> Result
     ]))
 }
 
-fn describe_tool_payload(toolkit: &ToolKit, tool_name: &str) -> Result<Value, String> {
-    let Some(tool) = toolkit.tools.iter().find(|tool| tool.name == tool_name) else {
+fn describe_binding_payload(collection: &Bindings, binding_name: &str) -> Result<Value, String> {
+    let Some(binding) = collection
+        .bindings
+        .iter()
+        .find(|binding| binding.name == binding_name)
+    else {
         return Err(format!(
-            "No tool \"{tool_name}\" in toolkit \"{}\". Available: {}",
-            toolkit.name,
-            tool_names(toolkit)
+            "No binding \"{binding_name}\" in collection \"{}\". Available: {}",
+            collection.name,
+            binding_names(collection)
         ));
     };
     Ok(json_object([
-        ("toolkit", Value::String(toolkit.name.clone())),
-        ("tool", Value::String(tool_name.to_string())),
-        ("description", Value::String(tool.description.clone())),
+        ("collection", Value::String(collection.name.clone())),
+        ("binding", Value::String(binding_name.to_string())),
+        ("description", Value::String(binding.description.clone())),
         (
             "flags",
-            Value::Array(describe_tool_flags(&tool.input_schema)),
+            Value::Array(describe_binding_flags(&binding.input_schema)),
         ),
         ("examples", Value::Array(Vec::new())),
     ]))
 }
 
-fn describe_tool_flags(schema: &Value) -> Vec<Value> {
+fn describe_binding_flags(schema: &Value) -> Vec<Value> {
     let properties = schema
         .get("properties")
         .and_then(Value::as_object)
@@ -3410,7 +3425,7 @@ fn describe_tool_flags(schema: &Value) -> Vec<Value> {
                 ),
                 (
                     "type",
-                    Value::String(describe_tool_flag_type(&field_schema)),
+                    Value::String(describe_binding_flag_type(&field_schema)),
                 ),
                 ("required", Value::Bool(required.contains(&field_name))),
             ])
@@ -3418,7 +3433,7 @@ fn describe_tool_flags(schema: &Value) -> Vec<Value> {
         .collect()
 }
 
-fn describe_tool_flag_type(schema: &Value) -> String {
+fn describe_binding_flag_type(schema: &Value) -> String {
     match json_schema_type(schema) {
         Some("array") => {
             let item_type = schema
@@ -3439,7 +3454,10 @@ fn describe_tool_flag_type(schema: &Value) -> String {
     }
 }
 
-fn tool_permission_mode(permissions: Option<&Permissions>, callback_key: &str) -> PermissionMode {
+fn binding_permission_mode(
+    permissions: Option<&Permissions>,
+    callback_key: &str,
+) -> PermissionMode {
     let Some(permissions) = permissions else {
         return PermissionMode::Allow;
     };
@@ -3537,19 +3555,19 @@ fn permission_pattern_matches(pattern: &str, value: &str) -> bool {
     pattern_index == pattern_bytes.len()
 }
 
-fn toolkit_names(tool_kits: &[ToolKit]) -> String {
-    tool_kits
+fn bindings_names(bindings: &[Bindings]) -> String {
+    bindings
         .iter()
-        .map(|toolkit| toolkit.name.clone())
+        .map(|collection| collection.name.clone())
         .collect::<Vec<_>>()
         .join(", ")
 }
 
-fn tool_names(toolkit: &ToolKit) -> String {
-    toolkit
-        .tools
+fn binding_names(collection: &Bindings) -> String {
+    collection
+        .bindings
         .iter()
-        .map(|tool| tool.name.clone())
+        .map(|binding| binding.name.clone())
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -3845,10 +3863,10 @@ mod tests {
         JoinHandle,
     };
     use crate::config::{
-        AgentOsConfig, AgentOsLimits, FsPermissionRule, FsPermissions, HttpLimits, JsRuntimeLimits,
-        MountPlugin, PatternPermissions, PermissionMode, Permissions, PythonLimits, ResourceLimits,
-        RootFilesystemConfig, RootFilesystemKind, RootFilesystemMode, RootLowerInput,
-        RulePermissions, ToolLimits, WasmLimits,
+        AgentOsConfig, AgentOsLimits, BindingLimits, FsPermissionRule, FsPermissions, HttpLimits,
+        JsRuntimeLimits, MountPlugin, PatternPermissions, PermissionMode, Permissions,
+        PythonLimits, ResourceLimits, RootFilesystemConfig, RootFilesystemKind, RootFilesystemMode,
+        RootLowerInput, RulePermissions, WasmLimits,
     };
     use crate::fs::{
         DirEntryType, FilesystemEntry, FilesystemEntryEncoding, FilesystemSnapshotEntries,
@@ -4126,9 +4144,9 @@ mod tests {
                 http: Some(HttpLimits {
                     max_fetch_response_bytes: Some(1024),
                 }),
-                tools: Some(ToolLimits {
-                    default_tool_timeout_ms: Some(500),
-                    max_registered_tools_per_vm: Some(12),
+                bindings: Some(BindingLimits {
+                    default_binding_timeout_ms: Some(500),
+                    max_registered_bindings_per_vm: Some(12),
                     ..Default::default()
                 }),
                 js_runtime: Some(JsRuntimeLimits {
@@ -4164,17 +4182,17 @@ mod tests {
         );
         assert_eq!(
             limits
-                .tools
+                .bindings
                 .as_ref()
-                .expect("tool limits")
-                .default_tool_timeout_ms,
+                .expect("binding limits")
+                .default_binding_timeout_ms,
             Some(500)
         );
         assert_eq!(
             limits
-                .tools
-                .expect("tool limits")
-                .max_registered_tools_per_vm,
+                .bindings
+                .expect("binding limits")
+                .max_registered_bindings_per_vm,
             Some(12)
         );
         assert_eq!(

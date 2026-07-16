@@ -67,13 +67,13 @@ pub use stream::{ByteStream, Subscription};
 
 pub use config::{
     node_modules_mount, AcpLimits, AgentOsConfig, AgentOsConfigBuilder, AgentOsLimits,
-    AgentOsSidecarConfig, FsPermissionRule, FsPermissions, HostTool, HttpLimits, JsRuntimeLimits,
-    MountConfig, MountPlugin, OverlayMountConfig, PackageRef, PatternPermissionRule,
-    PatternPermissions, PermissionMode, Permissions, PluginLimits, PythonLimits, ResourceLimits,
-    RootFilesystemConfig, RootFilesystemKind, RootFilesystemMode, RootLowerInput, RulePermissions,
-    ScheduleCallback, ScheduleDriver, ScheduleEntry, ScheduleHandle, SidecarJsBridgeCall,
-    SidecarJsBridgeCallback, SoftwareInput, SoftwareKind, TimerScheduleDriver, ToolCallback,
-    ToolKit, ToolLimits, WasmLimits,
+    AgentOsSidecarConfig, Binding, BindingCallback, BindingLimits, Bindings, FsPermissionRule,
+    FsPermissions, HttpLimits, JsRuntimeLimits, MountConfig, MountPlugin, OverlayMountConfig,
+    PackageRef, PatternPermissionRule, PatternPermissions, PermissionMode, Permissions,
+    PluginLimits, PythonLimits, ResourceLimits, RootFilesystemConfig, RootFilesystemKind,
+    RootFilesystemMode, RootLowerInput, RulePermissions, ScheduleCallback, ScheduleDriver,
+    ScheduleEntry, ScheduleHandle, SidecarJsBridgeCall, SidecarJsBridgeCallback, SoftwareInput,
+    SoftwareKind, TimerScheduleDriver, WasmLimits,
 };
 
 pub use process::{

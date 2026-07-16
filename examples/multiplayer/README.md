@@ -1,6 +1,6 @@
 ---
 title: "Multiplayer"
-description: "Multiple clients observing one session: shared output, collaborative input, and reconnect replay."
+description: "Multiple clients observing one live session with shared output and collaborative input."
 category: "Sessions & Permissions"
 order: 6
 ---
@@ -9,7 +9,7 @@ Run one agent session and let several clients watch and drive it at once. Reach 
 
 ## How it works
 
-Clients connect to the same VM actor by id (`getOrCreate("shared-agent")`), so they share one session rather than spawning their own. Each connection subscribes to the same event stream — `sessionEvent`, `processOutput`, and `shellData` all fan out to every connected client. One client can create the session and `sendPrompt`, while others observe the streaming response without driving it. Because the server fans events out from a single session, the `onSessionEvent` server hook still fires once per event regardless of how many clients are attached. Every event carries a sequence number, so a client that drops can call `getSequencedEvents({ since })` to replay what it missed before resuming the live stream.
+Clients connect to the same VM actor by id (`getOrCreate("shared-agent")`), so they share one session rather than spawning their own. Each connection subscribes to the same event stream—`sessionEvent`, `processOutput`, and `shellData` all fan out to every connected client. One client can create the session and `sendPrompt`, while others observe the streaming response without driving it. Because the server fans events out from a single session, the `onSessionEvent` server hook still fires once per event regardless of how many clients are attached. Session events are live-only, so reconnecting clients receive new events after they subscribe rather than replaying missed output.
 
 ## Run it
 

@@ -29,9 +29,9 @@ use agentos_native_sidecar_core::{
     VM_FETCH_BUFFER_LIMIT_BYTES,
 };
 use agentos_native_sidecar_core::{
-    ensure_command_aliases_available, ensure_toolkit_name_available,
-    ensure_toolkit_registry_capacity, registered_tool_command_names, shared_guest_runtime_identity,
-    validate_toolkit_registration,
+    ensure_binding_registry_capacity, ensure_collection_name_available,
+    ensure_command_aliases_available, registered_binding_command_names,
+    shared_guest_runtime_identity, validate_bindings_registration,
 };
 use agentos_sidecar_protocol::protocol::{
     FindBoundUdpRequest, FindListenerRequest, GuestFilesystemCallRequest,
@@ -90,7 +90,7 @@ struct VmState {
     kernel: BrowserKernel,
     configuration: BrowserVmConfiguration,
     layers: VmLayerStore,
-    toolkits: BTreeMap<String, RegisterHostCallbacksRequest>,
+    bindings: BTreeMap<String, RegisterHostCallbacksRequest>,
     signal_states: BTreeMap<String, BTreeMap<u32, ProtocolSignalHandlerRegistration>>,
     contexts: BTreeSet<String>,
     active_executions: BTreeSet<String>,
@@ -522,7 +522,7 @@ where
                     ..BrowserVmConfiguration::default()
                 },
                 layers: VmLayerStore::default(),
-                toolkits: BTreeMap::new(),
+                bindings: BTreeMap::new(),
                 signal_states: BTreeMap::new(),
                 contexts: BTreeSet::new(),
                 active_executions: BTreeSet::new(),
@@ -650,19 +650,19 @@ where
         vm_id: &str,
         payload: RegisterHostCallbacksRequest,
     ) -> Result<(String, u32), BrowserSidecarError> {
-        validate_toolkit_registration(&payload)
+        validate_bindings_registration(&payload)
             .map_err(|error| BrowserSidecarError::InvalidState(error.to_string()))?;
         let vm = self.vm_mut(vm_id)?;
-        ensure_toolkit_name_available(&vm.toolkits, &payload.name)
+        ensure_collection_name_available(&vm.bindings, &payload.name)
             .map_err(|error| BrowserSidecarError::InvalidState(error.to_string()))?;
-        ensure_command_aliases_available(&vm.toolkits, &payload)
+        ensure_command_aliases_available(&vm.bindings, &payload)
             .map_err(|error| BrowserSidecarError::InvalidState(error.to_string()))?;
-        ensure_toolkit_registry_capacity(&vm.toolkits, &payload)
+        ensure_binding_registry_capacity(&vm.bindings, &payload)
             .map_err(|error| BrowserSidecarError::InvalidState(error.to_string()))?;
 
         let registration = payload.name.clone();
-        vm.toolkits.insert(registration.clone(), payload);
-        let command_count = u32::try_from(registered_tool_command_names(&vm.toolkits).len())
+        vm.bindings.insert(registration.clone(), payload);
+        let command_count = u32::try_from(registered_binding_command_names(&vm.bindings).len())
             .map_err(|_| {
                 BrowserSidecarError::InvalidState(String::from(
                     "registered host callback command count exceeds u32",

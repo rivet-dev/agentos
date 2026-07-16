@@ -2,6 +2,7 @@
 
 //! Backend-agnostic sidecar logic shared by native and browser shells.
 
+pub mod bindings;
 pub mod bridge_bytes;
 pub mod ca;
 pub mod diagnostics;
@@ -18,9 +19,17 @@ pub mod root_fs;
 pub mod router;
 pub mod services;
 pub mod signals;
-pub mod tools;
 pub mod vm_fetch;
 
+pub use bindings::{
+    ensure_binding_registry_capacity, ensure_collection_name_available,
+    ensure_command_aliases_available, registered_binding_command_names,
+    validate_bindings_registration, BindingRegistrationError, DEFAULT_BINDING_TIMEOUT_MS,
+    MAX_BINDINGS_PER_COLLECTION, MAX_BINDING_COLLECTION_NAME_LENGTH,
+    MAX_BINDING_DESCRIPTION_LENGTH, MAX_BINDING_EXAMPLE_INPUT_BYTES, MAX_BINDING_NAME_LENGTH,
+    MAX_BINDING_SCHEMA_BYTES, MAX_BINDING_SCHEMA_DEPTH, MAX_BINDING_TIMEOUT_MS,
+    MAX_EXAMPLES_PER_BINDING, MAX_REGISTERED_BINDINGS_PER_VM, MAX_REGISTERED_BINDING_COLLECTIONS,
+};
 pub use bridge_bytes::{
     bridge_buffer_value, decode_base64, decode_bridge_buffer_value, decode_encoded_bytes_value,
     encoded_bytes_value,
@@ -52,8 +61,8 @@ pub use identity::{shared_guest_runtime_identity, SharedGuestRuntimeIdentity};
 pub use layers::{VmLayerStore, MAX_VM_LAYERS};
 pub use limits::{
     validate_vm_limits, virtual_os_cpu_count, virtual_os_freemem_bytes, virtual_os_totalmem_bytes,
-    vm_limits_from_config, AcpLimits, HttpLimits, JsRuntimeLimits, PluginLimits, PythonLimits,
-    ToolLimits, VmLimits, WasmLimits,
+    vm_limits_from_config, AcpLimits, BindingLimits, HttpLimits, JsRuntimeLimits, PluginLimits,
+    PythonLimits, VmLimits, WasmLimits,
 };
 pub use net::{
     local_endpoint_value, remote_endpoint_value, socket_addr_family, socket_address_value,
@@ -84,14 +93,6 @@ pub use signals::{
     apply_process_signal_state_update, canonical_signal_name, default_signal_exit_code,
     execution_signal_from_number, execution_signal_to_kernel, is_valid_posix_signal_number,
     parse_posix_signal, parse_process_signal_state_request, signal_number_from_name,
-};
-pub use tools::{
-    ensure_command_aliases_available, ensure_toolkit_name_available,
-    ensure_toolkit_registry_capacity, registered_tool_command_names, validate_toolkit_registration,
-    ToolRegistrationError, DEFAULT_TOOL_TIMEOUT_MS, MAX_REGISTERED_TOOLKITS,
-    MAX_REGISTERED_TOOLS_PER_VM, MAX_TOOLKIT_NAME_LENGTH, MAX_TOOLS_PER_TOOLKIT,
-    MAX_TOOL_DESCRIPTION_LENGTH, MAX_TOOL_EXAMPLES_PER_TOOL, MAX_TOOL_EXAMPLE_INPUT_BYTES,
-    MAX_TOOL_NAME_LENGTH, MAX_TOOL_SCHEMA_BYTES, MAX_TOOL_SCHEMA_DEPTH, MAX_TOOL_TIMEOUT_MS,
 };
 pub use vm_fetch::{
     ensure_vm_fetch_raw_response_buffer_within_limit, ensure_vm_fetch_response_within_limit,

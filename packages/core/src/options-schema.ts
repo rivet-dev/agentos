@@ -6,7 +6,7 @@ import type {
 	LimitWarningHandler,
 	NativeMountConfig,
 } from "./agent-os.js";
-import type { HostTool, ToolKit } from "./host-tools.js";
+import type { Binding, Bindings } from "./bindings.js";
 
 const stringArray = z.array(z.string());
 const nonNegativeInteger = z.number().int().nonnegative();
@@ -99,16 +99,16 @@ export const agentOsLimitsSchema = z
 			.object({ maxFetchResponseBytes: positiveInteger.optional() })
 			.strict()
 			.optional(),
-		tools: z
+		bindings: z
 			.object({
-				defaultToolTimeoutMs: nonNegativeInteger.optional(),
-				maxToolTimeoutMs: nonNegativeInteger.optional(),
-				maxRegisteredToolkits: positiveInteger.optional(),
-				maxRegisteredToolsPerVm: positiveInteger.optional(),
-				maxToolsPerToolkit: positiveInteger.optional(),
-				maxToolSchemaBytes: positiveInteger.optional(),
-				maxToolExamplesPerTool: nonNegativeInteger.optional(),
-				maxToolExampleInputBytes: positiveInteger.optional(),
+				defaultBindingTimeoutMs: nonNegativeInteger.optional(),
+				maxBindingTimeoutMs: nonNegativeInteger.optional(),
+				maxRegisteredCollections: positiveInteger.optional(),
+				maxRegisteredCollectionsPerVm: positiveInteger.optional(),
+				maxBindingsPerCollection: positiveInteger.optional(),
+				maxBindingSchemaBytes: positiveInteger.optional(),
+				maxExamplesPerBinding: nonNegativeInteger.optional(),
+				maxBindingExampleInputBytes: positiveInteger.optional(),
 			})
 			.strict()
 			.optional(),
@@ -265,14 +265,14 @@ export const sidecarConfigSchema = z.union([
 	explicitSidecarSchema,
 ]);
 
-const toolExampleSchema = z
+const bindingExampleSchema = z
 	.object({
 		description: z.string(),
 		input: z.unknown(),
 	})
 	.strict();
 
-export const hostToolSchema = z
+export const bindingSchema = z
 	.object({
 		description: z.string(),
 		inputSchema: z.custom(
@@ -282,18 +282,18 @@ export const hostToolSchema = z
 			},
 		),
 		execute: functionSchema,
-		examples: z.array(toolExampleSchema).optional(),
+		examples: z.array(bindingExampleSchema).optional(),
 		timeout: nonNegativeInteger.optional(),
 	})
-	.strict() as z.ZodType<HostTool>;
+	.strict() as z.ZodType<Binding>;
 
-export const toolKitSchema = z
+export const bindingsSchema = z
 	.object({
 		name: z.string(),
 		description: z.string(),
-		tools: z.record(z.string(), hostToolSchema),
+		bindings: z.record(z.string(), bindingSchema),
 	})
-	.strict() as z.ZodType<ToolKit>;
+	.strict() as z.ZodType<Bindings>;
 
 /**
  * Shared AgentOsOptions field schemas.
@@ -315,7 +315,7 @@ export const agentOsOptionFieldSchemas = {
 			message: "Expected schedule driver object",
 		})
 		.optional(),
-	toolKits: z.array(toolKitSchema).optional(),
+	bindings: z.array(bindingsSchema).optional(),
 	permissions: permissionsSchema.optional(),
 	sidecar: sidecarConfigSchema.optional(),
 	limits: agentOsLimitsSchema.optional(),

@@ -4,5 +4,5 @@ export type {
 } from "./mount.js";
 export { createSandboxFs } from "./mount.js";
 
-export type { SandboxToolkitOptions } from "./toolkit.js";
-export { createSandboxToolkit } from "./toolkit.js";
+export type { SandboxBindingsOptions } from "./bindings.js";
+export { createSandboxBindings } from "./bindings.js";

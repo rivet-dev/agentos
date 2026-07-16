@@ -1860,8 +1860,8 @@ pub(super) fn rollback_unregistered_spawn_child(
     context: &str,
 ) {
     if let Some(execution) = execution {
-        if let ActiveExecution::Tool(tool) = execution {
-            tool.cancelled.store(true, Ordering::Relaxed);
+        if let ActiveExecution::Binding(binding) = execution {
+            binding.cancelled.store(true, Ordering::Relaxed);
         } else if let Err(error) = execution.terminate() {
             eprintln!(
                 "[agentos] failed to terminate rejected {context} runtime for PID {}: {error}",
@@ -3042,8 +3042,8 @@ where
             (request.command.clone(), request.args.clone())
         };
         let process_args = apply_shell_cwd_prefix(&command, process_args, &guest_cwd);
-        if !exact_exec_path && is_tool_command(vm, &command) {
-            let command = normalized_tool_command_name(&command).unwrap_or(command);
+        if !exact_exec_path && is_binding_command(vm, &command) {
+            let command = normalized_binding_command_name(&command).unwrap_or(command);
             return Ok(ResolvedChildProcessExecution {
                 command: command.clone(),
                 process_args: std::iter::once(command.clone())
@@ -3056,7 +3056,7 @@ where
                 guest_cwd,
                 host_cwd,
                 wasm_permission_tier: None,
-                tool_command: true,
+                binding_command: true,
             });
         }
 
@@ -3107,7 +3107,7 @@ where
                 guest_cwd,
                 host_cwd,
                 wasm_permission_tier: None,
-                tool_command: false,
+                binding_command: false,
             });
         }
 
@@ -3140,7 +3140,7 @@ where
                     guest_cwd,
                     host_cwd,
                     wasm_permission_tier: None,
-                    tool_command: false,
+                    binding_command: false,
                 });
             }
 
@@ -3158,7 +3158,7 @@ where
                     guest_cwd,
                     host_cwd,
                     wasm_permission_tier: None,
-                    tool_command: false,
+                    binding_command: false,
                 });
             }
 
@@ -3179,7 +3179,7 @@ where
                     guest_cwd,
                     host_cwd,
                     wasm_permission_tier: None,
-                    tool_command: false,
+                    binding_command: false,
                 });
             }
 
@@ -3243,7 +3243,7 @@ where
                 guest_cwd,
                 host_cwd,
                 wasm_permission_tier: None,
-                tool_command: false,
+                binding_command: false,
             });
         }
 
@@ -3299,7 +3299,7 @@ where
                 guest_cwd,
                 host_cwd,
                 wasm_permission_tier: None,
-                tool_command: false,
+                binding_command: false,
             });
         }
         prepare_guest_runtime_env(
@@ -3322,7 +3322,7 @@ where
             guest_cwd,
             host_cwd,
             wasm_permission_tier,
-            tool_command: false,
+            binding_command: false,
         })
     }
 
@@ -3527,7 +3527,7 @@ where
         }
         let resolved = resolved;
         if prepared_host_net_fds.inherited_fd_count() != 0
-            && (resolved.runtime != GuestRuntimeKind::WebAssembly || resolved.tool_command)
+            && (resolved.runtime != GuestRuntimeKind::WebAssembly || resolved.binding_command)
         {
             return Err(SidecarError::InvalidState(String::from(
                 "ENOTSUP: inherited host-network fds require a WebAssembly child runtime",
@@ -3554,8 +3554,8 @@ where
         let vm_pending_event_bytes_budget = Arc::clone(&vm.pending_event_bytes_budget);
         let phase_start = Instant::now();
         let (kernel_pid, kernel_handle, execution, kernel_stdin_writer_fd, direct_posix_stdin) =
-            if resolved.tool_command {
-                let tool_resolution = resolve_tool_command(
+            if resolved.binding_command {
+                let binding_resolution = resolve_binding_command(
                     vm,
                     &resolved.command,
                     &resolved.execution_args,
@@ -3563,7 +3563,7 @@ where
                 )?
                 .ok_or_else(|| {
                     SidecarError::InvalidState(format!(
-                        "tool command no longer resolves: {}",
+                        "binding command no longer resolves: {}",
                         resolved.command
                     ))
                 })?;
@@ -3571,7 +3571,7 @@ where
                     .kernel
                     .create_virtual_process_with_process_group(
                         EXECUTION_DRIVER_NAME,
-                        TOOL_DRIVER_NAME,
+                        BINDING_DRIVER_NAME,
                         &resolved.command,
                         resolved.process_args.clone(),
                         VirtualProcessOptions {
@@ -3603,40 +3603,40 @@ where
                     &kernel_handle,
                     spawn_attributes.new_session || request.options.detached,
                 )?;
-                let tool_execution = ToolExecution::with_event_notify(
+                let binding_execution = BindingExecution::with_event_notify(
                     Arc::clone(&self.process_event_notify),
                     process_event_capacity,
                 )
                 .with_vm_pending_event_bytes_budget(Arc::clone(&vm_pending_event_bytes_budget));
-                let cancelled = tool_execution.cancelled.clone();
-                let pending_events = tool_execution.pending_events.clone();
-                let event_overflow_reason = tool_execution.event_overflow_reason.clone();
-                let pending_event_bytes = tool_execution.pending_event_bytes.clone();
-                let pending_event_count_limit = tool_execution.pending_event_count_limit.clone();
-                let pending_event_bytes_limit = tool_execution.pending_event_bytes_limit.clone();
-                let tool_vm_pending_event_bytes_budget =
-                    tool_execution.vm_pending_event_bytes_budget.clone();
-                let event_notify = tool_execution.event_notify.clone();
-                spawn_tool_process_events(ToolProcessEventRequest {
+                let cancelled = binding_execution.cancelled.clone();
+                let pending_events = binding_execution.pending_events.clone();
+                let event_overflow_reason = binding_execution.event_overflow_reason.clone();
+                let pending_event_bytes = binding_execution.pending_event_bytes.clone();
+                let pending_event_count_limit = binding_execution.pending_event_count_limit.clone();
+                let pending_event_bytes_limit = binding_execution.pending_event_bytes_limit.clone();
+                let binding_vm_pending_event_bytes_budget =
+                    binding_execution.vm_pending_event_bytes_budget.clone();
+                let event_notify = binding_execution.event_notify.clone();
+                spawn_binding_process_events(BindingProcessEventRequest {
                     runtime_context: vm.runtime_context.clone(),
                     sidecar_requests: sidecar_requests.clone(),
                     connection_id: vm.connection_id.clone(),
                     session_id: vm.session_id.clone(),
                     vm_id: vm_id.to_owned(),
-                    tool_resolution,
+                    binding_resolution,
                     cancelled,
                     pending_events,
                     event_overflow_reason,
                     pending_event_bytes,
                     pending_event_count_limit,
                     pending_event_bytes_limit,
-                    vm_pending_event_bytes_budget: tool_vm_pending_event_bytes_budget,
+                    vm_pending_event_bytes_budget: binding_vm_pending_event_bytes_budget,
                     event_notify,
                 });
                 (
                     kernel_pid,
                     kernel_handle,
-                    ActiveExecution::Tool(tool_execution),
+                    ActiveExecution::Binding(binding_execution),
                     None,
                     false,
                 )
@@ -4261,7 +4261,7 @@ where
             )?
         };
         apply_child_process_argv0(&mut resolved, request.options.argv0.as_deref());
-        if resolved.tool_command {
+        if resolved.binding_command {
             return Err(SidecarError::InvalidState(format!(
                 "ENOEXEC: exec format error: {}",
                 request.command
@@ -4971,7 +4971,7 @@ where
         }
         let resolved = resolved;
         if prepared_host_net_fds.inherited_fd_count() != 0
-            && (resolved.runtime != GuestRuntimeKind::WebAssembly || resolved.tool_command)
+            && (resolved.runtime != GuestRuntimeKind::WebAssembly || resolved.binding_command)
         {
             return Err(SidecarError::InvalidState(String::from(
                 "ENOTSUP: inherited host-network fds require a WebAssembly child runtime",
@@ -5003,8 +5003,8 @@ where
         child_path.push(child_process_id.as_str());
         let mut pending_kernel_handle = None;
         let spawn_result = (async {
-            let spawned = if resolved.tool_command {
-                let tool_resolution = resolve_tool_command(
+            let spawned = if resolved.binding_command {
+                let binding_resolution = resolve_binding_command(
                     vm,
                     &resolved.command,
                     &resolved.execution_args,
@@ -5012,7 +5012,7 @@ where
                 )?
                 .ok_or_else(|| {
                     SidecarError::InvalidState(format!(
-                        "tool command no longer resolves: {}",
+                        "binding command no longer resolves: {}",
                         resolved.command
                     ))
                 })?;
@@ -5020,7 +5020,7 @@ where
                     .kernel
                     .create_virtual_process_with_process_group(
                         EXECUTION_DRIVER_NAME,
-                        TOOL_DRIVER_NAME,
+                        BINDING_DRIVER_NAME,
                         &resolved.command,
                         resolved.process_args.clone(),
                         VirtualProcessOptions {
@@ -5053,40 +5053,40 @@ where
                     spawn_attributes.new_session || request.options.detached,
                 )?;
                 pending_kernel_handle = Some(kernel_handle.clone());
-                let tool_execution = ToolExecution::with_event_notify(
+                let binding_execution = BindingExecution::with_event_notify(
                     Arc::clone(&self.process_event_notify),
                     process_event_capacity,
                 )
                 .with_vm_pending_event_bytes_budget(Arc::clone(&vm_pending_event_bytes_budget));
-                let cancelled = tool_execution.cancelled.clone();
-                let pending_events = tool_execution.pending_events.clone();
-                let event_overflow_reason = tool_execution.event_overflow_reason.clone();
-                let pending_event_bytes = tool_execution.pending_event_bytes.clone();
-                let pending_event_count_limit = tool_execution.pending_event_count_limit.clone();
-                let pending_event_bytes_limit = tool_execution.pending_event_bytes_limit.clone();
-                let tool_vm_pending_event_bytes_budget =
-                    tool_execution.vm_pending_event_bytes_budget.clone();
-                let event_notify = tool_execution.event_notify.clone();
-                spawn_tool_process_events(ToolProcessEventRequest {
+                let cancelled = binding_execution.cancelled.clone();
+                let pending_events = binding_execution.pending_events.clone();
+                let event_overflow_reason = binding_execution.event_overflow_reason.clone();
+                let pending_event_bytes = binding_execution.pending_event_bytes.clone();
+                let pending_event_count_limit = binding_execution.pending_event_count_limit.clone();
+                let pending_event_bytes_limit = binding_execution.pending_event_bytes_limit.clone();
+                let binding_vm_pending_event_bytes_budget =
+                    binding_execution.vm_pending_event_bytes_budget.clone();
+                let event_notify = binding_execution.event_notify.clone();
+                spawn_binding_process_events(BindingProcessEventRequest {
                     runtime_context: vm.runtime_context.clone(),
                     sidecar_requests: sidecar_requests.clone(),
                     connection_id: vm.connection_id.clone(),
                     session_id: vm.session_id.clone(),
                     vm_id: vm_id.to_owned(),
-                    tool_resolution,
+                    binding_resolution,
                     cancelled,
                     pending_events,
                     event_overflow_reason,
                     pending_event_bytes,
                     pending_event_count_limit,
                     pending_event_bytes_limit,
-                    vm_pending_event_bytes_budget: tool_vm_pending_event_bytes_budget,
+                    vm_pending_event_bytes_budget: binding_vm_pending_event_bytes_budget,
                     event_notify,
                 });
                 (
                     kernel_pid,
                     kernel_handle,
-                    ActiveExecution::Tool(tool_execution),
+                    ActiveExecution::Binding(binding_execution),
                     None,
                     false,
                 )

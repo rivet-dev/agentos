@@ -5,6 +5,7 @@
 pub(crate) mod bootstrap;
 pub(crate) mod bridge;
 // Pure-Rust AES cipher primitives (RustCrypto) replacing the OpenSSL `Crypter`.
+pub(crate) mod bindings;
 pub(crate) mod crypto_cipher;
 pub(crate) mod execution;
 pub mod extension;
@@ -18,7 +19,6 @@ pub(crate) mod plugins;
 pub mod service;
 pub(crate) mod state;
 pub mod stdio;
-pub(crate) mod tools;
 pub(crate) mod vm;
 pub use agentos_sidecar_protocol::{generated_protocol, protocol, wire};
 

@@ -5,8 +5,8 @@ import { NativeSidecarKernelProxy } from "../src/sidecar/rpc-client.js";
 // Regression coverage for post-boot mountFs delivery to the native sidecar:
 //   1. Rust `configure_vm` rebuilds the whole VM configuration from each
 //      payload, so a runtime mount reconfigure that omits the boot `packages` /
-//      `packagesMountAt` / `toolShimCommands` strips the `/opt/agentos`
-//      projections and tool shims from the VM as a side effect.
+//      `packagesMountAt` / `bindingShimCommands` strips the `/opt/agentos`
+//      projections and binding shims from the VM as a side effect.
 //   2. mountFs used to be fire-and-forget with a swallowed rejection, so a
 //      failed reconfigure left the mount silently host-only and callers had no
 //      way to know when (or whether) the guest could see it.
@@ -23,7 +23,7 @@ const bootPackages = [
 		path: "/tmp/common.aospkg",
 	},
 ];
-const bootToolShims = ["agentos", "agentos-demo"];
+const bootBindingShims = ["agentos", "agentos-demo"];
 
 function createStubClient(options?: { failConfigureVm?: boolean }) {
 	const configureCalls: Array<Record<string, unknown>> = [];
@@ -72,7 +72,7 @@ function createProxy(client: unknown) {
 		sidecarMounts: [],
 		packages: bootPackages,
 		packagesMountAt: "/opt/agentos",
-		toolShimCommands: bootToolShims,
+		bindingShimCommands: bootBindingShims,
 		commandGuestPaths: new Map<string, string>(),
 		ownsClient: true,
 	};
@@ -82,7 +82,7 @@ function createProxy(client: unknown) {
 }
 
 describe("post-boot mount reconfiguration", () => {
-	it("resends the boot packages and tool shims on runtime mountFs", async () => {
+	it("resends the boot packages and binding shims on runtime mountFs", async () => {
 		const { client, configureCalls } = createStubClient();
 		const proxy = createProxy(client);
 
@@ -92,7 +92,7 @@ describe("post-boot mount reconfiguration", () => {
 		const payload = configureCalls[0];
 		expect(payload.packages).toEqual(bootPackages);
 		expect(payload.packagesMountAt).toBe("/opt/agentos");
-		expect(payload.toolShimCommands).toEqual(bootToolShims);
+		expect(payload.bindingShimCommands).toEqual(bootBindingShims);
 		expect(payload.mounts).toEqual([
 			expect.objectContaining({ guestPath: "/mnt/dynamic" }),
 		]);
@@ -101,7 +101,7 @@ describe("post-boot mount reconfiguration", () => {
 		expect(configureCalls).toHaveLength(2);
 		expect(configureCalls[1].mounts).toEqual([]);
 		expect(configureCalls[1].packages).toEqual(bootPackages);
-		expect(configureCalls[1].toolShimCommands).toEqual(bootToolShims);
+		expect(configureCalls[1].bindingShimCommands).toEqual(bootBindingShims);
 
 		await proxy.dispose();
 	});
