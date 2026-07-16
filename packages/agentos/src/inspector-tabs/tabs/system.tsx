@@ -2,11 +2,11 @@
 // installed software, configured mounts, preview links, and the actor id in
 // one scroll view, keeping the tab bar to the high-traffic surfaces
 // (transcript, terminal, filesystem).
-import { useQuery, useSuspenseQueries } from "@tanstack/react-query";
+import { useSuspenseQueries } from "@tanstack/react-query";
 import { type ReactNode, useState } from "react";
 import { ActionErrorNote, ChevronRight, CopyButton } from "../common";
 import { cn } from "../lib/cn";
-import { agentOsSource, healthQueryOptions } from "../lib/source";
+import { agentOsSource } from "../lib/source";
 import type { MountInfo, SignedPreviewUrl, SoftwareBundle } from "../lib/types";
 import { Badge } from "../ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
@@ -165,7 +165,7 @@ function PreviewLinks() {
 	};
 
 	return (
-		<div className="px-4 py-3 text-xs">
+		<div className="text-xs">
 			<div className="flex items-center gap-2">
 				<label className="text-muted-foreground" htmlFor="agentos-preview-port">
 					Port
@@ -221,12 +221,26 @@ function PreviewLinks() {
 	);
 }
 
-function SectionHeader({ children, right }: { children: string; right?: ReactNode }) {
+/** Card section, matching the dashboard's settings idiom: title inside a
+ * rounded bordered card, tables in an inner border. */
+function Card({
+	title,
+	right,
+	children,
+}: {
+	title: string;
+	right?: ReactNode;
+	children: ReactNode;
+}) {
 	return (
-		<div className="flex items-center border-b bg-muted/30 px-4 py-1.5 text-[11px] font-medium text-muted-foreground">
+		<section className="rounded-xl border bg-card p-4">
+			<div className="mb-3 flex items-center gap-2">
+				<span className="text-sm font-semibold">{title}</span>
+				<span className="ml-auto" />
+				{right}
+			</div>
 			{children}
-			{right ? <span className="ml-auto">{right}</span> : null}
-		</div>
+		</section>
 	);
 }
 
@@ -245,16 +259,6 @@ export function SystemTabConnected({ actorId }: { actorId: string }) {
 	);
 }
 
-/** Label-over-value cell for the overview grid. */
-function OverviewField({ label, children }: { label: string; children: ReactNode }) {
-	return (
-		<div className="min-w-0">
-			<div className="text-muted-foreground/70">{label}</div>
-			<div className="flex min-w-0 items-center gap-1 font-mono">{children}</div>
-		</div>
-	);
-}
-
 function SystemLoaded({ actorId }: { actorId: string }) {
 	const [software, mounts] = useSuspenseQueries({
 		queries: [
@@ -263,59 +267,51 @@ function SystemLoaded({ actorId }: { actorId: string }) {
 		],
 	});
 	const processCounts = useProcessCounts(actorId);
-	const health = useQuery(healthQueryOptions(actorId));
-	const sessions = health.data?.sessions;
+	const count = (text: string) => (
+		<span className="text-xs text-muted-foreground">{text}</span>
+	);
 	return (
-		<ScrollArea className="h-full min-h-0">
-			<section>
-				<SectionHeader right={<VmStatusBadges actorId={actorId} />}>Overview</SectionHeader>
-				{/* Inside-the-VM facts only: actor identity (id, key, runner) lives
-				    in the dashboard's own Metadata tab. */}
-				<div className="grid grid-cols-2 gap-x-8 gap-y-2 border-b px-4 py-3 text-xs sm:grid-cols-4">
-					<OverviewField label="Live sessions">
-						{sessions == null ? "—" : String(sessions)}
-					</OverviewField>
-					<OverviewField label="Running processes">
-						{`${processCounts.running} of ${processCounts.total}`}
-					</OverviewField>
-					<OverviewField label="Software packages">{String(software.data.length)}</OverviewField>
-					<OverviewField label="Mounts">{String(mounts.data.length)}</OverviewField>
+		<div className="relative h-full min-h-0">
+			{/* VM trouble chips float top-right like every other tab; nothing
+			    renders while the VM is healthy. */}
+			<div className="absolute right-3 top-2 z-10">
+				<VmStatusBadges actorId={actorId} />
+			</div>
+			<ScrollArea className="h-full min-h-0">
+				<div className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-4 py-4">
+					<Card
+						title="Processes"
+						right={count(`${processCounts.running} of ${processCounts.total} running`)}
+					>
+						<div className="overflow-hidden rounded-lg border">
+							<ProcessTable actorId={actorId} />
+						</div>
+					</Card>
+					<Card title="Software" right={count(String(software.data.length))}>
+						{software.data.length === 0 ? (
+							<div className="text-sm text-muted-foreground">No software bundles installed.</div>
+						) : (
+							<div className="divide-y overflow-hidden rounded-lg border">
+								{software.data.map((bundle) => (
+									<SoftwareRow key={bundle.name} bundle={bundle} />
+								))}
+							</div>
+						)}
+					</Card>
+					<Card title="Mounts" right={count(String(mounts.data.length))}>
+						{mounts.data.length === 0 ? (
+							<div className="text-sm text-muted-foreground">No mounts configured on this actor.</div>
+						) : (
+							<div className="overflow-hidden rounded-lg border">
+								<MountsTable mounts={mounts.data} />
+							</div>
+						)}
+					</Card>
+					<Card title="Preview links">
+						<PreviewLinks />
+					</Card>
 				</div>
-			</section>
-			<section>
-				<SectionHeader>Processes</SectionHeader>
-				<div className="border-b">
-					<ProcessTable actorId={actorId} />
-				</div>
-			</section>
-			<section>
-				<SectionHeader>Software</SectionHeader>
-				{software.data.length === 0 ? (
-					<div className="px-4 py-3 text-sm text-muted-foreground">
-						No software bundles installed.
-					</div>
-				) : (
-					<div className="divide-y">
-						{software.data.map((bundle) => (
-							<SoftwareRow key={bundle.name} bundle={bundle} />
-						))}
-					</div>
-				)}
-			</section>
-			<section>
-				<SectionHeader>Mounts</SectionHeader>
-				{mounts.data.length === 0 ? (
-					<div className="px-4 py-3 text-sm text-muted-foreground">
-						No mounts configured on this actor.
-					</div>
-				) : (
-					<MountsTable mounts={mounts.data} />
-				)}
-			</section>
-			<section>
-				<SectionHeader>Preview links</SectionHeader>
-				<PreviewLinks />
-			</section>
-		</ScrollArea>
+			</ScrollArea>
+		</div>
 	);
 }
