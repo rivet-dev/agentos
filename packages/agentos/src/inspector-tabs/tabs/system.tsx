@@ -10,7 +10,7 @@ import { agentOsSource } from "../lib/source";
 import type { MountInfo, SignedPreviewUrl, SoftwareBundle } from "../lib/types";
 import { Badge } from "../ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
-import { SOFTWARE_LOGOS } from "../software-logos";
+import { SOFTWARE_LOGO_DARK_CLASS, SOFTWARE_LOGOS } from "../software-logos";
 import { ScrollArea } from "../ui/scroll-area";
 import { VmBootGate } from "../vm-boot-gate";
 import { VmStatusBadges } from "../vm-status-badges";
@@ -36,14 +36,14 @@ function SoftwareRow({ bundle }: { bundle: SoftwareBundle }) {
 					)}
 				/>
 				{/* Theme-aware chip: white in light mode (the logos' native
-				    background), muted in dark mode with a brightness/hue-preserving
-				    invert so dark-fill artwork stays legible. */}
+				    background), muted in dark mode with a per-logo hue-true
+				    treatment so dark artwork stays legible. */}
 				<span className="flex size-6 shrink-0 items-center justify-center overflow-hidden rounded border bg-white/90 dark:bg-muted/60">
 					{logo ? (
 						<img
 							src={logo}
 							alt=""
-							className="size-4 dark:[filter:invert(1)_hue-rotate(180deg)]"
+							className={cn("size-4", SOFTWARE_LOGO_DARK_CLASS[bundle.slug])}
 						/>
 					) : (
 						<span className="text-[11px] font-medium text-black/60 dark:text-muted-foreground">

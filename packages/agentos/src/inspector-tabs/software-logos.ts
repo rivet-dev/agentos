@@ -26,6 +26,32 @@ import tar from "./assets/software-logos/tar.svg";
 import vim from "./assets/software-logos/vim.svg";
 import wget from "./assets/software-logos/wget.svg";
 
+/** Dark-mode legibility per logo, hue-true: brightness lifts dark brand colors
+ * without shifting them (GNU red stays red, curl navy stays navy); invert is
+ * reserved for near-black monochrome marks, which have no hue to break.
+ * Colorful logos (git, python, node, …) need nothing. */
+export const SOFTWARE_LOGO_DARK_CLASS: Record<string, string> = {
+	// GNU family, #A42E2B dark red.
+	coreutils: "dark:brightness-[1.8]",
+	diffutils: "dark:brightness-[1.8]",
+	findutils: "dark:brightness-[1.8]",
+	gawk: "dark:brightness-[1.8]",
+	grep: "dark:brightness-[1.8]",
+	gzip: "dark:brightness-[1.8]",
+	sed: "dark:brightness-[1.8]",
+	tar: "dark:brightness-[1.8]",
+	wget: "dark:brightness-[1.8]",
+	// Deep navy / purple marks.
+	codex: "dark:brightness-[2.1]",
+	curl: "dark:brightness-[2.6]",
+	sqlite3: "dark:brightness-[2.6]",
+	// Near-black monochrome marks.
+	duckdb: "dark:invert",
+	jq: "dark:invert",
+	opencode: "dark:invert",
+	pi: "dark:invert",
+};
+
 export const SOFTWARE_LOGOS: Record<string, string> = {
 	browserbase,
 	"claude-code": claudeCode,
