@@ -384,13 +384,15 @@ export function TerminalTabConnected({ actorId }: { actorId: string }) {
 						Shells{liveCount > 0 ? ` · ${liveCount} live` : ""}
 					</span>
 					<span className="ml-auto" />
+					{/* Always visible, like the transcript's + — it starts a shell
+					    directly, whether or not any exist yet. */}
 					{opening ? (
 						<span className="text-[10px] text-muted-foreground">Starting…</span>
-					) : hasShells ? (
+					) : (
 						<IconButton title="New shell" onClick={() => void start()}>
 							<PlusIcon className="size-3.5" />
 						</IconButton>
-					) : null}
+					)}
 				</div>
 				{!hasShells ? (
 					<AgentOsEmpty>No shells yet.</AgentOsEmpty>

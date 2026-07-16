@@ -144,7 +144,7 @@ function FileViewer({
 		setConfirmingDelete(false);
 		setMutationError(null);
 	}, [path]);
-	const { data, error, isFetching } = useQuery(
+	const { data, error } = useQuery(
 		agentOsSource.fileContentQueryOptions(actorId, path, force),
 	);
 	const imageUrl = useMemo(() => {
@@ -167,7 +167,9 @@ function FileViewer({
 			</AgentOsEmpty>
 		);
 	if (error) return <ActionErrorNote error={error} className="items-center justify-center text-center" />;
-	if (!data || isFetching) return <AgentOsEmpty>Loading {path}…</AgentOsEmpty>;
+	// Only the very first open shows a loading state; switching files keeps the
+	// previous content until the new one lands (keepPreviousData in source.ts).
+	if (!data) return <AgentOsEmpty>Loading {path}…</AgentOsEmpty>;
 
 	const filename = data.path.split("/").pop() ?? data.path;
 	const rename = async () => {

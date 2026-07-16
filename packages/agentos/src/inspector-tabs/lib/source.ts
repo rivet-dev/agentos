@@ -3,7 +3,7 @@
 // the gateway (actor-client) and transforms the result into the display type the
 // ported component expects. Action names/shapes are the actual ones, not the
 // mockup's aspirational `agentOs*` names.
-import { queryOptions } from "@tanstack/react-query";
+import { keepPreviousData, queryOptions } from "@tanstack/react-query";
 import { callAction, isInspectorActionError } from "./actor-client";
 import type {
 	FileContent,
@@ -241,6 +241,9 @@ export const agentOsSource = {
 		queryOptions({
 			queryKey: k(actorId, "file", path ?? "", force ? "force" : "guarded"),
 			enabled: !!path,
+			// Selecting another file keeps the previous one on screen until the
+			// new content lands, instead of flashing the whole viewer.
+			placeholderData: keepPreviousData,
 			queryFn: async (): Promise<FileContent> => {
 				const p = path as string;
 				// Stat first: reading a huge file drags megabytes through the
