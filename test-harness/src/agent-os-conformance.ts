@@ -425,7 +425,28 @@ export function defineAgentOsConformanceSuite(
 					}),
 				]),
 			);
-			expect(await backend.call<any[]>("listMounts")).toEqual([]);
+			expect(await backend.call<any[]>("listMounts")).toContainEqual(
+				expect.objectContaining({
+					path: "/conformance-mount",
+					kind: "host_dir",
+					readOnly: true,
+				}),
+			);
+			expect(
+				text(
+					await backend.call(
+						"readFile",
+						"/conformance-mount/package.json",
+					),
+				),
+			).toContain(CONFORMANCE_AGENT_NAME);
+			await expect(
+				backend.call(
+					"writeFile",
+					"/conformance-mount/should-fail.txt",
+					"read-only",
+				),
+			).rejects.toThrow();
 			const software = await backend.call<any[]>("listSoftware");
 			expect(
 				software.some((entry) =>

@@ -114,8 +114,8 @@ Every guest connect, listen, read, and write passes through sidecar ownership an
 
 A preview URL is port forwarding for a VM service: a time-limited, signed, publicly reachable URL that proxies HTTP to a port inside the VM. Mechanically it reuses the host-to-guest path:
 
-- A signed token is minted for a `(VM, port)` pair with an expiration, capped by `preview.maxExpiresInSeconds`. Tokens are stored in SQLite, survive sleep/wake cycles, and expired ones are cleaned up automatically.
-- An incoming request to the preview path is authenticated against the token, then proxied into the VM exactly like `vmFetch`: resolve the port to a VM-owned kernel listener, connect over loopback, frame HTTP/1.1, drive the target process, and stream the response back. The same fail-closed, VM-owned-listener-only rules apply.
+- A signed token is minted for a `(VM, port)` pair with an expiration, capped by `preview.maxExpiresInSeconds`. Tokens are stored in SQLite, survive sleep/wake cycles, and expired ones are cleaned up automatically. Active tokens are bounded by `preview.maxActiveTokens` (1,024 by default); creation fails with a limit error that names the option when the bound is reached.
+- An incoming request to the preview path is authenticated against the token, then proxied into the VM exactly like `vmFetch`: resolve the port to a VM-owned kernel listener, connect over loopback, frame HTTP/1.1, drive the target process, and return the bounded buffered response. The same fail-closed, VM-owned-listener-only rules apply.
 - CORS is enabled so browsers can reach preview URLs from any origin.
 - Revocation (`expireSignedPreviewUrl`) invalidates the token immediately, after which the proxy refuses the request before touching the socket table.
 

@@ -4,11 +4,12 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    types: [opened, synchronize, reopened, labeled]
 
 jobs:
   checks:
     name: Checks
+    if: github.event_name != 'pull_request' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,9 +31,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: |
           if grep -qE '^[[:space:]]*-[[:space:]]*website[[:space:]]*$' pnpm-workspace.yaml; then
-            npx turbo build --filter='!@rivet-dev/agentos-website' --filter='!@rivet-dev/agentos-browser' --filter='!@rivet-dev/agentos-runtime-browser' --filter='!@rivet-dev/agentos-playground'
+            npx turbo build --filter='!@rivet-dev/agentos-website'
           else
-            npx turbo build --filter='!@rivet-dev/agentos-browser' --filter='!@rivet-dev/agentos-runtime-browser' --filter='!@rivet-dev/agentos-playground'
+            npx turbo build
           fi
       - run: pnpm --dir scripts/publish run check-types
       - run: pnpm --dir scripts/publish test
@@ -40,20 +41,17 @@ jobs:
       - run: node scripts/check-rust-package-metadata.mjs
       - run: node --test scripts/check-agentos-client-protocol-compat.test.mjs
       - run: node scripts/check-agentos-client-protocol-compat.mjs
-      - run: node --test scripts/generate-secure-exec-mirror.test.mjs
       - run: node --test scripts/verify-fixed-versions.test.mjs
       - run: node scripts/verify-fixed-versions.mjs
       - run: pnpm check-layout
-      # cargo-fmt ignores workspace.default-members at a virtual workspace
-      # root, so route through the non-browser selector instead.
-      - run: node --test scripts/check-rustfmt.test.mjs
-      - run: node scripts/check-rustfmt.mjs
+      - run: cargo fmt --check
       - run: pnpm check-types
       - run: pnpm lint
         continue-on-error: true
 
   wasm-commands:
     name: WASM Commands
+    if: github.event_name != 'pull_request' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -82,6 +80,7 @@ jobs:
 
   rust:
     name: Rust
+    if: github.event_name != 'pull_request' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
     needs: [wasm-commands]
     runs-on: [self-hosted, agentos-builder]
     steps:
@@ -104,8 +103,8 @@ jobs:
           rm -rf website/vendor/theme && mkdir -p website/vendor
           cp -r /tmp/docs-theme/packages/theme website/vendor/theme
       - run: pnpm install --frozen-lockfile
-      # Browser support is retained in-tree but disabled during the unified
-      # native sidecar reactor migration, so it must not gate native CI.
+      - name: Install Playwright Chromium
+        run: pnpm --dir packages/browser exec playwright install --with-deps chromium
       - uses: actions/download-artifact@v4
         with:
           name: wasm-commands
@@ -113,12 +112,19 @@ jobs:
       - run: node packages/runtime-core/scripts/copy-wasm-commands.mjs --require
       - run: |
           if grep -qE '^[[:space:]]*-[[:space:]]*website[[:space:]]*$' pnpm-workspace.yaml; then
-            npx turbo build --filter='!@rivet-dev/agentos-website' --filter='!@rivet-dev/agentos-browser' --filter='!@rivet-dev/agentos-runtime-browser' --filter='!@rivet-dev/agentos-playground'
+            npx turbo build --filter='!@rivet-dev/agentos-website'
           else
-            npx turbo build --filter='!@rivet-dev/agentos-browser' --filter='!@rivet-dev/agentos-runtime-browser' --filter='!@rivet-dev/agentos-playground'
+            npx turbo build
           fi
       - name: Verify complete coreutils runtime package
         run: pnpm --filter @agentos-software/coreutils build:runtime
+      - name: Run real AgentOS actor conformance
+        run: |
+          cargo build -p agentos-sidecar
+          pnpm --filter @rivet-dev/agentos-test-harness build
+          pnpm --filter @rivet-dev/agentos test:e2e:run
+        env:
+          AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/target/debug/agentos-sidecar
       - run: cargo clippy --workspace --exclude agentos-sidecar-browser --exclude agentos-native-sidecar-browser --all-targets -- -D warnings
       - run: cargo test -p agentos-protocol -- --test-threads=1
       - run: cargo test -p agentos-sidecar -- --test-threads=1

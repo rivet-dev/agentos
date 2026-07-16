@@ -1,5 +1,4 @@
 import coreutils from "@agentos-software/coreutils";
-import { AgentOs, type PermissionReply } from "../src/index.js";
 import {
 	type AgentOsConformanceAction,
 	type AgentOsConformanceBackend,
@@ -9,6 +8,7 @@ import {
 	defineAgentOsConformanceSuite,
 } from "@rivet-dev/agentos-test-harness/agent-os-conformance";
 import { createProjectedAgentPackage } from "@rivet-dev/agentos-test-harness/projected-agent-package";
+import { AgentOs, type PermissionReply } from "../src/index.js";
 
 class EventBus {
 	readonly handlers = new Map<string, Set<(payload: any) => void>>();
@@ -34,9 +34,23 @@ async function createCoreBackend(): Promise<AgentOsConformanceBackend> {
 		name: CONFORMANCE_AGENT_NAME,
 		adapterScript: CONFORMANCE_ACP_ADAPTER,
 	});
+	const mounts = [
+		{
+			path: "/conformance-mount",
+			plugin: {
+				id: "host_dir" as const,
+				config: {
+					hostPath: agentPackage.packageDir,
+					readOnly: true,
+				},
+			},
+			readOnly: true,
+		},
+	];
 	const vm = await AgentOs.create({
 		defaultSoftware: false,
 		software: [coreutils, agentPackage.software],
+		mounts,
 		onAgentExit: (event) =>
 			events.emit("agentCrashed", { sessionId: event.sessionId, event }),
 	});
@@ -155,7 +169,12 @@ async function createCoreBackend(): Promise<AgentOsConformanceBackend> {
 			case "listCronJobs":
 				return vm.listCronJobs() as T;
 			case "listMounts":
-				return [] as T;
+				return mounts.map((mount) => ({
+					path: mount.path,
+					kind: mount.plugin.id,
+					readOnly: mount.readOnly,
+					config: mount.plugin.config,
+				})) as T;
 			case "listSoftware":
 				return (await vm.providedCommands()) as T;
 			case "createSession": {

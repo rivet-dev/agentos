@@ -2,7 +2,7 @@ name: bench
 
 on:
   pull_request:
-    branches: [main]
+    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
   schedule:
     - cron: "17 9 * * *"
@@ -10,6 +10,7 @@ on:
 jobs:
   bench-gate:
     name: Runtime benchmark gate
+    if: github.event_name != 'pull_request' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

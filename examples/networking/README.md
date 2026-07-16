@@ -11,7 +11,7 @@ Run a service inside a VM and reach it — from the client and from the public w
 
 ## How it works
 
-A process inside the VM binds a normal loopback port (e.g. `3000`), exactly like any Node server. The client reaches it with `agent.vmFetch(port, path, options)`, which proxies an HTTP request straight to that loopback port without exposing it to the network. To expose a port beyond loopback, set `loopbackExemptPorts` on the VM config. For external sharing, `agent.createSignedPreviewUrl(port, expiresInSeconds)` mints a short-lived signed URL; the `preview` config sets default and maximum lifetimes, and old tokens fall off automatically as they expire.
+A process inside the VM binds a normal loopback port (e.g. `3000`), exactly like any Node server. The client reaches it with `agent.vmFetch(port, path, options)`, which proxies an HTTP request straight to that loopback port without exposing it to the network. To expose a port beyond loopback, set `loopbackExemptPorts` on the VM config. For external sharing, `agent.createSignedPreviewUrl(port, expiresInSeconds)` mints a short-lived signed URL; the `preview` config sets default and maximum lifetimes plus a bounded maximum active-token count, and old tokens are removed automatically as they expire.
 
 ## Run it
 

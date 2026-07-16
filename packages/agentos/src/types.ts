@@ -57,6 +57,13 @@ export interface CronEventPayload {
 	event: SerializableCronEvent;
 }
 
+export interface MountInfoDto {
+	path: string;
+	kind: string;
+	readOnly: boolean;
+	config?: unknown;
+}
+
 // --- Event schema map (used by actor() events config) ---
 
 export interface AgentOsEvents {

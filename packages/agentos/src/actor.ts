@@ -5,6 +5,7 @@ import {
 	type AgentOsOptions,
 	type CronJobInfo,
 	type JsonRpcNotification,
+	type MountConfig,
 	type PermissionReply,
 	type PermissionRequest,
 } from "@rivet-dev/agentos-core";
@@ -16,12 +17,14 @@ import {
 	actor,
 	event,
 	type Type,
+	UserError,
 } from "rivetkit";
 import { type DatabaseProvider, db, type RawAccess } from "rivetkit/db";
 import type {
 	AgentCrashedPayload,
 	AgentOsEvents,
 	CronEventPayload,
+	MountInfoDto,
 	PermissionRequestPayload,
 	ProcessExitPayload,
 	ProcessOutputPayload,
@@ -38,9 +41,11 @@ const DEFAULT_ACTION_TIMEOUT_MS = 15 * 60_000;
 const DEFAULT_SLEEP_GRACE_PERIOD_MS = 15 * 60_000;
 const DEFAULT_PREVIEW_TTL_SECONDS = 3_600;
 const MAX_PREVIEW_TTL_SECONDS = 86_400;
+const DEFAULT_MAX_ACTIVE_PREVIEW_TOKENS = 1_024;
 const ACTOR_SQLITE_CHUNK_SIZE = 512 * 1024;
 const ACTOR_SQLITE_INLINE_THRESHOLD = 64 * 1024;
 const ROOT_NAMESPACE = "agentos-root";
+const PREVIEW_PATH_PATTERN = /^\/fetch\/([a-f0-9]{48})(\/.*)?$/;
 
 type BuiltInEvents = {
 	[K in keyof AgentOsEvents]: Type<AgentOsEvents[K]>;
@@ -103,8 +108,24 @@ async function ensureVm(
 		const vm = await AgentOs.create({
 			...options,
 			onAgentExit: (event) => {
+				c.log.error({
+					msg: "agent-os agent adapter exited unexpectedly",
+					...event,
+				});
+				if (event.restart !== "restarted") {
+					runtime.sessionHolds.get(event.sessionId)?.();
+					runtime.sessionHolds.delete(event.sessionId);
+				}
 				c.broadcast("agentCrashed", { sessionId: event.sessionId, event });
-				options?.onAgentExit?.(event);
+				try {
+					options?.onAgentExit?.(event);
+				} catch (error) {
+					c.log.error({
+						msg: "agent-os onAgentExit hook failed",
+						sessionId: event.sessionId,
+						error,
+					});
+				}
 			},
 			rootFilesystem: {
 				type: "native",
@@ -155,6 +176,41 @@ async function disposeVm(c: AnyContext, reason: "sleep" | "destroy" | "error") {
 	for (const release of runtime.sessionHolds.values()) release();
 	if (vm) await (await vm).dispose();
 	c.broadcast("vmShutdown", { reason });
+}
+
+function matchPreviewPath(pathname: string): RegExpMatchArray | null {
+	return pathname.match(PREVIEW_PATH_PATTERN);
+}
+
+function serializeMount(mount: MountConfig): MountInfoDto {
+	if ("plugin" in mount) {
+		const config = mount.plugin.config;
+		const configReadOnly =
+			typeof config === "object" &&
+			config !== null &&
+			"readOnly" in config &&
+			typeof config.readOnly === "boolean"
+				? config.readOnly
+				: undefined;
+		return {
+			path: mount.path,
+			kind: mount.plugin.id,
+			readOnly: mount.readOnly ?? configReadOnly ?? false,
+		};
+	}
+	if ("filesystem" in mount) {
+		return {
+			path: mount.path,
+			kind: "overlay",
+			readOnly: mount.filesystem.mode === "read-only",
+			config: { mode: mount.filesystem.mode },
+		};
+	}
+	return {
+		path: mount.path,
+		kind: "custom",
+		readOnly: mount.readOnly ?? false,
+	};
 }
 
 async function migrateAgentOsTables(database: RawAccess): Promise<void> {
@@ -295,6 +351,8 @@ export function createAgentOsActions(
 		preview.defaultExpiresInSeconds ?? DEFAULT_PREVIEW_TTL_SECONDS;
 	const maxPreviewTtlSeconds =
 		preview.maxExpiresInSeconds ?? MAX_PREVIEW_TTL_SECONDS;
+	const maxActivePreviewTokens =
+		preview.maxActiveTokens ?? DEFAULT_MAX_ACTIVE_PREVIEW_TOKENS;
 	if (
 		!Number.isFinite(defaultPreviewTtlSeconds) ||
 		defaultPreviewTtlSeconds <= 0 ||
@@ -302,9 +360,15 @@ export function createAgentOsActions(
 		maxPreviewTtlSeconds <= 0 ||
 		defaultPreviewTtlSeconds > maxPreviewTtlSeconds
 	) {
-		throw new RangeError(
+		throw new UserError(
 			"preview expiry bounds must be positive and the default cannot exceed the maximum",
+			{ code: "agentos_preview_invalid_config" },
 		);
+	}
+	if (!Number.isInteger(maxActivePreviewTokens) || maxActivePreviewTokens < 1) {
+		throw new UserError("preview.maxActiveTokens must be a positive integer", {
+			code: "agentos_preview_invalid_config",
+		});
 	}
 	return {
 		readFile: async (c: AnyContext, ...args: Parameters<AgentOs["readFile"]>) =>
@@ -589,18 +653,48 @@ export function createAgentOsActions(
 			ttlSeconds = defaultPreviewTtlSeconds,
 		) => {
 			if (!Number.isInteger(port) || port < 1 || port > 65_535)
-				throw new RangeError("port must be an integer between 1 and 65535");
+				throw new UserError(
+					"port must be an integer between 1 and 65535; pass a valid VM listener port",
+					{ code: "agentos_preview_invalid_port" },
+				);
 			if (
 				!Number.isFinite(ttlSeconds) ||
 				ttlSeconds <= 0 ||
 				ttlSeconds > maxPreviewTtlSeconds
 			)
-				throw new RangeError(
-					`ttlSeconds must be between 0 and ${maxPreviewTtlSeconds}`,
+				throw new UserError(
+					`ttlSeconds must be greater than 0 and at most ${maxPreviewTtlSeconds}; raise preview.maxExpiresInSeconds to allow a longer lifetime`,
+					{ code: "agentos_preview_invalid_ttl" },
 				);
 			const token = crypto.randomBytes(24).toString("hex");
 			const createdAt = Date.now();
 			const expiresAt = createdAt + ttlSeconds * 1_000;
+			await c.db.execute(
+				"DELETE FROM agent_os_preview_tokens WHERE expires_at <= ?",
+				createdAt,
+			);
+			const counts = await c.db.execute<{ count: number }>(
+				"SELECT COUNT(*) AS count FROM agent_os_preview_tokens",
+			);
+			const activeTokenCount = Number(counts[0]?.count ?? 0);
+			if (activeTokenCount >= maxActivePreviewTokens) {
+				throw new UserError(
+					`preview token limit ${maxActivePreviewTokens} reached; raise preview.maxActiveTokens to allow more`,
+					{
+						code: "agentos_preview_token_limit",
+						metadata: { limit: maxActivePreviewTokens },
+					},
+				);
+			}
+			const nextActiveTokenCount = activeTokenCount + 1;
+			const warningThreshold = Math.ceil(maxActivePreviewTokens * 0.8);
+			if (nextActiveTokenCount === warningThreshold) {
+				c.log.warn({
+					msg: `preview tokens are near the limit of ${maxActivePreviewTokens}; raise preview.maxActiveTokens to allow more`,
+					activeTokenCount: nextActiveTokenCount,
+					limit: maxActivePreviewTokens,
+				});
+			}
 			await c.db.execute(
 				"INSERT INTO agent_os_preview_tokens (token, port, created_at, expires_at) VALUES (?, ?, ?, ?)",
 				token,
@@ -616,7 +710,7 @@ export function createAgentOsActions(
 				token,
 			);
 		},
-		listMounts: async () => options?.mounts ?? [],
+		listMounts: async () => options?.mounts?.map(serializeMount) ?? [],
 		listSoftware: async (c: AnyContext) =>
 			(await ensureVm(c, options)).providedCommands(),
 	};
@@ -639,6 +733,7 @@ export interface AgentOsActorExtras extends AgentOsOptions {
 	preview?: {
 		defaultExpiresInSeconds?: number;
 		maxExpiresInSeconds?: number;
+		maxActiveTokens?: number;
 	};
 }
 
@@ -829,14 +924,16 @@ export function createAgentOS<
 			c: Parameters<NonNullable<typeof userOnBeforeConnect>>[0],
 			params: Parameters<NonNullable<typeof userOnBeforeConnect>>[1],
 		) => {
-			if (c.request && new URL(c.request.url).pathname.startsWith("/fetch/")) {
+			if (
+				c.request &&
+				matchPreviewPath(new URL(c.request.url).pathname) !== null
+			) {
 				return;
 			}
 			await userOnBeforeConnect?.(c, params);
 		},
 		onWake: async (c: AnyContext) => {
 			try {
-				await ensureVm(c as AnyContext, agentOsOptions);
 				await userOnWake?.(c);
 			} catch (error) {
 				await disposeVm(c as AnyContext, "error");
@@ -859,7 +956,7 @@ export function createAgentOS<
 		},
 		onRequest: async (c: AnyContext, request: Request) => {
 			const url = new URL(request.url);
-			const match = url.pathname.match(/^\/fetch\/([a-f0-9]{48})(\/.*)?$/);
+			const match = matchPreviewPath(url.pathname);
 			if (!match) {
 				const response = await userOnRequest?.(c as never, request);
 				return response ?? new Response("Not Found", { status: 404 });
@@ -874,10 +971,15 @@ export function createAgentOS<
 						"access-control-allow-headers": "*",
 					},
 				});
+			const now = Date.now();
+			await c.db.execute(
+				"DELETE FROM agent_os_preview_tokens WHERE expires_at <= ?",
+				now,
+			);
 			const rows = await c.db.execute<{ port: number }>(
 				"SELECT port FROM agent_os_preview_tokens WHERE token = ? AND expires_at > ?",
 				match[1],
-				Date.now(),
+				now,
 			);
 			if (!rows[0])
 				return new Response("Preview URL expired or invalid", { status: 403 });

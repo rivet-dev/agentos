@@ -21,7 +21,7 @@ The `agentOS()` actor (from `@rivet-dev/agentos`) wraps the core package and add
 
 We recommend using [Rivet Actors](https://rivet.dev/docs/actors) because they provide a portable way to run `agentOS()` on any infrastructure with built-in persistence, networking, and orchestration. Use the core package if you need the most bare-bones implementation possible.
 
-`agentOS()` returns an ordinary TypeScript Rivet actor definition. Its config accepts the core VM options together with normal actor state, actions, events, queues, connection types, and lifecycle hooks such as `onBeforeConnect`. AgentOS actions and events are merged in automatically; their names are reserved so they cannot be accidentally shadowed. The actor creates the core SDK VM on wake and disposes it on sleep.
+`agentOS()` returns an ordinary TypeScript Rivet actor definition. Its config accepts the core VM options together with normal actor state, actions, events, queues, connection types, and lifecycle hooks such as `onBeforeConnect`. AgentOS actions and events are merged in automatically; their names are reserved so they cannot be accidentally shadowed. After a wake, the actor creates the core SDK VM lazily on the first AgentOS action and disposes it on sleep. This lets a connection subscribe before the `vmBooted` event is emitted.
 
 Creation input is inferred from the actor definition and is passed through normal client creation options: `client.vm.create("key", { input })`. The same input reaches `createState(c, input)` and `onCreate(c, input)`.
 

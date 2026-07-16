@@ -10,6 +10,7 @@ const DEBUG_E2E = process.env.AGENTOS_ACTOR_E2E_DEBUG === "1";
 export const ACTOR_E2E_NAMESPACE = "default";
 export const ACTOR_E2E_TOKEN = "dev";
 export const ACTOR_E2E_POOL_NAME = "agentos-e2e";
+export const ACTOR_E2E_CONN_PARAMS = { authToken: "e2e-allowed" };
 const MAX_CAPTURED_LOG_BYTES = 1024 * 1024;
 const packageRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const workspaceRoot = resolve(packageRoot, "../..");
@@ -67,22 +68,40 @@ async function stopChildProcess(
 	});
 }
 
-async function getFreePort(): Promise<number> {
-	return new Promise((resolvePort, reject) => {
-		const server = createServer();
-		server.unref();
-		server.on("error", reject);
-		server.listen(0, "127.0.0.1", () => {
+async function getFreePorts(count: number): Promise<number[]> {
+	const servers = Array.from({ length: count }, () => createServer());
+	try {
+		await Promise.all(
+			servers.map(
+				(server) =>
+					new Promise<void>((resolveListen, reject) => {
+						server.unref();
+						server.once("error", reject);
+						server.listen(0, "127.0.0.1", resolveListen);
+					}),
+			),
+		);
+		return servers.map((server) => {
 			const address = server.address();
-			server.close(() => {
-				if (!address || typeof address === "string") {
-					reject(new Error("failed to allocate actor E2E port"));
-					return;
-				}
-				resolvePort(address.port);
-			});
+			if (!address || typeof address === "string") {
+				throw new Error("failed to allocate actor E2E port");
+			}
+			return address.port;
 		});
-	});
+	} finally {
+		await Promise.all(
+			servers.map(
+				(server) =>
+					new Promise<void>((resolveClose) => {
+						if (!server.listening) {
+							resolveClose();
+							return;
+						}
+						server.close(() => resolveClose());
+					}),
+			),
+		);
+	}
 }
 
 async function waitUntil(
@@ -116,7 +135,13 @@ export async function startActorRuntime(
 			`actor E2E requires ${sidecarPath}; run cargo build -p agentos-sidecar`,
 		);
 	}
-	const port = requestedPort ?? (await getFreePort());
+	const allocatedPorts = await getFreePorts(requestedPort === undefined ? 3 : 2);
+	const port = requestedPort ?? allocatedPorts[0];
+	const peerPort = allocatedPorts[requestedPort === undefined ? 1 : 0];
+	const metricsPort = allocatedPorts[requestedPort === undefined ? 2 : 1];
+	if (port === undefined || peerPort === undefined || metricsPort === undefined) {
+		throw new Error("failed to allocate actor E2E ports");
+	}
 	const endpoint = `http://127.0.0.1:${port}`;
 	let stdout = "";
 	let stderr = "";
@@ -130,9 +155,9 @@ export async function startActorRuntime(
 			RIVET__GUARD__HOST: "127.0.0.1",
 			RIVET__GUARD__PORT: String(port),
 			RIVET__API_PEER__HOST: "127.0.0.1",
-			RIVET__API_PEER__PORT: String(port + 1),
+			RIVET__API_PEER__PORT: String(peerPort),
 			RIVET__METRICS__HOST: "127.0.0.1",
-			RIVET__METRICS__PORT: String(port + 10),
+			RIVET__METRICS__PORT: String(metricsPort),
 			RIVET__FILE_SYSTEM__PATH: dbPath,
 		},
 		stdio: ["ignore", "pipe", "pipe"],
@@ -259,8 +284,12 @@ function client(endpoint: string): any {
 	} as never) as any;
 }
 
-export function actorHandle(endpoint: string, key: string): any {
-	return client(endpoint).vm.getOrCreate(key);
+export function actorHandle(
+	endpoint: string,
+	key: string,
+	params: unknown = ACTOR_E2E_CONN_PARAMS,
+): any {
+	return client(endpoint).vm.getOrCreate(key, { params });
 }
 
 export async function createActorHandle(
@@ -268,7 +297,10 @@ export async function createActorHandle(
 	key: string,
 	input: unknown,
 ): Promise<any> {
-	return client(endpoint).vm.create(key, { input });
+	return client(endpoint).vm.create(key, {
+		input,
+		params: ACTOR_E2E_CONN_PARAMS,
+	});
 }
 
 export function actorBytes(value: unknown): Uint8Array {

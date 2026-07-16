@@ -22,10 +22,26 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 const vm = agentOS({
 	defaultSoftware: false,
 	software: [coreutils, conformanceAgent.software],
+	mounts: [
+		{
+			path: "/conformance-mount",
+			plugin: {
+				id: "host_dir",
+				config: {
+					hostPath: conformanceAgent.packageDir,
+					readOnly: true,
+				},
+			},
+			readOnly: true,
+		},
+	],
 	permissions: allowAll,
+	preview: { maxActiveTokens: 8 },
 	createState: (_c, input) => ({
 		wakeCount: 0,
 		creationInput: input ?? null,
+		onCreateInput: null,
+		beforeConnectCount: 0,
 		sessionEventHookCount: 0,
 		permissionRequestHookCount: 0,
 	}),
@@ -35,7 +51,12 @@ const vm = agentOS({
 	actions: {
 		echo: (_c, value) => value,
 		getCreationInput: (c) => c.state.creationInput,
+		getCreationInputs: (c) => ({
+			createState: c.state.creationInput,
+			onCreate: c.state.onCreateInput,
+		}),
 		getWakeCount: (c) => c.state.wakeCount,
+		getBeforeConnectCount: (c) => c.state.beforeConnectCount,
 		getHookCounts: (c) => ({
 			sessionEvent: c.state.sessionEventHookCount,
 			permissionRequest: c.state.permissionRequestHookCount,
@@ -64,12 +85,21 @@ const vm = agentOS({
 			};
 		},
 	},
+	onCreate: (c, input) => {
+		c.state.onCreateInput = input ?? null;
+	},
 	onWake: (c) => {
 		c.state.wakeCount += 1;
 		c.broadcast("customLifecycle", {
 			phase: "wake",
 			wakeCount: c.state.wakeCount,
 		});
+	},
+	onBeforeConnect: (c, params) => {
+		c.state.beforeConnectCount += 1;
+		if (params?.authToken !== "e2e-allowed") {
+			throw new Error("invalid e2e auth token");
+		}
 	},
 	onSessionEvent: (c) => {
 		c.state.sessionEventHookCount += 1;

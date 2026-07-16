@@ -69,8 +69,8 @@ export interface FileContent {
 }
 
 // ── Mounts ────────────────────────────────────────────────────────────
-/** Raw `listMounts` entry — echoes the actor's declarative mount config
- * (`MountInfoDto`). The kernel has no runtime mount table to enumerate. */
+/** Safe `listMounts` metadata derived from the actor's declarative mounts.
+ * Native plugin config is intentionally omitted because it may contain secrets. */
 export interface MountInfo {
 	path: string;
 	kind: string;
