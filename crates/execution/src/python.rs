@@ -684,6 +684,18 @@ impl PythonExecution {
             .map_err(map_javascript_error)
     }
 
+    /// Service the local stdin bridge for consumers that drive a standalone
+    /// Python execution without the sidecar's sync-RPC dispatcher.
+    #[doc(hidden)]
+    pub fn try_service_standalone_stdin_sync_rpc(
+        &mut self,
+        request: &JavascriptSyncRpcRequest,
+    ) -> Result<bool, PythonExecutionError> {
+        self.inner
+            .handle_kernel_stdin_sync_rpc(request)
+            .map_err(map_javascript_error)
+    }
+
     pub fn poll_event_blocking(
         &mut self,
         timeout: Duration,

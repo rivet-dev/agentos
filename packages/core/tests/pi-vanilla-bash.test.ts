@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
-import type { Fixture, ToolCall } from "@copilotkit/llmock";
-import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import common from "@agentos-software/common";
+import pi from "@agentos-software/pi";
+import type { Fixture, ToolCall } from "@copilotkit/llmock";
 import { describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
 import {
@@ -9,6 +9,7 @@ import {
 	startLlmock,
 	stopLlmock,
 } from "./helpers/llmock-helper.js";
+import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 
 const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
 
@@ -55,7 +56,9 @@ async function createPiVm(mockUrl: string): Promise<AgentOs> {
 	return AgentOs.create({
 		loopbackExemptPorts: [Number(new URL(mockUrl).port)],
 		mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-		software: [common],
+		// Default software ships no agents; project Pi explicitly together with
+		// the shell commands used by its unmodified bash backend.
+		software: [...common, pi],
 	});
 }
 
@@ -109,12 +112,8 @@ function captureSessionEventText(
  * `detached: true` and streaming stdout/stderr), with no custom `operations`
  * override in the adapter. Everything stays inside the VM.
  *
- * The file-write, timeout, and abort cases depend on runtime behavior that is
- * still outstanding below the adapter layer (shell `>` redirect visibility
- * through `vm.readFile`, and a blocking guest `sleep`). They are tracked in
- * `~/.agents/todo/agentos-runtime-fixes.md` and registered as skipped
- * placeholders here so the file documents the full vanilla contract without
- * asserting behavior the runtime cannot yet deliver.
+ * The coverage includes shell output, filesystem side effects, timeout-driven
+ * process-tree termination, and cancellation of an in-flight command.
  */
 describe("vanilla Pi bash tool inside the VM", () => {
 	test("runs the vanilla bash backend in the session working directory", async () => {
@@ -241,11 +240,7 @@ describe("vanilla Pi bash tool inside the VM", () => {
 		}
 	}, 120_000);
 
-	// Blocked on shell `>` redirect output being visible to `vm.readFile()`.
-	// The redirect runs inside the guest shell but the written bytes do not
-	// reconcile to the host read path yet. Tracked in
-	// ~/.agents/todo/agentos-runtime-fixes.md (shell-exec redirect visibility).
-	test.skip("writes a file through the default bash backend", async () => {
+	test("writes a file through the default bash backend", async () => {
 		const fixtures = createBashFixtures(
 			bashToolCall({ command: "printf 'ok' > out.txt", timeout: 10 }),
 			"out.txt was written.",
@@ -285,11 +280,7 @@ describe("vanilla Pi bash tool inside the VM", () => {
 		}
 	}, 120_000);
 
-	// Blocked on a blocking guest `sleep`. The WASM `sleep` command currently
-	// fails to spawn ("operation not supported on this platform") because the
-	// host `sleep_ms` WASI import is unimplemented, so the timeout/kill path
-	// cannot be exercised. Tracked in ~/.agents/todo/agentos-runtime-fixes.md.
-	test.skip("enforces the bash timeout by killing the process tree", async () => {
+	test("enforces the bash timeout by killing the process tree", async () => {
 		const fixtures = createBashFixtures(
 			bashToolCall({ command: "sleep 30", timeout: 1 }),
 			"the command timed out.",
@@ -333,11 +324,7 @@ describe("vanilla Pi bash tool inside the VM", () => {
 		}
 	}, 60_000);
 
-	// Blocked on the same blocking-guest-`sleep` gap as the timeout case: the
-	// in-flight bash command exits immediately instead of staying running, so
-	// the cancel-while-in-progress path cannot be observed. Tracked in
-	// ~/.agents/todo/agentos-runtime-fixes.md.
-	test.skip("aborts an in-flight bash command on session cancel", async () => {
+	test("aborts an in-flight bash command on session cancel", async () => {
 		const fixtures: Fixture[] = [
 			createAnthropicFixture(
 				{
@@ -368,7 +355,7 @@ describe("vanilla Pi bash tool inside the VM", () => {
 			const activeSessionId = sessionId;
 			const sawInProgress = new Promise<void>((resolveInProgress) => {
 				const unsubscribe = vm.onSessionEvent(activeSessionId, (event) => {
-					const serialized = JSON.stringify(event.notification.params);
+					const serialized = JSON.stringify(event.params);
 					if (
 						serialized.includes('"in_progress"') &&
 						serialized.includes("bash")

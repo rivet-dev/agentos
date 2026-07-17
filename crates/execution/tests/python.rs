@@ -549,13 +549,19 @@ export async function loadPyodide(options) {
                 assert!(
                     execution
                         .try_service_standalone_module_sync_rpc(&request)
-                        .expect("service module sync RPC"),
+                        .expect("service module sync RPC")
+                        || execution
+                            .try_service_standalone_stdin_sync_rpc(&request)
+                            .expect("service stdin sync RPC"),
                     "unexpected JS sync RPC before stdin write: {request:?}"
                 );
             }
             other => panic!(
                 "streaming-stdin execution should stay alive until stdin closes, got {other:?}"
             ),
+        }
+        if Instant::now() >= idle_deadline {
+            break;
         }
     }
 
@@ -580,7 +586,10 @@ export async function loadPyodide(options) {
                 assert!(
                     execution
                         .try_service_standalone_module_sync_rpc(&request)
-                        .expect("service module sync RPC"),
+                        .expect("service module sync RPC")
+                        || execution
+                            .try_service_standalone_stdin_sync_rpc(&request)
+                            .expect("service stdin sync RPC"),
                     "unexpected JS sync RPC request during stdin test: {request:?}"
                 );
             }
