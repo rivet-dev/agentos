@@ -38,24 +38,47 @@ const hasGit = hasWasmBinaries && existsSync(resolve(COMMANDS_DIR, 'git'));
 const hasHostGit = spawnSync('git', ['--version'], { stdio: 'ignore' }).status === 0;
 const hasProxyHelper = hasCWasmBinaries('ssh_proxy_helper');
 const hasSkHelperContract = hasCWasmBinaries('ssh_sk_helper_contract');
+const sshCommandDirs = [C_BUILD_DIR, COMMANDS_DIR].filter((dir) => existsSync(dir));
 
 const SSH_USER = 'agentos';
 
+type GeneratedSshKeyPair = ReturnType<typeof sshUtils.generateKeyPairSync>;
+
+/**
+ * ssh2@1.17.0 occasionally emits an Ed25519 OpenSSH private key that its own
+ * parser rejects. Keep ephemeral test setup deterministic without weakening
+ * the key type exercised by the real OpenSSH client.
+ */
+function generateEd25519KeyPair(): GeneratedSshKeyPair {
+  const maxAttempts = 8;
+  let lastError: Error | undefined;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const pair = sshUtils.generateKeyPairSync('ed25519');
+    const parsed = sshUtils.parseKey(pair.private);
+    if (!(parsed instanceof Error)) return pair;
+    lastError = parsed;
+  }
+  throw new Error(
+    `ssh2 generated ${maxAttempts} invalid Ed25519 keypairs`,
+    { cause: lastError },
+  );
+}
+
 interface TestKeys {
-  hostKey: ReturnType<typeof sshUtils.generateKeyPairSync>;
-  clientKey: ReturnType<typeof sshUtils.generateKeyPairSync>;
+  hostKey: GeneratedSshKeyPair;
+  clientKey: GeneratedSshKeyPair;
   /** A second client keypair the server does NOT authorize. */
-  wrongClientKey: ReturnType<typeof sshUtils.generateKeyPairSync>;
+  wrongClientKey: GeneratedSshKeyPair;
   /** A second host key used to simulate a changed/unknown server identity. */
-  otherHostKey: ReturnType<typeof sshUtils.generateKeyPairSync>;
+  otherHostKey: GeneratedSshKeyPair;
 }
 
 function generateKeys(): TestKeys {
   return {
-    hostKey: sshUtils.generateKeyPairSync('ed25519'),
-    clientKey: sshUtils.generateKeyPairSync('ed25519'),
-    wrongClientKey: sshUtils.generateKeyPairSync('ed25519'),
-    otherHostKey: sshUtils.generateKeyPairSync('ed25519'),
+    hostKey: generateEd25519KeyPair(),
+    clientKey: generateEd25519KeyPair(),
+    wrongClientKey: generateEd25519KeyPair(),
+    otherHostKey: generateEd25519KeyPair(),
   };
 }
 
@@ -160,8 +183,7 @@ async function createSshKernel(loopbackExemptPorts: number[]) {
     loopbackExemptPorts,
     syncFilesystemOnDispose: false,
   });
-  const commandDirs = [C_BUILD_DIR, COMMANDS_DIR].filter((dir) => existsSync(dir));
-  await kernel.mount(createWasmVmRuntime({ commandDirs }));
+  await kernel.mount(createWasmVmRuntime({ commandDirs: sshCommandDirs }));
   return { kernel, vfs, dispose: () => kernel.dispose() };
 }
 
@@ -270,7 +292,7 @@ describeIf(hasSsh, 'ssh command', () => {
   it('ships the client helpers and reaches their real wire-protocol parsers', async () => {
     ({ kernel, vfs, dispose } = await createSshKernel([]));
     await vfs.mkdir('/etc/ssh', { recursive: true });
-    const hostKey = sshUtils.generateKeyPairSync('ed25519');
+    const hostKey = generateEd25519KeyPair();
     await kernel.writeFile('/etc/ssh/ssh_host_ed25519_key', `${hostKey.private}\n`);
     await vfs.chmod('/etc/ssh/ssh_host_ed25519_key', 0o600);
     await kernel.writeFile('/etc/ssh/ssh_config', 'EnableSSHKeysign yes\n');
@@ -287,7 +309,7 @@ describeIf(hasSsh, 'ssh command', () => {
     expect(sk.stderr).not.toMatch(/not found|ENOENT/i);
   });
 
-  it.runIf(hasSkHelperContract)('frames ssh-sk-helper provider errors', async () => {
+  it.runIf(hasSkHelperContract)('exercises the security-key helper framed protocol', async () => {
     ({ kernel, vfs, dispose } = await createSshKernel([]));
     const framed = await kernel.exec('ssh_sk_helper_contract');
     expect(framed.exitCode, framed.stderr).toBe(0);
@@ -295,8 +317,8 @@ describeIf(hasSsh, 'ssh command', () => {
   });
 
   it('uses ssh-keysign for a signed hostbased authentication request', async () => {
-    const serverHostKey = sshUtils.generateKeyPairSync('ed25519');
-    const clientHostKey = sshUtils.generateKeyPairSync('ed25519');
+    const serverHostKey = generateEd25519KeyPair();
+    const clientHostKey = generateEd25519KeyPair();
     const parsedClientHostKey = sshUtils.parseKey(clientHostKey.public);
     if (parsedClientHostKey instanceof Error) throw parsedClientHostKey;
     let sawSignedHostbased = false;
@@ -365,7 +387,7 @@ describeIf(hasSsh, 'ssh command', () => {
     });
 
     afterAll(async () => {
-      await new Promise<void>((r) => server.close(() => r()));
+      if (server) await new Promise<void>((r) => server.close(() => r()));
     });
 
     const sshCmd = (extra: string) =>

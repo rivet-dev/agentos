@@ -2570,9 +2570,10 @@ fn mirror_kernel_path_to_process_shadow(
     let Some(shadow_path) = resolve_process_guest_path_to_host(process, guest_path) else {
         return Ok(());
     };
-    // This is a trusted coherence copy, not a guest read. Use the kernel's
-    // internal read path so a write-only descriptor can still refresh the
-    // shadow after a successful write, matching Linux append semantics.
+    // This is internal reconciliation after the guest has already completed a
+    // permitted write. Reading the resulting bytes as the guest would wrongly
+    // reject write-only files even though no contents are returned to guest
+    // code; the trusted sidecar only mirrors them into this VM's own shadow.
     let bytes = kernel.read_file(guest_path).map_err(kernel_error)?;
     write_process_shadow_file(&shadow_path, guest_path, &bytes)
 }

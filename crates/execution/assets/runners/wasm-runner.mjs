@@ -95,6 +95,12 @@ const LINUX_GUEST_FD_LIMIT = 1 << 20;
 const LINUX_BINPRM_BUF_SIZE = 256;
 const LINUX_MAX_INTERPRETER_DEPTH = 4;
 const DEFAULT_WASM_MAX_MODULE_FILE_BYTES = 256 * 1024 * 1024;
+function boundedWasmSyncRpcReadLength(length) {
+  return Math.min(
+    Number(length) >>> 0,
+    __agentOSWasmSyncRpcReadPayloadBytes,
+  );
+}
 const POSIX_SPAWN_RESETIDS = 1;
 const POSIX_SPAWN_SETPGROUP = 2;
 const POSIX_SPAWN_SETSIGDEF = 4;
@@ -591,6 +597,11 @@ const initialMappedGuestFds = new Set([
   ...initialKernelFdMappings.values(),
   ...initialHostNetGuestFds,
 ]);
+// Keep explicit inherited guest destinations unavailable while bootstrap
+// assigns guest numbers to otherwise-unmapped kernel descriptors. Without
+// this reservation, an earlier unmapped kernel fd can take (for example)
+// guest fd 7 before a later kernel fd is installed at its required guest fd 7.
+const pendingInitialKernelGuestFds = new Set(initialKernelFdMappings.values());
 if (initialMappedGuestFds.size !== initialKernelFdMappings.size + initialHostNetGuestFds.length) {
   throw new Error('inherited kernel and host-network descriptors overlap in the guest fd table');
 }
@@ -2111,6 +2122,7 @@ function fsOpenFlagForPathOpen(oflags, rightsBase, fdflags) {
 
 function runnerFdMappingInUse(fd) {
   return (
+    pendingInitialKernelGuestFds.has(fd) ||
     syntheticFdEntries.has(fd) ||
     passthroughHandles.has(fd) ||
     retainedSpawnOutputHandlesByFd.has(fd) ||
@@ -4613,26 +4625,17 @@ function readReadyHostNetSocket(socket, maxBytes = 64 * 1024, peek = false, wait
     ]),
   );
   if (result.kind === 'data') {
-    const requested = Math.max(0, Number(maxBytes) >>> 0);
-    const bytes = Buffer.from(result.bytes);
-    if (peek === true) {
-      if (bytes.length > 0) {
-        // The sidecar read consumes its transport event. Preserve the complete
-        // chunk locally so MSG_PEEK does not consume bytes from the guest.
-        socket.readChunks.unshift(bytes);
-      }
-      socket.readableHint = bytes.length > 0;
-      return { kind: 'data', bytes: bytes.subarray(0, requested) };
+    // The sidecar owns the OS read quantum and can return more bytes than this
+    // guest recv/read requested (TLS commonly asks for its 5-byte record
+    // header first). Preserve the entire transport chunk and consume only the
+    // requested prefix; dropping the remainder corrupts the byte stream.
+    if (result.bytes.length > 0) {
+      socket.readChunks.push(Buffer.from(result.bytes));
     }
-    if (bytes.length > requested) {
-      // A transport event may contain more bytes than this recv/iovec can
-      // accept (notably when TLS records coalesce protocol responses). Keep
-      // the unread tail ahead of later events instead of silently dropping it.
-      socket.readChunks.unshift(bytes.subarray(requested));
-      socket.readableHint = true;
-      return { kind: 'data', bytes: bytes.subarray(0, requested) };
-    }
-    socket.readableHint = false;
+    const bytes = peek === true
+      ? peekHostNetBytes(socket, maxBytes)
+      : dequeueHostNetBytes(socket, maxBytes);
+    socket.readableHint = socket.readChunks.length > 0;
     return { kind: 'data', bytes };
   }
   // poll(2) readiness is only a snapshot: another read may consume the data
@@ -4682,7 +4685,9 @@ function pollHostNetSocket(socket, waitMs) {
   }
 
   if (event.readable === true || (Number(event.revents) & 0x001) !== 0) {
-    return readReadyHostNetSocket(socket);
+    // Poll must populate durable runner state without consuming the bytes that
+    // the following recv/read call owns.
+    return readReadyHostNetSocket(socket, 64 * 1024, true, 0);
   }
 
   if (event.hangup === true) {
@@ -6118,6 +6123,9 @@ const hostNetImport = {
         return WASI_ERRNO_BADF;
       }
       const peek = (recvFlags & HOST_NET_MSG_PEEK) !== 0;
+      if ((Number(bufLen) >>> 0) === 0) {
+        return writeGuestUint32(retReceivedPtr, 0);
+      }
 
       // Non-blocking sockets (O_NONBLOCK via net_set_nonblock, used by libxcb's poll_for_*):
       // pull whatever is queued, do ONE short readiness probe, and return EAGAIN if still empty
@@ -6818,17 +6826,38 @@ const hostProcessImport = {
             const directPosixStdin =
               result?.directPosixStdin === true ||
               spawnActionsControlGuestFd(activeSpawnCallContext?.fileActions, 0);
+            // A POSIX file action that installs stdout/stderr gives the child
+            // its own kernel descriptor. Routing the child event through the
+            // parent as well duplicates bytes, and retaining the parent's pipe
+            // end until child exit creates an EOF/exit ownership cycle.
+            const directPosixStdout =
+              spawnActionsControlGuestFd(activeSpawnCallContext?.fileActions, 1);
+            const directPosixStderr =
+              spawnActionsControlGuestFd(activeSpawnCallContext?.fileActions, 2);
             const stdinPipe = directPosixStdin
               ? null
               : registerPipeConsumer(stdinTarget, result.childId, 'stdin');
-            const stdoutPipe = registerPipeProducer(stdoutTarget, result.childId, 'stdout');
-            const stderrPipe = registerPipeProducer(stderrTarget, result.childId, 'stderr');
-            const retainedSpawnOutputHandles = [stdoutTarget, stderrTarget]
+            const stdoutPipe = directPosixStdout
+              ? null
+              : registerPipeProducer(stdoutTarget, result.childId, 'stdout');
+            const stderrPipe = directPosixStderr
+              ? null
+              : registerPipeProducer(stderrTarget, result.childId, 'stderr');
+            const retainedSpawnOutputHandles = [
+              directPosixStdout ? null : stdoutTarget,
+              directPosixStderr ? null : stderrTarget,
+            ]
+              .filter((fd) => fd != null)
               .filter((fd, index, values) => values.indexOf(fd) === index)
               .map((fd) => retainSpawnOutputHandle(fd))
               .filter(Boolean);
-            const delegateRetainedFds = [stdinTarget, stdoutTarget, stderrTarget].filter(
+            const delegateRetainedFds = [
+              directPosixStdin ? null : stdinTarget,
+              directPosixStdout ? null : stdoutTarget,
+              directPosixStderr ? null : stderrTarget,
+            ].filter(
               (fd, index, values) =>
+                fd != null &&
                 fd > 2 &&
                 delegateManagedFdRefCounts.has(fd) &&
                 values.indexOf(fd) === index,
@@ -6841,8 +6870,8 @@ const hostProcessImport = {
               pid,
               stdinFd: stdinTarget,
               directPosixStdin,
-              stdoutFd: stdoutTarget,
-              stderrFd: stderrTarget,
+              stdoutFd: directPosixStdout ? 0xffffffff : stdoutTarget,
+              stderrFd: directPosixStderr ? 0xffffffff : stderrTarget,
               stdinPipe,
               stdoutPipe,
               stderrPipe,
@@ -8566,6 +8595,9 @@ if (SIDECAR_MANAGED_PROCESS) {
     if (kernelFd <= 2 && mappedGuestFd == null) {
       continue;
     }
+    if (mappedGuestFd != null) {
+      pendingInitialKernelGuestFds.delete(mappedGuestFd);
+    }
     const guestFd = registerKernelDelegateFd(
       kernelFd,
       mappedGuestFd ?? null,
@@ -9458,7 +9490,9 @@ wasiImport.fd_read = (fd, iovs, iovsLen, nreadPtr) => {
   );
   if (handle?.kind === 'kernel-fd') {
     try {
-      const requestedLength = guestIovByteLength(iovs, iovsLen);
+      const requestedLength = boundedWasmSyncRpcReadLength(
+        guestIovByteLength(iovs, iovsLen),
+      );
       const kernelFd = Number(handle.targetFd) >>> 0;
       let bytes;
       const stat = callSyncRpc('process.fd_stat', [kernelFd]);
@@ -9563,18 +9597,20 @@ wasiImport.fd_read = (fd, iovs, iovsLen, nreadPtr) => {
 
   if (handle?.kind === 'guest-file') {
     try {
-      const requestedLength = __agentOSWasiMeasurePhase('fd_read', 'iov_scan', () => {
-        if (!(instanceMemory instanceof WebAssembly.Memory)) {
-          return 0;
-        }
-        const view = new DataView(instanceMemory.buffer);
-        let total = 0;
-        for (let index = 0; index < (Number(iovsLen) >>> 0); index += 1) {
-          const entryOffset = (Number(iovs) >>> 0) + index * 8;
-          total += view.getUint32(entryOffset + 4, true);
-        }
-        return total >>> 0;
-      });
+      const requestedLength = boundedWasmSyncRpcReadLength(
+        __agentOSWasiMeasurePhase('fd_read', 'iov_scan', () => {
+          if (!(instanceMemory instanceof WebAssembly.Memory)) {
+            return 0;
+          }
+          const view = new DataView(instanceMemory.buffer);
+          let total = 0;
+          for (let index = 0; index < (Number(iovsLen) >>> 0); index += 1) {
+            const entryOffset = (Number(iovs) >>> 0) + index * 8;
+            total += view.getUint32(entryOffset + 4, true);
+          }
+          return total >>> 0;
+        }),
+      );
       const buffer = Buffer.alloc(requestedLength);
       const bytesRead = __agentOSWasiMeasurePhase('fd_read', 'host_io', () =>
         fsModule.readSync(
@@ -9599,18 +9635,20 @@ wasiImport.fd_read = (fd, iovs, iovsLen, nreadPtr) => {
 
   if (handle?.kind === 'passthrough' && typeof handle.ioFd === 'number') {
     try {
-      const requestedLength = __agentOSWasiMeasurePhase('fd_read', 'iov_scan', () => {
-        if (!(instanceMemory instanceof WebAssembly.Memory)) {
-          return 0;
-        }
-        const view = new DataView(instanceMemory.buffer);
-        let total = 0;
-        for (let index = 0; index < (Number(iovsLen) >>> 0); index += 1) {
-          const entryOffset = (Number(iovs) >>> 0) + index * 8;
-          total += view.getUint32(entryOffset + 4, true);
-        }
-        return total >>> 0;
-      });
+      const requestedLength = boundedWasmSyncRpcReadLength(
+        __agentOSWasiMeasurePhase('fd_read', 'iov_scan', () => {
+          if (!(instanceMemory instanceof WebAssembly.Memory)) {
+            return 0;
+          }
+          const view = new DataView(instanceMemory.buffer);
+          let total = 0;
+          for (let index = 0; index < (Number(iovsLen) >>> 0); index += 1) {
+            const entryOffset = (Number(iovs) >>> 0) + index * 8;
+            total += view.getUint32(entryOffset + 4, true);
+          }
+          return total >>> 0;
+        }),
+      );
       const buffer = Buffer.alloc(requestedLength);
       const bytesRead = __agentOSWasiMeasurePhase('fd_read', 'host_io', () =>
         fsModule.readSync(
@@ -9792,7 +9830,9 @@ wasiImport.fd_pread = (fd, iovs, iovsLen, offset, nreadPtr) => {
   const handle = lookupFdHandle(fd);
   if (handle?.kind === 'kernel-fd') {
     try {
-      const requestedLength = guestIovByteLength(iovs, iovsLen);
+      const requestedLength = boundedWasmSyncRpcReadLength(
+        guestIovByteLength(iovs, iovsLen),
+      );
       const bytes = Buffer.from(callSyncRpc('process.fd_pread', [
         Number(handle.targetFd) >>> 0,
         requestedLength,
@@ -9805,18 +9845,20 @@ wasiImport.fd_pread = (fd, iovs, iovsLen, offset, nreadPtr) => {
   }
   if (handle?.kind === 'guest-file') {
     try {
-      const requestedLength = (() => {
-        if (!(instanceMemory instanceof WebAssembly.Memory)) {
-          return 0;
-        }
-        const view = new DataView(instanceMemory.buffer);
-        let total = 0;
-        for (let index = 0; index < (Number(iovsLen) >>> 0); index += 1) {
-          const entryOffset = (Number(iovs) >>> 0) + index * 8;
-          total += view.getUint32(entryOffset + 4, true);
-        }
-        return total >>> 0;
-      })();
+      const requestedLength = boundedWasmSyncRpcReadLength(
+        (() => {
+          if (!(instanceMemory instanceof WebAssembly.Memory)) {
+            return 0;
+          }
+          const view = new DataView(instanceMemory.buffer);
+          let total = 0;
+          for (let index = 0; index < (Number(iovsLen) >>> 0); index += 1) {
+            const entryOffset = (Number(iovs) >>> 0) + index * 8;
+            total += view.getUint32(entryOffset + 4, true);
+          }
+          return total >>> 0;
+        })(),
+      );
       const buffer = Buffer.alloc(requestedLength);
       const bytesRead = fsModule.readSync(
         handle.targetFd,
@@ -9835,18 +9877,20 @@ wasiImport.fd_pread = (fd, iovs, iovsLen, offset, nreadPtr) => {
   if (handle?.kind === 'passthrough') {
     if (typeof handle.ioFd === 'number') {
       try {
-        const requestedLength = (() => {
-          if (!(instanceMemory instanceof WebAssembly.Memory)) {
-            return 0;
-          }
-          const view = new DataView(instanceMemory.buffer);
-          let total = 0;
-          for (let index = 0; index < (Number(iovsLen) >>> 0); index += 1) {
-            const entryOffset = (Number(iovs) >>> 0) + index * 8;
-            total += view.getUint32(entryOffset + 4, true);
-          }
-          return total >>> 0;
-        })();
+        const requestedLength = boundedWasmSyncRpcReadLength(
+          (() => {
+            if (!(instanceMemory instanceof WebAssembly.Memory)) {
+              return 0;
+            }
+            const view = new DataView(instanceMemory.buffer);
+            let total = 0;
+            for (let index = 0; index < (Number(iovsLen) >>> 0); index += 1) {
+              const entryOffset = (Number(iovs) >>> 0) + index * 8;
+              total += view.getUint32(entryOffset + 4, true);
+            }
+            return total >>> 0;
+          })(),
+        );
         const buffer = Buffer.alloc(requestedLength);
         const bytesRead = fsModule.readSync(
           handle.ioFd,

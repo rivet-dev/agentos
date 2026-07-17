@@ -1,4 +1,5 @@
 use super::super::*;
+use crate::state::SocketFairnessRetirement;
 
 pub(in crate::execution) struct ActiveUdpSendToRequest<'a, B> {
     pub(in crate::execution) bridge: &'a SharedBridge<B>,
@@ -232,7 +233,7 @@ fn udp_io_deferred_error(error: std::io::Error) -> crate::state::DeferredRpcErro
 }
 
 fn notify_native_udp_readable(
-    event_pusher: &Arc<Mutex<Option<JavascriptSocketEventPusher>>>,
+    event_pusher: &Arc<SocketReadinessSubscribers>,
     read_event_notify: &Arc<tokio::sync::Notify>,
     wake_pending: &Arc<AtomicBool>,
     event: &'static str,
@@ -563,7 +564,7 @@ struct NativeUdpOwnerRegistration {
     limits: ReactorIoLimits,
     fairness_identity: Arc<OnceLock<(u64, u64)>>,
     fairness_identity_committed: Arc<tokio::sync::Notify>,
-    event_pusher: Arc<Mutex<Option<JavascriptSocketEventPusher>>>,
+    event_pusher: Arc<SocketReadinessSubscribers>,
     read_event_notify: Arc<tokio::sync::Notify>,
     wake_pending: Arc<AtomicBool>,
 }
@@ -1029,22 +1030,11 @@ impl ActiveUdpSocket {
             agentos_runtime::capability::CapabilityGeneration,
         )>,
     ) {
-        let target =
-            session
-                .zip(identity)
-                .map(|(session, (capability_id, capability_generation))| {
-                    JavascriptSocketEventPusher {
-                        session,
-                        capability_id,
-                        capability_generation,
-                    }
-                });
-        match self.event_pusher.lock() {
-            Ok(mut guard) => *guard = target,
-            Err(_) => eprintln!(
-                "ERR_AGENTOS_UDP_READY_STATE_POISONED: UDP readiness target lock poisoned"
-            ),
-        }
+        self.readiness_registration.register(
+            session,
+            identity,
+            agentos_runtime::readiness::ReadyFlags::DATAGRAM,
+        );
     }
 
     async fn acquire_fair_turn(&self) -> Result<FairWorkTurn, SidecarError> {
@@ -1072,6 +1062,10 @@ impl ActiveUdpSocket {
         let socket_id = kernel
             .socket_create(EXECUTION_DRIVER_NAME, kernel_pid, spec)
             .map_err(kernel_error)?;
+        let fairness_identity = Arc::new(OnceLock::new());
+        let fairness_retirement =
+            SocketFairnessRetirement::new(Arc::clone(&fairness_identity), runtime_context.clone());
+        let event_pusher = SocketReadinessSubscribers::new(&resources);
         Ok(Self {
             family,
             native_commands: None,
@@ -1086,10 +1080,13 @@ impl ActiveUdpSocket {
             resources,
             runtime_context,
             reactor_limits,
-            fairness_identity: Arc::new(OnceLock::new()),
+            fairness_identity,
             fairness_identity_committed: Arc::new(tokio::sync::Notify::new()),
+            fairness_retirement,
+            description_lease: Arc::new(SocketDescriptionLease::default()),
             read_event_notify: Arc::new(tokio::sync::Notify::new()),
-            event_pusher: Arc::new(Mutex::new(None)),
+            event_pusher: Arc::clone(&event_pusher),
+            readiness_registration: SocketReadinessRegistration::new(event_pusher, None, None),
             native_read_wake_pending: Arc::new(AtomicBool::new(false)),
         })
     }
@@ -1111,8 +1108,10 @@ impl ActiveUdpSocket {
         let local_addr = socket.local_addr().map_err(sidecar_net_error)?;
         let fairness_identity = Arc::new(OnceLock::new());
         let fairness_identity_committed = Arc::new(tokio::sync::Notify::new());
+        let fairness_retirement =
+            SocketFairnessRetirement::new(Arc::clone(&fairness_identity), runtime_context.clone());
         let read_event_notify = Arc::new(tokio::sync::Notify::new());
-        let event_pusher = Arc::new(Mutex::new(None));
+        let event_pusher = SocketReadinessSubscribers::new(&resources);
         let native_read_wake_pending = Arc::new(AtomicBool::new(false));
         let native_commands = spawn_native_udp_owner(
             &runtime_context,
@@ -1144,8 +1143,11 @@ impl ActiveUdpSocket {
             reactor_limits,
             fairness_identity,
             fairness_identity_committed,
+            fairness_retirement,
+            description_lease: Arc::new(SocketDescriptionLease::default()),
             read_event_notify,
-            event_pusher,
+            event_pusher: Arc::clone(&event_pusher),
+            readiness_registration: SocketReadinessRegistration::new(event_pusher, None, None),
             native_read_wake_pending,
         })
     }
@@ -1167,10 +1169,28 @@ impl ActiveUdpSocket {
             reactor_limits: self.reactor_limits,
             fairness_identity: Arc::clone(&self.fairness_identity),
             fairness_identity_committed: Arc::clone(&self.fairness_identity_committed),
+            fairness_retirement: Arc::clone(&self.fairness_retirement),
+            description_lease: Arc::clone(&self.description_lease),
             read_event_notify: Arc::clone(&self.read_event_notify),
             event_pusher: Arc::clone(&self.event_pusher),
+            readiness_registration: SocketReadinessRegistration::new(
+                Arc::clone(&self.event_pusher),
+                None,
+                None,
+            ),
             native_read_wake_pending: Arc::clone(&self.native_read_wake_pending),
         })
+    }
+
+    pub(in crate::execution) fn is_final_description_handle(&self) -> bool {
+        Arc::strong_count(&self.description_handles) == 1
+    }
+
+    pub(in crate::execution) fn retain_description_lease(
+        &self,
+        lease: Arc<agentos_runtime::capability::CapabilityLease>,
+    ) {
+        self.description_lease.retain(lease);
     }
 
     pub(in crate::execution) fn local_addr(&self) -> Option<SocketAddr> {
@@ -1871,6 +1891,26 @@ fn parse_native_udp_option(
     }
 }
 
+pub(in crate::execution) fn release_udp_socket_handle(
+    process: &mut ActiveProcess,
+    socket_id: &str,
+    mut socket: ActiveUdpSocket,
+    kernel: &mut SidecarKernel,
+    kernel_readiness: &KernelSocketReadinessRegistry,
+) -> Result<(), SidecarError> {
+    let identity = process
+        .capability_readiness_identity(&NativeCapabilityKey::UdpSocket(socket_id.to_owned()));
+    unregister_kernel_readiness_target(kernel_readiness, socket.kernel_socket_id, identity);
+    if socket.is_final_description_handle() {
+        socket.close(kernel, process.kernel_pid);
+    }
+    process.release_description_capability(
+        &NativeCapabilityKey::UdpSocket(socket_id.to_owned()),
+        socket.fairness_identity.get().copied(),
+        &socket.description_lease,
+    )
+}
+
 pub(in crate::execution) fn service_javascript_dgram_sync_rpc<B>(
     request: JavascriptDgramSyncRpcServiceRequest<'_, B>,
 ) -> Result<JavascriptSyncRpcServiceResponse, SidecarError>
@@ -1935,6 +1975,11 @@ where
                 }
             };
             socket.set_fairness_identity(process.capability_fairness_identity(&capability_key));
+            socket.retain_description_lease(
+                process
+                    .shared_capability_lease(&capability_key)
+                    .expect("committed UDP capability lease"),
+            );
             socket.set_event_pusher(
                 process.execution.javascript_v8_session_handle(),
                 process.capability_readiness_identity(&capability_key),
@@ -2086,12 +2131,10 @@ where
         }
         "dgram.close" => {
             let socket_id = javascript_sync_rpc_arg_str(&request.args, 0, "dgram.close socket id")?;
-            let mut socket = process.udp_sockets.remove(socket_id).ok_or_else(|| {
+            let socket = process.udp_sockets.remove(socket_id).ok_or_else(|| {
                 SidecarError::InvalidState(format!("unknown UDP socket {socket_id}"))
             })?;
-            unregister_kernel_readiness_target(&kernel_readiness, socket.kernel_socket_id);
-            socket.close(kernel, process.kernel_pid);
-            process.release_capability(&NativeCapabilityKey::UdpSocket(socket_id.to_owned()))?;
+            release_udp_socket_handle(process, socket_id, socket, kernel, &kernel_readiness)?;
             Ok(Value::Null.into())
         }
         "dgram.address" => {
@@ -2394,7 +2437,7 @@ mod native_udp_owner_tests {
                     limits,
                     fairness_identity,
                     fairness_identity_committed: Arc::new(tokio::sync::Notify::new()),
-                    event_pusher: Arc::new(Mutex::new(None)),
+                    event_pusher: SocketReadinessSubscribers::new(&resources),
                     read_event_notify: Arc::clone(&read_event_notify),
                     wake_pending: Arc::clone(&wake_pending),
                 },

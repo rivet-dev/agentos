@@ -3756,7 +3756,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         }
 
         if self.pipes.is_pipe(entry.description.id()) {
-            return Ok(self.pipes.read_with_timeout(
+            let result = self.pipes.read_with_timeout(
                 entry.description.id(),
                 length,
                 if (entry.description.flags() | entry.status_flags) & O_NONBLOCK != 0 {
@@ -3764,7 +3764,8 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
                 } else {
                     timeout.or_else(|| self.blocking_read_timeout())
                 },
-            )?);
+            )?;
+            return Ok(result);
         }
 
         if self.ptys.is_pty(entry.description.id()) {
@@ -3819,14 +3820,14 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         fd: u32,
         data: &[u8],
     ) -> KernelResult<usize> {
-        self.fd_write_with_pipe_mode(requester_driver, pid, fd, data, None)
+        self.fd_write_with_mode(requester_driver, pid, fd, data, false)
     }
 
-    /// Attempt a write without parking the calling host thread on a full pipe.
+    /// Attempt one write without blocking on bounded kernel transport state.
     ///
-    /// Non-pipe descriptors retain their normal behavior. This is used by
-    /// synchronous guest bridges, which cooperatively poll and retry blocking
-    /// pipe writes so another guest can drain the pipe on the same dispatcher.
+    /// This preserves the descriptor's guest-visible status flags. Trusted
+    /// sidecar actors use it to park a synchronous guest write and retry after
+    /// readiness changes instead of blocking the process-wide reactor.
     pub fn fd_write_nonblocking(
         &mut self,
         requester_driver: &str,
@@ -3834,16 +3835,16 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         fd: u32,
         data: &[u8],
     ) -> KernelResult<usize> {
-        self.fd_write_with_pipe_mode(requester_driver, pid, fd, data, Some(true))
+        self.fd_write_with_mode(requester_driver, pid, fd, data, true)
     }
 
-    fn fd_write_with_pipe_mode(
+    fn fd_write_with_mode(
         &mut self,
         requester_driver: &str,
         pid: u32,
         fd: u32,
         data: &[u8],
-        pipe_nonblocking_override: Option<bool>,
+        force_nonblocking: bool,
     ) -> KernelResult<usize> {
         self.assert_driver_owns(requester_driver, pid)?;
         self.resources.check_fd_write_size(data.len())?;
@@ -3881,8 +3882,8 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             return match self.pipes.write_with_mode(
                 entry.description.id(),
                 data,
-                pipe_nonblocking_override
-                    .unwrap_or((entry.description.flags() | entry.status_flags) & O_NONBLOCK != 0),
+                force_nonblocking
+                    || (entry.description.flags() | entry.status_flags) & O_NONBLOCK != 0,
             ) {
                 Ok(bytes) => Ok(bytes),
                 Err(error) => {

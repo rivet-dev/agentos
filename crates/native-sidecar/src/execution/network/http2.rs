@@ -4160,10 +4160,16 @@ mod http2_reactor_tests {
             agentos_runtime::SidecarRuntime::process(&agentos_runtime::RuntimeConfig::default())
                 .expect("runtime")
                 .context();
+        let first_generation = runtime
+            .allocate_vm_generation()
+            .expect("allocate first HTTP/2 fairness generation");
+        let second_generation = runtime
+            .allocate_vm_generation()
+            .expect("allocate second HTTP/2 fairness generation");
         runtime.handle().block_on(async {
             let first = runtime
                 .fairness()
-                .acquire(101, 1, FairBudget::new(4, 1_024))
+                .acquire(first_generation, 1, FairBudget::new(4, 1_024))
                 .await
                 .expect("first H2 fair turn");
             first
@@ -4173,7 +4179,7 @@ mod http2_reactor_tests {
                 Duration::from_secs(1),
                 runtime
                     .fairness()
-                    .acquire(202, 2, FairBudget::new(4, 1_024)),
+                    .acquire(second_generation, 2, FairBudget::new(4, 1_024)),
             )
             .await
             .expect("second VM must not be blocked by a retained H2 turn")
@@ -4183,11 +4189,11 @@ mod http2_reactor_tests {
                 .expect("complete second H2 turn");
             runtime
                 .fairness()
-                .retire_capability(101, 1)
+                .retire_capability(first_generation, 1)
                 .expect("retire first capability");
             runtime
                 .fairness()
-                .retire_capability(202, 2)
+                .retire_capability(second_generation, 2)
                 .expect("retire second capability");
         });
     }
@@ -4245,7 +4251,9 @@ mod http2_reactor_tests {
             agentos_runtime::SidecarRuntime::process(&agentos_runtime::RuntimeConfig::default())
                 .expect("runtime")
                 .context();
-        let vm_generation = 73;
+        let vm_generation = runtime
+            .allocate_vm_generation()
+            .expect("allocate repeated teardown HTTP/2 generation");
 
         for capability_id in 1..=2 {
             runtime.handle().block_on(async {
@@ -4294,9 +4302,9 @@ mod http2_reactor_tests {
                         .acquire(vm_generation, capability_id, FairBudget::new(1, 128))
                         .await,
                     Err(agentos_runtime::fairness::FairnessError::CapabilityRetired {
-                        vm_generation: 73,
+                        vm_generation: retired_generation,
                         capability_id: retired,
-                    }) if retired == capability_id
+                    }) if retired_generation == vm_generation && retired == capability_id
                 ));
             });
         }

@@ -1,11 +1,8 @@
 //! End-to-end ACP round-trip: `AcpCore` driving a REAL ACP echo agent (not a mock).
 //!
-//! This is the native proof of the same round-trip the browser will do in Chromium:
-//! a synchronous `AcpHost` (here over `std::process`, spawning `node` + the shared
-//! `acp-echo-agent.mjs` fixture) lets `AcpCore::create_session` run the actual
-//! `initialize` + `session/new` handshake over real stdin/stdout pipes. The browser
-//! backend swaps this `AcpHost` for one over the converged executor; the core and
-//! the agent contract are identical.
+//! A synchronous `AcpHost` (here over `std::process`, spawning `node` + the
+//! crate-owned `acp-echo-agent.mjs` fixture) lets `AcpCore::create_session` run the
+//! actual `initialize` + `session/new` handshake over real stdin/stdout pipes.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
@@ -169,8 +166,7 @@ impl AcpHost for NodeChildAcpHost {
 }
 
 fn echo_agent_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../packages/browser/tests/fixtures/acp-echo-agent.mjs")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/acp-echo-agent.mjs")
 }
 
 fn node_available() -> bool {

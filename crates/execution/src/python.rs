@@ -17,6 +17,7 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
+use std::io::{Read, Seek, SeekFrom};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -297,6 +298,10 @@ pub struct PythonExecutionLimits {
     pub reactor_work_quantum: Option<usize>,
     /// Per-call host bridge deadline forwarded unchanged to the Pyodide V8 runner.
     pub bridge_call_timeout_ms: Option<u64>,
+    /// Maximum host-direct descriptors retained for managed Pyodide assets.
+    /// `None` keeps the execution engine's bounded fallback. The native sidecar
+    /// always supplies the VM kernel's configured descriptor limit.
+    pub max_open_fds: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -456,6 +461,7 @@ pub struct PythonExecution {
     child_pid: u32,
     inner: JavascriptExecution,
     pyodide_dist_path: PathBuf,
+    managed_host_files: PythonManagedHostFiles,
     pending_vfs_rpc: Arc<Mutex<Option<PendingVfsRpc>>>,
     v8_session: crate::v8_host::V8SessionHandle,
     output_buffer_max_bytes: usize,
@@ -815,9 +821,11 @@ impl PythonExecution {
                     if self.try_service_standalone_module_sync_rpc(&request)? {
                         return Ok(None);
                     }
-                    if let Some(action) =
-                        python_javascript_sync_rpc_action(&self.pyodide_dist_path, &request)?
-                    {
+                    if let Some(action) = python_javascript_sync_rpc_action(
+                        &self.pyodide_dist_path,
+                        &mut self.managed_host_files,
+                        &request,
+                    )? {
                         respond_python_javascript_sync_rpc_action(
                             &mut self.inner,
                             request.id,
@@ -1334,6 +1342,9 @@ impl PythonExecutionEngine {
             v8_session: javascript_execution.v8_session_handle(),
             inner: javascript_execution,
             pyodide_dist_path,
+            managed_host_files: PythonManagedHostFiles::new(python_managed_host_file_limit(
+                &request,
+            )),
             pending_vfs_rpc,
             output_buffer_max_bytes: python_output_buffer_max_bytes(&request),
             execution_timeout: python_execution_timeout(&request),
@@ -1871,11 +1882,22 @@ fn resolved_pyodide_dist_path(path: &Path, cwd: &Path) -> PathBuf {
     resolve_execution_path(path, cwd)
 }
 
-#[derive(Default)]
 struct PythonPrewarmOutput {
     stdout: Vec<u8>,
     stderr: Vec<u8>,
     sync_rpc_log: Vec<String>,
+    managed_host_files: PythonManagedHostFiles,
+}
+
+impl PythonPrewarmOutput {
+    fn new(max_open_fds: usize) -> Self {
+        Self {
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            sync_rpc_log: Vec::new(),
+            managed_host_files: PythonManagedHostFiles::new(max_open_fds),
+        }
+    }
 }
 
 fn handle_python_prewarm_event(
@@ -1916,9 +1938,11 @@ fn handle_python_prewarm_event(
             }
             let pyodide_dist_path =
                 resolved_pyodide_dist_path(&context.pyodide_dist_path, &request.cwd);
-            if let Some(action) =
-                python_javascript_sync_rpc_action(&pyodide_dist_path, &sync_request)?
-            {
+            if let Some(action) = python_javascript_sync_rpc_action(
+                &pyodide_dist_path,
+                &mut output.managed_host_files,
+                &sync_request,
+            )? {
                 respond_python_javascript_sync_rpc_action(
                     prewarm_execution,
                     sync_request.id,
@@ -2006,7 +2030,7 @@ fn prewarm_python_path(
             defer_execute: false,
         },
     )?;
-    let mut output = PythonPrewarmOutput::default();
+    let mut output = PythonPrewarmOutput::new(python_managed_host_file_limit(request));
     let result = loop {
         let event = prewarm_execution
             .poll_event_blocking(PYTHON_PREWARM_TIMEOUT)
@@ -2088,7 +2112,7 @@ async fn prewarm_python_path_async(
             defer_execute: false,
         },
     )?;
-    let mut output = PythonPrewarmOutput::default();
+    let mut output = PythonPrewarmOutput::new(python_managed_host_file_limit(request));
     let result = loop {
         let event = prewarm_execution
             .poll_event(PYTHON_PREWARM_TIMEOUT)
@@ -2137,15 +2161,120 @@ async fn prewarm_python_path_async(
     ))
 }
 
+#[derive(Debug)]
 enum PythonJavascriptSyncRpcAction {
     Success(Value),
+    RawSuccess(Vec<u8>),
     Error { code: &'static str, message: String },
+}
+
+#[derive(Debug)]
+struct PythonManagedHostFiles {
+    next_fd: u64,
+    max_files: usize,
+    files: BTreeMap<u64, fs::File>,
+}
+
+// Standalone execution callers do not have a VM kernel from which to source
+// policy. Keep their fallback bounded; production sidecar launches always pass
+// `vm.kernel.resource_limits().max_open_fds` in `PythonExecutionLimits`.
+const DEFAULT_PYTHON_MANAGED_HOST_FILE_LIMIT: usize = 256;
+
+impl Default for PythonManagedHostFiles {
+    fn default() -> Self {
+        Self::new(DEFAULT_PYTHON_MANAGED_HOST_FILE_LIMIT)
+    }
+}
+
+impl PythonManagedHostFiles {
+    fn new(max_files: usize) -> Self {
+        Self {
+            // Keep host-direct descriptors disjoint from ordinary guest and
+            // stdio descriptors. They never cross the JavaScript execution.
+            next_fd: 0x4000_0000,
+            max_files,
+            files: BTreeMap::new(),
+        }
+    }
+}
+
+fn python_managed_host_file_limit(request: &StartPythonExecutionRequest) -> usize {
+    request
+        .limits
+        .max_open_fds
+        .unwrap_or(DEFAULT_PYTHON_MANAGED_HOST_FILE_LIMIT)
 }
 
 fn python_javascript_sync_rpc_action(
     pyodide_dist_path: &Path,
+    managed_host_files: &mut PythonManagedHostFiles,
     request: &JavascriptSyncRpcRequest,
 ) -> Result<Option<PythonJavascriptSyncRpcAction>, PythonExecutionError> {
+    if matches!(request.method.as_str(), "fs.readSync" | "_fsReadRaw") {
+        let Some(fd) = request.args.first().and_then(Value::as_u64) else {
+            return Ok(None);
+        };
+        let Some(file) = managed_host_files.files.get_mut(&fd) else {
+            return Ok(None);
+        };
+        let length = request
+            .args
+            .get(1)
+            .and_then(Value::as_u64)
+            .and_then(|length| usize::try_from(length).ok())
+            .ok_or_else(|| {
+                PythonExecutionError::RpcResponse(String::from(
+                    "managed fs.readSync length must fit within usize",
+                ))
+            })?;
+        if length > PYTHON_SYNC_RPC_DATA_BYTES {
+            return Err(PythonExecutionError::RpcResponse(format!(
+                "managed fs.readSync length {length} exceeds {PYTHON_SYNC_RPC_DATA_BYTES} bytes"
+            )));
+        }
+        if let Some(position) = request.args.get(2).and_then(Value::as_u64) {
+            file.seek(SeekFrom::Start(position))
+                .map_err(PythonExecutionError::PrepareRuntime)?;
+        }
+        let mut bytes = vec![0; length];
+        let bytes_read = file
+            .read(&mut bytes)
+            .map_err(PythonExecutionError::PrepareRuntime)?;
+        bytes.truncate(bytes_read);
+        return Ok(Some(if request.raw_bytes_args.contains_key(&usize::MAX) {
+            PythonJavascriptSyncRpcAction::RawSuccess(bytes)
+        } else {
+            PythonJavascriptSyncRpcAction::Success(Value::String(v8_runtime::base64_encode_pub(
+                &bytes,
+            )))
+        }));
+    }
+
+    if request.method == "fs.closeSync" {
+        let Some(fd) = request.args.first().and_then(Value::as_u64) else {
+            return Ok(None);
+        };
+        if managed_host_files.files.remove(&fd).is_none() {
+            return Ok(None);
+        }
+        return Ok(Some(PythonJavascriptSyncRpcAction::Success(Value::Null)));
+    }
+
+    if request.method == "fs.fstatSync" {
+        let Some(fd) = request.args.first().and_then(Value::as_u64) else {
+            return Ok(None);
+        };
+        let Some(file) = managed_host_files.files.get(&fd) else {
+            return Ok(None);
+        };
+        let metadata = file
+            .metadata()
+            .map_err(PythonExecutionError::PrepareRuntime)?;
+        return Ok(Some(PythonJavascriptSyncRpcAction::Success(
+            python_host_stat_value(&metadata),
+        )));
+    }
+
     let Some(path) = request.args.first().and_then(Value::as_str) else {
         return Ok(None);
     };
@@ -2155,6 +2284,44 @@ fn python_javascript_sync_rpc_action(
     };
 
     Ok(Some(match request.method.as_str() {
+        "fs.openSync" => {
+            let flags = request.args.get(1).unwrap_or(&Value::Null);
+            let read_only = matches!(flags.as_str(), Some("r"))
+                || flags.as_u64().is_some_and(|flags| flags == 0);
+            if !read_only {
+                PythonJavascriptSyncRpcAction::Error {
+                    code: "EROFS",
+                    message: format!(
+                        "EROFS: managed Python runtime assets are read-only, open '{path}'"
+                    ),
+                }
+            } else if managed_host_files.files.len() >= managed_host_files.max_files {
+                PythonJavascriptSyncRpcAction::Error {
+                    code: "EMFILE",
+                    message: format!(
+                        "EMFILE: managed Python host descriptor limit {} reached (limits.resources.maxOpenFds); raise limits.resources.maxOpenFds",
+                        managed_host_files.max_files
+                    ),
+                }
+            } else {
+                match fs::File::open(&host_path) {
+                    Ok(file) => {
+                        let fd = managed_host_files.next_fd;
+                        managed_host_files.next_fd =
+                            managed_host_files.next_fd.checked_add(1).ok_or_else(|| {
+                                PythonExecutionError::RpcResponse(String::from(
+                                    "managed Python host descriptor ids exhausted",
+                                ))
+                            })?;
+                        managed_host_files.files.insert(fd, file);
+                        PythonJavascriptSyncRpcAction::Success(json!(fd))
+                    }
+                    Err(error) => {
+                        return python_sync_rpc_fs_action_error(path, "open", error).map(Some);
+                    }
+                }
+            }
+        }
         "fs.promises.readFile" | "fs.readFileSync" => {
             let bytes = match fs::read(&host_path) {
                 Ok(bytes) => bytes,
@@ -2269,6 +2436,9 @@ fn respond_python_javascript_sync_rpc_action(
     match action {
         PythonJavascriptSyncRpcAction::Success(value) => execution
             .respond_sync_rpc_success(id, value)
+            .map_err(map_javascript_error),
+        PythonJavascriptSyncRpcAction::RawSuccess(bytes) => execution
+            .respond_sync_rpc_raw_success(id, bytes)
             .map_err(map_javascript_error),
         PythonJavascriptSyncRpcAction::Error { code, message } => execution
             .respond_sync_rpc_error(id, code, message)
@@ -2643,11 +2813,14 @@ fn warmup_metrics_line(
 #[cfg(test)]
 mod tests {
     use super::{
-        clear_pending_vfs_rpc, python_managed_path_kind, python_runner_javascript_limits,
-        python_wait_remaining, CreatePythonContextRequest, PendingVfsRpc, PendingVfsRpcResolution,
-        PendingVfsRpcState, PythonExecutionEngine, PythonExecutionLimits, PythonManagedPathKind,
-        PYODIDE_CACHE_GUEST_ROOT, PYODIDE_GUEST_ROOT,
+        clear_pending_vfs_rpc, python_javascript_sync_rpc_action, python_managed_path_kind,
+        python_runner_javascript_limits, python_wait_remaining, CreatePythonContextRequest,
+        JavascriptSyncRpcRequest, PendingVfsRpc, PendingVfsRpcResolution, PendingVfsRpcState,
+        PythonExecutionEngine, PythonExecutionLimits, PythonJavascriptSyncRpcAction,
+        PythonManagedHostFiles, PythonManagedPathKind, PYODIDE_CACHE_GUEST_ROOT,
+        PYODIDE_GUEST_ROOT,
     };
+    use std::collections::HashMap;
     use std::fs;
     #[cfg(unix)]
     use std::os::unix::fs::symlink;
@@ -2727,6 +2900,133 @@ mod tests {
             PendingVfsRpcResolution::TimedOut
         );
         assert!(pending.lock().expect("pending request lock").is_none());
+    }
+
+    #[test]
+    fn python_managed_asset_descriptor_reads_use_raw_bounded_responses() {
+        let temp = tempdir().expect("create temp dir");
+        let pyodide = temp.path().join("pyodide");
+        fs::create_dir_all(&pyodide).expect("create pyodide root");
+        fs::write(pyodide.join("python_stdlib.zip"), b"stdlib-bytes").expect("write managed asset");
+        let mut files = PythonManagedHostFiles::default();
+        let open = JavascriptSyncRpcRequest {
+            id: 1,
+            method: String::from("fs.openSync"),
+            args: vec![
+                serde_json::Value::String(format!("{PYODIDE_GUEST_ROOT}/python_stdlib.zip")),
+                serde_json::json!(0),
+                serde_json::Value::Null,
+            ],
+            raw_bytes_args: HashMap::new(),
+        };
+        let fd = match python_javascript_sync_rpc_action(&pyodide, &mut files, &open)
+            .expect("route managed open")
+            .expect("managed open action")
+        {
+            PythonJavascriptSyncRpcAction::Success(value) => {
+                value.as_u64().expect("managed descriptor")
+            }
+            other => panic!("unexpected managed open action: {other:?}"),
+        };
+
+        let read = JavascriptSyncRpcRequest {
+            id: 2,
+            method: String::from("fs.readSync"),
+            args: vec![
+                serde_json::json!(fd),
+                serde_json::json!(64),
+                serde_json::Value::Null,
+            ],
+            raw_bytes_args: HashMap::from([(usize::MAX, Vec::new())]),
+        };
+        match python_javascript_sync_rpc_action(&pyodide, &mut files, &read)
+            .expect("route managed read")
+            .expect("managed read action")
+        {
+            PythonJavascriptSyncRpcAction::RawSuccess(bytes) => {
+                assert_eq!(bytes, b"stdlib-bytes")
+            }
+            other => panic!("unexpected managed read action: {other:?}"),
+        }
+
+        let close = JavascriptSyncRpcRequest {
+            id: 3,
+            method: String::from("fs.closeSync"),
+            args: vec![serde_json::json!(fd)],
+            raw_bytes_args: HashMap::new(),
+        };
+        assert!(matches!(
+            python_javascript_sync_rpc_action(&pyodide, &mut files, &close)
+                .expect("route managed close"),
+            Some(PythonJavascriptSyncRpcAction::Success(
+                serde_json::Value::Null
+            ))
+        ));
+        assert!(files.files.is_empty());
+    }
+
+    #[test]
+    fn python_managed_asset_descriptors_enforce_limit_and_reuse_capacity_after_close() {
+        let temp = tempdir().expect("create temp dir");
+        let pyodide = temp.path().join("pyodide");
+        fs::create_dir_all(&pyodide).expect("create pyodide root");
+        fs::write(pyodide.join("python_stdlib.zip"), b"stdlib-bytes").expect("write managed asset");
+        let mut files = PythonManagedHostFiles::new(2);
+        let open = |id| JavascriptSyncRpcRequest {
+            id,
+            method: String::from("fs.openSync"),
+            args: vec![
+                serde_json::Value::String(format!("{PYODIDE_GUEST_ROOT}/python_stdlib.zip")),
+                serde_json::json!(0),
+                serde_json::Value::Null,
+            ],
+            raw_bytes_args: HashMap::new(),
+        };
+
+        let opened_fd = |action: PythonJavascriptSyncRpcAction| match action {
+            PythonJavascriptSyncRpcAction::Success(value) => {
+                value.as_u64().expect("managed descriptor")
+            }
+            other => panic!("unexpected managed open action: {other:?}"),
+        };
+        let first = opened_fd(
+            python_javascript_sync_rpc_action(&pyodide, &mut files, &open(1))
+                .expect("route first open")
+                .expect("first open action"),
+        );
+        let _second = opened_fd(
+            python_javascript_sync_rpc_action(&pyodide, &mut files, &open(2))
+                .expect("route second open")
+                .expect("second open action"),
+        );
+        assert_eq!(files.files.len(), 2);
+
+        assert!(matches!(
+            python_javascript_sync_rpc_action(&pyodide, &mut files, &open(3))
+                .expect("route saturated open"),
+            Some(PythonJavascriptSyncRpcAction::Error { code: "EMFILE", message })
+                if message.contains("limits.resources.maxOpenFds")
+        ));
+        assert_eq!(files.files.len(), 2);
+
+        let close = JavascriptSyncRpcRequest {
+            id: 4,
+            method: String::from("fs.closeSync"),
+            args: vec![serde_json::json!(first)],
+            raw_bytes_args: HashMap::new(),
+        };
+        assert!(matches!(
+            python_javascript_sync_rpc_action(&pyodide, &mut files, &close).expect("route close"),
+            Some(PythonJavascriptSyncRpcAction::Success(
+                serde_json::Value::Null
+            ))
+        ));
+        let _replacement = opened_fd(
+            python_javascript_sync_rpc_action(&pyodide, &mut files, &open(5))
+                .expect("route replacement open")
+                .expect("replacement open action"),
+        );
+        assert_eq!(files.files.len(), 2);
     }
 
     #[test]

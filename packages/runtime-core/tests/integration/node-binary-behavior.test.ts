@@ -15,7 +15,7 @@
 import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
 	describeIf,
 	createIntegrationKernel,
@@ -28,6 +28,10 @@ import {
   COMMANDS_DIR,
 } from '@rivet-dev/agentos-vm-test-harness';
 import type { IntegrationKernelResult } from '@rivet-dev/agentos-vm-test-harness';
+
+// A cold debug-sidecar boot can exceed Vitest's five-second default on the
+// self-hosted CI runner; runtime operation deadlines still detect real hangs.
+vi.setConfig({ testTimeout: 15_000 });
 
 const skipReason = skipUnlessWasmBuilt();
 

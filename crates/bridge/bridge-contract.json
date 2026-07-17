@@ -418,6 +418,7 @@
 		"_fsReadDirAsync": 4194304,
 		"_childProcessPoll": 1048576,
 		"_childProcessSpawnSync": 16777216,
+		"_processWasmSyncRpc": 262144,
 		"_netSocketReadRaw": 524288,
 		"_dgramSocketRecvRaw": 131072,
 		"_sqliteDatabaseExecRaw": 16777216,

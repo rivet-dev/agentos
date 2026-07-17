@@ -13,7 +13,7 @@
          mod unsupported;
 --- /dev/null
 +++ b/library/std/src/sys/pipe/wasi.rs
-@@ -0,0 +1,27 @@
+@@ -0,0 +1,31 @@
 +// WASI pipe implementation using wasmVM host_process.fd_pipe.
 +
 +use crate::io;
@@ -25,6 +25,7 @@
 +#[link(wasm_import_module = "host_process")]
 +unsafe extern "C" {
 +    fn fd_pipe(ret_read_fd: *mut u32, ret_write_fd: *mut u32) -> u32;
++    fn fd_setfd(fd: u32, flags: u32) -> u32;
 +}
 +
 +pub fn pipe() -> io::Result<(Pipe, Pipe)> {
@@ -34,10 +35,13 @@
 +    if errno != 0 {
 +        return Err(io::Error::from_raw_os_error(errno as i32));
 +    }
-+    unsafe {
-+        Ok((
-+            Pipe::from_raw_fd(read_fd as i32),
-+            Pipe::from_raw_fd(write_fd as i32),
-+        ))
++    let read_pipe = unsafe { Pipe::from_raw_fd(read_fd as i32) };
++    let write_pipe = unsafe { Pipe::from_raw_fd(write_fd as i32) };
++    for fd in [read_fd, write_fd] {
++        let errno = unsafe { fd_setfd(fd, 1) };
++        if errno != 0 {
++            return Err(io::Error::from_raw_os_error(errno as i32));
++        }
 +    }
++    Ok((read_pipe, write_pipe))
 +}

@@ -8,7 +8,7 @@
  * Requires WASM binaries built (make wasm in native/wasmvm/).
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { it, expect, beforeEach, afterEach } from 'vitest';
 import { createWasmVmRuntime } from '@rivet-dev/agentos-vm-test-harness';
 import { COMMANDS_DIR, createKernel, describeIf, hasWasmBinaries } from '@rivet-dev/agentos-vm-test-harness';
 import type { Kernel } from '@rivet-dev/agentos-vm-test-harness';

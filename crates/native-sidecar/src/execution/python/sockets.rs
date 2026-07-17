@@ -400,6 +400,11 @@ where
                 };
                 socket
                     .set_fairness_identity(process.capability_fairness_identity(&capability_key))?;
+                socket.retain_description_lease(
+                    process
+                        .shared_capability_lease(&capability_key)
+                        .expect("committed Python TCP capability lease"),
+                );
                 register_kernel_readiness_target(
                     &vm.kernel_socket_readiness,
                     socket.kernel_socket_id,
@@ -587,6 +592,11 @@ where
                     None,
                 )?;
                 socket.set_fairness_identity(process.capability_fairness_identity(&capability_key));
+                socket.retain_description_lease(
+                    process
+                        .shared_capability_lease(&capability_key)
+                        .expect("committed Python UDP capability lease"),
+                );
                 process.udp_sockets.insert(native_socket_id.clone(), socket);
                 let python_socket_id = process.next_python_socket_id;
                 process.next_python_socket_id = process.next_python_socket_id.wrapping_add(1);
@@ -949,14 +959,14 @@ where
             PythonHostSocket::Udp {
                 socket_id: native_socket_id,
             } => {
-                if let Some(mut socket) = process.udp_sockets.remove(&native_socket_id) {
-                    unregister_kernel_readiness_target(&kernel_readiness, socket.kernel_socket_id);
-                    socket.close(&mut vm.kernel, process.kernel_pid);
-                    if let Err(error) = process
-                        .release_capability(&NativeCapabilityKey::UdpSocket(native_socket_id))
-                    {
-                        eprintln!("ERR_AGENTOS_CAPABILITY_RELEASE: {error}");
-                    }
+                if let Some(socket) = process.udp_sockets.remove(&native_socket_id) {
+                    release_udp_socket_handle(
+                        process,
+                        &native_socket_id,
+                        socket,
+                        &mut vm.kernel,
+                        &kernel_readiness,
+                    )?;
                 }
             }
         }

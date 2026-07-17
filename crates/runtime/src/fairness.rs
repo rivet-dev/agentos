@@ -445,7 +445,6 @@ impl FairWorkBroker {
         }
 
         let key = (vm_generation, capability_id);
-        let mut enrolled = false;
         let mut cancellation = FairAcquireGuard {
             broker: self.clone(),
             key,
@@ -454,7 +453,12 @@ impl FairWorkBroker {
         loop {
             // Arm before observing state so a completion between the state
             // probe and await cannot be lost.
-            let changed = self.inner.changed.notified();
+            // `Notify::notified()` does not register its waiter until the
+            // future is first polled. Enable it before observing scheduler
+            // state, otherwise another completion can notify between the
+            // state probe and `.await`, permanently stranding this acquire.
+            let mut changed = Box::pin(self.inner.changed.notified());
+            changed.as_mut().enable();
             let published = {
                 let mut state = self
                     .inner
@@ -486,10 +490,13 @@ impl FairWorkBroker {
                         allowance,
                     });
                 }
-                if !enrolled {
-                    state.scheduler.mark_ready(vm_generation, capability_id)?;
-                    enrolled = true;
-                }
+                // Multiple protocol tasks for one full-duplex description can
+                // wait on the same capability concurrently (for example, one
+                // reader and one writer). A grant is consumed by only one of
+                // them, so every still-waiting acquire must reassert the
+                // coalesced ready edge after it wakes. `mark_ready` is
+                // idempotent and rearms an in-flight capability.
+                state.scheduler.mark_ready(vm_generation, capability_id)?;
                 let published = Self::publish_next_locked(&mut state)?;
                 if let Some(selection) = state.granted.remove(&key) {
                     let allowance = selection.allowance.min(requested);
@@ -1093,6 +1100,39 @@ mod tests {
         .expect("next turn");
         next.complete(FairBudget::new(1, 64), false)
             .expect("complete next turn");
+    }
+
+    #[tokio::test]
+    async fn concurrent_waiters_for_one_full_duplex_capability_each_receive_a_turn() {
+        let broker = broker();
+        let held = broker
+            .acquire(1, 10, FairBudget::new(1, 128))
+            .await
+            .expect("hold capability turn");
+        let waiter = |broker: FairWorkBroker| {
+            tokio::spawn(async move {
+                let turn = broker
+                    .acquire(1, 10, FairBudget::new(1, 128))
+                    .await
+                    .expect("full-duplex waiter turn");
+                turn.complete(FairBudget::new(1, 1), false)
+                    .expect("complete full-duplex waiter turn");
+            })
+        };
+        let reader = waiter(broker.clone());
+        let writer = waiter(broker.clone());
+        for _ in 0..4 {
+            tokio::task::yield_now().await;
+        }
+        held.complete(FairBudget::new(1, 1), false)
+            .expect("release held capability turn");
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            reader.await.expect("reader waiter joins");
+            writer.await.expect("writer waiter joins");
+        })
+        .await
+        .expect("same-capability waiters must not lose their shared ready edge");
     }
 
     #[tokio::test]

@@ -370,15 +370,12 @@ where
         kernel
             .set_socket_resource_ledger(Arc::clone(&vm_resources))
             .map_err(kernel_error)?;
-        let kernel_socket_readiness: KernelSocketReadinessRegistry =
-            Arc::new(Mutex::new(BTreeMap::new()));
+        let kernel_socket_readiness: KernelSocketReadinessRegistry = Arc::new(
+            crate::state::KernelSocketReadinessRegistryState::new(limits.reactor.max_capabilities),
+        );
         let readiness_targets = Arc::clone(&kernel_socket_readiness);
         kernel.set_socket_readiness_sink(Some(move |readiness: SocketReadiness| {
-            let target = readiness_targets
-                .lock()
-                .ok()
-                .and_then(|targets| targets.get(&readiness.socket_id).cloned());
-            if let Some(target) = target {
+            for target in readiness_targets.targets(readiness.socket_id) {
                 send_kernel_socket_readiness_event(target, readiness);
             }
         }));

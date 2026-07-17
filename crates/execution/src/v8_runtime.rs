@@ -399,7 +399,27 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, ()> {
 
 #[cfg(test)]
 mod tests {
-    use super::map_bridge_method;
+    use super::{json_to_cbor_payload, map_bridge_method};
+    use serde_json::json;
+
+    #[test]
+    fn cbor_byte_string_boundary_includes_five_byte_header() {
+        let payload_limit = 256 * 1024;
+        let raw_bytes = payload_limit - 5;
+        let encoded = json_to_cbor_payload(&json!({
+            "__type": "Buffer",
+            "data": super::base64_encode_pub(&vec![0xA5; raw_bytes]),
+        }))
+        .expect("encode boundary byte string");
+        assert_eq!(encoded.len(), payload_limit);
+
+        let oversized = json_to_cbor_payload(&json!({
+            "__type": "Buffer",
+            "data": super::base64_encode_pub(&vec![0xA5; raw_bytes + 1]),
+        }))
+        .expect("encode oversized byte string");
+        assert_eq!(oversized.len(), payload_limit + 1);
+    }
 
     #[test]
     fn audited_bridge_methods_map_to_named_handlers() {

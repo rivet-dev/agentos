@@ -1040,6 +1040,11 @@ where
             }
             return self.respond_python_rpc(vm_id, process_id, request_id, Err(error));
         }
+        socket.retain_description_lease(
+            process
+                .shared_capability_lease(&capability_key)
+                .expect("committed deferred Python TCP capability lease"),
+        );
         register_kernel_readiness_target(
             &kernel_readiness,
             socket.kernel_socket_id,

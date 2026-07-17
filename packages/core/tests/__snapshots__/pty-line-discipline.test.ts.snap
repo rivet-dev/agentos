@@ -644,9 +644,9 @@ cols=120 rows=40 cursor=0,7
 01|#START id=resize-sigwinch
 02|#SIZE tag=before rc=0 cols=80 rows=24
 03|#READY tag=resize
-04|!
-05|#SIG name=SIGWINCH
-06|#SIZE tag=after rc=0 cols=120 rows=40
+04|#SIG name=SIGWINCH
+05|#SIZE tag=after rc=0 cols=120 rows=40
+06|!
 07|#DONE id=resize-sigwinch
 08|
 09|

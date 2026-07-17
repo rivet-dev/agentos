@@ -1010,6 +1010,49 @@ fn kernel_fd_surface_supports_nonblocking_pipe_duplicates_via_dev_fd() {
 }
 
 #[test]
+fn trusted_nonblocking_pipe_write_does_not_change_guest_flags() {
+    let mut config = KernelVmConfig::new("vm-api-trusted-nonblock");
+    config.permissions = Permissions::allow_all();
+    let mut kernel = KernelVm::new(MemoryFileSystem::new(), config);
+    kernel
+        .register_driver(CommandDriver::new("shell", ["sh"]))
+        .expect("register shell");
+
+    let process = spawn_shell(&mut kernel);
+    let (_read_fd, write_fd) = kernel.open_pipe("shell", process.pid()).expect("open pipe");
+    kernel
+        .fd_write(
+            "shell",
+            process.pid(),
+            write_fd,
+            &vec![7; MAX_PIPE_BUFFER_BYTES],
+        )
+        .expect("fill pipe buffer");
+
+    assert_eq!(
+        kernel
+            .fd_fcntl("shell", process.pid(), write_fd, F_GETFL, 0)
+            .expect("read guest-visible flags")
+            & O_NONBLOCK,
+        0
+    );
+    assert_kernel_error_code(
+        kernel.fd_write_nonblocking("shell", process.pid(), write_fd, &[8]),
+        "EAGAIN",
+    );
+    assert_eq!(
+        kernel
+            .fd_fcntl("shell", process.pid(), write_fd, F_GETFL, 0)
+            .expect("read flags after trusted write")
+            & O_NONBLOCK,
+        0
+    );
+
+    process.finish(0);
+    kernel.waitpid(process.pid()).expect("wait for shell");
+}
+
+#[test]
 fn kernel_fd_surface_supports_fcntl_status_and_descriptor_flags() {
     let mut config = KernelVmConfig::new("vm-api-fcntl");
     config.permissions = Permissions::allow_all();

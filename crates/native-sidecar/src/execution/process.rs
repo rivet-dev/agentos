@@ -67,6 +67,17 @@ impl ActiveProcess {
                 .pending_event_bytes_limit
                 .store(pending_event_bytes_limit, Ordering::Release);
         }
+        // Binding producers lease retained-byte reservations from their own
+        // queue before an event can be moved into the ActiveProcess queue.
+        // Both queues must therefore start with the same budget identity; a
+        // signal-state drain may temporarily lease stdout/exit and requeue it.
+        let vm_pending_event_bytes_budget = match &execution {
+            ActiveExecution::Binding(binding) => Arc::clone(&binding.vm_pending_event_bytes_budget),
+            _ => VmPendingByteBudget::new(
+                pending_event_bytes_limit,
+                queue_tracker::TrackedLimit::PendingExecutionEventBytes,
+            ),
+        };
         Self {
             kernel_pid,
             kernel_handle,
@@ -74,6 +85,7 @@ impl ActiveProcess {
             limits,
             kernel_stdin_writer_fd: None,
             direct_posix_stdin: false,
+            kernel_stdin_reader_fd: 0,
             pending_kernel_stdin: PendingKernelStdin::default(),
             pending_kernel_stdin_gauge: queue_tracker::register_queue(
                 queue_tracker::TrackedLimit::PendingKernelStdinBytes,
@@ -107,10 +119,7 @@ impl ActiveProcess {
                 queue_tracker::TrackedLimit::PendingExecutionEventBytes,
                 pending_event_bytes_limit,
             ),
-            vm_pending_event_bytes_budget: VmPendingByteBudget::new(
-                pending_event_bytes_limit,
-                queue_tracker::TrackedLimit::PendingExecutionEventBytes,
-            ),
+            vm_pending_event_bytes_budget,
             pending_javascript_net_connects: BTreeMap::new(),
             pending_self_signal_exit: None,
             exit_signal: None,
@@ -153,7 +162,15 @@ impl ActiveProcess {
             tty_master_owner: None,
             tty_raw_mode_generation: None,
             deferred_kernel_wait_rpc: None,
+            deferred_child_write_timer: None,
             module_resolution_cache: agentos_execution::LocalModuleResolutionCache::default(),
+        }
+    }
+
+    pub(crate) fn clear_deferred_kernel_wait_rpc(&mut self) {
+        self.deferred_kernel_wait_rpc = None;
+        if let Some(timer) = self.deferred_child_write_timer.take() {
+            timer.abort();
         }
     }
 
@@ -604,7 +621,7 @@ impl ActiveProcess {
     ) -> Result<(), SidecarError> {
         match self.capability_leases.entry(key.clone()) {
             std::collections::btree_map::Entry::Vacant(entry) => {
-                entry.insert(lease);
+                entry.insert(Arc::new(lease));
                 Ok(())
             }
             std::collections::btree_map::Entry::Occupied(_) => Err(SidecarError::InvalidState(
@@ -613,9 +630,27 @@ impl ActiveProcess {
         }
     }
 
+    pub(super) fn shared_capability_lease(
+        &self,
+        key: &NativeCapabilityKey,
+    ) -> Option<Arc<agentos_runtime::capability::CapabilityLease>> {
+        self.capability_leases.get(key).map(Arc::clone)
+    }
+
     pub(super) fn release_capability(
         &mut self,
         key: &NativeCapabilityKey,
+    ) -> Result<(), SidecarError> {
+        self.release_capability_preserving_fairness(key, None)
+    }
+
+    /// Release a guest alias while allowing an open socket description to
+    /// retain its stable transport scheduler identity. The description's RAII
+    /// guard retires that identity after the final SCM_RIGHTS alias is gone.
+    pub(super) fn release_capability_preserving_fairness(
+        &mut self,
+        key: &NativeCapabilityKey,
+        preserved_identity: Option<(u64, u64)>,
     ) -> Result<(), SidecarError> {
         let lease = self.capability_leases.remove(key).ok_or_else(|| {
             SidecarError::InvalidState(format!(
@@ -632,12 +667,31 @@ impl ActiveProcess {
             }
         }
         if let Some(vm_generation) = self.runtime_context.vm_generation() {
-            self.runtime_context
-                .fairness()
-                .retire_capability(vm_generation, lease.id())
-                .map_err(|error| SidecarError::Execution(error.to_string()))?;
+            if preserved_identity != Some((lease.id(), vm_generation)) {
+                self.runtime_context
+                    .fairness()
+                    .retire_capability(vm_generation, lease.id())
+                    .map_err(|error| SidecarError::Execution(error.to_string()))?;
+            }
         }
         Ok(())
+    }
+
+    pub(super) fn release_description_capability(
+        &mut self,
+        key: &NativeCapabilityKey,
+        preserved_identity: Option<(u64, u64)>,
+        description_lease: &SocketDescriptionLease,
+    ) -> Result<(), SidecarError> {
+        if self.capability_leases.contains_key(key) {
+            return self.release_capability_preserving_fairness(key, preserved_identity);
+        }
+        if description_lease.is_retained() {
+            return Ok(());
+        }
+        Err(SidecarError::InvalidState(format!(
+            "ERR_AGENTOS_CAPABILITY_MISSING: process does not own {key:?} and the open description has no retained lease"
+        )))
     }
 
     pub(super) fn release_capability_if_present(&mut self, key: &NativeCapabilityKey) {
@@ -713,6 +767,9 @@ impl ActiveProcess {
 
 impl Drop for ActiveProcess {
     fn drop(&mut self) {
+        if let Some(timer) = self.deferred_child_write_timer.take() {
+            timer.abort();
+        }
         let pending_stdin_bytes = self.pending_kernel_stdin.total;
         self.vm_pending_stdin_bytes_budget
             .release(pending_stdin_bytes);
@@ -847,6 +904,100 @@ mod pending_event_reservation_tests {
     }
 
     #[test]
+    fn root_binding_signal_state_drain_preserves_output_and_exit_events() {
+        let event_budget = VmPendingByteBudget::new(
+            1024,
+            queue_tracker::TrackedLimit::PendingExecutionEventBytes,
+        );
+        let binding = BindingExecution::default()
+            .with_vm_pending_event_bytes_budget(Arc::clone(&event_budget));
+        let cancelled = Arc::clone(&binding.cancelled);
+        let pending_events = Arc::clone(&binding.pending_events);
+        let overflow_reason = Arc::clone(&binding.event_overflow_reason);
+        let pending_bytes = Arc::clone(&binding.pending_event_bytes);
+        let count_limit = Arc::clone(&binding.pending_event_count_limit);
+        let bytes_limit = Arc::clone(&binding.pending_event_bytes_limit);
+
+        let mut config = KernelVmConfig::new("root-binding-signal-state-drain");
+        config.permissions = Permissions::allow_all();
+        let mut kernel = SidecarKernel::new(MountTable::new(MemoryFileSystem::new()), config);
+        kernel
+            .register_driver(CommandDriver::new(EXECUTION_DRIVER_NAME, [WASM_COMMAND]))
+            .expect("register execution driver");
+        let handle = kernel
+            .spawn_process(
+                WASM_COMMAND,
+                Vec::new(),
+                SpawnOptions {
+                    requester_driver: Some(String::from(EXECUTION_DRIVER_NAME)),
+                    ..SpawnOptions::default()
+                },
+            )
+            .expect("spawn binding process");
+        let mut process = ActiveProcess::new(
+            handle.pid(),
+            handle,
+            test_runtime_context(),
+            crate::limits::VmLimits::default(),
+            agentos_runtime::DEFAULT_PROTOCOL_MAX_PROCESS_EVENTS,
+            GuestRuntimeKind::JavaScript,
+            ActiveExecution::Binding(binding),
+        );
+
+        let ActiveExecution::Binding(binding) = &process.execution else {
+            unreachable!("test process must retain binding execution");
+        };
+        assert!(Arc::ptr_eq(
+            &binding.vm_pending_event_bytes_budget,
+            &process.vm_pending_event_bytes_budget,
+        ));
+
+        for event in [
+            ActiveExecutionEvent::Stdout(b"binding-output".to_vec()),
+            ActiveExecutionEvent::Exited(0),
+        ] {
+            assert!(send_binding_process_event(
+                &cancelled,
+                &pending_events,
+                &overflow_reason,
+                &pending_bytes,
+                &count_limit,
+                &bytes_limit,
+                &event_budget,
+                event,
+            ));
+        }
+
+        // `get_signal_state` leases every execution event while looking for
+        // SignalState updates, then requeues unrelated stdout/exit events.
+        let mut deferred = VecDeque::new();
+        while let Some(event) = process
+            .try_poll_execution_event()
+            .expect("lease binding event")
+        {
+            deferred.push_back(event);
+        }
+        for event in deferred.into_iter().rev() {
+            process
+                .requeue_pending_execution_event(event)
+                .expect("signal-state drain must preserve leased binding event");
+        }
+
+        assert!(matches!(
+            process.pop_pending_execution_event(),
+            Some(ActiveExecutionEvent::Stdout(bytes)) if bytes == b"binding-output"
+        ));
+        assert!(matches!(
+            process.pop_pending_execution_event(),
+            Some(ActiveExecutionEvent::Exited(0))
+        ));
+        assert!(process.pop_pending_execution_event().is_none());
+
+        process.kernel_handle.finish(0);
+        kernel.waitpid(process.kernel_pid).expect("reap process");
+    }
+
+    #[test]
     fn duplicate_process_capability_preserves_the_live_lease() {
         let resources = Arc::new(ResourceLedger::root(
             "vm=duplicate-process-capability",
@@ -935,6 +1086,66 @@ mod pending_event_reservation_tests {
         assert!(resources.is_zero());
         process.kernel_handle.finish(0);
         kernel.waitpid(process.kernel_pid).expect("reap process");
+    }
+
+    #[test]
+    fn socket_description_retains_original_capability_until_final_alias_drops() {
+        let resources = Arc::new(ResourceLedger::root(
+            "vm=socket-description-lease",
+            [
+                (
+                    ResourceClass::Capabilities,
+                    ResourceLimit::new(1, "limits.reactor.maxCapabilities"),
+                ),
+                (
+                    ResourceClass::ReadyHandles,
+                    ResourceLimit::new(1, "limits.reactor.maxReadyHandles"),
+                ),
+                (
+                    ResourceClass::Sockets,
+                    ResourceLimit::new(1, "limits.resources.maxSockets"),
+                ),
+            ],
+        ));
+        let capabilities = CapabilityRegistry::new(11, Arc::clone(&resources));
+        let lease = Arc::new(
+            capabilities
+                .reserve(CapabilityKind::UdpSocket)
+                .expect("reserve capability")
+                .commit(CapabilityBackend::Native {
+                    local_id: String::from("shared-udp-description"),
+                })
+                .expect("commit capability"),
+        );
+        let description = Arc::new(SocketDescriptionLease::default());
+        description.retain(Arc::clone(&lease));
+        let alias = Arc::clone(&description);
+
+        drop(lease);
+        drop(description);
+        assert_eq!(capabilities.outstanding_len(), 1);
+        assert!(!resources.is_zero());
+
+        drop(alias);
+        assert_eq!(capabilities.outstanding_len(), 0);
+        assert!(resources.is_zero());
+    }
+
+    #[test]
+    fn accepted_connection_retires_from_listener_after_final_alias() {
+        let connections = Arc::new(Mutex::new(BTreeSet::from([String::from("tcp-accepted-1")])));
+        let retirement =
+            ListenerConnectionRetirement::new(&connections, String::from("tcp-accepted-1"));
+        let alias = Arc::clone(&retirement);
+
+        drop(retirement);
+        assert!(connections
+            .lock()
+            .expect("listener connections")
+            .contains("tcp-accepted-1"));
+
+        drop(alias);
+        assert!(connections.lock().expect("listener connections").is_empty());
     }
 }
 
@@ -1025,7 +1236,6 @@ pub(super) fn rebind_process_runtime_event_targets(
         let key = NativeCapabilityKey::TcpSocket(socket_id.clone());
         let identity = process.capability_readiness_identity(&key);
         socket.set_event_pusher(session.clone(), identity);
-        unregister_kernel_readiness_target(kernel_readiness, socket.kernel_socket_id);
         register_kernel_readiness_target(
             kernel_readiness,
             socket.kernel_socket_id,
@@ -1042,7 +1252,6 @@ pub(super) fn rebind_process_runtime_event_targets(
     }
     for (listener_id, listener) in &process.tcp_listeners {
         let key = NativeCapabilityKey::TcpListener(listener_id.clone());
-        unregister_kernel_readiness_target(kernel_readiness, listener.kernel_socket_id);
         register_kernel_readiness_target(
             kernel_readiness,
             listener.kernel_socket_id,
@@ -1061,7 +1270,6 @@ pub(super) fn rebind_process_runtime_event_targets(
         let key = NativeCapabilityKey::UdpSocket(socket_id.clone());
         let identity = process.capability_readiness_identity(&key);
         socket.set_event_pusher(session.clone(), identity);
-        unregister_kernel_readiness_target(kernel_readiness, socket.kernel_socket_id);
         register_kernel_readiness_target(
             kernel_readiness,
             socket.kernel_socket_id,
@@ -2331,7 +2539,12 @@ pub(super) fn commit_process_capability(
 /// bridge wait, so teardown must answer the parked RPC BEFORE dropping the
 /// execution (drop joins the guest thread) or cleanup deadlocks against it.
 pub(super) fn flush_parked_kernel_wait_rpc(process: &mut ActiveProcess) {
-    if let Some((request, _)) = process.deferred_kernel_wait_rpc.take() {
+    let request = process
+        .deferred_kernel_wait_rpc
+        .as_ref()
+        .map(|(request, _)| request.clone());
+    process.clear_deferred_kernel_wait_rpc();
+    if let Some(request) = request {
         let _ = process
             .execution
             .respond_javascript_sync_rpc_error(request.id, "EINTR", "process teardown")
@@ -2366,14 +2579,14 @@ pub(super) fn terminate_child_process_tree(
     let listener_ids = process.tcp_listeners.keys().cloned().collect::<Vec<_>>();
     for listener_id in listener_ids {
         if let Some(listener) = process.tcp_listeners.remove(&listener_id) {
-            unregister_kernel_readiness_target(kernel_readiness, listener.kernel_socket_id);
-            if let Err(error) = listener.close(kernel, process.kernel_pid) {
-                eprintln!("ERR_AGENTOS_TCP_LISTENER_CLOSE: {error}");
-            }
-            if let Err(error) =
-                process.release_capability(&NativeCapabilityKey::TcpListener(listener_id.clone()))
-            {
-                eprintln!("ERR_AGENTOS_CAPABILITY_RELEASE: {error}");
+            if let Err(error) = release_tcp_listener_handle(
+                process,
+                &listener_id,
+                listener,
+                kernel,
+                kernel_readiness,
+            ) {
+                eprintln!("ERR_AGENTOS_TCP_LISTENER_RELEASE: {error}");
             }
         }
     }
@@ -2388,30 +2601,27 @@ pub(super) fn terminate_child_process_tree(
     let unix_listener_ids = process.unix_listeners.keys().cloned().collect::<Vec<_>>();
     for listener_id in unix_listener_ids {
         if let Some(listener) = process.unix_listeners.remove(&listener_id) {
-            if !listener.is_final_description_handle() {
-                continue;
-            }
-            if let Err(error) = close_pending_guest_unix_connections(
-                unix_address_registry,
-                &listener.registry_binding_id,
-            ) {
-                eprintln!("ERR_AGENTOS_UNIX_SOCKET_METADATA: {error}");
-            }
-            if let Err(error) =
-                release_guest_unix_binding(unix_address_registry, &listener.registry_binding_id)
-            {
-                eprintln!("ERR_AGENTOS_UNIX_SOCKET_METADATA: {error}");
-            }
-            if let Err(error) =
-                purge_guest_unix_target(unix_address_registry, &listener.registry_binding_id)
-            {
-                eprintln!("ERR_AGENTOS_UNIX_SOCKET_METADATA: {error}");
-            }
-            drop(listener.close());
-            if let Err(error) =
-                process.release_capability(&NativeCapabilityKey::UnixListener(listener_id.clone()))
-            {
+            if let Err(error) = release_unix_listener_capability(process, &listener_id, &listener) {
                 eprintln!("ERR_AGENTOS_CAPABILITY_RELEASE: {error}");
+            }
+            if listener.is_final_description_handle() {
+                if let Err(error) = close_pending_guest_unix_connections(
+                    unix_address_registry,
+                    &listener.registry_binding_id,
+                ) {
+                    eprintln!("ERR_AGENTOS_UNIX_SOCKET_METADATA: {error}");
+                }
+                if let Err(error) =
+                    release_guest_unix_binding(unix_address_registry, &listener.registry_binding_id)
+                {
+                    eprintln!("ERR_AGENTOS_UNIX_SOCKET_METADATA: {error}");
+                }
+                if let Err(error) =
+                    purge_guest_unix_target(unix_address_registry, &listener.registry_binding_id)
+                {
+                    eprintln!("ERR_AGENTOS_UNIX_SOCKET_METADATA: {error}");
+                }
+                drop(listener.close());
             }
         }
     }
@@ -2425,13 +2635,11 @@ pub(super) fn terminate_child_process_tree(
 
     let udp_socket_ids = process.udp_sockets.keys().cloned().collect::<Vec<_>>();
     for socket_id in udp_socket_ids {
-        if let Some(mut socket) = process.udp_sockets.remove(&socket_id) {
-            unregister_kernel_readiness_target(kernel_readiness, socket.kernel_socket_id);
-            socket.close(kernel, process.kernel_pid);
+        if let Some(socket) = process.udp_sockets.remove(&socket_id) {
             if let Err(error) =
-                process.release_capability(&NativeCapabilityKey::UdpSocket(socket_id.clone()))
+                release_udp_socket_handle(process, &socket_id, socket, kernel, kernel_readiness)
             {
-                eprintln!("ERR_AGENTOS_CAPABILITY_RELEASE: {error}");
+                eprintln!("ERR_AGENTOS_UDP_SOCKET_RELEASE: {error}");
             }
         }
     }

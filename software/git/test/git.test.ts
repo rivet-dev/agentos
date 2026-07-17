@@ -876,6 +876,13 @@ describeIf(hasGit, 'git command', () => {
       );
       expect(cat.status).toBe(0);
       expect(Number(cat.stdout.trim())).toBe(big.length);
+
+      // Clone the enlarged repository through a fresh TLS connection. mbedTLS
+      // reads each record header separately, so this proves the runner retains
+      // the remainder of a sidecar read that exceeds the guest recv buffer.
+      await run(kernel, git(`clone --branch large-push ${trustedUrl()} /tmp/large-clone`));
+      const clonedBig = await kernel.readFile('/tmp/large-clone/big.bin');
+      expect(Buffer.from(clonedBig).equals(big)).toBe(true);
     }, Number(process.env.AGENTOS_GIT_PUSH_TIMEOUT_MS ?? 60_000));
 
     it('pack-objects failure reports the same smart-HTTP transport failure as native Git', async () => {
