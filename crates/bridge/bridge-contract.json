@@ -268,6 +268,7 @@
 				"_netServerAcceptRaw",
 				"_netServerCloseSyncRaw",
 				"_netSocketWaitConnectSyncRaw",
+				"_netSocketWriteSyncRaw",
 				"_dgramSocketCreateRaw",
 				"_dgramSocketBindRaw",
 				"_dgramSocketRecvRaw",
@@ -920,6 +921,10 @@
 			"translateArgs": false
 		},
 		"_netSocketWriteRaw": {
+			"method": "net.write",
+			"translateArgs": false
+		},
+		"_netSocketWriteSyncRaw": {
 			"method": "net.write",
 			"translateArgs": false
 		},

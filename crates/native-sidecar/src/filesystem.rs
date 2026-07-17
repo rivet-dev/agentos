@@ -33,6 +33,10 @@ use nix::libc;
 // anchor open mode. `O_TMPFILE` is never passed by any caller (it appears only
 // in a defensive `intersects` check), so an empty flag matches exactly.
 const O_PATH_ANCHOR: OFlag = OFlag::O_RDONLY;
+#[cfg(target_os = "linux")]
+const CHMOD_PATH_ANCHOR: OFlag = OFlag::O_PATH;
+#[cfg(not(target_os = "linux"))]
+const CHMOD_PATH_ANCHOR: OFlag = OFlag::O_RDONLY;
 const O_TMPFILE_FLAG: OFlag = OFlag::empty();
 use agentos_execution::{
     JavascriptSyncRpcRequest, LocalResolvedModuleFormat, ModuleFsReader, ModuleResolveMode,
@@ -160,11 +164,21 @@ impl AnchoredFd {
 
     /// `fchmod` the resolved object.
     fn set_mode(&self, mode: u32) -> std::io::Result<()> {
-        nix::sys::stat::fchmod(
+        let result = nix::sys::stat::fchmod(
             self.as_raw_fd(),
             Mode::from_bits_truncate(mode as nix::libc::mode_t),
-        )
-        .map_err(errno_to_io)
+        );
+        #[cfg(target_os = "linux")]
+        if result == Err(Errno::EBADF) {
+            // Linux rejects fchmod(2) on O_PATH handles. Resolve the stable
+            // descriptor through procfs so chmod follows the already-confined
+            // inode rather than reopening the guest-controlled pathname.
+            return fs::set_permissions(
+                format!("/proc/self/fd/{}", self.as_raw_fd()),
+                fs::Permissions::from_mode(mode & 0o7777),
+            );
+        }
+        result.map_err(errno_to_io)
     }
 
     /// `futimens` the resolved object.
@@ -1703,7 +1717,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                     SidecarError::Io(format!("failed to truncate mapped guest fd {fd}: {error}"))
                 })?;
                 if let Some(guest_path) = mapped_guest_path.as_deref() {
-                    mirror_kernel_path_to_process_shadow(kernel, process, kernel_pid, guest_path)?;
+                    mirror_kernel_path_to_process_shadow(kernel, process, guest_path)?;
                 }
                 return Ok(Value::Null);
             }
@@ -1726,7 +1740,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 let path = kernel
                     .fd_path(EXECUTION_DRIVER_NAME, kernel_pid, fd)
                     .map_err(kernel_error)?;
-                mirror_kernel_path_to_process_shadow(kernel, process, kernel_pid, &path)?;
+                mirror_kernel_path_to_process_shadow(kernel, process, &path)?;
             }
             Ok(Value::Null)
         }
@@ -1818,7 +1832,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                     javascript_sync_rpc_option_u32(&request.args, 2, "mode")?,
                 )
                 .map_err(|error| kernel_path_error("fs.writeFile", path, error))?;
-            mirror_kernel_path_to_process_shadow(kernel, process, kernel_pid, path)?;
+            mirror_kernel_path_to_process_shadow(kernel, process, path)?;
             Ok(Value::Null)
         }
         "fs.statSync" | "fs.promises.stat" => {
@@ -2277,7 +2291,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                     let opened = open_mapped_runtime_beneath(
                         &mapped_host,
                         "fs.chmod",
-                        O_PATH_ANCHOR,
+                        CHMOD_PATH_ANCHOR,
                         Mode::empty(),
                     )?;
                     if kernel
@@ -2535,7 +2549,7 @@ fn runtime_guest_host_mappings(process: &ActiveProcess) -> Vec<(String, PathBuf)
         .collect()
 }
 
-fn mirror_kernel_fd_contents_to_process_shadow(
+pub(crate) fn mirror_kernel_fd_contents_to_process_shadow(
     kernel: &mut SidecarKernel,
     process: &ActiveProcess,
     kernel_pid: u32,
@@ -2545,21 +2559,21 @@ fn mirror_kernel_fd_contents_to_process_shadow(
         .fd_path(EXECUTION_DRIVER_NAME, kernel_pid, fd)
         .map_err(kernel_error)?;
     let path = normalize_process_filesystem_rpc_path(process, &path);
-    mirror_kernel_path_to_process_shadow(kernel, process, kernel_pid, &path)
+    mirror_kernel_path_to_process_shadow(kernel, process, &path)
 }
 
 fn mirror_kernel_path_to_process_shadow(
     kernel: &mut SidecarKernel,
     process: &ActiveProcess,
-    kernel_pid: u32,
     guest_path: &str,
 ) -> Result<(), SidecarError> {
     let Some(shadow_path) = resolve_process_guest_path_to_host(process, guest_path) else {
         return Ok(());
     };
-    let bytes = kernel
-        .read_file_for_process(EXECUTION_DRIVER_NAME, kernel_pid, guest_path)
-        .map_err(kernel_error)?;
+    // This is a trusted coherence copy, not a guest read. Use the kernel's
+    // internal read path so a write-only descriptor can still refresh the
+    // shadow after a successful write, matching Linux append semantics.
+    let bytes = kernel.read_file(guest_path).map_err(kernel_error)?;
     write_process_shadow_file(&shadow_path, guest_path, &bytes)
 }
 
@@ -4706,7 +4720,7 @@ fn resolve_process_guest_path_to_host(
 
 /// Removes the host shadow copy of `guest_path` after a kernel-direct guest
 /// deletion so the exit-time shadow->kernel sync cannot resurrect it.
-fn remove_process_shadow_path(
+pub(crate) fn remove_process_shadow_path(
     process: &ActiveProcess,
     guest_path: &str,
 ) -> Result<(), SidecarError> {
@@ -4719,7 +4733,7 @@ fn remove_process_shadow_path(
 /// Mirrors a kernel-direct guest rename into the host shadow tree. If the
 /// source shadow entry is missing the stale destination copy is still removed
 /// so the shadow walk cannot resurrect pre-rename content.
-fn rename_process_shadow_path(
+pub(crate) fn rename_process_shadow_path(
     process: &ActiveProcess,
     source: &str,
     destination: &str,

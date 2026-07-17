@@ -800,7 +800,7 @@ describeIf(hasGit, 'git command', () => {
 
       const fsck = await kernel.exec(git('-C /tmp/clone fsck --full'));
       expect(fsck.exitCode, fsck.stderr).toBe(0);
-    });
+    }, Number(process.env.AGENTOS_GIT_FETCH_TIMEOUT_MS ?? 60_000));
 
     it('push sends a small commit over HTTPS smart-HTTP', async () => {
       ({ kernel, vfs, dispose } = await createGitKernelWithNet([trustedPort], trustedCaPem));

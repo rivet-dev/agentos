@@ -13,6 +13,31 @@ import { actorHandle, startActorRuntime } from "./helpers/actor-runtime.js";
 const RUN_E2E = process.env.AGENTOS_ACTOR_E2E === "1";
 let conformanceHandle: any;
 
+async function waitForActorReady(
+	handle: any,
+	runtime: Awaited<ReturnType<typeof startActorRuntime>>,
+	timeoutMs = 120_000,
+): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	let lastError: unknown;
+	while (Date.now() < deadline) {
+		if (runtime.child.exitCode !== null) {
+			throw new Error(`actor runtime exited during startup\n${runtime.logs()}`);
+		}
+		try {
+			await handle.echo("ready");
+			return;
+		} catch (error) {
+			lastError = error;
+		}
+		await new Promise((resolve) => setTimeout(resolve, 250));
+	}
+	throw new Error(
+		`actor did not become ready: ${String(lastError)}\n${runtime.logs()}`,
+		{ cause: lastError },
+	);
+}
+
 defineAgentOsConformanceSuite({
 	name: RUN_E2E
 		? "AgentOS real Rivet actor conformance"
@@ -32,6 +57,14 @@ defineAgentOsConformanceSuite({
 		conformanceHandle = handle;
 		const connection = handle.connect();
 		const subscriptions = new Set<() => void>();
+		try {
+			await waitForActorReady(handle, runtime);
+		} catch (error) {
+			connection.dispose?.();
+			await runtime.stop();
+			rmSync(storagePath, { recursive: true, force: true });
+			throw error;
+		}
 
 		return {
 			async call<T>(

@@ -1074,6 +1074,9 @@ pub(crate) struct ActiveProcess {
     /// their bounds from this snapshot instead of process-wide constants.
     pub(crate) limits: crate::limits::VmLimits,
     pub(crate) kernel_stdin_writer_fd: Option<u32>,
+    /// Whether fd 0 was installed by POSIX spawn actions and must be read
+    /// directly from the kernel instead of the JavaScript local-stdin bridge.
+    pub(crate) direct_posix_stdin: bool,
     /// Backlog for pipe-backed kernel stdin awaiting pipe capacity; see
     /// [`PendingKernelStdin`].
     pub(crate) pending_kernel_stdin: PendingKernelStdin,

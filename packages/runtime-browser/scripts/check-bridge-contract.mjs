@@ -153,6 +153,7 @@ const browserUnsupportedContractGlobals = new Set([
 	"_netSocketWaitConnectRaw",
 	"_netSocketWaitConnectSyncRaw",
 	"_netSocketWriteRaw",
+	"_netSocketWriteSyncRaw",
 	"_networkDnsLookupSyncRaw",
 	"_networkDnsResolveRaw",
 	"_networkHttp2ServerCloseRaw",

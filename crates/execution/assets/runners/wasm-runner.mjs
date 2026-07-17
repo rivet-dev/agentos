@@ -36,6 +36,7 @@ const WASI_ERRNO_INVAL = 28;
 const WASI_ERRNO_INTR = 27;
 const WASI_ERRNO_IO = 29;
 const WASI_ERRNO_ISCONN = 30;
+const WASI_ERRNO_ISDIR = 31;
 const WASI_ERRNO_LOOP = 32;
 const WASI_ERRNO_MFILE = 33;
 const WASI_ERRNO_MSGSIZE = 35;
@@ -46,6 +47,7 @@ const WASI_ERRNO_NOENT = 44;
 const WASI_ERRNO_NOEXEC = 45;
 const WASI_ERRNO_HOSTUNREACH = 23;
 const WASI_ERRNO_NOTDIR = 54;
+const WASI_ERRNO_NOTEMPTY = 55;
 const WASI_ERRNO_NOTCONN = 53;
 const WASI_ERRNO_NOTSOCK = 57;
 const WASI_ERRNO_NOTSUP = 58;
@@ -2135,7 +2137,10 @@ function allocateSyntheticFd(minFd = nextSyntheticFd, reservedCapacity = false) 
   }
   const descriptorLimit = Math.min(LINUX_GUEST_FD_LIMIT, rlimitNofileSoft);
   let fd = Math.max(FIRST_SYNTHETIC_FD, numericMinimum);
-  while (fd < descriptorLimit && syntheticFdInUse(fd)) {
+  while (
+    fd < descriptorLimit &&
+    (syntheticFdInUse(fd) || initialMappedGuestFds.has(fd))
+  ) {
     fd += 1;
   }
   if (fd >= descriptorLimit) return null;
@@ -2154,7 +2159,10 @@ function allocateKernelGuestFd(minFd = 3) {
   }
   const descriptorLimit = Math.min(LINUX_GUEST_FD_LIMIT, rlimitNofileSoft);
   let fd = Math.max(3, numericMinimum);
-  while (fd < descriptorLimit && syntheticFdInUse(fd)) {
+  while (
+    fd < descriptorLimit &&
+    (syntheticFdInUse(fd) || initialMappedGuestFds.has(fd))
+  ) {
     fd += 1;
   }
   return fd < descriptorLimit ? fd : null;
@@ -2439,8 +2447,12 @@ function mapSyntheticFsError(error) {
       return WASI_ERRNO_ROFS;
     case 'EEXIST':
       return WASI_ERRNO_EXIST;
+    case 'EISDIR':
+      return WASI_ERRNO_ISDIR;
     case 'ENOENT':
       return WASI_ERRNO_NOENT;
+    case 'ENOTEMPTY':
+      return WASI_ERRNO_NOTEMPTY;
     case 'ENOEXEC':
       return WASI_ERRNO_NOEXEC;
     case 'EINVAL':
@@ -2493,6 +2505,8 @@ function mapHostProcessError(error) {
       return WASI_ERRNO_ILSEQ;
     case 'EISCONN':
       return WASI_ERRNO_ISCONN;
+    case 'EISDIR':
+      return WASI_ERRNO_ISDIR;
     case 'ELOOP':
       return WASI_ERRNO_LOOP;
     case 'ENOENT':
@@ -2501,6 +2515,8 @@ function mapHostProcessError(error) {
       return WASI_ERRNO_NOEXEC;
     case 'ENOTDIR':
       return WASI_ERRNO_NOTDIR;
+    case 'ENOTEMPTY':
+      return WASI_ERRNO_NOTEMPTY;
     case 'ENOTSUP':
       return WASI_ERRNO_NOTSUP;
     case 'EPERM':
@@ -3110,8 +3126,7 @@ function retainSpawnOutputHandle(fd) {
   const handle = lookupFdHandle(numericFd);
   if (
     handle?.kind !== 'guest-file' &&
-    handle?.kind !== 'passthrough' &&
-    handle?.kind !== 'kernel-fd'
+    handle?.kind !== 'passthrough'
   ) {
     return null;
   }
@@ -4598,8 +4613,27 @@ function readReadyHostNetSocket(socket, maxBytes = 64 * 1024, peek = false, wait
     ]),
   );
   if (result.kind === 'data') {
-    socket.readableHint = peek === true && result.bytes.length > 0;
-    return result;
+    const requested = Math.max(0, Number(maxBytes) >>> 0);
+    const bytes = Buffer.from(result.bytes);
+    if (peek === true) {
+      if (bytes.length > 0) {
+        // The sidecar read consumes its transport event. Preserve the complete
+        // chunk locally so MSG_PEEK does not consume bytes from the guest.
+        socket.readChunks.unshift(bytes);
+      }
+      socket.readableHint = bytes.length > 0;
+      return { kind: 'data', bytes: bytes.subarray(0, requested) };
+    }
+    if (bytes.length > requested) {
+      // A transport event may contain more bytes than this recv/iovec can
+      // accept (notably when TLS records coalesce protocol responses). Keep
+      // the unread tail ahead of later events instead of silently dropping it.
+      socket.readChunks.unshift(bytes.subarray(requested));
+      socket.readableHint = true;
+      return { kind: 'data', bytes: bytes.subarray(0, requested) };
+    }
+    socket.readableHint = false;
+    return { kind: 'data', bytes };
   }
   // poll(2) readiness is only a snapshot: another read may consume the data
   // before recv(2), which then returns EAGAIN. Do not keep reporting POLLIN
@@ -10455,6 +10489,32 @@ wasiImport.fd_prestat_dir_name = (fd, pathPtr, pathLen) => {
     : WASI_ERRNO_BADF;
 };
 
+function writeKernelFdCooperatively(targetFd, bytes) {
+  while (true) {
+    try {
+      return Number(callSyncRpc('process.fd_write', [targetFd, bytes]));
+    } catch (error) {
+      if (error?.code !== 'EAGAIN' && error?.code !== 'EWOULDBLOCK') {
+        throw error;
+      }
+      const stat = callSyncRpc('process.fd_stat', [targetFd]);
+      if ((Number(stat?.flags) & KERNEL_O_NONBLOCK) !== 0) {
+        throw error;
+      }
+      // The sidecar deliberately attempts kernel-pipe writes without blocking
+      // its dispatcher. Wait cooperatively so sibling/descendant reads can be
+      // serviced on that dispatcher, then retry Linux's logically blocking
+      // write. Guest O_NONBLOCK descriptors still return EAGAIN above.
+      dispatchPendingWasmSignals();
+      pumpSpawnedChildren(0);
+      callSyncRpc('__kernel_poll', [
+        [{ fd: targetFd, events: KERNEL_POLLOUT }],
+        KERNEL_WAIT_SLICE_MS,
+      ]);
+    }
+  }
+}
+
 wasiImport.fd_write = (fd, iovs, iovsLen, nwrittenPtr) => {
   const numericFd = Number(fd) >>> 0;
   const hostNetSocket = getHostNetSocket(numericFd);
@@ -10468,10 +10528,10 @@ wasiImport.fd_write = (fd, iovs, iovsLen, nwrittenPtr) => {
   if (handle?.kind === 'kernel-fd') {
     try {
       const bytes = collectGuestIovBytes(iovs, iovsLen);
-      const written = Number(callSyncRpc('process.fd_write', [
+      const written = writeKernelFdCooperatively(
         Number(handle.targetFd) >>> 0,
         bytes,
-      ]));
+      );
       if (!Number.isSafeInteger(written) || written < 0 || written > bytes.length) {
         return WASI_ERRNO_FAULT;
       }

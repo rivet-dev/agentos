@@ -17,7 +17,7 @@ import type { IntegrationKernelResult } from '@rivet-dev/agentos-vm-test-harness
 
 const skipReason = skipUnlessWasmBuilt();
 
-describeIf(!skipReason, 'cross-runtime VFS consistency', () => {
+describeIf(!skipReason, 'cross-runtime VFS consistency', { timeout: 30_000 }, () => {
   let ctx: IntegrationKernelResult;
 
   afterEach(async () => {

@@ -268,7 +268,6 @@ mod service {
             StartWasmExecutionRequest, WasmPermissionTier,
         };
         use agentos_kernel::command_registry::CommandDriver;
-        use agentos_kernel::fd_table::O_NONBLOCK;
         use agentos_kernel::kernel::{KernelVmConfig, SpawnOptions, VirtualProcessOptions};
         use agentos_kernel::mount_table::{MountEntry, MountOptions, MountTable};
         use agentos_kernel::permissions::{
@@ -996,8 +995,36 @@ ykAheWCsAteSEWVc0w==\n\
             )
             .with_process_event_limits(&limits)
             .with_vm_pending_byte_budgets(Arc::clone(&stdin_budget), Arc::clone(&event_budget));
-            child_one.kernel_stdin_writer_fd =
-                Some(install_kernel_stdin_pipe_for_tests(&mut kernel, first_pid));
+            let first_writer = install_kernel_stdin_pipe_for_tests(&mut kernel, first_pid);
+            assert_ne!(
+                kernel
+                    .fd_fcntl(
+                        EXECUTION_DRIVER_NAME,
+                        first_pid,
+                        first_writer,
+                        agentos_kernel::fd_table::F_GETFD,
+                        0,
+                    )
+                    .expect("read child stdin writer descriptor flags")
+                    & agentos_kernel::fd_table::FD_CLOEXEC,
+                0,
+                "sidecar-owned stdin writer must not leak into descendants"
+            );
+            assert_ne!(
+                kernel
+                    .fd_fcntl(
+                        EXECUTION_DRIVER_NAME,
+                        first_pid,
+                        first_writer,
+                        agentos_kernel::fd_table::F_GETFL,
+                        0,
+                    )
+                    .expect("read child stdin writer status flags")
+                    & agentos_kernel::fd_table::O_NONBLOCK,
+                0,
+                "sidecar-owned stdin writer must never block its dispatch path"
+            );
+            child_one.kernel_stdin_writer_fd = Some(first_writer);
             child_two.kernel_stdin_writer_fd =
                 Some(install_kernel_stdin_pipe_for_tests(&mut kernel, second_pid));
 
@@ -1592,28 +1619,8 @@ ykAheWCsAteSEWVc0w==\n\
         }
 
         fn install_kernel_stdin_pipe_for_tests(kernel: &mut SidecarKernel, pid: u32) -> u32 {
-            let (read_fd, write_fd) = kernel
-                .open_pipe(EXECUTION_DRIVER_NAME, pid)
-                .expect("open child stdin pipe");
-            kernel
-                .fd_dup2(EXECUTION_DRIVER_NAME, pid, read_fd, 0)
-                .expect("install child stdin reader");
-            kernel
-                .fd_close(EXECUTION_DRIVER_NAME, pid, read_fd)
-                .expect("close extra child stdin reader");
-            let nonblocking_write_fd = kernel
-                .fd_open(
-                    EXECUTION_DRIVER_NAME,
-                    pid,
-                    &format!("/dev/fd/{write_fd}"),
-                    O_NONBLOCK,
-                    None,
-                )
-                .expect("duplicate child stdin writer as nonblocking");
-            kernel
-                .fd_close(EXECUTION_DRIVER_NAME, pid, write_fd)
-                .expect("close blocking child stdin writer");
-            nonblocking_write_fd
+            crate::execution::install_kernel_stdin_pipe(kernel, pid)
+                .expect("install nonblocking child stdin pipe")
         }
 
         fn active_process_for_tests(

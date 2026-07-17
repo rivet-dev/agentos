@@ -73,6 +73,7 @@ impl ActiveProcess {
             runtime_context,
             limits,
             kernel_stdin_writer_fd: None,
+            direct_posix_stdin: false,
             pending_kernel_stdin: PendingKernelStdin::default(),
             pending_kernel_stdin_gauge: queue_tracker::register_queue(
                 queue_tracker::TrackedLimit::PendingKernelStdinBytes,

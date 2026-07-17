@@ -1938,6 +1938,11 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 		this.capabilityId = handle.capabilityId;
 		this.capabilityGeneration = handle.capabilityGeneration;
 		this._handle = createConnectedSocketHandle(this._socketId);
+		// Native sockets begin reading as soon as they connect, buffering data up
+		// to the stream high-water mark even without a data/readable listener. In
+		// particular, this is required to observe a peer FIN and emit close on a
+		// paused socket. push(false) still clears demand and applies backpressure.
+		this._applicationReadDemand = true;
 		this._applySocketInfo(handle);
 		registerNetSocket(this._socketId, this);
 		this._syncHandleRef();
@@ -2400,6 +2405,7 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 		socket.capabilityGeneration = handle.info?.capabilityGeneration;
 		socket._handle = createConnectedSocketHandle(handle.socketId);
 		socket._applySocketInfo(handle.info);
+		socket._applicationReadDemand = true;
 		socket._connected = true;
 		socket.connecting = false;
 		socket.pending = false;
@@ -3500,7 +3506,9 @@ var NetServer = class {
 			}
 		};
 		try {
-			Promise.resolve(_netServerCloseRaw(serverId)).then(
+			// Node removes a pathname Unix-domain socket when Server.close()
+			// completes. TCP and abstract listeners ignore this flag.
+			Promise.resolve(_netServerCloseRaw(serverId, true)).then(
 				() => finishTransportClose(),
 				finishTransportClose,
 			);

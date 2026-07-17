@@ -33,15 +33,15 @@ pub(crate) use self::signals::{
     signal_runtime_process,
 };
 mod stdio;
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use self::stdio::drain_tty_master_output;
 use self::stdio::*;
 pub(crate) use self::stdio::{
     close_kernel_process_stdin, flush_pending_kernel_stdin, kernel_poll_response,
     kernel_stdin_read_response, parse_kernel_poll_args, parse_kernel_stdin_read_args,
     write_kernel_process_stdin,
 };
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use self::stdio::{drain_tty_master_output, install_kernel_stdin_pipe};
 mod network;
 #[cfg(test)]
 #[allow(unused_imports)]

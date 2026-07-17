@@ -178,12 +178,16 @@ function _getStreamStdin() {
   return typeof __runtimeStreamStdin !== "undefined" && !!__runtimeStreamStdin;
 }
 
+function _getKernelStdin() {
+  return typeof __runtimeKernelStdin !== "undefined" && !!__runtimeKernelStdin;
+}
+
 function ensureLiveStdinStarted() {
   if (_stdinLiveStarted) return;
-  if (!_getStdinIsTTY() && !_getStreamStdin()) return;
+  if (!_getStdinIsTTY() && !_getStreamStdin() && !_getKernelStdin()) return;
   _stdinLiveStarted = true;
   syncLiveStdinHandle(!_stdin.paused);
-  if (_getStreamStdin()) {
+  if (_getStreamStdin() && !_getKernelStdin()) {
     return;
   }
   if (typeof _kernelStdinRead === "undefined") return;
@@ -279,13 +283,13 @@ var _stdin = {
   on(event, listener) {
     if (!_stdinListeners[event]) _stdinListeners[event] = [];
     _stdinListeners[event].push(listener);
-    if ((_getStdinIsTTY() || _getStreamStdin()) && (event === "data" || event === "end" || event === "close")) {
+    if ((_getStdinIsTTY() || _getStreamStdin() || _getKernelStdin()) && (event === "data" || event === "end" || event === "close")) {
       ensureLiveStdinStarted();
     }
     if (event === "data" && this.paused) {
       this.resume();
     }
-    if ((event === "end" || event === "close") && (_getStdinIsTTY() || _getStreamStdin())) {
+    if ((event === "end" || event === "close") && (_getStdinIsTTY() || _getStreamStdin() || _getKernelStdin())) {
       maybeEmitLiveStdinTerminalEvents();
     }
     if (event === "end" && getStdinData() && !getStdinEnded()) {
@@ -297,13 +301,13 @@ var _stdin = {
   once(event, listener) {
     if (!_stdinOnceListeners[event]) _stdinOnceListeners[event] = [];
     _stdinOnceListeners[event].push(listener);
-    if ((_getStdinIsTTY() || _getStreamStdin()) && (event === "data" || event === "end" || event === "close")) {
+    if ((_getStdinIsTTY() || _getStreamStdin() || _getKernelStdin()) && (event === "data" || event === "end" || event === "close")) {
       ensureLiveStdinStarted();
     }
     if (event === "data" && this.paused) {
       this.resume();
     }
-    if ((event === "end" || event === "close") && (_getStdinIsTTY() || _getStreamStdin())) {
+    if ((event === "end" || event === "close") && (_getStdinIsTTY() || _getStreamStdin() || _getKernelStdin())) {
       maybeEmitLiveStdinTerminalEvents();
     }
     if (event === "end" && getStdinData() && !getStdinEnded()) {
@@ -337,7 +341,7 @@ var _stdin = {
     return this;
   },
   resume() {
-    if (_getStdinIsTTY() || _getStreamStdin()) {
+    if (_getStdinIsTTY() || _getStreamStdin() || _getKernelStdin()) {
       ensureLiveStdinStarted();
       syncLiveStdinHandle(true);
     }
@@ -436,4 +440,4 @@ var _stdin = {
     };
   }
 };
-export { STDIN_HANDLE_ID, _emitStdinData, _getStreamStdin, _stdin, _stdinListeners, _stdinLiveBuffer, _stdinLiveDecoder, _stdinLiveHandleRegistered, _stdinLiveStarted, _stdinLiveTerminalEventsEmitted, _stdinLiveTerminalEventsScheduled, _stdinOnceListeners, emitStdinListeners, ensureLiveStdinStarted, finishLiveStdin, flushLiveStdinBuffer, getStdinData, getStdinEnded, getStdinFlowMode, getStdinPosition, maybeEmitLiveStdinTerminalEvents, resetLiveStdinState, setStdinDataValue, setStdinEnded, setStdinFlowMode, setStdinPosition, stdinDispatch, syncLiveStdinHandle };
+export { STDIN_HANDLE_ID, _emitStdinData, _getKernelStdin, _getStreamStdin, _stdin, _stdinListeners, _stdinLiveBuffer, _stdinLiveDecoder, _stdinLiveHandleRegistered, _stdinLiveStarted, _stdinLiveTerminalEventsEmitted, _stdinLiveTerminalEventsScheduled, _stdinOnceListeners, emitStdinListeners, ensureLiveStdinStarted, finishLiveStdin, flushLiveStdinBuffer, getStdinData, getStdinEnded, getStdinFlowMode, getStdinPosition, maybeEmitLiveStdinTerminalEvents, resetLiveStdinState, setStdinDataValue, setStdinEnded, setStdinFlowMode, setStdinPosition, stdinDispatch, syncLiveStdinHandle };

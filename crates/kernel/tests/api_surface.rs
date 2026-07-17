@@ -988,6 +988,19 @@ fn kernel_fd_surface_supports_nonblocking_pipe_duplicates_via_dev_fd() {
         )
         .expect("fill pipe buffer");
     assert_kernel_error_code(
+        kernel.fd_write_nonblocking("shell", process.pid(), write_fd, &[8]),
+        "EAGAIN",
+    );
+    assert_eq!(
+        kernel
+            .fd_stat("shell", process.pid(), write_fd)
+            .expect("stat logically blocking writer after nonblocking attempt")
+            .flags
+            & O_NONBLOCK,
+        0,
+        "host-side cooperative writes must not change guest fd flags"
+    );
+    assert_kernel_error_code(
         kernel.fd_write("shell", process.pid(), nonblocking_write_fd, &[8]),
         "EAGAIN",
     );

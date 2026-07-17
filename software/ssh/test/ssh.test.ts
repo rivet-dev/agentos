@@ -37,6 +37,7 @@ const hasSsh = hasWasmBinaries && existsSync(resolve(COMMANDS_DIR, 'ssh'));
 const hasGit = hasWasmBinaries && existsSync(resolve(COMMANDS_DIR, 'git'));
 const hasHostGit = spawnSync('git', ['--version'], { stdio: 'ignore' }).status === 0;
 const hasProxyHelper = hasCWasmBinaries('ssh_proxy_helper');
+const hasSkHelperContract = hasCWasmBinaries('ssh_sk_helper_contract');
 
 const SSH_USER = 'agentos';
 
@@ -159,7 +160,8 @@ async function createSshKernel(loopbackExemptPorts: number[]) {
     loopbackExemptPorts,
     syncFilesystemOnDispose: false,
   });
-  await kernel.mount(createWasmVmRuntime({ commandDirs: [C_BUILD_DIR, COMMANDS_DIR] }));
+  const commandDirs = [C_BUILD_DIR, COMMANDS_DIR].filter((dir) => existsSync(dir));
+  await kernel.mount(createWasmVmRuntime({ commandDirs }));
   return { kernel, vfs, dispose: () => kernel.dispose() };
 }
 
@@ -283,7 +285,10 @@ describeIf(hasSsh, 'ssh command', () => {
     // Like native OpenSSH, ssh-sk-helper sends its pre-protocol failure to
     // syslog by default and may therefore have empty stderr on EOF.
     expect(sk.stderr).not.toMatch(/not found|ENOENT/i);
+  });
 
+  it.runIf(hasSkHelperContract)('frames ssh-sk-helper provider errors', async () => {
+    ({ kernel, vfs, dispose } = await createSshKernel([]));
     const framed = await kernel.exec('ssh_sk_helper_contract');
     expect(framed.exitCode, framed.stderr).toBe(0);
     expect(framed.stdout).toBe('ssh_sk_helper_framed_provider_error=yes\n');

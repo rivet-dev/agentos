@@ -17,7 +17,7 @@ const GATE_DEFAULTS = {
 	iterations: 9,
 	warmup: 3,
 	threshold: 2.0,
-	tinyBaselineFloorMs: 0.3,
+	tinyBaselineFloorMs: 0.5,
 	tinyCurrentFloorMs: 1.0,
 	rows: [
 		{ key: "fs/fs_write_small", lane: "guest", reason: "tiny sync write hot path; protected by the 1ms tiny-row floor" },

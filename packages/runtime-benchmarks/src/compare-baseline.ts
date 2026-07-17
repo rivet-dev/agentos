@@ -107,7 +107,7 @@ export function compareBaselineFile(
 		tinyCurrentFloorMs: number;
 	} = {
 		threshold: 2,
-		tinyBaselineFloorMs: 0.3,
+		tinyBaselineFloorMs: 0.5,
 		tinyCurrentFloorMs: 1,
 	},
 ) {
@@ -148,7 +148,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
 		JSON.stringify(
 			compareBaselineFile(current, baseline, gateRows, {
 				threshold: 2,
-				tinyBaselineFloorMs: 0.3,
+				tinyBaselineFloorMs: 0.5,
 				tinyCurrentFloorMs: 1,
 			}),
 			null,

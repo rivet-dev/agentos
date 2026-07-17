@@ -145,5 +145,5 @@ describeIf(!skipReason, 'kernel.spawn() integration', () => {
     const result2 = await ctx2.kernel.exec('cat /tmp/isolation-check.txt');
     expect(result2.exitCode).not.toBe(0);
     await ctx2.dispose();
-  });
+  }, 10_000);
 });

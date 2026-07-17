@@ -3267,10 +3267,14 @@ if (typeof globalThis !== "undefined") {{
           }}
           return _netSocketWaitConnectSyncRaw.applySync(void 0, args);
         case "net.write":
-          if (typeof _netSocketWriteRaw === "undefined") {{
+          if (typeof _netSocketWriteSyncRaw === "undefined") {{
             throw new Error("secure-exec WASM net.write bridge is unavailable");
           }}
-          return _netSocketWriteRaw.applySync(void 0, args);
+          return _netSocketWriteSyncRaw.applySync(void 0, [
+            args[0],
+            __agentOSNormalizeBytes(args[1]),
+            args[2],
+          ]);
         case "net.destroy":
           if (typeof _netSocketDestroyRaw === "undefined") {{
             throw new Error("secure-exec WASM net.destroy bridge is unavailable");
@@ -5557,6 +5561,7 @@ mod tests {
                 "net.socket_wait_connect",
                 "_netSocketWaitConnectSyncRaw.applySync",
             ),
+            ("net.write", "_netSocketWriteSyncRaw.applySync"),
         ] {
             assert!(
                 bootstrap.contains(&format!("case \"{method}\":")),

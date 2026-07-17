@@ -1278,12 +1278,12 @@ pub(super) struct AppliedPosixSpawnFileActions {
     closed_guest_fds: Vec<u32>,
 }
 
-/// Python's V8 runner issues stdio bridge calls with the POSIX fd numbers
-/// 0/1/2 directly. Unlike the WASM runner, it does not consume the
+/// JavaScript and Python issue stdio bridge calls with the POSIX fd numbers
+/// 0/1/2 directly. Unlike the WASM runner, they do not consume the
 /// guest-to-kernel fd mapping emitted by posix_spawn file actions. Install the
-/// mapped descriptions at their canonical stdio numbers before Pyodide starts
-/// so pipes and redirections observe the same descriptors as the guest.
-fn materialize_python_stdio_mappings(
+/// mapped descriptions at their canonical stdio numbers before execution
+/// starts so pipes and redirections observe the same descriptors as the guest.
+fn materialize_direct_runtime_stdio_mappings(
     kernel: &mut SidecarKernel,
     pid: u32,
     applied: &AppliedPosixSpawnFileActions,
@@ -1311,7 +1311,7 @@ fn materialize_python_stdio_mappings(
 }
 
 #[cfg(test)]
-mod python_stdio_mapping_tests {
+mod direct_runtime_stdio_mapping_tests {
     use super::*;
     use agentos_kernel::command_registry::CommandDriver;
     use agentos_kernel::kernel::{KernelVmConfig, SpawnOptions};
@@ -1349,7 +1349,7 @@ mod python_stdio_mapping_tests {
             )
             .unwrap();
 
-        materialize_python_stdio_mappings(
+        materialize_direct_runtime_stdio_mappings(
             &mut kernel,
             process.pid(),
             &AppliedPosixSpawnFileActions {
@@ -3783,8 +3783,11 @@ where
                             .descriptions
                             .iter()
                             .any(|description| description.guest_fds.contains(&0)));
-                if resolved.runtime == GuestRuntimeKind::Python {
-                    materialize_python_stdio_mappings(
+                if matches!(
+                    resolved.runtime,
+                    GuestRuntimeKind::JavaScript | GuestRuntimeKind::Python
+                ) {
+                    materialize_direct_runtime_stdio_mappings(
                         &mut vm.kernel,
                         kernel_pid,
                         &applied_spawn_actions,
@@ -3842,6 +3845,14 @@ where
                         );
                         execution_env
                             .insert(String::from("AGENTOS_KEEP_STDIN_OPEN"), String::from("1"));
+                        if posix_spawn_controls_stdin {
+                            execution_env.insert(
+                                String::from("AGENTOS_FORWARD_KERNEL_STDIN_RPC"),
+                                String::from("1"),
+                            );
+                        } else {
+                            execution_env.remove("AGENTOS_FORWARD_KERNEL_STDIN_RPC");
+                        }
                         let launch_entrypoint =
                             resolve_agentos_package_javascript_launch_entrypoint(
                                 vm,
@@ -4114,6 +4125,7 @@ where
                     ))
                 })?;
             child.tty_master_owner = inherited_tty_master_owner;
+            child.direct_posix_stdin = direct_posix_stdin;
             if let Some(kernel_stdin_writer_fd) = kernel_stdin_writer_fd {
                 child.kernel_stdin_writer_fd = Some(kernel_stdin_writer_fd);
             }
@@ -4298,7 +4310,14 @@ where
             )));
         }
 
-        let (guest_cwd, host_cwd, kernel_pid, parent_kernel_pid, current_runtime) = {
+        let (
+            guest_cwd,
+            host_cwd,
+            kernel_pid,
+            parent_kernel_pid,
+            current_runtime,
+            direct_posix_stdin,
+        ) = {
             let vm = self.vms.get(vm_id).ok_or_else(|| missing_vm_error(vm_id))?;
             let root = vm
                 .active_processes
@@ -4322,6 +4341,7 @@ where
                 process.kernel_pid,
                 parent_kernel_pid,
                 process.runtime.clone(),
+                process.direct_posix_stdin,
             )
         };
 
@@ -4491,6 +4511,14 @@ where
                     &request.options.internal_bootstrap_env,
                 ));
                 execution_env.insert(String::from("AGENTOS_KEEP_STDIN_OPEN"), String::from("1"));
+                if direct_posix_stdin {
+                    execution_env.insert(
+                        String::from("AGENTOS_FORWARD_KERNEL_STDIN_RPC"),
+                        String::from("1"),
+                    );
+                } else {
+                    execution_env.remove("AGENTOS_FORWARD_KERNEL_STDIN_RPC");
+                }
                 let launch_entrypoint =
                     resolve_agentos_package_javascript_launch_entrypoint(vm, &mut execution_env)
                         .unwrap_or_else(|| resolved.entrypoint.clone());
@@ -5240,8 +5268,11 @@ where
                             .descriptions
                             .iter()
                             .any(|description| description.guest_fds.contains(&0)));
-                if resolved.runtime == GuestRuntimeKind::Python {
-                    materialize_python_stdio_mappings(
+                if matches!(
+                    resolved.runtime,
+                    GuestRuntimeKind::JavaScript | GuestRuntimeKind::Python
+                ) {
+                    materialize_direct_runtime_stdio_mappings(
                         &mut vm.kernel,
                         kernel_pid,
                         &applied_spawn_actions,
@@ -5299,6 +5330,14 @@ where
                         );
                         execution_env
                             .insert(String::from("AGENTOS_KEEP_STDIN_OPEN"), String::from("1"));
+                        if posix_spawn_controls_stdin {
+                            execution_env.insert(
+                                String::from("AGENTOS_FORWARD_KERNEL_STDIN_RPC"),
+                                String::from("1"),
+                            );
+                        } else {
+                            execution_env.remove("AGENTOS_FORWARD_KERNEL_STDIN_RPC");
+                        }
                         let launch_entrypoint =
                             resolve_agentos_package_javascript_launch_entrypoint(
                                 vm,
@@ -5618,6 +5657,7 @@ where
                 .get_mut(&child_process_id)
                 .expect("inserted nested child exists during spawn registration");
             child.tty_master_owner = inherited_tty_master_owner;
+            child.direct_posix_stdin = direct_posix_stdin;
             if let Some(kernel_stdin_writer_fd) = kernel_stdin_writer_fd {
                 child.kernel_stdin_writer_fd = Some(kernel_stdin_writer_fd);
             }
@@ -5922,6 +5962,7 @@ where
         if request.method == "__kernel_stdin_read"
             && matches!(child.execution, ActiveExecution::Javascript(_))
             && child.tty_master_fd.is_none()
+            && !child.direct_posix_stdin
         {
             return Ok(false);
         }

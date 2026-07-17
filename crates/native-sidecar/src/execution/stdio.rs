@@ -391,7 +391,7 @@ pub(crate) fn kernel_poll_response(
     }))
 }
 
-pub(super) fn install_kernel_stdin_pipe(
+pub(crate) fn install_kernel_stdin_pipe(
     kernel: &mut SidecarKernel,
     pid: u32,
 ) -> Result<u32, SidecarError> {
@@ -403,6 +403,29 @@ pub(super) fn install_kernel_stdin_pipe(
         .map_err(kernel_error)?;
     kernel
         .fd_close(EXECUTION_DRIVER_NAME, pid, read_fd)
+        .map_err(kernel_error)?;
+    // This writer is sidecar-owned plumbing in the guest's fd table. Do not
+    // let a spawned descendant inherit a writer for its own stdin pipe, which
+    // would keep the pipe open forever and prevent EOF.
+    kernel
+        .fd_fcntl(
+            EXECUTION_DRIVER_NAME,
+            pid,
+            write_fd,
+            agentos_kernel::fd_table::F_SETFD,
+            agentos_kernel::fd_table::FD_CLOEXEC,
+        )
+        .map_err(kernel_error)?;
+    // The sidecar services the corresponding reads on this same dispatch
+    // path, so a blocking write to a full pipe would deadlock the VM.
+    kernel
+        .fd_fcntl(
+            EXECUTION_DRIVER_NAME,
+            pid,
+            write_fd,
+            agentos_kernel::fd_table::F_SETFL,
+            agentos_kernel::fd_table::O_NONBLOCK,
+        )
         .map_err(kernel_error)?;
     Ok(write_fd)
 }

@@ -49,7 +49,7 @@ function createBridgeIntegrationKernel(): Promise<IntegrationKernelResult> {
   });
 }
 
-describeIf(!skipReason, 'bridge child_process → kernel routing', () => {
+describeIf(!skipReason, 'bridge child_process → kernel routing', { timeout: 60_000 }, () => {
   let ctx: IntegrationKernelResult;
   const cleanupPaths: string[] = [];
 

@@ -1,4 +1,5 @@
 use super::super::*;
+use crate::filesystem::{remove_process_shadow_path, rename_process_shadow_path};
 use agentos_kernel::vfs::{VirtualTimeSpec, VirtualUtimeSpec};
 
 const ALLOWED_WASM_PROCESS_SYNC_RPCS: &[&str] = &[
@@ -558,7 +559,8 @@ where
             // wasm/python. Non-TTY JS keeps using the in-process local stdin
             // bridge (piped stdin fed via process.execution.write_stdin).
             let js_local_bridge = matches!(process.execution, ActiveExecution::Javascript(_))
-                && process.tty_master_fd.is_none();
+                && process.tty_master_fd.is_none()
+                && !process.direct_posix_stdin;
             if js_local_bridge {
                 match &process.execution {
                     ActiveExecution::Javascript(execution) => execution
@@ -954,10 +956,9 @@ where
                 javascript_sync_rpc_arg_u32(&request.args, 0, "path_remove_dir_at dir fd")?;
             let path = javascript_sync_rpc_arg_str(&request.args, 1, "path_remove_dir_at path")?;
             let path = wasm_process_resolve_at_path(kernel, process.kernel_pid, dir_fd, path)?;
-            kernel
-                .remove_dir(&path)
-                .map(|()| Value::Null)
-                .map_err(kernel_error)
+            kernel.remove_dir(&path).map_err(kernel_error)?;
+            remove_process_shadow_path(process, &path)?;
+            Ok(Value::Null)
         }
         "process.path_rename_at" => {
             let old_fd = javascript_sync_rpc_arg_u32(&request.args, 0, "path_rename_at old fd")?;
@@ -970,10 +971,9 @@ where
                 wasm_process_resolve_at_path(kernel, process.kernel_pid, old_fd, old_path)?;
             let new_path =
                 wasm_process_resolve_at_path(kernel, process.kernel_pid, new_fd, new_path)?;
-            kernel
-                .rename(&old_path, &new_path)
-                .map(|()| Value::Null)
-                .map_err(kernel_error)
+            kernel.rename(&old_path, &new_path).map_err(kernel_error)?;
+            rename_process_shadow_path(process, &old_path, &new_path)?;
+            Ok(Value::Null)
         }
         "process.path_symlink_at" => {
             let target = javascript_sync_rpc_arg_str(&request.args, 0, "path_symlink_at target")?;
@@ -989,10 +989,9 @@ where
             let dir_fd = javascript_sync_rpc_arg_u32(&request.args, 0, "path_unlink_at dir fd")?;
             let path = javascript_sync_rpc_arg_str(&request.args, 1, "path_unlink_at path")?;
             let path = wasm_process_resolve_at_path(kernel, process.kernel_pid, dir_fd, path)?;
-            kernel
-                .remove_file(&path)
-                .map(|()| Value::Null)
-                .map_err(kernel_error)
+            kernel.remove_file(&path).map_err(kernel_error)?;
+            remove_process_shadow_path(process, &path)?;
+            Ok(Value::Null)
         }
         "process.fd_snapshot" => kernel
             .fd_snapshot(EXECUTION_DRIVER_NAME, process.kernel_pid)
@@ -1023,6 +1022,13 @@ where
             .map_err(kernel_error),
         "process.fd_read" => {
             let fd = javascript_sync_rpc_arg_u32(&request.args, 0, "fd_read fd")?;
+            // A previous read may have freed capacity in fd 0's pipe. Refill
+            // it before the next blocking read so large run-to-completion
+            // stdin payloads continue draining and the deferred EOF is
+            // delivered after the queued tail.
+            if fd == 0 {
+                flush_pending_kernel_stdin(kernel, process)?;
+            }
             let length = usize::try_from(javascript_sync_rpc_arg_u64(
                 &request.args,
                 1,
@@ -1071,10 +1077,30 @@ where
         "process.fd_write" => {
             let fd = javascript_sync_rpc_arg_u32(&request.args, 0, "fd_write fd")?;
             let data = javascript_sync_rpc_bytes_arg(&request.args, 1, "fd_write data")?;
-            kernel
-                .fd_write(EXECUTION_DRIVER_NAME, process.kernel_pid, fd, &data)
-                .map(Value::from)
-                .map_err(kernel_error)
+            // A synchronous WASM RPC cannot park this dispatcher in a
+            // blocking pipe write: the reader's RPC must be serviced here as
+            // well. The runner polls and retries when a logically blocking fd
+            // reports EAGAIN; genuinely nonblocking fds surface EAGAIN.
+            let written = if process.runtime == GuestRuntimeKind::WebAssembly {
+                kernel.fd_write_nonblocking(EXECUTION_DRIVER_NAME, process.kernel_pid, fd, &data)
+            } else {
+                kernel.fd_write(EXECUTION_DRIVER_NAME, process.kernel_pid, fd, &data)
+            }
+            .map_err(kernel_error)?;
+            if kernel
+                .fd_stat(EXECUTION_DRIVER_NAME, process.kernel_pid, fd)
+                .map_err(kernel_error)?
+                .filetype
+                == agentos_kernel::fd_table::FILETYPE_REGULAR_FILE
+            {
+                crate::filesystem::mirror_kernel_fd_contents_to_process_shadow(
+                    kernel,
+                    process,
+                    process.kernel_pid,
+                    fd,
+                )?;
+            }
+            Ok(Value::from(written))
         }
         "process.fd_pwrite" => {
             let fd = javascript_sync_rpc_arg_u32(&request.args, 0, "fd_pwrite fd")?;
@@ -1082,10 +1108,23 @@ where
             let offset = javascript_sync_rpc_arg_str(&request.args, 2, "fd_pwrite offset")?
                 .parse::<u64>()
                 .map_err(|_| SidecarError::InvalidState("fd_pwrite offset must be u64".into()))?;
-            kernel
+            let written = kernel
                 .fd_pwrite(EXECUTION_DRIVER_NAME, process.kernel_pid, fd, &data, offset)
-                .map(Value::from)
-                .map_err(kernel_error)
+                .map_err(kernel_error)?;
+            if kernel
+                .fd_stat(EXECUTION_DRIVER_NAME, process.kernel_pid, fd)
+                .map_err(kernel_error)?
+                .filetype
+                == agentos_kernel::fd_table::FILETYPE_REGULAR_FILE
+            {
+                crate::filesystem::mirror_kernel_fd_contents_to_process_shadow(
+                    kernel,
+                    process,
+                    process.kernel_pid,
+                    fd,
+                )?;
+            }
+            Ok(Value::from(written))
         }
         "process.fd_sync" | "process.fd_datasync" => {
             let fd = javascript_sync_rpc_arg_u32(&request.args, 0, "fd_sync fd")?;
