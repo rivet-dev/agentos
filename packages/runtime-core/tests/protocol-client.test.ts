@@ -247,6 +247,59 @@ describe("sidecar protocol client", () => {
 		client.dispose();
 	});
 
+	it("delivers filesystem.changed to listeners without filling the bounded buffer", async () => {
+		const frameTransport = new MemoryFrameTransport();
+		const client = new SidecarProtocolClient({
+			frameTransport,
+			eventBufferCapacity: 2,
+			payloadCodec: "json",
+			stderrText: () => "stderr",
+		});
+		const fsChanged = (): LiveEventFrame => ({
+			frame_type: "event",
+			schema: SIDECAR_PROTOCOL_SCHEMA,
+			ownership,
+			payload: {
+				type: "structured",
+				name: "filesystem.changed",
+				detail: { dirs: '["/tmp"]', overflow: "false" },
+			},
+		});
+
+		// A recurring change stream on a busy VM far exceeds the buffer
+		// capacity; if any event were buffered, the fail-closed overflow would
+		// kill the client and the waiter below would reject.
+		let seen = 0;
+		const dispose = client.onEvent((event) => {
+			if (
+				event.payload.type === "structured" &&
+				event.payload.name === "filesystem.changed"
+			) {
+				seen += 1;
+			}
+		});
+		for (let i = 0; i < 8; i += 1) {
+			frameTransport.emitFrame(fsChanged());
+		}
+
+		const waiter = client.waitForEvent(
+			(event) => event.payload.type === "vm_lifecycle",
+		);
+		frameTransport.emitFrame({
+			frame_type: "event",
+			schema: SIDECAR_PROTOCOL_SCHEMA,
+			ownership,
+			payload: { type: "vm_lifecycle", state: "ready" },
+		});
+
+		await expect(waiter).resolves.toMatchObject({
+			payload: { type: "vm_lifecycle", state: "ready" },
+		});
+		expect(seen).toBe(8);
+		dispose();
+		client.dispose();
+	});
+
 	it("rejects in-flight requests when the silence watchdog fires", async () => {
 		const frameTransport = new MemoryFrameTransport();
 		let expired = 0;

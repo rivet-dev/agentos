@@ -397,6 +397,7 @@ async fn actor_worker(
                     // Aborted via `vars.clear()` on sleep/destroy; the buffers
                     // themselves survive in `health`.
                     actions::health::spawn_health_pumps(&host, vm_ref, &mut vars, &health);
+                    actions::filesystem::spawn_fs_change_pump(&host, vm_ref, &mut vars);
                 }
                 tracing::debug!(action = %name, "agent-os action start");
                 actions::dispatch(

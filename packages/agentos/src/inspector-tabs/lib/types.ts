@@ -101,6 +101,14 @@ export interface SignedPreviewUrl {
 }
 
 // ── Filesystem ────────────────────────────────────────────────────────
+/** `fsChanged` broadcast: one coalesced guest filesystem change window.
+ * Rust owns broadcasts — mirror of the plugin's FsChangedEvent. */
+export interface FsChangedPayload {
+	/** Absolute guest directories whose direct entries changed. */
+	dirs: string[];
+	/** The window overflowed its bound; treat the whole tree as changed. */
+	overflow: boolean;
+}
 /** Raw `readdirRecursive` entry. */
 export interface DirEntry {
 	path: string;

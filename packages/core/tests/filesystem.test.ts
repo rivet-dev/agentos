@@ -194,3 +194,30 @@ describe("filesystem operations", () => {
 		expect(result).toBe(false);
 	});
 });
+
+describe("filesystem change notifications", () => {
+	test("onFsChanged reports the parent directory of a write", async () => {
+		const changes: { dirs: string[]; overflow: boolean }[] = [];
+		const vm = await AgentOs.create({
+			permissions: ALLOW_ALL_VM_PERMISSIONS,
+			onFsChanged: (change) => {
+				changes.push(change);
+			},
+		});
+		try {
+			await vm.writeFile("/tmp/fs-evt.txt", "fs event probe");
+			// The sidecar coalesces for ~300ms before flushing one event.
+			const deadline = Date.now() + 10_000;
+			const matches = () =>
+				changes.some(
+					(change) => change.overflow || change.dirs.includes("/tmp"),
+				);
+			while (Date.now() < deadline && !matches()) {
+				await new Promise((resolveSleep) => setTimeout(resolveSleep, 100));
+			}
+			expect(matches()).toBe(true);
+		} finally {
+			await vm.dispose();
+		}
+	}, 60_000);
+});

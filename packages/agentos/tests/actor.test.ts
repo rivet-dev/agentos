@@ -754,6 +754,44 @@ describe.sequential("@rivet-dev/agentos actor plugin package bridge", () => {
 			} finally {
 				unsubscribe();
 			}
+
+			// fsChanged round-trip: a writeFile must surface the parent dir on
+			// the coalesced `fsChanged` broadcast — the inspector Filesystem
+			// tab invalidates its listings from exactly this stream.
+			const fsChanges: { dirs?: unknown; overflow?: unknown }[] = [];
+			const unsubscribeFs = (
+				conn as unknown as {
+					on: (name: string, cb: (payload: unknown) => void) => () => void;
+				}
+			).on("fsChanged", (payload) => {
+				fsChanges.push(
+					payload as { dirs?: unknown; overflow?: unknown },
+				);
+			});
+			try {
+				await waitForPromise(
+					handle.action({
+						name: "writeFile",
+						args: ["/tmp/fs-changed-probe.txt", "fs event probe"],
+					}),
+					30_000,
+					"fsChanged probe writeFile",
+				);
+				const matches = (): boolean =>
+					fsChanges.some(
+						(change) =>
+							change.overflow === true ||
+							(Array.isArray(change.dirs) &&
+								change.dirs.includes("/tmp")),
+					);
+				const deadline = Date.now() + 30_000;
+				while (Date.now() < deadline && !matches()) {
+					await new Promise((resolve) => setTimeout(resolve, 250));
+				}
+				expect(matches()).toBe(true);
+			} finally {
+				unsubscribeFs();
+			}
 		} finally {
 			await conn.dispose();
 		}

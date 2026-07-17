@@ -358,6 +358,7 @@ where
                 signal_states: BTreeMap::new(),
                 packages_staging_root: None,
                 projected_agent_launch: BTreeMap::new(),
+                fs_changes: std::sync::Arc::new(crate::fs_changes::FsChangeTracker::new()),
             },
         );
 

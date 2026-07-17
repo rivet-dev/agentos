@@ -264,3 +264,45 @@ impl From<BatchReadResult> for BatchReadResultDto {
         }
     }
 }
+
+/// `fsChanged` broadcast payload: one coalesced guest filesystem change
+/// window from the runtime's `filesystem.changed` events.
+#[derive(Serialize)]
+struct FsChangedEvent {
+    dirs: Vec<String>,
+    overflow: bool,
+}
+
+pub(crate) fn encode_fs_changed_event(dirs: Vec<String>, overflow: bool) -> Result<Vec<u8>> {
+    super::encode_event_arg(&FsChangedEvent { dirs, overflow })
+}
+
+/// One `fsChanged` pump per VM lifetime, spawned on fresh boot next to the
+/// health pumps: fans the client's coalesced `on_fs_changed` stream out to
+/// actor clients as `fsChanged` broadcasts (the inspector Filesystem tab's
+/// realtime invalidation signal). Tracked in [`Vars::fs_change_task`] so VM
+/// teardown aborts it; a lagged subscriber already degrades to
+/// `overflow: true` inside the client stream, so nothing is lost silently.
+pub(crate) fn spawn_fs_change_pump(host: &crate::host_ctx::HostCtx, vm: &AgentOs, vars: &mut super::Vars) {
+    use futures::StreamExt;
+
+    let (mut stream, subscription) = vm.on_fs_changed();
+    let host = host.clone();
+    vars.fs_change_task = Some(tokio::spawn(async move {
+        // RAII guard: dropping the stream on abort is the unsubscribe.
+        let _subscription = subscription;
+        while let Some(change) = stream.next().await {
+            match encode_fs_changed_event(change.dirs, change.overflow) {
+                Ok(bytes) => {
+                    let status = host.broadcast(b"fsChanged".to_vec(), bytes);
+                    if status != rivet_actor_plugin_abi::AbiStatus::Ok {
+                        tracing::warn!(?status, "fsChanged broadcast failed");
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(?error, "failed to encode fsChanged broadcast");
+                }
+            }
+        }
+    }));
+}

@@ -87,6 +87,17 @@ export interface CronEventPayload {
 	event: SerializableCronEvent;
 }
 
+/**
+ * One coalesced guest filesystem change window (flushed at most every ~300ms
+ * per VM). `dirs` holds the absolute guest directories whose direct entries
+ * changed; on `overflow` the window exceeded its bound and consumers must
+ * treat the whole tree as changed.
+ */
+export interface FsChangedPayload {
+	dirs: string[];
+	overflow: boolean;
+}
+
 // --- Event schema map (used by actor() events config) ---
 
 export interface AgentOsEvents {
@@ -104,6 +115,8 @@ export interface AgentOsEvents {
 	/** Shell process exit (mirrors `waitShell` resolution). */
 	shellExit: ShellExitPayload;
 	cronEvent: CronEventPayload;
+	/** Coalesced guest filesystem changes (realtime Filesystem tab signal). */
+	fsChanged: FsChangedPayload;
 }
 
 // --- Prompt result ---

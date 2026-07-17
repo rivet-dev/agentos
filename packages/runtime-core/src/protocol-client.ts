@@ -344,6 +344,16 @@ export class SidecarProtocolClient {
 			waiter.resolve(event);
 			return;
 		}
+		// Recurring push-style notifications (coalesced filesystem changes) are
+		// consumed by listeners above; never buffered. The event buffer is
+		// fail-closed, so an unconsumed recurring stream on a busy VM would
+		// otherwise accumulate until it kills the client.
+		if (
+			event.payload.type === "structured" &&
+			event.payload.name === "filesystem.changed"
+		) {
+			return;
+		}
 		this.bufferEvent(event);
 	}
 

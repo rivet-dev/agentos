@@ -1387,6 +1387,7 @@ pub(crate) struct JavascriptSyncRpcServiceRequest<'a, B> {
     pub(crate) socket_paths: &'a JavascriptSocketPathContext,
     pub(crate) kernel: &'a mut SidecarKernel,
     pub(crate) kernel_readiness: KernelSocketReadinessRegistry,
+    pub(crate) fs_changes: Arc<crate::fs_changes::FsChangeTracker>,
     pub(crate) process: &'a mut ActiveProcess,
     pub(crate) sync_request: &'a JavascriptSyncRpcRequest,
     pub(crate) resource_limits: &'a ResourceLimits,
@@ -1433,6 +1434,7 @@ struct LoopbackHttpResponseWaitRequest<'a, B> {
     socket_paths: &'a JavascriptSocketPathContext,
     kernel: &'a mut SidecarKernel,
     kernel_readiness: KernelSocketReadinessRegistry,
+    fs_changes: Arc<crate::fs_changes::FsChangeTracker>,
     process: &'a mut ActiveProcess,
     resource_limits: &'a ResourceLimits,
     request_key: (u64, u64),
@@ -1445,6 +1447,7 @@ pub(crate) struct LoopbackHttpDispatchRequest<'a, B> {
     pub(crate) socket_paths: &'a JavascriptSocketPathContext,
     pub(crate) kernel: &'a mut SidecarKernel,
     pub(crate) kernel_readiness: KernelSocketReadinessRegistry,
+    pub(crate) fs_changes: Arc<crate::fs_changes::FsChangeTracker>,
     pub(crate) process: &'a mut ActiveProcess,
     pub(crate) resource_limits: &'a ResourceLimits,
     pub(crate) server_id: u64,
@@ -4481,6 +4484,7 @@ where
         let socket_paths = build_javascript_socket_path_context(vm)?;
         let resource_limits = vm.kernel.resource_limits().clone();
         let kernel_readiness = Arc::clone(&vm.kernel_socket_readiness);
+        let fs_changes = Arc::clone(&vm.fs_changes);
         let process = vm
             .active_processes
             .get_mut(&target_process_id)
@@ -4497,6 +4501,7 @@ where
             socket_paths: &socket_paths,
             kernel: &mut vm.kernel,
             kernel_readiness,
+            fs_changes: Arc::clone(&fs_changes),
             process,
             resource_limits: &resource_limits,
             server_id,
@@ -8261,6 +8266,7 @@ where
                             socket_paths: &socket_paths,
                             kernel: &mut vm.kernel,
                             kernel_readiness,
+                            fs_changes: Arc::clone(&vm.fs_changes),
                             process: child,
                             sync_request: &request,
                             resource_limits: &resource_limits,
@@ -9977,6 +9983,7 @@ fn sync_host_directory_tree_to_kernel_inner(
                             kernel_error(error)
                         ))
                     })?;
+                vm.fs_changes.mark(&guest_path, Instant::now());
             }
             sync_host_directory_tree_to_kernel_inner(
                 vm,
@@ -10062,7 +10069,9 @@ fn sync_host_directory_tree_to_kernel_inner(
                 }
             };
             match vm.kernel.write_file(&guest_path, bytes) {
-                Ok(()) => {}
+                // The mtime fast-path above skips unchanged entries, so every
+                // write that lands here is a real change worth broadcasting.
+                Ok(()) => vm.fs_changes.mark(&guest_path, Instant::now()),
                 // ENOENT here means the guest-side path cannot currently
                 // receive the write (e.g. it is a symlink whose target was
                 // just unlinked by the guest — vim's swap-file dance). The
@@ -16455,6 +16464,7 @@ where
         socket_paths,
         kernel,
         kernel_readiness,
+        fs_changes,
         process,
         sync_request: request,
         resource_limits,
@@ -16715,11 +16725,11 @@ where
         }
         "fs.chmodSync" | "fs.promises.chmod" => {
             let response =
-                service_javascript_fs_sync_rpc(kernel, process, process.kernel_pid, request)?;
+                service_javascript_fs_sync_rpc(kernel, &fs_changes, process, process.kernel_pid, request)?;
             mirror_process_chmod_to_host(process, request)?;
             Ok(response)
         }
-        _ => service_javascript_fs_sync_rpc(kernel, process, process.kernel_pid, request),
+        _ => service_javascript_fs_sync_rpc(kernel, &fs_changes, process, process.kernel_pid, request),
     }?;
     Ok(response.into())
 }
@@ -19634,6 +19644,7 @@ fn service_host_fetch_target_event<B>(
     socket_paths: &JavascriptSocketPathContext,
     kernel: &mut SidecarKernel,
     kernel_readiness: &KernelSocketReadinessRegistry,
+    fs_changes: &Arc<crate::fs_changes::FsChangeTracker>,
     process: &mut ActiveProcess,
     resource_limits: &ResourceLimits,
     wait: Duration,
@@ -19660,6 +19671,7 @@ where
                 socket_paths,
                 kernel,
                 kernel_readiness: Arc::clone(kernel_readiness),
+                fs_changes: Arc::clone(fs_changes),
                 process,
                 sync_request: &request,
                 resource_limits,
@@ -19707,6 +19719,7 @@ where
     for _ in 0..32 {
         let dns = vm.dns.clone();
         let kernel_readiness = Arc::clone(&vm.kernel_socket_readiness);
+        let fs_changes = Arc::clone(&vm.fs_changes);
         let Some(process) = vm.active_processes.get_mut(target_process_id) else {
             break;
         };
@@ -19717,6 +19730,7 @@ where
             socket_paths,
             &mut vm.kernel,
             &kernel_readiness,
+            &fs_changes,
             process,
             resource_limits,
             Duration::from_millis(1),
@@ -19888,6 +19902,7 @@ where
         {
             let dns = vm.dns.clone();
             let kernel_readiness = Arc::clone(&vm.kernel_socket_readiness);
+            let fs_changes = Arc::clone(&vm.fs_changes);
             let process = vm
                 .active_processes
                 .get_mut(target_process_id)
@@ -19903,6 +19918,7 @@ where
                 socket_paths,
                 &mut vm.kernel,
                 &kernel_readiness,
+                &fs_changes,
                 process,
                 resource_limits,
                 Duration::from_millis(5),
@@ -20097,6 +20113,7 @@ where
         socket_paths,
         kernel,
         kernel_readiness,
+        fs_changes,
         process,
         resource_limits,
         request_key,
@@ -20137,6 +20154,7 @@ where
                     socket_paths,
                     kernel,
                     kernel_readiness: Arc::clone(&kernel_readiness),
+                    fs_changes: Arc::clone(&fs_changes),
                     process,
                     sync_request: &request,
                     resource_limits,
@@ -20185,6 +20203,7 @@ where
         socket_paths,
         kernel,
         kernel_readiness,
+        fs_changes,
         process,
         resource_limits,
         server_id,
@@ -20215,6 +20234,7 @@ where
         socket_paths,
         kernel,
         kernel_readiness,
+        fs_changes,
         process,
         resource_limits,
         request_key: (server_id, request_id),

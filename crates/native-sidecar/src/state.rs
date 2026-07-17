@@ -357,6 +357,9 @@ pub(crate) struct VmState {
     /// packages ship no `agentos-package.json`, so agent enumeration and
     /// resolution read this instead of the guest filesystem.
     pub(crate) projected_agent_launch: BTreeMap<String, ProjectedAgentLaunch>,
+    /// Coalesced guest filesystem mutations feeding the `filesystem.changed`
+    /// wire event; drained by the stdio loop on its tick.
+    pub(crate) fs_changes: std::sync::Arc<crate::fs_changes::FsChangeTracker>,
 }
 
 /// Launch parameters for one projected agent package.

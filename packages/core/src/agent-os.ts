@@ -544,6 +544,26 @@ export interface LimitWarning {
 export type LimitWarningHandler = (warning: LimitWarning) => void;
 
 /**
+ * One coalesced guest filesystem change window, from the sidecar's
+ * `filesystem.changed` structured events (VM-scoped, flushed at most every
+ * ~300ms per VM).
+ */
+export interface FsChanged {
+	/**
+	 * Absolute guest directories whose direct entries changed (parents of
+	 * mutated paths, plus removed/renamed directories themselves).
+	 */
+	dirs: string[];
+	/**
+	 * The sidecar's per-window dirty-set overflowed its bound; treat the whole
+	 * tree as changed.
+	 */
+	overflow: boolean;
+}
+
+export type FsChangedHandler = (change: FsChanged) => void;
+
+/**
  * Public core VM options.
  *
  * Keep this interface in sync with
@@ -627,6 +647,12 @@ export interface AgentOsOptions {
 	 * on a slow consumer or a runaway guest before the limit is actually hit.
 	 */
 	onLimitWarning?: LimitWarningHandler;
+	/**
+	 * Called with each coalesced guest filesystem change window (directories
+	 * whose entries changed). Drives live filesystem views without polling; on
+	 * `overflow` treat the whole tree as changed.
+	 */
+	onFsChanged?: FsChangedHandler;
 }
 
 /** Configuration for a local MCP server (spawned as a child process). */
@@ -2583,6 +2609,7 @@ export class AgentOs {
 	private readonly _agentStderrHandler?: AgentStderrHandler;
 	private readonly _agentExitHandler?: AgentExitHandler;
 	private readonly _limitWarningHandler?: LimitWarningHandler;
+	private readonly _fsChangedHandler?: FsChangedHandler;
 
 	private constructor(
 		kernel: Kernel,
@@ -2598,6 +2625,7 @@ export class AgentOs {
 		agentStderrHandler?: AgentStderrHandler,
 		agentExitHandler?: AgentExitHandler,
 		limitWarningHandler?: LimitWarningHandler,
+		fsChangedHandler?: FsChangedHandler,
 	) {
 		this.#kernel = kernel;
 		this.sidecar = sidecar;
@@ -2612,6 +2640,7 @@ export class AgentOs {
 		this._agentStderrHandler = agentStderrHandler;
 		this._agentExitHandler = agentExitHandler;
 		this._limitWarningHandler = limitWarningHandler;
+		this._fsChangedHandler = fsChangedHandler;
 		this._disposeSidecarEventListener = this._sidecarClient.onEvent((event) => {
 			this._handleSidecarEvent(event);
 		});
@@ -2920,6 +2949,7 @@ export class AgentOs {
 				options?.onAgentStderr ?? defaultAgentStderrHandler,
 				options?.onAgentExit ?? defaultAgentExitHandler,
 				options?.onLimitWarning,
+				options?.onFsChanged,
 			);
 			vm._sidecarLease = sidecarLease;
 			vm._toolKits = vmAdmin.toolKits;
@@ -3875,6 +3905,18 @@ export class AgentOs {
 			this._handleLimitWarning(event.payload.detail);
 			return;
 		}
+		if (event.payload.name === "filesystem.changed") {
+			// VM-scoped: sibling VMs share this sidecar transport, so only this
+			// VM's change windows reach the handler (mirrors the Rust client's
+			// ownership filter in its ACP event pump).
+			if (
+				event.ownership.scope === "vm" &&
+				event.ownership.vm_id === this._sidecarVm.vmId
+			) {
+				this._handleFsChanged(event.payload.detail);
+			}
+			return;
+		}
 		if (event.payload.name !== "acp.session_event") {
 			return;
 		}
@@ -3916,6 +3958,37 @@ export class AgentOs {
 				capacity: toNumber(detail.capacity),
 				fillPercent: toNumber(detail.fillPercent),
 			});
+		} catch {
+			// A throwing handler must never break the sidecar event loop.
+		}
+	}
+
+	private _handleFsChanged(detail: Record<string, string>): void {
+		if (!this._fsChangedHandler) {
+			return;
+		}
+		// Malformed payloads degrade to a whole-tree refresh rather than a
+		// silently dropped invalidation (same semantics as the Rust client).
+		let change: FsChanged = { dirs: [], overflow: true };
+		try {
+			const dirs: unknown = JSON.parse(detail.dirs ?? "");
+			if (
+				Array.isArray(dirs) &&
+				dirs.every((dir): dir is string => typeof dir === "string")
+			) {
+				change = { dirs, overflow: detail.overflow === "true" };
+			} else {
+				console.warn(
+					"agentOS: malformed filesystem.changed dirs; degrading to overflow",
+				);
+			}
+		} catch {
+			console.warn(
+				"agentOS: malformed filesystem.changed payload; degrading to overflow",
+			);
+		}
+		try {
+			this._fsChangedHandler(change);
 		} catch {
 			// A throwing handler must never break the sidecar event loop.
 		}

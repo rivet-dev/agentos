@@ -1242,6 +1242,38 @@ where
         wire_dispatch_result(result)
     }
 
+    /// Drain every VM's due `filesystem.changed` window into VM-scoped wire
+    /// event frames. `now` is a parameter so tests can close flush windows
+    /// without sleeping; the stdio loop passes `Instant::now()` on its tick.
+    pub fn take_due_fs_change_event_frames(
+        &mut self,
+        now: std::time::Instant,
+    ) -> Result<Vec<crate::wire::EventFrame>, SidecarError> {
+        let mut frames = Vec::new();
+        for (vm_id, vm) in &self.vms {
+            let Some(flush) = vm.fs_changes.take_due(now) else {
+                continue;
+            };
+            let dirs = serde_json::to_string(&flush.dirs).map_err(|error| {
+                SidecarError::InvalidState(format!("unencodable fs change dirs: {error}"))
+            })?;
+            let mut detail = std::collections::HashMap::new();
+            detail.insert(String::from("dirs"), dirs);
+            detail.insert(String::from("overflow"), flush.overflow.to_string());
+            let event = EventFrame::new(
+                OwnershipScope::vm(&vm.connection_id, &vm.session_id, vm_id),
+                EventPayload::Structured(crate::protocol::StructuredEvent {
+                    name: String::from("filesystem.changed"),
+                    detail,
+                }),
+            );
+            frames.push(crate::wire::event_frame_from_compat(event).map_err(|error| {
+                SidecarError::InvalidState(format!("invalid fs change event frame: {error}"))
+            })?);
+        }
+        Ok(frames)
+    }
+
     pub async fn poll_event_wire(
         &mut self,
         ownership: &crate::wire::OwnershipScope,
@@ -2191,6 +2223,7 @@ where
                         )));
                     }
                     let kernel_readiness = Arc::clone(&vm.kernel_socket_readiness);
+                    let fs_changes = Arc::clone(&vm.fs_changes);
                     let Some(target_process) = vm.active_processes.get_mut(&payload.process_id)
                     else {
                         return Err(SidecarError::InvalidState(format!(
@@ -2205,6 +2238,7 @@ where
                         socket_paths: &socket_paths,
                         kernel: &mut vm.kernel,
                         kernel_readiness,
+                        fs_changes: Arc::clone(&fs_changes),
                         process: target_process,
                         resource_limits: &resource_limits,
                         server_id: payload.server_id,
@@ -2275,6 +2309,7 @@ where
                         socket_paths: &socket_paths,
                         kernel: &mut vm.kernel,
                         kernel_readiness,
+                        fs_changes: Arc::clone(&vm.fs_changes),
                         process,
                         sync_request: &request,
                         resource_limits: &resource_limits,

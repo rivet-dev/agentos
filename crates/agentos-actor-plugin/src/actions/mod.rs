@@ -58,6 +58,10 @@ pub struct Vars {
     /// VM teardown aborts the feeds; the [`health::HealthBuffers`] they write
     /// into are owned by `actor_worker` and deliberately SURVIVE teardown.
     pub health_tasks: Vec<JoinHandle<()>>,
+    /// One `fsChanged` broadcast pump per VM lifetime (spawned by
+    /// `filesystem::spawn_fs_change_pump` on fresh boot), fanning the client's
+    /// coalesced filesystem-change stream out to actor clients.
+    pub fs_change_task: Option<JoinHandle<()>>,
     /// Bounded buffer of unanswered permission requests, fed by the permission
     /// pump and served by the observe-only `listPendingPermissions` backfill.
     /// Lives here (NOT next to `health` in `actor_worker`) because the
@@ -90,6 +94,9 @@ impl Vars {
             task.abort();
         }
         if let Some(task) = self.cron_task.take() {
+            task.abort();
+        }
+        if let Some(task) = self.fs_change_task.take() {
             task.abort();
         }
         for task in self.health_tasks.drain(..) {
@@ -675,6 +682,9 @@ pub mod contract {
 
     pub fn encode_sample_event(name: &str) -> Result<Vec<u8>> {
         match name {
+            "fsChanged" => {
+                filesystem::encode_fs_changed_event(vec![String::from("/tmp")], false)
+            }
             "sessionEvent" => session::encode_session_event(
                 "session-1",
                 &json!({ "jsonrpc": "2.0", "method": "session/update", "params": {} }),

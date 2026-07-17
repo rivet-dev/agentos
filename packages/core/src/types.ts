@@ -18,6 +18,8 @@ export type {
 	BatchWriteResult,
 	CreateSessionOptions,
 	DirEntry,
+	FsChanged,
+	FsChangedHandler,
 	LimitWarning,
 	LimitWarningHandler,
 	McpServerConfig,

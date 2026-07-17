@@ -142,3 +142,37 @@ async fn filesystem_surface_round_trips() {
 
     os.shutdown().await.expect("shutdown");
 }
+
+#[tokio::test]
+async fn fs_changed_events_follow_writes() {
+    if !common::require_sidecar("fs_changed_events_follow_writes") {
+        return;
+    }
+    let os = common::new_vm_with_sidecar_pool("fs-changed-events").await;
+
+    let (mut stream, _subscription) = os.on_fs_changed();
+    os.write_file(
+        "/tmp/fs-evt.txt",
+        FileContent::Text("fs event probe".to_string()),
+    )
+    .await
+    .expect("write probe file");
+
+    // The sidecar coalesces for ~300ms before emitting; wait generously.
+    let event = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        use futures::StreamExt;
+        loop {
+            let Some(change) = stream.next().await else {
+                panic!("fs change stream closed without an event");
+            };
+            if change.overflow || change.dirs.iter().any(|dir| dir == "/tmp") {
+                return change;
+            }
+        }
+    })
+    .await
+    .expect("fsChanged event within deadline");
+    assert!(event.overflow || event.dirs.iter().any(|dir| dir == "/tmp"));
+
+    os.shutdown().await.expect("shutdown");
+}

@@ -342,6 +342,9 @@ async fn run_async(extensions: Vec<Box<dyn Extension>>) -> Result<(), Box<dyn Er
                         let _ = event_ready_tx.try_send(());
                     }
                 }
+                for frame in sidecar.take_due_fs_change_event_frames(std::time::Instant::now())? {
+                    send_output_frame(&write_tx, ProtocolFrame::EventFrame(frame))?;
+                }
                 flush_sidecar_requests(&mut sidecar, &write_tx)?;
             }
             maybe_write_error = write_error_rx.recv() => {

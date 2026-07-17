@@ -201,6 +201,28 @@ pub type LimitWarningSubscription = (LimitWarningStream, Subscription);
 /// edge-triggered (once per threshold crossing), so a small buffer suffices.
 const LIMIT_WARNING_CHANNEL_CAPACITY: usize = 64;
 
+/// One coalesced guest filesystem change window, from the sidecar's
+/// `filesystem.changed` structured events. Parity surface for the TS
+/// `onFsChanged` create-time option.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FsChanged {
+    /// Absolute guest directories whose direct entries changed (parents of
+    /// mutated paths, plus removed/renamed directories themselves).
+    pub dirs: Vec<String>,
+    /// The sidecar's per-window dirty-set overflowed; treat the whole tree as
+    /// changed. Also synthesized client-side when a subscriber lags and events
+    /// are dropped, so an invalidation is never silently lost.
+    pub overflow: bool,
+}
+
+pub type FsChangedStream = Pin<Box<dyn Stream<Item = FsChanged> + Send>>;
+pub type FsChangedSubscription = (FsChangedStream, Subscription);
+
+/// Broadcast capacity for `on_fs_changed` subscribers. Events are already
+/// coalesced sidecar-side (≤ ~3/s per VM), and a lagged receiver degrades to a
+/// synthetic overflow rather than losing changes.
+const FS_CHANGED_CHANNEL_CAPACITY: usize = 256;
+
 pub(crate) struct AgentOsInner {
     // Transport / connection / VM handle.
     pub(crate) transport: Arc<SidecarProcess>,
@@ -275,6 +297,9 @@ pub(crate) struct AgentOsInner {
     /// Fan-out for the sidecar's `limit_warning` structured events
     /// ([`AgentOs::on_limit_warning`]); fed by the ACP event pump.
     pub(crate) limit_warning_tx: broadcast::Sender<LimitWarning>,
+    /// Fan-out for this VM's `filesystem.changed` structured events
+    /// ([`AgentOs::on_fs_changed`]); fed by the ACP event pump.
+    pub(crate) fs_changed_tx: broadcast::Sender<FsChanged>,
 }
 
 impl AgentOs {
@@ -647,6 +672,7 @@ impl AgentOs {
             disposed: AtomicBool::new(false),
             acp_event_pump: parking_lot::Mutex::new(None),
             limit_warning_tx: broadcast::channel(LIMIT_WARNING_CHANNEL_CAPACITY).0,
+            fs_changed_tx: broadcast::channel(FS_CHANGED_CHANNEL_CAPACITY).0,
         };
 
         let client = AgentOs {
@@ -918,6 +944,29 @@ impl AgentOs {
         (Box::pin(stream), Subscription::noop())
     }
 
+    /// Subscribe to coalesced guest filesystem changes (the sidecar's
+    /// `filesystem.changed` structured events, VM-scoped). Parity surface for
+    /// the TS `onFsChanged` create-time option. A lagged subscriber receives a
+    /// synthetic `FsChanged { dirs: [], overflow: true }` instead of silently
+    /// missing windows — consumers must treat overflow as "refresh everything".
+    pub fn on_fs_changed(&self) -> FsChangedSubscription {
+        let rx = self.inner.fs_changed_tx.subscribe();
+        let stream = futures::stream::unfold(rx, move |mut rx| async move {
+            match rx.recv().await {
+                Ok(event) => Some((event, rx)),
+                Err(broadcast::error::RecvError::Lagged(_)) => Some((
+                    FsChanged {
+                        dirs: Vec::new(),
+                        overflow: true,
+                    },
+                    rx,
+                )),
+                Err(broadcast::error::RecvError::Closed) => None,
+            }
+        });
+        (Box::pin(stream), Subscription::noop())
+    }
+
     pub fn projected_agents(&self) -> Vec<ProjectedAgent> {
         self.inner.projected_agents.lock().clone()
     }
@@ -951,22 +1000,40 @@ fn spawn_acp_event_pump(client: &AgentOs) {
                         tracing::warn!(?error, "failed to deliver acp extension event");
                     }
                 }
-                Ok((_, wire::EventPayload::StructuredEvent(event))) => {
-                    // Runtime limit warnings fan out to `on_limit_warning` subscribers.
-                    // Process-global signal, so no ownership filter — mirrors the TS
-                    // `_handleSidecarEvent` `limit_warning` path.
-                    if event.name != "limit_warning" {
-                        continue;
+                Ok((ownership, wire::EventPayload::StructuredEvent(event))) => {
+                    match event.name.as_str() {
+                        // Runtime limit warnings fan out to `on_limit_warning`
+                        // subscribers. Process-global signal, so no ownership
+                        // filter — mirrors the TS `_handleSidecarEvent`
+                        // `limit_warning` path.
+                        "limit_warning" => {
+                            let Some(inner) = inner.upgrade() else {
+                                break;
+                            };
+                            if inner.disposed.load(Ordering::SeqCst) {
+                                break;
+                            }
+                            let _ = inner
+                                .limit_warning_tx
+                                .send(parse_limit_warning(&event.detail));
+                        }
+                        // Coalesced guest filesystem changes are VM-scoped:
+                        // transports are shared across VMs, so only this VM's
+                        // events fan out to `on_fs_changed` subscribers.
+                        "filesystem.changed" => {
+                            let Some(inner) = inner.upgrade() else {
+                                break;
+                            };
+                            if inner.disposed.load(Ordering::SeqCst) {
+                                break;
+                            }
+                            if wire_ownership_vm_id(&ownership) != Some(inner.vm_id.as_str()) {
+                                continue;
+                            }
+                            let _ = inner.fs_changed_tx.send(parse_fs_changed(&event.detail));
+                        }
+                        _ => {}
                     }
-                    let Some(inner) = inner.upgrade() else {
-                        break;
-                    };
-                    if inner.disposed.load(Ordering::SeqCst) {
-                        break;
-                    }
-                    let _ = inner
-                        .limit_warning_tx
-                        .send(parse_limit_warning(&event.detail));
                 }
                 Ok((
                     _,
@@ -999,6 +1066,33 @@ fn parse_limit_warning(detail: &HashMap<String, String>) -> LimitWarning {
         capacity: to_number("capacity"),
         fill_percent: to_number("fillPercent"),
     }
+}
+
+/// Parse the string detail map of a `filesystem.changed` structured event. A
+/// malformed payload degrades to `{ dirs: [], overflow: true }` (full refresh)
+/// with a warning — an invalidation signal must never be dropped silently.
+fn parse_fs_changed(detail: &HashMap<String, String>) -> FsChanged {
+    let overflow = detail.get("overflow").map(String::as_str) == Some("true");
+    let dirs = match detail.get("dirs") {
+        Some(raw) => match serde_json::from_str::<Vec<String>>(raw) {
+            Ok(dirs) => dirs,
+            Err(error) => {
+                tracing::warn!(?error, "malformed filesystem.changed dirs; degrading to overflow");
+                return FsChanged {
+                    dirs: Vec::new(),
+                    overflow: true,
+                };
+            }
+        },
+        None => {
+            tracing::warn!("filesystem.changed event without dirs; degrading to overflow");
+            return FsChanged {
+                dirs: Vec::new(),
+                overflow: true,
+            };
+        }
+    };
+    FsChanged { dirs, overflow }
 }
 
 fn deliver_acp_ext_event(
@@ -4283,5 +4377,29 @@ mod tests {
         let wasm = limits.wasm.expect("wasm limits");
         assert_eq!(wasm.prewarm_timeout_ms, Some(30_000));
         assert_eq!(wasm.runner_heap_limit_mb, Some(2_048));
+    }
+
+    #[test]
+    fn parse_fs_changed_reads_dirs_and_overflow() {
+        let mut detail = std::collections::HashMap::new();
+        detail.insert(String::from("dirs"), String::from(r#"["/tmp","/workspace"]"#));
+        detail.insert(String::from("overflow"), String::from("false"));
+        let parsed = super::parse_fs_changed(&detail);
+        assert_eq!(parsed.dirs, vec!["/tmp", "/workspace"]);
+        assert!(!parsed.overflow);
+    }
+
+    #[test]
+    fn parse_fs_changed_degrades_malformed_payloads_to_overflow() {
+        let mut detail = std::collections::HashMap::new();
+        detail.insert(String::from("dirs"), String::from("not-json"));
+        detail.insert(String::from("overflow"), String::from("false"));
+        let parsed = super::parse_fs_changed(&detail);
+        assert!(parsed.overflow, "malformed dirs must degrade to full refresh");
+        assert!(parsed.dirs.is_empty());
+
+        let empty = std::collections::HashMap::new();
+        let parsed = super::parse_fs_changed(&empty);
+        assert!(parsed.overflow, "missing dirs must degrade to full refresh");
     }
 }

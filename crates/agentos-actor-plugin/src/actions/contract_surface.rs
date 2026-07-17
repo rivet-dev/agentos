@@ -285,6 +285,11 @@ pub const ACTION_CONTRACTS: &[ActionContract] = &[
 #[allow(dead_code)]
 pub const EVENT_CONTRACTS: &[EventContract] = &[
     EventContract {
+        name: "fsChanged",
+        payload_shape: ReplyShape::Object(&["dirs", "overflow"]),
+        ts_signature: "fsChanged: FsChangedPayload;",
+    },
+    EventContract {
         name: "sessionEvent",
         payload_shape: ReplyShape::Object(&["event", "sessionId"]),
         ts_signature: "sessionEvent: SessionEventPayload;",

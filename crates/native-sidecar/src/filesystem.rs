@@ -432,6 +432,7 @@ where
         let response = core_guest_filesystem_call(&mut vm.kernel, payload.clone())
             .map_err(native_guest_filesystem_core_error)?;
         mirror_guest_filesystem_shadow_after_call(vm, &payload)?;
+        mark_guest_filesystem_change(vm, &payload);
         response
     };
 
@@ -500,6 +501,52 @@ fn sync_guest_filesystem_shadow_before_call(
         | GuestFilesystemOperation::Truncate => {}
     }
     Ok(())
+}
+
+/// Feed the VM's `filesystem.changed` coalescer after a successful host
+/// fs-API mutation. Read-side operations mark nothing.
+fn mark_guest_filesystem_change(vm: &VmState, payload: &GuestFilesystemCallRequest) {
+    let now = std::time::Instant::now();
+    let changes = &vm.fs_changes;
+    match payload.operation {
+        GuestFilesystemOperation::WriteFile
+        | GuestFilesystemOperation::Pwrite
+        | GuestFilesystemOperation::CreateDir
+        | GuestFilesystemOperation::Mkdir
+        | GuestFilesystemOperation::Symlink
+        | GuestFilesystemOperation::Chmod
+        | GuestFilesystemOperation::Chown
+        | GuestFilesystemOperation::Utimes
+        | GuestFilesystemOperation::Truncate => changes.mark(&payload.path, now),
+        GuestFilesystemOperation::RemoveFile
+        | GuestFilesystemOperation::RemoveDir
+        | GuestFilesystemOperation::Remove => changes.mark_removed(&payload.path, now),
+        GuestFilesystemOperation::Copy => {
+            if let Some(destination) = payload.destination_path.as_deref() {
+                changes.mark_removed(destination, now);
+            }
+        }
+        GuestFilesystemOperation::Move | GuestFilesystemOperation::Rename => {
+            changes.mark_removed(&payload.path, now);
+            if let Some(destination) = payload.destination_path.as_deref() {
+                changes.mark_removed(destination, now);
+            }
+        }
+        GuestFilesystemOperation::Link => {
+            if let Some(destination) = payload.destination_path.as_deref() {
+                changes.mark(destination, now);
+            }
+        }
+        GuestFilesystemOperation::ReadFile
+        | GuestFilesystemOperation::Pread
+        | GuestFilesystemOperation::Exists
+        | GuestFilesystemOperation::Stat
+        | GuestFilesystemOperation::Lstat
+        | GuestFilesystemOperation::ReadDir
+        | GuestFilesystemOperation::ReadDirRecursive
+        | GuestFilesystemOperation::Realpath
+        | GuestFilesystemOperation::ReadLink => {}
+    }
 }
 
 fn mirror_guest_filesystem_shadow_after_call(
@@ -827,6 +874,9 @@ where
         log_stale_process_event(&sidecar.bridge, vm_id, process_id, "python VFS RPC");
         return Ok(());
     };
+    if response.is_ok() {
+        mark_python_vfs_rpc_change(vm, &request);
+    }
     let Some(process) = vm.active_processes.get_mut(process_id) else {
         log_stale_process_event(&sidecar.bridge, vm_id, process_id, "python VFS RPC");
         return Ok(());
@@ -841,6 +891,36 @@ where
             "ERR_AGENTOS_PYTHON_VFS_RPC",
             error.to_string(),
         ),
+    }
+}
+
+/// Feed the VM's `filesystem.changed` coalescer after a successful mutating
+/// Python VFS RPC. Paths that fail normalization were already rejected by the
+/// handler, so this only sees requests whose operation succeeded.
+fn mark_python_vfs_rpc_change(vm: &VmState, request: &PythonVfsRpcRequest) {
+    let now = Instant::now();
+    let Ok(path) = normalize_python_vfs_rpc_path(&request.path) else {
+        return;
+    };
+    match request.method {
+        PythonVfsRpcMethod::Write
+        | PythonVfsRpcMethod::Mkdir
+        | PythonVfsRpcMethod::Symlink
+        | PythonVfsRpcMethod::Setattr => vm.fs_changes.mark(&path, now),
+        PythonVfsRpcMethod::Unlink | PythonVfsRpcMethod::Rmdir => {
+            vm.fs_changes.mark_removed(&path, now);
+        }
+        PythonVfsRpcMethod::Rename => {
+            vm.fs_changes.mark_removed(&path, now);
+            if let Some(destination) = request
+                .destination
+                .as_deref()
+                .and_then(|destination| normalize_python_vfs_rpc_path(destination).ok())
+            {
+                vm.fs_changes.mark_removed(&destination, now);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -1221,6 +1301,102 @@ fn fs_sync_request_marks_host_write_dirty(
     })
 }
 
+/// Feed the VM's `filesystem.changed` coalescer for a mutating guest fs
+/// sync-RPC. Marking is pre-dispatch and best-effort: a spurious mark for an
+/// op that then fails only costs one redundant listing refetch, while argument
+/// shapes this helper cannot resolve are logged at debug level rather than
+/// failing the guest operation over observability bookkeeping.
+fn mark_fs_sync_rpc_change(
+    fs_changes: &crate::fs_changes::FsChangeTracker,
+    kernel: &SidecarKernel,
+    process: &ActiveProcess,
+    kernel_pid: u32,
+    request: &JavascriptSyncRpcRequest,
+) {
+    let now = Instant::now();
+    let path_arg = |index: usize| -> Option<String> {
+        match javascript_sync_rpc_path_arg(process, &request.args, index, "fs change mark") {
+            Ok(path) => Some(path),
+            Err(error) => {
+                tracing::debug!(method = %request.method, %error, "fs change mark skipped");
+                None
+            }
+        }
+    };
+    match request.method.as_str() {
+        // Descriptor-based writes: resolve the fd back to its path; stdio and
+        // unresolved fds are not filesystem entries and mark nothing.
+        "fs.write" | "fs.writeSync" | "fs.writevSync" | "fs.futimesSync" => {
+            let Ok(fd) = javascript_sync_rpc_arg_u32(&request.args, 0, "fs change mark fd") else {
+                return;
+            };
+            if fd <= 2 {
+                return;
+            }
+            if let Some(mapped) = process.mapped_host_fd(fd) {
+                // Only the guest-visible alias belongs in guest-facing events;
+                // a mapped fd without one has no guest listing to invalidate.
+                if let Some(guest_path) = mapped.guest_path.as_deref() {
+                    fs_changes.mark(guest_path, now);
+                }
+                return;
+            }
+            match kernel.fd_path(EXECUTION_DRIVER_NAME, kernel_pid, fd) {
+                Ok(path) => fs_changes.mark(&path, now),
+                Err(error) => {
+                    tracing::debug!(method = %request.method, fd, %error, "fs change mark skipped");
+                }
+            }
+        }
+        // Entry created or content/metadata changed at the path argument. A
+        // writable open is included for its O_CREAT case.
+        "fs.open"
+        | "fs.openSync"
+        | "fs.writeFileSync"
+        | "fs.promises.writeFile"
+        | "fs.mkdirSync"
+        | "fs.promises.mkdir"
+        | "fs.chmodSync"
+        | "fs.promises.chmod"
+        | "fs.chownSync"
+        | "fs.promises.chown"
+        | "fs.utimesSync"
+        | "fs.promises.utimes"
+        | "fs.lutimesSync"
+        | "fs.promises.lutimes" => {
+            if let Some(path) = path_arg(0) {
+                fs_changes.mark(&path, now);
+            }
+        }
+        "fs.unlinkSync" | "fs.promises.unlink" | "fs.rmdirSync" | "fs.promises.rmdir" => {
+            if let Some(path) = path_arg(0) {
+                fs_changes.mark_removed(&path, now);
+            }
+        }
+        "fs.renameSync" | "fs.promises.rename" => {
+            if let Some(path) = path_arg(0) {
+                fs_changes.mark_removed(&path, now);
+            }
+            if let Some(destination) = path_arg(1) {
+                fs_changes.mark_removed(&destination, now);
+            }
+        }
+        // copyFile(src, dest) / link(existing, new) / symlink(target, path):
+        // the second argument is the entry that appears.
+        "fs.copyFileSync"
+        | "fs.promises.copyFile"
+        | "fs.linkSync"
+        | "fs.promises.link"
+        | "fs.symlinkSync"
+        | "fs.promises.symlink" => {
+            if let Some(destination) = path_arg(1) {
+                fs_changes.mark(&destination, now);
+            }
+        }
+        _ => {}
+    }
+}
+
 pub(crate) fn service_javascript_fs_read_sync_rpc(
     kernel: &mut SidecarKernel,
     process: &mut ActiveProcess,
@@ -1255,6 +1431,7 @@ pub(crate) fn service_javascript_fs_read_sync_rpc(
 
 pub(crate) fn service_javascript_fs_sync_rpc(
     kernel: &mut SidecarKernel,
+    fs_changes: &crate::fs_changes::FsChangeTracker,
     process: &mut ActiveProcess,
     kernel_pid: u32,
     request: &JavascriptSyncRpcRequest,
@@ -1262,6 +1439,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
     let _phase_timer = FsSyncPhaseTimer::start(request.method.as_str());
     if fs_sync_request_marks_host_write_dirty(request)? {
         process.mark_host_write_dirty();
+        mark_fs_sync_rpc_change(fs_changes, kernel, process, kernel_pid, request);
     }
     match request.method.as_str() {
         "fs.open" | "fs.openSync" => {

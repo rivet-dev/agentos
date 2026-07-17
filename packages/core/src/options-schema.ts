@@ -3,6 +3,7 @@ import type {
 	AgentExitHandler,
 	AgentOsOptions,
 	AgentStderrHandler,
+	FsChangedHandler,
 	LimitWarningHandler,
 	NativeMountConfig,
 } from "./agent-os.js";
@@ -299,6 +300,10 @@ export const agentOsOptionFieldSchemas = {
 		{ message: "Expected function" },
 	).optional(),
 	onLimitWarning: z.custom<LimitWarningHandler>(
+		(value) => typeof value === "function",
+		{ message: "Expected function" },
+	).optional(),
+	onFsChanged: z.custom<FsChangedHandler>(
 		(value) => typeof value === "function",
 		{ message: "Expected function" },
 	).optional(),

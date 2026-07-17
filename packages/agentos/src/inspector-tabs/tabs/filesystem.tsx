@@ -19,8 +19,9 @@ import {
 	UploadIcon,
 } from "../common";
 import { cn } from "../lib/cn";
+import { useAgentOsActor } from "../lib/rivet";
 import { agentOsSource } from "../lib/source";
-import type { FsEntry } from "../lib/types";
+import type { FsChangedPayload, FsEntry } from "../lib/types";
 import { ScrollArea } from "../ui/scroll-area";
 import { VmBootGate } from "../vm-boot-gate";
 import { VmStatusBadges } from "../vm-status-badges";
@@ -431,6 +432,53 @@ function FilesystemLoaded({ actorId }: { actorId: string }) {
 	// Every directory listing under this actor (the tree fetches per-level).
 	const refreshTree = () =>
 		queryClient.invalidateQueries({ queryKey: ["agent-os", actorId, "dir"] });
+
+	// Realtime: the runtime broadcasts coalesced guest filesystem changes
+	// (`fsChanged`, at most one per ~300ms window per VM). Invalidate exactly
+	// the changed directory listings — collapsed levels just go stale and
+	// refetch on expand — plus the open file when its directory changed. Old
+	// vendored runtimes never emit the event, so this quietly degrades to the
+	// manual Refresh button.
+	const actor = useAgentOsActor();
+	const useAgentEvent = actor.useEvent as (
+		name: string,
+		handler: (payload: unknown) => void,
+	) => void;
+	const selectedPathRef = useRef(selectedPath);
+	selectedPathRef.current = selectedPath;
+	useAgentEvent("fsChanged", (raw) => {
+		const payload = raw as FsChangedPayload | undefined;
+		const dirs = Array.isArray(payload?.dirs)
+			? payload.dirs.filter((dir): dir is string => typeof dir === "string")
+			: null;
+		if (!dirs || payload?.overflow) {
+			// Overflow or malformed payload: full refresh, same as Refresh.
+			void queryClient.invalidateQueries({
+				queryKey: ["agent-os", actorId, "dir"],
+			});
+			void queryClient.invalidateQueries({
+				queryKey: ["agent-os", actorId, "file"],
+			});
+			return;
+		}
+		for (const dir of dirs) {
+			void queryClient.invalidateQueries({
+				queryKey: ["agent-os", actorId, "dir", dir],
+				exact: true,
+			});
+		}
+		const openFile = selectedPathRef.current;
+		if (
+			openFile &&
+			(dirs.includes(parentDir(openFile)) || dirs.includes(openFile))
+		) {
+			// Prefix key: covers the force/guarded content variants; the
+			// queryFn stats first, so oversize files stay cheap to refresh.
+			void queryClient.invalidateQueries({
+				queryKey: ["agent-os", actorId, "file", openFile],
+			});
+		}
+	});
 
 	// Folder actions target the location shown in the path bar, which follows
 	// tree clicks (a folder moves it there; a file moves it to its parent).

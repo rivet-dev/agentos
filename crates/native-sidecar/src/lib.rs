@@ -9,6 +9,7 @@ pub(crate) mod crypto_cipher;
 pub(crate) mod execution;
 pub mod extension;
 pub(crate) mod filesystem;
+pub(crate) mod fs_changes;
 #[allow(dead_code)]
 pub(crate) mod json_rpc;
 pub mod limits;

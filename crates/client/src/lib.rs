@@ -59,8 +59,8 @@ pub const CRON_JOB_LIMIT: usize = 1024;
 // ---------------------------------------------------------------------------
 
 pub use agent_os::{
-    AgentOs, LimitWarning, LimitWarningStream, LimitWarningSubscription, PackageDescriptor,
-    ProjectedAgent,
+    AgentOs, FsChanged, FsChangedStream, FsChangedSubscription, LimitWarning, LimitWarningStream,
+    LimitWarningSubscription, PackageDescriptor, ProjectedAgent,
 };
 pub use error::{ClientError, ClientResult};
 pub use sidecar::{

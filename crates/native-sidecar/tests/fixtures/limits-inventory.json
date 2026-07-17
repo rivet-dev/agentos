@@ -1114,5 +1114,11 @@
 		"path": "crates/execution/src/wasm.rs",
 		"class": "invariant",
 		"rationale": "Host-side LRU entry cap for cached wasm module bytes; process-wide cache sizing, not per-VM policy."
+	},
+	{
+		"name": "MAX_FS_CHANGED_DIRS",
+		"path": "crates/native-sidecar/src/fs_changes.rs",
+		"class": "invariant",
+		"rationale": "Per-VM dirty-directory coalescing bound for the filesystem.changed event; overflow collapses to a whole-tree invalidation instead of dropping changes, so it is event granularity, not a guest-allocatable resource."
 	}
 ]

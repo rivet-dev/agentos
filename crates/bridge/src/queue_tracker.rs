@@ -86,6 +86,7 @@ pub enum TrackedLimit {
     VmInodes,
     VmRecursiveFsDepth,
     VmRecursiveFsEntries,
+    FsChangedDirtyDirs,
     V8HeapBytes,
     V8CpuTimeMs,
     V8WallClockMs,
@@ -118,6 +119,7 @@ impl TrackedLimit {
             TrackedLimit::VmInodes => "vm_inodes",
             TrackedLimit::VmRecursiveFsDepth => "vm_recursive_fs_depth",
             TrackedLimit::VmRecursiveFsEntries => "vm_recursive_fs_entries",
+            TrackedLimit::FsChangedDirtyDirs => "fs_changed_dirty_dirs",
             TrackedLimit::V8HeapBytes => "v8_heap_bytes",
             TrackedLimit::V8CpuTimeMs => "v8_cpu_time_ms",
             TrackedLimit::V8WallClockMs => "v8_wall_clock_ms",
@@ -148,6 +150,7 @@ impl TrackedLimit {
             | TrackedLimit::VmInodes
             | TrackedLimit::VmRecursiveFsDepth
             | TrackedLimit::VmRecursiveFsEntries => LimitCategory::Resource,
+            TrackedLimit::FsChangedDirtyDirs => LimitCategory::Queue,
             TrackedLimit::V8HeapBytes | TrackedLimit::WasmMemoryBytes => LimitCategory::Memory,
             TrackedLimit::V8CpuTimeMs | TrackedLimit::V8WallClockMs | TrackedLimit::WasmFuelMs => {
                 LimitCategory::Cpu
