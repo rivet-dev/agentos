@@ -45,16 +45,103 @@ use tokio::sync::mpsc::{Receiver as TokioReceiver, Sender as TokioSender};
 use tokio::sync::oneshot::Sender as SyncSender;
 use tokio::sync::Notify;
 
+const DEFAULT_MAX_SOCKET_READINESS_SUBSCRIBERS: usize = 16_384;
+
 // ---------------------------------------------------------------------------
 // Type aliases
 // ---------------------------------------------------------------------------
 
 pub(crate) type BridgeError<B> = <B as BridgeTypes>::Error;
 pub(crate) type SidecarKernel = KernelVm<MountTable>;
-pub(crate) type KernelSocketReadinessRegistry =
-    Arc<Mutex<BTreeMap<SocketId, KernelSocketReadinessTarget>>>;
+pub(crate) type KernelSocketReadinessRegistry = Arc<KernelSocketReadinessRegistryState>;
 pub(crate) type HostNetTransferDescriptionRegistry =
     Arc<Mutex<BTreeMap<usize, HostNetTransferDescription>>>;
+
+/// Retains the first capability lease committed for one open socket
+/// description. Process-local aliases may own additional leases, but the
+/// original reservation and registry row must survive until the final
+/// dup/SCM_RIGHTS alias drops.
+#[derive(Debug, Default)]
+pub(crate) struct SocketDescriptionLease {
+    lease: Mutex<Option<Arc<agentos_runtime::capability::CapabilityLease>>>,
+}
+
+impl SocketDescriptionLease {
+    pub(crate) fn retain(&self, lease: Arc<agentos_runtime::capability::CapabilityLease>) {
+        let mut retained = self.lease.lock().unwrap_or_else(|error| error.into_inner());
+        if retained.is_none() {
+            *retained = Some(lease);
+        }
+    }
+
+    pub(crate) fn is_retained(&self) -> bool {
+        self.lease
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .is_some()
+    }
+}
+
+/// Keeps the scheduler identity for an open socket description alive across
+/// SCM_RIGHTS aliases. The first capability owns the transport's fairness
+/// membership; aliases may come and go without retiring work shared by the
+/// underlying description.
+#[derive(Debug)]
+pub(crate) struct SocketFairnessRetirement {
+    pub(crate) identity: Arc<OnceLock<(u64, u64)>>,
+    runtime: RuntimeContext,
+}
+
+/// Removes one accepted connection from its listener exactly when the final
+/// alias of the accepted open description disappears.
+#[derive(Debug)]
+pub(crate) struct ListenerConnectionRetirement {
+    connections: std::sync::Weak<Mutex<BTreeSet<String>>>,
+    socket_id: String,
+}
+
+impl ListenerConnectionRetirement {
+    pub(crate) fn new(connections: &Arc<Mutex<BTreeSet<String>>>, socket_id: String) -> Arc<Self> {
+        Arc::new(Self {
+            connections: Arc::downgrade(connections),
+            socket_id,
+        })
+    }
+}
+
+impl Drop for ListenerConnectionRetirement {
+    fn drop(&mut self) {
+        if let Some(connections) = self.connections.upgrade() {
+            connections
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .remove(&self.socket_id);
+        }
+    }
+}
+
+impl SocketFairnessRetirement {
+    pub(crate) fn new(identity: Arc<OnceLock<(u64, u64)>>, runtime: RuntimeContext) -> Arc<Self> {
+        Arc::new(Self { identity, runtime })
+    }
+}
+
+impl Drop for SocketFairnessRetirement {
+    fn drop(&mut self) {
+        let Some((capability_id, vm_generation)) = self.identity.get().copied() else {
+            return;
+        };
+        if let Err(error) = self
+            .runtime
+            .fairness()
+            .retire_capability(vm_generation, capability_id)
+        {
+            eprintln!(
+                "ERR_AGENTOS_FAIRNESS_RETIRE: socket-description capability={capability_id} vm_generation={vm_generation}: {error}"
+            );
+        }
+    }
+}
 
 /// One VM-wide retained-byte envelope shared by every process queue of a
 /// particular class. Per-process limits remain independently enforced; this
@@ -1074,6 +1161,9 @@ pub(crate) struct ActiveProcess {
     /// their bounds from this snapshot instead of process-wide constants.
     pub(crate) limits: crate::limits::VmLimits,
     pub(crate) kernel_stdin_writer_fd: Option<u32>,
+    /// Kernel descriptor backing guest fd 0. POSIX spawn actions can retain
+    /// the transported description at a sidecar-private descriptor number.
+    pub(crate) kernel_stdin_reader_fd: u32,
     /// Backlog for pipe-backed kernel stdin awaiting pipe capacity; see
     /// [`PendingKernelStdin`].
     pub(crate) pending_kernel_stdin: PendingKernelStdin,
@@ -1134,7 +1224,7 @@ pub(crate) struct ActiveProcess {
     /// the legacy guest-facing maps below. Dropping a map entry without its
     /// lease is prevented by the typed insert/release helpers.
     pub(crate) capability_leases:
-        BTreeMap<NativeCapabilityKey, agentos_runtime::capability::CapabilityLease>,
+        BTreeMap<NativeCapabilityKey, Arc<agentos_runtime::capability::CapabilityLease>>,
     pub(crate) tcp_listeners: BTreeMap<String, ActiveTcpListener>,
     pub(crate) next_tcp_listener_id: usize,
     pub(crate) tcp_sockets: BTreeMap<String, ActiveTcpSocket>,
@@ -1178,6 +1268,7 @@ pub(crate) struct ActiveProcess {
     /// this RPC, so it cannot issue another. The optional absolute deadline is
     /// `None` for a readiness-only wait with no recurring timeout.
     pub(crate) deferred_kernel_wait_rpc: Option<(JavascriptSyncRpcRequest, Option<Instant>)>,
+    pub(crate) deferred_child_write_timer: Option<tokio::task::JoinHandle<()>>,
     /// Per-process module resolution cache, persisted across module sync-RPCs
     /// (`__resolve_module` / `__load_file` / `__module_format` /
     /// `__batch_resolve_modules`) for the lifetime of this process so cold-start
@@ -1551,6 +1642,275 @@ pub(crate) struct JavascriptSocketEventPusher {
     pub(crate) capability_generation: agentos_runtime::capability::CapabilityGeneration,
 }
 
+#[derive(Debug)]
+struct JavascriptSocketReadinessSubscriber {
+    target: JavascriptSocketEventPusher,
+    application_read_interest: bool,
+}
+
+/// Bounded readiness fanout shared by every alias of one open socket
+/// description. Payloads stay in the description-owned transport queue; this
+/// registry only coalesces level hints to each VM capability that refers to it.
+#[derive(Debug)]
+pub(crate) struct SocketReadinessSubscribers {
+    subscribers: Mutex<BTreeMap<(u64, u64), JavascriptSocketReadinessSubscriber>>,
+    maximum: usize,
+}
+
+impl SocketReadinessSubscribers {
+    pub(crate) fn new(resources: &ResourceLedger) -> Arc<Self> {
+        let maximum = resources
+            .usage(ResourceClass::Capabilities)
+            .limit
+            .unwrap_or(DEFAULT_MAX_SOCKET_READINESS_SUBSCRIBERS)
+            .max(1);
+        Arc::new(Self {
+            subscribers: Mutex::new(BTreeMap::new()),
+            maximum,
+        })
+    }
+
+    fn register(
+        &self,
+        previous: Option<(u64, u64)>,
+        target: JavascriptSocketEventPusher,
+    ) -> Result<bool, SidecarError> {
+        let identity = (target.capability_id, target.capability_generation);
+        let mut subscribers = self.subscribers.lock().map_err(|_| {
+            SidecarError::InvalidState(String::from(
+                "ERR_AGENTOS_READY_STATE_POISONED: socket readiness subscriber lock poisoned",
+            ))
+        })?;
+        let preserved_interest = subscribers
+            .get(&identity)
+            .map(|subscriber| subscriber.application_read_interest)
+            .unwrap_or(false);
+        if previous != Some(identity) {
+            if let Some(previous) = previous {
+                subscribers.remove(&previous);
+            }
+            if !subscribers.contains_key(&identity) && subscribers.len() >= self.maximum {
+                return Err(SidecarError::Execution(format!(
+                    "ERR_AGENTOS_SOCKET_READINESS_SUBSCRIBER_LIMIT: socket description readiness subscribers exceeded {}; raise limits.reactor.maxCapabilities",
+                    self.maximum
+                )));
+            }
+        }
+        subscribers.insert(
+            identity,
+            JavascriptSocketReadinessSubscriber {
+                target,
+                application_read_interest: preserved_interest,
+            },
+        );
+        Ok(subscribers
+            .values()
+            .any(|subscriber| subscriber.application_read_interest))
+    }
+
+    fn unregister(&self, identity: (u64, u64)) -> bool {
+        self.subscribers
+            .lock()
+            .map(|mut subscribers| {
+                subscribers.remove(&identity);
+                subscribers
+                    .values()
+                    .any(|subscriber| subscriber.application_read_interest)
+            })
+            .unwrap_or_else(|_| {
+                eprintln!(
+                    "ERR_AGENTOS_READY_STATE_POISONED: socket readiness subscriber lock poisoned"
+                );
+                false
+            })
+    }
+
+    fn set_application_read_interest(
+        &self,
+        identity: (u64, u64),
+        enabled: bool,
+    ) -> Result<bool, SidecarError> {
+        let target = {
+            let subscribers = self.subscribers.lock().map_err(|_| {
+                SidecarError::InvalidState(String::from(
+                    "ERR_AGENTOS_READY_STATE_POISONED: socket readiness subscriber lock poisoned",
+                ))
+            })?;
+            subscribers
+                .get(&identity)
+                .map(|subscriber| subscriber.target.clone())
+        };
+        let Some(target) = target else {
+            return Ok(false);
+        };
+        target
+            .session
+            .set_application_read_interest(
+                target.capability_id,
+                target.capability_generation,
+                enabled,
+            )
+            .map_err(|error| SidecarError::Execution(error.to_string()))?;
+        self.set_application_read_interest_state(identity, enabled)
+    }
+
+    fn set_application_read_interest_state(
+        &self,
+        identity: (u64, u64),
+        enabled: bool,
+    ) -> Result<bool, SidecarError> {
+        let mut subscribers = self.subscribers.lock().map_err(|_| {
+            SidecarError::InvalidState(String::from(
+                "ERR_AGENTOS_READY_STATE_POISONED: socket readiness subscriber lock poisoned",
+            ))
+        })?;
+        if let Some(subscriber) = subscribers.get_mut(&identity) {
+            subscriber.application_read_interest = enabled;
+        }
+        Ok(subscribers
+            .values()
+            .any(|subscriber| subscriber.application_read_interest))
+    }
+
+    pub(crate) fn targets(&self) -> Vec<JavascriptSocketEventPusher> {
+        self.subscribers
+            .lock()
+            .map(|subscribers| {
+                subscribers
+                    .values()
+                    .map(|subscriber| subscriber.target.clone())
+                    .collect()
+            })
+            .unwrap_or_else(|_| {
+                eprintln!(
+                    "ERR_AGENTOS_READY_STATE_POISONED: socket readiness subscriber lock poisoned"
+                );
+                Vec::new()
+            })
+    }
+}
+
+/// Per-alias registration. Transfer clones deliberately receive a fresh empty
+/// token, so dropping a queued or rejected SCM_RIGHTS transfer cannot remove
+/// the sender's readiness subscription.
+#[derive(Debug)]
+pub(crate) struct SocketReadinessRegistration {
+    subscribers: Arc<SocketReadinessSubscribers>,
+    identity: Mutex<Option<(u64, u64)>>,
+    aggregate_interest: Option<Arc<AtomicBool>>,
+    interest_notify: Option<Arc<Notify>>,
+}
+
+impl SocketReadinessRegistration {
+    pub(crate) fn new(
+        subscribers: Arc<SocketReadinessSubscribers>,
+        aggregate_interest: Option<Arc<AtomicBool>>,
+        interest_notify: Option<Arc<Notify>>,
+    ) -> Self {
+        Self {
+            subscribers,
+            identity: Mutex::new(None),
+            aggregate_interest,
+            interest_notify,
+        }
+    }
+
+    pub(crate) fn register(
+        &self,
+        session: Option<V8SessionHandle>,
+        identity: Option<(u64, u64)>,
+        replay_flags: agentos_runtime::readiness::ReadyFlags,
+    ) {
+        let (Some(session), Some((capability_id, capability_generation))) = (session, identity)
+        else {
+            return;
+        };
+        let target = JavascriptSocketEventPusher {
+            session,
+            capability_id,
+            capability_generation,
+        };
+        let previous = self
+            .identity
+            .lock()
+            .map(|identity| *identity)
+            .unwrap_or_else(|_| {
+                eprintln!(
+                    "ERR_AGENTOS_READY_STATE_POISONED: socket readiness registration lock poisoned"
+                );
+                None
+            });
+        let aggregate = match self.subscribers.register(previous, target.clone()) {
+            Ok(aggregate) => aggregate,
+            Err(error) => {
+                eprintln!("{error}");
+                return;
+            }
+        };
+        if let Ok(mut registered) = self.identity.lock() {
+            *registered = Some((capability_id, capability_generation));
+        }
+        self.update_aggregate_interest(aggregate);
+        // Readiness is level state. Replaying one coalesced hint after
+        // registration closes the race where data arrived before this alias
+        // was added; the subsequent bounded poll validates the actual level.
+        if let Err(error) =
+            target
+                .session
+                .publish_readiness(capability_id, capability_generation, replay_flags)
+        {
+            eprintln!(
+                "ERR_AGENTOS_NET_SOCKET_WAKE: capability={capability_id} generation={capability_generation} registration replay: {error}"
+            );
+        }
+    }
+
+    pub(crate) fn set_application_read_interest(
+        &self,
+        enabled: bool,
+    ) -> Result<bool, SidecarError> {
+        let identity = {
+            let identity = self.identity.lock().map_err(|_| {
+                SidecarError::InvalidState(String::from(
+                    "ERR_AGENTOS_READY_STATE_POISONED: socket readiness registration lock poisoned",
+                ))
+            })?;
+            let Some(identity) = *identity else {
+                return Ok(false);
+            };
+            identity
+        };
+        let aggregate = self
+            .subscribers
+            .set_application_read_interest(identity, enabled)?;
+        self.update_aggregate_interest(aggregate);
+        Ok(aggregate)
+    }
+
+    fn update_aggregate_interest(&self, enabled: bool) {
+        if let Some(interest) = &self.aggregate_interest {
+            interest.store(enabled, Ordering::Release);
+        }
+        if let Some(notify) = &self.interest_notify {
+            notify.notify_waiters();
+        }
+    }
+}
+
+impl Drop for SocketReadinessRegistration {
+    fn drop(&mut self) {
+        let identity = self
+            .identity
+            .get_mut()
+            .unwrap_or_else(|error| error.into_inner())
+            .take();
+        if let Some(identity) = identity {
+            let aggregate = self.subscribers.unregister(identity);
+            self.update_aggregate_interest(aggregate);
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum KernelSocketReadinessEvent {
     Data,
@@ -1568,12 +1928,101 @@ pub(crate) struct KernelSocketReadinessTarget {
     pub(crate) event: KernelSocketReadinessEvent,
 }
 
+type KernelSocketReadinessIdentity = (u64, u64);
+type KernelSocketReadinessTargets =
+    BTreeMap<SocketId, BTreeMap<KernelSocketReadinessIdentity, KernelSocketReadinessTarget>>;
+
+#[derive(Debug)]
+pub(crate) struct KernelSocketReadinessRegistryState {
+    targets: Mutex<KernelSocketReadinessTargets>,
+    maximum: usize,
+}
+
+impl KernelSocketReadinessRegistryState {
+    pub(crate) fn new(maximum: usize) -> Self {
+        Self {
+            targets: Mutex::new(BTreeMap::new()),
+            maximum: maximum.max(1),
+        }
+    }
+
+    pub(crate) fn register(
+        &self,
+        socket_id: SocketId,
+        target: KernelSocketReadinessTarget,
+    ) -> Result<(), SidecarError> {
+        let identity = (target.capability_id, target.capability_generation);
+        let mut targets = self.targets.lock().map_err(|_| {
+            SidecarError::InvalidState(String::from(
+                "ERR_AGENTOS_KERNEL_READINESS_REGISTRY_POISONED: readiness registry lock poisoned",
+            ))
+        })?;
+        let already_registered = targets
+            .get(&socket_id)
+            .is_some_and(|socket_targets| socket_targets.contains_key(&identity));
+        if !already_registered {
+            let registered = targets.values().map(BTreeMap::len).sum::<usize>();
+            if registered >= self.maximum {
+                return Err(SidecarError::Execution(format!(
+                    "ERR_AGENTOS_KERNEL_READINESS_TARGET_LIMIT: kernel readiness targets exceeded {}; raise limits.reactor.maxCapabilities",
+                    self.maximum
+                )));
+            }
+        }
+        targets
+            .entry(socket_id)
+            .or_default()
+            .insert(identity, target);
+        Ok(())
+    }
+
+    pub(crate) fn unregister(&self, socket_id: SocketId, identity: (u64, u64)) {
+        let Ok(mut targets) = self.targets.lock() else {
+            eprintln!(
+                "ERR_AGENTOS_KERNEL_READINESS_REGISTRY_POISONED: readiness registry lock poisoned"
+            );
+            return;
+        };
+        if let Some(socket_targets) = targets.get_mut(&socket_id) {
+            socket_targets.remove(&identity);
+            if socket_targets.is_empty() {
+                targets.remove(&socket_id);
+            }
+        }
+    }
+
+    pub(crate) fn targets(&self, socket_id: SocketId) -> Vec<KernelSocketReadinessTarget> {
+        self.targets
+            .lock()
+            .map(|targets| {
+                targets
+                    .get(&socket_id)
+                    .map(|targets| targets.values().cloned().collect())
+                    .unwrap_or_default()
+            })
+            .unwrap_or_else(|_| {
+                eprintln!(
+                    "ERR_AGENTOS_KERNEL_READINESS_REGISTRY_POISONED: readiness registry lock poisoned"
+                );
+                Vec::new()
+            })
+    }
+}
+
+impl Default for KernelSocketReadinessRegistryState {
+    fn default() -> Self {
+        Self::new(DEFAULT_MAX_SOCKET_READINESS_SUBSCRIBERS)
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct ActiveTcpSocket {
     pub(crate) runtime_context: agentos_runtime::RuntimeContext,
     pub(crate) reactor_limits: ReactorIoLimits,
     pub(crate) fairness_identity: Arc<OnceLock<(u64, u64)>>,
     pub(crate) fairness_identity_committed: Arc<Notify>,
+    pub(crate) fairness_retirement: Arc<SocketFairnessRetirement>,
+    pub(crate) description_lease: Arc<SocketDescriptionLease>,
     pub(crate) stream: Option<Arc<Mutex<TcpStream>>>,
     pub(crate) pending_read_stream: Option<Arc<Mutex<Option<TcpStream>>>>,
     pub(crate) plain_reader_running: Arc<AtomicBool>,
@@ -1583,7 +2032,8 @@ pub(crate) struct ActiveTcpSocket {
     /// Durable per-operation wait source shared by adapters. Event data stays
     /// in `events`; this is only a coalesced readiness hint.
     pub(crate) read_event_notify: Arc<Notify>,
-    pub(crate) event_pusher: Arc<Mutex<Option<JavascriptSocketEventPusher>>>,
+    pub(crate) event_pusher: Arc<SocketReadinessSubscribers>,
+    pub(crate) readiness_registration: SocketReadinessRegistration,
     pub(crate) application_read_interest: Arc<AtomicBool>,
     pub(crate) application_read_notify: Arc<Notify>,
     pub(crate) kernel_socket_id: Option<SocketId>,
@@ -1609,6 +2059,7 @@ pub(crate) struct ActiveTcpSocket {
     /// separate from transport/TLS worker Arcs so SCM_RIGHTS can decide when a
     /// close is the final description close.
     pub(crate) description_handles: Arc<()>,
+    pub(crate) listener_connection_retirement: Option<Arc<ListenerConnectionRetirement>>,
     /// Kernel open-description guard used after this socket first crosses
     /// SCM_RIGHTS. It keeps owner-0 kernel sockets alive while queued or held
     /// by another process and lets the kernel prune discarded transfers.
@@ -1797,10 +2248,11 @@ pub(crate) struct ActiveTcpListener {
     pub(crate) local_addr: Option<SocketAddr>,
     pub(crate) guest_local_addr: SocketAddr,
     pub(crate) backlog: usize,
-    pub(crate) active_connection_ids: BTreeSet<String>,
+    pub(crate) active_connection_ids: Arc<Mutex<BTreeSet<String>>>,
     /// One strong reference per guest-visible listener description, including
     /// descriptors queued in SCM_RIGHTS messages.
     pub(crate) description_handles: Arc<()>,
+    pub(crate) description_lease: Arc<SocketDescriptionLease>,
     pub(crate) kernel_transfer_guard: Option<TransferredFd>,
 }
 
@@ -1845,11 +2297,14 @@ pub(crate) struct ActiveUnixSocket {
     pub(crate) reactor_limits: ReactorIoLimits,
     pub(crate) fairness_identity: Arc<OnceLock<(u64, u64)>>,
     pub(crate) fairness_identity_committed: Arc<Notify>,
+    pub(crate) fairness_retirement: Arc<SocketFairnessRetirement>,
+    pub(crate) description_lease: Arc<SocketDescriptionLease>,
     pub(crate) stream: Arc<Mutex<UnixStream>>,
     pub(crate) plain_commands: TokioSender<NativePlainSocketCommand>,
     pub(crate) events: Arc<Mutex<AsyncCompletionReceiver<JavascriptTcpSocketEvent>>>,
     pub(crate) event_sender: AsyncCompletionSender<JavascriptTcpSocketEvent>,
-    pub(crate) event_pusher: Arc<Mutex<Option<JavascriptSocketEventPusher>>>,
+    pub(crate) event_pusher: Arc<SocketReadinessSubscribers>,
+    pub(crate) readiness_registration: SocketReadinessRegistration,
     pub(crate) application_read_interest: Arc<AtomicBool>,
     pub(crate) application_read_notify: Arc<Notify>,
     pub(crate) listener_id: Option<String>,
@@ -1870,6 +2325,7 @@ pub(crate) struct ActiveUnixSocket {
     /// reads and `MSG_PEEK` observe one Linux-style read cursor.
     pub(crate) read_buffer: Arc<Mutex<VecDeque<u8>>>,
     pub(crate) description_handles: Arc<()>,
+    pub(crate) listener_connection_retirement: Option<Arc<ListenerConnectionRetirement>>,
     pub(crate) resources: Arc<agentos_runtime::accounting::ResourceLedger>,
 }
 
@@ -1878,7 +2334,8 @@ pub(crate) struct ActiveUnixListener {
     pub(crate) listener: Option<UnixListener>,
     pub(crate) bound_socket: Option<Socket>,
     pub(crate) events: Arc<Mutex<AsyncCompletionReceiver<JavascriptUnixListenerEvent>>>,
-    pub(crate) event_pusher: Arc<Mutex<Option<JavascriptSocketEventPusher>>>,
+    pub(crate) event_pusher: Arc<SocketReadinessSubscribers>,
+    pub(crate) readiness_registration: SocketReadinessRegistration,
     pub(crate) close_notify: Arc<Notify>,
     pub(crate) close_completion: Arc<Mutex<Option<tokio::sync::oneshot::Receiver<()>>>>,
     pub(crate) acceptor_started: bool,
@@ -1888,8 +2345,9 @@ pub(crate) struct ActiveUnixListener {
     pub(crate) private_host_path: Option<PathBuf>,
     pub(crate) guest_node_path: Option<String>,
     pub(crate) backlog: usize,
-    pub(crate) active_connection_ids: BTreeSet<String>,
+    pub(crate) active_connection_ids: Arc<Mutex<BTreeSet<String>>>,
     pub(crate) description_handles: Arc<()>,
+    pub(crate) description_lease: Arc<SocketDescriptionLease>,
 }
 
 // ---------------------------------------------------------------------------
@@ -2056,8 +2514,11 @@ pub(crate) struct ActiveUdpSocket {
     pub(crate) reactor_limits: ReactorIoLimits,
     pub(crate) fairness_identity: Arc<OnceLock<(u64, u64)>>,
     pub(crate) fairness_identity_committed: Arc<Notify>,
+    pub(crate) fairness_retirement: Arc<SocketFairnessRetirement>,
+    pub(crate) description_lease: Arc<SocketDescriptionLease>,
     pub(crate) read_event_notify: Arc<Notify>,
-    pub(crate) event_pusher: Arc<Mutex<Option<JavascriptSocketEventPusher>>>,
+    pub(crate) event_pusher: Arc<SocketReadinessSubscribers>,
+    pub(crate) readiness_registration: SocketReadinessRegistration,
     pub(crate) native_read_wake_pending: Arc<AtomicBool>,
 }
 
@@ -2323,5 +2784,151 @@ mod async_completion_tests {
         drop(_held_rx);
         drop(waiting_rx);
         assert_eq!(resources.usage(ResourceClass::AsyncCompletions).used, 0);
+    }
+}
+
+#[cfg(test)]
+mod socket_readiness_registry_tests {
+    use super::*;
+    use agentos_execution::v8_host::V8RuntimeHost;
+    use agentos_runtime::accounting::ResourceLimit;
+
+    fn kernel_target(
+        capability_id: u64,
+        capability_generation: u64,
+        target_id: &str,
+    ) -> KernelSocketReadinessTarget {
+        KernelSocketReadinessTarget {
+            session: None,
+            notify: Some(Arc::new(Notify::new())),
+            capability_id,
+            capability_generation,
+            target_id: target_id.to_owned(),
+            event: KernelSocketReadinessEvent::Data,
+        }
+    }
+
+    fn javascript_target(
+        session: &V8SessionHandle,
+        capability_id: u64,
+    ) -> JavascriptSocketEventPusher {
+        JavascriptSocketEventPusher {
+            session: session.clone(),
+            capability_id,
+            capability_generation: 1,
+        }
+    }
+
+    #[test]
+    fn kernel_registry_keeps_aliases_independent_until_each_unregisters() {
+        let registry = KernelSocketReadinessRegistryState::new(2);
+        registry
+            .register(41, kernel_target(1, 1, "parent"))
+            .expect("register parent alias");
+        registry
+            .register(41, kernel_target(2, 1, "child"))
+            .expect("register child alias");
+
+        let targets = registry.targets(41);
+        assert_eq!(targets.len(), 2);
+        assert!(targets.iter().any(|target| target.target_id == "parent"));
+        assert!(targets.iter().any(|target| target.target_id == "child"));
+
+        registry.unregister(41, (2, 1));
+        let targets = registry.targets(41);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].target_id, "parent");
+
+        registry.unregister(41, (1, 1));
+        assert!(registry.targets(41).is_empty());
+    }
+
+    #[test]
+    fn kernel_registry_rebind_upserts_without_growing_and_enforces_bound() {
+        let registry = KernelSocketReadinessRegistryState::new(1);
+        registry
+            .register(41, kernel_target(1, 1, "before-exec"))
+            .expect("register initial target");
+        registry
+            .register(41, kernel_target(1, 1, "after-exec"))
+            .expect("rebind same alias");
+        let targets = registry.targets(41);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].target_id, "after-exec");
+
+        let error = registry
+            .register(42, kernel_target(2, 1, "other"))
+            .expect_err("registry must enforce its configured bound");
+        assert!(error
+            .to_string()
+            .contains("ERR_AGENTOS_KERNEL_READINESS_TARGET_LIMIT"));
+    }
+
+    #[test]
+    fn native_alias_registration_is_raii_and_read_interest_is_aggregate_or() {
+        let process_runtime =
+            agentos_runtime::SidecarRuntime::process(&agentos_runtime::RuntimeConfig::default())
+                .expect("create subscriber test runtime");
+        let resources = ResourceLedger::root(
+            "socket-subscriber-test",
+            [(
+                ResourceClass::Capabilities,
+                ResourceLimit::new(2, "limits.reactor.maxCapabilities"),
+            )],
+        );
+        let host = V8RuntimeHost::spawn(&process_runtime.context())
+            .expect("spawn subscriber test V8 host");
+        let session = host.session_handle(String::from("socket-subscriber-test"));
+        let subscribers = SocketReadinessSubscribers::new(&resources);
+        let aggregate_interest = Arc::new(AtomicBool::new(false));
+        let interest_notify = Arc::new(Notify::new());
+
+        let mut parent = SocketReadinessRegistration::new(
+            Arc::clone(&subscribers),
+            Some(Arc::clone(&aggregate_interest)),
+            Some(Arc::clone(&interest_notify)),
+        );
+        subscribers
+            .register(None, javascript_target(&session, 1))
+            .expect("register parent alias");
+        *parent.identity.get_mut().expect("parent identity") = Some((1, 1));
+
+        let mut child = SocketReadinessRegistration::new(
+            Arc::clone(&subscribers),
+            Some(Arc::clone(&aggregate_interest)),
+            Some(Arc::clone(&interest_notify)),
+        );
+        subscribers
+            .register(None, javascript_target(&session, 2))
+            .expect("register child alias");
+        *child.identity.get_mut().expect("child identity") = Some((2, 1));
+        assert_eq!(subscribers.targets().len(), 2);
+
+        let aggregate = subscribers
+            .set_application_read_interest_state((1, 1), true)
+            .expect("enable parent interest");
+        parent.update_aggregate_interest(aggregate);
+        assert!(aggregate_interest.load(Ordering::Acquire));
+
+        let aggregate = subscribers
+            .set_application_read_interest_state((2, 1), true)
+            .expect("enable child interest");
+        child.update_aggregate_interest(aggregate);
+        let aggregate = subscribers
+            .set_application_read_interest_state((1, 1), false)
+            .expect("disable parent interest");
+        parent.update_aggregate_interest(aggregate);
+        assert!(
+            aggregate_interest.load(Ordering::Acquire),
+            "one paused alias must not stop an interested sibling"
+        );
+
+        drop(child);
+        assert!(!aggregate_interest.load(Ordering::Acquire));
+        assert_eq!(subscribers.targets().len(), 1);
+        assert_eq!(subscribers.targets()[0].capability_id, 1);
+
+        drop(parent);
+        assert!(subscribers.targets().is_empty());
     }
 }

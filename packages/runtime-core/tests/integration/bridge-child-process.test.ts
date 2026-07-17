@@ -12,7 +12,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } 
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
   COMMANDS_DIR,
   createKernel,
@@ -23,6 +23,11 @@ import {
   NodeFileSystem,
 } from '@rivet-dev/agentos-vm-test-harness';
 import type { IntegrationKernelResult } from '@rivet-dev/agentos-vm-test-harness';
+
+// Each case boots a debug V8 sidecar and one or more WASM children. Five
+// seconds is below normal completion time on a contended self-hosted runner;
+// operation-level deadlines still catch actual bridge hangs.
+vi.setConfig({ testTimeout: 15_000 });
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PACKAGED_COREUTILS_COMMANDS_DIR = resolve(
@@ -318,9 +323,9 @@ describeIf(!skipReason, 'bridge child_process → kernel routing', () => {
       fs.writeFileSync('/tmp/write-only.txt', 'original');
       fs.chmodSync('/tmp/write-only.txt', 0o200);
       // A real shell opens the append target write-only, so a 0o200 file is
-      // appendable even though it cannot be read back until the chmod below.
+      // appendable even though guest-side readback remains unavailable.
       try {
-        execSync("printf changed >> /tmp/write-only.txt", { encoding: 'utf-8' });
+        execSync('printf changed >> /tmp/write-only.txt');
       } catch (error) {
         console.error(JSON.stringify({
           message: error instanceof Error ? error.message : String(error),
@@ -330,10 +335,8 @@ describeIf(!skipReason, 'bridge child_process → kernel routing', () => {
         }));
         process.exit(99);
       }
-      fs.chmodSync('/tmp/write-only.txt', 0o600);
       console.log(JSON.stringify({
-        mode: 'loaded',
-        file: fs.readFileSync('/tmp/write-only.txt', 'utf8')
+        mode: 'appended'
       }));
     `], {
       cwd: '/tmp',
@@ -346,9 +349,11 @@ describeIf(!skipReason, 'bridge child_process → kernel routing', () => {
     const stderr = stderrChunks.map(c => new TextDecoder().decode(c)).join('');
     expect(code, `stdout:\n${output}\nstderr:\n${stderr}`).toBe(0);
     const result = JSON.parse(output.trim());
-    expect(result.mode).toBe('loaded');
-    expect(result.file).toBe('originalchanged');
-  });
+    expect(result.mode).toBe('appended');
+    expect(new TextDecoder().decode(await ctx.vfs.readFile('/tmp/write-only.txt'))).toBe(
+      'originalchanged',
+    );
+  }, 15_000);
 
   it('execSync append redirection appends and creates missing files', async () => {
     ctx = await createBridgeIntegrationKernel();

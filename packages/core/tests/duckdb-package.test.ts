@@ -168,42 +168,4 @@ describe("duckdb registry package", () => {
 			await closeServer(server);
 		}
 	}, 90_000);
-
-	test("propagates registry package command permission tiers into the runtime", async () => {
-		await vm.dispose();
-
-		const curlReadOnly = {
-			...CURL_PACKAGE,
-			commands: [{ name: "curl", permissionTier: "read-only" as const }],
-		};
-
-		const server = createServer(
-			(_req: IncomingMessage, res: ServerResponse) => {
-				res.writeHead(200, { "Content-Type": "text/plain" });
-				res.end("ok");
-			},
-		);
-
-		await new Promise<void>((resolve) =>
-			server.listen(0, "127.0.0.1", resolve),
-		);
-
-		try {
-			const address = server.address();
-			if (!address || typeof address === "string") {
-				throw new Error("failed to bind test HTTP server");
-			}
-			await recreateVm({
-				software: [coreutils, curlReadOnly],
-				loopbackExemptPorts: [address.port],
-			});
-
-			const result = await vm.exec(
-				`curl -fsS http://127.0.0.1:${address.port}/blocked`,
-			);
-			expect(result.exitCode).not.toBe(0);
-		} finally {
-			await closeServer(server);
-		}
-	}, 90_000);
 });

@@ -16,8 +16,6 @@
 //   - SIGINT/SIGQUIT are consumed by the kernel line discipline (no data byte),
 //     but the signal is not yet delivered into the V8 isolate / does not kill it,
 //     so the probe is not torn down the way the wasm-c process is.
-//   - live PTY resize is not delivered as SIGWINCH, so a re-query after resize
-//     still reports the launch size.
 //   - a raw lone-LF stdout write does not flow through OPOST/ONLCR (guest-node
 //     stdout payload-write quirk), so `a\nb` is not rewritten to `a\r\nb`.
 
@@ -304,8 +302,8 @@ async function caseEof() {
 
 async function caseResizeSigwinch() {
 	out(`#SIZE tag=before rc=0 cols=${process.stdout.columns} rows=${process.stdout.rows}\r\n`);
-	// A real TTY delivers SIGWINCH on resize; guest-node never receives it, so
-	// the #SIG / #SIZE tag=after lines simply never print (honest broken).
+	// Match Node: the sidecar forwards the kernel foreground-process-group
+	// SIGWINCH, and the handler reads the live resized PTY dimensions.
 	process.on("SIGWINCH", () => {
 		out("#SIG name=SIGWINCH\r\n");
 		out(`#SIZE tag=after rc=0 cols=${process.stdout.columns} rows=${process.stdout.rows}\r\n`);

@@ -957,7 +957,6 @@ async fn run_async(
     let mut pending_frame: Option<AccountedProtocolFrame> = None;
     let mut limit_warning_closed = false;
     let mut stdin_closed = false;
-
     'protocol: loop {
         if let Some(frame) = pending_frame.take() {
             handle_protocol_frame(

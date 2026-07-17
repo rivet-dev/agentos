@@ -3756,7 +3756,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         }
 
         if self.pipes.is_pipe(entry.description.id()) {
-            return Ok(self.pipes.read_with_timeout(
+            let result = self.pipes.read_with_timeout(
                 entry.description.id(),
                 length,
                 if (entry.description.flags() | entry.status_flags) & O_NONBLOCK != 0 {
@@ -3764,7 +3764,8 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
                 } else {
                     timeout.or_else(|| self.blocking_read_timeout())
                 },
-            )?);
+            )?;
+            return Ok(result);
         }
 
         if self.ptys.is_pty(entry.description.id()) {
@@ -3819,6 +3820,32 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         fd: u32,
         data: &[u8],
     ) -> KernelResult<usize> {
+        self.fd_write_with_mode(requester_driver, pid, fd, data, false)
+    }
+
+    /// Attempt one write without blocking on bounded kernel transport state.
+    ///
+    /// This preserves the descriptor's guest-visible status flags. Trusted
+    /// sidecar actors use it to park a synchronous guest write and retry after
+    /// readiness changes instead of blocking the process-wide reactor.
+    pub fn fd_write_nonblocking(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        fd: u32,
+        data: &[u8],
+    ) -> KernelResult<usize> {
+        self.fd_write_with_mode(requester_driver, pid, fd, data, true)
+    }
+
+    fn fd_write_with_mode(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        fd: u32,
+        data: &[u8],
+        force_nonblocking: bool,
+    ) -> KernelResult<usize> {
         self.assert_driver_owns(requester_driver, pid)?;
         self.resources.check_fd_write_size(data.len())?;
         let entry = {
@@ -3855,7 +3882,8 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             return match self.pipes.write_with_mode(
                 entry.description.id(),
                 data,
-                (entry.description.flags() | entry.status_flags) & O_NONBLOCK != 0,
+                force_nonblocking
+                    || (entry.description.flags() | entry.status_flags) & O_NONBLOCK != 0,
             ) {
                 Ok(bytes) => Ok(bytes),
                 Err(error) => {

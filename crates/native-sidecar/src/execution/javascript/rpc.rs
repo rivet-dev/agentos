@@ -100,12 +100,31 @@ pub(crate) fn javascript_sync_rpc_may_make_fd_readable(request: &JavascriptSyncR
     )
 }
 
-pub(in crate::execution) fn deferred_child_kernel_wait_request(
+/// Whether a successful sync RPC can free capacity in a pipe and therefore
+/// make a parked writer runnable.
+pub(crate) fn javascript_sync_rpc_may_make_fd_writable(request: &JavascriptSyncRpcRequest) -> bool {
+    let method = if request.method == "process.wasm_sync_rpc" {
+        request
+            .args
+            .first()
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+    } else {
+        request.method.as_str()
+    };
+    matches!(method, "process.fd_read" | "__kernel_stdin_read")
+}
+
+pub(crate) fn deferred_child_kernel_wait_request(
     request: &JavascriptSyncRpcRequest,
 ) -> Result<Option<JavascriptSyncRpcRequest>, SidecarError> {
     if matches!(
         request.method.as_str(),
-        "__kernel_stdin_read" | "__kernel_poll" | "process.fd_read"
+        "__kernel_stdin_read"
+            | "__kernel_poll"
+            | "__kernel_stdio_write"
+            | "process.fd_read"
+            | "process.fd_write"
     ) {
         return Ok(Some(request.clone()));
     }
@@ -121,7 +140,7 @@ pub(in crate::execution) fn deferred_child_kernel_wait_request(
                 "WASM process sync RPC method must be a string",
             ))
         })?;
-    if method != "process.fd_read" {
+    if method != "process.fd_read" && method != "process.fd_write" {
         return Ok(None);
     }
     Ok(Some(JavascriptSyncRpcRequest {
@@ -133,6 +152,48 @@ pub(in crate::execution) fn deferred_child_kernel_wait_request(
             .iter()
             .filter(|(index, _)| **index > 0 && **index != usize::MAX)
             .map(|(index, bytes)| (*index - 1, bytes.clone()))
+            .collect(),
+    }))
+}
+
+/// Normalize embedded-Node `fs.write*` calls only when they target a kernel
+/// pipe. Regular-file writes must retain the filesystem service's host-shadow
+/// synchronization, while a full pipe must never block the sidecar actor.
+pub(crate) fn deferred_kernel_wait_request_for_process(
+    request: &JavascriptSyncRpcRequest,
+    kernel: &SidecarKernel,
+    kernel_pid: u32,
+) -> Result<Option<JavascriptSyncRpcRequest>, SidecarError> {
+    if let Some(request) = deferred_child_kernel_wait_request(request)? {
+        return Ok(Some(request));
+    }
+    if request.method != "fs.write" && request.method != "fs.writeSync" {
+        return Ok(None);
+    }
+    if javascript_sync_rpc_arg_u64_optional(&request.args, 2, "filesystem write position")?
+        .is_some()
+    {
+        return Ok(None);
+    }
+    let fd = javascript_sync_rpc_arg_u32(&request.args, 0, "filesystem write fd")?;
+    let stat = kernel
+        .fd_stat(EXECUTION_DRIVER_NAME, kernel_pid, fd)
+        .map_err(kernel_error)?;
+    if stat.filetype != agentos_kernel::fd_table::FILETYPE_PIPE {
+        return Ok(None);
+    }
+    Ok(Some(JavascriptSyncRpcRequest {
+        id: request.id,
+        method: String::from("process.fd_write"),
+        args: vec![
+            request.args.first().cloned().unwrap_or(Value::Null),
+            request.args.get(1).cloned().unwrap_or(Value::Null),
+        ],
+        raw_bytes_args: request
+            .raw_bytes_args
+            .iter()
+            .filter(|(index, _)| **index == 1 || **index == usize::MAX)
+            .map(|(index, bytes)| (*index, bytes.clone()))
             .collect(),
     }))
 }
@@ -954,10 +1015,9 @@ where
                 javascript_sync_rpc_arg_u32(&request.args, 0, "path_remove_dir_at dir fd")?;
             let path = javascript_sync_rpc_arg_str(&request.args, 1, "path_remove_dir_at path")?;
             let path = wasm_process_resolve_at_path(kernel, process.kernel_pid, dir_fd, path)?;
-            kernel
-                .remove_dir(&path)
-                .map(|()| Value::Null)
-                .map_err(kernel_error)
+            kernel.remove_dir(&path).map_err(kernel_error)?;
+            crate::filesystem::remove_process_shadow_path(process, &path)?;
+            Ok(Value::Null)
         }
         "process.path_rename_at" => {
             let old_fd = javascript_sync_rpc_arg_u32(&request.args, 0, "path_rename_at old fd")?;
@@ -970,10 +1030,9 @@ where
                 wasm_process_resolve_at_path(kernel, process.kernel_pid, old_fd, old_path)?;
             let new_path =
                 wasm_process_resolve_at_path(kernel, process.kernel_pid, new_fd, new_path)?;
-            kernel
-                .rename(&old_path, &new_path)
-                .map(|()| Value::Null)
-                .map_err(kernel_error)
+            kernel.rename(&old_path, &new_path).map_err(kernel_error)?;
+            crate::filesystem::rename_process_shadow_path(process, &old_path, &new_path)?;
+            Ok(Value::Null)
         }
         "process.path_symlink_at" => {
             let target = javascript_sync_rpc_arg_str(&request.args, 0, "path_symlink_at target")?;
@@ -989,10 +1048,9 @@ where
             let dir_fd = javascript_sync_rpc_arg_u32(&request.args, 0, "path_unlink_at dir fd")?;
             let path = javascript_sync_rpc_arg_str(&request.args, 1, "path_unlink_at path")?;
             let path = wasm_process_resolve_at_path(kernel, process.kernel_pid, dir_fd, path)?;
-            kernel
-                .remove_file(&path)
-                .map(|()| Value::Null)
-                .map_err(kernel_error)
+            kernel.remove_file(&path).map_err(kernel_error)?;
+            crate::filesystem::remove_process_shadow_path(process, &path)?;
+            Ok(Value::Null)
         }
         "process.fd_snapshot" => kernel
             .fd_snapshot(EXECUTION_DRIVER_NAME, process.kernel_pid)
@@ -2140,14 +2198,13 @@ where
         )?
         .to_owned();
         if let Some(listener) = request.process.tcp_listeners.remove(&listener_id) {
-            unregister_kernel_readiness_target(
+            release_tcp_listener_handle(
+                request.process,
+                &listener_id,
+                listener,
+                request.kernel,
                 &request.kernel_readiness,
-                listener.kernel_socket_id,
-            );
-            listener.close(request.kernel, request.process.kernel_pid)?;
-            request
-                .process
-                .release_capability(&NativeCapabilityKey::TcpListener(listener_id))?;
+            )?;
             return Ok(JavascriptSyncRpcServiceResponse::Json(Value::Null));
         }
 
@@ -2158,9 +2215,7 @@ where
             .ok_or_else(|| {
                 SidecarError::InvalidState(format!("unknown net listener {listener_id}"))
             })?;
-        request
-            .process
-            .release_capability(&NativeCapabilityKey::UnixListener(listener_id.clone()))?;
+        release_unix_listener_capability(request.process, &listener_id, &listener)?;
         if !listener.is_final_description_handle() {
             return Ok(JavascriptSyncRpcServiceResponse::Json(Value::Null));
         }
@@ -2852,10 +2907,15 @@ where
             let identity = commit_process_capability(
                 process,
                 pending,
-                capability_key,
+                capability_key.clone(),
                 listener_id.clone(),
                 None,
             )?;
+            listener.retain_description_lease(
+                process
+                    .shared_capability_lease(&capability_key)
+                    .expect("committed Unix listener capability lease"),
+            );
             listener.set_event_pusher(
                 process.execution.javascript_v8_session_handle(),
                 Some(identity),
@@ -3175,6 +3235,11 @@ where
                 );
                 socket
                     .set_fairness_identity(process.capability_fairness_identity(&capability_key))?;
+                socket.retain_description_lease(
+                    process
+                        .shared_capability_lease(&capability_key)
+                        .expect("committed socket capability lease"),
+                );
                 process.unix_sockets.insert(socket_id.clone(), socket);
                 Ok(json!({
                     "socketId": socket_id,
@@ -3287,6 +3352,11 @@ where
                 );
                 socket
                     .set_fairness_identity(process.capability_fairness_identity(&capability_key))?;
+                socket.retain_description_lease(
+                    process
+                        .shared_capability_lease(&capability_key)
+                        .expect("committed socket capability lease"),
+                );
                 register_kernel_readiness_target(
                     &kernel_readiness,
                     socket.kernel_socket_id,
@@ -3565,10 +3635,15 @@ where
                 let identity = commit_process_capability(
                     process,
                     pending,
-                    capability_key,
+                    capability_key.clone(),
                     listener_id.clone(),
                     None,
                 )?;
+                listener.retain_description_lease(
+                    process
+                        .shared_capability_lease(&capability_key)
+                        .expect("committed Unix listener capability lease"),
+                );
                 listener.set_event_pusher(
                     process.execution.javascript_v8_session_handle(),
                     Some(identity),
@@ -3645,6 +3720,11 @@ where
                         return Err(error);
                     }
                 };
+                listener.retain_description_lease(
+                    process
+                        .shared_capability_lease(&capability_key)
+                        .expect("committed TCP listener capability lease"),
+                );
                 register_kernel_readiness_target(
                     &kernel_readiness,
                     listener.kernel_socket_id,
@@ -3897,7 +3977,7 @@ where
                         } = pending;
                         let pending_capability = tcp_pending_capability
                             .expect("TCP capability reserved before listener accept");
-                        let socket = if let Some(stream) = stream {
+                        let mut socket = if let Some(stream) = stream {
                             ActiveTcpSocket::from_stream(
                                 stream,
                                 Some(listener_id.to_string()),
@@ -3944,6 +4024,11 @@ where
                         socket.set_fairness_identity(
                             process.capability_fairness_identity(&capability_key),
                         )?;
+                        socket.retain_description_lease(
+                            process
+                                .shared_capability_lease(&capability_key)
+                                .expect("committed TCP capability lease"),
+                        );
                         register_kernel_readiness_target(
                             &kernel_readiness,
                             socket.kernel_socket_id,
@@ -3954,7 +4039,8 @@ where
                             KernelSocketReadinessEvent::Data,
                         );
                         if let Some(listener) = process.tcp_listeners.get_mut(listener_id) {
-                            listener.register_connection(&socket_id);
+                            socket.listener_connection_retirement =
+                                Some(listener.register_connection(&socket_id));
                         }
                         process.tcp_sockets.insert(socket_id.clone(), socket);
                         Ok(json!({
@@ -4028,8 +4114,14 @@ where
                     socket.set_fairness_identity(
                         process.capability_fairness_identity(&capability_key),
                     )?;
+                    socket.retain_description_lease(
+                        process
+                            .shared_capability_lease(&capability_key)
+                            .expect("committed Unix capability lease"),
+                    );
                     if let Some(listener) = process.unix_listeners.get_mut(listener_id) {
-                        listener.register_connection(&socket_id);
+                        socket.listener_connection_retirement =
+                            Some(listener.register_connection(&socket_id));
                     }
                     process.unix_sockets.insert(socket_id.clone(), socket);
                     Ok(json!({
@@ -4079,7 +4171,7 @@ where
                             guest_remote_addr,
                         } = pending;
                         let mut info = tcp_socket_info_value(&guest_local_addr, &guest_remote_addr);
-                        let socket = if let Some(stream) = stream {
+                        let mut socket = if let Some(stream) = stream {
                             ActiveTcpSocket::from_stream(
                                 stream,
                                 Some(listener_id.to_string()),
@@ -4130,6 +4222,11 @@ where
                         socket.set_fairness_identity(
                             process.capability_fairness_identity(&capability_key),
                         )?;
+                        socket.retain_description_lease(
+                            process
+                                .shared_capability_lease(&capability_key)
+                                .expect("committed TCP capability lease"),
+                        );
                         register_kernel_readiness_target(
                             &kernel_readiness,
                             socket.kernel_socket_id,
@@ -4140,7 +4237,8 @@ where
                             KernelSocketReadinessEvent::Data,
                         );
                         if let Some(listener) = process.tcp_listeners.get_mut(listener_id) {
-                            listener.register_connection(&socket_id);
+                            socket.listener_connection_retirement =
+                                Some(listener.register_connection(&socket_id));
                         }
                         process.tcp_sockets.insert(socket_id.clone(), socket);
                         javascript_net_json_string(
@@ -4214,12 +4312,18 @@ where
                     socket.set_fairness_identity(
                         process.capability_fairness_identity(&capability_key),
                     )?;
+                    socket.retain_description_lease(
+                        process
+                            .shared_capability_lease(&capability_key)
+                            .expect("committed Unix capability lease"),
+                    );
                     if let Value::Object(fields) = &mut info {
                         fields.insert(String::from("capabilityId"), json!(identity.0));
                         fields.insert(String::from("capabilityGeneration"), json!(identity.1));
                     }
                     if let Some(listener) = process.unix_listeners.get_mut(listener_id) {
-                        listener.register_connection(&socket_id);
+                        socket.listener_connection_retirement =
+                            Some(listener.register_connection(&socket_id));
                     }
                     process.unix_sockets.insert(socket_id.clone(), socket);
                     javascript_net_json_string(
@@ -4365,20 +4469,22 @@ where
             let listener_id =
                 javascript_sync_rpc_arg_str(&request.args, 0, "net.server_close listener id")?;
             if let Some(listener) = process.tcp_listeners.remove(listener_id) {
-                unregister_kernel_readiness_target(&kernel_readiness, listener.kernel_socket_id);
-                listener.close(kernel, process.kernel_pid)?;
-                process.release_capability(&NativeCapabilityKey::TcpListener(
-                    listener_id.to_owned(),
-                ))?;
+                release_tcp_listener_handle(
+                    process,
+                    listener_id,
+                    listener,
+                    kernel,
+                    &kernel_readiness,
+                )?;
                 Ok(Value::Null)
             } else {
                 let listener = process.unix_listeners.remove(listener_id).ok_or_else(|| {
                     SidecarError::InvalidState(format!("unknown net listener {listener_id}"))
                 })?;
-                drop(listener.close());
-                process.release_capability(&NativeCapabilityKey::UnixListener(
-                    listener_id.to_owned(),
-                ))?;
+                release_unix_listener_capability(process, listener_id, &listener)?;
+                if listener.is_final_description_handle() {
+                    drop(listener.close());
+                }
                 Ok(Value::Null)
             }
         }

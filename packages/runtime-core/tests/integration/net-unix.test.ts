@@ -193,7 +193,7 @@ describeIf(!skipReason(), "WasmVM Unix domain socket integration", { timeout: 30
 		);
 
 		expect(result.exitCode).toBe(0);
-		expect(result.stderr).toBe("");
+		expect(result.stderr, `stdout:\n${result.stdout}`).toBe("");
 		expect(result.stdout).toContain('server="/tmp/node-close.sock"');
 		expect(result.stdout).toContain('"address":{}');
 		expect(result.stdout).toContain('"hasLocalAddress":false');

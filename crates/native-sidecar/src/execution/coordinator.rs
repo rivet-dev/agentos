@@ -218,34 +218,52 @@ where
         let (connection_id, session_id, vm_id) = self.vm_scope_for(&request.ownership)?;
         self.require_owned_vm(&connection_id, &session_id, &vm_id)?;
 
-        let vm = self
-            .vms
-            .get_mut(&vm_id)
-            .ok_or_else(|| missing_vm_error(&vm_id))?;
-        let process = vm
-            .active_processes
-            .get_mut(&payload.process_id)
-            .ok_or_else(|| {
-                SidecarError::InvalidState(format!(
-                    "VM {vm_id} has no active process {}",
+        // Signal registrations are execution events. Consume them before the
+        // resize so a handler installed immediately before the host request is
+        // visible when the kernel-generated SIGWINCH is delivered below.
+        self.drain_root_signal_state_events(&vm_id, &payload.process_id)?;
+
+        let foreground_pgid = {
+            let vm = self
+                .vms
+                .get_mut(&vm_id)
+                .ok_or_else(|| missing_vm_error(&vm_id))?;
+            let process = vm
+                .active_processes
+                .get_mut(&payload.process_id)
+                .ok_or_else(|| {
+                    SidecarError::InvalidState(format!(
+                        "VM {vm_id} has no active process {}",
+                        payload.process_id
+                    ))
+                })?;
+            let Some(writer_fd) = process.kernel_stdin_writer_fd else {
+                return Err(SidecarError::InvalidState(format!(
+                    "process {} does not have a PTY",
                     payload.process_id
-                ))
-            })?;
-        let Some(writer_fd) = process.kernel_stdin_writer_fd else {
-            return Err(SidecarError::InvalidState(format!(
-                "process {} does not have a PTY",
-                payload.process_id
-            )));
+                )));
+            };
+            let foreground_pgid = vm
+                .kernel
+                .tcgetpgrp(EXECUTION_DRIVER_NAME, process.kernel_pid, writer_fd)
+                .map_err(kernel_error)?;
+            vm.kernel
+                .pty_resize(
+                    EXECUTION_DRIVER_NAME,
+                    process.kernel_pid,
+                    writer_fd,
+                    payload.cols,
+                    payload.rows,
+                )
+                .map_err(kernel_error)?;
+            foreground_pgid
         };
-        vm.kernel
-            .pty_resize(
-                EXECUTION_DRIVER_NAME,
-                process.kernel_pid,
-                writer_fd,
-                payload.cols,
-                payload.rows,
-            )
-            .map_err(kernel_error)?;
+
+        self.deliver_kernel_process_group_signal_to_tracked_runtimes(
+            &vm_id,
+            foreground_pgid,
+            "SIGWINCH",
+        )?;
 
         Ok(DispatchResult {
             response: self.respond(

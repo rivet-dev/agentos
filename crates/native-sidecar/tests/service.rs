@@ -4778,8 +4778,9 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     local_addr: Some(SocketAddr::from(([127, 0, 0, 1], 49993))),
                     guest_local_addr: SocketAddr::from(([127, 0, 0, 1], 49993)),
                     backlog: listener.backlog,
-                    active_connection_ids: std::collections::BTreeSet::new(),
+                    active_connection_ids: Arc::new(Mutex::new(std::collections::BTreeSet::new())),
                     description_handles: std::sync::Arc::clone(&listener.description_handles),
+                    description_lease: Arc::clone(&listener.description_lease),
                     kernel_transfer_guard: listener.kernel_transfer_guard.clone(),
                 }
             };
@@ -4808,8 +4809,15 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     reactor_limits: socket.reactor_limits,
                     fairness_identity: Arc::clone(&socket.fairness_identity),
                     fairness_identity_committed: Arc::clone(&socket.fairness_identity_committed),
+                    fairness_retirement: Arc::clone(&socket.fairness_retirement),
+                    description_lease: Arc::clone(&socket.description_lease),
                     read_event_notify: Arc::clone(&socket.read_event_notify),
-                    event_pusher: Arc::new(Mutex::new(None)),
+                    event_pusher: Arc::clone(&socket.event_pusher),
+                    readiness_registration: crate::state::SocketReadinessRegistration::new(
+                        Arc::clone(&socket.event_pusher),
+                        None,
+                        None,
+                    ),
                     native_read_wake_pending: Arc::new(AtomicBool::new(false)),
                 }
             };
@@ -24594,6 +24602,253 @@ console.log(JSON.stringify({
                 ActiveExecutionEvent::Stdout(chunk) => assert_eq!(chunk, b"pull-owned"),
                 other => panic!("expected queued child stdout, got {other:?}"),
             }
+        }
+
+        #[test]
+        fn wasm_parent_child_write_deadline_wakes_after_parent_stops_polling() {
+            assert_node_available();
+
+            let mut sidecar = create_test_sidecar();
+            let (connection_id, session_id) =
+                authenticate_and_open_session(&mut sidecar).expect("authenticate sidecar");
+            let vm_id = create_vm(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                PermissionsPolicy::allow_all(),
+            )
+            .expect("create vm");
+            let cwd = temp_dir("agentos-native-sidecar-wasm-child-write-deadline");
+            let writer = br#"
+const fs = require("node:fs");
+try {
+  fs.writeSync(3, Buffer.from("x"));
+  process.exit(3);
+} catch (error) {
+  if (error?.code !== "ETIMEDOUT") {
+    console.error(error?.stack || String(error));
+    process.exit(2);
+  }
+  process.exit(0);
+}
+"#;
+            write_fixture(&cwd.join("writer.mjs"), writer);
+
+            let (parent_pid, read_fd, write_fd, baseline) = {
+                let vm = sidecar.vms.get_mut(&vm_id).expect("test vm");
+                vm.limits.reactor.operation_deadline_ms = 50;
+                vm.kernel
+                    .write_file("/writer.mjs", writer.to_vec())
+                    .expect("stage guest writer");
+                let handle = vm
+                    .kernel
+                    .create_virtual_process(
+                        EXECUTION_DRIVER_NAME,
+                        EXECUTION_DRIVER_NAME,
+                        WASM_COMMAND,
+                        vec![String::from(WASM_COMMAND)],
+                        VirtualProcessOptions {
+                            env: vm.guest_env.clone(),
+                            cwd: Some(String::from("/")),
+                            ..VirtualProcessOptions::default()
+                        },
+                    )
+                    .expect("create virtual WASM parent");
+                let parent_pid = handle.pid();
+                let (read_fd, write_fd) = vm
+                    .kernel
+                    .open_pipe(EXECUTION_DRIVER_NAME, parent_pid)
+                    .expect("open saturated child pipe");
+                let capacity = agentos_kernel::pipe_manager::MAX_PIPE_BUFFER_BYTES;
+                assert_eq!(
+                    vm.kernel
+                        .fd_write_nonblocking(
+                            EXECUTION_DRIVER_NAME,
+                            parent_pid,
+                            write_fd,
+                            &vec![b'x'; capacity],
+                        )
+                        .expect("fill child pipe"),
+                    capacity
+                );
+                let mut env = vm.guest_env.clone();
+                env.insert(
+                    String::from("AGENTOS_ALLOWED_NODE_BUILTINS"),
+                    String::from("[\"fs\"]"),
+                );
+                vm.active_processes.insert(
+                    String::from("wasm-write-parent"),
+                    active_process_for_vm_tests(
+                        parent_pid,
+                        handle,
+                        vm.runtime_context.clone(),
+                        vm.limits.clone(),
+                        GuestRuntimeKind::WebAssembly,
+                        ActiveExecution::Binding(BindingExecution::default()),
+                    )
+                    .with_guest_cwd(String::from("/"))
+                    .with_env(env)
+                    .with_host_cwd(cwd.clone()),
+                );
+                (parent_pid, read_fd, write_fd, vm.kernel.resource_snapshot())
+            };
+
+            let spawned = spawn_descendant_javascript_child_process_for_test(
+                &mut sidecar,
+                &vm_id,
+                "wasm-write-parent",
+                &[],
+                crate::protocol::JavascriptChildProcessSpawnRequest {
+                    command: String::from("node"),
+                    args: vec![String::from("./writer.mjs")],
+                    options: crate::protocol::JavascriptChildProcessSpawnOptions {
+                        spawn_fd_mappings: vec![[3, read_fd]],
+                        spawn_file_actions: vec![crate::protocol::JavascriptPosixSpawnFileAction {
+                            command: 2,
+                            guest_fd: Some(3),
+                            fd: 3,
+                            source_fd: write_fd as i32,
+                            guest_source_fd: None,
+                            oflag: 0,
+                            mode: 0,
+                            path: String::new(),
+                            close_from_guest_fds: Vec::new(),
+                        }],
+                        ..Default::default()
+                    },
+                },
+            )
+            .expect("spawn nested Node writer");
+            let child_id = spawned["childId"]
+                .as_str()
+                .expect("nested child id")
+                .to_owned();
+            let ownership = OwnershipScope::vm(&connection_id, &session_id, &vm_id);
+            let runtime_handle = sidecar
+                .vms
+                .get(&vm_id)
+                .expect("test vm")
+                .runtime_context
+                .handle()
+                .clone();
+            let event_notify = Arc::clone(&sidecar.process_event_notify);
+
+            let park_deadline = Instant::now() + Duration::from_secs(10);
+            let mut prepark_events = Vec::new();
+            loop {
+                match runtime_handle.block_on(sidecar.poll_javascript_child_process(
+                    &vm_id,
+                    "wasm-write-parent",
+                    &child_id,
+                    0,
+                )) {
+                    Ok(event) if !event.is_null() => prepark_events.push(event),
+                    Ok(_) => {}
+                    Err(error) => panic!(
+                        "WASM parent failed before the child write parked: {error}; events: {prepark_events:?}"
+                    ),
+                }
+                let parked = sidecar
+                    .vms
+                    .get(&vm_id)
+                    .and_then(|vm| vm.active_processes.get("wasm-write-parent"))
+                    .and_then(|parent| parent.child_processes.get(&child_id))
+                    .is_some_and(|child| child.deferred_kernel_wait_rpc.is_some());
+                if parked {
+                    break;
+                }
+                if Instant::now() >= park_deadline {
+                    let mut events = Vec::new();
+                    for _ in 0..16 {
+                        match poll_javascript_child_process_for_test(
+                            &mut sidecar,
+                            &vm_id,
+                            "wasm-write-parent",
+                            &child_id,
+                            100,
+                        ) {
+                            Ok(event) if !event.is_null() => events.push(event),
+                            Ok(_) => {}
+                            Err(error) => {
+                                events.push(json!({ "pollError": error.to_string() }));
+                                break;
+                            }
+                        }
+                    }
+                    panic!("nested write never parked; child events: {events:?}");
+                }
+                let _ = runtime_handle.block_on(async {
+                    tokio::time::timeout(Duration::from_millis(100), event_notify.notified()).await
+                });
+            }
+
+            let timeout_deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                let remaining = timeout_deadline.saturating_duration_since(Instant::now());
+                assert!(
+                    !remaining.is_zero(),
+                    "deadline wake did not clear parked write"
+                );
+                runtime_handle
+                    .block_on(async {
+                        tokio::time::timeout(remaining, event_notify.notified()).await
+                    })
+                    .expect("deadline timer must notify the global process pump");
+                runtime_handle
+                    .block_on(sidecar.pump_process_events(&ownership))
+                    .expect("service deadline wake");
+                let parked = sidecar
+                    .vms
+                    .get(&vm_id)
+                    .and_then(|vm| vm.active_processes.get("wasm-write-parent"))
+                    .and_then(|parent| parent.child_processes.get(&child_id))
+                    .is_some_and(|child| child.deferred_kernel_wait_rpc.is_some());
+                if !parked {
+                    let timer_cleared = sidecar
+                        .vms
+                        .get(&vm_id)
+                        .and_then(|vm| vm.active_processes.get("wasm-write-parent"))
+                        .and_then(|parent| parent.child_processes.get(&child_id))
+                        .is_some_and(|child| child.deferred_child_write_timer.is_none());
+                    assert!(timer_cleared, "settled write must release its timer task");
+                    break;
+                }
+            }
+
+            let mut exit_code = None;
+            for _ in 0..40 {
+                let event = poll_javascript_child_process_for_test(
+                    &mut sidecar,
+                    &vm_id,
+                    "wasm-write-parent",
+                    &child_id,
+                    250,
+                )
+                .expect("poll timed-out writer");
+                if event.get("type").and_then(Value::as_str) == Some("exit") {
+                    exit_code = event.get("exitCode").and_then(Value::as_i64);
+                    break;
+                }
+            }
+            assert_eq!(exit_code, Some(0), "writer must observe ETIMEDOUT");
+            assert_eq!(
+                sidecar
+                    .vms
+                    .get(&vm_id)
+                    .expect("test vm")
+                    .kernel
+                    .resource_snapshot(),
+                baseline,
+                "timed-out child must restore the parent process/fd baseline"
+            );
+            assert_eq!(
+                sidecar
+                    .vms
+                    .get(&vm_id)
+                    .and_then(|vm| vm.active_processes.get("wasm-write-parent"))
+                    .map(|parent| parent.kernel_pid),
+                Some(parent_pid)
+            );
         }
 
         fn javascript_child_process_internal_bootstrap_env_is_allowlisted() {

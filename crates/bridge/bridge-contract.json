@@ -268,6 +268,7 @@
 				"_netServerAcceptRaw",
 				"_netServerCloseSyncRaw",
 				"_netSocketWaitConnectSyncRaw",
+				"_netSocketWriteSyncRaw",
 				"_dgramSocketCreateRaw",
 				"_dgramSocketBindRaw",
 				"_dgramSocketRecvRaw",
@@ -417,6 +418,7 @@
 		"_fsReadDirAsync": 4194304,
 		"_childProcessPoll": 1048576,
 		"_childProcessSpawnSync": 16777216,
+		"_processWasmSyncRpc": 262144,
 		"_netSocketReadRaw": 524288,
 		"_dgramSocketRecvRaw": 131072,
 		"_sqliteDatabaseExecRaw": 16777216,
@@ -920,6 +922,10 @@
 			"translateArgs": false
 		},
 		"_netSocketWriteRaw": {
+			"method": "net.write",
+			"translateArgs": false
+		},
+		"_netSocketWriteSyncRaw": {
 			"method": "net.write",
 			"translateArgs": false
 		},

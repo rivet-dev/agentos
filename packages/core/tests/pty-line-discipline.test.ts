@@ -614,7 +614,14 @@ const CASES: Case[] = [
 			await ctx.waitForScreen("#SIZE tag=before");
 			await ctx.waitForScreen("#READY tag=resize");
 			ctx.resizeShell(120, 40);
-			// Sentinel '!' + CR (ICRNL -> NL flushes the cooked line).
+			if (ctx.runtime.name === "js-node") {
+				// Keep the probe alive until the asynchronous SIGWINCH handler has
+				// queried the resized PTY. Releasing it first races process.exit(0)
+				// against the coalesced signal wake.
+				await ctx.waitForScreen("#SIZE tag=after rc=0 cols=120 rows=40");
+			}
+			// Sentinel '!' + CR (ICRNL -> NL flushes the cooked line). WASM has
+			// no signal handler, so it re-queries only after this read completes.
 			await ctx.writeShell("!\r");
 			await ctx.waitForScreen("#SIZE tag=after rc=0 cols=120 rows=40");
 			ctx.snapshot("resize");

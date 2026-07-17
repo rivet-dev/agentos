@@ -89,6 +89,10 @@ const _: () = assert!(DEFAULT_WASM_RUNNER_HEAP_LIMIT_MB > 128);
 const MAX_SYNC_WASM_PREWARM_MODULE_BYTES: u64 = 16 * 1024 * 1024;
 const WASM_CAPTURED_OUTPUT_LIMIT_BYTES: usize = 16 * 1024 * 1024;
 const WASM_SYNC_READ_LIMIT_BYTES: usize = 16 * 1024 * 1024;
+// `_processWasmSyncRpc` returns file-read bytes as one CBOR byte string. The
+// bridge contract bounds the encoded response payload, not the unencoded file
+// bytes, so the runner must leave room for CBOR's byte-string header.
+const WASM_PROCESS_SYNC_RPC_RESPONSE_BYTES: usize = 256 * 1024;
 const WASM_INLINE_RUNNER_ENTRYPOINT: &str = "./__agentos_wasm_runner__.mjs";
 const WASM_SNAPSHOT_RUNNER_ENV: &str = "AGENTOS_WASM_SNAPSHOT_RUNNER";
 const WASM_RUNNER_NO_CACHE_ENV: &str = "AGENTOS_WASM_RUNNER_NO_CACHE";
@@ -3078,9 +3082,12 @@ fn build_wasm_runner_bootstrap(
     let warmup_emit = wasm_warmup_metrics_emit_source(warmup_metrics);
     let wasi_module_source = render_native_wasi_module_source();
     let env_merge_source = wasm_internal_env_merge_source();
+    let wasm_sync_rpc_read_payload_bytes =
+        max_cbor_byte_string_payload_bytes(WASM_PROCESS_SYNC_RPC_RESPONSE_BYTES);
 
     format!(
         r#"const __agentOSWasmInternalEnv = {internal_env_json};
+const __agentOSWasmSyncRpcReadPayloadBytes = {wasm_sync_rpc_read_payload_bytes};
 const __agentOSRequireBuiltin = (specifier) => {{
   if (typeof globalThis.require === "function") {{
     return globalThis.require(specifier);
@@ -3267,10 +3274,10 @@ if (typeof globalThis !== "undefined") {{
           }}
           return _netSocketWaitConnectSyncRaw.applySync(void 0, args);
         case "net.write":
-          if (typeof _netSocketWriteRaw === "undefined") {{
+          if (typeof _netSocketWriteSyncRaw === "undefined") {{
             throw new Error("secure-exec WASM net.write bridge is unavailable");
           }}
-          return _netSocketWriteRaw.applySync(void 0, args);
+          return _netSocketWriteSyncRaw.applySync(void 0, args);
         case "net.destroy":
           if (typeof _netSocketDestroyRaw === "undefined") {{
             throw new Error("secure-exec WASM net.destroy bridge is unavailable");
@@ -3437,6 +3444,32 @@ if (typeof globalThis !== "undefined") {{
 }}
 {warmup_emit}"#
     )
+}
+
+fn max_cbor_byte_string_payload_bytes(encoded_limit: usize) -> usize {
+    // CBOR byte-string lengths use 1 byte inline through 23, then 2/3/5/9-byte
+    // headers for u8/u16/u32/u64 lengths. Select the largest payload whose
+    // encoded representation remains within the bridge response payload cap.
+    for payload_bytes in (encoded_limit.saturating_sub(9)..=encoded_limit).rev() {
+        let header_bytes = if payload_bytes <= 23 {
+            1
+        } else if u8::try_from(payload_bytes).is_ok() {
+            2
+        } else if u16::try_from(payload_bytes).is_ok() {
+            3
+        } else if u32::try_from(payload_bytes).is_ok() {
+            5
+        } else {
+            9
+        };
+        if payload_bytes
+            .checked_add(header_bytes)
+            .is_some_and(|encoded_bytes| encoded_bytes <= encoded_limit)
+        {
+            return payload_bytes;
+        }
+    }
+    0
 }
 
 fn wasm_warmup_metrics_emit_source(warmup_metrics: Option<&[u8]>) -> String {
@@ -4563,8 +4596,8 @@ fn resolve_path_like_specifier(cwd: &Path, specifier: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_wasm_internal_env, build_wasm_runner_bootstrap, open_wasm_guest_file,
-        resolve_wasm_execution_timeout, resolve_wasm_prewarm_timeout,
+        build_wasm_internal_env, build_wasm_runner_bootstrap, max_cbor_byte_string_payload_bytes,
+        open_wasm_guest_file, resolve_wasm_execution_timeout, resolve_wasm_prewarm_timeout,
         resolve_wasm_stack_limit_bytes, resolved_module_path, translate_wasm_guest_path,
         translate_wasm_host_symlink_target, wasm_guest_module_paths, wasm_host_path_is_read_only,
         wasm_memory_limit_bytes, wasm_memory_limit_pages, wasm_mutation_touches_read_only_mapping,
@@ -4580,7 +4613,8 @@ mod tests {
         WASM_INTERNAL_MAX_STACK_BYTES_ENV, WASM_MAX_FUEL_ENV, WASM_MAX_MEMORY_BYTES_ENV,
         WASM_MAX_MODULE_FILE_BYTES_ENV, WASM_MAX_SPAWN_FILE_ACTIONS_ENV,
         WASM_MAX_SPAWN_FILE_ACTION_BYTES_ENV, WASM_MAX_STACK_BYTES_ENV, WASM_PAGE_BYTES,
-        WASM_SANDBOX_ROOT_ENV, WASM_SIDECAR_ROUTED_FS_SYNC_METHODS, WASM_SYNC_READ_LIMIT_BYTES,
+        WASM_PROCESS_SYNC_RPC_RESPONSE_BYTES, WASM_SANDBOX_ROOT_ENV,
+        WASM_SIDECAR_ROUTED_FS_SYNC_METHODS, WASM_SYNC_READ_LIMIT_BYTES,
     };
     use std::collections::{BTreeMap, BTreeSet, VecDeque};
     use std::fs;
@@ -4601,6 +4635,28 @@ mod tests {
         assert_eq!(javascript.v8_heap_limit_mb, Some(192));
         assert_eq!(javascript.reactor_work_quantum, Some(17));
         assert_eq!(javascript.bridge_call_timeout_ms, Some(12_345));
+    }
+
+    #[test]
+    fn wasm_process_reads_fit_the_encoded_bridge_response_budget() {
+        let raw_limit = max_cbor_byte_string_payload_bytes(WASM_PROCESS_SYNC_RPC_RESPONSE_BYTES);
+        assert_eq!(raw_limit, 256 * 1024 - 5);
+        assert_eq!(
+            agentos_bridge::bridge_contract()
+                .response_max_bytes
+                .get("_processWasmSyncRpc")
+                .copied(),
+            Some(WASM_PROCESS_SYNC_RPC_RESPONSE_BYTES)
+        );
+
+        let bootstrap = build_wasm_runner_bootstrap(&BTreeMap::new(), None);
+        assert!(bootstrap.contains(&format!(
+            "const __agentOSWasmSyncRpcReadPayloadBytes = {raw_limit};"
+        )));
+        let runner = include_str!("../assets/runners/wasm-runner.mjs");
+        assert!(runner.contains("boundedWasmSyncRpcReadLength("));
+        assert!(runner.contains("callSyncRpc('process.fd_read'"));
+        assert!(runner.contains("callSyncRpc('process.fd_pread'"));
     }
 
     #[test]
@@ -5557,6 +5613,7 @@ mod tests {
                 "net.socket_wait_connect",
                 "_netSocketWaitConnectSyncRaw.applySync",
             ),
+            ("net.write", "_netSocketWriteSyncRaw.applySync"),
         ] {
             assert!(
                 bootstrap.contains(&format!("case \"{method}\":")),

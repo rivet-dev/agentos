@@ -189,8 +189,9 @@
 		"check-types": "pnpm run build:protocol && pnpm run build:vm-config && tsc --noEmit",
 		"build": "pnpm run build:protocol && pnpm run build:vm-config && tsc && pnpm run copy-commands",
 		"prepack": "node scripts/copy-wasm-commands.mjs --require",
+		"pretest": "cargo build -q -p agentos-native-sidecar",
 		"test": "vitest run",
-		"test:ecosystem": "vitest run tests/integration/e2e-project-matrix.test.ts -t 'required Node ecosystem reactor matrix' --reporter=verbose"
+		"test:ecosystem": "AGENTOS_ECOSYSTEM_E2E=1 vitest run tests/integration/e2e-project-matrix.test.ts -t 'required Node ecosystem reactor matrix' --reporter=verbose"
 	},
 	"dependencies": {
 		"@rivet-dev/agentos-runtime-sidecar": "workspace:*",

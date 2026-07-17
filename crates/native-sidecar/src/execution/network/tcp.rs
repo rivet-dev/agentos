@@ -1,4 +1,5 @@
 use super::super::*;
+use crate::state::SocketFairnessRetirement;
 
 pub(in crate::execution) struct NetTcpTraceCounters {
     pub(in crate::execution) socket_read_calls: AtomicU64,
@@ -266,6 +267,8 @@ impl ActiveTcpSocket {
         let write_stream = stream.try_clone().map_err(sidecar_net_error)?;
         let fairness_identity = Arc::new(OnceLock::new());
         let fairness_identity_committed = Arc::new(tokio::sync::Notify::new());
+        let fairness_retirement =
+            SocketFairnessRetirement::new(Arc::clone(&fairness_identity), runtime_context.clone());
         let plain_commands = spawn_tcp_plain_socket_transport(
             &runtime_context,
             write_stream,
@@ -283,6 +286,7 @@ impl ActiveTcpSocket {
         let read_event_notify = Arc::new(tokio::sync::Notify::new());
         let application_read_interest = Arc::new(AtomicBool::new(false));
         let application_read_notify = Arc::new(tokio::sync::Notify::new());
+        let event_pusher = SocketReadinessSubscribers::new(&resources);
         let tls_mode = Arc::new(AtomicBool::new(false));
         let tls_state = Arc::new(Mutex::new(None));
         let saw_local_shutdown = Arc::new(AtomicBool::new(false));
@@ -294,6 +298,8 @@ impl ActiveTcpSocket {
             reactor_limits,
             fairness_identity,
             fairness_identity_committed,
+            fairness_retirement,
+            description_lease: Arc::new(SocketDescriptionLease::default()),
             stream: Some(stream),
             pending_read_stream: Some(pending_read_stream),
             plain_reader_running: Arc::new(AtomicBool::new(false)),
@@ -301,7 +307,12 @@ impl ActiveTcpSocket {
             events: Some(Arc::new(Mutex::new(events))),
             event_sender: Some(sender),
             read_event_notify,
-            event_pusher: Arc::new(Mutex::new(None)),
+            event_pusher: Arc::clone(&event_pusher),
+            readiness_registration: SocketReadinessRegistration::new(
+                event_pusher,
+                Some(Arc::clone(&application_read_interest)),
+                Some(Arc::clone(&application_read_notify)),
+            ),
             application_read_interest,
             application_read_notify,
             kernel_socket_id: None,
@@ -320,6 +331,7 @@ impl ActiveTcpSocket {
             close_notified,
             read_buffer: Arc::new(Mutex::new(VecDeque::new())),
             description_handles: Arc::new(()),
+            listener_connection_retirement: None,
             kernel_transfer_guard: None,
             resources,
         })
@@ -338,11 +350,19 @@ impl ActiveTcpSocket {
             runtime_context.clone(),
             socket_completion_capacity(reactor_limits),
         );
+        let fairness_identity = Arc::new(OnceLock::new());
+        let fairness_retirement =
+            SocketFairnessRetirement::new(Arc::clone(&fairness_identity), runtime_context.clone());
+        let application_read_interest = Arc::new(AtomicBool::new(false));
+        let application_read_notify = Arc::new(tokio::sync::Notify::new());
+        let event_pusher = SocketReadinessSubscribers::new(&resources);
         Self {
             runtime_context,
             reactor_limits,
-            fairness_identity: Arc::new(OnceLock::new()),
+            fairness_identity,
             fairness_identity_committed: Arc::new(tokio::sync::Notify::new()),
+            fairness_retirement,
+            description_lease: Arc::new(SocketDescriptionLease::default()),
             stream: None,
             pending_read_stream: None,
             plain_reader_running: Arc::new(AtomicBool::new(false)),
@@ -350,9 +370,14 @@ impl ActiveTcpSocket {
             events: Some(Arc::new(Mutex::new(events))),
             event_sender: Some(sender),
             read_event_notify: Arc::new(tokio::sync::Notify::new()),
-            event_pusher: Arc::new(Mutex::new(None)),
-            application_read_interest: Arc::new(AtomicBool::new(false)),
-            application_read_notify: Arc::new(tokio::sync::Notify::new()),
+            event_pusher: Arc::clone(&event_pusher),
+            readiness_registration: SocketReadinessRegistration::new(
+                event_pusher,
+                Some(Arc::clone(&application_read_interest)),
+                Some(Arc::clone(&application_read_notify)),
+            ),
+            application_read_interest,
+            application_read_notify,
             kernel_socket_id: Some(socket_id),
             no_delay: false,
             keep_alive: false,
@@ -369,6 +394,7 @@ impl ActiveTcpSocket {
             close_notified: Arc::new(AtomicBool::new(false)),
             read_buffer: Arc::new(Mutex::new(VecDeque::new())),
             description_handles: Arc::new(()),
+            listener_connection_retirement: None,
             kernel_transfer_guard: None,
             resources,
         }
@@ -380,6 +406,8 @@ impl ActiveTcpSocket {
             reactor_limits: self.reactor_limits,
             fairness_identity: Arc::clone(&self.fairness_identity),
             fairness_identity_committed: Arc::clone(&self.fairness_identity_committed),
+            fairness_retirement: Arc::clone(&self.fairness_retirement),
+            description_lease: Arc::clone(&self.description_lease),
             stream: self.stream.as_ref().map(Arc::clone),
             pending_read_stream: self.pending_read_stream.as_ref().map(Arc::clone),
             plain_reader_running: Arc::clone(&self.plain_reader_running),
@@ -388,6 +416,11 @@ impl ActiveTcpSocket {
             event_sender: self.event_sender.clone(),
             read_event_notify: Arc::clone(&self.read_event_notify),
             event_pusher: Arc::clone(&self.event_pusher),
+            readiness_registration: SocketReadinessRegistration::new(
+                Arc::clone(&self.event_pusher),
+                Some(Arc::clone(&self.application_read_interest)),
+                Some(Arc::clone(&self.application_read_notify)),
+            ),
             application_read_interest: Arc::clone(&self.application_read_interest),
             application_read_notify: Arc::clone(&self.application_read_notify),
             kernel_socket_id: self.kernel_socket_id,
@@ -406,6 +439,7 @@ impl ActiveTcpSocket {
             close_notified: Arc::clone(&self.close_notified),
             read_buffer: Arc::clone(&self.read_buffer),
             description_handles: Arc::clone(&self.description_handles),
+            listener_connection_retirement: self.listener_connection_retirement.clone(),
             kernel_transfer_guard: self.kernel_transfer_guard.clone(),
             resources: Arc::clone(&self.resources),
         }
@@ -413,6 +447,13 @@ impl ActiveTcpSocket {
 
     pub(in crate::execution) fn is_final_description_handle(&self) -> bool {
         Arc::strong_count(&self.description_handles) == 1
+    }
+
+    pub(in crate::execution) fn retain_description_lease(
+        &self,
+        lease: Arc<agentos_runtime::capability::CapabilityLease>,
+    ) {
+        self.description_lease.retain(lease);
     }
 
     pub(in crate::execution) fn set_event_pusher(
@@ -427,24 +468,21 @@ impl ActiveTcpSocket {
         else {
             return;
         };
-        if let Ok(mut pusher) = self.event_pusher.lock() {
-            *pusher = Some(JavascriptSocketEventPusher {
-                session,
-                capability_id,
-                capability_generation,
-            });
-        }
+        self.readiness_registration.register(
+            Some(session),
+            Some((capability_id, capability_generation)),
+            agentos_runtime::readiness::ReadyFlags::READABLE,
+        );
     }
 
     pub(in crate::execution) fn set_application_read_interest(
         &self,
         enabled: bool,
     ) -> Result<(), SidecarError> {
-        set_socket_readiness_interest(&self.event_pusher, enabled)?;
-        self.application_read_interest
-            .store(enabled, Ordering::Release);
-        self.application_read_notify.notify_waiters();
-        if enabled {
+        let aggregate = self
+            .readiness_registration
+            .set_application_read_interest(enabled)?;
+        if aggregate {
             self.ensure_tcp_reader()?;
         }
         Ok(())
@@ -1323,42 +1361,52 @@ pub(in crate::execution) fn register_kernel_readiness_target(
         );
         return;
     };
-    if let Ok(mut targets) = registry.lock() {
-        if targets
-            .insert(
-                kernel_socket_id,
-                KernelSocketReadinessTarget {
-                    session,
-                    notify,
-                    capability_id,
-                    capability_generation,
-                    target_id,
-                    event,
-                },
-            )
-            .is_some()
+    let target = KernelSocketReadinessTarget {
+        session,
+        notify,
+        capability_id,
+        capability_generation,
+        target_id,
+        event,
+    };
+    if let Err(error) = registry.register(kernel_socket_id, target.clone()) {
+        eprintln!("{error}");
+        return;
+    }
+    if let Some(notify) = &target.notify {
+        notify.notify_one();
+    }
+    if let Some(session) = &target.session {
+        let flags = match target.event {
+            KernelSocketReadinessEvent::Data => agentos_runtime::readiness::ReadyFlags::READABLE,
+            KernelSocketReadinessEvent::Datagram => {
+                agentos_runtime::readiness::ReadyFlags::DATAGRAM
+            }
+            KernelSocketReadinessEvent::Accept => agentos_runtime::readiness::ReadyFlags::ACCEPT,
+        };
+        if let Err(error) =
+            session.publish_readiness(target.capability_id, target.capability_generation, flags)
         {
             eprintln!(
-                "ERR_AGENTOS_KERNEL_READINESS_DUPLICATE: socket={kernel_socket_id} capability={capability_id} generation={capability_generation}"
+                "ERR_AGENTOS_KERNEL_READINESS_WAKE: failed registration replay capability={} generation={} target={}: {error}",
+                target.capability_id, target.capability_generation, target.target_id
             );
         }
-    } else {
-        eprintln!(
-            "ERR_AGENTOS_KERNEL_READINESS_REGISTRY_POISONED: socket={kernel_socket_id} capability={capability_id}"
-        );
     }
 }
 
 pub(in crate::execution) fn unregister_kernel_readiness_target(
     registry: &KernelSocketReadinessRegistry,
     kernel_socket_id: Option<SocketId>,
+    capability: Option<(
+        agentos_runtime::capability::CapabilityId,
+        agentos_runtime::capability::CapabilityGeneration,
+    )>,
 ) {
-    let Some(kernel_socket_id) = kernel_socket_id else {
+    let (Some(kernel_socket_id), Some(capability)) = (kernel_socket_id, capability) else {
         return;
     };
-    if let Ok(mut targets) = registry.lock() {
-        targets.remove(&kernel_socket_id);
-    }
+    registry.unregister(kernel_socket_id, capability);
 }
 
 pub(in crate::execution) fn release_tcp_socket_handle(
@@ -1368,23 +1416,42 @@ pub(in crate::execution) fn release_tcp_socket_handle(
     kernel: &mut SidecarKernel,
     kernel_readiness: &KernelSocketReadinessRegistry,
 ) {
+    let identity = process
+        .capability_readiness_identity(&NativeCapabilityKey::TcpSocket(socket_id.to_owned()));
+    unregister_kernel_readiness_target(kernel_readiness, socket.kernel_socket_id, identity);
     if socket.is_final_description_handle() {
-        unregister_kernel_readiness_target(kernel_readiness, socket.kernel_socket_id);
-        if let Some(listener_id) = socket.listener_id.as_deref() {
-            if let Some(listener) = process.tcp_listeners.get_mut(listener_id) {
-                listener.release_connection(socket_id);
-            }
-        }
         if let Err(error) = socket.close(kernel, process.kernel_pid) {
             eprintln!("ERR_AGENTOS_TCP_SOCKET_CLOSE: {error}");
         }
     }
-    if let Err(error) =
-        process.release_capability(&NativeCapabilityKey::TcpSocket(socket_id.to_owned()))
-    {
+    if let Err(error) = process.release_description_capability(
+        &NativeCapabilityKey::TcpSocket(socket_id.to_owned()),
+        socket.fairness_identity.get().copied(),
+        &socket.description_lease,
+    ) {
         eprintln!("ERR_AGENTOS_CAPABILITY_RELEASE: {error}");
     }
     process.release_capability_if_present(&NativeCapabilityKey::TlsSocket(socket_id.to_owned()));
+}
+
+pub(in crate::execution) fn release_tcp_listener_handle(
+    process: &mut ActiveProcess,
+    listener_id: &str,
+    listener: ActiveTcpListener,
+    kernel: &mut SidecarKernel,
+    kernel_readiness: &KernelSocketReadinessRegistry,
+) -> Result<(), SidecarError> {
+    let identity = process
+        .capability_readiness_identity(&NativeCapabilityKey::TcpListener(listener_id.to_owned()));
+    unregister_kernel_readiness_target(kernel_readiness, listener.kernel_socket_id, identity);
+    if listener.is_final_description_handle() {
+        listener.close(kernel, process.kernel_pid)?;
+    }
+    process.release_description_capability(
+        &NativeCapabilityKey::TcpListener(listener_id.to_owned()),
+        None,
+        &listener.description_lease,
+    )
 }
 
 pub(in crate::execution) fn release_unix_socket_handle(
@@ -1402,18 +1469,15 @@ pub(in crate::execution) fn release_unix_socket_handle(
                 eprintln!("ERR_AGENTOS_UNIX_SOCKET_METADATA: {error}");
             }
         }
-        if let Some(listener_id) = socket.listener_id.as_deref() {
-            if let Some(listener) = process.unix_listeners.get_mut(listener_id) {
-                listener.release_connection(socket_id);
-            }
-        }
         if let Err(error) = socket.close() {
             eprintln!("ERR_AGENTOS_UNIX_SOCKET_CLOSE: {error}");
         }
     }
-    if let Err(error) =
-        process.release_capability(&NativeCapabilityKey::UnixSocket(socket_id.to_owned()))
-    {
+    if let Err(error) = process.release_description_capability(
+        &NativeCapabilityKey::UnixSocket(socket_id.to_owned()),
+        socket.fairness_identity.get().copied(),
+        &socket.description_lease,
+    ) {
         eprintln!("ERR_AGENTOS_CAPABILITY_RELEASE: {error}");
     }
 }
@@ -1543,8 +1607,9 @@ impl ActiveTcpListener {
             guest_local_addr: guest_addr,
             backlog: usize::try_from(backlog.unwrap_or(DEFAULT_JAVASCRIPT_NET_BACKLOG))
                 .expect("default backlog fits within usize"),
-            active_connection_ids: BTreeSet::new(),
+            active_connection_ids: Arc::new(Mutex::new(BTreeSet::new())),
             description_handles: Arc::new(()),
+            description_lease: Arc::new(SocketDescriptionLease::default()),
             kernel_transfer_guard: None,
         })
     }
@@ -1588,8 +1653,9 @@ impl ActiveTcpListener {
             guest_local_addr: guest_addr,
             backlog: usize::try_from(backlog.unwrap_or(DEFAULT_JAVASCRIPT_NET_BACKLOG))
                 .expect("default backlog fits within usize"),
-            active_connection_ids: BTreeSet::new(),
+            active_connection_ids: Arc::new(Mutex::new(BTreeSet::new())),
             description_handles: Arc::new(()),
+            description_lease: Arc::new(SocketDescriptionLease::default()),
             kernel_transfer_guard: None,
         })
     }
@@ -1606,10 +1672,15 @@ impl ActiveTcpListener {
             local_addr: self.local_addr,
             guest_local_addr: self.guest_local_addr,
             backlog: self.backlog,
-            active_connection_ids: self.active_connection_ids.clone(),
+            active_connection_ids: Arc::clone(&self.active_connection_ids),
             description_handles: Arc::clone(&self.description_handles),
+            description_lease: Arc::clone(&self.description_lease),
             kernel_transfer_guard: self.kernel_transfer_guard.clone(),
         })
+    }
+
+    pub(in crate::execution) fn is_final_description_handle(&self) -> bool {
+        Arc::strong_count(&self.description_handles) == 1
     }
 
     pub(crate) fn local_addr(&self) -> SocketAddr {
@@ -1714,7 +1785,13 @@ impl ActiveTcpListener {
                 .accept()
             {
                 Ok((stream, remote_addr)) => {
-                    if self.active_connection_ids.len() >= self.backlog {
+                    if self
+                        .active_connection_ids
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .len()
+                        >= self.backlog
+                    {
                         let _ = stream.shutdown(Shutdown::Both);
                         if wait.is_zero() || Instant::now() >= deadline {
                             return Ok(None);
@@ -1766,15 +1843,28 @@ impl ActiveTcpListener {
     }
 
     pub(in crate::execution) fn active_connection_count(&self) -> usize {
-        self.active_connection_ids.len()
+        self.active_connection_ids
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .len()
     }
 
-    pub(in crate::execution) fn register_connection(&mut self, socket_id: &str) {
-        self.active_connection_ids.insert(socket_id.to_string());
+    pub(in crate::execution) fn register_connection(
+        &self,
+        socket_id: &str,
+    ) -> Arc<ListenerConnectionRetirement> {
+        self.active_connection_ids
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .insert(socket_id.to_string());
+        ListenerConnectionRetirement::new(&self.active_connection_ids, socket_id.to_string())
     }
 
-    pub(in crate::execution) fn release_connection(&mut self, socket_id: &str) {
-        self.active_connection_ids.remove(socket_id);
+    pub(in crate::execution) fn retain_description_lease(
+        &self,
+        lease: Arc<agentos_runtime::capability::CapabilityLease>,
+    ) {
+        self.description_lease.retain(lease);
     }
 }
 
@@ -1870,6 +1960,11 @@ pub(crate) fn finalize_javascript_net_connect(
                 Some(identity),
             );
             socket.set_fairness_identity(process.capability_fairness_identity(&capability_key))?;
+            socket.retain_description_lease(
+                process
+                    .shared_capability_lease(&capability_key)
+                    .expect("committed TCP capability lease"),
+            );
             register_kernel_readiness_target(
                 kernel_readiness,
                 socket.kernel_socket_id,
@@ -1919,6 +2014,11 @@ pub(crate) fn finalize_javascript_net_connect(
                 Some(identity),
             );
             socket.set_fairness_identity(process.capability_fairness_identity(&capability_key))?;
+            socket.retain_description_lease(
+                process
+                    .shared_capability_lease(&capability_key)
+                    .expect("committed Unix capability lease"),
+            );
             process.unix_sockets.insert(socket_id.clone(), *socket);
             Ok(json!({
                 "socketId": socket_id,
@@ -2866,7 +2966,7 @@ fn spawn_tcp_socket_reader(
     stream: TcpStream,
     sender: AsyncCompletionSender<JavascriptTcpSocketEvent>,
     read_event_notify: Arc<tokio::sync::Notify>,
-    event_pusher: Arc<Mutex<Option<JavascriptSocketEventPusher>>>,
+    event_pusher: Arc<SocketReadinessSubscribers>,
     application_read_interest: Arc<AtomicBool>,
     application_read_notify: Arc<tokio::sync::Notify>,
     tls_mode: Arc<AtomicBool>,
@@ -3068,7 +3168,7 @@ pub(in crate::execution) async fn reserve_socket_event_bytes_or_close(
     resources: &ResourceLedger,
     bytes: usize,
     sender: &AsyncCompletionSender<JavascriptTcpSocketEvent>,
-    event_pusher: &Arc<Mutex<Option<JavascriptSocketEventPusher>>>,
+    event_pusher: &Arc<SocketReadinessSubscribers>,
     close_notified: &Arc<AtomicBool>,
 ) -> Option<Reservation> {
     match resources
@@ -3094,7 +3194,7 @@ pub(in crate::execution) async fn reserve_tls_event_bytes_or_close(
     resources: &ResourceLedger,
     bytes: usize,
     sender: &AsyncCompletionSender<JavascriptTcpSocketEvent>,
-    event_pusher: &Arc<Mutex<Option<JavascriptSocketEventPusher>>>,
+    event_pusher: &Arc<SocketReadinessSubscribers>,
     close_notified: &Arc<AtomicBool>,
 ) -> Option<(Reservation, Reservation)> {
     let buffered = match resources
@@ -3136,7 +3236,7 @@ pub(in crate::execution) async fn reserve_tls_event_bytes_or_close(
 
 pub(in crate::execution) async fn send_async_socket_error_and_close(
     sender: &AsyncCompletionSender<JavascriptTcpSocketEvent>,
-    event_pusher: &Arc<Mutex<Option<JavascriptSocketEventPusher>>>,
+    event_pusher: &Arc<SocketReadinessSubscribers>,
     close_notified: &Arc<AtomicBool>,
     code: Option<String>,
     message: String,
@@ -3307,6 +3407,58 @@ mod plain_socket_fairness_tests {
     use super::*;
 
     #[test]
+    fn transferred_description_retires_transport_identity_after_last_alias() {
+        let process_runtime =
+            agentos_runtime::SidecarRuntime::process(&agentos_runtime::RuntimeConfig::default())
+                .expect("create transferred socket fairness test runtime");
+        let runtime = process_runtime.context();
+        let vm_generation = runtime
+            .allocate_vm_generation()
+            .expect("allocate transferred socket fairness generation");
+        let identity = Arc::new(OnceLock::new());
+        identity
+            .set((92_010, vm_generation))
+            .expect("commit transferred socket fairness identity");
+        let original = SocketFairnessRetirement::new(Arc::clone(&identity), runtime.clone());
+        let transferred_alias = Arc::clone(&original);
+
+        runtime.handle().block_on(async {
+            let initial = runtime
+                .fairness()
+                .acquire(vm_generation, 92_010, FairBudget::new(1, 1))
+                .await
+                .expect("transport identity starts live");
+            initial
+                .complete(FairBudget::new(1, 1), false)
+                .expect("complete initial transport turn");
+
+            drop(original);
+            let after_sender_close = runtime
+                .fairness()
+                .acquire(vm_generation, 92_010, FairBudget::new(1, 1))
+                .await
+                .expect("sender close must not retire a transferred description");
+            after_sender_close
+                .complete(FairBudget::new(1, 1), false)
+                .expect("complete transferred transport turn");
+
+            drop(transferred_alias);
+            let error = runtime
+                .fairness()
+                .acquire(vm_generation, 92_010, FairBudget::new(1, 1))
+                .await
+                .expect_err("last alias drop must retire the transport identity");
+            assert!(matches!(
+                error,
+                agentos_runtime::fairness::FairnessError::CapabilityRetired {
+                    vm_generation: retired_generation,
+                    capability_id: 92_010,
+                } if retired_generation == vm_generation
+            ));
+        });
+    }
+
+    #[test]
     fn shutdown_step_releases_the_process_fairness_turn_before_follow_up_waits() {
         let process_runtime =
             agentos_runtime::SidecarRuntime::process(&agentos_runtime::RuntimeConfig::default())
@@ -3362,6 +3514,116 @@ mod plain_socket_fairness_tests {
                 .retire_vm(second_generation)
                 .expect("retire second shutdown fairness generation");
         });
+    }
+}
+
+#[cfg(test)]
+mod transferred_alias_transport_tests {
+    use super::*;
+
+    fn exercise_surviving_tcp_alias(close_sender: bool) {
+        let process_runtime =
+            agentos_runtime::SidecarRuntime::process(&agentos_runtime::RuntimeConfig::default())
+                .expect("create transferred TCP test runtime");
+        let process_context = process_runtime.context();
+        let generation = process_context
+            .allocate_vm_generation()
+            .expect("allocate transferred TCP test generation");
+        let resources = Arc::clone(process_context.resources());
+        let runtime = process_context.scoped_for_vm(Arc::clone(&resources), generation);
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind TCP alias test listener");
+        let mut peer = TcpStream::connect(listener.local_addr().expect("listener address"))
+            .expect("connect TCP alias test peer");
+        peer.set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("set peer read timeout");
+        let (accepted, remote_addr) = listener.accept().expect("accept TCP alias test peer");
+        let local_addr = accepted.local_addr().expect("accepted local address");
+        let original = ActiveTcpSocket::from_stream(
+            accepted,
+            None,
+            local_addr,
+            remote_addr,
+            resources,
+            runtime.clone(),
+            reactor_io_limits(&crate::limits::VmLimits::default()),
+        )
+        .expect("create original TCP description");
+        original
+            .set_fairness_identity(Some((81_001, generation)))
+            .expect("commit TCP fairness identity");
+        let transferred = original.clone_for_fd_transfer();
+        assert!(!original.is_final_description_handle());
+        assert!(!transferred.is_final_description_handle());
+
+        let survivor = if close_sender {
+            drop(original);
+            transferred
+        } else {
+            drop(transferred);
+            original
+        };
+        assert!(survivor.is_final_description_handle());
+
+        survivor
+            .application_read_interest
+            .store(true, Ordering::Release);
+        survivor.application_read_notify.notify_waiters();
+        survivor
+            .ensure_tcp_reader()
+            .expect("start TCP alias reader");
+        peer.write_all(b"host-to-survivor")
+            .expect("write to surviving alias");
+        runtime.handle().block_on(async {
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                survivor.read_event_notify.notified(),
+            )
+            .await
+            .expect("surviving alias receives a transport wake");
+        });
+        let event = survivor
+            .events
+            .as_ref()
+            .expect("TCP event queue")
+            .lock()
+            .expect("TCP event queue lock")
+            .try_recv()
+            .expect("surviving alias reads queued data");
+        match event {
+            JavascriptTcpSocketEvent::Data { bytes, .. } => {
+                assert_eq!(bytes, b"host-to-survivor")
+            }
+            other => panic!("expected TCP data after alias close, got {other:?}"),
+        }
+
+        let completion = survivor
+            .begin_plain_write(b"survivor-to-host")
+            .expect("write through surviving alias");
+        runtime.handle().block_on(async {
+            tokio::time::timeout(Duration::from_secs(2), completion)
+                .await
+                .expect("surviving alias write completes")
+                .expect("surviving alias write completion sender")
+                .expect("surviving alias write succeeds");
+        });
+        let mut bytes = [0_u8; 16];
+        peer.read_exact(&mut bytes)
+            .expect("peer reads surviving alias write");
+        assert_eq!(&bytes, b"survivor-to-host");
+
+        drop(peer);
+        drop(survivor);
+        runtime.close_admission();
+    }
+
+    #[test]
+    fn transferred_tcp_child_close_leaves_sender_wake_read_and_write_live() {
+        exercise_surviving_tcp_alias(false);
+    }
+
+    #[test]
+    fn transferred_tcp_sender_close_leaves_child_wake_read_and_write_live() {
+        exercise_surviving_tcp_alias(true);
     }
 }
 

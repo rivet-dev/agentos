@@ -13,7 +13,7 @@
      #[stable(feature = "io_safety", since = "1.63.0")]
      pub fn try_clone_to_owned(&self) -> io::Result<OwnedFd> {
          Err(io::Error::UNSUPPORTED_PLATFORM)
-@@ -139,6 +143,24 @@
+@@ -139,6 +143,30 @@
          Err(io::Error::UNSUPPORTED_PLATFORM)
      }
  
@@ -26,13 +26,19 @@
 +        #[link(wasm_import_module = "host_process")]
 +        unsafe extern "C" {
 +            fn fd_dup(fd: u32, ret_new_fd: *mut u32) -> u32;
++            fn fd_setfd(fd: u32, flags: u32) -> u32;
 +        }
 +        let mut new_fd: u32 = 0;
 +        let errno = unsafe { fd_dup(self.as_raw_fd() as u32, &mut new_fd) };
 +        if errno != 0 {
 +            return Err(io::Error::from_raw_os_error(errno as i32));
 +        }
-+        Ok(unsafe { OwnedFd::from_raw_fd(new_fd as RawFd) })
++        let owned = unsafe { OwnedFd::from_raw_fd(new_fd as RawFd) };
++        let errno = unsafe { fd_setfd(new_fd, 1) };
++        if errno != 0 {
++            return Err(io::Error::from_raw_os_error(errno as i32));
++        }
++        Ok(owned)
 +    }
 +
      /// Creates a new `OwnedFd` instance that shares the same underlying file

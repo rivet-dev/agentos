@@ -930,6 +930,11 @@ var NODE_CUSTOM_GLOBAL_INVENTORY = [
 		rationale: "Host net socket write bridge reference.",
 	},
 	{
+		name: "_netSocketWriteSyncRaw",
+		classification: "hardened",
+		rationale: "Host synchronous net socket write bridge reference for WASM.",
+	},
+	{
 		name: "_netSocketEndRaw",
 		classification: "hardened",
 		rationale: "Host net socket end bridge reference.",

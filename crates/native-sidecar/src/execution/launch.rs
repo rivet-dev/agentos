@@ -2533,7 +2533,7 @@ pub(super) fn javascript_execution_limits(vm: &VmState) -> JavascriptExecutionLi
         ),
         max_timers: Some(vm.limits.js_runtime.max_timers),
         reactor_work_quantum: vm_reactor_work_quantum(&vm.limits),
-        bridge_call_timeout_ms: Some(vm.limits.reactor.operation_deadline_ms),
+        bridge_call_timeout_ms: Some(bridge_call_timeout_ms(&vm.limits)),
     }
 }
 
@@ -2600,7 +2600,8 @@ pub(super) fn python_execution_limits(vm: &VmState) -> PythonExecutionLimits {
         max_old_space_mb: Some(vm.limits.python.max_old_space_mb),
         vfs_rpc_timeout_ms: Some(vm.limits.python.vfs_rpc_timeout_ms),
         reactor_work_quantum: vm_reactor_work_quantum(&vm.limits),
-        bridge_call_timeout_ms: Some(vm.limits.reactor.operation_deadline_ms),
+        bridge_call_timeout_ms: Some(bridge_call_timeout_ms(&vm.limits)),
+        max_open_fds: vm.kernel.resource_limits().max_open_fds,
     }
 }
 
@@ -2625,8 +2626,20 @@ pub(super) fn wasm_execution_limits(vm: &VmState) -> WasmExecutionLimits {
         prewarm_timeout_ms: Some(vm.limits.wasm.prewarm_timeout_ms),
         runner_heap_limit_mb: Some(vm.limits.wasm.runner_heap_limit_mb),
         reactor_work_quantum: vm_reactor_work_quantum(&vm.limits),
-        bridge_call_timeout_ms: Some(vm.limits.reactor.operation_deadline_ms),
+        bridge_call_timeout_ms: Some(bridge_call_timeout_ms(&vm.limits)),
     }
+}
+
+/// The bridge watchdog is a last-resort guard around a sidecar operation, not
+/// the operation's user-visible deadline. Give the sidecar a bounded window to
+/// publish its typed timeout before the outer V8 wait cancels the call.
+const BRIDGE_CALL_DEADLINE_GRACE_MS: u64 = 1_000;
+
+fn bridge_call_timeout_ms(limits: &crate::limits::VmLimits) -> u64 {
+    limits
+        .reactor
+        .operation_deadline_ms
+        .saturating_add(BRIDGE_CALL_DEADLINE_GRACE_MS)
 }
 
 fn vm_reactor_work_quantum(limits: &crate::limits::VmLimits) -> Option<usize> {
@@ -2635,13 +2648,26 @@ fn vm_reactor_work_quantum(limits: &crate::limits::VmLimits) -> Option<usize> {
 
 #[cfg(test)]
 mod reactor_work_quantum_tests {
-    use super::vm_reactor_work_quantum;
+    use super::{bridge_call_timeout_ms, vm_reactor_work_quantum, BRIDGE_CALL_DEADLINE_GRACE_MS};
 
     #[test]
     fn native_execution_forwards_vm_reactor_work_quantum_override() {
         let mut limits = crate::limits::VmLimits::default();
         limits.reactor.work_quantum = 3;
         assert_eq!(vm_reactor_work_quantum(&limits), Some(3));
+    }
+
+    #[test]
+    fn bridge_watchdog_runs_after_the_typed_operation_deadline() {
+        let mut limits = crate::limits::VmLimits::default();
+        limits.reactor.operation_deadline_ms = 50;
+        assert_eq!(
+            bridge_call_timeout_ms(&limits),
+            50 + BRIDGE_CALL_DEADLINE_GRACE_MS
+        );
+
+        limits.reactor.operation_deadline_ms = u64::MAX;
+        assert_eq!(bridge_call_timeout_ms(&limits), u64::MAX);
     }
 }
 
@@ -4294,6 +4320,8 @@ where
                 payload.process_id
             )));
         }
+        let vm_pending_stdin_bytes_budget = Arc::clone(&vm.pending_stdin_bytes_budget);
+        let vm_pending_event_bytes_budget = Arc::clone(&vm.pending_event_bytes_budget);
 
         if let Some(command) = payload.command.as_deref() {
             if let Some(binding_resolution) =
@@ -4324,7 +4352,8 @@ where
                 let binding_execution = BindingExecution::with_event_notify(
                     Arc::clone(&self.process_event_notify),
                     process_event_capacity,
-                );
+                )
+                .with_vm_pending_event_bytes_budget(Arc::clone(&vm_pending_event_bytes_budget));
                 let cancelled = binding_execution.cancelled.clone();
                 let pending_events = binding_execution.pending_events.clone();
                 let event_overflow_reason = binding_execution.event_overflow_reason.clone();
@@ -4346,6 +4375,10 @@ where
                         ActiveExecution::Binding(binding_execution),
                     )
                     .with_event_notify(Arc::clone(&self.process_event_notify))
+                    .with_vm_pending_byte_budgets(
+                        Arc::clone(&vm_pending_stdin_bytes_budget),
+                        Arc::clone(&vm_pending_event_bytes_budget),
+                    )
                     .with_guest_cwd(guest_cwd.clone())
                     .with_host_cwd(resolve_vm_guest_path_to_host(vm, &guest_cwd)),
                 );
@@ -4366,7 +4399,6 @@ where
                     vm_pending_event_bytes_budget: binding_vm_pending_event_bytes_budget,
                     event_notify,
                 });
-
                 return Ok(DispatchResult {
                     response: process_started_response(
                         request,
@@ -4646,6 +4678,10 @@ where
                 execution,
             )
             .with_event_notify(Arc::clone(&self.process_event_notify))
+            .with_vm_pending_byte_budgets(
+                vm_pending_stdin_bytes_budget,
+                vm_pending_event_bytes_budget,
+            )
             .with_kernel_stdin_writer_fd(kernel_stdin_writer_fd)
             .with_tty_master_fd(tty_master_fd)
             .with_guest_cwd(resolved.guest_cwd.clone())

@@ -1703,7 +1703,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                     SidecarError::Io(format!("failed to truncate mapped guest fd {fd}: {error}"))
                 })?;
                 if let Some(guest_path) = mapped_guest_path.as_deref() {
-                    mirror_kernel_path_to_process_shadow(kernel, process, kernel_pid, guest_path)?;
+                    mirror_kernel_path_to_process_shadow(kernel, process, guest_path)?;
                 }
                 return Ok(Value::Null);
             }
@@ -1726,7 +1726,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 let path = kernel
                     .fd_path(EXECUTION_DRIVER_NAME, kernel_pid, fd)
                     .map_err(kernel_error)?;
-                mirror_kernel_path_to_process_shadow(kernel, process, kernel_pid, &path)?;
+                mirror_kernel_path_to_process_shadow(kernel, process, &path)?;
             }
             Ok(Value::Null)
         }
@@ -1818,7 +1818,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                     javascript_sync_rpc_option_u32(&request.args, 2, "mode")?,
                 )
                 .map_err(|error| kernel_path_error("fs.writeFile", path, error))?;
-            mirror_kernel_path_to_process_shadow(kernel, process, kernel_pid, path)?;
+            mirror_kernel_path_to_process_shadow(kernel, process, path)?;
             Ok(Value::Null)
         }
         "fs.statSync" | "fs.promises.stat" => {
@@ -2535,7 +2535,7 @@ fn runtime_guest_host_mappings(process: &ActiveProcess) -> Vec<(String, PathBuf)
         .collect()
 }
 
-fn mirror_kernel_fd_contents_to_process_shadow(
+pub(crate) fn mirror_kernel_fd_contents_to_process_shadow(
     kernel: &mut SidecarKernel,
     process: &ActiveProcess,
     kernel_pid: u32,
@@ -2545,21 +2545,22 @@ fn mirror_kernel_fd_contents_to_process_shadow(
         .fd_path(EXECUTION_DRIVER_NAME, kernel_pid, fd)
         .map_err(kernel_error)?;
     let path = normalize_process_filesystem_rpc_path(process, &path);
-    mirror_kernel_path_to_process_shadow(kernel, process, kernel_pid, &path)
+    mirror_kernel_path_to_process_shadow(kernel, process, &path)
 }
 
 fn mirror_kernel_path_to_process_shadow(
     kernel: &mut SidecarKernel,
     process: &ActiveProcess,
-    kernel_pid: u32,
     guest_path: &str,
 ) -> Result<(), SidecarError> {
     let Some(shadow_path) = resolve_process_guest_path_to_host(process, guest_path) else {
         return Ok(());
     };
-    let bytes = kernel
-        .read_file_for_process(EXECUTION_DRIVER_NAME, kernel_pid, guest_path)
-        .map_err(kernel_error)?;
+    // This is internal reconciliation after the guest has already completed a
+    // permitted write. Reading the resulting bytes as the guest would wrongly
+    // reject write-only files even though no contents are returned to guest
+    // code; the trusted sidecar only mirrors them into this VM's own shadow.
+    let bytes = kernel.read_file(guest_path).map_err(kernel_error)?;
     write_process_shadow_file(&shadow_path, guest_path, &bytes)
 }
 
@@ -4706,7 +4707,7 @@ fn resolve_process_guest_path_to_host(
 
 /// Removes the host shadow copy of `guest_path` after a kernel-direct guest
 /// deletion so the exit-time shadow->kernel sync cannot resurrect it.
-fn remove_process_shadow_path(
+pub(crate) fn remove_process_shadow_path(
     process: &ActiveProcess,
     guest_path: &str,
 ) -> Result<(), SidecarError> {
@@ -4719,7 +4720,7 @@ fn remove_process_shadow_path(
 /// Mirrors a kernel-direct guest rename into the host shadow tree. If the
 /// source shadow entry is missing the stale destination copy is still removed
 /// so the shadow walk cannot resurrect pre-rename content.
-fn rename_process_shadow_path(
+pub(crate) fn rename_process_shadow_path(
     process: &ActiveProcess,
     source: &str,
     destination: &str,

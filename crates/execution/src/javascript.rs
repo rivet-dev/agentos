@@ -3655,6 +3655,8 @@ fn prepend_v8_runtime_shim(
   }}
 
   globalThis.__runtimeStreamStdin = nextEnv.AGENTOS_KEEP_STDIN_OPEN === "1";
+  globalThis.__runtimeKernelStdin =
+    nextEnv.AGENTOS_FORWARD_KERNEL_STDIN_RPC === "1";
 
   if (
     typeof globalThis.WebAssembly === "object" &&

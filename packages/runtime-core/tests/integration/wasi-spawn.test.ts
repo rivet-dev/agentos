@@ -21,6 +21,8 @@ function skipReason(): string | false {
   return false;
 }
 
+const codexExecTest = existsSync(resolve(COMMANDS_DIR, 'codex-exec')) ? it : it.skip;
+
 // Minimal VFS for kernel
 class SimpleVFS {
   private files = new Map<string, Uint8Array>();
@@ -147,7 +149,7 @@ describeIf(!skipReason(), 'wasi-spawn: WasiChild host_process integration', { ti
     expect(result.stdout).toContain('PASS');
   });
 
-  it('codex-exec headless prompt mode exits cleanly', async () => {
+  codexExecTest('codex-exec headless prompt mode exits cleanly', async () => {
     const result = await kernel.exec('codex-exec echo hello');
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toContain('prompt received');

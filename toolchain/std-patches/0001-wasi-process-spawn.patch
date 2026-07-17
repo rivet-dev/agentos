@@ -14,7 +14,7 @@
 
 --- /dev/null
 +++ b/library/std/src/sys/process/wasi.rs
-@@ -0,0 +1,808 @@
+@@ -0,0 +1,824 @@
 +// WASI process implementation using wasmVM host_process syscalls.
 +//
 +// Replaces the unsupported() stubs with real process management
@@ -24,7 +24,7 @@
 +pub use crate::ffi::OsString as EnvKey;
 +use crate::ffi::{OsStr, OsString};
 +use crate::num::NonZero;
-+use crate::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
++use crate::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
 +use crate::os::wasi::ffi::OsStrExt;
 +use crate::path::Path;
 +use crate::process::StdioPipes;
@@ -101,6 +101,7 @@
 +    fn proc_kill(pid: u32, signal: u32) -> u32;
 +
 +    fn fd_pipe(ret_read_fd: *mut u32, ret_write_fd: *mut u32) -> u32;
++    fn fd_setfd(fd: u32, flags: u32) -> u32;
 +}
 +
 +/// Convert a WASI errno to an io::Error.
@@ -153,7 +154,22 @@
 +    if errno != 0 {
 +        return Err(wasi_err(errno));
 +    }
-+    Ok((read_fd, write_fd))
++    // Match native Rust's anonymous-pipe invariant: std-owned child-process
++    // pipe ends are close-on-exec until an explicit spawn dup2 installs the
++    // selected endpoint at stdin/stdout/stderr. The OwnedFd guards ensure a
++    // partial fcntl failure cannot leak either descriptor.
++    let read_guard = unsafe { OwnedFd::from_raw_fd(read_fd as RawFd) };
++    let write_guard = unsafe { OwnedFd::from_raw_fd(write_fd as RawFd) };
++    for fd in [read_fd, write_fd] {
++        let errno = unsafe { fd_setfd(fd, 1) };
++        if errno != 0 {
++            return Err(wasi_err(errno));
++        }
++    }
++    Ok((
++        read_guard.into_raw_fd() as u32,
++        write_guard.into_raw_fd() as u32,
++    ))
 +}
 +
 +/// Wrap a raw fd number into a ChildPipe.

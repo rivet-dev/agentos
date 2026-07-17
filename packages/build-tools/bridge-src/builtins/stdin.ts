@@ -178,12 +178,16 @@ function _getStreamStdin() {
   return typeof __runtimeStreamStdin !== "undefined" && !!__runtimeStreamStdin;
 }
 
+function _getKernelStdin() {
+  return typeof __runtimeKernelStdin !== "undefined" && !!__runtimeKernelStdin;
+}
+
 function ensureLiveStdinStarted() {
   if (_stdinLiveStarted) return;
-  if (!_getStdinIsTTY() && !_getStreamStdin()) return;
+  if (!_getStdinIsTTY() && !_getStreamStdin() && !_getKernelStdin()) return;
   _stdinLiveStarted = true;
   syncLiveStdinHandle(!_stdin.paused);
-  if (_getStreamStdin()) {
+  if (_getStreamStdin() && !_getKernelStdin()) {
     return;
   }
   if (typeof _kernelStdinRead === "undefined") return;

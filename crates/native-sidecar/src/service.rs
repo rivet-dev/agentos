@@ -2,17 +2,19 @@ use crate::bindings::register_host_callbacks;
 use crate::bridge::{build_mount_plugin_registry, MountPluginContext};
 pub(crate) use crate::execution::{
     apply_active_process_default_signal, build_javascript_socket_path_context,
-    canonical_signal_name, dispatch_loopback_http_request_deferred, error_code,
-    flush_pending_kernel_stdin, format_tcp_resource, ignore_stale_javascript_sync_rpc_response,
-    javascript_sync_rpc_arg_i32, javascript_sync_rpc_arg_str, javascript_sync_rpc_arg_u32,
-    javascript_sync_rpc_arg_u32_optional, javascript_sync_rpc_arg_u64,
-    javascript_sync_rpc_arg_u64_optional, javascript_sync_rpc_bytes_arg,
-    javascript_sync_rpc_bytes_value, javascript_sync_rpc_encoding, javascript_sync_rpc_error_code,
-    javascript_sync_rpc_may_make_fd_readable, javascript_sync_rpc_option_bool,
+    canonical_signal_name, deferred_kernel_wait_request_for_process,
+    dispatch_loopback_http_request_deferred, error_code, flush_pending_kernel_stdin,
+    format_tcp_resource, ignore_stale_javascript_sync_rpc_response, javascript_sync_rpc_arg_i32,
+    javascript_sync_rpc_arg_str, javascript_sync_rpc_arg_u32, javascript_sync_rpc_arg_u32_optional,
+    javascript_sync_rpc_arg_u64, javascript_sync_rpc_arg_u64_optional,
+    javascript_sync_rpc_bytes_arg, javascript_sync_rpc_bytes_value, javascript_sync_rpc_encoding,
+    javascript_sync_rpc_error_code, javascript_sync_rpc_may_make_fd_readable,
+    javascript_sync_rpc_may_make_fd_writable, javascript_sync_rpc_option_bool,
     javascript_sync_rpc_option_u32, kernel_poll_response, kernel_stdin_read_response,
     mark_execute_exit_event_queued, parse_kernel_poll_args, parse_kernel_stdin_read_args,
     parse_signal, record_execute_exit_event_queue_wait, record_execute_phase,
-    sanitize_javascript_child_process_internal_bootstrap_env, service_javascript_sync_rpc,
+    sanitize_javascript_child_process_internal_bootstrap_env,
+    service_javascript_kernel_fd_write_sync_rpc, service_javascript_sync_rpc,
     JavascriptSyncRpcServiceRequest, LoopbackHttpDispatchRequest,
 };
 use crate::extension::{
@@ -2116,6 +2118,7 @@ where
         request: &JavascriptSyncRpcRequest,
     ) -> Result<Option<crate::execution::JavascriptSyncRpcServiceResponse>, SidecarError> {
         let requested_timeout_ms = match request.method.as_str() {
+            "process.fd_write" => None,
             "__kernel_stdin_read" => parse_kernel_stdin_read_args(request)?.1,
             _ => {
                 let timeout_ms = parse_kernel_poll_args(request)?.1;
@@ -2137,19 +2140,34 @@ where
             log_stale_process_event(&self.bridge, vm_id, process_id, "deferred kernel wait RPC");
             return Ok(None);
         };
+        let requested_timeout_ms = if request.method == "process.fd_write" {
+            Some(vm.limits.reactor.operation_deadline_ms)
+        } else {
+            requested_timeout_ms
+        };
         // Reading from the pipe frees capacity. Top it off before every root
         // process read/poll probe, matching the descendant-process path, and
         // deliver a deferred close only after all accepted bytes are written.
         flush_pending_kernel_stdin(&mut vm.kernel, process)?;
         let kernel_pid = process.kernel_pid;
+        let kernel_stdin_reader_fd = process.kernel_stdin_reader_fd;
         let deadline = match &process.deferred_kernel_wait_rpc {
             Some((parked, parked_deadline)) if parked.id == request.id => *parked_deadline,
             _ => requested_timeout_ms.map(|timeout_ms| now + Duration::from_millis(timeout_ms)),
         };
         let probe = match request.method.as_str() {
+            "process.fd_write" => {
+                service_javascript_kernel_fd_write_sync_rpc(&mut vm.kernel, process, request)
+            }
             "__kernel_stdin_read" => {
                 let (max_bytes, _) = parse_kernel_stdin_read_args(request)?;
-                kernel_stdin_read_response(&mut vm.kernel, kernel_pid, max_bytes, Duration::ZERO)
+                kernel_stdin_read_response(
+                    &mut vm.kernel,
+                    kernel_pid,
+                    kernel_stdin_reader_fd,
+                    max_bytes,
+                    Duration::ZERO,
+                )
             }
             _ => {
                 let (fd_requests, _) = parse_kernel_poll_args(request)?;
@@ -2159,17 +2177,36 @@ where
         let Some(process) = vm.active_processes.get_mut(process_id) else {
             return Ok(None);
         };
-        let probe = match probe {
-            Ok(value) => value,
+        let (probe, ready) = match probe {
+            Ok(value) => {
+                let ready = match request.method.as_str() {
+                    "process.fd_write" => true,
+                    "__kernel_stdin_read" => !value.is_null(),
+                    _ => value.get("readyCount").and_then(Value::as_u64).unwrap_or(0) > 0,
+                };
+                (value, ready)
+            }
+            Err(error)
+                if request.method == "process.fd_write"
+                    && javascript_sync_rpc_error_code(&error) == "EAGAIN" =>
+            {
+                (Value::Null, false)
+            }
             Err(error) => {
                 process.deferred_kernel_wait_rpc = None;
                 return Err(error);
             }
         };
-        let ready = match request.method.as_str() {
-            "__kernel_stdin_read" => !probe.is_null(),
-            _ => probe.get("readyCount").and_then(Value::as_u64).unwrap_or(0) > 0,
-        };
+        if request.method == "process.fd_write"
+            && !ready
+            && deadline.is_some_and(|deadline| now >= deadline)
+        {
+            process.deferred_kernel_wait_rpc = None;
+            return Err(SidecarError::Execution(format!(
+                "ETIMEDOUT: pipe write exceeded limits.reactor.operationDeadlineMs ({} ms); raise that limit for slower readers",
+                vm.limits.reactor.operation_deadline_ms
+            )));
+        }
         if ready
             || requested_timeout_ms == Some(0)
             || deadline.is_some_and(|deadline| now >= deadline)
@@ -2245,8 +2282,28 @@ where
             return Ok(());
         }
 
+        let deferrable_fd_write = {
+            let vm = self.vms.get(vm_id).expect("VM existence checked above");
+            let process = vm
+                .active_processes
+                .get(process_id)
+                .expect("process existence checked above");
+            deferred_kernel_wait_request_for_process(&request, &vm.kernel, process.kernel_pid)?
+                .filter(|request| request.method == "process.fd_write")
+        };
+
         let response: Result<crate::execution::JavascriptSyncRpcServiceResponse, SidecarError> =
             match request.method.as_str() {
+                _ if deferrable_fd_write.is_some() => {
+                    let normalized = deferrable_fd_write
+                        .as_ref()
+                        .expect("guarded deferred fd_write request");
+                    match self.service_deferrable_kernel_wait_rpc(vm_id, process_id, normalized) {
+                        Ok(Some(response)) => Ok(response),
+                        Ok(None) => return Ok(()),
+                        Err(error) => Err(error),
+                    }
+                }
                 "child_process.spawn" => {
                     let Some(vm) = self.vms.get(vm_id) else {
                         log_stale_process_event(
@@ -2761,6 +2818,11 @@ where
         if response.is_ok() && javascript_sync_rpc_may_make_fd_readable(&request) {
             if let Some(vm) = self.vms.get_mut(vm_id) {
                 Self::wake_ready_deferred_fd_reads(vm)?;
+            }
+        }
+        if response.is_ok() && javascript_sync_rpc_may_make_fd_writable(&request) {
+            if let Some(vm) = self.vms.get_mut(vm_id) {
+                Self::wake_ready_deferred_fd_writes(vm)?;
             }
         }
 
