@@ -24,6 +24,7 @@ import { builtinCryptoModule } from "./crypto.js";
 import { eventsModule } from "./events.js";
 import {
 	builtinDiagnosticsChannelModule,
+	builtinInspectorModule,
 	builtinStreamConsumersModule,
 	builtinStreamPromisesModule,
 	builtinTtyModule,
@@ -44,6 +45,7 @@ import { URL2, URLSearchParams } from "./whatwg-url.js";
 class BuiltinModuleRegistry {
 	static builtinModules = [
 		"assert",
+		"assert/strict",
 		"async_hooks",
 		"buffer",
 		"child_process",
@@ -140,6 +142,82 @@ function defineMissingModuleProperty(target, key, value) {
 		target[key] = value;
 	}
 }
+function bufferValidationBytes(input) {
+	if (
+		input instanceof ArrayBuffer ||
+		(typeof SharedArrayBuffer !== "undefined" &&
+			input instanceof SharedArrayBuffer)
+	) {
+		return new Uint8Array(input);
+	}
+	if (ArrayBuffer.isView(input) && !(input instanceof DataView)) {
+		return new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
+	}
+	const error = new TypeError(
+		'The "input" argument must be an instance of ArrayBuffer, Buffer, or TypedArray',
+	);
+	error.code = "ERR_INVALID_ARG_TYPE";
+	throw error;
+}
+function bufferIsAscii(input) {
+	const bytes = bufferValidationBytes(input);
+	for (let index = 0; index < bytes.length; index += 1) {
+		if (bytes[index] > 0x7f) {
+			return false;
+		}
+	}
+	return true;
+}
+function bufferIsUtf8(input) {
+	const bytes = bufferValidationBytes(input);
+	let index = 0;
+	while (index < bytes.length) {
+		const first = bytes[index];
+		if (first <= 0x7f) {
+			index += 1;
+			continue;
+		}
+
+		let continuationCount;
+		let minimumCodePoint;
+		let codePoint;
+		if (first >= 0xc2 && first <= 0xdf) {
+			continuationCount = 1;
+			minimumCodePoint = 0x80;
+			codePoint = first & 0x1f;
+		} else if (first >= 0xe0 && first <= 0xef) {
+			continuationCount = 2;
+			minimumCodePoint = 0x800;
+			codePoint = first & 0x0f;
+		} else if (first >= 0xf0 && first <= 0xf4) {
+			continuationCount = 3;
+			minimumCodePoint = 0x10000;
+			codePoint = first & 0x07;
+		} else {
+			return false;
+		}
+
+		if (index + continuationCount >= bytes.length) {
+			return false;
+		}
+		for (let offset = 1; offset <= continuationCount; offset += 1) {
+			const continuation = bytes[index + offset];
+			if ((continuation & 0xc0) !== 0x80) {
+				return false;
+			}
+			codePoint = (codePoint << 6) | (continuation & 0x3f);
+		}
+		if (
+			codePoint < minimumCodePoint ||
+			codePoint > 0x10ffff ||
+			(codePoint >= 0xd800 && codePoint <= 0xdfff)
+		) {
+			return false;
+		}
+		index += continuationCount + 1;
+	}
+	return true;
+}
 function trimNonRootTrailingSlash(pathValue) {
 	return typeof pathValue === "string" &&
 		pathValue.length > 1 &&
@@ -165,6 +243,8 @@ defineMissingModuleProperty(
 );
 defineMissingModuleProperty(builtinBufferStdlibModule, "Blob", globalThis.Blob);
 defineMissingModuleProperty(builtinBufferStdlibModule, "File", globalThis.File);
+defineMissingModuleProperty(builtinBufferStdlibModule, "isAscii", bufferIsAscii);
+defineMissingModuleProperty(builtinBufferStdlibModule, "isUtf8", bufferIsUtf8);
 var builtinConstantsStdlibModule = cloneStdlibModule(constantsStdlibModuleNs);
 var builtinEventsStdlibModule = cloneStdlibModule(eventsStdlibModuleNs);
 var builtinEventsConstructor = null;
@@ -334,6 +414,29 @@ defineReadableAsyncIterator(builtinStreamStdlibModule?.Readable?.prototype);
 defineReadableAsyncIterator(builtinStreamStdlibModule?.PassThrough?.prototype);
 defineReadableAsyncIterator(builtinStreamStdlibModule?.Transform?.prototype);
 defineReadableAsyncIterator(builtinStreamStdlibModule?.Duplex?.prototype);
+let defaultByteHighWaterMark = 64 * 1024;
+let defaultObjectHighWaterMark = 16;
+defineMissingModuleProperty(
+	builtinStreamStdlibModule,
+	"getDefaultHighWaterMark",
+	(objectMode) =>
+		objectMode ? defaultObjectHighWaterMark : defaultByteHighWaterMark,
+);
+defineMissingModuleProperty(
+	builtinStreamStdlibModule,
+	"setDefaultHighWaterMark",
+	(objectMode, value) => {
+		if (!Number.isInteger(value) || value < 0) {
+			const error = new RangeError(
+				`The value of "value" is out of range. It must be a non-negative integer. Received ${value}.`,
+			);
+			error.code = "ERR_OUT_OF_RANGE";
+			throw error;
+		}
+		if (objectMode) defaultObjectHighWaterMark = value;
+		else defaultByteHighWaterMark = value;
+	},
+);
 defineMissingModuleProperty(
 	builtinStreamStdlibModule,
 	"isReadable",
@@ -429,6 +532,7 @@ function loadBuiltinModule(request) {
 	const normalized = rejectRestrictedBuiltinRequest(request);
 	switch (normalized) {
 		case "assert":
+		case "assert/strict":
 			return globalThis.__secureExecBuiltinAssertModule;
 		case "async_hooks":
 			return builtinAsyncHooksModule;
@@ -731,7 +835,7 @@ function loadBuiltinModule(request) {
 		case "https":
 			return _httpsModule;
 		case "inspector":
-			throw createAccessDeniedBuiltinError(request);
+			return builtinInspectorModule;
 		case "module":
 			return _moduleModule;
 		case "wasi":
@@ -751,6 +855,11 @@ function loadBuiltinModule(request) {
 		}
 	}
 }
+
+// Node 20.16+ exposes the same permission-gated builtin resolver on process.
+// Install it on the shared process object so ESM dependencies can use it before
+// an entrypoint-specific CommonJS `require` has been created.
+defineMissingModuleProperty(process_default, "getBuiltinModule", loadBuiltinModule);
 
 export {
 	__jsRuntimeBuiltinAllowlist,

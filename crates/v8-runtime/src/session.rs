@@ -2938,6 +2938,21 @@ fn session_thread(
                             }
                         }
 
+                        // Async callbacks may assign process.exitCode after the entry script's
+                        // initial synchronous completion. Re-read it after all active handles
+                        // and pending script evaluation have drained so spawn() and exec()
+                        // report the same final Node process status.
+                        if !terminated && error.is_none() {
+                            let scope = &mut v8::HandleScope::new(iso);
+                            let ctx = v8::Local::new(scope, &exec_context);
+                            let scope = &mut v8::ContextScope::new(scope, ctx);
+                            if let Some(process_exit_code) =
+                                execution::extract_global_process_exit_code(scope)
+                            {
+                                code = process_exit_code;
+                            }
+                        }
+
                         // Determine which execution budget (if any) fired. Both the
                         // CPU-time budget and the wall-clock backstop can be armed;
                         // whichever fired first recorded its abort reason. Prefer the

@@ -272,6 +272,9 @@ class SecureExecPromisesResolver {
 }
 
 var dns = {
+  ADDRCONFIG: 32,
+  ALL: 16,
+  V4MAPPED: 8,
   lookup(hostname, options, callback) {
     lookupDnsRecords(hostname, options, callback).catch((err) => {
       const done = typeof options === "function" ? options : callback;

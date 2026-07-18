@@ -154,6 +154,7 @@ var Dir = class {
 var FILE_HANDLE_READ_CHUNK_BYTES = 64 * 1024;
 var FILE_HANDLE_READ_BUFFER_BYTES = 16 * 1024;
 var FILE_HANDLE_MAX_READ_BYTES = 2 ** 31 - 1;
+var READ_FILE_SYNC_CHUNK_BYTES = 8 * 1024 * 1024;
 function createAbortError(reason) {
   const error = new Error("The operation was aborted");
   error.name = "AbortError";
@@ -574,6 +575,18 @@ function normalizePathLike(path, name = "path") {
     throw createInvalidArgTypeError(name, "of type string or an instance of Buffer or URL", path);
   }
   throw createInvalidArgTypeError(name, "of type string or an instance of Buffer or URL", path);
+}
+function resolveOperationPath(path) {
+  const normalized = normalizePathLike(path);
+  if (normalized.startsWith("/")) {
+    return normalized;
+  }
+  const cwd = typeof globalThis.process?.cwd === "function"
+    ? globalThis.process.cwd()
+    : typeof _processConfig !== "undefined" && typeof _processConfig.cwd === "string"
+      ? _processConfig.cwd
+      : "/";
+  return `${cwd.replace(/\/$/, "")}/${normalized}`;
 }
 function tryNormalizeExistsPath(path) {
   try {
@@ -2224,6 +2237,7 @@ var _fdOpen = createBridgeSyncFacade("fs.openSync");
 var _fdClose = createBridgeSyncFacade("fs.closeSync");
 var _fdRead = createBridgeSyncFacade("fs.readSync");
 var _fsReadRaw = createBridgeSyncFacade("_fsReadRaw");
+var _fsReadFileRangeRaw = createBridgeSyncFacade("_fsReadFileRangeRaw");
 var _fdWrite = createBridgeSyncFacade("fs.writeSync");
 var _fsWriteRaw = createBridgeSyncFacade("_fsWriteRaw");
 var _fsWritevRaw = createBridgeSyncFacade("_fsWritevRaw");
@@ -2335,7 +2349,7 @@ async function fsWriteFileAsync(file, data, options) {
   validateEncodingOption(options);
   const rawPath = typeof file === "number" ? _fdGetPath.applySync(void 0, [normalizeFdInteger(file)]) : normalizePathLike(file);
   if (!rawPath) throw createFsError("EBADF", "EBADF: bad file descriptor", "write");
-  const pathStr = rawPath;
+  const pathStr = typeof file === "number" ? rawPath : resolveOperationPath(file);
   try {
     if (typeof data === "string") {
       return await _fsAsync.writeFile.apply(void 0, [pathStr, data]);
@@ -2594,18 +2608,44 @@ var fs = {
   // Sync methods
   readFileSync(path, options) {
     validateEncodingOption(options);
-    const rawPath = typeof path === "number" ? _fdGetPath.applySync(void 0, [normalizeFdInteger(path)]) : normalizePathLike(path);
-    if (!rawPath) throw createFsError("EBADF", "EBADF: bad file descriptor", "read");
-    const pathStr = rawPath;
     const encoding = typeof options === "string" ? options : options?.encoding;
+    const suppliedFd = typeof path === "number";
+    const rawPath = suppliedFd ? null : normalizePathLike(path);
+    const operationPath = suppliedFd ? null : resolveOperationPath(path);
+    const fd = suppliedFd ? normalizeFdInteger(path) : null;
     try {
-      if (encoding) {
-        const content = _fs.readFile.applySyncPromise(void 0, [pathStr, encoding]);
-        return content;
-      } else {
-        const base64Content = _fs.readFileBinary.applySyncPromise(void 0, [pathStr]);
-        return import_buffer.Buffer.from(base64Content, "base64");
+      const chunks = [];
+      let totalLength = 0;
+      let position = 0;
+      while (true) {
+        let chunk;
+        let bytesRead;
+        if (suppliedFd) {
+          chunk = import_buffer.Buffer.allocUnsafe(READ_FILE_SYNC_CHUNK_BYTES);
+          bytesRead = fs.readSync(fd, chunk, 0, chunk.byteLength, null);
+        } else {
+          const rawBytes = _fsReadFileRangeRaw.applySyncPromise(void 0, [
+            operationPath,
+            position,
+            READ_FILE_SYNC_CHUNK_BYTES
+          ]);
+          chunk = rawBytes instanceof Uint8Array ? rawBytes : import_buffer.Buffer.from(rawBytes);
+          bytesRead = chunk.byteLength;
+        }
+        if (bytesRead === 0) {
+          break;
+        }
+        chunks.push(chunk.subarray(0, bytesRead));
+        totalLength += bytesRead;
+        position += bytesRead;
+        if (totalLength > FILE_HANDLE_MAX_READ_BYTES) {
+          const error = new RangeError("File size is greater than 2 GiB");
+          error.code = "ERR_FS_FILE_TOO_LARGE";
+          throw error;
+        }
       }
+      const content = import_buffer.Buffer.concat(chunks, totalLength);
+      return encoding ? content.toString(encoding) : content;
     } catch (err) {
       if (bridgeErrorCode(err) === "ENOENT") {
         throw createFsError(
@@ -2630,7 +2670,7 @@ var fs = {
     validateEncodingOption(_options);
     const rawPath = typeof file === "number" ? _fdGetPath.applySync(void 0, [normalizeFdInteger(file)]) : normalizePathLike(file);
     if (!rawPath) throw createFsError("EBADF", "EBADF: bad file descriptor", "write");
-    const pathStr = rawPath;
+    const pathStr = typeof file === "number" ? rawPath : resolveOperationPath(file);
     try {
       if (typeof data === "string") {
         return _fs.writeFile.applySyncPromise(void 0, [pathStr, data]);
@@ -2669,7 +2709,7 @@ var fs = {
   readdirSync(path, options) {
     validateEncodingOption(options);
     const rawPath = normalizePathLike(path);
-    const pathStr = rawPath;
+    const pathStr = resolveOperationPath(path);
     let entries;
     try {
       entries = _fs.readDir.applySyncPromise(void 0, [pathStr]);
@@ -2737,10 +2777,11 @@ var fs = {
     }
   },
   existsSync(path) {
-    const pathStr = tryNormalizeExistsPath(path);
-    if (!pathStr) {
+    const rawPath = tryNormalizeExistsPath(path);
+    if (!rawPath) {
       return false;
     }
+    const pathStr = resolveOperationPath(rawPath);
     // NOTE: residual band-aid. The kernel device layer + permission exemption
     // (is_standard_device_path) now serve readFileSync/statSync on /dev/null
     // through the host fs path, but `_fs.exists` ("fs.existsSync") still returns
@@ -2770,7 +2811,7 @@ var fs = {
   },
   statSync(path, _options) {
     const rawPath = normalizePathLike(path);
-    const pathStr = rawPath;
+    const pathStr = resolveOperationPath(path);
     let statJson;
     try {
       statJson = _fs.stat.applySyncPromise(void 0, [pathStr]);
@@ -2799,8 +2840,8 @@ var fs = {
     _fs.unlink.applySyncPromise(void 0, [pathStr]);
   },
   renameSync(oldPath, newPath) {
-    const oldPathStr = normalizePathLike(oldPath, "oldPath");
-    const newPathStr = normalizePathLike(newPath, "newPath");
+    const oldPathStr = resolveOperationPath(normalizePathLike(oldPath, "oldPath"));
+    const newPathStr = resolveOperationPath(normalizePathLike(newPath, "newPath"));
     _fs.rename.applySyncPromise(void 0, [oldPathStr, newPathStr]);
   },
   copyFileSync(src, dest, _mode) {
@@ -2895,7 +2936,7 @@ var fs = {
   },
   // File descriptor methods
   openSync(path, flags, _mode) {
-    const pathStr = normalizePathLike(path);
+    const pathStr = resolveOperationPath(path);
     const numFlags = parseFlags(flags ?? "r");
     const requestedMode = normalizeOpenModeArgument(_mode);
     const modeNum = numFlags & O_CREAT ? applyProcessUmask(requestedMode ?? 438) : requestedMode;

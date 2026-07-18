@@ -1089,6 +1089,8 @@ function buildSerializedTlsOptions(options, extra) {
 		serialized.passphrase = options.passphrase;
 	if (typeof options?.ciphers === "string")
 		serialized.ciphers = options.ciphers;
+	if (typeof options?.host === "string" && options.host.length > 0)
+		serialized.host = options.host;
 	if (
 		Buffer.isBuffer(options?.session) ||
 		options?.session instanceof Uint8Array
@@ -1800,6 +1802,7 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 	_bridgeWriteFlushQueuedAtUs = 0;
 	_lastReadDeliveryEndUs = 0;
 	_currentDataEmitStartUs = 0;
+	_emittingData = false;
 	_wroteDuringDataEmit = false;
 	_lastDataEmitEndUs = 0;
 	_readWakeQueuedAtUs = 0;
@@ -2003,15 +2006,19 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 		}
 		countNetBridgeMetric("userWriteCalls");
 		countNetBridgeMetric("userWriteBytes", buf.length);
+		if (this._emittingData) {
+			this._wroteDuringDataEmit = true;
+		}
 		if (isNetBridgeMetricsEnabled()) {
 			const nowUs = netBridgeNowUs();
-			if (this._currentDataEmitStartUs > 0) {
+			if (this._emittingData) {
 				countNetBridgeMetric("userWriteDuringDataEmitCalls");
-				countNetBridgeMetric(
-					"dataEmitStartToUserWriteUs",
-					nowUs - this._currentDataEmitStartUs,
-				);
-				this._wroteDuringDataEmit = true;
+				if (this._currentDataEmitStartUs > 0) {
+					countNetBridgeMetric(
+						"dataEmitStartToUserWriteUs",
+						nowUs - this._currentDataEmitStartUs,
+					);
+				}
 			} else if (this._lastDataEmitEndUs > 0) {
 				countNetBridgeMetric(
 					"dataEmitEndToUserWriteUs",
@@ -2152,7 +2159,7 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 		if (callback) {
 			this._pendingBridgeWriteCallbacks.push(callback);
 		}
-		if (this._currentDataEmitStartUs > 0) {
+		if (this._emittingData) {
 			countNetBridgeMetric("writeFlushInlineDuringDataEmit");
 			void this._flushBridgeWrites();
 		} else if (!this._bridgeWriteFlushScheduled) {
@@ -2575,7 +2582,8 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 		const traceEmit =
 			isNetBridgeMetricsEnabled() && (event === "readable" || event === "data");
 		const emitStartUs = traceEmit ? netBridgeNowUs() : 0;
-		if (traceEmit && event === "data") {
+		if (event === "data") {
+			this._emittingData = true;
 			this._currentDataEmitStartUs = emitStartUs;
 		}
 		if (event === "readable") {
@@ -2593,6 +2601,9 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 		try {
 			handled = super.emit(event, ...args);
 		} finally {
+			if (event === "data") {
+				this._emittingData = false;
+			}
 			if (traceEmit) {
 				const elapsedUs = netBridgeNowUs() - emitStartUs;
 				if (event === "readable") {
@@ -2602,8 +2613,10 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 					countNetBridgeMetric("socketDataEmitUs", elapsedUs);
 					maxNetBridgeMetric("socketDataEmitMaxUs", elapsedUs);
 					this._lastDataEmitEndUs = netBridgeNowUs();
-					this._currentDataEmitStartUs = 0;
 				}
+			}
+			if (event === "data") {
+				this._currentDataEmitStartUs = 0;
 			}
 		}
 		return handled;

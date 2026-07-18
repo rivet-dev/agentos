@@ -13,6 +13,11 @@ var NODE_CUSTOM_GLOBAL_INVENTORY = [
 			"High-resolution monotonic clock, only installed when high_resolution_time opt-in is set.",
 	},
 	{
+		name: "__secureExecRequireEsmSync",
+		classification: "hardened",
+		rationale: "V8-owned synchronous ESM loader used by Node-compatible require().",
+	},
+	{
 		name: "process.cpuUsage",
 		classification: "hardened",
 		rationale: "Host process CPU usage bridge reference.",
@@ -551,6 +556,26 @@ var NODE_CUSTOM_GLOBAL_INVENTORY = [
 		rationale: "Host crypto digest bridge reference.",
 	},
 	{
+		name: "_cryptoHashCreate",
+		classification: "hardened",
+		rationale: "Host incremental crypto digest creation bridge reference.",
+	},
+	{
+		name: "_cryptoHashUpdate",
+		classification: "hardened",
+		rationale: "Host incremental crypto digest update bridge reference.",
+	},
+	{
+		name: "_cryptoHashFinal",
+		classification: "hardened",
+		rationale: "Host incremental crypto digest completion bridge reference.",
+	},
+	{
+		name: "_cryptoHashDestroy",
+		classification: "hardened",
+		rationale: "Host incremental crypto digest cleanup bridge reference.",
+	},
+	{
 		name: "_cryptoHmacDigest",
 		classification: "hardened",
 		rationale: "Host crypto HMAC bridge reference.",
@@ -889,6 +914,11 @@ var NODE_CUSTOM_GLOBAL_INVENTORY = [
 		name: "_fsReadRaw",
 		classification: "hardened",
 		rationale: "Raw-byte host file-descriptor read bridge reference.",
+	},
+	{
+		name: "_fsReadFileRangeRaw",
+		classification: "hardened",
+		rationale: "Bounded raw-byte host pathname read bridge reference.",
 	},
 	{
 		name: "fs.writeSync",

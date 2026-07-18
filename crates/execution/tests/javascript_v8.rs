@@ -1044,6 +1044,9 @@ fn javascript_execution_virtualizes_process_metadata_for_inline_v8_code() {
                 r#"
 if (process.argv[1] !== "/root/entry.mjs") throw new Error(`argv=${process.argv[1]}`);
 if (process.argv[2] !== "alpha") throw new Error(`arg2=${process.argv[2]}`);
+const processModule = require("process");
+if (processModule.argv[1] !== "/root/entry.mjs") throw new Error(`module argv=${processModule.argv[1]}`);
+if (processModule.argv[2] !== "alpha") throw new Error(`module arg2=${processModule.argv[2]}`);
 if (process.argv0 !== "") throw new Error(`argv0=${process.argv0}`);
 if (process.cwd() !== "/root") throw new Error(`cwd=${process.cwd()}`);
 if (process.pid !== 4242) throw new Error(`pid=${process.pid}`);
@@ -1590,7 +1593,7 @@ fn javascript_execution_file_url_to_path_accepts_guest_absolute_paths() {
             wasm_module_bytes: None,
             inline_code: Some(String::from(
                 r#"
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const guestPath = "/root/node_modules/@mariozechner/pi-coding-agent/dist/config.js";
 if (fileURLToPath(guestPath) !== guestPath) {
@@ -1600,6 +1603,11 @@ if (fileURLToPath(guestPath) !== guestPath) {
 const href = "file:///root/node_modules/@mariozechner/pi-coding-agent/dist/config.js";
 if (fileURLToPath(href) !== guestPath) {
   throw new Error(`file url mismatch: ${fileURLToPath(href)}`);
+}
+
+const viteInternal = pathToFileURL("/@id//node_modules/vitest/dist/index.js").href;
+if (viteInternal !== "file:///@id/node_modules/vitest/dist/index.js") {
+  throw new Error(`path url mismatch: ${viteInternal}`);
 }
 "#,
             )),
@@ -1952,7 +1960,15 @@ if (!workerDenied) {
   throw new Error("node:worker_threads Worker should stay unavailable");
 }
 
-for (const builtin of ["inspector", "cluster"]) {
+const inspector = require("node:inspector");
+if (typeof inspector.Session !== "function" || inspector.url() !== undefined) {
+  throw new Error("node:inspector compatibility shim is not inert");
+}
+const inspectorSession = new inspector.Session();
+inspectorSession.connect();
+inspectorSession.disconnect();
+
+for (const builtin of ["cluster"]) {
   let denied = false;
   try {
     require(`node:${builtin}`);
@@ -1971,7 +1987,12 @@ for (const builtin of ["inspector", "cluster"]) {
         .expect("start JavaScript execution");
 
     let result = execution.wait().expect("wait for JavaScript execution");
-    assert_eq!(result.exit_code, 0);
+    assert_eq!(
+        result.exit_code,
+        0,
+        "stderr: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
     assert!(
         result.stderr.is_empty(),
         "unexpected stderr: {:?}",
@@ -1985,12 +2006,22 @@ fn javascript_execution_v8_util_format_with_options_matches_node() {
         &temp.path().join("entry.mjs"),
         r#"
 import { createRequire } from "node:module";
-import { formatWithOptions as namedFormatWithOptions } from "node:util";
+import {
+  formatWithOptions as namedFormatWithOptions,
+  parseEnv as namedParseEnv,
+  stripVTControlCharacters as namedStripVTControlCharacters,
+} from "node:util";
 
 const require = createRequire(import.meta.url);
 const util = require("node:util");
 const circular = {};
 circular.self = circular;
+let stripTypeError;
+try {
+  util.stripVTControlCharacters(42);
+} catch (error) {
+  stripTypeError = { name: error.name, code: error.code };
+}
 
 console.log(JSON.stringify({
   type: typeof util.formatWithOptions,
@@ -1999,6 +2030,13 @@ console.log(JSON.stringify({
   extra: util.formatWithOptions({ colors: false }, "value", { alpha: 1 }, "tail"),
   object: util.formatWithOptions({ colors: false, depth: 1 }, "%O", { nested: { value: 1 } }),
   circular: util.formatWithOptions({}, "%j", circular),
+  stripType: typeof util.stripVTControlCharacters,
+  namedStripType: typeof namedStripVTControlCharacters,
+  stripped: util.stripVTControlCharacters("plain \u001b[31mred\u001b[39m \u001b]8;;https://example.com\u0007link\u001b]8;;\u0007"),
+  stripTypeError,
+  parseEnvType: typeof util.parseEnv,
+  namedParseEnvType: typeof namedParseEnv,
+  parsedEnv: util.parseEnv('BASIC=basic\nSPACED = value with spaces\nEMPTY=\nCOMMENT=value # comment\nDOUBLE="line\\nvalue"\nSINGLE=\'raw\\nvalue\'\nexport EXPORTED=ready\n'),
 }));
 "#,
     );

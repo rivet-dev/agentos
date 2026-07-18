@@ -88,6 +88,10 @@
 				"_cryptoRandomFill",
 				"_cryptoRandomUUID",
 				"_cryptoHashDigest",
+				"_cryptoHashCreate",
+				"_cryptoHashUpdate",
+				"_cryptoHashFinal",
+				"_cryptoHashDestroy",
 				"_cryptoHmacDigest",
 				"_cryptoPbkdf2",
 				"_cryptoScrypt",
@@ -165,6 +169,7 @@
 				"fs.closeSync",
 				"fs.readSync",
 				"_fsReadRaw",
+				"_fsReadFileRangeRaw",
 				"fs.writeSync",
 				"_fsWriteRaw",
 				"_fsWritevRaw",
@@ -583,6 +588,22 @@
 		},
 		"_cryptoHashDigest": {
 			"method": "crypto.hashDigest",
+			"translateArgs": false
+		},
+		"_cryptoHashCreate": {
+			"method": "crypto.hashCreate",
+			"translateArgs": false
+		},
+		"_cryptoHashUpdate": {
+			"method": "crypto.hashUpdate",
+			"translateArgs": false
+		},
+		"_cryptoHashFinal": {
+			"method": "crypto.hashFinal",
+			"translateArgs": false
+		},
+		"_cryptoHashDestroy": {
+			"method": "crypto.hashDestroy",
 			"translateArgs": false
 		},
 		"_cryptoHmacDigest": {
@@ -1335,6 +1356,10 @@
 		},
 		"_fsReadRaw": {
 			"method": "fs.readSync",
+			"translateArgs": false
+		},
+		"_fsReadFileRangeRaw": {
+			"method": "fs.readFileRangeSync",
 			"translateArgs": false
 		},
 		"fs.writeSync": {

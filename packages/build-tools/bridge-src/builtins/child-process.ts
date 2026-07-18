@@ -98,14 +98,163 @@ function normalizeChildProcessBridgePayload(payload) {
   return payload;
 }
 const CHILD_PROCESS_IPC_FRAME_PREFIX = "\x1EAGENTOS_IPC:";
-function encodeChildProcessIpcFrame(message) {
-  const json = JSON.stringify(message);
+const CHILD_PROCESS_IPC_MAX_GRAPH_NODES = 65536;
+const CHILD_PROCESS_IPC_MAX_GRAPH_DEPTH = 512;
+function createIpcSerializationLimitError(limit) {
+  const error = new Error(`ERR_RESOURCE_BUDGET_EXCEEDED: advanced child_process IPC message exceeds ${limit}`);
+  error.code = "ERR_RESOURCE_BUDGET_EXCEEDED";
+  return error;
+}
+function encodeAdvancedIpcMessage(message) {
+  const seen = /* @__PURE__ */ new Map();
+  const nodes = [];
+  function encode(value, depth) {
+    if (depth > CHILD_PROCESS_IPC_MAX_GRAPH_DEPTH) {
+      throw createIpcSerializationLimitError(`maximum graph depth ${CHILD_PROCESS_IPC_MAX_GRAPH_DEPTH}`);
+    }
+    if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+    if (typeof value === "number") {
+      if (Number.isNaN(value)) return { $t: "nan" };
+      if (value === Infinity) return { $t: "+inf" };
+      if (value === -Infinity) return { $t: "-inf" };
+      if (Object.is(value, -0)) return { $t: "-0" };
+      return value;
+    }
+    if (typeof value === "undefined") return { $t: "undefined" };
+    if (typeof value === "bigint") return { $t: "bigint", value: String(value) };
+    if (typeof value === "function" || typeof value === "symbol") {
+      const error = new TypeError(`${typeof value} could not be cloned by advanced child_process IPC`);
+      error.code = "ERR_IPC_MESSAGE_SERIALIZATION";
+      throw error;
+    }
+    const existing = seen.get(value);
+    if (existing !== undefined) return { $r: existing };
+    if (nodes.length >= CHILD_PROCESS_IPC_MAX_GRAPH_NODES) {
+      throw createIpcSerializationLimitError(`maximum graph nodes ${CHILD_PROCESS_IPC_MAX_GRAPH_NODES}`);
+    }
+    const index = nodes.length;
+    seen.set(value, index);
+    nodes.push(null);
+    let node;
+    if (Array.isArray(value)) {
+      node = { type: "array", values: value.map((entry) => encode(entry, depth + 1)) };
+    } else if (value instanceof Date) {
+      node = { type: "date", value: value.toISOString() };
+    } else if (value instanceof RegExp) {
+      node = { type: "regexp", source: value.source, flags: value.flags, lastIndex: value.lastIndex };
+    } else if (typeof Buffer !== "undefined" && Buffer.isBuffer(value)) {
+      node = { type: "buffer", value: value.toString("base64") };
+    } else if (value instanceof ArrayBuffer) {
+      const bytes = new Uint8Array(value);
+      node = { type: "arraybuffer", value: typeof Buffer !== "undefined" ? Buffer.from(bytes).toString("base64") : btoa(String.fromCharCode(...bytes)) };
+    } else if (ArrayBuffer.isView(value)) {
+      const bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+      node = {
+        type: "typedarray",
+        name: value.constructor?.name || "Uint8Array",
+        value: typeof Buffer !== "undefined" ? Buffer.from(bytes).toString("base64") : btoa(String.fromCharCode(...bytes))
+      };
+    } else if (value instanceof Map) {
+      node = { type: "map", values: Array.from(value, ([key, entry]) => [encode(key, depth + 1), encode(entry, depth + 1)]) };
+    } else if (value instanceof Set) {
+      node = { type: "set", values: Array.from(value, (entry) => encode(entry, depth + 1)) };
+    } else if (value instanceof Error) {
+      node = {
+        type: "error",
+        name: value.name,
+        message: value.message,
+        stack: value.stack,
+        values: Object.keys(value).map((key) => [key, encode(value[key], depth + 1)])
+      };
+    } else {
+      node = { type: "object", values: Object.keys(value).map((key) => [key, encode(value[key], depth + 1)]) };
+    }
+    nodes[index] = node;
+    return { $r: index };
+  }
+  return JSON.stringify({ __agentOSAdvancedIpc: 1, root: encode(message, 0), nodes });
+}
+function decodeAdvancedIpcMessage(envelope) {
+  if (!Array.isArray(envelope.nodes) || envelope.nodes.length > CHILD_PROCESS_IPC_MAX_GRAPH_NODES) {
+    throw createIpcSerializationLimitError(`maximum graph nodes ${CHILD_PROCESS_IPC_MAX_GRAPH_NODES}`);
+  }
+  const shells = envelope.nodes.map((node) => {
+    switch (node?.type) {
+      case "array": return [];
+      case "date": return new Date(node.value);
+      case "regexp": {
+        const value = new RegExp(node.source, node.flags);
+        value.lastIndex = node.lastIndex || 0;
+        return value;
+      }
+      case "buffer": return typeof Buffer !== "undefined" ? Buffer.from(node.value, "base64") : Uint8Array.from(atob(node.value), (character) => character.charCodeAt(0));
+      case "arraybuffer": {
+        const bytes = typeof Buffer !== "undefined" ? Buffer.from(node.value, "base64") : Uint8Array.from(atob(node.value), (character) => character.charCodeAt(0));
+        return Uint8Array.from(bytes).buffer;
+      }
+      case "typedarray": {
+        const bytes = typeof Buffer !== "undefined" ? Buffer.from(node.value, "base64") : Uint8Array.from(atob(node.value), (character) => character.charCodeAt(0));
+        const ctor = globalThis[node.name];
+        const buffer = Uint8Array.from(bytes).buffer;
+        return typeof ctor === "function" && ctor.BYTES_PER_ELEMENT ? new ctor(buffer) : new Uint8Array(buffer);
+      }
+      case "map": return /* @__PURE__ */ new Map();
+      case "set": return /* @__PURE__ */ new Set();
+      case "error": {
+        const value = new Error(node.message);
+        value.name = node.name || "Error";
+        if (node.stack !== undefined) value.stack = node.stack;
+        return value;
+      }
+      default: return {};
+    }
+  });
+  function decode(token, depth) {
+    if (depth > CHILD_PROCESS_IPC_MAX_GRAPH_DEPTH) {
+      throw createIpcSerializationLimitError(`maximum graph depth ${CHILD_PROCESS_IPC_MAX_GRAPH_DEPTH}`);
+    }
+    if (token === null || typeof token !== "object") return token;
+    if (Object.prototype.hasOwnProperty.call(token, "$r")) {
+      if (!Number.isInteger(token.$r) || token.$r < 0 || token.$r >= shells.length) {
+        throw new TypeError("invalid advanced child_process IPC reference");
+      }
+      return shells[token.$r];
+    }
+    switch (token.$t) {
+      case "undefined": return undefined;
+      case "nan": return NaN;
+      case "+inf": return Infinity;
+      case "-inf": return -Infinity;
+      case "-0": return -0;
+      case "bigint": return BigInt(token.value);
+      default: return token;
+    }
+  }
+  for (let index = 0; index < envelope.nodes.length; index += 1) {
+    const node = envelope.nodes[index];
+    const shell = shells[index];
+    if (node.type === "array") {
+      for (const value of node.values) shell.push(decode(value, 1));
+    } else if (node.type === "object" || node.type === "error") {
+      for (const [key, value] of node.values || []) shell[key] = decode(value, 1);
+    } else if (node.type === "map") {
+      for (const [key, value] of node.values) shell.set(decode(key, 1), decode(value, 1));
+    } else if (node.type === "set") {
+      for (const value of node.values) shell.add(decode(value, 1));
+    }
+  }
+  return decode(envelope.root, 0);
+}
+function encodeChildProcessIpcFrame(message, serialization) {
+  const mode = serialization ?? globalThis.__agentOSProcessConfigEnv?.AGENTOS_NODE_IPC_SERIALIZATION;
+  const json = mode === "advanced" ? encodeAdvancedIpcMessage(message) : JSON.stringify(message);
   const encoded = typeof Buffer !== "undefined" ? Buffer.from(json, "utf8").toString("base64") : btoa(json);
   return `${CHILD_PROCESS_IPC_FRAME_PREFIX}${encoded}\n`;
 }
 function decodeChildProcessIpcFramePayload(payload) {
   const json = typeof Buffer !== "undefined" ? Buffer.from(payload, "base64").toString("utf8") : atob(payload);
-  return JSON.parse(json);
+  const parsed = JSON.parse(json);
+  return parsed?.__agentOSAdvancedIpc === 1 ? decodeAdvancedIpcMessage(parsed) : parsed;
 }
 function splitChildProcessIpcFrames(buffer, chunk) {
   const text = `${buffer}${typeof Buffer !== "undefined" ? Buffer.from(chunk).toString("utf8") : String(chunk)}`;
@@ -165,6 +314,11 @@ function routeChildProcessEvent(sessionId, type, data) {
       const parsed = splitChildProcessIpcFrames(child._ipcStdoutBuffer, buf);
       child._ipcStdoutBuffer = parsed.buffer;
       for (const message of parsed.messages) {
+        if (message?.__agentOSControl === "ipc-ready") {
+          child._ipcReady = true;
+          child._flushIpcOutboundQueue();
+          continue;
+        }
         child._emitOrQueueIpcMessage(message);
       }
       if (parsed.output.length === 0) {
@@ -189,6 +343,8 @@ function routeChildProcessEvent(sessionId, type, data) {
     child._pendingSignalCode = null;
     child.signalCode = signalCode;
     child.exitCode = signalCode == null ? exitCode : null;
+    child.stdin.writable = false;
+    child.stdin.destroyed = true;
     if (wasConnected) {
       child.emit("disconnect");
     }
@@ -412,8 +568,12 @@ var ChildProcess = class {
   _handleDescription = "";
   _handleRefed = false;
   _ipcEnabled = false;
+  _ipcSerialization = "json";
+  _ipcReady = false;
   _ipcStdoutBuffer = "";
   _ipcQueuedMessages = [];
+  _ipcOutboundQueue = [];
+  _ipcOutboundBytes = 0;
   spawnfile = "";
   spawnargs = [];
   stdin;
@@ -499,6 +659,7 @@ var ChildProcess = class {
       _flushScheduled: false,
       _maxListeners: 10,
       _maxListenersWarned: /* @__PURE__ */ new Set(),
+      _pipeListeners: /* @__PURE__ */ new Map(),
       on(event, listener) {
         if (!this._listeners[event]) this._listeners[event] = [];
         this._listeners[event].push(listener);
@@ -569,7 +730,29 @@ var ChildProcess = class {
         return this._maxListeners;
       },
       pipe(dest) {
+        if (!this._pipeListeners.has(dest)) {
+          const onData = (chunk) => dest?.write?.(chunk);
+          this._pipeListeners.set(dest, onData);
+          this.on("data", onData);
+        }
         return dest;
+      },
+      unpipe(dest) {
+        if (dest === undefined) {
+          for (const [target, listener] of this._pipeListeners) {
+            this.off("data", listener);
+            target?.emit?.("unpipe", this);
+          }
+          this._pipeListeners.clear();
+          return this;
+        }
+        const listener = this._pipeListeners.get(dest);
+        if (listener) {
+          this.off("data", listener);
+          this._pipeListeners.delete(dest);
+          dest?.emit?.("unpipe", this);
+        }
+        return this;
       },
       pause() {
         return this;
@@ -599,6 +782,7 @@ var ChildProcess = class {
       _flushScheduled: false,
       _maxListeners: 10,
       _maxListenersWarned: /* @__PURE__ */ new Set(),
+      _pipeListeners: /* @__PURE__ */ new Map(),
       on(event, listener) {
         if (!this._listeners[event]) this._listeners[event] = [];
         this._listeners[event].push(listener);
@@ -669,7 +853,29 @@ var ChildProcess = class {
         return this._maxListeners;
       },
       pipe(dest) {
+        if (!this._pipeListeners.has(dest)) {
+          const onData = (chunk) => dest?.write?.(chunk);
+          this._pipeListeners.set(dest, onData);
+          this.on("data", onData);
+        }
         return dest;
+      },
+      unpipe(dest) {
+        if (dest === undefined) {
+          for (const [target, listener] of this._pipeListeners) {
+            this.off("data", listener);
+            target?.emit?.("unpipe", this);
+          }
+          this._pipeListeners.clear();
+          return this;
+        }
+        const listener = this._pipeListeners.get(dest);
+        if (listener) {
+          this.off("data", listener);
+          this._pipeListeners.delete(dest);
+          dest?.emit?.("unpipe", this);
+        }
+        return this;
       },
       pause() {
         return this;
@@ -760,6 +966,13 @@ var ChildProcess = class {
       }
     });
   }
+  _flushIpcOutboundQueue() {
+    while (this._ipcReady && this._ipcOutboundQueue.length > 0) {
+      const queued = this._ipcOutboundQueue.shift();
+      this._ipcOutboundBytes -= queued.frame.length;
+      this.stdin.write(queued.frame, "utf8", queued.callback);
+    }
+  }
   emit(event, ...args) {
     let handled = false;
     if (this._listeners[event]) {
@@ -807,7 +1020,19 @@ var ChildProcess = class {
     }
     const callback = typeof sendHandleOrOptions === "function" ? sendHandleOrOptions : typeof optionsOrCallback === "function" ? optionsOrCallback : maybeCallback;
     try {
-      const frame = encodeChildProcessIpcFrame(message);
+      const frame = encodeChildProcessIpcFrame(message, this._ipcSerialization);
+      if (!this._ipcReady) {
+        if (this._ipcOutboundQueue.length >= 1024 || this._ipcOutboundBytes + frame.length > 8 * 1024 * 1024) {
+          const error = new Error("ERR_RESOURCE_BUDGET_EXCEEDED: pre-ready child_process IPC queue exceeds 1024 messages or 8388608 bytes; wait for the child spawn/IPC channel before sending more data");
+          error.code = "ERR_RESOURCE_BUDGET_EXCEEDED";
+          if (callback) queueMicrotask(() => callback(error));
+          else queueMicrotask(() => this.emit("error", error));
+          return false;
+        }
+        this._ipcOutboundQueue.push({ frame, callback });
+        this._ipcOutboundBytes += frame.length;
+        return true;
+      }
       this.stdin.write(frame, "utf8", callback);
       return true;
     } catch (error) {
@@ -992,6 +1217,10 @@ function spawn(command, args, options) {
     opts = options || {};
   }
   const child = new ChildProcess();
+  if (opts.__agentOSForkIpc === true) {
+    child._ipcEnabled = true;
+    child.connected = true;
+  }
   child.spawnfile = command;
   child.spawnargs = [command, ...argsArray];
   child.detached = opts.detached === true;
@@ -1050,6 +1279,15 @@ function spawn(command, args, options) {
     }
     child.stdin.write = (data, encodingOrCallback, callback) => {
       const done = typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
+      if (!child.stdin.writable || child.stdin.destroyed) {
+        const error = new Error("Cannot call write after a stream was destroyed");
+        error.code = "ERR_STREAM_DESTROYED";
+        queueMicrotask(() => {
+          if (done) done(error);
+          else child.stdin.emit("error", error);
+        });
+        return false;
+      }
       if (typeof _childProcessStdinWrite === "undefined") return false;
       const bytes = typeof data === "string" ? new TextEncoder().encode(data) : data;
       try {
@@ -1300,6 +1538,20 @@ function execFile(file, args, options, callback) {
   });
   return child;
 }
+Object.defineProperty(execFile, Symbol.for("nodejs.util.promisify.custom"), {
+  configurable: true,
+  value(file, args, options) {
+    return new Promise((resolve, reject) => {
+      execFile(file, args, options, (error, stdout, stderr) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve({ stdout, stderr });
+      });
+    });
+  },
+});
 function execFileSync(file, args, options) {
   let argsArray = [];
   let opts = {};
@@ -1340,22 +1592,35 @@ function fork(modulePath, args, options) {
   }
   const effectiveCwd = opts.cwd ?? (typeof process !== "undefined" ? process.cwd() : "/");
   const execArgv = Array.isArray(opts.execArgv) ? opts.execArgv : typeof process !== "undefined" && Array.isArray(process.execArgv) ? process.execArgv : [];
+  const preloadModules = [];
+  for (let index = 0; index < execArgv.length; index += 1) {
+    const argument = String(execArgv[index]);
+    if (argument === "--require" || argument === "-r") {
+      if (index + 1 < execArgv.length) preloadModules.push(String(execArgv[++index]));
+    } else if (argument.startsWith("--require=")) {
+      preloadModules.push(argument.slice("--require=".length));
+    }
+  }
   const env = {
     ...(typeof process !== "undefined" ? process.env : {}),
     ...(opts.env || {}),
-    AGENTOS_NODE_IPC: "1"
+    AGENTOS_NODE_IPC: "1",
+    AGENTOS_NODE_IPC_SERIALIZATION: opts.serialization === "advanced" ? "advanced" : "json",
+    AGENTOS_NODE_EXEC_ARGV: JSON.stringify(execArgv.map(String)),
+    AGENTOS_NODE_PRELOAD_MODULES: JSON.stringify(preloadModules)
   };
   const child = spawn(opts.execPath || (typeof process !== "undefined" ? process.execPath : "node"), [
-    ...execArgv,
     modulePath,
     ...argsArray
   ], {
     ...opts,
+    __agentOSForkIpc: true,
     cwd: effectiveCwd,
     env,
     shell: false
   });
   child._ipcEnabled = true;
+  child._ipcSerialization = opts.serialization === "advanced" ? "advanced" : "json";
   child.connected = true;
   return child;
 }

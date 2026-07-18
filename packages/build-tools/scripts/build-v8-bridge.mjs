@@ -82,8 +82,9 @@ const nodeStdlibUrlPackageEntry = createRequire(stdLibBrowser.url).resolve("url/
 
 const alias = {};
 const customAlias = {
-	url: nodeStdlibUrlPackageEntry,
-	"node:url": nodeStdlibUrlPackageEntry,
+	url: path.join(undiciShimDir, "url.js"),
+	"node:url": path.join(undiciShimDir, "url.js"),
+	"agentos-legacy-url-polyfill": nodeStdlibUrlPackageEntry,
 	stream: path.join(undiciShimDir, "stream.js"),
 	"node:stream": path.join(undiciShimDir, "stream.js"),
 	"secure-exec-stream-stdlib": require.resolve("readable-stream"),
@@ -116,6 +117,8 @@ const customAlias = {
 	worker_threads: path.join(undiciShimDir, "worker_threads.js"),
 	"node:sqlite": path.join(undiciShimDir, "sqlite.js"),
 	sqlite: path.join(undiciShimDir, "sqlite.js"),
+	randombytes: path.join(undiciShimDir, "randombytes.js"),
+	ws: require.resolve("ws"),
 };
 Object.assign(alias, customAlias);
 for (const [name, modulePath] of Object.entries(stdLibBrowser)) {
@@ -194,6 +197,7 @@ async function validateBridgeContractGlobals(sourceText) {
 	const runtimeOnlyInventoryNames = new Set([
 		"_processConfig",
 		"__secureExecHrNowUs",
+		"__secureExecRequireEsmSync",
 		"_osConfig",
 		"bridge",
 		"_registerHandle",

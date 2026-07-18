@@ -109,6 +109,12 @@ var builtinTtyModule = {
     constructor(fd) {
       return TtyWriteStream(fd);
     }
+    getColorDepth() {
+      return this?.isTTY ? 8 : 1;
+    }
+    hasColors(count = 16) {
+      return !!this?.isTTY && Number(count) <= 2 ** 8;
+    }
   },
   isatty: ttyIsatty
 };
@@ -460,6 +466,35 @@ var builtinDiagnosticsChannelModule = {
   }
 };
 
+class InspectorSession extends EventEmitter {
+  connect() {
+  }
+  connectToMainThread() {
+  }
+  disconnect() {
+  }
+  post(method, params, callback) {
+    const done = typeof params === "function" ? params : callback;
+    if (typeof done === "function") {
+      queueMicrotask(() => done(null, {}));
+    }
+  }
+}
+
+var builtinInspectorModule = {
+  Session: InspectorSession,
+  close() {
+  },
+  console,
+  open() {
+  },
+  url() {
+    return void 0;
+  },
+  waitForDebugger() {
+  },
+};
+
 function padDateTimeField(value, length = 2) {
   return String(Math.trunc(value)).padStart(length, "0");
 }
@@ -594,10 +629,41 @@ class SafeNumberFormat {
   }
 }
 
+class SafeListFormat {
+  constructor(locales = "en-US", options = {}) {
+    this.locales = locales;
+    this.options = options && typeof options === "object" ? { ...options } : {};
+    this.format = this.format.bind(this);
+  }
+  format(values) {
+    const items = Array.from(values ?? [], (value) => String(value));
+    if (items.length < 2) return items[0] ?? "";
+    const conjunction = this.options.type === "disjunction" ? "or" : "and";
+    if (items.length === 2) return `${items[0]} ${conjunction} ${items[1]}`;
+    return `${items.slice(0, -1).join(", ")}, ${conjunction} ${items.at(-1)}`;
+  }
+  formatToParts(values) {
+    return [{ type: "element", value: this.format(values) }];
+  }
+  resolvedOptions() {
+    const locale = Array.isArray(this.locales) ? this.locales.find((entry) => typeof entry === "string") || "en-US" : typeof this.locales === "string" ? this.locales : "en-US";
+    return {
+      locale,
+      style: this.options.style ?? "long",
+      type: this.options.type ?? "conjunction"
+    };
+  }
+  static supportedLocalesOf(locales) {
+    if (Array.isArray(locales)) return locales.filter((entry) => typeof entry === "string");
+    return typeof locales === "string" ? [locales] : [];
+  }
+}
+
 function installSafeIntlFormatters(target) {
   const existingIntl = target.Intl && typeof target.Intl === "object" ? target.Intl : {};
   existingIntl.DateTimeFormat = SafeDateTimeFormat;
   existingIntl.NumberFormat = SafeNumberFormat;
+  existingIntl.ListFormat = SafeListFormat;
   target.Intl = existingIntl;
   Date.prototype.toLocaleString = function(locales, options) {
     return new target.Intl.DateTimeFormat(locales, options).format(this);
@@ -617,4 +683,4 @@ function installSafeIntlFormatters(target) {
     return new target.Intl.NumberFormat(locales, options).format(this.valueOf());
   };
 }
-export { DiagnosticsChannel, SafeDateTimeFormat, SafeNumberFormat, TtyReadStream, TtyWriteStream, WorkerThreadMessageChannel, WorkerThreadPort, WorkerThreadWorker, applySafeNumberGrouping, builtinDiagnosticsChannelModule, builtinStreamConsumersModule, builtinStreamPromisesModule, builtinTtyModule, builtinWorkerThreadsModule, coerceIntlDate, collectReadableChunks, createAccessDeniedBuiltinError, createBuiltinBlob, createDiagnosticsTracingChannel, createWorkerThreadsNotImplementedError, diagnosticsChannelCache, formatSafeDateTimeValue, getDiagnosticsChannel, getNodeReadableAsyncIterable, installSafeIntlFormatters, normalizeFractionDigitOption, padDateTimeField, ttyIsatty };
+export { DiagnosticsChannel, InspectorSession, SafeDateTimeFormat, SafeListFormat, SafeNumberFormat, TtyReadStream, TtyWriteStream, WorkerThreadMessageChannel, WorkerThreadPort, WorkerThreadWorker, applySafeNumberGrouping, builtinDiagnosticsChannelModule, builtinInspectorModule, builtinStreamConsumersModule, builtinStreamPromisesModule, builtinTtyModule, builtinWorkerThreadsModule, coerceIntlDate, collectReadableChunks, createAccessDeniedBuiltinError, createBuiltinBlob, createDiagnosticsTracingChannel, createWorkerThreadsNotImplementedError, diagnosticsChannelCache, formatSafeDateTimeValue, getDiagnosticsChannel, getNodeReadableAsyncIterable, installSafeIntlFormatters, normalizeFractionDigitOption, padDateTimeField, ttyIsatty };

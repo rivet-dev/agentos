@@ -48,6 +48,7 @@ var IncomingMessage = class {
   destroyed;
   _encoding;
   _closeEmitted;
+  _readableScheduled;
   constructor(response) {
     const normalizedHeaders = {};
     if (Array.isArray(response?.headers)) {
@@ -121,6 +122,7 @@ var IncomingMessage = class {
     this.readableFlowing = null;
     this.destroyed = false;
     this._closeEmitted = false;
+    this._readableScheduled = false;
   }
   on(event, listener) {
     if (!this._listeners[event]) this._listeners[event] = [];
@@ -129,7 +131,7 @@ var IncomingMessage = class {
       this._flowing = true;
       this.readableFlowing = true;
       Promise.resolve().then(() => {
-        if (!this._bodyConsumed) {
+        if (!this._bodyConsumed && this._flowing) {
           this._bodyConsumed = true;
           if (this._body && this._body.length > 0) {
             let buf;
@@ -163,6 +165,23 @@ var IncomingMessage = class {
         }
       });
     }
+    if (event === "readable" && !this._bodyConsumed && !this._readableScheduled) {
+      this._flowing = false;
+      this.readableFlowing = false;
+      this._readableScheduled = true;
+      queueMicrotask(() => {
+        this._readableScheduled = false;
+        if (!this._bodyConsumed && !this.destroyed) this.emit("readable");
+      });
+    }
+    return this;
+  }
+  addListener(event, listener) {
+    return this.on(event, listener);
+  }
+  prependListener(event, listener) {
+    if (!this._listeners[event]) this._listeners[event] = [];
+    this._listeners[event].unshift(listener);
     return this;
   }
   once(event, listener) {
@@ -171,7 +190,17 @@ var IncomingMessage = class {
       listener(...args);
     };
     wrapper._originalListener = listener;
+    wrapper.listener = listener;
     return this.on(event, wrapper);
+  }
+  prependOnceListener(event, listener) {
+    const wrapper = (...args) => {
+      this.off(event, wrapper);
+      listener(...args);
+    };
+    wrapper._originalListener = listener;
+    wrapper.listener = listener;
+    return this.prependListener(event, wrapper);
   }
   off(event, listener) {
     if (this._listeners[event]) {
@@ -193,6 +222,14 @@ var IncomingMessage = class {
     }
     return this;
   }
+  listeners(event) {
+    return (this._listeners[event] || []).map(
+      (listener) => listener.listener || listener
+    );
+  }
+  listenerCount(event) {
+    return this._listeners[event]?.length || 0;
+  }
   emit(event, ...args) {
     return dispatchCustomEmitterListeners(this, this._listeners[event], args);
   }
@@ -209,6 +246,7 @@ var IncomingMessage = class {
     } else {
       buf = this._body;
     }
+    if (this.listenerCount("data") > 0) this.emit("data", buf);
     Promise.resolve().then(() => {
       if (!this._ended) {
         this._ended = true;
@@ -370,6 +408,9 @@ var ClientRequest = class {
   _errorEmitted = false;
   socket;
   finished = false;
+  writable = true;
+  writableEnded = false;
+  writableFinished = false;
   aborted = false;
   destroyed = false;
   path;
@@ -641,7 +682,11 @@ var ClientRequest = class {
     };
     const createConnection = this._options.createConnection;
     if (typeof createConnection === "function") {
-      const maybeSocket = createConnection(this._options, (_err, socket) => {
+      // Node keeps the HTTP request target separate from the options object
+      // passed to transport creation. Connection factories such as `ws` mutate
+      // `options.path` to `options.socketPath`; sharing our request state would
+      // silently rewrite a WebSocket request target to `/` before serialization.
+      const maybeSocket = createConnection({ ...this._options }, (_err, socket) => {
         finish(socket);
       });
       finish(maybeSocket);
@@ -665,6 +710,11 @@ var ClientRequest = class {
   addListener(event, listener) {
     return this.on(event, listener);
   }
+  prependListener(event, listener) {
+    if (!this._listeners[event]) this._listeners[event] = [];
+    this._listeners[event].unshift(listener);
+    return this;
+  }
   once(event, listener) {
     const wrapper = (...args) => {
       this.off(event, wrapper);
@@ -672,6 +722,14 @@ var ClientRequest = class {
     };
     wrapper.listener = listener;
     return this.on(event, wrapper);
+  }
+  prependOnceListener(event, listener) {
+    const wrapper = (...args) => {
+      this.off(event, wrapper);
+      listener(...args);
+    };
+    wrapper.listener = listener;
+    return this.prependListener(event, wrapper);
   }
   off(event, listener) {
     if (this._listeners[event]) {
@@ -685,6 +743,19 @@ var ClientRequest = class {
   removeListener(event, listener) {
     return this.off(event, listener);
   }
+  listeners(event) {
+    return (this._listeners[event] || []).map(
+      (listener) => listener.listener || listener
+    );
+  }
+  listenerCount(event) {
+    return this._listenerCount(event);
+  }
+  emit(event, ...args) {
+    const hadListeners = this._listenerCount(event) > 0;
+    this._emit(event, ...args);
+    return hadListeners;
+  }
   getHeader(name) {
     if (typeof name !== "string") {
       throw createTypeErrorWithCode(
@@ -693,6 +764,10 @@ var ClientRequest = class {
       );
     }
     return this._headers[name.toLowerCase()];
+  }
+  setHeader(name, value) {
+    this._setHeaderValue(name, value);
+    return this;
   }
   getHeaders() {
     const headers = /* @__PURE__ */ Object.create(null);
@@ -766,18 +841,32 @@ var ClientRequest = class {
     }
     this._options.headers = { ...this._headers };
   }
-  write(data) {
+  write(data, _encoding, callback) {
+    if (typeof _encoding === "function") callback = _encoding;
     const addedBytes = typeof Buffer !== "undefined" ? Buffer.byteLength(data) : data.length;
     if (this._bodyBytes + addedBytes > MAX_HTTP_BODY_BYTES) {
       throw new Error("ERR_HTTP_BODY_TOO_LARGE: request body exceeds " + MAX_HTTP_BODY_BYTES + " byte limit");
     }
     this._body += data;
     this._bodyBytes += addedBytes;
+    if (typeof callback === "function") queueMicrotask(callback);
     return true;
   }
-  end(data) {
-    if (data) this.write(data);
+  end(data, encoding, callback) {
+    if (typeof data === "function") {
+      callback = data;
+      data = void 0;
+    } else if (typeof encoding === "function") {
+      callback = encoding;
+      encoding = void 0;
+    }
+    if (data !== void 0 && data !== null) this.write(data, encoding);
+    if (typeof callback === "function") this.once("finish", callback);
     this._ended = true;
+    this.writable = false;
+    this.writableEnded = true;
+    this.writableFinished = true;
+    queueMicrotask(() => this._emit("finish"));
     return this;
   }
   abort() {
@@ -2614,8 +2703,8 @@ function serializeLoopbackResponse(response, request, requestWantsClose) {
     }
   }
   if (closeConnection) {
-    headers.connection = "close";
-    if (!rawNameMap.has("connection")) {
+    if (headers.connection === void 0) {
+      headers.connection = "close";
       rawNameMap.set("connection", "Connection");
       order.push("connection");
     }
@@ -3398,7 +3487,13 @@ var Server = class {
   _requestListener;
   constructor(requestListener, tlsOptions = null) {
     this._serverId = nextServerId++;
-    this._requestListener = requestListener ?? (() => void 0);
+    this._requestListener = (...args) => {
+      const listeners = this._listeners.request;
+      if (!listeners || listeners.length === 0) return void 0;
+      const results = listeners.slice().map((listener) => listener.call(this, ...args));
+      return results.length === 1 ? results[0] : Promise.all(results);
+    };
+    if (requestListener) this.on("request", requestListener);
     this._tlsOptions = tlsOptions;
     serverInstances.set(this._serverId, this);
   }
@@ -3610,6 +3705,13 @@ var Server = class {
   }
   listenerCount(event) {
     return this._listeners[event]?.length || 0;
+  }
+  listeners(event) {
+    return [...this._listeners[event] || []];
+  }
+  emit(event, ...args) {
+    this._emit(event, ...args);
+    return this.listenerCount(event) > 0;
   }
   // Node.js Server timeout properties (no-op in sandbox)
   keepAliveTimeout = 5e3;
@@ -4084,14 +4186,23 @@ function attachHttpServerSocket(server, socket) {
         return;
       }
       buffer = buffer.subarray(parsed.bytesConsumed);
-      if (parsed.upgradeHead) {
-        cleanup();
-        const incoming = new ServerIncomingMessage(parsed.request);
-        incoming.socket = socket;
-        incoming.connection = socket;
-        server._emit("upgrade", incoming, socket, parsed.upgradeHead);
-        return;
-      }
+		if (parsed.upgradeHead) {
+			cleanup();
+			const incoming = new ServerIncomingMessage(parsed.request);
+			incoming.socket = socket;
+			incoming.connection = socket;
+			try {
+				server._emit("upgrade", incoming, socket, parsed.upgradeHead);
+			} catch (error) {
+				// EventEmitter listener failures are uncaught in Node. Do not turn an
+				// upgrade-handler exception into a silent socket close or a dangling
+				// handshake merely because request dispatch runs in an async pump.
+				queueMicrotask(() => {
+					throw error;
+				});
+			}
+			return;
+		}
       const result = await dispatchSocketBackedServerRequest(
         server,
         parsed.request,

@@ -1750,6 +1750,7 @@ fn read_response_length_argument(
 ) -> Option<usize> {
     let index = match method {
         "fs.readSync" | "_fsReadRaw" => 1,
+        "_fsReadFileRangeRaw" => 2,
         "_pythonStdinRead" | "_kernelStdinReadRaw" | "_kernelStdinRead" => 0,
         _ => return None,
     };

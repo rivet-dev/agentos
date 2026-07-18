@@ -27,7 +27,7 @@ use std::os::fd::OwnedFd;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     mpsc::{self, Receiver, SyncSender, TrySendError},
     Arc, Condvar, Mutex, OnceLock,
 };
@@ -1798,6 +1798,7 @@ pub struct JavascriptExecution {
     // panicked whenever those paths were reached from the unified runtime.
     events: EventReceiver<JavascriptExecutionEvent>,
     pending_sync_rpc: Arc<Mutex<Option<PendingSyncRpcState>>>,
+    exited: Arc<AtomicBool>,
     kernel_stdin: Arc<LocalKernelStdinBridge>,
     _import_cache_guard: Arc<NodeImportCacheCleanup>,
     v8_session: V8SessionHandle,
@@ -1841,6 +1842,10 @@ impl JavascriptExecution {
 
     pub fn uses_shared_v8_runtime(&self) -> bool {
         true
+    }
+
+    pub fn has_exited(&self) -> bool {
+        self.exited.load(Ordering::Acquire)
     }
 
     /// Enqueue a replacement image that was fully prepared without running
@@ -1926,6 +1931,12 @@ impl JavascriptExecution {
     }
 
     pub fn terminate(&self) -> Result<(), JavascriptExecutionError> {
+        // Completion may race an idempotent child-process cleanup kill. Once
+        // the terminal frame is published, preserve that result and avoid
+        // enqueueing TerminateExecution into an already-completed V8 session.
+        if self.has_exited() {
+            return Ok(());
+        }
         self.v8_session
             .terminate()
             .map_err(JavascriptExecutionError::Terminate)
@@ -2825,6 +2836,7 @@ impl JavascriptExecutionEngine {
         // made during module instantiation/evaluation cannot deadlock waiting
         // for a response while no host thread is draining session frames yet.
         let pending_sync_rpc = Arc::new(Mutex::new(None));
+        let exited = Arc::new(AtomicBool::new(false));
         let kernel_stdin = Arc::new(LocalKernelStdinBridge::default());
         let standalone_translator = translator.clone();
         // default + in-place assign: LocalBridgeState is Drop, so `..Default::default()`
@@ -2846,6 +2858,7 @@ impl JavascriptExecutionEngine {
             &runtime,
             frame_receiver,
             pending_sync_rpc.clone(),
+            exited.clone(),
             sync_rpc_timeout,
             v8_session.clone(),
             local_bridge,
@@ -2901,6 +2914,7 @@ impl JavascriptExecutionEngine {
             child_pid: v8_host.child_pid(),
             events,
             pending_sync_rpc,
+            exited,
             kernel_stdin,
             _import_cache_guard: import_cache_guard,
             v8_session,
@@ -3196,9 +3210,10 @@ fn build_v8_user_code(entrypoint: &str, env: &BTreeMap<String, String>) -> Strin
         // Inline code from NODE_EVAL or similar
         env.get("AGENTOS_NODE_EVAL").cloned().unwrap_or_default()
     } else {
-        // Module entrypoint - use require to load it
+        // Module entrypoint - load it as Node's main CommonJS module so
+        // require.main, module.parent, and process.mainModule are coherent.
         format!(
-            "require({});\n//# sourceURL={}",
+            "_moduleModule._load({}, null, true);\n//# sourceURL={}",
             serde_json::to_string(entrypoint).unwrap_or_else(|_| format!("\"{}\"", entrypoint)),
             entrypoint
         )
@@ -3555,6 +3570,9 @@ fn prepend_v8_runtime_shim(
       writable: false,
     }});
   }} catch (_e) {{}}
+  if (typeof globalThis.__runtimeRefreshProcessConfig === "function") {{
+    globalThis.__runtimeRefreshProcessConfig();
+  }}
   Object.defineProperty(globalThis, "__agentOSProcessConfigEnv", {{
     configurable: true,
     enumerable: false,
@@ -3689,6 +3707,25 @@ fn prepend_v8_runtime_shim(
       globalThis._moduleModule.createRequire(requireEntryFile);
   }}
 
+  if (typeof globalThis.require === "function") {{
+    let preloadModules = [];
+    try {{
+      const parsed = JSON.parse(nextEnv.AGENTOS_NODE_PRELOAD_MODULES || "[]");
+      if (Array.isArray(parsed)) preloadModules = parsed.map(String);
+    }} catch (_e) {{}}
+    const preloadBase =
+      nextCwd === "/"
+        ? "/__agentos_preload__.js"
+        : `${{nextCwd.replace(/\/+$/, "")}}/__agentos_preload__.js`;
+    const preloadRequire =
+      typeof globalThis._moduleModule?.createRequire === "function"
+        ? globalThis._moduleModule.createRequire(preloadBase)
+        : globalThis.require;
+    for (const preloadModule of preloadModules) {{
+      preloadRequire(preloadModule);
+    }}
+  }}
+
   // jsRuntime platform tiering: the guest JS host surface is baked into the
   // shared V8 snapshot, so non-node platforms are produced by subtractively
   // scrubbing baked globals here, per execution.
@@ -3775,6 +3812,7 @@ fn spawn_v8_event_bridge(
     runtime: &RuntimeContext,
     frame_receiver: V8SessionFrameReceiver,
     pending_sync_rpc: Arc<Mutex<Option<PendingSyncRpcState>>>,
+    exited: Arc<AtomicBool>,
     _sync_rpc_timeout: Duration,
     v8_session: V8SessionHandle,
     mut local_bridge: LocalBridgeState,
@@ -3929,6 +3967,7 @@ fn spawn_v8_event_bridge(
                             || sidecar_method == "fs.writeSync"
                             || sidecar_method == "fs.writevSync"
                             || sidecar_method == "fs.writeFileSync"
+                            || sidecar_method == "crypto.hashUpdate"
                         {
                             if let Ok(Some(bytes)) =
                                 v8_runtime::cbor_payload_raw_byte_arg(&payload, 1)
@@ -3936,7 +3975,7 @@ fn spawn_v8_event_bridge(
                                 raw_bytes_args.insert(1, bytes);
                             }
                         }
-                        if method == "_fsReadRaw" {
+                        if method == "_fsReadRaw" || method == "_fsReadFileRangeRaw" {
                             raw_bytes_args.insert(usize::MAX, Vec::new());
                         }
                         record_sync_bridge_phase(
@@ -3965,6 +4004,7 @@ fn spawn_v8_event_bridge(
                     BinaryFrame::ExecutionResult {
                         exit_code, error, ..
                     } => {
+                        exited.store(true, Ordering::Release);
                         let phase_start = Instant::now();
                         exit_frame_start = Some(phase_start);
                         record_js_event_phase("js_exit_frame_recv_wait", frame_recv_wait);
@@ -4051,6 +4091,7 @@ fn spawn_v8_event_bridge(
             }
 
             if !emitted_exit {
+                exited.store(true, Ordering::Release);
                 let phase_start = Instant::now();
                 let sent = send_javascript_event_async(
                     &sender,
@@ -4855,7 +4896,12 @@ impl<'a, R: ModuleFsReader> ModuleResolver<'a, R> {
             if let Some(package_json) = self.read_package_json(&package_json_path) {
                 return package_json.package_type;
             }
-            if dir == "/" {
+            // Node package scopes do not inherit `type` across a node_modules
+            // boundary. This also matters for pnpm's nested symlink layout: if
+            // a package.json read is unavailable at the symlinked package root,
+            // climbing into the fixture's `type: module` package would
+            // incorrectly classify a dependency's CommonJS `.js` files as ESM.
+            if dir == "/" || dir.rsplit('/').next() == Some("node_modules") {
                 break;
             }
             dir = dirname_guest_path(&dir);
@@ -5318,6 +5364,7 @@ fn normalize_builtin_specifier(specifier: &str) -> Option<String> {
     let bare = specifier.trim_start_matches("node:");
     match bare {
         "assert"
+        | "assert/strict"
         | "async_hooks"
         | "buffer"
         | "child_process"
@@ -5408,7 +5455,7 @@ fn polyfill_expression(request: &str) -> Option<String> {
 }
 
 fn build_builtin_module_wrapper(module_name: &str) -> String {
-    if module_name == "assert" {
+    if module_name == "assert" || module_name == "assert/strict" {
         return String::from(
             r#"class AssertionError extends Error {
   constructor(message = "Assertion failed") {
@@ -5701,24 +5748,22 @@ export default pathModule;
             r#"const NativeURL = globalThis.URL;
 
 function normalizeFilePath(value) {
-  const path = String(value ?? "");
+  let path = String(value ?? "");
   if (path.length === 0) {
     return "/";
   }
-  return path.startsWith("/") ? path : `/${path}`;
+  if (!path.startsWith("/")) path = `/${path}`;
+  const segments = [];
+  for (const segment of path.split("/")) {
+    if (!segment || segment === ".") continue;
+    if (segment === "..") segments.pop();
+    else segments.push(segment);
+  }
+  return `/${segments.join("/")}`;
 }
 
 function encodeFilePath(path) {
-  return path
-    .split("/")
-    .map((segment, index) =>
-      index === 0
-        ? ""
-        : encodeURIComponent(segment).replace(/[!'()*]/g, (char) =>
-            `%${char.charCodeAt(0).toString(16).toUpperCase()}`
-          )
-    )
-    .join("/");
+  return encodeURI(path).replace(/#/g, "%23").replace(/\?/g, "%3F");
 }
 
 function buildFileUrlRecord(href, pathname) {
@@ -7308,6 +7353,7 @@ fn builtin_named_exports(module_name: &str) -> &'static [&'static str] {
             "File",
             "INSPECT_MAX_BYTES",
             "SlowBuffer",
+            "isAscii",
             "isUtf8",
         ],
         "child_process" => &[
@@ -7347,15 +7393,80 @@ fn builtin_named_exports(module_name: &str) -> &'static [&'static str] {
             "trace",
             "warn",
         ],
+        "constants" => &[
+            "COPYFILE_EXCL",
+            "COPYFILE_FICLONE",
+            "COPYFILE_FICLONE_FORCE",
+            "F_OK",
+            "R_OK",
+            "W_OK",
+            "X_OK",
+            "O_RDONLY",
+            "O_WRONLY",
+            "O_RDWR",
+            "O_CREAT",
+            "O_EXCL",
+            "O_TRUNC",
+            "O_APPEND",
+            "O_DIRECTORY",
+            "O_NOFOLLOW",
+            "O_SYNC",
+            "O_DSYNC",
+            "O_NONBLOCK",
+            "S_IFMT",
+            "S_IFREG",
+            "S_IFDIR",
+            "S_IFCHR",
+            "S_IFBLK",
+            "S_IFIFO",
+            "S_IFLNK",
+            "S_IFSOCK",
+        ],
         "crypto" => &[
+            "DiffieHellman",
+            "ECDH",
+            "KeyObject",
+            "constants",
+            "createCipheriv",
+            "createDecipheriv",
+            "createDiffieHellman",
+            "createECDH",
             "createHash",
+            "createHmac",
             "createPrivateKey",
+            "createPublicKey",
+            "createSecretKey",
+            "createSign",
+            "createVerify",
+            "diffieHellman",
+            "generateKeyPair",
+            "generateKeyPairSync",
+            "generateKeySync",
+            "generatePrime",
+            "generatePrimeSync",
+            "getCiphers",
+            "getCurves",
+            "getDiffieHellman",
+            "getFips",
             "getHashes",
             "getRandomValues",
+            "pbkdf2",
+            "pbkdf2Sync",
+            "privateDecrypt",
+            "privateEncrypt",
+            "publicDecrypt",
+            "publicEncrypt",
             "randomBytes",
+            "randomFill",
             "randomFillSync",
             "randomUUID",
+            "scrypt",
+            "scryptSync",
+            "sign",
             "subtle",
+            "timingSafeEqual",
+            "verify",
+            "webcrypto",
         ],
         "diagnostics_channel" => &[
             "Channel",
@@ -7377,7 +7488,10 @@ fn builtin_named_exports(module_name: &str) -> &'static [&'static str] {
             "setMaxListeners",
         ],
         "dns" => &[
+            "ADDRCONFIG",
+            "ALL",
             "Resolver",
+            "V4MAPPED",
             "getServers",
             "lookup",
             "promises",
@@ -7404,6 +7518,11 @@ fn builtin_named_exports(module_name: &str) -> &'static [&'static str] {
             "resolveCaa",
         ],
         "fs" => &[
+            "Dir",
+            "Dirent",
+            "ReadStream",
+            "Stats",
+            "WriteStream",
             "access",
             "accessSync",
             "appendFile",
@@ -7430,10 +7549,13 @@ fn builtin_named_exports(module_name: &str) -> &'static [&'static str] {
             "readSync",
             "readdirSync",
             "readlink",
+            "realpath",
             "realpathSync",
             "rename",
             "readlinkSync",
             "renameSync",
+            "rmdir",
+            "rmdirSync",
             "rm",
             "rmSync",
             "stat",
@@ -7578,8 +7700,70 @@ fn builtin_named_exports(module_name: &str) -> &'static [&'static str] {
             "win32",
         ],
         "process" => &[
-            "arch", "argv", "argv0", "cwd", "env", "execPath", "exit", "pid", "platform", "ppid",
-            "stderr", "stdin", "stdout", "umask", "version", "versions",
+            "abort",
+            "allowedNodeEnvironmentFlags",
+            "arch",
+            "argv",
+            "argv0",
+            "availableMemory",
+            "chdir",
+            "config",
+            "constrainedMemory",
+            "cpuUsage",
+            "cwd",
+            "debugPort",
+            "dlopen",
+            "emitWarning",
+            "env",
+            "execArgv",
+            "execPath",
+            "execve",
+            "exit",
+            "exitCode",
+            "features",
+            "finalization",
+            "getActiveResourcesInfo",
+            "getBuiltinModule",
+            "getegid",
+            "geteuid",
+            "getgid",
+            "getgroups",
+            "getuid",
+            "hasUncaughtExceptionCaptureCallback",
+            "hrtime",
+            "initgroups",
+            "kill",
+            "loadEnvFile",
+            "memoryUsage",
+            "moduleLoadList",
+            "nextTick",
+            "openStdin",
+            "pid",
+            "platform",
+            "ppid",
+            "reallyExit",
+            "ref",
+            "release",
+            "report",
+            "resourceUsage",
+            "setSourceMapsEnabled",
+            "setUncaughtExceptionCaptureCallback",
+            "setegid",
+            "seteuid",
+            "setgid",
+            "setgroups",
+            "setuid",
+            "sourceMapsEnabled",
+            "stderr",
+            "stdin",
+            "stdout",
+            "threadCpuUsage",
+            "title",
+            "umask",
+            "unref",
+            "uptime",
+            "version",
+            "versions",
         ],
         "perf_hooks" => &[
             "PerformanceObserver",
@@ -7599,11 +7783,13 @@ fn builtin_named_exports(module_name: &str) -> &'static [&'static str] {
             "addAbortSignal",
             "compose",
             "finished",
+            "getDefaultHighWaterMark",
             "isDisturbed",
             "isErrored",
             "isReadable",
             "isWritable",
             "pipeline",
+            "setDefaultHighWaterMark",
         ],
         "stream/consumers" => &["arrayBuffer", "blob", "buffer", "json", "text"],
         "sys" => &[
@@ -7611,6 +7797,7 @@ fn builtin_named_exports(module_name: &str) -> &'static [&'static str] {
             "MIMEParams",
             "TextDecoder",
             "TextEncoder",
+            "aborted",
             "callbackify",
             "debug",
             "debuglog",
@@ -7619,8 +7806,10 @@ fn builtin_named_exports(module_name: &str) -> &'static [&'static str] {
             "formatWithOptions",
             "inherits",
             "inspect",
+            "parseEnv",
             "parseArgs",
             "promisify",
+            "styleText",
             "stripVTControlCharacters",
             "types",
         ],
@@ -7634,12 +7823,16 @@ fn builtin_named_exports(module_name: &str) -> &'static [&'static str] {
         ],
         "tty" => &["ReadStream", "WriteStream", "isatty"],
         "tls" => &[
+            "DEFAULT_MAX_VERSION",
+            "DEFAULT_MIN_VERSION",
             "TLSSocket",
             "Server",
+            "checkServerIdentity",
             "connect",
             "createSecureContext",
             "createServer",
             "getCiphers",
+            "rootCertificates",
         ],
         "stream/promises" => &["finished", "pipeline"],
         "timers/promises" => &["scheduler", "setImmediate", "setInterval", "setTimeout"],
@@ -7649,6 +7842,7 @@ fn builtin_named_exports(module_name: &str) -> &'static [&'static str] {
             "MIMEParams",
             "TextDecoder",
             "TextEncoder",
+            "aborted",
             "callbackify",
             "debug",
             "debuglog",
@@ -7658,8 +7852,10 @@ fn builtin_named_exports(module_name: &str) -> &'static [&'static str] {
             "inherits",
             "inspect",
             "isDeepStrictEqual",
+            "parseEnv",
             "parseArgs",
             "promisify",
+            "styleText",
             "stripVTControlCharacters",
             "types",
         ],
@@ -7841,14 +8037,24 @@ fn resolve_exports_target(
             if let Some(value) = record.get(subpath) {
                 return resolve_exports_target(value, ".", mode);
             }
+            let mut best_match = None;
             for (key, value) in record {
                 if let Some((prefix, suffix)) = key.split_once('*') {
                     if subpath.starts_with(prefix) && subpath.ends_with(suffix) {
                         let wildcard = &subpath[prefix.len()..subpath.len() - suffix.len()];
-                        let resolved = resolve_exports_target(value, ".", mode)?;
-                        return Some(resolved.replace('*', wildcard));
+                        let specificity = (prefix.len(), suffix.len());
+                        if best_match
+                            .as_ref()
+                            .is_none_or(|(_, _, current)| specificity > *current)
+                        {
+                            best_match = Some((value, wildcard, specificity));
+                        }
                     }
                 }
+            }
+            if let Some((value, wildcard, _)) = best_match {
+                let resolved = resolve_exports_target(value, ".", mode)?;
+                return Some(resolved.replace('*', wildcard));
             }
             if subpath == "." {
                 record
@@ -7894,16 +8100,25 @@ fn resolve_imports_target(
             if let Some(value) = record.get(specifier) {
                 return resolve_exports_target(value, ".", mode);
             }
+            let mut best_match = None;
             for (key, value) in record {
                 if let Some((prefix, suffix)) = key.split_once('*') {
                     if specifier.starts_with(prefix) && specifier.ends_with(suffix) {
                         let wildcard = &specifier[prefix.len()..specifier.len() - suffix.len()];
-                        let resolved = resolve_exports_target(value, ".", mode)?;
-                        return Some(resolved.replace('*', wildcard));
+                        let specificity = (prefix.len(), suffix.len());
+                        if best_match
+                            .as_ref()
+                            .is_none_or(|(_, _, current)| specificity > *current)
+                        {
+                            best_match = Some((value, wildcard, specificity));
+                        }
                     }
                 }
             }
-            None
+            best_match.and_then(|(value, wildcard, _)| {
+                resolve_exports_target(value, ".", mode)
+                    .map(|resolved| resolved.replace('*', wildcard))
+            })
         }
         _ => None,
     }

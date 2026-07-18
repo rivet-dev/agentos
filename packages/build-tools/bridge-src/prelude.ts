@@ -24,6 +24,7 @@ import undiciHeadersModule from "undici/lib/web/fetch/headers.js";
 import undiciRequestModule from "undici/lib/web/fetch/request.js";
 import undiciResponseModule from "undici/lib/web/fetch/response.js";
 import undiciWebidlModule from "undici/lib/web/webidl/index.js";
+import loadWebSocketModule from "./undici-shims/websocket-lazy.js";
 
 const NativeAbortControllerGlobal = globalThis.AbortController;
 const NativeAbortSignalGlobal = globalThis.AbortSignal;
@@ -32,6 +33,9 @@ const EarlyBufferGlobal =
   bufferStdlibModuleNs.Buffer ??
   bufferStdlibModuleNs.default?.Buffer ??
   bufferStdlibModuleNs.default;
+if (typeof EarlyBufferGlobal === "function") {
+  delete EarlyBufferGlobal.TYPED_ARRAY_SUPPORT;
+}
 function normalizeBase64UrlEncoding(encoding) {
   return typeof encoding === "string" && encoding.toLowerCase() === "base64url" ? "base64" : encoding;
 }
@@ -247,6 +251,7 @@ export {
   undiciRequestModule,
   undiciResponseModule,
   undiciWebidlModule,
+  loadWebSocketModule,
   urlStdlibModuleNs,
   utilStdlibModuleNs,
 };
