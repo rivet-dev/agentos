@@ -1,11 +1,18 @@
+use agentos_runtime::{RuntimeConfig, SidecarRuntime};
 use agentos_vfs::{FileBlockStore, SqliteMetadataStore};
 use rusqlite::Connection;
 use vfs::adapter::MountedEngineFileSystem;
 use vfs::engine::engines::{ChunkedFs, ChunkedFsOptions};
 use vfs::engine::mem::MemoryBlockStore;
-use vfs::engine::{BlockKey, BlockStore, VirtualFileSystem};
+use vfs::engine::{BlockKey, BlockStore, InodeType, VirtualFileSystem, S_IFBLK, S_IFCHR, S_IFIFO};
 use vfs::posix::MountedFileSystem;
 use vfs::posix::{MemoryFileSystem, MountOptions, MountTable};
+
+fn test_runtime_context() -> agentos_runtime::RuntimeContext {
+    SidecarRuntime::process(&RuntimeConfig::default())
+        .expect("create test runtime")
+        .context()
+}
 
 #[tokio::test]
 async fn file_block_store_persists_blocks() {
@@ -35,7 +42,7 @@ async fn sqlite_store_installs_canonical_schema() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, 2);
+    assert_eq!(version, 3);
 
     let mut statement = connection
         .prepare(
@@ -133,7 +140,7 @@ fn sqlite_store_rejects_future_schema_versions() {
                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
                schema_version INTEGER NOT NULL CHECK (schema_version >= 0)
              ) STRICT;
-             INSERT INTO agentos_fs_schema_version (singleton, schema_version) VALUES (1, 3);",
+             INSERT INTO agentos_fs_schema_version (singleton, schema_version) VALUES (1, 4);",
         )
         .unwrap();
     drop(connection);
@@ -143,7 +150,41 @@ fn sqlite_store_rejects_future_schema_versions() {
         .expect("future schema must be rejected");
     assert!(error
         .message()
-        .contains("version 3; latest supported version is 2"));
+        .contains("version 4; latest supported version is 3"));
+}
+
+#[tokio::test]
+async fn sqlite_store_persists_special_inode_kinds_and_device_ids() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = temp.path().join("special-inodes.sqlite");
+    let blocks = MemoryBlockStore::new();
+
+    {
+        let fs = ChunkedFs::new(SqliteMetadataStore::open(&db).unwrap(), blocks.clone());
+        fs.create_dir("/devices").await.unwrap();
+        fs.mknod("/devices/char", S_IFCHR | 0o600, (1 << 8) | 3)
+            .await
+            .unwrap();
+        fs.mknod("/devices/block", S_IFBLK | 0o640, (8 << 8) | 1)
+            .await
+            .unwrap();
+        fs.mknod("/devices/fifo", S_IFIFO | 0o600, 0).await.unwrap();
+    }
+
+    let fs = ChunkedFs::new(SqliteMetadataStore::open(&db).unwrap(), blocks);
+    let entries = fs.read_dir_with_types("/devices").await.unwrap();
+    assert!(entries
+        .iter()
+        .any(|entry| entry.name == "char" && entry.kind == InodeType::CharacterDevice));
+    assert!(entries
+        .iter()
+        .any(|entry| entry.name == "block" && entry.kind == InodeType::BlockDevice));
+    assert!(entries
+        .iter()
+        .any(|entry| entry.name == "fifo" && entry.kind == InodeType::Fifo));
+    assert_eq!(fs.stat("/devices/char").await.unwrap().rdev, (1 << 8) | 3);
+    assert_eq!(fs.stat("/devices/block").await.unwrap().rdev, (8 << 8) | 1);
+    assert_eq!(fs.stat("/devices/fifo").await.unwrap().rdev, 0);
 }
 
 #[tokio::test]
@@ -440,7 +481,7 @@ fn chunked_local_mounted_adapter_creates_exclusive_files_with_modes() {
         SqliteMetadataStore::open(temp.path().join("metadata.sqlite")).unwrap(),
         FileBlockStore::new(temp.path().join("blocks")).unwrap(),
     );
-    let mut mounted = MountedEngineFileSystem::new(fs).unwrap();
+    let mut mounted = MountedEngineFileSystem::with_runtime_context(fs, test_runtime_context());
 
     mounted.mkdir("/nested", false).unwrap();
     mounted
@@ -461,7 +502,7 @@ fn chunked_local_mounted_adapter_preserves_sparse_pwrite_allocation() {
         SqliteMetadataStore::open(temp.path().join("metadata.sqlite")).unwrap(),
         FileBlockStore::new(temp.path().join("blocks")).unwrap(),
     );
-    let mut mounted = MountedEngineFileSystem::new(fs).unwrap();
+    let mut mounted = MountedEngineFileSystem::with_runtime_context(fs, test_runtime_context());
 
     mounted.write_file("/sparse", Vec::new()).unwrap();
     mounted
@@ -480,7 +521,7 @@ fn chunked_local_mount_table_preserves_sparse_pwrite_allocation() {
         SqliteMetadataStore::open(temp.path().join("metadata.sqlite")).unwrap(),
         FileBlockStore::new(temp.path().join("blocks")).unwrap(),
     );
-    let mounted = MountedEngineFileSystem::new(fs).unwrap();
+    let mounted = MountedEngineFileSystem::with_runtime_context(fs, test_runtime_context());
     let mut table = MountTable::new(MemoryFileSystem::new());
     vfs::posix::VirtualFileSystem::mkdir(&mut table, "/mnt", false).unwrap();
     table

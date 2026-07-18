@@ -373,6 +373,7 @@ dependencies = [
 name = "agentos-vfs"
 version = "0.0.1"
 dependencies = [
+ "agentos-runtime",
  "agentos-vfs-core",
  "async-trait",
  "aws-config",
