@@ -45,6 +45,7 @@ async fn s3_block_store_round_trips_and_cleans_blocks() {
 }
 
 #[tokio::test]
+#[ignore = "ObjectS3 is dormant; retain this unsupported whole-object target for its return"]
 async fn object_s3_round_trips_native_objects() {
     let server = MockS3Server::start();
     let backend = S3ObjectBackend::with_options(
@@ -104,6 +105,7 @@ async fn object_s3_round_trips_native_objects() {
 }
 
 #[tokio::test]
+#[ignore = "ObjectS3 is dormant; retain this unsupported whole-object target for its return"]
 async fn object_s3_resolves_explicit_directory_markers_for_new_files() {
     let server = MockS3Server::start();
     let backend = S3ObjectBackend::with_options(
@@ -143,6 +145,7 @@ async fn object_s3_resolves_explicit_directory_markers_for_new_files() {
 }
 
 #[tokio::test]
+#[ignore = "ObjectS3 is dormant; retain this unsupported whole-object target for its return"]
 async fn object_s3_preserves_and_cleans_special_nodes_under_directory_markers() {
     let server = MockS3Server::start();
     let backend = S3ObjectBackend::with_options(

@@ -132,6 +132,26 @@ const LOCAL_FS_MIGRATIONS: &[LocalFsMigration] = &[
             DROP TABLE agentos_fs_inodes_v1;
         "#,
     },
+    LocalFsMigration {
+        version: 3,
+        statements: r#"
+            DROP INDEX agentos_fs_dentries_parent;
+            ALTER TABLE agentos_fs_dentries RENAME TO agentos_fs_dentries_v2;
+            CREATE TABLE agentos_fs_dentries (
+              parent_ino INTEGER NOT NULL CHECK (parent_ino > 0),
+              name TEXT NOT NULL CHECK (length(name) > 0),
+              child_ino INTEGER NOT NULL CHECK (child_ino > 0),
+              kind INTEGER NOT NULL CHECK (kind IN (0, 1, 2, 3, 4, 5)),
+              PRIMARY KEY (parent_ino, name)
+            ) STRICT;
+            INSERT INTO agentos_fs_dentries (parent_ino, name, child_ino, kind)
+              SELECT parent_ino, name, child_ino, kind
+                FROM agentos_fs_dentries_v2;
+            DROP TABLE agentos_fs_dentries_v2;
+            CREATE INDEX agentos_fs_dentries_parent
+              ON agentos_fs_dentries(parent_ino);
+        "#,
+    },
 ];
 
 pub struct SqliteMetadataStore {
@@ -267,13 +287,19 @@ impl SqliteMetadataStore {
         upsert_inode(connection, meta)?;
         if storage_changed {
             connection
-                .execute("DELETE FROM agentos_fs_chunks WHERE ino = ?", params![meta.ino])
+                .execute(
+                    "DELETE FROM agentos_fs_chunks WHERE ino = ?",
+                    params![meta.ino],
+                )
                 .map_err(|err| VfsError::eio(format!("delete setattr chunks: {err}")))?;
             for key in affected_keys {
                 let refcount = self.inner.refcount(&key);
                 if refcount == 0 {
                     connection
-                        .execute("DELETE FROM agentos_fs_block_refs WHERE block_key = ?", params![key.0])
+                        .execute(
+                            "DELETE FROM agentos_fs_block_refs WHERE block_key = ?",
+                            params![key.0],
+                        )
                         .map_err(|err| {
                             VfsError::eio(format!("delete setattr block ref {}: {err}", key.0))
                         })?;
@@ -399,7 +425,9 @@ impl SqliteMetadataStore {
 
             if new_size < old_size {
                 connection
-                    .prepare_cached("DELETE FROM agentos_fs_chunks WHERE ino = ? AND chunk_index >= ?")
+                    .prepare_cached(
+                        "DELETE FROM agentos_fs_chunks WHERE ino = ? AND chunk_index >= ?",
+                    )
                     .map_err(|err| VfsError::eio(format!("prepare truncated chunk delete: {err}")))?
                     .execute(params![ino, keep_chunks])
                     .map_err(|err| {
@@ -425,7 +453,10 @@ impl SqliteMetadataStore {
                 let refcount = self.inner.refcount(&key);
                 if refcount == 0 {
                     connection
-                        .execute("DELETE FROM agentos_fs_block_refs WHERE block_key = ?", params![key.0])
+                        .execute(
+                            "DELETE FROM agentos_fs_block_refs WHERE block_key = ?",
+                            params![key.0],
+                        )
                         .map_err(|err| {
                             VfsError::eio(format!("delete SQLite block ref {}: {err}", key.0))
                         })?;
@@ -1030,5 +1061,39 @@ mod tests {
             )
             .expect("inspect database");
         assert_eq!(table_count, 0);
+    }
+
+    #[test]
+    fn upgrades_v2_dentries_without_losing_existing_rows() {
+        let mut connection = Connection::open_in_memory().expect("open database");
+        install_schema_migrations(&mut connection, &LOCAL_FS_MIGRATIONS[..2])
+            .expect("install schema v2");
+        connection
+            .execute(
+                "INSERT INTO agentos_fs_dentries (parent_ino, name, child_ino, kind)
+                 VALUES (1, 'existing', 2, 0)",
+                [],
+            )
+            .expect("seed v2 dentry");
+
+        install_schema_migrations(&mut connection, LOCAL_FS_MIGRATIONS)
+            .expect("upgrade schema to v3");
+
+        let existing: (u64, i64) = connection
+            .query_row(
+                "SELECT child_ino, kind FROM agentos_fs_dentries
+                 WHERE parent_ino = 1 AND name = 'existing'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("read preserved dentry");
+        assert_eq!(existing, (2, 0));
+        connection
+            .execute(
+                "INSERT INTO agentos_fs_dentries (parent_ino, name, child_ino, kind)
+                 VALUES (1, 'character', 3, 3)",
+                [],
+            )
+            .expect("insert character-device dentry after upgrade");
     }
 }
