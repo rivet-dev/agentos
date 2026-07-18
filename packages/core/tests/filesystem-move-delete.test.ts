@@ -33,7 +33,7 @@ describe("filesystem move and delete", () => {
 
 	test("delete file", async () => {
 		await vm.writeFile("/tmp/delfile.txt", "delete me");
-		await vm.delete("/tmp/delfile.txt");
+		await vm.remove("/tmp/delfile.txt");
 		expect(await vm.exists("/tmp/delfile.txt")).toBe(false);
 	});
 
@@ -42,11 +42,11 @@ describe("filesystem move and delete", () => {
 		await vm.mkdir("/tmp/deldir/sub");
 		await vm.writeFile("/tmp/deldir/a.txt", "a");
 		await vm.writeFile("/tmp/deldir/sub/b.txt", "b");
-		await vm.delete("/tmp/deldir", { recursive: true });
+		await vm.remove("/tmp/deldir", { recursive: true });
 		expect(await vm.exists("/tmp/deldir")).toBe(false);
 	});
 
 	test("delete non-existent path throws", async () => {
-		await expect(vm.delete("/tmp/no-such-file.txt")).rejects.toThrow();
+		await expect(vm.remove("/tmp/no-such-file.txt")).rejects.toThrow();
 	});
 });

@@ -6,9 +6,8 @@ const handle = client.vm.getOrCreate("my-agent");
 
 // docs:start subscribe
 const conn = handle.connect();
-conn.on("cronEvent", (data) => {
-  // data is inferred: { event: CronEvent }
-  console.log("Cron event:", data.event);
+conn.on("cronEvent", (event) => {
+  console.log("Cron event:", event);
 });
 // docs:end subscribe
 

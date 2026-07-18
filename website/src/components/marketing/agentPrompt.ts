@@ -9,7 +9,7 @@ agentOS is the agent-facing runtime for running coding agents — Claude Code, C
 
 Please do the following in this project:
 
-1. Scaffold a minimal agentOS server and client. Install \`@rivet-dev/agentos\` and a software package such as \`@agentos-software/pi\`. Create a server that defines an \`agentOS()\` VM actor with that software and starts the registry via \`setup\`. Create a client that uses \`createClient\` from \`@rivet-dev/agentos/client\`, calls \`vm.getOrCreate(...)\`, creates an agent session with \`createSession("pi")\`, and sends a prompt with \`sendPrompt\`.
+1. Scaffold a minimal agentOS server and client. Install \`@rivet-dev/agentos\` and a software package such as \`@agentos-software/pi\`. Create a server that defines an \`agentOS()\` VM actor with that software and starts the registry via \`setup\`. Create a client that uses \`createClient\` from \`@rivet-dev/agentos/client\`, calls \`vm.getOrCreate(...)\`, chooses a session ID, opens a durable agent session with \`openSession({ sessionId, agent: "pi" })\`, and sends a prompt with \`prompt({ sessionId, content })\`.
 
 2. Actually test it end-to-end — don't stop at "it compiles". Start the server, connect the client, create the session, send a prompt, and confirm a real response comes back from the agent. Verify the full server↔client round-trip works.
 

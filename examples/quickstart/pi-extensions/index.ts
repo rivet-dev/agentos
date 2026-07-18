@@ -92,7 +92,8 @@ console.log("Extension written. Creating Pi session...\n");
 
 // ── Create session and prompt ──────────────────────────────────────
 
-const { sessionId } = await vm.createSession("pi", {
+await vm.openSession({
+	agent: "pi",
 	cwd: WORKSPACE_DIR,
 	env: {
 		HOME: HOME_DIR,
@@ -100,23 +101,28 @@ const { sessionId } = await vm.createSession("pi", {
 		...(ANTHROPIC_BASE_URL ? { ANTHROPIC_BASE_URL } : {}),
 	},
 });
-console.log("Session created:", sessionId);
 
 // Ask a simple question — if the extension loaded, the agent will
 // prefix its response with "EXTENSION_OK: "
-const { text } = await vm.prompt(
-	sessionId,
-	"What is 2 + 2? Reply with just the number.",
-);
-console.log("Agent:", text);
+const result = await vm.prompt({
+	content: [
+		{ type: "text", text: "What is 2 + 2? Reply with just the number." },
+	],
+});
+const responseText =
+	result.message?.content
+		.filter((block) => block.type === "text")
+		.map((block) => block.text)
+		.join("") ?? "";
+console.log("Agent:", responseText);
 
 // ── Verify ─────────────────────────────────────────────────────────
 
-if (text.includes("EXTENSION_OK:")) {
+if (responseText.includes("EXTENSION_OK:")) {
 	console.log("SUCCESS — Pi extension loaded and modified the system prompt.");
 } else {
 	throw new Error("FAIL — Response did not include the expected prefix.");
 }
 
-vm.closeSession(sessionId);
+await vm.deleteSession();
 await vm.dispose();

@@ -18,16 +18,26 @@ async function reviewCode(code: string): Promise<string> {
 	await reviewerHandle.writeFile("/home/agentos/review.ts", code);
 
 	// Ask the reviewer to review.
-	const sessionId = await reviewerHandle.createSession("claude", {
+	await reviewerHandle.openSession({
+		agent: "claude",
 		env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 	});
-	const result = await reviewerHandle.sendPrompt(
-		sessionId,
-		"Review the code at /home/agentos/review.ts and list any issues.",
-	);
-	await reviewerHandle.closeSession(sessionId);
+	const result = await reviewerHandle.prompt({
+		content: [
+			{
+				type: "text",
+				text: "Review the code at /home/agentos/review.ts and list any issues.",
+			},
+		],
+	});
+	await reviewerHandle.deleteSession();
 
-	return result.text;
+	return (
+		result.message?.content
+			.filter((block) => block.type === "text")
+			.map((block) => block.text)
+			.join("") ?? ""
+	);
 }
 
 // The writer agent gets a `review` binding collection. When the writer runs

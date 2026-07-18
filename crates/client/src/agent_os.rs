@@ -7,19 +7,18 @@
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::io::Write;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
-use scc::{HashMap as SccHashMap, HashSet as SccHashSet};
+use scc::HashMap as SccHashMap;
 use serde::Deserialize;
 use serde_json::{Map, Value};
-use tokio::sync::{broadcast, oneshot, watch};
+use tokio::sync::{broadcast, watch};
 use tokio::task::JoinHandle;
 
 use agentos_protocol::generated::v1::{
     AcpCallback, AcpCallbackResponse, AcpEvent, AcpHostRequestCallbackResponse,
-    AcpPermissionCallbackResponse,
 };
 use agentos_protocol::ACP_EXTENSION_NAMESPACE;
 use agentos_sidecar_client::wire;
@@ -32,12 +31,10 @@ use crate::config::{
 };
 use crate::cron::CronManager;
 use crate::error::ClientError;
-use crate::json_rpc::JsonRpcNotification;
 use crate::process::SYNTHETIC_PID_BASE;
 use crate::session::{
-    record_live_session_event, AgentCapabilities, AgentExitEvent, AgentInfo, PermissionReply,
-    PermissionRequest, PermissionRouteRequest, PermissionRouteResult, SessionConfigOption,
-    SessionModeState,
+    AgentExitEvent, AgentRestartOutcome, DurableSessionEventEntry, EphemeralSessionEventEntry,
+    SessionStreamEntry, SessionUpdate,
 };
 use crate::sidecar::{AgentOsSidecar, AgentOsSidecarPlacement, AgentOsSidecarVmLease};
 use crate::transport::{SidecarProcess, WireSidecarCallback};
@@ -53,8 +50,11 @@ use once_cell::sync::OnceCell;
 pub(crate) struct ProcessEntry {
     pub command: String,
     pub args: Vec<String>,
+    #[allow(dead_code)]
     pub stdout_tx: broadcast::Sender<Vec<u8>>,
+    #[allow(dead_code)]
     pub stderr_tx: broadcast::Sender<Vec<u8>>,
+    pub output_tx: broadcast::Sender<crate::process::ProcessOutput>,
     /// Seeded `None`; the already-exited branch fires immediately once it holds `Some(code)`.
     pub exit_tx: watch::Sender<Option<i32>>,
     /// The sidecar-side process id used on the wire.
@@ -121,30 +121,6 @@ pub(crate) struct HostAcpTerminal {
     pub exit_rx: watch::Receiver<Option<i32>>,
 }
 
-/// An ACP session (TS `_sessions` value). Keyed by ACP session id.
-pub(crate) struct SessionEntry {
-    pub agent_type: String,
-    pub modes: parking_lot::Mutex<Option<SessionModeState>>,
-    pub config_options: parking_lot::Mutex<Vec<SessionConfigOption>>,
-    pub capabilities: parking_lot::Mutex<Option<AgentCapabilities>>,
-    pub agent_info: parking_lot::Mutex<Option<AgentInfo>>,
-    pub config_overrides: parking_lot::Mutex<std::collections::BTreeMap<String, String>>,
-    pub event_tx: broadcast::Sender<JsonRpcNotification>,
-    pub permission_tx: broadcast::Sender<PermissionRequest>,
-    pub agent_exit_tx: broadcast::Sender<AgentExitEvent>,
-    pub pending_permission_replies: SccHashMap<String, oneshot::Sender<PermissionReply>>,
-    pub pending_session_request_lock: parking_lot::Mutex<()>,
-    /// Pending prompt resolvers, for cancel prompt-fallback + abort-on-close.
-    ///
-    /// The resolver carries the intended [`JsonRpcResponse`], mirroring the TS resolver shape
-    /// `{ method, resolve: (response) => void }`. The cause (close vs cancel) decides the payload at
-    /// the abort/cancel site: abort-on-close resolves with the `-32000` `Session closed: <id>` error,
-    /// while prompt-cancel resolves with `{ result: { stopReason: "cancelled" } }`. The shape is NOT
-    /// re-derived from the method downstream.
-    pub pending_prompt_resolvers:
-        SccHashMap<i64, oneshot::Sender<crate::json_rpc::JsonRpcResponse>>,
-}
-
 // ---------------------------------------------------------------------------
 // AgentOs
 // ---------------------------------------------------------------------------
@@ -166,6 +142,13 @@ pub struct ProjectedAgent {
     pub adapter_entrypoint: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SoftwareInfo {
+    #[serde(rename = "packageName")]
+    pub package_name: String,
+    pub commands: Vec<String>,
+}
+
 /// The high-level client. Cheaply cloneable via `Arc`.
 #[derive(Clone)]
 pub struct AgentOs {
@@ -178,7 +161,6 @@ pub(crate) struct AgentOsInner {
     pub(crate) connection_id: String,
     pub(crate) session_id: String,
     pub(crate) vm_id: String,
-    pub(crate) request_counter: AtomicI64,
     /// Projected command names and guest entrypoints reported by the sidecar.
     pub(crate) projected_commands: parking_lot::Mutex<BTreeMap<String, String>>,
     /// Projected agents reported by the sidecar.
@@ -220,15 +202,9 @@ pub(crate) struct AgentOsInner {
     /// Monotonic counter for the `acp-terminal-N` ids (TS `_acpTerminalCounter`).
     pub(crate) host_acp_terminal_counter: AtomicU64,
 
-    // Session registries.
-    pub(crate) sessions: SccHashMap<String, SessionEntry>,
-    /// Bounded ordered set (cap [`crate::CLOSED_SESSION_ID_RETENTION_LIMIT`]) for close idempotence.
-    pub(crate) closed_session_ids: parking_lot::Mutex<VecDeque<String>>,
-    /// Session ids with an in-flight close in progress. Mirrors TS `_sessionClosePromises`: because
-    /// `close_session` runs the actual close on a detached task, this set keeps the id "known" during
-    /// the window between removal from `sessions` and insertion into `closed_session_ids`, so a second
-    /// `close_session` (or close-after-destroy) does not spuriously throw `SessionNotFound`.
-    pub(crate) closing_session_ids: SccHashSet<String>,
+    // Durable session event fan-out. Session state itself is sidecar-owned SQLite.
+    pub(crate) durable_session_event_tx: broadcast::Sender<crate::session::SessionStreamEntry>,
+    pub(crate) durable_agent_exit_tx: broadcast::Sender<crate::session::AgentExitEvent>,
 
     // Cron.
     pub(crate) cron: Arc<CronManager>,
@@ -237,7 +213,7 @@ pub(crate) struct AgentOsInner {
     pub(crate) config: Arc<AgentOsConfig>,
     pub(crate) sidecar: Arc<AgentOsSidecar>,
     pub(crate) sidecar_lease: parking_lot::Mutex<Option<AgentOsSidecarVmLease>>,
-    pub(crate) in_process_mounts: SccHashMap<String, crate::fs::MountedFs>,
+    pub(crate) dynamic_mounts: parking_lot::Mutex<Vec<wire::MountDescriptor>>,
     pub(crate) disposed: AtomicBool,
     /// Handle for the background ACP event-pump task (`spawn_acp_event_pump`). Stored so `shutdown`
     /// can abort it; the pump only exits on its own when the shared transport's event channel closes,
@@ -312,7 +288,8 @@ impl AgentOs {
             | wire::ResponsePayload::GuestKernelResultResponse(_)
             | wire::ResponsePayload::ResourceSnapshotResponse(_)
             | wire::ResponsePayload::PackageLinkedResponse(_)
-            | wire::ResponsePayload::ProvidedCommandsResponse(_) => {
+            | wire::ResponsePayload::ProvidedCommandsResponse(_)
+            | wire::ResponsePayload::ListMountsResponse(_) => {
                 return Err(ClientError::Sidecar(
                     "unexpected open_session response".to_string(),
                 ));
@@ -381,7 +358,8 @@ impl AgentOs {
             | wire::ResponsePayload::GuestKernelResultResponse(_)
             | wire::ResponsePayload::ResourceSnapshotResponse(_)
             | wire::ResponsePayload::PackageLinkedResponse(_)
-            | wire::ResponsePayload::ProvidedCommandsResponse(_) => {
+            | wire::ResponsePayload::ProvidedCommandsResponse(_)
+            | wire::ResponsePayload::ListMountsResponse(_) => {
                 return Err(ClientError::Sidecar(
                     "unexpected create_vm response".to_string(),
                 ));
@@ -398,6 +376,7 @@ impl AgentOs {
 
         // Native plugin mounts configured on the client.
         let mounts = serialize_mounts(&config)?;
+        let configured_mounts = mounts.clone();
 
         // 6. Configure the VM (vm scope). The sidecar owns the `/opt/agentos` package
         // projection: it builds the staging dir + registers the read-only host_dir
@@ -470,7 +449,8 @@ impl AgentOs {
             | wire::ResponsePayload::GuestKernelResultResponse(_)
             | wire::ResponsePayload::ResourceSnapshotResponse(_)
             | wire::ResponsePayload::PackageLinkedResponse(_)
-            | wire::ResponsePayload::ProvidedCommandsResponse(_) => {
+            | wire::ResponsePayload::ProvidedCommandsResponse(_)
+            | wire::ResponsePayload::ListMountsResponse(_) => {
                 return Err(ClientError::Sidecar(
                     "unexpected configure_vm response".to_string(),
                 ));
@@ -553,7 +533,8 @@ impl AgentOs {
                     | wire::ResponsePayload::GuestKernelResultResponse(_)
                     | wire::ResponsePayload::ResourceSnapshotResponse(_)
                     | wire::ResponsePayload::PackageLinkedResponse(_)
-                    | wire::ResponsePayload::ProvidedCommandsResponse(_) => {
+                    | wire::ResponsePayload::ProvidedCommandsResponse(_)
+                    | wire::ResponsePayload::ListMountsResponse(_) => {
                         return Err(ClientError::Sidecar(
                             "unexpected register_host_callbacks response".to_string(),
                         ));
@@ -588,7 +569,6 @@ impl AgentOs {
             connection_id,
             session_id,
             vm_id,
-            request_counter: AtomicI64::new(1),
             projected_commands: parking_lot::Mutex::new(projected_commands),
             projected_agents: parking_lot::Mutex::new(projected_agents),
             process_registry_lock: parking_lot::Mutex::new(()),
@@ -607,14 +587,13 @@ impl AgentOs {
             acp_terminal_lifecycle_lock: tokio::sync::Mutex::new(()),
             host_acp_terminals: SccHashMap::new(),
             host_acp_terminal_counter: AtomicU64::new(0),
-            sessions: SccHashMap::new(),
-            closed_session_ids: parking_lot::Mutex::new(VecDeque::new()),
-            closing_session_ids: SccHashSet::new(),
+            durable_session_event_tx: broadcast::channel(1024).0,
+            durable_agent_exit_tx: broadcast::channel(64).0,
             cron,
             config,
             sidecar,
             sidecar_lease: parking_lot::Mutex::new(Some(lease)),
-            in_process_mounts: SccHashMap::new(),
+            dynamic_mounts: parking_lot::Mutex::new(configured_mounts),
             disposed: AtomicBool::new(false),
             acp_event_pump: parking_lot::Mutex::new(None),
         };
@@ -622,29 +601,26 @@ impl AgentOs {
         let client = AgentOs {
             inner: Arc::new(inner),
         };
-        // Register the permission router and callback unconditionally (unlike `host_callback`,
-        // which is gated on configured binding kits): any agent session can raise a permission
-        // request. Re-registering on a shared transport replaces an identical stateless callback,
-        // same as the `host_callback` pattern.
-        let _ = vm_permission_routers()
-            .insert(client.inner.vm_id.clone(), Arc::downgrade(&client.inner));
+        // Register the ACP host-operation router unconditionally. Adapters can
+        // request filesystem or terminal work even when no binding kit exists.
+        // Re-registering on a shared transport replaces the same stateless callback.
+        let _ = vm_acp_routers().insert(client.inner.vm_id.clone(), Arc::downgrade(&client.inner));
         client
             .inner
             .transport
-            .register_wire_callback("ext", permission_request_callback());
+            .register_wire_callback("ext", acp_host_callback());
         spawn_acp_event_pump(&client);
         Ok(client)
     }
 
     /// Dispose the VM (= TS `dispose`). Teardown order:
     /// 1. cron dispose
-    /// 2. close all sessions (swallow errors)
-    /// 3. kill all shells + snapshot pending exits
-    /// 4. kill all ACP terminals
-    /// 5. drain tracked shell-exit tasks (two-phase, bounded by
+    /// 2. kill all shells + snapshot pending exits
+    /// 3. kill all ACP terminals
+    /// 4. drain tracked shell-exit tasks (two-phase, bounded by
     ///    [`crate::SHELL_DISPOSE_TIMEOUT_MS`])
-    /// 6. unregister the sidecar event listener
-    /// 7. release the lease (or tear down the transport)
+    /// 5. unregister the sidecar event listener
+    /// 6. release the lease (or tear down the transport)
     ///
     /// Idempotent (guarded by `disposed`).
     /// Dynamically link a software package into the RUNNING VM (parity with the
@@ -686,7 +662,7 @@ impl AgentOs {
         }
     }
 
-    pub async fn provided_commands(&self) -> Result<BTreeMap<String, Vec<String>>, ClientError> {
+    pub async fn list_software(&self) -> Result<Vec<SoftwareInfo>, ClientError> {
         let inner = self.inner();
         let response = self
             .transport()
@@ -699,11 +675,14 @@ impl AgentOs {
             wire::ResponsePayload::ProvidedCommandsResponse(provided) => Ok(provided
                 .packages
                 .into_iter()
-                .map(|package| (package.package_name, package.commands))
+                .map(|package| SoftwareInfo {
+                    package_name: package.package_name,
+                    commands: package.commands,
+                })
                 .collect()),
             wire::ResponsePayload::RejectedResponse(rejected) => Err(rejected_to_error(rejected)),
             other => Err(ClientError::Sidecar(format!(
-                "unexpected provided_commands response: {other:?}"
+                "unexpected list_software response: {other:?}"
             ))),
         }
     }
@@ -817,7 +796,7 @@ impl AgentOs {
             )
             .await;
         let _ = vm_bindings().remove(&self.inner.vm_id);
-        let _ = vm_permission_routers().remove(&self.inner.vm_id);
+        let _ = vm_acp_routers().remove(&self.inner.vm_id);
         let _ = session_js_bridge_callbacks().remove(&sidecar_session_key(
             &self.inner.connection_id,
             &self.inner.session_id,
@@ -928,37 +907,55 @@ fn deliver_acp_ext_event(
     let event: AcpEvent = serde_bare::from_slice(&envelope.payload)
         .map_err(|error| ClientError::Sidecar(format!("invalid ACP event: {error}")))?;
     match event {
+        AcpEvent::AcpDurableSessionEvent(event) => {
+            let durable_event = crate::session::decode_durable_event(event.event)
+                .map_err(|error| ClientError::Sidecar(error.to_string()))?;
+            let _ = inner
+                .durable_session_event_tx
+                .send(SessionStreamEntry::Durable(DurableSessionEventEntry {
+                    durability: crate::session::DurableEventKind::Durable,
+                    session_id: event.session_id.clone(),
+                    sequence: event.sequence,
+                    timestamp: event.timestamp,
+                    event: durable_event.clone(),
+                }));
+            Ok(())
+        }
+        AcpEvent::AcpEphemeralSessionUpdateEvent(event) => {
+            let update: SessionUpdate = serde_json::from_str(&event.update).map_err(|error| {
+                ClientError::Sidecar(format!("invalid ephemeral ACP session update: {error}"))
+            })?;
+            let session_event = match update {
+                SessionUpdate::AgentMessageChunk(chunk) => {
+                    crate::session::EphemeralSessionEvent::AgentMessageChunk(chunk)
+                }
+                SessionUpdate::AgentThoughtChunk(chunk) => {
+                    crate::session::EphemeralSessionEvent::AgentThoughtChunk(chunk)
+                }
+                _ => {
+                    return Err(ClientError::Sidecar(String::from(
+                        "ephemeral ACP event must be an agent message or thought chunk",
+                    )))
+                }
+            };
+            let _ = inner
+                .durable_session_event_tx
+                .send(SessionStreamEntry::Ephemeral(EphemeralSessionEventEntry {
+                    durability: crate::session::EphemeralEventKind::Ephemeral,
+                    session_id: event.session_id,
+                    after_sequence: event.after_sequence,
+                    event: session_event,
+                }));
+            Ok(())
+        }
         AcpEvent::AcpSessionEvent(event) => {
-            let notification: JsonRpcNotification = serde_json::from_str(&event.notification)
-                .map_err(|error| {
-                    ClientError::Sidecar(format!("invalid ACP session notification: {error}"))
-                })?;
-            let delivered = inner
-                .sessions
-                .read(&event.session_id, |_, entry| {
-                    record_live_session_event(entry, notification.clone());
-                })
-                .is_some();
-            if !delivered {
-                tracing::warn!(
-                    session_id = event.session_id,
-                    "received acp event for unknown session"
-                );
-            }
+            tracing::warn!(
+                session_id = event.session_id,
+                "ignored legacy live-session event; durable session events use typed envelopes"
+            );
             Ok(())
         }
         AcpEvent::AcpAgentStderrEvent(event) => {
-            if !event.session_id.is_empty()
-                && inner.sessions.read(&event.session_id, |_, _| ()).is_none()
-            {
-                tracing::warn!(
-                    session_id = event.session_id,
-                    agent_type = event.agent_type,
-                    process_id = event.process_id,
-                    "received acp stderr event for unknown session"
-                );
-            }
-
             let mut stderr = std::io::stderr().lock();
             if let Err(error) = stderr.write_all(&event.chunk).and_then(|_| stderr.flush()) {
                 tracing::warn!(?error, "failed to write acp stderr event");
@@ -976,26 +973,16 @@ fn deliver_acp_ext_event(
                 max_restarts = event.max_restarts,
                 "acp agent adapter exited unexpectedly"
             );
-            let delivered = inner
-                .sessions
-                .read(&event.session_id, |_, entry| {
-                    let _ = entry.agent_exit_tx.send(AgentExitEvent {
-                        session_id: event.session_id.clone(),
-                        agent_type: event.agent_type.clone(),
-                        process_id: event.process_id.clone(),
-                        exit_code: event.exit_code,
-                        restart: event.restart.clone(),
-                        restart_count: event.restart_count,
-                        max_restarts: event.max_restarts,
-                    });
-                })
-                .is_some();
-            if !delivered {
-                tracing::warn!(
-                    session_id = event.session_id,
-                    "received acp agent exit event for unknown session"
-                );
-            }
+            let _ = inner.durable_agent_exit_tx.send(AgentExitEvent {
+                session_id: event.session_id,
+                agent_type: event.agent_type,
+                process_id: event.process_id,
+                pid: event.pid,
+                exit_code: event.exit_code,
+                restart: AgentRestartOutcome::NotAttempted,
+                restart_count: event.restart_count,
+                max_restarts: event.max_restarts,
+            });
             Ok(())
         }
     }
@@ -1044,6 +1031,7 @@ fn serialize_create_vm_config_for_sidecar(
     let (root_filesystem, native_root) =
         serialize_root_filesystem_config_for_sidecar(&config.root_filesystem)?;
     Ok(vm_config::CreateVmConfig {
+        database: config.database.clone(),
         cwd: None,
         env: BTreeMap::new(),
         root_filesystem,
@@ -1455,13 +1443,13 @@ fn vm_bindings() -> &'static SccHashMap<String, Arc<VmBindingRegistry>> {
     VM_BINDINGS.get_or_init(SccHashMap::new)
 }
 
-/// Process-global map of vm id -> client inner, so the shared `permission_request` transport
-/// callback can route a sidecar permission request to the owning client. `Weak` so the registry
-/// never extends a client's lifetime; entries are removed in `shutdown`.
-static VM_PERMISSION_ROUTERS: OnceCell<SccHashMap<String, Weak<AgentOsInner>>> = OnceCell::new();
+/// Process-global map of VM id to client state. The shared ACP host callback
+/// uses frame ownership to route filesystem and terminal operations to the
+/// correct VM. `Weak` prevents the registry from extending VM lifetime.
+static VM_ACP_ROUTERS: OnceCell<SccHashMap<String, Weak<AgentOsInner>>> = OnceCell::new();
 
-fn vm_permission_routers() -> &'static SccHashMap<String, Weak<AgentOsInner>> {
-    VM_PERMISSION_ROUTERS.get_or_init(SccHashMap::new)
+fn vm_acp_routers() -> &'static SccHashMap<String, Weak<AgentOsInner>> {
+    VM_ACP_ROUTERS.get_or_init(SccHashMap::new)
 }
 
 /// Process-global map of sidecar session -> Rust-host js_bridge callback.
@@ -1587,9 +1575,10 @@ async fn run_js_bridge_callback(
     }
 }
 
-/// The transport callback that answers sidecar permission requests by routing them to the owning
-/// client's `on_permission_request` subscribers. Mirrors TS `_handlePermissionSidecarRequest`.
-fn permission_request_callback() -> WireSidecarCallback {
+/// Transport callback for ACP filesystem and terminal host operations. Durable
+/// permission requests are resolved inside the sidecar; the legacy permission
+/// callback variant is rejected below.
+fn acp_host_callback() -> WireSidecarCallback {
     Arc::new(|payload, ownership| {
         Box::pin(async move {
             match payload {
@@ -1602,7 +1591,7 @@ fn permission_request_callback() -> WireSidecarCallback {
                 | wire::SidecarRequestPayload::JsBridgeCallRequest(_) => Ok(
                     wire::SidecarResponsePayload::ExtEnvelope(wire::ExtEnvelope {
                         namespace: ACP_EXTENSION_NAMESPACE.to_string(),
-                        payload: b"permission callback received a non-extension request".to_vec(),
+                        payload: b"ACP callback received a non-extension request".to_vec(),
                     }),
                 ),
             }
@@ -1625,24 +1614,6 @@ async fn handle_acp_ext_callback(
     let callback: AcpCallback = serde_bare::from_slice(&envelope.payload)
         .map_err(|error| ClientError::Sidecar(format!("invalid ACP callback: {error}")))?;
     let response = match callback {
-        AcpCallback::AcpPermissionCallback(callback) => {
-            let params =
-                serde_json::from_str(&callback.params).unwrap_or_else(|_| serde_json::json!({}));
-            let result = route_permission_request(
-                ownership,
-                PermissionRouteRequest {
-                    session_id: callback.session_id,
-                    permission_id: callback.permission_id.clone(),
-                    params,
-                },
-            )
-            .await;
-            let reply = result.reply.unwrap_or_else(|| String::from("reject"));
-            AcpCallbackResponse::AcpPermissionCallbackResponse(AcpPermissionCallbackResponse {
-                permission_id: callback.permission_id,
-                reply,
-            })
-        }
         AcpCallback::AcpHostRequestCallback(callback) => {
             let response = dispatch_acp_host_request(ownership, &callback.request).await;
             AcpCallbackResponse::AcpHostRequestCallbackResponse(AcpHostRequestCallbackResponse {
@@ -1659,21 +1630,6 @@ async fn handle_acp_ext_callback(
             payload,
         },
     ))
-}
-
-async fn route_permission_request(
-    ownership: &wire::OwnershipScope,
-    request: PermissionRouteRequest,
-) -> PermissionRouteResult {
-    let vm_id = wire_ownership_vm_id(ownership).unwrap_or("");
-    let inner = vm_permission_routers()
-        .read(vm_id, |_, weak| weak.clone())
-        .and_then(|weak| weak.upgrade());
-    let Some(inner) = inner else {
-        return PermissionRouteResult { reply: None };
-    };
-    let client = AgentOs { inner };
-    client.deliver_sidecar_permission_request(request).await
 }
 
 // ---------------------------------------------------------------------------
@@ -1790,7 +1746,7 @@ fn acp_error_response(id: Value, code: i64, message: &str, data: Option<Value>) 
 /// Resolve the `AgentOs` that owns the VM named in `ownership`, mirroring `route_permission_request`.
 fn resolve_acp_agent(ownership: &wire::OwnershipScope) -> Result<AgentOs, AcpDispatchError> {
     let vm_id = wire_ownership_vm_id(ownership).unwrap_or("");
-    let inner = vm_permission_routers()
+    let inner = vm_acp_routers()
         .read(vm_id, |_, weak| weak.clone())
         .and_then(|weak| weak.upgrade());
     inner
@@ -1807,9 +1763,6 @@ async fn handle_acp_host_request(
 ) -> Result<Value, AcpDispatchError> {
     let params = acp_params(method, params_value)?;
     match method {
-        crate::session::ACP_PERMISSION_METHOD => {
-            handle_acp_permission_request(ownership, method, &params).await
-        }
         "fs/read" | "fs/read_text_file" => {
             let agent = resolve_acp_agent(ownership)?;
             handle_acp_read_file(&agent, &params).await
@@ -2100,89 +2053,6 @@ async fn handle_acp_read_dir(
         })
         .collect();
     Ok(serde_json::json!({ "entries": mapped }))
-}
-
-// --- session/request_permission handler ---
-
-async fn handle_acp_permission_request(
-    ownership: &wire::OwnershipScope,
-    method: &str,
-    params: &Map<String, Value>,
-) -> Result<Value, AcpDispatchError> {
-    let session_id = require_acp_string(params, "sessionId", method)?;
-
-    let result = route_permission_request(
-        ownership,
-        PermissionRouteRequest {
-            session_id: session_id.clone(),
-            // The host-request id is not available here as the permission key; use a generated key
-            // scoped to the session so concurrent permission requests do not collide.
-            permission_id: format!("acp-permission-{}", uuid::Uuid::new_v4()),
-            params: Value::Object(params.clone()),
-        },
-    )
-    .await;
-
-    // `reply: None` means the session/VM is gone or the request timed out -> cancelled outcome.
-    let reply = match result.reply.as_deref() {
-        Some("always") => PermissionDecision::Always,
-        Some("once") => PermissionDecision::Once,
-        _ => PermissionDecision::Reject,
-    };
-    Ok(build_acp_permission_result(reply, params))
-}
-
-#[derive(Clone, Copy)]
-enum PermissionDecision {
-    Always,
-    Once,
-    Reject,
-}
-
-/// Mirror of TS `_normalizeAcpPermissionOptionId`: pick the matching option id from the request's
-/// `options`, falling back to the canonical id for the decision.
-fn normalize_acp_permission_option_id(
-    options: Option<&Vec<Value>>,
-    decision: PermissionDecision,
-) -> String {
-    let (option_ids, kinds, fallback): (&[&str], &[&str], &str) = match decision {
-        PermissionDecision::Always => (
-            &["always", "allow_always"],
-            &["allow_always"],
-            "allow_always",
-        ),
-        PermissionDecision::Once => (&["once", "allow_once"], &["allow_once"], "allow_once"),
-        PermissionDecision::Reject => (&["reject", "reject_once"], &["reject_once"], "reject_once"),
-    };
-    if let Some(options) = options {
-        for option in options {
-            let Some(record) = option.as_object() else {
-                continue;
-            };
-            let option_id = record.get("optionId").and_then(Value::as_str);
-            let kind = record.get("kind").and_then(Value::as_str);
-            let matches = option_id.is_some_and(|id| option_ids.contains(&id))
-                || kind.is_some_and(|k| kinds.contains(&k));
-            if matches {
-                if let Some(id) = option_id {
-                    return id.to_string();
-                }
-            }
-        }
-    }
-    fallback.to_string()
-}
-
-/// Mirror of TS `_buildAcpPermissionResult`: produce `{ outcome: { outcome: "selected", optionId } }`.
-fn build_acp_permission_result(decision: PermissionDecision, params: &Map<String, Value>) -> Value {
-    let options = params.get("options").and_then(Value::as_array);
-    let option_id = normalize_acp_permission_option_id(options, decision);
-    serde_json::json!({
-        "outcome": {
-            "outcome": "selected",
-            "optionId": option_id,
-        }
-    })
 }
 
 // --- terminal/* handlers ---
@@ -2759,7 +2629,7 @@ async fn parse_binding_input(
             format!("{cwd}/{path}")
         });
         let vm_id = wire_ownership_vm_id(ownership).unwrap_or("");
-        let inner = vm_permission_routers()
+        let inner = vm_acp_routers()
             .read(vm_id, |_, weak| weak.clone())
             .and_then(|weak| weak.upgrade())
             .ok_or_else(|| String::from("Invalid JSON file: VM is no longer available"))?;
@@ -3621,7 +3491,7 @@ fn json_object<const N: usize>(entries: [(&str, Value); N]) -> Value {
 
 /// Build the wire [`wire::PackageDescriptor`]s for the `/opt/agentos` projection.
 /// The sidecar reads package metadata from the forwarded package path.
-fn build_package_descriptors(config: &AgentOsConfig) -> Vec<wire::PackageDescriptor> {
+pub(crate) fn build_package_descriptors(config: &AgentOsConfig) -> Vec<wire::PackageDescriptor> {
     config
         .packages
         .iter()
@@ -3653,7 +3523,9 @@ fn register_projected_agents(
     }
 }
 
-fn serialize_mounts(config: &AgentOsConfig) -> Result<Vec<wire::MountDescriptor>, ClientError> {
+pub(crate) fn serialize_mounts(
+    config: &AgentOsConfig,
+) -> Result<Vec<wire::MountDescriptor>, ClientError> {
     config
         .mounts
         .iter()
@@ -3686,7 +3558,7 @@ fn serialize_mounts(config: &AgentOsConfig) -> Result<Vec<wire::MountDescriptor>
         .collect()
 }
 
-fn permissions_policy(config: &AgentOsConfig) -> wire::PermissionsPolicy {
+pub(crate) fn permissions_policy(config: &AgentOsConfig) -> wire::PermissionsPolicy {
     let Some(permissions) = config.permissions.as_ref() else {
         return default_permissions_policy();
     };

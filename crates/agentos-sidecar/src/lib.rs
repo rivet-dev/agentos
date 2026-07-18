@@ -2,9 +2,10 @@
 
 //! Agent OS native sidecar wrapper.
 
-mod acp_extension;
+mod acp;
+mod session_store;
 
-pub use acp_extension::AcpExtension;
+pub use acp::AcpExtension;
 
 pub fn extensions() -> Vec<Box<dyn agentos_native_sidecar::Extension>> {
     vec![Box::new(AcpExtension::new())]

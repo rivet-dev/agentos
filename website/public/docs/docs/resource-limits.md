@@ -2,16 +2,16 @@
 
 Cap per-VM resources, JavaScript CPU/wall-clock time, Python execution, and WASM runtime work so guest code can never exhaust the host.
 
-Every agentOS VM runs with **per-VM resource and runtime caps**. Runaway or malicious guest code can exhaust its own VM, but it can never starve the host or any sibling VM.
+Every agentOS VM runs with **per-VM resource and runtime caps**. These caps contain runaway or malicious guest work to its VM and give the host an explicit failure instead of silent data loss.
 
-- **Bounded by default**: each VM ships with conservative caps. Unset fields fall back to built-in defaults that match the runtime's historical constants.
+- **Secure defaults**: unset fields fall back to built-in defaults that match the runtime's historical constants. Optional execution budgets such as WASM fuel explicitly document when their default has no additional budget.
 - **Per-VM**: every VM gets its own budget. Limits are not shared across VMs.
-- **Enforced by the sidecar/runtime**: a guest that exceeds a cap fails inside the VM (out-of-memory, `EMFILE`, `EAGAIN`, runtime timeout, etc.). The host is never affected.
+- **Enforced by the sidecar/runtime**: a guest that exceeds a cap fails inside the VM (out-of-memory, `EMFILE`, `EAGAIN`, runtime timeout, etc.) instead of consuming past the configured budget.
 - **Operator-raisable**: the operator (the trusted process that creates the VM) may raise any cap for trusted workloads. Guest code can never raise its own caps.
 
 ## Setting limits
 
-Set caps on the `limits` object in the `agentOS` config. Limits are grouped by subsystem (`resources`, `jsRuntime`, `python`, `wasm`, and more). Omitted limits keep their secure default.
+Set caps on the `limits` object in the `agentOS` config. Limits are grouped by subsystem (`resources`, `process`, `jsRuntime`, `python`, `wasm`, and more). Omitted limits keep their secure default.
 
 ## Available caps
 
@@ -21,9 +21,14 @@ Set caps on the `limits` object in the `agentOS` config. Limits are grouped by s
 | `resources.maxOpenFds` | Open file descriptors | Exhausting the table fails with `EMFILE` / `ENFILE`. |
 | `resources.maxSockets` | Open sockets in the socket table | Bounds concurrent connections; excess `connect`/`accept` fail. |
 | `resources.maxFilesystemBytes` | Total bytes stored in the virtual filesystem | Bounds VFS storage; writes past the budget fail with a no-space error. |
+| `resources.maxInodeCount` | Inodes retained by the virtual filesystem | Default is `16384`; creating another file or directory fails with a no-space error. This is the expected upper bound for filesystem-schema sizing and benchmarks. |
 | `resources.maxWasmFuel` | WASM execution budget | Bounds WASM execution work; unset means no explicit fuel budget. |
 | `resources.maxWasmMemoryBytes` | WASM linear memory, in bytes | Default is `128 MiB`. |
 | `resources.maxWasmStackBytes` | Maximum WASM call-stack size, in bytes | Deep recursion fails with a stack overflow instead of crashing the VM. |
+| `resources.maxBlockingReadMs` | AgentOS safety backstop for otherwise-blocking guest operations | Default is `30000`. Socket waits, poll, and contended `F_SETLKW` warn near the limit and fail with `ETIMEDOUT` if it expires; raise it for workloads that intentionally wait longer. Linux has no equivalent global backstop. |
+| `process.pendingStdinBytes` | Stdin accepted by the sidecar but not yet written into kernel pipes | Default is `64 MiB` per process and across the VM. Sibling processes share the same aggregate envelope, so this is a tighter bound for multi-process workloads. A non-draining process rejects further writes with an error naming `limits.process.pendingStdinBytes`. |
+| `process.pendingEventCount` | Event count at each bounded VM/process delivery-queue stage | Default is `10000`. The crossing event is rejected with an error naming `limits.process.pendingEventCount`; it is never silently dropped. |
+| `process.pendingEventBytes` | Retained process-event bytes at each bounded delivery-queue stage | Default is `64 MiB` per process and across all process queues in the VM. Sibling processes share the VM-wide envelope. Large stdout/stderr bursts are rejected with an error naming `limits.process.pendingEventBytes`, independently of event count. |
 | `jsRuntime.v8HeapLimitMb` | Guest JavaScript V8 heap, in MiB | Default is `128`. |
 | `jsRuntime.cpuTimeLimitMs` | Active JavaScript CPU time | Default is `30000`; `0` disables the CPU watchdog. |
 | `jsRuntime.wallClockLimitMs` | JavaScript elapsed wall-clock backstop | Default is `0`, disabled. Use this for finite commands, not long-lived adapters. |
@@ -33,6 +38,8 @@ Set caps on the `limits` object in the `agentOS` config. Limits are grouped by s
 | `python.maxOldSpaceMb` | Pyodide runner V8 old-space heap, in MiB | Default is `0`, which keeps the engine default. |
 | `wasm.prewarmTimeoutMs` | WASM compile-cache warmup timeout | Default is `30000`. |
 | `wasm.runnerHeapLimitMb` | Trusted WASI/WASM runner V8 heap, in MiB | Default is `2048`; this is not guest linear memory. |
+| `process.maxSpawnFileActions` | File actions decoded for one `posix_spawn` call | Default is `4096`; excess actions fail with `E2BIG`. |
+| `process.maxSpawnFileActionBytes` | Serialized file-action bytes for one `posix_spawn` call | Default is `1 MiB`; excess input fails with `E2BIG`. |
 
 ## Behavior at the limit
 
@@ -40,7 +47,21 @@ Set caps on the `limits` object in the `agentOS` config. Limits are grouped by s
 - **JavaScript CPU time**: CPU-bound loops terminate with a CPU-budget error once active JS CPU exceeds `jsRuntime.cpuTimeLimitMs`.
 - **JavaScript wall time**: awaiting or blocked JS terminates only when you set `jsRuntime.wallClockLimitMs`; the default is disabled for long-lived adapters.
 - **Filesystem bytes**: writing past the VFS budget fails with a no-space error to the guest.
-- **Counts (fds / processes / sockets)**: hitting a table cap returns the standard POSIX errno (`EMFILE`, `EAGAIN`, etc.), exactly as a real Linux kernel would under `ulimit`.
+- **Counts (fds / processes / sockets)**: hitting a table cap returns the standard POSIX errno appropriate to that cap (`EMFILE`/`ENFILE`, `EAGAIN`, etc.).
+
+### WASM memory residency calls
+
+V8 owns the physical backing pages for WASM linear memory, and the runtime
+cannot currently pin those pages against host swapping. Nonempty `mlock()` and
+valid `mlockall()` requests therefore return `ENOTSUP` rather than falsely
+claiming that secrets or other guest memory were pinned. `munlock()` and
+`munlockall()` succeed because no guest lock can be established and the memory
+is already unlocked.
+
+Non-destructive `madvise()` access-pattern calls are accepted as best-effort
+hints, which Linux is also permitted to ignore. Advice that would discard data
+or change fork, core-dump, or host VM mapping policy returns `ENOTSUP` because
+the runtime cannot apply it.
 
 ## Sidecar liveness
 
@@ -58,17 +79,16 @@ configurable — they are fixed protocol constants.
 
 ## Warnings & observability
 
-Limits are observable, not just enforced. Every bound — resource caps and the
-internal bounded queues alike — is tracked in a central limit registry that:
+Limits are observable, not just enforced. Live resource gauges and internal
+bounded queues are tracked in a central limit registry that:
 
 - **Warns before the limit is hit.** As usage crosses ~80% of a cap, the runtime
   emits a structured warning (once per crossing, re-armed only after it recovers),
   so a slow consumer or a runaway guest is visible *before* it fails.
-- **Applies backpressure instead of failing catastrophically.** The internal
-  queues between the guest, the runtime, and the host block their producer when
-  full rather than dropping data or tearing down the session — so a transient
-  burst degrades to "slower", not "broken".
-- **Surfaces through logs.** secure-exec logs to stderr (stdout is the wire
+- **Never drops data silently.** Internal queues either apply backpressure or
+  fail with a typed error naming the exhausted limit and the setting used to
+  raise it. A rejected event is not popped and forgotten.
+- **Surfaces through logs.** The agentOS sidecar logs to stderr (stdout is the wire
   protocol); set `AGENTOS_LOG=warn` (the default) to see near-limit warnings
   or `AGENTOS_LOG=debug` for live per-limit usage snapshots.
 

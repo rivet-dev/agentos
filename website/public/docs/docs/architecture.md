@@ -161,7 +161,7 @@ An agent (such as [Pi](https://github.com/mariozechner/pi-coding-agent)) is just
 
 - **Long-lived.** Where a bare `exec()` runs once and exits, a session keeps an agent alive across many prompts.
 - **Streamed.** The agent's output flows back to your app in real time as `sessionEvent`s.
-- **Live-only events.** Subscribe before prompting; actor session events are not persisted or replayed.
+- **Durable semantic events.** Completed ACP updates and interactive permission request/response records are sequenced in SQLite; streaming message deltas remain live-only.
 - **Durable files.** Files under `/home/agentos` survive sleep through the sidecar's direct SQLite-over-UDS connection.
 - **Context injected.** agentOS adds a system prompt describing the VM environment and available commands and bindings, layered on top of the agent's own instructions. See [System Prompt](/docs/system-prompt).
 - See [Agent Sessions](/docs/architecture/agent-sessions) for the internals.
@@ -169,8 +169,8 @@ An agent (such as [Pi](https://github.com/mariozechner/pi-coding-agent)) is just
 ### Permissions & approvals
 
 - **Two layers, different jobs.** The lower-level [permission policy](/docs/permissions) is enforced by the kernel on every guest syscall (nothing is allowed until you opt in). On top of that, [approvals](/docs/approvals) are about an agent asking before it uses a tool.
-- **Human-in-the-loop or automatic.** Subscribe to `permissionRequest` and respond per request, or use a server-side hook to decide without a client round-trip.
-- **Blocks until answered.** If neither your hook nor your client responds, the agent waits rather than proceeding.
+- **Human-in-the-loop or automatic.** Use the default `allow_all`, explicit `reject_all`, or subscribe to `permission_request` variants on the ordinary session-event stream with `permissionPolicy: "ask"`.
+- **Blocks until answered.** An `ask` request has no expiry and keeps the active turn awake until a response or explicit lifecycle transition wins the race.
 
 ## Orchestration (Rivet Actors)
 
@@ -190,7 +190,7 @@ The `agentOS()` actor (from `@rivet-dev/agentos`) wraps the raw VM in a [Rivet A
 ### What are actors?
 
 - **Durable server objects.** A Rivet Actor is a long-lived, addressable object with its own state. You reach a specific VM by name (`vm.getOrCreate("my-agent")`).
-- **Stateful by default.** Unlike the bare core package, the actor persists its filesystem and actor state while keeping sessions live-only.
+- **Stateful by default.** The actor persists its filesystem, actor state, durable session metadata, and completed ACP history. Active adapter processes remain runtime state.
 - **The portable runtime.** Actors give you a consistent way to run `agentOS()` on any infrastructure, with persistence, networking, and orchestration built in.
 
 ### Cron
@@ -209,7 +209,7 @@ The `agentOS()` actor (from `@rivet-dev/agentos`) wraps the raw VM in a [Rivet A
 
 - **Sleeps when idle.** After a grace period (15 minutes by default) with no activity, the VM sleeps to free resources.
 - **Wakes on demand.** It wakes automatically when a client connects or a cron job fires.
-- **What survives.** The `/home/agentos` filesystem, actor state, and preview tokens persist. Sessions, transcripts, cron definitions, running processes, and open shells are live-only. See [Persistence & Sleep](/docs/persistence).
+- **What survives.** The `/home/agentos` filesystem, actor state, preview tokens, durable session metadata, and completed ACP history persist. On wake, `openSession` restores the adapter when possible and otherwise starts it with AgentOS history as context. In-flight deltas, running processes, and open shells do not survive. See [Persistence & Sleep](/docs/persistence).
 
 ## Going deeper
 

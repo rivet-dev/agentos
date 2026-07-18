@@ -4,8 +4,29 @@ import type { registry } from "./server";
 const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
 const agent = client.vm.getOrCreate("my-agent");
 
-// Observe permission requests client-side for human-in-the-loop review.
-const conn = agent.connect();
-conn.on("permissionRequest", (data) => {
-  console.log("Permission requested:", data.request);
+// Handle permission requests through the generic session event stream.
+const connection = agent.connect();
+connection.on("sessionEvent", (event) => {
+	if (event.type !== "permission_request") return;
+	const option = event.options.find(
+		(candidate) => candidate.kind === "allow_once",
+	);
+	if (!option) return;
+	agent
+		.respondPermission({
+			sessionId: event.sessionId,
+			requestId: event.requestId,
+			optionId: option.optionId,
+		})
+		.catch((error) => console.error("Permission response failed:", error));
+});
+
+await agent.openSession({
+	agent: "pi",
+	// Required for permission_request events; the default is allow_all.
+	permissionPolicy: "ask",
+	env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
+});
+await agent.prompt({
+	content: [{ type: "text", text: "Create /workspace/output.txt" }],
 });

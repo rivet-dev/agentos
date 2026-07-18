@@ -1,7 +1,7 @@
 //! Real Pi agent session e2e against a real `agentos-sidecar`.
 //!
 //! The HONEST regression gate for the agent-session path. When a built Pi adapter is available it
-//! ASSERTS that `create_session("pi")` succeeds and that a real prompt round-trips through the Pi
+//! ASSERTS that `open_session` succeeds and that a real prompt round-trips through the Pi
 //! SDK (via a host llmock LLM). It never skips on a feature error — a broken Pi path fails the test.
 //! It skips only when the prerequisite is genuinely absent (Pi not built).
 //!
@@ -27,7 +27,8 @@ use agentos_client::config::{
     node_modules_mount, AgentOsConfig, PackageRef, PatternPermissions, PermissionMode, Permissions,
 };
 use agentos_client::fs::MkdirOptions;
-use agentos_client::{AgentOs, CreateSessionOptions};
+use agentos_client::{AgentOs, OpenSessionInput, PromptInput};
+use agentos_vm_config::VmSqliteDescriptor;
 
 const LLMOCK_SENTINEL: &str = "PONG_FROM_LLMOCK";
 
@@ -120,8 +121,8 @@ impl Drop for LlmockServer {
     }
 }
 
-/// One comprehensive Pi session lifecycle: create -> list -> prompt (real SDK -> host llmock) ->
-/// close. A single test (one VM) per the one-test-per-file e2e convention, because the shared
+/// One comprehensive Pi session lifecycle: open -> list -> prompt (real SDK -> host llmock) ->
+/// delete. A single test (one VM) per the one-test-per-file e2e convention, because the shared
 /// sidecar pool tears down when an `AgentOs` from a prior test drops.
 #[tokio::test]
 async fn pi_session_create_prompt_close() {
@@ -160,6 +161,12 @@ async fn pi_session_create_prompt_close() {
         )]
     };
     let os = AgentOs::create(AgentOsConfig {
+        database: Some(VmSqliteDescriptor::SqliteFile {
+            path: std::env::temp_dir()
+                .join(format!("agentos-pi-session-{}.sqlite", std::process::id()))
+                .to_string_lossy()
+                .into_owned(),
+        }),
         mounts,
         loopback_exempt_ports: vec![port],
         packages: vec![PackageRef {
@@ -194,24 +201,32 @@ async fn pi_session_create_prompt_close() {
     env.insert("ANTHROPIC_API_KEY".to_string(), "mock-key".to_string());
     env.insert("ANTHROPIC_BASE_URL".to_string(), url.clone());
     env.insert("PI_SKIP_VERSION_CHECK".to_string(), "1".to_string());
+    os.open_session(OpenSessionInput {
+        session_id: None,
+        agent: String::from("pi"),
+        cwd: Some(String::from("/home/agentos/workspace")),
+        additional_directories: None,
+        env: Some(env),
+        mcp_servers: None,
+        permission_policy: None,
+        skip_os_instructions: Some(true),
+        additional_instructions: None,
+    })
+    .await
+    .expect("open_session must succeed against a built Pi tree");
     let session = os
-        .create_session(
-            "pi",
-            CreateSessionOptions {
-                cwd: Some("/home/agentos/workspace".to_string()),
-                env,
-                skip_os_instructions: true,
-                ..Default::default()
-            },
-        )
+        .get_session(None)
         .await
-        .expect("create_session(\"pi\") must succeed against a built Pi tree");
+        .expect("get_session must return the opened main session");
     assert!(
         !session.session_id.is_empty(),
         "session id must be non-empty"
     );
     assert!(
-        os.list_sessions()
+        os.list_sessions(Default::default())
+            .await
+            .expect("list sessions")
+            .sessions
             .iter()
             .any(|s| s.session_id == session.session_id),
         "created session must appear in list_sessions"
@@ -220,18 +235,28 @@ async fn pi_session_create_prompt_close() {
     // The real Pi SDK ACP prompt flow must reach llmock and return its scripted reply.
     let result = tokio::time::timeout(
         Duration::from_secs(60),
-        os.prompt(&session.session_id, "Reply with the sentinel."),
+        os.prompt(PromptInput {
+            session_id: Some(session.session_id.clone()),
+            idempotency_key: None,
+            content: vec![serde_json::from_value(serde_json::json!({
+                "type": "text",
+                "text": "Reply with the sentinel.",
+            }))
+            .expect("content block")],
+        }),
     )
     .await
     .expect("prompt timed out")
     .expect("prompt must succeed");
 
+    let result_json = serde_json::to_string(&result.message).expect("serialize prompt message");
     assert!(
-        result.text.contains(LLMOCK_SENTINEL),
-        "prompt response must contain the llmock sentinel; got: {:?}",
-        result.text
+        result_json.contains(LLMOCK_SENTINEL),
+        "prompt response must contain the llmock sentinel; got: {result_json}"
     );
 
-    os.close_session(&session.session_id).ok();
+    os.delete_session(Some(&session.session_id))
+        .await
+        .expect("delete session");
     os.shutdown().await.expect("shutdown");
 }

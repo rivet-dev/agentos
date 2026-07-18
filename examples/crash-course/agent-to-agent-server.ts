@@ -27,14 +27,22 @@ const coder = agentOS({
 							.readFile(path);
 						const reviewerHandle = client.reviewer.getOrCreate("feature-auth");
 						await reviewerHandle.writeFile(path, content);
-						const sessionId = await reviewerHandle.createSession("pi", {
+						await reviewerHandle.openSession({
+							agent: "pi",
 							env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 						});
-						const result = await reviewerHandle.sendPrompt(
-							sessionId,
-							`Review ${path} for security issues`,
-						);
-						return { review: result.text };
+						const result = await reviewerHandle.prompt({
+							content: [
+								{ type: "text", text: `Review ${path} for security issues` },
+							],
+						});
+						return {
+							review:
+								result.message?.content
+									.filter((block) => block.type === "text")
+									.map((block) => block.text)
+									.join("") ?? "",
+						};
 					},
 				},
 			},

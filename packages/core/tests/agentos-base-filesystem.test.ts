@@ -37,7 +37,7 @@ describe("AgentOs base filesystem", () => {
 		);
 
 		await vm.writeFile("/tmp/overlay-only.txt", "overlay data");
-		await vm.delete("/etc/profile");
+		await vm.remove("/etc/profile");
 
 		expect(textDecoder.decode(await vm.readFile("/tmp/overlay-only.txt"))).toBe(
 			"overlay data",
@@ -187,7 +187,7 @@ describe("AgentOs base filesystem", () => {
 		await vfs.symlink("/tmp/original.txt", "/tmp/alias.txt");
 		expect(await vfs.realpath("/tmp/alias.txt")).toBe("/tmp/original.txt");
 
-		await vm.delete("/tmp/original.txt");
+		await vm.remove("/tmp/original.txt");
 		expect(textDecoder.decode(await vm.readFile("/tmp/linked.txt"))).toBe(
 			"hello",
 		);
@@ -195,7 +195,7 @@ describe("AgentOs base filesystem", () => {
 
 	test("snapshotRootFilesystem exports a reusable lower snapshot", async () => {
 		await vm.writeFile("/home/agentos/snap.txt", "snapshotted");
-		const snapshot = await vm.snapshotRootFilesystem();
+		const snapshot = await vm.exportRootFilesystem({ maxBytes: 64 * 1024 * 1024 });
 
 		const secondVm = await AgentOs.create({
 			rootFilesystem: {

@@ -29,7 +29,7 @@ describe("Codex agent availability", () => {
 		expect((await vm.listAgents()).some((agent) => agent.id === "codex")).toBe(
 			false,
 		);
-		await expect(vm.createSession("codex")).rejects.toThrow(
+		await expect(vm.openSession({ agent: "codex" })).rejects.toThrow(
 			/no projected .*codex.*agent\.acpEntrypoint/,
 		);
 	});

@@ -1,11 +1,11 @@
 use agentos_sidecar_protocol::protocol::{
     AgentosProjectedAgent, AuthenticateRequest, AuthenticatedResponse, BoundUdpSnapshotResponse,
-    EventFrame, EventPayload, LayerCreatedResponse, LayerSealedResponse, ListenerSnapshotResponse,
-    OverlayCreatedResponse, OwnershipScope, PackageCommands, PackageLinkedResponse,
-    ProcessExitedEvent, ProcessKilledResponse, ProcessOutputEvent, ProcessSnapshotEntry,
-    ProcessSnapshotResponse, ProcessStartedResponse, ProjectedCommand, ProtocolSchema,
-    ProvidedCommandsResponse, RejectedResponse, RequestFrame, RequestId, ResponseFrame,
-    ResponsePayload, RootFilesystemBootstrappedResponse, RootFilesystemEntry,
+    EventFrame, EventPayload, LayerCreatedResponse, LayerSealedResponse, ListMountsResponse,
+    ListenerSnapshotResponse, MountInfo, OverlayCreatedResponse, OwnershipScope, PackageCommands,
+    PackageLinkedResponse, ProcessExitedEvent, ProcessKilledResponse, ProcessOutputEvent,
+    ProcessSnapshotEntry, ProcessSnapshotResponse, ProcessStartedResponse, ProjectedCommand,
+    ProtocolSchema, ProvidedCommandsResponse, RejectedResponse, RequestFrame, RequestId,
+    ResponseFrame, ResponsePayload, RootFilesystemBootstrappedResponse, RootFilesystemEntry,
     RootFilesystemSnapshotResponse, SessionOpenedResponse, SignalHandlerRegistration,
     SignalStateResponse, SnapshotExportedResponse, SnapshotImportedResponse, SocketStateEntry,
     StdinClosedResponse, StdinWrittenResponse, StreamChannel, StructuredEvent,
@@ -252,6 +252,13 @@ pub fn root_filesystem_snapshot_response(
     respond(
         request,
         ResponsePayload::RootFilesystemSnapshot(RootFilesystemSnapshotResponse { entries }),
+    )
+}
+
+pub fn mounts_listed_response(request: &RequestFrame, mounts: Vec<MountInfo>) -> ResponseFrame {
+    respond(
+        request,
+        ResponsePayload::MountsListed(ListMountsResponse { mounts }),
     )
 }
 

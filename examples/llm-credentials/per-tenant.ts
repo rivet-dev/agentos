@@ -14,10 +14,10 @@ declare function lookupTenantApiKey(tenantId: string): Promise<string>;
 async function startTenantSession(tenantId: string) {
 	const anthropicApiKey = await lookupTenantApiKey(tenantId);
 
-	return client.vm.getOrCreate(tenantId).createSession("pi", {
+	await client.vm.getOrCreate(tenantId).openSession({
+		agent: "pi",
 		env: { ANTHROPIC_API_KEY: anthropicApiKey },
 	});
 }
 
-const sessionId = await startTenantSession("tenant-123");
-console.log(sessionId);
+await startTenantSession("tenant-123");

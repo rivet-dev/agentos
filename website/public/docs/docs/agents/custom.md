@@ -2,7 +2,7 @@
 
 Bring your own coding agent to agentOS by speaking the Agent Client Protocol (ACP) inside the VM.
 
-A custom agent is a program that runs **inside the VM** to drive a coding agent. agentOS spawns it when you call `createSession()` and talks to it over the Agent Client Protocol. You ship it as a software package, exactly like the built-in agents.
+A custom agent is a program that runs **inside the VM** to drive a coding agent. AgentOS spawns it when you call `openSession({ sessionId, agent })` and talks to it over the Agent Client Protocol. You ship it as a software package, exactly like the built-in agents.
 
 ## Agent Client Protocol (ACP)
 

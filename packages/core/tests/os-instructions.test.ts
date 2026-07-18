@@ -29,7 +29,7 @@ describe("base system prompt fixture", () => {
 	});
 });
 
-// ── createSession integration tests ────────────────────────────────────
+// ── openSession integration tests ────────────────────────────────────
 
 /**
  * Mock ACP adapter that responds to initialize/session/new.
@@ -89,7 +89,7 @@ process.stdin.on('data', (chunk) => {
 });
 `;
 
-describe("createSession OS instructions integration", () => {
+describe("openSession OS instructions integration", () => {
 	let vm: AgentOs;
 	let agentPackages: ProjectedAgentPackage[];
 
@@ -110,9 +110,10 @@ describe("createSession OS instructions integration", () => {
 		}
 	});
 
-	test("createSession passes the assembled prompt through the adapter-neutral contract", async () => {
-		const { sessionId } = await vm.createSession("pi");
-		const agentInfo = vm.getSessionAgentInfo(sessionId) as {
+	test("openSession passes the assembled prompt through the adapter-neutral contract", async () => {
+		const sessionId = "assembled-prompt";
+		await vm.openSession({ sessionId, agent: "pi" });
+		const agentInfo = (await vm.getSessionAgentInfo({ sessionId })) as {
 			systemPrompt?: string;
 		};
 		const instructionsArg = agentInfo.systemPrompt ?? "";
@@ -121,13 +122,14 @@ describe("createSession OS instructions integration", () => {
 		// The sidecar injects the embedded base prompt, not a guest-read file.
 		expect(instructionsArg).toContain("# agentOS");
 
-		vm.closeSession(sessionId);
+		vm.unloadSession({ sessionId });
 	});
 
-	test("createSession leaves OpenCode compatibility translation to its launcher", async () => {
-		const { sessionId } = await vm.createSession("opencode");
+	test("openSession leaves OpenCode compatibility translation to its launcher", async () => {
+		const sessionId = "opencode-compat";
+		await vm.openSession({ sessionId, agent: "opencode" });
 
-		const agentInfo = vm.getSessionAgentInfo(sessionId) as {
+		const agentInfo = (await vm.getSessionAgentInfo({ sessionId })) as {
 			contextPaths?: string;
 			systemPrompt?: string;
 			argv?: string[];
@@ -140,84 +142,76 @@ describe("createSession OS instructions integration", () => {
 		const agentOsDirExists = await vm.exists("/home/agentos/.agent-os");
 		expect(agentOsDirExists).toBe(false);
 
-		vm.closeSession(sessionId);
+		vm.unloadSession({ sessionId });
 	});
 
-	test("createSession with skipOsInstructions:true does not inject args or env", async () => {
-		const { sessionId } = await vm.createSession("pi", {
+	test("openSession with skipOsInstructions:true does not inject args or env", async () => {
+		const sessionId = "skip-os-instructions";
+		await vm.openSession({
+			sessionId,
+			agent: "pi",
 			skipOsInstructions: true,
 		});
-		const agentInfo = vm.getSessionAgentInfo(sessionId) as {
+		const agentInfo = (await vm.getSessionAgentInfo({ sessionId })) as {
 			systemPrompt?: string;
 		};
 		expect(agentInfo.systemPrompt).toBeNull();
 
-		vm.closeSession(sessionId);
+		vm.unloadSession({ sessionId });
 	});
 
-	test("createSession with skipOsInstructions:true still forwards additionalInstructions", async () => {
+	test("openSession with skipOsInstructions:true still forwards additionalInstructions", async () => {
 		const additionalText = "CUSTOM_MARKER: skip base, keep extras.";
 
-		const { sessionId } = await vm.createSession("pi", {
+		const sessionId = "skip-base-keep-extra";
+		await vm.openSession({
+			sessionId,
+			agent: "pi",
 			skipOsInstructions: true,
 			additionalInstructions: additionalText,
 		});
-		const agentInfo = vm.getSessionAgentInfo(sessionId) as {
+		const agentInfo = (await vm.getSessionAgentInfo({ sessionId })) as {
 			systemPrompt?: string;
 		};
 		const instructionsArg = agentInfo.systemPrompt ?? "";
 		expect(instructionsArg).toContain(additionalText);
 		expect(instructionsArg).not.toContain("# agentOS");
 
-		vm.closeSession(sessionId);
+		vm.unloadSession({ sessionId });
 	});
 
 	test("user-provided env vars override instruction env vars", async () => {
 		const userContextPaths = '["my-custom-paths.md"]';
-		const { sessionId } = await vm.createSession("opencode", {
+		const sessionId = "user-env-override";
+		await vm.openSession({
+			sessionId,
+			agent: "opencode",
 			env: { OPENCODE_CONTEXTPATHS: userContextPaths },
 		});
 
-		const agentInfo = vm.getSessionAgentInfo(sessionId) as {
+		const agentInfo = (await vm.getSessionAgentInfo({ sessionId })) as {
 			contextPaths?: string;
 		};
 		expect(agentInfo.contextPaths).toBe(userContextPaths);
 
-		vm.closeSession(sessionId);
+		vm.unloadSession({ sessionId });
 	});
 
 	test("additionalInstructions content appears in injected text", async () => {
 		const additionalText = "CUSTOM_MARKER: Always use pnpm for this project.";
 
-		const { sessionId } = await vm.createSession("pi", {
+		const sessionId = "additional-instructions";
+		await vm.openSession({
+			sessionId,
+			agent: "pi",
 			additionalInstructions: additionalText,
 		});
-		const agentInfo = vm.getSessionAgentInfo(sessionId) as {
+		const agentInfo = (await vm.getSessionAgentInfo({ sessionId })) as {
 			systemPrompt?: string;
 		};
 		const instructionsArg = agentInfo.systemPrompt ?? "";
 		expect(instructionsArg).toContain(additionalText);
 
-		vm.closeSession(sessionId);
-	});
-
-	test("AgentOs.create additionalInstructions are included in created sessions", async () => {
-		await vm.dispose();
-		const vmLevelInstructions =
-			"CUSTOM_MARKER: VM-level instruction applies to every session.";
-		vm = await AgentOs.create({
-			defaultSoftware: false,
-			additionalInstructions: vmLevelInstructions,
-			software: agentPackages.map((agentPackage) => agentPackage.software),
-		});
-
-		const { sessionId } = await vm.createSession("pi");
-		const agentInfo = vm.getSessionAgentInfo(sessionId) as {
-			systemPrompt?: string;
-		};
-		const instructionsArg = agentInfo.systemPrompt ?? "";
-		expect(instructionsArg).toContain(vmLevelInstructions);
-
-		vm.closeSession(sessionId);
+		vm.unloadSession({ sessionId });
 	});
 });

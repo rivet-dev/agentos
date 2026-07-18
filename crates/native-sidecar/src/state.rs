@@ -842,6 +842,8 @@ pub(crate) struct VmState {
     /// VM-scoped admission view over the process's single Tokio runtime and
     /// fixed blocking executor. This owns no runtime or worker of its own.
     pub(crate) runtime_context: agentos_runtime::RuntimeContext,
+    /// One resolved SQLite transport shared by every durable VM subsystem.
+    pub(crate) database: Option<crate::vm_sqlite::SharedVmSqliteDatabase>,
     /// Common lifecycle/identity registry for native and kernel backends.
     pub(crate) capabilities: agentos_runtime::capability::CapabilityRegistry,
     pub(crate) dns: VmDnsConfig,

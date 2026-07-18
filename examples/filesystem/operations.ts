@@ -59,10 +59,10 @@ console.log(info.size, info.isDirectory, info.mtimeMs);
 await agent.move("/home/agentos/old.txt", "/home/agentos/new.txt");
 
 // Delete a file
-await agent.deleteFile("/home/agentos/new.txt");
+await agent.remove("/home/agentos/new.txt");
 
 // Delete a directory recursively
-await agent.deleteFile("/home/agentos/temp", { recursive: true });
+await agent.remove("/home/agentos/temp", { recursive: true });
 // docs:end move-delete
 
 // Keep batch + directory results referenced for the type-check.

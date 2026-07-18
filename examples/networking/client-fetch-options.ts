@@ -3,7 +3,9 @@ import type { registry } from "./server";
 
 const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
 
-const response = await client.vm.getOrCreate("my-agent").vmFetch(3000, "/api/data", {
+const response = await client.vm.getOrCreate("my-agent").httpRequest({
+  port: 3000,
+  path: "/api/data",
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ key: "value" }),

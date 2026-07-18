@@ -82,7 +82,6 @@ export const docsLandings: Record<string, DocsLandingData> = {
 				title: "Orchestration",
 				items: [
 					{ title: "Cron", href: "/cookbooks/cron", icon: faClock, description: "Scheduled jobs." },
-					{ title: "Queues", href: "/cookbooks/queues", icon: faDiagramNext, description: "Work queues." },
 					{ title: "Workflows", href: "/cookbooks/workflows", icon: faDiagramNext, description: "Durable workflows." },
 					{ title: "Webhooks", href: "/cookbooks/webhooks", icon: faLink, description: "Webhook handling." },
 				],

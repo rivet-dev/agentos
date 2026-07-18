@@ -1529,6 +1529,7 @@ where
             RequestRoute::SnapshotRootFilesystem(payload) => {
                 self.snapshot_root_filesystem(&request, payload).await
             }
+            RequestRoute::ListMounts(payload) => self.list_mounts(&request, payload).await,
             RequestRoute::Execute(payload) => self.execute(&request, payload).await,
             RequestRoute::WriteStdin(payload) => self.write_stdin(&request, payload).await,
             RequestRoute::ResizePty(payload) => self.resize_pty(&request, payload).await,
@@ -3428,6 +3429,31 @@ where
     B: NativeSidecarBridge + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
+    fn vm_acp_limits<'a>(
+        &'a mut self,
+        ownership: OwnershipScope,
+    ) -> ExtensionFuture<'a, agentos_native_sidecar_core::limits::AcpLimits> {
+        Box::pin(async move {
+            let (connection_id, session_id, vm_id) = self.vm_scope_for(&ownership)?;
+            self.require_owned_vm(&connection_id, &session_id, &vm_id)?;
+            self.vms
+                .get(&vm_id)
+                .map(|vm| vm.limits.acp.clone())
+                .ok_or_else(|| SidecarError::InvalidState(format!("VM not found: {vm_id}")))
+        })
+    }
+
+    fn vm_database<'a>(
+        &'a mut self,
+        ownership: OwnershipScope,
+    ) -> ExtensionFuture<'a, Option<crate::vm_sqlite::SharedVmSqliteDatabase>> {
+        Box::pin(async move {
+            let (connection_id, session_id, vm_id) = self.vm_scope_for(&ownership)?;
+            self.require_owned_vm(&connection_id, &session_id, &vm_id)?;
+            Ok(self.vms.get(&vm_id).and_then(|vm| vm.database.clone()))
+        })
+    }
+
     fn spawn_process<'a>(
         &'a mut self,
         ownership: OwnershipScope,

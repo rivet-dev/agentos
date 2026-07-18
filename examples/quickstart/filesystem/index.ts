@@ -44,8 +44,8 @@ await vm.move("/project/README.md", "/project/docs.md");
 console.log("docs.md exists:", await vm.exists("/project/docs.md"));
 
 // Delete a file, then delete directory recursively
-await vm.delete("/project/docs.md");
-await vm.delete("/project", { recursive: true });
+await vm.remove("/project/docs.md");
+await vm.remove("/project", { recursive: true });
 console.log("project exists after delete:", await vm.exists("/project"));
 
 await vm.dispose();

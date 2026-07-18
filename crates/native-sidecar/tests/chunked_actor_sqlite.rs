@@ -13,15 +13,20 @@ use vbare::OwnedVersionedData;
 mod bridge {
     pub struct MountPluginContext<B> {
         pub runtime_context: agentos_runtime::RuntimeContext,
+        pub database: Option<crate::vm_sqlite::SharedVmSqliteDatabase>,
         pub marker: std::marker::PhantomData<B>,
     }
 }
 
 #[allow(dead_code)]
+#[path = "../src/vm_sqlite.rs"]
+mod vm_sqlite;
+
+#[allow(dead_code)]
 mod subject {
     include!("../src/plugins/chunked_actor_sqlite.rs");
 
-    pub async fn exercise_persistence(client: ActorUdsClient) {
+    pub async fn exercise_persistence(client: SharedVmSqliteDatabase) {
         let first = ActorSqliteMetadataStore::new(
             client.clone(),
             "test".to_owned(),
@@ -83,10 +88,10 @@ mod subject {
         .await
         .unwrap();
         let chunks = client
-            .query(
-                "SELECT content FROM agentos_vfs_metadata_chunks WHERE namespace = ? ORDER BY chunk_index",
+            .query(SqlStatement::new(
+                "SELECT content FROM agentos_fs_metadata_chunks WHERE namespace = ? ORDER BY chunk_index",
                 vec![SqlValue::SqlText("large-test".to_owned())],
-            )
+            ))
             .await
             .unwrap();
         assert!(chunks.rows.len() >= 3);
@@ -137,42 +142,50 @@ fn from_sqlite(value: ValueRef<'_>) -> wire::SqlValue {
 }
 
 fn execute_query(connection: &mut Connection, request: wire::SqliteQuery) -> wire::ResponsePayload {
-    let values = request
-        .params
-        .into_iter()
-        .map(to_sqlite)
-        .collect::<Vec<_>>();
-    let mut statement = connection.prepare(&request.sql).unwrap();
-    let columns = statement
-        .column_names()
-        .into_iter()
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    if columns.is_empty() {
-        let changes = statement.execute(params_from_iter(values)).unwrap() as i64;
-        return wire::ResponsePayload::SqliteQueryOk(wire::SqliteQueryOk {
+    let result = (|| -> rusqlite::Result<wire::SqliteQueryOk> {
+        let values = request
+            .params
+            .into_iter()
+            .map(to_sqlite)
+            .collect::<Vec<_>>();
+        let mut statement = connection.prepare(&request.sql)?;
+        let columns = statement
+            .column_names()
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        if columns.is_empty() {
+            let changes = statement.execute(params_from_iter(values))? as i64;
+            return Ok(wire::SqliteQueryOk {
+                columns,
+                rows: Vec::new(),
+                changes,
+                last_insert_row_id: Some(connection.last_insert_rowid()),
+            });
+        }
+        let column_count = columns.len();
+        let rows = statement
+            .query_map(params_from_iter(values), |row| {
+                (0..column_count)
+                    .map(|index| row.get_ref(index).map(from_sqlite))
+                    .collect::<rusqlite::Result<Vec<_>>>()
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(wire::SqliteQueryOk {
             columns,
-            rows: Vec::new(),
-            changes,
-            last_insert_row_id: Some(connection.last_insert_rowid()),
-        });
-    }
-    let column_count = columns.len();
-    let rows = statement
-        .query_map(params_from_iter(values), |row| {
-            (0..column_count)
-                .map(|index| row.get_ref(index).map(from_sqlite))
-                .collect::<rusqlite::Result<Vec<_>>>()
+            rows,
+            changes: 0,
+            last_insert_row_id: None,
         })
-        .unwrap()
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .unwrap();
-    wire::ResponsePayload::SqliteQueryOk(wire::SqliteQueryOk {
-        columns,
-        rows,
-        changes: 0,
-        last_insert_row_id: None,
-    })
+    })();
+    match result {
+        Ok(result) => wire::ResponsePayload::SqliteQueryOk(result),
+        Err(error) => wire::ResponsePayload::SqlError(wire::SqlError {
+            code: 1,
+            statement_index: 0,
+            message: error.to_string(),
+        }),
+    }
 }
 
 async fn serve_connection(mut stream: UnixStream, database: Arc<Mutex<Connection>>) {
@@ -236,7 +249,145 @@ async fn metadata_and_blocks_persist_directly_over_actor_sqlite_uds() {
         }
     });
 
-    let client = agentos_actor_uds_client::ActorUdsClient::new(&path, "secret");
+    let runtime =
+        agentos_runtime::SidecarRuntime::process(&agentos_runtime::RuntimeConfig::default())
+            .unwrap();
+    let client = vm_sqlite::resolve_vm_sqlite(
+        &agentos_vm_config::VmSqliteDescriptor::ActorUds {
+            path: path.display().to_string(),
+            token: "secret".to_owned(),
+        },
+        runtime.context(),
+        128 * 1024 * 1024,
+    )
+    .await
+    .unwrap();
+    subject::bootstrap_schema(client.as_ref()).await.unwrap();
     subject::exercise_persistence(client).await;
+    server.abort();
+}
+
+#[tokio::test]
+async fn migrations_are_independent_strict_and_atomic_over_actor_sqlite_uds() {
+    const FS_MIGRATIONS: &[vm_sqlite::VmSqliteMigration] = &[vm_sqlite::VmSqliteMigration {
+        version: 1,
+        statements: &["CREATE TABLE agentos_fs_uds_probe (value INTEGER NOT NULL) STRICT"],
+    }];
+    const CORE_MIGRATIONS: &[vm_sqlite::VmSqliteMigration] = &[vm_sqlite::VmSqliteMigration {
+        version: 1,
+        statements: &["CREATE TABLE agentos_core_uds_probe (value TEXT NOT NULL) STRICT"],
+    }];
+    const FAILING_ACTOR_MIGRATIONS: &[vm_sqlite::VmSqliteMigration] =
+        &[vm_sqlite::VmSqliteMigration {
+            version: 1,
+            statements: &[
+                "CREATE TABLE agentos_actor_uds_probe (value INTEGER NOT NULL) STRICT",
+                "INSERT INTO agentos_actor_uds_probe (value) VALUES ('not-an-integer')",
+            ],
+        }];
+
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("actor-migrations.sock");
+    let listener = UnixListener::bind(&path).unwrap();
+    let database = Arc::new(Mutex::new(Connection::open_in_memory().unwrap()));
+    let server = tokio::spawn(async move {
+        loop {
+            let (stream, _) = listener.accept().await.unwrap();
+            let database = database.clone();
+            tokio::spawn(serve_connection(stream, database));
+        }
+    });
+
+    let runtime =
+        agentos_runtime::SidecarRuntime::process(&agentos_runtime::RuntimeConfig::default())
+            .unwrap();
+    let client = vm_sqlite::resolve_vm_sqlite(
+        &agentos_vm_config::VmSqliteDescriptor::ActorUds {
+            path: path.display().to_string(),
+            token: "secret".to_owned(),
+        },
+        runtime.context(),
+        128 * 1024 * 1024,
+    )
+    .await
+    .unwrap();
+
+    vm_sqlite::migrate_schema(
+        client.as_ref(),
+        "filesystem",
+        "agentos_fs_schema_version",
+        FS_MIGRATIONS,
+    )
+    .await
+    .unwrap();
+    vm_sqlite::migrate_schema(
+        client.as_ref(),
+        "core",
+        "agentos_core_schema_version",
+        CORE_MIGRATIONS,
+    )
+    .await
+    .unwrap();
+    let versions = client
+        .query(vm_sqlite::SqlStatement::plain(
+            "SELECT (SELECT schema_version FROM agentos_fs_schema_version WHERE singleton = 1), (SELECT schema_version FROM agentos_core_schema_version WHERE singleton = 1), (SELECT COUNT(*) FROM sqlite_schema WHERE name = 'agentos_schema_versions')",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        versions.rows,
+        vec![vec![
+            vm_sqlite::SqlValue::SqlInteger(1),
+            vm_sqlite::SqlValue::SqlInteger(1),
+            vm_sqlite::SqlValue::SqlInteger(0),
+        ]]
+    );
+
+    let schemas = client
+        .query(vm_sqlite::SqlStatement::plain(
+            "SELECT name, sql FROM sqlite_schema WHERE name IN ('agentos_fs_schema_version', 'agentos_fs_uds_probe', 'agentos_core_schema_version', 'agentos_core_uds_probe') ORDER BY name",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(schemas.rows.len(), 4);
+    assert!(schemas.rows.iter().all(|row| {
+        matches!(row.get(1), Some(vm_sqlite::SqlValue::SqlText(sql)) if sql.trim_end().ends_with("STRICT"))
+    }));
+
+    let invalid_type = client
+        .query(vm_sqlite::SqlStatement::plain(
+            "INSERT INTO agentos_fs_uds_probe (value) VALUES ('text')",
+        ))
+        .await;
+    assert!(matches!(
+        invalid_type,
+        Err(vm_sqlite::VmSqliteError::Actor(
+            agentos_actor_uds_client::ActorUdsError::Sql { .. }
+        ))
+    ));
+
+    assert!(vm_sqlite::migrate_schema(
+        client.as_ref(),
+        "actor",
+        "agentos_actor_schema_version",
+        FAILING_ACTOR_MIGRATIONS,
+    )
+    .await
+    .is_err());
+    let rolled_back = client
+        .query(vm_sqlite::SqlStatement::plain(
+            "SELECT (SELECT COUNT(*) FROM sqlite_schema WHERE name = 'agentos_actor_uds_probe'), (SELECT COUNT(*) FROM agentos_actor_schema_version), (SELECT schema_version FROM agentos_fs_schema_version WHERE singleton = 1), (SELECT schema_version FROM agentos_core_schema_version WHERE singleton = 1)",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        rolled_back.rows,
+        vec![vec![
+            vm_sqlite::SqlValue::SqlInteger(0),
+            vm_sqlite::SqlValue::SqlInteger(0),
+            vm_sqlite::SqlValue::SqlInteger(1),
+            vm_sqlite::SqlValue::SqlInteger(1),
+        ]]
+    );
     server.abort();
 }

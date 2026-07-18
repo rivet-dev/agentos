@@ -12,10 +12,13 @@
 //!
 //! Cron fields are interpreted in the host LOCAL timezone, matching croner's default behavior.
 
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use chrono::{DateTime, Datelike, Duration as ChronoDuration, Local, Timelike, Utc, Weekday};
+use chrono::{
+    DateTime, Datelike, Duration as ChronoDuration, Local, SecondsFormat, Timelike, Utc, Weekday,
+};
 use scc::HashMap as SccHashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
@@ -23,7 +26,7 @@ use tokio::sync::broadcast;
 use crate::agent_os::AgentOs;
 use crate::config::{ScheduleDriver, ScheduleEntry, ScheduleHandle};
 use crate::error::ClientError;
-use crate::session::CreateSessionOptions;
+use crate::session::{McpServerConfig, OpenSessionInput, PermissionPolicy, PromptInput};
 
 // ---------------------------------------------------------------------------
 // Supporting types
@@ -42,11 +45,11 @@ pub enum CronOverlap {
 /// A cron action. `Callback` holds an in-process closure and cannot cross the wire.
 #[derive(Clone)]
 pub enum CronAction {
-    /// Create a session, prompt it, then close it.
+    /// Open a fresh durable session, prompt it, then delete it.
     Session {
         agent_type: String,
         prompt: String,
-        options: Option<CreateSessionOptions>,
+        options: Option<CronSessionOptions>,
     },
     /// Run a command via `exec`.
     Exec { command: String, args: Vec<String> },
@@ -55,6 +58,61 @@ pub enum CronAction {
         #[allow(clippy::type_complexity)]
         callback: Arc<dyn Fn() -> futures::future::BoxFuture<'static, ()> + Send + Sync>,
     },
+}
+
+/// Durable session options accepted by a cron action. The action owns the
+/// agent name and generates a unique session ID for each run.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CronSessionOptions {
+    pub cwd: Option<String>,
+    pub additional_directories: Option<Vec<String>>,
+    pub env: Option<BTreeMap<String, String>>,
+    pub mcp_servers: Option<Vec<McpServerConfig>>,
+    pub permission_policy: Option<PermissionPolicy>,
+    pub skip_os_instructions: Option<bool>,
+    pub additional_instructions: Option<String>,
+}
+
+/// Serializable description of a scheduled action. Callback jobs deliberately
+/// expose only their kind: the host closure is execution state, not job data.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum CronActionInfo {
+    Session {
+        #[serde(rename = "agentType")]
+        agent_type: String,
+        prompt: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        options: Option<CronSessionOptions>,
+    },
+    Exec {
+        command: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        args: Vec<String>,
+    },
+    Callback,
+}
+
+impl From<&CronAction> for CronActionInfo {
+    fn from(action: &CronAction) -> Self {
+        match action {
+            CronAction::Session {
+                agent_type,
+                prompt,
+                options,
+            } => Self::Session {
+                agent_type: agent_type.clone(),
+                prompt: prompt.clone(),
+                options: options.clone(),
+            },
+            CronAction::Exec { command, args } => Self::Exec {
+                command: command.clone(),
+                args: args.clone(),
+            },
+            CronAction::Callback { .. } => Self::Callback,
+        }
+    }
 }
 
 impl std::fmt::Debug for CronAction {
@@ -90,33 +148,35 @@ pub struct CronJobOptions {
 }
 
 /// Snapshot info for a cron job.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CronJobInfo {
     pub id: String,
     pub schedule: String,
-    pub action: CronAction,
+    pub action: CronActionInfo,
     pub overlap: CronOverlap,
-    pub last_run: Option<DateTime<Utc>>,
-    pub next_run: Option<DateTime<Utc>>,
+    pub last_run: Option<String>,
+    pub next_run: Option<String>,
     pub run_count: u64,
     pub running: bool,
 }
 
 /// A cron event emitted on each run.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type")]
 pub enum CronEvent {
-    Fire {
-        job_id: String,
-        time: DateTime<Utc>,
-    },
+    #[serde(rename = "cron:fire", rename_all = "camelCase")]
+    Fire { job_id: String, time: String },
+    #[serde(rename = "cron:complete", rename_all = "camelCase")]
     Complete {
         job_id: String,
-        time: DateTime<Utc>,
+        time: String,
         duration_ms: f64,
     },
+    #[serde(rename = "cron:error", rename_all = "camelCase")]
     Error {
         job_id: String,
-        time: DateTime<Utc>,
+        time: String,
         error: String,
     },
 }
@@ -259,7 +319,7 @@ async fn execute_job_inner(manager: Arc<CronManager>, vm: AgentOs, id: String) {
 
     let _ = manager.event_tx.send(CronEvent::Fire {
         job_id: id.to_string(),
-        time: Utc::now(),
+        time: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
     });
 
     // TS `durationMs = Date.now() - startTime`, an integer millisecond count.
@@ -271,14 +331,14 @@ async fn execute_job_inner(manager: Arc<CronManager>, vm: AgentOs, id: String) {
         Ok(()) => {
             let _ = manager.event_tx.send(CronEvent::Complete {
                 job_id: id.to_string(),
-                time: Utc::now(),
+                time: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
                 duration_ms,
             });
         }
         Err(error) => {
             let _ = manager.event_tx.send(CronEvent::Error {
                 job_id: id.to_string(),
-                time: Utc::now(),
+                time: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
                 error: error.to_string(),
             });
         }
@@ -304,8 +364,8 @@ async fn execute_job_inner(manager: Arc<CronManager>, vm: AgentOs, id: String) {
 
 /// Dispatch a [`CronAction`]. Mirrors TS `CronManager.runAction`.
 ///
-/// `Session` creates a session, prompts it, and always closes it (even if the prompt errors, the
-/// close still runs, matching the TS `finally`). `Exec` sends the structured `(command, args)` argv
+/// `Session` opens a session, prompts it, and always deletes it (even if the prompt errors, the
+/// delete still runs, matching the TS `finally`). `Exec` sends the structured `(command, args)` argv
 /// verbatim via [`AgentOs::exec_argv`] (no string flattening / re-parsing). `Callback` awaits the
 /// in-process future.
 async fn run_action(vm: &AgentOs, action: &CronAction) -> Result<(), ClientError> {
@@ -315,15 +375,48 @@ async fn run_action(vm: &AgentOs, action: &CronAction) -> Result<(), ClientError
             prompt,
             options,
         } => {
-            let session = vm
-                .create_session(agent_type, options.clone().unwrap_or_default())
-                .await
-                .map_err(|err| ClientError::Sidecar(err.to_string()))?;
-            let prompt_result = vm.prompt(&session.session_id, prompt).await;
-            // Always close the session, mirroring the TS `finally` block.
-            let _ = vm.close_session(&session.session_id);
-            prompt_result.map_err(|err| ClientError::Sidecar(err.to_string()))?;
-            Ok(())
+            let options = options.clone().unwrap_or_default();
+            let session_id = format!("cron-{}", uuid::Uuid::new_v4());
+            vm.open_session(OpenSessionInput {
+                session_id: Some(session_id.clone()),
+                agent: agent_type.clone(),
+                cwd: options.cwd,
+                additional_directories: options.additional_directories,
+                env: options.env,
+                mcp_servers: options.mcp_servers,
+                permission_policy: options.permission_policy,
+                skip_os_instructions: options.skip_os_instructions,
+                additional_instructions: options.additional_instructions,
+            })
+            .await
+            .map_err(|err| ClientError::Sidecar(err.to_string()))?;
+            let content = serde_json::from_value(serde_json::json!({
+                "type": "text",
+                "text": prompt,
+            }))
+            .map_err(|err| ClientError::Sidecar(err.to_string()))?;
+            let prompt_result = vm
+                .prompt(PromptInput {
+                    session_id: Some(session_id.clone()),
+                    idempotency_key: None,
+                    content: vec![content],
+                })
+                .await;
+            // Always delete this per-run session so cron does not grow the durable catalog.
+            let delete_result = vm.delete_session(Some(&session_id)).await;
+            match (prompt_result, delete_result) {
+                (Ok(_), Ok(())) => Ok(()),
+                (Err(prompt_error), Ok(())) => Err(ClientError::Sidecar(prompt_error.to_string())),
+                (Ok(_), Err(delete_error)) => Err(ClientError::Sidecar(format!(
+                    "cron prompt completed but durable session cleanup failed: {delete_error}"
+                ))),
+                (Err(prompt_error), Err(delete_error)) => {
+                    eprintln!(
+                        "ERR_AGENTOS_CRON_SESSION_CLEANUP: prompt failed with {prompt_error}; durable session cleanup also failed: {delete_error}"
+                    );
+                    Err(ClientError::Sidecar(prompt_error.to_string()))
+                }
+            }
         }
         CronAction::Exec { command, args } => {
             // Send the structured argv verbatim. Flattening `command`/`args` into a single string
@@ -1136,10 +1229,18 @@ impl AgentOs {
             result.push(CronJobInfo {
                 id: id.clone(),
                 schedule: state.schedule.clone(),
-                action: state.action.clone(),
+                action: CronActionInfo::from(&state.action),
                 overlap: state.overlap,
-                last_run: *state.last_run.lock(),
-                next_run: *state.next_run.lock(),
+                last_run: state
+                    .last_run
+                    .lock()
+                    .as_ref()
+                    .map(|time| time.to_rfc3339_opts(SecondsFormat::Millis, true)),
+                next_run: state
+                    .next_run
+                    .lock()
+                    .as_ref()
+                    .map(|time| time.to_rfc3339_opts(SecondsFormat::Millis, true)),
                 run_count: state.run_count.load(Ordering::SeqCst),
                 running: state.running.load(Ordering::SeqCst),
             });

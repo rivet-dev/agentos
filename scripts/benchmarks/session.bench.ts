@@ -4,7 +4,7 @@
  * Measures the cost of getting a pi agent ready across lanes and reports how much
  * of it is the agentOS VM vs the inherent Node.js pi-SDK work:
  *
- *   lane `vm`        — AgentOs.create() (vmCreate) + createSession("pi") (sessionCreate)
+ *   lane `vm`        — AgentOs.create() (vmCreate) + openSession({ sessionId, agent: "pi" })
  *   lane `bare-node` — the SAME pi-SDK session construction on host node, no VM
  *                      (sessionCreate = load pi SDK + createAgentSession)
  *
@@ -485,7 +485,7 @@ async function bareNodeLaneSample(
 // ── lanes ────────────────────────────────────────────────────────────
 type Sample = Record<string, number>;
 
-// VM lane: create ONE VM/sidecar and loop createSession on it, so the
+// VM lane: create ONE VM/sidecar and loop open/delete on it, so the
 // process-wide agent-SDK snapshot cache is exercised the way it is in production
 // (build-once-per-sidecar, then reuse). A fresh VM per session — the old
 // behavior — gives every session a cold cache, which hides the snapshot benefit
@@ -514,9 +514,13 @@ async function runVmLane(
 			});
 			const vmCreate = performance.now() - t;
 			t = performance.now();
-			const { sessionId } = await vm.createSession("pi", { env: sessionEnv });
+			const sessionId = "main";
+			await vm.openSession({ sessionId,
+				agent: "pi",
+				env: sessionEnv,
+			});
 			const sessionCreate = performance.now() - t;
-			vm.closeSession(sessionId);
+			await vm.deleteSession({ sessionId });
 			await vm.dispose();
 			if (warm) continue;
 			vmCreates.push(vmCreate);
@@ -535,20 +539,19 @@ async function runVmLane(
 		loopbackExemptPorts: [port],
 	});
 	vmCreates.push(performance.now() - t);
-	// closeSession() is fire-and-forget; await the internal teardown promise
-	// between iterations so adapter processes/isolates don't pile up in the
-	// shared sidecar and confound the next createSession measurement.
-	const closePromises = (
-		vm as unknown as { _sessionClosePromises: Map<string, Promise<void>> }
-	)._sessionClosePromises;
+	// Await deletion between iterations so adapters do not pile up in the shared
+	// sidecar and confound the next openSession measurement.
 	try {
 		for (let i = 0; i < ITERATIONS + WARMUP; i++) {
 			const warm = i < WARMUP;
 			t = performance.now();
-			const { sessionId } = await vm.createSession("pi", { env: sessionEnv });
+			const sessionId = `benchmark-${i}`;
+			await vm.openSession({ sessionId,
+				agent: "pi",
+				env: sessionEnv,
+			});
 			const sessionCreate = performance.now() - t;
-			vm.closeSession(sessionId);
-			await closePromises.get(sessionId)?.catch(() => {});
+			await vm.deleteSession({ sessionId });
 			if (warm) continue;
 			sessionCreates.push(sessionCreate);
 			console.error(
@@ -587,7 +590,7 @@ async function runLane(
 // ── trace mode ───────────────────────────────────────────────────────
 const RESULTS_DIR = join(import.meta.dirname, "results");
 
-/** One vm createSession with adapter phase tracing on; returns the spans. */
+/** One VM openSession with adapter phase tracing enabled; returns the spans. */
 async function vmLaneTrace(software: unknown): Promise<TraceEvent[]> {
 	const { port, url } = await ensureLlmock();
 	const vm = await AgentOs.create({
@@ -595,7 +598,9 @@ async function vmLaneTrace(software: unknown): Promise<TraceEvent[]> {
 		loopbackExemptPorts: [port],
 	});
 	const tracePath = "/home/agentos/pi-trace.json";
-	const { sessionId } = await vm.createSession("pi", {
+	const sessionId = "main";
+	await vm.openSession({ sessionId,
+		agent: "pi",
 		env: {
 			ANTHROPIC_API_KEY: "bench-key",
 			ANTHROPIC_BASE_URL: url,
@@ -608,7 +613,7 @@ async function vmLaneTrace(software: unknown): Promise<TraceEvent[]> {
 	} catch (e) {
 		console.error(`  (no adapter trace: ${(e as Error).message})`);
 	}
-	vm.closeSession(sessionId);
+	await vm.deleteSession({ sessionId });
 	await vm.dispose();
 	return spans;
 }
@@ -706,7 +711,7 @@ async function main() {
 	if (LANES.includes("vm")) {
 		const software = await loadPiSoftware();
 		console.error(
-			`\n=== lane: vm (AgentOs + createSession${FRESH_VM_PER_SESSION ? ", fresh sidecar/session" : ", reused sidecar"}) ===`,
+			`\n=== lane: vm (AgentOs + openSession${FRESH_VM_PER_SESSION ? ", fresh sidecar/session" : ", reused sidecar"}) ===`,
 		);
 		lanes.vm = await runVmLane(software);
 	}

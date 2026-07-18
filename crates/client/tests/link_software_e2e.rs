@@ -10,7 +10,6 @@ use agentos_client::config::{
 };
 use agentos_client::process::SpawnOptions;
 use agentos_client::AgentOs;
-use agentos_client::ExecOptions;
 use agentos_client::PackageDescriptor;
 
 fn allow_all() -> Permissions {
@@ -76,26 +75,21 @@ async fn link_software_makes_command_resolve_live() {
     // $PATH resolution + header dispatch.
     let captured = Arc::new(Mutex::new(Vec::<u8>::new()));
     let err_cap = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let handle = os
+        .spawn("linked-cmd", Vec::new(), SpawnOptions::default())
+        .expect("spawn linked-cmd");
     let cb = captured.clone();
     let ecb = err_cap.clone();
-    let handle = os
-        .spawn(
-            "linked-cmd",
-            Vec::new(),
-            SpawnOptions {
-                base: ExecOptions {
-                    on_stdout: Some(Box::new(move |chunk: &[u8]| {
-                        cb.lock().unwrap().extend_from_slice(chunk);
-                    })),
-                    on_stderr: Some(Box::new(move |chunk: &[u8]| {
-                        ecb.lock().unwrap().extend_from_slice(chunk);
-                    })),
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-        )
-        .expect("spawn linked-cmd");
+    let _output = os
+        .on_process_output(handle.pid, move |event| match event.stream {
+            agentos_client::ProcessStream::Stdout => {
+                cb.lock().unwrap().extend_from_slice(&event.data)
+            }
+            agentos_client::ProcessStream::Stderr => {
+                ecb.lock().unwrap().extend_from_slice(&event.data)
+            }
+        })
+        .expect("subscribe linked-cmd output");
     let code = os.wait_process(handle.pid).await.expect("wait linked-cmd");
     let stdout = String::from_utf8_lossy(&captured.lock().unwrap()).into_owned();
     let stderr = String::from_utf8_lossy(&err_cap.lock().unwrap()).into_owned();

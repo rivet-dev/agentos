@@ -8,6 +8,7 @@ const ACP_EXTENSION_NAMESPACE = "dev.rivet.agent-os.acp";
 
 type TrackedAgent = AgentOs & {
 	_sessions: Map<string, unknown>;
+	_agentExitHandlers: Map<string, Set<(event: AgentExitEvent) => void>>;
 	_agentExitHandler?: (event: AgentExitEvent) => void;
 	_handleAcpExtEvent(env: { namespace: string; payload: Uint8Array }): void;
 };
@@ -25,13 +26,14 @@ function createTrackedAgent(): TrackedAgent {
 			},
 		],
 	]);
+	agent._agentExitHandlers = new Map();
 	return agent;
 }
 
 function encodeAgentExitedEvent(overrides?: {
 	sessionId?: string;
+	pid?: number | null;
 	exitCode?: number | null;
-	restart?: string;
 }): Uint8Array {
 	return encodeAcpEvent({
 		tag: "AcpAgentExitedEvent",
@@ -39,10 +41,11 @@ function encodeAgentExitedEvent(overrides?: {
 			sessionId: overrides?.sessionId ?? SESSION_ID,
 			agentType: "codex",
 			processId: "acp-agent-1",
+			pid: overrides?.pid === undefined ? 4242 : overrides.pid,
 			exitCode: overrides?.exitCode === undefined ? 7 : overrides.exitCode,
-			restart: overrides?.restart ?? "restarted",
-			restartCount: 1,
-			maxRestarts: 3,
+			restart: "not_attempted",
+			restartCount: 0,
+			maxRestarts: 0,
 		},
 	});
 }
@@ -67,9 +70,9 @@ describe("AgentOs onAgentExit dispatch", () => {
 				processId: "acp-agent-1",
 				pid: 4242,
 				exitCode: 7,
-				restart: "restarted",
-				restartCount: 1,
-				maxRestarts: 3,
+				restart: "not_attempted",
+				restartCount: 0,
+				maxRestarts: 0,
 			},
 		]);
 	});
@@ -85,8 +88,8 @@ describe("AgentOs onAgentExit dispatch", () => {
 			namespace: ACP_EXTENSION_NAMESPACE,
 			payload: encodeAgentExitedEvent({
 				sessionId: "evicted-session",
+				pid: null,
 				exitCode: null,
-				restart: "unsupported",
 			}),
 		});
 
@@ -95,7 +98,7 @@ describe("AgentOs onAgentExit dispatch", () => {
 			sessionId: "evicted-session",
 			pid: null,
 			exitCode: null,
-			restart: "unsupported",
+			restart: "not_attempted",
 		});
 	});
 

@@ -34,12 +34,13 @@ const interval = setInterval(() => {
 `,
 );
 
-const proc = vm.spawn("node", ["/tmp/counter.mjs"], {
-	onStdout: (data: Uint8Array) => {
+const proc = vm.spawn("node", ["/tmp/counter.mjs"]);
+vm.onProcessOutput(proc.pid, (event) => {
+	if (event.stream === "stdout") {
 		process.stdout.write(
-			`[process ${proc.pid}] ${new TextDecoder().decode(data)}`,
+			`[process ${proc.pid}] ${new TextDecoder().decode(event.data)}`,
 		);
-	},
+	}
 });
 console.log("Spawned process:", proc.pid);
 

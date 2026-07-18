@@ -12,21 +12,20 @@ It's a VM-level option covering every session's agent process; if omitted, chunk
 
 ## Agent crashes (`onAgentExit`)
 
-If the agent process exits without `closeSession()`, the runtime logs the exit, **auto-restarts the agent** (bounded to 3 restarts per session, re-attaching the same session id when the agent supports native resume), and fires `onAgentExit` with the outcome:
+If an adapter exits unexpectedly, the runtime logs the exit, does **not** restart it or replay an uncertain prompt, and fires `onAgentExit`:
 
 ```ts
 const agentOs = await AgentOs.create({
   software: [pi],
   onAgentExit(event) {
-    // event: { sessionId, agentType, processId, pid, exitCode,
-    //          restart: "restarted" | "unsupported" | "failed" | "exhausted",
-    //          restartCount, maxRestarts }
+    // restart is always "not_attempted". A later explicit prompt restores the
+    // durable session through resume, load, or bounded transcript continuation.
     console.warn(`agent exited (code ${event.exitCode}), restart=${event.restart}`);
   },
 });
 ```
 
-Only `restart === "restarted"` leaves the session usable; every other outcome means the session was evicted. The crash *reason* is on the agent's stderr (above); the exit event tells you it died and whether it recovered. See [Sessions → Agent crashes and auto-restart](/docs/sessions#agent-crashes-and-auto-restart).
+The durable session and committed SQLite history remain available. The crash *reason* is on the adapter's stderr; the exit event reports that the live runtime disappeared. A later explicit prompt performs restoration. See [Sessions](/docs/sessions).
 
 ## Runtime logs (sidecar)
 

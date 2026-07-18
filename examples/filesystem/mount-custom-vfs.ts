@@ -1,7 +1,8 @@
-import { AgentOs, createInMemoryFileSystem } from "@rivet-dev/agentos-core";
+import { AgentOs } from "@rivet-dev/agentos-core";
 
 const vm = await AgentOs.create({ defaultSoftware: false });
-const driver = createInMemoryFileSystem();
-
-await vm.mountFs("/home/agentos/scratch", driver);
+await vm.mountFs({
+	path: "/home/agentos/scratch",
+	plugin: { id: "memory", config: {} },
+});
 await vm.writeFile("/home/agentos/scratch/hello.txt", "hello");

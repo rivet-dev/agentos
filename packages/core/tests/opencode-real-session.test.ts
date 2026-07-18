@@ -24,7 +24,7 @@ async function createOpenCodeVm(mockUrl: string): Promise<AgentOs> {
 	});
 }
 
-describe("real createSession('opencode')", () => {
+describe("real openSession({ agent: 'opencode' })", () => {
 	test("initializes the projected OpenCode ACP package inside the VM", async () => {
 		const { mock, url } = await startLlmock([DEFAULT_TEXT_FIXTURE]);
 		const vm = await createOpenCodeVm(url);
@@ -33,15 +33,16 @@ describe("real createSession('opencode')", () => {
 		try {
 			const homeDir = await createVmOpenCodeHome(vm, url);
 			const workspaceDir = await createVmWorkspace(vm);
-			sessionId = (
-				await vm.createSession("opencode", {
-					cwd: workspaceDir,
-					env: {
-						HOME: homeDir,
-						ANTHROPIC_API_KEY: "mock-key",
-					},
-				})
-			).sessionId;
+			sessionId = "main";
+			await vm.openSession({
+				sessionId,
+				agent: "opencode",
+				cwd: workspaceDir,
+				env: {
+					HOME: homeDir,
+					ANTHROPIC_API_KEY: "mock-key",
+				},
+			});
 
 			const agentInfo = vm.getSessionAgentInfo(sessionId) as AgentInfo;
 			expect(agentInfo.name).toBe("OpenCode");
@@ -67,7 +68,7 @@ describe("real createSession('opencode')", () => {
 			});
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				vm.unloadSession({ sessionId });
 			}
 			await vm.dispose();
 			await stopLlmock(mock);

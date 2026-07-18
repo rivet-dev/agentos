@@ -39,21 +39,24 @@ import pi from "@agentos-software/pi";
 const vm = await AgentOs.create({ software: [common, pi] });
 
 // Create a session and send a prompt
-const { sessionId } = await vm.createSession("pi", {
+await vm.openSession({
+  agent: "pi",
   env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 });
 
-vm.onSessionEvent(sessionId, (event) => {
+vm.onSessionEvent((event) => {
   console.log(event);
 });
 
-await vm.prompt(sessionId, "Write a hello world script to /home/agentos/hello.js");
+await vm.prompt({
+  content: [{ type: "text", text: "Write a hello world script to /home/agentos/hello.js" }],
+});
 
 // Read the file the agent created
 const content = await vm.readFile("/home/agentos/hello.js");
 console.log(new TextDecoder().decode(content));
 
-vm.closeSession(sessionId);
+await vm.deleteSession();
 await vm.dispose();
 ```
 
@@ -115,7 +118,7 @@ All benchmarks compare agentOS against the fastest/cheapest mainstream sandbox p
 ### Infrastructure
 - **[Mount external storage as a filesystem](https://agentos-sdk.dev/docs/filesystem)**: S3-compatible storage, Google Drive, host directories, overlay filesystems, or custom backends
 - **[Bindings](https://agentos-sdk.dev/docs/bindings)**: Define JavaScript functions that agents call as CLI commands inside the VM
-- **[Cron](https://agentos-sdk.dev/docs/cron), [webhooks](https://agentos-sdk.dev/docs/webhooks), and queues**: Schedule tasks, receive external events, and serialize work with built-in primitives
+- **[Cron](https://agentos-sdk.dev/docs/cron) and [webhooks](https://agentos-sdk.dev/docs/webhooks)**: Schedule tasks and receive external events with built-in primitives
 - **[Sandbox extension](https://agentos-sdk.dev/docs/sandbox)**: Pair with full sandboxes (E2B, Daytona, etc.) for heavy workloads like browsers or native compilation
 
 ### Orchestration

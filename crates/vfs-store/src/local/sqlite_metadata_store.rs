@@ -12,6 +12,76 @@ use vfs::engine::types::{
     InodeType, SnapshotId, Storage, Timespec, DEFAULT_CHUNK_SIZE,
 };
 
+const LOCAL_FS_SCHEMA_VERSION_TABLE: &str = "agentos_fs_schema_version";
+
+struct LocalFsMigration {
+    version: i64,
+    statements: &'static str,
+}
+
+// This ladder belongs to the standalone rusqlite metadata database opened by
+// `SqliteMetadataStore`. It is not interchangeable with the filesystem ladder
+// installed in the per-VM descriptor database by `chunked_actor_sqlite`.
+const LOCAL_FS_MIGRATIONS: &[LocalFsMigration] = &[LocalFsMigration {
+    version: 1,
+    statements: r#"
+        CREATE TABLE agentos_fs_inodes (
+          ino INTEGER PRIMARY KEY CHECK (ino > 0),
+          kind INTEGER NOT NULL CHECK (kind IN (0, 1, 2)),
+          mode INTEGER NOT NULL CHECK (mode BETWEEN 0 AND 4294967295),
+          uid INTEGER NOT NULL CHECK (uid BETWEEN 0 AND 4294967295),
+          gid INTEGER NOT NULL CHECK (gid BETWEEN 0 AND 4294967295),
+          size INTEGER NOT NULL CHECK (size >= 0),
+          nlink INTEGER NOT NULL CHECK (nlink >= 0),
+          atime_ns INTEGER NOT NULL,
+          mtime_ns INTEGER NOT NULL,
+          ctime_ns INTEGER NOT NULL,
+          birthtime_ns INTEGER NOT NULL,
+          storage_mode INTEGER NOT NULL CHECK (storage_mode IN (0, 1, 2)),
+          storage_chunk_size INTEGER CHECK (
+            storage_chunk_size IS NULL OR
+            storage_chunk_size BETWEEN 1 AND 4294967295
+          ),
+          inline_content BLOB,
+          symlink_target TEXT,
+          CHECK (
+            (storage_mode = 0 AND storage_chunk_size IS NULL AND inline_content IS NULL) OR
+            (storage_mode = 1 AND storage_chunk_size IS NULL AND inline_content IS NOT NULL) OR
+            (storage_mode = 2 AND storage_chunk_size IS NOT NULL AND inline_content IS NULL)
+          ),
+          CHECK (
+            (kind = 2 AND symlink_target IS NOT NULL) OR
+            (kind <> 2 AND symlink_target IS NULL)
+          )
+        ) STRICT;
+        CREATE TABLE agentos_fs_dentries (
+          parent_ino INTEGER NOT NULL CHECK (parent_ino > 0),
+          name TEXT NOT NULL CHECK (length(name) > 0),
+          child_ino INTEGER NOT NULL CHECK (child_ino > 0),
+          kind INTEGER NOT NULL CHECK (kind IN (0, 1, 2)),
+          PRIMARY KEY (parent_ino, name)
+        ) STRICT;
+        CREATE INDEX agentos_fs_dentries_parent
+          ON agentos_fs_dentries(parent_ino);
+        CREATE TABLE agentos_fs_chunks (
+          ino INTEGER NOT NULL CHECK (ino > 0),
+          chunk_index INTEGER NOT NULL CHECK (chunk_index >= 0),
+          block_key TEXT NOT NULL CHECK (length(block_key) > 0),
+          len INTEGER NOT NULL CHECK (len BETWEEN 0 AND 4294967295),
+          PRIMARY KEY (ino, chunk_index)
+        ) STRICT;
+        CREATE TABLE agentos_fs_block_refs (
+          block_key TEXT PRIMARY KEY CHECK (length(block_key) > 0),
+          refcount INTEGER NOT NULL CHECK (refcount > 0)
+        ) STRICT;
+        CREATE TABLE agentos_fs_snapshots (
+          snapshot_id INTEGER PRIMARY KEY CHECK (snapshot_id > 0),
+          root_ino INTEGER NOT NULL CHECK (root_ino > 0),
+          created_ns INTEGER NOT NULL
+        ) STRICT;
+    "#,
+}];
+
 pub struct SqliteMetadataStore {
     connection: Mutex<Connection>,
     inner: InMemoryMetadataStore,
@@ -31,12 +101,13 @@ impl SqliteMetadataStore {
     }
 
     fn from_connection(mut connection: Connection) -> VfsResult<Self> {
-        install_schema(&connection)?;
+        install_schema(&mut connection)?;
         let dump = load_dump(&connection)?;
+        let is_new = dump.is_none();
         let inner = dump
             .map(InMemoryMetadataStore::from_dump)
             .unwrap_or_default();
-        if load_dump(&connection)?.is_none() {
+        if is_new {
             persist_dump(&mut connection, &inner.dump())?;
         }
         Ok(Self {
@@ -49,7 +120,7 @@ impl SqliteMetadataStore {
         let connection = self.connection.lock().expect("sqlite mutex poisoned");
         let count: i64 = connection
             .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('inodes', 'dentries', 'chunks', 'block_refs', 'snapshots')",
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('agentos_fs_inodes', 'agentos_fs_dentries', 'agentos_fs_chunks', 'agentos_fs_block_refs', 'agentos_fs_snapshots')",
                 [],
                 |row| row.get(0),
             )
@@ -64,57 +135,107 @@ impl SqliteMetadataStore {
     }
 }
 
-fn install_schema(connection: &Connection) -> VfsResult<()> {
-    connection
-        .execute_batch(
-            "
-            CREATE TABLE IF NOT EXISTS inodes (
-              ino INTEGER PRIMARY KEY,
-              kind INTEGER NOT NULL,
-              mode INTEGER NOT NULL,
-              uid INTEGER NOT NULL,
-              gid INTEGER NOT NULL,
-              size INTEGER NOT NULL,
-              nlink INTEGER NOT NULL,
-              atime_ns INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
-              ctime_ns INTEGER NOT NULL, birthtime_ns INTEGER NOT NULL,
-              storage_mode INTEGER NOT NULL,
-              storage_chunk_size INTEGER,
-              inline_content BLOB,
-              symlink_target TEXT
-            );
-            CREATE TABLE IF NOT EXISTS dentries (
-              parent_ino INTEGER NOT NULL,
-              name TEXT NOT NULL,
-              child_ino INTEGER NOT NULL,
-              kind INTEGER NOT NULL,
-              PRIMARY KEY (parent_ino, name)
-            );
-            CREATE INDEX IF NOT EXISTS dentries_parent ON dentries(parent_ino);
-            CREATE TABLE IF NOT EXISTS chunks (
-              ino INTEGER NOT NULL,
-              chunk_index INTEGER NOT NULL,
-              block_key TEXT NOT NULL,
-              len INTEGER NOT NULL,
-              PRIMARY KEY (ino, chunk_index)
-            );
-            CREATE TABLE IF NOT EXISTS block_refs (
-              block_key TEXT PRIMARY KEY,
-              refcount INTEGER NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS snapshots (
-              snapshot_id INTEGER PRIMARY KEY,
-              root_ino INTEGER NOT NULL,
-              created_ns INTEGER NOT NULL
-            );
-            ",
+fn install_schema(connection: &mut Connection) -> VfsResult<()> {
+    install_schema_migrations(connection, LOCAL_FS_MIGRATIONS)
+}
+
+fn install_schema_migrations(
+    connection: &mut Connection,
+    migrations: &[LocalFsMigration],
+) -> VfsResult<()> {
+    validate_migration_ladder(migrations)?;
+    let latest_version = migrations.last().map_or(0, |migration| migration.version);
+    let tx = connection
+        .transaction()
+        .map_err(|err| VfsError::eio(format!("begin SQLite schema migration: {err}")))?;
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS agentos_fs_schema_version (
+           singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+           schema_version INTEGER NOT NULL CHECK (schema_version >= 0)
+         ) STRICT;",
+    )
+    .map_err(|err| VfsError::eio(format!("install SQLite schema version table: {err}")))?;
+
+    let row_count: i64 = tx
+        .query_row(
+            "SELECT COUNT(*) FROM agentos_fs_schema_version",
+            [],
+            |row| row.get(0),
         )
-        .map_err(|err| VfsError::eio(format!("install SQLite metadata schema: {err}")))
+        .map_err(|err| VfsError::eio(format!("inspect SQLite schema version rows: {err}")))?;
+    let current_version = match row_count {
+        0 => 0,
+        1 => tx
+            .query_row(
+                "SELECT schema_version FROM agentos_fs_schema_version WHERE singleton = 1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|err| VfsError::eio(format!("read SQLite schema version: {err}")))?,
+        count => {
+            return Err(VfsError::eio(format!(
+                "{LOCAL_FS_SCHEMA_VERSION_TABLE} must contain at most one row; found {count}"
+            )))
+        }
+    };
+    if !(0..=latest_version).contains(&current_version) {
+        return Err(VfsError::eio(format!(
+            "unsupported {LOCAL_FS_SCHEMA_VERSION_TABLE} version {current_version}; latest supported version is {latest_version}"
+        )));
+    }
+
+    for migration in migrations
+        .iter()
+        .filter(|migration| migration.version > current_version)
+    {
+        tx.execute_batch(migration.statements).map_err(|err| {
+            VfsError::eio(format!(
+                "apply SQLite filesystem migration {}: {err}",
+                migration.version
+            ))
+        })?;
+        tx.execute(
+            "INSERT INTO agentos_fs_schema_version (singleton, schema_version)
+             VALUES (1, ?1)
+             ON CONFLICT(singleton) DO UPDATE SET schema_version = excluded.schema_version",
+            [migration.version],
+        )
+        .map_err(|err| {
+            VfsError::eio(format!(
+                "record SQLite filesystem migration {}: {err}",
+                migration.version
+            ))
+        })?;
+    }
+
+    tx.commit()
+        .map_err(|err| VfsError::eio(format!("commit SQLite schema migration: {err}")))
+}
+
+fn validate_migration_ladder(migrations: &[LocalFsMigration]) -> VfsResult<()> {
+    for (index, migration) in migrations.iter().enumerate() {
+        let expected = i64::try_from(index + 1)
+            .map_err(|_| VfsError::eio("SQLite filesystem migration version overflow"))?;
+        if migration.version != expected {
+            return Err(VfsError::eio(format!(
+                "malformed SQLite filesystem migration ladder: expected version {expected}, found {}",
+                migration.version
+            )));
+        }
+        if migration.statements.trim().is_empty() {
+            return Err(VfsError::eio(format!(
+                "malformed SQLite filesystem migration ladder: version {expected} has no statements"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn load_dump(connection: &Connection) -> VfsResult<Option<MetadataDump>> {
     let inode_count: i64 = connection
-        .query_row("SELECT COUNT(*) FROM inodes", [], |row| row.get(0))
+        .query_row("SELECT COUNT(*) FROM agentos_fs_inodes", [], |row| {
+            row.get(0)
+        })
         .map_err(|err| VfsError::eio(format!("count SQLite inodes: {err}")))?;
     if inode_count == 0 {
         return Ok(None);
@@ -126,7 +247,7 @@ fn load_dump(connection: &Connection) -> VfsResult<Option<MetadataDump>> {
         .prepare(
             "SELECT ino, kind, mode, uid, gid, size, nlink, atime_ns, mtime_ns, ctime_ns,
                     birthtime_ns, storage_mode, storage_chunk_size, inline_content, symlink_target
-             FROM inodes",
+             FROM agentos_fs_inodes",
         )
         .map_err(|err| VfsError::eio(format!("prepare inode load: {err}")))?;
     let rows = statement
@@ -174,7 +295,7 @@ fn load_dump(connection: &Connection) -> VfsResult<Option<MetadataDump>> {
 
     let mut dentries = BTreeMap::new();
     let mut statement = connection
-        .prepare("SELECT parent_ino, name, child_ino FROM dentries")
+        .prepare("SELECT parent_ino, name, child_ino FROM agentos_fs_dentries")
         .map_err(|err| VfsError::eio(format!("prepare dentry load: {err}")))?;
     let rows = statement
         .query_map([], |row| {
@@ -192,7 +313,7 @@ fn load_dump(connection: &Connection) -> VfsResult<Option<MetadataDump>> {
 
     let mut chunks = BTreeMap::new();
     let mut statement = connection
-        .prepare("SELECT ino, chunk_index, block_key, len FROM chunks")
+        .prepare("SELECT ino, chunk_index, block_key, len FROM agentos_fs_chunks")
         .map_err(|err| VfsError::eio(format!("prepare chunk load: {err}")))?;
     let rows = statement
         .query_map([], |row| {
@@ -215,7 +336,7 @@ fn load_dump(connection: &Connection) -> VfsResult<Option<MetadataDump>> {
 
     let mut block_refs = BTreeMap::new();
     let mut statement = connection
-        .prepare("SELECT block_key, refcount FROM block_refs")
+        .prepare("SELECT block_key, refcount FROM agentos_fs_block_refs")
         .map_err(|err| VfsError::eio(format!("prepare block ref load: {err}")))?;
     let rows = statement
         .query_map([], |row| Ok((BlockKey(row.get(0)?), row.get::<_, u64>(1)?)))
@@ -241,11 +362,11 @@ fn persist_dump(connection: &mut Connection, dump: &MetadataDump) -> VfsResult<(
         .map_err(|err| VfsError::eio(format!("begin SQLite metadata transaction: {err}")))?;
     tx.execute_batch(
         "
-        DELETE FROM snapshots;
-        DELETE FROM block_refs;
-        DELETE FROM chunks;
-        DELETE FROM dentries;
-        DELETE FROM inodes;
+        DELETE FROM agentos_fs_snapshots;
+        DELETE FROM agentos_fs_block_refs;
+        DELETE FROM agentos_fs_chunks;
+        DELETE FROM agentos_fs_dentries;
+        DELETE FROM agentos_fs_inodes;
         ",
     )
     .map_err(|err| VfsError::eio(format!("clear SQLite metadata tables: {err}")))?;
@@ -257,7 +378,7 @@ fn persist_dump(connection: &mut Connection, dump: &MetadataDump) -> VfsResult<(
             Storage::Chunked { chunk_size } => (2, Some(*chunk_size), None),
         };
         tx.execute(
-            "INSERT INTO inodes
+            "INSERT INTO agentos_fs_inodes
              (ino, kind, mode, uid, gid, size, nlink, atime_ns, mtime_ns, ctime_ns, birthtime_ns,
               storage_mode, storage_chunk_size, inline_content, symlink_target)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -289,7 +410,7 @@ fn persist_dump(connection: &mut Connection, dump: &MetadataDump) -> VfsResult<(
             .map(|meta| meta.kind)
             .ok_or_else(|| VfsError::eio(format!("dentry points to missing inode {child}")))?;
         tx.execute(
-            "INSERT INTO dentries (parent_ino, name, child_ino, kind) VALUES (?, ?, ?, ?)",
+            "INSERT INTO agentos_fs_dentries (parent_ino, name, child_ino, kind) VALUES (?, ?, ?, ?)",
             params![parent, name, child, kind_id(kind)],
         )
         .map_err(|err| VfsError::eio(format!("persist SQLite dentry {name}: {err}")))?;
@@ -297,7 +418,7 @@ fn persist_dump(connection: &mut Connection, dump: &MetadataDump) -> VfsResult<(
 
     for ((ino, index), chunk) in &dump.chunks {
         tx.execute(
-            "INSERT INTO chunks (ino, chunk_index, block_key, len) VALUES (?, ?, ?, ?)",
+            "INSERT INTO agentos_fs_chunks (ino, chunk_index, block_key, len) VALUES (?, ?, ?, ?)",
             params![ino, index, chunk.key.0, chunk.len],
         )
         .map_err(|err| VfsError::eio(format!("persist SQLite chunk {ino}/{index}: {err}")))?;
@@ -305,7 +426,7 @@ fn persist_dump(connection: &mut Connection, dump: &MetadataDump) -> VfsResult<(
 
     for (key, refcount) in &dump.block_refs {
         tx.execute(
-            "INSERT INTO block_refs (block_key, refcount) VALUES (?, ?)",
+            "INSERT INTO agentos_fs_block_refs (block_key, refcount) VALUES (?, ?)",
             params![key.0, refcount],
         )
         .map_err(|err| VfsError::eio(format!("persist SQLite block ref {}: {err}", key.0)))?;
@@ -434,5 +555,54 @@ impl MetadataStore for SqliteMetadataStore {
 
     async fn gc(&self) -> VfsResult<Vec<BlockKey>> {
         self.inner.gc().await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_malformed_ladder_before_touching_database() {
+        const MALFORMED: &[LocalFsMigration] = &[LocalFsMigration {
+            version: 2,
+            statements: "CREATE TABLE agentos_fs_probe (value INTEGER) STRICT;",
+        }];
+        let mut connection = Connection::open_in_memory().expect("open database");
+
+        let error = install_schema_migrations(&mut connection, MALFORMED)
+            .expect_err("malformed ladder must fail");
+
+        assert!(error.message().contains("expected version 1, found 2"));
+        let table_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name LIKE 'agentos_fs_%'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("inspect database");
+        assert_eq!(table_count, 0);
+    }
+
+    #[test]
+    fn rolls_back_schema_and_version_when_migration_fails() {
+        const FAILING: &[LocalFsMigration] = &[LocalFsMigration {
+            version: 1,
+            statements: "CREATE TABLE agentos_fs_probe (value INTEGER CHECK (value > 0)) STRICT;
+                         INSERT INTO agentos_fs_probe (value) VALUES (0);",
+        }];
+        let mut connection = Connection::open_in_memory().expect("open database");
+
+        install_schema_migrations(&mut connection, FAILING)
+            .expect_err("failing migration must roll back");
+
+        let table_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('agentos_fs_schema_version', 'agentos_fs_probe')",
+                [],
+                |row| row.get(0),
+            )
+            .expect("inspect database");
+        assert_eq!(table_count, 0);
     }
 }

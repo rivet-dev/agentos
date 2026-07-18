@@ -11,9 +11,10 @@ console.log("exit code:", result.exitCode);
 
 // Spawn a long-running process
 const conn = agent.connect();
+const { pid } = await agent.spawn("node", ["server.js"]);
 conn.on("processOutput", (data) => {
+	if (data.pid !== pid) return;
   console.log(`[pid ${data.pid}]`, new TextDecoder().decode(data.data));
 });
 
-const { pid } = await agent.spawn("node", ["server.js"]);
 console.log("Process ID:", pid);

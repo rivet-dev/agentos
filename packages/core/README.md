@@ -30,14 +30,16 @@ import { AgentOs } from "@rivet-dev/agentos-core";
 // 1. Create a VM
 const vm = await AgentOs.create();
 
-// 2. Create an agent session
-const { sessionId } = await vm.createSession("pi");
+// 2. Create the default agent session
+await vm.openSession({ agent: "pi" });
 
 // 3. Send a prompt
-const response = await vm.prompt(sessionId, "Write a hello world in TypeScript");
+const response = await vm.prompt({
+  content: [{ type: "text", text: "Write a hello world in TypeScript" }],
+});
 
 // 4. Clean up
-vm.closeSession(sessionId);
+await vm.deleteSession();
 await vm.dispose();
 ```
 
@@ -70,13 +72,16 @@ await vm.dispose();
 | `writeFiles` | `writeFiles(entries: BatchWriteEntry[]): Promise<BatchWriteResult[]>` | Batch write multiple files (creates parent dirs) |
 | `mkdir` | `mkdir(path: string): Promise<void>` | Create a directory |
 | `readdir` | `readdir(path: string): Promise<string[]>` | List directory entries |
+| `readdirEntries` | `readdirEntries(path: string): Promise<ReaddirEntry[]>` | List immediate directory entries and types in one operation |
 | `readdirRecursive` | `readdirRecursive(path: string, options?: ReaddirRecursiveOptions): Promise<DirEntry[]>` | Recursively list directory contents with metadata |
 | `stat` | `stat(path: string): Promise<VirtualStat>` | Get file/directory metadata |
 | `exists` | `exists(path: string): Promise<boolean>` | Check if a path exists |
 | `move` | `move(from: string, to: string): Promise<void>` | Rename/move a file or directory |
-| `delete` | `delete(path: string, options?: { recursive?: boolean }): Promise<void>` | Delete a file or directory |
-| `mountFs` | `mountFs(path: string, driver: VirtualFileSystem, options?: { readOnly?: boolean }): void` | Mount a filesystem driver at the given path |
-| `unmountFs` | `unmountFs(path: string): void` | Unmount a filesystem |
+| `remove` | `remove(path: string, options?: { recursive?: boolean }): Promise<void>` | Remove a file or directory |
+| `mountFs` | `mountFs(descriptor: DynamicMountDescriptor): Promise<void>` | Mount a sidecar-owned filesystem descriptor |
+| `unmountFs` | `unmountFs(path: string): Promise<void>` | Unmount a filesystem |
+| `listMounts` | `listMounts(): Promise<MountInfo[]>` | Read sanitized live mount metadata from the sidecar |
+| `exportRootFilesystem` | `exportRootFilesystem({ maxBytes }): Promise<RootSnapshotExport>` | Export a bounded root-filesystem snapshot |
 
 ### Process Management
 
@@ -84,6 +89,8 @@ await vm.dispose();
 |--------|-----------|-------------|
 | `exec` | `exec(command: string, options?: ExecOptions): Promise<ExecResult>` | Execute a shell command and wait for completion |
 | `spawn` | `spawn(command: string, args: string[], options?: SpawnOptions): { pid: number }` | Spawn a long-running process |
+| `onProcessOutput` | `onProcessOutput(pid, handler): () => void` | Subscribe to unified stdout/stderr DTOs |
+| `onProcessExit` | `onProcessExit(pid, handler): () => void` | Subscribe to process exit DTOs |
 | `listProcesses` | `listProcesses(): SpawnedProcessInfo[]` | List processes started via `spawn()` |
 | `allProcesses` | `allProcesses(): ProcessInfo[]` | List all kernel processes across all runtimes |
 | `processTree` | `processTree(): ProcessTreeNode[]` | Get processes organized as a parent-child tree |
@@ -95,7 +102,7 @@ await vm.dispose();
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `fetch` | `fetch(port: number, request: Request): Promise<Response>` | Send an HTTP request to a service running inside the VM |
+| `httpRequest` | `httpRequest(request: HttpRequest): Promise<HttpResponse>` | Send a buffered HTTP request to a service running inside the VM |
 
 ### Shell
 
@@ -112,9 +119,11 @@ await vm.dispose();
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `createSession` | `createSession(agentType: AgentType, options?: CreateSessionOptions): Promise<{ sessionId: string }>` | Launch an agent and return a session ID |
-| `listSessions` | `listSessions(): SessionInfo[]` | List active sessions |
-| `destroySession` | `destroySession(sessionId: string): Promise<void>` | Gracefully cancel and close a session |
+| `openSession` | `openSession(input: OpenSessionInput): Promise<void>` | Create or restore a durable session with a caller-chosen ID |
+| `getSession` | `getSession(input?: SessionTarget): Promise<SessionInfo>` | Read SQLite metadata without starting an adapter |
+| `listSessions` | `listSessions(input?: ListSessionsInput): Promise<SessionPage>` | Page through SQLite metadata without starting adapters |
+| `unloadSession` | `unloadSession(input?: SessionTarget): Promise<void>` | Stop the adapter while retaining history |
+| `deleteSession` | `deleteSession(input?: SessionTarget): Promise<void>` | Stop the adapter and delete durable state; omitted ID targets main |
 
 ### Agent Registry
 
@@ -126,27 +135,22 @@ await vm.dispose();
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `prompt` | `prompt(sessionId: string, text: string): Promise<PromptResult>` | Send a prompt and collect the agent text |
-| `cancelSession` | `cancelSession(sessionId: string): Promise<JsonRpcResponse>` | Cancel ongoing agent work |
-| `closeSession` | `closeSession(sessionId: string): void` | Kill the agent process and clean up |
-| `onSessionEvent` | `onSessionEvent(sessionId: string, handler: SessionEventHandler): () => void` | Subscribe to session update notifications |
-| `onPermissionRequest` | `onPermissionRequest(sessionId: string, handler: PermissionRequestHandler): () => void` | Subscribe to permission requests |
-| `respondPermission` | `respondPermission(sessionId: string, permissionId: string, reply: PermissionReply): Promise<JsonRpcResponse>` | Reply to a permission request |
-| `setSessionMode` | `setSessionMode(sessionId: string, modeId: string): Promise<JsonRpcResponse>` | Set the session mode |
-| `getSessionModes` | `getSessionModes(sessionId: string): SessionModeState \| null` | Get available modes |
-| `setSessionModel` | `setSessionModel(sessionId: string, model: string): Promise<JsonRpcResponse>` | Set the model |
-| `setSessionThoughtLevel` | `setSessionThoughtLevel(sessionId: string, level: string): Promise<JsonRpcResponse>` | Set reasoning level |
-| `getSessionConfigOptions` | `getSessionConfigOptions(sessionId: string): SessionConfigOption[]` | Get available config options |
-| `rawSend` | `rawSend(sessionId: string, method: string, params?: Record<string, unknown>): Promise<JsonRpcResponse>` | Send an arbitrary ACP request |
+| `prompt` | `prompt(input: PromptInput): Promise<PromptResult>` | Send native ACP content blocks and durably commit the turn |
+| `cancelPrompt` | `cancelPrompt(input?: SessionTarget): Promise<CancelPromptResult>` | Cancel active agent work |
+| `onSessionEvent` | `onSessionEvent(sessionId: string, handler: SessionEventHandler): () => void` | Subscribe to native ACP update and permission request/response variants |
+| `respondPermission` | `respondPermission(input: PermissionResponse): Promise<PermissionResponseResult>` | Select an exact adapter-supplied ACP permission option |
+| `getSessionConfig` | `getSessionConfig(input?: SessionTarget): Promise<SessionConfig>` | Read cached native ACP configuration |
+| `setSessionConfigOption` | `setSessionConfigOption(input: SetSessionConfigOptionInput): Promise<SessionConfig>` | Set a native ACP string or boolean option |
+| `readHistory` | `readHistory(input?: ReadHistoryInput): Promise<HistoryPage>` | Read authoritative durable ACP updates and permission events from SQLite |
 
 ### Exported Types
 
 **VM & Options**
-- `AgentOsOptions` — VM creation options (commandDirs, loopbackExemptPorts, mounts, additionalInstructions). Use `nodeModulesMount(...)` in `mounts` to expose a host `node_modules` tree at `/root/node_modules`.
+- `AgentOsOptions` — VM creation options (commandDirs, loopbackExemptPorts, mounts). Use `nodeModulesMount(...)` in `mounts` to expose a host `node_modules` tree at `/root/node_modules`.
 - `AgentOsSidecarConfig` — shared-pool or explicit-handle sidecar selection for VM creation
 - `AgentOsSharedSidecarOptions` — shared sidecar pool selection
 - `AgentOsCreateSidecarOptions` — explicit sidecar handle creation options
-- `CreateSessionOptions` — Session options (cwd, env, mcpServers, skipOsInstructions, additionalInstructions)
+- `OpenSessionInput` — Durable session identity and creation options (agent, cwd, env, mcpServers, skipOsInstructions, additionalInstructions)
 
 **Sidecar**
 - `AgentOsSidecarDescription` — Sidecar identity, placement, lifecycle state, and active VM count
@@ -182,17 +186,16 @@ await vm.dispose();
 - `AgentRegistryEntry` — Registry entry (id, acpAdapter, agentPackage, installed)
 
 **Session**
-- `SessionInfo` — Session summary (sessionId, agentType)
-- `SessionInitData` — Data from ACP initialize response
-- `SessionMode` — A mode the agent supports
-- `SessionModeState` — Current mode and available modes
+- `SessionInfo` — Durable session summary and current state
+- `SessionStreamEntry` — Generic live union of durable session updates, permission requests/responses, and ephemeral message deltas
+- `DurableSessionEventEntry` — Durable history/event union keyed by session sequence
+- `HistoryPage` — Cursor-based durable event page returned by `readHistory()`
 - `SessionConfigOption` — A configuration option the agent supports
-- `AgentCapabilities` — Boolean capability flags from the agent
-- `AgentInfo` — Agent identity (name, version)
-- `PermissionRequest` — Permission request from an agent
-- `PermissionReply` — `"once" | "always" | "reject"`
-- `PermissionRequestHandler` — Handler for permission requests
-- `SessionEventHandler` — Handler for live session update events
+- `SessionCapabilities` — Native ACP capabilities cached for a durable session
+- `SessionAgentInfo` — Native ACP adapter identity
+- `PermissionPolicy` — Sidecar-owned `"allow_all" | "reject_all" | "ask"` strategy
+- `PermissionResponse` / `PermissionResponseResult` — Explicit-session native ACP option selection and its accepted/terminal result
+- `SessionEventHandler` — Handler for the generic live session-event union
 
 **Protocol**
 - `JsonRpcRequest`, `JsonRpcResponse`, `JsonRpcNotification`, `JsonRpcError`

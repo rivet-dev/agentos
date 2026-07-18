@@ -37,7 +37,9 @@ use crate::resource_accounting::{
     measure_filesystem_usage, FileSystemUsage, ResourceAccountant, ResourceError, ResourceLimits,
     ResourceSnapshot, DEFAULT_MAX_OPEN_FDS,
 };
-use crate::root_fs::{RootFileSystem, RootFilesystemError, RootFilesystemSnapshot};
+use crate::root_fs::{
+    encode_snapshot, RootFileSystem, RootFilesystemError, RootFilesystemSnapshot,
+};
 use crate::socket_table::{
     DatagramSocketOption, InetSocketAddress, OpaqueTransferredRight, ReceivedDatagram, SocketId,
     SocketMulticastMembership, SocketReadiness, SocketRecord, SocketShutdown, SocketSpec,
@@ -6979,6 +6981,48 @@ impl KernelVm<MountTable> {
             .root_filesystem_mut()
             .ok_or_else(|| KernelError::new("EINVAL", "native root filesystem is not available"))?;
         root.snapshot().map_err(KernelError::from)
+    }
+
+    /// Snapshot the root filesystem without allowing caller-selected export
+    /// work to materialize or return more than `max_bytes`. Raw content usage
+    /// is checked before traversal; the encoded snapshot is checked before it
+    /// can leave the kernel.
+    pub fn snapshot_root_filesystem_bounded(
+        &mut self,
+        max_bytes: u64,
+    ) -> KernelResult<RootFilesystemSnapshot> {
+        if max_bytes == 0 {
+            return Err(KernelError::new(
+                "EINVAL",
+                "maxBytes must be greater than zero",
+            ));
+        }
+        let usage = self.filesystem_usage()?;
+        self.resources
+            .check_filesystem_usage(&usage, usage.total_bytes, usage.inode_count)?;
+        if usage.total_bytes > max_bytes {
+            return Err(KernelError::new(
+                "EFBIG",
+                format!(
+                    "root filesystem export exceeds maxBytes: {} content bytes > {max_bytes}; raise maxBytes",
+                    usage.total_bytes
+                ),
+            ));
+        }
+        let root = self
+            .root_filesystem_mut()
+            .ok_or_else(|| KernelError::new("EINVAL", "native root filesystem is not available"))?;
+        let snapshot = root.snapshot().map_err(KernelError::from)?;
+        let encoded_len = encode_snapshot(&snapshot).map_err(KernelError::from)?.len();
+        if u64::try_from(encoded_len).unwrap_or(u64::MAX) > max_bytes {
+            return Err(KernelError::new(
+                "EFBIG",
+                format!(
+                    "root filesystem export exceeds maxBytes: {encoded_len} encoded bytes > {max_bytes}; raise maxBytes"
+                ),
+            ));
+        }
+        Ok(snapshot)
     }
 }
 

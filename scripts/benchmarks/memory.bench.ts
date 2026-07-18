@@ -9,8 +9,8 @@
  *
  * Workloads:
  *   --workload=sleep             (default) Minimal VM with idle Node.js process
- *   --workload=pi-session        VM with PI agent session via createSession
- *   --workload=claude-session    VM with Claude agent session via createSession
+ *   --workload=pi-session        VM with PI agent session via openSession
+ *   --workload=claude-session    VM with Claude agent session via openSession
  *
  * Pass --count=N to control how many VMs to add (default 5; marketing run
  * uses 20 for shell / 10 for agent).

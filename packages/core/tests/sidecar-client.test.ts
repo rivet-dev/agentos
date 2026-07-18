@@ -18,7 +18,7 @@ describe("AgentOsSidecarClient", () => {
 		const client = new AgentOsSidecarClient({
 			createId: () => `id-${++nextId}`,
 			now: () => ++tick,
-			async createSessionTransport(bootstrap) {
+			async createOwnershipTransport(bootstrap) {
 				calls.push({ type: "session", bootstrap });
 				return {
 					async createVm(vmBootstrap) {
@@ -34,7 +34,7 @@ describe("AgentOsSidecarClient", () => {
 			},
 		});
 
-		const session = await client.createSession({
+		const session = await client.createOwnershipSession({
 			placement: { kind: "shared", pool: "default" },
 			metadata: { owner: "core-test" },
 		});
@@ -104,7 +104,7 @@ describe("AgentOsSidecarClient", () => {
 		let nextId = 0;
 		const client = new AgentOsSidecarClient({
 			createId: () => `id-${++nextId}`,
-			async createSessionTransport(bootstrap) {
+			async createOwnershipTransport(bootstrap) {
 				return {
 					async createVm(vmBootstrap) {
 						disposedSessions.push(
@@ -121,8 +121,8 @@ describe("AgentOsSidecarClient", () => {
 			},
 		});
 
-		const first = await client.createSession();
-		const second = await client.createSession({
+		const first = await client.createOwnershipSession();
+		const second = await client.createOwnershipSession({
 			placement: { kind: "explicit", sidecarId: "shared-sidecar-2" },
 		});
 		const vm = await second.createVm();

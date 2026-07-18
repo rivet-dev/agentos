@@ -76,6 +76,12 @@ export interface LivePackageCommands {
 	commands: string[];
 }
 
+export interface LiveMountInfo {
+	path: string;
+	kind: string;
+	read_only: boolean;
+}
+
 export interface LiveAgentosProjectedAgent {
 	id: string;
 	acp_entrypoint: string;
@@ -113,6 +119,10 @@ export type LiveResponsePayload =
 	| {
 			type: "provided_commands_response";
 			packages: LivePackageCommands[];
+	  }
+	| {
+			type: "mounts_listed";
+			mounts: LiveMountInfo[];
 	  }
 	| {
 			type: "host_callbacks_registered";
@@ -311,6 +321,15 @@ export function fromGeneratedResponsePayload(
 				packages: payload.val.packages.map((pkg) => ({
 					package_name: pkg.packageName,
 					commands: [...pkg.commands],
+				})),
+			};
+		case "ListMountsResponse":
+			return {
+				type: "mounts_listed",
+				mounts: payload.val.mounts.map((mount) => ({
+					path: mount.path,
+					kind: mount.kind,
+					read_only: mount.readOnly,
 				})),
 			};
 		case "HostCallbacksRegisteredResponse":

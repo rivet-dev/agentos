@@ -18,11 +18,22 @@ export const setup: typeof rivetkitSetup = ((
 
 export type {
 	AgentOsOptions,
-	CreateSessionOptions,
 	DirEntry,
+	DynamicMountDescriptor,
+	ExportRootFilesystemOptions,
+	HttpRequest,
+	HttpResponse,
+	MountInfo,
 	NodeModulesMountConfig,
+	PackageDescriptor,
+	ProcessExit,
+	ProcessOutput,
 	PromptResult,
+	ReaddirEntry,
+	RootSnapshotExport,
 	SessionInfo,
+	ShellData,
+	ShellExit,
 } from "@rivet-dev/agentos-core";
 export { defineSoftware, nodeModulesMount } from "@rivet-dev/agentos-core";
 export type {
@@ -37,22 +48,17 @@ export {
 	createAgentOS,
 	createAgentOS as agentOS,
 	createAgentOsActions,
-	type VmFetchOptions,
-	type VmFetchResponse,
 } from "./actor.js";
 export type {
-	AgentCrashedPayload,
 	AgentOsEvents,
-	CronEventPayload,
-	PermissionRequestPayload,
 	ProcessExitPayload,
 	ProcessOutputPayload,
 	SerializableCronAction,
 	SerializableCronEvent,
 	SerializableCronJobInfo,
 	SerializableCronJobOptions,
-	SessionEventPayload,
 	ShellDataPayload,
+	ShellExitPayload,
 	VmBootedPayload,
 	VmShutdownPayload,
 } from "./types.js";

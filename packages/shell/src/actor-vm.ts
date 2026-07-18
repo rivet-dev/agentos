@@ -15,7 +15,11 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@rivet-dev/agentos/client";
-import type { MountConfig, SoftwareInput } from "@rivet-dev/agentos-core";
+import type {
+	MountConfig,
+	ShellData,
+	SoftwareInput,
+} from "@rivet-dev/agentos-core";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const workspaceRoot = resolve(__dirname, "../../..");
@@ -104,7 +108,7 @@ export interface ShellVmHandle {
 	writeShell(shellId: string, data: Uint8Array | string): Promise<void>;
 	resizeShell(shellId: string, cols: number, rows: number): void;
 	/** Ordered PTY output containing stdout and stderr exactly once. */
-	onShellData(shellId: string, handler: (data: Uint8Array) => void): () => void;
+	onShellData(shellId: string, handler: (event: ShellData) => void): () => void;
 	waitShell(shellId: string): Promise<number>;
 	dispose(): Promise<void>;
 }
@@ -335,7 +339,7 @@ export async function createActorShellVm(
 	const handle = (client as any).vm.getOrCreate(`shell-${process.pid}`);
 	const conn = handle.connect();
 
-	const shellDataHandlers = new Map<string, Set<(data: Uint8Array) => void>>();
+	const shellDataHandlers = new Map<string, Set<(event: ShellData) => void>>();
 	const shellStderrHandlers = new Map<
 		string,
 		Set<(data: Uint8Array) => void>
@@ -345,10 +349,10 @@ export async function createActorShellVm(
 	// Output can arrive between the openShell reply and the caller's
 	// onShellData subscription; buffer it (bounded) and flush on subscribe.
 	const PENDING_SHELL_DATA_LIMIT = 256;
-	const pendingShellData = new Map<string, Uint8Array[]>();
+	const pendingShellData = new Map<string, ShellData[]>();
 
 	conn.on("shellData", (payload: { shellId: string; data: unknown }) => {
-		const bytes = toBytes(payload.data);
+		const event = { shellId: payload.shellId, data: toBytes(payload.data) };
 		const handlers = shellDataHandlers.get(payload.shellId);
 		if (!handlers || handlers.size === 0) {
 			let pending = pendingShellData.get(payload.shellId);
@@ -356,10 +360,10 @@ export async function createActorShellVm(
 				pending = [];
 				pendingShellData.set(payload.shellId, pending);
 			}
-			if (pending.length < PENDING_SHELL_DATA_LIMIT) pending.push(bytes);
+			if (pending.length < PENDING_SHELL_DATA_LIMIT) pending.push(event);
 			return;
 		}
-		for (const handler of handlers) handler(bytes);
+		for (const handler of handlers) handler(event);
 	});
 	conn.on("shellStderr", (payload: { shellId: string; data: unknown }) => {
 		const handlers = shellStderrHandlers.get(payload.shellId);

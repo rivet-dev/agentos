@@ -5,11 +5,11 @@ category: "Orchestration"
 order: 1
 ---
 
-Run work on a schedule inside a VM — a shell command on a fixed interval, or a recurring agent session that reviews logs, triages issues, or processes a queue. Reach for this when you need background jobs that fire on a cron expression instead of on demand.
+Run work on a schedule inside a VM — a shell command on a fixed interval, or a recurring agent session that reviews logs or triages issues. Reach for this when you need background jobs that fire on a cron expression instead of on demand.
 
 ## How it works
 
-Each VM handle exposes `scheduleCron({ schedule, action, overlap })`. The `schedule` is a standard cron expression, and the `action` is either an `exec` (run a command with args) or a `session` (spawn an agent of a given `agentType` with a `prompt`). The `overlap` policy decides what happens when a run is still going when the next tick arrives: `skip` drops the new run, `queue` lines it up to run after. Scheduling returns a job `id` you can later pass to `cancelCronJob`, and `listCronJobs` enumerates everything registered on the VM. Connecting to the handle and listening for `cronEvent` streams each run's lifecycle so you can monitor execution.
+Each VM handle exposes `scheduleCron({ schedule, action, overlap })`. The `schedule` is a standard cron expression, and the `action` is either an `exec` (run a command with args) or a `session` (spawn an agent of a given `agentType` with a `prompt`). The `overlap` policy decides what happens when a run is still going when the next tick arrives. Scheduling returns a job `id` you can later pass to `cancelCronJob`, and `listCronJobs` enumerates everything registered on the VM. Subscribe to the native `cronEvent` event on a connection to monitor each run; timestamps are ISO strings in both events and job metadata.
 
 ## Run it
 

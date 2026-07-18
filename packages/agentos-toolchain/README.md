@@ -73,4 +73,5 @@ npx @rivet-dev/agentos-toolchain pack @agentos-software/pi --agent pi-sdk-acp --
 
 The package is consumed by an agentOS host as `defineSoftware({ name, dir })` — add
 `agent: { acpEntrypoint: "<bin>" }` for an agent. The host projects it under `/opt/agentos`,
-and `createSession(name)` launches the adapter via `/opt/agentos/bin/<bin>`.
+and `openSession({ agent: name })` launches or restores the default session adapter through
+`/opt/agentos/bin/<bin>`.

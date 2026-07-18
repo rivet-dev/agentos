@@ -85,8 +85,8 @@ async function createVmWorkspace(vm: AgentOs): Promise<string> {
 	return workspaceDir;
 }
 
-describe("full createSession('pi') inside the VM", () => {
-	test("createSession('pi') initializes over the default native sidecar transport", async () => {
+describe("full openSession({ agent: 'pi' }) inside the VM", () => {
+	test("openSession({ agent: 'pi' }) initializes over the default native sidecar transport", async () => {
 		const { mock, url } = await startLlmock([]);
 		const vm = await createPiVm(url);
 
@@ -94,17 +94,18 @@ describe("full createSession('pi') inside the VM", () => {
 		try {
 			const homeDir = await createVmPiHome(vm, url);
 			const workspaceDir = await createVmWorkspace(vm);
-			sessionId = (
-				await vm.createSession("pi", {
-					cwd: workspaceDir,
-					env: {
-						HOME: homeDir,
-						ANTHROPIC_API_KEY: "mock-key",
-						ANTHROPIC_BASE_URL: url,
-						PI_SKIP_VERSION_CHECK: "1",
-					},
-				})
-			).sessionId;
+			sessionId = "main";
+			await vm.openSession({
+				sessionId,
+				agent: "pi",
+				cwd: workspaceDir,
+				env: {
+					HOME: homeDir,
+					ANTHROPIC_API_KEY: "mock-key",
+					ANTHROPIC_BASE_URL: url,
+					PI_SKIP_VERSION_CHECK: "1",
+				},
+			});
 
 			expect(sessionId).toBeTruthy();
 			expect(
@@ -112,7 +113,7 @@ describe("full createSession('pi') inside the VM", () => {
 			).toBe(true);
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				vm.unloadSession({ sessionId });
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
@@ -138,16 +139,17 @@ describe("full createSession('pi') inside the VM", () => {
 		try {
 			const homeDir = await createVmPiHome(vm, url);
 			const workspaceDir = await createVmWorkspace(vm);
-			sessionId = (
-				await vm.createSession("pi", {
-					cwd: workspaceDir,
-					env: {
-						HOME: homeDir,
-						ANTHROPIC_API_KEY: "mock-key",
-						ANTHROPIC_BASE_URL: url,
-					},
-				})
-			).sessionId;
+			sessionId = "main";
+			await vm.openSession({
+				sessionId,
+				agent: "pi",
+				cwd: workspaceDir,
+				env: {
+					HOME: homeDir,
+					ANTHROPIC_API_KEY: "mock-key",
+					ANTHROPIC_BASE_URL: url,
+				},
+			});
 
 			const agentInfo = vm.getSessionAgentInfo(sessionId) as AgentInfo;
 			expect(agentInfo.name).toBe("pi-sdk-acp");
@@ -202,7 +204,7 @@ describe("full createSession('pi') inside the VM", () => {
 			).toBe(true);
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				vm.unloadSession({ sessionId });
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
@@ -230,16 +232,17 @@ describe("full createSession('pi') inside the VM", () => {
 			try {
 				const homeDir = await createVmPiHome(vm, url);
 				const workspaceDir = await createVmWorkspace(vm);
-				sessionId = (
-					await vm.createSession("pi", {
-						cwd: workspaceDir,
-						env: {
-							HOME: homeDir,
-							ANTHROPIC_API_KEY: "mock-key",
-							ANTHROPIC_BASE_URL: url,
-						},
-					})
-				).sessionId;
+				sessionId = "main";
+				await vm.openSession({
+					sessionId,
+					agent: "pi",
+					cwd: workspaceDir,
+					env: {
+						HOME: homeDir,
+						ANTHROPIC_API_KEY: "mock-key",
+						ANTHROPIC_BASE_URL: url,
+					},
+				});
 
 				const { response, text } = await vm.prompt(
 					sessionId,
@@ -256,7 +259,7 @@ describe("full createSession('pi') inside the VM", () => {
 				expect(mock.getRequests().length).toBeGreaterThanOrEqual(2);
 			} finally {
 				if (sessionId) {
-					vm.closeSession(sessionId);
+					vm.unloadSession({ sessionId });
 				}
 				await vm.dispose();
 				await stopLlmock(mock);

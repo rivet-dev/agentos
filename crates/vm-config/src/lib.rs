@@ -18,6 +18,9 @@ pub struct CreateVmConfig {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     #[ts(type = "Record<string, string>")]
     pub env: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub database: Option<VmSqliteDescriptor>,
     #[serde(default, rename = "rootFilesystem")]
     pub root_filesystem: RootFilesystemConfig,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -62,6 +65,9 @@ impl CreateVmConfig {
         if let Some(cwd) = self.cwd.as_deref() {
             validate_guest_path("cwd", cwd)?;
         }
+        if let Some(database) = &self.database {
+            database.validate()?;
+        }
         self.root_filesystem.validate()?;
         if let Some(native_root) = &self.native_root {
             native_root.validate()?;
@@ -88,6 +94,44 @@ impl CreateVmConfig {
         }
         Ok(())
     }
+}
+
+/// Transport used by the VM-scoped SQLite substrate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+#[ts(tag = "type", rename_all = "snake_case")]
+#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+pub enum VmSqliteDescriptor {
+    /// Rivet actor SQLite reached through the actor's authenticated UDS.
+    ActorUds { path: String, token: String },
+    /// A SQLite database file owned by the native sidecar host.
+    SqliteFile { path: String },
+}
+
+impl VmSqliteDescriptor {
+    fn validate(&self) -> Result<(), VmConfigError> {
+        match self {
+            Self::ActorUds { path, token } => {
+                validate_absolute_host_path("database.path", path)?;
+                if token.is_empty() || token.len() > 4096 {
+                    return Err(VmConfigError::new(
+                        "database.token must contain 1..=4096 bytes",
+                    ));
+                }
+            }
+            Self::SqliteFile { path } => validate_absolute_host_path("database.path", path)?,
+        }
+        Ok(())
+    }
+}
+
+fn validate_absolute_host_path(field: &str, path: &str) -> Result<(), VmConfigError> {
+    if path.is_empty() || !path.starts_with('/') || path.as_bytes().contains(&0) {
+        return Err(VmConfigError::new(format!(
+            "{field} must be a non-empty absolute path without NUL bytes"
+        )));
+    }
+    Ok(())
 }
 
 /// Guest JavaScript host-environment configuration.
@@ -549,6 +593,9 @@ pub struct VmLimitsConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub acp: Option<AcpLimitsConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub sqlite: Option<SqliteLimitsConfig>,
     #[serde(default, rename = "jsRuntime", skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub js_runtime: Option<JsRuntimeLimitsConfig>,
@@ -962,7 +1009,25 @@ limits_struct!(PluginLimitsConfig {
 limits_struct!(AcpLimitsConfig {
     max_read_line_bytes,
     stdout_buffer_byte_limit,
+    max_completed_message_bytes,
+    max_turn_output_bytes,
+    max_prompt_bytes,
+    max_prompt_blocks,
+    max_fallback_continuation_bytes,
+    max_session_history_bytes,
+    max_session_history_events,
+    max_history_page_entries,
+    max_session_list_entries,
+    max_sessions_per_vm,
+    max_prompts_per_session,
+    max_prompts_per_vm,
+    max_pending_permissions_per_session,
+    max_pending_permissions_per_vm,
+    max_permission_outcomes_per_session,
+    max_permission_outcomes_per_vm,
 });
+
+limits_struct!(SqliteLimitsConfig { max_result_bytes });
 
 limits_struct!(JsRuntimeLimitsConfig {
     v8_heap_limit_mb,

@@ -117,7 +117,10 @@ describe("mount integration", () => {
 	test("runtime mountFs and unmountFs work", async () => {
 		vm = await createMountVm();
 
-		await vm.mountFs("/mnt/dynamic", createInMemoryFileSystem());
+		await vm.mountFs({
+			path: "/mnt/dynamic",
+			plugin: { id: "memory", config: {} },
+		});
 		await vm.writeFile("/mnt/dynamic/test.txt", "dynamic");
 		const data = await vm.readFile("/mnt/dynamic/test.txt");
 		expect(new TextDecoder().decode(data)).toBe("dynamic");
@@ -128,19 +131,18 @@ describe("mount integration", () => {
 		// integration test needs more than the 30s default (see PR #1521 CI).
 	}, 120_000);
 
-	test("runtime mountFs routes through a plain JS VFS driver", async () => {
-		const mounted = createRecordingFilesystem();
+	test("runtime mountFs accepts a portable sidecar descriptor", async () => {
 		vm = await createMountVm();
 
-		await vm.mountFs("/mnt/custom", mounted.fs);
+		await vm.mountFs({
+			path: "/mnt/custom",
+			plugin: { id: "memory", config: {} },
+		});
 		await vm.writeFile("/mnt/custom/note.txt", "from custom vfs");
 
 		expect(
 			new TextDecoder().decode(await vm.readFile("/mnt/custom/note.txt")),
 		).toBe("from custom vfs");
-		expect(mounted.calls).toContain("writeFile:/note.txt");
-		expect(mounted.calls).toContain("readFile:/note.txt");
-
 		await vm.unmountFs("/mnt/custom");
 		await expect(vm.readFile("/mnt/custom/note.txt")).rejects.toThrow();
 		// Runtime mount + unmount each trigger a full sidecar reconfigure, so this
@@ -171,11 +173,13 @@ describe("mount integration", () => {
 		).toBe("from guest process");
 	});
 
-	test("guest processes can read and write a runtime-mounted plain JS VFS", async () => {
-		const mounted = createRecordingFilesystem();
+	test("guest processes can read and write a runtime-mounted portable VFS", async () => {
 		vm = await createMountVm();
 
-		await vm.mountFs("/mnt/custom", mounted.fs);
+		await vm.mountFs({
+			path: "/mnt/custom",
+			plugin: { id: "memory", config: {} },
+		});
 		await vm.writeFile("/mnt/custom/host.txt", "from host api");
 		const result = await vm.execArgv("node", [
 			"-e",
@@ -187,8 +191,6 @@ describe("mount integration", () => {
 		]);
 		expect(result.exitCode, result.stderr).toBe(0);
 		expect(result.stdout.trim()).toBe("from host api");
-		expect(mounted.calls).toContain("readFile:/host.txt");
-		expect(mounted.calls).toContain("writeFile:/guest.txt");
 		expect(
 			new TextDecoder().decode(await vm.readFile("/mnt/custom/guest.txt")),
 		).toBe("from guest process");

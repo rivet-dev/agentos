@@ -242,7 +242,6 @@ export const siteConfig = {
 					title: "Orchestration",
 					pages: [
 						{ title: "Cron", href: "/cookbooks/cron" },
-						{ title: "Queues", href: "/cookbooks/queues" },
 						{ title: "Workflows", href: "/cookbooks/workflows" },
 						{ title: "Webhooks", href: "/cookbooks/webhooks" },
 					],

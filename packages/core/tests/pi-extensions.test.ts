@@ -100,16 +100,17 @@ describe("Pi extensions quickstart truth test", () => {
 		let sessionId: string | undefined;
 		try {
 			await seedPiConfig(vm, url);
-			sessionId = (
-				await vm.createSession("pi", {
-					cwd: WORKSPACE_DIR,
-					env: {
-						HOME: HOME_DIR,
-						ANTHROPIC_API_KEY: "mock-key",
-						ANTHROPIC_BASE_URL: url,
-					},
-				})
-			).sessionId;
+			sessionId = "main";
+			await vm.openSession({
+				sessionId,
+				agent: "pi",
+				cwd: WORKSPACE_DIR,
+				env: {
+					HOME: HOME_DIR,
+					ANTHROPIC_API_KEY: "mock-key",
+					ANTHROPIC_BASE_URL: url,
+				},
+			});
 
 			const { response, text } = await vm.prompt(
 				sessionId,
@@ -119,12 +120,12 @@ describe("Pi extensions quickstart truth test", () => {
 			expect(response.error).toBeUndefined();
 			expect(text).toContain(EXPECTED_REPLY);
 			expect(mock.getRequests().length).toBeGreaterThanOrEqual(1);
-			expect(
-				mock.getRequests().some(requestIncludesExtensionMarker),
-			).toBe(true);
+			expect(mock.getRequests().some(requestIncludesExtensionMarker)).toBe(
+				true,
+			);
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				vm.unloadSession({ sessionId });
 			}
 			await vm.dispose();
 			await stopLlmock(mock);

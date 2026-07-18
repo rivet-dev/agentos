@@ -4,7 +4,7 @@ description: "Proxy HTTP requests into agentOS VMs and create shareable preview 
 skill: true
 ---
 
-Proxy HTTP requests into VM services with `vmFetch` and create time-limited, token-based preview URLs (with configurable expiration, revocation, and CORS), all carried over one transport (the kernel socket table) that is loopback-only by default under a three-layer confinement model.
+Proxy buffered HTTP requests into VM services with `httpRequest` and create time-limited, actor-only preview URLs (with configurable expiration, revocation, and CORS), all carried over one transport (the kernel socket table) that is loopback-only by default under a three-layer confinement model.
 
 ## Run an HTTP server in the VM
 
@@ -17,7 +17,7 @@ Guest code runs a normal Node HTTP server: it binds a loopback port inside the V
 
 ## Fetch from a VM service
 
-With the HTTP server running in the VM (above), send requests to it with `vmFetch`, including custom methods, headers, and body.
+With the HTTP server running in the VM (above), send requests to it with `httpRequest`, including custom methods, headers, and body.
 
 <CodeGroup>
 <CodeSnippet file="examples/networking/client-fetch.ts" />
@@ -27,7 +27,7 @@ With the HTTP server running in the VM (above), send requests to it with `vmFetc
 
 ## Preview URLs
 
-Preview URLs are port forwarding for VM services: a time-limited, public URL that proxies HTTP to a port inside the VM, for browser or external access (use `vmFetch` for server-to-server). Tokens survive sleep/wake and CORS is enabled; see [Security](/docs/security-model) for details.
+Preview URLs are port forwarding for VM services: a time-limited, public URL that proxies HTTP to a port inside the VM, for browser or external access (use `httpRequest` for server-to-server). Preview creation is intentionally actor-only through the native `createPreviewUrl` and `expirePreviewUrl` actions; tokens survive sleep/wake and CORS is enabled. See [Security](/docs/security-model) for details.
 
 ### Create a preview URL
 

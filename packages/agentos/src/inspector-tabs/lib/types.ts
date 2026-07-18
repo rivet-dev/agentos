@@ -83,16 +83,6 @@ export interface SessionInfo {
 	sessionId: string;
 	agentType: string;
 }
-export interface JsonRpcNotification {
-	jsonrpc: "2.0";
-	method: string;
-	params?: unknown;
-}
-/** Live `sessionEvent` broadcast payload. */
-export interface SessionEventPayload {
-	sessionId: string;
-	event: JsonRpcNotification;
-}
 /** Mapped, displayable live transcript event (defensive; unknown → "raw"). */
 export type TranscriptEvent =
 	| { kind: "user" | "assistant" | "thinking"; text: string }

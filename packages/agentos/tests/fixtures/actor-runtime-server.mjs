@@ -43,7 +43,6 @@ const vm = agentOS({
 		onCreateInput: null,
 		beforeConnectCount: 0,
 		sessionEventHookCount: 0,
-		permissionRequestHookCount: 0,
 	}),
 	events: {
 		customLifecycle: event(),
@@ -59,21 +58,20 @@ const vm = agentOS({
 		getBeforeConnectCount: (c) => c.state.beforeConnectCount,
 		getHookCounts: (c) => ({
 			sessionEvent: c.state.sessionEventHookCount,
-			permissionRequest: c.state.permissionRequestHookCount,
 		}),
 		sleepActor: (c) => c.sleep(),
 		inspectAgentOsStorage: async (c) => {
 			const tables = await c.db.execute(
-				"SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'agentos_vfs_%' ORDER BY name",
+				"SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'agentos_fs_%' ORDER BY name",
 			);
 			const metadata = await c.db.execute(
-				"SELECT COUNT(*) AS count FROM agentos_vfs_metadata_heads",
+				"SELECT COUNT(*) AS count FROM agentos_fs_metadata_heads",
 			);
 			const metadataChunks = await c.db.execute(
-				"SELECT COUNT(*) AS count, COALESCE(SUM(length(content)), 0) AS bytes FROM agentos_vfs_metadata_chunks",
+				"SELECT COUNT(*) AS count, COALESCE(SUM(length(content)), 0) AS bytes FROM agentos_fs_metadata_chunks",
 			);
 			const blocks = await c.db.execute(
-				"SELECT COUNT(*) AS count, COALESCE(SUM(length(content)), 0) AS bytes FROM agentos_vfs_blocks",
+				"SELECT COUNT(*) AS count, COALESCE(SUM(length(content)), 0) AS bytes FROM agentos_fs_blocks",
 			);
 			return {
 				tables: tables.map((row) => row.name),
@@ -103,9 +101,6 @@ const vm = agentOS({
 	},
 	onSessionEvent: (c) => {
 		c.state.sessionEventHookCount += 1;
-	},
-	onPermissionRequest: (c) => {
-		c.state.permissionRequestHookCount += 1;
 	},
 });
 

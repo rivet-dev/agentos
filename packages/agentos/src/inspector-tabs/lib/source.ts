@@ -4,11 +4,11 @@
 // ported component expects. Action names/shapes are the actual ones, not the
 // mockup's aspirational `agentOs*` names.
 import { queryOptions } from "@tanstack/react-query";
+import type { SessionStreamEntry } from "@rivet-dev/agentos-core";
 import { callAction } from "./actor-client";
 import type {
 	FileContent,
 	FsEntry,
-	JsonRpcNotification,
 	MountInfo,
 	ProcessInfo,
 	ReaddirEntry,
@@ -87,33 +87,33 @@ function bytesToDisplay(bytes: Uint8Array): string | null {
 }
 
 // ── Transcript mapper (defensive: unknown ACP updates → "raw") ─────────
-// Map a raw JSON-RPC session notification to a display event.
-export function mapNotification(n: JsonRpcNotification): TranscriptEvent {
-	const params = (n?.params ?? {}) as { update?: Record<string, unknown> };
-	const u = params.update;
-	if (n?.method === "session/update" && u && typeof u === "object") {
-		const kind = u.sessionUpdate as string | undefined;
-		const text = ((u.content as { text?: string } | undefined)?.text ??
-			"") as string;
-		switch (kind) {
-			case "user_message_chunk":
-				return { kind: "user", text };
-			case "agent_message_chunk":
-				return { kind: "assistant", text };
-			case "agent_thought_chunk":
-				return { kind: "thinking", text };
-			case "tool_call":
-			case "tool_call_update":
-				return {
-					kind: "tool",
-					tool: (u.title as string) ?? (u.toolCallId as string) ?? "tool",
-					status: u.status as string | undefined,
-				};
-			default:
-				return { kind: "raw", label: kind ?? n.method, json: u };
-		}
+// Map the flat public session-event union to a display event.
+export function mapSessionEvent(event: SessionStreamEntry): TranscriptEvent {
+	const text =
+		event.type === "user_message_chunk" ||
+		event.type === "agent_message_chunk" ||
+		event.type === "agent_thought_chunk"
+			? event.content.type === "text"
+				? event.content.text
+				: ""
+			: "";
+	switch (event.type) {
+		case "user_message_chunk":
+			return { kind: "user", text };
+		case "agent_message_chunk":
+			return { kind: "assistant", text };
+		case "agent_thought_chunk":
+			return { kind: "thinking", text };
+		case "tool_call":
+		case "tool_call_update":
+			return {
+				kind: "tool",
+				tool: event.title ?? event.toolCallId ?? "tool",
+				status: event.status ?? undefined,
+			};
+		default:
+			return { kind: "raw", label: event.type, json: event };
 	}
-	return { kind: "raw", label: n?.method ?? "event", json: n?.params };
 }
 
 // ── Query options ─────────────────────────────────────────────────────

@@ -21,7 +21,7 @@ export const PI_BENCHMARK_PROMPT = "Reply with exactly: Hello from llmock";
 export const PI_HEADLESS_BLOCKER_REFERENCE =
 	"packages/core/tests/pi-headless.test.ts";
 export const PI_HEADLESS_BLOCKER_REASON =
-	'Standalone `spawn("pi", ...)` is not exposed on the native sidecar PATH; use `createSession("pi-cli")` to benchmark the native PI CLI RPC path tracked in packages/core/tests/pi-headless.test.ts.';
+	'Standalone `spawn("pi", ...)` is not exposed on the native sidecar PATH; use `openSession({ sessionId: "main", agent: "pi-cli" })` to benchmark the native PI CLI RPC path tracked in packages/core/tests/pi-headless.test.ts.';
 // ── Shared bench sidecar + cold-run snapshot ───────────────────────
 //
 // Benchmarks create the sidecar ONCE up front and lease every VM from it,
@@ -164,7 +164,10 @@ function makeAgentSessionWorkload(opts: {
 		},
 		start: async (vm) => {
 			const { url } = await ensureLlmock();
-			await vm.createSession(opts.agentId, {
+			const sessionId = "main";
+			await vm.openSession({
+				sessionId,
+				agent: opts.agentId,
 				env: {
 					ANTHROPIC_API_KEY: "bench-key",
 					ANTHROPIC_BASE_URL: url,
@@ -195,11 +198,15 @@ function getTextEventPayload(
 	if (!event || typeof event !== "object") {
 		return undefined;
 	}
-	const params = (event as { params?: unknown }).params;
-	if (!params || typeof params !== "object") {
+	const update = (event as { update?: unknown }).update;
+	if (!update || typeof update !== "object") {
 		return undefined;
 	}
-	return params as { text?: string; type?: string };
+	const content = (update as { content?: unknown }).content;
+	if (!content || typeof content !== "object") {
+		return undefined;
+	}
+	return content as { text?: string; type?: string };
 }
 
 function makeAgentPromptWorkload(opts: {
@@ -223,7 +230,9 @@ function makeAgentPromptWorkload(opts: {
 		},
 		start: async (vm) => {
 			const { url } = await ensureLlmock();
-			const { sessionId } = await vm.createSession(opts.agentId, {
+			const sessionId = "main";
+			await vm.openSession({ sessionId,
+				agent: opts.agentId,
 				env: {
 					ANTHROPIC_API_KEY: "bench-key",
 					ANTHROPIC_BASE_URL: url,
@@ -237,12 +246,10 @@ function makeAgentPromptWorkload(opts: {
 			const requestCountBefore = getLlmockRequestCount();
 
 			try {
-				const { response, text } = await vm.prompt(sessionId, opts.prompt);
-				if (response.error) {
-					throw new Error(
-						`${opts.agentId} prompt workload failed: ${response.error.message}`,
-					);
-				}
+				const { text, stopReason } = await vm.prompt({
+					sessionId,
+					content: [{ type: "text", text: opts.prompt }],
+				});
 				const textEvents = events
 					.map(getTextEventPayload)
 					.filter((event) => event?.type === "text");
@@ -256,10 +263,9 @@ function makeAgentPromptWorkload(opts: {
 					sessionUpdateCount: events.length,
 					textEventCount: textEvents.length,
 					finalText,
-					stopReason: (response.result as { stopReason?: string } | undefined)
-						?.stopReason,
+					stopReason,
 					workloadPath:
-						'createSession("pi-cli") + vm.prompt(...) via pi-acp -> PI CLI --mode rpc',
+						'openSession({ sessionId: "main", agent: "pi-cli" }) + vm.prompt(...) via pi-acp -> PI CLI --mode rpc',
 					blockerReference: PI_HEADLESS_BLOCKER_REFERENCE,
 					blockerReason: PI_HEADLESS_BLOCKER_REASON,
 				} satisfies WorkloadObservation;
@@ -309,21 +315,21 @@ export const WORKLOADS: Record<string, Workload> = {
 	},
 	"pi-session": makeAgentSessionWorkload({
 		agentId: "pi",
-		description: "VM with PI agent session via createSession",
+		description: "VM with PI agent session via openSession",
 		software: [pi],
 		processMarker: "agentos-pi",
 	}),
 	"pi-prompt-turn": makeAgentPromptWorkload({
 		agentId: "pi-cli",
 		description:
-			'Native PI CLI headless benchmark path via createSession("pi-cli"), which drives the real PI CLI through pi-acp RPC mode and records a full prompt turn.',
+			'Native PI CLI headless benchmark path via openSession({ sessionId: "main", agent: "pi-cli" }), which drives the real PI CLI through pi-acp RPC mode and records a full prompt turn.',
 		software: [],
 		processMarker: "pi-acp",
 		prompt: PI_BENCHMARK_PROMPT,
 	}),
 	"claude-session": makeAgentSessionWorkload({
 		agentId: "claude",
-		description: "VM with Claude agent session via createSession",
+		description: "VM with Claude agent session via openSession",
 		software: [claude],
 		processMarker: "agentos-claude",
 	}),

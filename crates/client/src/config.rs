@@ -20,6 +20,10 @@ use crate::fs::VirtualFileSystem;
 /// and `packages/core/src/options-schema.ts::agentOsOptionsSchema`.
 #[derive(Default)]
 pub struct AgentOsConfig {
+    /// VM-scoped SQLite backend shared by VFS metadata/storage and AgentOS
+    /// durable state. Actor deployments inject `ActorUds`; standalone clients
+    /// normally provide a `SqliteFile` descriptor.
+    pub database: Option<agentos_vm_config::VmSqliteDescriptor>,
     /// Software packages to install (flattened). Default `[]`.
     pub software: Vec<SoftwareInput>,
     /// Package directories to project into the VM's `/opt/agentos` tree (the
@@ -67,6 +71,11 @@ pub struct AgentOsConfigBuilder {
 impl AgentOsConfigBuilder {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn database(mut self, database: agentos_vm_config::VmSqliteDescriptor) -> Self {
+        self.config.database = Some(database);
+        self
     }
 
     pub fn packages(mut self, packages: Vec<PackageRef>) -> Self {
@@ -255,6 +264,8 @@ pub struct AgentOsLimits {
     pub plugins: Option<PluginLimits>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acp: Option<AcpLimits>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sqlite: Option<SqliteLimits>,
     #[serde(default, rename = "jsRuntime", skip_serializing_if = "Option::is_none")]
     pub js_runtime: Option<JsRuntimeLimits>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -469,6 +480,112 @@ pub struct AcpLimits {
         skip_serializing_if = "Option::is_none"
     )]
     pub stdout_buffer_byte_limit: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxCompletedMessageBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_completed_message_bytes: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxTurnOutputBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_turn_output_bytes: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxPromptBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_prompt_bytes: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxPromptBlocks",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_prompt_blocks: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxFallbackContinuationBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_fallback_continuation_bytes: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxSessionHistoryBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_session_history_bytes: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxSessionHistoryEvents",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_session_history_events: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxHistoryPageEntries",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_history_page_entries: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxSessionListEntries",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_session_list_entries: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxSessionsPerVm",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_sessions_per_vm: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxPromptsPerSession",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_prompts_per_session: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxPromptsPerVm",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_prompts_per_vm: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxPendingPermissionsPerSession",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_pending_permissions_per_session: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxPendingPermissionsPerVm",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_pending_permissions_per_vm: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxPermissionOutcomesPerSession",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_permission_outcomes_per_session: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxPermissionOutcomesPerVm",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_permission_outcomes_per_vm: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SqliteLimits {
+    #[serde(
+        default,
+        rename = "maxResultBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_result_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

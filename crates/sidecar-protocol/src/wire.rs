@@ -485,6 +485,40 @@ fn legacy_limits_config(
     let acp = agentos_vm_config::AcpLimitsConfig {
         max_read_line_bytes: legacy_u64(metadata, "limits.acp.max_read_line_bytes"),
         stdout_buffer_byte_limit: legacy_u64(metadata, "limits.acp.stdout_buffer_byte_limit"),
+        max_completed_message_bytes: legacy_u64(metadata, "limits.acp.max_completed_message_bytes"),
+        max_turn_output_bytes: legacy_u64(metadata, "limits.acp.max_turn_output_bytes"),
+        max_prompt_bytes: legacy_u64(metadata, "limits.acp.max_prompt_bytes"),
+        max_prompt_blocks: legacy_u64(metadata, "limits.acp.max_prompt_blocks"),
+        max_fallback_continuation_bytes: legacy_u64(
+            metadata,
+            "limits.acp.max_fallback_continuation_bytes",
+        ),
+        max_session_history_bytes: legacy_u64(metadata, "limits.acp.max_session_history_bytes"),
+        max_session_history_events: legacy_u64(metadata, "limits.acp.max_session_history_events"),
+        max_history_page_entries: legacy_u64(metadata, "limits.acp.max_history_page_entries"),
+        max_session_list_entries: legacy_u64(metadata, "limits.acp.max_session_list_entries"),
+        max_sessions_per_vm: legacy_u64(metadata, "limits.acp.max_sessions_per_vm"),
+        max_prompts_per_session: legacy_u64(metadata, "limits.acp.max_prompts_per_session"),
+        max_prompts_per_vm: legacy_u64(metadata, "limits.acp.max_prompts_per_vm"),
+        max_pending_permissions_per_session: legacy_u64(
+            metadata,
+            "limits.acp.max_pending_permissions_per_session",
+        ),
+        max_pending_permissions_per_vm: legacy_u64(
+            metadata,
+            "limits.acp.max_pending_permissions_per_vm",
+        ),
+        max_permission_outcomes_per_session: legacy_u64(
+            metadata,
+            "limits.acp.max_permission_outcomes_per_session",
+        ),
+        max_permission_outcomes_per_vm: legacy_u64(
+            metadata,
+            "limits.acp.max_permission_outcomes_per_vm",
+        ),
+    };
+    let sqlite = agentos_vm_config::SqliteLimitsConfig {
+        max_result_bytes: legacy_u64(metadata, "limits.sqlite.max_result_bytes"),
     };
     let js_runtime = agentos_vm_config::JsRuntimeLimitsConfig {
         v8_heap_limit_mb: legacy_u64(metadata, "limits.js_runtime.v8_heap_limit_mb"),
@@ -552,6 +586,7 @@ fn legacy_limits_config(
         bindings: legacy_has_binding_limits(&bindings).then_some(bindings),
         plugins: legacy_has_plugin_limits(&plugins).then_some(plugins),
         acp: legacy_has_acp_limits(&acp).then_some(acp),
+        sqlite: sqlite.max_result_bytes.is_some().then_some(sqlite),
         js_runtime: legacy_has_js_runtime_limits(&js_runtime).then_some(js_runtime),
         python: legacy_has_python_limits(&python).then_some(python),
         wasm: legacy_has_wasm_limits(&wasm).then_some(wasm),
@@ -563,6 +598,7 @@ fn legacy_limits_config(
         && config.bindings.is_none()
         && config.plugins.is_none()
         && config.acp.is_none()
+        && config.sqlite.is_none()
         && config.js_runtime.is_none()
         && config.python.is_none()
         && config.wasm.is_none()
@@ -622,7 +658,24 @@ fn legacy_has_plugin_limits(config: &agentos_vm_config::PluginLimitsConfig) -> b
 }
 
 fn legacy_has_acp_limits(config: &agentos_vm_config::AcpLimitsConfig) -> bool {
-    config.max_read_line_bytes.is_some() || config.stdout_buffer_byte_limit.is_some()
+    config.max_read_line_bytes.is_some()
+        || config.stdout_buffer_byte_limit.is_some()
+        || config.max_completed_message_bytes.is_some()
+        || config.max_turn_output_bytes.is_some()
+        || config.max_prompt_bytes.is_some()
+        || config.max_prompt_blocks.is_some()
+        || config.max_fallback_continuation_bytes.is_some()
+        || config.max_session_history_bytes.is_some()
+        || config.max_session_history_events.is_some()
+        || config.max_history_page_entries.is_some()
+        || config.max_session_list_entries.is_some()
+        || config.max_sessions_per_vm.is_some()
+        || config.max_prompts_per_session.is_some()
+        || config.max_prompts_per_vm.is_some()
+        || config.max_pending_permissions_per_session.is_some()
+        || config.max_pending_permissions_per_vm.is_some()
+        || config.max_permission_outcomes_per_session.is_some()
+        || config.max_permission_outcomes_per_vm.is_some()
 }
 
 fn legacy_has_js_runtime_limits(config: &agentos_vm_config::JsRuntimeLimitsConfig) -> bool {

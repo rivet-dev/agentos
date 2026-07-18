@@ -1,47 +1,49 @@
----
-title: "Agent Sessions"
-description: "How live agent sessions, prompts, permissions, and events flow through agentOS."
----
+# Agent Sessions
 
-An agent session is a live conversation with an ACP adapter running inside a VM. The RivetKit actor exposes the core SDK session API without adding a second session state machine.
+How durable sessions, ACP adapters, prompts, permissions, and history flow through AgentOS.
 
-## Components
+An AgentOS session is a durable SQLite record with an optional live ACP adapter. The stable public session ID and the adapter's private ACP session ID are deliberately separate.
 
-- **Actor:** ordinary RivetKit lifecycle and connection hooks plus AgentOS actions and events.
-- **Core SDK:** thin transport client used by the actor.
-- **Sidecar:** trusted enforcement point that owns the VM, ACP adapter process, permissions, and session registry.
-- **Agent:** untrusted guest process whose filesystem, process, and network access is enforced by the sidecar.
+## Ownership
 
-## Creating and prompting
-
-`createSession(agentType, options)` boots the VM if necessary, launches the selected ACP adapter, performs its handshake, and returns the live session id. `env`, `cwd`, `mcpServers`, and instruction options are forwarded to the sidecar.
-
-`sendPrompt(sessionId, text)` routes the prompt to that live adapter. ACP notifications flow back through the core SDK, then the actor broadcasts `sessionEvent` and invokes `onSessionEvent`. Permission requests are broadcast as `permissionRequest` and invoke `onPermissionRequest`.
+- **Actor:** lifecycle and `keepAwake` for active turns; one actor owns one VM.
+- **Core SDK:** thin TypeScript or Rust transport and native ACP data types.
+- **Sidecar:** session policy, SQLite transactions, adapter lifecycle, restore selection, and event delivery.
+- **ACP adapter:** agent-specific private context and native protocol behavior.
 
 ```text
-client -> Rivet actor -> core SDK -> sidecar -> ACP adapter
-client <- live actor event <- core SDK <- ACP notification
+client -> actor/core -> sidecar -> ACP adapter
+                    ↘ VM SQLite event log
 ```
 
-The actor does not assign sequence numbers, persist transcripts, or offer cursor recovery. Register event listeners before sending a prompt.
+The sidecar—not the actor or SDK—owns defaults and orchestration. TypeScript and Rust send omitted fields as omissions and expose the same methods.
 
-## Lifecycle
+## Turn lifecycle
 
-- **Active:** the adapter process is running and accepts prompts.
-- **Closed:** `closeSession` gracefully stops the live session.
-- **Destroyed:** `destroySession` terminates the session and releases its runtime resources.
-- **VM shutdown:** all live sessions and their event streams end.
+1. `openSession` creates the SQLite record and negotiates an adapter, or reuses the compatible existing record. It resolves without returning metadata.
+2. `prompt` restores an unloaded adapter if needed.
+3. AgentOS atomically marks the session running, records the prompt, and appends complete user-message ACP updates.
+4. The prompt is dispatched exactly once. Live message/thought deltas are ephemeral; committed completed updates receive durable sequence numbers.
+5. The prompt result and terminal idle/failed state commit atomically. Only then does the actor release `keepAwake`.
 
-Runtime configuration such as `setModel`, `setMode`, and `setThoughtLevel` applies to an active session. `listSessions` returns only sessions currently known to the running sidecar.
+One prompt may run per session. Cancellation races are first-writer-wins. AgentOS does not automatically replay interrupted prompts because tool side effects may already have occurred.
 
-The durable boundary is the VM filesystem, not the ACP event stream. Files under `/home/agentos` are restored after actor sleep through the sidecar's direct SQLite-over-UDS connection. A caller creates a new live session after wake and continues from those files.
+## Reads versus adapter operations
 
-## Adapter crashes
+`getSession`, `listSessions`, `readHistory`, and cached negotiation getters read SQLite without starting an adapter. `prompt` and configuration setters may restore one. `unloadSession` preserves SQLite while stopping the adapter; `deleteSession` removes both runtime and durable state.
 
-If an adapter exits unexpectedly, the sidecar reports the crash and applies its bounded native restart policy. The interrupted prompt still fails because replaying a turn could repeat side effects. Crash diagnostics are available through the SDK and actor events.
+## Native ACP data
+
+Prompt content, stop reasons, session updates, configuration options, agent information, capabilities, and permission requests use upstream ACP shapes. AgentOS adds persistence envelopes and load/save semantics; it does not invent a parallel event vocabulary.
+
+ACP has no portable durable history-read method. Native restore is also inconsistent across real adapters, so adapter storage cannot be AgentOS's public history source. SQLite remains authoritative even if an adapter emitted output that failed to commit.
+
+## Adapter exits
+
+An unexpected adapter exit evicts the live route and fails the active turn. AgentOS does not respawn the adapter or replay work implicitly. The next explicit prompt can restore the session through native resume/load or the bounded continuation fallback.
 
 ## Next
 
-- [Sessions](/docs/sessions) for the public API
-- [Sessions & Persistence](/docs/architecture/sessions-persistence) for the durable filesystem boundary
-- [Permissions](/docs/permissions) for guest enforcement
+- [Sessions](/docs/sessions) for the public API.
+- [Sessions & Persistence](/docs/architecture/sessions-persistence) for SQLite and restoration.
+- [Approvals](/docs/approvals) for ACP permission options.

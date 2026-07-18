@@ -1198,24 +1198,30 @@ async fn dispatch_with_prompt_interrupt(
     };
 
     let mut dispatch = Box::pin(sidecar.dispatch_wire(request.clone()));
-    tokio::select! {
-        result = dispatch.as_mut() => Ok((result?, Vec::new())),
-        maybe_frame = stdin_rx.recv() => {
-            let frame = decode_stdin_frame(maybe_frame)?;
-            if let Some(frame) = frame {
+    let mut extra_responses = Vec::new();
+    loop {
+        tokio::select! {
+            result = dispatch.as_mut() => return Ok((result?, extra_responses)),
+            maybe_frame = stdin_rx.recv() => {
+                let frame = decode_stdin_frame(maybe_frame)?;
+                let Some(frame) = frame else {
+                    return Ok((dispatch.await?, extra_responses));
+                };
                 if let Some(interrupt) = extension_interrupt_response(&blocking_request, &request, &frame.frame) {
-                    drop(dispatch);
-                    let mut extra_responses = Vec::new();
                     if let Some(response) = interrupt.interrupting_response {
                         extra_responses.push(response);
                     } else {
                         *pending_frame = Some(frame);
                     }
-                    return Ok((interrupt.interrupted_dispatch, extra_responses));
+                    if interrupt.interrupt_active {
+                        drop(dispatch);
+                        return Ok((interrupt.interrupted_dispatch, extra_responses));
+                    }
+                    continue;
                 }
                 *pending_frame = Some(frame);
+                return Ok((dispatch.await?, extra_responses));
             }
-            Ok((dispatch.await?, Vec::new()))
         }
     }
 }
@@ -1236,6 +1242,7 @@ struct BlockingExtensionRequest {
 }
 
 struct ExtensionInterruptDispatch {
+    interrupt_active: bool,
     interrupted_dispatch: WireDispatchResult,
     interrupting_response: Option<ResponseFrame>,
 }
@@ -1270,11 +1277,16 @@ fn extension_interrupt_response(
                 &blocking_request.namespace,
                 request,
             )?;
+            let interrupt_ownership =
+                crate::wire::ownership_scope_to_compat(request.ownership.clone());
             let interrupt = blocking_request.extension.interrupt_blocking_request(
                 &blocking_request.payload,
                 match interrupt {
                     BlockingExtensionInterrupt::ExtensionPayload(payload) => {
-                        ExtensionInterruptRequest::ExtensionPayload(payload)
+                        ExtensionInterruptRequest::ExtensionPayload {
+                            payload,
+                            ownership: &interrupt_ownership,
+                        }
                     }
                     BlockingExtensionInterrupt::KillProcess => {
                         ExtensionInterruptRequest::KillProcess
@@ -1297,6 +1309,7 @@ fn extension_interrupt_response(
                 )
             });
             Some(ExtensionInterruptDispatch {
+                interrupt_active: interrupt.interrupt_active,
                 interrupted_dispatch,
                 interrupting_response,
             })
@@ -2461,20 +2474,23 @@ mod tests {
                 encode_test_response("prompt-cancelled", blocking_session_id);
             match interrupt {
                 ExtensionInterruptRequest::KillProcess => Some(ExtensionInterruptResponse {
+                    interrupt_active: true,
                     interrupted_response_payload,
                     interrupting_response_payload: None,
                 }),
-                ExtensionInterruptRequest::ExtensionPayload(payload) => {
+                ExtensionInterruptRequest::ExtensionPayload { payload, .. } => {
                     let (interrupt_kind, interrupt_session_id) = parse_test_payload(payload)?;
                     match interrupt_kind {
                         "close" if interrupt_session_id == blocking_session_id => {
                             Some(ExtensionInterruptResponse {
+                                interrupt_active: true,
                                 interrupted_response_payload,
                                 interrupting_response_payload: None,
                             })
                         }
                         "cancel" if interrupt_session_id == blocking_session_id => {
                             Some(ExtensionInterruptResponse {
+                                interrupt_active: true,
                                 interrupted_response_payload,
                                 interrupting_response_payload: Some(encode_test_response(
                                     "cancelled",

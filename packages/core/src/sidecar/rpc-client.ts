@@ -378,6 +378,7 @@ export class NativeSidecarKernelProxy {
 	private readonly ownsClient: boolean;
 	private readonly localMounts: LocalCompatMount[];
 	private readonly baseSidecarMounts: SidecarMountDescriptor[];
+	private readonly dynamicSidecarMounts: SidecarMountDescriptor[] = [];
 	private readonly permissions: SidecarPermissionsPolicy | undefined;
 	private readonly commandPermissions:
 		| Parameters<SidecarProcess["configureVm"]>[2]["commandPermissions"]
@@ -1575,9 +1576,44 @@ export class NativeSidecarKernelProxy {
 		return applied;
 	}
 
+	mountDescriptor(mount: SidecarMountDescriptor): Promise<void> {
+		const normalized = posixPath.normalize(mount.guestPath);
+		if (
+			this.desiredSidecarMounts().some(
+				(existing) => posixPath.normalize(existing.guestPath) === normalized,
+			)
+		) {
+			return Promise.reject(new Error(`mount already exists: ${normalized}`));
+		}
+		this.dynamicSidecarMounts.push({ ...mount, guestPath: normalized });
+		const applied = this.reconfigureSidecarMounts();
+		applied.catch(() => {});
+		return applied;
+	}
+
+	unmountDescriptor(path: string): Promise<void> {
+		const normalized = posixPath.normalize(path);
+		const index = this.dynamicSidecarMounts.findIndex(
+			(mount) => posixPath.normalize(mount.guestPath) === normalized,
+		);
+		if (index < 0) return Promise.resolve();
+		this.dynamicSidecarMounts.splice(index, 1);
+		const applied = this.reconfigureSidecarMounts();
+		applied.catch(() => {});
+		return applied;
+	}
+
+	async listMounts(): Promise<
+		Array<{ path: string; kind: string; readOnly: boolean }>
+	> {
+		await this.waitForMountReconfigure();
+		return this.client.listMounts(this.session, this.vm);
+	}
+
 	private desiredSidecarMounts(): SidecarMountDescriptor[] {
 		return [
 			...this.baseSidecarMounts,
+			...this.dynamicSidecarMounts,
 			...this.localMounts.map(
 				(mount) =>
 					mount.sidecarMount ?? {
@@ -2837,7 +2873,7 @@ export interface AgentOsSidecarTransport {
 }
 
 export interface AgentOsSidecarClientOptions {
-	createSessionTransport(
+	createOwnershipTransport(
 		bootstrap: AgentOsSidecarSessionBootstrap,
 	): Promise<AgentOsSidecarTransport>;
 	createId?: () => string;
@@ -2896,19 +2932,20 @@ export class AgentOsSidecarSessionHandle {
 }
 
 export class AgentOsSidecarClient {
-	private readonly createSessionTransport: AgentOsSidecarClientOptions["createSessionTransport"];
+	private readonly createOwnershipTransport: AgentOsSidecarClientOptions["createOwnershipTransport"];
 	private readonly createId: () => string;
 	private readonly now: () => number;
 	private readonly sessions = new Map<string, AgentOsSidecarSessionEntry>();
 	private disposed = false;
 
 	constructor(options: AgentOsSidecarClientOptions) {
-		this.createSessionTransport = options.createSessionTransport;
+		this.createOwnershipTransport = options.createOwnershipTransport;
 		this.createId = options.createId ?? randomUUID;
 		this.now = options.now ?? Date.now;
 	}
 
-	async createSession(
+	/** Open a physical sidecar ownership scope, not a durable ACP session. */
+	async createOwnershipSession(
 		options: AgentOsSidecarSessionOptions = {},
 	): Promise<AgentOsSidecarSessionHandle> {
 		this.assertActive();
@@ -2931,7 +2968,7 @@ export class AgentOsSidecarClient {
 		this.sessions.set(sessionId, entry);
 
 		try {
-			entry.transport = await this.createSessionTransport({
+			entry.transport = await this.createOwnershipTransport({
 				sessionId,
 				placement: clonePlacement(placement),
 				metadata: cloneMetadata(metadata),

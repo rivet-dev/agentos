@@ -827,6 +827,7 @@ export class SidecarProcess {
 	async snapshotRootFilesystem(
 		session: AuthenticatedSession,
 		vm: CreatedVm,
+		maxBytes: number,
 	): Promise<RootFilesystemEntry[]> {
 		const response = await this.sendRequest({
 			ownership: {
@@ -837,6 +838,7 @@ export class SidecarProcess {
 			},
 			payload: {
 				type: "snapshot_root_filesystem",
+				max_bytes: maxBytes,
 			},
 		});
 		if (response.payload.type !== "root_filesystem_snapshot") {
@@ -845,6 +847,29 @@ export class SidecarProcess {
 			);
 		}
 		return response.payload.entries;
+	}
+
+	async listMounts(
+		session: AuthenticatedSession,
+		vm: CreatedVm,
+	): Promise<Array<{ path: string; kind: string; readOnly: boolean }>> {
+		const response = await this.sendRequest({
+			ownership: {
+				scope: "vm",
+				connection_id: session.connectionId,
+				session_id: session.sessionId,
+				vm_id: vm.vmId,
+			},
+			payload: { type: "list_mounts" },
+		});
+		if (response.payload.type !== "mounts_listed") {
+			throw new Error(`unexpected list_mounts response: ${response.payload.type}`);
+		}
+		return response.payload.mounts.map((mount) => ({
+			path: mount.path,
+			kind: mount.kind,
+			readOnly: mount.read_only,
+		}));
 	}
 
 	async readFile(

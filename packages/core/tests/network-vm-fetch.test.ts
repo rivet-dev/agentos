@@ -10,7 +10,7 @@ afterEach(async () => {
 	vm = null;
 });
 
-test("vm.fetch reaches a guest http.createServer listener", async () => {
+test("httpRequest reaches a guest http.createServer listener", async () => {
 	vm = await AgentOs.create({
 		permissions: {
 			fs: "allow",
@@ -38,30 +38,33 @@ test("vm.fetch reaches a guest http.createServer listener", async () => {
 		resolvePort = resolve;
 	});
 
-	const { pid } = vm.spawn("node", ["/tmp/server.js"], {
-		onStdout: (chunk) => {
+	const { pid } = vm.spawn("node", ["/tmp/server.js"]);
+	const unsubscribe = vm.onProcessOutput(pid, (event) => {
+		if (event.stream === "stdout") {
+			const chunk = event.data;
 			const text = textDecoder.decode(chunk);
 			const match = text.match(/LISTENING:(\d+)/);
 			if (match) {
 				resolvePort(Number(match[1]));
 			}
-		},
+		}
 	});
 
 	try {
 		const guestPort = await portPromise;
-		const response = await vm.fetch(
-			guestPort,
-			new Request("http://localhost/api/test"),
-		);
+		const response = await vm.httpRequest({
+			port: guestPort,
+			path: "/api/test",
+		});
 
 		expect(response.status).toBe(200);
-		await expect(response.json()).resolves.toEqual({
+		expect(JSON.parse(textDecoder.decode(response.body))).toEqual({
 			status: "ok",
 			method: "GET",
 			url: "/api/test",
 		});
 	} finally {
+		unsubscribe();
 		vm.stopProcess(pid);
 		await vm.waitProcess(pid).catch(() => {});
 	}

@@ -99,11 +99,12 @@ async function inspectLaunch(
 	let sessionId: string | undefined;
 
 	try {
-		sessionId = (await vm.createSession(agentType)).sessionId;
+		sessionId = `launch-probe-${agentType}`;
+		await vm.openSession({ sessionId, agent: agentType });
 		return vm.getSessionAgentInfo(sessionId) as LaunchProbe;
 	} finally {
 		if (sessionId) {
-			vm.closeSession(sessionId);
+			vm.unloadSession({ sessionId });
 		}
 		await vm.dispose();
 		agentPackage.cleanup();
@@ -165,5 +166,4 @@ describe("agent launch args and env", () => {
 		expect(agentInfo.env?.ACP_APPEND_SYSTEM_PROMPT).toContain("# agentOS");
 		expect(agentInfo.env?.OPENCODE_CONTEXTPATHS).toBeNull();
 	});
-
 });

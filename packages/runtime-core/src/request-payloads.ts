@@ -131,6 +131,10 @@ export type LiveRequestPayload =
 	  }
 	| {
 			type: "snapshot_root_filesystem";
+			max_bytes: number;
+	  }
+	| {
+			type: "list_mounts";
 	  }
 	| {
 			type: "guest_kernel_call";
@@ -407,7 +411,12 @@ export function toGeneratedRequestPayload(
 				},
 			};
 		case "snapshot_root_filesystem":
-			return { tag: "SnapshotRootFilesystemRequest", val: null };
+			return {
+				tag: "SnapshotRootFilesystemRequest",
+				val: { maxBytes: BigInt(payload.max_bytes) },
+			};
+		case "list_mounts":
+			return { tag: "ListMountsRequest", val: null };
 		case "execute":
 			return {
 				tag: "ExecuteRequest",

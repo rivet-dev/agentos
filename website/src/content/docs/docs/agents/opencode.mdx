@@ -52,7 +52,8 @@ await agent.writeFile(
   }),
 );
 
-const session = await agent.createSession("opencode", {
+await agent.openSession({
+  agent: "opencode",
   env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 });
 ```
@@ -65,7 +66,7 @@ OpenCode discovers `SKILL.md` files from its skills directory. Write the skill i
 
 ## MCP servers
 
-Expose extra tools to the agent by passing `mcpServers` to `createSession`. Both local child-process servers and remote URLs are supported.
+Expose extra tools to the agent by passing `mcpServers` to `openSession`. Both local child-process servers and remote URLs are supported.
 
 <CodeSnippet file="examples/opencode/client.ts" region="mcp" />
 

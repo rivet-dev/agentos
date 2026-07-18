@@ -67,7 +67,7 @@ An agent is a Node.js or WASM package (packaged exactly as above) whose `agentos
 
 3. **Define it** — point `defineSoftware()` at the packaged directory; the agent block is already in its `agentos-package.json`:
 
-4. **Use it** — `createSession()` launches the agent by spawning its `acpEntrypoint`:
+4. **Use it** — choose a session ID, then `openSession({ sessionId, agent })` launches the agent by spawning its `acpEntrypoint`:
 
 ## Reference
 

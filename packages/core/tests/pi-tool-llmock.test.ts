@@ -101,16 +101,17 @@ describe("pi tool execution (llmock)", () => {
 		try {
 			const homeDir = await createVmPiHome(vm, url);
 			const workspaceDir = await createVmWorkspace(vm);
-			sessionId = (
-				await vm.createSession("pi", {
-					cwd: workspaceDir,
-					env: {
-						HOME: homeDir,
-						ANTHROPIC_API_KEY: "mock-key",
-						ANTHROPIC_BASE_URL: url,
-					},
-				})
-			).sessionId;
+			sessionId = "main";
+			await vm.openSession({
+				sessionId,
+				agent: "pi",
+				cwd: workspaceDir,
+				env: {
+					HOME: homeDir,
+					ANTHROPIC_API_KEY: "mock-key",
+					ANTHROPIC_BASE_URL: url,
+				},
+			});
 
 			const events: { method: string; params?: unknown }[] = [];
 			const unsubscribeEvents = vm.onSessionEvent(sessionId, (event) => {
@@ -145,7 +146,7 @@ describe("pi tool execution (llmock)", () => {
 			).toBe(true);
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				vm.unloadSession({ sessionId });
 			}
 			await vm.dispose();
 			await stopLlmock(mock);

@@ -1,13 +1,14 @@
 import crypto from "node:crypto";
-import { posix as posixPath } from "node:path";
 import {
 	AgentOs,
+	type AgentExitEvent,
 	type AgentOsOptions,
-	type CronJobInfo,
-	type JsonRpcNotification,
-	type MountConfig,
-	type PermissionReply,
-	type PermissionRequest,
+	type CronEvent,
+	type DynamicMountDescriptor,
+	type OpenSessionInput,
+	type PackageDescriptor,
+	type PromptInput,
+	type SessionStreamEntry,
 } from "@rivet-dev/agentos-core";
 import {
 	type Actions,
@@ -21,46 +22,76 @@ import {
 } from "rivetkit";
 import { type DatabaseProvider, db, type RawAccess } from "rivetkit/db";
 import type {
-	AgentCrashedPayload,
 	AgentOsEvents,
-	CronEventPayload,
-	MountInfoDto,
-	PermissionRequestPayload,
 	ProcessExitPayload,
 	ProcessOutputPayload,
-	SerializableCronJobInfo,
 	SerializableCronJobOptions,
-	SessionEventPayload,
 	ShellDataPayload,
 	ShellExitPayload,
 	VmBootedPayload,
 	VmShutdownPayload,
 } from "./types.js";
 
-const DEFAULT_ACTION_TIMEOUT_MS = 15 * 60_000;
+// Prompts may remain paused at a permission request for a long human review.
+// RivetKit currently exposes only one actor-wide action timeout, so use the
+// largest value Node timers can represent safely (~24.8 days). Callers may
+// still opt into a shorter timeout through actor options.
+const DEFAULT_ACTION_TIMEOUT_MS = 2_147_483_647;
 const DEFAULT_SLEEP_GRACE_PERIOD_MS = 15 * 60_000;
 const DEFAULT_PREVIEW_TTL_SECONDS = 3_600;
 const MAX_PREVIEW_TTL_SECONDS = 86_400;
 const DEFAULT_MAX_ACTIVE_PREVIEW_TOKENS = 1_024;
+const DEFAULT_MAX_SESSION_SUBSCRIPTIONS = 10_000;
+const DEFAULT_MAX_DYNAMIC_MOUNTS = 10_000;
+const DEFAULT_MAX_LINKED_SOFTWARE = 10_000;
 const ACTOR_SQLITE_CHUNK_SIZE = 512 * 1024;
 const ACTOR_SQLITE_INLINE_THRESHOLD = 64 * 1024;
 const ROOT_NAMESPACE = "agentos-root";
 const PREVIEW_PATH_PATTERN = /^\/fetch\/([a-f0-9]{48})(\/.*)?$/;
+const MAX_SQLITE_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
+
+interface ActorSqliteMigration {
+	readonly version: number;
+	readonly sql: string;
+}
+
+const ACTOR_SQLITE_MIGRATIONS = [
+	{
+		version: 1,
+		sql: `
+			CREATE TABLE agentos_actor_preview_tokens (
+				token TEXT PRIMARY KEY CHECK (length(token) = 48 AND token NOT GLOB '*[^0-9a-f]*'),
+				port INTEGER NOT NULL CHECK (port BETWEEN 1 AND 65535),
+				created_at_ms INTEGER NOT NULL CHECK (created_at_ms BETWEEN 0 AND ${MAX_SQLITE_SAFE_INTEGER}),
+				expires_at_ms INTEGER NOT NULL CHECK (expires_at_ms > created_at_ms AND expires_at_ms <= ${MAX_SQLITE_SAFE_INTEGER})
+			) STRICT;
+			CREATE INDEX agentos_actor_preview_tokens_by_expiry
+				ON agentos_actor_preview_tokens(expires_at_ms);
+			CREATE TABLE agentos_actor_dynamic_mounts (
+				path TEXT PRIMARY KEY CHECK (substr(path, 1, 1) = '/' AND instr(path, char(0)) = 0),
+				descriptor_json TEXT NOT NULL CHECK (json_valid(descriptor_json) AND json_type(descriptor_json) = 'object')
+			) STRICT;
+			CREATE TABLE agentos_actor_linked_software (
+				path TEXT PRIMARY KEY CHECK (length(path) > 0 AND instr(path, char(0)) = 0),
+				descriptor_json TEXT NOT NULL CHECK (json_valid(descriptor_json) AND json_type(descriptor_json) = 'object')
+			) STRICT;
+		`,
+	},
+] as const satisfies readonly ActorSqliteMigration[];
 
 type BuiltInEvents = {
 	[K in keyof AgentOsEvents]: Type<AgentOsEvents[K]>;
 };
 
 const builtInEvents: BuiltInEvents = {
-	sessionEvent: event<SessionEventPayload>(),
-	permissionRequest: event<PermissionRequestPayload>(),
+	sessionEvent: event<SessionStreamEntry>(),
 	vmBooted: event<VmBootedPayload>(),
 	vmShutdown: event<VmShutdownPayload>(),
 	processOutput: event<ProcessOutputPayload>(),
 	processExit: event<ProcessExitPayload>(),
 	shellData: event<ShellDataPayload>(),
-	cronEvent: event<CronEventPayload>(),
-	agentCrashed: event<AgentCrashedPayload>(),
+	cronEvent: event<CronEvent>(),
+	agentExit: event<AgentExitEvent>(),
 	shellStderr: event<ShellDataPayload>(),
 	shellExit: event<ShellExitPayload>(),
 };
@@ -71,7 +102,7 @@ type AnyContext = ActorContext<any, any, any, any, any, ActorDb, any, any>;
 
 interface RuntimeState {
 	vm: Promise<AgentOs> | null;
-	sessionHolds: Map<string, () => void>;
+	subscribedSessions: Map<string, readonly (() => void)[]>;
 }
 
 const runtimes = new Map<string, RuntimeState>();
@@ -79,7 +110,7 @@ const runtimes = new Map<string, RuntimeState>();
 function runtimeFor(c: AnyContext): RuntimeState {
 	let runtime = runtimes.get(c.actorId);
 	if (!runtime) {
-		runtime = { vm: null, sessionHolds: new Map() };
+		runtime = { vm: null, subscribedSessions: new Map() };
 		runtimes.set(c.actorId, runtime);
 	}
 	return runtime;
@@ -105,18 +136,21 @@ async function ensureVm(
 			);
 		}
 		const { path, token } = await actorUds.call(c);
+		const mountRows = await c.db.execute<{ descriptor_json: string }>(
+			"SELECT descriptor_json FROM agentos_actor_dynamic_mounts ORDER BY path",
+		);
+		const softwareRows = await c.db.execute<{ descriptor_json: string }>(
+			"SELECT descriptor_json FROM agentos_actor_linked_software ORDER BY path",
+		);
 		const vm = await AgentOs.create({
 			...options,
+			database: { type: "actor_uds", path, token },
 			onAgentExit: (event) => {
 				c.log.error({
 					msg: "agent-os agent adapter exited unexpectedly",
 					...event,
 				});
-				if (event.restart !== "restarted") {
-					runtime.sessionHolds.get(event.sessionId)?.();
-					runtime.sessionHolds.delete(event.sessionId);
-				}
-				c.broadcast("agentCrashed", { sessionId: event.sessionId, event });
+				c.broadcast("agentExit", event);
 				try {
 					options?.onAgentExit?.(event);
 				} catch (error) {
@@ -132,8 +166,6 @@ async function ensureVm(
 				plugin: {
 					id: "chunked_actor_sqlite",
 					config: {
-						path,
-						token,
 						namespace: ROOT_NAMESPACE,
 						chunkSize: ACTOR_SQLITE_CHUNK_SIZE,
 						inlineThreshold: ACTOR_SQLITE_INLINE_THRESHOLD,
@@ -141,17 +173,22 @@ async function ensureVm(
 				},
 			},
 		});
-		vm.onCronEvent((cronEvent) => {
-			c.broadcast("cronEvent", {
-				event: {
-					...cronEvent,
-					time: cronEvent.time.getTime(),
-					...(cronEvent.type === "cron:error"
-						? { error: cronEvent.error.message }
-						: {}),
-				},
-			});
-		});
+		try {
+			for (const row of mountRows) {
+				await vm.mountFs(
+					JSON.parse(row.descriptor_json) as DynamicMountDescriptor,
+				);
+			}
+			for (const row of softwareRows) {
+				await vm.linkSoftware(
+					JSON.parse(row.descriptor_json) as PackageDescriptor,
+				);
+			}
+		} catch (error) {
+			await vm.dispose();
+			throw error;
+		}
+		vm.onCronEvent((cronEvent) => c.broadcast("cronEvent", cronEvent));
 		c.broadcast("vmBooted", {});
 		c.log.info({
 			msg: "agent-os vm booted",
@@ -173,7 +210,10 @@ async function disposeVm(c: AnyContext, reason: "sleep" | "destroy" | "error") {
 	if (!runtime) return;
 	const vm = runtime.vm;
 	runtimes.delete(c.actorId);
-	for (const release of runtime.sessionHolds.values()) release();
+	for (const unsubscribers of runtime.subscribedSessions.values()) {
+		for (const unsubscribe of unsubscribers) unsubscribe();
+	}
+	runtime.subscribedSessions.clear();
 	if (vm) await (await vm).dispose();
 	c.broadcast("vmShutdown", { reason });
 }
@@ -182,170 +222,217 @@ function matchPreviewPath(pathname: string): RegExpMatchArray | null {
 	return pathname.match(PREVIEW_PATH_PATTERN);
 }
 
-function serializeMount(mount: MountConfig): MountInfoDto {
-	if ("plugin" in mount) {
-		const config = mount.plugin.config;
-		const configReadOnly =
-			typeof config === "object" &&
-			config !== null &&
-			"readOnly" in config &&
-			typeof config.readOnly === "boolean"
-				? config.readOnly
-				: undefined;
-		return {
-			path: mount.path,
-			kind: mount.plugin.id,
-			readOnly: mount.readOnly ?? configReadOnly ?? false,
-		};
+/** @internal Exported only for focused migration-ladder tests. */
+export function validateAgentOsActorMigrationLadder(
+	migrations: readonly ActorSqliteMigration[],
+): void {
+	if (migrations.length === 0) {
+		throw new Error("AgentOS actor SQLite migration ladder must not be empty");
 	}
-	if ("filesystem" in mount) {
-		return {
-			path: mount.path,
-			kind: "overlay",
-			readOnly: mount.filesystem.mode === "read-only",
-			config: { mode: mount.filesystem.mode },
-		};
+	for (const [index, migration] of migrations.entries()) {
+		const expectedVersion = index + 1;
+		if (migration.version !== expectedVersion) {
+			throw new Error(
+				`invalid AgentOS actor SQLite migration ladder: expected version ${expectedVersion}, received ${migration.version}`,
+			);
+		}
+		if (migration.sql.trim().length === 0) {
+			throw new Error(
+				`invalid AgentOS actor SQLite migration ${migration.version}: SQL is empty`,
+			);
+		}
+		if (
+			/(?:^|;)\s*(?:BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE)\b/im.test(
+				migration.sql,
+			)
+		) {
+			throw new Error(
+				`invalid AgentOS actor SQLite migration ${migration.version}: transaction control belongs to the migration provider`,
+			);
+		}
+		if (/\b(?:FOREIGN\s+KEY|REFERENCES)\b/i.test(migration.sql)) {
+			throw new Error(
+				`invalid AgentOS actor SQLite migration ${migration.version}: foreign keys are not used in the actor-owned schema`,
+			);
+		}
+		for (const statement of migration.sql.split(";")) {
+			if (
+				/^\s*CREATE\s+TABLE\b/i.test(statement) &&
+				!/[)]\s*STRICT\s*$/i.test(statement)
+			) {
+				throw new Error(
+					`invalid AgentOS actor SQLite migration ${migration.version}: every actor-owned table must be STRICT`,
+				);
+			}
+		}
+		const ownedIdentifiers = migration.sql.match(/\bagentos_[a-z0-9_]+\b/gi);
+		if (
+			!ownedIdentifiers ||
+			ownedIdentifiers.some(
+				(identifier) => !identifier.startsWith("agentos_actor_"),
+			)
+		) {
+			throw new Error(
+				`invalid AgentOS actor SQLite migration ${migration.version}: migrations may reference only agentos_actor_* tables and indexes`,
+			);
+		}
 	}
-	return {
-		path: mount.path,
-		kind: "custom",
-		readOnly: mount.readOnly ?? false,
-	};
 }
 
-async function migrateAgentOsTables(database: RawAccess): Promise<void> {
+/** @internal Exported only for focused migration tests. */
+export async function migrateAgentOsActorTables(
+	database: RawAccess,
+): Promise<void> {
+	validateAgentOsActorMigrationLadder(ACTOR_SQLITE_MIGRATIONS);
 	await database.execute(`
-		CREATE TABLE IF NOT EXISTS agent_os_preview_tokens (
-			token TEXT PRIMARY KEY,
-			port INTEGER NOT NULL,
-			created_at INTEGER NOT NULL,
-			expires_at INTEGER NOT NULL
-		);
-		CREATE INDEX IF NOT EXISTS idx_agent_os_preview_tokens_expires_at
-			ON agent_os_preview_tokens(expires_at);
+		CREATE TABLE IF NOT EXISTS agentos_actor_schema_version (
+			singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+			schema_version INTEGER NOT NULL CHECK (schema_version BETWEEN 0 AND ${MAX_SQLITE_SAFE_INTEGER})
+		) STRICT;
 	`);
-}
-
-function serializeCronJob(job: CronJobInfo): SerializableCronJobInfo {
-	if (job.action.type === "callback") {
-		throw new TypeError("callback cron actions are not serializable");
+	const rows = await database.execute<{ schema_version: unknown }>(
+		"SELECT schema_version FROM agentos_actor_schema_version WHERE singleton = 1",
+	);
+	if (rows.length > 1) {
+		throw new Error(
+			`invalid AgentOS actor SQLite schema version table: expected at most one row, received ${rows.length}`,
+		);
 	}
-	return {
-		id: job.id,
-		schedule: job.schedule,
-		action:
-			job.action.type === "session"
-				? {
-						type: "session",
-						agentType: job.action.agentType,
-						prompt: job.action.prompt,
-						cwd: job.action.options?.cwd,
-					}
-				: {
-						type: "exec",
-						command: job.action.command,
-						args: job.action.args,
-					},
-		overlap: job.overlap,
-		lastRun: job.lastRun?.toISOString(),
-		nextRun: job.nextRun?.toISOString(),
-		runCount: job.runCount,
-		running: job.running,
-	};
+	const rawCurrent = rows[0]?.schema_version;
+	const current = rows.length === 0 ? 0 : rawCurrent;
+	if (
+		typeof current !== "number" ||
+		!Number.isSafeInteger(current) ||
+		current < 0
+	) {
+		throw new Error(
+			`invalid AgentOS actor SQLite schema version ${String(rawCurrent)}`,
+		);
+	}
+	if (current > ACTOR_SQLITE_MIGRATIONS.length) {
+		throw new Error(
+			`AgentOS actor SQLite schema version ${current} is newer than supported version ${ACTOR_SQLITE_MIGRATIONS.length}`,
+		);
+	}
+	for (const migration of ACTOR_SQLITE_MIGRATIONS.slice(current)) {
+		await database.execute(migration.sql);
+		await database.execute(
+			`INSERT INTO agentos_actor_schema_version (singleton, schema_version)
+			 VALUES (1, ?)
+			 ON CONFLICT(singleton) DO UPDATE SET schema_version = excluded.schema_version`,
+			migration.version,
+		);
+	}
 }
 
-export interface VmFetchOptions {
-	method?: string;
-	headers?: Record<string, string>;
-	body?: string | Uint8Array;
-}
-
-export interface VmFetchResponse {
-	status: number;
-	statusText: string;
-	headers: Record<string, string>;
-	body: Uint8Array;
+async function assertActorCollectionCapacity(
+	c: AnyContext,
+	table: "agentos_actor_dynamic_mounts" | "agentos_actor_linked_software",
+	key: string,
+	limit: number,
+	label: "dynamic mounts" | "linked software packages",
+	configKey: "maxDynamicMounts" | "maxLinkedSoftware",
+): Promise<void> {
+	const existing = await c.db.execute<{ present: number }>(
+		`SELECT 1 AS present FROM ${table} WHERE path = ? LIMIT 1`,
+		key,
+	);
+	if (existing.length > 0) return;
+	const rows = await c.db.execute<{ count: number }>(
+		`SELECT COUNT(*) AS count FROM ${table}`,
+	);
+	const count = Number(rows[0]?.count ?? 0);
+	if (count >= limit) {
+		throw new UserError(
+			`${label} limit ${limit} reached; raise ${configKey} to persist more`,
+			{
+				code: `agentos_${configKey === "maxDynamicMounts" ? "dynamic_mount" : "linked_software"}_limit`,
+				metadata: { limit },
+			},
+		);
+	}
+	if (count + 1 === Math.ceil(limit * 0.8)) {
+		c.log.warn({
+			msg: `${label} are near the limit of ${limit}; raise ${configKey} to persist more`,
+			count: count + 1,
+			limit,
+		});
+	}
 }
 
 export interface AgentOsEventHooks<TContext = AnyContext> {
 	onSessionEvent?: (
 		c: TContext,
 		sessionId: string,
-		event: JsonRpcNotification,
-	) => void | Promise<void>;
-	onPermissionRequest?: (
-		c: TContext,
-		sessionId: string,
-		request: PermissionRequest,
+		event: SessionStreamEntry,
 	) => void | Promise<void>;
 }
 
-function trackLiveSession(
+function trackSessionEvents(
 	c: AnyContext,
 	vm: AgentOs,
 	sessionId: string,
 	hooks: AgentOsEventHooks,
+	maxSessionSubscriptions: number,
 ): void {
 	const runtime = runtimeFor(c);
-	if (!runtime.sessionHolds.has(sessionId)) {
-		const sessionHold = new Promise<void>((resolve) => {
-			runtime.sessionHolds.set(sessionId, resolve);
-		});
-		void c.keepAwake(sessionHold).catch((error) =>
-			c.log.error({
-				msg: "agent-os session hold failed",
-				sessionId,
-				error,
-			}),
+	if (runtime.subscribedSessions.has(sessionId)) return;
+	if (runtime.subscribedSessions.size >= maxSessionSubscriptions) {
+		throw new UserError(
+			`session subscription limit ${maxSessionSubscriptions} reached; raise maxSessionSubscriptions to observe more sessions`,
+			{
+				code: "agentos_session_subscription_limit",
+				metadata: { limit: maxSessionSubscriptions },
+			},
 		);
 	}
-	vm.onSessionEvent(sessionId, (notification: JsonRpcNotification) => {
-		const serialized = JSON.parse(
-			JSON.stringify(notification),
-		) as JsonRpcNotification;
-		c.broadcast("sessionEvent", { sessionId, event: serialized });
-		if (hooks.onSessionEvent) {
-			c.waitUntil(
-				Promise.resolve()
-					.then(() => hooks.onSessionEvent?.(c, sessionId, serialized))
-					.catch((error) =>
-						c.log.error({
-							msg: "agent-os session event hook failed",
-							sessionId,
-							error,
-						}),
-					),
-			);
-		}
-	});
-	vm.onPermissionRequest(sessionId, (request: PermissionRequest) => {
-		c.broadcast("permissionRequest", { sessionId, request });
-		if (hooks.onPermissionRequest) {
-			c.waitUntil(
-				Promise.resolve()
-					.then(() => hooks.onPermissionRequest?.(c, sessionId, request))
-					.catch((error) =>
-						c.log.error({
-							msg: "agent-os permission hook failed",
-							sessionId,
-							error,
-						}),
-					),
-			);
-		}
-	});
+	const nextCount = runtime.subscribedSessions.size + 1;
+	if (nextCount === Math.ceil(maxSessionSubscriptions * 0.8)) {
+		c.log.warn({
+			msg: `session subscriptions are near the limit of ${maxSessionSubscriptions}; raise maxSessionSubscriptions to observe more sessions`,
+			subscriptionCount: nextCount,
+			limit: maxSessionSubscriptions,
+		});
+	}
+	const unsubscribeSession = vm.onSessionEvent(
+		sessionId,
+		(notification: SessionStreamEntry) => {
+			const serialized = JSON.parse(
+				JSON.stringify(notification),
+			) as SessionStreamEntry;
+			c.broadcast("sessionEvent", serialized);
+			if (hooks.onSessionEvent) {
+				c.waitUntil(
+					Promise.resolve()
+						.then(() => hooks.onSessionEvent?.(c, sessionId, serialized))
+						.catch((error) =>
+							c.log.error({
+								msg: "agent-os session event hook failed",
+								sessionId,
+								error,
+							}),
+						),
+				);
+			}
+		},
+	);
+	runtime.subscribedSessions.set(sessionId, [unsubscribeSession]);
 }
 
-function releaseLiveSession(c: AnyContext, sessionId: string): void {
-	const runtime = runtimeFor(c);
-	runtime.sessionHolds.get(sessionId)?.();
-	runtime.sessionHolds.delete(sessionId);
+function untrackSessionEvents(c: AnyContext, sessionId: string): void {
+	const unsubscribers = runtimeFor(c).subscribedSessions.get(sessionId);
+	if (!unsubscribers) return;
+	for (const unsubscribe of unsubscribers) unsubscribe();
+	runtimeFor(c).subscribedSessions.delete(sessionId);
 }
 
 export function createAgentOsActions(
 	options?: AgentOsOptions,
 	hooks: AgentOsEventHooks = {},
 	preview: AgentOsActorExtras["preview"] = {},
+	maxSessionSubscriptions = DEFAULT_MAX_SESSION_SUBSCRIPTIONS,
+	maxDynamicMounts = DEFAULT_MAX_DYNAMIC_MOUNTS,
+	maxLinkedSoftware = DEFAULT_MAX_LINKED_SOFTWARE,
 ) {
 	const defaultPreviewTtlSeconds =
 		preview.defaultExpiresInSeconds ?? DEFAULT_PREVIEW_TTL_SECONDS;
@@ -370,6 +457,24 @@ export function createAgentOsActions(
 			code: "agentos_preview_invalid_config",
 		});
 	}
+	if (
+		!Number.isInteger(maxSessionSubscriptions) ||
+		maxSessionSubscriptions < 1
+	) {
+		throw new UserError("maxSessionSubscriptions must be a positive integer", {
+			code: "agentos_session_subscription_invalid_config",
+		});
+	}
+	if (!Number.isInteger(maxDynamicMounts) || maxDynamicMounts < 1) {
+		throw new UserError("maxDynamicMounts must be a positive integer", {
+			code: "agentos_dynamic_mount_invalid_config",
+		});
+	}
+	if (!Number.isInteger(maxLinkedSoftware) || maxLinkedSoftware < 1) {
+		throw new UserError("maxLinkedSoftware must be a positive integer", {
+			code: "agentos_linked_software_invalid_config",
+		});
+	}
 	return {
 		readFile: async (c: AnyContext, ...args: Parameters<AgentOs["readFile"]>) =>
 			(await ensureVm(c, options)).readFile(...args),
@@ -391,20 +496,10 @@ export function createAgentOsActions(
 			(await ensureVm(c, options)).mkdir(...args),
 		readdir: async (c: AnyContext, ...args: Parameters<AgentOs["readdir"]>) =>
 			(await ensureVm(c, options)).readdir(...args),
-		readdirEntries: async (c: AnyContext, path: string) => {
-			const vm = await ensureVm(c, options);
-			const names = await vm.readdir(path);
-			return Promise.all(
-				names.map(async (name) => {
-					const stat = await vm.stat(posixPath.join(path, name));
-					return {
-						name,
-						isDirectory: stat.isDirectory,
-						isSymbolicLink: stat.isSymbolicLink,
-					};
-				}),
-			);
-		},
+		readdirEntries: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["readdirEntries"]>
+		) => (await ensureVm(c, options)).readdirEntries(...args),
 		readdirRecursive: async (
 			c: AnyContext,
 			...args: Parameters<AgentOs["readdirRecursive"]>
@@ -413,40 +508,26 @@ export function createAgentOsActions(
 			(await ensureVm(c, options)).exists(...args),
 		move: async (c: AnyContext, ...args: Parameters<AgentOs["move"]>) =>
 			(await ensureVm(c, options)).move(...args),
-		deleteFile: async (c: AnyContext, ...args: Parameters<AgentOs["delete"]>) =>
-			(await ensureVm(c, options)).delete(...args),
+		remove: async (c: AnyContext, ...args: Parameters<AgentOs["remove"]>) =>
+			(await ensureVm(c, options)).remove(...args),
 		exec: async (c: AnyContext, ...args: Parameters<AgentOs["exec"]>) =>
 			(await ensureVm(c, options)).exec(...args),
-		spawn: async (
-			c: AnyContext,
-			command: string,
-			args: string[],
-			spawnOptions?: Omit<
-				NonNullable<Parameters<AgentOs["spawn"]>[2]>,
-				"onStdout" | "onStderr"
-			>,
-		) => {
+		execArgv: async (c: AnyContext, ...args: Parameters<AgentOs["execArgv"]>) =>
+			(await ensureVm(c, options)).execArgv(...args),
+		spawn: async (c: AnyContext, ...args: Parameters<AgentOs["spawn"]>) => {
 			const vm = await ensureVm(c, options);
-			const process = vm.spawn(command, args, {
-				...spawnOptions,
-				onStdout: (data) =>
-					c.broadcast("processOutput", {
-						pid: process.pid,
-						stream: "stdout",
-						data,
-					}),
-				onStderr: (data) =>
-					c.broadcast("processOutput", {
-						pid: process.pid,
-						stream: "stderr",
-						data,
-					}),
-			});
+			const process = vm.spawn(...args);
+			const unsubscribeOutput = vm.onProcessOutput(process.pid, (event) =>
+				c.broadcast("processOutput", event),
+			);
+			const unsubscribeExit = vm.onProcessExit(process.pid, (event) =>
+				c.broadcast("processExit", event),
+			);
 			void c
 				.keepAwake(
-					vm.waitProcess(process.pid).then((exitCode) => {
-						c.broadcast("processExit", { pid: process.pid, exitCode });
-						return exitCode;
+					vm.waitProcess(process.pid).finally(() => {
+						unsubscribeOutput();
+						unsubscribeExit();
 					}),
 				)
 				.catch((error) =>
@@ -490,25 +571,25 @@ export function createAgentOsActions(
 		) => (await ensureVm(c, options)).closeProcessStdin(...args),
 		openShell: async (
 			c: AnyContext,
-			shellOptions?: Omit<
-				NonNullable<Parameters<AgentOs["openShell"]>[0]>,
-				"onStderr"
-			>,
+			...args: Parameters<AgentOs["openShell"]>
 		) => {
 			const vm = await ensureVm(c, options);
-			const shell = vm.openShell({
-				...shellOptions,
-				onStderr: (data) =>
-					c.broadcast("shellStderr", { shellId: shell.shellId, data }),
-			});
-			vm.onShellData(shell.shellId, (data) =>
-				c.broadcast("shellData", { shellId: shell.shellId, data }),
+			const shell = vm.openShell(...args);
+			const unsubscribeData = vm.onShellData(shell.shellId, (event) =>
+				c.broadcast("shellData", event),
+			);
+			const unsubscribeStderr = vm.onShellStderr(shell.shellId, (event) =>
+				c.broadcast("shellStderr", event),
+			);
+			const unsubscribeExit = vm.onShellExit(shell.shellId, (event) =>
+				c.broadcast("shellExit", event),
 			);
 			void c
 				.keepAwake(
-					vm.waitShell(shell.shellId).then((exitCode) => {
-						c.broadcast("shellExit", { shellId: shell.shellId, exitCode });
-						return exitCode;
+					vm.waitShell(shell.shellId).finally(() => {
+						unsubscribeData();
+						unsubscribeStderr();
+						unsubscribeExit();
 					}),
 				)
 				.catch((error) =>
@@ -536,36 +617,10 @@ export function createAgentOsActions(
 			c: AnyContext,
 			...args: Parameters<AgentOs["waitShell"]>
 		) => (await ensureVm(c, options)).waitShell(...args),
-		vmFetch: async (
+		httpRequest: async (
 			c: AnyContext,
-			port: number,
-			url: string,
-			requestOptions?: VmFetchOptions,
-		): Promise<VmFetchResponse> => {
-			const vm = await ensureVm(c, options);
-			const body =
-				requestOptions?.body instanceof Uint8Array
-					? Buffer.from(requestOptions.body)
-					: requestOptions?.body;
-			const response = await vm.fetch(
-				port,
-				new Request(url, {
-					method: requestOptions?.method ?? "GET",
-					headers: requestOptions?.headers,
-					body,
-				}),
-			);
-			const headers: Record<string, string> = {};
-			response.headers.forEach((value, key) => {
-				headers[key] = value;
-			});
-			return {
-				status: response.status,
-				statusText: response.statusText,
-				headers,
-				body: new Uint8Array(await response.arrayBuffer()),
-			};
-		},
+			...args: Parameters<AgentOs["httpRequest"]>
+		) => (await ensureVm(c, options)).httpRequest(...args),
 		scheduleCron: async (
 			c: AnyContext,
 			cronOptions: SerializableCronJobOptions,
@@ -576,78 +631,85 @@ export function createAgentOsActions(
 			return { id: job.id };
 		},
 		listCronJobs: async (c: AnyContext) =>
-			(await ensureVm(c, options)).listCronJobs().map(serializeCronJob),
+			(await ensureVm(c, options)).listCronJobs(),
 		cancelCronJob: async (
 			c: AnyContext,
 			...args: Parameters<AgentOs["cancelCronJob"]>
 		) => (await ensureVm(c, options)).cancelCronJob(...args),
 		listAgents: async (c: AnyContext) =>
 			(await ensureVm(c, options)).listAgents(),
-		createSession: async (
-			c: AnyContext,
-			...args: Parameters<AgentOs["createSession"]>
-		) => {
+		openSession: async (c: AnyContext, input: OpenSessionInput) => {
 			const vm = await ensureVm(c, options);
-			const { sessionId } = await vm.createSession(...args);
-			trackLiveSession(c, vm, sessionId, hooks);
-			return sessionId;
+			await vm.openSession(input);
+			trackSessionEvents(
+				c,
+				vm,
+				input.sessionId ?? "main",
+				hooks,
+				maxSessionSubscriptions,
+			);
 		},
-		resumeSession: async (
+		getSession: async (
 			c: AnyContext,
-			...args: Parameters<AgentOs["resumeSession"]>
+			...args: Parameters<AgentOs["getSession"]>
+		) => (await ensureVm(c, options)).getSession(...args),
+		listSessions: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["listSessions"]>
+		) => (await ensureVm(c, options)).listSessions(...args),
+		deleteSession: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["deleteSession"]>
 		) => {
-			const vm = await ensureVm(c, options);
-			const result = await vm.resumeSession(...args);
-			trackLiveSession(c, vm, result.sessionId, hooks);
+			const result = await (await ensureVm(c, options)).deleteSession(...args);
+			untrackSessionEvents(c, args[0]?.sessionId ?? "main");
 			return result;
 		},
-		sendPrompt: async (c: AnyContext, sessionId: string, text: string) => {
-			const promise = (await ensureVm(c, options)).prompt(sessionId, text);
-			return c.keepAwake(promise);
+		unloadSession: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["unloadSession"]>
+		) => {
+			const result = await (await ensureVm(c, options)).unloadSession(...args);
+			untrackSessionEvents(c, args[0]?.sessionId ?? "main");
+			return result;
 		},
-		cancelPrompt: async (c: AnyContext, sessionId: string) =>
-			(await ensureVm(c, options)).cancelSession(sessionId),
-		closeSession: async (c: AnyContext, sessionId: string) => {
+		prompt: async (c: AnyContext, input: PromptInput) => {
 			const vm = await ensureVm(c, options);
-			vm.closeSession(sessionId);
-			releaseLiveSession(c, sessionId);
+			const sessionId = input.sessionId ?? "main";
+			trackSessionEvents(c, vm, sessionId, hooks, maxSessionSubscriptions);
+			// The actor is held only through the terminal SQLite commit for this
+			// active turn. Merely having an idle durable session holds nothing.
+			return c.keepAwake(vm.prompt(input));
 		},
-		destroySession: async (c: AnyContext, sessionId: string) => {
-			await (await ensureVm(c, options)).destroySession(sessionId);
-			releaseLiveSession(c, sessionId);
-		},
+		cancelPrompt: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["cancelPrompt"]>
+		) => (await ensureVm(c, options)).cancelPrompt(...args),
 		respondPermission: async (
 			c: AnyContext,
-			sessionId: string,
-			permissionId: string,
-			reply: PermissionReply,
-		) =>
-			(await ensureVm(c, options)).respondPermission(
-				sessionId,
-				permissionId,
-				reply,
-			),
-		listSessions: async (c: AnyContext) =>
-			(await ensureVm(c, options)).listSessions(),
-		setMode: async (c: AnyContext, sessionId: string, modeId: string) =>
-			(await ensureVm(c, options)).setSessionMode(sessionId, modeId),
-		getModes: async (c: AnyContext, sessionId: string) =>
-			(await ensureVm(c, options)).getSessionModes(sessionId),
-		setModel: async (c: AnyContext, sessionId: string, model: string) =>
-			(await ensureVm(c, options)).setSessionModel(sessionId, model),
-		setThoughtLevel: async (c: AnyContext, sessionId: string, level: string) =>
-			(await ensureVm(c, options)).setSessionThoughtLevel(sessionId, level),
-		getSessionConfigOptions: async (c: AnyContext, sessionId: string) =>
-			(await ensureVm(c, options)).getSessionConfigOptions(sessionId),
-		getSessionCapabilities: async (c: AnyContext, sessionId: string) =>
-			(await ensureVm(c, options)).getSessionCapabilities(sessionId),
-		getSessionAgentInfo: async (c: AnyContext, sessionId: string) =>
-			(await ensureVm(c, options)).getSessionAgentInfo(sessionId),
-		rawSessionSend: async (
+			...args: Parameters<AgentOs["respondPermission"]>
+		) => (await ensureVm(c, options)).respondPermission(...args),
+		readHistory: async (
 			c: AnyContext,
-			...args: Parameters<AgentOs["rawSessionSend"]>
-		) => (await ensureVm(c, options)).rawSessionSend(...args),
-		createSignedPreviewUrl: async (
+			...args: Parameters<AgentOs["readHistory"]>
+		) => (await ensureVm(c, options)).readHistory(...args),
+		getSessionConfig: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["getSessionConfig"]>
+		) => (await ensureVm(c, options)).getSessionConfig(...args),
+		setSessionConfigOption: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["setSessionConfigOption"]>
+		) => (await ensureVm(c, options)).setSessionConfigOption(...args),
+		getSessionCapabilities: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["getSessionCapabilities"]>
+		) => (await ensureVm(c, options)).getSessionCapabilities(...args),
+		getSessionAgentInfo: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["getSessionAgentInfo"]>
+		) => (await ensureVm(c, options)).getSessionAgentInfo(...args),
+		createPreviewUrl: async (
 			c: AnyContext,
 			port: number,
 			ttlSeconds = defaultPreviewTtlSeconds,
@@ -670,11 +732,11 @@ export function createAgentOsActions(
 			const createdAt = Date.now();
 			const expiresAt = createdAt + ttlSeconds * 1_000;
 			await c.db.execute(
-				"DELETE FROM agent_os_preview_tokens WHERE expires_at <= ?",
+				"DELETE FROM agentos_actor_preview_tokens WHERE expires_at_ms <= ?",
 				createdAt,
 			);
 			const counts = await c.db.execute<{ count: number }>(
-				"SELECT COUNT(*) AS count FROM agent_os_preview_tokens",
+				"SELECT COUNT(*) AS count FROM agentos_actor_preview_tokens",
 			);
 			const activeTokenCount = Number(counts[0]?.count ?? 0);
 			if (activeTokenCount >= maxActivePreviewTokens) {
@@ -696,7 +758,7 @@ export function createAgentOsActions(
 				});
 			}
 			await c.db.execute(
-				"INSERT INTO agent_os_preview_tokens (token, port, created_at, expires_at) VALUES (?, ?, ?, ?)",
+				"INSERT INTO agentos_actor_preview_tokens (token, port, created_at_ms, expires_at_ms) VALUES (?, ?, ?, ?)",
 				token,
 				port,
 				createdAt,
@@ -704,15 +766,111 @@ export function createAgentOsActions(
 			);
 			return { path: `/fetch/${token}`, token, port, expiresAt };
 		},
-		expireSignedPreviewUrl: async (c: AnyContext, token: string) => {
+		expirePreviewUrl: async (c: AnyContext, token: string) => {
 			await c.db.execute(
-				"DELETE FROM agent_os_preview_tokens WHERE token = ?",
+				"DELETE FROM agentos_actor_preview_tokens WHERE token = ?",
 				token,
 			);
 		},
-		listMounts: async () => options?.mounts?.map(serializeMount) ?? [],
+		exportRootFilesystem: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["exportRootFilesystem"]>
+		) => (await ensureVm(c, options)).exportRootFilesystem(...args),
+		mountFs: async (c: AnyContext, descriptor: DynamicMountDescriptor) => {
+			await assertActorCollectionCapacity(
+				c,
+				"agentos_actor_dynamic_mounts",
+				descriptor.path,
+				maxDynamicMounts,
+				"dynamic mounts",
+				"maxDynamicMounts",
+			);
+			const vm = await ensureVm(c, options);
+			await vm.mountFs(descriptor);
+			try {
+				await c.db.execute(
+					"INSERT INTO agentos_actor_dynamic_mounts (path, descriptor_json) VALUES (?, ?) ON CONFLICT(path) DO UPDATE SET descriptor_json = excluded.descriptor_json",
+					descriptor.path,
+					JSON.stringify(descriptor),
+				);
+			} catch (error) {
+				try {
+					await vm.unmountFs(descriptor.path);
+				} catch (rollbackError) {
+					c.log.error({
+						msg: "agent-os dynamic mount rollback failed",
+						path: descriptor.path,
+						error: rollbackError,
+					});
+				}
+				throw error;
+			}
+		},
+		unmountFs: async (c: AnyContext, path: string) => {
+			const rows = await c.db.execute<{ descriptor_json: string }>(
+				"SELECT descriptor_json FROM agentos_actor_dynamic_mounts WHERE path = ?",
+				path,
+			);
+			const vm = await ensureVm(c, options);
+			await vm.unmountFs(path);
+			try {
+				await c.db.execute(
+					"DELETE FROM agentos_actor_dynamic_mounts WHERE path = ?",
+					path,
+				);
+			} catch (error) {
+				if (rows[0]) {
+					try {
+						await vm.mountFs(
+							JSON.parse(rows[0].descriptor_json) as DynamicMountDescriptor,
+						);
+					} catch (rollbackError) {
+						c.log.error({
+							msg: "agent-os dynamic unmount rollback failed",
+							path,
+							error: rollbackError,
+						});
+					}
+				}
+				throw error;
+			}
+		},
+		listMounts: async (c: AnyContext) =>
+			(await ensureVm(c, options)).listMounts(),
 		listSoftware: async (c: AnyContext) =>
-			(await ensureVm(c, options)).providedCommands(),
+			(await ensureVm(c, options)).listSoftware(),
+		linkSoftware: async (c: AnyContext, descriptor: PackageDescriptor) => {
+			await assertActorCollectionCapacity(
+				c,
+				"agentos_actor_linked_software",
+				descriptor.path,
+				maxLinkedSoftware,
+				"linked software packages",
+				"maxLinkedSoftware",
+			);
+			await c.db.execute(
+				"INSERT INTO agentos_actor_linked_software (path, descriptor_json) VALUES (?, ?) ON CONFLICT(path) DO UPDATE SET descriptor_json = excluded.descriptor_json",
+				descriptor.path,
+				JSON.stringify(descriptor),
+			);
+			try {
+				await (await ensureVm(c, options)).linkSoftware(descriptor);
+			} catch (error) {
+				try {
+					await c.db.execute(
+						"DELETE FROM agentos_actor_linked_software WHERE path = ?",
+						descriptor.path,
+					);
+				} catch (rollbackError) {
+					c.log.error({
+						msg: "agent-os linked software rollback failed",
+						path: descriptor.path,
+						error: rollbackError,
+					});
+				}
+				throw error;
+			}
+		},
 	};
 }
 
@@ -730,6 +888,12 @@ export type AgentOsActorDefinition<TConnParams = undefined> = ActorDefinition<
 >;
 
 export interface AgentOsActorExtras extends AgentOsOptions {
+	/** Maximum live session event subscriptions per actor VM. Default: 10,000. */
+	maxSessionSubscriptions?: number;
+	/** Maximum durable dynamic mount descriptors per actor. Default: 10,000. */
+	maxDynamicMounts?: number;
+	/** Maximum durable linked software descriptors per actor. Default: 10,000. */
+	maxLinkedSoftware?: number;
 	preview?: {
 		defaultExpiresInSeconds?: number;
 		maxExpiresInSeconds?: number;
@@ -789,9 +953,9 @@ const agentOsOptionKeys = [
 	"loopbackExemptPorts",
 	"allowedNodeBuiltins",
 	"highResolutionTime",
+	"database",
 	"rootFilesystem",
 	"mounts",
-	"additionalInstructions",
 	"scheduleDriver",
 	"bindings",
 	"permissions",
@@ -815,17 +979,25 @@ function splitConfig(
 	}
 	const onSessionEvent =
 		actorConfig.onSessionEvent as AgentOsEventHooks<AnyContext>["onSessionEvent"];
-	const onPermissionRequest =
-		actorConfig.onPermissionRequest as AgentOsEventHooks<AnyContext>["onPermissionRequest"];
 	const preview = actorConfig.preview as AgentOsActorExtras["preview"];
+	const maxSessionSubscriptions = actorConfig.maxSessionSubscriptions as
+		| number
+		| undefined;
+	const maxDynamicMounts = actorConfig.maxDynamicMounts as number | undefined;
+	const maxLinkedSoftware = actorConfig.maxLinkedSoftware as number | undefined;
 	delete actorConfig.onSessionEvent;
-	delete actorConfig.onPermissionRequest;
 	delete actorConfig.preview;
+	delete actorConfig.maxSessionSubscriptions;
+	delete actorConfig.maxDynamicMounts;
+	delete actorConfig.maxLinkedSoftware;
 	return {
 		actorConfig,
 		agentOsOptions,
-		hooks: { onSessionEvent, onPermissionRequest },
+		hooks: { onSessionEvent },
 		preview,
+		maxSessionSubscriptions,
+		maxDynamicMounts,
+		maxLinkedSoftware,
 	};
 }
 
@@ -894,13 +1066,32 @@ export function createAgentOS<
 		typeof config,
 		keyof AgentOsActorExtras
 	>;
-	const { agentOsOptions, hooks, preview } = split;
+	const {
+		agentOsOptions,
+		hooks,
+		preview,
+		maxSessionSubscriptions,
+		maxDynamicMounts,
+		maxLinkedSoftware,
+	} = split;
 	if (agentOsOptions.rootFilesystem) {
 		throw new Error(
 			"agentOS() owns rootFilesystem so it can persist directly through the actor SQLite UDS; use mounts for additional filesystems",
 		);
 	}
-	const actions = createAgentOsActions(agentOsOptions, hooks, preview);
+	if (agentOsOptions.database) {
+		throw new Error(
+			"agentOS() owns database and injects the actor SQLite UDS descriptor; standalone AgentOs clients may choose a SQLite file",
+		);
+	}
+	const actions = createAgentOsActions(
+		agentOsOptions,
+		hooks,
+		preview,
+		maxSessionSubscriptions,
+		maxDynamicMounts,
+		maxLinkedSoftware,
+	);
 	assertNoReservedKeys("action", actorConfig.actions, actions);
 	assertNoReservedKeys("event", actorConfig.events, builtInEvents);
 
@@ -917,7 +1108,7 @@ export function createAgentOS<
 			sleepGracePeriod: DEFAULT_SLEEP_GRACE_PERIOD_MS,
 			...actorConfig.options,
 		},
-		db: db({ onMigrate: migrateAgentOsTables }),
+		db: db({ onMigrate: migrateAgentOsActorTables }),
 		events: { ...(actorConfig.events ?? {}), ...builtInEvents },
 		actions: { ...(actorConfig.actions ?? {}), ...actions },
 		onBeforeConnect: async (
@@ -973,11 +1164,11 @@ export function createAgentOS<
 				});
 			const now = Date.now();
 			await c.db.execute(
-				"DELETE FROM agent_os_preview_tokens WHERE expires_at <= ?",
+				"DELETE FROM agentos_actor_preview_tokens WHERE expires_at_ms <= ?",
 				now,
 			);
 			const rows = await c.db.execute<{ port: number }>(
-				"SELECT port FROM agent_os_preview_tokens WHERE token = ? AND expires_at > ?",
+				"SELECT port FROM agentos_actor_preview_tokens WHERE token = ? AND expires_at_ms > ?",
 				match[1],
 				now,
 			);
@@ -986,13 +1177,22 @@ export function createAgentOS<
 			const target = new URL(request.url);
 			target.pathname = match[2] ?? "/";
 			const vm = await ensureVm(c as AnyContext, agentOsOptions);
-			const response = await vm.fetch(
-				rows[0].port,
-				new Request(target, request),
-			);
+			const requestHeaders: Record<string, string> = {};
+			request.headers.forEach((value, key) => {
+				requestHeaders[key] = value;
+			});
+			const response = await vm.httpRequest({
+				port: rows[0].port,
+				path: `${target.pathname}${target.search}`,
+				method: request.method,
+				headers: requestHeaders,
+				...(request.method === "GET" || request.method === "HEAD"
+					? {}
+					: { body: new Uint8Array(await request.arrayBuffer()) }),
+			});
 			const headers = new Headers(response.headers);
 			headers.set("access-control-allow-origin", "*");
-			return new Response(response.body, {
+			return new Response(Buffer.from(response.body), {
 				status: response.status,
 				statusText: response.statusText,
 				headers,

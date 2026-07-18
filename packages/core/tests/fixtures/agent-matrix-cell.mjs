@@ -35,6 +35,10 @@ let vm;
 let sessionId;
 try {
 	vm = await AgentOs.create({
+		database: {
+			type: "sqlite_file",
+			path: `${process.cwd()}/agentos-session-history.sqlite`,
+		},
 		software: [software],
 		// Real LLM egress needs network; the secure baseline denies it by default.
 		// Keys are fs/network/childProcess/process/env (NOT filesystem/environment).
@@ -91,35 +95,39 @@ try {
 	await vm.mkdir(workspaceDir, { recursive: true });
 
 	// ACP bootstrap can flake; retry a couple times before declaring a failure.
-	let created;
+	sessionId = `${AGENT}-matrix-session`;
 	for (let attempt = 1; attempt <= 3; attempt++) {
 		try {
-			created = await vm.createSession(AGENT, { cwd: workspaceDir, env });
+			await vm.openSession({ sessionId, agent: AGENT, cwd: workspaceDir, env });
 			break;
 		} catch (err) {
 			if (attempt === 3) throw err;
 		}
 	}
-	sessionId = created.sessionId;
-
 	const events = [];
 	let promptStart = 0;
 	vm.onSessionEvent(sessionId, (event) => {
 		events.push({
-			method: event.method,
-			kind: event.params?.update?.sessionUpdate,
+			durability: event.durability,
+			kind: event.update?.sessionUpdate,
 			t: performance.now() - promptStart,
 		});
 	});
 
 	promptStart = performance.now();
-	const { text, response } = await vm.prompt(
+	const response = await vm.prompt({
 		sessionId,
-		"Write a haiku about the ocean. Output only the haiku.",
-	);
+		content: [
+			{
+				type: "text",
+				text: "Write a haiku about the ocean. Output only the haiku.",
+			},
+		],
+	});
+	const { text } = response;
 	const resolvedAt = performance.now() - promptStart;
 
-	const updates = events.filter((e) => e.method === "session/update");
+	const updates = events;
 	const chunks = updates.filter(
 		(e) => e.kind === "agent_message_chunk" || e.kind === "agent_thought_chunk",
 	);
@@ -139,7 +147,7 @@ try {
 	const streaming =
 		chunks.length >= 2 && chunksBeforeResolve >= 2 && gap > 100;
 
-	result.ok = !response?.error && (text || "").length > 0;
+	result.ok = response.stopReason !== undefined && (text || "").length > 0;
 	result.streaming = streaming;
 	result.metrics = {
 		resolvedAt: Math.round(resolvedAt),
@@ -157,7 +165,7 @@ try {
 	result.error = String(err?.stack || err);
 } finally {
 	try {
-		if (sessionId) vm?.closeSession(sessionId);
+		if (sessionId) await vm?.unloadSession({ sessionId });
 	} catch {}
 	try {
 		await vm?.dispose();

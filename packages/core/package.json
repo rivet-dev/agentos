@@ -46,13 +46,14 @@
 		}
 	},
 	"scripts": {
-		"check-types": "pnpm run build:protocols && tsc --noEmit",
+		"check-types": "pnpm run build:protocols && tsc --noEmit && tsc -p tsconfig.type-tests.json",
 		"build": "pnpm run build:protocols && tsc",
 		"build:agentos-protocol": "node ./scripts/compile-agentos-protocol.mjs",
 		"build:protocols": "pnpm run build:agentos-protocol",
 		"test": "vitest run --reporter=verbose"
 	},
 	"dependencies": {
+		"@agentclientprotocol/sdk": "0.16.1",
 		"@agentos-software/claude-code": "workspace:*",
 		"@agentos-software/codex-cli": "workspace:*",
 		"@agentos-software/common": "workspace:*",

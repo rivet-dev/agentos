@@ -19,8 +19,6 @@ import {
 	OPT_AGENTOS_ROOT,
 	binding,
 	bindingSchema,
-	isAcpTimeoutErrorData,
-	isUnknownSessionErrorData,
 	mountConfigSchema,
 	nodeModulesMount,
 	parseAgentOsOptions,
@@ -28,24 +26,23 @@ import {
 	bindings,
 	bindingsSchema,
 	validateBindings,
-	type AcpTimeoutErrorData,
 	type AgentOsLimits,
 	type ExecOptions,
 	type HostDirMountPluginConfig,
-	type JsonRpcErrorData,
 	type KernelExecOptions,
 	type KernelExecResult,
 	type KernelSpawnOptions,
 	type MountConfigJsonPrimitive,
 	type NodeModulesMountConfig,
 	type OpenShellOptions,
-	type PromptCapabilities,
+	type OpenSessionInput,
+	type PermissionResponse,
 	type PromptResult,
-	type ResumeSessionOptions,
-	type ResumeSessionResult,
+	type SessionCapabilities,
+	type SessionInfo,
+	type SessionStreamEntry,
 	type StdioChannel,
 	type TimingMitigation,
-	type UnknownSessionErrorData,
 } from "../src/index.js";
 
 describe("root public API exports", () => {
@@ -110,24 +107,23 @@ describe("root public API exports", () => {
 	});
 
 	test("re-exports current public SDK types from the root entrypoint", () => {
-		void (null as AcpTimeoutErrorData | null);
 		void (null as AgentOsLimits | null);
 		void (null as ExecOptions | null);
 		void (null as HostDirMountPluginConfig | null);
-		void (null as JsonRpcErrorData | null);
 		void (null as KernelExecOptions | null);
 		void (null as KernelExecResult | null);
 		void (null as KernelSpawnOptions | null);
 		void (null as MountConfigJsonPrimitive | null);
 		void (null as NodeModulesMountConfig | null);
 		void (null as OpenShellOptions | null);
-		void (null as PromptCapabilities | null);
+		void (null as OpenSessionInput | null);
+		void (null as PermissionResponse | null);
 		void (null as PromptResult | null);
-		void (null as ResumeSessionOptions | null);
-		void (null as ResumeSessionResult | null);
+		void (null as SessionCapabilities | null);
+		void (null as SessionInfo | null);
+		void (null as SessionStreamEntry | null);
 		void (null as StdioChannel | null);
 		void (null as TimingMitigation | null);
-		void (null as UnknownSessionErrorData | null);
 
 		expect(true).toBe(true);
 	});
@@ -145,35 +141,6 @@ describe("root public API exports", () => {
 		});
 		expect(writable.readOnly).toBe(false);
 		expect(writable.plugin.config.readOnly).toBe(false);
-	});
-
-	test("re-exports ACP timeout diagnostics helper from the root entrypoint", () => {
-		const timeout: AcpTimeoutErrorData = {
-			kind: "acp_timeout",
-			method: "session/prompt",
-			id: 7,
-			timeoutMs: 5000,
-			recentActivity: ["waiting for adapter"],
-		};
-
-		expect(isAcpTimeoutErrorData(timeout)).toBe(true);
-		expect(isAcpTimeoutErrorData({ kind: "other" })).toBe(false);
-	});
-
-	test("re-exports unknown-session discriminator helper from the root entrypoint", () => {
-		const unknownSession: UnknownSessionErrorData = {
-			kind: "unknown_session",
-			sessionId: "sess-123",
-		};
-
-		expect(isUnknownSessionErrorData(unknownSession)).toBe(true);
-		// `sessionId` is optional — the discriminator is `kind` alone, matching the
-		// sidecar's normalized `{kind}`-only shape.
-		expect(isUnknownSessionErrorData({ kind: "unknown_session" })).toBe(true);
-		expect(
-			isUnknownSessionErrorData({ kind: "unknown_session", sessionId: 5 }),
-		).toBe(false);
-		expect(isUnknownSessionErrorData({ kind: "other" })).toBe(false);
 	});
 
 	test("re-exports cron scheduling errors from the root entrypoint", () => {

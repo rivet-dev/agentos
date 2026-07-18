@@ -5,7 +5,7 @@ const vm = agentOS({
 	software: [pi],
 	onSessionEvent: async (_c, sessionId, event) => {
 		// Server-side hook runs once per event, even with multiple clients
-		console.log("Session event:", sessionId, event.method);
+		console.log("Session event:", sessionId, event);
 	},
 });
 

@@ -11,7 +11,6 @@
 mod common;
 
 use agentos_client::{ClientError, OpenShellOptions, StdinInput};
-use futures::StreamExt;
 
 #[tokio::test]
 async fn shell_surface_open_write_data_resize_close() {
@@ -46,7 +45,7 @@ async fn shell_surface_open_write_data_resize_close() {
     );
     assert!(
         matches!(
-            os.on_shell_data("shell-missing"),
+            os.on_shell_data("shell-missing", |_| {}),
             Err(ClientError::ShellNotFound(_))
         ),
         "on_shell_data(unknown) must return ShellNotFound"
@@ -79,12 +78,18 @@ async fn shell_surface_open_write_data_resize_close() {
     );
 
     // --- on_shell_data: subscribe to the ordered PTY stream ---------------------------------------
-    let mut data = os
-        .on_shell_data(&shell.shell_id)
+    let (data_tx, mut data_rx) = tokio::sync::mpsc::unbounded_channel();
+    let _data = os
+        .on_shell_data(&shell.shell_id, move |event| {
+            let _ = data_tx.send(event.data);
+        })
         .expect("on_shell_data for live shell");
     // Stderr remains available as a channel-specific diagnostic tap.
-    let mut stderr = os
-        .on_shell_stderr(&shell.shell_id)
+    let (stderr_tx, mut stderr_rx) = tokio::sync::mpsc::unbounded_channel();
+    let _stderr = os
+        .on_shell_stderr(&shell.shell_id, move |event| {
+            let _ = stderr_tx.send(event.data);
+        })
         .expect("on_shell_stderr for live shell");
 
     // --- write_shell: prove execution and stdout/stderr ordering on the PTY stream ----------------
@@ -99,7 +104,7 @@ async fn shell_surface_open_write_data_resize_close() {
 
     let ordered_output = tokio::time::timeout(std::time::Duration::from_secs(10), async {
         let mut acc = Vec::<u8>::new();
-        while let Some(chunk) = data.next().await {
+        while let Some(chunk) = data_rx.recv().await {
             acc.extend_from_slice(&chunk);
             let text = String::from_utf8_lossy(&acc);
             if text.contains("OUT:hello-shell") && text.contains("ERR:hello-shell") {
@@ -124,7 +129,7 @@ async fn shell_surface_open_write_data_resize_close() {
 
     let diagnostic_saw_stderr = tokio::time::timeout(std::time::Duration::from_secs(10), async {
         let mut acc = Vec::<u8>::new();
-        while let Some(chunk) = stderr.next().await {
+        while let Some(chunk) = stderr_rx.recv().await {
             acc.extend_from_slice(&chunk);
             if String::from_utf8_lossy(&acc).contains("ERR:hello-shell") {
                 return true;
@@ -154,7 +159,7 @@ async fn shell_surface_open_write_data_resize_close() {
     );
 
     // --- ShellNotFound contract for a never-opened id ---------------------------------------------
-    match os.on_shell_data("shell-does-not-exist") {
+    match os.on_shell_data("shell-does-not-exist", |_| {}) {
         Err(ClientError::ShellNotFound(_)) => {}
         Ok(_) => panic!("unknown shell id must error"),
         Err(other) => panic!("expected ShellNotFound, got {other:?}"),

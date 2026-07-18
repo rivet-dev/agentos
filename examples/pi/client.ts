@@ -1,21 +1,25 @@
 import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
 
-const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
+const client = createClient<typeof registry>({
+	endpoint: "http://localhost:6420",
+});
 const agent = client.vm.getOrCreate("my-agent");
 
 // ── Quick start ───────────────────────────────────────────────────
 // docs:start quick-start
 async function quickStart() {
-  const sessionId = await agent.createSession("pi", {
-    env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
-  });
+	await agent.openSession({
+		agent: "pi",
+		env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
+	});
 
-  const { text } = await agent.sendPrompt(
-    sessionId,
-    "What files are in the current directory?",
-  );
-  console.log(text);
+	const result = await agent.prompt({
+		content: [
+			{ type: "text", text: "What files are in the current directory?" },
+		],
+	});
+	console.log(result.message?.content ?? []);
 }
 // docs:end quick-start
 
@@ -25,7 +29,7 @@ async function quickStart() {
 // session and the agent discovers it automatically.
 // docs:start skill
 async function withSkill() {
-  const skill = `---
+	const skill = `---
 name: commit-style
 description: How to write commit messages in this project.
 ---
@@ -33,13 +37,16 @@ description: How to write commit messages in this project.
 Write commit messages in the imperative mood and keep the subject under 50 characters.
 `;
 
-  await agent.mkdir("/home/agentos/.pi/agent/skills/commit-style");
-  await agent.writeFile("/home/agentos/.pi/agent/skills/commit-style/SKILL.md", skill);
+	await agent.mkdir("/home/agentos/.pi/agent/skills/commit-style");
+	await agent.writeFile(
+		"/home/agentos/.pi/agent/skills/commit-style/SKILL.md",
+		skill,
+	);
 
-  const sessionId = await agent.createSession("pi", {
-    env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
-  });
-  console.log(sessionId);
+	await agent.openSession({
+		agent: "pi",
+		env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
+	});
 }
 // docs:end skill
 
@@ -49,37 +56,41 @@ Write commit messages in the imperative mood and keep the subject under 50 chara
 // into the agent's config directory before creating the session — local
 // child-process servers and remote URLs are both supported.
 async function withMcp() {
-  // Pre-install the MCP server so `npx` is silent — first-run install output
-  // would otherwise corrupt the MCP stdio handshake ("Connection closed").
-  await agent.exec("npm install -g @modelcontextprotocol/server-filesystem");
+	// Pre-install the MCP server so `npx` is silent — first-run install output
+	// would otherwise corrupt the MCP stdio handshake ("Connection closed").
+	await agent.exec("npm install -g @modelcontextprotocol/server-filesystem");
 
-  // docs:start mcp
-  const mcpConfig = JSON.stringify({
-    mcpServers: {
-      filesystem: {
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/agentos"],
-      },
-      remote: {
-        url: "https://mcp.example.com/sse",
-        headers: { Authorization: "Bearer my-token" },
-      },
-    },
-  });
+	// docs:start mcp
+	const mcpConfig = JSON.stringify({
+		mcpServers: {
+			filesystem: {
+				command: "npx",
+				args: [
+					"-y",
+					"@modelcontextprotocol/server-filesystem",
+					"/home/agentos",
+				],
+			},
+			remote: {
+				url: "https://mcp.example.com/sse",
+				headers: { Authorization: "Bearer my-token" },
+			},
+		},
+	});
 
-  await agent.mkdir("/home/agentos/.pi/agent");
-  await agent.writeFile("/home/agentos/.pi/agent/.mcp.json", mcpConfig);
+	await agent.mkdir("/home/agentos/.pi/agent");
+	await agent.writeFile("/home/agentos/.pi/agent/.mcp.json", mcpConfig);
 
-  const sessionId = await agent.createSession("pi", {
-    env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
-  });
-  // docs:end mcp
-  console.log(sessionId);
+	await agent.openSession({
+		agent: "pi",
+		env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
+	});
+	// docs:end mcp
 }
 
 // ── Skills + MCP together ─────────────────────────────────────────
 async function withSkillAndMcp() {
-  const skill = `---
+	const skill = `---
 name: commit-style
 description: How to write commit messages in this project.
 ---
@@ -87,33 +98,45 @@ description: How to write commit messages in this project.
 Write commit messages in the imperative mood and keep the subject under 50 characters.
 `;
 
-  await agent.mkdir("/home/agentos/.pi/agent/skills/commit-style");
-  await agent.writeFile("/home/agentos/.pi/agent/skills/commit-style/SKILL.md", skill);
+	await agent.mkdir("/home/agentos/.pi/agent/skills/commit-style");
+	await agent.writeFile(
+		"/home/agentos/.pi/agent/skills/commit-style/SKILL.md",
+		skill,
+	);
 
-  // Pre-install the MCP server so `npx` is silent — first-run install output
-  // would otherwise corrupt the MCP stdio handshake ("Connection closed").
-  await agent.exec("npm install -g @modelcontextprotocol/server-filesystem");
+	// Pre-install the MCP server so `npx` is silent — first-run install output
+	// would otherwise corrupt the MCP stdio handshake ("Connection closed").
+	await agent.exec("npm install -g @modelcontextprotocol/server-filesystem");
 
-  const mcpConfig = JSON.stringify({
-    mcpServers: {
-      filesystem: {
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/agentos"],
-      },
-    },
-  });
-  await agent.mkdir("/home/agentos/.pi/agent");
-  await agent.writeFile("/home/agentos/.pi/agent/.mcp.json", mcpConfig);
+	const mcpConfig = JSON.stringify({
+		mcpServers: {
+			filesystem: {
+				command: "npx",
+				args: [
+					"-y",
+					"@modelcontextprotocol/server-filesystem",
+					"/home/agentos",
+				],
+			},
+		},
+	});
+	await agent.mkdir("/home/agentos/.pi/agent");
+	await agent.writeFile("/home/agentos/.pi/agent/.mcp.json", mcpConfig);
 
-  const sessionId = await agent.createSession("pi", {
-    env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
-  });
+	await agent.openSession({
+		agent: "pi",
+		env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
+	});
 
-  const { text } = await agent.sendPrompt(
-    sessionId,
-    "Stage everything and write a commit message following the project skill.",
-  );
-  console.log(text);
+	const result = await agent.prompt({
+		content: [
+			{
+				type: "text",
+				text: "Stage everything and write a commit message following the project skill.",
+			},
+		],
+	});
+	console.log(result.message?.content ?? []);
 }
 
 // ── Extensions ────────────────────────────────────────────────────
@@ -121,8 +144,8 @@ Write commit messages in the imperative mood and keep the subject under 50 chara
 // Write a `.js` extension into the agent's extensions directory before
 // creating the session and the agent discovers it automatically.
 async function withExtension() {
-  // docs:start extension
-  const extensionCode = `
+	// docs:start extension
+	const extensionCode = `
 export default function(pi) {
   // Modify the system prompt before each agent turn
   pi.on("before_agent_start", async (event) => {
@@ -134,16 +157,19 @@ export default function(pi) {
 }
 `;
 
-  // Write the extension before creating the session
-  await agent.mkdir("/home/agentos/.pi/agent/extensions");
-  await agent.writeFile("/home/agentos/.pi/agent/extensions/formal.js", extensionCode);
+	// Write the extension before creating the session
+	await agent.mkdir("/home/agentos/.pi/agent/extensions");
+	await agent.writeFile(
+		"/home/agentos/.pi/agent/extensions/formal.js",
+		extensionCode,
+	);
 
-  // Pi discovers the extension automatically
-  const sessionId = await agent.createSession("pi", {
-    env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
-  });
-  // docs:end extension
-  console.log(sessionId);
+	// Pi discovers the extension automatically
+	await agent.openSession({
+		agent: "pi",
+		env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
+	});
+	// docs:end extension
 }
 
 export { quickStart, withSkill, withMcp, withSkillAndMcp, withExtension };

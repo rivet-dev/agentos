@@ -89,9 +89,9 @@ describe("filesystem operations", () => {
 		// Behavior is preserved: every intermediate dir exists and is writable, and
 		// repeating the call is a no-op (idempotent).
 		await vm.writeFile(`${deepPath}/leaf.txt`, "ok");
-		expect(new TextDecoder().decode(await vm.readFile(`${deepPath}/leaf.txt`))).toBe(
-			"ok",
-		);
+		expect(
+			new TextDecoder().decode(await vm.readFile(`${deepPath}/leaf.txt`)),
+		).toBe("ok");
 		await vm.mkdir(deepPath, { recursive: true });
 	});
 
@@ -137,31 +137,34 @@ describe("filesystem operations", () => {
 
 		let sessionId: string | undefined;
 		try {
-			sessionId = (
-				await vm.createSession("claude", {
-					cwd: "/home/agentos",
-					env: {
-						ANTHROPIC_API_KEY: "mock-key",
-						ANTHROPIC_BASE_URL: url,
+			sessionId = "main";
+			await vm.openSession({
+				sessionId,
+				agent: "claude",
+				cwd: "/home/agentos",
+				permissionPolicy: "allow_all",
+				env: {
+					ANTHROPIC_API_KEY: "mock-key",
+					ANTHROPIC_BASE_URL: url,
+				},
+			});
+			const response = await vm.prompt({
+				sessionId,
+				content: [
+					{
+						type: "text",
+						text: "Use bash to write agent-shadow-ok into /tmp/agent-shadow.txt.",
 					},
-				})
-			).sessionId;
-			vm.onPermissionRequest(sessionId, (request) => {
-				void vm.respondPermission(sessionId!, request.permissionId, "once");
+				],
 			});
 
-			const { response } = await vm.prompt(
-				sessionId,
-				"Use bash to write agent-shadow-ok into /tmp/agent-shadow.txt.",
-			);
-
-			expect(response.error).toBeUndefined();
+			expect(response.stopReason).toBeDefined();
 			expect(
 				new TextDecoder().decode(await vm.readFile("/tmp/agent-shadow.txt")),
 			).toBe("agent-shadow-ok");
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.unloadSession({ sessionId });
 			}
 			await stopLlmock(mock);
 		}

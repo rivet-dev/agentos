@@ -9,8 +9,9 @@ import type { ProcessLimitsConfig } from "./ProcessLimitsConfig.js";
 import type { PythonLimitsConfig } from "./PythonLimitsConfig.js";
 import type { ReactorLimitsConfig } from "./ReactorLimitsConfig.js";
 import type { ResourceLimitsConfig } from "./ResourceLimitsConfig.js";
+import type { SqliteLimitsConfig } from "./SqliteLimitsConfig.js";
 import type { TlsLimitsConfig } from "./TlsLimitsConfig.js";
 import type { UdpLimitsConfig } from "./UdpLimitsConfig.js";
 import type { WasmLimitsConfig } from "./WasmLimitsConfig.js";
 
-export type VmLimitsConfig = { reactor?: ReactorLimitsConfig, resources?: ResourceLimitsConfig, http?: HttpLimitsConfig, udp?: UdpLimitsConfig, tls?: TlsLimitsConfig, http2?: Http2LimitsConfig, bindings?: BindingLimitsConfig, plugins?: PluginLimitsConfig, acp?: AcpLimitsConfig, jsRuntime?: JsRuntimeLimitsConfig, python?: PythonLimitsConfig, wasm?: WasmLimitsConfig, process?: ProcessLimitsConfig, };
+export type VmLimitsConfig = { reactor?: ReactorLimitsConfig, resources?: ResourceLimitsConfig, http?: HttpLimitsConfig, udp?: UdpLimitsConfig, tls?: TlsLimitsConfig, http2?: Http2LimitsConfig, bindings?: BindingLimitsConfig, plugins?: PluginLimitsConfig, acp?: AcpLimitsConfig, sqlite?: SqliteLimitsConfig, jsRuntime?: JsRuntimeLimitsConfig, python?: PythonLimitsConfig, wasm?: WasmLimitsConfig, process?: ProcessLimitsConfig, };

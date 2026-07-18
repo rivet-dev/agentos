@@ -223,7 +223,7 @@ describe("native sidecar migration parity gate", () => {
 			textDecoder.decode(await vm.readFile("/workspace/process.txt")),
 		).toBe("filesystem-ok:process-ok");
 
-		const snapshot = await vm.snapshotRootFilesystem();
+		const snapshot = await vm.exportRootFilesystem({ maxBytes: 64 * 1024 * 1024 });
 		const clonedVm = await AgentOs.create({
 			rootFilesystem: {
 				disableDefaultBaseLayer: true,
@@ -381,7 +381,8 @@ describe("native sidecar migration parity gate", () => {
 		});
 		assertNativeSidecar(vm);
 
-		const { sessionId } = await vm.createSession("migration-parity");
+		const sessionId = "migration-parity";
+		await vm.openSession({ sessionId, agent: "migration-parity" });
 
 		const events: { method: string; params?: unknown }[] = [];
 		const unsubscribeEvents = vm.onSessionEvent(sessionId, (event) => {
@@ -414,6 +415,6 @@ describe("native sidecar migration parity gate", () => {
 			),
 		).toBe(true);
 
-		await vm.destroySession(sessionId);
+		await vm.deleteSession({ sessionId });
 	}, 120_000);
 });

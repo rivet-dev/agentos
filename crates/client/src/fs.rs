@@ -10,8 +10,6 @@
 //! methods NEVER reject (per-entry error strings). Snapshot wire format keeps octal-string `mode`
 //! and `utf8`/`base64` content verbatim.
 
-use std::sync::Arc;
-
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -116,15 +114,26 @@ pub struct MkdirOptions {
     pub recursive: bool,
 }
 
-/// Options for `delete`.
+/// Options for `remove`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct DeleteOptions {
+pub struct RemoveOptions {
     pub recursive: bool,
 }
 
-/// Options for `mount_fs`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct MountFsOptions {
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DynamicMountDescriptor {
+    pub path: String,
+    pub plugin: crate::config::MountPlugin,
+    #[serde(default)]
+    #[serde(rename = "readOnly")]
+    pub read_only: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MountInfo {
+    pub path: String,
+    pub kind: String,
+    #[serde(rename = "readOnly")]
     pub read_only: bool,
 }
 
@@ -152,16 +161,6 @@ pub struct VirtualStat {
     pub nlink: u64,
     pub uid: u32,
     pub gid: u32,
-}
-
-/// A registered in-process mount: the live [`VirtualFileSystem`] driver plus the `read_only` flag
-/// forwarded from [`MountFsOptions`]. TS `mountFs` passes `{ readOnly }` through to
-/// `kernel.mountFs`, which enforces read-only mount semantics; the flag is retained here so the
-/// option is not structurally dropped before the mount-dispatch path consumes it.
-#[derive(Clone)]
-pub struct MountedFs {
-    pub driver: Arc<dyn VirtualFileSystem>,
-    pub read_only: bool,
 }
 
 /// A directory entry with a known type, returned by `read_dir_with_types` on the mount contract.
@@ -757,6 +756,21 @@ impl AgentOs {
         Ok(results)
     }
 
+    /// Return typed immediate children using one sidecar filesystem operation.
+    pub async fn readdir_entries(&self, path: &str) -> Result<Vec<VirtualDirEntry>> {
+        Self::assert_safe_absolute_path(path)?;
+        Ok(self
+            .kernel_readdir_recursive(path, Some(0))
+            .await?
+            .into_iter()
+            .map(|entry| VirtualDirEntry {
+                name: entry.name,
+                is_directory: entry.is_directory,
+                is_symbolic_link: entry.is_symbolic_link,
+            })
+            .collect())
+    }
+
     /// Stat (follows symlinks).
     pub async fn stat(&self, path: &str) -> Result<VirtualStat> {
         Self::assert_safe_absolute_path(path)?;
@@ -770,11 +784,23 @@ impl AgentOs {
     }
 
     /// Export the root filesystem snapshot. Octal-string mode + utf8/base64 content verbatim.
-    pub async fn snapshot_root_filesystem(&self) -> Result<RootSnapshotExport> {
+    pub async fn export_root_filesystem(&self, max_bytes: usize) -> Result<RootSnapshotExport> {
+        if max_bytes == 0 {
+            return Err(ClientError::Sidecar("max_bytes must be greater than zero".into()).into());
+        }
         let scope = self.fs_vm_scope();
+        let max_bytes_u64 = u64::try_from(max_bytes)
+            .map_err(|_| ClientError::Sidecar("max_bytes exceeds u64".into()))?;
         let response = self
             .transport()
-            .request_wire(scope, wire::RequestPayload::SnapshotRootFilesystemRequest)
+            .request_wire(
+                scope,
+                wire::RequestPayload::SnapshotRootFilesystemRequest(
+                    wire::SnapshotRootFilesystemRequest {
+                        max_bytes: max_bytes_u64,
+                    },
+                ),
+            )
             .await
             .context("snapshot root filesystem failed")?;
         let snapshot = match response {
@@ -795,41 +821,138 @@ impl AgentOs {
             .map(Self::snapshot_entry_from)
             .collect::<Result<Vec<_>>>()?;
 
-        Ok(RootSnapshotExport {
+        let snapshot = RootSnapshotExport {
             kind: SnapshotExportKind::SnapshotExport,
             source: FilesystemSnapshotExport {
                 format: String::from("agentos-filesystem-snapshot-v1"),
                 filesystem: FilesystemSnapshotEntries { entries },
             },
-        })
+        };
+        let size = serde_json::to_vec(&snapshot)
+            .context("serializing root filesystem export for bound check")?
+            .len();
+        if size > max_bytes {
+            return Err(ClientError::Sidecar(format!(
+				"root filesystem export is {size} bytes, limit is {max_bytes}; raise max_bytes to export this filesystem"
+			)).into());
+        }
+        Ok(snapshot)
     }
 
-    /// Mount an in-process [`VirtualFileSystem`] driver. SYNC. Safe-path guard. The driver is a live
-    /// trait object and cannot cross an RPC boundary, so it is registered (together with the
-    /// `read_only` flag, mirroring TS `kernel.mountFs({ readOnly })`) in the in-process mount table
-    /// keyed by its normalized guest path.
-    pub fn mount_fs(
-        &self,
-        path: &str,
-        driver: Arc<dyn VirtualFileSystem>,
-        options: MountFsOptions,
-    ) -> std::result::Result<(), ClientError> {
-        Self::assert_safe_absolute_path(path)?;
-        let _ = self.inner().in_process_mounts.insert(
-            path.to_string(),
-            MountedFs {
-                driver,
-                read_only: options.read_only,
+    /// Mount a portable sidecar-owned filesystem descriptor.
+    pub async fn mount_fs(&self, descriptor: DynamicMountDescriptor) -> Result<()> {
+        Self::assert_safe_absolute_path(&descriptor.path)?;
+        let config = descriptor
+            .plugin
+            .config
+            .unwrap_or_else(|| serde_json::json!({}));
+        let mount = wire::MountDescriptor {
+            guest_path: descriptor.path,
+            read_only: descriptor.read_only,
+            plugin: wire::MountPluginDescriptor {
+                id: descriptor.plugin.id,
+                config: serde_json::to_string(&config)
+                    .context("serializing dynamic mount config")?,
             },
-        );
+        };
+        {
+            let mut mounts = self.inner().dynamic_mounts.lock();
+            if mounts
+                .iter()
+                .any(|existing| existing.guest_path == mount.guest_path)
+            {
+                return Err(ClientError::Sidecar(format!(
+                    "mount already exists: {}",
+                    mount.guest_path
+                ))
+                .into());
+            }
+            mounts.push(mount);
+        }
+        if let Err(error) = self.reconfigure_dynamic_mounts().await {
+            self.inner().dynamic_mounts.lock().pop();
+            return Err(error);
+        }
         Ok(())
     }
 
-    /// Unmount a previously mounted path. SYNC.
-    pub fn unmount_fs(&self, path: &str) -> std::result::Result<(), ClientError> {
+    pub async fn unmount_fs(&self, path: &str) -> Result<()> {
         Self::assert_safe_absolute_path(path)?;
-        self.inner().in_process_mounts.remove(path);
+        let removed = {
+            let mut mounts = self.inner().dynamic_mounts.lock();
+            mounts
+                .iter()
+                .position(|mount| mount.guest_path == path)
+                .map(|index| (index, mounts.remove(index)))
+        };
+        let Some((index, mount)) = removed else {
+            return Ok(());
+        };
+        if let Err(error) = self.reconfigure_dynamic_mounts().await {
+            self.inner().dynamic_mounts.lock().insert(index, mount);
+            return Err(error);
+        }
         Ok(())
+    }
+
+    pub async fn list_mounts(&self) -> Result<Vec<MountInfo>> {
+        let response = self
+            .transport()
+            .request_wire(self.fs_vm_scope(), wire::RequestPayload::ListMountsRequest)
+            .await?;
+        match response {
+            wire::ResponsePayload::ListMountsResponse(response) => Ok(response
+                .mounts
+                .into_iter()
+                .map(|mount| MountInfo {
+                    path: mount.path,
+                    kind: mount.kind,
+                    read_only: mount.read_only,
+                })
+                .collect()),
+            wire::ResponsePayload::RejectedResponse(rejected) => {
+                Err(ClientError::from_rejection(rejected).into())
+            }
+            other => Err(ClientError::Sidecar(format!(
+                "unexpected list mounts response: {other:?}"
+            ))
+            .into()),
+        }
+    }
+
+    async fn reconfigure_dynamic_mounts(&self) -> Result<()> {
+        let inner = self.inner();
+        let config = &inner.config;
+        let response = self
+            .transport()
+            .request_wire(
+                self.fs_vm_scope(),
+                wire::RequestPayload::ConfigureVmRequest(wire::ConfigureVmRequest {
+                    mounts: inner.dynamic_mounts.lock().clone(),
+                    software: Vec::new(),
+                    permissions: Some(crate::agent_os::permissions_policy(config)),
+                    module_access_cwd: None,
+                    instructions: config.additional_instructions.clone().into_iter().collect(),
+                    projected_modules: Vec::new(),
+                    command_permissions: std::collections::HashMap::new(),
+                    loopback_exempt_ports: config.loopback_exempt_ports.clone(),
+                    packages: crate::agent_os::build_package_descriptors(config),
+                    packages_mount_at: config.packages_mount_at.clone().unwrap_or_default(),
+                    bootstrap_commands: Vec::new(),
+                    binding_shim_commands: Vec::new(),
+                }),
+            )
+            .await?;
+        match response {
+            wire::ResponsePayload::VmConfiguredResponse(_) => Ok(()),
+            wire::ResponsePayload::RejectedResponse(rejected) => {
+                Err(ClientError::from_rejection(rejected).into())
+            }
+            other => Err(ClientError::Sidecar(format!(
+                "unexpected dynamic mount reconfigure response: {other:?}"
+            ))
+            .into()),
+        }
     }
 
     /// Move a path through the sidecar primitive. The kernel attempts rename first, then falls back
@@ -842,7 +965,7 @@ impl AgentOs {
 
     /// Delete a path through the sidecar primitive. Non-recursive directory deletes preserve
     /// ENOTEMPTY semantics.
-    pub async fn delete(&self, path: &str, options: DeleteOptions) -> Result<()> {
+    pub async fn remove(&self, path: &str, options: RemoveOptions) -> Result<()> {
         Self::assert_writable_absolute_path(path)?;
         self.kernel_remove_path(path, options.recursive).await
     }

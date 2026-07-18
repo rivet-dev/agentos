@@ -6,7 +6,7 @@
     },
     "/docs/docs/approvals": {
       "title": "Approvals",
-      "description": "Approve or deny agent tool use with human-in-the-loop or auto-approve patterns."
+      "description": "Handle native ACP permission options with durable AgentOS correlation."
     },
     "/docs/docs/architecture": {
       "title": "Overview",
@@ -94,7 +94,7 @@
     },
     "/docs/docs/persistence": {
       "title": "Persistence & Sleep",
-      "description": "How agentOS persists data and manages sleep/wake cycles."
+      "description": "How agentOS persists files and manages sleep/wake cycles."
     },
     "/docs/docs/processes": {
       "title": "Processes & Shell",
@@ -122,7 +122,7 @@
     },
     "/docs/docs/sessions": {
       "title": "Sessions",
-      "description": "Create agent sessions, send prompts, stream responses, and subscribe to events."
+      "description": "Open durable ACP sessions, prompt them, read history, and restore adapters."
     },
     "/docs/docs/software": {
       "title": "Software",
@@ -164,25 +164,13 @@
       "title": "Pi",
       "description": "Run the Pi coding agent inside a VM with extensions and custom configuration."
     },
-    "/docs/docs/custom-software/building-wasm": {
-      "title": "Building Binaries",
-      "description": "Compile WASM command binaries for agentOS from source in the secure-exec registry."
-    },
-    "/docs/docs/custom-software/definition": {
-      "title": "Software Definition",
-      "description": "The software-package definition for custom commands and agents in an agentOS VM: a package is a packed .aospkg (or a package directory), declared with defineSoftware({ packagePath })."
-    },
-    "/docs/docs/custom-software/publishing": {
-      "title": "Publishing Packages",
-      "description": "Build, publish, and consume agentOS packages — locally, from npm, or from your own repo."
-    },
     "/docs/docs/architecture/agent-sdk-snapshots": {
       "title": "Agent SDK Snapshots",
-      "description": "How an agent's SDK is evaluated once per sidecar into a V8 heap snapshot and reused across sessions instead of re-imported on every createSession: the bundle, the userland snapshot, the process-wide cache, pre-warm, per-session restore, isolation, and the snapshot-safety rules an SDK must follow."
+      "description": "How an agent's SDK is evaluated once per sidecar into a V8 heap snapshot and reused across sessions instead of re-imported on every openSession: the bundle, the userland snapshot, the process-wide cache, pre-warm, per-session restore, isolation, and the snapshot-safety rules an SDK must follow."
     },
     "/docs/docs/architecture/agent-sessions": {
       "title": "Agent Sessions",
-      "description": "Internals of agent sessions: how a session is created and bound to a VM, how prompts and events flow from client to sidecar to agent adapter and back, the session lifecycle, and where session state lives."
+      "description": "How durable sessions, ACP adapters, prompts, permissions, and history flow through AgentOS."
     },
     "/docs/docs/architecture/compiler-toolchain": {
       "title": "Compiler Toolchain",
@@ -218,7 +206,23 @@
     },
     "/docs/docs/architecture/sessions-persistence": {
       "title": "Sessions & Persistence",
-      "description": "How agentOS, ACP, RivetKit actors, and durable session persistence fit together."
+      "description": "How AgentOS stores exact ACP history and restores adapters through VM SQLite."
+    },
+    "/docs/docs/architecture/tls-ssl": {
+      "title": "TLS & SSL",
+      "description": "How agentOS uses in-guest mbedTLS plus a VM CA bundle for curl / wget / git, and a hermetic OpenSSL libcrypto build for OpenSSH."
+    },
+    "/docs/docs/custom-software/building-wasm": {
+      "title": "Building Binaries",
+      "description": "Compile WASM command binaries for agentOS from source."
+    },
+    "/docs/docs/custom-software/definition": {
+      "title": "Software Definition",
+      "description": "The software-package definition for custom commands and agents in an agentOS VM: a package is a packed .aospkg (or a package directory), declared with defineSoftware({ packagePath })."
+    },
+    "/docs/docs/custom-software/publishing": {
+      "title": "Publishing Packages",
+      "description": "Build, publish, and consume agentOS packages — locally, from npm, or from your own repo."
     }
   }
 }

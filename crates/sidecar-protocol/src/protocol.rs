@@ -438,9 +438,10 @@ fn to_generated_request_payload(
         RequestPayload::GuestFilesystemCall(inner) => {
             generated_protocol::RequestPayload::GuestFilesystemCallRequest(inner.clone())
         }
-        RequestPayload::SnapshotRootFilesystem(_) => {
-            generated_protocol::RequestPayload::SnapshotRootFilesystemRequest
+        RequestPayload::SnapshotRootFilesystem(inner) => {
+            generated_protocol::RequestPayload::SnapshotRootFilesystemRequest(inner.clone())
         }
+        RequestPayload::ListMounts(_) => generated_protocol::RequestPayload::ListMountsRequest,
         RequestPayload::Execute(inner) => {
             generated_protocol::RequestPayload::ExecuteRequest(inner.clone())
         }
@@ -552,8 +553,11 @@ fn from_generated_request_payload(
         generated_protocol::RequestPayload::GuestFilesystemCallRequest(inner) => {
             RequestPayload::GuestFilesystemCall(inner)
         }
-        generated_protocol::RequestPayload::SnapshotRootFilesystemRequest => {
-            RequestPayload::SnapshotRootFilesystem(SnapshotRootFilesystemRequest {})
+        generated_protocol::RequestPayload::SnapshotRootFilesystemRequest(inner) => {
+            RequestPayload::SnapshotRootFilesystem(inner)
+        }
+        generated_protocol::RequestPayload::ListMountsRequest => {
+            RequestPayload::ListMounts(ListMountsRequest {})
         }
         generated_protocol::RequestPayload::ExecuteRequest(inner) => RequestPayload::Execute(inner),
         generated_protocol::RequestPayload::WriteStdinRequest(inner) => {
@@ -683,6 +687,9 @@ fn to_generated_response_payload(
                     entries: inner.entries.clone(),
                 },
             )
+        }
+        ResponsePayload::MountsListed(inner) => {
+            generated_protocol::ResponsePayload::ListMountsResponse(inner.clone())
         }
         ResponsePayload::ProcessStarted(inner) => {
             generated_protocol::ResponsePayload::ProcessStartedResponse(inner.clone())
@@ -830,6 +837,9 @@ fn from_generated_response_payload(
             ResponsePayload::RootFilesystemSnapshot(RootFilesystemSnapshotResponse {
                 entries: inner.entries,
             })
+        }
+        generated_protocol::ResponsePayload::ListMountsResponse(inner) => {
+            ResponsePayload::MountsListed(inner)
         }
         generated_protocol::ResponsePayload::ProcessStartedResponse(inner) => {
             ResponsePayload::ProcessStarted(inner)
@@ -1260,6 +1270,7 @@ pub enum RequestPayload {
     CreateOverlay(CreateOverlayRequest),
     GuestFilesystemCall(GuestFilesystemCallRequest),
     SnapshotRootFilesystem(SnapshotRootFilesystemRequest),
+    ListMounts(ListMountsRequest),
     Execute(ExecuteRequest),
     WriteStdin(WriteStdinRequest),
     CloseStdin(CloseStdinRequest),
@@ -1297,6 +1308,7 @@ pub enum ResponsePayload {
     OverlayCreated(OverlayCreatedResponse),
     GuestFilesystemResult(GuestFilesystemResultResponse),
     RootFilesystemSnapshot(RootFilesystemSnapshotResponse),
+    MountsListed(ListMountsResponse),
     ProcessStarted(ProcessStartedResponse),
     StdinWritten(StdinWrittenResponse),
     StdinClosed(StdinClosedResponse),
@@ -1435,10 +1447,14 @@ pub type PtyResizedResponse = crate::wire::PtyResizedResponse;
 pub type PackageLinkedResponse = crate::wire::PackageLinkedResponse;
 pub type ProvidedCommandsResponse = crate::wire::ProvidedCommandsResponse;
 
+pub type SnapshotRootFilesystemRequest = crate::wire::SnapshotRootFilesystemRequest;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct SnapshotRootFilesystemRequest {}
+pub struct ListMountsRequest {}
 
 pub type MountDescriptor = crate::wire::MountDescriptor;
+
+pub type MountInfo = crate::wire::MountInfo;
 
 pub type MountPluginDescriptor = crate::wire::MountPluginDescriptor;
 
@@ -1510,6 +1526,8 @@ pub type GuestDirEntry = crate::wire::GuestDirEntry;
 pub type GuestFilesystemResultResponse = crate::wire::GuestFilesystemResultResponse;
 
 pub type RootFilesystemSnapshotResponse = crate::wire::RootFilesystemSnapshotResponse;
+
+pub type ListMountsResponse = crate::wire::ListMountsResponse;
 
 pub type LayerCreatedResponse = crate::wire::LayerCreatedResponse;
 
@@ -1629,6 +1647,7 @@ impl_bare_newtype_union_enum!(
         GetResourceSnapshot(GetResourceSnapshotRequest) = 30,
         LinkPackage(LinkPackageRequest) = 31,
         ProvidedCommands(ProvidedCommandsRequest) = 32,
+        ListMounts(ListMountsRequest) = 33,
     }
 );
 
@@ -1672,6 +1691,7 @@ impl_bare_newtype_union_enum!(
         ResourceSnapshot(ResourceSnapshotResponse) = 32,
         PackageLinked(PackageLinkedResponse) = 33,
         ProvidedCommands(ProvidedCommandsResponse) = 34,
+        MountsListed(ListMountsResponse) = 35,
     }
 );
 
@@ -2253,6 +2273,7 @@ enum ExpectedResponseKind {
     PtyResized,
     PackageLinked,
     ProvidedCommands,
+    MountsListed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2299,6 +2320,7 @@ impl ExpectedResponseKind {
             Self::PtyResized => "pty_resized",
             Self::PackageLinked => "package_linked",
             Self::ProvidedCommands => "provided_commands_response",
+            Self::MountsListed => "mounts_listed",
         }
     }
 
@@ -2342,6 +2364,7 @@ impl RequestPayload {
             | Self::CreateOverlay(_)
             | Self::GuestFilesystemCall(_)
             | Self::SnapshotRootFilesystem(_)
+            | Self::ListMounts(_)
             | Self::Execute(_)
             | Self::WriteStdin(_)
             | Self::CloseStdin(_)
@@ -2378,6 +2401,7 @@ impl RequestPayload {
             Self::CreateOverlay(_) => ExpectedResponseKind::OverlayCreated,
             Self::GuestFilesystemCall(_) => ExpectedResponseKind::GuestFilesystemResult,
             Self::SnapshotRootFilesystem(_) => ExpectedResponseKind::RootFilesystemSnapshot,
+            Self::ListMounts(_) => ExpectedResponseKind::MountsListed,
             Self::Execute(_) => ExpectedResponseKind::ProcessStarted,
             Self::WriteStdin(_) => ExpectedResponseKind::StdinWritten,
             Self::CloseStdin(_) => ExpectedResponseKind::StdinClosed,
@@ -2434,6 +2458,7 @@ impl ResponsePayload {
             | Self::OverlayCreated(_)
             | Self::GuestFilesystemResult(_)
             | Self::RootFilesystemSnapshot(_)
+            | Self::MountsListed(_)
             | Self::ProcessStarted(_)
             | Self::StdinWritten(_)
             | Self::StdinClosed(_)
@@ -2471,6 +2496,7 @@ impl ResponsePayload {
             Self::OverlayCreated(_) => "overlay_created",
             Self::GuestFilesystemResult(_) => "guest_filesystem_result",
             Self::RootFilesystemSnapshot(_) => "root_filesystem_snapshot",
+            Self::MountsListed(_) => "mounts_listed",
             Self::ProcessStarted(_) => "process_started",
             Self::StdinWritten(_) => "stdin_written",
             Self::StdinClosed(_) => "stdin_closed",

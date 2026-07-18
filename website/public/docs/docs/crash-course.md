@@ -70,7 +70,7 @@ Execute commands, spawn long-running processes, and open interactive shells.
 
 ### Networking & Previews
 
-Proxy HTTP requests into VMs with `vmFetch`. Create preview URLs for port forwarding VM services to shareable public URLs.
+Proxy HTTP requests into VMs with `httpRequest`. Create actor-namespaced preview URLs for port forwarding VM services to shareable public URLs.
 
 *See [Full Example](https://github.com/rivet-dev/agentos/tree/main/examples/crash-course) or [Documentation](/docs/networking)*
 

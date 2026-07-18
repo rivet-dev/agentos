@@ -6,10 +6,15 @@ const client = createClient<typeof registry>({
 });
 const agent = client.vm.getOrCreate("my-agent");
 
-const sessionId = await agent.createSession("pi", {
+await agent.openSession({
+	agent: "pi",
 	env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 });
 
-await agent.setModel(sessionId, "anthropic/claude-sonnet-4");
-await agent.setMode(sessionId, "plan");
-await agent.setThoughtLevel(sessionId, "high");
+const config = await agent.getSessionConfig();
+console.log(config.options);
+
+await agent.setSessionConfigOption({
+	configId: "model",
+	value: "anthropic/claude-sonnet-4",
+});

@@ -80,7 +80,7 @@ describe("default home dir must not be shadowed by a default mount", () => {
 		// unshadowed root layer rather than a separate default mount.
 		await (vm as AgentOs).writeFile(MARKER_PATH, MARKER_CONTENT);
 
-		const snapshot = await (vm as AgentOs).snapshotRootFilesystem();
+		const snapshot = await (vm as AgentOs).exportRootFilesystem({ maxBytes: 64 * 1024 * 1024 });
 
 		const restored = await AgentOs.create({
 			rootFilesystem: {

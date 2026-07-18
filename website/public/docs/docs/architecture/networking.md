@@ -4,9 +4,9 @@ How the kernel socket table works: a single VM-local transport that carries host
 
 <Note>These internal architecture docs are mostly generated and maintained by LLMs, then reviewed by humans. They are intentionally verbose; use your preferred LLM to ask focused questions about the architecture as needed.</Note>
 
-This is the internals view of agentOS networking: the kernel socket table, the layers a request crosses, and where policy is enforced. For the user-facing API (`vmFetch`, preview URLs, the confinement model from a caller's perspective), see [Networking & Previews](/docs/networking). For the trust boundary this all sits inside, see [Architecture](/docs/architecture).
+This is the internals view of agentOS networking: the kernel socket table, the layers a request crosses, and where policy is enforced. For the user-facing API (`httpRequest`, preview URLs, the confinement model from a caller's perspective), see [Networking & Previews](/docs/networking). For the trust boundary this all sits inside, see [Architecture](/docs/architecture).
 
-The governing rule is that there is exactly **one authoritative transport for everything VM-local**: the kernel socket table. No part of guest networking opens a real host socket on its own. Guest `fetch()`, `node:http`, `node:net`, WASM TCP clients and servers, and host-into-guest requests (`vmFetch` / `rt.fetch`) all target the same listener table.
+The governing rule for TCP is that there is exactly **one authoritative transport for everything VM-local**: the kernel socket table. No untrusted guest code opens a host socket directly. Guest `fetch()`, `node:http`, TCP `node:net`, WASM TCP clients and servers, and host-into-guest requests (`httpRequest` / `rt.fetch`) all target the same listener table. The trusted sidecar implements `AF_UNIX` streams with a separate, per-VM private host transport while keeping pathname inodes and permissions authoritative in the guest VFS.
 
 ## The kernel socket table
 
@@ -18,6 +18,12 @@ The socket table is the floor of the stack and the only component that actually 
 - Connecting pairs two in-VM sockets and shuttles bytes between them. No host networking happens at this layer.
 
 Because every server is a kernel TCP listener, a client never needs to know whether the server it is talking to is JS, WASM, raw TCP, or HTTP. HTTP is layered on top of kernel TCP bytes, so every listener lives in the one table and is reachable identically.
+
+<Note>`AF_UNIX` `SOCK_STREAM` sockets follow Linux `sockaddr_un` rules: full-size pathname addresses stop at their first NUL, while a leading NUL selects the length-sensitive abstract namespace. Abstract names are losslessly encoded across the WASM boundary and mapped into a per-VM host namespace, so they cannot collide with another VM's sockets. Pathname sockets are real `S_IFSOCK` entries in the guest VFS and apply Linux directory, owner, group, mode, umask, symlink, rename, link, and unlink behavior. The transport files live under a unique host directory with mode `0700` and are removed with the VM.</Note>
+
+<Note>`AF_UNIX` has three explicit limits. Datagram and sequenced-packet Unix sockets return `ENOTSUP`; only streams are implemented. The current string-based VFS cannot represent invalid-UTF-8 filename bytes, so the WASM boundary returns `EILSEQ` instead of corrupting them (valid UTF-8 control characters are supported). Unix sockets on read-only host-backed mounts fail with `EROFS`, and sockets on writable host-backed mounts fail closed with `ENOTSUP`: host `bind(2)` and `connect(2)` have no descriptor-relative form that can preserve the mount confinement boundary. Symlinks into either kind of mount are rejected before a host socket is created.</Note>
+
+Blocking WASM `AF_UNIX` connect, accept, read/receive, and poll calls honor nonblocking mode and signals; accept and reads also honor `SO_RCVTIMEO`, returning Linux's `EAGAIN` when that socket timeout expires. Every blocking wait is additionally capped by `limits.resources.maxBlockingReadMs` (30 seconds by default); the runtime warns near the cap and returns `ETIMEDOUT` at the AgentOS safeguard. Raise that limit for workloads that intentionally wait longer.
 
 <Note>An earlier design carried two listener models at once: stream-mode listeners (`net.createServer`, WASM) on real kernel TCP sockets, and object-mode HTTP listeners (`http.createServer`) on a separate table that exchanged JSON request/response objects over stream events. A second guest process could not reach the object-mode table reliably, because the client expected byte-stream TCP semantics while the server only spoke object-mode dispatch. The current architecture removes the second model: everything is one socket table.</Note>
 
@@ -41,7 +47,7 @@ A request passes through four layers. Only the top and bottom understand HTTP; t
 `crates/sidecar/src/execution.rs` is where policy is applied. Two roles matter for networking:
 
 - **Listener state.** `build_javascript_socket_path_context` walks every active process and records what is listening on which port, including a map of HTTP loopback targets keyed by `(family, port)`. This is the source of truth a connect consults to learn that, say, "port 3000 is an HTTP server owned by process X, server Y."
-- **Host fetch client.** When the host calls `vmFetch` / `rt.fetch()`, the sidecar resolves the target to a VM-owned kernel listener, opens its own kernel socket, connects over loopback, and speaks HTTP/1.1 to the guest server. This is the only HTTP client that lives in the sidecar (the host has no guest isolate to do framing for it).
+- **Host fetch client.** When the host calls `httpRequest` / `rt.fetch()`, the sidecar resolves the target to a VM-owned kernel listener, opens its own kernel socket, connects over loopback, and speaks HTTP/1.1 to the guest server. This is the only HTTP client that lives in the sidecar (the host has no guest isolate to do framing for it).
 
 ### Layer 3: sync-RPC dispatch
 
@@ -77,7 +83,7 @@ A WASM HTTP server or client does its own framing in guest code (reading the req
 
 ## Data flows
 
-- **Host to guest (`vmFetch` / `rt.fetch`).** The sidecar resolves the port to a VM-owned kernel listener, opens a sidecar-owned kernel socket, connects over loopback, serializes the request bytes, drives the target process forward so it can accept and respond, then parses the response bytes back into the host response object. It is **fail-closed**: no DNS, no external networking, no host-loopback fallback. If no VM-owned listener exists, it returns a missing-listener error.
+- **Host to guest (`httpRequest` / `rt.fetch`).** The sidecar resolves the port to a VM-owned kernel listener, opens a sidecar-owned kernel socket, connects over loopback, serializes the request bytes, drives the target process forward so it can accept and respond, then parses the response bytes back into the host response object. It is **fail-closed**: no DNS, no external networking, no host-loopback fallback. If no VM-owned listener exists, it returns a missing-listener error.
 - **Guest to guest.** `net.connect` goes through the sidecar, which returns a loopback HTTP target handle. The guest sends the request through `net.http_request`, which dispatches into the target process's request handler. Cross-process loopback passes through the enforcement point rather than taking an in-isolate shortcut.
 - **Cross-runtime (JS and WASM, either direction).** Client and server connect through a kernel loopback socket pair and exchange raw bytes. JS to WASM, WASM to JS, and WASM to WASM all use the same path; only the side that runs the HTTP codec differs.
 - **Guest outbound to host or external.** Connections that do not target a VM-owned listener take the external network path: permission checks, DNS pinning, then a real host `TcpStream`. Reaching a host loopback port still requires an explicit loopback exemption entry.
@@ -108,22 +114,22 @@ The per-port loopback exemption belongs to layer 2 only. It is a trusted, per-po
 
 Every guest connect, listen, read, and write passes through sidecar ownership and kernel owner checks. Guest-to-guest loopback is allowed only when the destination is a VM-owned listener and the applied network policy permits the connect. Host-loopback access from guest code is separate and still requires a loopback exemption plus the applied network policy. Long-lived waits must not block the sync-RPC path, so the stack uses stream events, bounded polling, and kernel socket waits with explicit timeouts.
 
-<Note>Host-to-guest requests bypass egress, not the table. `vmFetch` / `rt.fetch` terminate at the guest's loopback listener and never leave the VM, so they work even when guest egress (layer 3) or outbound `connect` (layer 1) is denied. They are host control-plane traffic, not guest egress, and only ever reach VM-owned listeners, while still going through the same kernel socket table as everything else.</Note>
+<Note>Host-to-guest requests bypass egress, not the table. `httpRequest` / `rt.fetch` terminate at the guest's loopback listener and never leave the VM, so they work even when guest egress (layer 3) or outbound `connect` (layer 1) is denied. They are host control-plane traffic, not guest egress, and only ever reach VM-owned listeners, while still going through the same kernel socket table as everything else.</Note>
 
 ## Preview URLs
 
 A preview URL is port forwarding for a VM service: a time-limited, signed, publicly reachable URL that proxies HTTP to a port inside the VM. Mechanically it reuses the host-to-guest path:
 
 - A signed token is minted for a `(VM, port)` pair with an expiration, capped by `preview.maxExpiresInSeconds`. Tokens are stored in SQLite, survive sleep/wake cycles, and expired ones are cleaned up automatically. Active tokens are bounded by `preview.maxActiveTokens` (1,024 by default); creation fails with a limit error that names the option when the bound is reached.
-- An incoming request to the preview path is authenticated against the token, then proxied into the VM exactly like `vmFetch`: resolve the port to a VM-owned kernel listener, connect over loopback, frame HTTP/1.1, drive the target process, and return the bounded buffered response. The same fail-closed, VM-owned-listener-only rules apply.
+- An incoming request to the preview path is authenticated against the token, then proxied into the VM exactly like `httpRequest`: resolve the port to a VM-owned kernel listener, connect over loopback, frame HTTP/1.1, drive the target process, and return the bounded buffered response. The same fail-closed, VM-owned-listener-only rules apply.
 - CORS is enabled so browsers can reach preview URLs from any origin.
-- Revocation (`expireSignedPreviewUrl`) invalidates the token immediately, after which the proxy refuses the request before touching the socket table.
+- Revocation (`agent.expirePreviewUrl`) invalidates the token immediately, after which the proxy refuses the request before touching the socket table.
 
 Because previews ride the host fetch path, they are subject to loopback confinement at the kernel but **not** to the guest egress allowlist: the request enters the listener from the host side and never becomes guest outbound traffic.
 
 ## Where to go next
 
-- [Networking & Previews](/docs/networking): the `vmFetch` and preview URL API, with usage examples.
+- [Networking & Previews](/docs/networking): the `httpRequest` and preview URL API, with usage examples.
 - [JavaScript Executor & Socket Reactor](/docs/architecture/javascript-executor): how Tokio readiness wakes V8, how the channel lanes are separated, and how Node stream backpressure reaches the transport.
 - [Architecture](/docs/architecture): the client / sidecar / executor trust boundary this stack lives inside.
 - [Security Model](/docs/security-model): the full in-scope and out-of-scope threat model.

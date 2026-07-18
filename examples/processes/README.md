@@ -14,7 +14,7 @@ A `server.ts` registers a VM with its software, and each script connects with `c
 - **`exec`** — run a command to completion and collect `stdout`, `stderr`, and `exitCode` in one call.
 - **`spawn` + lifecycle** — start a process for a `pid`, then `listProcesses`, `getProcess`, `waitProcess`, `stopProcess` (SIGTERM), and `killProcess` (SIGKILL).
 - **stdin** — `writeProcessStdin` and `closeProcessStdin` to feed a running process, including an interactive `sh` (see `shell.ts`).
-- **events** — `agent.connect()` returns a connection that emits `processOutput` / `processExit` and `shellData`, so output streams live as it is produced.
+- **subscriptions** — call `agent.connect()` and use `onProcessOutput`, `onProcessExit`, `onShellData`, `onShellStderr`, and `onShellExit`. The connection filters RivetKit broadcasts to the requested process or shell.
 
 `visibility.ts` shows how to enumerate and inspect everything running in the VM.
 

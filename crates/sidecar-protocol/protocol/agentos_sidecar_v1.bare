@@ -191,6 +191,12 @@ type MountDescriptor struct {
   plugin: MountPluginDescriptor
 }
 
+type MountInfo struct {
+  path: str
+  kind: str
+  readOnly: bool
+}
+
 type SoftwareDescriptor struct {
   packageName: str
   root: str
@@ -359,7 +365,11 @@ type GuestKernelCallRequest struct {
   payload: data
 }
 
-type SnapshotRootFilesystemRequest void
+type SnapshotRootFilesystemRequest struct {
+  maxBytes: u64
+}
+
+type ListMountsRequest void
 
 type ExecuteRequest struct {
   processId: str
@@ -479,7 +489,8 @@ type RequestPayload union {
   ResizePtyRequest |
   GetResourceSnapshotRequest |
   LinkPackageRequest |
-  ProvidedCommandsRequest
+  ProvidedCommandsRequest |
+  ListMountsRequest
 }
 
 type RequestFrame struct {
@@ -588,6 +599,10 @@ type GuestKernelResultResponse struct {
 
 type RootFilesystemSnapshotResponse struct {
   entries: list<RootFilesystemEntry>
+}
+
+type ListMountsResponse struct {
+  mounts: list<MountInfo>
 }
 
 type ProcessStartedResponse struct {
@@ -780,7 +795,8 @@ type ResponsePayload union {
   PtyResizedResponse |
   ResourceSnapshotResponse |
   PackageLinkedResponse |
-  ProvidedCommandsResponse
+  ProvidedCommandsResponse |
+  ListMountsResponse
 }
 
 type ResponseFrame struct {

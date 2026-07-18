@@ -6,7 +6,7 @@ Pass LLM provider API keys to agent sessions so keys stay on the server and are 
 
 ## Passing API keys
 
-Pass LLM provider keys via the `env` option on `createSession`. The VM does not inherit from the host `process.env`, so keys must be passed explicitly.
+Pass LLM provider keys via the `env` option on `openSession`. The VM does not inherit from the host `process.env`, so keys must be passed explicitly.
 
 ## Per-tenant credentials
 

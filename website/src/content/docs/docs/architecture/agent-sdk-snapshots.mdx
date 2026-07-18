@@ -1,16 +1,16 @@
 ---
 title: "Agent SDK Snapshots"
-description: "How an agent's SDK is evaluated once per sidecar into a V8 heap snapshot and reused across sessions instead of re-imported on every createSession: the bundle, the userland snapshot, the process-wide cache, pre-warm, per-session restore, isolation, and the snapshot-safety rules an SDK must follow."
+description: "How an agent's SDK is evaluated once per sidecar into a V8 heap snapshot and reused across sessions instead of re-imported on every openSession: the bundle, the userland snapshot, the process-wide cache, pre-warm, per-session restore, isolation, and the snapshot-safety rules an SDK must follow."
 skill: true
 ---
 
 <Note>These internal architecture docs are mostly generated and maintained by LLMs, then reviewed by humans. They are intentionally verbose; use your preferred LLM to ask focused questions about the architecture as needed.</Note>
 
-This page is an internals deep-dive on **agent SDK snapshotting** — an optional optimization that loads an agent's SDK *once per sidecar* and reuses it for every session, instead of re-evaluating the whole SDK module graph on each `createSession`. For the agent-author view (how to opt in and the rules your SDK must follow), see [Software Definition → SDK snapshotting & snapshot-safety](/docs/custom-software/definition). For how sessions work in general, see [Agent Sessions](/docs/architecture/agent-sessions).
+This page is an internals deep-dive on **agent SDK snapshotting** — an optional optimization that loads an agent's SDK *once per sidecar* and reuses it for every session, instead of re-evaluating the whole SDK module graph on each `openSession`. For the agent-author view (how to opt in and the rules your SDK must follow), see [Software Definition → SDK snapshotting & snapshot-safety](/docs/custom-software/definition). For how sessions work in general, see [Agent Sessions](/docs/architecture/agent-sessions).
 
 ## The problem: per-session SDK re-evaluation
 
-When a session starts, its agent adapter runs inside a fresh [V8 isolate](/docs/architecture/agent-sessions) and imports the agent SDK (for Pi, `@mariozechner/pi-coding-agent`). Importing a real-world SDK means resolving, loading, compiling, and **evaluating** a large module graph — hundreds of modules running their top-level initialization. That evaluation dominates session-creation latency, and because every session gets a fresh isolate, it is paid *again on every `createSession`*.
+When a session starts, its agent adapter runs inside a fresh [V8 isolate](/docs/architecture/agent-sessions) and imports the agent SDK (for Pi, `@mariozechner/pi-coding-agent`). Importing a real-world SDK means resolving, loading, compiling, and **evaluating** a large module graph — hundreds of modules running their top-level initialization. That evaluation dominates session-creation latency, and because every session gets a fresh isolate, it is paid *again on every `openSession`*.
 
 The work is identical every time: the same modules, evaluated to the same post-init heap, only to be thrown away when the session ends. Snapshotting captures that post-init heap once and stamps it into every new isolate.
 
@@ -53,7 +53,7 @@ The V8 platform must be initialized on a long-lived thread *before* any pre-warm
 
 ### 5. Restore a fresh isolate per session
 
-On `createSession`, the agent's isolate is created from the cached blob. The SDK is already evaluated in the snapshot's default context, and each session gets a **fresh context cloned from it**. The adapter reads the SDK off the global instead of importing it. If no snapshot is configured — or snapshot creation fails — the adapter transparently falls back to the per-session dynamic-import path, so snapshotting never affects correctness, only latency.
+On `openSession`, the agent's isolate is created from the cached blob. The SDK is already evaluated in the snapshot's default context, and each session gets a **fresh context cloned from it**. The adapter reads the SDK off the global instead of importing it. If no snapshot is configured — or snapshot creation fails — the adapter transparently falls back to the per-session dynamic-import path, so snapshotting never affects correctness, only latency.
 
 ## Isolation
 

@@ -9,7 +9,7 @@ Run a coding agent inside an Agent OS VM, send it a prompt, and read back its re
 
 ## How it works
 
-Register the agent software bundles when you `AgentOs.create` a VM, then open a session with `createSession(agent, { env })` for the agent of your choice. Subscribe with `onSessionEvent` to watch streamed text and tool use as it happens, and call `prompt` to send a message and await the final response text. Close the session and dispose the VM when finished. Agents read credentials such as `ANTHROPIC_API_KEY` from the session `env`.
+Register the agent software bundles when you `AgentOs.create` a VM, then call `openSession({ agent, env })` for the agent of your choice; omitting `sessionId` selects `main`. Subscribe with `onSessionEvent` to watch streamed text and tool use as it happens, call `prompt({ content })` to send a message, and use `unloadSession()` to release the adapter while retaining durable history. Agents read credentials such as `ANTHROPIC_API_KEY` from the session `env`.
 
 ## Run it
 

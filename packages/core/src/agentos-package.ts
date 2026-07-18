@@ -28,14 +28,21 @@ export const OPT_AGENTOS_BIN = "/opt/agentos/bin";
 export type AgentBlock = PackageAgentDescriptor;
 export type PackageRef = ManifestPackageRef;
 export type SoftwarePackageRef = { packagePath: string };
-/** @deprecated Package software is now represented by its package directory. */
-export type PackageDescriptor = PackageRef;
+/** Portable descriptor used to link a package into a running VM. */
+export interface PackageDescriptor {
+	path: string;
+}
 
 /** Discriminate the dir-only package reference. */
 export function isPackageDescriptor(
 	value: unknown,
 ): value is PackageDescriptor {
-	return typeof value === "string";
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		!Array.isArray(value) &&
+		typeof (value as { path?: unknown }).path === "string"
+	);
 }
 
 export function readAgentosPackageManifest(

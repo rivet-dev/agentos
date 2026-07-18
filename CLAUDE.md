@@ -54,6 +54,31 @@ that drop rejections are bugs, not defensive coding. For guest-visible
 surfaces, prefer matching Linux behavior — the correct POSIX errno delivered to
 the guest — over inventing a softer fallback that hides the failure.
 
+## SQLite Schema Ownership
+
+The per-VM SQLite database is physically shared but has three independent schema
+owners. Each owner must manage its own version table and append-only migration
+ladder, operate only on its own table namespace, and never read, advance,
+migrate, or delete another owner's schema:
+
+- Filesystem storage owns `agentos_fs_*`, including
+  `agentos_fs_schema_version`.
+- Sidecar/core durable state owns `agentos_core_*`, including
+  `agentos_core_schema_version`. This namespace is intentionally generic; do
+  not name it after sessions, ACP, or another current consumer.
+- The AgentOS TypeScript actor layer owns `agentos_actor_*`, including
+  `agentos_actor_schema_version`.
+
+Do not use a shared schema-version table, a `component` discriminator, or a
+global migration sequence across these owners. Each migration must update its
+owner's version in the same SQLite transaction or savepoint as its schema
+changes. AgentOS-owned tables must be `STRICT`.
+
+There is no compatibility requirement for the previous SQLite layout. Remove
+the shared component-version mechanism and rename or replace legacy
+`agentos_vfs_*`, `agentos_session*`, and `agent_os_*` tables directly; do not
+add compatibility views, aliases, legacy adoption paths, or dual writes.
+
 ## Runtime And Registry
 
 - The projected `/opt/agentos` filesystem is the source of truth for software

@@ -8,7 +8,7 @@ import {
 	defineAgentOsConformanceSuite,
 } from "@rivet-dev/agentos-test-harness/agent-os-conformance";
 import { createProjectedAgentPackage } from "@rivet-dev/agentos-test-harness/projected-agent-package";
-import { AgentOs, type PermissionReply } from "../src/index.js";
+import { AgentOs } from "../src/index.js";
 
 class EventBus {
 	readonly handlers = new Map<string, Set<(payload: any) => void>>();
@@ -51,18 +51,12 @@ async function createCoreBackend(): Promise<AgentOsConformanceBackend> {
 		defaultSoftware: false,
 		software: [coreutils, agentPackage.software],
 		mounts,
-		onAgentExit: (event) =>
-			events.emit("agentCrashed", { sessionId: event.sessionId, event }),
+		onAgentExit: (event) => events.emit("agentExit", event),
 	});
 	vm.onCronEvent((event) => events.emit("cronEvent", event));
 
 	function trackSession(sessionId: string): void {
-		vm.onSessionEvent(sessionId, (event) =>
-			events.emit("sessionEvent", { sessionId, event }),
-		);
-		vm.onPermissionRequest(sessionId, (request) =>
-			events.emit("permissionRequest", { sessionId, request }),
-		);
+		vm.onSessionEvent(sessionId, (event) => events.emit("sessionEvent", event));
 	}
 
 	const call = async <T>(
@@ -70,23 +64,9 @@ async function createCoreBackend(): Promise<AgentOsConformanceBackend> {
 		...args: unknown[]
 	): Promise<T> => {
 		switch (action) {
-			case "readdirEntries": {
-				const path = args[0] as string;
-				const names = await vm.readdir(path);
-				return (await Promise.all(
-					names.map(async (name) => {
-						const stat = await vm.stat(`${path}/${name}`);
-						return {
-							name,
-							isDirectory: stat.isDirectory,
-							isSymbolicLink: stat.isSymbolicLink,
-						};
-					}),
-				)) as T;
-			}
-			case "deleteFile":
-				return (await vm.delete(
-					...(args as Parameters<AgentOs["delete"]>),
+			case "remove":
+				return (await vm.remove(
+					...(args as Parameters<AgentOs["remove"]>),
 				)) as T;
 			case "spawn": {
 				const [command, processArgs, spawnOptions] = args as [
@@ -94,72 +74,34 @@ async function createCoreBackend(): Promise<AgentOsConformanceBackend> {
 					string[],
 					Record<string, unknown> | undefined,
 				];
-				const process = vm.spawn(command, processArgs, {
-					...spawnOptions,
-					onStdout: (data) =>
-						events.emit("processOutput", {
-							pid: process.pid,
-							stream: "stdout",
-							data,
-						}),
-					onStderr: (data) =>
-						events.emit("processOutput", {
-							pid: process.pid,
-							stream: "stderr",
-							data,
-						}),
-				});
-				void vm
-					.waitProcess(process.pid)
-					.then((exitCode) =>
-						events.emit("processExit", { pid: process.pid, exitCode }),
-					);
+				const process = vm.spawn(command, processArgs, spawnOptions);
+				vm.onProcessOutput(process.pid, (event) =>
+					events.emit("processOutput", event),
+				);
+				vm.onProcessExit(process.pid, (event) =>
+					events.emit("processExit", event),
+				);
 				return process as T;
 			}
 			case "openShell": {
-				const shell = vm.openShell({
-					...(args[0] as Record<string, unknown> | undefined),
-					onStderr: (data) =>
-						events.emit("shellStderr", { shellId: shell.shellId, data }),
-				});
-				vm.onShellData(shell.shellId, (data) =>
-					events.emit("shellData", { shellId: shell.shellId, data }),
+				const shell = vm.openShell(
+					args[0] as Parameters<AgentOs["openShell"]>[0],
 				);
-				void vm
-					.waitShell(shell.shellId)
-					.then((exitCode) =>
-						events.emit("shellExit", { shellId: shell.shellId, exitCode }),
-					);
+				vm.onShellData(shell.shellId, (event) =>
+					events.emit("shellData", event),
+				);
+				vm.onShellStderr(shell.shellId, (event) =>
+					events.emit("shellStderr", event),
+				);
+				vm.onShellExit(shell.shellId, (event) =>
+					events.emit("shellExit", event),
+				);
 				return shell as T;
 			}
-			case "vmFetch": {
-				const [port, url, requestOptions] = args as [
-					number,
-					string,
-					(
-						| {
-								method?: string;
-								headers?: Record<string, string>;
-								body?: string | Uint8Array;
-						  }
-						| undefined
-					),
-				];
-				const response = await vm.fetch(
-					port,
-					new Request(url, {
-						method: requestOptions?.method,
-						headers: requestOptions?.headers,
-						body: requestOptions?.body,
-					}),
-				);
-				return {
-					status: response.status,
-					statusText: response.statusText,
-					headers: Object.fromEntries(response.headers.entries()),
-					body: new Uint8Array(await response.arrayBuffer()),
-				} as T;
-			}
+			case "httpRequest":
+				return (await vm.httpRequest(
+					...(args as Parameters<AgentOs["httpRequest"]>),
+				)) as T;
 			case "scheduleCron": {
 				const job = vm.scheduleCron(
 					args[0] as Parameters<AgentOs["scheduleCron"]>[0],
@@ -169,55 +111,15 @@ async function createCoreBackend(): Promise<AgentOsConformanceBackend> {
 			case "listCronJobs":
 				return vm.listCronJobs() as T;
 			case "listMounts":
-				return mounts.map((mount) => ({
-					path: mount.path,
-					kind: mount.plugin.id,
-					readOnly: mount.readOnly,
-					config: mount.plugin.config,
-				})) as T;
+				return (await vm.listMounts()) as T;
 			case "listSoftware":
-				return (await vm.providedCommands()) as T;
-			case "createSession": {
-				const result = await vm.createSession(
-					...(args as Parameters<AgentOs["createSession"]>),
-				);
-				trackSession(result.sessionId);
-				return result.sessionId as T;
+				return (await vm.listSoftware()) as T;
+			case "openSession": {
+				const [input] = args as Parameters<AgentOs["openSession"]>;
+				await vm.openSession(...(args as Parameters<AgentOs["openSession"]>));
+				trackSession(input.sessionId ?? "main");
+				return undefined as T;
 			}
-			case "resumeSession": {
-				const result = await vm.resumeSession(
-					...(args as Parameters<AgentOs["resumeSession"]>),
-				);
-				trackSession(result.sessionId);
-				return result as T;
-			}
-			case "sendPrompt":
-				return (await vm.prompt(args[0] as string, args[1] as string)) as T;
-			case "cancelPrompt":
-				return (await vm.cancelSession(args[0] as string)) as T;
-			case "setMode":
-				return (await vm.setSessionMode(
-					args[0] as string,
-					args[1] as string,
-				)) as T;
-			case "getModes":
-				return vm.getSessionModes(args[0] as string) as T;
-			case "setModel":
-				return (await vm.setSessionModel(
-					args[0] as string,
-					args[1] as string,
-				)) as T;
-			case "setThoughtLevel":
-				return (await vm.setSessionThoughtLevel(
-					args[0] as string,
-					args[1] as string,
-				)) as T;
-			case "respondPermission":
-				return (await vm.respondPermission(
-					args[0] as string,
-					args[1] as string,
-					args[2] as PermissionReply,
-				)) as T;
 			default: {
 				const method = (vm as any)[action];
 				if (typeof method !== "function") {

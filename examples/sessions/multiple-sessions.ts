@@ -1,23 +1,37 @@
 import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
 
-const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
+const client = createClient<typeof registry>({
+	endpoint: "http://localhost:6420",
+});
 const agent = client.vm.getOrCreate("my-agent");
 
 // Create two sessions in the same VM
-const coder = await agent.createSession("pi", {
-  env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
+const coderSessionId = "coder";
+await agent.openSession({
+	sessionId: coderSessionId,
+	agent: "pi",
+	env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 });
-const reviewer = await agent.createSession("pi", {
-  env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
+const reviewerSessionId = "reviewer";
+await agent.openSession({
+	sessionId: reviewerSessionId,
+	agent: "pi",
+	env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 });
 
 // Coder writes code
-await agent.sendPrompt(coder, "Write a REST API at /home/agentos/api.ts");
+await agent.prompt({
+	sessionId: coderSessionId,
+	content: [{ type: "text", text: "Write a REST API at /workspace/api.ts" }],
+});
 
 // Reviewer reads and reviews the same file
-await agent.sendPrompt(reviewer, "Review /home/agentos/api.ts for issues");
+await agent.prompt({
+	sessionId: reviewerSessionId,
+	content: [{ type: "text", text: "Review /workspace/api.ts for issues" }],
+});
 
-// Close each session independently
-await agent.closeSession(coder);
-await agent.closeSession(reviewer);
+// Unload each adapter independently while retaining both histories.
+await agent.unloadSession({ sessionId: coderSessionId });
+await agent.unloadSession({ sessionId: reviewerSessionId });

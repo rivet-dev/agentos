@@ -14,7 +14,7 @@ import { AgentOs } from "../src/index.js";
  * End-to-end proof that an `/opt/agentos` AGENT package launches a session:
  * a package dir with `agentos-package.json` registers an agent whose ACP adapter
  * is the `bin/<acpEntrypoint>` command, and
- * `createSession(name)` spawns it via `/opt/agentos/bin/<acpEntrypoint>` — no
+ * `openSession({ agent: name })` spawns it via `/opt/agentos/bin/<acpEntrypoint>` — no
  * npm package resolution. The adapter is a hand-built minimal ACP stdio server.
  */
 const MOCK_ACP_ADAPTER = `
@@ -120,9 +120,11 @@ describe("agentos agent package (VM)", () => {
 		expect(entry?.installed).toBe(true);
 	});
 
-	test("createSession launches the packaged agent via /opt/agentos/bin", async () => {
-		const session = await vm.createSession("mock-agent");
-		expect(session.sessionId).toBeTruthy();
-		await vm.closeSession(session.sessionId);
+	test("openSession launches the packaged agent via /opt/agentos/bin", async () => {
+		const sessionId = "packaged-agent";
+		await expect(
+			vm.openSession({ sessionId, agent: "mock-agent" }),
+		).resolves.toBeUndefined();
+		await vm.unloadSession({ sessionId });
 	});
 });

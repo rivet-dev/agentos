@@ -24,6 +24,22 @@ pub struct ProjectedAgentLaunchEntry {
 }
 
 pub trait ExtensionHost {
+    /// Return the VM-scoped ACP/session limits. Test hosts that do not own a VM
+    /// use the same generous defaults as a normal sidecar.
+    fn vm_acp_limits<'a>(
+        &'a mut self,
+        _ownership: OwnershipScope,
+    ) -> ExtensionFuture<'a, agentos_native_sidecar_core::limits::AcpLimits> {
+        Box::pin(async { Ok(agentos_native_sidecar_core::limits::AcpLimits::default()) })
+    }
+
+    /// Return the VM's single resolved SQLite handle. Reads through this handle
+    /// never create another transport, connection pool, or database namespace.
+    fn vm_database<'a>(
+        &'a mut self,
+        ownership: OwnershipScope,
+    ) -> ExtensionFuture<'a, Option<crate::vm_sqlite::SharedVmSqliteDatabase>>;
+
     fn projected_agents<'a>(
         &'a mut self,
         ownership: OwnershipScope,
@@ -306,6 +322,20 @@ impl<'a> ExtensionContext<'a> {
         timeout: Duration,
     ) -> Result<Vec<u8>, SidecarError> {
         self.snapshot.invoke_callback(payload, timeout)
+    }
+
+    pub async fn vm_database(
+        &mut self,
+    ) -> Result<Option<crate::vm_sqlite::SharedVmSqliteDatabase>, SidecarError> {
+        self.host.vm_database(self.snapshot.ownership.clone()).await
+    }
+
+    pub async fn vm_acp_limits(
+        &mut self,
+    ) -> Result<agentos_native_sidecar_core::limits::AcpLimits, SidecarError> {
+        self.host
+            .vm_acp_limits(self.snapshot.ownership.clone())
+            .await
     }
 
     pub async fn spawn_process(
@@ -619,12 +649,19 @@ fn extension_callback_response_payload(
 }
 
 pub enum ExtensionInterruptRequest<'a> {
-    ExtensionPayload(&'a [u8]),
+    ExtensionPayload {
+        payload: &'a [u8],
+        ownership: &'a OwnershipScope,
+    },
     KillProcess,
 }
 
 #[derive(Debug, Clone)]
 pub struct ExtensionInterruptResponse {
+    /// Whether the active request future should be dropped and replaced by the
+    /// synthetic response. Cooperative interrupts can signal the active future
+    /// and leave this false so it commits its own terminal state.
+    pub interrupt_active: bool,
     pub interrupted_response_payload: Vec<u8>,
     pub interrupting_response_payload: Option<Vec<u8>>,
 }
@@ -637,6 +674,15 @@ pub trait Extension: Send + Sync {
         ctx: ExtensionContext<'a>,
         payload: Vec<u8>,
     ) -> ExtensionFuture<'a, ExtensionResponse>;
+
+    /// Register/migrate extension-owned schemas during VM database bootstrap,
+    /// before VFS or extension requests can observe the VM.
+    fn bootstrap_vm_database<'a>(
+        &'a self,
+        _database: crate::vm_sqlite::SharedVmSqliteDatabase,
+    ) -> ExtensionFuture<'a, ()> {
+        Box::pin(async { Ok(()) })
+    }
 
     fn on_vm_created<'a>(&'a self, _ctx: ExtensionSnapshot) -> ExtensionFuture<'a, ()> {
         Box::pin(async { Ok(()) })

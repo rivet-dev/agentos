@@ -1,6 +1,4 @@
 export type {
-	AgentCapabilities,
-	AgentInfo,
 	AgentOsCreateSidecarOptions,
 	AgentOsLimits,
 	AgentOsOptions,
@@ -16,14 +14,15 @@ export type {
 	BatchReadResult,
 	BatchWriteEntry,
 	BatchWriteResult,
-	CreateSessionOptions,
 	DirEntry,
+	DynamicMountDescriptor,
+	ExportRootFilesystemOptions,
+	HttpRequest,
+	HttpResponse,
 	LimitWarning,
 	LimitWarningHandler,
-	McpServerConfig,
-	McpServerConfigLocal,
-	McpServerConfigRemote,
 	MountConfig,
+	MountInfo,
 	MountConfigJsonObject,
 	MountConfigJsonPrimitive,
 	MountConfigJsonValue,
@@ -32,25 +31,21 @@ export type {
 	NativeRootFilesystemConfig,
 	OverlayMountConfig,
 	OverlayRootFilesystemConfig,
-	PermissionReply,
-	PermissionRequest,
-	PermissionRequestHandler,
 	PlainMountConfig,
 	ProcessTreeNode,
-	PromptResult,
+	ProcessExit,
+	ProcessOutput,
+	ReaddirEntry,
 	ReaddirRecursiveOptions,
-	ResumeSessionOptions,
-	ResumeSessionResult,
 	RootFilesystemConfig,
 	RootLowerInput,
-	SessionConfigOption,
-	SessionEventHandler,
-	SessionInfo,
-	SessionInitData,
-	SessionMode,
-	SessionModeState,
 	SpawnedProcessInfo,
+	SpawnOptions,
+	ShellData,
+	ShellExit,
+	ShellOptions,
 } from "./agent-os.js";
+export type * from "./session-api.js";
 /**
  * An agent type id — the `name` of an `/opt/agentos` agent package manifest
  * (e.g. `"pi"`, `"claude"`). Agents are resolved by the SIDECAR from the projected
@@ -60,6 +55,7 @@ export type {
 export type AgentType = string;
 export type {
 	CronAction,
+	CronActionInfo,
 	CronEvent,
 	CronEventHandler,
 	CronJob,
@@ -75,15 +71,6 @@ export type {
 	NodeModulesMountConfig,
 } from "./host-dir-mount.js";
 export type { Binding, BindingExample, Bindings } from "./bindings.js";
-export type {
-	AcpTimeoutErrorData,
-	JsonRpcError,
-	JsonRpcErrorData,
-	JsonRpcNotification,
-	JsonRpcRequest,
-	JsonRpcResponse,
-	UnknownSessionErrorData,
-} from "./json-rpc.js";
 export type {
 	FilesystemSnapshotExport,
 	LayerHandle,
@@ -127,4 +114,3 @@ export type {
 	VirtualFileSystem,
 	VirtualStat,
 } from "./runtime.js";
-export type { PromptCapabilities } from "./agent-session-types.js";

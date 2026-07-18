@@ -9,7 +9,7 @@ Spin up the Pi coding agent inside a VM, open a session, and send it prompts. Re
 
 ## How it works
 
-The server registers a VM with the `pi` software package and starts the registry. The client grabs a VM with `getOrCreate`, then `createSession("pi", …)` passing the `ANTHROPIC_API_KEY` through `env`. From there `sendPrompt` runs a turn and returns the agent's `text`. Sessions are configurable: drop a `SKILL.md` into the agent's skills directory (via `mkdir` + `writeFile`) before creating the session and it's auto-discovered, and pass `mcpServers` (local child-process or remote URL) to expose extra tools. Pre-install any `npx`-launched MCP server so install output doesn't corrupt the stdio handshake.
+The server registers a VM with the `pi` software package and starts the registry. The client grabs a VM with `getOrCreate`, then calls `openSession({ agent: "pi", env: … })`, which infers the default `main` session and passes `ANTHROPIC_API_KEY` through `env`. From there `prompt({ content })` runs a turn and returns the agent's `text`. Drop a `SKILL.md` into the agent's skills directory before opening the session and it is auto-discovered; Pi reads MCP servers from its native `.mcp.json` config. Pre-install any `npx`-launched MCP server so install output does not corrupt the stdio handshake.
 
 ## Run it
 

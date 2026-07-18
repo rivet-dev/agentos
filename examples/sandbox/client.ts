@@ -22,7 +22,6 @@ console.log(install.exitCode, install.stdout);
 const { pid } = await vm.spawn("npm", ["run", "dev", "--prefix", "/home/agentos/sandbox/app"]);
 const conn = vm.connect();
 conn.on("processOutput", (payload) => {
-	if (payload.pid === pid) {
-		console.log(payload.stream, new TextDecoder().decode(payload.data));
-	}
+	if (payload.pid !== pid) return;
+	console.log(payload.stream, new TextDecoder().decode(payload.data));
 });

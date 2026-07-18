@@ -18,8 +18,9 @@ export const AGENT_OS_CONFORMANCE_ACTIONS = [
 	"readdirRecursive",
 	"exists",
 	"move",
-	"deleteFile",
+	"remove",
 	"exec",
+	"execArgv",
 	"spawn",
 	"waitProcess",
 	"killProcess",
@@ -35,29 +36,30 @@ export const AGENT_OS_CONFORMANCE_ACTIONS = [
 	"resizeShell",
 	"closeShell",
 	"waitShell",
-	"vmFetch",
+	"httpRequest",
 	"scheduleCron",
 	"listCronJobs",
 	"cancelCronJob",
 	"listAgents",
 	"listMounts",
 	"listSoftware",
-	"createSession",
-	"resumeSession",
-	"sendPrompt",
+	"exportRootFilesystem",
+	"mountFs",
+	"unmountFs",
+	"linkSoftware",
+	"openSession",
+	"getSession",
+	"prompt",
 	"cancelPrompt",
-	"closeSession",
-	"destroySession",
+	"unloadSession",
+	"deleteSession",
 	"respondPermission",
 	"listSessions",
-	"setMode",
-	"getModes",
-	"setModel",
-	"setThoughtLevel",
-	"getSessionConfigOptions",
+	"readHistory",
+	"getSessionConfig",
+	"setSessionConfigOption",
 	"getSessionCapabilities",
 	"getSessionAgentInfo",
-	"rawSessionSend",
 ] as const;
 
 export type AgentOsConformanceAction =
@@ -71,8 +73,7 @@ export const AGENT_OS_CONFORMANCE_EVENTS = [
 	"shellExit",
 	"cronEvent",
 	"sessionEvent",
-	"permissionRequest",
-	"agentCrashed",
+	"agentExit",
 ] as const;
 
 export type AgentOsConformanceEvent =
@@ -132,7 +133,9 @@ async function eventually<T>(
 		await new Promise((resolve) => setTimeout(resolve, 25));
 		value = await read();
 	}
-	if (!accept(value)) throw new Error("condition did not become true");
+	if (!accept(value)) {
+		throw new Error(`condition did not become true: ${JSON.stringify(value)}`);
+	}
 	return value;
 }
 
@@ -211,7 +214,7 @@ export function defineAgentOsConformanceSuite(
 				"/conformance/fs/moved.txt",
 			);
 			expect(await backend.call("exists", "/conformance/fs/a.txt")).toBe(false);
-			await backend.call("deleteFile", "/conformance/fs/moved.txt");
+			await backend.call("remove", "/conformance/fs/moved.txt");
 			expect(await backend.call("exists", "/conformance/fs/moved.txt")).toBe(
 				false,
 			);
@@ -220,6 +223,10 @@ export function defineAgentOsConformanceSuite(
 		test("process actions and events cover execution, inspection, stdin, stop, and kill", async () => {
 			const execResult = await backend.call<any>("exec", "printf exec-ok");
 			expect(execResult).toMatchObject({ exitCode: 0, stdout: "exec-ok" });
+			const argvResult = await backend.call<any>("execArgv", "printf", [
+				"argv-ok",
+			]);
+			expect(argvResult).toMatchObject({ exitCode: 0, stdout: "argv-ok" });
 
 			const output: any[] = [];
 			const exits: any[] = [];
@@ -366,10 +373,10 @@ export function defineAgentOsConformanceSuite(
 					),
 			);
 			const response = await backend.call<any>(
-				"vmFetch",
-				31337,
-				"http://agentos.test/path?q=1",
+				"httpRequest",
 				{
+					port: 31337,
+					path: "/path?q=1",
 					method: "POST",
 					headers: { "content-type": "text/plain" },
 					body: "payload",
@@ -408,8 +415,7 @@ export function defineAgentOsConformanceSuite(
 				(events) =>
 					events.some(
 						(payload) =>
-							(payload.event ?? payload).type === "cron:complete" &&
-							(payload.event ?? payload).jobId === oneShot.id,
+							payload.type === "cron:complete" && payload.jobId === oneShot.id,
 					),
 				10_000,
 			);
@@ -455,59 +461,59 @@ export function defineAgentOsConformanceSuite(
 			).toBe(true);
 		}, 60_000);
 
-		test("sessions cover creation, live events, permission replies, config, raw RPC, resume, close, and destroy", async () => {
-			const sessionId = await backend.call<string>(
-				"createSession",
-				CONFORMANCE_AGENT_NAME,
-				{
+		test("sessions cover durable history, live events, permission replies, config, restoration, unload, and deletion", async () => {
+			const sessionId = "conformance-session";
+			expect(
+				await backend.call("openSession", {
+					sessionId,
+					agent: CONFORMANCE_AGENT_NAME,
+					permissionPolicy: "ask",
 					cwd: "/workspace",
 					env: { CONFORMANCE_INPUT: "present" },
 					skipOsInstructions: true,
 					additionalInstructions: "shared-suite",
-				},
-			);
-			expect(typeof sessionId).toBe("string");
-			expect(await backend.call<any[]>("listSessions")).toContainEqual(
+				}),
+			).toBeUndefined();
+			expect((await backend.call<any>("listSessions")).sessions).toContainEqual(
 				expect.objectContaining({
 					sessionId,
-					agentType: CONFORMANCE_AGENT_NAME,
+					agent: CONFORMANCE_AGENT_NAME,
 				}),
 			);
-			expect(await backend.call<any>("getModes", sessionId)).toMatchObject({
-				currentModeId: "default",
-			});
 			expect(
-				await backend.call<any[]>("getSessionConfigOptions", sessionId),
+				(await backend.call<any>("getSessionConfig", { sessionId })).options,
 			).toHaveLength(2);
 			expect(
-				await backend.call<any>("getSessionCapabilities", sessionId),
+				await backend.call<any>("getSessionCapabilities", { sessionId }),
 			).toMatchObject({ loadSession: true });
 			expect(
-				await backend.call<any>("getSessionAgentInfo", sessionId),
+				await backend.call<any>("getSessionAgentInfo", { sessionId }),
 			).toMatchObject({ name: CONFORMANCE_AGENT_NAME });
 
 			const sessionEvents: any[] = [];
 			const permissions: any[] = [];
 			const permissionReady = deferred<any>();
-			const offSession = backend.on("sessionEvent", (event) =>
-				sessionEvents.push(event),
-			);
-			const offPermission = backend.on("permissionRequest", (event) => {
-				permissions.push(event);
-				if (event.sessionId === sessionId) permissionReady.resolve(event);
+			const offSession = backend.on("sessionEvent", (event) => {
+				sessionEvents.push(event);
+				if (
+					event.sessionId === sessionId &&
+					event.type === "permission_request"
+				) {
+					permissions.push(event);
+					permissionReady.resolve(event);
+				}
 			});
-			const prompt = backend.call<any>(
-				"sendPrompt",
+			const prompt = backend.call<any>("prompt", {
 				sessionId,
-				"permission please",
-			);
+				content: [{ type: "text", text: "permission please" }],
+			});
 			await eventually(
 				() => sessionEvents,
 				(events) =>
 					events.some(
 						(event) =>
 							event.sessionId === sessionId &&
-							event.event?.method === "session/update",
+							event.type === "agent_message_chunk",
 					),
 			);
 			const permission = await Promise.race([
@@ -519,80 +525,144 @@ export function defineAgentOsConformanceSuite(
 					),
 				),
 			]);
-			expect(permission.request.params.toolCall.toolCallId).toBe(
-				"binding-call-1",
-			);
-			await backend.call(
-				"respondPermission",
+			expect(permission.toolCall.toolCallId).toBe("binding-call-1");
+			await backend.call("respondPermission", {
 				sessionId,
-				permission.request.permissionId,
-				"once",
-			);
-			expect((await prompt).text).toContain("permission");
+				requestId: permission.requestId,
+				optionId: "allow_once",
+			});
+			expect(JSON.stringify((await prompt).message)).toContain("permission");
 			expect(permissions).toHaveLength(1);
 
-			await backend.call("setMode", sessionId, "plan");
-			await backend.call("setModel", sessionId, "next-model");
-			await backend.call("setThoughtLevel", sessionId, "high");
-			expect(await backend.call<any>("getModes", sessionId)).toMatchObject({
-				currentModeId: "plan",
-			});
-			const config = await backend.call<any[]>(
-				"getSessionConfigOptions",
+			await backend.call("setSessionConfigOption", {
 				sessionId,
-			);
+				configId: "model",
+				value: "next-model",
+			});
+			await backend.call("setSessionConfigOption", {
+				sessionId,
+				configId: "thought_level",
+				value: "high",
+			});
+			const config = (await backend.call<any>("getSessionConfig", { sessionId }))
+				.options;
 			expect(
-				config.find((entry) => entry.category === "model")?.currentValue,
+				config.find((entry: any) => entry.category === "model")?.currentValue,
 			).toBe("next-model");
 			expect(
-				config.find((entry) => entry.category === "thought_level")
+				config.find((entry: any) => entry.category === "thought_level")
 					?.currentValue,
 			).toBe("high");
-			expect(
-				await backend.call("rawSessionSend", sessionId, "conformance/echo", {
-					value: 42,
-				}),
-			).toMatchObject({ result: { echoed: { value: 42 } } });
-			await backend.call("cancelPrompt", sessionId);
-
-			const resumed = await backend.call<any>(
-				"resumeSession",
-				"conformance-resumed",
-				CONFORMANCE_AGENT_NAME,
-				{ cwd: "/workspace" },
+			await backend.call("cancelPrompt", { sessionId });
+			const history = await backend.call<any>("readHistory", { sessionId });
+			expect(history.events.length).toBeGreaterThan(0);
+			const permissionHistory = history.events.filter(
+				(entry: any) =>
+					entry.type === "permission_request" ||
+					entry.type === "permission_response",
 			);
-			expect(resumed).toMatchObject({
-				sessionId: "conformance-resumed",
-				mode: "native",
+			expect(permissionHistory.map((entry: any) => entry.type)).toEqual([
+				"permission_request",
+				"permission_response",
+			]);
+			expect(permissionHistory[0].sequence).toBeLessThan(
+				permissionHistory[1].sequence,
+			);
+			expect(permission.sequence).toBe(permissionHistory[0].sequence);
+			expect(
+				sessionEvents.some(
+					(event) =>
+						event.type === "permission_response" &&
+						event.sequence === permissionHistory[1].sequence,
+				),
+			).toBe(true);
+			const recoveredBySequence = new Map<number, any>();
+			for (const entry of [...history.events, ...sessionEvents]) {
+				if (entry?.durability === "durable" || entry?.sequence !== undefined) {
+					recoveredBySequence.set(entry.sequence, entry);
+				}
+			}
+			expect(recoveredBySequence.size).toBe(history.events.length);
+
+			await backend.call("unloadSession", { sessionId });
+			const restored = await backend.call<any>("prompt", {
+				sessionId,
+				content: [{ type: "text", text: "restored" }],
 			});
-			await backend.call("closeSession", resumed.sessionId);
-			await backend.call("destroySession", sessionId);
-			expect(await backend.call<any[]>("listSessions")).not.toContainEqual(
+			expect(JSON.stringify(restored.message)).toContain("restored");
+			await backend.call("deleteSession", { sessionId });
+			expect((await backend.call<any>("listSessions")).sessions).not.toContainEqual(
 				expect.objectContaining({ sessionId }),
 			);
 			offSession();
-			offPermission();
 		}, 90_000);
 
-		test("unexpected ACP adapter exits surface through agentCrashed", async () => {
+		test("default permission policy auto-resolves without durable or live permission events", async () => {
+			const sessionId = "conformance-auto-permission";
+			const sessionEvents: any[] = [];
+			const offSession = backend.on("sessionEvent", (event) => {
+				if (event.sessionId === sessionId) sessionEvents.push(event);
+			});
+			try {
+				// permissionPolicy is deliberately omitted: the sidecar-owned default
+				// must be allow_all for both Core and actor clients.
+				expect(
+					await backend.call("openSession", {
+						sessionId,
+						agent: CONFORMANCE_AGENT_NAME,
+						skipOsInstructions: true,
+					}),
+				).toBeUndefined();
+				const result = await backend.call<any>("prompt", {
+					sessionId,
+					content: [{ type: "text", text: "permission automatically" }],
+				});
+				expect(JSON.stringify(result.message)).toContain("allow_once");
+
+				const history = await backend.call<any>("readHistory", { sessionId });
+				expect(
+					history.events.filter(
+						(entry: any) =>
+							entry.type === "permission_request" ||
+							entry.type === "permission_response",
+					),
+				).toEqual([]);
+				expect(
+					sessionEvents.some(
+						(event) =>
+							event.type === "permission_request" ||
+							event.type === "permission_response",
+					),
+				).toBe(false);
+			} finally {
+				offSession();
+				await backend.call("deleteSession", { sessionId });
+			}
+		}, 90_000);
+
+		test("unexpected ACP adapter exits surface through agentExit", async () => {
 			const crashes: any[] = [];
-			const offCrash = backend.on("agentCrashed", (event) =>
+			const offCrash = backend.on("agentExit", (event) =>
 				crashes.push(event),
 			);
-			const sessionId = await backend.call<string>(
-				"createSession",
-				CONFORMANCE_AGENT_NAME,
-				{ skipOsInstructions: true },
-			);
+			const sessionId = "crash-session";
+			await backend.call("openSession", {
+				sessionId,
+				agent: CONFORMANCE_AGENT_NAME,
+				skipOsInstructions: true,
+			});
 			await backend
-				.call("sendPrompt", sessionId, "crash-adapter")
+				.call("prompt", {
+					sessionId,
+					content: [{ type: "text", text: "crash-adapter" }],
+				})
 				.catch(() => undefined);
 			await eventually(
 				() => crashes,
 				(events) => events.some((event) => event.sessionId === sessionId),
 				15_000,
 			);
-			await backend.call("closeSession", sessionId);
+			await backend.call("deleteSession", { sessionId });
 			offCrash();
 		}, 30_000);
 

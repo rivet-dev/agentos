@@ -30,7 +30,6 @@ const mount: NodeModulesMountConfig = nodeModulesMount(
 const config: AgentOSConfigInput = {
 	software: [pi],
 	mounts: [mount],
-	additionalInstructions: "Be concise.",
 	allowedNodeBuiltins: ["path", "fs"],
 	loopbackExemptPorts: [3000],
 	preview: {
@@ -38,10 +37,7 @@ const config: AgentOSConfigInput = {
 		maxExpiresInSeconds: 86_400,
 	},
 	onSessionEvent: async (c, sessionId, event) => {
-		console.log(c.actorId, sessionId, event.method);
-	},
-	onPermissionRequest: async (c, sessionId, request) => {
-		console.log(c.actorId, sessionId, request.permissionId);
+		console.log(c.actorId, sessionId, event.type);
 	},
 };
 
@@ -63,9 +59,14 @@ const client = createClient<typeof registry>({
 });
 
 type PublicDomainTypes = PromptResult | SerializableCronJobInfo | SessionInfo;
+type SessionStreamEntry = AgentOsEvents["sessionEvent"];
 
 function acceptPublicDomainType(value: PublicDomainTypes): PublicDomainTypes {
 	return value;
+}
+
+function acceptSessionStreamEntry(event: SessionStreamEntry): SessionStreamEntry {
+	return event;
 }
 
 function acceptEvent<K extends keyof AgentOsEvents>(
@@ -84,28 +85,58 @@ const cron: SerializableCronJobOptions = {
 
 async function main(): Promise<void> {
 	const handle = client.vm.getOrCreate("my-agent");
-	await client.inputVm.create("input-agent", {
+	void client.vm.get("my-agent").createPreviewUrl;
+	void client.vm.getForId("actor-id").createPreviewUrl;
+	const connection = handle.connect();
+	connection.on("sessionEvent", (event) => acceptSessionStreamEntry(event));
+	connection.on("sessionEvent", (event) => {
+		if (event.sessionId === "session-1") acceptSessionStreamEntry(event);
+	});
+	const createdHandle = await client.inputVm.create("input-agent", {
 		input: { workspace: "/work" },
 	});
+	void createdHandle.createPreviewUrl;
 
-	await handle.createSession("pi", { cwd: "/work" });
-	await handle.sendPrompt("session-1", "List the files in /work.");
+	const sessionId = "session-1";
+	await handle.openSession({
+		sessionId,
+		agent: "pi",
+		cwd: "/work",
+		permissionPolicy: "ask",
+	});
+	const session = await handle.getSession({ sessionId });
+	await handle.prompt({
+		sessionId: "session-1",
+		content: [{ type: "text", text: "List the files in /work." }],
+	});
 	await handle.scheduleCron(cron);
-	await handle.createSignedPreviewUrl(3000, 300);
+	await handle.createPreviewUrl(3000, 300);
 
 	acceptEvent("sessionEvent", {
+		durability: "ephemeral",
+		type: "agent_message_chunk",
 		sessionId: "session-1",
-		event: { jsonrpc: "2.0", method: "session/update" },
+		afterSequence: 0,
+		content: { type: "text", text: "Working…" },
 	});
-	acceptEvent("permissionRequest", {
+	acceptEvent("sessionEvent", {
+		durability: "durable",
+		type: "permission_request",
 		sessionId: "session-1",
-		request: { permissionId: "perm-1", params: {} },
+		sequence: 1,
+		timestamp: new Date().toISOString(),
+		requestId: "request-1",
+		toolCall: { toolCallId: "tool-1", title: "Write a file" },
+		options: [
+			{
+				optionId: "allow_once",
+				name: "Allow once",
+				kind: "allow_once",
+			},
+		],
 	});
 
-	acceptPublicDomainType({
-		sessionId: "session-1",
-		agentType: "pi",
-	});
+	acceptPublicDomainType(session);
 }
 
 export { main };

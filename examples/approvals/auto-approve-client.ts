@@ -1,11 +1,17 @@
 import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
 
-const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
+const client = createClient<typeof registry>({
+	endpoint: "http://localhost:6420",
+});
 const agent = client.vm.getOrCreate("my-agent");
 
-// No need to handle permissions on the client. The server hook handles them.
-const sessionId = await agent.createSession("claude", {
-  env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
+// allow_all selects an adapter-supplied allow option without a client round-trip.
+await agent.openSession({
+	agent: "pi",
+	permissionPolicy: "allow_all",
+	env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 });
-await agent.sendPrompt(sessionId, "Write files as needed");
+await agent.prompt({
+	content: [{ type: "text", text: "Write files as needed" }],
+});

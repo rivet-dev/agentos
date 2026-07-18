@@ -323,8 +323,10 @@ const FS_ALLOW: &[&str] = &[
     // it never handles guest paths at runtime.
     "crates/vfs/src/package_format/mod.rs",
     "crates/vfs/src/package_format/pack.rs",
-    // ACP trace output is an operator-selected host diagnostic sink.
-    "crates/agentos-sidecar/src/acp_extension.rs",
+    // ACP trace output is an operator-selected host diagnostic sink. The
+    // extension is split mechanically across its module root and restore path.
+    "crates/agentos-sidecar/src/acp/mod.rs",
+    "crates/agentos-sidecar/src/acp/restore.rs",
     // Tar-backed read-only VFS: mmaps the trusted, client-configured package
     // tar from the host and serves member byte ranges without extracting.
     // Same sanctioned read-only host-source boundary as host_dir.rs (the tar is
@@ -385,6 +387,9 @@ const NET_ALLOW: &[&str] = &[
     // Authenticated local transport from the sidecar to the owning actor's
     // SQLite UDS endpoint. This is local IPC, not external network egress.
     "crates/actor-uds-client/src/lib.rs",
+    // Test-only actor SQLite UDS fixture; it opens local Unix sockets but no
+    // external network connection.
+    "crates/agentos-sidecar/src/session_store/performance_tests.rs",
 ];
 
 /// process: OS subprocess creation.
@@ -409,7 +414,8 @@ const PROCESS_ALLOW: &[&str] = &[
 const ENV_ALLOW: &[&str] = &[
     "crates/sidecar-client/src/transport.rs",
     "crates/client/src/sidecar.rs",
-    "crates/agentos-sidecar/src/acp_extension.rs",
+    // Operator-selected ACP trace output path.
+    "crates/agentos-sidecar/src/acp/restore.rs",
     "crates/agentos-sidecar/src/main.rs",
     "crates/execution/src/host_node.rs",
     // Node import cache reads an operator timeout knob before materializing
@@ -662,9 +668,20 @@ fn generic_runtime_layers_do_not_depend_on_product_or_acp_layers() {
 #[test]
 fn shared_acp_runtime_has_no_adapter_name_policy() {
     let root = repo_root();
-    let source = std::fs::read_to_string(root.join("crates/agentos-sidecar/src/acp_extension.rs"))
-        .expect("read native ACP extension");
-    let production = source.split("#[cfg(test)]").next().unwrap_or(&source);
+    let production = ["mod.rs", "runtime.rs", "restore.rs", "turn.rs"]
+        .into_iter()
+        .map(|file| {
+            let source =
+                std::fs::read_to_string(root.join("crates/agentos-sidecar/src/acp").join(file))
+                    .unwrap_or_else(|error| panic!("read native ACP module {file}: {error}"));
+            source
+                .split("#[cfg(test)]")
+                .next()
+                .unwrap_or(&source)
+                .to_owned()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     for adapter_name in [
         "\"claude\"",
         "\"codex\"",
@@ -1235,7 +1252,7 @@ fn protocol_and_abort_delivery_have_no_recurring_poll_timer() {
     let root = repo_root();
     for (relative_path, forbidden) in [
         (
-            "crates/agentos-sidecar/src/acp_extension.rs",
+            "crates/agentos-sidecar/src/acp/runtime.rs",
             &["ACP_JSON_RPC_POLL_INTERVAL", "remaining.min(ACP_"][..],
         ),
         (

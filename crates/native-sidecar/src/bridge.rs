@@ -1019,6 +1019,7 @@ pub(crate) struct MountPluginContext<B> {
     pub(crate) session_id: String,
     pub(crate) vm_id: String,
     pub(crate) sidecar_requests: SharedSidecarRequestClient,
+    pub(crate) database: Option<crate::vm_sqlite::SharedVmSqliteDatabase>,
     pub(crate) max_pread_bytes: Option<usize>,
 }
 

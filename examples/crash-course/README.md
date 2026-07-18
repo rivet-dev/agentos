@@ -16,9 +16,9 @@ A single `server.ts` stands up an Agent OS registry with the `pi` agent software
 - **Sessions** (`minimal-client.ts`, `sessions-client.ts`) — create a session, stream `sessionEvent`s, send prompts, and read back files the agent wrote.
 - **Filesystem** (`filesystem-client.ts`) — `writeFile`, `readFile`, and recursive directory listing.
 - **Processes** (`processes-client.ts`) — one-shot `exec` plus long-running `spawn` with streamed `processOutput`.
-- **Networking** (`networking-client.ts`) — `vmFetch` against an in-VM service and signed public preview URLs.
+- **Networking** (`networking-client.ts`) — `httpRequest` against an in-VM service and actor-namespaced signed preview URLs.
 - **Cron** (`cron-client.ts`) — schedule recurring `exec` commands and agent sessions.
-- **Permissions** (`permissions-client.ts`, `permissions-server.ts`) — handle permission requests client-side (human-in-the-loop) or auto-approve server-side.
+- **Permissions** (`permissions-client.ts`, `permissions-server.ts`) — observe interactive permission requests through the generic session-event stream; use `permissionPolicy: "ask"` when prompting for a decision, or the default `allow_all` for unattended approval.
 - **Multiplayer** (`multiplayer-client.ts`) — two clients observing the same shared agent session.
 - **Agent-to-agent** (`agent-to-agent-*.ts`) — a coder agent calls a `review` binding that drives a separate reviewer agent.
 

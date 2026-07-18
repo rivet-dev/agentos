@@ -142,7 +142,8 @@ describe("synthetic session/update compatibility", () => {
 		let sessionId: string | undefined;
 
 		try {
-			sessionId = (await vm.createSession("synthetic")).sessionId;
+			sessionId = "synthetic-updates";
+			await vm.openSession({ sessionId, agent: "synthetic" });
 
 			const receivedEvents: string[] = [];
 			const unsubscribe = vm.onSessionEvent(sessionId, (event) => {
@@ -180,7 +181,7 @@ describe("synthetic session/update compatibility", () => {
 			).toBeGreaterThanOrEqual(2);
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				vm.unloadSession({ sessionId });
 			}
 			await vm.dispose();
 			agentPackage.cleanup();

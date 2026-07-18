@@ -13,7 +13,6 @@ mod common;
 use std::sync::{Arc, Mutex};
 
 use agentos_client::{ClientError, ExecOptions, SpawnOptions, StdinInput};
-use futures::StreamExt;
 
 #[tokio::test]
 async fn process_surface_exec_spawn_and_snapshot() {
@@ -65,10 +64,10 @@ async fn process_surface_exec_spawn_and_snapshot() {
     );
     assert!(
         matches!(
-            os.on_process_stdout(MISSING_PID),
+            os.on_process_output(MISSING_PID, |_| {}),
             Err(ClientError::ProcessNotFound(_))
         ),
-        "on_process_stdout(unknown) must return ProcessNotFound"
+        "on_process_output(unknown) must return ProcessNotFound"
     );
     assert!(
         matches!(
@@ -173,9 +172,14 @@ async fn process_surface_exec_spawn_and_snapshot() {
     );
 
     // Subscribe to stdout BEFORE writing so no output is missed.
-    let mut stdout = os
-        .on_process_stdout(handle.pid)
-        .expect("subscribe spawn stdout");
+    let (stdout_tx, mut stdout_rx) = tokio::sync::mpsc::unbounded_channel();
+    let _output = os
+        .on_process_output(handle.pid, move |event| {
+            if event.stream == agentos_client::ProcessStream::Stdout {
+                let _ = stdout_tx.send(event.data);
+            }
+        })
+        .expect("subscribe spawn output");
 
     // get_process / list_processes reflect the live SDK process.
     let info = os.get_process(handle.pid).expect("get_process");
@@ -198,7 +202,7 @@ async fn process_surface_exec_spawn_and_snapshot() {
     let collected = tokio::time::timeout(std::time::Duration::from_secs(10), async {
         let mut buf = Vec::<u8>::new();
         while buf.len() < expected_spawn_stdout.len() {
-            let Some(chunk) = stdout.next().await else {
+            let Some(chunk) = stdout_rx.recv().await else {
                 break;
             };
             buf.extend_from_slice(&chunk);

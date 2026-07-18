@@ -8,7 +8,8 @@ const agent = client.vm.getOrCreate("my-agent");
 
 // The Browserbase credentials go into the session environment, so every
 // command the agent runs — including `browse` — inherits them.
-const sessionId = await agent.createSession("pi", {
+await agent.openSession({
+	agent: "pi",
 	env: {
 		BROWSERBASE_API_KEY: process.env.BROWSERBASE_API_KEY!,
 		BROWSERBASE_PROJECT_ID: process.env.BROWSERBASE_PROJECT_ID!,
@@ -16,10 +17,14 @@ const sessionId = await agent.createSession("pi", {
 	},
 });
 
-const response = await agent.sendPrompt(
-	sessionId,
-	"Run `browse cloud fetch https://example.com` and tell me in one sentence what the page is about.",
-);
-console.log(response.text);
+const response = await agent.prompt({
+	content: [
+		{
+			type: "text",
+			text: "Run `browse cloud fetch https://example.com` and tell me in one sentence what the page is about.",
+		},
+	],
+});
+console.log(response.message?.content ?? []);
 
-await agent.closeSession(sessionId);
+await agent.deleteSession();

@@ -56,6 +56,7 @@
 		"test:e2e:run": "AGENTOS_ACTOR_E2E=1 vitest run tests/actor.e2e.test.ts tests/agent-os-conformance.e2e.test.ts --fileParallelism=false"
 	},
 	"dependencies": {
+		"@agentclientprotocol/sdk": "0.16.1",
 		"@agentos-software/common": "workspace:*",
 		"@rivet-dev/agentos-core": "workspace:*",
 		"@rivetkit/react": "catalog:rivetkit",

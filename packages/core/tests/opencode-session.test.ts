@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import {
 	createServer,
 	type IncomingMessage,
@@ -9,7 +9,6 @@ import { join, resolve } from "node:path";
 import opencode from "@agentos-software/opencode";
 import type { Fixture, ToolCall } from "@copilotkit/llmock";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import type { AgentCapabilities, AgentInfo } from "../src/agent-os.js";
 import { AgentOs } from "../src/agent-os.js";
 import {
 	createAnthropicFixture,
@@ -73,8 +72,8 @@ const shellSoftware = shellCommandDir
 			{
 				commandDir: shellCommandDir,
 				commands: [
-					{ name: "sh", permissionTier: "full" },
-					{ name: "bash", permissionTier: "full", aliasOf: "sh" },
+					{ name: "sh", permissionTier: "full" as const },
+					{ name: "bash", permissionTier: "full" as const, aliasOf: "sh" },
 				],
 			},
 		]
@@ -273,8 +272,12 @@ async function createOpenCodeOnlyVm(mockUrl: string): Promise<AgentOs> {
 	});
 }
 
+function textPrompt(vm: AgentOs, sessionId: string, text: string) {
+	return vm.prompt({ sessionId, content: [{ type: "text", text }] });
+}
+
 describe("OpenCode session API integration", () => {
-	test("full createSession'opencode' inside the VM", async () => {
+	test("full openSession({ agent: 'opencode' }) inside the VM", async () => {
 		const { mock, url } = await startLlmock([DEFAULT_TEXT_FIXTURE]);
 		const vm = await createOpenCodeVm(url);
 
@@ -282,46 +285,47 @@ describe("OpenCode session API integration", () => {
 		try {
 			const homeDir = await createVmOpenCodeHome(vm, url);
 			const workspaceDir = await createVmWorkspace(vm);
-			sessionId = (
-				await vm.createSession("opencode", {
-					cwd: workspaceDir,
-					env: {
-						HOME: homeDir,
-						ANTHROPIC_API_KEY: "mock-key",
-					},
-				})
-			).sessionId;
+			sessionId = "main";
+			await vm.openSession({
+				sessionId,
+				agent: "opencode",
+				permissionPolicy: "ask",
+				cwd: workspaceDir,
+				env: {
+					HOME: homeDir,
+					ANTHROPIC_API_KEY: "mock-key",
+				},
+			});
 
-			const agentInfo = vm.getSessionAgentInfo(sessionId) as AgentInfo;
+			const agentInfo = await vm.getSessionAgentInfo({ sessionId });
 			expect(agentInfo.name).toBe("OpenCode");
 			expect(agentInfo.version).toBeTruthy();
 
-			const capabilities = vm.getSessionCapabilities(
-				sessionId,
-			) as AgentCapabilities;
-			expect(capabilities.promptCapabilities).toMatchObject({
+			const capabilities = await vm.getSessionCapabilities({ sessionId });
+			expect(capabilities?.prompt).toMatchObject({
 				embeddedContext: true,
 				image: true,
 			});
 
-			const modes = vm.getSessionModes(sessionId);
-			expect(modes?.currentModeId).toBe("build");
-			expect(modes?.availableModes.map((mode) => mode.id)).toEqual(
+			const config = await vm.getSessionConfig({ sessionId });
+			const modes = config.options.find((option) => option.id === "mode");
+			expect(modes?.type).toBe("select");
+			if (modes?.type !== "select") throw new Error("missing mode selector");
+			expect(modes.currentValue).toBe("build");
+			expect(modes.options.map((mode) => mode.value)).toEqual(
 				expect.arrayContaining(["build", "plan"]),
 			);
 
-			const configOptions = vm.getSessionConfigOptions(sessionId);
-			expect(configOptions.some((option) => option.category === "model")).toBe(
+			expect(config.options.some((option) => option.category === "model")).toBe(
 				true,
 			);
 
-			expect(vm.listSessions()).toContainEqual({
-				sessionId,
-				agentType: "opencode",
-			});
+			expect((await vm.listSessions()).sessions).toContainEqual(
+				expect.objectContaining({ sessionId, agent: "opencode" }),
+			);
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.unloadSession({ sessionId });
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
@@ -347,66 +351,66 @@ describe("OpenCode session API integration", () => {
 		try {
 			const homeDir = await createVmOpenCodeHome(vm, url);
 			const workspaceDir = await createVmWorkspace(vm);
-			sessionId = (
-				await vm.createSession("opencode", {
-					cwd: workspaceDir,
-					env: {
-						HOME: homeDir,
-						ANTHROPIC_API_KEY: "mock-key",
-					},
-				})
-			).sessionId;
+			sessionId = "main";
+			await vm.openSession({
+				sessionId,
+				agent: "opencode",
+				cwd: workspaceDir,
+				env: {
+					HOME: homeDir,
+					ANTHROPIC_API_KEY: "mock-key",
+				},
+			});
 
-			const agentInfo = vm.getSessionAgentInfo(sessionId) as AgentInfo;
+			const agentInfo = await vm.getSessionAgentInfo({ sessionId });
 			expect(agentInfo.name).toBe("OpenCode");
 			expect(agentInfo.version).toBeTruthy();
 
-			const capabilities = vm.getSessionCapabilities(
-				sessionId,
-			) as AgentCapabilities;
-			expect(capabilities.promptCapabilities).toMatchObject({
+			const capabilities = await vm.getSessionCapabilities({ sessionId });
+			expect(capabilities?.prompt).toMatchObject({
 				embeddedContext: true,
 				image: true,
 			});
 
-			const modes = vm.getSessionModes(sessionId);
-			expect(modes?.currentModeId).toBe("build");
-			expect(modes?.availableModes.map((mode) => mode.id)).toEqual(
+			const config = await vm.getSessionConfig({ sessionId });
+			const modes = config.options.find((option) => option.id === "mode");
+			expect(modes?.type).toBe("select");
+			if (modes?.type !== "select") throw new Error("missing mode selector");
+			expect(modes.currentValue).toBe("build");
+			expect(modes.options.map((mode) => mode.value)).toEqual(
 				expect.arrayContaining(["build", "plan"]),
 			);
 
-			const configOptions = vm.getSessionConfigOptions(sessionId);
-			expect(configOptions.some((option) => option.category === "model")).toBe(
+			expect(config.options.some((option) => option.category === "model")).toBe(
 				true,
 			);
 
-			const events: { method: string; params?: unknown }[] = [];
+			const events: unknown[] = [];
 			const unsubscribeEvents = vm.onSessionEvent(sessionId, (event) => {
 				events.push(event);
 			});
-			const { response } = await vm.prompt(
+			const response = await textPrompt(
+				vm,
 				sessionId,
 				"Create notes.txt with the text hello from tool.",
 			);
 			unsubscribeEvents();
 
-			expect(response.error).toBeUndefined();
+			expect(response.stopReason).toBeDefined();
 			expect(await readVmText(vm, `${workspaceDir}/notes.txt`)).toBe(
 				"hello from tool",
 			);
 			expect(mock.getRequests().length).toBeGreaterThanOrEqual(2);
 
 			expect(
-				events.some(
-					(event) =>
-						event.method === "session/update" &&
-						JSON.stringify(event.params).includes("tool_call"),
+				events.some((event) =>
+					JSON.stringify(event).includes("tool_call"),
 				),
 			).toBe(true);
 			expect(events.length).toBeGreaterThan(0);
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.unloadSession({ sessionId });
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
@@ -455,25 +459,27 @@ describe("OpenCode session API integration", () => {
 						},
 					});
 					const workspaceDir = await createVmWorkspace(vm);
-					sessionId = (
-						await vm.createSession("opencode", {
-							cwd: workspaceDir,
-							env: {
-								HOME: homeDir,
-								[providerCase.envName]: "mock-key",
-							},
-						})
-					).sessionId;
+					sessionId = "main";
+					await vm.openSession({
+						sessionId,
+						agent: "opencode",
+						cwd: workspaceDir,
+						env: {
+							HOME: homeDir,
+							[providerCase.envName]: "mock-key",
+						},
+					});
 
-					const { response } = await vm.prompt(
+					const response = await textPrompt(
+						vm,
 						sessionId,
 						`Reply with exactly ${providerCase.reply}.`,
 					);
 
-					expect(response.error).toBeUndefined();
+					expect(response.stopReason).toBeDefined();
 				} finally {
 					if (sessionId) {
-						vm.closeSession(sessionId);
+						await vm.unloadSession({ sessionId });
 					}
 					await vm.dispose();
 				}
@@ -497,49 +503,57 @@ describe("OpenCode session API integration", () => {
 		try {
 			const homeDir = await createVmOpenCodeHome(vm, url);
 			const workspaceDir = await createVmWorkspace(vm);
-			sessionId = (
-				await vm.createSession("opencode", {
-					cwd: workspaceDir,
-					env: {
-						HOME: homeDir,
-						ANTHROPIC_API_KEY: "mock-key",
-					},
-				})
-			).sessionId;
-
-			expect(vm.listSessions()).toContainEqual({
+			sessionId = "main";
+			await vm.openSession({
 				sessionId,
-				agentType: "opencode",
+				agent: "opencode",
+				cwd: workspaceDir,
+				env: {
+					HOME: homeDir,
+					ANTHROPIC_API_KEY: "mock-key",
+				},
 			});
 
-			const modelOption = vm
-				.getSessionConfigOptions(sessionId)
-				.find((option) => option.category === "model");
+			expect((await vm.listSessions()).sessions).toContainEqual(
+				expect.objectContaining({ sessionId, agent: "opencode" }),
+			);
+
+			const modelOption = (
+				await vm.getSessionConfig({ sessionId })
+			).options.find((option) => option.category === "model");
 			expect(modelOption).toMatchObject({
 				id: "model",
 				category: "model",
 				currentValue: "anthropic/claude-sonnet-4-20250514",
-				readOnly: true,
 			});
-			expect(modelOption?.description).toContain("before createSession()");
+			expect(modelOption?.description).toContain("before opening the session");
 
-			const setModelResponse = await vm.setSessionModel(
+			await expect(
+				vm.setSessionConfigOption({
+					sessionId,
+					configId: "model",
+					value: "anthropic/claude-opus-4-1-20250805",
+				}),
+			).rejects.toThrow("configured before opening the session");
+
+			const setModeResponse = await vm.setSessionConfigOption({
 				sessionId,
-				"anthropic/claude-opus-4-1-20250805",
+				configId: "mode",
+				value: "plan",
+			});
+			const modeOption = setModeResponse.options.find(
+				(option) => option.id === "mode",
 			);
-			expect(setModelResponse.error?.message).toContain(
-				"configured before createSession()",
+			expect(modeOption?.type === "select" && modeOption.currentValue).toBe(
+				"plan",
 			);
 
-			const setModeResponse = await vm.setSessionMode(sessionId, "plan");
-			expect(setModeResponse.error).toBeUndefined();
-			expect(vm.getSessionModes(sessionId)?.currentModeId).toBe("plan");
-
-			const { response: promptResponse } = await vm.prompt(
+			const promptResponse = await textPrompt(
+				vm,
 				sessionId,
 				"Plan the next step without running tools.",
 			);
-			expect(promptResponse.error).toBeUndefined();
+			expect(promptResponse.stopReason).toBeDefined();
 			expect(
 				mock
 					.getRequests()
@@ -560,92 +574,16 @@ describe("OpenCode session API integration", () => {
 			expect(modelsUsed).not.toContain("claude-opus-4-1-20250805");
 
 			const destroyedSessionId = sessionId;
-			await vm.destroySession(destroyedSessionId);
+			await vm.deleteSession({ sessionId: destroyedSessionId });
 			sessionId = undefined;
-			expect(vm.listSessions()).not.toContainEqual({
-				sessionId: destroyedSessionId,
-				agentType: "opencode",
-			});
+			expect((await vm.listSessions()).sessions).not.toContainEqual(
+				expect.objectContaining({ sessionId: destroyedSessionId }),
+			);
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.unloadSession({ sessionId });
 			}
 			await vm.dispose();
-			await stopLlmock(mock);
-		}
-	}, 120_000);
-
-	test("real OpenCode missing session/load degrades to transcript fallback", async () => {
-		const { mock, url } = await startLlmock([DEFAULT_TEXT_FIXTURE]);
-
-		let vm: AgentOs | undefined;
-		let liveSessionId: string | undefined;
-		try {
-			vm = await createOpenCodeOnlyVm(url);
-			const homeDir = await createVmOpenCodeHome(vm, url);
-			const workspaceDir = await createVmWorkspace(vm);
-			const externalSessionId = "missing-opencode-session";
-			const transcriptPath = `/root/.agentos/threads/${externalSessionId}.md`;
-
-			const resumed = await vm.resumeSession(externalSessionId, "opencode", {
-				cwd: workspaceDir,
-				env: {
-					HOME: homeDir,
-					ANTHROPIC_API_KEY: "mock-key",
-				},
-				transcriptPath,
-			});
-			liveSessionId = resumed.sessionId;
-
-			expect(resumed.mode).toBe("fallback");
-			expect(resumed.sessionId).not.toBe(externalSessionId);
-
-			const { response } = await vm.prompt(
-				liveSessionId,
-				"Continue from the missing native session.",
-			);
-			expect(response.error).toBeUndefined();
-
-			expect(
-				mock
-					.getRequests()
-					.some((request) =>
-						hasUserMessageContaining(
-							request,
-							"You are continuing an earlier session",
-						),
-					),
-			).toBe(true);
-			expect(
-				mock
-					.getRequests()
-					.some((request) => hasUserMessageContaining(request, transcriptPath)),
-			).toBe(true);
-
-			const traces = readFileSync(ACP_TRACE_PATH, "utf8")
-				.trim()
-				.split("\n")
-				.map((line) => JSON.parse(line) as Record<string, unknown>);
-			const loadTrace = traces.find((trace) => trace.method === "session/load");
-			expect(loadTrace?.response).toMatchObject({
-				error: {
-					code: -32603,
-					data: {
-						details: "NotFoundError",
-					},
-				},
-			});
-			expect(
-				(loadTrace?.response as { error?: { data?: { kind?: unknown } } }).error
-					?.data?.kind,
-			).toBeUndefined();
-		} finally {
-			if (liveSessionId) {
-				vm?.closeSession(liveSessionId);
-			}
-			if (vm) {
-				await vm.dispose();
-			}
 			await stopLlmock(mock);
 		}
 	}, 120_000);
@@ -673,36 +611,23 @@ describe("OpenCode session API integration", () => {
 		try {
 			const homeDir = await createVmOpenCodeHome(vm, url);
 			const workspaceDir = await createVmWorkspace(vm);
-			sessionId = (
-				await vm.createSession("opencode", {
-					cwd: workspaceDir,
-					env: {
-						HOME: homeDir,
-						ANTHROPIC_API_KEY: "mock-key",
-					},
-				})
-			).sessionId;
-
-			const firstResponse = await vm.prompt(sessionId, firstPrompt);
-			expect(firstResponse.response.error).toBeUndefined();
-			vm.closeSession(sessionId);
-
-			const resumed = await vm.resumeSession(sessionId, "opencode", {
+			sessionId = "main";
+			await vm.openSession({
+				sessionId,
+				agent: "opencode",
 				cwd: workspaceDir,
 				env: {
 					HOME: homeDir,
 					ANTHROPIC_API_KEY: "mock-key",
 				},
-				transcriptPath: `/root/.agentos/threads/${sessionId}.md`,
 			});
 
-			expect(resumed).toMatchObject({
-				mode: "native",
-				sessionId,
-			});
+			const firstResponse = await textPrompt(vm, sessionId, firstPrompt);
+			expect(firstResponse.stopReason).toBeDefined();
+			await vm.unloadSession({ sessionId });
 
-			const secondResponse = await vm.prompt(resumed.sessionId, secondPrompt);
-			expect(secondResponse.response.error).toBeUndefined();
+			const secondResponse = await textPrompt(vm, sessionId, secondPrompt);
+			expect(secondResponse.stopReason).toBeDefined();
 
 			const secondRequest = mock
 				.getRequests()
@@ -717,7 +642,7 @@ describe("OpenCode session API integration", () => {
 			).toBe(false);
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.unloadSession({ sessionId });
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
@@ -740,45 +665,32 @@ describe("OpenCode session API integration", () => {
 		try {
 			const homeDir = await createVmOpenCodeHome(vm, url);
 			const workspaceDir = await createVmWorkspace(vm);
-			sessionId = (
-				await vm.createSession("opencode", {
-					cwd: workspaceDir,
-					env: {
-						HOME: homeDir,
-						ANTHROPIC_API_KEY: "mock-key",
-					},
-				})
-			).sessionId;
+			sessionId = "main";
+			await vm.openSession({
+				sessionId,
+				agent: "opencode",
+				cwd: workspaceDir,
+				env: {
+					HOME: homeDir,
+					ANTHROPIC_API_KEY: "mock-key",
+				},
+			});
 
-			const promptPromise = vm.prompt(
+			const promptPromise = textPrompt(
+				vm,
 				sessionId,
 				"Take a while and then answer.",
 			);
 			await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
 
-			const cancelResponse = await vm.cancelSession(sessionId);
-			expect(cancelResponse.error).toBeUndefined();
-			expect(
-				cancelResponse.result as {
-					cancelled: boolean;
-					requested: boolean;
-					via: string;
-				},
-			).toMatchObject({
-				cancelled: true,
-				requested: true,
-				via: "prompt-fallback",
-			});
+			const cancelResponse = await vm.cancelPrompt({ sessionId });
+			expect(cancelResponse.status).toBe("cancelled");
 
 			const promptResponse = await promptPromise;
-			expect(promptResponse.response.error).toBeUndefined();
-			expect(
-				(promptResponse.response.result as { stopReason?: string } | undefined)
-					?.stopReason,
-			).toBe("cancelled");
+			expect(promptResponse.stopReason).toBe("cancelled");
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.unloadSession({ sessionId });
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
@@ -834,34 +746,43 @@ describe("OpenCode session API integration", () => {
 					permission: { bash: "ask" },
 				});
 				const workspaceDir = await createVmWorkspace(vm);
-				sessionId = (
-					await vm.createSession("opencode", {
-						cwd: workspaceDir,
-						env: {
-							HOME: homeDir,
-							ANTHROPIC_API_KEY: "mock-key",
-						},
-					})
-				).sessionId;
+				sessionId = "main";
+				await vm.openSession({
+					sessionId,
+					agent: "opencode",
+					permissionPolicy: "ask",
+					cwd: workspaceDir,
+					env: {
+						HOME: homeDir,
+						ANTHROPIC_API_KEY: "mock-key",
+					},
+				});
 				const activeSessionId = sessionId;
 
-				vm.onPermissionRequest(activeSessionId, (request) => {
-					permissionIds.push(request.permissionId);
-					permissionParams.push(request.params);
+				vm.onSessionEvent(activeSessionId, (event) => {
+					if (event.type !== "permission_request") return;
+					permissionIds.push(event.requestId);
+					permissionParams.push(event);
+					const option = event.options.find(
+						(candidate) => candidate.kind === "allow_once",
+					);
+					if (!option) throw new Error("missing ACP allow_once option");
 					permissionResponses.push(
-						vm.respondPermission(activeSessionId, request.permissionId, "once"),
+						vm.respondPermission({
+							sessionId: activeSessionId,
+							requestId: event.requestId,
+							optionId: option.optionId,
+						}),
 					);
 				});
 
-				const { response } = await vm.prompt(
+				const response = await textPrompt(
+					vm,
 					sessionId,
 					"Use bash to write perm-ok into perm-output.txt.",
 				);
-				expect(response.error).toBeUndefined();
+				expect(response.stopReason).toBeDefined();
 				expect(permissionIds).toHaveLength(1);
-				expect(
-					(permissionParams[0]?._acpMethod as string | undefined) ?? "",
-				).toBe("session/request_permission");
 				expect(
 					(
 						permissionParams[0]?.options as
@@ -870,16 +791,14 @@ describe("OpenCode session API integration", () => {
 					)?.map((option) => option.optionId),
 				).toEqual(["once", "always", "reject"]);
 				await expect(Promise.all(permissionResponses)).resolves.toEqual([
-					expect.objectContaining({
-						result: expect.objectContaining({ via: "sidecar-request" }),
-					}),
+					{ status: "accepted" },
 				]);
 				expect(await readVmText(vm, `${workspaceDir}/perm-output.txt`)).toBe(
 					"perm-ok\n",
 				);
 			} finally {
 				if (sessionId) {
-					vm.closeSession(sessionId);
+					await vm.unloadSession({ sessionId });
 				}
 				await vm.dispose();
 				await stopLlmock(mock);
@@ -933,37 +852,51 @@ describe("OpenCode session API integration", () => {
 
 		let sessionId: string | undefined;
 		const permissionIds: string[] = [];
+		const permissionResponses: Promise<unknown>[] = [];
 		try {
 			const homeDir = await createVmOpenCodeHome(vm, url, {
 				permission: { bash: "ask" },
 			});
 			const workspaceDir = await createVmWorkspace(vm);
-			sessionId = (
-				await vm.createSession("opencode", {
-					cwd: workspaceDir,
-					env: {
-						HOME: homeDir,
-						ANTHROPIC_API_KEY: "mock-key",
-					},
-				})
-			).sessionId;
+			sessionId = "main";
+			await vm.openSession({
+				sessionId,
+				agent: "opencode",
+				permissionPolicy: "ask",
+				cwd: workspaceDir,
+				env: {
+					HOME: homeDir,
+					ANTHROPIC_API_KEY: "mock-key",
+				},
+			});
 			const activeSessionId = sessionId;
 
-			vm.onPermissionRequest(activeSessionId, (request) => {
-				permissionIds.push(request.permissionId);
-				void vm.respondPermission(
-					activeSessionId,
-					request.permissionId,
-					"reject",
+			vm.onSessionEvent(activeSessionId, (event) => {
+				if (event.type !== "permission_request") return;
+				permissionIds.push(event.requestId);
+				const option = event.options.find(
+					(candidate) => candidate.kind === "reject_once",
+				);
+				if (!option) throw new Error("missing ACP reject_once option");
+				permissionResponses.push(
+					vm.respondPermission({
+						sessionId: activeSessionId,
+						requestId: event.requestId,
+						optionId: option.optionId,
+					}),
 				);
 			});
 
-			const { response } = await vm.prompt(
+			const response = await textPrompt(
+				vm,
 				sessionId,
 				"Use bash to write perm-no into perm-output.txt.",
 			);
-			expect(response.error).toBeUndefined();
+			expect(response.stopReason).toBeDefined();
 			expect(permissionIds).toHaveLength(1);
+			await expect(Promise.all(permissionResponses)).resolves.toEqual([
+				{ status: "accepted" },
+			]);
 			await expect(
 				vm.readFile(`${workspaceDir}/perm-output.txt`),
 			).rejects.toThrow();
@@ -979,14 +912,14 @@ describe("OpenCode session API integration", () => {
 			).toBe(true);
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.unloadSession({ sessionId });
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
 		}
 	}, 120_000);
 
-	test("supports rawSend() mode changes through the Agent OS session API", async () => {
+	test("supports native ACP mode changes through the AgentOS session API", async () => {
 		const { mock, url } = await startLlmock([DEFAULT_TEXT_FIXTURE]);
 		const vm = await createOpenCodeVm(url);
 
@@ -994,50 +927,55 @@ describe("OpenCode session API integration", () => {
 		try {
 			const homeDir = await createVmOpenCodeHome(vm, url);
 			const workspaceDir = await createVmWorkspace(vm);
-			sessionId = (
-				await vm.createSession("opencode", {
-					cwd: workspaceDir,
-					env: {
-						HOME: homeDir,
-						ANTHROPIC_API_KEY: "mock-key",
-					},
-				})
-			).sessionId;
+			sessionId = "main";
+			await vm.openSession({
+				sessionId,
+				agent: "opencode",
+				cwd: workspaceDir,
+				env: {
+					HOME: homeDir,
+					ANTHROPIC_API_KEY: "mock-key",
+				},
+			});
 
 			const receivedEvents: string[] = [];
 			const unsubscribe = vm.onSessionEvent(sessionId, (event) => {
-				if (event.method !== "session/update") {
-					return;
-				}
-				const serialized = JSON.stringify(event.params);
+				if (event.type !== "current_mode_update") return;
+				const serialized = JSON.stringify(event);
 				if (serialized.includes("current_mode_update")) {
 					receivedEvents.push(serialized);
 				}
 			});
 
-			const setPlanResponse = await vm.setSessionMode(sessionId, "plan");
-			expect(setPlanResponse.error).toBeUndefined();
-			expect(vm.getSessionModes(sessionId)?.currentModeId).toBe("plan");
+			const setPlanResponse = await vm.setSessionConfigOption({
+				sessionId,
+				configId: "mode",
+				value: "plan",
+			});
+			const planMode = setPlanResponse.options.find(
+				(option) => option.id === "mode",
+			);
+			expect(planMode?.type === "select" && planMode.currentValue).toBe("plan");
 
 			const planPrompt = "Plan once and do not run tools.";
-			const { response: planPromptResponse } = await vm.prompt(
-				sessionId,
-				planPrompt,
-			);
-			expect(planPromptResponse.error).toBeUndefined();
+			const planPromptResponse = await textPrompt(vm, sessionId, planPrompt);
+			expect(planPromptResponse.stopReason).toBeDefined();
 
-			const rawBuildResponse = await vm.rawSend(sessionId, "session/set_mode", {
-				modeId: "build",
+			const buildResponse = await vm.setSessionConfigOption({
+				sessionId,
+				configId: "mode",
+				value: "build",
 			});
-			expect(rawBuildResponse.error).toBeUndefined();
-			expect(vm.getSessionModes(sessionId)?.currentModeId).toBe("build");
+			const buildMode = buildResponse.options.find(
+				(option) => option.id === "mode",
+			);
+			expect(buildMode?.type === "select" && buildMode.currentValue).toBe(
+				"build",
+			);
 
 			const buildPrompt = "Answer normally after returning to build mode.";
-			const { response: buildPromptResponse } = await vm.prompt(
-				sessionId,
-				buildPrompt,
-			);
-			expect(buildPromptResponse.error).toBeUndefined();
+			const buildPromptResponse = await textPrompt(vm, sessionId, buildPrompt);
+			expect(buildPromptResponse.stopReason).toBeDefined();
 			await new Promise<void>((resolve) => queueMicrotask(resolve));
 
 			expect(
@@ -1069,7 +1007,7 @@ describe("OpenCode session API integration", () => {
 			).toBe(false);
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.unloadSession({ sessionId });
 			}
 			await vm.dispose();
 			await stopLlmock(mock);

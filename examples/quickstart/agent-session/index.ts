@@ -23,21 +23,21 @@ const agent = "pi";
 const env: Record<string, string> = {};
 if (ANTHROPIC_API_KEY) env.ANTHROPIC_API_KEY = ANTHROPIC_API_KEY;
 
-const { sessionId } = await vm.createSession(agent, { env });
-console.log("Session ID:", sessionId);
+await vm.openSession({ agent, env });
 
 // Listen for session events (streamed text, tool use, etc.)
-vm.onSessionEvent(sessionId, (event) => {
+vm.onSessionEvent((event) => {
 	console.log("Event:", JSON.stringify(event, null, 2));
 });
 
 // Send a prompt and wait for the response
-const { text } = await vm.prompt(
-	sessionId,
-	"What is 2 + 2? Reply with just the number.",
-);
-console.log("Response:", text);
+const result = await vm.prompt({
+	content: [
+		{ type: "text", text: "What is 2 + 2? Reply with just the number." },
+	],
+});
+console.log("Response:", result.message?.content ?? []);
 
 // Close the session
-vm.closeSession(sessionId);
+await vm.deleteSession();
 await vm.dispose();

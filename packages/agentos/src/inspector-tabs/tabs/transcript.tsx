@@ -1,10 +1,11 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
+import type { SessionStreamEntry } from "@rivet-dev/agentos-core";
 import { useEffect, useRef, useState } from "react";
 import { AgentOsEmpty, StatusDot } from "../common";
 import { cn } from "../lib/cn";
 import { useAgentOsActor } from "../lib/rivet";
-import { agentOsSource, mapNotification } from "../lib/source";
-import type { JsonRpcNotification, SessionEventPayload, TranscriptEvent } from "../lib/types";
+import { agentOsSource, mapSessionEvent } from "../lib/source";
+import type { TranscriptEvent } from "../lib/types";
 import { ScrollArea } from "../ui/scroll-area";
 import React from "react";
 
@@ -60,7 +61,7 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 	const actor = useAgentOsActor();
 	const useAgentEvent = actor.useEvent as (
 		name: string,
-		handler: (payload: SessionEventPayload) => void,
+		handler: (event: SessionStreamEntry) => void,
 	) => void;
 	const [live, setLive] = useState<TranscriptEvent[]>([]);
 	// Keep the latest session id in a ref so the event handler never filters
@@ -70,15 +71,11 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 	useEffect(() => {
 		setLive([]);
 	}, [sessionId]);
-	useAgentEvent("sessionEvent", (payload) => {
+	useAgentEvent("sessionEvent", (event) => {
 		const cur = sessionIdRef.current;
 		if (!cur) return;
-		// Broadcast may omit sessionId; when present, keep only this session's.
-		if (payload?.sessionId && payload.sessionId !== cur) return;
-		const notification: JsonRpcNotification | undefined =
-			payload?.event ?? (payload as unknown as JsonRpcNotification);
-		if (!notification) return;
-		setLive((prev) => [...prev, mapNotification(notification)]);
+		if (event.sessionId !== cur) return;
+		setLive((prev) => [...prev, mapSessionEvent(event)]);
 	});
 	return (
 		<div className="flex h-full min-h-0">

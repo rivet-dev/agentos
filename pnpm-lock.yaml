@@ -2237,6 +2237,9 @@ importers:
 
   packages/agentos:
     dependencies:
+      '@agentclientprotocol/sdk':
+        specifier: 0.16.1
+        version: 0.16.1(zod@4.3.6)
       '@agentos-software/common':
         specifier: workspace:*
         version: link:../../software/common
@@ -2418,6 +2421,9 @@ importers:
 
   packages/core:
     dependencies:
+      '@agentclientprotocol/sdk':
+        specifier: 0.16.1
+        version: 0.16.1(zod@4.3.6)
       '@agentos-software/claude-code':
         specifier: workspace:*
         version: link:../../software/claude

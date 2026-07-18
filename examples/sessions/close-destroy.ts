@@ -6,9 +6,13 @@ const client = createClient<typeof registry>({
 });
 const agent = client.vm.getOrCreate("my-agent");
 
-const sessionId = await agent.createSession("pi", {
+await agent.openSession({
+	agent: "pi",
 	env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 });
 
-// Close the live session and release its resources. Events are not replayed.
-await agent.closeSession(sessionId);
+// Release only the adapter. SQLite history remains and the next prompt restores it.
+await agent.unloadSession();
+
+// Permanent deletion requires an explicit public session ID.
+await agent.deleteSession();

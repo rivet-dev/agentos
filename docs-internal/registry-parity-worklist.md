@@ -706,7 +706,7 @@ real e2e tests that prove Linux-parity behavior — not smoke tests.
     `2026-07-08T13-12-51-0700-item12-jq-check-types-final.log`;
     `2026-07-08T13-12-51-0700-item12-jq-cargo-fmt-check-final.log`.
     Rev: `slnmvuqz`.
-  - **pi — DONE.** Enabled the existing real `createSession('pi')` headless
+  - **pi — DONE.** Enabled the existing real `openSession({ sessionId: 'main', agent: 'pi' })` headless
     suite in default core Vitest coverage and unskipped the upstream Pi SDK bash
     tool path. The suite proves initialization over the native sidecar
     transport plus real ACP write-tool and bash-tool flows inside the VM. Proof:
@@ -714,7 +714,7 @@ real e2e tests that prove Linux-parity behavior — not smoke tests.
     `2026-07-08T14-37-00-0700-item12-sidecar-build-after-manual-cc-restore.log`;
     `2026-07-08T14-38-00-0700-item12-pi-headless-final-after-cc-restore.log`.
     Rev: `mzuuypsm`.
-  - **pi-cli — DONE.** Enabled the existing real `createSession('pi-cli')`
+  - **pi-cli — DONE.** Enabled the existing real `openSession({ sessionId: 'main', agent: 'pi-cli' })`
     headless suite in default core Vitest coverage and unskipped the unmodified
     Pi CLI bash-tool flow. Pi and pi-cli now project registry command software
     only when the local `.aospkg` artifacts are built, so write-tool coverage
@@ -724,7 +724,7 @@ real e2e tests that prove Linux-parity behavior — not smoke tests.
     `2026-07-08T15-00-00-0700-item12-pi-cli-sidecar-build-after-cc-restore-final.log`;
     `2026-07-08T15-01-00-0700-item12-pi-cli-focused-final-after-cc-restore.log`.
     Rev: `xqtkmsyn`.
-  - **claude — DONE.** Enabled the existing real `createSession('claude')`
+  - **claude — DONE.** Enabled the existing real `openSession({ sessionId: 'main', agent: 'claude' })`
     session suite in default core Vitest coverage, projected the actual
     `@agentos-software/claude-code` agent package, and replaced the missing
     test-only `xu` binary dependency with a real PATH-backed `sh` command from
@@ -738,7 +738,7 @@ real e2e tests that prove Linux-parity behavior — not smoke tests.
     `2026-07-08T15-19-00-0700-item12-claude-session-after-cache-move.log`.
     Rev: `rxmoulty`.
   - **opencode — DONE.** Added default core Vitest coverage for real
-    `createSession('opencode')` initialization through the projected
+    `openSession({ sessionId: 'main', agent: 'opencode' })` initialization through the projected
     `@agentos-software/opencode` agent package. The focused suite proves the
     sidecar resolves the OpenCode ACP package, initializes the adapter, exposes
     agent metadata/capabilities/modes, and registers the session through the
@@ -748,7 +748,7 @@ real e2e tests that prove Linux-parity behavior — not smoke tests.
     `2026-07-08T15-37-00-0700-item12-opencode-real-session-final.log`.
     Rev: `xtnuomsw`.
   - **codex — DONE.** Codex does not currently expose a runnable
-    `createSession('codex')` ACP package: `@agentos-software/codex` is a
+    `openSession({ sessionId: 'main', agent: 'codex' })` ACP package: `@agentos-software/codex` is a
     registry/package wrapper and `codex-session.test.ts` verifies the sidecar
     rejects it as a session agent. The real Codex agent coverage is the
     `codex-exec --session-turn` VM path from item 11, which drives the real

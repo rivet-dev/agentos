@@ -22,7 +22,7 @@ Codex discovers `SKILL.md` files from its skills directory. Write the skill into
 
 ## MCP servers
 
-Expose extra tools to the agent by passing `mcpServers` to `createSession`. Both local child-process servers and remote URLs are supported.
+Expose extra tools to the agent by passing `mcpServers` to `openSession`. Both local child-process servers and remote URLs are supported.
 
 **Pre-install `npx`-launched servers.** A local server started with `npx -y …` writes install progress to **stdout** on its first run, which corrupts the MCP stdio handshake (you'll see `Connection closed`). Pre-install it in the VM so `npx` is silent — `await agent.exec("npm install -g @modelcontextprotocol/server-filesystem")` before the session — or pin the package and point `command` at the installed binary.
 

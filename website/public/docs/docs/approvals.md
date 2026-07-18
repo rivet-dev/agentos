@@ -1,49 +1,33 @@
 # Approvals
 
-Approve or deny agent tool use with human-in-the-loop or auto-approve patterns.
+Handle native ACP permission options with durable AgentOS correlation.
 
-When an agent wants to use a tool (write a file, run a command, etc.), it asks for permission. You approve or deny that request, either interactively or with a server-side hook.
+Set a session's immutable `permissionPolicy` when calling `openSession`:
 
-- **Human-in-the-loop**: subscribe to `permissionRequest` on the client and respond per-request.
-- **Auto-approve**: use the `onPermissionRequest` server hook to decide without a client round-trip.
-- **Selective approval**: inspect the request and approve some, forward others to the client.
+- `reject_all` prefers a native `reject_once` option, then `reject_always`, and fails with `permission_policy_unsatisfied` when neither exists.
+- `allow_all` (the default) prefers `allow_once`, then `allow_always`.
+- `ask` durably records the exact ACP `RequestPermissionRequest` in the ordinary sequenced session-event stream.
 
-## Permission request flow
+This controls how AgentOS answers an adapter's native ACP permission request. It does not grant VM filesystem or network permissions, change which tools the adapter exposes, or become ACP adapter configuration.
 
-When an agent wants to use a tool, it emits a `permissionRequest`. Every request is delivered to two places at once, and you respond from whichever fits your app:
+Subscribing to session events does not enable interactive approval. You must set `permissionPolicy: "ask"` in `openSession`; if it is omitted, the default `allow_all` policy resolves requests automatically and no `permission_request` event is emitted or persisted.
 
-- **On the client**: subscribe to the `permissionRequest` event and call `respondPermission(sessionId, permissionId, reply)`.
-- **On the server**: the `onPermissionRequest` hook on the actor runs for every request, with no client round-trip.
-- If neither responds, the request blocks until a reply arrives, then rejects after 120 seconds.
+## Human in the loop
 
-The `permissionRequest` event payload:
+With `ask`, respond using the AgentOS `requestId` plus one of the exact `optionId` values supplied by the adapter. Do not translate options into AgentOS-specific `once`/`always` strings.
 
-- **`data.sessionId`**: the session the request belongs to.
-- **`data.request.permissionId`**: the id to pass back to `respondPermission`.
-- **`data.request.description`**: human-readable summary of the requested action.
-- **`data.request.params`**: raw ACP permission details (requested tool, paths, etc.).
+The `permission_request` session-event variant contains:
 
-Reply options for `respondPermission`:
+- `sessionId`: stable public AgentOS session ID, including inside the native request payload.
+- `requestId`: globally unique AgentOS correlation ID; the adapter JSON-RPC ID is private.
+- `request`: exact native ACP request params, including `toolCall` and `options`.
 
-| Reply | Behavior |
-|-------|----------|
-| `"once"` | Approve this single request |
-| `"always"` | Approve this and all future requests of the same type |
-| `"reject"` | Deny the request |
+`respondPermission` requires an explicit `sessionId` and returns `accepted` or `not_pending` with a specific terminal reason. The first valid response wins atomically. Invalid options fail with `invalid_permission_option` and list the offered IDs. `accepted` means the decision reached the active ACP waiter; it does not mean the tool operation succeeded.
 
-## Patterns
+Permission requests have no sidecar expiry. They remain pending until answered or terminated by prompt cancellation, adapter exit, session deletion, or VM shutdown. RivetKit's actor-wide safety bound defaults to about 24.8 days rather than the old 15-minute action timeout. Both the request and its accepted response are durable history entries, so reconnecting consumers subscribe, read history after their last sequence, and deduplicate by `(sessionId, sequence)`.
 
-### Auto-approve
+## Automatic policy
 
-The `onPermissionRequest` hook runs server-side for every permission request before it reaches any client. Useful for fully automated pipelines.
+For a fully automated session, omit `permissionPolicy` or choose `allow_all` explicitly. No permission event or client round-trip is required.
 
-- **Signature**: `onPermissionRequest: async (c, sessionId, request) => { ... }`.
-- **Inspect**: `request.permissionId`, `request.description`, and `request.params`.
-- **Anything not handled** in the hook is forwarded to the client via the `permissionRequest` event.
-
-### Selective approval
-
-Inspect the permission request to make approval decisions based on the tool or path. Approve some server-side, forward the rest to the client for human review.
-
-- For interactive applications, subscribe to `permissionRequest` on the client and build an approval UI.
-- If neither the server hook nor the client responds, the agent blocks until a response is given or the action times out.
+For unattended fail-closed work, choose `reject_all` explicitly. ACP approval is advisory; VM filesystem, network, and process permissions remain the security boundary. Automatically handled requests are neither emitted nor persisted.

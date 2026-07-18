@@ -987,6 +987,24 @@ impl AcpCore {
                  it from the projected /opt/agentos packages"
                     .to_string(),
             )),
+            AcpRequest::AcpOpenSessionRequest(_)
+            | AcpRequest::AcpGetDurableSessionRequest(_)
+            | AcpRequest::AcpListDurableSessionsRequest(_)
+            | AcpRequest::AcpDeleteSessionRequest(_)
+            | AcpRequest::AcpUnloadSessionRequest(_)
+            | AcpRequest::AcpPromptRequest(_)
+            | AcpRequest::AcpCancelPromptRequest(_)
+            | AcpRequest::AcpRespondPermissionRequest(_)
+            | AcpRequest::AcpReadHistoryRequest(_)
+            | AcpRequest::AcpGetSessionConfigRequest(_)
+            | AcpRequest::AcpSetSessionConfigOptionRequest(_)
+            | AcpRequest::AcpGetSessionCapabilitiesRequest(_)
+            | AcpRequest::AcpGetSessionAgentInfoRequest(_) => Err(
+                AcpCoreError::InvalidState(
+                    "durable sessions require native sidecar VM SQLite and are not supported by the dormant browser ACP core"
+                        .to_string(),
+                ),
+            ),
         }
     }
 

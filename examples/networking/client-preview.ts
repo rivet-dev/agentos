@@ -8,11 +8,11 @@ const agent = client.vm.getOrCreate("my-agent");
 await agent.spawn("node", ["/home/agentos/app.js"]);
 
 // Create a preview URL for port 3000, valid for 1 hour
-const preview = await agent.createSignedPreviewUrl(3000, 3600);
+const preview = await agent.createPreviewUrl(3000, 3600);
 console.log("Preview path:", preview.path);
 console.log("Token:", preview.token);
 console.log("Expires at:", new Date(preview.expiresAt));
 
 // Create a preview URL with a shorter expiration
-const shortPreview = await agent.createSignedPreviewUrl(3000, 300); // 5 minutes
+const shortPreview = await agent.createPreviewUrl(3000, 300); // 5 minutes
 console.log("Short-lived preview:", shortPreview.path);

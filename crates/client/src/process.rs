@@ -21,7 +21,7 @@ use agentos_sidecar_client::wire::{self, EventPayload, ProcessSnapshotStatus, St
 use crate::agent_os::{AgentOs, ProcessEntry};
 use crate::command_line::resolve_exec_command;
 use crate::error::ClientError;
-use crate::stream::{ByteStream, Subscription};
+use crate::stream::Subscription;
 
 /// Broadcast channel capacity for a spawned process's stdout/stderr fan-out.
 const PROCESS_STREAM_CAPACITY: usize = 1024;
@@ -118,15 +118,37 @@ pub enum SpawnStdio {
     Inherit,
 }
 
-/// Options for `spawn` (extends [`ExecOptions`]).
+/// Callback-free options for portable `spawn`.
 #[derive(Default)]
 pub struct SpawnOptions {
-    pub base: ExecOptions,
+    pub env: BTreeMap<String, String>,
+    pub cwd: Option<String>,
     pub stdio: Option<SpawnStdio>,
     pub stdin_fd: Option<i32>,
     pub stdout_fd: Option<i32>,
     pub stderr_fd: Option<i32>,
     pub stream_stdin: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProcessStream {
+    Stdout,
+    Stderr,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProcessOutput {
+    pub pid: u32,
+    pub stream: ProcessStream,
+    pub data: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProcessExit {
+    pub pid: u32,
+    #[serde(rename = "exitCode")]
+    pub exit_code: i32,
 }
 
 /// Public JSON info for SDK-spawned processes.
@@ -379,7 +401,7 @@ impl AgentOs {
         &self,
         command: &str,
         args: Vec<String>,
-        mut options: SpawnOptions,
+        options: SpawnOptions,
     ) -> Result<SpawnHandle> {
         let registry_guard = self.inner().process_registry_lock.lock();
         self.prune_exited_processes_locked(1);
@@ -400,6 +422,7 @@ impl AgentOs {
 
         let (stdout_tx, _) = broadcast::channel::<Vec<u8>>(PROCESS_STREAM_CAPACITY);
         let (stderr_tx, _) = broadcast::channel::<Vec<u8>>(PROCESS_STREAM_CAPACITY);
+        let (output_tx, _) = broadcast::channel::<ProcessOutput>(PROCESS_STREAM_CAPACITY);
         // Seeded `None`; the already-exited branch of `on_process_exit` fires immediately once this
         // watch holds `Some(code)`.
         let (exit_tx, _) = watch::channel::<Option<i32>>(None);
@@ -407,27 +430,16 @@ impl AgentOs {
         // `all_processes`/`process_tree` can remap the kernel snapshot back to this display pid.
         let (kernel_pid_tx, _) = watch::channel::<Option<u32>>(None);
 
-        // Seed any caller-provided initial stdout/stderr callbacks into the fan-out, matching the TS
-        // initial-handler-set behavior (`stdoutHandlers.add(options.onStdout)`). The spawned task
-        // handles are retained on the entry so `shutdown` can abort them (the entry's own sender
-        // clones keep the channel open, so the tasks never observe `Closed` on their own).
-        let mut output_tasks = Vec::new();
-        if let Some(cb) = options.base.on_stdout.take() {
-            output_tasks.push(install_output_callback(stdout_tx.clone(), cb));
-        }
-        if let Some(cb) = options.base.on_stderr.take() {
-            output_tasks.push(install_output_callback(stderr_tx.clone(), cb));
-        }
-
         let entry = ProcessEntry {
             command: command.to_owned(),
             args: args.clone(),
             stdout_tx: stdout_tx.clone(),
             stderr_tx: stderr_tx.clone(),
+            output_tx: output_tx.clone(),
             exit_tx: exit_tx.clone(),
             process_id: process_id.clone(),
             kernel_pid: kernel_pid_tx.clone(),
-            output_tasks,
+            output_tasks: Vec::new(),
             started_at: epoch_ms_now() as i64,
         };
         // `spawn` is documented as overwriting any prior entry for a freshly allocated pid; the pid
@@ -450,6 +462,7 @@ impl AgentOs {
                 events,
                 stdout_tx,
                 stderr_tx,
+                output_tx,
                 exit_tx,
                 kernel_pid_tx,
             )
@@ -502,24 +515,27 @@ impl AgentOs {
         Ok(())
     }
 
-    /// Subscribe to a spawned process's stdout. No replay; multi-subscriber. Errors if unknown.
-    pub fn on_process_stdout(&self, pid: u32) -> std::result::Result<ByteStream, ClientError> {
-        let rx = self
+    /// Subscribe to the unified stdout/stderr event stream for a process.
+    pub fn on_process_output(
+        &self,
+        pid: u32,
+        mut handler: impl FnMut(ProcessOutput) + Send + 'static,
+    ) -> std::result::Result<Subscription, ClientError> {
+        let mut rx = self
             .inner()
             .processes
-            .read(&pid, |_, entry| entry.stdout_tx.subscribe())
+            .read(&pid, |_, entry| entry.output_tx.subscribe())
             .ok_or(ClientError::ProcessNotFound(pid))?;
-        Ok(ByteStream::new(rx))
-    }
-
-    /// Subscribe to a spawned process's stderr. No replay; multi-subscriber. Errors if unknown.
-    pub fn on_process_stderr(&self, pid: u32) -> std::result::Result<ByteStream, ClientError> {
-        let rx = self
-            .inner()
-            .processes
-            .read(&pid, |_, entry| entry.stderr_tx.subscribe())
-            .ok_or(ClientError::ProcessNotFound(pid))?;
-        Ok(ByteStream::new(rx))
+        let task = tokio::spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(event) => handler(event),
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => return,
+                }
+            }
+        });
+        Ok(Subscription::new(move || task.abort()))
     }
 
     /// Register a once-only exit handler. If the process has already exited, the handler fires
@@ -529,7 +545,7 @@ impl AgentOs {
     pub fn on_process_exit(
         &self,
         pid: u32,
-        handler: impl FnOnce(i32) + Send + 'static,
+        handler: impl FnOnce(ProcessExit) + Send + 'static,
     ) -> std::result::Result<Subscription, ClientError> {
         let mut rx = self
             .inner()
@@ -539,7 +555,10 @@ impl AgentOs {
 
         // Already-exited branch: fire immediately + synchronously, return a no-op unsubscribe.
         if let Some(code) = *rx.borrow() {
-            handler(code);
+            handler(ProcessExit {
+                pid,
+                exit_code: code,
+            });
             return Ok(Subscription::noop());
         }
 
@@ -548,7 +567,10 @@ impl AgentOs {
         let task = tokio::spawn(async move {
             while rx.changed().await.is_ok() {
                 if let Some(code) = *rx.borrow() {
-                    handler(code);
+                    handler(ProcessExit {
+                        pid,
+                        exit_code: code,
+                    });
                     return;
                 }
             }
@@ -1017,6 +1039,7 @@ impl AgentOs {
         mut events: broadcast::Receiver<(wire::OwnershipScope, EventPayload)>,
         stdout_tx: broadcast::Sender<Vec<u8>>,
         stderr_tx: broadcast::Sender<Vec<u8>>,
+        output_tx: broadcast::Sender<ProcessOutput>,
         exit_tx: watch::Sender<Option<i32>>,
         kernel_pid_tx: watch::Sender<Option<u32>>,
     ) {
@@ -1025,8 +1048,8 @@ impl AgentOs {
                 &process_id,
                 Some(command),
                 args,
-                options.base.env.clone(),
-                options.base.cwd.clone(),
+                options.env.clone(),
+                options.cwd.clone(),
             )
             .await
         {
@@ -1042,7 +1065,13 @@ impl AgentOs {
                 // newline) on stderr and resolves the wait with exit code 1 (`startTrackedProcess`
                 // catch -> stderr handlers + `finishProcess(entry, 1)`).
                 let message = format!("{error}\n");
-                let _ = stderr_tx.send(message.into_bytes());
+                let bytes = message.into_bytes();
+                let _ = stderr_tx.send(bytes.clone());
+                let _ = output_tx.send(ProcessOutput {
+                    pid,
+                    stream: ProcessStream::Stderr,
+                    data: bytes,
+                });
                 tracing::error!(?error, pid, %process_id, "spawn: Execute request failed");
                 let _ = exit_tx.send(Some(1));
                 let _guard = self.inner().process_registry_lock.lock();
@@ -1066,6 +1095,14 @@ impl AgentOs {
             match payload {
                 EventPayload::ProcessOutputEvent(output) if output.process_id == process_id => {
                     let bytes = output.chunk;
+                    let _ = output_tx.send(ProcessOutput {
+                        pid,
+                        stream: match output.channel {
+                            StreamChannel::Stdout => ProcessStream::Stdout,
+                            StreamChannel::Stderr => ProcessStream::Stderr,
+                        },
+                        data: bytes.clone(),
+                    });
                     match output.channel {
                         StreamChannel::Stdout => {
                             let _ = stdout_tx.send(bytes);
@@ -1280,6 +1317,7 @@ mod tests {
 
         let (stdout_tx, _) = broadcast::channel::<Vec<u8>>(8);
         let (stderr_tx, _) = broadcast::channel::<Vec<u8>>(8);
+        let (output_tx, _) = broadcast::channel(8);
         let (exit_tx, _) = watch::channel::<Option<i32>>(None);
         let (kernel_pid_tx, _) = watch::channel::<Option<u32>>(None);
 
@@ -1297,6 +1335,7 @@ mod tests {
             args: vec!["3600".to_string()],
             stdout_tx,
             stderr_tx,
+            output_tx,
             exit_tx,
             process_id: "proc-test".to_string(),
             kernel_pid: kernel_pid_tx,
@@ -1336,6 +1375,7 @@ mod tests {
 
         let (stdout_tx, _) = broadcast::channel::<Vec<u8>>(8);
         let (stderr_tx, _) = broadcast::channel::<Vec<u8>>(8);
+        let (output_tx, _) = broadcast::channel(8);
         let (exit_tx, _) = watch::channel::<Option<i32>>(None);
         let (kernel_pid_tx, _) = watch::channel::<Option<u32>>(None);
 
@@ -1353,6 +1393,7 @@ mod tests {
             args: vec!["3600".to_string()],
             stdout_tx: stdout_tx.clone(),
             stderr_tx,
+            output_tx,
             exit_tx,
             process_id: "proc-test".to_string(),
             kernel_pid: kernel_pid_tx,

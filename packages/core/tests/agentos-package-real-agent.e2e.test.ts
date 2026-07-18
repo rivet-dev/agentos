@@ -28,8 +28,8 @@ const TOOLCHAIN_CLI = resolve(
 
 /** Real published agent adapters, packed flat with native addons pruned. */
 const AGENTS = [
-	// `agentType` is the unscoped `agentos-package.json` name (the agent id the
-	// sidecar projects at /opt/agentos/pkgs/<name>/ and resolves createSession on);
+	// `agentType` is the package's projected agent name. `openSession` asks the
+	// sidecar to resolve it under /opt/agentos/pkgs/<name>/<version>.
 	// `pkg` is only the npm package name used to pack the adapter.
 	{ pkg: "@agentos-software/pi", agentType: "pi", acpEntrypoint: "pi-sdk-acp" },
 	// claude is intentionally NOT here: this block packs from the PUBLISHED npm
@@ -84,13 +84,17 @@ describe.skipIf(!ENABLED).each(AGENTS)(
 		test("lists the real agent as installed", async () => {
 			const entry = (await vm.listAgents()).find((a) => a.id === agentType);
 			expect(entry?.installed).toBe(true);
-			expect(entry?.adapterEntrypoint).toBe(`/opt/agentos/bin/${acpEntrypoint}`);
+			expect(entry?.adapterEntrypoint).toBe(
+				`/opt/agentos/bin/${acpEntrypoint}`,
+			);
 		});
 
-		test("createSession launches the real adapter and returns a session", async () => {
-			const session = await vm.createSession(agentType);
-			expect(session.sessionId).toBeTruthy();
-			await vm.closeSession(session.sessionId);
+		test("openSession launches the real adapter for a caller-owned session", async () => {
+			const sessionId = `real-${agentType}`;
+			await expect(
+				vm.openSession({ sessionId, agent: agentType }),
+			).resolves.toBeUndefined();
+			await vm.unloadSession({ sessionId });
 		}, 60_000);
 	},
 );
@@ -99,9 +103,12 @@ describe.skipIf(!ENABLED).each(AGENTS)(
 // which does not yet ship `agentos-package.json`, so its manifest name resolves to
 // "claude-code" instead of "claude". Re-enable in the AGENTS list above once that
 // package is republished with `agentos-package.json` in `files`.
-describe.skipIf(!ENABLED)("real agent package end-to-end ('@agentos-software/claude-code')", () => {
-	test.skip("deferred until @agentos-software/claude-code republishes with agentos-package.json (name → 'claude')", () => {});
-});
+describe.skipIf(!ENABLED)(
+	"real agent package end-to-end ('@agentos-software/claude-code')",
+	() => {
+		test.skip("deferred until @agentos-software/claude-code republishes with agentos-package.json (name → 'claude')", () => {});
+	},
+);
 
 /**
  * Default software is coreutils-only ([common]) — it ships NO agents by design
@@ -126,7 +133,9 @@ describe.skipIf(!ENABLED)("default software ships no agents", () => {
 		expect(ids).not.toContain("claude");
 	});
 
-	test("createSession('pi') fails with unknown agent type", async () => {
-		await expect(vm.createSession("pi")).rejects.toThrow(/unknown agent type/i);
+	test("openSession({ agent: 'pi' }) fails with unknown agent type", async () => {
+		await expect(vm.openSession({ agent: "pi" })).rejects.toThrow(
+			/unknown agent type/i,
+		);
 	});
 });

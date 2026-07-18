@@ -11,7 +11,6 @@ mod common;
 use std::path::PathBuf;
 
 use agentos_client::{AgentOs, AgentOsConfig, OpenShellOptions, PackageRef, StdinInput};
-use futures::StreamExt;
 
 fn coreutils_package_path() -> Option<PathBuf> {
     // Prefer the packed .aospkg — the artifact registry packages actually ship.
@@ -71,14 +70,17 @@ async fn pty_shell_round_trip_via_boot_packages() {
         })
         .expect("open_shell");
 
-    let mut data = os
-        .on_shell_data(&shell.shell_id)
+    let (data_tx, mut data_rx) = tokio::sync::mpsc::unbounded_channel();
+    let _data = os
+        .on_shell_data(&shell.shell_id, move |event| {
+            let _ = data_tx.send(event.data);
+        })
         .expect("on_shell_data subscription");
 
     // Wait for the guest to reach its read() before writing.
     let saw_before = tokio::time::timeout(std::time::Duration::from_secs(20), async {
         let mut acc = Vec::<u8>::new();
-        while let Some(chunk) = data.next().await {
+        while let Some(chunk) = data_rx.recv().await {
             acc.extend_from_slice(&chunk);
             if String::from_utf8_lossy(&acc).contains("before-read") {
                 return true;
@@ -104,7 +106,7 @@ async fn pty_shell_round_trip_via_boot_packages() {
     // `got:marker-input` (plus the input echo) on the data stream.
     let saw_roundtrip = tokio::time::timeout(std::time::Duration::from_secs(20), async {
         let mut acc = Vec::<u8>::new();
-        while let Some(chunk) = data.next().await {
+        while let Some(chunk) = data_rx.recv().await {
             acc.extend_from_slice(&chunk);
             if String::from_utf8_lossy(&acc).contains("got:marker-input") {
                 return true;

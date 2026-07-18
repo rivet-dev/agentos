@@ -123,16 +123,17 @@ describe("REPRO: Pi session/update live delivery", () => {
 			const workspaceDir = "/home/agentos/workspace";
 			await vm.mkdir(workspaceDir, { recursive: true });
 
-			sessionId = (
-				await vm.createSession("pi", {
-					cwd: workspaceDir,
-					env: {
-						HOME: homeDir,
-						ANTHROPIC_API_KEY: "mock-key",
-						ANTHROPIC_BASE_URL: url,
-					},
-				})
-			).sessionId;
+			sessionId = "main";
+			await vm.openSession({
+				sessionId,
+				agent: "pi",
+				cwd: workspaceDir,
+				env: {
+					HOME: homeDir,
+					ANTHROPIC_API_KEY: "mock-key",
+					ANTHROPIC_BASE_URL: url,
+				},
+			});
 
 			const unsubscribe = vm.onSessionEvent(sessionId, (event) => {
 				events.push({
@@ -179,7 +180,7 @@ describe("REPRO: Pi session/update live delivery", () => {
 				"BUG: first update arrived at ~the same time as resolution — events are batched, not streamed",
 			).toBeGreaterThan(RESPONSE_LATENCY_MS * 0.5);
 		} finally {
-			if (sessionId) vm.closeSession(sessionId);
+			if (sessionId) vm.unloadSession({ sessionId });
 			await vm.dispose();
 			await stopLlmock(mock);
 		}

@@ -1,6 +1,8 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { sed } from "@agentos-software/common";
+import { CONFORMANCE_AGENT_NAME } from "@rivet-dev/agentos-test-harness/agent-os-conformance-fixture";
 import { describe, expect, test } from "vitest";
 import {
 	actorBytes,
@@ -98,7 +100,7 @@ describe.skipIf(!RUN_E2E)("AgentOS real Rivet actor", () => {
 				(lines) => lines.some((line) => line.includes("preview-ready")),
 			);
 
-			const preview = await connection.createSignedPreviewUrl(port, 60);
+			const preview = await connection.createPreviewUrl(port, 60);
 			const unauthenticated = actorHandle(runtime.endpoint, actorKey, {
 				authToken: "rejected",
 			});
@@ -119,10 +121,10 @@ describe.skipIf(!RUN_E2E)("AgentOS real Rivet actor", () => {
 				marker: "yes",
 			});
 
-			await connection.expireSignedPreviewUrl(preview.token);
+			await connection.expirePreviewUrl(preview.token);
 			expect((await unauthenticated.fetch(preview.path)).status).toBe(403);
 
-			const short = await connection.createSignedPreviewUrl(port, 0.05);
+			const short = await connection.createPreviewUrl(port, 0.05);
 			await new Promise((resolve) =>
 				setTimeout(resolve, Math.max(1, short.expiresAt - Date.now() + 25)),
 			);
@@ -130,22 +132,22 @@ describe.skipIf(!RUN_E2E)("AgentOS real Rivet actor", () => {
 
 			const active: Array<{ token: string }> = [];
 			for (let index = 0; index < 8; index += 1) {
-				active.push(await connection.createSignedPreviewUrl(port, 60));
+				active.push(await connection.createPreviewUrl(port, 60));
 			}
 			await expect(
-				connection.createSignedPreviewUrl(port, 60),
+				connection.createPreviewUrl(port, 60),
 			).rejects.toMatchObject({
 				code: "agentos_preview_token_limit",
 				message:
 					"preview token limit 8 reached; raise preview.maxActiveTokens to allow more",
 			});
-			await connection.expireSignedPreviewUrl(active[0].token);
-			const replacement = await connection.createSignedPreviewUrl(port, 60);
+			await connection.expirePreviewUrl(active[0].token);
+			const replacement = await connection.createPreviewUrl(port, 60);
 			active.push(replacement);
 			await Promise.all(
 				active
 					.slice(1)
-					.map((token) => connection.expireSignedPreviewUrl(token.token)),
+					.map((token) => connection.expirePreviewUrl(token.token)),
 			);
 			await connection.killProcess(server.pid);
 			await connection.waitProcess(server.pid);
@@ -185,9 +187,9 @@ describe.skipIf(!RUN_E2E)("AgentOS real Rivet actor", () => {
 
 			const storage = await handle.inspectAgentOsStorage();
 			expect(storage.tables).toEqual([
-				"agentos_vfs_blocks",
-				"agentos_vfs_metadata_chunks",
-				"agentos_vfs_metadata_heads",
+				"agentos_fs_blocks",
+				"agentos_fs_metadata_chunks",
+				"agentos_fs_metadata_heads",
 			]);
 			expect(storage.metadataCount).toBe(1);
 			expect(storage.metadataChunkCount).toBeGreaterThan(0);
@@ -225,6 +227,184 @@ describe.skipIf(!RUN_E2E)("AgentOS real Rivet actor", () => {
 			expect(await handle.getWakeCount()).toBe(3);
 		} finally {
 			await runtime?.stop();
+			rmSync(storagePath, { recursive: true, force: true });
+		}
+	}, 180_000);
+
+	test("replays dynamic mounts and linked software after actor sleep", async () => {
+		const storagePath = mkdtempSync(join(tmpdir(), "agentos-replay-e2e-"));
+		let runtime: Awaited<ReturnType<typeof startActorRuntime>> | undefined;
+		try {
+			runtime = await startActorRuntime(storagePath);
+			const handle = actorHandle(runtime.endpoint, `replay-${Date.now()}`);
+			const mountPath = "/durable-dynamic-mount";
+			await handle.mountFs({
+				path: mountPath,
+				plugin: {
+					id: "chunked_actor_sqlite",
+					config: {
+						namespace: "dynamic-replay",
+						chunkSize: 512 * 1024,
+						inlineThreshold: 64 * 1024,
+					},
+				},
+			});
+			await handle.writeFile(`${mountPath}/message.txt`, "mounted-before-sleep");
+			await handle.linkSoftware({ path: sed.packagePath });
+			expect(
+				(await handle.listSoftware()).some((entry: { commands: string[] }) =>
+					entry.commands.includes("sed"),
+				),
+			).toBe(true);
+
+			await handle.sleepActor();
+			await new Promise((resolve) => setTimeout(resolve, 1_000));
+
+			expect(await handle.listMounts()).toContainEqual(
+				expect.objectContaining({ path: mountPath, readOnly: false }),
+			);
+			expect(
+				new TextDecoder().decode(
+					actorBytes(await handle.readFile(`${mountPath}/message.txt`)),
+				),
+			).toBe("mounted-before-sleep");
+			expect(
+				(await handle.listSoftware()).some((entry: { commands: string[] }) =>
+					entry.commands.includes("sed"),
+				),
+			).toBe(true);
+		} finally {
+			await runtime?.stop();
+			rmSync(storagePath, { recursive: true, force: true });
+		}
+	}, 180_000);
+
+	test("persists durable sessions and history and restores ACP across RivetKit sleep with default persistence", async () => {
+		const storagePath = mkdtempSync(
+			join(tmpdir(), "agentos-session-sleep-e2e-"),
+		);
+		const tracePath = join(storagePath, "acp-trace.jsonl");
+		const previousTracePath = process.env.AGENT_OS_ACP_TRACE_PATH;
+		process.env.AGENT_OS_ACP_TRACE_PATH = tracePath;
+		let runtime: Awaited<ReturnType<typeof startActorRuntime>> | undefined;
+		try {
+			runtime = await startActorRuntime(storagePath);
+			const actorKey = `session-sleep-${Date.now()}`;
+			const handle = actorHandle(runtime.endpoint, actorKey);
+			const connection = handle.connect();
+			const shutdown: Array<{ reason: string }> = [];
+			connection.on("vmShutdown", (event: { reason: string }) =>
+				shutdown.push(event),
+			);
+			await connection.ready;
+
+			const sessionId = "sleep-persistence";
+			await connection.openSession({
+				sessionId,
+				agent: CONFORMANCE_AGENT_NAME,
+				skipOsInstructions: true,
+			});
+			const firstPrompt = await connection.prompt({
+				sessionId,
+				content: [{ type: "text", text: "before-sleep" }],
+			});
+			expect(JSON.stringify(firstPrompt.message)).toContain("echo:before-sleep");
+
+			const beforeList = await connection.listSessions();
+			const beforeSession = beforeList.sessions.find(
+				(session: { sessionId: string }) => session.sessionId === sessionId,
+			);
+			if (!beforeSession)
+				throw new Error("opened session missing from catalog");
+			expect(beforeSession).toMatchObject({
+				sessionId,
+				agent: CONFORMANCE_AGENT_NAME,
+			});
+			const beforeHistory = await connection.readHistory({ sessionId });
+			expect(beforeHistory.events).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						sessionId,
+						type: "agent_message_chunk",
+						content: expect.objectContaining({ text: "echo:before-sleep" }),
+					}),
+				]),
+			);
+
+			await connection.sleepActor();
+			await eventually(
+				() => shutdown,
+				(events) => events.some((event) => event.reason === "sleep"),
+			);
+
+			// The first storage-only call wakes the actor and must recover the same
+			// catalog without starting an ACP adapter.
+			const afterList = await connection.listSessions();
+			expect(await connection.getWakeCount()).toBe(2);
+			expect(existsSync(tracePath)).toBe(false);
+			const storageOnlyProcesses = await connection.allProcesses();
+			expect(
+				storageOnlyProcesses.some((process: unknown) =>
+					JSON.stringify(process).includes("conformance-agent-acp"),
+				),
+			).toBe(false);
+			const afterSession = afterList.sessions.find(
+				(session: { sessionId: string }) => session.sessionId === sessionId,
+			);
+			if (!afterSession) throw new Error("session missing after actor wake");
+			expect(afterSession).toMatchObject({
+				sessionId,
+				agent: CONFORMANCE_AGENT_NAME,
+				createdAt: beforeSession.createdAt,
+				latestSequence: beforeSession.latestSequence,
+			});
+			const afterHistory = await connection.readHistory({ sessionId });
+			expect(afterHistory).toEqual(beforeHistory);
+
+			// The adapter process was disposed by sleep. Prompting the durable public
+			// ID must transparently restore its private ACP session through session/load.
+			const restoredPrompt = await connection.prompt({
+				sessionId,
+				content: [{ type: "text", text: "after-sleep" }],
+			});
+			expect(JSON.stringify(restoredPrompt.message)).toContain("echo:after-sleep");
+			const trace = readFileSync(tracePath, "utf8")
+				.trim()
+				.split("\n")
+				.filter(Boolean)
+				.map((line) => JSON.parse(line));
+			expect(trace).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						method: "session/load",
+						response: expect.objectContaining({
+							result: expect.objectContaining({
+								sessionId: expect.any(String),
+							}),
+						}),
+					}),
+				]),
+			);
+			const restoredHistory = await connection.readHistory({ sessionId });
+			expect(restoredHistory.events.length).toBeGreaterThan(
+				beforeHistory.events.length,
+			);
+			expect(JSON.stringify(restoredHistory.events)).toContain(
+				"echo:before-sleep",
+			);
+			expect(JSON.stringify(restoredHistory.events)).toContain(
+				"echo:after-sleep",
+			);
+
+			await connection.deleteSession({ sessionId });
+			await connection.dispose();
+		} finally {
+			await runtime?.stop();
+			if (previousTracePath === undefined) {
+				delete process.env.AGENT_OS_ACP_TRACE_PATH;
+			} else {
+				process.env.AGENT_OS_ACP_TRACE_PATH = previousTracePath;
+			}
 			rmSync(storagePath, { recursive: true, force: true });
 		}
 	}, 180_000);

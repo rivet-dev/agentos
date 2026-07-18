@@ -1539,6 +1539,32 @@ fn snapshot_root_filesystem_rejects_current_usage_over_configured_limit() {
 }
 
 #[test]
+fn bounded_root_export_rejects_before_materializing_content_over_max_bytes() {
+    let root = RootFileSystem::from_descriptor(RootFilesystemDescriptor {
+        mode: RootFilesystemMode::Ephemeral,
+        disable_default_base_layer: true,
+        lowers: vec![RootFilesystemSnapshot {
+            entries: vec![
+                FilesystemEntry::directory("/workspace"),
+                FilesystemEntry::file("/workspace/data.txt", b"too large".to_vec()),
+            ],
+        }],
+        bootstrap_entries: Vec::new(),
+    })
+    .expect("create root filesystem");
+    let mut config = KernelVmConfig::new("vm-explicit-export-limit");
+    config.permissions = Permissions::allow_all();
+    let mut kernel = KernelVm::new(MountTable::new(root), config);
+
+    let error = kernel
+        .snapshot_root_filesystem_bounded(4)
+        .expect_err("caller export bound should reject oversized content");
+    assert_eq!(error.code(), "EFBIG");
+    assert!(error.to_string().contains("maxBytes"));
+    assert!(error.to_string().contains("raise maxBytes"));
+}
+
+#[test]
 fn resource_limits_reject_oversized_direct_pread_before_device_allocation() {
     let mut config = KernelVmConfig::new("vm-direct-pread-limit");
     config.permissions = Permissions::allow_all();

@@ -2,20 +2,24 @@
 import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
 
-const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
+const client = createClient<typeof registry>({
+	endpoint: "http://localhost:6420",
+});
 const agent = client.vm.getOrCreate("my-agent");
 
 // ── Quick start ───────────────────────────────────────────────────
 async function quickStart() {
-  const sessionId = await agent.createSession("codex", {
-    env: { OPENAI_API_KEY: process.env.OPENAI_API_KEY! },
-  });
+	await agent.openSession({
+		agent: "codex",
+		env: { OPENAI_API_KEY: process.env.OPENAI_API_KEY! },
+	});
 
-  const { text } = await agent.sendPrompt(
-    sessionId,
-    "What files are in the current directory?",
-  );
-  console.log(text);
+	const result = await agent.prompt({
+		content: [
+			{ type: "text", text: "What files are in the current directory?" },
+		],
+	});
+	console.log(result.message?.content ?? []);
 }
 // docs:end quickstart
 
@@ -25,7 +29,7 @@ async function quickStart() {
 // Write a SKILL.md into the agent's skills directory before creating the
 // session and the agent discovers it automatically.
 async function withSkill() {
-  const skill = `---
+	const skill = `---
 name: commit-style
 description: How to write commit messages in this project.
 ---
@@ -33,13 +37,16 @@ description: How to write commit messages in this project.
 Write commit messages in the imperative mood and keep the subject under 50 characters.
 `;
 
-  await agent.mkdir("/home/agentos/.codex/skills/commit-style");
-  await agent.writeFile("/home/agentos/.codex/skills/commit-style/SKILL.md", skill);
+	await agent.mkdir("/home/agentos/.codex/skills/commit-style");
+	await agent.writeFile(
+		"/home/agentos/.codex/skills/commit-style/SKILL.md",
+		skill,
+	);
 
-  const sessionId = await agent.createSession("codex", {
-    env: { OPENAI_API_KEY: process.env.OPENAI_API_KEY! },
-  });
-  console.log(sessionId);
+	await agent.openSession({
+		agent: "codex",
+		env: { OPENAI_API_KEY: process.env.OPENAI_API_KEY! },
+	});
 }
 // docs:end skills
 
@@ -50,11 +57,11 @@ Write commit messages in the imperative mood and keep the subject under 50 chara
 // into the VM before creating the session — local child-process servers and
 // remote URLs are both supported.
 async function withMcp() {
-  // Pre-install the MCP server so `npx` is silent — first-run install output
-  // would otherwise corrupt the MCP stdio handshake ("Connection closed").
-  await agent.exec("npm install -g @modelcontextprotocol/server-filesystem");
+	// Pre-install the MCP server so `npx` is silent — first-run install output
+	// would otherwise corrupt the MCP stdio handshake ("Connection closed").
+	await agent.exec("npm install -g @modelcontextprotocol/server-filesystem");
 
-  const config = `[mcp_servers.filesystem]
+	const config = `[mcp_servers.filesystem]
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-filesystem", "/home/agentos"]
 
@@ -63,18 +70,18 @@ url = "https://mcp.example.com/sse"
 http_headers = { Authorization = "Bearer my-token" }
 `;
 
-  await agent.writeFile("/home/agentos/.codex/config.toml", config);
+	await agent.writeFile("/home/agentos/.codex/config.toml", config);
 
-  const sessionId = await agent.createSession("codex", {
-    env: { OPENAI_API_KEY: process.env.OPENAI_API_KEY! },
-  });
-  console.log(sessionId);
+	await agent.openSession({
+		agent: "codex",
+		env: { OPENAI_API_KEY: process.env.OPENAI_API_KEY! },
+	});
 }
 // docs:end mcp
 
 // ── Skills + MCP together ─────────────────────────────────────────
 async function withSkillAndMcp() {
-  const skill = `---
+	const skill = `---
 name: commit-style
 description: How to write commit messages in this project.
 ---
@@ -82,29 +89,37 @@ description: How to write commit messages in this project.
 Write commit messages in the imperative mood and keep the subject under 50 characters.
 `;
 
-  await agent.mkdir("/home/agentos/.codex/skills/commit-style");
-  await agent.writeFile("/home/agentos/.codex/skills/commit-style/SKILL.md", skill);
+	await agent.mkdir("/home/agentos/.codex/skills/commit-style");
+	await agent.writeFile(
+		"/home/agentos/.codex/skills/commit-style/SKILL.md",
+		skill,
+	);
 
-  // Pre-install the MCP server so `npx` is silent — first-run install output
-  // would otherwise corrupt the MCP stdio handshake ("Connection closed").
-  await agent.exec("npm install -g @modelcontextprotocol/server-filesystem");
+	// Pre-install the MCP server so `npx` is silent — first-run install output
+	// would otherwise corrupt the MCP stdio handshake ("Connection closed").
+	await agent.exec("npm install -g @modelcontextprotocol/server-filesystem");
 
-  const config = `[mcp_servers.filesystem]
+	const config = `[mcp_servers.filesystem]
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-filesystem", "/home/agentos"]
 `;
 
-  await agent.writeFile("/home/agentos/.codex/config.toml", config);
+	await agent.writeFile("/home/agentos/.codex/config.toml", config);
 
-  const sessionId = await agent.createSession("codex", {
-    env: { OPENAI_API_KEY: process.env.OPENAI_API_KEY! },
-  });
+	await agent.openSession({
+		agent: "codex",
+		env: { OPENAI_API_KEY: process.env.OPENAI_API_KEY! },
+	});
 
-  const { text } = await agent.sendPrompt(
-    sessionId,
-    "Stage everything and write a commit message following the project skill.",
-  );
-  console.log(text);
+	const result = await agent.prompt({
+		content: [
+			{
+				type: "text",
+				text: "Stage everything and write a commit message following the project skill.",
+			},
+		],
+	});
+	console.log(result.message?.content ?? []);
 }
 
 export { quickStart, withSkill, withMcp, withSkillAndMcp };

@@ -47,17 +47,17 @@ For advanced cases the core package exposes explicit sidecar handles so you can 
 
 ## Processes
 
-Long-running process output is delivered through the `onStdout`/`onStderr` callbacks you pass to `spawn`, and exit through `onProcessExit(pid, …)`:
+Portable `spawn()` is callback-free. Subscribe to its unified stdout/stderr stream with `onProcessOutput(pid, …)` and to completion with `onProcessExit(pid, …)`:
 
 ## Agent sessions
 
-`createSession` resolves to a session ID string, which is passed directly to the other session actions. Session events and permission requests are delivered through per-session callbacks (`onSessionEvent` / `onPermissionRequest`):
+`openSession` negotiates the adapter and resolves without a value. Omit `sessionId` to use `main`; call `getSession` separately only when you need durable metadata. Native ACP updates and interactive permission request/response variants share the sequenced `onSessionEvent` stream:
 
-Register `onSessionEvent` right after `createSession` so you do not miss the live stream — core session events are live-only and are not replayed.
+Register `onSessionEvent` before prompting to receive live deltas. Durable entries can be recovered with `readHistory`; ephemeral agent/thought deltas cannot.
 
 ## Networking
 
-`fetch(port, request)` reaches a server running inside the VM:
+`httpRequest({ port, path, ... })` reaches a server running inside the VM and returns a bounded, serializable response DTO:
 
 ## Cron jobs
 
@@ -78,7 +78,7 @@ The top-level fields are documented inline above. See [Mounts](#mounts) and [Sof
 
 ### Session events
 
-With the core package, session events and permission requests are observed per-session on the `AgentOs` instance. `onSessionEvent(sessionId, event)` fires once for every session event; `onPermissionRequest(sessionId, request)` fires when an agent requests permission. Both are live-only callbacks — register them right after `createSession`:
+With the core package, `onSessionEvent` receives a generic union containing exact native ACP `SessionUpdate`, `RequestPermissionRequest`, and `RequestPermissionResponse` payloads wrapped with AgentOS durability metadata. Register it before prompting. On reconnect, also read durable history after your last sequence and deduplicate by `(sessionId, sequence)`:
 
 ### Timeouts and sleep
 

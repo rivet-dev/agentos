@@ -1,26 +1,16 @@
-import { describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
 import { createProjectedAgentPackage } from "./helpers/projected-agent-package.js";
 
-// L2 (agent-os side): exercise the sidecar resume orchestration state machine
-// end-to-end against the REAL agentos-sidecar with a MOCK ACP adapter (no LLM).
-//
-// Spec: .agent/specs/session-resume.md §6
-//   - Tier 1 (native): agent advertises `loadSession` -> sidecar runs
-//     `initialize` then `session/load`; on success mode "native", id preserved.
-//   - unknown_session fallthrough: `session/load` returns the OpenCode-shape error
-//     ({code:-32603, data:{details:"NotFoundError"}}) or data.kind=="unknown_session"
-//     -> fall through to Tier 2.
-//   - Tier 2 (fallback): `session/new`, mode "fallback", new live id, and a
-//     continuation preamble prepended to the next `session/prompt`.
+// Exercise lazy durable restoration through the public API against the real
+// sidecar and a mock ACP adapter. `unloadSession` hides the private ACP id;
+// `prompt` must restore it natively or create a continuation session.
 
 // Single configurable mock ACP adapter. Its behavior is selected at launch time
-// via the `MOCK_RESUME_SCENARIO` env var, which the host forwards through
-// `resumeSession(..., { env })` (the sidecar passes `env` straight to the
-// adapter process). Scenarios:
+// via the immutable session env. Scenarios:
 //   - "native":      advertise loadSession; session/load -> ok
 //   - "resume-only": advertise resume; session/resume -> ok
-//   - "fallthrough": advertise loadSession; session/load -> NotFoundError error
+//   - "fallthrough": advertise loadSession; session/load -> ACP ResourceNotFound
 //   - "no-loadsession": do NOT advertise loadSession (straight to fallback)
 //
 // On `session/prompt` the adapter echoes the exact prompt blocks it received back
@@ -83,7 +73,7 @@ process.stdin.on("data", (chunk) => {
           promptCapabilities: {},
         };
         if (SCENARIO === "resume-only") {
-          agentCapabilities.resume = true;
+          agentCapabilities.sessionCapabilities = { resume: {} };
         } else if (SCENARIO !== "no-loadsession") {
           agentCapabilities.loadSession = true;
         }
@@ -101,10 +91,7 @@ process.stdin.on("data", (chunk) => {
           // request.session_id for native loads); just acknowledge success.
           writeResponse(msg.id, { modes });
         } else if (SCENARIO === "fallthrough") {
-          // OpenCode-shape "no such session" sentinel: -32603 + NotFoundError.
-          writeError(msg.id, -32603, "Internal error", {
-            details: "NotFoundError",
-          });
+          writeError(msg.id, -32002, "Resource not found");
         } else {
           writeError(msg.id, -32601, "Method not found", {
             method: "session/load",
@@ -170,132 +157,75 @@ async function createMockAgentVm(): Promise<{
 }
 
 describe("sidecar resume orchestration (mock ACP adapter)", () => {
-	test("Tier 1 native: loadSession advertised + session/load ok -> mode native, id preserved", async () => {
-		const { vm, cleanup } = await createMockAgentVm();
-		let liveSessionId: string | undefined;
+	let vm: AgentOs;
+	let cleanup: () => void;
 
+	beforeAll(async () => {
+		({ vm, cleanup } = await createMockAgentVm());
+	}, 120_000);
+
+	afterAll(async () => {
+		await vm.dispose();
+		cleanup();
+	}, 120_000);
+
+	async function textPrompt(sessionId: string, text: string) {
+		return vm.prompt({
+			sessionId,
+			content: [{ type: "text", text }],
+		});
+	}
+
+	test.each([
+		["loadSession", "native"],
+		["session/resume", "resume-only"],
+	] as const)("restores through native %s while preserving the public id", async (_method, scenario) => {
+		const sessionId = `public-${scenario}`;
 		try {
-			const externalSessionId = "external-session-native";
-			const result = await vm.resumeSession(externalSessionId, "synthetic", {
-				env: { MOCK_RESUME_SCENARIO: "native" },
-			});
-			liveSessionId = result.sessionId;
-
-			expect(result.mode).toBe("native");
-			// Native load reuses the requested id: external == live.
-			expect(result.sessionId).toBe(externalSessionId);
+			expect(
+				await vm.openSession({
+					sessionId,
+					agent: "synthetic",
+					env: { MOCK_RESUME_SCENARIO: scenario },
+				}),
+			).toBeUndefined();
+			await vm.unloadSession({ sessionId });
+			const restored = await textPrompt(sessionId, "after unload");
+			expect(restored.sessionId).toBe(sessionId);
+			expect(JSON.parse(restored.text)).toEqual([
+				{ type: "text", text: "after unload" },
+			]);
 		} finally {
-			if (liveSessionId) {
-				vm.closeSession(liveSessionId);
-			}
-			await vm.dispose();
-			cleanup();
+			await vm.deleteSession({ sessionId });
 		}
 	});
 
-	test("Tier 1 native: resume advertised + session/resume ok -> mode native, id preserved", async () => {
-		const { vm, cleanup } = await createMockAgentVm();
-		let liveSessionId: string | undefined;
-
+	test.each([
+		"fallthrough",
+		"no-loadsession",
+	] as const)("uses bounded SQLite continuation for %s fallback", async (scenario) => {
+		const sessionId = `public-${scenario}`;
 		try {
-			const externalSessionId = "external-session-resume-only";
-			const result = await vm.resumeSession(externalSessionId, "synthetic", {
-				env: { MOCK_RESUME_SCENARIO: "resume-only" },
+			await vm.openSession({
+				sessionId,
+				agent: "synthetic",
+				env: { MOCK_RESUME_SCENARIO: scenario },
 			});
-			liveSessionId = result.sessionId;
-
-			expect(result.mode).toBe("native");
-			expect(result.sessionId).toBe(externalSessionId);
-		} finally {
-			if (liveSessionId) {
-				vm.closeSession(liveSessionId);
-			}
-			await vm.dispose();
-			cleanup();
-		}
-	});
-
-	test("unknown_session fallthrough: session/load NotFoundError -> mode fallback, new live id, preamble prepended", async () => {
-		const { vm, cleanup } = await createMockAgentVm();
-		let liveSessionId: string | undefined;
-
-		try {
-			const externalSessionId = "external-session-fallthrough";
-			const transcriptPath = "/root/.agentos/threads/external-session-fallthrough.md";
-			const result = await vm.resumeSession(externalSessionId, "synthetic", {
-				transcriptPath,
-				env: { MOCK_RESUME_SCENARIO: "fallthrough" },
-			});
-			liveSessionId = result.sessionId;
-
-			// session/load returned the unknown_session sentinel, so the sidecar fell
-			// through to Tier 2: a fresh session/new id, mode "fallback".
-			expect(result.mode).toBe("fallback");
-			expect(result.sessionId).toBe("mock-fallback-session");
-			expect(result.sessionId).not.toBe(externalSessionId);
-
-			// The next session/prompt must arrive at the adapter with the continuation
-			// preamble prepended as a leading text block. The adapter echoes the exact
-			// prompt blocks it received back as the agent message text.
-			const { text } = await vm.prompt(liveSessionId, "what did we discuss?");
-			const receivedBlocks = JSON.parse(text) as Array<{
+			await textPrompt(sessionId, "first turn");
+			await vm.unloadSession({ sessionId });
+			const restored = await textPrompt(sessionId, "second turn");
+			const blocks = JSON.parse(restored.text) as Array<{
 				type: string;
 				text: string;
 			}>;
-
-			expect(receivedBlocks.length).toBe(2);
-			// Leading block is the injected preamble pointing at the transcript path.
-			expect(receivedBlocks[0].type).toBe("text");
-			expect(receivedBlocks[0].text).toContain(
-				"You are continuing an earlier session",
+			expect(blocks).toHaveLength(2);
+			expect(blocks[0]?.text).toContain(
+				"authoritative recent ACP session updates",
 			);
-			expect(receivedBlocks[0].text).toContain(transcriptPath);
-			// Original user text follows.
-			expect(receivedBlocks[1].text).toBe("what did we discuss?");
-
-			// Preamble is single-turn: a second prompt has no leading preamble block.
-			const second = await vm.prompt(liveSessionId, "second turn");
-			const secondBlocks = JSON.parse(second.text) as Array<{
-				type: string;
-				text: string;
-			}>;
-			expect(secondBlocks.length).toBe(1);
-			expect(secondBlocks[0].text).toBe("second turn");
+			expect(blocks[0]?.text).toContain("first turn");
+			expect(blocks[1]?.text).toBe("second turn");
 		} finally {
-			if (liveSessionId) {
-				vm.closeSession(liveSessionId);
-			}
-			await vm.dispose();
-			cleanup();
-		}
-	});
-
-	test("no loadSession capability -> straight to fallback (session/new)", async () => {
-		const { vm, cleanup } = await createMockAgentVm();
-		let liveSessionId: string | undefined;
-
-		try {
-			const externalSessionId = "external-session-nocap";
-			const result = await vm.resumeSession(externalSessionId, "synthetic", {
-				env: { MOCK_RESUME_SCENARIO: "no-loadsession" },
-			});
-			liveSessionId = result.sessionId;
-
-			// No loadSession capability -> Tier 1 is skipped entirely; fallback runs.
-			expect(result.mode).toBe("fallback");
-			expect(result.sessionId).toBe("mock-fallback-session");
-
-			// No transcriptPath was supplied, so no preamble is armed.
-			const { text } = await vm.prompt(liveSessionId, "hello");
-			const blocks = JSON.parse(text) as Array<{ type: string; text: string }>;
-			expect(blocks.length).toBe(1);
-			expect(blocks[0].text).toBe("hello");
-		} finally {
-			if (liveSessionId) {
-				vm.closeSession(liveSessionId);
-			}
-			await vm.dispose();
-			cleanup();
+			await vm.deleteSession({ sessionId });
 		}
 	});
 });

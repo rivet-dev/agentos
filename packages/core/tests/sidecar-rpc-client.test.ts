@@ -3,7 +3,6 @@ import { AgentOs } from "../src/agent-os.js";
 import {
 	decodeAcpCallbackResponse,
 	encodeAcpCallback,
-	encodeAcpResponse,
 } from "../src/sidecar/agentos-protocol.js";
 import { NativeSidecarProcessClient } from "../src/sidecar/rpc-client.js";
 
@@ -120,84 +119,6 @@ async function dispatchAcpRequest(
 		};
 	};
 }
-
-describe("AgentOs ACP session event retention", () => {
-	it("hydrates the current ACP session snapshot through Ext", async () => {
-		const extensionRequest = vi.fn().mockResolvedValue({
-			namespace: ACP_EXTENSION_NAMESPACE,
-			payload: encodeAcpResponse({
-				tag: "AcpSessionStateResponse",
-				val: {
-					sessionId: "acp-session-1",
-					agentType: "codex",
-					processId: "acp-proc-1",
-					pid: 42,
-					closed: false,
-					exitCode: null,
-					modes: JSON.stringify({
-						currentModeId: "build",
-						availableModes: [{ id: "build", label: "Build" }],
-					}),
-					configOptions: [
-						JSON.stringify({
-							id: "model",
-							category: "model",
-							label: "Model",
-							currentValue: "gpt-5-codex",
-						}),
-					],
-					agentCapabilities: JSON.stringify({ toolCalls: true }),
-					agentInfo: JSON.stringify({ name: "Codex", version: "1.0.0" }),
-				},
-			}),
-		});
-		const agent = Object.create(AgentOs.prototype) as AgentOs & {
-			_sidecarClient: {
-				extensionRequest: typeof extensionRequest;
-			};
-			_sidecarSession: typeof session;
-			_sidecarVm: typeof vm;
-			_hydrateSessionState: (session: { sessionId: string }) => Promise<void>;
-		};
-		const trackedSession = {
-			sessionId: "acp-session-1",
-			agentType: "codex",
-			processId: "",
-			pid: null,
-			closed: false,
-			modes: null,
-			configOptions: [],
-			capabilities: {},
-			agentInfo: null,
-			eventHandlers: new Set(),
-			permissionHandlers: new Set(),
-			configOverrides: new Map(),
-			pendingPermissionReplies: new Map(),
-		};
-		agent._sidecarClient = { extensionRequest };
-		agent._sidecarSession = session;
-		agent._sidecarVm = vm;
-
-		await agent._hydrateSessionState(trackedSession);
-
-		expect(extensionRequest).toHaveBeenCalledWith(
-			session,
-			vm,
-			expect.objectContaining({
-				namespace: ACP_EXTENSION_NAMESPACE,
-			}),
-		);
-		expect(trackedSession.processId).toBe("acp-proc-1");
-		expect(trackedSession.pid).toBe(42);
-		expect(trackedSession.modes?.currentModeId).toBe("build");
-		expect(trackedSession.configOptions[0]?.currentValue).toBe("gpt-5-codex");
-		expect(trackedSession.capabilities).toEqual({ toolCalls: true });
-		expect(trackedSession.agentInfo).toEqual({
-			name: "Codex",
-			version: "1.0.0",
-		});
-	});
-});
 
 describe("AgentOs ACP host dispatcher integration", () => {
 	let agent: AgentOs | null = null;

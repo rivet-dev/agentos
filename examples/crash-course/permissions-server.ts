@@ -1,11 +1,13 @@
 import pi from "@agentos-software/pi";
 import { agentOS, setup } from "@rivet-dev/agentos";
 
-// Auto-approve all permissions server-side
+// Observe native ACP permission requests through the ordinary event hook.
 const vm = agentOS({
 	software: [pi],
-	onPermissionRequest: async (_c, sessionId, request) => {
-		console.log("Auto-approving", sessionId, request.permissionId);
+	onSessionEvent: async (_c, sessionId, event) => {
+		if (event.type === "permission_request") {
+			console.log("Permission requested", sessionId, event.requestId);
+		}
 	},
 });
 

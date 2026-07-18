@@ -62,21 +62,25 @@ try {
 
 	const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 	if (ANTHROPIC_API_KEY) {
-		const { sessionId } = await vm.createSession("pi", {
+		await vm.openSession({
+			agent: "pi",
 			cwd: SANDBOX_MOUNT,
 			env: { ANTHROPIC_API_KEY },
 		});
-		console.log("Session ID:", sessionId);
-		const { text } = await vm.prompt(
-			sessionId,
-			"Create a C source file named fib.c in the current directory that prints Fibonacci numbers.",
-		);
-		console.log("Agent:", text);
+		const result = await vm.prompt({
+			content: [
+				{
+					type: "text",
+					text: "Create a C source file named fib.c in the current directory that prints Fibonacci numbers.",
+				},
+			],
+		});
+		console.log("Agent:", result.message?.content ?? []);
 		if (!(await vm.exists(`${SANDBOX_MOUNT}/fib.c`))) {
 			throw new Error(`Expected the agent to create ${SANDBOX_MOUNT}/fib.c`);
 		}
 		console.log(`Verified ${SANDBOX_MOUNT}/fib.c exists.`);
-		await vm.closeSession(sessionId);
+		await vm.deleteSession();
 	} else {
 		console.log("Skipping agent prompt because ANTHROPIC_API_KEY is not set.");
 	}

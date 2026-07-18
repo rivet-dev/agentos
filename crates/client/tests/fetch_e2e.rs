@@ -19,8 +19,9 @@ use agentos_client::config::{
     PatternPermissionRule, PatternPermissions, PermissionMode, Permissions, RulePermissions,
 };
 use agentos_client::AgentOs;
+use agentos_client::HttpRequest;
 use bytes::Bytes;
-use futures::{FutureExt, StreamExt};
+use futures::FutureExt;
 
 async fn fetch_tolerant(
     os: &AgentOs,
@@ -28,7 +29,36 @@ async fn fetch_tolerant(
     request: http::Request<Bytes>,
 ) -> anyhow::Result<http::Response<Bytes>> {
     let os = os.clone();
-    let handle = tokio::spawn(async move { os.fetch(port, request).await });
+    let (parts, body) = request.into_parts();
+    let request = HttpRequest {
+        port,
+        path: parts
+            .uri
+            .path_and_query()
+            .map(|value| value.as_str())
+            .unwrap_or("/")
+            .to_string(),
+        method: parts.method.to_string(),
+        headers: parts
+            .headers
+            .iter()
+            .map(|(key, value)| {
+                (
+                    key.to_string(),
+                    value.to_str().unwrap_or_default().to_string(),
+                )
+            })
+            .collect(),
+        body: Some(body.to_vec()),
+    };
+    let handle = tokio::spawn(async move {
+        let response = os.http_request(request).await?;
+        let mut builder = http::Response::builder().status(response.status);
+        for (key, value) in response.headers {
+            builder = builder.header(key, value);
+        }
+        Ok(builder.body(Bytes::from(response.body))?)
+    });
     match handle.await {
         Ok(result) => result,
         Err(join_error) if join_error.is_panic() => {
@@ -45,7 +75,36 @@ async fn fetch_tolerant_with_timeout(
     duration: std::time::Duration,
 ) -> Option<anyhow::Result<http::Response<Bytes>>> {
     let os = os.clone();
-    let mut handle = tokio::spawn(async move { os.fetch(port, request).await });
+    let (parts, body) = request.into_parts();
+    let request = HttpRequest {
+        port,
+        path: parts
+            .uri
+            .path_and_query()
+            .map(|value| value.as_str())
+            .unwrap_or("/")
+            .to_string(),
+        method: parts.method.to_string(),
+        headers: parts
+            .headers
+            .iter()
+            .map(|(key, value)| {
+                (
+                    key.to_string(),
+                    value.to_str().unwrap_or_default().to_string(),
+                )
+            })
+            .collect(),
+        body: Some(body.to_vec()),
+    };
+    let mut handle = tokio::spawn(async move {
+        let response = os.http_request(request).await?;
+        let mut builder = http::Response::builder().status(response.status);
+        for (key, value) in response.headers {
+            builder = builder.header(key, value);
+        }
+        Ok(builder.body(Bytes::from(response.body))?)
+    });
     tokio::select! {
         joined = &mut handle => Some(match joined {
             Ok(result) => result,
@@ -151,12 +210,12 @@ server.listen({port}, "0.0.0.0", () => console.log("READY"));
             Default::default(),
         )
         .expect("spawn guest HTTP server");
-    let mut server_stdout = os
-        .on_process_stdout(server.pid)
-        .expect("subscribe guest HTTP server stdout");
-    let mut server_stderr = os
-        .on_process_stderr(server.pid)
-        .expect("subscribe guest HTTP server stderr");
+    let (output_tx, mut output_rx) = tokio::sync::mpsc::unbounded_channel();
+    let _output = os
+        .on_process_output(server.pid, move |event| {
+            let _ = output_tx.send(event);
+        })
+        .expect("subscribe guest HTTP server output");
     let mut captured_stdout = String::new();
     let mut captured_stderr = String::new();
     let mut last_fetch_result = String::from("not attempted");
@@ -165,11 +224,15 @@ server.listen({port}, "0.0.0.0", () => console.log("READY"));
     let response = {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
         loop {
-            while let Some(Some(chunk)) = server_stdout.next().now_or_never() {
-                append_output(&mut captured_stdout, chunk);
-            }
-            while let Some(Some(chunk)) = server_stderr.next().now_or_never() {
-                append_output(&mut captured_stderr, chunk);
+            while let Ok(event) = output_rx.try_recv() {
+                match event.stream {
+                    agentos_client::ProcessStream::Stdout => {
+                        append_output(&mut captured_stdout, event.data)
+                    }
+                    agentos_client::ProcessStream::Stderr => {
+                        append_output(&mut captured_stderr, event.data)
+                    }
+                }
             }
             if let Some(exit_result) = os.wait_process(server.pid).now_or_never() {
                 let exit_code = exit_result.expect("wait guest HTTP server");

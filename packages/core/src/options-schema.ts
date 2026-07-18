@@ -123,7 +123,27 @@ export const agentOsLimitsSchema = z
 			.object({
 				maxReadLineBytes: positiveInteger.optional(),
 				stdoutBufferByteLimit: positiveInteger.optional(),
+				maxCompletedMessageBytes: positiveInteger.optional(),
+				maxTurnOutputBytes: positiveInteger.optional(),
+				maxPromptBytes: positiveInteger.optional(),
+				maxPromptBlocks: positiveInteger.optional(),
+				maxFallbackContinuationBytes: positiveInteger.optional(),
+				maxSessionHistoryBytes: positiveInteger.optional(),
+				maxSessionHistoryEvents: positiveInteger.optional(),
+				maxHistoryPageEntries: positiveInteger.optional(),
+				maxSessionListEntries: positiveInteger.optional(),
+				maxSessionsPerVm: positiveInteger.optional(),
+				maxPromptsPerSession: positiveInteger.optional(),
+				maxPromptsPerVm: positiveInteger.optional(),
+				maxPendingPermissionsPerSession: positiveInteger.optional(),
+				maxPendingPermissionsPerVm: positiveInteger.optional(),
+				maxPermissionOutcomesPerSession: positiveInteger.optional(),
+				maxPermissionOutcomesPerVm: positiveInteger.optional(),
 			})
+			.strict()
+			.optional(),
+		sqlite: z
+			.object({ maxResultBytes: positiveInteger.optional() })
 			.strict()
 			.optional(),
 		jsRuntime: z
@@ -307,9 +327,25 @@ export const agentOsOptionFieldSchemas = {
 	loopbackExemptPorts: z.array(z.number().int().min(0).max(65535)).optional(),
 	allowedNodeBuiltins: stringArray.optional(),
 	highResolutionTime: z.boolean().optional(),
+	database: z
+		.discriminatedUnion("type", [
+			z
+				.object({
+					type: z.literal("actor_uds"),
+					path: z.string().min(1),
+					token: z.string().min(1).max(4096),
+				})
+				.strict(),
+			z
+				.object({
+					type: z.literal("sqlite_file"),
+					path: z.string().min(1),
+				})
+				.strict(),
+		])
+		.optional(),
 	rootFilesystem: rootFilesystemConfigSchema.optional(),
 	mounts: z.array(mountConfigSchema).optional(),
-	additionalInstructions: z.string().optional(),
 	scheduleDriver: z
 		.custom((value) => typeof value === "object" && value !== null, {
 			message: "Expected schedule driver object",

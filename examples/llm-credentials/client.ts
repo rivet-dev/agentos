@@ -5,10 +5,9 @@ const client = createClient<typeof registry>({
 	endpoint: "http://localhost:6420",
 });
 
-// Pass LLM provider keys via the `env` option on createSession. The VM does
+// Pass LLM provider keys via the `env` option on openSession. The VM does
 // not inherit from the host process.env, so keys must be passed explicitly.
-const sessionId = await client.vm.getOrCreate("my-agent").createSession("pi", {
+await client.vm.getOrCreate("my-agent").openSession({
+	agent: "pi",
 	env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 });
-
-console.log(sessionId);

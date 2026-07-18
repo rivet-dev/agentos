@@ -6,54 +6,55 @@ const client = createClient<typeof registry>({
 });
 const agent = client.vm.getOrCreate("my-agent");
 
-// ── Create a session ──────────────────────────────────────────────
-async function createSession() {
-	// createSession returns the session ID.
-	const sessionId = await agent.createSession("pi", {
+// ── Open a session ──────────────────────────────────────────────
+async function openSession() {
+	// The caller owns the durable session ID; openSession resolves with no value.
+	await agent.openSession({
+		agent: "pi",
 		env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 	});
-	console.log(sessionId);
 }
 
-// ── createSession options: env ────────────────────────────────────
+// ── openSession options: env ────────────────────────────────────
 async function withEnv() {
-	const sessionId = await agent.createSession("pi", {
+	await agent.openSession({
+		agent: "pi",
 		env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 	});
-	console.log(sessionId);
 }
 
-// ── createSession options: cwd ────────────────────────────────────
+// ── openSession options: cwd ────────────────────────────────────
 async function withCwd() {
-	const sessionId = await agent.createSession("pi", {
+	await agent.openSession({
+		agent: "pi",
 		env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 		cwd: "/home/agentos/project",
 	});
-	console.log(sessionId);
 }
 
-// ── createSession options: additionalInstructions ─────────────────
+// ── openSession options: additionalInstructions ─────────────────
 async function withInstructions() {
-	const sessionId = await agent.createSession("pi", {
+	await agent.openSession({
+		agent: "pi",
 		env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 		additionalInstructions: "Always write tests before implementation.",
 	});
-	console.log(sessionId);
 }
 
-// ── createSession options: skipOsInstructions ─────────────────────
+// ── openSession options: skipOsInstructions ─────────────────────
 async function withSkipOsInstructions() {
-	const sessionId = await agent.createSession("pi", {
+	await agent.openSession({
+		agent: "pi",
 		env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 		skipOsInstructions: true,
 	});
-	console.log(sessionId);
 }
 
-// ── createSession options: system prompt customization ────────────
+// ── openSession options: system prompt customization ────────────
 async function withSystemPrompt() {
 	// docs:start system-prompt
-	const sessionId = await agent.createSession("pi", {
+	await agent.openSession({
+		agent: "pi",
 		env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 		// Extra instructions appended to the agent system prompt
 		additionalInstructions: "Always write tests before implementation.",
@@ -61,19 +62,23 @@ async function withSystemPrompt() {
 		skipOsInstructions: true,
 	});
 	// docs:end system-prompt
-	console.log(sessionId);
 }
 
-// ── Send a prompt ─────────────────────────────────────────────────
-async function sendPrompt() {
-	const sessionId = await agent.createSession("pi", {
+// ── Prompt a session ─────────────────────────────────────────────────
+async function promptSession() {
+	await agent.openSession({
+		agent: "pi",
 		env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 	});
-	const response = await agent.sendPrompt(
-		sessionId,
-		"Create a TypeScript function that checks if a number is prime",
-	);
-	console.log(response.text);
+	const response = await agent.prompt({
+		content: [
+			{
+				type: "text",
+				text: "Create a TypeScript function that checks if a number is prime",
+			},
+		],
+	});
+	console.log(response.message?.content ?? []);
 }
 
 // ── Stream responses ──────────────────────────────────────────────
@@ -81,22 +86,25 @@ async function streamResponses() {
 	const conn = agent.connect();
 
 	// Subscribe to session events before sending the prompt
-	conn.on("sessionEvent", (data) => {
-		console.log(`[${data.sessionId}]`, data.event.method, data.event.params);
+	conn.on("sessionEvent", (event) => {
+		console.log(`[${event.sessionId}]`, event.durability, event);
 	});
 
-	const sessionId = await agent.createSession("pi", {
+	await agent.openSession({
+		agent: "pi",
 		env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 	});
-	await agent.sendPrompt(sessionId, "Explain how async/await works");
+	await agent.prompt({
+		content: [{ type: "text", text: "Explain how async/await works" }],
+	});
 }
 
 // ── Client events ─────────────────────────────────────────────────
 function clientEvents() {
 	const conn = agent.connect();
 
-	conn.on("sessionEvent", (data) => {
-		console.log(data.sessionId, data.event.method, data.event.params);
+	conn.on("sessionEvent", (event) => {
+		console.log(event.sessionId, event.durability, event);
 	});
 
 	conn.on("vmBooted", () => {
@@ -113,93 +121,117 @@ async function subscribeFirst() {
 	const conn = agent.connect();
 
 	// Subscribe first
-	conn.on("sessionEvent", (data) => {
-		console.log("Session:", data.event.method);
+	conn.on("sessionEvent", (event) => {
+		console.log("Session:", event);
 	});
 
 	// Then trigger actions
-	const sessionId = await agent.createSession("pi", {
+	await agent.openSession({
+		agent: "pi",
 		env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 	});
-	await agent.sendPrompt(sessionId, "Run the test suite");
+	await agent.prompt({
+		content: [{ type: "text", text: "Run the test suite" }],
+	});
 }
 
 // ── Cancel a prompt ───────────────────────────────────────────────
 async function cancelPrompt() {
-	const sessionId = await agent.createSession("pi", {
+	await agent.openSession({
+		agent: "pi",
 		env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 	});
 
 	// Start a long-running prompt
-	const promptPromise = agent.sendPrompt(
-		sessionId,
-		"Refactor the entire codebase to use TypeScript strict mode",
-	);
+	const promptPromise = agent.prompt({
+		content: [
+			{
+				type: "text",
+				text: "Refactor the entire codebase to use TypeScript strict mode",
+			},
+		],
+	});
 
 	// Cancel the in-flight prompt while keeping the session available.
 	setTimeout(async () => {
-		await agent.cancelPrompt(sessionId);
+		await agent.cancelPrompt();
 	}, 10_000);
 
 	const response = await promptPromise;
-	console.log(response.text);
+	console.log(response.message?.content ?? []);
 }
 
-// ── Close a session ───────────────────────────────────────────────
-async function closeSession() {
-	const sessionId = await agent.createSession("pi", {
+// ── Unload a session runtime ───────────────────────────────────────────────
+async function unloadSession() {
+	await agent.openSession({
+		agent: "pi",
 		env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 	});
 
-	// Session events are live-only, so closing releases the session and its stream.
-	await agent.closeSession(sessionId);
+	// Release the adapter without deleting the durable session or its history.
+	await agent.unloadSession();
 }
 
-// ── List live sessions ─────────────────────────────────────────────────
-async function listLiveSessions() {
-	const sessionId = await agent.createSession("pi", {
+// ── List durable sessions ─────────────────────────────────────────────────
+async function listDurableSessions() {
+	await agent.openSession({
+		agent: "pi",
 		env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 	});
-	const sessions = await agent.listSessions();
-	for (const session of sessions) {
-		console.log(session.sessionId, session.agentType);
+	const page = await agent.listSessions();
+	for (const session of page.sessions) {
+		console.log(session.sessionId, session.agent);
 	}
 }
 
 // ── Multiple sessions ─────────────────────────────────────────────
 async function multipleSessions() {
 	// Create two sessions in the same VM
-	const coder = await agent.createSession("pi", {
+	const coderSessionId = "coder";
+	await agent.openSession({
+		sessionId: coderSessionId,
+		agent: "pi",
 		env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 	});
-	const reviewer = await agent.createSession("pi", {
+	const reviewerSessionId = "reviewer";
+	await agent.openSession({
+		sessionId: reviewerSessionId,
+		agent: "pi",
 		env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 	});
 
 	// Coder writes code
-	await agent.sendPrompt(coder, "Write a REST API at /home/agentos/api.ts");
+	await agent.prompt({
+		sessionId: coderSessionId,
+		content: [
+			{ type: "text", text: "Write a REST API at /home/agentos/api.ts" },
+		],
+	});
 
 	// Reviewer reads and reviews the same file
-	await agent.sendPrompt(reviewer, "Review /home/agentos/api.ts for issues");
+	await agent.prompt({
+		sessionId: reviewerSessionId,
+		content: [{ type: "text", text: "Review /home/agentos/api.ts for issues" }],
+	});
 
-	// Close each session independently
-	await agent.closeSession(coder);
-	await agent.closeSession(reviewer);
+	// Unload each adapter independently while preserving both histories.
+	await agent.unloadSession({ sessionId: coderSessionId });
+	await agent.unloadSession({ sessionId: reviewerSessionId });
 }
 
 export {
-	createSession,
+	openSession,
 	withEnv,
 	withCwd,
 	withInstructions,
 	withSkipOsInstructions,
 	withSystemPrompt,
-	sendPrompt,
+	promptSession,
 	streamResponses,
 	clientEvents,
 	subscribeFirst,
 	cancelPrompt,
-	closeSession,
-	listLiveSessions,
+	unloadSession,
+	listDurableSessions,
 	multipleSessions,
 };

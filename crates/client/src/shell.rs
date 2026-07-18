@@ -26,7 +26,6 @@ use agentos_sidecar_client::wire::{self, EventPayload, StreamChannel};
 use crate::agent_os::{AcpTerminalEntry, AgentOs, ShellEntry};
 use crate::error::ClientError;
 use crate::process::{install_output_callback, OutputCallback, ProcessStatus, StdinInput};
-use crate::stream::ByteStream;
 
 /// Channel capacity for a shell's ordered terminal-data and diagnostic-stderr broadcasts.
 const SHELL_DATA_CHANNEL_CAPACITY: usize = 1024;
@@ -42,11 +41,7 @@ const DEFAULT_SHELL_COMMAND: &str = "sh";
 // Supporting types
 // ---------------------------------------------------------------------------
 
-/// Options for `open_shell`.
-///
-/// `on_stderr` mirrors the TS `OpenShellOptions.onStderr` raw-byte callback. It is an optional
-/// stderr-only diagnostic tap; the same bytes are already present once in ordered shell data, so a
-/// terminal renderer must not consume both surfaces.
+/// Callback-free options for portable `open_shell`.
 #[derive(Default)]
 pub struct OpenShellOptions {
     pub command: Option<String>,
@@ -55,7 +50,6 @@ pub struct OpenShellOptions {
     pub cwd: Option<String>,
     pub cols: Option<u16>,
     pub rows: Option<u16>,
-    pub on_stderr: Option<OutputCallback>,
 }
 
 /// Options for `connect_terminal` (extends [`OpenShellOptions`]).
@@ -67,12 +61,25 @@ pub struct OpenShellOptions {
 pub struct ConnectTerminalOptions {
     pub base: OpenShellOptions,
     pub on_data: Option<OutputCallback>,
+    pub on_stderr: Option<OutputCallback>,
 }
 
 /// The synthetic shell id returned by `open_shell` (`shell-N`, NOT a pid).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShellHandle {
     pub shell_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellData {
+    pub shell_id: String,
+    pub data: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellExit {
+    pub shell_id: String,
+    pub exit_code: i32,
 }
 
 // ---------------------------------------------------------------------------
@@ -243,12 +250,6 @@ impl AgentOs {
         let (spawned_tx, _) = tokio::sync::watch::channel(false);
         // Exit-code channel backing `wait_shell`.
         let (exit_tx, _) = tokio::sync::watch::channel(None::<i32>);
-
-        // Seed any caller-provided initial stderr callback into the stderr fan-out, matching the TS
-        // initial-handler-set behavior (`stderrHandlers.add(options.onStderr)`).
-        if let Some(cb) = options.on_stderr.take() {
-            install_output_callback(stderr_tx.clone(), cb);
-        }
 
         // Register the entry up front so write/resize/close can address it immediately, exactly like
         // the TS map insert before the handle's async work settles.
@@ -562,7 +563,11 @@ impl AgentOs {
     /// stdin binding, terminal raw-mode, and SIGWINCH/resize forwarding are host-process concerns
     /// that have no native wire op and are intentionally not bound here.
     pub async fn connect_terminal(&self, options: ConnectTerminalOptions) -> Result<u32> {
-        let ConnectTerminalOptions { base, on_data } = options;
+        let ConnectTerminalOptions {
+            base,
+            on_data,
+            on_stderr,
+        } = options;
 
         let process_id = format!("terminal-{}", Uuid::new_v4());
         let command = base
@@ -578,7 +583,7 @@ impl AgentOs {
         if let Some(cb) = on_data {
             install_output_callback(data_tx.clone(), cb);
         }
-        if let Some(cb) = base.on_stderr {
+        if let Some(cb) = on_stderr {
             install_output_callback(stderr_tx.clone(), cb);
         }
 
@@ -749,24 +754,92 @@ impl AgentOs {
     /// returned stream is the unsubscribe. Carries stdout and stderr exactly once in wire order.
     /// Use [`Self::on_shell_stderr`] only as a channel-specific diagnostic tap, not as a second
     /// terminal-rendering stream. Errors with [`ClientError::ShellNotFound`].
-    pub fn on_shell_data(&self, shell_id: &str) -> std::result::Result<ByteStream, ClientError> {
-        self.inner()
+    pub fn on_shell_data(
+        &self,
+        shell_id: &str,
+        mut handler: impl FnMut(ShellData) + Send + 'static,
+    ) -> std::result::Result<crate::stream::Subscription, ClientError> {
+        let mut rx = self
+            .inner()
             .shells
             .read(shell_id, |_, entry| entry.data_tx.subscribe())
-            .map(ByteStream::new)
-            .ok_or_else(|| ClientError::ShellNotFound(shell_id.to_string()))
+            .ok_or_else(|| ClientError::ShellNotFound(shell_id.to_string()))?;
+        let shell_id = shell_id.to_string();
+        let task = tokio::spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(data) => handler(ShellData {
+                        shell_id: shell_id.clone(),
+                        data,
+                    }),
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                }
+            }
+        });
+        Ok(crate::stream::Subscription::new(move || task.abort()))
     }
 
     /// Subscribe to a shell's stderr. SYNC register; multi-handler; dropping the returned stream is
     /// the unsubscribe. This is the optional diagnostic channel backing the TS `onStderr` option;
     /// stderr is also present once in ordered `on_shell_data`. Errors with
     /// [`ClientError::ShellNotFound`].
-    pub fn on_shell_stderr(&self, shell_id: &str) -> std::result::Result<ByteStream, ClientError> {
-        self.inner()
+    pub fn on_shell_stderr(
+        &self,
+        shell_id: &str,
+        mut handler: impl FnMut(ShellData) + Send + 'static,
+    ) -> std::result::Result<crate::stream::Subscription, ClientError> {
+        let mut rx = self
+            .inner()
             .shells
             .read(shell_id, |_, entry| entry.stderr_tx.subscribe())
-            .map(ByteStream::new)
-            .ok_or_else(|| ClientError::ShellNotFound(shell_id.to_string()))
+            .ok_or_else(|| ClientError::ShellNotFound(shell_id.to_string()))?;
+        let shell_id = shell_id.to_string();
+        let task = tokio::spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(data) => handler(ShellData {
+                        shell_id: shell_id.clone(),
+                        data,
+                    }),
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                }
+            }
+        });
+        Ok(crate::stream::Subscription::new(move || task.abort()))
+    }
+
+    pub fn on_shell_exit(
+        &self,
+        shell_id: &str,
+        handler: impl FnOnce(ShellExit) + Send + 'static,
+    ) -> std::result::Result<crate::stream::Subscription, ClientError> {
+        let mut rx = self
+            .inner()
+            .shells
+            .read(shell_id, |_, entry| entry.exit_tx.subscribe())
+            .ok_or_else(|| ClientError::ShellNotFound(shell_id.to_string()))?;
+        if let Some(exit_code) = *rx.borrow() {
+            handler(ShellExit {
+                shell_id: shell_id.to_string(),
+                exit_code,
+            });
+            return Ok(crate::stream::Subscription::noop());
+        }
+        let shell_id = shell_id.to_string();
+        let task = tokio::spawn(async move {
+            while rx.changed().await.is_ok() {
+                if let Some(exit_code) = *rx.borrow() {
+                    handler(ShellExit {
+                        shell_id,
+                        exit_code,
+                    });
+                    return;
+                }
+            }
+        });
+        Ok(crate::stream::Subscription::new(move || task.abort()))
     }
 
     /// Resize a shell's PTY winsize. SYNC fire-and-forget, mirroring the TS `ShellHandle.resize`

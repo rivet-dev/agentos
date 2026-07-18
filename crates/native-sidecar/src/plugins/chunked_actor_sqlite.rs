@@ -1,7 +1,7 @@
-use std::time::Duration;
-
 use crate::bridge::MountPluginContext;
-use agentos_actor_uds_client::{ActorUdsClient, QueryResult, SqlValue};
+use crate::vm_sqlite::{
+    migrate_schema, QueryResult, SharedVmSqliteDatabase, SqlStatement, SqlValue, VmSqliteMigration,
+};
 use agentos_kernel::mount_plugin::{
     FileSystemPluginFactory, OpenFileSystemPluginRequest, PluginError,
 };
@@ -28,36 +28,36 @@ const DEFAULT_MAX_METADATA_BYTES: usize = 64 * 1024 * 1024;
 const MAX_METADATA_BYTES: usize = 1024 * 1024 * 1024;
 const METADATA_CLEANUP_BATCH_SIZE: i64 = 64;
 const MAX_CHUNK_SIZE: u32 = 16 * 1024 * 1024;
-const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 30_000;
-const MAX_REQUEST_TIMEOUT_MS: u64 = 5 * 60_000;
-
-const INSTALL_SCHEMA: &str = r#"
-CREATE TABLE IF NOT EXISTS agentos_vfs_metadata_heads (
-    namespace TEXT PRIMARY KEY,
-    generation INTEGER NOT NULL,
-    chunk_count INTEGER NOT NULL,
-    byte_length INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS agentos_vfs_metadata_chunks (
-    namespace TEXT NOT NULL,
-    generation INTEGER NOT NULL,
-    chunk_index INTEGER NOT NULL,
+const VFS_MIGRATION_1: &[&str] = &[
+    "CREATE TABLE agentos_fs_metadata_heads (
+    namespace TEXT PRIMARY KEY CHECK (length(namespace) > 0),
+    generation INTEGER NOT NULL CHECK (generation >= 0),
+    chunk_count INTEGER NOT NULL CHECK (chunk_count >= 0),
+    byte_length INTEGER NOT NULL CHECK (byte_length >= 0)
+) STRICT",
+    "CREATE TABLE agentos_fs_metadata_chunks (
+    namespace TEXT NOT NULL CHECK (length(namespace) > 0),
+    generation INTEGER NOT NULL CHECK (generation >= 0),
+    chunk_index INTEGER NOT NULL CHECK (chunk_index >= 0),
     content BLOB NOT NULL,
     PRIMARY KEY (namespace, generation, chunk_index)
-);
-CREATE TABLE IF NOT EXISTS agentos_vfs_blocks (
-    namespace TEXT NOT NULL,
-    block_key TEXT NOT NULL,
+) STRICT",
+    "CREATE TABLE agentos_fs_blocks (
+    namespace TEXT NOT NULL CHECK (length(namespace) > 0),
+    block_key TEXT NOT NULL CHECK (length(block_key) > 0),
     content BLOB NOT NULL,
     PRIMARY KEY (namespace, block_key)
-);
-"#;
+) STRICT",
+];
+
+const VFS_MIGRATIONS: &[VmSqliteMigration] = &[VmSqliteMigration {
+    version: 1,
+    statements: VFS_MIGRATION_1,
+}];
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ChunkedActorSqliteMountConfig {
-    path: String,
-    token: String,
     #[serde(default = "default_namespace")]
     namespace: String,
     chunk_size: Option<u32>,
@@ -68,7 +68,6 @@ struct ChunkedActorSqliteMountConfig {
     dir_mode: Option<u32>,
     metadata_cache_entries: Option<usize>,
     max_metadata_bytes: Option<usize>,
-    request_timeout_ms: Option<u64>,
 }
 
 fn default_namespace() -> String {
@@ -95,15 +94,14 @@ impl<B> FileSystemPluginFactory<MountPluginContext<B>> for ChunkedActorSqliteMou
         let inline_threshold = config
             .inline_threshold
             .unwrap_or(vfs::engine::DEFAULT_INLINE_THRESHOLD);
-        let timeout = Duration::from_millis(
-            config
-                .request_timeout_ms
-                .unwrap_or(DEFAULT_REQUEST_TIMEOUT_MS),
-        );
-        let client = ActorUdsClient::with_request_timeout(config.path, config.token, timeout);
+        let database = request.context.database.clone().ok_or_else(|| {
+            PluginError::invalid_input(
+                "chunked_actor_sqlite requires createVm database configuration",
+            )
+        })?;
         let metadata = CachedMetadataStore::new(
             ActorSqliteMetadataStore::new(
-                client.clone(),
+                database.clone(),
                 config.namespace.clone(),
                 config
                     .max_metadata_bytes
@@ -113,7 +111,7 @@ impl<B> FileSystemPluginFactory<MountPluginContext<B>> for ChunkedActorSqliteMou
                 .metadata_cache_entries
                 .unwrap_or(DEFAULT_METADATA_CACHE_ENTRIES),
         );
-        let blocks = ActorSqliteBlockStore::new(client, config.namespace);
+        let blocks = ActorSqliteBlockStore::new(database, config.namespace);
         let fs = ChunkedFs::with_options(
             metadata,
             blocks,
@@ -134,16 +132,6 @@ impl<B> FileSystemPluginFactory<MountPluginContext<B>> for ChunkedActorSqliteMou
 }
 
 fn validate_config(config: &ChunkedActorSqliteMountConfig) -> Result<(), PluginError> {
-    if config.path.trim().is_empty() || !config.path.starts_with('/') {
-        return Err(PluginError::invalid_input(
-            "chunked_actor_sqlite.path must be a non-empty absolute Unix socket path",
-        ));
-    }
-    if config.token.is_empty() || config.token.len() > 4096 {
-        return Err(PluginError::invalid_input(
-            "chunked_actor_sqlite.token must contain 1..=4096 bytes",
-        ));
-    }
     if config.namespace.is_empty() || config.namespace.len() > 256 {
         return Err(PluginError::invalid_input(
             "chunked_actor_sqlite.namespace must contain 1..=256 bytes",
@@ -179,19 +167,11 @@ fn validate_config(config: &ChunkedActorSqliteMountConfig) -> Result<(), PluginE
             "chunked_actor_sqlite.maxMetadataBytes must be between 1 and {MAX_METADATA_BYTES} bytes"
         )));
     }
-    let request_timeout_ms = config
-        .request_timeout_ms
-        .unwrap_or(DEFAULT_REQUEST_TIMEOUT_MS);
-    if request_timeout_ms == 0 || request_timeout_ms > MAX_REQUEST_TIMEOUT_MS {
-        return Err(PluginError::invalid_input(format!(
-            "chunked_actor_sqlite.requestTimeoutMs must be between 1 and {MAX_REQUEST_TIMEOUT_MS}"
-        )));
-    }
     Ok(())
 }
 
 struct ActorSqliteMetadataStore {
-    client: ActorUdsClient,
+    database: SharedVmSqliteDatabase,
     namespace: String,
     max_metadata_bytes: usize,
     inner: OnceCell<InMemoryMetadataStore>,
@@ -199,9 +179,9 @@ struct ActorSqliteMetadataStore {
 }
 
 impl ActorSqliteMetadataStore {
-    fn new(client: ActorUdsClient, namespace: String, max_metadata_bytes: usize) -> Self {
+    fn new(database: SharedVmSqliteDatabase, namespace: String, max_metadata_bytes: usize) -> Self {
         Self {
-            client,
+            database,
             namespace,
             max_metadata_bytes,
             inner: OnceCell::new(),
@@ -212,8 +192,9 @@ impl ActorSqliteMetadataStore {
     async fn inner(&self) -> VfsResult<&InMemoryMetadataStore> {
         self.inner
             .get_or_try_init(|| async {
-                install_schema(&self.client).await?;
-                match load_metadata(&self.client, &self.namespace, self.max_metadata_bytes).await? {
+                match load_metadata(&self.database, &self.namespace, self.max_metadata_bytes)
+                    .await?
+                {
                     Some(bytes) => {
                         let dump: MetadataDump =
                             serde_bare::from_slice(&bytes).map_err(|error| {
@@ -227,7 +208,7 @@ impl ActorSqliteMetadataStore {
                     None => {
                         let inner = InMemoryMetadataStore::default();
                         persist_metadata(
-                            &self.client,
+                            &self.database,
                             &self.namespace,
                             &inner,
                             self.max_metadata_bytes,
@@ -242,7 +223,7 @@ impl ActorSqliteMetadataStore {
 
     async fn persist(&self, inner: &InMemoryMetadataStore) -> VfsResult<()> {
         persist_metadata(
-            &self.client,
+            &self.database,
             &self.namespace,
             inner,
             self.max_metadata_bytes,
@@ -251,12 +232,21 @@ impl ActorSqliteMetadataStore {
     }
 }
 
-async fn install_schema(client: &ActorUdsClient) -> VfsResult<()> {
-    client.exec(INSTALL_SCHEMA).await.map_err(actor_sql_error)
+pub(crate) async fn bootstrap_schema(
+    database: &dyn crate::vm_sqlite::VmSqliteDatabase,
+) -> VfsResult<()> {
+    migrate_schema(
+        database,
+        "filesystem",
+        "agentos_fs_schema_version",
+        VFS_MIGRATIONS,
+    )
+    .await
+    .map_err(actor_sql_error)
 }
 
 async fn persist_metadata(
-    client: &ActorUdsClient,
+    database: &SharedVmSqliteDatabase,
     namespace: &str,
     inner: &InMemoryMetadataStore,
     max_metadata_bytes: usize,
@@ -279,11 +269,11 @@ async fn persist_metadata(
         );
     }
 
-    let generation_result = client
-        .query(
-            "SELECT COALESCE(MAX(generation), 0) FROM agentos_vfs_metadata_chunks WHERE namespace = ?",
+    let generation_result = database
+        .query(SqlStatement::new(
+            "SELECT COALESCE(MAX(generation), 0) FROM agentos_fs_metadata_chunks WHERE namespace = ?",
             vec![SqlValue::SqlText(namespace.to_owned())],
-        )
+        ))
         .await
         .map_err(actor_sql_error)?;
     let generation = first_integer(generation_result, "metadata generation")?
@@ -292,9 +282,9 @@ async fn persist_metadata(
 
     let chunks = dump.chunks(METADATA_CHUNK_SIZE).collect::<Vec<_>>();
     for (chunk_index, content) in chunks.iter().enumerate() {
-        client
-            .query(
-                "INSERT INTO agentos_vfs_metadata_chunks (namespace, generation, chunk_index, content) VALUES (?, ?, ?, ?)",
+        database
+            .query(SqlStatement::new(
+                "INSERT INTO agentos_fs_metadata_chunks (namespace, generation, chunk_index, content) VALUES (?, ?, ?, ?)",
                 vec![
                     SqlValue::SqlText(namespace.to_owned()),
                     SqlValue::SqlInteger(generation),
@@ -303,14 +293,14 @@ async fn persist_metadata(
                     })?),
                     SqlValue::SqlBlob(content.to_vec()),
                 ],
-            )
+            ))
             .await
             .map_err(actor_sql_error)?;
     }
 
-    client
-        .query(
-            "INSERT INTO agentos_vfs_metadata_heads (namespace, generation, chunk_count, byte_length) VALUES (?, ?, ?, ?) \
+    database
+        .query(SqlStatement::new(
+            "INSERT INTO agentos_fs_metadata_heads (namespace, generation, chunk_count, byte_length) VALUES (?, ?, ?, ?) \
              ON CONFLICT(namespace) DO UPDATE SET generation = excluded.generation, chunk_count = excluded.chunk_count, byte_length = excluded.byte_length",
             vec![
                 SqlValue::SqlText(namespace.to_owned()),
@@ -322,11 +312,11 @@ async fn persist_metadata(
                     VfsError::eio("actor SQLite VFS metadata byte length overflow")
                 })?),
             ],
-        )
+        ))
         .await
         .map_err(actor_sql_error)?;
 
-    if let Err(error) = cleanup_old_metadata(client, namespace, generation).await {
+    if let Err(error) = cleanup_old_metadata(database, namespace, generation).await {
         eprintln!(
             "agentos chunked_actor_sqlite failed to clean superseded metadata generations: {error}"
         );
@@ -335,15 +325,15 @@ async fn persist_metadata(
 }
 
 async fn load_metadata(
-    client: &ActorUdsClient,
+    database: &SharedVmSqliteDatabase,
     namespace: &str,
     max_metadata_bytes: usize,
 ) -> VfsResult<Option<Vec<u8>>> {
-    let result = client
-        .query(
-            "SELECT generation, chunk_count, byte_length FROM agentos_vfs_metadata_heads WHERE namespace = ?",
+    let result = database
+        .query(SqlStatement::new(
+            "SELECT generation, chunk_count, byte_length FROM agentos_fs_metadata_heads WHERE namespace = ?",
             vec![SqlValue::SqlText(namespace.to_owned())],
-        )
+        ))
         .await
         .map_err(actor_sql_error)?;
     let Some(row) = result.rows.into_iter().next() else {
@@ -376,9 +366,9 @@ async fn load_metadata(
 
     let mut dump = Vec::with_capacity(byte_length);
     for chunk_index in 0..chunk_count {
-        let result = client
-            .query(
-                "SELECT content FROM agentos_vfs_metadata_chunks WHERE namespace = ? AND generation = ? AND chunk_index = ?",
+        let result = database
+            .query(SqlStatement::new(
+                "SELECT content FROM agentos_fs_metadata_chunks WHERE namespace = ? AND generation = ? AND chunk_index = ?",
                 vec![
                     SqlValue::SqlText(namespace.to_owned()),
                     SqlValue::SqlInteger(generation),
@@ -386,7 +376,7 @@ async fn load_metadata(
                         VfsError::eio("actor SQLite VFS metadata chunk index overflow")
                     })?),
                 ],
-            )
+            ))
             .await
             .map_err(actor_sql_error)?;
         let content = first_blob(result)?.ok_or_else(|| {
@@ -412,20 +402,20 @@ async fn load_metadata(
 }
 
 async fn cleanup_old_metadata(
-    client: &ActorUdsClient,
+    database: &SharedVmSqliteDatabase,
     namespace: &str,
     current_generation: i64,
 ) -> VfsResult<()> {
     loop {
-        let result = client
-            .query(
-                "SELECT generation, chunk_index FROM agentos_vfs_metadata_chunks WHERE namespace = ? AND generation <> ? LIMIT ?",
+        let result = database
+            .query(SqlStatement::new(
+                "SELECT generation, chunk_index FROM agentos_fs_metadata_chunks WHERE namespace = ? AND generation <> ? LIMIT ?",
                 vec![
                     SqlValue::SqlText(namespace.to_owned()),
                     SqlValue::SqlInteger(current_generation),
                     SqlValue::SqlInteger(METADATA_CLEANUP_BATCH_SIZE),
                 ],
-            )
+            ))
             .await
             .map_err(actor_sql_error)?;
         if result.rows.is_empty() {
@@ -439,15 +429,15 @@ async fn cleanup_old_metadata(
             }
             let generation = sql_nonnegative_integer(&row[0], "metadata generation")?;
             let chunk_index = sql_nonnegative_integer(&row[1], "metadata chunk index")?;
-            client
-                .query(
-                    "DELETE FROM agentos_vfs_metadata_chunks WHERE namespace = ? AND generation = ? AND chunk_index = ?",
+            database
+                .query(SqlStatement::new(
+                    "DELETE FROM agentos_fs_metadata_chunks WHERE namespace = ? AND generation = ? AND chunk_index = ?",
                     vec![
                         SqlValue::SqlText(namespace.to_owned()),
                         SqlValue::SqlInteger(generation),
                         SqlValue::SqlInteger(chunk_index),
                     ],
-                )
+                ))
                 .await
                 .map_err(actor_sql_error)?;
         }
@@ -578,56 +568,45 @@ impl MetadataStore for ActorSqliteMetadataStore {
 }
 
 struct ActorSqliteBlockStore {
-    client: ActorUdsClient,
+    database: SharedVmSqliteDatabase,
     namespace: String,
-    initialized: OnceCell<()>,
 }
 
 impl ActorSqliteBlockStore {
-    fn new(client: ActorUdsClient, namespace: String) -> Self {
+    fn new(database: SharedVmSqliteDatabase, namespace: String) -> Self {
         Self {
-            client,
+            database,
             namespace,
-            initialized: OnceCell::new(),
         }
-    }
-
-    async fn ensure_initialized(&self) -> VfsResult<()> {
-        self.initialized
-            .get_or_try_init(|| async { install_schema(&self.client).await })
-            .await
-            .map(|_| ())
     }
 }
 
 #[async_trait]
 impl BlockStore for ActorSqliteBlockStore {
     async fn get(&self, key: &BlockKey) -> VfsResult<Vec<u8>> {
-        self.ensure_initialized().await?;
         let result = self
-            .client
-            .query(
-                "SELECT content FROM agentos_vfs_blocks WHERE namespace = ? AND block_key = ?",
+            .database
+            .query(SqlStatement::new(
+                "SELECT content FROM agentos_fs_blocks WHERE namespace = ? AND block_key = ?",
                 vec![
                     SqlValue::SqlText(self.namespace.clone()),
                     SqlValue::SqlText(key.0.clone()),
                 ],
-            )
+            ))
             .await
             .map_err(actor_sql_error)?;
         first_blob(result)?.ok_or_else(|| VfsError::enoent(&key.0))
     }
 
     async fn get_range(&self, key: &BlockKey, off: u64, len: u64) -> VfsResult<Vec<u8>> {
-        self.ensure_initialized().await?;
         let offset = i64::try_from(off)
             .map_err(|_| VfsError::einval(format!("block range offset is too large: {off}")))?;
         let length = i64::try_from(len)
             .map_err(|_| VfsError::einval(format!("block range length is too large: {len}")))?;
         let result = self
-            .client
-            .query(
-                "SELECT substr(content, ?, ?) FROM agentos_vfs_blocks \
+            .database
+            .query(SqlStatement::new(
+                "SELECT substr(content, ?, ?) FROM agentos_fs_blocks \
                  WHERE namespace = ? AND block_key = ?",
                 vec![
                     SqlValue::SqlInteger(offset.saturating_add(1)),
@@ -635,94 +614,72 @@ impl BlockStore for ActorSqliteBlockStore {
                     SqlValue::SqlText(self.namespace.clone()),
                     SqlValue::SqlText(key.0.clone()),
                 ],
-            )
+            ))
             .await
             .map_err(actor_sql_error)?;
         first_blob(result)?.ok_or_else(|| VfsError::enoent(&key.0))
     }
 
     async fn put(&self, key: &BlockKey, data: &[u8]) -> VfsResult<()> {
-        self.ensure_initialized().await?;
-        self.client
-            .query(
-                "INSERT INTO agentos_vfs_blocks (namespace, block_key, content) VALUES (?, ?, ?) \
+        self.database
+            .query(SqlStatement::new(
+                "INSERT INTO agentos_fs_blocks (namespace, block_key, content) VALUES (?, ?, ?) \
                  ON CONFLICT(namespace, block_key) DO UPDATE SET content = excluded.content",
                 vec![
                     SqlValue::SqlText(self.namespace.clone()),
                     SqlValue::SqlText(key.0.clone()),
                     SqlValue::SqlBlob(data.to_vec()),
                 ],
-            )
+            ))
             .await
             .map_err(actor_sql_error)?;
         Ok(())
     }
 
     async fn exists(&self, key: &BlockKey) -> VfsResult<bool> {
-        self.ensure_initialized().await?;
         let result = self
-            .client
-            .query(
-                "SELECT 1 FROM agentos_vfs_blocks WHERE namespace = ? AND block_key = ? LIMIT 1",
+            .database
+            .query(SqlStatement::new(
+                "SELECT 1 FROM agentos_fs_blocks WHERE namespace = ? AND block_key = ? LIMIT 1",
                 vec![
                     SqlValue::SqlText(self.namespace.clone()),
                     SqlValue::SqlText(key.0.clone()),
                 ],
-            )
+            ))
             .await
             .map_err(actor_sql_error)?;
         Ok(!result.rows.is_empty())
     }
 
     async fn delete_many(&self, keys: &[BlockKey]) -> VfsResult<()> {
-        self.ensure_initialized().await?;
         if keys.is_empty() {
             return Ok(());
         }
-        let lease = format!("delete-blocks-{}", unique_lease_id());
-        self.client
-            .query_with_lease("BEGIN IMMEDIATE", Vec::new(), Some(&lease))
-            .await
-            .map_err(actor_sql_error)?;
-        for key in keys {
-            if let Err(error) = self
-                .client
-                .query_with_lease(
-                    "DELETE FROM agentos_vfs_blocks WHERE namespace = ? AND block_key = ?",
-                    vec![
-                        SqlValue::SqlText(self.namespace.clone()),
-                        SqlValue::SqlText(key.0.clone()),
-                    ],
-                    Some(&lease),
-                )
-                .await
-            {
-                if let Err(rollback_error) = self
-                    .client
-                    .query_with_lease("ROLLBACK", Vec::new(), Some(&lease))
-                    .await
-                {
-                    eprintln!(
-                        "agentos chunked_actor_sqlite rollback failed after block deletion error: {rollback_error}"
-                    );
-                }
-                return Err(actor_sql_error(error));
-            }
-        }
-        self.client
-            .query_with_lease("COMMIT", Vec::new(), Some(&lease))
+        self.database
+            .transaction(
+                keys.iter()
+                    .map(|key| {
+                        SqlStatement::new(
+                            "DELETE FROM agentos_fs_blocks WHERE namespace = ? AND block_key = ?",
+                            vec![
+                                SqlValue::SqlText(self.namespace.clone()),
+                                SqlValue::SqlText(key.0.clone()),
+                            ],
+                        )
+                    })
+                    .collect(),
+            )
             .await
             .map_err(actor_sql_error)?;
         Ok(())
     }
 
     async fn copy(&self, src: &BlockKey, dst: &BlockKey) -> VfsResult<()> {
-        self.ensure_initialized().await?;
         let result = self
-            .client
-            .query(
-                "INSERT INTO agentos_vfs_blocks (namespace, block_key, content) \
-                 SELECT namespace, ?, content FROM agentos_vfs_blocks \
+            .database
+            .query(SqlStatement::new(
+                "INSERT INTO agentos_fs_blocks (namespace, block_key, content) \
+                 SELECT namespace, ?, content FROM agentos_fs_blocks \
                  WHERE namespace = ? AND block_key = ? \
                  ON CONFLICT(namespace, block_key) DO UPDATE SET content = excluded.content",
                 vec![
@@ -730,7 +687,7 @@ impl BlockStore for ActorSqliteBlockStore {
                     SqlValue::SqlText(self.namespace.clone()),
                     SqlValue::SqlText(src.0.clone()),
                 ],
-            )
+            ))
             .await
             .map_err(actor_sql_error)?;
         if result.changes == 0 {
@@ -755,10 +712,4 @@ fn first_blob(result: QueryResult) -> VfsResult<Option<Vec<u8>>> {
 
 fn actor_sql_error(error: impl std::fmt::Display) -> VfsError {
     VfsError::eio(format!("actor SQLite UDS: {error}"))
-}
-
-fn unique_lease_id() -> u64 {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static NEXT: AtomicU64 = AtomicU64::new(1);
-    NEXT.fetch_add(1, Ordering::Relaxed)
 }

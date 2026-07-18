@@ -128,16 +128,17 @@ describe("vanilla Pi bash tool inside the VM", () => {
 		try {
 			const homeDir = await createVmPiHome(vm, url);
 			const workspaceDir = await createVmWorkspace(vm);
-			sessionId = (
-				await vm.createSession("pi", {
-					cwd: workspaceDir,
-					env: {
-						HOME: homeDir,
-						ANTHROPIC_API_KEY: "mock-key",
-						ANTHROPIC_BASE_URL: url,
-					},
-				})
-			).sessionId;
+			sessionId = "main";
+			await vm.openSession({
+				sessionId,
+				agent: "pi",
+				cwd: workspaceDir,
+				env: {
+					HOME: homeDir,
+					ANTHROPIC_API_KEY: "mock-key",
+					ANTHROPIC_BASE_URL: url,
+				},
+			});
 
 			const eventText = captureSessionEventText(vm, sessionId);
 			const { response } = await vm.prompt(sessionId, "Run pwd.");
@@ -146,7 +147,7 @@ describe("vanilla Pi bash tool inside the VM", () => {
 			expect(eventText.text()).toContain(workspaceDir);
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				vm.unloadSession({ sessionId });
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
@@ -165,17 +166,18 @@ describe("vanilla Pi bash tool inside the VM", () => {
 		try {
 			const homeDir = await createVmPiHome(vm, url);
 			const workspaceDir = await createVmWorkspace(vm);
-			sessionId = (
-				await vm.createSession("pi", {
-					cwd: workspaceDir,
-					env: {
-						HOME: homeDir,
-						ANTHROPIC_API_KEY: "mock-key",
-						ANTHROPIC_BASE_URL: url,
-						APP_TEST_FLAG: "vanilla",
-					},
-				})
-			).sessionId;
+			sessionId = "main";
+			await vm.openSession({
+				sessionId,
+				agent: "pi",
+				cwd: workspaceDir,
+				env: {
+					HOME: homeDir,
+					ANTHROPIC_API_KEY: "mock-key",
+					ANTHROPIC_BASE_URL: url,
+					APP_TEST_FLAG: "vanilla",
+				},
+			});
 
 			const eventText = captureSessionEventText(vm, sessionId);
 			const { response } = await vm.prompt(
@@ -187,7 +189,7 @@ describe("vanilla Pi bash tool inside the VM", () => {
 			expect(eventText.text()).toContain("vanilla");
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				vm.unloadSession({ sessionId });
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
@@ -209,16 +211,17 @@ describe("vanilla Pi bash tool inside the VM", () => {
 		try {
 			const homeDir = await createVmPiHome(vm, url);
 			const workspaceDir = await createVmWorkspace(vm);
-			sessionId = (
-				await vm.createSession("pi", {
-					cwd: workspaceDir,
-					env: {
-						HOME: homeDir,
-						ANTHROPIC_API_KEY: "mock-key",
-						ANTHROPIC_BASE_URL: url,
-					},
-				})
-			).sessionId;
+			sessionId = "main";
+			await vm.openSession({
+				sessionId,
+				agent: "pi",
+				cwd: workspaceDir,
+				env: {
+					HOME: homeDir,
+					ANTHROPIC_API_KEY: "mock-key",
+					ANTHROPIC_BASE_URL: url,
+				},
+			});
 
 			const eventText = captureSessionEventText(vm, sessionId);
 			const { response } = await vm.prompt(
@@ -233,7 +236,7 @@ describe("vanilla Pi bash tool inside the VM", () => {
 			expect(events).toContain("3");
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				vm.unloadSession({ sessionId });
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
@@ -252,16 +255,17 @@ describe("vanilla Pi bash tool inside the VM", () => {
 		try {
 			const homeDir = await createVmPiHome(vm, url);
 			const workspaceDir = await createVmWorkspace(vm);
-			sessionId = (
-				await vm.createSession("pi", {
-					cwd: workspaceDir,
-					env: {
-						HOME: homeDir,
-						ANTHROPIC_API_KEY: "mock-key",
-						ANTHROPIC_BASE_URL: url,
-					},
-				})
-			).sessionId;
+			sessionId = "main";
+			await vm.openSession({
+				sessionId,
+				agent: "pi",
+				cwd: workspaceDir,
+				env: {
+					HOME: homeDir,
+					ANTHROPIC_API_KEY: "mock-key",
+					ANTHROPIC_BASE_URL: url,
+				},
+			});
 
 			const { response } = await vm.prompt(
 				sessionId,
@@ -273,7 +277,7 @@ describe("vanilla Pi bash tool inside the VM", () => {
 			).toBe("ok");
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				vm.unloadSession({ sessionId });
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
@@ -293,16 +297,17 @@ describe("vanilla Pi bash tool inside the VM", () => {
 		try {
 			const homeDir = await createVmPiHome(vm, url);
 			const workspaceDir = await createVmWorkspace(vm);
-			sessionId = (
-				await vm.createSession("pi", {
-					cwd: workspaceDir,
-					env: {
-						HOME: homeDir,
-						ANTHROPIC_API_KEY: "mock-key",
-						ANTHROPIC_BASE_URL: url,
-					},
-				})
-			).sessionId;
+			sessionId = "main";
+			await vm.openSession({
+				sessionId,
+				agent: "pi",
+				cwd: workspaceDir,
+				env: {
+					HOME: homeDir,
+					ANTHROPIC_API_KEY: "mock-key",
+					ANTHROPIC_BASE_URL: url,
+				},
+			});
 
 			const eventText = captureSessionEventText(vm, sessionId);
 			const { response } = await vm.prompt(
@@ -317,7 +322,7 @@ describe("vanilla Pi bash tool inside the VM", () => {
 			expect(eventText.text().toLowerCase()).toContain("timed out");
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				vm.unloadSession({ sessionId });
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
@@ -341,16 +346,17 @@ describe("vanilla Pi bash tool inside the VM", () => {
 		try {
 			const homeDir = await createVmPiHome(vm, url);
 			const workspaceDir = await createVmWorkspace(vm);
-			sessionId = (
-				await vm.createSession("pi", {
-					cwd: workspaceDir,
-					env: {
-						HOME: homeDir,
-						ANTHROPIC_API_KEY: "mock-key",
-						ANTHROPIC_BASE_URL: url,
-					},
-				})
-			).sessionId;
+			sessionId = "main";
+			await vm.openSession({
+				sessionId,
+				agent: "pi",
+				cwd: workspaceDir,
+				env: {
+					HOME: homeDir,
+					ANTHROPIC_API_KEY: "mock-key",
+					ANTHROPIC_BASE_URL: url,
+				},
+			});
 
 			const activeSessionId = sessionId;
 			const sawInProgress = new Promise<void>((resolveInProgress) => {
@@ -387,7 +393,7 @@ describe("vanilla Pi bash tool inside the VM", () => {
 			expect(lingering).toEqual([]);
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				vm.unloadSession({ sessionId });
 			}
 			await vm.dispose();
 			await stopLlmock(mock);

@@ -21,7 +21,6 @@ pub mod config;
 pub mod cron;
 pub mod error;
 pub mod fs;
-pub mod json_rpc;
 pub mod net;
 pub mod process;
 pub mod session;
@@ -35,12 +34,6 @@ pub mod transport;
 
 /// ACP protocol version negotiated on session creation.
 pub const ACP_PROTOCOL_VERSION: u64 = 1;
-
-/// Per-request permission timeout (milliseconds).
-pub const PERMISSION_TIMEOUT_MS: u64 = 120_000;
-
-/// Bounded closed-session-id set capacity (for `close_session` idempotence).
-pub const CLOSED_SESSION_ID_RETENTION_LIMIT: usize = 2048;
 
 /// Bounded exited-shell exit-code retention (for `wait_shell` after exit).
 pub const CLOSED_SHELL_EXIT_CODE_RETENTION_LIMIT: usize = 2048;
@@ -58,7 +51,7 @@ pub const CRON_JOB_LIMIT: usize = 1024;
 // Public re-exports
 // ---------------------------------------------------------------------------
 
-pub use agent_os::{AgentOs, PackageDescriptor, ProjectedAgent};
+pub use agent_os::{AgentOs, PackageDescriptor, ProjectedAgent, SoftwareInfo};
 pub use error::{ClientError, ClientResult, ResourceLimitDetails};
 pub use sidecar::{
     AgentOsSidecar, AgentOsSidecarDescription, AgentOsSidecarPlacement, SidecarState,
@@ -77,33 +70,38 @@ pub use config::{
 };
 
 pub use process::{
-    ExecOptions, ExecResult, ProcessInfo, ProcessStatus, ProcessTreeNode, SpawnHandle,
-    SpawnOptions, SpawnStdio, SpawnedProcessInfo, StdinInput, TimingMitigation,
+    ExecOptions, ExecResult, ProcessExit, ProcessInfo, ProcessOutput, ProcessStatus, ProcessStream,
+    ProcessTreeNode, SpawnHandle, SpawnOptions, SpawnStdio, SpawnedProcessInfo, StdinInput,
+    TimingMitigation,
 };
+
+pub use net::{HttpRequest, HttpResponse};
 
 pub use fs::{
-    BatchReadResult, BatchWriteEntry, BatchWriteResult, DeleteOptions, DirEntry, DirEntryType,
-    FileContent, FilesystemEntry, FilesystemEntryEncoding, FilesystemSnapshotEntries,
-    FilesystemSnapshotExport, MkdirOptions, MountFsOptions, ReaddirRecursiveOptions,
-    RootSnapshotExport, SnapshotExportKind, VirtualDirEntry, VirtualFileSystem, VirtualStat,
+    BatchReadResult, BatchWriteEntry, BatchWriteResult, DirEntry, DirEntryType,
+    DynamicMountDescriptor, FileContent, FilesystemEntry, FilesystemEntryEncoding,
+    FilesystemSnapshotEntries, FilesystemSnapshotExport, MkdirOptions, MountInfo,
+    ReaddirRecursiveOptions, RemoveOptions, RootSnapshotExport, SnapshotExportKind,
+    VirtualDirEntry, VirtualFileSystem, VirtualStat,
 };
 
-pub use shell::{ConnectTerminalOptions, OpenShellOptions, ShellHandle};
+pub use shell::{ConnectTerminalOptions, OpenShellOptions, ShellData, ShellExit, ShellHandle};
 
 pub use session::{
-    AgentCapabilities, AgentExitEvent, AgentExitStream, AgentExitSubscription, AgentInfo,
-    AgentRegistryEntry, ConfigAllowedValue, CreateSessionOptions, McpServerConfig, PermissionReply,
-    PermissionRequest, PromptCapabilities, PromptResult, ResumeSessionOptions, ResumeSessionResult,
-    SessionConfigOption, SessionId, SessionInfo, SessionInitData, SessionMode, SessionModeState,
-};
-
-pub use json_rpc::{
-    is_unknown_session, AcpTimeoutErrorData, JsonRpcError, JsonRpcId, JsonRpcNotification,
-    JsonRpcResponse, UnknownSessionErrorData,
+    AgentExitEvent, AgentExitStream, AgentExitSubscription, AgentMessage, AgentRegistryEntry,
+    AgentRestartOutcome, CancelPromptStatus, ContentBlock, DurableEventKind, DurableSessionEvent,
+    DurableSessionEventEntry, DurableSessionEventStream, DurableSessionEventSubscription,
+    EphemeralEventKind, EphemeralSessionEvent, EphemeralSessionEventEntry, HistoryPage,
+    ListSessionsInput, McpServerConfig, OpenSessionInput, PendingPermissionRequest,
+    PermissionEventStatus, PermissionPolicy, PermissionResponseStatus, PermissionTerminalReason,
+    PromptInput, PromptResult, ReadHistoryInput, SessionCapabilities, SessionConfig,
+    SessionConfigOption, SessionConfigValue, SessionInfo, SessionPage, SessionState,
+    SessionStreamEntry, SessionSubscriptionError, SessionUpdate, StopReason,
 };
 
 pub use cron::{
-    CronAction, CronEvent, CronJobHandle, CronJobInfo, CronJobOptions, CronManager, CronOverlap,
+    CronAction, CronActionInfo, CronEvent, CronJobHandle, CronJobInfo, CronJobOptions, CronManager,
+    CronOverlap, CronSessionOptions,
 };
 
 // `shell` is declared here because its methods live in a sibling module to keep `lib.rs` re-exports

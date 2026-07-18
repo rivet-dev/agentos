@@ -104,8 +104,9 @@ describe("binding reference registration", () => {
 		expect(bindingReference).toContain("Add 1 and 2");
 	});
 
-	test("createSession injects the registered binding reference into the system prompt", async () => {
-		const { sessionId } = await vm.createSession("pi");
+	test("openSession injects the registered binding reference into the system prompt", async () => {
+		const sessionId = "binding-reference";
+		await vm.openSession({ sessionId, agent: "pi" });
 		const agentInfo = vm.getSessionAgentInfo(sessionId) as {
 			systemPrompt?: string;
 		};
@@ -114,6 +115,6 @@ describe("binding reference registration", () => {
 		expect(prompt).toContain("`agentos-math add --a <number> --b <number>`");
 		expect(prompt).toContain("### math");
 
-		vm.closeSession(sessionId);
+		vm.unloadSession({ sessionId });
 	});
 });

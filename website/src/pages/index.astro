@@ -9,15 +9,18 @@ const heroTabSnippets = [
 	{ key: 'agents', fileName: 'agents.ts', code: `import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
 
-const client = createClient<typeof registry>("http://localhost:6420");
-const agent = client.vm.getOrCreate("my-agent").connect();
+const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
+const agent = client.vm.getOrCreate("my-agent");
+const connection = agent.connect();
 
 // Stream events (tool calls, text output, etc.)
-agent.on("sessionEvent", (data) => console.log(data.event));
+connection.on("sessionEvent", (event) => console.log(event));
 
 // Create a session and send a prompt
-const session = await agent.createSession("pi", { env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! } });
-await agent.sendPrompt(session.sessionId, "Write a Python script that calculates pi");` },
+await agent.openSession({ agent: "pi", env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! } });
+await agent.prompt({
+  content: [{ type: "text", text: "Write a Python script that calculates pi" }],
+});` },
 
 	{ key: 'bindings', fileName: 'bindings.ts', code: `// server.ts
 import { agentOS, setup } from "@rivet-dev/agentos";
@@ -50,12 +53,14 @@ registry.start();
 import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
 
-const client = createClient<typeof registry>("http://localhost:6420");
+const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
 const agent = client.vm.getOrCreate("my-agent");
 
 // Bindings are injected into the agent's system prompt automatically
-const session = await agent.createSession("pi");
-await agent.sendPrompt(session.sessionId, "What's the weather in London?");
+await agent.openSession({ agent: "pi" });
+await agent.prompt({
+  content: [{ type: "text", text: "What's the weather in London?" }],
+});
 // The agent will call: agentos-weather get --city London` },
 
 	{ key: 'agent-agent', fileName: 'agent-agent.ts', code: `// server.ts
@@ -68,16 +73,18 @@ const reviewer = agentOS({});
 
 // Bridge: copy a file from the writer's VM to the reviewer's, then review it
 async function reviewFile(path: string) {
-  const client = createClient<typeof registry>("http://localhost:6420");
+  const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
   const writer = client.writer.getOrCreate("my-project");
   const reviewerHandle = client.reviewer.getOrCreate("my-project");
 
   const code = await writer.readFile(path);
   await reviewerHandle.writeFile(path, code);
 
-  const session = await reviewerHandle.createSession("pi");
-  const { text } = await reviewerHandle.sendPrompt(session.sessionId, \`Review \${path}\`);
-  return text;
+  await reviewerHandle.openSession({ agent: "pi" });
+  const result = await reviewerHandle.prompt({
+    content: [{ type: "text", text: \`Review \${path}\` }],
+  });
+  return result.message?.content ?? [];
 }
 
 // The writer gets a "review" binding -> agentos-review submit --path ...
@@ -102,100 +109,87 @@ registry.start();
 import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
 
-const client = createClient<typeof registry>("http://localhost:6420");
+const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
 const writer = client.writer.getOrCreate("my-project");
 
-const session = await writer.createSession("pi");
-await writer.sendPrompt(
-  session.sessionId,
-  "Write a REST API at /home/agentos/api.ts, then run agentos-review submit --path /home/agentos/api.ts",
-);` },
+await writer.openSession({ agent: "pi" });
+await writer.prompt({
+  content: [{ type: "text", text: "Write a REST API at /home/agentos/api.ts, then run agentos-review submit --path /home/agentos/api.ts" }],
+});` },
 
 	{ key: 'multiplayer', fileName: 'multiplayer.ts', code: `import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
 
-const client = createClient<typeof registry>("http://localhost:6420");
+const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
 
 // Both clients connect to the same agent by key
 const a = client.vm.getOrCreate("shared-agent").connect();
 const b = client.vm.getOrCreate("shared-agent").connect();
 
 // Both receive the same session events
-a.on("sessionEvent", (e) => console.log("[A]", e.event.method));
-b.on("sessionEvent", (e) => console.log("[B]", e.event.method));
+a.on("sessionEvent", (event) => console.log("[A]", event));
+b.on("sessionEvent", (event) => console.log("[B]", event));
 
 // Either client can send prompts to the shared session
-const session = await a.createSession("pi");
-await a.sendPrompt(session.sessionId, "Build a REST API");` },
+await a.openSession({ agent: "pi" });
+await a.prompt({
+  content: [{ type: "text", text: "Build a REST API" }],
+});` },
 
-	{ key: 'workflows', fileName: 'workflows.ts', code: `// server.ts
+	{ key: 'workflows', fileName: 'automation.ts', code: `// server.ts
 import { agentOS, setup } from "@rivet-dev/agentos";
-import { actor, queue } from "rivetkit";
-import { workflow } from "rivetkit/workflow";
 import pi from "@agentos-software/pi";
 
 const vm = agentOS({ software: [pi] });
-
-// Durable workflow: every ctx.step is recorded, retried, and resumed after a crash
-const bugFixer = actor({
-  queues: { fixBug: queue<{ repo: string; issue: string }>() },
-  run: workflow(async (ctx) => {
-    await ctx.loop("fix-bug-loop", async (loop) => {
-      const { repo, issue } = (await loop.queue.next("wait-fix-bug")).body;
-      const agent = loop.client<typeof registry>().vm.getOrCreate("bug-fixer");
-
-      await loop.step("clone-repo", () => agent.exec(\`git clone \${repo} /home/agentos/repo\`));
-      await loop.step("fix-bug", async () => {
-        const session = await agent.createSession("pi");
-        await agent.sendPrompt(session.sessionId, \`Fix: \${issue}\`);
-        await agent.closeSession(session.sessionId);
-      });
-      await loop.step("run-tests", () => agent.exec("cd /home/agentos/repo && npm test"));
-    });
-  }),
-});
-
-export const registry = setup({ use: { bugFixer, vm } });
+export const registry = setup({ use: { vm } });
 registry.start();
 
 // client.ts
 import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
 
-const client = createClient<typeof registry>("http://localhost:6420");
-const handle = client.bugFixer.getOrCreate("main");
+const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
+const agent = client.vm.getOrCreate("bug-fixer");
 
-// Trigger the durable workflow; it survives restarts and resumes mid-run
-await handle.send("fixBug", {
-  repo: "https://github.com/example/repo.git",
-  issue: "Fix the login redirect bug",
-});` },
+await agent.openSession({ agent: "pi" });
+// Prompt calls targeting one session are queued automatically.
+await Promise.all([
+  agent.prompt({ content: [{ type: "text", text: "Fix the login redirect bug" }] }),
+  agent.prompt({ content: [{ type: "text", text: "Then run the tests and summarize failures" }] }),
+]);` },
 
 	{ key: 'permissions', fileName: 'permissions.ts', code: `import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
 
-const client = createClient<typeof registry>("http://localhost:6420");
-const agent = client.vm.getOrCreate("my-agent").connect();
+const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
+const handle = client.vm.getOrCreate("my-agent");
+const agent = handle.connect();
 
-// Human-in-the-loop: respond to permission requests as they arrive
-agent.on("permissionRequest", async ({ sessionId, request }) => {
-  const description = (request.description ?? "").toLowerCase();
+// Human-in-the-loop: respond to permission requests on the session stream
+agent.on("sessionEvent", async (event) => {
+  if (event.type !== "permission_request") return;
+  const description = JSON.stringify(event.toolCall).toLowerCase();
 
   // Allow read-only operations automatically
   if (description.includes("read")) {
-    await agent.respondPermission(sessionId, request.permissionId, "always");
+    const option = event.options.find((item) => item.kind === "allow_always");
+    if (option) await handle.respondPermission({ sessionId: event.sessionId, requestId: event.requestId, optionId: option.optionId });
     return;
   }
 
   // Deny dangerous operations
   if (description.includes("rm -rf")) {
-    await agent.respondPermission(sessionId, request.permissionId, "reject");
+    const option = event.options.find((item) => item.kind === "reject_once" || item.kind === "reject_always");
+    if (option) await handle.respondPermission({ sessionId: event.sessionId, requestId: event.requestId, optionId: option.optionId });
     return;
   }
 
   // Approve everything else once — "once" | "always" | "reject"
-  await agent.respondPermission(sessionId, request.permissionId, "once");
-});` },
+  const option = event.options.find((item) => item.kind === "allow_once");
+  if (option) await handle.respondPermission({ sessionId: event.sessionId, requestId: event.requestId, optionId: option.optionId });
+});
+
+await handle.openSession({ agent: "pi", permissionPolicy: "ask" });` },
 ];
 
 const heroTabs = await Promise.all(

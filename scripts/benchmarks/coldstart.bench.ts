@@ -4,15 +4,15 @@
  * Measures time from AgentOs.create() through workload ready:
  *   --workload=sleep            Minimal VM + idle Node.js process (marketing cold-start workload)
  *   --workload=echo             Minimal VM + first exec("echo hello") completing
- *   --workload=pi-session       VM + createSession("pi") completing (ACP handshake done)
- *   --workload=pi-prompt-turn   VM + createSession("pi-cli") + first prompt turn completing
- *   --workload=claude-session   VM + createSession("claude") completing (ACP handshake done)
+ *   --workload=pi-session       VM + openSession({ sessionId: "main", agent: "pi" }) completing
+ *   --workload=pi-prompt-turn   VM + openSession({ sessionId: "main", agent: "pi-cli" }) + first prompt turn
+ *   --workload=claude-session   VM + openSession({ sessionId: "main", agent: "claude" }) completing
  *
  * All VMs lease one shared sidecar process; a cold-run VM is created and
  * snapshotted first so measured iterations reflect warm, incremental cost.
  *
  * `pi-prompt-turn` benchmarks the native PI CLI path through
- * `createSession("pi-cli")`, which uses `pi-acp` to drive the real PI CLI in
+ * `openSession({ sessionId: "main", agent: "pi-cli" })`, which uses `pi-acp` to drive the real PI CLI in
  * RPC mode. The same PI headless test file documents that raw `spawn("pi", ...)`
  * is still not exposed on the native sidecar PATH.
  *

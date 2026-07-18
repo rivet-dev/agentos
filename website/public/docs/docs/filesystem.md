@@ -20,9 +20,9 @@ Mount a Google Drive folder with the built-in `google_drive` plugin.
 
 Use the built-in `memory` plugin for an ephemeral mounted directory in the RivetKit `agentOS()` actor.
 
-Use `mountFs()` for a callback-backed JS filesystem driver. The driver must live in the same JS process as the `AgentOs` instance. This includes direct core usage and the TypeScript `agentOS()` actor. `mountFs()` works on a running VM too — it returns a promise that resolves once the mount is visible to guest code, and rejects if delivery to the runtime fails.
+Use `mountFs()` with a serializable, sidecar-owned plugin descriptor. The same descriptor works through Core and RivetKit; the actor persists dynamic descriptors in SQLite and replays them on wake. `mountFs()` resolves only once the mount is visible to guest code, and `unmountFs(path)` removes it.
 
-The actor's durable root is handled separately: the sidecar connects directly to Rivet's actor SQLite UDS, so root filesystem reads and writes never pass through JavaScript.
+The actor's durable root is handled separately: the sidecar connects directly to Rivet's actor SQLite UDS, so root filesystem reads and writes never pass through JavaScript. `listMounts()` returns live sanitized metadata without plugin configuration.
 
 ## File operations
 

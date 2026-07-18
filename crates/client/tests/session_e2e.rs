@@ -1,13 +1,11 @@
 //! Agent session (ACP) e2e against a real `agentos-sidecar`.
 //!
-//! `create_session` requires an agent package projected into `/opt/agentos`. This suite builds a
+//! `open_session` requires an agent package projected into `/opt/agentos`. This suite builds a
 //! tiny mock ACP package on the fly so it exercises the real sidecar/session path without depending
 //! on a locally built Pi adapter.
 //!
-//! When a session CAN be created the suite asserts the real TS contract: the session appears in
-//! `list_sessions`, `prompt` returns a `PromptResult` (response + accumulated agent text),
-//! `on_session_event` streams live `session/update` notifications, and `close_session` removes the
-//! session (later prompts report SessionNotFound).
+//! It asserts the durable TypeScript/Rust contract: SQLite-backed listing and history, live event
+//! streaming, explicit unload, restoration, and deletion.
 
 mod common;
 
@@ -15,7 +13,10 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use agentos_client::config::{AgentOsConfig, PackageRef};
-use agentos_client::{AgentOs, ClientError, CreateSessionOptions};
+use agentos_client::{
+    AgentOs, OpenSessionInput, PromptInput, ReadHistoryInput, SessionStreamEntry,
+};
+use agentos_vm_config::VmSqliteDescriptor;
 use futures::StreamExt;
 
 const MOCK_AGENT_TYPE: &str = "mock-agent";
@@ -56,10 +57,7 @@ process.stdin.on("data", (chunk) => {
       case "session/prompt":
         writeMessage({ jsonrpc: "2.0", method: "session/update", params: {
           sessionId: "__MOCK_SESSION_ID__",
-          update: { sessionUpdate: "agent_message_chunk", content: { text: "__MOCK_PROMPT_TEXT__" } } } });
-        writeMessage({ jsonrpc: "2.0", method: "session/update", params: {
-          sessionId: "__MOCK_SESSION_ID__",
-          update: { sessionUpdate: "completed", stopReason: "end_turn" } } });
+          update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "__MOCK_PROMPT_TEXT__" } } } });
         writeResponse(msg.id, { stopReason: "end_turn" });
         break;
       case "session/cancel":
@@ -102,177 +100,97 @@ fn write_mock_agent_package(root: &Path) -> PathBuf {
     package
 }
 
-async fn try_create_session_with_options(
-    os: &AgentOs,
-    options: CreateSessionOptions,
-) -> Option<String> {
-    match os.create_session(MOCK_AGENT_TYPE, options).await {
-        Ok(session) => Some(session.session_id),
-        Err(error) => {
-            if common::allow_local_e2e_skips() {
-                eprintln!(
-                    "skipping session e2e: create_session unavailable in this environment ({error})"
-                );
-                None
-            } else {
-                panic!("create_session unavailable; this e2e cannot pass as a skip: {error}");
-            }
-        }
-    }
-}
-
-fn agent_message_chunk_text(notification: &agentos_client::JsonRpcNotification) -> Option<&str> {
-    let params = notification.params.as_ref()?;
-    let update = params.get("update").unwrap_or(params);
-    if update.get("sessionUpdate").and_then(|value| value.as_str()) != Some("agent_message_chunk") {
-        return None;
-    }
-    update
-        .get("content")
-        .and_then(|content| content.get("text"))
-        .and_then(|value| value.as_str())
-}
-
 #[tokio::test]
-async fn session_surface_create_prompt_events_close() {
-    if !common::require_sidecar("session_surface_create_prompt_events_close") {
+async fn durable_session_surface_persists_native_acp_history() {
+    if !common::require_sidecar("durable_session_surface_persists_native_acp_history") {
         return;
     }
-    let package_root = unique_dir("pkg");
+    let package_root = unique_dir("durable");
     let package_dir = write_mock_agent_package(&package_root);
     common::ensure_sidecar_env();
-    let os = agentos_client::AgentOs::create(AgentOsConfig {
+    let os = AgentOs::create(AgentOsConfig {
+        database: Some(VmSqliteDescriptor::SqliteFile {
+            path: package_root
+                .join("agentos.sqlite")
+                .to_string_lossy()
+                .into_owned(),
+        }),
         packages: vec![PackageRef {
             path: package_dir.to_string_lossy().into_owned(),
         }],
         ..Default::default()
     })
     .await
-    .expect("create VM with mock agent package");
+    .expect("create durable VM");
 
-    // --- Runtime-independent session surface (no agents/V8 needed) --------------------------------
-    // Real assertions against the real sidecar: the registry starts empty, agents are resolved
-    // dynamically from the configured `/opt/agentos` package manifests (there is NO hardcoded
-    // agent registry), and every session operation on an unknown id reports SessionNotFound.
-    assert!(os.list_sessions().is_empty(), "a fresh VM has no sessions");
-    let agents = os.list_agents().await.expect("list_agents");
-    assert!(
-        agents.iter().any(|agent| agent.id == MOCK_AGENT_TYPE),
-        "the projected mock package must appear in list_agents: {agents:?}"
-    );
-    assert!(
-        matches!(
-            os.close_session("nope"),
-            Err(ClientError::SessionNotFound(_))
-        ),
-        "close_session(unknown) must return SessionNotFound"
-    );
-    assert!(
-        os.prompt("nope", "x")
+    os.open_session(OpenSessionInput {
+        session_id: None,
+        agent: MOCK_AGENT_TYPE.to_owned(),
+        cwd: Some(String::from("/home/agentos")),
+        additional_directories: None,
+        env: None,
+        mcp_servers: None,
+        permission_policy: None,
+        skip_os_instructions: None,
+        additional_instructions: None,
+    })
+    .await
+    .expect("open durable session");
+    let session = os.get_session(None).await.expect("get durable session");
+    assert_eq!(session.session_id, "main");
+    assert_eq!(
+        os.list_sessions(Default::default())
             .await
-            .unwrap_err()
-            .downcast_ref::<ClientError>()
-            .map(|error| matches!(error, ClientError::SessionNotFound(_)))
-            .unwrap_or(false),
-        "prompt(unknown) must return SessionNotFound"
+            .expect("list")
+            .sessions
+            .len(),
+        1
     );
 
-    let workspace_dir = "/home/agentos/workspace";
-    os.mkdir(workspace_dir, Default::default())
-        .await
-        .expect("create workspace");
-
-    let session_id = match try_create_session_with_options(
-        &os,
-        CreateSessionOptions {
-            cwd: Some(workspace_dir.to_string()),
-            ..Default::default()
-        },
-    )
-    .await
-    {
-        Some(id) => id,
-        None => {
-            os.shutdown().await.expect("shutdown");
-            std::fs::remove_dir_all(&package_root).ok();
-            return;
-        }
-    };
-
-    // --- list_sessions: the new session is registered --------------------------------------------
-    assert!(
-        os.list_sessions()
-            .iter()
-            .any(|s| s.session_id == session_id),
-        "created session must appear in list_sessions"
-    );
-
-    // --- on_session_event: subscribe before prompting so prompt-time chunks are observed ---------
-    let (mut events, _sub) = os
-        .on_session_event(&session_id)
-        .expect("on_session_event for live session");
-
-    // --- prompt: returns a PromptResult (response + accumulated agent text) -----------------------
+    let (mut events, _subscription) = os.on_session_event(Some("main"));
+    let content = serde_json::from_value(serde_json::json!({
+        "type": "text",
+        "text": "Say PONG",
+    }))
+    .expect("content block");
     let result = os
-        .prompt(&session_id, "Say the word PONG and nothing else.")
+        .prompt(PromptInput {
+            session_id: None,
+            idempotency_key: Some(String::from("prompt-1")),
+            content: vec![content],
+        })
         .await
-        .expect("prompt");
-    // The JSON-RPC response is returned even when it carries an error; here a healthy mock should
-    // produce a non-error response. We assert the response shape rather than exact model text.
-    assert_eq!(result.response.jsonrpc, "2.0");
-    assert!(
-        result.response.error.is_none(),
-        "mock-backed prompt should not return a JSON-RPC error: {:?}",
-        result.response.error
-    );
+        .expect("durable prompt");
+    assert_eq!(result.session_id, "main");
+    assert!(serde_json::to_string(&result.message)
+        .expect("serialize prompt message")
+        .contains(MOCK_PROMPT_TEXT));
 
-    // The first agent_message_chunk must arrive live because the subscription was created before
-    // prompt.
-    let live_chunk_text = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        while let Some(notification) = events.next().await {
-            if let Some(text) = agent_message_chunk_text(&notification) {
-                return Some(text.to_string());
-            }
-        }
-        None
-    })
-    .await
-    .ok()
-    .flatten();
-    assert!(
-        result.text.contains(MOCK_PROMPT_TEXT),
-        "prompt should accumulate agent_message_chunk text from live session events"
-    );
-    assert!(
-        live_chunk_text
-            .as_deref()
-            .is_some_and(|text| text.contains(MOCK_PROMPT_TEXT)),
-        "on_session_event should stream a live agent_message_chunk during prompt"
-    );
+    let live = tokio::time::timeout(std::time::Duration::from_secs(5), events.next())
+        .await
+        .expect("live event timeout")
+        .expect("live event stream")
+        .expect("live event lagged");
+    assert!(matches!(live, SessionStreamEntry::Durable(_)));
 
-    // --- close_session: removes the session; later prompts report SessionNotFound -----------------
-    os.close_session(&session_id).expect("close_session");
-    // close_session is fire-and-forget; the in-memory registry removal is synchronous in the close
-    // path, but the detached internal close runs on a task. Poll briefly for the deregistration.
-    let gone = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        loop {
-            if matches!(
-                os.prompt(&session_id, "ignored").await,
-                Err(error) if error.downcast_ref::<ClientError>()
-                    .map(|e| matches!(e, ClientError::SessionNotFound(_)))
-                    .unwrap_or(false)
-            ) {
-                return true;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
-    })
-    .await
-    .unwrap_or(false);
-    assert!(
-        gone,
-        "after close_session, prompting the session must report SessionNotFound"
+    let history = os
+        .read_history(ReadHistoryInput::default())
+        .await
+        .expect("history");
+    assert_eq!(history.events.len(), 2, "user and completed agent messages");
+    assert_eq!(history.events[0].sequence, 1);
+    assert_eq!(history.events[1].sequence, 2);
+
+    os.unload_session(None).await.expect("unload");
+    assert_eq!(
+        os.get_session(None)
+            .await
+            .expect("SQLite get")
+            .latest_sequence,
+        2
     );
+    os.delete_session(None).await.expect("delete");
+    assert!(os.get_session(None).await.is_err());
 
     os.shutdown().await.expect("shutdown");
     std::fs::remove_dir_all(&package_root).ok();

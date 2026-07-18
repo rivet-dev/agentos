@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use agentos_client::config::{AgentOsConfig, PackageRef};
 use agentos_client::process::SpawnOptions;
-use agentos_client::{AgentOs, ExecOptions};
+use agentos_client::AgentOs;
 
 mod common;
 
@@ -30,26 +30,21 @@ fn coreutils_aospkg() -> Option<PathBuf> {
 async fn spawn_capture(os: &AgentOs, cmd: &str, args: Vec<String>) -> (i32, String, String) {
     let captured = Arc::new(Mutex::new(Vec::<u8>::new()));
     let err_cap = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let handle = os
+        .spawn(cmd, args, SpawnOptions::default())
+        .unwrap_or_else(|e| panic!("spawn {cmd}: {e:?}"));
     let cb = captured.clone();
     let ecb = err_cap.clone();
-    let handle = os
-        .spawn(
-            cmd,
-            args,
-            SpawnOptions {
-                base: ExecOptions {
-                    on_stdout: Some(Box::new(move |chunk: &[u8]| {
-                        cb.lock().unwrap().extend_from_slice(chunk);
-                    })),
-                    on_stderr: Some(Box::new(move |chunk: &[u8]| {
-                        ecb.lock().unwrap().extend_from_slice(chunk);
-                    })),
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-        )
-        .unwrap_or_else(|e| panic!("spawn {cmd}: {e:?}"));
+    let _output = os
+        .on_process_output(handle.pid, move |event| match event.stream {
+            agentos_client::ProcessStream::Stdout => {
+                cb.lock().unwrap().extend_from_slice(&event.data)
+            }
+            agentos_client::ProcessStream::Stderr => {
+                ecb.lock().unwrap().extend_from_slice(&event.data)
+            }
+        })
+        .unwrap_or_else(|e| panic!("subscribe {cmd}: {e:?}"));
     let code = os
         .wait_process(handle.pid)
         .await

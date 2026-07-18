@@ -15,17 +15,17 @@ how it is configured.
 
 `AgentOs.create({ ... })` boots a VM in-process with its mounts, software, and
 network settings, and returns an `AgentOs` instance. Everything runs through that
-instance: `exec`/`spawn` for processes, `readFile`/`writeFiles`/`readdirRecursive`
-for the filesystem, `createSession`/`prompt` for agents, `fetch` for in-VM
-servers, and `scheduleCron` for jobs. Process output and session/permission/cron
-events are delivered through callbacks (`spawn({ onStdout })`, `onProcessExit`,
-`onSessionEvent`, `onPermissionRequest`, `onCronEvent`).
+instance: `exec`/`spawn` for processes, `readFile`/`writeFiles`/`readdirEntries`
+for the filesystem, `openSession`/`prompt` for agents, `httpRequest` for in-VM
+servers, and `scheduleCron` for jobs. Portable process, shell, session, adapter,
+and cron events use explicit subscription methods. Interactive permission
+requests and responses are variants of the generic `onSessionEvent` union.
 
 - `vm.ts` — boot a VM and every instance capability (exec, filesystem,
   processes, sessions, networking, cron).
 - `advanced.ts` — pin VMs to a dedicated sidecar process.
 - `config-reference.ts` — the full `AgentOs.create()` config surface.
-- `hooks.ts` — per-session event and permission observation.
+- `hooks.ts` — generic durable session-event observation.
 - `mounts.ts` — host-directory and S3 mount descriptors.
 
 ## Run it

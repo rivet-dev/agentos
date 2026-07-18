@@ -128,7 +128,7 @@ const vm = agentOS({ software: [${entry.agentId}] });
 export const registry = setup({ use: { vm } });
 
 // Then start a session from your client with the "${entry.agentId}" agent id:
-// const session = await agent.createSession("${entry.agentId}", { env: { /* API keys */ } });`;
+// await agent.openSession({ agent: "${entry.agentId}", env: { /* API keys */ } });`;
 } else if (isDocs && entry.status === "docs" && entry.package && entry.agentId) {
 	// Built-in agent adapter: register it as VM software, then open a session
 	// with its agent id. The import identifier matches the agent id (e.g.
@@ -142,7 +142,7 @@ const vm = agentOS({ software: [${entry.agentId}] });
 export const registry = setup({ use: { vm } });
 
 // Then start a session from your client with the "${entry.agentId}" agent id:
-// const session = await agent.createSession("${entry.agentId}", { env: { /* API keys */ } });`;
+// await agent.openSession({ agent: "${entry.agentId}", env: { /* API keys */ } });`;
 }
 const exampleHtml = exampleSource
 	? await highlightCodeHtml(exampleSource, "ts")

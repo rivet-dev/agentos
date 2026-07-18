@@ -132,7 +132,7 @@ describe("host_dir native mount integration", () => {
 			"rename me",
 		);
 
-		await vm.delete("/hostmnt/renamed.txt");
+		await vm.remove("/hostmnt/renamed.txt");
 		expect(fs.existsSync(path.join(tmpDir, "renamed.txt"))).toBe(false);
 	});
 });

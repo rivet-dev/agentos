@@ -1,4 +1,4 @@
-//! End-to-end coverage for sidecar-owned system-prompt injection at `create_session`.
+//! End-to-end coverage for sidecar-owned system-prompt injection at `open_session`.
 //!
 //! The base prompt is no longer baked into a guest file (`/etc/agentos/instructions.md` is gone);
 //! the Agent OS client passes create-time additions and generated tool docs to the wrapper sidecar,
@@ -16,7 +16,8 @@ use agentos_client::config::{
     node_modules_mount, AgentOsConfig, AgentOsSidecarConfig, Binding, Bindings, FsPermissions,
     PackageRef, PatternPermissions, PermissionMode, Permissions,
 };
-use agentos_client::{AgentOs, CreateSessionOptions};
+use agentos_client::{AgentOs, OpenSessionInput};
+use agentos_vm_config::VmSqliteDescriptor;
 use serde_json::json;
 use uuid::Uuid;
 
@@ -40,7 +41,7 @@ process.stdin.on("data", (chunk) => {
       case "initialize":
         result = {
           protocolVersion: 1,
-          agentInfo: { name: "mock-acp", version: "1.0.0", systemPrompt: process.env.ACP_APPEND_SYSTEM_PROMPT || null },
+          agentInfo: { name: process.env.ACP_APPEND_SYSTEM_PROMPT || "", version: "1.0.0" },
         };
         break;
       case "session/new":
@@ -101,12 +102,12 @@ fn write_mock_pi_adapter(module_root: &std::path::Path) -> std::path::PathBuf {
     package_dir
 }
 
-async fn launch_pi_session_and_read_prompt(options: CreateSessionOptions) -> String {
+async fn launch_pi_session_and_read_prompt(options: OpenSessionInput) -> String {
     launch_pi_session_with_tools_and_read_prompt(options, Vec::new()).await
 }
 
 async fn launch_pi_session_with_tools_and_read_prompt(
-    options: CreateSessionOptions,
+    options: OpenSessionInput,
     bindings: Vec<Bindings>,
 ) -> String {
     let module_access_dir =
@@ -122,10 +123,16 @@ async fn launch_pi_session_with_tools_and_read_prompt(
 async fn run_session(
     module_access_dir: &Path,
     package_dir: &Path,
-    options: CreateSessionOptions,
+    options: OpenSessionInput,
     bindings: Vec<Bindings>,
 ) -> String {
     let os = AgentOs::create(AgentOsConfig {
+        database: Some(VmSqliteDescriptor::SqliteFile {
+            path: module_access_dir
+                .join("agentos.sqlite")
+                .to_string_lossy()
+                .into_owned(),
+        }),
         mounts: vec![node_modules_mount(
             module_access_dir
                 .join("node_modules")
@@ -145,20 +152,16 @@ async fn run_session(
     .await
     .expect("create VM with module access for mock adapter");
 
-    let session = os
-        .create_session("pi", options)
+    os.open_session(options)
         .await
-        .expect("create pi session against mock adapter");
+        .expect("open pi session against mock adapter");
 
     let agent_info = os
-        .get_session_agent_info(&session.session_id)
+        .get_session_agent_info(Some("main"))
+        .await
+        .expect("read agent info")
         .expect("mock adapter should report agent info");
-    let prompt = agent_info
-        .extra
-        .get("systemPrompt")
-        .and_then(serde_json::Value::as_str)
-        .expect("mock adapter should echo the system prompt in agentInfo")
-        .to_string();
+    let prompt = agent_info.name;
 
     os.shutdown().await.expect("shutdown VM");
     prompt
@@ -173,9 +176,16 @@ async fn create_session_injects_assembled_system_prompt() {
     }
     common::ensure_sidecar_env();
 
-    let prompt = launch_pi_session_and_read_prompt(CreateSessionOptions {
+    let prompt = launch_pi_session_and_read_prompt(OpenSessionInput {
+        session_id: None,
+        agent: String::from("pi"),
+        cwd: None,
+        additional_directories: None,
+        env: None,
+        mcp_servers: None,
+        permission_policy: None,
+        skip_os_instructions: None,
         additional_instructions: Some(ADDITIONAL_MARKER.to_string()),
-        ..Default::default()
     })
     .await;
 
@@ -199,7 +209,17 @@ async fn create_session_injects_binding_reference_from_client_config() {
     common::ensure_sidecar_env();
 
     let prompt = launch_pi_session_with_tools_and_read_prompt(
-        CreateSessionOptions::default(),
+        OpenSessionInput {
+            session_id: None,
+            agent: String::from("pi"),
+            cwd: None,
+            additional_directories: None,
+            env: None,
+            mcp_servers: None,
+            permission_policy: None,
+            skip_os_instructions: None,
+            additional_instructions: None,
+        },
         vec![Bindings {
             name: "weather".to_string(),
             description: "Weather lookup tools.".to_string(),
@@ -239,11 +259,16 @@ async fn create_session_skip_os_instructions_drops_base_but_keeps_additional() {
     }
     common::ensure_sidecar_env();
 
-    let prompt = launch_pi_session_and_read_prompt(CreateSessionOptions {
-        skip_os_instructions: true,
+    let prompt = launch_pi_session_and_read_prompt(OpenSessionInput {
+        session_id: None,
+        agent: String::from("pi"),
+        cwd: None,
+        additional_directories: None,
+        env: Some(BTreeMap::new()),
+        mcp_servers: None,
+        permission_policy: None,
+        skip_os_instructions: Some(true),
         additional_instructions: Some(ADDITIONAL_MARKER.to_string()),
-        env: BTreeMap::new(),
-        ..Default::default()
     })
     .await;
 

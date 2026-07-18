@@ -7,12 +7,35 @@ import {
 import type { ScheduleDriver, ScheduleHandle } from "./schedule-driver.js";
 import type {
 	CronAction,
+	CronActionInfo,
 	CronEvent,
 	CronEventHandler,
 	CronJob,
 	CronJobInfo,
 	CronJobOptions,
 } from "./types.js";
+
+function describeAction(action: CronAction): CronActionInfo {
+	switch (action.type) {
+		case "session":
+			return {
+				type: "session",
+				agentType: action.agentType,
+				prompt: action.prompt,
+				...(action.options === undefined
+					? {}
+					: { options: structuredClone(action.options) }),
+			};
+		case "exec":
+			return {
+				type: "exec",
+				command: action.command,
+				...(action.args === undefined ? {} : { args: [...action.args] }),
+			};
+		case "callback":
+			return { type: "callback" };
+	}
+}
 
 interface CronJobState {
 	id: string;
@@ -92,10 +115,10 @@ export class CronManager {
 			result.push({
 				id: state.id,
 				schedule: state.schedule,
-				action: state.action,
+				action: describeAction(state.action),
 				overlap: state.overlap,
-				lastRun: state.lastRun,
-				nextRun: state.nextRun,
+				lastRun: state.lastRun?.toISOString(),
+				nextRun: state.nextRun?.toISOString(),
 				runCount: state.runCount,
 				running: state.running,
 			});
@@ -142,7 +165,11 @@ export class CronManager {
 		state.lastRun = new Date();
 		state.runCount++;
 
-		this.emit({ type: "cron:fire", jobId: state.id, time: new Date() });
+		this.emit({
+			type: "cron:fire",
+			jobId: state.id,
+			time: new Date().toISOString(),
+		});
 
 		const startTime = Date.now();
 		try {
@@ -150,15 +177,15 @@ export class CronManager {
 			this.emit({
 				type: "cron:complete",
 				jobId: state.id,
-				time: new Date(),
+				time: new Date().toISOString(),
 				durationMs: Date.now() - startTime,
 			});
 		} catch (error) {
 			this.emit({
 				type: "cron:error",
 				jobId: state.id,
-				time: new Date(),
-				error: error as Error,
+				time: new Date().toISOString(),
+				error: error instanceof Error ? error.message : String(error),
 			});
 		} finally {
 			state.running = false;
@@ -175,14 +202,19 @@ export class CronManager {
 	private async runAction(action: CronAction): Promise<void> {
 		switch (action.type) {
 			case "session": {
-				const { sessionId } = await this.vm.createSession(
-					action.agentType,
-					action.options,
-				);
+				const sessionId = `cron-${randomUUID()}`;
+				await this.vm.openSession({
+					...action.options,
+					sessionId,
+					agent: action.agentType,
+				});
 				try {
-					await this.vm.prompt(sessionId, action.prompt);
+					await this.vm.prompt({
+						sessionId,
+						content: [{ type: "text", text: action.prompt }],
+					});
 				} finally {
-					this.vm.closeSession(sessionId);
+					await this.vm.deleteSession({ sessionId });
 				}
 				break;
 			}

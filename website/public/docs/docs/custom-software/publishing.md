@@ -20,10 +20,9 @@ Every package is an npm package whose default export points at a self-contained 
 In the AgentOS registry, the `just` recipes drive the toolchain (see [Building Binaries](/docs/custom-software/building-wasm)):
 
 ```bash
-just registry-native            # compile the native wasm binaries (once per checkout)
-just registry-build             # stage + assemble every registry package
-just registry-build coreutils   # ... or one package
-just registry-status            # inspect: version, staged bin/, assembled dist
+just toolchain-build            # compile the native wasm binaries (once per checkout)
+just software-build             # stage + assemble every software package
+just software-build coreutils   # ... or one package
 ```
 
 ## Publishing
@@ -52,9 +51,9 @@ just agentos-pkgs-update dev                # ... or from another tag
 
 ## Local development
 
-AgentOS consumes local registry builds by default because the registry packages
-are pnpm workspace members. Build the native commands with `just registry-native`
-and assemble packages with `just registry-build`; no sibling checkout or
+AgentOS consumes local registry builds by default because the software packages
+are pnpm workspace members. Build the native commands with `just toolchain-build`
+and assemble packages with `just software-build`; no sibling checkout or
 published package is required while iterating.
 
 Published-version pins exist only in release validation and downstream
@@ -77,4 +76,4 @@ For a JS agent, `pack` replaces `stage`/`build`:
 npx @rivet-dev/agentos-toolchain pack . --out dist/package --agent my-acp-entrypoint
 ```
 
-The published package is a plain npm dependency — consumers import its descriptor and pass it to `software` exactly like the registry packages. See [Software Definition](/docs/custom-software/definition) for the descriptor shape.
+The published package is a plain npm dependency — consumers import its descriptor and pass it to `software` exactly like the software packages. See [Software Definition](/docs/custom-software/definition) for the descriptor shape.

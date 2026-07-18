@@ -1,17 +1,36 @@
 import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
 
-const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
+const client = createClient<typeof registry>({
+	endpoint: "http://localhost:6420",
+});
 const agent = client.vm.getOrCreate("my-agent");
 
-// Permission requests forwarded by the server reach the client here. The
-// payload is inferred from the actor's event schema, so no cast is needed.
+// Select exact adapter-supplied options from the generic session-event stream.
 const conn = agent.connect();
-conn.on("permissionRequest", (data) => {
-  console.log("Permission requested:", JSON.stringify(data.request));
+conn.on("sessionEvent", (event) => {
+	if (event.type !== "permission_request") return;
+	const toolCall = JSON.stringify(event.toolCall).toLowerCase();
+	const desiredKind = toolCall.includes("read") ? "allow_once" : "reject_once";
+	const option = event.options.find(
+		(candidate) => candidate.kind === desiredKind,
+	);
+	if (!option) return;
+	agent
+		.respondPermission({
+			sessionId: event.sessionId,
+			requestId: event.requestId,
+			optionId: option.optionId,
+		})
+		.catch((error) => console.error("Permission response failed:", error));
 });
 
-const sessionId = await agent.createSession("claude", {
-  env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
+await agent.openSession({
+	agent: "claude",
+	// Required for permission_request events; the default is allow_all.
+	permissionPolicy: "ask",
+	env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 });
-await agent.sendPrompt(sessionId, "Read config.json and update it");
+await agent.prompt({
+	content: [{ type: "text", text: "Read config.json and update it" }],
+});

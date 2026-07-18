@@ -1,7 +1,7 @@
 // Networking: start a server inside the VM and fetch from it.
 //
-// vm.fetch() routes HTTP requests to services running inside the VM.
-// Note: Preview URLs (createSignedPreviewUrl) are only available in the
+// vm.httpRequest() routes HTTP requests to services running inside the VM.
+// Note: Preview URLs (agent.createPreviewUrl) are only available in the
 // RivetKit actor wrapper, not in the core API. See examples/agent-os/ for that.
 
 import { AgentOs } from "@rivet-dev/agentos-core";
@@ -43,20 +43,21 @@ const portPromise = new Promise<number>((resolve) => {
 	resolvePort = resolve;
 });
 
-const proc = vm.spawn("node", ["/tmp/server.js"], {
-	onStdout: (data: Uint8Array) => {
-		const text = new TextDecoder().decode(data);
+const proc = vm.spawn("node", ["/tmp/server.js"]);
+vm.onProcessOutput(proc.pid, (event) => {
+	if (event.stream === "stdout") {
+		const text = new TextDecoder().decode(event.data);
 		const match = text.match(/LISTENING:(\d+)/);
 		if (match) resolvePort(Number(match[1]));
-	},
+	}
 });
 
 const port = await portPromise;
 console.log("Server listening on port", port);
 
-// vm.fetch() sends HTTP requests to the VM server via localhost
-const response = await vm.fetch(port, new Request("http://localhost/api/test"));
-const json = await response.json();
+// vm.httpRequest() sends a buffered request to the VM server via localhost
+const response = await vm.httpRequest({ port, path: "/api/test" });
+const json = JSON.parse(new TextDecoder().decode(response.body));
 console.log("Response:", json);
 
 await settleWithin(

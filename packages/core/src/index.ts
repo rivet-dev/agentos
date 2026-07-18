@@ -38,10 +38,6 @@ export {
 	OPT_AGENTOS_ROOT,
 	tryReadAgentosPackageManifest,
 } from "./agentos-package.js";
-export {
-	isAcpTimeoutErrorData,
-	isUnknownSessionErrorData,
-} from "./json-rpc.js";
 export { KernelError } from "./runtime-compat.js";
 export type {
 	ExecOptions,

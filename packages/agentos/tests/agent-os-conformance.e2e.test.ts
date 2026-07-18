@@ -102,6 +102,5 @@ defineAgentOsConformanceSuite({
 		if (!RUN_E2E) return;
 		const counts = await conformanceHandle.getHookCounts();
 		expect(counts.sessionEvent).toBeGreaterThan(0);
-		expect(counts.permissionRequest).toBeGreaterThan(0);
 	},
 });

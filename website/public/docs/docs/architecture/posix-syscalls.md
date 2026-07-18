@@ -103,3 +103,10 @@ path_open("/data/x")  -> resolved under the /data preopen root
 path_open(..O_CREAT)  -> rejected on a read-only mount
 path_open("../../etc")-> stays inside the mount; cannot escape
 ```
+
+POSIX record locks match Linux conflict, byte-range, close/exit-release, signal,
+and deadlock behavior. In particular, `F_SETLKW` detects process wait cycles and
+returns `EDEADLK`. The one intentional deviation is a finite safety cap: a
+non-deadlocked wait that exceeds `limits.resources.maxBlockingReadMs` (30
+seconds by default) returns `ETIMEDOUT` instead of waiting indefinitely. Raise
+that limit for workloads that intentionally hold locks longer.

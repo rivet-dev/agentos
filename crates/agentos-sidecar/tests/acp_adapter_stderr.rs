@@ -6,8 +6,7 @@
 //! diagnostic to the caller.
 //!
 //! In the current source the adapter runs inside the VM and the shared exchange
-//! loop `send_json_rpc_request()` in
-//! `crates/agentos-sidecar/src/acp_extension.rs` now (a) forwards agent
+//! loop in `crates/agentos-sidecar/src/acp/runtime.rs` now (a) forwards agent
 //! stderr as an Agent OS ACP extension event and (b) observes the adapter
 //! `ProcessExitedEvent` and returns
 //! `SidecarError::InvalidState("ACP adapter process {id} exited with code {} ...")`.
@@ -38,10 +37,9 @@ use agentos_native_sidecar::wire::{
 };
 use agentos_native_sidecar::{NativeSidecar, NativeSidecarConfig};
 use agentos_protocol::generated::v1::{
-    AcpCreateSessionRequest, AcpErrorResponse, AcpRequest, AcpResponse, AcpRuntimeKind,
-    AcpSessionRequest,
+    AcpErrorResponse, AcpOpenSessionRequest, AcpPromptRequest, AcpRequest, AcpResponse,
 };
-use agentos_protocol::{ACP_EXTENSION_NAMESPACE, PROTOCOL_VERSION as ACP_PROTOCOL_VERSION};
+use agentos_protocol::ACP_EXTENSION_NAMESPACE;
 use agentos_vm_config as vm_config;
 use bridge_support::RecordingBridge;
 
@@ -59,31 +57,26 @@ fn adapter_stderr_and_exit_surface_to_caller() {
     fs::write(&adapter, crashing_adapter_script()).expect("write adapter script");
     let vm_id = create_vm(&mut sidecar, &connection_id, &session_id, &cwd);
 
-    // Bootstrap the session normally (initialize + session/new succeed).
-    let created = dispatch_acp(
+    // Bootstrap the durable session normally (initialize + session/new succeed).
+    let opened = dispatch_acp(
         &mut sidecar,
         4,
         &connection_id,
         &session_id,
         &vm_id,
-        AcpRequest::AcpCreateSessionRequest(AcpCreateSessionRequest {
-            agent_type: String::from("pi"),
-            runtime: AcpRuntimeKind::JavaScript,
-            cwd: cwd.to_string_lossy().into_owned(),
-            args: Vec::new(),
-            env: HashMap::new(),
-            protocol_version: i32::from(ACP_PROTOCOL_VERSION),
-            client_capabilities: String::from(r#"{"fs":{}}"#),
-            mcp_servers: String::from(r#"{"servers":[]}"#),
-            skip_os_instructions: true,
+        AcpRequest::AcpOpenSessionRequest(AcpOpenSessionRequest {
+            session_id: Some(String::from("stderr-session")),
+            agent: String::from("pi"),
+            cwd: Some(String::from("/home/agentos")),
+            additional_directories: None,
+            env: None,
+            mcp_servers: None,
+            permission_policy: None,
+            skip_os_instructions: Some(true),
             additional_instructions: None,
         }),
     );
-
-    let AcpResponse::AcpSessionCreatedResponse(created) = created else {
-        panic!("unexpected create response: {created:?}");
-    };
-    assert_eq!(created.session_id, "adapter-session");
+    assert!(matches!(opened, AcpResponse::AcpOpenSessionResponse(_)));
 
     // Now send the prompt: the adapter writes to stderr and exits(1) without a
     // JSON-RPC response. The exchange loop must observe the exit and surface it
@@ -97,12 +90,10 @@ fn adapter_stderr_and_exit_surface_to_caller() {
         &connection_id,
         &session_id,
         &vm_id,
-        AcpRequest::AcpSessionRequest(AcpSessionRequest {
-            session_id: String::from("adapter-session"),
-            method: String::from("session/prompt"),
-            params: Some(String::from(
-                r#"{"prompt":[{"type":"text","text":"hello"}]}"#,
-            )),
+        AcpRequest::AcpPromptRequest(AcpPromptRequest {
+            session_id: Some(String::from("stderr-session")),
+            idempotency_key: None,
+            content: String::from(r#"[{"type":"text","text":"hello"}]"#),
         }),
     );
 
@@ -121,31 +112,6 @@ fn adapter_stderr_and_exit_surface_to_caller() {
         message.contains("live session route was evicted")
             && message.contains("restore explicitly"),
         "adapter exits must be terminal and must not trigger an implicit restart: {message}"
-    );
-
-    let retry = dispatch_acp(
-        &mut sidecar,
-        7,
-        &connection_id,
-        &session_id,
-        &vm_id,
-        AcpRequest::AcpSessionRequest(AcpSessionRequest {
-            session_id: String::from("adapter-session"),
-            method: String::from("session/prompt"),
-            params: Some(String::from(
-                r#"{"prompt":[{"type":"text","text":"do not replay"}]}"#,
-            )),
-        }),
-    );
-    let AcpResponse::AcpErrorResponse(retry) = retry else {
-        panic!("terminal adapter exit must evict the route, got: {retry:?}");
-    };
-    assert!(
-        retry
-            .message
-            .contains("unknown ACP session adapter-session"),
-        "a retry must require explicit restoration instead of replay: {}",
-        retry.message
     );
 }
 
@@ -322,6 +288,9 @@ fn create_vm(
                 runtime: GuestRuntimeKind::JavaScript,
                 config: serde_json::to_string(&vm_config::CreateVmConfig {
                     cwd: Some(cwd.to_string_lossy().into_owned()),
+                    database: Some(vm_config::VmSqliteDescriptor::SqliteFile {
+                        path: cwd.join("agentos.sqlite").to_string_lossy().into_owned(),
+                    }),
                     permissions: Some(allow_all_permissions()),
                     ..Default::default()
                 })

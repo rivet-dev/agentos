@@ -11,6 +11,7 @@ export type {
 export { TimerScheduleDriver } from "./timer-driver.js";
 export type {
 	CronAction,
+	CronActionInfo,
 	CronEvent,
 	CronEventHandler,
 	CronJob,

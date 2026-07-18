@@ -630,10 +630,10 @@ async function runTerminalAttempt(
 	const onResize = () => {
 		vm.resizeShell(shellId, process.stdout.columns, process.stdout.rows);
 	};
-	const unsubscribeOutput = vm.onShellData(shellId, (data) => {
-		detectBackendError(data);
+	const unsubscribeOutput = vm.onShellData(shellId, (event) => {
+		detectBackendError(event.data);
 		if (suppress()) return;
-		const sanitized = stripDiagnostics(data);
+		const sanitized = stripDiagnostics(event.data);
 		if (sanitized) process.stdout.write(sanitized);
 	});
 	const canUseRawMode =

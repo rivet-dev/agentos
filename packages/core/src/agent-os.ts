@@ -14,16 +14,29 @@ import type {
 } from "@rivet-dev/agentos-runtime-core/descriptors";
 import type { CreateVmConfig } from "@rivet-dev/agentos-runtime-core/vm-config";
 import type {
-	AgentCapabilities,
-	AgentInfo,
-	PermissionReply,
-	PermissionRequest,
-	PermissionRequestHandler,
-	SessionConfigOption,
-	SessionEventHandler,
-	SessionInitData,
-	SessionModeState,
-} from "./agent-session-types.js";
+	CancelPromptResult,
+	DurableSessionEventEntry,
+	EphemeralSessionEventEntry,
+	HistoryPage,
+	JsonValue,
+	ListSessionsInput,
+	OpenSessionInput,
+	PermissionResponse,
+	PermissionResponseResult,
+	PermissionTerminalReason,
+	PromptInput,
+	PromptResult as DurablePromptResult,
+	ReadHistoryInput,
+	AcpSessionEvent,
+	SessionCapabilities,
+	SessionAgentInfo,
+	SessionConfig,
+	SessionInfo as DurableSessionInfo,
+	SessionPage,
+	SessionStreamEntry,
+	SessionTarget,
+	SetSessionConfigOptionInput,
+} from "./session-api.js";
 import { type Binding, type Bindings, validateBindings } from "./bindings.js";
 import { zodToJsonSchema } from "./bindings-zod.js";
 import type {
@@ -55,40 +68,171 @@ export type {
 	MountConfigJsonValue,
 	NativeMountPluginDescriptor,
 } from "@rivet-dev/agentos-runtime-core/descriptors";
-export type {
-	AgentCapabilities,
-	AgentInfo,
-	PermissionReply,
-	PermissionRequest,
-	PermissionRequestHandler,
-	SessionConfigOption,
-	SessionEventHandler,
-	SessionInitData,
-	SessionMode,
-	SessionModeState,
-} from "./agent-session-types.js";
-export type {
-	AcpTimeoutErrorData,
-	JsonRpcError,
-	JsonRpcErrorData,
-	JsonRpcNotification,
-	JsonRpcRequest,
-	JsonRpcResponse,
-} from "./json-rpc.js";
-export { isAcpTimeoutErrorData } from "./json-rpc.js";
 export type { ConnectTerminalOptions } from "./runtime-compat.js";
+export type * from "./session-api.js";
 
 const ACP_PROTOCOL_VERSION = 1;
 const ACP_EXTENSION_NAMESPACE = "dev.rivet.agent-os.acp";
 const SHELL_DISPOSE_TIMEOUT_MS = 5_000;
 
-function defaultAcpClientCapabilities(): Record<string, unknown> {
+function safeWireU64(value: bigint): number {
+	const result = Number(value);
+	if (!Number.isSafeInteger(result) || result < 0) {
+		throw new RangeError(
+			`wire integer ${value} exceeds JavaScript's safe range`,
+		);
+	}
+	return result;
+}
+
+function decodeDurableSessionInfo(
+	value: AcpDurableSessionInfo,
+): DurableSessionInfo {
 	return {
-		fs: {
-			readTextFile: true,
-			writeTextFile: true,
-		},
-		terminal: true,
+		sessionId: value.sessionId,
+		agent: value.agent,
+		cwd: value.cwd,
+		additionalDirectories: JSON.parse(value.additionalDirectories),
+		state: JSON.parse(value.state),
+		latestSequence: safeWireU64(value.latestSequence),
+		title: value.title ?? undefined,
+		metadata: value.metadata === null ? undefined : JSON.parse(value.metadata),
+		createdAt: value.createdAt,
+		updatedAt: value.updatedAt,
+	};
+}
+
+const PERMISSION_TERMINAL_REASONS = new Set<PermissionTerminalReason>([
+	"already_resolved",
+	"prompt_cancelled",
+	"adapter_exited",
+	"session_deleted",
+	"vm_shutdown",
+	"request_not_found",
+]);
+
+function permissionTerminalReason(
+	value: string | null,
+): PermissionTerminalReason {
+	if (
+		value !== null &&
+		PERMISSION_TERMINAL_REASONS.has(value as PermissionTerminalReason)
+	) {
+		return value as PermissionTerminalReason;
+	}
+	throw new Error(`invalid permission terminal reason: ${value ?? "missing"}`);
+}
+
+function decodeDurableSessionEvent(value: {
+	sessionId: string;
+	sequence: bigint;
+	timestamp: string;
+	event: AcpDurableEvent;
+}): DurableSessionEventEntry {
+	const envelope = {
+		durability: "durable" as const,
+		sessionId: value.sessionId,
+		sequence: safeWireU64(value.sequence),
+		timestamp: value.timestamp,
+	};
+	switch (value.event.tag) {
+		case "AcpDurableSessionUpdate": {
+			const update = JSON.parse(value.event.val.update) as {
+				sessionUpdate: AcpSessionEvent["type"];
+			} & Record<string, unknown>;
+			const { sessionUpdate: type, ...payload } = update;
+			return {
+				...envelope,
+				type,
+				...payload,
+			} as DurableSessionEventEntry;
+		}
+		case "AcpDurablePermissionRequest": {
+			const request = JSON.parse(value.event.val.request) as {
+				sessionId: string;
+			} & Record<string, unknown>;
+			const { sessionId: _sessionId, ...payload } = request;
+			return {
+				...envelope,
+				type: "permission_request",
+				requestId: value.event.val.requestId,
+				...payload,
+			} as DurableSessionEventEntry;
+		}
+		case "AcpDurablePermissionResponse": {
+			const status = value.event.val.status;
+			if (status !== "accepted" && status !== "not_pending") {
+				throw new Error(`invalid permission response event status: ${status}`);
+			}
+			const response = JSON.parse(value.event.val.response) as Record<
+				string,
+				unknown
+			>;
+			return {
+				...envelope,
+				type: "permission_response",
+				requestId: value.event.val.requestId,
+				...response,
+				status,
+				...(value.event.val.reason === null
+					? {}
+					: { reason: permissionTerminalReason(value.event.val.reason) }),
+			} as DurableSessionEventEntry;
+		}
+	}
+}
+
+function normalizeSessionCapabilities(value: unknown): SessionCapabilities {
+	const capabilities = toRecord(value);
+	const prompt = toRecord(capabilities.promptCapabilities);
+	const mcp = toRecord(capabilities.mcpCapabilities);
+	const session = toRecord(capabilities.sessionCapabilities);
+	const extensions = Object.fromEntries(
+		Object.entries(capabilities).filter(
+			([key]) =>
+				!(
+					[
+						"loadSession",
+						"promptCapabilities",
+						"mcpCapabilities",
+						"sessionCapabilities",
+					] as const
+				).includes(key as never),
+		),
+	) as Record<string, JsonValue>;
+	return {
+		protocolVersion: ACP_PROTOCOL_VERSION,
+		loadSession: capabilities.loadSession === true,
+		...(Object.keys(prompt).length > 0
+			? {
+					prompt: {
+						audio: prompt.audio === true || undefined,
+						embeddedContext: prompt.embeddedContext === true || undefined,
+						image: prompt.image === true || undefined,
+					},
+				}
+			: {}),
+		...(Object.keys(mcp).length > 0
+			? {
+					mcp: {
+						http: mcp.http === true || undefined,
+						sse: mcp.sse === true || undefined,
+					},
+				}
+			: {}),
+		...(Object.keys(session).length > 0
+			? {
+					session: {
+						list: typeof session.list === "object" || undefined,
+						resume: typeof session.resume === "object" || undefined,
+						close: typeof session.close === "object" || undefined,
+						delete: typeof session.delete === "object" || undefined,
+						additionalDirectories:
+							typeof session.additionalDirectories === "object" || undefined,
+					},
+				}
+			: {}),
+		...(Object.keys(extensions).length > 0 ? { extensions } : {}),
 	};
 }
 
@@ -119,6 +263,76 @@ export interface DirEntry {
 	type: "file" | "directory" | "symlink";
 	size: number;
 }
+
+/** One immediate child returned by a single readdirEntries operation. */
+export interface ReaddirEntry {
+	name: string;
+	isDirectory: boolean;
+	isSymbolicLink: boolean;
+}
+
+/** Fully buffered request to an HTTP service listening inside the VM. */
+export interface HttpRequest {
+	port: number;
+	path: string;
+	method?: string;
+	headers?: Record<string, string>;
+	body?: string | Uint8Array;
+}
+
+/** Fully buffered HTTP response from a service inside the VM. */
+export interface HttpResponse {
+	status: number;
+	statusText: string;
+	headers: Record<string, string>;
+	body: Uint8Array;
+}
+
+export interface ProcessOutput {
+	pid: number;
+	stream: "stdout" | "stderr";
+	data: Uint8Array;
+}
+
+export interface ProcessExit {
+	pid: number;
+	exitCode: number;
+}
+
+export interface ShellData {
+	shellId: string;
+	data: Uint8Array;
+}
+
+export interface ShellExit {
+	shellId: string;
+	exitCode: number;
+}
+
+/** Sanitized live mount metadata. Plugin configuration is never exposed. */
+export interface MountInfo {
+	path: string;
+	kind: string;
+	readOnly: boolean;
+}
+
+export interface ExportRootFilesystemOptions {
+	/** Maximum serialized snapshot bytes returned to this caller. */
+	maxBytes: number;
+}
+
+/** Portable, sidecar-owned dynamic mount descriptor. */
+export interface DynamicMountDescriptor {
+	path: string;
+	plugin: NativeMountPluginDescriptor;
+	readOnly?: boolean;
+}
+
+/** Callback-free options accepted by the portable spawn API. */
+export type SpawnOptions = Omit<KernelSpawnOptions, "onStdout" | "onStderr">;
+
+/** Callback-free options accepted by the portable openShell API. */
+export type ShellOptions = Omit<OpenShellOptions, "onStderr">;
 
 /** Options for readdirRecursive(). */
 export interface ReaddirRecursiveOptions {
@@ -152,14 +366,11 @@ export interface BatchReadResult {
 export interface AgentRegistryEntry {
 	id: string;
 	installed: boolean;
-	/** Guest entrypoint the sidecar launches for this agent (`/opt/agentos/bin/<acpEntrypoint>`). */
-	adapterEntrypoint: string;
 }
 
 import {
 	OPT_AGENTOS_ROOT,
-	type PackageRef,
-	type SoftwarePackageRef,
+	type PackageDescriptor,
 	tryReadAgentosPackageManifest,
 } from "./agentos-package.js";
 import { getBaseEnvironment } from "./base-filesystem.js";
@@ -195,6 +406,8 @@ import type { SoftwareInput, SoftwareRoot } from "./packages.js";
 import type { PermissionTier } from "./runtime.js";
 import { allowAll, createNodeHostNetworkAdapter } from "./runtime-compat.js";
 import {
+	type AcpDurableEvent,
+	type AcpDurableSessionInfo,
 	type AcpRequest,
 	type AcpResponse,
 	AcpRuntimeKind,
@@ -224,10 +437,8 @@ import {
 	type SidecarRegisteredHostCallbackDefinition,
 	type SidecarRequestFrame,
 	type SidecarResponsePayload,
-	type SidecarSessionState,
 	serializeRootFilesystemForSidecar,
 } from "./sidecar/rpc-client.js";
-import type { AgentType } from "./types.js";
 
 export interface AgentOsSharedSidecarOptions {
 	pool?: string;
@@ -279,41 +490,9 @@ interface AgentOsVmAdmin extends InProcessSidecarVmAdmin {
 	sidecarClient: SidecarProcess;
 	sidecarSession: AuthenticatedSession;
 	sidecarVm: CreatedVm;
-	snapshotRootFilesystem?: () => Promise<RootSnapshotExport>;
+	snapshotRootFilesystem?: (maxBytes: number) => Promise<RootSnapshotExport>;
 	bindings: Bindings[];
 	bindingReference: string;
-}
-
-interface SessionEventSubscriber {
-	handler: SessionEventHandler;
-}
-
-interface AgentSessionEntry {
-	sessionId: string;
-	agentType: string;
-	processId: string;
-	pid: number | null;
-	closed: boolean;
-	modes: SessionModeState | null;
-	configOptions: SessionConfigOption[];
-	capabilities: AgentCapabilities;
-	agentInfo: AgentInfo | null;
-	eventHandlers: Set<SessionEventSubscriber>;
-	permissionHandlers: Set<PermissionRequestHandler>;
-	/**
-	 * Set once we have emitted the "no permission handler registered" warning for
-	 * this session, so a tool-heavy turn does not re-warn on every request.
-	 */
-	warnedNoPermissionHandler: boolean;
-	configOverrides: Map<string, string>;
-	pendingPermissionReplies: Map<
-		string,
-		{
-			resolve: (reply: PermissionReply) => void;
-			reject: (error: Error) => void;
-			timer: ReturnType<typeof setTimeout>;
-		}
-	>;
 }
 
 interface AcpTerminalEntry {
@@ -327,7 +506,9 @@ interface AcpTerminalEntry {
 
 interface ShellEntry {
 	handle: ShellHandle;
-	dataHandlers: Set<(data: Uint8Array) => void>;
+	dataHandlers: Set<(event: ShellData) => void>;
+	stderrHandlers: Set<(event: ShellData) => void>;
+	exitHandlers: Set<(event: ShellExit) => void>;
 	exitPromise: Promise<number>;
 }
 
@@ -352,6 +533,11 @@ export interface NativeRootFilesystemConfig {
 export type RootFilesystemConfig =
 	| OverlayRootFilesystemConfig
 	| NativeRootFilesystemConfig;
+
+/** VM-scoped SQLite storage shared by VFS and AgentOS durable state. */
+export type VmSqliteConfig =
+	| { type: "actor_uds"; path: string; token: string }
+	| { type: "sqlite_file"; path: string };
 
 /**
  * Compatibility path for arbitrary caller-supplied filesystems.
@@ -421,7 +607,7 @@ export interface AgentOsLimits {
 	};
 	/** HTTP body buffering limits. */
 	http?: {
-		/** Cap on `vm.fetch()` buffered response bodies. Must be <= the sidecar wire frame cap. */
+		/** Cap on `vm.httpRequest()` buffered response bodies. Must be <= the sidecar wire frame cap. */
 		maxFetchResponseBytes?: number;
 	};
 	/** Host binding registration and invocation limits. */
@@ -440,10 +626,23 @@ export interface AgentOsLimits {
 		maxPersistedManifestBytes?: number;
 		maxPersistedManifestFileBytes?: number;
 	};
-	/** ACP adapter buffering limits. */
+	/** ACP adapter, active-turn, history-retention, and page limits. */
 	acp?: {
 		maxReadLineBytes?: number;
 		stdoutBufferByteLimit?: number;
+		maxCompletedMessageBytes?: number;
+		maxTurnOutputBytes?: number;
+		maxPromptBytes?: number;
+		maxPromptBlocks?: number;
+		maxFallbackContinuationBytes?: number;
+		maxSessionHistoryBytes?: number;
+		maxSessionHistoryEvents?: number;
+		maxHistoryPageEntries?: number;
+		maxSessionListEntries?: number;
+	};
+	/** Shared local-file/actor-UDS SQLite result materialization limit. */
+	sqlite?: {
+		maxResultBytes?: number;
 	};
 	/** Guest JavaScript runtime buffering limits. */
 	jsRuntime?: {
@@ -504,7 +703,7 @@ export type AgentRestartOutcome = "not_attempted";
 
 /**
  * An unexpected ACP adapter process exit — a crash from the host's
- * perspective (any spontaneous exit without `closeSession()`, including exit
+ * perspective (any spontaneous exit before `unloadSession()`, including exit
  * code 0). The live route is evicted and must be restored explicitly.
  */
 export interface AgentExitEvent {
@@ -588,12 +787,12 @@ export interface AgentOsOptions {
 	 * profiling workloads.
 	 */
 	highResolutionTime?: boolean;
+	/** Durable SQLite storage for VM-owned filesystem and session state. */
+	database?: VmSqliteConfig;
 	/** Root filesystem configuration. Defaults to an overlay with the bundled base snapshot as its deepest lower. */
 	rootFilesystem?: RootFilesystemConfig;
 	/** Filesystems to mount at boot time. */
 	mounts?: MountConfig[];
-	/** Additional instructions appended to the base OS system prompt injected at session start. */
-	additionalInstructions?: string;
 	/** Custom schedule driver for cron jobs. Defaults to TimerScheduleDriver. */
 	scheduleDriver?: ScheduleDriver;
 	/** Host-side bindings available to agents inside the VM. */
@@ -621,8 +820,8 @@ export interface AgentOsOptions {
 	 */
 	onAgentStderr?: AgentStderrHandler;
 	/**
-	 * Called when the ACP adapter process behind a session exits without
-	 * `closeSession()` — i.e. an adapter crash. The sidecar evicts the live
+	 * Called when the ACP adapter process behind a session exits unexpectedly.
+	 * The sidecar evicts the live
 	 * route and never retries the adapter or interrupted request implicitly.
 	 * Defaults to writing a warning line to `process.stderr`.
 	 */
@@ -635,92 +834,11 @@ export interface AgentOsOptions {
 	onLimitWarning?: LimitWarningHandler;
 }
 
-/** Configuration for a local MCP server (spawned as a child process). */
-export interface McpServerConfigLocal {
-	type: "local";
-	/** Command to launch the MCP server. */
-	command: string;
-	/** Arguments for the command. */
-	args?: string[];
-	/** Environment variables for the server process. */
-	env?: Record<string, string>;
-}
-
-/** Configuration for a remote MCP server (connected via URL). */
-export interface McpServerConfigRemote {
-	type: "remote";
-	/** URL of the remote MCP server. */
-	url: string;
-	/** HTTP headers to include in requests to the server. */
-	headers?: Record<string, string>;
-}
-
-export type McpServerConfig = McpServerConfigLocal | McpServerConfigRemote;
-
 export interface AgentOsRuntimeAdmin {
 	kernel: Kernel;
 	rootView: VirtualFileSystem;
 	env: Record<string, string>;
 	sidecar: AgentOsSidecar;
-}
-
-export interface CreateSessionOptions {
-	/** Working directory for the agent session inside the VM. */
-	cwd?: string;
-	/** Environment variables to pass to the agent process. */
-	env?: Record<string, string>;
-	/** MCP servers to make available to the agent during the session. */
-	mcpServers?: McpServerConfig[];
-	/** Skip OS instructions injection entirely (default false). */
-	skipOsInstructions?: boolean;
-	/** Additional instructions appended to the base OS instructions. */
-	additionalInstructions?: string;
-}
-
-/**
- * Options for {@link AgentOs.resumeSession}.
- *
- * Resume depends on a durable root: after a Rivet actor sleeps (VM destroyed) and
- * wakes (fresh VM, actor SQLite intact) the caller can keep prompting an existing
- * session. On a non-durable (default in-memory) root there is no surviving store,
- * so the sidecar's universal fallback tier always runs and the transcript pointer
- * is the only continuity mechanism.
- */
-export interface ResumeSessionOptions {
-	/**
-	 * Guest-readable path to the reconstructed transcript. When present, the
-	 * fallback tier arms a continuation preamble pointing the agent at it.
-	 */
-	transcriptPath?: string;
-	/** Working directory for the resumed agent session (default `/workspace`). */
-	cwd?: string;
-	/** Environment variables to pass to the resumed agent process. */
-	env?: Record<string, string>;
-}
-
-/** Result from {@link AgentOs.resumeSession}. */
-export interface ResumeSessionResult {
-	/**
-	 * The live ACP session id in the fresh VM: equal to the requested id for
-	 * native loads, or a freshly assigned id for the fallback tier — the caller
-	 * remaps `external -> live`.
-	 */
-	sessionId: string;
-	/** `"native"` (session/load|resume) or `"fallback"` (session/new + preamble). */
-	mode: string;
-}
-
-export interface SessionInfo {
-	sessionId: string;
-	agentType: string;
-}
-
-/** Result from AgentOs.prompt(). */
-export interface PromptResult {
-	/** Raw JSON-RPC response from the ACP adapter. */
-	response: JsonRpcResponse;
-	/** Accumulated agent text output from streamed message chunks. */
-	text: string;
 }
 
 /** Information about a process spawned via AgentOs.spawn(). */
@@ -731,9 +849,6 @@ export interface SpawnedProcessInfo {
 	running: boolean;
 	exitCode: number | null;
 }
-
-const LEGACY_PERMISSION_METHOD = "request/permission";
-const ACP_PERMISSION_METHOD = "session/request_permission";
 
 class AcpDispatchError extends Error {
 	readonly code: number;
@@ -830,84 +945,6 @@ function normalizePackageRef(value: unknown): NormalizedPackageRef | undefined {
 	return undefined;
 }
 
-type AcpResponseValue<TTag extends AcpResponse["tag"]> = Extract<
-	AcpResponse,
-	{ tag: TTag }
->["val"];
-
-function parseAcpJson(value: string | null, context: string): unknown {
-	if (value === null) {
-		return undefined;
-	}
-	try {
-		return JSON.parse(value);
-	} catch (error) {
-		throw new Error(
-			`invalid ACP ${context} JSON: ${
-				error instanceof Error ? error.message : String(error)
-			}`,
-		);
-	}
-}
-
-function parseAcpJsonList(
-	values: readonly string[],
-	context: string,
-): unknown[] {
-	return values.map((value, index) =>
-		parseAcpJson(value, `${context}[${index}]`),
-	);
-}
-
-function sidecarSessionCreatedFromAcp(
-	response: AcpResponseValue<"AcpSessionCreatedResponse">,
-) {
-	return {
-		sessionId: response.sessionId,
-		...(response.pid !== null ? { pid: response.pid } : {}),
-		modes: parseAcpJson(response.modes, "modes"),
-		configOptions: parseAcpJsonList(response.configOptions, "configOptions"),
-		agentCapabilities: parseAcpJson(
-			response.agentCapabilities,
-			"agentCapabilities",
-		),
-		agentInfo: parseAcpJson(response.agentInfo, "agentInfo"),
-	};
-}
-
-function sidecarSessionStateFromAcp(
-	response: AcpResponseValue<"AcpSessionStateResponse">,
-): SidecarSessionState {
-	return {
-		sessionId: response.sessionId,
-		agentType: response.agentType,
-		processId: response.processId,
-		...(response.pid !== null ? { pid: response.pid } : {}),
-		closed: response.closed,
-		modes: parseAcpJson(response.modes, "modes"),
-		configOptions: parseAcpJsonList(response.configOptions, "configOptions"),
-		agentCapabilities: parseAcpJson(
-			response.agentCapabilities,
-			"agentCapabilities",
-		),
-		agentInfo: parseAcpJson(response.agentInfo, "agentInfo"),
-	};
-}
-
-function isLocalCancelledPromptResponse(
-	method: string,
-	response: JsonRpcResponse,
-): boolean {
-	const result = toRecord(response.result);
-	return (
-		method === "session/prompt" &&
-		response.id === null &&
-		response.error === undefined &&
-		result.stopReason === "cancelled"
-	);
-}
-
-const CLOSED_SESSION_ID_RETENTION_LIMIT = 2048;
 const CLOSED_SHELL_ID_RETENTION_LIMIT = 2048;
 
 class BoundedSet<T, V = undefined> {
@@ -950,63 +987,6 @@ class BoundedSet<T, V = undefined> {
 	get size(): number {
 		return this.#entries.size;
 	}
-}
-
-function shouldDispatchToSessionEventHandlers(
-	notification: JsonRpcNotification,
-): boolean {
-	return notification.method === "session/update";
-}
-
-function toSessionModes(value: unknown): SessionModeState | null {
-	if (!value || typeof value !== "object" || Array.isArray(value)) {
-		return null;
-	}
-	return value as SessionModeState;
-}
-
-function toSessionConfigOptions(value: unknown): SessionConfigOption[] {
-	return Array.isArray(value) ? (value as SessionConfigOption[]) : [];
-}
-
-function toAgentCapabilities(value: unknown): AgentCapabilities {
-	if (!value || typeof value !== "object" || Array.isArray(value)) {
-		return {};
-	}
-	return value as AgentCapabilities;
-}
-
-function toAgentInfo(value: unknown): AgentInfo | null {
-	if (!value || typeof value !== "object" || Array.isArray(value)) {
-		return null;
-	}
-	if (typeof (value as { name?: unknown }).name !== "string") {
-		return null;
-	}
-	return value as AgentInfo;
-}
-
-function sessionEntryFromInit(
-	sessionId: string,
-	agentType: string,
-	initData: SessionInitData,
-): AgentSessionEntry {
-	return {
-		sessionId,
-		agentType,
-		processId: "",
-		pid: null,
-		closed: false,
-		modes: initData.modes ?? null,
-		configOptions: initData.configOptions ?? [],
-		capabilities: initData.capabilities ?? {},
-		agentInfo: initData.agentInfo ?? null,
-		eventHandlers: new Set(),
-		permissionHandlers: new Set(),
-		warnedNoPermissionHandler: false,
-		configOverrides: new Map(),
-		pendingPermissionReplies: new Map(),
-	};
 }
 
 function isOverlayMountConfig(
@@ -1433,7 +1413,7 @@ async function bootstrapLiveBootstrapDirectories(
 	config: RootFilesystemConfig | undefined,
 ): Promise<void> {
 	const existingPaths = new Set(
-		(await client.snapshotRootFilesystem(session, vm)).map(
+		(await client.snapshotRootFilesystem(session, vm, Number.MAX_SAFE_INTEGER)).map(
 			(entry) => entry.path,
 		),
 	);
@@ -2602,27 +2582,19 @@ async function registerBindingsOnSidecar(
 export class AgentOs {
 	#kernel: Kernel;
 	readonly sidecar: AgentOsSidecar;
-	private _sessions = new Map<string, AgentSessionEntry>();
-	private _closedSessionIds = new BoundedSet<string>(
-		CLOSED_SESSION_ID_RETENTION_LIMIT,
-	);
-	private _sessionClosePromises = new Map<string, Promise<void>>();
-	private _pendingSessionRequestResolvers = new Map<
+	private _durableSessionEventHandlers = new Map<
 		string,
-		Set<{
-			method: string;
-			resolve: (response: JsonRpcResponse) => void;
-		}>
+		Set<(entry: SessionStreamEntry) => void>
 	>();
+	private _agentExitHandlers = new Map<string, Set<AgentExitHandler>>();
 	private _processes = new Map<
 		number,
 		{
 			proc: ManagedProcess;
 			command: string;
 			args: string[];
-			stdoutHandlers: Set<(data: Uint8Array) => void>;
-			stderrHandlers: Set<(data: Uint8Array) => void>;
-			exitHandlers: Set<(exitCode: number) => void>;
+			outputHandlers: Set<(event: ProcessOutput) => void>;
+			exitHandlers: Set<(event: ProcessExit) => void>;
 		}
 	>();
 	private _shells = new Map<string, ShellEntry>();
@@ -2643,7 +2615,6 @@ export class AgentOs {
 	private _hostMounts: HostMountInfo[];
 	private _env: Record<string, string>;
 	private _rootFilesystem: VirtualFileSystem;
-	private readonly _additionalInstructions: string | undefined;
 	private _sidecarLease: AgentOsSidecarVmLease<AgentOsVmAdmin> | null = null;
 	private readonly _sidecarClient: SidecarProcess;
 	private readonly _sidecarSession: AuthenticatedSession;
@@ -2663,7 +2634,6 @@ export class AgentOs {
 		sidecarClient: SidecarProcess,
 		sidecarSession: AuthenticatedSession,
 		sidecarVm: CreatedVm,
-		additionalInstructions?: string,
 		agentStderrHandler?: AgentStderrHandler,
 		agentExitHandler?: AgentExitHandler,
 		limitWarningHandler?: LimitWarningHandler,
@@ -2677,7 +2647,6 @@ export class AgentOs {
 		this._sidecarClient = sidecarClient;
 		this._sidecarSession = sidecarSession;
 		this._sidecarVm = sidecarVm;
-		this._additionalInstructions = additionalInstructions;
 		this._agentStderrHandler = agentStderrHandler;
 		this._agentExitHandler = agentExitHandler;
 		this._limitWarningHandler = limitWarningHandler;
@@ -2709,7 +2678,7 @@ export class AgentOs {
 		// Default software is FULLY DYNAMIC: this package's own NON-agent
 		// @agentos-software/* dependencies (e.g. common), each default-exporting
 		// its registry-built descriptor. Agent packages are NOT projected here —
-		// createSession(id) links the matching agent dependency into the running
+		// openSession({ agent: id }) links the matching agent dependency into the running
 		// VM on first use, so agent closures (and pi's V8 snapshot bundle) only
 		// enter VMs that run them. Unbuilt packages throw with build
 		// instructions; opt out via defaultSoftware: false.
@@ -2805,6 +2774,7 @@ export class AgentOs {
 					serializePermissionsForSidecar(hostPermissions);
 				const createVmConfig: CreateVmConfig = {
 					env,
+					database: options?.database,
 					rootFilesystem: serializeRootFilesystemForSidecar(
 						options?.rootFilesystem,
 						bootstrapLower,
@@ -2937,10 +2907,14 @@ export class AgentOs {
 					sidecarSession: session,
 					sidecarVm: nativeVm,
 					permissions: hostPermissions,
-					snapshotRootFilesystem: async () =>
+					snapshotRootFilesystem: async (maxBytes) =>
 						createSnapshotExport(
 							convertSidecarRootSnapshotEntries(
-								await snapshotClient.snapshotRootFilesystem(session, nativeVm),
+								await snapshotClient.snapshotRootFilesystem(
+									session,
+									nativeVm,
+									maxBytes,
+								),
 							),
 						),
 					bindings: bindings ?? [],
@@ -2998,7 +2972,6 @@ export class AgentOs {
 				vmAdmin.sidecarClient,
 				vmAdmin.sidecarSession,
 				vmAdmin.sidecarVm,
-				options?.additionalInstructions,
 				options?.onAgentStderr ?? defaultAgentStderrHandler,
 				options?.onAgentExit ?? defaultAgentExitHandler,
 				options?.onLimitWarning,
@@ -3046,16 +3019,14 @@ export class AgentOs {
 		proc: ManagedProcess,
 		command: string,
 		args: string[],
-		stdoutHandlers: Set<(data: Uint8Array) => void>,
-		stderrHandlers: Set<(data: Uint8Array) => void>,
-		exitHandlers: Set<(exitCode: number) => void>,
+		outputHandlers: Set<(event: ProcessOutput) => void>,
+		exitHandlers: Set<(event: ProcessExit) => void>,
 	): { pid: number } {
 		const entry = {
 			proc,
 			command,
 			args,
-			stdoutHandlers,
-			stderrHandlers,
+			outputHandlers,
 			exitHandlers,
 		};
 		this._processes.set(proc.pid, entry);
@@ -3066,7 +3037,7 @@ export class AgentOs {
 		// `_processes` is a process table for this VM's lifetime; it is freed wholesale
 		// in dispose(). (H5: the leak was that dispose() never cleared it.)
 		void proc.wait().then((code) => {
-			for (const h of exitHandlers) h(code);
+			for (const h of exitHandlers) h({ pid: proc.pid, exitCode: code });
 		});
 
 		return { pid: proc.pid };
@@ -3075,34 +3046,26 @@ export class AgentOs {
 	spawn(
 		command: string,
 		args: string[],
-		options?: KernelSpawnOptions,
+		options?: SpawnOptions,
 	): { pid: number } {
-		const stdoutHandlers = new Set<(data: Uint8Array) => void>();
-		const stderrHandlers = new Set<(data: Uint8Array) => void>();
-		const exitHandlers = new Set<(exitCode: number) => void>();
-
-		// Include caller-provided callbacks in the initial handler sets.
-		if (options?.onStdout) stdoutHandlers.add(options.onStdout);
-		if (options?.onStderr) stderrHandlers.add(options.onStderr);
+		const outputHandlers = new Set<(event: ProcessOutput) => void>();
+		const exitHandlers = new Set<(event: ProcessExit) => void>();
 
 		const proc = this.#kernel.spawn(command, args, {
 			...options,
 			onStdout: (data) => {
-				for (const h of stdoutHandlers) h(data);
+				for (const h of outputHandlers) {
+					h({ pid: proc.pid, stream: "stdout", data });
+				}
 			},
 			onStderr: (data) => {
-				for (const h of stderrHandlers) h(data);
+				for (const h of outputHandlers) {
+					h({ pid: proc.pid, stream: "stderr", data });
+				}
 			},
 		});
 
-		return this._trackProcess(
-			proc,
-			command,
-			args,
-			stdoutHandlers,
-			stderrHandlers,
-			exitHandlers,
-		);
+		return this._trackProcess(proc, command, args, outputHandlers, exitHandlers);
 	}
 
 	/** Write data to a process's stdin. */
@@ -3119,39 +3082,23 @@ export class AgentOs {
 		return entry.proc.closeStdin();
 	}
 
-	/** Subscribe to stdout data from a process. Returns an unsubscribe function. */
-	onProcessStdout(
-		pid: number,
-		handler: (data: Uint8Array) => void,
-	): () => void {
+	/** Subscribe to stdout and stderr from a process. */
+	onProcessOutput(pid: number, handler: (event: ProcessOutput) => void): () => void {
 		const entry = this._processes.get(pid);
 		if (!entry) throw new Error(`Process not found: ${pid}`);
-		entry.stdoutHandlers.add(handler);
+		entry.outputHandlers.add(handler);
 		return () => {
-			entry.stdoutHandlers.delete(handler);
-		};
-	}
-
-	/** Subscribe to stderr data from a process. Returns an unsubscribe function. */
-	onProcessStderr(
-		pid: number,
-		handler: (data: Uint8Array) => void,
-	): () => void {
-		const entry = this._processes.get(pid);
-		if (!entry) throw new Error(`Process not found: ${pid}`);
-		entry.stderrHandlers.add(handler);
-		return () => {
-			entry.stderrHandlers.delete(handler);
+			entry.outputHandlers.delete(handler);
 		};
 	}
 
 	/** Subscribe to process exit. Returns an unsubscribe function. */
-	onProcessExit(pid: number, handler: (exitCode: number) => void): () => void {
+	onProcessExit(pid: number, handler: (event: ProcessExit) => void): () => void {
 		const entry = this._processes.get(pid);
 		if (!entry) throw new Error(`Process not found: ${pid}`);
 		// If already exited, call immediately.
 		if (entry.proc.exitCode !== null) {
-			handler(entry.proc.exitCode);
+			handler({ pid, exitCode: entry.proc.exitCode });
 			return () => {};
 		}
 		entry.exitHandlers.add(handler);
@@ -3263,6 +3210,16 @@ export class AgentOs {
 		return this.#kernel.readdir(path);
 	}
 
+	async readdirEntries(path: string): Promise<ReaddirEntry[]> {
+		this._assertSafeAbsolutePath(path);
+		const entries = await this.#kernel.readdirRecursive(path, { maxDepth: 0 });
+		return entries.map((entry) => ({
+			name: entry.name,
+			isDirectory: entry.isDirectory,
+			isSymbolicLink: entry.isSymbolicLink,
+		}));
+	}
+
 	async readdirRecursive(
 		path: string,
 		options?: ReaddirRecursiveOptions,
@@ -3314,15 +3271,25 @@ export class AgentOs {
 		return this.#kernel.exists(path);
 	}
 
-	async snapshotRootFilesystem(): Promise<RootSnapshotExport> {
-		const nativeSnapshot = this._sidecarLease?.admin.snapshotRootFilesystem;
-		if (nativeSnapshot) {
-			return nativeSnapshot();
+	async exportRootFilesystem(
+		options: ExportRootFilesystemOptions,
+	): Promise<RootSnapshotExport> {
+		if (!Number.isSafeInteger(options.maxBytes) || options.maxBytes <= 0) {
+			throw new RangeError("maxBytes must be a positive safe integer");
 		}
-
-		return createSnapshotExport(
-			await snapshotVirtualFilesystem(this._rootFilesystem),
-		);
+		const nativeSnapshot = this._sidecarLease?.admin.snapshotRootFilesystem;
+		const snapshot = nativeSnapshot
+			? await nativeSnapshot(options.maxBytes)
+			: createSnapshotExport(
+					await snapshotVirtualFilesystem(this._rootFilesystem),
+				);
+		const size = Buffer.byteLength(JSON.stringify(snapshot));
+		if (size > options.maxBytes) {
+			throw new RangeError(
+				`root filesystem export is ${size} bytes, limit is ${options.maxBytes}; raise maxBytes to export this filesystem`,
+			);
+		}
+		return snapshot;
 	}
 
 	/**
@@ -3331,18 +3298,32 @@ export class AgentOs {
 	 * after the returned promise settles; a delivery failure rejects instead of
 	 * leaving the mount silently host-only.
 	 */
-	async mountFs(
-		path: string,
-		driver: VirtualFileSystem,
-		options?: { readOnly?: boolean },
-	): Promise<void> {
-		this._assertSafeAbsolutePath(path);
-		await this.#kernel.mountFs(path, driver, { readOnly: options?.readOnly });
+	async mountFs(descriptor: DynamicMountDescriptor): Promise<void> {
+		this._assertSafeAbsolutePath(descriptor.path);
+		if (!(this.#kernel instanceof NativeSidecarKernelProxy)) {
+			throw new Error("portable dynamic mounts require the native sidecar");
+		}
+		await this.#kernel.mountDescriptor({
+			guestPath: descriptor.path,
+			readOnly: descriptor.readOnly ?? false,
+			plugin: {
+				id: descriptor.plugin.id,
+				config: descriptor.plugin.config ?? {},
+			},
+		});
 	}
 
 	async unmountFs(path: string): Promise<void> {
 		this._assertSafeAbsolutePath(path);
-		await this.#kernel.unmountFs(path);
+		if (!(this.#kernel instanceof NativeSidecarKernelProxy)) {
+			throw new Error("portable dynamic mounts require the native sidecar");
+		}
+		await this.#kernel.unmountDescriptor(path);
+	}
+
+	async listMounts(): Promise<MountInfo[]> {
+		if (!(this.#kernel instanceof NativeSidecarKernelProxy)) return [];
+		return this.#kernel.listMounts();
 	}
 
 	async move(from: string, to: string): Promise<void> {
@@ -3351,25 +3332,30 @@ export class AgentOs {
 		await this.#kernel.movePath(from, to);
 	}
 
-	async delete(path: string, options?: { recursive?: boolean }): Promise<void> {
+	async remove(path: string, options?: { recursive?: boolean }): Promise<void> {
 		this._assertWritableAbsolutePath(path);
 		await this.#kernel.removePath(path, {
 			recursive: options?.recursive ?? false,
 		});
 	}
 
-	async fetch(port: number, request: Request): Promise<Response> {
-		const url = new URL(request.url);
+	async httpRequest(request: HttpRequest): Promise<HttpResponse> {
+		this._assertSafeAbsolutePath(request.path.split("?")[0] || "/");
+		const method = request.method?.toUpperCase() ?? "GET";
+		const body =
+			typeof request.body === "string"
+				? request.body
+				: request.body === undefined
+					? undefined
+					: new TextDecoder().decode(request.body);
 		const responsePayload = JSON.parse(
 			await this._sidecarClient.vmFetch(this._sidecarSession, this._sidecarVm, {
-				port,
-				method: request.method,
-				path: `${url.pathname}${url.search}`,
-				headersJson: JSON.stringify(
-					Object.fromEntries(request.headers.entries()),
-				),
-				...(request.method !== "GET" && request.method !== "HEAD"
-					? { body: await request.text() }
+				port: request.port,
+				method,
+				path: request.path,
+				headersJson: JSON.stringify(request.headers ?? {}),
+				...(method !== "GET" && method !== "HEAD" && body !== undefined
+					? { body }
 					: {}),
 			}),
 		) as {
@@ -3378,30 +3364,40 @@ export class AgentOs {
 			headers?: Array<[string, string]>;
 			body?: string;
 		};
-		const headers = new Headers();
+		const headers: Record<string, string> = {};
 		for (const [key, value] of responsePayload.headers ?? []) {
-			headers.append(key, value);
+			headers[key] = value;
 		}
-		return new Response(Buffer.from(responsePayload.body ?? "", "base64"), {
+		return {
 			status: responsePayload.status,
-			statusText: responsePayload.statusText,
+			statusText: responsePayload.statusText ?? "",
 			headers,
-		});
+			body: new Uint8Array(Buffer.from(responsePayload.body ?? "", "base64")),
+		};
 	}
 
-	openShell(options?: OpenShellOptions): { shellId: string } {
+	openShell(options?: ShellOptions): { shellId: string } {
 		const shellId = `shell-${++this._shellCounter}`;
 		this._closedShellIds.delete(shellId);
-		const dataHandlers = new Set<(data: Uint8Array) => void>();
+		const dataHandlers = new Set<(event: ShellData) => void>();
+		const stderrHandlers = new Set<(event: ShellData) => void>();
+		const exitHandlers = new Set<(event: ShellExit) => void>();
 
-		const handle = this.#kernel.openShell(options);
+		const handle = this.#kernel.openShell({
+			...options,
+			onStderr: (data) => {
+				for (const handler of stderrHandlers) handler({ shellId, data });
+			},
+		});
 		handle.onData = (data) => {
-			for (const h of dataHandlers) h(data);
+			for (const handler of dataHandlers) handler({ shellId, data });
 		};
 
 		const entry: ShellEntry = {
 			handle,
 			dataHandlers,
+			stderrHandlers,
+			exitHandlers,
 			exitPromise: Promise.resolve(0),
 		};
 		const exitPromise = handle.wait();
@@ -3417,6 +3413,7 @@ export class AgentOs {
 		entry.exitPromise = exitPromise.then(
 			(exitCode) => {
 				finalize(exitCode);
+				for (const handler of exitHandlers) handler({ shellId, exitCode });
 				return exitCode;
 			},
 			(error) => {
@@ -3447,7 +3444,7 @@ export class AgentOs {
 	 */
 	onShellData(
 		shellId: string,
-		handler: (data: Uint8Array) => void,
+		handler: (event: ShellData) => void,
 	): () => void {
 		const entry = this._shells.get(shellId);
 		if (!entry) throw new Error(`Shell not found: ${shellId}`);
@@ -3455,6 +3452,32 @@ export class AgentOs {
 		return () => {
 			entry.dataHandlers.delete(handler);
 		};
+	}
+
+	/** Subscribe to the stderr-only diagnostic stream for a shell. */
+	onShellStderr(
+		shellId: string,
+		handler: (event: ShellData) => void,
+	): () => void {
+		const entry = this._shells.get(shellId);
+		if (!entry) throw new Error(`Shell not found: ${shellId}`);
+		entry.stderrHandlers.add(handler);
+		return () => entry.stderrHandlers.delete(handler);
+	}
+
+	/** Subscribe to shell exit. */
+	onShellExit(shellId: string, handler: (event: ShellExit) => void): () => void {
+		const entry = this._shells.get(shellId);
+		if (!entry) {
+			const exitCode = this._closedShellIds.get(shellId);
+			if (exitCode !== undefined) {
+				handler({ shellId, exitCode });
+				return () => {};
+			}
+			throw new Error(`Shell not found: ${shellId}`);
+		}
+		entry.exitHandlers.add(handler);
+		return () => entry.exitHandlers.delete(handler);
 	}
 
 	/** Notify a shell of terminal resize. */
@@ -3588,21 +3611,240 @@ export class AgentOs {
 		entry.proc.kill(9);
 	}
 
-	/** Returns all active sessions with their IDs and agent types. */
-	listSessions(): SessionInfo[] {
-		return [...this._sessions.values()].map((s) => ({
-			sessionId: s.sessionId,
-			agentType: s.agentType,
-		}));
+	async openSession(input: OpenSessionInput): Promise<void> {
+		const response = await this._sendAcpRequest({
+			tag: "AcpOpenSessionRequest",
+			val: {
+				sessionId: input.sessionId ?? null,
+				agent: input.agent,
+				cwd: input.cwd ?? null,
+				additionalDirectories:
+					input.additionalDirectories === undefined
+						? null
+						: JSON.stringify(input.additionalDirectories),
+				env: input.env === undefined ? null : JSON.stringify(input.env),
+				mcpServers:
+					input.mcpServers === undefined
+						? null
+						: JSON.stringify(input.mcpServers),
+				permissionPolicy: input.permissionPolicy ?? null,
+				skipOsInstructions: input.skipOsInstructions ?? null,
+				additionalInstructions:
+					combineInstructions(
+						input.additionalInstructions,
+						this._bindingReference,
+					) ?? null,
+			},
+		});
+		if (response.tag !== "AcpOpenSessionResponse") {
+			throw new Error(`unexpected openSession response: ${response.tag}`);
+		}
 	}
 
-	/** Internal helper: retrieve a session or throw. */
-	private _requireSession(sessionId: string): AgentSessionEntry {
-		const session = this._sessions.get(sessionId);
-		if (!session) {
-			throw new Error(`Session not found: ${sessionId}`);
+	async getSession(input?: SessionTarget): Promise<DurableSessionInfo> {
+		const response = await this._sendAcpRequest({
+			tag: "AcpGetDurableSessionRequest",
+			val: { sessionId: input?.sessionId ?? null },
+		});
+		if (response.tag !== "AcpGetDurableSessionResponse") {
+			throw new Error(`unexpected getSession response: ${response.tag}`);
 		}
-		return session;
+		return decodeDurableSessionInfo(response.val.session);
+	}
+
+	async listSessions(input?: ListSessionsInput): Promise<SessionPage> {
+		const response = await this._sendAcpRequest({
+			tag: "AcpListDurableSessionsRequest",
+			val: { cursor: input?.cursor ?? null, limit: input?.limit ?? null },
+		});
+		if (response.tag !== "AcpListDurableSessionsResponse") {
+			throw new Error(`unexpected listSessions response: ${response.tag}`);
+		}
+		return {
+			sessions: response.val.sessions.map(decodeDurableSessionInfo),
+			nextCursor: response.val.nextCursor,
+		};
+	}
+
+	async deleteSession(input: SessionTarget = {}): Promise<void> {
+		const response = await this._sendAcpRequest({
+			tag: "AcpDeleteSessionRequest",
+			val: { sessionId: input.sessionId ?? null },
+		});
+		if (response.tag !== "AcpDeleteSessionResponse") {
+			throw new Error(`unexpected deleteSession response: ${response.tag}`);
+		}
+	}
+
+	async unloadSession(input?: SessionTarget): Promise<void> {
+		const response = await this._sendAcpRequest({
+			tag: "AcpUnloadSessionRequest",
+			val: { sessionId: input?.sessionId ?? null },
+		});
+		if (response.tag !== "AcpUnloadSessionResponse") {
+			throw new Error(`unexpected unloadSession response: ${response.tag}`);
+		}
+	}
+
+	async prompt(input: PromptInput): Promise<DurablePromptResult> {
+		const response = await this._sendAcpRequest({
+			tag: "AcpPromptRequest",
+			val: {
+				sessionId: input.sessionId ?? null,
+				idempotencyKey: input.idempotencyKey ?? null,
+				content: JSON.stringify(input.content),
+			},
+		});
+		if (response.tag !== "AcpPromptResponse") {
+			throw new Error(`unexpected prompt response: ${response.tag}`);
+		}
+		return {
+			sessionId: response.val.sessionId,
+			message:
+				response.val.message === null ? null : JSON.parse(response.val.message),
+			stopReason: response.val.stopReason as DurablePromptResult["stopReason"],
+		};
+	}
+
+	async cancelPrompt(input?: SessionTarget): Promise<CancelPromptResult> {
+		const response = await this._sendAcpRequest({
+			tag: "AcpCancelPromptRequest",
+			val: { sessionId: input?.sessionId ?? null },
+		});
+		if (response.tag !== "AcpCancelPromptResponse") {
+			throw new Error(`unexpected cancelPrompt response: ${response.tag}`);
+		}
+		if (
+			response.val.status !== "cancelled" &&
+			response.val.status !== "no_active_prompt"
+		) {
+			throw new Error(`invalid cancelPrompt status: ${response.val.status}`);
+		}
+		return { status: response.val.status };
+	}
+
+	async respondPermission(
+		input: PermissionResponse,
+	): Promise<PermissionResponseResult> {
+		const response = await this._sendAcpRequest({
+			tag: "AcpRespondPermissionRequest",
+			val: {
+				sessionId: input.sessionId,
+				requestId: input.requestId,
+				optionId: input.optionId,
+			},
+		});
+		if (response.tag !== "AcpRespondPermissionResponse") {
+			throw new Error(`unexpected respondPermission response: ${response.tag}`);
+		}
+		if (
+			response.val.status !== "accepted" &&
+			response.val.status !== "not_pending"
+		) {
+			throw new Error(
+				`invalid respondPermission status: ${response.val.status}`,
+			);
+		}
+		if (response.val.status === "accepted") {
+			if (response.val.reason !== null) {
+				throw new Error("accepted permission response must not include a reason");
+			}
+			return { status: "accepted" };
+		}
+		return {
+			status: "not_pending",
+			reason: permissionTerminalReason(response.val.reason),
+		};
+	}
+
+	async readHistory(input?: ReadHistoryInput): Promise<HistoryPage> {
+		const response = await this._sendAcpRequest({
+			tag: "AcpReadHistoryRequest",
+			val: {
+				sessionId: input?.sessionId ?? null,
+				before: input?.before === undefined ? null : BigInt(input.before),
+				after: input?.after === undefined ? null : BigInt(input.after),
+				limit: input?.limit ?? null,
+			},
+		});
+		if (response.tag !== "AcpHistoryPageResponse") {
+			throw new Error(`unexpected readHistory response: ${response.tag}`);
+		}
+		return {
+			events: response.val.events.map(decodeDurableSessionEvent),
+			hasMoreBefore: response.val.hasMoreBefore,
+			hasMoreAfter: response.val.hasMoreAfter,
+		};
+	}
+
+	async getSessionConfig(input?: SessionTarget): Promise<SessionConfig> {
+		const response = await this._sendAcpRequest({
+			tag: "AcpGetSessionConfigRequest",
+			val: { sessionId: input?.sessionId ?? null },
+		});
+		if (response.tag !== "AcpSessionConfigResponse") {
+			throw new Error(`unexpected getSessionConfig response: ${response.tag}`);
+		}
+		return {
+			revision: safeWireU64(response.val.revision),
+			options: JSON.parse(response.val.options),
+		};
+	}
+
+	async setSessionConfigOption(
+		input: SetSessionConfigOptionInput,
+	): Promise<SessionConfig> {
+		const response = await this._sendAcpRequest({
+			tag: "AcpSetSessionConfigOptionRequest",
+			val: {
+				sessionId: input.sessionId ?? null,
+				configId: input.configId,
+				value: JSON.stringify(input.value),
+			},
+		});
+		if (response.tag !== "AcpSessionConfigResponse") {
+			throw new Error(
+				`unexpected setSessionConfigOption response: ${response.tag}`,
+			);
+		}
+		return {
+			revision: safeWireU64(response.val.revision),
+			options: JSON.parse(response.val.options),
+		};
+	}
+
+	async getSessionCapabilities(
+		input?: SessionTarget,
+	): Promise<SessionCapabilities | null> {
+		const response = await this._sendAcpRequest({
+			tag: "AcpGetSessionCapabilitiesRequest",
+			val: { sessionId: input?.sessionId ?? null },
+		});
+		if (response.tag !== "AcpSessionCapabilitiesResponse") {
+			throw new Error(
+				`unexpected getSessionCapabilities response: ${response.tag}`,
+			);
+		}
+		return response.val.capabilities === null
+			? null
+			: normalizeSessionCapabilities(JSON.parse(response.val.capabilities));
+	}
+
+	async getSessionAgentInfo(
+		input?: SessionTarget,
+	): Promise<SessionAgentInfo | null> {
+		const response = await this._sendAcpRequest({
+			tag: "AcpGetSessionAgentInfoRequest",
+			val: { sessionId: input?.sessionId ?? null },
+		});
+		if (response.tag !== "AcpSessionAgentInfoResponse") {
+			throw new Error(
+				`unexpected getSessionAgentInfo response: ${response.tag}`,
+			);
+		}
+		return response.val.agentInfo === null
+			? null
+			: JSON.parse(response.val.agentInfo);
 	}
 
 	/**
@@ -3610,16 +3852,10 @@ export class AgentOs {
 	 * `bin/` commands appear under `/opt/agentos/bin` (on `$PATH`) and its `share/man`
 	 * pages under MANPATH immediately — the `/opt/agentos` mount is host-backed, so
 	 * writing into its staging dir is reflected live with no reboot. An `agent`
-	 * block registers the package for `createSession(name)`. Persists for the VM's
+	 * block registers the package for `openSession({ agent: name })`. Persists for the VM's
 	 * lifetime (and across a snapshot iff the volume persists).
 	 */
-	async linkSoftware(
-		descriptor: PackageRef | SoftwarePackageRef,
-	): Promise<void> {
-		const ref = normalizePackageRef(descriptor);
-		if (!ref) {
-			throw new Error("Invalid agentOS package reference");
-		}
+	async linkSoftware(descriptor: PackageDescriptor): Promise<void> {
 		// Forward to the sidecar, which owns the `/opt/agentos` projection and
 		// appends the package to its live host-backed staging dir; the commands
 		// appear under `/opt/agentos/bin` immediately. The sidecar rejects a
@@ -3627,7 +3863,7 @@ export class AgentOs {
 		const commands = await this._sidecarClient.linkPackage(
 			this._sidecarSession,
 			this._sidecarVm,
-			{ path: ref.path },
+			descriptor,
 		);
 		if (this.#kernel instanceof NativeSidecarKernelProxy) {
 			this.#kernel.registerCommandGuestPaths(
@@ -3641,14 +3877,14 @@ export class AgentOs {
 			// Retain the linked package for runtime mount reconfigures:
 			// `configure_vm` is replace-on-write, so a later `mountFs` that
 			// resent only the boot packages would unproject this one.
-			this.#kernel.registerLinkedPackage({ path: ref.path });
+			this.#kernel.registerLinkedPackage(descriptor);
 		}
 		// The client parses no manifests: an `agent` block in the linked package is
 		// picked up by the sidecar (it owns the projected `/opt/agentos` and answers
-		// createSession/listAgents from it). Nothing to record client-side.
+		// openSession/listAgents from it). Nothing to record client-side.
 	}
 
-	async providedCommands(): Promise<
+	async listSoftware(): Promise<
 		{ packageName: string; commands: string[] }[]
 	> {
 		return this._sidecarClient.providedCommands(
@@ -3674,194 +3910,7 @@ export class AgentOs {
 		return response.val.agents.map((agent) => ({
 			id: agent.id,
 			installed: agent.installed,
-			adapterEntrypoint: agent.adapterEntrypoint,
 		}));
-	}
-
-	private _syncSessionState(
-		session: AgentSessionEntry,
-		state: Pick<
-			SidecarSessionState,
-			| "processId"
-			| "pid"
-			| "closed"
-			| "modes"
-			| "configOptions"
-			| "agentCapabilities"
-			| "agentInfo"
-		>,
-	): void {
-		session.processId = state.processId;
-		session.pid = state.pid ?? null;
-		session.closed = state.closed;
-		session.modes = toSessionModes(state.modes);
-		session.configOptions = toSessionConfigOptions(state.configOptions);
-		this._applySyntheticConfigOverrides(session);
-		session.capabilities = toAgentCapabilities(state.agentCapabilities);
-		session.agentInfo = toAgentInfo(state.agentInfo);
-	}
-
-	private _applySessionUpdate(
-		session: AgentSessionEntry,
-		notification: JsonRpcNotification,
-	): void {
-		if (notification.method !== "session/update") {
-			return;
-		}
-
-		const params = toRecord(notification.params);
-		const update = toRecord(params.update ?? params);
-		const sessionUpdate = update.sessionUpdate;
-
-		if (
-			sessionUpdate === "current_mode_update" &&
-			typeof update.currentModeId === "string" &&
-			session.modes
-		) {
-			session.modes = {
-				...session.modes,
-				currentModeId: update.currentModeId,
-			};
-		}
-
-		if (
-			(sessionUpdate === "config_option_update" ||
-				sessionUpdate === "config_options_update") &&
-			Array.isArray(update.configOptions)
-		) {
-			session.configOptions = update.configOptions as SessionConfigOption[];
-		}
-	}
-
-	private _recordSessionNotification(
-		session: AgentSessionEntry,
-		notification: JsonRpcNotification,
-	): void {
-		this._applySessionUpdate(session, notification);
-
-		if (shouldDispatchToSessionEventHandlers(notification)) {
-			this._dispatchSessionEvent(session, notification);
-		}
-
-		if (
-			notification.method === LEGACY_PERMISSION_METHOD ||
-			notification.method === ACP_PERMISSION_METHOD
-		) {
-			const params = toRecord(notification.params);
-			const permissionId = params.permissionId;
-			if (
-				typeof permissionId === "string" ||
-				typeof permissionId === "number"
-			) {
-				const request: PermissionRequest = {
-					permissionId: String(permissionId),
-					description:
-						typeof params.description === "string"
-							? params.description
-							: undefined,
-					params,
-				};
-				for (const handler of session.permissionHandlers) {
-					handler(request);
-				}
-			}
-		}
-	}
-
-	private _dispatchSessionEvent(
-		session: AgentSessionEntry,
-		notification: JsonRpcNotification,
-	): void {
-		if (session.eventHandlers.size === 0) {
-			return;
-		}
-		for (const subscriber of [...session.eventHandlers]) {
-			try {
-				subscriber.handler(notification);
-			} catch {
-				// Ignore subscriber callback failures and keep event delivery moving.
-			}
-		}
-	}
-
-	private _subscribeSessionEvents(
-		session: AgentSessionEntry,
-		handler: SessionEventHandler,
-	): () => void {
-		const subscriber: SessionEventSubscriber = {
-			handler,
-		};
-		session.eventHandlers.add(subscriber);
-		return () => {
-			session.eventHandlers.delete(subscriber);
-		};
-	}
-
-	/**
-	 * Warn once per session (host-visible) that a tool-permission request was
-	 * auto-denied because no `onPermissionRequest` handler is registered. Shared
-	 * by both the bare-callback and JSON-RPC permission paths so the message and
-	 * the once-per-session guard cannot drift between them.
-	 */
-	private _warnNoPermissionHandlerOnce(
-		session: AgentSessionEntry,
-		params: Record<string, unknown>,
-	): void {
-		if (session.warnedNoPermissionHandler) {
-			return;
-		}
-		session.warnedNoPermissionHandler = true;
-		this._emitSessionWarning(
-			session,
-			`agentos: a tool-permission request (${this._permissionToolLabel(params)}) was ` +
-				`auto-denied because no onPermissionRequest handler is registered for session ` +
-				`${session.sessionId}. Register one with vm.onPermissionRequest(sessionId, ...) and ` +
-				`reply via vm.respondPermission(...) to let the agent use tools.`,
-		);
-	}
-
-	/** Best-effort human label for the tool named in a permission request. */
-	private _permissionToolLabel(params: Record<string, unknown>): string {
-		if (typeof params.toolName === "string") {
-			return params.toolName;
-		}
-		const toolCall = params.toolCall;
-		if (
-			toolCall &&
-			typeof toolCall === "object" &&
-			typeof (toolCall as { title?: unknown }).title === "string"
-		) {
-			return (toolCall as { title: string }).title;
-		}
-		return "a tool";
-	}
-
-	/**
-	 * Emit a host-visible warning for a session through the same agent-process log
-	 * channel that surfaces adapter stderr (`onAgentStderr`, default: process
-	 * stderr). Used for agent-os-owned diagnostics — e.g. a permission request
-	 * that was auto-denied because no host hook is registered — so they never fire
-	 * silently inside the sidecar.
-	 */
-	private _emitSessionWarning(
-		session: AgentSessionEntry,
-		message: string,
-	): void {
-		const handler = this._agentStderrHandler;
-		if (!handler) {
-			return;
-		}
-		try {
-			handler({
-				sessionId: session.sessionId,
-				agentType: session.agentType,
-				processId: session.processId,
-				pid: session.pid,
-				chunk: new TextEncoder().encode(`${message}\n`),
-			});
-		} catch {
-			// A warning sink failure must never affect permission handling.
-		}
 	}
 
 	private _recordAgentStderr(event: {
@@ -3870,13 +3919,7 @@ export class AgentOs {
 		processId: string;
 		chunk: ArrayBuffer;
 	}): void {
-		const session =
-			(event.sessionId ? this._sessions.get(event.sessionId) : undefined) ??
-			[...this._sessions.values()].find(
-				(candidate) => candidate.processId === event.processId,
-			);
-		const sessionId = event.sessionId || session?.sessionId;
-		if (!sessionId) {
+		if (!event.sessionId) {
 			return;
 		}
 		const handler = this._agentStderrHandler;
@@ -3885,14 +3928,14 @@ export class AgentOs {
 		}
 		try {
 			handler({
-				sessionId,
-				agentType: event.agentType || session?.agentType || "",
+				sessionId: event.sessionId,
+				agentType: event.agentType,
 				processId: event.processId,
-				pid: session?.pid ?? null,
+				pid: null,
 				chunk: new Uint8Array(event.chunk),
 			});
-		} catch {
-			// Ignore subscriber callback failures and keep event delivery moving.
+		} catch (error) {
+			console.error("AgentOS stderr handler failed", error);
 		}
 	}
 
@@ -3900,47 +3943,39 @@ export class AgentOs {
 		sessionId: string;
 		agentType: string;
 		processId: string;
+		pid: number | null;
 		exitCode: number | null;
 		restart: string;
 		restartCount: number;
 		maxRestarts: number;
 	}): void {
-		const session = this._sessions.get(event.sessionId);
+		const publicEvent: AgentExitEvent = {
+			sessionId: event.sessionId,
+			agentType: event.agentType,
+			processId: event.processId,
+			pid: event.pid,
+			exitCode: event.exitCode,
+			restart: event.restart as AgentRestartOutcome,
+			restartCount: event.restartCount,
+			maxRestarts: event.maxRestarts,
+		};
 		const handler = this._agentExitHandler;
-		if (!handler) {
-			return;
+		if (handler) {
+			try {
+				handler(publicEvent);
+			} catch (error) {
+				console.error("AgentOS agent-exit handler failed", error);
+			}
 		}
-		try {
-			handler({
-				sessionId: event.sessionId,
-				agentType: event.agentType || session?.agentType || "",
-				processId: event.processId,
-				pid: session?.pid ?? null,
-				exitCode: event.exitCode,
-				restart: event.restart as AgentRestartOutcome,
-				restartCount: event.restartCount,
-				maxRestarts: event.maxRestarts,
-			});
-		} catch {
-			// Ignore subscriber callback failures and keep event delivery moving.
+		for (const key of ["*", event.sessionId]) {
+			for (const subscription of this._agentExitHandlers.get(key) ?? []) {
+				try {
+					subscription(publicEvent);
+				} catch (error) {
+					console.error("AgentOS agent-exit subscription failed", error);
+				}
+			}
 		}
-	}
-
-	private _applySyntheticConfigOverrides(session: AgentSessionEntry): void {
-		if (session.configOverrides.size === 0) {
-			return;
-		}
-
-		session.configOptions = session.configOptions.map((option) => {
-			const override =
-				session.configOverrides.get(option.id) ??
-				(typeof option.category === "string"
-					? session.configOverrides.get(option.category)
-					: undefined);
-			return override === undefined
-				? option
-				: { ...option, currentValue: override };
-		});
 	}
 
 	private _handleSidecarEvent(
@@ -3959,30 +3994,6 @@ export class AgentOs {
 		}
 		if (event.payload.name === "limit_warning") {
 			this._handleLimitWarning(event.payload.detail);
-			return;
-		}
-		if (event.payload.name !== "acp.session_event") {
-			return;
-		}
-
-		const sessionId = event.payload.detail.session_id;
-		const session = sessionId ? this._sessions.get(sessionId) : undefined;
-		if (!session) {
-			return;
-		}
-
-		const notificationText = event.payload.detail.notification;
-		if (typeof notificationText !== "string") {
-			return;
-		}
-
-		try {
-			this._recordSessionNotification(
-				session,
-				toJsonRpcNotification(JSON.parse(notificationText)),
-			);
-		} catch {
-			// Ignore malformed event payloads from the sidecar.
 		}
 	}
 
@@ -4002,8 +4013,8 @@ export class AgentOs {
 				capacity: toNumber(detail.capacity),
 				fillPercent: toNumber(detail.fillPercent),
 			});
-		} catch {
-			// A throwing handler must never break the sidecar event loop.
+		} catch (error) {
+			console.error("AgentOS limit-warning handler failed", error);
 		}
 	}
 
@@ -4017,17 +4028,28 @@ export class AgentOs {
 		try {
 			const event = decodeAcpEvent(envelope.payload);
 			switch (event.tag) {
-				case "AcpSessionEvent": {
-					const session = this._sessions.get(event.val.sessionId);
-					if (!session) {
-						return;
-					}
-					this._recordSessionNotification(
-						session,
-						toJsonRpcNotification(JSON.parse(event.val.notification)),
+				case "AcpDurableSessionEvent": {
+					this._emitDurableSessionEvent(
+						decodeDurableSessionEvent(event.val),
 					);
 					return;
 				}
+				case "AcpEphemeralSessionUpdateEvent": {
+					const update = JSON.parse(event.val.update) as {
+						sessionUpdate: EphemeralSessionEventEntry["type"];
+					} & Record<string, unknown>;
+					const { sessionUpdate: type, ...payload } = update;
+					this._emitDurableSessionEvent({
+						durability: "ephemeral",
+						type,
+						sessionId: event.val.sessionId,
+						afterSequence: safeWireU64(event.val.afterSequence),
+						...payload,
+					} as EphemeralSessionEventEntry);
+					return;
+				}
+				case "AcpSessionEvent":
+					return;
 				case "AcpAgentStderrEvent": {
 					this._recordAgentStderr(event.val);
 					return;
@@ -4037,23 +4059,21 @@ export class AgentOs {
 					return;
 				}
 			}
-		} catch {
-			// Ignore malformed event payloads from the sidecar.
+		} catch (error) {
+			console.error("AgentOS failed to decode an ACP sidecar event", error);
 		}
 	}
 
-	private _unsupportedConfigResponse(
-		_agentType: string,
-		category: string,
-	): JsonRpcResponse {
-		return {
-			jsonrpc: "2.0",
-			id: null,
-			error: {
-				code: -32601,
-				message: `The ${category} config option is read-only for this session.`,
-			},
-		};
+	private _emitDurableSessionEvent(entry: SessionStreamEntry): void {
+		for (const handler of this._durableSessionEventHandlers.get(
+			entry.sessionId,
+		) ?? []) {
+			try {
+				handler(entry);
+			} catch (error) {
+				console.error("AgentOS session event handler failed", error);
+			}
+		}
 	}
 
 	private async _sendAcpRequest(request: AcpRequest): Promise<AcpResponse> {
@@ -4077,375 +4097,6 @@ export class AgentOs {
 			throw error;
 		}
 		return response;
-	}
-
-	private async _sendSessionRequest(
-		sessionId: string,
-		method: string,
-		params?: Record<string, unknown>,
-	): Promise<JsonRpcResponse> {
-		const session = this._requireSession(sessionId);
-		const response = await new Promise<JsonRpcResponse>((resolve, reject) => {
-			const resolvers =
-				this._pendingSessionRequestResolvers.get(sessionId) ?? new Set();
-			const resolver = {
-				method,
-				resolve: (response: JsonRpcResponse) => {
-					resolve(response);
-				},
-			};
-			resolvers.add(resolver);
-			this._pendingSessionRequestResolvers.set(sessionId, resolvers);
-
-			void this._sendAcpRequest({
-				tag: "AcpSessionRequest",
-				val: {
-					sessionId,
-					method,
-					params: params === undefined ? null : JSON.stringify(params),
-				},
-			})
-				.then((response) => {
-					if (response.tag !== "AcpSessionRpcResponse") {
-						throw new Error(
-							`unexpected response to AcpSessionRequest: ${response.tag}`,
-						);
-					}
-					return toJsonRpcResponse(JSON.parse(response.val.response));
-				})
-				.then(resolve, reject)
-				.finally(() => {
-					const nextResolvers =
-						this._pendingSessionRequestResolvers.get(sessionId);
-					if (!nextResolvers) {
-						return;
-					}
-					nextResolvers.delete(resolver);
-					if (nextResolvers.size === 0) {
-						this._pendingSessionRequestResolvers.delete(sessionId);
-					}
-				});
-		});
-		const liveSession = this._sessions.get(sessionId);
-		if (liveSession && !isLocalCancelledPromptResponse(method, response)) {
-			await this._hydrateSessionState(liveSession).catch(() => {});
-		}
-		if (!response.error) {
-			if (
-				method === "session/set_mode" &&
-				typeof params?.modeId === "string" &&
-				session.modes
-			) {
-				session.modes = {
-					...session.modes,
-					currentModeId: params.modeId,
-				};
-			}
-			if (
-				method === "session/set_config_option" &&
-				typeof params?.configId === "string" &&
-				typeof params?.value === "string"
-			) {
-				const nextValue = params.value;
-				const updatedOption = session.configOptions.find(
-					(option) => option.id === params.configId,
-				);
-				session.configOverrides.set(params.configId, nextValue);
-				if (typeof updatedOption?.category === "string") {
-					session.configOverrides.set(updatedOption.category, nextValue);
-				}
-				session.configOptions = session.configOptions.map((option) =>
-					option.id === params.configId
-						? { ...option, currentValue: nextValue }
-						: option,
-				);
-			}
-		}
-		return response;
-	}
-
-	private async _setSessionConfigByCategory(
-		sessionId: string,
-		category: string,
-		value: string,
-	): Promise<JsonRpcResponse> {
-		const session = this._requireSession(sessionId);
-		const option = session.configOptions.find(
-			(entry) => entry.category === category,
-		);
-		if (option?.readOnly) {
-			return this._unsupportedConfigResponse(session.agentType, category);
-		}
-		const response = await this._sendSessionRequest(
-			sessionId,
-			"session/set_config_option",
-			{
-				configId: option?.id ?? category,
-				value,
-			},
-		);
-		return response;
-	}
-
-	private _removeSession(sessionId: string): void {
-		this._sessions.delete(sessionId);
-	}
-
-	private _abortPendingSessionRequests(sessionId: string): void {
-		const resolvers = this._pendingSessionRequestResolvers.get(sessionId);
-		if (!resolvers) {
-			return;
-		}
-		this._pendingSessionRequestResolvers.delete(sessionId);
-		const response: JsonRpcResponse = {
-			jsonrpc: "2.0",
-			id: null,
-			error: {
-				code: -32_000,
-				message: `Session closed: ${sessionId}`,
-			},
-		};
-		for (const resolver of resolvers) {
-			resolver.resolve(response);
-		}
-	}
-
-	private _cancelPendingPromptRequests(sessionId: string): boolean {
-		const resolvers = this._pendingSessionRequestResolvers.get(sessionId);
-		if (!resolvers) {
-			return false;
-		}
-
-		const response: JsonRpcResponse = {
-			jsonrpc: "2.0",
-			id: null,
-			result: {
-				stopReason: "cancelled",
-			},
-		};
-
-		let cancelledPrompt = false;
-		for (const resolver of [...resolvers]) {
-			if (resolver.method !== "session/prompt") {
-				continue;
-			}
-			resolvers.delete(resolver);
-			resolver.resolve(response);
-			cancelledPrompt = true;
-		}
-
-		if (resolvers.size === 0) {
-			this._pendingSessionRequestResolvers.delete(sessionId);
-		}
-
-		return cancelledPrompt;
-	}
-
-	private _rejectPendingPermissionReplies(sessionId: string): void {
-		const session = this._sessions.get(sessionId);
-		if (!session) {
-			return;
-		}
-		this._rejectPendingPermissionRepliesFromSession(session);
-	}
-
-	private _rejectPendingPermissionRepliesFromSession(
-		session: AgentSessionEntry,
-	): void {
-		for (const [
-			permissionId,
-			pendingReply,
-		] of session.pendingPermissionReplies) {
-			clearTimeout(pendingReply.timer);
-			pendingReply.reject(
-				new Error(`Session closed before permission reply: ${permissionId}`),
-			);
-		}
-		session.pendingPermissionReplies.clear();
-	}
-
-	private async _closeSessionInternal(sessionId: string): Promise<void> {
-		const closing = this._sessionClosePromises.get(sessionId);
-		if (closing) {
-			return closing;
-		}
-		if (this._closedSessionIds.has(sessionId)) {
-			return;
-		}
-
-		this._abortPendingSessionRequests(sessionId);
-		this._rejectPendingPermissionReplies(sessionId);
-
-		this._requireSession(sessionId);
-		this._removeSession(sessionId);
-		this._closedSessionIds.add(sessionId);
-
-		const closePromise = this._sendAcpRequest({
-			tag: "AcpCloseSessionRequest",
-			val: { sessionId },
-		})
-			.then((response) => {
-				if (response.tag !== "AcpSessionClosedResponse") {
-					throw new Error(
-						`unexpected response to AcpCloseSessionRequest: ${response.tag}`,
-					);
-				}
-			})
-			.finally(() => {
-				this._sessionClosePromises.delete(sessionId);
-			});
-		this._sessionClosePromises.set(sessionId, closePromise);
-		await closePromise;
-	}
-
-	private async _hydrateSessionState(
-		session: AgentSessionEntry,
-	): Promise<void> {
-		const response = await this._sendAcpRequest({
-			tag: "AcpGetSessionStateRequest",
-			val: { sessionId: session.sessionId },
-		});
-		if (response.tag !== "AcpSessionStateResponse") {
-			throw new Error(
-				`unexpected response to AcpGetSessionStateRequest: ${response.tag}`,
-			);
-		}
-		const state = sidecarSessionStateFromAcp(response.val);
-		this._syncSessionState(session, state);
-	}
-
-	async createSession(
-		agentType: AgentType,
-		options?: CreateSessionOptions,
-	): Promise<{ sessionId: string }> {
-		// The client is npm-agnostic: it sends only the agent NAME. The sidecar
-		// resolves the name -> package -> entrypoint/env/launchArgs from the
-		// projected `/opt/agentos/<name>/current/agentos-package.json` and spawns
-		// (including the agent's static launch args and manifest env defaults).
-		// System-prompt assembly/injection (launch args / OPENCODE_CONTEXTPATHS) is
-		// owned by the sidecar; the host only forwards additionalInstructions /
-		// skipOsInstructions plus the caller's env.
-		const launchEnv = { ...options?.env };
-		const sessionCwd = options?.cwd ?? "/workspace";
-
-		const response = await this._sendAcpRequest({
-			tag: "AcpCreateSessionRequest",
-			val: {
-				agentType: String(agentType),
-				runtime: AcpRuntimeKind.JavaScript,
-				args: [],
-				env: new Map(Object.entries(launchEnv)),
-				cwd: sessionCwd,
-				mcpServers: JSON.stringify(options?.mcpServers ?? []),
-				protocolVersion: ACP_PROTOCOL_VERSION,
-				clientCapabilities: JSON.stringify(defaultAcpClientCapabilities()),
-				additionalInstructions: combineInstructions(
-					[this._additionalInstructions, options?.additionalInstructions]
-						.map((part) => part?.trim())
-						.filter((part): part is string => Boolean(part))
-						.join("\n\n") || undefined,
-					this._bindingReference,
-				),
-				skipOsInstructions: options?.skipOsInstructions ?? false,
-			},
-		});
-		if (response.tag !== "AcpSessionCreatedResponse") {
-			throw new Error(`unexpected create_session response: ${response.tag}`);
-		}
-		const created = sidecarSessionCreatedFromAcp(response.val);
-
-		// The sessionId is chosen by the (untrusted/buggy) ACP adapter or sidecar. If it collides
-		// with a live session already in `_sessions`, blindly overwriting the entry would orphan the
-		// first session's event/permission handlers and pending permission replies. Fail closed:
-		// reject the colliding create and leave the original session intact. (A previously-closed,
-		// evicted id may still be re-used; only a live, non-closed entry is a collision.)
-		const existing = this._sessions.get(created.sessionId);
-		if (existing !== undefined && !existing.closed) {
-			throw new Error(`session id collision: ${created.sessionId}`);
-		}
-
-		const initData: SessionInitData = {
-			modes: toSessionModes(created.modes) ?? undefined,
-			configOptions: toSessionConfigOptions(created.configOptions),
-			capabilities: toAgentCapabilities(created.agentCapabilities),
-			agentInfo: toAgentInfo(created.agentInfo) ?? undefined,
-		};
-		const session = sessionEntryFromInit(
-			created.sessionId,
-			String(agentType),
-			initData,
-		);
-		this._closedSessionIds.delete(created.sessionId);
-		this._sessions.set(created.sessionId, session);
-
-		try {
-			await this._hydrateSessionState(session);
-		} catch (error) {
-			this._removeSession(created.sessionId);
-			throw error;
-		}
-
-		return { sessionId: created.sessionId };
-	}
-
-	/**
-	 * Resume a session that exists in durable storage but is not live in this VM
-	 * (e.g. after a Rivet actor slept and woke with a fresh VM). Thin forwarder:
-	 * resolves the agent config + adapter entrypoint exactly as {@link createSession}
-	 * does, then forwards a single `AcpResumeSessionRequest` to the sidecar, which
-	 * owns the resume state machine (native `session/load` when the agent supports
-	 * it, else `session/new` + a transcript-continuation preamble). The returned
-	 * `sessionId` is the live id in this VM (equal to the requested id for native
-	 * loads, freshly assigned for the fallback); the caller remaps `external -> live`.
-	 * The new live session is registered + hydrated locally so subsequent prompts
-	 * route to it.
-	 *
-	 * Resume depends on a durable root; on a non-durable (default in-memory) root
-	 * there is no surviving store and the fallback tier always runs.
-	 */
-	async resumeSession(
-		sessionId: string,
-		agentType: AgentType,
-		options?: ResumeSessionOptions,
-	): Promise<ResumeSessionResult> {
-		// The client is npm-agnostic: it sends only the agent NAME. The sidecar
-		// resolves the name -> package -> entrypoint/env/launchArgs from the
-		// projected manifest, exactly as createSession does.
-		const sessionCwd = options?.cwd ?? "/workspace";
-		const launchEnv = { ...options?.env };
-
-		const response = await this._sendAcpRequest({
-			tag: "AcpResumeSessionRequest",
-			val: {
-				sessionId,
-				agentType: String(agentType),
-				transcriptPath: options?.transcriptPath ?? null,
-				cwd: sessionCwd,
-				env: new Map(Object.entries(launchEnv)),
-			},
-		});
-		if (response.tag !== "AcpSessionResumedResponse") {
-			throw new Error(`unexpected resume_session response: ${response.tag}`);
-		}
-		const { sessionId: liveSessionId, mode } = response.val;
-
-		// Register + hydrate the live session so subsequent prompts route to it.
-		const existing = this._sessions.get(liveSessionId);
-		if (existing !== undefined && !existing.closed) {
-			throw new Error(`session id collision: ${liveSessionId}`);
-		}
-
-		const session = sessionEntryFromInit(liveSessionId, String(agentType), {});
-		this._closedSessionIds.delete(liveSessionId);
-		this._sessions.set(liveSessionId, session);
-		try {
-			await this._hydrateSessionState(session);
-		} catch (error) {
-			this._removeSession(liveSessionId);
-			throw error;
-		}
-
-		return { sessionId: liveSessionId, mode };
 	}
 
 	private _installSidecarRequestHandler(): void {
@@ -4484,29 +4135,6 @@ export class AgentOs {
 		}
 		const callback = decodeAcpCallback(envelope.payload);
 		switch (callback.tag) {
-			case "AcpPermissionCallback": {
-				const reply = await this._handleAcpPermissionCallback(
-					callback.val.sessionId,
-					callback.val.permissionId,
-					{
-						...toRecord(JSON.parse(callback.val.params)),
-						_acpMethod: ACP_PERMISSION_METHOD,
-					},
-				);
-				return {
-					type: "ext_result",
-					envelope: {
-						namespace: ACP_EXTENSION_NAMESPACE,
-						payload: encodeAcpCallbackResponse({
-							tag: "AcpPermissionCallbackResponse",
-							val: {
-								permissionId: callback.val.permissionId,
-								reply,
-							},
-						}),
-					},
-				};
-			}
 			case "AcpHostRequestCallback": {
 				const response = await this._dispatchAcpSidecarRequest(
 					toJsonRpcRequest(JSON.parse(callback.val.request)),
@@ -4565,8 +4193,6 @@ export class AgentOs {
 	): Promise<unknown> {
 		const params = this._acpParams(request);
 		switch (request.method) {
-			case ACP_PERMISSION_METHOD:
-				return this._handleAcpPermissionRequest(request, params);
 			case "fs/read":
 			case "fs/read_text_file":
 				return this._handleAcpReadFile(params);
@@ -4602,131 +4228,6 @@ export class AgentOs {
 					},
 				);
 		}
-	}
-
-	private _normalizeAcpPermissionOptionId(
-		options: Array<Record<string, unknown>> | undefined,
-		reply: PermissionReply,
-	): string | null {
-		const optionTargets =
-			reply === "always"
-				? {
-						optionIds: new Set(["always", "allow_always"]),
-						kinds: new Set(["allow_always"]),
-					}
-				: reply === "once"
-					? {
-							optionIds: new Set(["once", "allow_once"]),
-							kinds: new Set(["allow_once"]),
-						}
-					: {
-							optionIds: new Set(["reject", "reject_once"]),
-							kinds: new Set(["reject_once"]),
-						};
-
-		const matched = options?.find((option) => {
-			const optionId =
-				typeof option.optionId === "string" ? option.optionId : undefined;
-			const kind = typeof option.kind === "string" ? option.kind : undefined;
-			return (
-				(optionId !== undefined && optionTargets.optionIds.has(optionId)) ||
-				(kind !== undefined && optionTargets.kinds.has(kind))
-			);
-		});
-		if (matched && typeof matched.optionId === "string") {
-			return matched.optionId;
-		}
-		if (reply === "always") {
-			return "allow_always";
-		}
-		if (reply === "once") {
-			return "allow_once";
-		}
-		return "reject_once";
-	}
-
-	private _buildAcpPermissionResult(
-		reply: PermissionReply,
-		params: Record<string, unknown>,
-	): Record<string, unknown> {
-		const options = Array.isArray(params.options)
-			? params.options.filter(
-					(option): option is Record<string, unknown> =>
-						typeof option === "object" && option !== null,
-				)
-			: undefined;
-		const optionId = this._normalizeAcpPermissionOptionId(options, reply);
-		return {
-			outcome: optionId
-				? {
-						outcome: "selected",
-						optionId,
-					}
-				: {
-						outcome: "cancelled",
-					},
-		};
-	}
-
-	private async _handleAcpPermissionRequest(
-		request: JsonRpcRequest,
-		params: Record<string, unknown>,
-	): Promise<unknown> {
-		const sessionId =
-			typeof params.sessionId === "string" ? params.sessionId : undefined;
-		if (!sessionId) {
-			throw new AcpDispatchError(
-				-32602,
-				`${ACP_PERMISSION_METHOD} requires a sessionId`,
-			);
-		}
-
-		const session = this._sessions.get(sessionId);
-		if (!session) {
-			throw new AcpDispatchError(-32602, `Session not found: ${sessionId}`);
-		}
-
-		const permissionId = String(request.id);
-		const permissionParams: Record<string, unknown> = {
-			...params,
-			permissionId,
-			_acpMethod: request.method,
-		};
-		if (session.permissionHandlers.size === 0) {
-			// Default-closed deny; warn once (host-visible) so a forgotten
-			// onPermissionRequest handler is an observable cause rather than a
-			// silent denial. See _warnNoPermissionHandlerOnce.
-			this._warnNoPermissionHandlerOnce(session, permissionParams);
-			return this._buildAcpPermissionResult("reject", permissionParams);
-		}
-
-		const reply = await new Promise<PermissionReply>((resolve, reject) => {
-			const timer = setTimeout(() => {
-				session.pendingPermissionReplies.delete(permissionId);
-				reject(
-					new Error(`Timed out waiting for permission reply: ${permissionId}`),
-				);
-			}, 120_000);
-			session.pendingPermissionReplies.set(permissionId, {
-				resolve,
-				reject,
-				timer,
-			});
-
-			const permissionRequest: PermissionRequest = {
-				permissionId,
-				description:
-					typeof permissionParams["description"] === "string"
-						? permissionParams["description"]
-						: undefined,
-				params: permissionParams,
-			};
-			for (const handler of session.permissionHandlers) {
-				handler(permissionRequest);
-			}
-		});
-
-		return this._buildAcpPermissionResult(reply, permissionParams);
 	}
 
 	private _acpParams(request: JsonRpcRequest): Record<string, unknown> {
@@ -5103,256 +4604,62 @@ export class AgentOs {
 		return null;
 	}
 
-	private async _handleAcpPermissionCallback(
-		sessionId: string,
-		permissionId: string,
-		params: Record<string, unknown>,
-	): Promise<PermissionReply> {
-		const session = this._sessions.get(sessionId);
-		if (!session) {
-			return "reject";
+	onSessionEvent(handler: (entry: SessionStreamEntry) => void): () => void;
+	onSessionEvent(
+		sessionId: string | undefined,
+		handler: (entry: SessionStreamEntry) => void,
+	): () => void;
+	onSessionEvent(
+		sessionIdOrHandler:
+			| string
+			| ((entry: SessionStreamEntry) => void)
+			| undefined,
+		maybeHandler?: (entry: SessionStreamEntry) => void,
+	): () => void {
+		const sessionId =
+			typeof sessionIdOrHandler === "string" ? sessionIdOrHandler : "main";
+		const handler =
+			typeof sessionIdOrHandler === "function"
+				? sessionIdOrHandler
+				: maybeHandler;
+		if (!handler) {
+			throw new TypeError("onSessionEvent requires a handler");
 		}
-
-		if (session.permissionHandlers.size === 0) {
-			// Default-closed: deny when no host hook is listening, and warn once
-			// (host-visible) so a forgotten onPermissionRequest handler is not an
-			// invisible cause of an agent that cannot use any tool.
-			this._warnNoPermissionHandlerOnce(session, params);
-			return "reject";
-		}
-
-		try {
-			return await new Promise<PermissionReply>((resolve, reject) => {
-				const timer = setTimeout(() => {
-					session.pendingPermissionReplies.delete(permissionId);
-					reject(
-						new Error(
-							`Timed out waiting for permission reply: ${permissionId}`,
-						),
-					);
-				}, 120_000);
-				session.pendingPermissionReplies.set(permissionId, {
-					resolve,
-					reject,
-					timer,
-				});
-
-				const permissionRequest: PermissionRequest = {
-					permissionId,
-					description:
-						typeof params.description === "string"
-							? params.description
-							: undefined,
-					params,
-				};
-				for (const handler of session.permissionHandlers) {
-					handler(permissionRequest);
-				}
-			});
-		} catch {
-			return "reject";
-		}
-	}
-
-	/**
-	 * Gracefully destroy a session: cancel any pending work, close the client,
-	 * and remove from tracking. Unlike close() which is abrupt, this attempts
-	 * a graceful shutdown sequence.
-	 */
-	async destroySession(sessionId: string): Promise<void> {
-		this._requireSession(sessionId);
-		try {
-			await this.cancelSession(sessionId);
-		} catch {
-			// Ignore cancellation failures during teardown.
-		}
-		await this._closeSessionInternal(sessionId);
-	}
-
-	// ── Flat session API (ID-based) ───────────────────────────────
-
-	async prompt(sessionId: string, text: string): Promise<PromptResult> {
-		const session = this._requireSession(sessionId);
-		let agentText = "";
-		const handler: SessionEventHandler = (event) => {
-			const params = toRecord(event.params);
-			const update = toRecord(params.update);
-			if (update?.sessionUpdate === "agent_message_chunk") {
-				const content = toRecord(update.content);
-				if (typeof content.text === "string") {
-					agentText += content.text;
-				}
+		const handlers =
+			this._durableSessionEventHandlers.get(sessionId) ?? new Set();
+		handlers.add(handler);
+		this._durableSessionEventHandlers.set(sessionId, handlers);
+		return () => {
+			handlers.delete(handler);
+			if (handlers.size === 0) {
+				this._durableSessionEventHandlers.delete(sessionId);
 			}
 		};
-		const unsubscribe = this._subscribeSessionEvents(session, handler);
-
-		try {
-			const response = await this._sendSessionRequest(
-				sessionId,
-				"session/prompt",
-				{
-					prompt: [{ type: "text", text }],
-				},
-			);
-			return { response, text: agentText };
-		} finally {
-			unsubscribe();
-		}
 	}
 
-	/** Cancel ongoing agent work for a session. */
-	async cancelSession(sessionId: string): Promise<JsonRpcResponse> {
-		this._requireSession(sessionId);
-		const cancelledPendingPrompt = this._cancelPendingPromptRequests(sessionId);
-		if (cancelledPendingPrompt) {
-			// Session control requests share the same framed sidecar transport as an
-			// in-flight prompt request. If the adapter is blocked in prompt I/O, a
-			// synchronous cancel RPC can wedge behind that prompt until the transport
-			// timeout fires. Resolve the local prompt immediately, then let the sidecar
-			// cancellation continue in the background as best effort.
-			void this._sendSessionRequest(sessionId, "session/cancel").catch(
-				() => {},
-			);
-			return {
-				jsonrpc: "2.0",
-				id: null,
-				result: {
-					cancelled: true,
-					requested: true,
-					via: "prompt-fallback",
-				},
-			};
-		}
-		const response = await this._sendSessionRequest(
-			sessionId,
-			"session/cancel",
-		);
-		if (response.error?.code === -32601) {
-			return {
-				jsonrpc: "2.0",
-				id: null,
-				result: {
-					cancelled: false,
-					requested: true,
-					via: "unsupported",
-				},
-			};
-		}
-		return response;
-	}
-
-	closeSession(sessionId: string): void {
-		if (
-			!this._sessions.has(sessionId) &&
-			!this._closedSessionIds.has(sessionId) &&
-			!this._sessionClosePromises.has(sessionId)
-		) {
-			throw new Error(`Session not found: ${sessionId}`);
-		}
-		const closePromise = this._closeSessionInternal(sessionId);
-		// `closeSession()` is intentionally fire-and-forget; suppress unhandled
-		// rejections here and let tracked close promises surface errors to any
-		// internal/test callers awaiting `_sessionClosePromises`.
-		void closePromise.catch(() => {});
-	}
-
-	async respondPermission(
-		sessionId: string,
-		permissionId: string,
-		reply: PermissionReply,
-	): Promise<JsonRpcResponse> {
-		const session = this._requireSession(sessionId);
-		const pendingReply = session.pendingPermissionReplies.get(permissionId);
-		if (pendingReply) {
-			session.pendingPermissionReplies.delete(permissionId);
-			clearTimeout(pendingReply.timer);
-			pendingReply.resolve(reply);
-			return {
-				jsonrpc: "2.0",
-				id: null,
-				result: {
-					permissionId,
-					reply,
-					via: "sidecar-request",
-				},
-			};
-		}
-
-		return this._sendSessionRequest(sessionId, LEGACY_PERMISSION_METHOD, {
-			permissionId,
-			reply,
-		});
-	}
-
-	async setSessionMode(
-		sessionId: string,
-		modeId: string,
-	): Promise<JsonRpcResponse> {
-		return this._sendSessionRequest(sessionId, "session/set_mode", {
-			modeId,
-		});
-	}
-
-	getSessionModes(sessionId: string): SessionModeState | null {
-		return this._requireSession(sessionId).modes;
-	}
-
-	async setSessionModel(
-		sessionId: string,
-		model: string,
-	): Promise<JsonRpcResponse> {
-		return this._setSessionConfigByCategory(sessionId, "model", model);
-	}
-
-	async setSessionThoughtLevel(
-		sessionId: string,
-		level: string,
-	): Promise<JsonRpcResponse> {
-		return this._setSessionConfigByCategory(sessionId, "thought_level", level);
-	}
-
-	getSessionConfigOptions(sessionId: string): SessionConfigOption[] {
-		return [...this._requireSession(sessionId).configOptions];
-	}
-
-	getSessionCapabilities(sessionId: string): AgentCapabilities | null {
-		const caps = this._requireSession(sessionId).capabilities;
-		return Object.keys(caps).length > 0 ? caps : null;
-	}
-
-	getSessionAgentInfo(sessionId: string): AgentInfo | null {
-		return this._requireSession(sessionId).agentInfo;
-	}
-
-	async rawSessionSend(
-		sessionId: string,
-		method: string,
-		params?: Record<string, unknown>,
-	): Promise<JsonRpcResponse> {
-		return this._sendSessionRequest(sessionId, method, params);
-	}
-
-	async rawSend(
-		sessionId: string,
-		method: string,
-		params?: Record<string, unknown>,
-	): Promise<JsonRpcResponse> {
-		return this.rawSessionSend(sessionId, method, params);
-	}
-
-	onSessionEvent(sessionId: string, handler: SessionEventHandler): () => void {
-		const session = this._requireSession(sessionId);
-		return this._subscribeSessionEvents(session, handler);
-	}
-
-	onPermissionRequest(
-		sessionId: string,
-		handler: PermissionRequestHandler,
+	/** Subscribe to unexpected adapter exits without changing session liveness. */
+	onAgentExit(handler: AgentExitHandler): () => void;
+	onAgentExit(
+		sessionId: string | undefined,
+		handler: AgentExitHandler,
+	): () => void;
+	onAgentExit(
+		sessionIdOrHandler: string | AgentExitHandler | undefined,
+		maybeHandler?: AgentExitHandler,
 	): () => void {
-		const session = this._requireSession(sessionId);
-		session.permissionHandlers.add(handler);
+		const sessionId =
+			typeof sessionIdOrHandler === "string" ? sessionIdOrHandler : "*";
+		const handler =
+			typeof sessionIdOrHandler === "function"
+				? sessionIdOrHandler
+				: maybeHandler;
+		if (!handler) throw new TypeError("onAgentExit requires a handler");
+		const handlers = this._agentExitHandlers.get(sessionId) ?? new Set();
+		handlers.add(handler);
+		this._agentExitHandlers.set(sessionId, handlers);
 		return () => {
-			session.permissionHandlers.delete(handler);
+			handlers.delete(handler);
+			if (handlers.size === 0) this._agentExitHandlers.delete(sessionId);
 		};
 	}
 
@@ -5380,10 +4687,6 @@ export class AgentOs {
 
 	async dispose(): Promise<void> {
 		this._cronManager.dispose();
-
-		for (const sessionId of [...this._sessions.keys()]) {
-			await this._closeSessionInternal(sessionId).catch(() => {});
-		}
 
 		for (const [id, entry] of this._shells) {
 			entry.handle.kill();
@@ -5805,7 +5108,7 @@ async function leaseAgentOsSidecarVm<TVmAdmin extends InProcessSidecarVmAdmin>(
 
 	let transport: InProcessSidecarTransport<TVmAdmin> | undefined;
 	const client: AgentOsSidecarClient = createAgentOsSidecarClient({
-		async createSessionTransport(sessionBootstrap) {
+		async createOwnershipTransport(sessionBootstrap) {
 			transport = await createInProcessSidecarTransport(
 				sessionBootstrap,
 				options,
@@ -5830,7 +5133,7 @@ async function leaseAgentOsSidecarVm<TVmAdmin extends InProcessSidecarVmAdmin>(
 	let leaseRecord: AgentOsSidecarLeaseRecord | undefined;
 
 	try {
-		const session = await client.createSession({
+		const session = await client.createOwnershipSession({
 			placement: cloneSidecarPlacement(state.description.placement),
 		});
 		const vm = await session.createVm();

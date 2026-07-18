@@ -1,5 +1,7 @@
 use agentos_protocol::generated::v1::{
-    AcpCreateSessionRequest, AcpRequest, AcpResponse, AcpRuntimeKind, AcpSessionCreatedResponse,
+    AcpCreateSessionRequest, AcpDurableEvent, AcpDurablePermissionRequest, AcpDurableSessionEvent,
+    AcpEvent, AcpOpenSessionResponse, AcpRequest, AcpResponse, AcpRuntimeKind,
+    AcpSessionCreatedResponse,
 };
 
 #[test]
@@ -22,6 +24,35 @@ fn acp_protocol_round_trips_create_session() {
     let encoded = serde_bare::to_vec(&request).expect("encode acp request");
     let decoded: AcpRequest = serde_bare::from_slice(&encoded).expect("decode acp request");
     assert_eq!(decoded, request);
+}
+
+#[test]
+fn acp_protocol_round_trips_generic_durable_permission_event() {
+    let event = AcpEvent::AcpDurableSessionEvent(AcpDurableSessionEvent {
+        session_id: String::from("public-session"),
+        sequence: 42,
+        timestamp: String::from("2026-07-18T12:00:00.000Z"),
+        event: AcpDurableEvent::AcpDurablePermissionRequest(AcpDurablePermissionRequest {
+            request_id: String::from("019-public-request"),
+            request: String::from(
+                r#"{"sessionId":"public-session","options":[{"optionId":"once","kind":"allow_once"}],"_meta":{"preserved":true}}"#,
+            ),
+        }),
+    });
+
+    let encoded = serde_bare::to_vec(&event).expect("encode durable permission event");
+    let decoded: AcpEvent =
+        serde_bare::from_slice(&encoded).expect("decode durable permission event");
+    assert_eq!(decoded, event);
+}
+
+#[test]
+fn acp_protocol_round_trips_unit_open_session_response() {
+    let response = AcpResponse::AcpOpenSessionResponse(AcpOpenSessionResponse { reserved: false });
+
+    let encoded = serde_bare::to_vec(&response).expect("encode ACP open response");
+    let decoded: AcpResponse = serde_bare::from_slice(&encoded).expect("decode ACP open response");
+    assert_eq!(decoded, response);
 }
 
 #[test]

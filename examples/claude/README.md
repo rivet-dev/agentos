@@ -9,7 +9,7 @@ Run the Claude Code agent inside a VM session and drive it with prompts. Reach f
 
 ## How it works
 
-The server registers a VM with the Claude Code software and starts the registry. The client creates a session against the `claude` agent, passing `ANTHROPIC_API_KEY` through the session env, then calls `sendPrompt` to get the agent's response. From there you can layer on extras: drop a `SKILL.md` into `~/.claude/skills/` before creating the session and the agent discovers it automatically, or pass `mcpServers` (local child processes or remote URLs) to expose more tools. Pre-install local MCP servers with `exec` so first-run `npx` output does not corrupt the stdio handshake.
+The server registers a VM with the Claude Code software and starts the registry. The client calls `openSession({ agent: "claude", env: … })`, which infers the default `main` session, passes `ANTHROPIC_API_KEY` through the session env, then calls `prompt({ content })` to get the agent's response. From there you can layer on extras: drop a `SKILL.md` into `~/.claude/skills/` before opening the session and the agent discovers it automatically, or configure MCP servers in Claude Code's native `~/.claude.json` file. Pre-install local MCP servers with `exec` so first-run `npx` output does not corrupt the stdio handshake.
 
 ## Run it
 

@@ -344,7 +344,7 @@ pub(crate) fn derive_config_options(
         option.insert(
             String::from("description"),
             Value::String(String::from(
-                "Available models reported by OpenCode. Model switching must be configured before createSession() because ACP session/set_config_option is not implemented.",
+                "Available models reported by OpenCode. Model switching must be configured before opening the session because ACP session/set_config_option is not implemented.",
             )),
         );
     }

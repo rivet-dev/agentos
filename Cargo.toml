@@ -55,6 +55,7 @@ repository = "https://github.com/rivet-dev/agent-os"
 # AgentOS crates are published as a lock-step chain and are self-contained in
 # this workspace.
 [workspace.dependencies]
+agent-client-protocol-schema = "1.4.0"
 agentos-actor-uds-client = { path = "crates/actor-uds-client", version = "0.0.1" }
 agentos-bridge = { path = "crates/bridge", version = "0.0.1" }
 agentos-build-support = { path = "crates/build-support", version = "0.0.1" }

@@ -1,26 +1,7 @@
 [
 	{
-		"name": "MAX_ADAPTER_RESTARTS",
-		"path": "crates/agentos-sidecar/src/acp_extension.rs",
-		"class": "policy-deferred",
-		"rationale": "Bounded ACP adapter restart budget; expose through typed ACP policy if operators need to tune it."
-	},
-	{
-		"name": "MAX_SESSION_STDOUT_BUFFER_BYTES",
-		"path": "crates/agentos-sidecar/src/acp_extension.rs",
-		"class": "policy",
-		"rationale": "ACP session stdout accumulation mirrors the configured per-line adapter stdout cap.",
-		"wired": "VmLimits.acp.max_read_line_bytes"
-	},
-	{
 		"name": "ACP_TERMINAL_DEFAULT_OUTPUT_BYTE_LIMIT",
 		"path": "crates/client/src/agent_os.rs",
-		"class": "policy-deferred",
-		"rationale": "Bounded SDK-side retention, registry, or capture limit; expose through client configuration if operators need to tune it."
-	},
-	{
-		"name": "CLOSED_SESSION_ID_RETENTION_LIMIT",
-		"path": "crates/client/src/lib.rs",
 		"class": "policy-deferred",
 		"rationale": "Bounded SDK-side retention, registry, or capture limit; expose through client configuration if operators need to tune it."
 	},
@@ -66,24 +47,6 @@
 		"path": "crates/client/src/process.rs",
 		"class": "invariant",
 		"rationale": "Bounded SDK fan-out channel capacity used for flow control; not a sidecar VM resource policy."
-	},
-	{
-		"name": "PROMPT_DELIVERED_CHUNK_LIMIT",
-		"path": "crates/client/src/session.rs",
-		"class": "policy-deferred",
-		"rationale": "Bounded SDK-side retention, registry, or capture limit; expose through client configuration if operators need to tune it."
-	},
-	{
-		"name": "PROMPT_TEXT_CAPTURE_LIMIT_BYTES",
-		"path": "crates/client/src/session.rs",
-		"class": "policy-deferred",
-		"rationale": "Bounded SDK-side retention, registry, or capture limit; expose through client configuration if operators need to tune it."
-	},
-	{
-		"name": "SESSION_PENDING_REQUEST_LIMIT",
-		"path": "crates/client/src/session.rs",
-		"class": "policy-deferred",
-		"rationale": "Bounded SDK-side retention, registry, or capture limit; expose through client configuration if operators need to tune it."
 	},
 	{
 		"name": "ACP_TERMINAL_LIMIT",
@@ -516,6 +479,83 @@
 		"rationale": "Layer count cap is operator-meaningful but coupled to layer RPC validation tests; wire later."
 	},
 	{
+		"name": "DEFAULT_ACP_MAX_COMPLETED_MESSAGE_BYTES",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Maximum serialized bytes retained while completing one ACP message.",
+		"wired": "VmLimits.acp.max_completed_message_bytes"
+	},
+	{
+		"name": "DEFAULT_ACP_MAX_FALLBACK_CONTINUATION_BYTES",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Maximum recent durable history included in an ACP fallback continuation preamble.",
+		"wired": "VmLimits.acp.max_fallback_continuation_bytes"
+	},
+	{
+		"name": "DEFAULT_ACP_MAX_HISTORY_PAGE_ENTRIES",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Maximum number of durable ACP history entries returned in one page.",
+		"wired": "VmLimits.acp.max_history_page_entries"
+	},
+	{
+		"name": "DEFAULT_ACP_MAX_PENDING_PERMISSIONS_PER_SESSION",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Maximum actionable ACP permission requests retained for one durable session.",
+		"wired": "VmLimits.acp.max_pending_permissions_per_session"
+	},
+	{
+		"name": "DEFAULT_ACP_MAX_PENDING_PERMISSIONS_PER_VM",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Maximum actionable ACP permission requests retained across one VM.",
+		"wired": "VmLimits.acp.max_pending_permissions_per_vm"
+	},
+	{
+		"name": "DEFAULT_ACP_MAX_PERMISSION_OUTCOMES_PER_SESSION",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Maximum terminal ACP permission outcomes retained for one durable session.",
+		"wired": "VmLimits.acp.max_permission_outcomes_per_session"
+	},
+	{
+		"name": "DEFAULT_ACP_MAX_PERMISSION_OUTCOMES_PER_VM",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Maximum terminal ACP permission outcomes retained across one VM.",
+		"wired": "VmLimits.acp.max_permission_outcomes_per_vm"
+	},
+	{
+		"name": "DEFAULT_ACP_MAX_PROMPT_BLOCKS",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Maximum content blocks accepted in one ACP prompt.",
+		"wired": "VmLimits.acp.max_prompt_blocks"
+	},
+	{
+		"name": "DEFAULT_ACP_MAX_PROMPT_BYTES",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Maximum serialized bytes accepted in one ACP prompt.",
+		"wired": "VmLimits.acp.max_prompt_bytes"
+	},
+	{
+		"name": "DEFAULT_ACP_MAX_PROMPTS_PER_SESSION",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Maximum prompt and idempotency records retained for one durable session.",
+		"wired": "VmLimits.acp.max_prompts_per_session"
+	},
+	{
+		"name": "DEFAULT_ACP_MAX_PROMPTS_PER_VM",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Maximum prompt and idempotency records retained across one VM.",
+		"wired": "VmLimits.acp.max_prompts_per_vm"
+	},
+	{
 		"name": "DEFAULT_ACP_MAX_READ_LINE_BYTES",
 		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
@@ -523,11 +563,53 @@
 		"wired": "VmLimits.acp.max_read_line_bytes"
 	},
 	{
+		"name": "DEFAULT_ACP_MAX_SESSION_HISTORY_BYTES",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Per-session byte budget for retained durable ACP history.",
+		"wired": "VmLimits.acp.max_session_history_bytes"
+	},
+	{
+		"name": "DEFAULT_ACP_MAX_SESSION_HISTORY_EVENTS",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Per-session event-count budget for retained durable ACP history.",
+		"wired": "VmLimits.acp.max_session_history_events"
+	},
+	{
+		"name": "DEFAULT_ACP_MAX_SESSION_LIST_ENTRIES",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Maximum number of durable sessions returned in one list page.",
+		"wired": "VmLimits.acp.max_session_list_entries"
+	},
+	{
+		"name": "DEFAULT_ACP_MAX_SESSIONS_PER_VM",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Maximum durable sessions retained in one VM SQLite database.",
+		"wired": "VmLimits.acp.max_sessions_per_vm"
+	},
+	{
+		"name": "DEFAULT_ACP_MAX_TURN_OUTPUT_BYTES",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Maximum serialized ACP update bytes retained during one turn.",
+		"wired": "VmLimits.acp.max_turn_output_bytes"
+	},
+	{
 		"name": "DEFAULT_ACP_STDOUT_BUFFER_BYTE_LIMIT",
 		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
 		"rationale": "Pre-session ACP stdout buffer cap.",
 		"wired": "VmLimits.acp.stdout_buffer_byte_limit"
+	},
+	{
+		"name": "DEFAULT_SQLITE_MAX_RESULT_BYTES",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Maximum materialized bytes returned by one VM SQLite statement.",
+		"wired": "VmLimits.sqlite.max_result_bytes"
 	},
 	{
 		"name": "DEFAULT_HTTP2_MAX_BUFFERED_BYTES",
@@ -1842,34 +1924,10 @@
 		"rationale": "Linux ELOOP resolution limit."
 	},
 	{
-		"name": "MAX_SYMLINK_DEPTH",
-		"path": "packages/build-bindings/bridge-src/builtins/fs.ts",
-		"class": "invariant",
-		"rationale": "Linux ELOOP mirror of the kernel invariant."
-	},
-	{
-		"name": "NET_BRIDGE_MAX_RAW_WRITE_BYTES",
-		"path": "packages/build-bindings/bridge-src/builtins/net.ts",
-		"class": "invariant",
-		"rationale": "Internal socket bridge flush granularity that preserves backpressure under the wired socket buffered-byte limit; not an operator policy cap."
-	},
-	{
-		"name": "CLOSED_SESSION_ID_RETENTION_LIMIT",
-		"path": "packages/core/src/agent-os.ts",
-		"class": "policy-deferred",
-		"rationale": "Bounded TypeScript client retention set; expose through client configuration if operators need to tune it."
-	},
-	{
 		"name": "CLOSED_SHELL_ID_RETENTION_LIMIT",
 		"path": "packages/core/src/agent-os.ts",
 		"class": "policy-deferred",
 		"rationale": "Bounded TypeScript client retention set; expose through client configuration if operators need to tune it."
-	},
-	{
-		"name": "MAX_BINDING_DESCRIPTION_LENGTH",
-		"path": "packages/core/src/host-bindings.ts",
-		"class": "policy-deferred",
-		"rationale": "Cross-boundary contract with packages/core/src/bindings.ts; both sides must change together."
 	},
 	{
 		"name": "DEFAULT_LIVE_FILESYSTEM_SYNC_MAX_BYTES",
@@ -1877,12 +1935,6 @@
 		"class": "policy",
 		"rationale": "Default byte bound for copying a live compatibility filesystem into the sidecar-backed filesystem.",
 		"wired": "createKernel.maxFilesystemBytes"
-	},
-	{
-		"name": "MAX_SYMLINK_DEPTH",
-		"path": "packages/core/src/runtime-compat.ts",
-		"class": "invariant",
-		"rationale": "Linux ELOOP mirror of the kernel invariant."
 	},
 	{
 		"name": "TRAILING_OUTPUT_DRAIN_MAX_MS",
@@ -1895,5 +1947,101 @@
 		"path": "packages/core/src/test/terminal-harness.ts",
 		"class": "invariant",
 		"rationale": "Test harness wait timeout only."
+	},
+	{
+		"name": "DEFAULT_LIMIT",
+		"path": "crates/agentos-sidecar/src/acp/mod.rs",
+		"class": "invariant",
+		"rationale": "Default page size used when a caller omits limit; the configured ACP page maximum remains authoritative."
+	},
+	{
+		"name": "MAX_SAFE_SEQUENCE",
+		"path": "crates/agentos-sidecar/src/session_store.rs",
+		"class": "invariant",
+		"rationale": "JavaScript safe-integer boundary for durable session sequence interoperability."
+	},
+	{
+		"name": "DEFAULT_CONNECT_TIMEOUT",
+		"path": "crates/actor-uds-client/src/lib.rs",
+		"class": "policy-deferred",
+		"rationale": "Actor UDS transport connect timeout; expose through transport configuration if tuning is needed."
+	},
+	{
+		"name": "DEFAULT_REQUEST_TIMEOUT",
+		"path": "crates/actor-uds-client/src/lib.rs",
+		"class": "policy-deferred",
+		"rationale": "Actor UDS request timeout; expose through transport configuration if tuning is needed."
+	},
+	{
+		"name": "MAX_FRAME_BYTES",
+		"path": "crates/actor-uds-client/src/lib.rs",
+		"class": "invariant",
+		"rationale": "Actor UDS framing protocol bound shared with the actor endpoint."
+	},
+	{
+		"name": "DEFAULT_PYTHON_MANAGED_HOST_FILE_LIMIT",
+		"path": "crates/execution/src/python.rs",
+		"class": "invariant",
+		"rationale": "Bounded fallback for standalone Python execution; VM launches use configured kernel fd limits."
+	},
+	{
+		"name": "DEFAULT_MAX_METADATA_BYTES",
+		"path": "crates/native-sidecar/src/plugins/chunked_actor_sqlite.rs",
+		"class": "policy-deferred",
+		"rationale": "Default actor-SQLite VFS metadata budget, overridable in the plugin descriptor."
+	},
+	{
+		"name": "DEFAULT_METADATA_CACHE_ENTRIES",
+		"path": "crates/native-sidecar/src/plugins/chunked_actor_sqlite.rs",
+		"class": "policy-deferred",
+		"rationale": "Default actor-SQLite VFS metadata cache capacity, overridable in the plugin descriptor."
+	},
+	{
+		"name": "MAX_CHUNK_SIZE",
+		"path": "crates/native-sidecar/src/plugins/chunked_actor_sqlite.rs",
+		"class": "invariant",
+		"rationale": "Actor-SQLite VFS storage-format chunk-size ceiling."
+	},
+	{
+		"name": "MAX_METADATA_BYTES",
+		"path": "crates/native-sidecar/src/plugins/chunked_actor_sqlite.rs",
+		"class": "policy-deferred",
+		"rationale": "Hard ceiling for the plugin-configured actor-SQLite VFS metadata budget."
+	},
+	{
+		"name": "MAX_METADATA_CACHE_ENTRIES",
+		"path": "crates/native-sidecar/src/plugins/chunked_actor_sqlite.rs",
+		"class": "policy-deferred",
+		"rationale": "Hard ceiling for the plugin-configured actor-SQLite VFS metadata cache."
+	},
+	{
+		"name": "DEFAULT_MAX_SOCKET_READINESS_SUBSCRIBERS",
+		"path": "crates/native-sidecar/src/state.rs",
+		"class": "policy-deferred",
+		"rationale": "Default socket readiness subscriber bound; wire through typed VM networking limits."
+	},
+	{
+		"name": "DEFAULT_BRIDGE_CALL_TIMEOUT",
+		"path": "crates/v8-runtime/src/host_call.rs",
+		"class": "policy-deferred",
+		"rationale": "V8 host-call fallback timeout; expose through runtime configuration if tuning is needed."
+	},
+	{
+		"name": "MAX_SYMLINK_DEPTH",
+		"path": "packages/build-tools/bridge-src/builtins/fs.ts",
+		"class": "invariant",
+		"rationale": "Linux ELOOP mirror of the kernel invariant."
+	},
+	{
+		"name": "NET_BRIDGE_MAX_RAW_WRITE_BYTES",
+		"path": "packages/build-tools/bridge-src/builtins/net.ts",
+		"class": "invariant",
+		"rationale": "Internal socket bridge flush granularity preserving configured backpressure."
+	},
+	{
+		"name": "MAX_BINDING_DESCRIPTION_LENGTH",
+		"path": "packages/core/src/bindings.ts",
+		"class": "policy-deferred",
+		"rationale": "Cross-boundary contract with native-sidecar-core bindings validation; both sides must change together."
 	}
 ]

@@ -7,7 +7,7 @@
 
 mod common;
 
-use agentos_client::fs::{BatchWriteEntry, DeleteOptions, DirEntryType, FileContent, MkdirOptions};
+use agentos_client::fs::{BatchWriteEntry, DirEntryType, FileContent, MkdirOptions, RemoveOptions};
 use agentos_client::ClientError;
 
 #[tokio::test]
@@ -57,7 +57,7 @@ async fn filesystem_surface_round_trips() {
     );
 
     let snapshot = os
-        .snapshot_root_filesystem()
+        .export_root_filesystem(64 * 1024 * 1024)
         .await
         .expect("snapshot root filesystem");
     assert_eq!(snapshot.source.format, "agentos-filesystem-snapshot-v1");
@@ -115,13 +115,13 @@ async fn filesystem_surface_round_trips() {
         .expect("move file");
     assert!(!os.exists("/tmp/a.txt").await.expect("old gone"));
     assert!(os.exists("/tmp/a2.txt").await.expect("new present"));
-    os.delete("/tmp/a2.txt", DeleteOptions { recursive: false })
+    os.remove("/tmp/a2.txt", RemoveOptions { recursive: false })
         .await
         .expect("delete file");
     assert!(!os.exists("/tmp/a2.txt").await.expect("deleted"));
 
     // Recursive delete of a populated directory.
-    os.delete("/tmp/d1", DeleteOptions { recursive: true })
+    os.remove("/tmp/d1", RemoveOptions { recursive: true })
         .await
         .expect("delete -r");
     assert!(!os.exists("/tmp/d1").await.expect("dir removed"));

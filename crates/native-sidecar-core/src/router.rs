@@ -5,10 +5,10 @@ use agentos_sidecar_protocol::protocol::{
     ExportSnapshotRequest, ExtEnvelope, FindBoundUdpRequest, FindListenerRequest,
     GetProcessSnapshotRequest, GetResourceSnapshotRequest, GetSignalStateRequest,
     GetZombieTimerCountRequest, GuestFilesystemCallRequest, GuestKernelCallRequest,
-    ImportSnapshotRequest, KillProcessRequest, LinkPackageRequest, OpenSessionRequest,
-    OwnershipScope, ProvidedCommandsRequest, RegisterHostCallbacksRequest, RequestFrame,
-    RequestPayload, ResizePtyRequest, SealLayerRequest, SnapshotRootFilesystemRequest,
-    VmFetchRequest, WriteStdinRequest,
+    ImportSnapshotRequest, KillProcessRequest, LinkPackageRequest, ListMountsRequest,
+    OpenSessionRequest, OwnershipScope, ProvidedCommandsRequest, RegisterHostCallbacksRequest,
+    RequestFrame, RequestPayload, ResizePtyRequest, SealLayerRequest,
+    SnapshotRootFilesystemRequest, VmFetchRequest, WriteStdinRequest,
 };
 use agentos_sidecar_protocol::wire as generated_wire;
 
@@ -42,6 +42,7 @@ pub enum RequestRoute {
     GuestFilesystemCall(GuestFilesystemCallRequest),
     GuestKernelCall(GuestKernelCallRequest),
     SnapshotRootFilesystem(SnapshotRootFilesystemRequest),
+    ListMounts(ListMountsRequest),
     Execute(ExecuteRequest),
     WriteStdin(WriteStdinRequest),
     ResizePty(ResizePtyRequest),
@@ -89,6 +90,7 @@ pub fn route_request_payload(request: &RequestFrame) -> RequestRoute {
         RequestPayload::SnapshotRootFilesystem(payload) => {
             RequestRoute::SnapshotRootFilesystem(payload)
         }
+        RequestPayload::ListMounts(payload) => RequestRoute::ListMounts(payload),
         RequestPayload::Execute(payload) => RequestRoute::Execute(payload),
         RequestPayload::WriteStdin(payload) => RequestRoute::WriteStdin(payload),
         RequestPayload::ResizePty(payload) => RequestRoute::ResizePty(payload),
@@ -152,6 +154,7 @@ pub fn request_dispatch_mode(request: &RequestFrame) -> RequestDispatchMode {
         | RequestPayload::GuestFilesystemCall(_)
         | RequestPayload::GuestKernelCall(_)
         | RequestPayload::SnapshotRootFilesystem(_)
+        | RequestPayload::ListMounts(_)
         | RequestPayload::Execute(_)
         | RequestPayload::WriteStdin(_)
         | RequestPayload::ResizePty(_)

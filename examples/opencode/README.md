@@ -9,7 +9,7 @@ Spin up the OpenCode coding agent inside a VM session and prompt it with natural
 
 ## How it works
 
-Register the `opencode` software with `agentOS({ software: [opencode] })` so the runtime knows the agent type. The client then calls `agent.createSession("opencode", ...)`, passing `ANTHROPIC_API_KEY` through `env`, and drives the agent with `agent.sendPrompt`. The example also shows two extension points: drop a `SKILL.md` into `~/.config/opencode/skills/` before creating the session and the agent auto-discovers it, and wire in extra tools via `mcpServers` (local child-process or remote URL). Pre-install any `npx` MCP server first so install output does not corrupt the stdio handshake.
+Register the `opencode` software with `agentOS({ software: [opencode] })` so the runtime knows the agent type. The client calls `agent.openSession({ agent: "opencode", ... })`, which infers the default `main` session, passes `ANTHROPIC_API_KEY` through `env`, and then drives the agent with `agent.prompt`. The example also shows two extension points: drop a `SKILL.md` into `~/.config/opencode/skills/` before opening the session and the agent auto-discovers it, and wire in extra tools through native ACP `mcpServers`. Pre-install any `npx` MCP server first so install output does not corrupt the stdio handshake.
 
 ## Run it
 

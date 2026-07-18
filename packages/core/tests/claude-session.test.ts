@@ -10,7 +10,6 @@ import {
 	expect,
 	test,
 } from "vitest";
-import type { AgentCapabilities, AgentInfo } from "../src/agent-os.js";
 import { AgentOs } from "../src/agent-os.js";
 import {
 	createAnthropicFixture,
@@ -56,6 +55,10 @@ child.on("close", (code) => {
 });
 `.trimStart();
 const TEXT_ONLY_OUTPUT = "plain-text-ok";
+
+function textPrompt(vm: AgentOs, sessionId: string, text: string) {
+	return vm.prompt({ sessionId, content: [{ type: "text", text }] });
+}
 
 type LlmockMessage = {
 	role?: string;
@@ -115,7 +118,7 @@ async function writeExecSyncScript(vm: AgentOs): Promise<void> {
 	await vm.writeFile(NODE_EXECSYNC_SCRIPT_PATH, NODE_EXECSYNC_SCRIPT);
 }
 
-describe("full createSession('claude')", () => {
+describe("full openSession({ agent: 'claude' })", () => {
 	let vm: AgentOs;
 	let mock: LLMock;
 	let mockUrl: string;
@@ -154,41 +157,33 @@ describe("full createSession('claude')", () => {
 		await vm.dispose();
 	});
 
-	test("createSession('claude') runs PATH-backed shell commands end-to-end", async () => {
+	test("openSession({ agent: 'claude' }) runs PATH-backed shell commands end-to-end", async () => {
 		let sessionId: string | undefined;
 
 		try {
-			const session = await vm.createSession("claude", {
+			sessionId = "claude-path-shell";
+			await vm.openSession({
+				sessionId,
+				agent: "claude",
 				cwd: "/home/agentos",
+				permissionPolicy: "allow_all",
 				env: {
 					ANTHROPIC_API_KEY: "mock-key",
 					ANTHROPIC_BASE_URL: mockUrl,
 				},
 			});
-			sessionId = session.sessionId;
-			const activeSessionId = sessionId;
-			vm.onPermissionRequest(activeSessionId, (request) => {
-				void vm.respondPermission(
-					activeSessionId,
-					request.permissionId,
-					"once",
-				);
-			});
-
-			const events: { method: string; params?: unknown }[] = [];
+			const events: unknown[] = [];
 			const unsubscribeEvents = vm.onSessionEvent(sessionId, (event) => {
 				events.push(event);
 			});
-			const { response } = await vm.prompt(
+			const response = await textPrompt(
+				vm,
 				sessionId,
 				`Run ${XU_COMMAND} and tell me what it prints.`,
 			);
 			unsubscribeEvents();
 
-			expect(response.error).toBeUndefined();
-			expect((response.result as { stopReason?: string }).stopReason).toBe(
-				"end_turn",
-			);
+			expect(response.stopReason).toBe("end_turn");
 			expect(
 				mock
 					.getRequests()
@@ -196,29 +191,24 @@ describe("full createSession('claude')", () => {
 			).toBe(true);
 
 			expect(events.length).toBeGreaterThanOrEqual(1);
-			expect(events[0].method).toBe("session/update");
 			expect(
-				events.some(
-					(event) =>
-						event.method === "session/update" &&
-						JSON.stringify(event.params).includes("tool_call"),
+				events.some((event) =>
+					JSON.stringify(event).includes("tool_call"),
 				),
 			).toBe(true);
 			expect(
-				events.some(
-					(event) =>
-						event.method === "session/update" &&
-						JSON.stringify(event.params).includes("agent_message_chunk"),
+				events.some((event) =>
+					JSON.stringify(event).includes("agent_message_chunk"),
 				),
 			).toBe(true);
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.unloadSession({ sessionId });
 			}
 		}
 	}, 120_000);
 
-	test("createSession('claude') handles text-only responses without tool calls", async () => {
+	test("openSession({ agent: 'claude' }) handles text-only responses without tool calls", async () => {
 		const { mock: promptMock, url: promptMockUrl } = await startLlmock([
 			createAnthropicFixture({}, { content: TEXT_ONLY_OUTPUT }),
 		]);
@@ -231,55 +221,51 @@ describe("full createSession('claude')", () => {
 		let sessionId: string | undefined;
 		try {
 			await writeExecSyncScript(promptVm);
-			const session = await promptVm.createSession("claude", {
+			sessionId = "claude-text-only";
+			await promptVm.openSession({
+				sessionId,
+				agent: "claude",
 				cwd: "/home/agentos",
 				env: {
 					ANTHROPIC_API_KEY: "mock-key",
 					ANTHROPIC_BASE_URL: promptMockUrl,
 				},
 			});
-			sessionId = session.sessionId;
 
-			const events: { method: string; params?: unknown }[] = [];
+			const events: unknown[] = [];
 			const unsubscribeEvents = promptVm.onSessionEvent(sessionId, (event) => {
 				events.push(event);
 			});
-			const { response } = await promptVm.prompt(
+			const response = await textPrompt(
+				promptVm,
 				sessionId,
 				`Reply with exactly ${TEXT_ONLY_OUTPUT}.`,
 			);
 			unsubscribeEvents();
 
-			expect(response.error).toBeUndefined();
-			expect((response.result as { stopReason?: string }).stopReason).toBe(
-				"end_turn",
-			);
+			expect(response.stopReason).toBe("end_turn");
 			expect(promptMock.getRequests().length).toBeGreaterThanOrEqual(1);
 
 			expect(
-				events.some(
-					(event) =>
-						event.method === "session/update" &&
-						JSON.stringify(event.params).includes("agent_message_chunk"),
+				events.some((event) =>
+					JSON.stringify(event).includes("agent_message_chunk"),
 				),
 			).toBe(true);
 			expect(
-				events.some(
-					(event) =>
-						event.method === "session/update" &&
-						JSON.stringify(event.params).includes("tool_call"),
+				events.some((event) =>
+					JSON.stringify(event).includes("tool_call"),
 				),
 			).toBe(false);
 		} finally {
 			if (sessionId) {
-				promptVm.closeSession(sessionId);
+				await promptVm.unloadSession({ sessionId });
 			}
 			await promptVm.dispose();
 			await stopLlmock(promptMock);
 		}
 	}, 120_000);
 
-	test("createSession('claude') runs nested node child_process.execSync() end-to-end", async () => {
+	test("openSession({ agent: 'claude' }) runs nested node child_process.execSync() end-to-end", async () => {
 		const fixtures = createToolFixtures(
 			{
 				name: "Bash",
@@ -299,65 +285,53 @@ describe("full createSession('claude')", () => {
 		});
 		let sessionId: string | undefined;
 		try {
-			const session = await promptVm.createSession("claude", {
+			sessionId = "claude-exec-sync";
+			await promptVm.openSession({
+				sessionId,
+				agent: "claude",
 				cwd: "/home/agentos",
+				permissionPolicy: "allow_all",
 				env: {
 					ANTHROPIC_API_KEY: "mock-key",
 					ANTHROPIC_BASE_URL: promptMockUrl,
 				},
 			});
-			sessionId = session.sessionId;
-			const activeSessionId = sessionId;
-			promptVm.onPermissionRequest(activeSessionId, (request) => {
-				void promptVm.respondPermission(
-					activeSessionId,
-					request.permissionId,
-					"once",
-				);
-			});
-
-			const events: { method: string; params?: unknown }[] = [];
+			const events: unknown[] = [];
 			const unsubscribeEvents = promptVm.onSessionEvent(sessionId, (event) => {
 				events.push(event);
 			});
-			const { response } = await promptVm.prompt(
+			const response = await textPrompt(
+				promptVm,
 				sessionId,
 				`Run ${NODE_EXECSYNC_COMMAND} and tell me what it prints.`,
 			);
 			unsubscribeEvents();
 
-			expect(response.error).toBeUndefined();
-			expect((response.result as { stopReason?: string }).stopReason).toBe(
-				"end_turn",
-			);
+			expect(response.stopReason).toBe("end_turn");
 			expect(promptMock.getRequests().some((req) => hasToolResult(req))).toBe(
 				true,
 			);
 
 			expect(
-				events.some(
-					(event) =>
-						event.method === "session/update" &&
-						JSON.stringify(event.params).includes("tool_call"),
+				events.some((event) =>
+					JSON.stringify(event).includes("tool_call"),
 				),
 			).toBe(true);
 			expect(
-				events.some(
-					(event) =>
-						event.method === "session/update" &&
-						JSON.stringify(event.params).includes("agent_message_chunk"),
+				events.some((event) =>
+					JSON.stringify(event).includes("agent_message_chunk"),
 				),
 			).toBe(true);
 		} finally {
 			if (sessionId) {
-				promptVm.closeSession(sessionId);
+				await promptVm.unloadSession({ sessionId });
 			}
 			await promptVm.dispose();
 			await stopLlmock(promptMock);
 		}
 	}, 120_000);
 
-	test("createSession('claude') runs nested node child_process.spawn() end-to-end", async () => {
+	test("openSession({ agent: 'claude' }) runs nested node child_process.spawn() end-to-end", async () => {
 		const fixtures = createToolFixtures(
 			{
 				name: "Bash",
@@ -378,37 +352,29 @@ describe("full createSession('claude')", () => {
 		let sessionId: string | undefined;
 		try {
 			await writeAsyncSpawnScript(promptVm);
-			const session = await promptVm.createSession("claude", {
+			sessionId = "claude-async-spawn";
+			await promptVm.openSession({
+				sessionId,
+				agent: "claude",
 				cwd: "/home/agentos",
+				permissionPolicy: "allow_all",
 				env: {
 					ANTHROPIC_API_KEY: "mock-key",
 					ANTHROPIC_BASE_URL: promptMockUrl,
 				},
 			});
-			sessionId = session.sessionId;
-			const activeSessionId = sessionId;
-			promptVm.onPermissionRequest(activeSessionId, (request) => {
-				void promptVm.respondPermission(
-					activeSessionId,
-					request.permissionId,
-					"once",
-				);
-			});
-
-			const events: { method: string; params?: unknown }[] = [];
+			const events: unknown[] = [];
 			const unsubscribeEvents = promptVm.onSessionEvent(sessionId, (event) => {
 				events.push(event);
 			});
-			const { response } = await promptVm.prompt(
+			const response = await textPrompt(
+				promptVm,
 				sessionId,
 				`Run ${NODE_ASYNC_SPAWN_COMMAND} and tell me what it prints.`,
 			);
 			unsubscribeEvents();
 
-			expect(response.error).toBeUndefined();
-			expect((response.result as { stopReason?: string }).stopReason).toBe(
-				"end_turn",
-			);
+			expect(response.stopReason).toBe("end_turn");
 			expect(
 				promptMock
 					.getRequests()
@@ -416,169 +382,145 @@ describe("full createSession('claude')", () => {
 			).toBe(true);
 
 			expect(
-				events.some(
-					(event) =>
-						event.method === "session/update" &&
-						JSON.stringify(event.params).includes("tool_call"),
+				events.some((event) =>
+					JSON.stringify(event).includes("tool_call"),
 				),
 			).toBe(true);
 			expect(
-				events.some(
-					(event) =>
-						event.method === "session/update" &&
-						JSON.stringify(event.params).includes("agent_message_chunk"),
+				events.some((event) =>
+					JSON.stringify(event).includes("agent_message_chunk"),
 				),
 			).toBe(true);
 		} finally {
 			if (sessionId) {
-				promptVm.closeSession(sessionId);
+				await promptVm.unloadSession({ sessionId });
 			}
 			await promptVm.dispose();
 			await stopLlmock(promptMock);
 		}
 	}, 120_000);
 
-	test("createSession('claude') is integrated into the session metadata and lifecycle API", async () => {
+	test("openSession({ agent: 'claude' }) is integrated into the durable session lifecycle API", async () => {
 		let sessionId: string | undefined;
 
 		try {
-			const session = await vm.createSession("claude", {
+			sessionId = "claude-lifecycle";
+			await vm.openSession({
+				sessionId,
+				agent: "claude",
 				cwd: "/home/agentos",
 				env: {
 					ANTHROPIC_API_KEY: "mock-key",
 					ANTHROPIC_BASE_URL: mockUrl,
 				},
 			});
-			sessionId = session.sessionId;
 
-			expect(vm.listSessions()).toContainEqual({
-				sessionId,
-				agentType: "claude",
-			});
+			expect((await vm.listSessions()).sessions).toContainEqual(
+				expect.objectContaining({ sessionId, agent: "claude" }),
+			);
 
-			const agentInfo = vm.getSessionAgentInfo(sessionId) as AgentInfo;
+			const agentInfo = await vm.getSessionAgentInfo({ sessionId });
 			expect(agentInfo).toMatchObject({
 				name: "claude-sdk-acp",
 				title: "Claude Agent SDK ACP adapter",
 				version: "0.1.0",
 			});
 
-			const capabilities = vm.getSessionCapabilities(
-				sessionId,
-			) as AgentCapabilities;
-			expect(capabilities.promptCapabilities).toMatchObject({
+			const capabilities = await vm.getSessionCapabilities({ sessionId });
+			expect(capabilities?.prompt).toMatchObject({
 				audio: false,
 				embeddedContext: false,
 				image: true,
 			});
 
-			const modes = vm.getSessionModes(sessionId);
-			expect(modes?.currentModeId).toBe("default");
-			expect(modes?.availableModes.map((mode) => mode.id)).toEqual(
+			const config = await vm.getSessionConfig({ sessionId });
+			const modes = config.options.find((option) => option.id === "mode");
+			expect(modes?.type).toBe("select");
+			if (modes?.type !== "select") throw new Error("missing mode selector");
+			expect(modes.currentValue).toBe("default");
+			expect(modes.options.map((mode) => mode.value)).toEqual(
 				expect.arrayContaining(["default", "plan", "dontAsk"]),
 			);
-			expect(vm.getSessionConfigOptions(sessionId)).toEqual([]);
 
 			const closedSessionId = sessionId;
-			vm.closeSession(closedSessionId);
+			await vm.unloadSession({ sessionId: closedSessionId });
 			sessionId = undefined;
 
-			expect(vm.listSessions()).not.toContainEqual({
-				sessionId: closedSessionId,
-				agentType: "claude",
-			});
+			expect((await vm.listSessions()).sessions).toContainEqual(
+				expect.objectContaining({
+					sessionId: closedSessionId,
+					agent: "claude",
+				}),
+			);
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.unloadSession({ sessionId });
 			}
 		}
 	}, 120_000);
 
-	test("createSession('claude') supports cancelSession() and destroySession()", async () => {
-		const session = await vm.createSession("claude", {
+	test("Claude sessions support cancellation and durable deletion", async () => {
+		const sessionId = "claude-cancellation";
+		await vm.openSession({
+			sessionId,
+			agent: "claude",
 			cwd: "/home/agentos",
 			env: {
 				ANTHROPIC_API_KEY: "mock-key",
 				ANTHROPIC_BASE_URL: mockUrl,
 			},
 		});
-		const sessionId = session.sessionId;
 
-		const cancelResponse = await vm.cancelSession(sessionId);
-		expect(cancelResponse.error).toBeUndefined();
-		expect(vm.listSessions()).toContainEqual({
-			sessionId,
-			agentType: "claude",
-		});
+		const cancelResponse = await vm.cancelPrompt({ sessionId });
+		expect(cancelResponse.status).toBe("no_active_prompt");
+		expect((await vm.listSessions()).sessions).toContainEqual(
+			expect.objectContaining({ sessionId, agent: "claude" }),
+		);
 
-		await vm.destroySession(sessionId);
+		await vm.deleteSession({ sessionId });
 
-		expect(vm.listSessions()).not.toContainEqual({
-			sessionId,
-			agentType: "claude",
-		});
+		expect((await vm.listSessions()).sessions).not.toContainEqual(
+			expect.objectContaining({ sessionId }),
+		);
 	}, 120_000);
 
-	test("createSession('claude') reflects setSessionMode() through getSessionModes()", async () => {
+	test("Claude sessions reflect native ACP configuration changes", async () => {
 		let sessionId: string | undefined;
 
 		try {
-			const session = await vm.createSession("claude", {
+			sessionId = "claude-config";
+			await vm.openSession({
+				sessionId,
+				agent: "claude",
 				cwd: "/home/agentos",
 				env: {
 					ANTHROPIC_API_KEY: "mock-key",
 					ANTHROPIC_BASE_URL: mockUrl,
 				},
 			});
-			sessionId = session.sessionId;
 
-			const modeEvents: { method: string; params?: unknown }[] = [];
+			const modeEvents: unknown[] = [];
 			const unsubscribeEvents = vm.onSessionEvent(sessionId, (event) => {
 				if (
-					event.method === "session/update" &&
-					JSON.stringify(event.params).includes("current_mode_update")
+					event.type === "current_mode_update" &&
+					JSON.stringify(event).includes("current_mode_update")
 				) {
 					modeEvents.push(event);
 				}
 			});
-			const response = await vm.setSessionMode(sessionId, "plan");
+			const response = await vm.setSessionConfigOption({
+				sessionId,
+				configId: "mode",
+				value: "plan",
+			});
 			unsubscribeEvents();
-			expect(response.error).toBeUndefined();
-
-			const modes = vm.getSessionModes(sessionId);
-			expect(modes?.currentModeId).toBe("plan");
+			const modes = response.options.find((option) => option.id === "mode");
+			expect(modes?.type === "select" && modes.currentValue).toBe("plan");
 
 			expect(modeEvents.length).toBeGreaterThanOrEqual(1);
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
-			}
-		}
-	}, 120_000);
-
-	test("createSession('claude') supports rawSend() for supported ACP methods", async () => {
-		let sessionId: string | undefined;
-
-		try {
-			const session = await vm.createSession("claude", {
-				cwd: "/home/agentos",
-				env: {
-					ANTHROPIC_API_KEY: "mock-key",
-					ANTHROPIC_BASE_URL: mockUrl,
-				},
-			});
-			sessionId = session.sessionId;
-
-			const response = await vm.rawSend(sessionId, "session/set_mode", {
-				modeId: "plan",
-			});
-			expect(response.error).toBeUndefined();
-
-			const modes = vm.getSessionModes(sessionId);
-			expect(modes?.currentModeId).toBe("plan");
-		} finally {
-			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.unloadSession({ sessionId });
 			}
 		}
 	}, 120_000);

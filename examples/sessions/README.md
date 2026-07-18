@@ -9,7 +9,7 @@ Spin up an agent VM, open sessions against it, and drive them end to end: send p
 
 ## How it works
 
-The server registers an agent VM with `agentOS({ software: [pi] })` and exposes it through a typed RivetKit `setup` registry. The client connects with `createClient` and grabs a VM handle with `getOrCreate`. From that handle you call `createSession` (with options like `env`, `cwd`, `mcpServers`, and `additionalInstructions`), then `sendPrompt`/`cancelPrompt` to run work. A `connect()` connection surfaces `sessionEvent`, `vmBooted`, and `vmShutdown` events for live streaming—subscribe before triggering actions because session events are not replayed. Runtime knobs (`setModel`, `setMode`, `setThoughtLevel`), live session listing, and multi-session fan-out within one VM round out the surface.
+The server registers an agent VM with `agentOS({ software: [pi] })` and exposes it through a typed RivetKit `setup` registry. The client connects with `createClient` and grabs a VM handle with `getOrCreate`. From that handle, `openSession` creates or restores a durable session using options such as `env`, `cwd`, `mcpServers`, and `additionalInstructions`; `prompt` and `cancelPrompt` drive turns. A `connect()` connection surfaces live `sessionEvent`, `vmBooted`, and `vmShutdown` events. Completed ACP updates are retained in SQLite and can be recovered with `readHistory`; streaming deltas remain ephemeral. Use `getSession` and `listSessions` without starting an adapter, `getSessionConfig` and `setSessionConfigOption` for adapter-defined controls, `unloadSession` to release only the runtime, and `deleteSession` to permanently remove a session and its history.
 
 ## Run it
 

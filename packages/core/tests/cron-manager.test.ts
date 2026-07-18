@@ -42,7 +42,7 @@ class MockScheduleDriver implements ScheduleDriver {
 }
 
 // ---------------------------------------------------------------------------
-// Mock AgentOs — stubs for exec and createSession
+// Mock AgentOs — stubs for exec and durable sessions
 // ---------------------------------------------------------------------------
 
 function createMockVm() {
@@ -51,9 +51,9 @@ function createMockVm() {
 		execArgv: vi
 			.fn()
 			.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }),
-		createSession: vi.fn().mockResolvedValue({ sessionId: "mock-session-1" }),
+		openSession: vi.fn().mockResolvedValue({ sessionId: "mock-session-1" }),
 		prompt: vi.fn().mockResolvedValue(undefined),
-		closeSession: vi.fn(),
+		deleteSession: vi.fn(),
 	};
 }
 
@@ -121,16 +121,16 @@ describe("CronManager", () => {
 
 			const jobs = new Map(manager.list().map((job) => [job.id, job]));
 
-			expect(jobs.get("space-date")?.nextRun?.toISOString()).toBe(
+			expect(jobs.get("space-date")?.nextRun).toBe(
 				"2026-04-10T14:00:00.000Z",
 			);
-			expect(jobs.get("iso-date")?.nextRun?.toISOString()).toBe(
+			expect(jobs.get("iso-date")?.nextRun).toBe(
 				"2026-04-10T14:00:00.000Z",
 			);
-			expect(jobs.get("cron-5")?.nextRun?.toISOString()).toBe(
+			expect(jobs.get("cron-5")?.nextRun).toBe(
 				"2026-04-10T13:01:00.000Z",
 			);
-			expect(jobs.get("cron-6")?.nextRun?.toISOString()).toBe(
+			expect(jobs.get("cron-6")?.nextRun).toBe(
 				"2026-04-10T13:00:01.000Z",
 			);
 		} finally {
@@ -241,7 +241,7 @@ describe("CronManager", () => {
 	// Session action
 	// -----------------------------------------------------------------------
 
-	it("session action calls vm.createSession, session.prompt, session.close", async () => {
+	it("session action opens, prompts, and deletes a durable session", async () => {
 		manager.schedule({
 			id: "j5",
 			schedule: "* * * * *",
@@ -254,10 +254,16 @@ describe("CronManager", () => {
 
 		await driver.fire("j5");
 
-		expect(vm.createSession).toHaveBeenCalledTimes(1);
-		expect(vm.createSession).toHaveBeenCalledWith("pi", undefined);
-		expect(vm.prompt).toHaveBeenCalledWith("mock-session-1", "do something");
-		expect(vm.closeSession).toHaveBeenCalledWith("mock-session-1");
+		expect(vm.openSession).toHaveBeenCalledWith({
+			agent: "pi",
+			sessionId: expect.stringMatching(/^cron-/),
+		});
+		const sessionId = vm.openSession.mock.calls[0][0].sessionId;
+		expect(vm.prompt).toHaveBeenCalledWith({
+			sessionId,
+			content: [{ type: "text", text: "do something" }],
+		});
+		expect(vm.deleteSession).toHaveBeenCalledWith({ sessionId });
 	});
 
 	// -----------------------------------------------------------------------
@@ -455,7 +461,7 @@ describe("CronManager", () => {
 		const errorEvent = events.find((e) => e.type === "cron:error");
 		expect(errorEvent).toBeDefined();
 		expect(errorEvent!.jobId).toBe("j11");
-		expect(errorEvent!.type === "cron:error" && errorEvent!.error).toBe(error);
+			expect(errorEvent!.type === "cron:error" && errorEvent!.error).toBe("boom");
 
 		// Manager still functional — can schedule new jobs
 		const fn2 = vi.fn();

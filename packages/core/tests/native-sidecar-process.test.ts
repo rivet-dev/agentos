@@ -1124,7 +1124,11 @@ describe("native sidecar process client", () => {
 			expect(
 				await client.exists(session, vm, "/workspace/nested/renamed.txt"),
 			).toBe(true);
-			const snapshot = await client.snapshotRootFilesystem(session, vm);
+			const snapshot = await client.snapshotRootFilesystem(
+				session,
+				vm,
+				16 * 1024 * 1024,
+			);
 			expect(
 				snapshot.some(
 					(entry) => entry.path === "/workspace/nested/renamed.txt",

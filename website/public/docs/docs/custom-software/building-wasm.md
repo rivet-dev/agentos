@@ -56,4 +56,4 @@ and `pnpm --filter './software/*' test`, and fix any failures.
 
 Install a published package and pass it to `software`. Registry WASM packages are `{ packagePath }` descriptors — import and pass them directly:
 
-Meta-packages bundle a full set, e.g. `@agentos-software/common` (coreutils, sed, grep, gawk, findutils, diffutils, tar, gzip). Run the commands from the client; see [Processes & Shell](/docs/processes). Browse the full catalog on the [Registry](/registry), and see the package descriptor in [Software Definition](/docs/custom-software/definition).
+Meta-packages bundle a full set, e.g. `@agentos-software/common` (coreutils, sed, grep, gawk, findutils, diffutils, tar, gzip). Run the commands from the client; see [Processes & Shell](/docs/processes). Browse the full catalog on the [Registry](/registry), and see the package descriptor in [Software Definition](/docs/custom-software/definition). To ship your package to npm or use a local build, see [Publishing Packages](/docs/custom-software/publishing).

@@ -9,21 +9,27 @@ export function Agent() {
   const agent = useActor({ name: "vm", key: "my-agent" });
 
   // Stream agent events into component state
-  agent.useEvent("sessionEvent", (data) => {
-    setLog((prev) => prev + JSON.stringify(data.event) + "\n");
+  agent.useEvent("sessionEvent", (event) => {
+	setLog((prev) => prev + JSON.stringify(event) + "\n");
   });
 
   async function run() {
     // In production, inject credentials on the server (see /docs/llm-credentials)
-    // createSession returns the session ID.
-    const sessionId = await agent.connection?.createSession("pi", {
+    const connection = agent.connection;
+    if (!connection) return;
+
+    await connection.openSession({
+      agent: "pi",
       env: { ANTHROPIC_API_KEY: process.env.VITE_ANTHROPIC_API_KEY! },
     });
-    if (!sessionId) return;
-    await agent.connection?.sendPrompt(
-      sessionId,
-      "Write a hello world script to /workspace/hello.js",
-    );
+    await connection.prompt({
+      content: [
+        {
+          type: "text",
+          text: "Write a hello world script to /workspace/hello.js",
+        },
+      ],
+    });
   }
 
   return (

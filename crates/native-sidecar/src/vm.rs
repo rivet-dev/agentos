@@ -11,8 +11,8 @@ use crate::bridge::{bridge_permissions, MountPluginContext};
 use crate::protocol::{
     AgentosProjectedAgent, ConfigureVmRequest, CreateLayerRequest, CreateOverlayRequest,
     DisposeReason, EventFrame, ExportSnapshotRequest, ImportSnapshotRequest, LinkPackageRequest,
-    MountDescriptor, MountPluginDescriptor, PackageCommands, ProjectedCommand,
-    ProvidedCommandsRequest, RootFilesystemDescriptor, RootFilesystemEntry,
+    ListMountsRequest, MountDescriptor, MountInfo, MountPluginDescriptor, PackageCommands,
+    ProjectedCommand, ProvidedCommandsRequest, RootFilesystemDescriptor, RootFilesystemEntry,
     RootFilesystemEntryEncoding, RootFilesystemLowerDescriptor, SealLayerRequest,
     SnapshotRootFilesystemRequest, VmLifecycleState,
 };
@@ -50,11 +50,12 @@ use agentos_native_sidecar_core::ca::{
 };
 use agentos_native_sidecar_core::permissions::{allow_all_policy, deny_all_policy};
 use agentos_native_sidecar_core::{
-    layer_created_response, layer_sealed_response, overlay_created_response,
-    package_linked_response, protocol_root_filesystem_mode, provided_commands_response,
-    root_filesystem_bootstrapped_response, root_filesystem_protocol_descriptor_from_config,
-    root_filesystem_snapshot_response, snapshot_exported_response, snapshot_imported_response,
-    vm_configured_response, vm_created_response, vm_disposed_response, VmLayerStore,
+    layer_created_response, layer_sealed_response, mounts_listed_response,
+    overlay_created_response, package_linked_response, protocol_root_filesystem_mode,
+    provided_commands_response, root_filesystem_bootstrapped_response,
+    root_filesystem_protocol_descriptor_from_config, root_filesystem_snapshot_response,
+    snapshot_exported_response, snapshot_imported_response, vm_configured_response,
+    vm_created_response, vm_disposed_response, VmLayerStore,
 };
 use agentos_runtime::accounting::{ResourceClass, ResourceLedger, ResourceLimit};
 use agentos_runtime::capability::CapabilityRegistry;
@@ -292,6 +293,40 @@ where
         )?);
         let vm_runtime_context =
             process_runtime_context.scoped_for_vm(Arc::clone(&vm_resources), vm_generation);
+        let database = match create_config.database.as_ref() {
+            Some(descriptor) => {
+                let database = crate::vm_sqlite::resolve_vm_sqlite(
+                    descriptor,
+                    vm_runtime_context.clone(),
+                    limits.sqlite.max_result_bytes,
+                )
+                .await
+                .map_err(|error| {
+                    SidecarError::InvalidState(format!(
+                        "failed to resolve VM SQLite database: {error}"
+                    ))
+                })?;
+                crate::plugins::chunked_actor_sqlite::bootstrap_schema(database.as_ref())
+                    .await
+                    .map_err(|error| {
+                        SidecarError::InvalidState(format!(
+                            "failed to migrate VM SQLite database: {error}"
+                        ))
+                    })?;
+                for extension in self.extensions.values() {
+                    extension
+                        .bootstrap_vm_database(database.clone())
+                        .await
+                        .map_err(|error| {
+                            SidecarError::InvalidState(format!(
+                                "failed to migrate extension VM database schema: {error}"
+                            ))
+                        })?;
+                }
+                Some(database)
+            }
+            None => None,
+        };
         let capabilities = CapabilityRegistry::new(vm_generation, Arc::clone(&vm_resources));
         let dns = vm_dns_config_from_config(create_config.dns.as_ref())?;
         let listen_policy = vm_listen_policy_from_config(create_config.listen.as_ref())?;
@@ -354,6 +389,7 @@ where
                     session_id: session_id.clone(),
                     vm_id: vm_id.clone(),
                     sidecar_requests: self.sidecar_requests.clone(),
+                    database: database.clone(),
                     max_pread_bytes: resource_limits.max_pread_bytes,
                 },
             )?
@@ -443,6 +479,7 @@ where
                 pending_event_bytes_budget,
                 resources: vm_resources,
                 runtime_context: vm_runtime_context,
+                database,
                 capabilities,
                 dns,
                 listen_policy,
@@ -594,6 +631,7 @@ where
                 session_id: session_id.clone(),
                 vm_id: vm_id.clone(),
                 sidecar_requests: self.sidecar_requests.clone(),
+                database: vm.database.clone(),
                 max_pread_bytes,
             },
         )
@@ -783,6 +821,7 @@ where
             session_id: session_id.clone(),
             vm_id: vm_id.clone(),
             sidecar_requests: self.sidecar_requests.clone(),
+            database: vm.database.clone(),
             max_pread_bytes: vm.kernel.resource_limits().max_pread_bytes,
         };
         mount_leaf_descriptors(&self.mount_plugins, vm, &new_mounts, mount_context)?;
@@ -974,19 +1013,48 @@ where
     pub(crate) async fn snapshot_root_filesystem(
         &mut self,
         request: &crate::protocol::RequestFrame,
-        _payload: SnapshotRootFilesystemRequest,
+        payload: SnapshotRootFilesystemRequest,
     ) -> Result<DispatchResult, SidecarError> {
         let (connection_id, session_id, vm_id) = self.vm_scope_for(&request.ownership)?;
         self.require_owned_vm(&connection_id, &session_id, &vm_id)?;
 
         let vm = self.vms.get_mut(&vm_id).expect("owned VM should exist");
-        let snapshot = vm.kernel.snapshot_root_filesystem().map_err(kernel_error)?;
+        let snapshot = vm
+            .kernel
+            .snapshot_root_filesystem_bounded(payload.max_bytes)
+            .map_err(kernel_error)?;
 
         Ok(DispatchResult {
             response: root_filesystem_snapshot_response(
                 request,
                 snapshot.entries.iter().map(root_snapshot_entry).collect(),
             ),
+            events: Vec::new(),
+        })
+    }
+
+    pub(crate) async fn list_mounts(
+        &mut self,
+        request: &crate::protocol::RequestFrame,
+        _payload: ListMountsRequest,
+    ) -> Result<DispatchResult, SidecarError> {
+        let (connection_id, session_id, vm_id) = self.vm_scope_for(&request.ownership)?;
+        self.require_owned_vm(&connection_id, &session_id, &vm_id)?;
+
+        let vm = self.vms.get(&vm_id).expect("owned VM should exist");
+        let mounts = vm
+            .kernel
+            .mounted_filesystems()
+            .into_iter()
+            .map(|mount| MountInfo {
+                path: mount.path,
+                kind: mount.plugin_id,
+                read_only: mount.read_only,
+            })
+            .collect();
+
+        Ok(DispatchResult {
+            response: mounts_listed_response(request, mounts),
             events: Vec::new(),
         })
     }
@@ -1052,6 +1120,7 @@ where
             session_id: session_id.to_owned(),
             vm_id: vm_id.to_owned(),
             sidecar_requests: self.sidecar_requests.clone(),
+            database: vm.database.clone(),
             max_pread_bytes: vm.kernel.resource_limits().max_pread_bytes,
         };
         let _ = shutdown_configured_mounts(&mut vm, &mount_context, "dispose_vm", true);
@@ -3519,6 +3588,7 @@ mod tests {
             session_id: String::from("session-test"),
             vm_id: String::from("vm-test"),
             sidecar_requests: sidecar.sidecar_requests.clone(),
+            database: None,
             max_pread_bytes: None,
         };
         let plugin = ChunkedLocalMountPlugin;

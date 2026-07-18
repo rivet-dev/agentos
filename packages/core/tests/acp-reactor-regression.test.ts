@@ -238,7 +238,8 @@ describe("ACP adapter reactor regression", () => {
 		});
 		cleanups.add(async () => vm.dispose());
 
-		const { sessionId } = await vm.createSession("acp-reactor-regression");
+		const sessionId = "acp-reactor-regression";
+		await vm.openSession({ sessionId, agent: "acp-reactor-regression" });
 		const updateTexts: string[] = [];
 		const unsubscribe = vm.onSessionEvent(sessionId, (event) => {
 			if (event.method !== "session/update") return;
@@ -294,7 +295,7 @@ describe("ACP adapter reactor regression", () => {
 			expect(stderr).not.toMatch(/session evicted/i);
 		} finally {
 			unsubscribe();
-			vm.closeSession(sessionId);
+			vm.unloadSession({ sessionId });
 		}
 	}, 120_000);
 });

@@ -49,6 +49,9 @@ mod state;
 #[allow(dead_code)]
 #[path = "../src/vm.rs"]
 mod vm;
+#[allow(dead_code)]
+#[path = "../src/vm_sqlite.rs"]
+mod vm_sqlite;
 #[allow(dead_code, unused_imports)]
 mod wire {
     pub use agentos_sidecar_protocol::wire::*;

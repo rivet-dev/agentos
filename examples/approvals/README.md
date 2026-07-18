@@ -5,16 +5,18 @@ category: "Sessions & Permissions"
 order: 3
 ---
 
-When an agent wants to read a file, write output, or run a command, the VM raises a permission request. This example shows how to handle those requests—either fully server-side (auto-approve) or by forwarding them to a client for a human-in-the-loop decision (selective approval). Reach for this when you need to control what an agent is allowed to do mid-session.
+When an agent asks to use a tool, its ACP adapter can raise a permission request. This example shows unattended `allow_all` and interactive `ask` policies. ACP decisions are advisory; VM permissions remain the runtime security boundary.
 
 ## How it works
 
-Permissions flow through two complementary hooks:
+Permissions use the ordinary durable session-event stream:
 
-- **Server-side (`onPermissionRequest`)**: a hook on `agentOS({ ... })` runs for every request before it reaches any client. Inspect `request.description` and `request.params` to approve, log, or filter requests in fully automated pipelines—no client round-trip needed.
-- **Client-side (`permissionRequest` event)**: requests the server forwards reach the client over a live `agent.connect()` connection. The client decides and calls `agent.respondPermission(sessionId, permissionId, "once" | "reject")` to allow a single action or deny it.
+- **Automatic**: omit `permissionPolicy` or set `allow_all`. AgentOS deterministically selects an adapter-supplied allow option without emitting or persisting the request.
+- **Interactive**: set `permissionPolicy: "ask"`, consume `permission_request` variants from `sessionEvent`, and call `respondPermission({ sessionId, requestId, optionId })` with an exact offered option ID.
 
-The `selective` variants combine both: the server handles some requests itself and forwards the rest to the client. A local `pi` software fixture stands in for a real agent package so the example runs self-contained.
+Subscribing to `sessionEvent` does not enable interactive approval. The policy is fixed when the session opens; if `permissionPolicy` is omitted, the default `allow_all` policy resolves the adapter request automatically and no `permission_request` event is emitted.
+
+The `selective` client inspects the exact native tool call and chooses an offered allow or reject option. Requests have no expiry; they remain pending until answered or terminated by prompt/session/adapter/VM lifecycle. A local `pi` software fixture stands in for a real agent package so the example runs self-contained.
 
 ## Run it
 
@@ -29,7 +31,7 @@ npx tsx auto-approve.ts & npx tsx auto-approve-client.ts
 npx tsx selective.ts     & npx tsx selective-client.ts
 ```
 
-The agent runs its prompt and each permission request is approved, rejected, or logged according to the hook you chose.
+The agent runs its prompt and each interactive request is recoverable from durable session history. Reconnecting consumers merge history with live events and deduplicate by `(sessionId, sequence)`.
 
 ## Source
 

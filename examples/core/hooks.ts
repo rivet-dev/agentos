@@ -1,17 +1,15 @@
 import { AgentOs } from "@rivet-dev/agentos-core";
 import pi from "@agentos-software/pi";
 
-// With the core package, session events and permission requests are observed
-// per-session on the AgentOs instance (there is no actor-factory hook).
+// ACP updates and interactive permission records share one durable event union.
 const vm = await AgentOs.create({ software: [pi] });
-const { sessionId } = await vm.createSession("pi");
+await vm.openSession({ agent: "pi", permissionPolicy: "ask" });
 
 // Runs for every event on this session.
-vm.onSessionEvent(sessionId, (event) => {
-  console.log("Session event:", sessionId, event.method);
-});
-
-// Fires when the agent requests permission.
-vm.onPermissionRequest(sessionId, (request) => {
-  console.log("Permission request:", sessionId, request.permissionId);
+vm.onSessionEvent((event) => {
+	if (event.type === "permission_request") {
+		console.log("Permission request:", event.requestId, event.toolCall);
+	} else {
+		console.log("Session update:", event.durability, event);
+	}
 });

@@ -15,8 +15,6 @@ const vm = await AgentOs.create({
   defaultSoftware: true,
   // Ports exempt from SSRF checks (for testing against host-side mock servers)
   loopbackExemptPorts: [3000],
-  // Extra instructions appended to agent system prompts
-  additionalInstructions: "Always write tests first.",
   // Sidecar placement — defaults to the shared `default` pool
   sidecar: { kind: "shared" },
 });

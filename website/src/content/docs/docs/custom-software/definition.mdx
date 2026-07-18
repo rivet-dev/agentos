@@ -88,7 +88,7 @@ An agent is a Node.js or WASM package (packaged exactly as above) whose `agentos
 
    <CodeSnippet file="examples/software/quickstart-agent/my-agent.ts" />
 
-4. **Use it** — `createSession()` launches the agent by spawning its `acpEntrypoint`:
+4. **Use it** — choose a session ID, then `openSession({ sessionId, agent })` launches the agent by spawning its `acpEntrypoint`:
 
    <CodeSnippet file="examples/software/quickstart-agent/index.ts" />
 

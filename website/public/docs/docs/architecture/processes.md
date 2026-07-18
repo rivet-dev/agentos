@@ -43,6 +43,23 @@ Signals (`stopProcess` / SIGTERM, `killProcess` / SIGKILL) are the same shape: a
 request into the kernel, which applies it to the virtualized process rather than
 to any host process.
 
+## Process image replacement
+
+Guest `execve` is distinct from the client-facing one-shot `exec` API. It
+replaces the current process image in place, following Linux process semantics:
+
+- the virtual PID, parent, process group, session, working directory, pending signals, blocked-signal mask, stdio, and non-`FD_CLOEXEC` descriptors survive;
+- the supplied pathname is resolved literally relative to the current working directory, without a `PATH` or basename fallback;
+- `argv` and `envp` replace the old image's values exactly, including a custom or empty `argv[0]`;
+- descriptors marked `FD_CLOEXEC` close at the image-commit point; and
+- caught signal handlers reset to their defaults, while ignored dispositions remain ignored.
+
+For a WASM-to-WASM replacement, the sidecar commits the kernel state first and
+the executor then swaps the module in place. This keeps runner-local pipe,
+socket, and duplicated-descriptor state attached to the same process instead of
+silently recreating it. `waitpid` reports an exit code and a terminating signal
+as separate values, so a normal `exit(137)` is not confused with `SIGKILL`.
+
 ## Stdio bridging
 
 Standard streams are kernel-owned objects, not host file descriptors. Each
