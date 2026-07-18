@@ -8778,6 +8778,11 @@ function hostUserNameLookup(rpcMethod, namePtr, nameLen, bufPtr, bufLen, retLenP
   }
 }
 
+function hostUserOptionalId(value) {
+  const id = Number(value) >>> 0;
+  return id === 0xffffffff ? null : id;
+}
+
 const hostUserImport = {
   getuid(retUidPtr) {
     try {

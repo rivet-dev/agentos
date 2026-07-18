@@ -17,7 +17,7 @@ import type { IntegrationKernelResult } from '@rivet-dev/agentos-vm-test-harness
 const skipReason = skipUnlessWasmBuilt();
 
 describeIf(!skipReason, 'signal forwarding (integration)', () => {
-  let ctx: IntegrationKernelResult;
+  let ctx: IntegrationKernelResult | undefined;
 
   afterEach(async () => {
     if (ctx) await ctx.dispose();
@@ -83,6 +83,15 @@ describeIf(!skipReason, 'signal forwarding (integration)', () => {
     nodeProc.kill(15);
     await nodeProc.wait();
   }, 15_000);
+
+  it('disposing immediately after kill handles the pending signal request', async () => {
+    ctx = await createIntegrationKernel({ runtimes: ['wasmvm', 'node'] });
+
+    const proc = ctx.kernel.spawn('node', ['-e', 'setTimeout(()=>{},60000)']);
+    proc.kill(15);
+    await ctx.dispose();
+    ctx = undefined;
+  }, 10_000);
 
   it('killing a non-existent PID returns ESRCH', async () => {
     ctx = await createIntegrationKernel({ runtimes: ['wasmvm'] });

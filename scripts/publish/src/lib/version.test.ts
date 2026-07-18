@@ -26,6 +26,17 @@ agentos-kernel = { path = "crates/kernel", version = "0.2.0-rc.3" }
 serde = "1"
 `,
 		);
+		await mkdir(join(repoRoot, "crates", "excluded-core"), { recursive: true });
+		await writeFile(
+			join(repoRoot, "crates", "excluded-core", "Cargo.toml"),
+			`[package]
+name = "agentos-excluded-core"
+version = "0.2.0"
+
+[dependencies]
+agentos-protocol = { path = "../agentos-protocol", version = "0.2.0" }
+`,
+		);
 
 		await bumpCargoVersions(repoRoot, "0.3.0");
 
@@ -42,6 +53,15 @@ serde = "1"
 			/agentos-kernel = \{ path = "crates\/kernel", version = "0\.3\.0" \}/,
 		);
 		assert.match(cargoToml, /serde = "1"/);
+		const excludedCargoToml = await readFile(
+			join(repoRoot, "crates", "excluded-core", "Cargo.toml"),
+			"utf8",
+		);
+		assert.match(excludedCargoToml, /version = "0\.3\.0"/);
+		assert.match(
+			excludedCargoToml,
+			/agentos-protocol = \{ path = "\.\.\/agentos-protocol", version = "0\.3\.0" \}/,
+		);
 	} finally {
 		await rm(repoRoot, { recursive: true, force: true });
 	}

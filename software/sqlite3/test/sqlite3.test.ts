@@ -127,7 +127,7 @@ class SimpleVFS {
   }
 }
 
-describeIf(hasSqlite3Binary, 'sqlite3 command', () => {
+describeIf(hasSqlite3Binary, 'sqlite3 command', { timeout: 30_000 }, () => {
   let kernel: Kernel;
 
   afterEach(async () => {

@@ -6,9 +6,9 @@
  *   Safe to call in CI on every run. Uses discovery as the source of truth.
  *   Does NOT touch Cargo.toml or non-discovered files.
  *
- * - `bumpCargoVersions` — rewrites the Rust `[workspace.package]` version and
- *   the lock-step internal crate `version` fields under `[workspace.dependencies]`
- *   so the crates.io publish chain stays consistent.
+ * - `bumpCargoVersions` — rewrites the Rust `[workspace.package]` version,
+ *   lock-step internal dependencies, and excluded AgentOS crate manifests so
+ *   the crates.io publish chain stays consistent.
  *
  * - `resolveVersion` / `shouldTagAsLatest` — semver helpers for the local cut.
  *
@@ -255,17 +255,52 @@ export async function bumpCargoVersions(
 		`$1${version}$2`,
 	);
 
-	if (next === cargoToml) {
-		log.info(`Cargo.toml Rust versions already set to ${version}`);
-		return;
+	const updates = new Map<string, string>();
+	if (next !== cargoToml) updates.set(cargoTomlPath, next);
+
+	// Excluded crates cannot inherit workspace values, but Cargo still resolves
+	// their path dependency graph during a workspace publish dry-run. Rewrite
+	// their explicit package and AgentOS path-dependency versions transiently.
+	const cratesDir = join(repoRoot, "crates");
+	for (const entry of await fs.readdir(cratesDir, { withFileTypes: true })) {
+		if (!entry.isDirectory()) continue;
+		const manifestPath = join(cratesDir, entry.name, "Cargo.toml");
+		let manifest: string;
+		try {
+			manifest = await fs.readFile(manifestPath, "utf8");
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+			throw error;
+		}
+		if (!/\[package\]\nname = "(?:agentos|agent-os)-[a-z0-9-]+"/.test(manifest)) {
+			continue;
+		}
+
+		let updated = manifest.replace(
+			/(\[package\]\n(?:[^\n]*\n)*?[ \t]*version = )"[^"]+"/,
+			`$1"${version}"`,
+		);
+		updated = updated.replace(
+			/^((?:agentos|agent-os)-[a-z0-9-]+ = \{[^\n]*\bpath = "\.\.\/[^\"]+"[^\n]*\bversion = ")[^"]+(")/gm,
+			`$1${version}$2`,
+		);
+		updated = updated.replace(
+			/^(\w[\w-]* = \{[^\n]*\bpackage = "(?:agentos|agent-os)-[a-z0-9-]+"[^\n]*\bpath = "\.\.\/[^\"]+"[^\n]*\bversion = ")[^"]+(")/gm,
+			`$1${version}$2`,
+		);
+		if (updated !== manifest) updates.set(manifestPath, updated);
 	}
 
-	if (opts.dryRun) {
-		log.info(`[dry-run] would update Cargo.toml Rust versions -> ${version}`);
-	} else {
-		await fs.writeFile(cargoTomlPath, next);
-		log.info(`updated Cargo.toml Rust versions -> ${version}`);
+	if (updates.size === 0) {
+		log.info(`Cargo Rust versions already set to ${version}`);
+		return;
 	}
+	if (opts.dryRun) {
+		log.info(`[dry-run] would update ${updates.size} Cargo manifests -> ${version}`);
+		return;
+	}
+	for (const [path, contents] of updates) await fs.writeFile(path, contents);
+	log.info(`updated ${updates.size} Cargo manifests -> ${version}`);
 }
 
 // -----------------------------------------------------------------------------

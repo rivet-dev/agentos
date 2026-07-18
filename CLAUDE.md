@@ -233,6 +233,10 @@ custom host-syscall imports. Treat that target as **native POSIX**;
 
 ## Tests
 
+- Required PR CI should complete in under 15 minutes of wall-clock time. If it
+  runs longer, warn the user promptly, identify the slow job or step, and check
+  whether the current changes introduced or expanded that work by comparing the
+  workflow diff and recent baseline run times; do not silently normalize slow CI.
 - Cheap gates for normal changes: `cargo check --workspace`, `pnpm build`,
   `pnpm check-types`, publish helper checks, changed script syntax checks, and
   workflow YAML parsing.

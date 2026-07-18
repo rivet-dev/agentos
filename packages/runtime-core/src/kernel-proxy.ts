@@ -698,14 +698,18 @@ export class NativeSidecarKernelProxy {
 					return;
 				}
 				entry.pendingKillSignal = signal;
-				void entry.startPromise.then(async () => {
-					if (entry.pendingKillSignal === null) {
-						return;
-					}
-					const pendingSignal = entry.pendingKillSignal;
-					entry.pendingKillSignal = null;
-					await this.signalProcess(entry, pendingSignal);
-				});
+				void entry.startPromise
+					.then(async () => {
+						if (entry.pendingKillSignal === null) {
+							return;
+						}
+						const pendingSignal = entry.pendingKillSignal;
+						entry.pendingKillSignal = null;
+						await this.signalProcess(entry, pendingSignal);
+					})
+					.catch((error) => {
+						this.handleBackgroundProcessError(entry, error);
+					});
 				if (
 					(signal === 9 || signal === 15) &&
 					entry.exitCode === null

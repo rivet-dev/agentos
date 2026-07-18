@@ -153,7 +153,9 @@ use md5::Md5;
 use nix::libc;
 use nix::poll::{poll, PollFd as NixPollFd, PollFlags, PollTimeout};
 use nix::sys::signal::{kill as send_signal, Signal};
-use nix::sys::socket::{bind as bind_socket, connect as connect_socket, UnixAddr};
+#[cfg(target_os = "linux")]
+use nix::sys::socket::connect as connect_socket;
+use nix::sys::socket::{bind as bind_socket, UnixAddr};
 use nix::sys::wait::WaitStatus;
 #[cfg(not(target_os = "macos"))]
 use nix::sys::wait::{waitid as wait_on_child, Id as WaitId, WaitPidFlag};
