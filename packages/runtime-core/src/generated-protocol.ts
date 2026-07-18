@@ -3305,6 +3305,7 @@ function write34(bc: bare.ByteCursor, x: readonly QueueSnapshotEntry[]): void {
 
 export type ResourceSnapshotResponse = {
     readonly runningProcesses: u64
+    readonly stoppedProcesses: u64
     readonly exitedProcesses: u64
     readonly fdTables: u64
     readonly openFds: u64
@@ -3324,6 +3325,7 @@ export type ResourceSnapshotResponse = {
 export function readResourceSnapshotResponse(bc: bare.ByteCursor): ResourceSnapshotResponse {
     return {
         runningProcesses: bare.readU64(bc),
+        stoppedProcesses: bare.readU64(bc),
         exitedProcesses: bare.readU64(bc),
         fdTables: bare.readU64(bc),
         openFds: bare.readU64(bc),
@@ -3343,6 +3345,7 @@ export function readResourceSnapshotResponse(bc: bare.ByteCursor): ResourceSnaps
 
 export function writeResourceSnapshotResponse(bc: bare.ByteCursor, x: ResourceSnapshotResponse): void {
     bare.writeU64(bc, x.runningProcesses)
+    bare.writeU64(bc, x.stoppedProcesses)
     bare.writeU64(bc, x.exitedProcesses)
     bare.writeU64(bc, x.fdTables)
     bare.writeU64(bc, x.openFds)

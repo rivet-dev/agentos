@@ -2730,6 +2730,10 @@ pub struct JavascriptPosixSpawnFileAction {
 #[serde(rename_all = "camelCase")]
 pub struct JavascriptSpawnHostNetFd {
     pub guest_fd: u32,
+    /// Decimal kernel open-file-description identity. Present for managed
+    /// execution; absent only for the standalone Node compatibility path.
+    #[serde(default)]
+    pub description_id: Option<String>,
     #[serde(default)]
     pub close_on_exec: bool,
     #[serde(default)]
@@ -2901,13 +2905,13 @@ pub struct JavascriptNetListenRequest {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct JavascriptDgramCreateSocketRequest {
+pub struct DgramCreateSocketOptions {
     #[serde(rename = "type")]
     pub socket_type: String,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct JavascriptDgramBindRequest {
+pub struct DgramBindOptions {
     #[serde(default)]
     pub address: Option<String>,
     #[serde(default)]
@@ -2915,7 +2919,7 @@ pub struct JavascriptDgramBindRequest {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct JavascriptDgramSendRequest {
+pub struct DgramSendOptions {
     #[serde(default)]
     pub address: Option<String>,
     #[serde(default)]
@@ -2923,7 +2927,7 @@ pub struct JavascriptDgramSendRequest {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct JavascriptDgramConnectRequest {
+pub struct DgramConnectOptions {
     #[serde(default)]
     pub address: Option<String>,
     pub port: u16,

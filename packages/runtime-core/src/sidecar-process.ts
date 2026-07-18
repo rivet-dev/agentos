@@ -132,6 +132,7 @@ export interface SidecarQueueSnapshotEntry {
 
 export interface SidecarResourceSnapshot {
 	runningProcesses: number;
+	stoppedProcesses: number;
 	exitedProcesses: number;
 	fdTables: number;
 	openFds: number;
@@ -1441,6 +1442,7 @@ export class SidecarProcess {
 		}
 		return {
 			runningProcesses: response.payload.running_processes,
+			stoppedProcesses: response.payload.stopped_processes,
 			exitedProcesses: response.payload.exited_processes,
 			fdTables: response.payload.fd_tables,
 			openFds: response.payload.open_fds,

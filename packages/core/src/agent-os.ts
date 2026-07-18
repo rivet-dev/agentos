@@ -617,7 +617,6 @@ export interface AgentOsLimits {
 		maxProcessArgvBytes?: number;
 		maxProcessEnvBytes?: number;
 		maxReaddirEntries?: number;
-		maxWasmFuel?: number;
 		maxWasmMemoryBytes?: number;
 		maxWasmStackBytes?: number;
 	};
@@ -690,7 +689,9 @@ export interface AgentOsLimits {
 		syncReadLimitBytes?: number;
 		prewarmTimeoutMs?: number;
 		runnerHeapLimitMb?: number;
-		runnerCpuTimeLimitMs?: number;
+		activeCpuTimeLimitMs?: number;
+		wallClockLimitMs?: number;
+		deterministicFuel?: number;
 	};
 	/** Process spawn, I/O, and lifecycle-event backlog limits. */
 	process?: {
@@ -699,6 +700,8 @@ export interface AgentOsLimits {
 		pendingStdinBytes?: number;
 		pendingEventCount?: number;
 		pendingEventBytes?: number;
+		maxPendingChildSyncCount?: number;
+		maxPendingChildSyncBytes?: number;
 	};
 }
 
@@ -1262,7 +1265,9 @@ const KERNEL_POSIX_BOOTSTRAP_DIR_METADATA: Record<
 	{ mode: string; uid: number; gid: number }
 > = {
 	"/tmp": { mode: "1777", uid: 0, gid: 0 },
-	"/root": { mode: "700", uid: 0, gid: 0 },
+	// Compatibility module mounts live below /root; allow traversal without
+	// allowing the default guest to enumerate the root user's home directory.
+	"/root": { mode: "711", uid: 0, gid: 0 },
 	"/sys": { mode: "555", uid: 0, gid: 0 },
 	"/home/agentos": { mode: "2755", uid: 1000, gid: 1000 },
 	"/workspace": { mode: "755", uid: 1000, gid: 1000 },
