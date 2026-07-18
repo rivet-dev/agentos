@@ -456,6 +456,10 @@ type VmFetchRequest struct {
   path: str
   headersJson: str
   body: optional<str>
+  bodyBase64: optional<str>
+  streamOperation: optional<str>
+  streamId: optional<str>
+  maxBytes: optional<u32>
 }
 
 type RequestPayload union {

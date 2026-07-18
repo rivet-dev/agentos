@@ -3,7 +3,11 @@ import { exposeCustomGlobal, exposeInstallCompatibleHardenedGlobal } from "../gl
 import { undiciHeadersModule, undiciRequestModule, undiciResponseModule } from "../prelude.js";
 import { isFlatHeaderList, onUpgradeSocketEnd } from "./http.js";
 
-var MAX_HTTP_BODY_BYTES = 50 * 1024 * 1024;
+// npm 11 requests full registry metadata while resolving manifests. Large,
+// long-lived packages such as drizzle-orm can exceed 50 MiB even though their
+// install tarball is much smaller. Keep buffering bounded while allowing those
+// package-manager responses to pass through the Node compatibility layer.
+var MAX_HTTP_BODY_BYTES = 128 * 1024 * 1024;
 
 var MAX_HTTP_REQUEST_HEADER_BYTES = 64 * 1024;
 

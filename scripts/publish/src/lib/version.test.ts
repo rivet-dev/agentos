@@ -143,3 +143,59 @@ test("bumpPackageJsons injects sidecar platform optional dependencies", async ()
 		await rm(repoRoot, { recursive: true, force: true });
 	}
 });
+
+test("bumpPackageJsons pins lockstep and independent AgentOS Apps runtimes", async () => {
+	const repoRoot = await mkdtemp(join(tmpdir(), "agentos-version-test-"));
+	try {
+		await writeJson(repoRoot, "package.json", {
+			name: "agentos-workspace",
+			private: true,
+			packageManager: "pnpm@10.13.1",
+		});
+		await writeFile(
+			join(repoRoot, "pnpm-workspace.yaml"),
+			["packages:", "  - packages/*", "  - software/*", ""].join("\n"),
+		);
+		await writeJson(repoRoot, "packages/apps/package.json", {
+			name: "@rivet-dev/agentos-apps",
+			version: "0.0.1",
+			dependencies: {
+				"@agentos-software/apps-builder": "workspace:*",
+				"@agentos-software/sh": "workspace:*",
+				"@agentos-software/tar": "workspace:*",
+			},
+		});
+		for (const name of [
+			"@agentos-software/apps-builder",
+			"@agentos-software/sh",
+			"@agentos-software/tar",
+		]) {
+			await writeJson(
+				repoRoot,
+				`software/${name.split("/")[1]}/package.json`,
+				{ name, version: "0.0.1" },
+			);
+		}
+
+		await bumpPackageJsons(repoRoot, "0.0.0-preview.abc1234", {
+			resolveNpmLatestVersion: async (name) => {
+				assert.equal(name, "@agentos-software/tar");
+				return "0.3.5";
+			},
+		});
+
+		const appsManifest = JSON.parse(
+			await readFile(
+				join(repoRoot, "packages/apps/package.json"),
+				"utf8",
+			),
+		);
+		assert.deepEqual(appsManifest.dependencies, {
+			"@agentos-software/apps-builder": "0.0.0-preview.abc1234",
+			"@agentos-software/sh": "0.0.0-preview.abc1234",
+			"@agentos-software/tar": "0.3.5",
+		});
+	} finally {
+		await rm(repoRoot, { recursive: true, force: true });
+	}
+});

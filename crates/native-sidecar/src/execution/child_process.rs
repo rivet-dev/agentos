@@ -6296,6 +6296,11 @@ where
                 }
                 Err(error) => {
                     child.clear_deferred_kernel_wait_rpc();
+                    tracing::warn!(
+                        method = %request.method,
+                        error = %error,
+                        "child JavaScript sync RPC failed"
+                    );
                     child
                         .execution
                         .respond_javascript_sync_rpc_error(

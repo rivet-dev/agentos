@@ -85,6 +85,8 @@ async function readPnpmCatalog(repoRoot: string): Promise<Map<string, string>> {
 export interface BumpOptions {
 	/** If true, report actions but do not write. */
 	dryRun?: boolean;
+	/** Test hook for independently versioned registry package resolution. */
+	resolveNpmLatestVersion?: (name: string) => Promise<string>;
 	/**
 	 * When true, only rewrite the `version` field. Does not touch dependency
 	 * references or inject `optionalDependencies`. Safe to commit to git
@@ -206,7 +208,9 @@ export async function bumpPackageJsons(
 					// Independently-versioned registry software packages: pin to
 					// the npm `latest` the owner last deliberately released from
 					// local. Never leave `workspace:` in a published manifest.
-					deps[dep] = await npmLatestVersion(dep);
+					deps[dep] = await (
+						opts.resolveNpmLatestVersion ?? npmLatestVersion
+					)(dep);
 				}
 			}
 		}

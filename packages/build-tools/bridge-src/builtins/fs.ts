@@ -155,6 +155,9 @@ var FILE_HANDLE_READ_CHUNK_BYTES = 64 * 1024;
 var FILE_HANDLE_READ_BUFFER_BYTES = 16 * 1024;
 var FILE_HANDLE_MAX_READ_BYTES = 2 ** 31 - 1;
 var READ_FILE_SYNC_CHUNK_BYTES = 8 * 1024 * 1024;
+// Raw bridge responses include a small serialization envelope and must stay
+// below the sidecar frame cap. Node callers already handle short reads.
+var MAX_SYNC_BRIDGE_READ_BYTES = 8 * 1024 * 1024;
 function createAbortError(reason) {
   const error = new Error("The operation was aborted");
   error.name = "AbortError";
@@ -3048,13 +3051,14 @@ var fs = {
   },
   readSync(fd, buffer, offset, length, position) {
     const normalized = normalizeReadSyncArgs(buffer, offset, length, position);
+    const bridgeReadLength = Math.min(normalized.length, MAX_SYNC_BRIDGE_READ_BYTES);
     let bytes;
     try {
       if (hasBridgeSyncFn("_fsReadRaw")) {
-        const rawBytes = _fsReadRaw.applySyncPromise(void 0, [fd, normalized.length, normalized.position ?? null]);
+        const rawBytes = _fsReadRaw.applySyncPromise(void 0, [fd, bridgeReadLength, normalized.position ?? null]);
         bytes = rawBytes instanceof Uint8Array ? rawBytes : import_buffer.Buffer.from(rawBytes);
       } else {
-        const base64 = _fdRead.applySyncPromise(void 0, [fd, normalized.length, normalized.position ?? null]);
+        const base64 = _fdRead.applySyncPromise(void 0, [fd, bridgeReadLength, normalized.position ?? null]);
         bytes = import_buffer.Buffer.from(base64, "base64");
       }
     } catch (e) {

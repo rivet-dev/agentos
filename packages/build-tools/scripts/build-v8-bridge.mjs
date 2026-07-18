@@ -79,6 +79,7 @@ const undiciRuntimeFeaturesPath = require.resolve(
 	"undici/lib/util/runtime-features.js",
 );
 const nodeStdlibUrlPackageEntry = createRequire(stdLibBrowser.url).resolve("url/");
+const wsNodeEntry = require.resolve("ws");
 
 const alias = {};
 const customAlias = {
@@ -134,6 +135,11 @@ const mainBundleAlias = {
 	...alias,
 	zlib: path.join(undiciShimDir, "zlib.js"),
 	"node:zlib": path.join(undiciShimDir, "zlib.js"),
+};
+const zlibBundleAlias = {
+	...alias,
+	url: stdLibBrowser.url,
+	"node:url": stdLibBrowser.url,
 };
 
 await mkdir(path.dirname(bridgeOutput), { recursive: true });
@@ -248,6 +254,7 @@ async function validateBridgeContractGlobals(sourceText) {
 		"Headers",
 		"Request",
 		"Response",
+		"WebSocket",
 		"DOMException",
 		"__importMetaResolve",
 		"Blob",
@@ -730,6 +737,7 @@ const result = await build({
 				`if(typeof globalThis.TextEncoder==="undefined"){globalThis.TextEncoder=class{encode(value=""){const input=String(value??"");const encoded=unescape(encodeURIComponent(input));const out=new Uint8Array(encoded.length);for(let i=0;i<encoded.length;i++){out[i]=encoded.charCodeAt(i);}return out;}};}`,
 				`if(typeof globalThis.TextDecoder==="undefined"){globalThis.TextDecoder=class{decode(value=new Uint8Array()){const view=value instanceof Uint8Array?value:ArrayBuffer.isView(value)?new Uint8Array(value.buffer,value.byteOffset,value.byteLength):value instanceof ArrayBuffer?new Uint8Array(value):new Uint8Array(0);let binary="";for(let i=0;i<view.length;i++){binary+=String.fromCharCode(view[i]);}return decodeURIComponent(escape(binary));}};}`,
 				`if(typeof globalThis.Buffer==="undefined"){const __secureExecTe=typeof TextEncoder==="function"?new TextEncoder():null;const __secureExecTd=typeof TextDecoder==="function"?new TextDecoder():null;class __SecureExecEarlyBuffer extends Uint8Array{static from(value,encoding="utf8"){if(value instanceof ArrayBuffer){return new __SecureExecEarlyBuffer(value);}if(ArrayBuffer.isView(value)){return new __SecureExecEarlyBuffer(value.buffer.slice(value.byteOffset,value.byteOffset+value.byteLength));}if(Array.isArray(value)){return new __SecureExecEarlyBuffer(value);}const stringValue=String(value??"");if(encoding==="base64"&&typeof atob==="function"){const binary=atob(stringValue);const out=new __SecureExecEarlyBuffer(binary.length);for(let i=0;i<binary.length;i++){out[i]=binary.charCodeAt(i);}return out;}if(encoding==="binary"||encoding==="latin1"){const out=new __SecureExecEarlyBuffer(stringValue.length);for(let i=0;i<stringValue.length;i++){out[i]=stringValue.charCodeAt(i)&255;}return out;}if(__secureExecTe){return new __SecureExecEarlyBuffer(__secureExecTe.encode(stringValue));}const out=new __SecureExecEarlyBuffer(stringValue.length);for(let i=0;i<stringValue.length;i++){out[i]=stringValue.charCodeAt(i)&255;}return out;}static alloc(size){return new __SecureExecEarlyBuffer(Number(size)||0);}static concat(list,totalLength){const length=totalLength??list.reduce((sum,item)=>sum+(item?.length??0),0);const out=new __SecureExecEarlyBuffer(length);let offset=0;for(const item of list){const chunk=item instanceof Uint8Array?item:__SecureExecEarlyBuffer.from(item);out.set(chunk,offset);offset+=chunk.length;}return out;}static isBuffer(value){return value instanceof Uint8Array;}static byteLength(value,encoding="utf8"){return __SecureExecEarlyBuffer.from(value,encoding).byteLength;}toString(encoding="utf8"){if(encoding==="base64"&&typeof btoa==="function"){let binary="";for(const byte of this){binary+=String.fromCharCode(byte);}return btoa(binary);}if(encoding==="binary"||encoding==="latin1"){let binary="";for(const byte of this){binary+=String.fromCharCode(byte);}return binary;}if(__secureExecTd){return __secureExecTd.decode(this);}return Array.from(this,byte=>String.fromCharCode(byte)).join("");}}globalThis.Buffer=__SecureExecEarlyBuffer;}`,
+				'if(typeof globalThis.Buffer.allocUnsafe!=="function"){globalThis.Buffer.allocUnsafe=globalThis.Buffer.alloc;}if(typeof globalThis.Buffer.allocUnsafeSlow!=="function"){globalThis.Buffer.allocUnsafeSlow=globalThis.Buffer.alloc;}',
 				'if(typeof globalThis.performance==="undefined"){const __secureExecPerformanceStart=Date.now();globalThis.performance={now(){if(typeof globalThis.__secureExecHrNowUs==="function"){return globalThis.__secureExecHrNowUs()/1000;}return Date.now()-__secureExecPerformanceStart;}};}if(typeof globalThis.performance.markResourceTiming!=="function"){globalThis.performance.markResourceTiming=()=>{};}',
 				'if(typeof TextEncoder==="undefined"&&typeof globalThis.TextEncoder!=="undefined"){var TextEncoder=globalThis.TextEncoder;}if(typeof TextDecoder==="undefined"&&typeof globalThis.TextDecoder!=="undefined"){var TextDecoder=globalThis.TextDecoder;}if(typeof Buffer==="undefined"&&typeof globalThis.Buffer!=="undefined"){var Buffer=globalThis.Buffer;}',
 			].join(""),
@@ -744,6 +752,7 @@ const zlibResult = await build({
 			'import { Buffer as zlibBuffer } from "node:buffer";',
 			'import * as utilStdlibModuleNs from "node:util";',
 			'import * as zlibStdlibModuleNs from "node:zlib";',
+			`import wsModule from ${JSON.stringify(wsNodeEntry)};`,
 			"const assertModule = assertStdlibModuleNs.default ?? assertStdlibModuleNs;",
 			"const utilModule = utilStdlibModuleNs.default ?? utilStdlibModuleNs;",
 			"const zlibModule = zlibStdlibModuleNs.default ?? zlibStdlibModuleNs;",
@@ -756,6 +765,8 @@ const zlibResult = await build({
 			"globalThis.__secureExecBuiltinAssertModule = assertModule;",
 			"globalThis.__secureExecBuiltinUtilModule = utilModule;",
 			"globalThis.__secureExecBuiltinZlibModule = zlibModule;",
+			"const AgentOSWebSocket = wsModule?.WebSocket ?? wsModule?.default?.WebSocket ?? wsModule?.default ?? wsModule;",
+			'if(typeof AgentOSWebSocket === "function"){Object.defineProperty(globalThis,"WebSocket",{value:AgentOSWebSocket,writable:false,configurable:false,enumerable:true});}',
 		].join("\n"),
 		resolveDir: bridgeAssetsDir,
 		sourcefile: "v8-bridge-zlib.entry.js",
@@ -769,13 +780,12 @@ const zlibResult = await build({
 	target: "es2020",
 	minify: true,
 	metafile: true,
-	alias,
+	alias: zlibBundleAlias,
 	define: {
 		"process.env.NODE_ENV": '"production"',
 		global: "globalThis",
 	},
 	plugins: createUndiciBuildPlugins(),
-	alias,
 	banner: {
 			js: [
 				'if(typeof globalThis.global==="undefined"){globalThis.global=globalThis;}',
@@ -783,6 +793,7 @@ const zlibResult = await build({
 				`if(typeof globalThis.TextEncoder==="undefined"){globalThis.TextEncoder=class{encode(value=""){const input=String(value??"");const encoded=unescape(encodeURIComponent(input));const out=new Uint8Array(encoded.length);for(let i=0;i<encoded.length;i++){out[i]=encoded.charCodeAt(i);}return out;}};}`,
 				`if(typeof globalThis.TextDecoder==="undefined"){globalThis.TextDecoder=class{decode(value=new Uint8Array()){const view=value instanceof Uint8Array?value:ArrayBuffer.isView(value)?new Uint8Array(value.buffer,value.byteOffset,value.byteLength):value instanceof ArrayBuffer?new Uint8Array(value):new Uint8Array(0);let binary="";for(let i=0;i<view.length;i++){binary+=String.fromCharCode(view[i]);}return decodeURIComponent(escape(binary));}};}`,
 				`if(typeof globalThis.Buffer==="undefined"){const __secureExecTe=typeof TextEncoder==="function"?new TextEncoder():null;const __secureExecTd=typeof TextDecoder==="function"?new TextDecoder():null;class __SecureExecEarlyBuffer extends Uint8Array{static from(value,encoding="utf8"){if(value instanceof ArrayBuffer){return new __SecureExecEarlyBuffer(value);}if(ArrayBuffer.isView(value)){return new __SecureExecEarlyBuffer(value.buffer.slice(value.byteOffset,value.byteOffset+value.byteLength));}if(Array.isArray(value)){return new __SecureExecEarlyBuffer(value);}const stringValue=String(value??"");if(encoding==="base64"&&typeof atob==="function"){const binary=atob(stringValue);const out=new __SecureExecEarlyBuffer(binary.length);for(let i=0;i<binary.length;i++){out[i]=binary.charCodeAt(i);}return out;}if(encoding==="binary"||encoding==="latin1"){const out=new __SecureExecEarlyBuffer(stringValue.length);for(let i=0;i<stringValue.length;i++){out[i]=stringValue.charCodeAt(i)&255;}return out;}if(__secureExecTe){return new __SecureExecEarlyBuffer(__secureExecTe.encode(stringValue));}const out=new __SecureExecEarlyBuffer(stringValue.length);for(let i=0;i<stringValue.length;i++){out[i]=stringValue.charCodeAt(i)&255;}return out;}static alloc(size){return new __SecureExecEarlyBuffer(Number(size)||0);}static concat(list,totalLength){const length=totalLength??list.reduce((sum,item)=>sum+(item?.length??0),0);const out=new __SecureExecEarlyBuffer(length);let offset=0;for(const item of list){const chunk=item instanceof Uint8Array?item:__SecureExecEarlyBuffer.from(item);out.set(chunk,offset);offset+=chunk.length;}return out;}static isBuffer(value){return value instanceof Uint8Array;}static byteLength(value,encoding="utf8"){return __SecureExecEarlyBuffer.from(value,encoding).byteLength;}toString(encoding="utf8"){if(encoding==="base64"&&typeof btoa==="function"){let binary="";for(const byte of this){binary+=String.fromCharCode(byte);}return btoa(binary);}if(encoding==="binary"||encoding==="latin1"){let binary="";for(const byte of this){binary+=String.fromCharCode(byte);}return binary;}if(__secureExecTd){return __secureExecTd.decode(this);}return Array.from(this,byte=>String.fromCharCode(byte)).join("");}}globalThis.Buffer=__SecureExecEarlyBuffer;}`,
+				'if(typeof globalThis.Buffer.allocUnsafe!=="function"){globalThis.Buffer.allocUnsafe=globalThis.Buffer.alloc;}if(typeof globalThis.Buffer.allocUnsafeSlow!=="function"){globalThis.Buffer.allocUnsafeSlow=globalThis.Buffer.alloc;}',
 				'if(typeof globalThis.performance==="undefined"){const __secureExecPerformanceStart=Date.now();globalThis.performance={now(){if(typeof globalThis.__secureExecHrNowUs==="function"){return globalThis.__secureExecHrNowUs()/1000;}return Date.now()-__secureExecPerformanceStart;}};}if(typeof globalThis.performance.markResourceTiming!=="function"){globalThis.performance.markResourceTiming=()=>{};}',
 				'if(typeof TextEncoder==="undefined"&&typeof globalThis.TextEncoder!=="undefined"){var TextEncoder=globalThis.TextEncoder;}if(typeof TextDecoder==="undefined"&&typeof globalThis.TextDecoder!=="undefined"){var TextDecoder=globalThis.TextDecoder;}if(typeof Buffer==="undefined"&&typeof globalThis.Buffer!=="undefined"){var Buffer=globalThis.Buffer;}',
 			].join(""),

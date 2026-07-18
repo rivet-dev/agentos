@@ -215,6 +215,10 @@ export type LiveRequestPayload =
 			path: string;
 			headers_json: string;
 			body?: string;
+			body_base64?: string;
+			stream_operation?: "start" | "read" | "cancel";
+			stream_id?: string;
+			max_bytes?: number;
 	  }
 	| {
 			type: "get_signal_state";
@@ -491,6 +495,10 @@ export function toGeneratedRequestPayload(
 					path: payload.path,
 					headersJson: payload.headers_json,
 					body: payload.body ?? null,
+					bodyBase64: payload.body_base64 ?? null,
+					streamOperation: payload.stream_operation ?? null,
+					streamId: payload.stream_id ?? null,
+					maxBytes: payload.max_bytes ?? null,
 				},
 			};
 		case "get_signal_state":

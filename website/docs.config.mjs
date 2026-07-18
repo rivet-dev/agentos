@@ -145,6 +145,7 @@ export const siteConfig = {
 				{
 					title: "Orchestration",
 					pages: [
+						{ title: "AI-Generated Apps", href: "/docs/apps", badge: "Preview", icon: faCloud },
 						{ title: "Authentication", href: "/docs/authentication", icon: faKey },
 						{ title: "Webhooks", href: "/docs/webhooks", icon: faLink },
 						{ title: "Multiplayer & Realtime", href: "/docs/multiplayer", icon: faTowerBroadcast },

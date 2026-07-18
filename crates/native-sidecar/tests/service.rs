@@ -15533,6 +15533,7 @@ console.log(
             }
         }
 
+        #[test]
         fn javascript_mapped_tmp_open_wx_uses_exclusive_create_once() {
             assert_node_available();
 
@@ -15562,6 +15563,8 @@ try {
 
 const fd = fs.openSync(target, "wx", 0o600);
 fs.writeSync(fd, "lock");
+fs.futimesSync(fd, new Date("2024-01-02T03:04:05.000Z"), new Date("2024-01-02T03:04:05.000Z"));
+const mtimeMs = fs.fstatSync(fd).mtimeMs;
 fs.closeSync(fd);
 
 let secondOpenCode = "";
@@ -15578,6 +15581,7 @@ console.log(
     text: fs.readFileSync(target, "utf8"),
     secondOpenCode,
     exists: fs.existsSync(target),
+    mtimeMs,
   }),
 );
 "#,
@@ -15621,6 +15625,10 @@ console.log(
                 "stdout: {stdout}"
             );
             assert!(stdout.contains("\"exists\":true"), "stdout: {stdout}");
+            assert!(
+                stdout.contains("\"mtimeMs\":1704164645000"),
+                "stdout: {stdout}"
+            );
             assert_eq!(
                 fs::read_to_string(mapped_tmp.join("exclusive-mapped.lock"))
                     .expect("read mapped host lock file"),
@@ -20648,6 +20656,19 @@ import { createRequire } from "module";
 
 const require = createRequire(import.meta.url);
 const http2 = require("node:http2");
+const requiredConstants = {
+  HTTP2_HEADER_EXPECT: "expect",
+  HTTP2_HEADER_LOCATION: "location",
+  HTTP2_HEADER_USER_AGENT: "user-agent",
+  HTTP_STATUS_REQUEST_TIMEOUT: 408,
+  HTTP_STATUS_TOO_MANY_REQUESTS: 429,
+  HTTP_STATUS_INTERNAL_SERVER_ERROR: 500,
+};
+for (const [name, expected] of Object.entries(requiredConstants)) {
+  if (http2.constants[name] !== expected) {
+    throw new Error(`unexpected http2.constants.${name}: ${http2.constants[name]}`);
+  }
+}
 const server = http2.createServer();
 
 server.on("stream", (stream, headers) => {
@@ -21793,6 +21814,10 @@ console.log(JSON.stringify({
                     path: String::from(path),
                     headers_json: String::from(r#"{"content-type":"text/plain"}"#),
                     body: body.map(String::from),
+                    body_base64: None,
+                    stream_operation: None,
+                    stream_id: None,
+                    max_bytes: None,
                 }),
             ))
         }
@@ -21906,6 +21931,10 @@ await new Promise(() => {});
                         path: String::from("/from-host"),
                         headers_json: String::from(r#"{"content-type":"text/plain"}"#),
                         body: Some(String::from("hello")),
+                        body_base64: None,
+                        stream_operation: None,
+                        stream_id: None,
+                        max_bytes: None,
                     }),
                 ))
                 .expect("host fetch reaches guest HTTP server");
@@ -22007,6 +22036,139 @@ await new Promise(() => {});
                 }
                 other => panic!("unexpected vm_fetch response payload: {other:?}"),
             }
+        }
+
+        fn vm_fetch_stream_flushes_chunks_and_cancel_releases_socket() {
+            assert_node_available();
+
+            let mut sidecar = create_test_sidecar();
+            let (connection_id, session_id) =
+                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
+            let vm_id = create_vm(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                PermissionsPolicy::allow_all(),
+            )
+            .expect("create vm");
+            let server_cwd = temp_dir("agentos-native-sidecar-host-fetch-js-stream-cwd");
+            write_fixture(
+                &server_cwd.join("entry.mjs"),
+                r#"
+import http from "node:http";
+
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { "content-type": "text/event-stream" });
+  res.flushHeaders();
+  if (req.url === "/hold") return;
+  setTimeout(() => res.write("first\n"), 5);
+  setTimeout(() => {
+    res.write("second\n");
+    res.end();
+  }, 10);
+});
+
+server.listen(3000, "127.0.0.1", () => console.log("READY"));
+await new Promise(() => {});
+"#,
+            );
+            start_fake_javascript_process(&mut sidecar, &vm_id, &server_cwd, "proc-js-server");
+            wait_for_process_stdout_contains(&mut sidecar, &vm_id, "proc-js-server", "READY");
+            let baseline = vm_network_resources(&sidecar, &vm_id);
+
+            let dispatch_stream = |sidecar: &mut NativeSidecar<RecordingBridge>,
+                                   request_id,
+                                   operation: &str,
+                                   stream_id: Option<&str>,
+                                   path: &str,
+                                   max_bytes: Option<u32>| {
+                sidecar.dispatch_blocking(request(
+                    request_id,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    RequestPayload::VmFetch(crate::protocol::VmFetchRequest {
+                        port: 3000,
+                        method: String::from("GET"),
+                        path: String::from(path),
+                        headers_json: String::from("{}"),
+                        body: None,
+                        body_base64: None,
+                        stream_operation: Some(String::from(operation)),
+                        stream_id: stream_id.map(String::from),
+                        max_bytes,
+                    }),
+                ))
+            };
+            let response_json = |result: DispatchResult| match result.response.payload {
+                ResponsePayload::VmFetchResult(result) => result.response_json,
+                other => panic!("unexpected vm_fetch stream response: {other:?}"),
+            };
+
+            let head: Value = serde_json::from_str(&response_json(
+                dispatch_stream(&mut sidecar, 920, "start", None, "/events", None)
+                    .expect("start streaming fetch"),
+            ))
+            .expect("parse stream head");
+            assert_eq!(head["status"], Value::from(200));
+            let stream_id = head["streamId"].as_str().expect("stream id").to_owned();
+            assert_eq!(
+                sidecar.vms.get(&vm_id).expect("vm").vm_fetch_streams.len(),
+                1
+            );
+
+            let mut body = Vec::new();
+            for request_id in 921..940 {
+                let chunk: Value = serde_json::from_str(&response_json(
+                    dispatch_stream(
+                        &mut sidecar,
+                        request_id,
+                        "read",
+                        Some(&stream_id),
+                        "/",
+                        Some(3),
+                    )
+                    .expect("read streaming fetch"),
+                ))
+                .expect("parse stream chunk");
+                body.extend(
+                    base64::engine::general_purpose::STANDARD
+                        .decode(chunk["body"].as_str().expect("chunk body"))
+                        .expect("decode stream chunk"),
+                );
+                if chunk["done"] == Value::Bool(true) {
+                    break;
+                }
+            }
+            assert_eq!(body, b"first\nsecond\n");
+            assert!(sidecar
+                .vms
+                .get(&vm_id)
+                .expect("vm")
+                .vm_fetch_streams
+                .is_empty());
+            assert_network_resources_unchanged(
+                baseline.clone(),
+                vm_network_resources(&sidecar, &vm_id),
+            );
+
+            let held_head: Value = serde_json::from_str(&response_json(
+                dispatch_stream(&mut sidecar, 940, "start", None, "/hold", None)
+                    .expect("start held stream"),
+            ))
+            .expect("parse held stream head");
+            let held_stream_id = held_head["streamId"].as_str().expect("held stream id");
+            dispatch_stream(&mut sidecar, 941, "cancel", Some(held_stream_id), "/", None)
+                .expect("cancel held stream");
+            assert!(sidecar
+                .vms
+                .get(&vm_id)
+                .expect("vm")
+                .vm_fetch_streams
+                .is_empty());
+            assert_network_resources_unchanged(baseline, vm_network_resources(&sidecar, &vm_id));
+
+            sidecar
+                .kill_process_internal(&vm_id, "proc-js-server", "SIGKILL")
+                .expect("kill javascript server process");
         }
 
         fn vm_fetch_kernel_tcp_rejects_chunked_with_content_length() {
@@ -25443,6 +25605,11 @@ try {
         }
 
         #[test]
+        fn aaf_vm_fetch_stream_flushes_chunks_and_cancel_releases_socket() {
+            run_isolated_service_test("vm-fetch-kernel-tcp-stream");
+        }
+
+        #[test]
         fn aag_vm_fetch_kernel_tcp_rejects_chunked_with_content_length() {
             run_isolated_service_test("vm-fetch-kernel-tcp-chunked-content-length");
         }
@@ -25618,6 +25785,9 @@ try {
                 }
                 "vm-fetch-kernel-tcp-chunked" => {
                     vm_fetch_kernel_tcp_decodes_chunked_response_body();
+                }
+                "vm-fetch-kernel-tcp-stream" => {
+                    vm_fetch_stream_flushes_chunks_and_cancel_releases_socket();
                 }
                 "vm-fetch-kernel-tcp-chunked-content-length" => {
                     vm_fetch_kernel_tcp_rejects_chunked_with_content_length();

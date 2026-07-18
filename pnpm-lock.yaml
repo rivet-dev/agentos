@@ -84,6 +84,18 @@ importers:
         specifier: ^5.9.2
         version: 5.9.3
 
+  benchmarks/agentos-apps:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.19.15
+        version: 22.19.15
+      tsx:
+        specifier: ^4.20.6
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
   examples/agent-to-agent:
     dependencies:
       '@agentos-software/claude-code':
@@ -199,6 +211,177 @@ importers:
         version: 4.21.0
       typescript:
         specifier: ^5.7.2
+        version: 5.9.3
+
+  examples/apps-ai-builder:
+    dependencies:
+      '@ai-sdk/anthropic':
+        specifier: ^4.0.19
+        version: 4.0.19(zod@4.3.6)
+      '@hono/node-server':
+        specifier: ^2.0.11
+        version: 2.0.11(hono@4.12.9)
+      '@rivet-dev/agentos':
+        specifier: workspace:*
+        version: link:../../packages/agentos
+      '@rivet-dev/agentos-apps':
+        specifier: workspace:*
+        version: link:../../packages/agentos-apps
+      ai:
+        specifier: ^7.0.37
+        version: 7.0.37(zod@4.3.6)
+      hono:
+        specifier: ^4.12.9
+        version: 4.12.9
+      rivetkit:
+        specifier: catalog:rivetkit
+        version: 2.3.9(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(sql.js@1.14.1)(ws@8.21.0(bufferutil@4.1.0))
+    devDependencies:
+      '@types/node':
+        specifier: ^22.19.15
+        version: 22.19.15
+      tsx:
+        specifier: ^4.20.6
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  examples/apps-hello-world:
+    dependencies:
+      '@hono/node-server':
+        specifier: ^2.0.11
+        version: 2.0.11(hono@4.12.9)
+      '@rivet-dev/agentos':
+        specifier: workspace:*
+        version: link:../../packages/agentos
+      '@rivet-dev/agentos-apps':
+        specifier: workspace:*
+        version: link:../../packages/agentos-apps
+      hono:
+        specifier: ^4.12.9
+        version: 4.12.9
+    devDependencies:
+      '@types/node':
+        specifier: ^22.19.15
+        version: 22.19.15
+      tsx:
+        specifier: ^4.20.6
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  examples/apps-multiplayer:
+    dependencies:
+      '@hono/node-server':
+        specifier: ^2.0.11
+        version: 2.0.11(hono@4.12.9)
+      '@rivet-dev/agentos':
+        specifier: workspace:*
+        version: link:../../packages/agentos
+      '@rivet-dev/agentos-apps':
+        specifier: workspace:*
+        version: link:../../packages/agentos-apps
+      hono:
+        specifier: ^4.12.9
+        version: 4.12.9
+      rivetkit:
+        specifier: catalog:rivetkit
+        version: 2.3.9(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(sql.js@1.14.1)(ws@8.21.0(bufferutil@4.1.0))
+    devDependencies:
+      '@types/node':
+        specifier: ^22.19.15
+        version: 22.19.15
+      tsx:
+        specifier: ^4.20.6
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  examples/apps-sqlite:
+    dependencies:
+      '@hono/node-server':
+        specifier: ^2.0.11
+        version: 2.0.11(hono@4.12.9)
+      '@rivet-dev/agentos':
+        specifier: workspace:*
+        version: link:../../packages/agentos
+      '@rivet-dev/agentos-apps':
+        specifier: workspace:*
+        version: link:../../packages/agentos-apps
+      hono:
+        specifier: ^4.12.9
+        version: 4.12.9
+      rivetkit:
+        specifier: catalog:rivetkit
+        version: 2.3.9(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(sql.js@1.14.1)(ws@8.21.0(bufferutil@4.1.0))
+    devDependencies:
+      '@types/node':
+        specifier: ^22.19.15
+        version: 22.19.15
+      tsx:
+        specifier: ^4.20.6
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  examples/apps-static-website:
+    dependencies:
+      '@hono/node-server':
+        specifier: ^2.0.11
+        version: 2.0.11(hono@4.12.9)
+      '@rivet-dev/agentos':
+        specifier: workspace:*
+        version: link:../../packages/agentos
+      '@rivet-dev/agentos-apps':
+        specifier: workspace:*
+        version: link:../../packages/agentos-apps
+      hono:
+        specifier: ^4.12.9
+        version: 4.12.9
+      rivetkit:
+        specifier: catalog:rivetkit
+        version: 2.3.9(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(sql.js@1.14.1)(ws@8.21.0(bufferutil@4.1.0))
+    devDependencies:
+      '@types/node':
+        specifier: ^22.19.15
+        version: 22.19.15
+      tsx:
+        specifier: ^4.20.6
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  examples/apps-workflows:
+    dependencies:
+      '@hono/node-server':
+        specifier: ^2.0.11
+        version: 2.0.11(hono@4.12.9)
+      '@rivet-dev/agentos':
+        specifier: workspace:*
+        version: link:../../packages/agentos
+      '@rivet-dev/agentos-apps':
+        specifier: workspace:*
+        version: link:../../packages/agentos-apps
+      hono:
+        specifier: ^4.12.9
+        version: 4.12.9
+      rivetkit:
+        specifier: catalog:rivetkit
+        version: 2.3.9(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(sql.js@1.14.1)(ws@8.21.0(bufferutil@4.1.0))
+    devDependencies:
+      '@types/node':
+        specifier: ^22.19.15
+        version: 22.19.15
+      tsx:
+        specifier: ^4.20.6
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.3
         version: 5.9.3
 
   examples/authentication:
@@ -2440,6 +2623,46 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.19.15)(lightningcss@1.33.0)
 
+  packages/agentos-apps:
+    dependencies:
+      '@agentos-software/apps-builder':
+        specifier: workspace:*
+        version: link:../../software/apps-builder
+      '@agentos-software/sh':
+        specifier: workspace:*
+        version: link:../../software/sh
+      '@agentos-software/tar':
+        specifier: workspace:*
+        version: link:../../software/tar
+      '@rivet-dev/agentos':
+        specifier: workspace:*
+        version: link:../agentos
+      '@rivet-dev/agentos-core':
+        specifier: workspace:*
+        version: link:../core
+      '@rivet-dev/agentos-toolchain':
+        specifier: workspace:*
+        version: link:../agentos-toolchain
+      hono:
+        specifier: ^4.7.0
+        version: 4.12.9
+      rivetkit:
+        specifier: catalog:rivetkit
+        version: 2.3.9(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(sql.js@1.14.1)(ws@8.21.0(bufferutil@4.1.0))
+    devDependencies:
+      '@types/node':
+        specifier: ^22.19.15
+        version: 22.19.15
+      tsup:
+        specifier: ^8.4.0
+        version: 8.5.1(@microsoft/api-extractor@7.43.0(@types/node@22.19.15))(jiti@2.7.0)(postcss@8.5.22)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.15)(lightningcss@1.33.0)
+
   packages/agentos-sandbox:
     dependencies:
       '@rivet-dev/agentos-core':
@@ -3146,6 +3369,28 @@ importers:
         specifier: ^2.1.9
         version: 2.1.9(@types/node@22.19.15)(lightningcss@1.33.0)
 
+  software/apps-builder:
+    dependencies:
+      esbuild-wasm:
+        specifier: 0.27.4
+        version: 0.27.4
+    devDependencies:
+      '@agentos-software/manifest':
+        specifier: workspace:*
+        version: link:../../packages/manifest
+      '@rivet-dev/agentos-toolchain':
+        specifier: workspace:*
+        version: link:../../packages/agentos-toolchain
+      '@types/node':
+        specifier: ^22.19.15
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)(lightningcss@1.33.0)
+
   software/attr:
     devDependencies:
       '@agentos-software/manifest':
@@ -3824,6 +4069,27 @@ importers:
         specifier: ^2.1.9
         version: 2.1.9(@types/node@22.19.15)(lightningcss@1.33.0)
 
+  software/sh:
+    devDependencies:
+      '@agentos-software/manifest':
+        specifier: workspace:*
+        version: link:../../packages/manifest
+      '@rivet-dev/agentos-test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
+      '@rivet-dev/agentos-toolchain':
+        specifier: workspace:*
+        version: link:../../packages/agentos-toolchain
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)(lightningcss@1.33.0)
+
   software/sqlite3:
     devDependencies:
       '@agentos-software/manifest':
@@ -4054,6 +4320,37 @@ importers:
         version: 22.19.15
       typescript:
         specifier: ^5.9.2
+        version: 5.9.3
+
+  tests/e2e/agentos-apps:
+    dependencies:
+      '@rivet-dev/agentos':
+        specifier: workspace:*
+        version: link:../../../packages/agentos
+      '@rivet-dev/agentos-apps':
+        specifier: workspace:*
+        version: link:../../../packages/agentos-apps
+      rivetkit:
+        specifier: catalog:rivetkit
+        version: 2.3.9(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(sql.js@1.14.1)(ws@8.21.0(bufferutil@4.1.0))
+    devDependencies:
+      '@rivet-dev/agentos-toolchain':
+        specifier: workspace:*
+        version: link:../../../packages/agentos-toolchain
+      '@rivetkit/engine-cli':
+        specifier: 2.3.9
+        version: 2.3.9
+      '@types/node':
+        specifier: ^22.19.15
+        version: 22.19.15
+      get-port:
+        specifier: ^7.1.0
+        version: 7.2.0
+      tsx:
+        specifier: ^4.20.6
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.3
         version: 5.9.3
 
   website:
@@ -4584,6 +4881,12 @@ packages:
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
+  '@ai-sdk/anthropic@4.0.19':
+    resolution: {integrity: sha512-74XMHUG4Jc7fu923HkIhAxd/HMcd21br7U68W+GVnrd3INXwdUx3XhRUc5zVsE03sIUh37gTg7KUYhfhn6bP+A==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
   '@ai-sdk/azure@2.0.104':
     resolution: {integrity: sha512-g0ZDc/IgNCnIQuMj+bCBPionZwH4YBkfj5/CYeEPNqWrGBJm3aYfuWCjdT6Yayg+zlimunHZIjpjdDwan3i8Qg==}
     engines: {node: '>=18'}
@@ -4628,6 +4931,12 @@ packages:
 
   '@ai-sdk/gateway@4.0.19':
     resolution: {integrity: sha512-pQ3UPO0tyLUuW751jdgWhvHmXmjvAFpyiTeZF6eSVHMYhH/dSH4FtSKGT2nOnvvpaRpU8ygsLV4ng2Mz0lcU/A==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
+  '@ai-sdk/gateway@4.0.28':
+    resolution: {integrity: sha512-ee9TsNO3mkgHDWmTmJ8Fvltr6PFh52zhrV2+FaKJY3F3iu7kWZi5tCRJCR1HVhhlpj6lHniUb28nLQdPHkA/1Q==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -4695,6 +5004,12 @@ packages:
   '@ai-sdk/provider-utils@4.0.21':
     resolution: {integrity: sha512-MtFUYI1/8mgDvRmaBDjbLJPFFrMG777AvSgyIFQtZHIMzm88R/12vYBBpnk7pfiWLFE1DSZzY4WDYzGbKAcmiw==}
     engines: {node: '>=18'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
+  '@ai-sdk/provider-utils@5.0.12':
+    resolution: {integrity: sha512-bbhlOgHeYwrIGheLkM6fhS8hVger8uFPmcOLg+kxc9EFh7y30XYorWhthlYAgpadO3SJhFZrIcEknN7qEqEVvA==}
+    engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
@@ -9098,6 +9413,12 @@ packages:
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
+  ai@7.0.37:
+    resolution: {integrity: sha512-stF+SEQJgKY3Qfe3FwNzqUrehHviOp2l7LemoI8YMOa0Zk5PxKsRNgUk3cHXz0RAue9RRyCAis2fz6LSCP6EKw==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
   ajv-formats@3.0.1:
     resolution: {integrity: sha512-8iUql50EUR+uUcdRQ3HDqa6EVyo3docL8g5WJ3FNcWmu62IbkGUue/pEyLBW8VGKKucTPgqeks4fIU1DA4yowQ==}
     peerDependencies:
@@ -10377,6 +10698,11 @@ packages:
 
   esast-util-from-js@2.0.1:
     resolution: {integrity: sha512-8Ja+rNJ0Lt56Pcf3TAmpBZjmx8ZcK5Ts4cAzIOjsjevg9oSXJnl6SUQ2EevU8tv3h6ZLWmoKL5H4fgWvdvfETw==}
+
+  esbuild-wasm@0.27.4:
+    resolution: {integrity: sha512-3xhVMcJ8Odvb1QjlWnjBGSYVYESsi3/oJYwLyVvbHOb2CiV4mFtD6x8Lk6JFnRxwEE3fUeVuJLbIxyVQWa867g==}
+    engines: {node: '>=18'}
+    hasBin: true
 
   esbuild@0.21.5:
     resolution: {integrity: sha512-mg3OPMV4hXywwpoDxu3Qda5xCKQi+vCTZq8S9J/EpkhB2HzKXq4SNFZE3+NK93JYxc8VMSep+lOUSC/RVKaBqw==}
@@ -14618,6 +14944,12 @@ snapshots:
       '@ai-sdk/provider-utils': 4.0.21(zod@3.25.76)
       zod: 3.25.76
 
+  '@ai-sdk/anthropic@4.0.19(zod@4.3.6)':
+    dependencies:
+      '@ai-sdk/provider': 4.0.3
+      '@ai-sdk/provider-utils': 5.0.12(zod@4.3.6)
+      zod: 4.3.6
+
   '@ai-sdk/azure@2.0.104(zod@4.3.6)':
     dependencies:
       '@ai-sdk/openai': 2.0.102(zod@4.3.6)
@@ -14675,6 +15007,13 @@ snapshots:
     dependencies:
       '@ai-sdk/provider': 4.0.3
       '@ai-sdk/provider-utils': 5.0.9(zod@4.3.6)
+      '@vercel/oidc': 3.2.0
+      zod: 4.3.6
+
+  '@ai-sdk/gateway@4.0.28(zod@4.3.6)':
+    dependencies:
+      '@ai-sdk/provider': 4.0.3
+      '@ai-sdk/provider-utils': 5.0.12(zod@4.3.6)
       '@vercel/oidc': 3.2.0
       zod: 4.3.6
 
@@ -14761,6 +15100,14 @@ snapshots:
       '@standard-schema/spec': 1.1.0
       eventsource-parser: 3.0.6
       zod: 3.25.76
+
+  '@ai-sdk/provider-utils@5.0.12(zod@4.3.6)':
+    dependencies:
+      '@ai-sdk/provider': 4.0.3
+      '@standard-schema/spec': 1.1.0
+      '@workflow/serde': 4.1.0
+      eventsource-parser: 3.1.0
+      zod: 4.3.6
 
   '@ai-sdk/provider-utils@5.0.9(zod@4.3.6)':
     dependencies:
@@ -16002,7 +16349,7 @@ snapshots:
       zod-to-json-schema: 3.25.2(zod@4.3.6)
     optionalDependencies:
       '@ai-sdk/amazon-bedrock': 3.0.93(zod@4.3.6)
-      '@ai-sdk/anthropic': 2.0.74(zod@4.3.6)
+      '@ai-sdk/anthropic': 2.0.85(zod@4.3.6)
       '@ai-sdk/azure': 2.0.104(zod@4.3.6)
       '@ai-sdk/cerebras': 1.0.40(zod@4.3.6)
       '@ai-sdk/deepseek': 1.0.36(zod@4.3.6)
@@ -20940,6 +21287,13 @@ snapshots:
       '@ai-sdk/provider-utils': 5.0.9(zod@4.3.6)
       zod: 4.3.6
 
+  ai@7.0.37(zod@4.3.6):
+    dependencies:
+      '@ai-sdk/gateway': 4.0.28(zod@4.3.6)
+      '@ai-sdk/provider': 4.0.3
+      '@ai-sdk/provider-utils': 5.0.12(zod@4.3.6)
+      zod: 4.3.6
+
   ajv-formats@3.0.1(ajv@8.18.0):
     optionalDependencies:
       ajv: 8.18.0
@@ -22324,6 +22678,8 @@ snapshots:
       acorn: 8.17.0
       esast-util-from-estree: 2.0.0
       vfile-message: 4.0.3
+
+  esbuild-wasm@0.27.4: {}
 
   esbuild@0.21.5:
     optionalDependencies:

@@ -52,6 +52,7 @@ describe("root public API exports", () => {
 	});
 	test("re-exports the main public value surface from the root entrypoint", () => {
 		expect(AgentOs).toBeTypeOf("function");
+		expect(AgentOs.prototype.pread).toBeTypeOf("function");
 		expect(AgentOsSidecar).toBeTypeOf("function");
 		expect(CronManager).toBeTypeOf("function");
 		expect(TimerScheduleDriver).toBeTypeOf("function");
@@ -63,6 +64,7 @@ describe("root public API exports", () => {
 		expect(agentOsLimitsSchema.safeParse({}).success).toBe(true);
 		expect(
 			agentOsLimitsSchema.safeParse({
+				tls: { maxBufferedBytes: 16 * 1024 * 1024 },
 				process: {
 					maxSpawnFileActions: 4096,
 					maxSpawnFileActionBytes: 1024 * 1024,

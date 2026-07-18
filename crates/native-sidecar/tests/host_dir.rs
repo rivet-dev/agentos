@@ -8,7 +8,7 @@ mod host_dir {
     mod tests {
         use super::{HostDirFilesystem, HostDirMountPlugin, MAX_HOST_DIR_READ_BYTES};
         use agentos_kernel::mount_plugin::{FileSystemPluginFactory, OpenFileSystemPluginRequest};
-        use agentos_kernel::mount_table::MountedFileSystem;
+        use agentos_kernel::mount_table::{MountOptions, MountTable, MountedFileSystem};
         use agentos_kernel::vfs::VirtualFileSystem;
         use serde_json::json;
         use std::fs;
@@ -90,6 +90,28 @@ mod host_dir {
                 fs::read(host_dir.join("data.txt")).expect("read written host file"),
                 b"abXYZf\0\0!".to_vec()
             );
+
+            fs::remove_dir_all(host_dir).expect("remove temp dir");
+        }
+
+        #[test]
+        fn mount_table_pwrite_delegates_without_reading_the_whole_host_file() {
+            let host_dir = temp_dir("secure-exec-host-dir-mounted-pwrite");
+            fs::write(host_dir.join("large.bin"), vec![b'a'; 32]).expect("seed host file");
+
+            let mounted = HostDirFilesystem::new_with_read_limit(&host_dir, Some(4))
+                .expect("create bounded host dir fs");
+            let mut table = MountTable::new(agentos_kernel::vfs::MemoryFileSystem::new());
+            table
+                .mount("/output", mounted, MountOptions::new("host_dir"))
+                .expect("mount host directory");
+
+            table
+                .pwrite("/output/large.bin", b"Z".to_vec(), 16)
+                .expect("positioned write must not require a full-file read");
+            let bytes = fs::read(host_dir.join("large.bin")).expect("read host file");
+            assert_eq!(bytes.len(), 32);
+            assert_eq!(bytes[16], b'Z');
 
             fs::remove_dir_all(host_dir).expect("remove temp dir");
         }

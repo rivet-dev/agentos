@@ -870,6 +870,11 @@ pub(crate) struct VmState {
     pub(crate) command_permissions: BTreeMap<String, WasmPermissionTier>,
     pub(crate) bindings: BTreeMap<String, RegisterHostCallbacksRequest>,
     pub(crate) active_processes: BTreeMap<String, ActiveProcess>,
+    /// Pull-driven host fetches retained between sidecar requests. A stream
+    /// owns exactly one kernel socket and capability lease; reads advance it
+    /// only when the trusted client asks for another bounded chunk.
+    pub(crate) vm_fetch_streams: BTreeMap<String, VmFetchStreamState>,
+    pub(crate) next_vm_fetch_stream_id: u64,
     pub(crate) exited_process_snapshots: VecDeque<ExitedProcessSnapshot>,
     pub(crate) detached_child_processes: BTreeSet<String>,
     /// Rotating start positions for bounded child-process event turns. Durable
@@ -898,6 +903,29 @@ pub(crate) struct VmState {
     pub(crate) shadow_sync_inventory: BTreeMap<String, ShadowSyncInventoryEntry>,
     pub(crate) unix_address_registry: GuestUnixAddressRegistry,
     pub(crate) unix_socket_host_dir: PathBuf,
+}
+
+#[derive(Debug)]
+pub(crate) enum VmFetchBodyMode {
+    Empty,
+    ContentLength { remaining: usize },
+    Chunked { chunk_remaining: Option<usize> },
+    UntilClose,
+}
+
+#[derive(Debug)]
+pub(crate) struct VmFetchStreamState {
+    pub(crate) target_process_id: String,
+    pub(crate) kernel_pid: u32,
+    pub(crate) socket_id: SocketId,
+    pub(crate) _capability: agentos_runtime::capability::CapabilityLease,
+    pub(crate) raw_buffer: Vec<u8>,
+    pub(crate) decoded_buffer: VecDeque<u8>,
+    pub(crate) body_mode: VmFetchBodyMode,
+    pub(crate) peer_closed: bool,
+    pub(crate) response_bytes: usize,
+    pub(crate) max_response_bytes: usize,
+    pub(crate) last_progress_at: Instant,
 }
 
 /// Minimal ownership retained when a VM generation misses its teardown

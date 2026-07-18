@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
 	EXCLUDED,
+	LOCKSTEP_SOFTWARE_PACKAGES,
 	assertDiscoverySanity,
 	buildMetaPlatformMap,
 	discoverPackages,
@@ -76,6 +77,18 @@ test("sanity check passes for the agent-os workspace", () => {
 	const packages = discoverPackages(repoRoot);
 
 	assert.doesNotThrow(() => assertDiscoverySanity(packages));
+});
+
+test("publishes only new AgentOS Apps software packages in lockstep", () => {
+	const names = discoverPackages(repoRoot).map((pkg) => pkg.name);
+
+	assert(LOCKSTEP_SOFTWARE_PACKAGES.has("@agentos-software/apps-builder"));
+	assert(LOCKSTEP_SOFTWARE_PACKAGES.has("@agentos-software/sh"));
+	assert(!LOCKSTEP_SOFTWARE_PACKAGES.has("@agentos-software/tar"));
+	assert(names.includes("@rivet-dev/agentos-apps"));
+	assert(names.includes("@agentos-software/apps-builder"));
+	assert(names.includes("@agentos-software/sh"));
+	assert(!names.includes("@agentos-software/tar"));
 });
 
 test("browser migration packages stay explicitly excluded from publication", () => {

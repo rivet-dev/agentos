@@ -50,6 +50,10 @@ export {
 	createAgentOS,
 	createAgentOS as agentOS,
 	createAgentOsActions,
+	type VmFetchOptions,
+	type VmFetchResponse,
+	type VmFetchStreamChunk,
+	type VmFetchStreamHead,
 } from "./actor.js";
 export type {
 	AgentOsEvents,

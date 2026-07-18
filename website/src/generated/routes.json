@@ -8,6 +8,10 @@
       "title": "Approvals",
       "description": "Handle native ACP permission options with durable AgentOS correlation."
     },
+    "/docs/docs/apps": {
+      "title": "agentOS Apps",
+      "description": "Deploy user-generated applications in agentOS VMs."
+    },
     "/docs/docs/architecture": {
       "title": "Overview",
       "description": "A high-level tour of how agentOS works: the client / server / VM picture, the anatomy of a Linux VM (kernel + executor), agents and sessions, and the Rivet Actor orchestration underneath."
@@ -212,14 +216,6 @@
       "title": "TLS & SSL",
       "description": "How agentOS uses in-guest mbedTLS plus a VM CA bundle for curl / wget / git, and a hermetic OpenSSL libcrypto build for OpenSSH."
     },
-    "/docs/docs/frameworks/flue": {
-      "title": "Flue",
-      "description": "Use agentOS as the durable sandbox backend for Flue."
-    },
-    "/docs/docs/frameworks/vercel-eve": {
-      "title": "Vercel Eve",
-      "description": "Run Vercel Eve with agentOS and Rivet World."
-    },
     "/docs/docs/custom-software/building-wasm": {
       "title": "Building Binaries",
       "description": "Compile WASM command binaries for agentOS from source."
@@ -231,6 +227,14 @@
     "/docs/docs/custom-software/publishing": {
       "title": "Publishing Packages",
       "description": "Build, publish, and consume agentOS packages — locally, from npm, or from your own repo."
+    },
+    "/docs/docs/frameworks/flue": {
+      "title": "Flue",
+      "description": "Use agentOS as the durable sandbox backend for Flue."
+    },
+    "/docs/docs/frameworks/vercel-eve": {
+      "title": "Vercel Eve",
+      "description": "Run Vercel Eve with agentOS and Rivet World."
     }
   }
 }

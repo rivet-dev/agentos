@@ -878,7 +878,7 @@ impl AcpCore {
 
         let spawned = host.spawn_agent(SpawnAgentRequest {
             process_id: process_id.clone(),
-            runtime: request.runtime.clone(),
+            runtime: AcpRuntimeKind::JavaScript,
             entrypoint: Some(resolved.entrypoint.clone()),
             command: None,
             args: resolved.launch_args.clone(),

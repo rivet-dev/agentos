@@ -626,6 +626,10 @@ export interface AgentOsLimits {
 		/** Cap on `vm.httpRequest()` buffered response bodies. Must be <= the sidecar wire frame cap. */
 		maxFetchResponseBytes?: number;
 	};
+	/** TLS plaintext buffering limits. */
+	tls?: {
+		maxBufferedBytes?: number;
+	};
 	/** Host binding registration and invocation limits. */
 	bindings?: {
 		defaultBindingTimeoutMs?: number;
@@ -3421,6 +3425,113 @@ export class AgentOs {
 			headers,
 			body: new Uint8Array(Buffer.from(responsePayload.body ?? "", "base64")),
 		};
+	}
+
+	/**
+	 * Fetch an HTTP endpoint inside the VM while preserving duplicate response
+	 * headers and arbitrary binary bodies. AgentOS Apps uses this compatibility
+	 * surface for its direct actor API.
+	 */
+	async fetch(port: number, request: Request): Promise<Response> {
+		const url = new URL(request.url);
+		const responsePayload = JSON.parse(
+			await this._sidecarClient.vmFetch(this._sidecarSession, this._sidecarVm, {
+				port,
+				method: request.method,
+				path: `${url.pathname}${url.search}`,
+				headersJson: JSON.stringify(
+					Object.fromEntries(request.headers.entries()),
+				),
+				...(request.method !== "GET" && request.method !== "HEAD"
+					? {
+							bodyBase64: Buffer.from(await request.arrayBuffer()).toString(
+								"base64",
+							),
+						}
+					: {}),
+			}),
+		) as {
+			status: number;
+			statusText?: string;
+			headers?: Array<[string, string]>;
+			body?: string;
+		};
+		const headers = new Headers();
+		for (const [key, value] of responsePayload.headers ?? []) {
+			headers.append(key, value);
+		}
+		return new Response(Buffer.from(responsePayload.body ?? "", "base64"), {
+			status: responsePayload.status,
+			statusText: responsePayload.statusText ?? "",
+			headers,
+		});
+	}
+
+	async fetchStreamStart(
+		port: number,
+		request: Request,
+	): Promise<{
+		streamId: string;
+		status: number;
+		statusText: string;
+		headers: Array<[string, string]>;
+	}> {
+		const url = new URL(request.url);
+		return JSON.parse(
+			await this._sidecarClient.vmFetch(this._sidecarSession, this._sidecarVm, {
+				port,
+				method: request.method,
+				path: `${url.pathname}${url.search}`,
+				headersJson: JSON.stringify(
+					Object.fromEntries(request.headers.entries()),
+				),
+				...(request.method !== "GET" && request.method !== "HEAD"
+					? {
+							bodyBase64: Buffer.from(await request.arrayBuffer()).toString(
+								"base64",
+							),
+						}
+					: {}),
+				streamOperation: "start",
+			}),
+		) as {
+			streamId: string;
+			status: number;
+			statusText: string;
+			headers: Array<[string, string]>;
+		};
+	}
+
+	async fetchStreamRead(
+		streamId: string,
+		maxBytes = 64 * 1024,
+	): Promise<{ body: Uint8Array; done: boolean }> {
+		const response = JSON.parse(
+			await this._sidecarClient.vmFetch(this._sidecarSession, this._sidecarVm, {
+				port: 0,
+				method: "GET",
+				path: "/",
+				headersJson: "{}",
+				streamOperation: "read",
+				streamId,
+				maxBytes,
+			}),
+		) as { body: string; done: boolean };
+		return {
+			body: new Uint8Array(Buffer.from(response.body, "base64")),
+			done: response.done,
+		};
+	}
+
+	async fetchStreamCancel(streamId: string): Promise<void> {
+		await this._sidecarClient.vmFetch(this._sidecarSession, this._sidecarVm, {
+			port: 0,
+			method: "GET",
+			path: "/",
+			headersJson: "{}",
+			streamOperation: "cancel",
+			streamId,
+		});
 	}
 
 	openShell(options?: ShellOptions): { shellId: string } {
