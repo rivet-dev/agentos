@@ -649,7 +649,7 @@ describe("OpenCode session API integration", () => {
 		}
 	}, 120_000);
 
-	test("surfaces OpenCode cancelSession() honestly through the Agent OS session API", async () => {
+	test("surfaces OpenCode cancelPrompt() honestly through the Agent OS session API", async () => {
 		const { mock, url } = await startLlmock([
 			{
 				match: { predicate: () => true },

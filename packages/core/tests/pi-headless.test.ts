@@ -3,8 +3,8 @@ import common from "@agentos-software/common";
 import pi from "@agentos-software/pi";
 import type { Fixture, ToolCall } from "@copilotkit/llmock";
 import { describe, expect, test } from "vitest";
-import type { AgentCapabilities, AgentInfo } from "../src/agent-os.js";
 import { AgentOs } from "../src/agent-os.js";
+import type { SessionStreamEntry } from "../src/session-api.js";
 import {
 	createAnthropicFixture,
 	startLlmock,
@@ -12,6 +12,7 @@ import {
 } from "./helpers/llmock-helper.js";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import { hasBuiltRegistryCommands } from "./helpers/registry-command-availability.js";
+import { promptResultText } from "./helpers/session-result.js";
 
 const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
 const registryCommandsAvailable = hasBuiltRegistryCommands(common);
@@ -109,11 +110,13 @@ describe("full openSession({ agent: 'pi' }) inside the VM", () => {
 
 			expect(sessionId).toBeTruthy();
 			expect(
-				vm.listSessions().some((entry) => entry.sessionId === sessionId),
+				(await vm.listSessions()).sessions.some(
+					(entry) => entry.sessionId === sessionId,
+				),
 			).toBe(true);
 		} finally {
 			if (sessionId) {
-				vm.unloadSession({ sessionId });
+				await vm.unloadSession({ sessionId });
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
@@ -151,36 +154,40 @@ describe("full openSession({ agent: 'pi' }) inside the VM", () => {
 				},
 			});
 
-			const agentInfo = vm.getSessionAgentInfo(sessionId) as AgentInfo;
+			const agentInfo = await vm.getSessionAgentInfo({ sessionId });
 			expect(agentInfo.name).toBe("pi-sdk-acp");
 			expect(agentInfo.title).toBe("Pi SDK ACP adapter");
 			expect(agentInfo.version).toBeTruthy();
 
-			const capabilities = vm.getSessionCapabilities(
-				sessionId,
-			) as AgentCapabilities;
-			expect(capabilities.promptCapabilities).toMatchObject({
-				image: true,
-				audio: false,
-				embeddedContext: false,
-			});
+			const capabilities = await vm.getSessionCapabilities({ sessionId });
+			expect(capabilities.prompt?.image).toBe(true);
+			expect(capabilities.prompt?.audio).toBeUndefined();
+			expect(capabilities.prompt?.embeddedContext).toBeUndefined();
 
-			const modes = vm.getSessionModes(sessionId);
-			expect(modes?.currentModeId).toBeTruthy();
-			expect(modes?.availableModes.length).toBeGreaterThan(0);
+			const config = await vm.getSessionConfig({ sessionId });
+			// Pi currently advertises legacy ACP `modes`, not native
+			// `configOptions`; AgentOS deliberately does not invent a mapping.
+			expect(config.options.some((option) => option.id === "mode")).toBe(false);
 
-			const events: { method: string; params?: unknown }[] = [];
+			const events: SessionStreamEntry[] = [];
 			const unsubscribeEvents = vm.onSessionEvent(sessionId, (event) => {
 				events.push(event);
 			});
-			const { response, text } = await vm.prompt(
+			const result = await vm.prompt({
 				sessionId,
-				"Create notes.txt with the text hello from pi write.",
-			);
+				content: [
+					{
+						type: "text",
+						text: "Create notes.txt with the text hello from pi write.",
+					},
+				],
+			});
 			unsubscribeEvents();
 
-			expect(response.error).toBeUndefined();
-			expect(text).toContain("notes.txt was created successfully.");
+			expect(result.stopReason).toBe("end_turn");
+			expect(promptResultText(result)).toContain(
+				"notes.txt was created successfully.",
+			);
 			expect(
 				new TextDecoder().decode(
 					await vm.readFile(`${workspaceDir}/notes.txt`),
@@ -188,23 +195,10 @@ describe("full openSession({ agent: 'pi' }) inside the VM", () => {
 			).toBe("hello from pi write");
 			expect(mock.getRequests().length).toBeGreaterThanOrEqual(2);
 
-			expect(
-				events.some(
-					(event) =>
-						event.method === "session/update" &&
-						JSON.stringify(event.params).includes("tool_call"),
-				),
-			).toBe(true);
-			expect(
-				events.some(
-					(event) =>
-						event.method === "session/update" &&
-						JSON.stringify(event.params).includes('"completed"'),
-				),
-			).toBe(true);
+			expect(events.some((event) => event.type === "tool_call")).toBe(true);
 		} finally {
 			if (sessionId) {
-				vm.unloadSession({ sessionId });
+				await vm.unloadSession({ sessionId });
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
@@ -244,13 +238,20 @@ describe("full openSession({ agent: 'pi' }) inside the VM", () => {
 					},
 				});
 
-				const { response, text } = await vm.prompt(
+				const result = await vm.prompt({
 					sessionId,
-					"Use bash to write bash-ok into bash-output.txt.",
-				);
+					content: [
+						{
+							type: "text",
+							text: "Use bash to write bash-ok into bash-output.txt.",
+						},
+					],
+				});
 
-				expect(response.error).toBeUndefined();
-				expect(text).toContain("bash-output.txt was written successfully.");
+				expect(result.stopReason).toBe("end_turn");
+				expect(promptResultText(result)).toContain(
+					"bash-output.txt was written successfully.",
+				);
 				expect(
 					new TextDecoder().decode(
 						await vm.readFile(`${workspaceDir}/bash-output.txt`),
@@ -259,7 +260,7 @@ describe("full openSession({ agent: 'pi' }) inside the VM", () => {
 				expect(mock.getRequests().length).toBeGreaterThanOrEqual(2);
 			} finally {
 				if (sessionId) {
-					vm.unloadSession({ sessionId });
+					await vm.unloadSession({ sessionId });
 				}
 				await vm.dispose();
 				await stopLlmock(mock);

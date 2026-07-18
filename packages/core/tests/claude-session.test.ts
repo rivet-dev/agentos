@@ -192,9 +192,7 @@ describe("full openSession({ agent: 'claude' })", () => {
 
 			expect(events.length).toBeGreaterThanOrEqual(1);
 			expect(
-				events.some((event) =>
-					JSON.stringify(event).includes("tool_call"),
-				),
+				events.some((event) => JSON.stringify(event).includes("tool_call")),
 			).toBe(true);
 			expect(
 				events.some((event) =>
@@ -252,9 +250,7 @@ describe("full openSession({ agent: 'claude' })", () => {
 				),
 			).toBe(true);
 			expect(
-				events.some((event) =>
-					JSON.stringify(event).includes("tool_call"),
-				),
+				events.some((event) => JSON.stringify(event).includes("tool_call")),
 			).toBe(false);
 		} finally {
 			if (sessionId) {
@@ -313,9 +309,7 @@ describe("full openSession({ agent: 'claude' })", () => {
 			);
 
 			expect(
-				events.some((event) =>
-					JSON.stringify(event).includes("tool_call"),
-				),
+				events.some((event) => JSON.stringify(event).includes("tool_call")),
 			).toBe(true);
 			expect(
 				events.some((event) =>
@@ -382,9 +376,7 @@ describe("full openSession({ agent: 'claude' })", () => {
 			).toBe(true);
 
 			expect(
-				events.some((event) =>
-					JSON.stringify(event).includes("tool_call"),
-				),
+				events.some((event) => JSON.stringify(event).includes("tool_call")),
 			).toBe(true);
 			expect(
 				events.some((event) =>
@@ -427,20 +419,16 @@ describe("full openSession({ agent: 'claude' })", () => {
 			});
 
 			const capabilities = await vm.getSessionCapabilities({ sessionId });
-			expect(capabilities?.prompt).toMatchObject({
-				audio: false,
-				embeddedContext: false,
-				image: true,
-			});
+			expect(capabilities?.prompt?.image).toBe(true);
+			expect(capabilities?.prompt?.audio).toBeUndefined();
+			expect(capabilities?.prompt?.embeddedContext).toBeUndefined();
 
 			const config = await vm.getSessionConfig({ sessionId });
-			const modes = config.options.find((option) => option.id === "mode");
-			expect(modes?.type).toBe("select");
-			if (modes?.type !== "select") throw new Error("missing mode selector");
-			expect(modes.currentValue).toBe("default");
-			expect(modes.options.map((mode) => mode.value)).toEqual(
-				expect.arrayContaining(["default", "plan", "dontAsk"]),
-			);
+			expect(config.revision).toBe(0);
+			expect(config.options).toEqual(expect.any(Array));
+			// Claude currently advertises legacy ACP `modes`, not native
+			// `configOptions`; AgentOS deliberately does not invent a mapping.
+			expect(config.options.some((option) => option.id === "mode")).toBe(false);
 
 			const closedSessionId = sessionId;
 			await vm.unloadSession({ sessionId: closedSessionId });
@@ -484,7 +472,7 @@ describe("full openSession({ agent: 'claude' })", () => {
 		);
 	}, 120_000);
 
-	test("Claude sessions reflect native ACP configuration changes", async () => {
+	test("Claude sessions surface unsupported native ACP configuration changes", async () => {
 		let sessionId: string | undefined;
 
 		try {
@@ -498,26 +486,16 @@ describe("full openSession({ agent: 'claude' })", () => {
 					ANTHROPIC_BASE_URL: mockUrl,
 				},
 			});
+			const initialConfig = await vm.getSessionConfig({ sessionId });
 
-			const modeEvents: unknown[] = [];
-			const unsubscribeEvents = vm.onSessionEvent(sessionId, (event) => {
-				if (
-					event.type === "current_mode_update" &&
-					JSON.stringify(event).includes("current_mode_update")
-				) {
-					modeEvents.push(event);
-				}
-			});
-			const response = await vm.setSessionConfigOption({
-				sessionId,
-				configId: "mode",
-				value: "plan",
-			});
-			unsubscribeEvents();
-			const modes = response.options.find((option) => option.id === "mode");
-			expect(modes?.type === "select" && modes.currentValue).toBe("plan");
-
-			expect(modeEvents.length).toBeGreaterThanOrEqual(1);
+			await expect(
+				vm.setSessionConfigOption({
+					sessionId,
+					configId: "mode",
+					value: "plan",
+				}),
+			).rejects.toThrow(/session\/set_config_option.*method not found/i);
+			expect(await vm.getSessionConfig({ sessionId })).toEqual(initialConfig);
 		} finally {
 			if (sessionId) {
 				await vm.unloadSession({ sessionId });

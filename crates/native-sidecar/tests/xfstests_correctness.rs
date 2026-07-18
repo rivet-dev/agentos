@@ -2405,7 +2405,7 @@ fn xfstests_looptest_scaled_throughput_probe() {
         &connection_id,
         &session_id,
         &vm_id,
-        xfstests_mounts(&source, root.path(), &backend, s3_endpoint.as_deref()),
+        xfstests_mounts(&source, root.path(), &backend, s3_endpoint),
     );
 
     let truncate_arg = if truncate { "-t" } else { "" };
@@ -5420,7 +5420,7 @@ fn xfstests_truncfile_scaled_throughput_regression() {
     let connection_id = authenticate_wire(&mut sidecar, "conn-xfstests-truncfile-throughput");
     let session_id = open_session_wire(&mut sidecar, 2, &connection_id);
     let vm_id = create_xfstests_vm_wire(&mut sidecar, 3, &connection_id, &session_id, &cwd);
-    let mut mounts = xfstests_mounts(&source, root.path(), &backend, s3_endpoint.as_deref());
+    let mut mounts = xfstests_mounts(&source, root.path(), &backend, s3_endpoint);
     mounts.push(host_dir_mount(
         &format!("/__secure_exec/commands/{}", COMMAND_PACKAGES.len()),
         &source.join("src"),
@@ -6364,8 +6364,7 @@ fn quick_tests(source: &Path) -> Vec<String> {
         .filter_map(|line| {
             let fields = line.split_whitespace().collect::<Vec<_>>();
             fields
-                .iter()
-                .any(|field| *field == "quick")
+                .contains(&"quick")
                 .then(|| format!("generic/{}", fields[0]))
         })
         .collect::<Vec<_>>();

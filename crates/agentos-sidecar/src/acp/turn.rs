@@ -553,6 +553,36 @@ impl AcpExtension {
         if output.response.is_err() {
             return output;
         }
+        let response = match &output.response {
+            Ok(AcpResponse::AcpSessionRpcResponse(response)) => {
+                match serde_json::from_str::<Value>(&response.response) {
+                    Ok(response) => response,
+                    Err(error) => {
+                        return AcpHandlerOutput {
+                            response: Err(SidecarError::InvalidState(format!(
+                                "invalid ACP config update response JSON: {error}"
+                            ))),
+                            events: output.events,
+                        };
+                    }
+                }
+            }
+            Ok(_) => {
+                return AcpHandlerOutput {
+                    response: Err(SidecarError::InvalidState(String::from(
+                        "invalid ACP config update response",
+                    ))),
+                    events: output.events,
+                };
+            }
+            Err(_) => unreachable!("ACP transport errors returned above"),
+        };
+        if let Err(error) = response_result(response, "ACP session/set_config_option") {
+            return AcpHandlerOutput {
+                response: Err(error),
+                events: output.events,
+            };
+        }
         if let Err(error) = sink.flush(ctx, &mut output.events).await {
             return AcpHandlerOutput {
                 response: Err(error),
@@ -723,6 +753,7 @@ impl DurableUpdateSink {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn handle_permission_request(
         &mut self,
         ctx: &mut ExtensionContext<'_>,
@@ -1144,6 +1175,7 @@ pub(super) fn decode_durable_event(event_json: &str) -> Result<AcpDurableEvent, 
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn wait_for_permission_signal(
     ctx: &mut ExtensionContext<'_>,
     process_id: &str,

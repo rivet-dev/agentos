@@ -448,9 +448,11 @@ async fn exercise_near_limit_append(
     populate_history(&database, HISTORY_COMPLEXITY_LIMIT - 1).await;
 
     let recording = RecordingDatabase::wrap(database);
-    let mut limits = AcpLimits::default();
-    limits.max_session_history_events = HISTORY_COMPLEXITY_LIMIT;
-    limits.max_session_history_bytes = 16 * 1024 * 1024;
+    let limits = AcpLimits {
+        max_session_history_events: HISTORY_COMPLEXITY_LIMIT,
+        max_session_history_bytes: 16 * 1024 * 1024,
+        ..AcpLimits::default()
+    };
     let store: SharedVmSqliteDatabase = recording.clone();
     let store = SessionStore::from_database(store).with_limits(&limits);
     if let Some(metrics) = wire_metrics {

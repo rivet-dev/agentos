@@ -355,9 +355,9 @@ impl AcpExtension {
                 .await;
             matches!(&sigterm, Err(error) if is_process_already_gone_error(error))
         };
-        let terminated = if adapter_already_gone {
-            true
-        } else if wait_for_process_exit(ctx, &session.process_id, SESSION_CLOSE_TIMEOUT).await {
+        let terminated = if adapter_already_gone
+            || wait_for_process_exit(ctx, &session.process_id, SESSION_CLOSE_TIMEOUT).await
+        {
             true
         } else {
             let sigkill = ctx
@@ -404,12 +404,13 @@ impl AcpExtension {
         Ok(())
     }
 
+    #[allow(clippy::needless_option_as_deref)]
     pub(super) async fn send_runtime_request_with_sink(
         &self,
         ctx: &mut ExtensionContext<'_>,
         request: AcpSessionRequest,
         mut durable_sink: Option<&mut DurableUpdateSink>,
-        mut cancellation: Option<&mut tokio::sync::watch::Receiver<bool>>,
+        cancellation: Option<&mut tokio::sync::watch::Receiver<bool>>,
     ) -> AcpHandlerOutput {
         let params = match request
             .params
@@ -488,7 +489,7 @@ impl AcpExtension {
             &mut stdout_buffer,
             Some(&acp_session_id),
             durable_sink.as_deref_mut(),
-            cancellation.as_deref_mut(),
+            cancellation,
         )
         .await
         {
@@ -564,7 +565,7 @@ impl AcpExtension {
             };
             match synthetic {
                 Ok(Some(notification)) => {
-                    let handled = if let Some(sink) = durable_sink.as_deref_mut() {
+                    let handled = if let Some(sink) = durable_sink {
                         match serde_json::from_str::<Value>(&notification) {
                             Ok(notification) => match sink
                                 .handle_notification(ctx, &notification, &mut exchange.events)

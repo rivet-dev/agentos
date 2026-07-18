@@ -52,10 +52,7 @@ process.stdin.on("data", (chunk) => {
       case "session/prompt":
         writeMessage({ jsonrpc: "2.0", method: "session/update", params: {
           sessionId: "opt-agentos-session-1",
-          update: { sessionUpdate: "agent_message_chunk", content: { text: "opt-agentos-agent-ok" } } } });
-        writeMessage({ jsonrpc: "2.0", method: "session/update", params: {
-          sessionId: "opt-agentos-session-1",
-          update: { sessionUpdate: "completed", stopReason: "end_turn" } } });
+          update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "opt-agentos-agent-ok" } } } });
         writeResponse(msg.id, { stopReason: "end_turn" });
         break;
       case "session/cancel":

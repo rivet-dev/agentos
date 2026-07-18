@@ -1487,13 +1487,13 @@ impl MountTable {
                     }
                 }
             }
-            (Some(before), Some(after)) if (before.dev, before.ino) == (after.dev, after.ino) => {
-                if !before.is_directory {
-                    usage.total_bytes = usage
-                        .total_bytes
-                        .saturating_sub(before.size)
-                        .saturating_add(after.size);
-                }
+            (Some(before), Some(after))
+                if (before.dev, before.ino) == (after.dev, after.ino) && !before.is_directory =>
+            {
+                usage.total_bytes = usage
+                    .total_bytes
+                    .saturating_sub(before.size)
+                    .saturating_add(after.size);
             }
             _ => {}
         }

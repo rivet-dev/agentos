@@ -4,12 +4,14 @@ import pi from "@agentos-software/pi";
 import type { Fixture, ToolCall } from "@copilotkit/llmock";
 import { describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
+import type { SessionStreamEntry } from "../src/session-api.js";
 import {
 	createAnthropicFixture,
 	startLlmock,
 	stopLlmock,
 } from "./helpers/llmock-helper.js";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
+import { promptResultText } from "./helpers/session-result.js";
 
 /**
  * REPRO / REGRESSION: "onSessionUpdate not delivered live mid-turn with Pi".
@@ -41,11 +43,7 @@ import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
 const RESPONSE_LATENCY_MS = 1500;
 
-interface TimedEvent {
-	method: string;
-	params?: unknown;
-	t: number;
-}
+type TimedEvent = SessionStreamEntry & { t: number };
 
 function getRequestBody(req: unknown): Record<string, unknown> {
 	const direct = req as Record<string, unknown>;
@@ -64,7 +62,9 @@ function isPostToolResultRequest(
 }
 
 function isSessionUpdate(event: TimedEvent): boolean {
-	return event.method === "session/update";
+	return (
+		event.type !== "permission_request" && event.type !== "permission_response"
+	);
 }
 
 describe("REPRO: Pi session/update live delivery", () => {
@@ -137,24 +137,28 @@ describe("REPRO: Pi session/update live delivery", () => {
 
 			const unsubscribe = vm.onSessionEvent(sessionId, (event) => {
 				events.push({
-					method: event.method,
-					params: event.params,
+					...event,
 					t: performance.now() - promptStart,
 				});
 			});
 
 			promptStart = performance.now();
-			const { response, text } = await vm.prompt(
+			const result = await vm.prompt({
 				sessionId,
-				"Write the text 'tool-test-ok' to tool-verify.txt. Do not explain, just do it.",
-			);
+				content: [
+					{
+						type: "text",
+						text: "Write the text 'tool-test-ok' to tool-verify.txt. Do not explain, just do it.",
+					},
+				],
+			});
 			const promptResolved = performance.now() - promptStart;
 			unsubscribe();
 
 			// Sanity: the turn completed correctly and actually exercised the
 			// latency hold (so the mid-turn window really existed).
-			expect(response.error).toBeUndefined();
-			expect(text).toContain(finalText);
+			expect(result.stopReason).toBe("end_turn");
+			expect(promptResultText(result)).toContain(finalText);
 			expect(mock.getRequests().length).toBeGreaterThanOrEqual(2);
 			expect(
 				promptResolved,
@@ -180,7 +184,7 @@ describe("REPRO: Pi session/update live delivery", () => {
 				"BUG: first update arrived at ~the same time as resolution — events are batched, not streamed",
 			).toBeGreaterThan(RESPONSE_LATENCY_MS * 0.5);
 		} finally {
-			if (sessionId) vm.unloadSession({ sessionId });
+			if (sessionId) await vm.unloadSession({ sessionId });
 			await vm.dispose();
 			await stopLlmock(mock);
 		}

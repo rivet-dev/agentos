@@ -9,6 +9,17 @@ const sessionState = {
   modeId: "default",
   configOptions: [
     {
+      id: "mode",
+      category: "mode",
+      label: "Mode",
+      type: "select",
+      currentValue: "default",
+      options: [
+        { value: "default", name: "Default" },
+        { value: "plan", name: "Plan" },
+      ],
+    },
+    {
       id: "model",
       category: "model",
       label: "Model",
@@ -147,19 +158,33 @@ describe("synthetic session/update compatibility", () => {
 
 			const receivedEvents: string[] = [];
 			const unsubscribe = vm.onSessionEvent(sessionId, (event) => {
-				if (event.method === "session/update") {
-					receivedEvents.push(JSON.stringify(event.params));
+				if (event.type === "config_option_update") {
+					receivedEvents.push(JSON.stringify(event));
 				}
 			});
 
-			await vm.setSessionModel(sessionId, "gpt-5-codex");
-			await vm.setSessionThoughtLevel(sessionId, "high");
-			await vm.setSessionMode(sessionId, "plan");
+			await vm.setSessionConfigOption({
+				sessionId,
+				configId: "model",
+				value: "gpt-5-codex",
+			});
+			await vm.setSessionConfigOption({
+				sessionId,
+				configId: "thought_level",
+				value: "high",
+			});
+			await vm.setSessionConfigOption({
+				sessionId,
+				configId: "mode",
+				value: "plan",
+			});
 			await new Promise<void>((resolve) => queueMicrotask(resolve));
 			unsubscribe();
 
-			expect(vm.getSessionModes(sessionId)?.currentModeId).toBe("plan");
-			const configOptions = vm.getSessionConfigOptions(sessionId);
+			const configOptions = (await vm.getSessionConfig({ sessionId })).options;
+			expect(
+				configOptions.find((option) => option.id === "mode")?.currentValue,
+			).toBe("plan");
 			expect(
 				configOptions.find((option) => option.category === "model")
 					?.currentValue,
@@ -170,18 +195,13 @@ describe("synthetic session/update compatibility", () => {
 			).toBe("high");
 
 			expect(
-				receivedEvents.some((event) =>
-					event.includes('"sessionUpdate":"current_mode_update"'),
-				),
-			).toBe(true);
-			expect(
 				receivedEvents.filter((event) =>
-					event.includes('"sessionUpdate":"config_option_update"'),
+					event.includes('"type":"config_option_update"'),
 				).length,
-			).toBeGreaterThanOrEqual(2);
+			).toBeGreaterThanOrEqual(3);
 		} finally {
 			if (sessionId) {
-				vm.unloadSession({ sessionId });
+				await vm.unloadSession({ sessionId });
 			}
 			await vm.dispose();
 			agentPackage.cleanup();

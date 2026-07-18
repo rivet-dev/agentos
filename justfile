@@ -91,7 +91,7 @@ shell *args:
 		done
 		pnpm "${registry_filters[@]}" build
 	fi
-	if [[ ! -e registry/software/common/dist/index.js ]]; then
+	if [[ ! -e software/common/dist/index.js ]]; then
 		pnpm --filter @agentos-software/common build
 	fi
 	if [[ ! -e packages/runtime-core/dist/index.js \

@@ -262,7 +262,12 @@ impl SessionStore {
                 vec![SqlValue::SqlText(session_id.to_owned())],
             ))
             .await?;
-        match result.rows.first().map(decode_session).transpose()? {
+        match result
+            .rows
+            .first()
+            .map(|row| decode_session(row))
+            .transpose()?
+        {
             Some(mut session) => {
                 self.hydrate_pending_state(&mut session).await?;
                 Ok(Some(session))
@@ -271,6 +276,7 @@ impl SessionStore {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn create(
         &self,
         session_id: &str,
@@ -409,7 +415,7 @@ impl SessionStore {
         let mut sessions = result
             .rows
             .iter()
-            .map(decode_session_summary)
+            .map(|row| decode_session_summary(row))
             .collect::<Result<Vec<_>, _>>()?;
         self.hydrate_pending_summaries(&mut sessions).await?;
         Ok(sessions)
@@ -457,7 +463,11 @@ impl SessionStore {
                 vec![text(session_id), text(idempotency_key)],
             ))
             .await?;
-        result.rows.first().map(decode_prompt).transpose()
+        result
+            .rows
+            .first()
+            .map(|row| decode_prompt(row))
+            .transpose()
     }
 
     pub async fn accept_prompt(
@@ -550,9 +560,7 @@ impl SessionStore {
         let results = match self.database.transaction(statements).await {
             Ok(results) => results,
             Err(error @ VmSqliteError::UnexpectedChanges { .. }) => {
-                if let Err(limit_error) = self.ensure_prompt_capacity(session_id).await {
-                    return Err(limit_error);
-                }
+                self.ensure_prompt_capacity(session_id).await?;
                 return Err(error);
             }
             Err(error) => return Err(error),
@@ -763,9 +771,7 @@ impl SessionStore {
         {
             Ok(results) => results,
             Err(error @ VmSqliteError::UnexpectedChanges { .. }) => {
-                if let Err(limit_error) = self.ensure_pending_capacity(session_id).await {
-                    return Err(limit_error);
-                }
+                self.ensure_pending_capacity(session_id).await?;
                 return Err(error);
             }
             Err(error) => return Err(error),
@@ -1840,15 +1846,13 @@ fn validate_event(event: &Value) -> Result<&str, VmSqliteError> {
                 event.get("reason").and_then(Value::as_str),
             ) {
                 (Some("accepted"), None) => {}
-                (Some("not_pending"), Some(reason))
-                    if matches!(
-                        reason,
-                        "already_resolved"
-                            | "prompt_cancelled"
-                            | "adapter_exited"
-                            | "session_deleted"
-                            | "vm_shutdown"
-                    ) => {}
+                (
+                    Some("not_pending"),
+                    Some(
+                        "already_resolved" | "prompt_cancelled" | "adapter_exited"
+                        | "session_deleted" | "vm_shutdown",
+                    ),
+                ) => {}
                 _ => {
                     return Err(VmSqliteError::InvalidResult(
                         "permission_response event status/reason combination is invalid".to_owned(),
@@ -2070,7 +2074,7 @@ fn derive_state_json(
     serde_json::to_string(&value).map_err(|error| VmSqliteError::InvalidResult(error.to_string()))
 }
 
-fn decode_session(row: &Vec<SqlValue>) -> Result<StoredSession, VmSqliteError> {
+fn decode_session(row: &[SqlValue]) -> Result<StoredSession, VmSqliteError> {
     if row.len() != 26 {
         return Err(VmSqliteError::InvalidResult(format!(
             "session row has {} columns, expected 26",
@@ -2127,7 +2131,7 @@ fn decode_session(row: &Vec<SqlValue>) -> Result<StoredSession, VmSqliteError> {
     })
 }
 
-fn decode_session_summary(row: &Vec<SqlValue>) -> Result<StoredSessionSummary, VmSqliteError> {
+fn decode_session_summary(row: &[SqlValue]) -> Result<StoredSessionSummary, VmSqliteError> {
     if row.len() != 12 {
         return Err(VmSqliteError::InvalidResult(format!(
             "session summary row has {} columns, expected 12",
@@ -2229,7 +2233,7 @@ fn decode_pending_resolution(
     Ok(PendingRequestResolution::Terminal { reason, event })
 }
 
-fn decode_prompt(row: &Vec<SqlValue>) -> Result<StoredPrompt, VmSqliteError> {
+fn decode_prompt(row: &[SqlValue]) -> Result<StoredPrompt, VmSqliteError> {
     if row.len() != 5 {
         return Err(VmSqliteError::InvalidResult(format!(
             "prompt row has {} columns, expected 5",
@@ -2559,9 +2563,11 @@ mod tests {
             .await
             .expect("database");
 
-            let mut limits = AcpLimits::default();
-            limits.max_session_history_events = 3;
-            limits.max_session_history_bytes = 1_000_000;
+            let mut limits = AcpLimits {
+                max_session_history_events: 3,
+                max_session_history_bytes: 1_000_000,
+                ..AcpLimits::default()
+            };
             let store = SessionStore::open(database.clone())
                 .await
                 .expect("store")
@@ -2749,8 +2755,10 @@ mod tests {
                 .expect("session");
             assert_eq!(stale.oldest_retained_sequence, 1);
 
-            let mut limits = AcpLimits::default();
-            limits.max_session_history_events = 2;
+            let limits = AcpLimits {
+                max_session_history_events: 2,
+                ..AcpLimits::default()
+            };
             let request_store = SessionStore::from_database(database).with_limits(&limits);
             let refreshed = request_store
                 .enforce_history_retention("main")
@@ -3613,14 +3621,16 @@ mod tests {
             )
             .await
             .expect("database");
-            let mut limits = AcpLimits::default();
-            limits.max_sessions_per_vm = 1;
-            limits.max_prompts_per_session = 1;
-            limits.max_prompts_per_vm = 1;
-            limits.max_pending_permissions_per_session = 1;
-            limits.max_pending_permissions_per_vm = 1;
-            limits.max_permission_outcomes_per_session = 1;
-            limits.max_permission_outcomes_per_vm = 1;
+            let limits = AcpLimits {
+                max_sessions_per_vm: 1,
+                max_prompts_per_session: 1,
+                max_prompts_per_vm: 1,
+                max_pending_permissions_per_session: 1,
+                max_pending_permissions_per_vm: 1,
+                max_permission_outcomes_per_session: 1,
+                max_permission_outcomes_per_vm: 1,
+                ..AcpLimits::default()
+            };
             let store = SessionStore::open(database).await.expect("store").with_limits(&limits);
             store.create("main", "agent", "native", "/workspace", r#"{"permissionPolicy":"ask"}"#, None, None, "[]").await.expect("create");
             assert!(matches!(
@@ -3660,9 +3670,11 @@ mod tests {
             )
             .await
             .expect("database");
-            let mut limits = AcpLimits::default();
-            limits.max_prompts_per_session = 1;
-            limits.max_prompts_per_vm = 1;
+            let mut limits = AcpLimits {
+                max_prompts_per_session: 1,
+                max_prompts_per_vm: 1,
+                ..AcpLimits::default()
+            };
             let prompt_store = SessionStore::open(database.clone())
                 .await
                 .expect("store")

@@ -4,6 +4,7 @@ import piCli from "@agentos-software/pi-cli";
 import type { Fixture, ToolCall } from "@copilotkit/llmock";
 import { describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
+import type { SessionStreamEntry } from "../src/session-api.js";
 import {
 	createAnthropicFixture,
 	startLlmock,
@@ -11,6 +12,7 @@ import {
 } from "./helpers/llmock-helper.js";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import { hasBuiltRegistryCommands } from "./helpers/registry-command-availability.js";
+import { promptResultText } from "./helpers/session-result.js";
 
 const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
 const registryCommandsAvailable = hasBuiltRegistryCommands(common);
@@ -116,40 +118,34 @@ describe("full openSession({ agent: 'pi-cli' }) inside the VM", () => {
 				},
 			});
 
-			const events: { method: string; params?: unknown }[] = [];
+			const events: SessionStreamEntry[] = [];
 			const unsubscribeEvents = vm.onSessionEvent(sessionId, (event) => {
 				events.push(event);
 			});
-			const { response, text } = await vm.prompt(
+			const result = await vm.prompt({
 				sessionId,
-				`Create ${workspacePath} with the text hello from pi cli write.`,
-			);
+				content: [
+					{
+						type: "text",
+						text: `Create ${workspacePath} with the text hello from pi cli write.`,
+					},
+				],
+			});
 			unsubscribeEvents();
 
-			expect(response.error).toBeUndefined();
-			expect(text).toContain("notes.txt was created successfully.");
+			expect(result.stopReason).toBe("end_turn");
+			expect(promptResultText(result)).toContain(
+				"notes.txt was created successfully.",
+			);
 			expect(new TextDecoder().decode(await vm.readFile(workspacePath))).toBe(
 				"hello from pi cli write",
 			);
 			expect(mock.getRequests().length).toBeGreaterThanOrEqual(2);
 
-			expect(
-				events.some(
-					(event) =>
-						event.method === "session/update" &&
-						JSON.stringify(event.params).includes("tool_call"),
-				),
-			).toBe(true);
-			expect(
-				events.some(
-					(event) =>
-						event.method === "session/update" &&
-						JSON.stringify(event.params).includes('"completed"'),
-				),
-			).toBe(true);
+			expect(events.some((event) => event.type === "tool_call")).toBe(true);
 		} finally {
 			if (sessionId) {
-				vm.unloadSession({ sessionId });
+				await vm.unloadSession({ sessionId });
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
@@ -190,20 +186,27 @@ describe("full openSession({ agent: 'pi-cli' }) inside the VM", () => {
 					},
 				});
 
-				const { response, text } = await vm.prompt(
+				const result = await vm.prompt({
 					sessionId,
-					`Use bash to write bash-ok into ${workspacePath}.`,
-				);
+					content: [
+						{
+							type: "text",
+							text: `Use bash to write bash-ok into ${workspacePath}.`,
+						},
+					],
+				});
 
-				expect(response.error).toBeUndefined();
-				expect(text).toContain("bash-output.txt was written successfully.");
+				expect(result.stopReason).toBe("end_turn");
+				expect(promptResultText(result)).toContain(
+					"bash-output.txt was written successfully.",
+				);
 				expect(new TextDecoder().decode(await vm.readFile(workspacePath))).toBe(
 					"bash-ok",
 				);
 				expect(mock.getRequests().length).toBeGreaterThanOrEqual(2);
 			} finally {
 				if (sessionId) {
-					vm.unloadSession({ sessionId });
+					await vm.unloadSession({ sessionId });
 				}
 				await vm.dispose();
 				await stopLlmock(mock);

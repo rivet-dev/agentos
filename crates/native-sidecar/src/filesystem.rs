@@ -2658,16 +2658,12 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             } else {
                 kernel.chown_for_process(EXECUTION_DRIVER_NAME, kernel_pid, path, uid, gid, true)
             };
-            if is_lchown && result.as_ref().is_err_and(|error| error.code() == "ENOENT") {
-                if materialize_process_shadow_symlink(kernel, process, kernel_pid, path)? {
-                    result = kernel.lchown_for_process(
-                        EXECUTION_DRIVER_NAME,
-                        kernel_pid,
-                        path,
-                        uid,
-                        gid,
-                    );
-                }
+            if is_lchown
+                && result.as_ref().is_err_and(|error| error.code() == "ENOENT")
+                && materialize_process_shadow_symlink(kernel, process, kernel_pid, path)?
+            {
+                result =
+                    kernel.lchown_for_process(EXECUTION_DRIVER_NAME, kernel_pid, path, uid, gid);
             }
             result.map(|()| Value::Null).map_err(kernel_error)
         }
@@ -2943,7 +2939,7 @@ fn normalize_process_filesystem_rpc_path(process: &ActiveProcess, path: &str) ->
             return guest_path;
         }
         if let Some(sandbox_root) = process.shadow_root.as_ref() {
-            if let Ok(suffix) = normalized_host_path.strip_prefix(&sandbox_root) {
+            if let Ok(suffix) = normalized_host_path.strip_prefix(sandbox_root) {
                 let suffix = suffix.to_string_lossy();
                 return normalize_path(&format!("/{}", suffix.trim_start_matches('/')));
             }
@@ -3933,14 +3929,14 @@ fn mapped_child_rename_at2(
     {
         let flags = nix::fcntl::RenameFlags::from_bits(flags)
             .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EINVAL))?;
-        return nix::fcntl::renameat2(
+        nix::fcntl::renameat2(
             Some(source.directory.as_raw_fd()),
             source.child_name.as_os_str(),
             Some(destination.directory.as_raw_fd()),
             destination.child_name.as_os_str(),
             flags,
         )
-        .map_err(errno_to_io);
+        .map_err(errno_to_io)
     }
 
     #[cfg(not(all(target_os = "linux", target_env = "gnu")))]

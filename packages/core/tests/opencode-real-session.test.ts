@@ -1,7 +1,6 @@
 import { resolve } from "node:path";
 import opencode from "@agentos-software/opencode";
 import { describe, expect, test } from "vitest";
-import type { AgentCapabilities, AgentInfo } from "../src/agent-os.js";
 import { AgentOs } from "../src/agent-os.js";
 import {
 	DEFAULT_TEXT_FIXTURE,
@@ -44,31 +43,27 @@ describe("real openSession({ agent: 'opencode' })", () => {
 				},
 			});
 
-			const agentInfo = vm.getSessionAgentInfo(sessionId) as AgentInfo;
+			const agentInfo = await vm.getSessionAgentInfo({ sessionId });
 			expect(agentInfo.name).toBe("OpenCode");
 			expect(agentInfo.version).toBeTruthy();
 
-			const capabilities = vm.getSessionCapabilities(
-				sessionId,
-			) as AgentCapabilities;
-			expect(capabilities.promptCapabilities).toMatchObject({
+			const capabilities = await vm.getSessionCapabilities({ sessionId });
+			expect(capabilities.prompt).toMatchObject({
 				embeddedContext: true,
 				image: true,
 			});
 
-			const modes = vm.getSessionModes(sessionId);
-			expect(modes?.currentModeId).toBe("build");
-			expect(modes?.availableModes.map((mode) => mode.id)).toEqual(
-				expect.arrayContaining(["build", "plan"]),
-			);
+			const config = await vm.getSessionConfig({ sessionId });
+			// OpenCode currently advertises legacy ACP `modes`, not native
+			// `configOptions`; AgentOS deliberately does not invent a mapping.
+			expect(config.options.some((option) => option.id === "mode")).toBe(false);
 
-			expect(vm.listSessions()).toContainEqual({
-				sessionId,
-				agentType: "opencode",
-			});
+			expect((await vm.listSessions()).sessions).toContainEqual(
+				expect.objectContaining({ sessionId, agent: "opencode" }),
+			);
 		} finally {
 			if (sessionId) {
-				vm.unloadSession({ sessionId });
+				await vm.unloadSession({ sessionId });
 			}
 			await vm.dispose();
 			await stopLlmock(mock);

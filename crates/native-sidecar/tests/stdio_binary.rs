@@ -744,7 +744,11 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
         wire_request(
             13,
             wire_vm(&connection_id, &session_id, &vm_id),
-            RequestPayload::SnapshotRootFilesystemRequest,
+            RequestPayload::SnapshotRootFilesystemRequest(
+                agentos_native_sidecar::wire::SnapshotRootFilesystemRequest {
+                    max_bytes: 64 * 1024 * 1024,
+                },
+            ),
         ),
     );
     let snapshot = recv_response(&mut control, &codec, 13, &mut buffered_events);
@@ -985,6 +989,31 @@ fn native_sidecar_binary_supports_js_bridge_host_filesystem_access() {
                 ("realpath", "/existing.txt") => {
                     js_bridge_result(call, Some(json!("/existing.txt")), None)
                 }
+                ("stat" | "lstat", "/existing.txt") => {
+                    let metadata =
+                        fs::metadata(host_root.join("existing.txt")).expect("stat host file");
+                    js_bridge_result(
+                        call,
+                        Some(json!({
+                            "mode": 0o644,
+                            "size": metadata.len(),
+                            "blocks": 0,
+                            "dev": 1,
+                            "rdev": 0,
+                            "isDirectory": false,
+                            "isSymbolicLink": false,
+                            "atimeMs": 0,
+                            "mtimeMs": 0,
+                            "ctimeMs": 0,
+                            "birthtimeMs": 0,
+                            "ino": 2,
+                            "nlink": 1,
+                            "uid": 0,
+                            "gid": 0,
+                        })),
+                        None,
+                    )
+                }
                 ("readFile", "/existing.txt") => js_bridge_result(
                     call,
                     Some(serde_json::Value::String(
@@ -994,6 +1023,9 @@ fn native_sidecar_binary_supports_js_bridge_host_filesystem_access() {
                     )),
                     None,
                 ),
+                ("utimes", "/existing.txt") => {
+                    js_bridge_result(call, Some(serde_json::Value::Null), None)
+                }
                 other => panic!("unexpected js bridge read callback: {other:?}"),
             }
         },

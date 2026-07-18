@@ -1,7 +1,8 @@
 import { resolve } from "node:path";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import { describe, expect, test } from "vitest";
-import { AgentOs, type AgentInfo } from "../src/agent-os.js";
+import { AgentOs } from "../src/agent-os.js";
+import type { SessionAgentInfo } from "../src/session-api.js";
 import { createProjectedAgentPackage } from "./helpers/projected-agent-package.js";
 
 const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
@@ -74,7 +75,7 @@ process.stdin.on("data", (chunk) => {
 });
 `;
 
-type LaunchProbe = AgentInfo & {
+type LaunchProbe = SessionAgentInfo & {
 	argv?: string[];
 	env?: Partial<Record<(typeof CAPTURED_ENV_KEYS)[number], string | null>>;
 };
@@ -101,10 +102,10 @@ async function inspectLaunch(
 	try {
 		sessionId = `launch-probe-${agentType}`;
 		await vm.openSession({ sessionId, agent: agentType });
-		return vm.getSessionAgentInfo(sessionId) as LaunchProbe;
+		return (await vm.getSessionAgentInfo({ sessionId })) as LaunchProbe;
 	} finally {
 		if (sessionId) {
-			vm.unloadSession({ sessionId });
+			await vm.unloadSession({ sessionId });
 		}
 		await vm.dispose();
 		agentPackage.cleanup();

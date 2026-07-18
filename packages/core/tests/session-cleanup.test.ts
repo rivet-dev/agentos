@@ -25,6 +25,7 @@ import {
 	createVmOpenCodeHome,
 } from "./helpers/opencode-helper.js";
 import { REGISTRY_SOFTWARE } from "./helpers/registry-commands.js";
+import { promptResultText } from "./helpers/session-result.js";
 
 const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
 const PROMPT_TEXT = "Reply with exactly cleanup-ok.";
@@ -732,12 +733,12 @@ function registerSharedCleanupCoverage(agents: SessionCleanupAgent[]): void {
 			);
 			expect(activePids.length).toBeGreaterThan(0);
 
-			const { stopReason, text } = await vm.prompt({
+			const result = await vm.prompt({
 				sessionId,
 				content: [{ type: "text", text: PROMPT_TEXT }],
 			});
-			expect(stopReason).toBeDefined();
-			expect(text).toContain(PROMPT_RESPONSE);
+			expect(result.stopReason).toBeDefined();
+			expect(promptResultText(result)).toContain(PROMPT_RESPONSE);
 			const vmResourcesBeforeClose = await snapshotVmResources(vm);
 			expect(vmResourcesBeforeClose.processCount).toBeGreaterThanOrEqual(
 				baselineVmResources.processCount + 1,
@@ -800,12 +801,12 @@ describe("session cleanup", () => {
 					(pid) => !baselineVmResources.pids.includes(pid),
 				);
 				expect(activePids.length).toBeGreaterThan(0);
-				const { stopReason, text } = await vm.prompt({
+				const result = await vm.prompt({
 					sessionId,
 					content: [{ type: "text", text: PROMPT_TEXT }],
 				});
-				expect(stopReason).toBeDefined();
-				expect(text).toContain(PROMPT_RESPONSE);
+				expect(result.stopReason).toBeDefined();
+				expect(promptResultText(result)).toContain(PROMPT_RESPONSE);
 
 				await unloadTestSession(vm, sessionId);
 				await assertSessionResourcesReleased(

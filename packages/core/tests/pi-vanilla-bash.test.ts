@@ -98,12 +98,16 @@ function captureSessionEventText(
 } {
 	const events: string[] = [];
 	const unsubscribe = vm.onSessionEvent(sessionId, (event) => {
-		events.push(JSON.stringify(event.params));
+		events.push(JSON.stringify(event));
 	});
 	return {
 		text: () => events.join("\n"),
 		unsubscribe,
 	};
+}
+
+function textPrompt(vm: AgentOs, sessionId: string, text: string) {
+	return vm.prompt({ sessionId, content: [{ type: "text", text }] });
 }
 
 /**
@@ -141,13 +145,13 @@ describe("vanilla Pi bash tool inside the VM", () => {
 			});
 
 			const eventText = captureSessionEventText(vm, sessionId);
-			const { response } = await vm.prompt(sessionId, "Run pwd.");
+			const result = await textPrompt(vm, sessionId, "Run pwd.");
 			eventText.unsubscribe();
-			expect(response.error).toBeUndefined();
+			expect(result.stopReason).toBe("end_turn");
 			expect(eventText.text()).toContain(workspaceDir);
 		} finally {
 			if (sessionId) {
-				vm.unloadSession({ sessionId });
+				await vm.unloadSession({ sessionId });
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
@@ -180,16 +184,17 @@ describe("vanilla Pi bash tool inside the VM", () => {
 			});
 
 			const eventText = captureSessionEventText(vm, sessionId);
-			const { response } = await vm.prompt(
+			const result = await textPrompt(
+				vm,
 				sessionId,
 				"Echo the APP_TEST_FLAG variable.",
 			);
 			eventText.unsubscribe();
-			expect(response.error).toBeUndefined();
+			expect(result.stopReason).toBe("end_turn");
 			expect(eventText.text()).toContain("vanilla");
 		} finally {
 			if (sessionId) {
-				vm.unloadSession({ sessionId });
+				await vm.unloadSession({ sessionId });
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
@@ -224,19 +229,20 @@ describe("vanilla Pi bash tool inside the VM", () => {
 			});
 
 			const eventText = captureSessionEventText(vm, sessionId);
-			const { response } = await vm.prompt(
+			const result = await textPrompt(
+				vm,
 				sessionId,
 				"Run a command that writes to stdout and stderr and exits nonzero.",
 			);
 			eventText.unsubscribe();
-			expect(response.error).toBeUndefined();
+			expect(result.stopReason).toBe("end_turn");
 			const events = eventText.text();
 			expect(events).toContain("out-line");
 			expect(events).toContain("err-line");
 			expect(events).toContain("3");
 		} finally {
 			if (sessionId) {
-				vm.unloadSession({ sessionId });
+				await vm.unloadSession({ sessionId });
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
@@ -267,17 +273,18 @@ describe("vanilla Pi bash tool inside the VM", () => {
 				},
 			});
 
-			const { response } = await vm.prompt(
+			const result = await textPrompt(
+				vm,
 				sessionId,
 				"Use bash to write ok into out.txt.",
 			);
-			expect(response.error).toBeUndefined();
+			expect(result.stopReason).toBe("end_turn");
 			expect(
 				new TextDecoder().decode(await vm.readFile(`${workspaceDir}/out.txt`)),
 			).toBe("ok");
 		} finally {
 			if (sessionId) {
-				vm.unloadSession({ sessionId });
+				await vm.unloadSession({ sessionId });
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
@@ -310,19 +317,20 @@ describe("vanilla Pi bash tool inside the VM", () => {
 			});
 
 			const eventText = captureSessionEventText(vm, sessionId);
-			const { response } = await vm.prompt(
+			const result = await textPrompt(
+				vm,
 				sessionId,
 				"Run sleep 30 with a 1 second timeout.",
 			);
 			eventText.unsubscribe();
-			expect(response.error).toBeUndefined();
+			expect(result.stopReason).toBe("end_turn");
 			// The kill must actually fire: completing in seconds (not ~30s) proves
 			// the timeout killed the sleep instead of waiting for it to finish.
 			expect(Date.now() - startedAt).toBeLessThan(20_000);
 			expect(eventText.text().toLowerCase()).toContain("timed out");
 		} finally {
 			if (sessionId) {
-				vm.unloadSession({ sessionId });
+				await vm.unloadSession({ sessionId });
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
@@ -361,7 +369,7 @@ describe("vanilla Pi bash tool inside the VM", () => {
 			const activeSessionId = sessionId;
 			const sawInProgress = new Promise<void>((resolveInProgress) => {
 				const unsubscribe = vm.onSessionEvent(activeSessionId, (event) => {
-					const serialized = JSON.stringify(event.params);
+					const serialized = JSON.stringify(event);
 					if (
 						serialized.includes('"in_progress"') &&
 						serialized.includes("bash")
@@ -372,15 +380,17 @@ describe("vanilla Pi bash tool inside the VM", () => {
 				});
 			});
 
-			const promptPromise = vm.prompt(activeSessionId, "Run sleep 60 in bash.");
+			const promptPromise = textPrompt(
+				vm,
+				activeSessionId,
+				"Run sleep 60 in bash.",
+			);
 
 			await sawInProgress;
-			await vm.cancelSession(activeSessionId);
+			await vm.cancelPrompt({ sessionId: activeSessionId });
 
-			const { response } = await promptPromise;
-			const stopReason = (response.result as { stopReason?: string })
-				?.stopReason;
-			expect(stopReason).toBe("cancelled");
+			const result = await promptPromise;
+			expect(result.stopReason).toBe("cancelled");
 
 			const lingering = vm
 				.allProcesses()
@@ -393,7 +403,7 @@ describe("vanilla Pi bash tool inside the VM", () => {
 			expect(lingering).toEqual([]);
 		} finally {
 			if (sessionId) {
-				vm.unloadSession({ sessionId });
+				await vm.unloadSession({ sessionId });
 			}
 			await vm.dispose();
 			await stopLlmock(mock);

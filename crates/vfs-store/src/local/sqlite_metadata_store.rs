@@ -267,13 +267,19 @@ impl SqliteMetadataStore {
         upsert_inode(connection, meta)?;
         if storage_changed {
             connection
-                .execute("DELETE FROM agentos_fs_chunks WHERE ino = ?", params![meta.ino])
+                .execute(
+                    "DELETE FROM agentos_fs_chunks WHERE ino = ?",
+                    params![meta.ino],
+                )
                 .map_err(|err| VfsError::eio(format!("delete setattr chunks: {err}")))?;
             for key in affected_keys {
                 let refcount = self.inner.refcount(&key);
                 if refcount == 0 {
                     connection
-                        .execute("DELETE FROM agentos_fs_block_refs WHERE block_key = ?", params![key.0])
+                        .execute(
+                            "DELETE FROM agentos_fs_block_refs WHERE block_key = ?",
+                            params![key.0],
+                        )
                         .map_err(|err| {
                             VfsError::eio(format!("delete setattr block ref {}: {err}", key.0))
                         })?;
@@ -399,7 +405,9 @@ impl SqliteMetadataStore {
 
             if new_size < old_size {
                 connection
-                    .prepare_cached("DELETE FROM agentos_fs_chunks WHERE ino = ? AND chunk_index >= ?")
+                    .prepare_cached(
+                        "DELETE FROM agentos_fs_chunks WHERE ino = ? AND chunk_index >= ?",
+                    )
                     .map_err(|err| VfsError::eio(format!("prepare truncated chunk delete: {err}")))?
                     .execute(params![ino, keep_chunks])
                     .map_err(|err| {
@@ -425,7 +433,10 @@ impl SqliteMetadataStore {
                 let refcount = self.inner.refcount(&key);
                 if refcount == 0 {
                     connection
-                        .execute("DELETE FROM agentos_fs_block_refs WHERE block_key = ?", params![key.0])
+                        .execute(
+                            "DELETE FROM agentos_fs_block_refs WHERE block_key = ?",
+                            params![key.0],
+                        )
                         .map_err(|err| {
                             VfsError::eio(format!("delete SQLite block ref {}: {err}", key.0))
                         })?;

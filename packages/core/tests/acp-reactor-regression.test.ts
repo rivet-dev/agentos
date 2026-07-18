@@ -37,7 +37,7 @@ function writeUpdate(text) {
       sessionId: "reactor-session-1",
       update: {
         sessionUpdate: "agent_message_chunk",
-        content: { text },
+        content: { type: "text", text },
       },
     },
   });
@@ -242,29 +242,38 @@ describe("ACP adapter reactor regression", () => {
 		await vm.openSession({ sessionId, agent: "acp-reactor-regression" });
 		const updateTexts: string[] = [];
 		const unsubscribe = vm.onSessionEvent(sessionId, (event) => {
-			if (event.method !== "session/update") return;
-			const params = event.params as {
-				update?: { content?: { text?: unknown } };
-			};
-			const text = params.update?.content?.text;
-			if (typeof text === "string") updateTexts.push(text);
+			if (
+				event.durability === "ephemeral" &&
+				event.type === "agent_message_chunk" &&
+				event.content.type === "text"
+			) {
+				updateTexts.push(event.content.text);
+			}
 		});
 
 		try {
-			const firstPrompt = await vm.prompt(
+			const firstPrompt = await vm.prompt({
 				sessionId,
-				"Exercise the saturated ordinary event lane.",
-			);
-			expect(firstPrompt.response.error).toBeUndefined();
-			expect(
-				(firstPrompt.response.result as { stopReason?: string }).stopReason,
-			).toBe("end_turn");
-			await waitFor(
-				() =>
-					updateTexts.filter((text) => text.startsWith("reactor-update:"))
-						.length === UPDATE_COUNT &&
-					updateTexts.includes("reactor-tool-result:42"),
-			);
+				content: [
+					{
+						type: "text",
+						text: "Exercise the saturated ordinary event lane.",
+					},
+				],
+			});
+			expect(firstPrompt.stopReason).toBe("end_turn");
+			try {
+				await waitFor(
+					() =>
+						updateTexts.filter((text) => text.startsWith("reactor-update:"))
+							.length === UPDATE_COUNT &&
+						updateTexts.includes("reactor-tool-result:42"),
+				);
+			} catch (error) {
+				throw new Error(
+					`${String(error)}; received ${updateTexts.length} updates; stderr: ${stderrChunks.join("")}`,
+				);
+			}
 
 			const numberedUpdates = updateTexts
 				.filter((text) => text.startsWith("reactor-update:"))
@@ -276,14 +285,16 @@ describe("ACP adapter reactor regression", () => {
 			expect(hostToolCalls).toBe(1);
 			expect(hostToolInputs).toEqual([{ a: 19, b: 23 }]);
 
-			const secondPrompt = await vm.prompt(
+			const secondPrompt = await vm.prompt({
 				sessionId,
-				"Prove that the same adapter session remains reusable.",
-			);
-			expect(secondPrompt.response.error).toBeUndefined();
-			expect(
-				(secondPrompt.response.result as { stopReason?: string }).stopReason,
-			).toBe("end_turn");
+				content: [
+					{
+						type: "text",
+						text: "Prove that the same adapter session remains reusable.",
+					},
+				],
+			});
+			expect(secondPrompt.stopReason).toBe("end_turn");
 			await waitFor(() => updateTexts.includes("reactor-session-reused:2"));
 			expect(hostToolCalls).toBe(1);
 			expect(unexpectedAgentExits).toEqual([]);
@@ -295,7 +306,7 @@ describe("ACP adapter reactor regression", () => {
 			expect(stderr).not.toMatch(/session evicted/i);
 		} finally {
 			unsubscribe();
-			vm.unloadSession({ sessionId });
+			await vm.unloadSession({ sessionId });
 		}
 	}, 120_000);
 });

@@ -1928,7 +1928,8 @@ mod tests {
             .to_string()
             .contains("limits.resources.maxSocketBufferedBytes"));
 
-        let acp_relationship_cases: [(&str, &str, fn(&mut VmLimits)); 3] = [
+        type AcpRelationshipCase = (&'static str, &'static str, fn(&mut VmLimits));
+        let acp_relationship_cases: [AcpRelationshipCase; 3] = [
             (
                 "limits.acp.maxPromptsPerSession",
                 "limits.acp.maxPromptsPerVm",

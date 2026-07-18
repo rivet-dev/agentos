@@ -436,11 +436,14 @@ async fn chunked_local_reopens_and_cleans_stale_blocks() {
 #[test]
 fn chunked_local_mounted_adapter_creates_exclusive_files_with_modes() {
     let temp = tempfile::tempdir().unwrap();
+    let runtime =
+        agentos_runtime::SidecarRuntime::process(&agentos_runtime::RuntimeConfig::default())
+            .expect("create test runtime");
     let fs = ChunkedFs::new(
         SqliteMetadataStore::open(temp.path().join("metadata.sqlite")).unwrap(),
         FileBlockStore::new(temp.path().join("blocks")).unwrap(),
     );
-    let mut mounted = MountedEngineFileSystem::new(fs).unwrap();
+    let mut mounted = MountedEngineFileSystem::with_runtime_context(fs, runtime.context());
 
     mounted.mkdir("/nested", false).unwrap();
     mounted
@@ -457,11 +460,14 @@ fn chunked_local_mounted_adapter_creates_exclusive_files_with_modes() {
 #[test]
 fn chunked_local_mounted_adapter_preserves_sparse_pwrite_allocation() {
     let temp = tempfile::tempdir().unwrap();
+    let runtime =
+        agentos_runtime::SidecarRuntime::process(&agentos_runtime::RuntimeConfig::default())
+            .expect("create test runtime");
     let fs = ChunkedFs::new(
         SqliteMetadataStore::open(temp.path().join("metadata.sqlite")).unwrap(),
         FileBlockStore::new(temp.path().join("blocks")).unwrap(),
     );
-    let mut mounted = MountedEngineFileSystem::new(fs).unwrap();
+    let mut mounted = MountedEngineFileSystem::with_runtime_context(fs, runtime.context());
 
     mounted.write_file("/sparse", Vec::new()).unwrap();
     mounted
@@ -476,11 +482,14 @@ fn chunked_local_mounted_adapter_preserves_sparse_pwrite_allocation() {
 #[test]
 fn chunked_local_mount_table_preserves_sparse_pwrite_allocation() {
     let temp = tempfile::tempdir().unwrap();
+    let runtime =
+        agentos_runtime::SidecarRuntime::process(&agentos_runtime::RuntimeConfig::default())
+            .expect("create test runtime");
     let fs = ChunkedFs::new(
         SqliteMetadataStore::open(temp.path().join("metadata.sqlite")).unwrap(),
         FileBlockStore::new(temp.path().join("blocks")).unwrap(),
     );
-    let mounted = MountedEngineFileSystem::new(fs).unwrap();
+    let mounted = MountedEngineFileSystem::with_runtime_context(fs, runtime.context());
     let mut table = MountTable::new(MemoryFileSystem::new());
     vfs::posix::VirtualFileSystem::mkdir(&mut table, "/mnt", false).unwrap();
     table

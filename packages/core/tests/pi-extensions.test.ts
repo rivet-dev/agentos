@@ -9,6 +9,7 @@ import {
 	stopLlmock,
 } from "./helpers/llmock-helper.js";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
+import { promptResultText } from "./helpers/session-result.js";
 
 const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
 const HOME_DIR = "/home/agentos";
@@ -112,20 +113,22 @@ describe("Pi extensions quickstart truth test", () => {
 				},
 			});
 
-			const { response, text } = await vm.prompt(
+			const result = await vm.prompt({
 				sessionId,
-				"What is 2 + 2? Reply with just the number.",
-			);
+				content: [
+					{ type: "text", text: "What is 2 + 2? Reply with just the number." },
+				],
+			});
 
-			expect(response.error).toBeUndefined();
-			expect(text).toContain(EXPECTED_REPLY);
+			expect(result.stopReason).toBe("end_turn");
+			expect(promptResultText(result)).toContain(EXPECTED_REPLY);
 			expect(mock.getRequests().length).toBeGreaterThanOrEqual(1);
 			expect(mock.getRequests().some(requestIncludesExtensionMarker)).toBe(
 				true,
 			);
 		} finally {
 			if (sessionId) {
-				vm.unloadSession({ sessionId });
+				await vm.unloadSession({ sessionId });
 			}
 			await vm.dispose();
 			await stopLlmock(mock);

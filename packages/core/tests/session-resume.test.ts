@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
 import { createProjectedAgentPackage } from "./helpers/projected-agent-package.js";
+import { promptResultText } from "./helpers/session-result.js";
 
 // Exercise lazy durable restoration through the public API against the real
 // sidecar and a mock ACP adapter. `unloadSession` hides the private ACP id;
@@ -192,7 +193,7 @@ describe("sidecar resume orchestration (mock ACP adapter)", () => {
 			await vm.unloadSession({ sessionId });
 			const restored = await textPrompt(sessionId, "after unload");
 			expect(restored.sessionId).toBe(sessionId);
-			expect(JSON.parse(restored.text)).toEqual([
+			expect(JSON.parse(promptResultText(restored))).toEqual([
 				{ type: "text", text: "after unload" },
 			]);
 		} finally {
@@ -214,7 +215,7 @@ describe("sidecar resume orchestration (mock ACP adapter)", () => {
 			await textPrompt(sessionId, "first turn");
 			await vm.unloadSession({ sessionId });
 			const restored = await textPrompt(sessionId, "second turn");
-			const blocks = JSON.parse(restored.text) as Array<{
+			const blocks = JSON.parse(promptResultText(restored)) as Array<{
 				type: string;
 				text: string;
 			}>;

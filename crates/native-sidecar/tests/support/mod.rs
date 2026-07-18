@@ -11,6 +11,7 @@ use agentos_native_sidecar::protocol::{
 };
 use agentos_native_sidecar::{DispatchResult, NativeSidecar, NativeSidecarConfig};
 pub use bridge_support::RecordingBridge;
+#[allow(unused_imports)]
 pub(crate) use s3_common::test_support::MockS3Server;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;

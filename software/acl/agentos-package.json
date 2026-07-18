@@ -7,6 +7,7 @@
 	"registry": {
 		"title": "POSIX ACL tools",
 		"description": "Inspect and modify POSIX access and default ACLs.",
+		"category": "core",
 		"priority": 42
 	}
 }

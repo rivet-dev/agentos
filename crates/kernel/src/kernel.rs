@@ -2284,6 +2284,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             .set_xattr(path, name, value, flags, follow_symlinks)?)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn set_xattr_for_process(
         &mut self,
         requester_driver: &str,
@@ -9078,7 +9079,7 @@ struct PosixAcl {
 
 impl PosixAcl {
     fn parse(value: &[u8], path: &str) -> KernelResult<Self> {
-        if value.len() < 4 || (value.len() - 4) % 8 != 0 {
+        if value.len() < 4 || !(value.len() - 4).is_multiple_of(8) {
             return Err(invalid_acl(path, "invalid xattr length"));
         }
         let entry_count = (value.len() - 4) / 8;

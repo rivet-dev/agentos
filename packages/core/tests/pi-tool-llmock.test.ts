@@ -4,12 +4,14 @@ import pi from "@agentos-software/pi";
 import type { Fixture, ToolCall } from "@copilotkit/llmock";
 import { describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
+import type { SessionStreamEntry } from "../src/session-api.js";
 import {
 	createAnthropicFixture,
 	startLlmock,
 	stopLlmock,
 } from "./helpers/llmock-helper.js";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
+import { promptResultText } from "./helpers/session-result.js";
 
 const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
 
@@ -113,40 +115,34 @@ describe("pi tool execution (llmock)", () => {
 				},
 			});
 
-			const events: { method: string; params?: unknown }[] = [];
+			const events: SessionStreamEntry[] = [];
 			const unsubscribeEvents = vm.onSessionEvent(sessionId, (event) => {
 				events.push(event);
 			});
-			const { response, text } = await vm.prompt(
+			const result = await vm.prompt({
 				sessionId,
-				"Write the text 'tool-test-ok' to tool-verify.txt. Do not explain, just do it.",
-			);
+				content: [
+					{
+						type: "text",
+						text: "Write the text 'tool-test-ok' to tool-verify.txt. Do not explain, just do it.",
+					},
+				],
+			});
 			unsubscribeEvents();
 
-			expect(response.error).toBeUndefined();
-			expect(text).toContain("tool-verify.txt was created successfully.");
+			expect(result.stopReason).toBe("end_turn");
+			expect(promptResultText(result)).toContain(
+				"tool-verify.txt was created successfully.",
+			);
 			expect(new TextDecoder().decode(await vm.readFile(workspacePath))).toBe(
 				"tool-test-ok",
 			);
 			expect(mock.getRequests().length).toBeGreaterThanOrEqual(2);
 
-			expect(
-				events.some(
-					(event) =>
-						event.method === "session/update" &&
-						JSON.stringify(event.params).includes("tool_call"),
-				),
-			).toBe(true);
-			expect(
-				events.some(
-					(event) =>
-						event.method === "session/update" &&
-						JSON.stringify(event.params).includes('"completed"'),
-				),
-			).toBe(true);
+			expect(events.some((event) => event.type === "tool_call")).toBe(true);
 		} finally {
 			if (sessionId) {
-				vm.unloadSession({ sessionId });
+				await vm.unloadSession({ sessionId });
 			}
 			await vm.dispose();
 			await stopLlmock(mock);

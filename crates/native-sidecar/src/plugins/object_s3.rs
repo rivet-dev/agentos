@@ -70,7 +70,6 @@ impl<B> FileSystemPluginFactory<MountPluginContext<B>> for ObjectS3MountPlugin {
                 gid: config.gid.unwrap_or(0),
                 file_mode: config.file_mode.unwrap_or(0o644),
                 dir_mode: config.dir_mode.unwrap_or(0o755),
-                ..ObjectFsOptions::default()
             },
         );
         Ok(Box::new(MountedEngineFileSystem::with_runtime_context(

@@ -35,7 +35,7 @@ impl AcpExtension {
             .restore_acp_runtime(
                 ctx,
                 RestoreRuntimeRequest {
-                    acp_session_id: acp_session_id,
+                    acp_session_id,
                     agent_type: session.agent.clone(),
                     cwd: session.cwd.clone(),
                     env,

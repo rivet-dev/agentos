@@ -926,12 +926,13 @@ impl AgentOs {
     async fn reconfigure_dynamic_mounts(&self) -> Result<()> {
         let inner = self.inner();
         let config = &inner.config;
+        let mounts = inner.dynamic_mounts.lock().clone();
         let response = self
             .transport()
             .request_wire(
                 self.fs_vm_scope(),
                 wire::RequestPayload::ConfigureVmRequest(wire::ConfigureVmRequest {
-                    mounts: inner.dynamic_mounts.lock().clone(),
+                    mounts,
                     software: Vec::new(),
                     permissions: Some(crate::agent_os::permissions_policy(config)),
                     module_access_cwd: None,

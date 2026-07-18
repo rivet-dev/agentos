@@ -5,7 +5,9 @@ import common from "@agentos-software/common";
 import { afterEach, describe, expect, test } from "vitest";
 import { z } from "zod";
 import { AgentOs, binding, bindings } from "../src/index.js";
+import type { SessionStreamEntry } from "../src/session-api.js";
 import { createProjectedAgentPackage } from "./helpers/projected-agent-package.js";
+import { promptResultText } from "./helpers/session-result.js";
 
 const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
 const textDecoder = new TextDecoder();
@@ -78,6 +80,7 @@ process.stdin.on("data", (chunk) => {
             update: {
               sessionUpdate: "agent_message_chunk",
               content: {
+                type: "text",
                 text: "mock-parity-flow-ok",
               },
             },
@@ -90,19 +93,10 @@ process.stdin.on("data", (chunk) => {
             sessionId: "mock-session-1",
             update: {
               sessionUpdate: "tool_call",
+              toolCallId: "synthetic-tool-1",
               title: "synthetic-tool",
+              kind: "other",
               status: "completed",
-            },
-          },
-        });
-        writeMessage({
-          jsonrpc: "2.0",
-          method: "session/update",
-          params: {
-            sessionId: "mock-session-1",
-            update: {
-              sessionUpdate: "completed",
-              stopReason: "end_turn",
             },
           },
         });
@@ -146,8 +140,10 @@ function assertNativeSidecar(vm: AgentOs): void {
 	expect(vm.sidecar.describe()).toMatchObject({
 		state: "ready",
 	});
-	expect("kernel" in (vm as Record<string, unknown>)).toBe(false);
-	expect((vm as Record<string, unknown>).kernel).toBeUndefined();
+	expect("kernel" in (vm as unknown as Record<string, unknown>)).toBe(false);
+	expect(
+		(vm as unknown as Record<string, unknown>).kernel,
+	).toBeUndefined();
 }
 
 async function runSpawnedProcess(
@@ -155,22 +151,7 @@ async function runSpawnedProcess(
 	command: string,
 	args: string[],
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-	const stdoutChunks: string[] = [];
-	const stderrChunks: string[] = [];
-	const { pid } = vm.spawn(command, args, {
-		onStdout: (chunk) => {
-			stdoutChunks.push(textDecoder.decode(chunk));
-		},
-		onStderr: (chunk) => {
-			stderrChunks.push(textDecoder.decode(chunk));
-		},
-	});
-
-	return {
-		exitCode: await vm.waitProcess(pid),
-		stdout: stdoutChunks.join(""),
-		stderr: stderrChunks.join(""),
-	};
+	return vm.execArgv(command, args);
 }
 
 function getRequestPath(req: IncomingMessage): string {
@@ -223,7 +204,9 @@ describe("native sidecar migration parity gate", () => {
 			textDecoder.decode(await vm.readFile("/workspace/process.txt")),
 		).toBe("filesystem-ok:process-ok");
 
-		const snapshot = await vm.exportRootFilesystem({ maxBytes: 64 * 1024 * 1024 });
+		const snapshot = await vm.exportRootFilesystem({
+			maxBytes: 64 * 1024 * 1024,
+		});
 		const clonedVm = await AgentOs.create({
 			rootFilesystem: {
 				disableDefaultBaseLayer: true,
@@ -384,36 +367,22 @@ describe("native sidecar migration parity gate", () => {
 		const sessionId = "migration-parity";
 		await vm.openSession({ sessionId, agent: "migration-parity" });
 
-		const events: { method: string; params?: unknown }[] = [];
+		const events: SessionStreamEntry[] = [];
 		const unsubscribeEvents = vm.onSessionEvent(sessionId, (event) => {
 			events.push(event);
 		});
-		const { response, text } = await vm.prompt(
+		const result = await vm.prompt({
 			sessionId,
-			"Run the migration parity prompt flow.",
-		);
+			content: [
+				{ type: "text", text: "Run the migration parity prompt flow." },
+			],
+		});
 		unsubscribeEvents();
 
-		expect(response.error).toBeUndefined();
-		expect((response.result as { stopReason?: string }).stopReason).toBe(
-			"end_turn",
-		);
-		expect(text).toContain("mock-parity-flow-ok");
+		expect(result.stopReason).toBe("end_turn");
+		expect(promptResultText(result)).toContain("mock-parity-flow-ok");
 
-		expect(
-			events.some(
-				(event) =>
-					event.method === "session/update" &&
-					JSON.stringify(event.params).includes("tool_call"),
-			),
-		).toBe(true);
-		expect(
-			events.some(
-				(event) =>
-					event.method === "session/update" &&
-					JSON.stringify(event.params).includes('"completed"'),
-			),
-		).toBe(true);
+		expect(events.some((event) => event.type === "tool_call")).toBe(true);
 
 		await vm.deleteSession({ sessionId });
 	}, 120_000);

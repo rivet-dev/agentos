@@ -5,6 +5,7 @@
 	"registry": {
 		"title": "xfs_io",
 		"description": "Scriptable low-level filesystem I/O commands used by xfstests.",
+		"category": "core",
 		"priority": 43
 	}
 }
