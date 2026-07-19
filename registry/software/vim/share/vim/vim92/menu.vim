@@ -1,8 +1,9 @@
 " Vim support file to define the default menus
 " You can also use this as a start for your own set of menus.
 "
-" Maintainer:	Bram Moolenaar <Bram@vim.org>
-" Last Change:	2022 Nov 27
+" Maintainer:	The Vim Project <https://github.com/vim/vim>
+" Last Change:	2025 Aug 10
+" Former Maintainer:	Bram Moolenaar <Bram@vim.org>
 
 " Note that ":an" (short for ":anoremenu") is often used to make a menu work
 " in all modes and avoid side effects from mappings defined by the user.
@@ -121,7 +122,7 @@ enddef
 " File menu
 an 10.310 &File.&Open\.\.\.<Tab>:e		:browse confirm e<CR>
 an 10.320 &File.Sp&lit-Open\.\.\.<Tab>:sp	:browse sp<CR>
-an 10.320 &File.Open\ Tab\.\.\.<Tab>:tabnew	:browse tabnew<CR>
+an 10.320 &File.Open\ &Tab\.\.\.<Tab>:tabnew	:browse tabnew<CR>
 an 10.325 &File.&New<Tab>:enew			:confirm enew<CR>
 an <silent> 10.330 &File.&Close<Tab>:close
 	\ :if winheight(2) < 0 && tabpagewinnr(2) == 0 <Bar>
@@ -607,7 +608,9 @@ def s:XxdBack()
     exe ':%!' .. g:xxdprogram .. ' -r'
   endif
   set ft=
-  doautocmd filetypedetect BufReadPost
+  if exists('#filetypedetect') && exists('#BufReadPost')
+    doautocmd filetypedetect BufReadPost
+  endif
   &mod = mod
 enddef
 
@@ -794,8 +797,21 @@ def s:BMShow()
 enddef
 
 def s:BMHash(name: string): number
-  # Make name all upper case, so that chars are between 32 and 96
-  var nm = substitute(name, ".*", '\U\0', "")
+  # Create a sortable numeric hash of the name. This number has to be within
+  # the bounds of a signed 32-bit integer as this is what Vim GUI uses
+  # internally for the index.
+
+  # Make name all upper case, so that alphanumeric chars are between 32 and 96
+  var nm = toupper(name)
+
+  if char2nr(nm[0]) < 32 || char2nr(nm[0]) > 96
+    # We don't have an ASCII character, so just return the raw character value
+    # for first character (clamped to 2^31) and set the high bit to make it
+    # sort after other items. This means only the first character will be
+    # sorted, unfortunately.
+    return or(and(char2nr(nm), 0x7fffffff), 0x40000000)
+  endif
+
   var sp: number
   if has("ebcdic")
     # HACK: Replace all non alphabetics with 'Z'
@@ -805,12 +821,18 @@ def s:BMHash(name: string): number
   else
     sp = char2nr(' ')
   endif
-  # convert first six chars into a number for sorting:
-  return (char2nr(nm[0]) - sp) * 0x800000 + (char2nr(nm[1]) - sp) * 0x20000 + (char2nr(nm[2]) - sp) * 0x1000 + (char2nr(nm[3]) - sp) * 0x80 + (char2nr(nm[4]) - sp) * 0x20 + (char2nr(nm[5]) - sp)
+  # convert first five chars into a number for sorting by compressing each
+  # char into 5 bits (0-63), to a total of 30 bits. If any character is not
+  # ASCII, it will simply be clamped to prevent overflow.
+  return (max([0, min([63, char2nr(nm[0]) - sp])]) << 24) +
+    (max([0, min([63, char2nr(nm[1]) - sp])]) << 18) +
+    (max([0, min([63, char2nr(nm[2]) - sp])]) << 12) +
+    (max([0, min([63, char2nr(nm[3]) - sp])]) <<  6) +
+    max([0, min([63, char2nr(nm[4]) - sp])])
 enddef
 
 def s:BMHash2(name: string): string
-  var nm = substitute(name, ".", '\L\0', "")
+  var nm = tolower(name[0])
   if nm[0] < 'a' || nm[0] > 'z'
     return '&others.'
   elseif nm[0] <= 'd'
@@ -1134,7 +1156,7 @@ else
   endif
   tmenu ToolBar.LoadSesn	Choose a session to load
   tmenu ToolBar.SaveSesn	Save current session
-  tmenu ToolBar.RunScript	Choose a Vim Script to run
+  tmenu ToolBar.RunScript	Choose a Vim script to run
   tmenu ToolBar.Make		Make current project (:make)
   tmenu ToolBar.RunCtags	Build tags in current directory tree (!ctags -R .)
   tmenu ToolBar.TagJump		Jump to tag under cursor

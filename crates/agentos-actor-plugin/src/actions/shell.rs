@@ -45,7 +45,16 @@ pub struct OpenShellDto {
 fn broadcast_event<T: Serialize>(host: &HostCtx, name: &[u8], payload: &T) {
     match super::encode_event_arg(payload) {
         Ok(bytes) => {
-            let _ = host.broadcast(name.to_vec(), bytes);
+            let status = host.broadcast(name.to_vec(), bytes);
+            if status != rivet_actor_plugin_abi::AbiStatus::Ok {
+                // A dropped delivery is invisible client-side (terminals just
+                // miss output); the failure must at least be host-visible.
+                tracing::warn!(
+                    ?status,
+                    event = %String::from_utf8_lossy(name),
+                    "shell event broadcast failed"
+                );
+            }
         }
         Err(error) => {
             tracing::warn!(?error, "failed to encode shell event broadcast");
@@ -111,7 +120,7 @@ pub fn open_shell(
 
     let data_host = host.clone();
     let data_shell_id = shell_id.clone();
-    vars.shell_tasks.push(tokio::spawn(async move {
+    vars.track_shell_task(tokio::spawn(async move {
         while let Some(chunk) = data_stream.next().await {
             broadcast_event(
                 &data_host,
@@ -126,7 +135,7 @@ pub fn open_shell(
 
     let stderr_host = host.clone();
     let stderr_shell_id = shell_id.clone();
-    vars.shell_tasks.push(tokio::spawn(async move {
+    vars.track_shell_task(tokio::spawn(async move {
         while let Some(chunk) = stderr_stream.next().await {
             broadcast_event(
                 &stderr_host,
@@ -142,16 +151,23 @@ pub fn open_shell(
     let exit_host = host.clone();
     let exit_vm = vm.clone();
     let exit_shell_id = shell_id.clone();
-    vars.shell_tasks.push(tokio::spawn(async move {
-        if let Ok(exit_code) = exit_vm.wait_shell(&exit_shell_id).await {
-            broadcast_event(
+    vars.track_shell_task(tokio::spawn(async move {
+        match exit_vm.wait_shell(&exit_shell_id).await {
+            Ok(exit_code) => broadcast_event(
                 &exit_host,
                 b"shellExit",
                 &ShellExitEvent {
                     shell_id: &exit_shell_id,
                     exit_code,
                 },
-            );
+            ),
+            // No shellExit reaches clients on this path; VM teardown is covered
+            // by the vmShutdown broadcast, but the failure itself must not vanish.
+            Err(error) => tracing::warn!(
+                ?error,
+                shell_id = %exit_shell_id,
+                "wait_shell failed; shellExit not broadcast"
+            ),
         }
     }));
 
@@ -198,7 +214,7 @@ pub fn spawn_process_output_pumps(host: &HostCtx, vm: &AgentOs, vars: &mut Vars,
 
     if let Ok(mut stream) = stdout {
         let host = host.clone();
-        vars.shell_tasks.push(tokio::spawn(async move {
+        vars.track_shell_task(tokio::spawn(async move {
             while let Some(chunk) = stream.next().await {
                 broadcast_event(
                     &host,
@@ -214,7 +230,7 @@ pub fn spawn_process_output_pumps(host: &HostCtx, vm: &AgentOs, vars: &mut Vars,
     }
     if let Ok(mut stream) = stderr {
         let host = host.clone();
-        vars.shell_tasks.push(tokio::spawn(async move {
+        vars.track_shell_task(tokio::spawn(async move {
             while let Some(chunk) = stream.next().await {
                 broadcast_event(
                     &host,
@@ -230,7 +246,7 @@ pub fn spawn_process_output_pumps(host: &HostCtx, vm: &AgentOs, vars: &mut Vars,
     }
     let host = host.clone();
     let vm = vm.clone();
-    vars.shell_tasks.push(tokio::spawn(async move {
+    vars.track_shell_task(tokio::spawn(async move {
         if let Ok(exit_code) = vm.wait_process(pid).await {
             broadcast_event(&host, b"processExit", &ProcessExitEvent { pid, exit_code });
         }

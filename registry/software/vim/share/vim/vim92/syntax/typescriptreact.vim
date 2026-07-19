@@ -1,9 +1,9 @@
 " Vim syntax file
 " Language:     TypeScript with React (JSX)
-" Maintainer:   Bram Moolenaar
-" Last Change:	2019 Nov 30
+" Maintainer:   The Vim Project <https://github.com/vim/vim>
+" Last Change:  2024 May 26
 " Based On:     Herrington Darkholme's yats.vim
-" Changes:      See https:github.com/HerringtonDarkholme/yats.vim
+" Changes:      See https://github.com/HerringtonDarkholme/yats.vim
 " Credits:      See yats.vim on github
 
 if !exists("main_syntax")
@@ -118,13 +118,14 @@ syntax match tsxEqual +=+ display contained
 
 " <tag id="sample">
 "         s~~~~~~e
-syntax region tsxString contained start=+"+ end=+"+ contains=tsxEntity,@Spell display
+syntax region tsxString contained start=+"+ skip=+\\"+ end=+"+ contains=tsxEntity,@Spell display
+syntax region tsxString contained start=+'+ skip=+\\'+ end=+'+ contains=tsxEntity,@Spell display
 
 " <tag key={this.props.key}>
 "          s~~~~~~~~~~~~~~e
 syntax region tsxEscJs
     \ contained
-    \ contains=@typescriptValue,@tsxComment
+    \ contains=@typescriptValue,@tsxComment,typescriptObjectSpread
     \ matchgroup=typescriptBraces
     \ start=+{+
     \ end=+}+

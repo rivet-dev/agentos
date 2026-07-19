@@ -1,6 +1,6 @@
 " Vim plugin for using Vim as manpager.
 " Maintainer: Enno Nagel <ennonagel+vim@gmail.com>
-" Last Change: 2022 Oct 17
+" Last Change: 2024 Jul 03
 
 if exists('g:loaded_manpager_plugin')
   finish
@@ -20,9 +20,6 @@ function s:ManPager()
   endif
   syntax on
 
-  " Make this an unlisted, readonly scratch buffer
-  setlocal buftype=nofile noswapfile bufhidden=hide nobuflisted readonly
-
   " Ensure text width matches window width
   setlocal foldcolumn& nofoldenable nonumber norelativenumber
 
@@ -30,10 +27,10 @@ function s:ManPager()
   setlocal modifiable
 
   " Emulate 'col -b'
-  silent! keepj keepp %s/\v(.)\b\ze\1?//ge
+  exe 'silent! keepj keepp %s/\v(.)\b\ze\1?//e' .. (&gdefault ? '' : 'g')
 
   " Remove ansi sequences
-  silent! keepj keepp %s/\v\e\[%(%(\d;)?\d{1,2})?[mK]//ge
+  exe 'silent! keepj keepp %s/\v\e\[%(%(\d;)?\d{1,2})?[mK]//e' .. (&gdefault ? '' : 'g')
 
   " Remove empty lines above the header
   call cursor(1, 1)
@@ -44,6 +41,9 @@ function s:ManPager()
 
   " Finished preprocessing the buffer, prevent any further modifications
   setlocal nomodified nomodifiable
+
+  " Make this an unlisted, readonly scratch buffer
+  setlocal buftype=nofile noswapfile bufhidden=hide nobuflisted readonly
 
   " Set filetype to man even if ftplugin is disabled
   setlocal filetype=man

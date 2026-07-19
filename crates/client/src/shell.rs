@@ -304,6 +304,26 @@ impl AgentOs {
         let handle = tokio::spawn(async move {
             let mut events = agent.transport().subscribe_wire_events();
 
+            // Spawn failed (transport error or a rejected execute): the shell id was already
+            // handed to the caller, so the failure must still terminate the shell's lifecycle —
+            // record a synthetic 127 exit (POSIX command-start failure) so `wait_shell` resolves
+            // and exit-driven surfaces (e.g. the actor plugin's `shellExit` broadcast) observe it,
+            // instead of leaving a phantom shell that never outputs and never exits.
+            let fail_spawn = |error: &dyn std::fmt::Debug| {
+                tracing::warn!(?error, shell_id = %exit_shell_id, "open_shell spawn failed");
+                {
+                    let mut retained = agent.inner().closed_shell_exit_codes.lock();
+                    retained.push_back((exit_shell_id.clone(), 127));
+                    while retained.len() > crate::CLOSED_SHELL_EXIT_CODE_RETENTION_LIMIT {
+                        retained.pop_front();
+                    }
+                }
+                let _ = exit_tx.send_replace(Some(127));
+                agent.inner().pending_shell_exits.remove(&exit_key);
+                agent.inner().shells.remove_if(&exit_shell_id, |existing| {
+                    existing.process_id == route_process_id
+                });
+            };
             let response = match agent
                 .transport()
                 .request_wire(
@@ -314,25 +334,32 @@ impl AgentOs {
             {
                 Ok(response) => response,
                 Err(error) => {
-                    tracing::warn!(?error, shell_id = %exit_shell_id, "open_shell spawn failed");
-                    // Drop the dead entry so later shell calls report ShellNotFound rather than hang.
-                    agent.inner().shells.remove(&exit_shell_id);
-                    agent.inner().pending_shell_exits.remove(&exit_key);
+                    fail_spawn(&error);
                     return;
                 }
             };
 
             // Record the real kernel pid on the entry (TS `ShellHandle.pid`) and release the write
             // gate so any queued `write_shell`/`close_shell` proceed against the live spawn.
-            if let wire::ResponsePayload::ProcessStartedResponse(wire::ProcessStartedResponse {
-                pid: Some(pid),
-                ..
-            }) = response
-            {
-                agent
-                    .inner()
-                    .shells
-                    .update(&exit_shell_id, |_, existing| existing.pid = pid);
+            match response {
+                wire::ResponsePayload::ProcessStartedResponse(wire::ProcessStartedResponse {
+                    pid: Some(pid),
+                    ..
+                }) => {
+                    agent
+                        .inner()
+                        .shells
+                        .update(&exit_shell_id, |_, existing| existing.pid = pid);
+                }
+                wire::ResponsePayload::ProcessStartedResponse(_) => {}
+                wire::ResponsePayload::RejectedResponse(rejected) => {
+                    fail_spawn(&rejected_to_error(rejected));
+                    return;
+                }
+                other => {
+                    fail_spawn(&format!("unexpected execute response: {other:?}"));
+                    return;
+                }
             }
             // send_replace, not send: `watch::Sender::send` REFUSES to store the
             // value while no receiver exists (and the initial receiver is dropped
@@ -344,7 +371,17 @@ impl AgentOs {
             loop {
                 let (_scope, payload) = match events.recv().await {
                     Ok(value) => value,
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(missed)) => {
+                        // Dropped wire events can include this shell's output — or its
+                        // exit. Losing them silently would strand the shell "live", so
+                        // at least make the loss host-visible.
+                        tracing::warn!(
+                            missed,
+                            shell_id = %exit_shell_id,
+                            "shell wire-event subscriber lagged; output/exit events dropped"
+                        );
+                        continue;
+                    }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 };
                 match payload {
@@ -473,15 +510,32 @@ impl AgentOs {
                 }
             };
 
-            if let wire::ResponsePayload::ProcessStartedResponse(wire::ProcessStartedResponse {
-                pid: Some(pid),
-                ..
-            }) = response
-            {
-                agent
-                    .inner()
-                    .shells
-                    .update(&exit_shell_id, |_, existing| existing.pid = pid);
+            match response {
+                wire::ResponsePayload::ProcessStartedResponse(wire::ProcessStartedResponse {
+                    pid: Some(pid),
+                    ..
+                }) => {
+                    agent
+                        .inner()
+                        .shells
+                        .update(&exit_shell_id, |_, existing| existing.pid = pid);
+                }
+                wire::ResponsePayload::ProcessStartedResponse(_) => {}
+                // A rejected execute is a spawn failure: same terminal handling as the
+                // transport-error branch above, so the terminal never looks live.
+                other => {
+                    let error = match other {
+                        wire::ResponsePayload::RejectedResponse(rejected) => {
+                            rejected_to_error(rejected).to_string()
+                        }
+                        unexpected => format!("unexpected execute response: {unexpected:?}"),
+                    };
+                    tracing::warn!(%error, shell_id = %exit_shell_id, "acp_open_terminal spawn rejected");
+                    agent.inner().shells.remove(&exit_shell_id);
+                    agent.inner().pending_shell_exits.remove(&exit_key);
+                    let _ = exit_tx.send(Some(1));
+                    return;
+                }
             }
             // send_replace, not send: `watch::Sender::send` REFUSES to store the
             // value while no receiver exists (and the initial receiver is dropped
@@ -494,7 +548,14 @@ impl AgentOs {
             loop {
                 let (_scope, payload) = match events.recv().await {
                     Ok(value) => value,
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(missed)) => {
+                        tracing::warn!(
+                            missed,
+                            shell_id = %exit_shell_id,
+                            "terminal wire-event subscriber lagged; output/exit events dropped"
+                        );
+                        continue;
+                    }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 };
                 match payload {

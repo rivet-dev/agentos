@@ -47,8 +47,9 @@ pub struct Vars {
     pub permission_tasks: HashMap<String, JoinHandle<()>>,
     /// Shell data/stderr/exit broadcast pump tasks (one triple per `openShell`).
     /// The pumps end on their own when the shell exits (stream close); this
-    /// list exists so VM teardown aborts any still-live pumps. Bounded by the
-    /// client's shell registries, not here.
+    /// list exists so VM teardown aborts any still-live pumps. Bounded via
+    /// [`Vars::track_shell_task`], which prunes finished handles on every push
+    /// so a long-lived VM's open/close shell cycles cannot accumulate them.
     pub shell_tasks: Vec<JoinHandle<()>>,
     /// One cron event pump per VM lifetime. It fans `AgentOs::cron_events()` to
     /// actor clients as `cronEvent` broadcasts.
@@ -79,6 +80,13 @@ impl Vars {
             .get(external_session_id)
             .map(String::as_str)
             .unwrap_or(external_session_id)
+    }
+
+    /// Track a shell/process broadcast pump task, pruning already-finished
+    /// handles first so the list stays bounded by the number of LIVE pumps.
+    pub fn track_shell_task(&mut self, task: JoinHandle<()>) {
+        self.shell_tasks.retain(|t| !t.is_finished());
+        self.shell_tasks.push(task);
     }
 
     /// Abort and clear all in-flight pump tasks (event capture + permission
@@ -933,7 +941,7 @@ pub(crate) async fn dispatch(
             Ok((pid,)) => {
                 let host = host.clone();
                 let vm = vm.clone();
-                vars.shell_tasks.push(tokio::spawn(async move {
+                vars.track_shell_task(tokio::spawn(async move {
                     match process::wait_process(&vm, pid).await {
                         Ok(code) => reply_ok(&host, token, &code),
                         Err(error) => reply_err(&host, token, error),
@@ -1149,7 +1157,7 @@ pub(crate) async fn dispatch(
             Ok((shell_id,)) => {
                 let host = host.clone();
                 let vm = vm.clone();
-                vars.shell_tasks.push(tokio::spawn(async move {
+                vars.track_shell_task(tokio::spawn(async move {
                     match shell::wait_shell(&vm, &shell_id).await {
                         Ok(exit_code) => reply_ok(&host, token, &exit_code),
                         Err(error) => reply_err(&host, token, error),

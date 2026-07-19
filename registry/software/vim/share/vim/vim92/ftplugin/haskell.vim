@@ -3,6 +3,7 @@
 " Maintainer:           Daniel Campoverde <alx@sillybytes.net>
 " Previous Maintainer:  Nikolai Weibull <now@bitwi.se>
 " Latest Revision:      2018-08-27
+" 2025 Jul 09 by Vim Project revert setting iskeyword #8191
 
 if exists("b:did_ftplugin")
   finish

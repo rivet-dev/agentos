@@ -38,6 +38,21 @@ These operations are primarily what the agent uses inside the VM, and are also a
 
 ### Move and delete
 
+## Change notifications
+
+The runtime reports guest filesystem changes to the host, coalesced per VM: every successful mutation (host API writes, guest `fs.*` calls, shell command output files, Python VFS writes) marks its parent directory, and at most every ~300ms the VM flushes one event listing the directories whose entries changed. Pass `onFsChanged` when creating the VM:
+
+```ts
+const vm = await AgentOs.create({
+	onFsChanged: ({ dirs, overflow }) => {
+		if (overflow) return refreshEverything();
+		for (const dir of dirs) refreshListing(dir);
+	},
+});
+```
+
+The Rust client exposes the same stream as `AgentOs::on_fs_changed()`. Two bounds keep the signal cheap and truthful: a window holds at most 64 distinct directories (`fs_changed_dirty_dirs`, warned near capacity like every other tracked limit), and past the bound the event collapses to `overflow: true`, meaning "treat the whole tree as changed" — changes are never dropped silently. A subscriber that falls behind receives the same overflow marker instead of missing windows. The inspector's Filesystem tab updates in realtime from exactly this event.
+
 ## Permissions
 
 Filesystem access is governed by the VM permission policy. The filesystem scope is granted by default; restrict it by path, for example to deny a sensitive directory:

@@ -1,8 +1,9 @@
 " Vim support file to define the syntax selection menu
 " This file is normally sourced from menu.vim.
 "
-" Maintainer:	Bram Moolenaar <Bram@vim.org>
-" Last Change:	2022 Oct 04
+" Maintainer:		The Vim Project <https://github.com/vim/vim>
+" Last Change:		2025 Mar 09
+" Former Maintainer:	Bram Moolenaar <Bram@vim.org>
 
 " Define the SetSyn function, used for the Syntax menu entries.
 " Set 'filetype' and also 'syntax' if it is manually selected.
@@ -12,6 +13,10 @@ def SetSyn(name: string)
     g:use_fvwm_1 = name == "fvwm1"
     g:use_fvwm_2 = name == "fvwm2"
     filetype = "fvwm"
+  elseif name =~ '^modula2:\w\+$'
+    var dialect: string
+    [filetype, dialect] = split(name, ":")
+    modula2#SetDialect(dialect)
   endif
   if name == "whitespace"
     # do not replace the filetype but add whitespace on top
@@ -72,7 +77,7 @@ an 50.10.440 &Syntax.AB.Assembly.PIC :cal SetSyn("pic")<CR>
 an 50.10.450 &Syntax.AB.Assembly.Turbo :cal SetSyn("tasm")<CR>
 an 50.10.460 &Syntax.AB.Assembly.VAX\ Macro\ Assembly :cal SetSyn("vmasm")<CR>
 an 50.10.470 &Syntax.AB.Assembly.Z-80 :cal SetSyn("z8a")<CR>
-an 50.10.480 &Syntax.AB.Assembly.xa\ 6502\ cross\ assember :cal SetSyn("a65")<CR>
+an 50.10.480 &Syntax.AB.Assembly.xa\ 6502\ cross\ assembler :cal SetSyn("a65")<CR>
 an 50.10.490 &Syntax.AB.ASN\.1 :cal SetSyn("asn")<CR>
 an 50.10.500 &Syntax.AB.Asterisk\ config :cal SetSyn("asterisk")<CR>
 an 50.10.510 &Syntax.AB.Asterisk\ voicemail\ config :cal SetSyn("asteriskvm")<CR>
@@ -105,6 +110,7 @@ an 50.20.110 &Syntax.C.C++ :cal SetSyn("cpp")<CR>
 an 50.20.120 &Syntax.C.C# :cal SetSyn("cs")<CR>
 an 50.20.130 &Syntax.C.Cabal\ Haskell\ build\ file :cal SetSyn("cabal")<CR>
 an 50.20.140 &Syntax.C.Calendar :cal SetSyn("calendar")<CR>
+an 50.20.140 &Syntax.C.Cangjie :cal SetSyn("cangjie")<CR>
 an 50.20.150 &Syntax.C.Cascading\ Style\ Sheets :cal SetSyn("css")<CR>
 an 50.20.160 &Syntax.C.CDL :cal SetSyn("cdl")<CR>
 an 50.20.170 &Syntax.C.Cdrdao\ TOC :cal SetSyn("cdrtoc")<CR>
@@ -302,7 +308,7 @@ an 50.50.710 &Syntax.HIJK.Kimwitu++ :cal SetSyn("kwt")<CR>
 an 50.50.720 &Syntax.HIJK.Kivy :cal SetSyn("kivy")<CR>
 an 50.50.730 &Syntax.HIJK.KixTart :cal SetSyn("kix")<CR>
 an 50.60.100 &Syntax.L.Lace :cal SetSyn("lace")<CR>
-an 50.60.110 &Syntax.L.LamdaProlog :cal SetSyn("lprolog")<CR>
+an 50.60.110 &Syntax.L.LambdaProlog :cal SetSyn("lprolog")<CR>
 an 50.60.120 &Syntax.L.Latte :cal SetSyn("latte")<CR>
 an 50.60.130 &Syntax.L.Ld\ script :cal SetSyn("ld")<CR>
 an 50.60.140 &Syntax.L.LDAP.LDIF :cal SetSyn("ldif")<CR>
@@ -358,25 +364,27 @@ an 50.70.340 &Syntax.M.MMIX :cal SetSyn("mmix")<CR>
 an 50.70.350 &Syntax.M.Modconf :cal SetSyn("modconf")<CR>
 an 50.70.360 &Syntax.M.Model :cal SetSyn("model")<CR>
 an 50.70.370 &Syntax.M.Modsim\ III :cal SetSyn("modsim3")<CR>
-an 50.70.380 &Syntax.M.Modula\ 2 :cal SetSyn("modula2")<CR>
-an 50.70.390 &Syntax.M.Modula\ 3 :cal SetSyn("modula3")<CR>
-an 50.70.400 &Syntax.M.Monk :cal SetSyn("monk")<CR>
-an 50.70.410 &Syntax.M.Motorola\ S-Record :cal SetSyn("srec")<CR>
-an 50.70.420 &Syntax.M.Mplayer\ config :cal SetSyn("mplayerconf")<CR>
-an 50.70.430 &Syntax.M.MOO :cal SetSyn("moo")<CR>
-an 50.70.440 &Syntax.M.Mrxvtrc :cal SetSyn("mrxvtrc")<CR>
-an 50.70.450 &Syntax.M.MS-DOS/Windows.4DOS\ \.bat\ file :cal SetSyn("btm")<CR>
-an 50.70.460 &Syntax.M.MS-DOS/Windows.\.bat\/\.cmd\ file :cal SetSyn("dosbatch")<CR>
-an 50.70.470 &Syntax.M.MS-DOS/Windows.\.ini\ file :cal SetSyn("dosini")<CR>
-an 50.70.480 &Syntax.M.MS-DOS/Windows.Message\ text :cal SetSyn("msmessages")<CR>
-an 50.70.490 &Syntax.M.MS-DOS/Windows.Module\ Definition :cal SetSyn("def")<CR>
-an 50.70.500 &Syntax.M.MS-DOS/Windows.Registry :cal SetSyn("registry")<CR>
-an 50.70.510 &Syntax.M.MS-DOS/Windows.Resource\ file :cal SetSyn("rc")<CR>
-an 50.70.520 &Syntax.M.Msql :cal SetSyn("msql")<CR>
-an 50.70.530 &Syntax.M.MuPAD :cal SetSyn("mupad")<CR>
-an 50.70.540 &Syntax.M.Murphi :cal SetSyn("murphi")<CR>
-an 50.70.550 &Syntax.M.MUSHcode :cal SetSyn("mush")<CR>
-an 50.70.560 &Syntax.M.Muttrc :cal SetSyn("muttrc")<CR>
+an 50.70.380 &Syntax.M.Modula-2.R10\ (2010) :cal SetSyn("modula2:r10")<CR>
+an 50.70.390 &Syntax.M.Modula-2.ISO\ (1994) :cal SetSyn("modula2:iso")<CR>
+an 50.70.400 &Syntax.M.Modula-2.PIM\ (1985) :cal SetSyn("modula2:pim")<CR>
+an 50.70.410 &Syntax.M.Modula-3 :cal SetSyn("modula3")<CR>
+an 50.70.420 &Syntax.M.Monk :cal SetSyn("monk")<CR>
+an 50.70.430 &Syntax.M.Motorola\ S-Record :cal SetSyn("srec")<CR>
+an 50.70.440 &Syntax.M.Mplayer\ config :cal SetSyn("mplayerconf")<CR>
+an 50.70.450 &Syntax.M.MOO :cal SetSyn("moo")<CR>
+an 50.70.460 &Syntax.M.Mrxvtrc :cal SetSyn("mrxvtrc")<CR>
+an 50.70.470 &Syntax.M.MS-DOS/Windows.4DOS\ \.bat\ file :cal SetSyn("btm")<CR>
+an 50.70.480 &Syntax.M.MS-DOS/Windows.\.bat\/\.cmd\ file :cal SetSyn("dosbatch")<CR>
+an 50.70.490 &Syntax.M.MS-DOS/Windows.\.ini\ file :cal SetSyn("dosini")<CR>
+an 50.70.500 &Syntax.M.MS-DOS/Windows.Message\ text :cal SetSyn("msmessages")<CR>
+an 50.70.510 &Syntax.M.MS-DOS/Windows.Module\ Definition :cal SetSyn("def")<CR>
+an 50.70.520 &Syntax.M.MS-DOS/Windows.Registry :cal SetSyn("registry")<CR>
+an 50.70.530 &Syntax.M.MS-DOS/Windows.Resource\ file :cal SetSyn("rc")<CR>
+an 50.70.540 &Syntax.M.Msql :cal SetSyn("msql")<CR>
+an 50.70.550 &Syntax.M.MuPAD :cal SetSyn("mupad")<CR>
+an 50.70.560 &Syntax.M.Murphi :cal SetSyn("murphi")<CR>
+an 50.70.570 &Syntax.M.MUSHcode :cal SetSyn("mush")<CR>
+an 50.70.580 &Syntax.M.Muttrc :cal SetSyn("muttrc")<CR>
 an 50.80.100 &Syntax.NO.N1QL :cal SetSyn("n1ql")<CR>
 an 50.80.110 &Syntax.NO.Nanorc :cal SetSyn("nanorc")<CR>
 an 50.80.120 &Syntax.NO.Nastran\ input/DMAP :cal SetSyn("nastran")<CR>
@@ -571,26 +579,27 @@ an 50.150.190 &Syntax.T.TealInfo :cal SetSyn("tli")<CR>
 an 50.150.200 &Syntax.T.Telix\ Salt :cal SetSyn("tsalt")<CR>
 an 50.150.210 &Syntax.T.Termcap/Printcap :cal SetSyn("ptcap")<CR>
 an 50.150.220 &Syntax.T.Terminfo :cal SetSyn("terminfo")<CR>
-an 50.150.230 &Syntax.T.Tera\ Term :cal SetSyn("teraterm")<CR>
-an 50.150.240 &Syntax.T.TeX.TeX/LaTeX :cal SetSyn("tex")<CR>
-an 50.150.250 &Syntax.T.TeX.plain\ TeX :cal SetSyn("plaintex")<CR>
-an 50.150.260 &Syntax.T.TeX.Initex :cal SetSyn("initex")<CR>
-an 50.150.270 &Syntax.T.TeX.ConTeXt :cal SetSyn("context")<CR>
-an 50.150.280 &Syntax.T.TeX.TeX\ configuration :cal SetSyn("texmf")<CR>
-an 50.150.290 &Syntax.T.TeX.Texinfo :cal SetSyn("texinfo")<CR>
-an 50.150.300 &Syntax.T.TF\ mud\ client :cal SetSyn("tf")<CR>
-an 50.150.310 &Syntax.T.Tidy\ configuration :cal SetSyn("tidy")<CR>
-an 50.150.320 &Syntax.T.Tilde :cal SetSyn("tilde")<CR>
-an 50.150.330 &Syntax.T.Tmux\ configuration :cal SetSyn("tmux")<CR>
-an 50.150.340 &Syntax.T.TPP :cal SetSyn("tpp")<CR>
-an 50.150.350 &Syntax.T.Trasys\ input :cal SetSyn("trasys")<CR>
-an 50.150.360 &Syntax.T.Treetop :cal SetSyn("treetop")<CR>
-an 50.150.370 &Syntax.T.Trustees :cal SetSyn("trustees")<CR>
-an 50.150.380 &Syntax.T.TSS.Command\ Line :cal SetSyn("tsscl")<CR>
-an 50.150.390 &Syntax.T.TSS.Geometry :cal SetSyn("tssgm")<CR>
-an 50.150.400 &Syntax.T.TSS.Optics :cal SetSyn("tssop")<CR>
-an 50.150.410 &Syntax.T.Typescript :cal SetSyn("typescript")<CR>
-an 50.150.420 &Syntax.T.TypescriptReact :cal SetSyn("typescriptreact")<CR>
+an 50.150.230 &Syntax.T.Tera :cal SetSyn("tera")<CR>
+an 50.150.240 &Syntax.T.Tera\ Term :cal SetSyn("teraterm")<CR>
+an 50.150.250 &Syntax.T.TeX.TeX/LaTeX :cal SetSyn("tex")<CR>
+an 50.150.260 &Syntax.T.TeX.plain\ TeX :cal SetSyn("plaintex")<CR>
+an 50.150.270 &Syntax.T.TeX.Initex :cal SetSyn("initex")<CR>
+an 50.150.280 &Syntax.T.TeX.ConTeXt :cal SetSyn("context")<CR>
+an 50.150.290 &Syntax.T.TeX.TeX\ configuration :cal SetSyn("texmf")<CR>
+an 50.150.300 &Syntax.T.TeX.Texinfo :cal SetSyn("texinfo")<CR>
+an 50.150.310 &Syntax.T.TF\ mud\ client :cal SetSyn("tf")<CR>
+an 50.150.320 &Syntax.T.Tidy\ configuration :cal SetSyn("tidy")<CR>
+an 50.150.330 &Syntax.T.Tilde :cal SetSyn("tilde")<CR>
+an 50.150.340 &Syntax.T.Tmux\ configuration :cal SetSyn("tmux")<CR>
+an 50.150.350 &Syntax.T.TPP :cal SetSyn("tpp")<CR>
+an 50.150.360 &Syntax.T.Trasys\ input :cal SetSyn("trasys")<CR>
+an 50.150.370 &Syntax.T.Treetop :cal SetSyn("treetop")<CR>
+an 50.150.380 &Syntax.T.Trustees :cal SetSyn("trustees")<CR>
+an 50.150.390 &Syntax.T.TSS.Command\ Line :cal SetSyn("tsscl")<CR>
+an 50.150.400 &Syntax.T.TSS.Geometry :cal SetSyn("tssgm")<CR>
+an 50.150.410 &Syntax.T.TSS.Optics :cal SetSyn("tssop")<CR>
+an 50.150.420 &Syntax.T.Typescript :cal SetSyn("typescript")<CR>
+an 50.150.430 &Syntax.T.TypescriptReact :cal SetSyn("typescriptreact")<CR>
 an 50.160.100 &Syntax.UV.Udev\ config :cal SetSyn("udevconf")<CR>
 an 50.160.110 &Syntax.UV.Udev\ permissions :cal SetSyn("udevperm")<CR>
 an 50.160.120 &Syntax.UV.Udev\ rules :cal SetSyn("udevrules")<CR>
@@ -617,7 +626,7 @@ an 50.160.330 &Syntax.UV.VSE\ JCL :cal SetSyn("vsejcl")<CR>
 an 50.170.100 &Syntax.WXYZ.WEB.CWEB :cal SetSyn("cweb")<CR>
 an 50.170.110 &Syntax.WXYZ.WEB.WEB :cal SetSyn("web")<CR>
 an 50.170.120 &Syntax.WXYZ.WEB.WEB\ Changes :cal SetSyn("change")<CR>
-an 50.170.130 &Syntax.WXYZ.WebAssembly :cal SetSyn("wast")<CR>
+an 50.170.130 &Syntax.WXYZ.WebAssembly :cal SetSyn("wat")<CR>
 an 50.170.140 &Syntax.WXYZ.Webmacro :cal SetSyn("webmacro")<CR>
 an 50.170.150 &Syntax.WXYZ.Website\ MetaLanguage :cal SetSyn("wml")<CR>
 an 50.170.170 &Syntax.WXYZ.wDiff :cal SetSyn("wdiff")<CR>
@@ -644,6 +653,7 @@ an 50.170.390 &Syntax.WXYZ.XFree86\ Config :cal SetSyn("xf86conf")<CR>
 an 50.170.410 &Syntax.WXYZ.YAML :cal SetSyn("yaml")<CR>
 an 50.170.420 &Syntax.WXYZ.Yacc :cal SetSyn("yacc")<CR>
 an 50.170.440 &Syntax.WXYZ.Zimbu :cal SetSyn("zimbu")<CR>
+an 50.170.450 &Syntax.WXYZ.Zserio :cal SetSyn("zserio")<CR>
 
 " The End Of The Syntax Menu
 
