@@ -223,9 +223,24 @@ pub(crate) fn deferred_kernel_wait_request_for_process(
         return Ok(None);
     }
     let fd = javascript_sync_rpc_arg_u32(&request.args, 0, "filesystem write fd")?;
-    let stat = kernel
-        .fd_stat(EXECUTION_DRIVER_NAME, kernel_pid, fd)
-        .map_err(kernel_error)?;
+    // Mapped host fds live in the per-process map, NOT the kernel fd table, so
+    // stat'ing one here raised `EBADF: bad file descriptor 1000000000` on EVERY
+    // guest file write. That error escaped the process-event pump: it used to
+    // kill the whole sidecar (LT-011 cross-tenant DoS) and, once the pump
+    // stopped propagating it, left the guest's sync-RPC response undelivered
+    // until the 31 s bridge deadline (LT-024). A mapped host fd is host-backed
+    // and can never be a kernel pipe, so deferral never applies to it.
+    if fd >= crate::state::MAPPED_HOST_FD_START {
+        return Ok(None);
+    }
+    let stat = match kernel.fd_stat(EXECUTION_DRIVER_NAME, kernel_pid, fd) {
+        Ok(stat) => stat,
+        // Defense in depth for the whole class: any fd this kernel does not own
+        // is by definition not a kernel pipe, so it is not deferrable. Report
+        // "no deferral" rather than failing the write with an unrelated errno.
+        Err(error) if error.code() == "EBADF" => return Ok(None),
+        Err(error) => return Err(kernel_error(error)),
+    };
     if stat.filetype != agentos_kernel::fd_table::FILETYPE_PIPE {
         return Ok(None);
     }
