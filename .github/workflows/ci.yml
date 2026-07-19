@@ -83,7 +83,7 @@ jobs:
           targets: wasm32-wasip1
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: toolchain -> toolchain/target
+          workspaces: toolchain -> target
           cache-workspace-crates: true
           key: wasm-commands-${{ hashFiles('toolchain/Cargo.lock') }}
       - run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos-runtime-core...'

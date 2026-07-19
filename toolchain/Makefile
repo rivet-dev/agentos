@@ -7,6 +7,7 @@ WASI_C_LIBDIR := $(WASI_C_SYSROOT)/lib/wasm32-wasi
 
 # Standalone binary output directory (configurable)
 COMMANDS_DIR ?= $(RELEASE_DIR)/commands
+WASM_OPT_JOBS ?= 4
 
 # Detect patched std: if std-patches/ has .patch files and patch-std.sh exists, use patched sysroot
 PATCHES := $(wildcard std-patches/*.patch)
@@ -229,20 +230,35 @@ wasm: c/sysroot/lib/wasm32-wasi/libc.a vendor patch-vendor patch-std wasm-opt-ch
 			--bin "$$bin"; \
 	done
 	@mkdir -p $(COMMANDS_DIR)
-	@TOTAL=0; SKIPPED=0; \
+	@set -e; \
 	HAS_OPT=$$(command -v wasm-opt >/dev/null 2>&1 && echo 1 || echo 0); \
+	if [ "$$HAS_OPT" = "1" ]; then \
+		printf '%s\n' $(COMMAND_NAMES) | \
+			xargs -P $(WASM_OPT_JOBS) -n 1 sh -c ' \
+				wasm="$(RELEASE_DIR)/$$1.wasm"; \
+				if [ -f "$$wasm" ]; then \
+					wasm-opt -O3 --strip-debug --all-features "$$wasm" -o "$(COMMANDS_DIR)/$$1"; \
+				else \
+					echo "Warning: $$wasm not found — skipping $$1"; \
+				fi \
+			' _; \
+	else \
+		for cmd in $(COMMAND_NAMES); do \
+			wasm="$(RELEASE_DIR)/$$cmd.wasm"; \
+			if [ -f "$$wasm" ]; then \
+				cp "$$wasm" "$(COMMANDS_DIR)/$$cmd"; \
+			else \
+				echo "Warning: $$wasm not found — skipping $$cmd"; \
+			fi; \
+		done; \
+	fi; \
+	TOTAL=0; SKIPPED=0; \
 	for cmd in $(COMMAND_NAMES); do \
 		wasm="$(RELEASE_DIR)/$$cmd.wasm"; \
 		if [ -f "$$wasm" ]; then \
 			TOTAL=$$((TOTAL + 1)); \
-			if [ "$$HAS_OPT" = "1" ]; then \
-				wasm-opt -O3 --strip-debug --all-features "$$wasm" -o "$(COMMANDS_DIR)/$$cmd"; \
-			else \
-				cp "$$wasm" "$(COMMANDS_DIR)/$$cmd"; \
-			fi; \
 		else \
 			SKIPPED=$$((SKIPPED + 1)); \
-			echo "Warning: $$wasm not found — skipping $$cmd"; \
 		fi; \
 	done; \
 	echo ""; \
