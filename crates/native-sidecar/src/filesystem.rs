@@ -1564,9 +1564,11 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             )?;
             record_fs_sync_subphase(request.method.as_str(), "parse", phase_start);
             let phase_start = Instant::now();
+            // Read the byte budget before taking the mutable borrow on `process`.
+            let max_filesystem_bytes = kernel.resource_limits().max_filesystem_bytes;
             if let Some(mapped) = process.mapped_host_fd_mut(fd) {
                 record_fs_sync_subphase(request.method.as_str(), "mapped_fd_match", phase_start);
-                return write_mapped_host_fd(mapped, fd, &contents, position);
+                return write_mapped_host_fd(mapped, fd, &contents, position, max_filesystem_bytes);
             }
             record_fs_sync_subphase(request.method.as_str(), "mapped_fd_none", phase_start);
             let phase_start = Instant::now();
@@ -1616,11 +1618,14 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             record_fs_sync_subphase(request.method.as_str(), "parse", phase_start);
 
             let mut total_written = 0usize;
+            // Read the byte budget before taking the mutable borrow on `process`.
+            let max_filesystem_bytes = kernel.resource_limits().max_filesystem_bytes;
             if let Some(mapped) = process.mapped_host_fd_mut(fd) {
                 record_fs_sync_subphase(request.method.as_str(), "mapped_fd_match", phase_start);
                 let mut next_position = position;
                 for buffer in buffers {
-                    let written = write_all_mapped_host_fd(mapped, fd, buffer, next_position)?;
+                    let written =
+                        write_all_mapped_host_fd(mapped, fd, buffer, next_position, max_filesystem_bytes)?;
                     total_written = total_written.saturating_add(written);
                     if let Some(position) = &mut next_position {
                         *position = position.saturating_add(written as u64);
@@ -4286,12 +4291,45 @@ fn read_mapped_host_fd(
     Ok(javascript_sync_rpc_bytes_value(&bytes))
 }
 
+/// Enforce the VM's filesystem byte budget on a host-mapped write.
+///
+/// Writes through a mapped host fd go straight to the host file and never reach
+/// the kernel VFS, so `check_filesystem_usage` never sees them. Without this a
+/// guest writing to a host-backed path (`/tmp`, `/workspace`) could exceed
+/// `limits.resources.maxFilesystemBytes` without bound and fill the host disk
+/// (LT-011 / LT-017). Only runs when a limit is configured, so the common
+/// unlimited case keeps the original fast path.
+fn check_mapped_host_fd_write_budget(
+    mapped: &crate::state::ActiveMappedHostFd,
+    fd: u32,
+    len: usize,
+    position: Option<u64>,
+    max_filesystem_bytes: Option<u64>,
+) -> Result<(), SidecarError> {
+    let Some(limit) = max_filesystem_bytes else {
+        return Ok(());
+    };
+    let current = mapped.file.metadata().map(|meta| meta.len()).unwrap_or(0);
+    let start = position.unwrap_or(current);
+    let resulting = start.saturating_add(len as u64).max(current);
+    if resulting > limit {
+        return Err(SidecarError::Execution(format!(
+            "ENOSPC: writing {len} byte(s) to mapped guest fd {fd} would reach {resulting} bytes, \
+             exceeding the VM filesystem limit of {limit} (limits.resources.maxFilesystemBytes); \
+             raise the limit to store more data"
+        )));
+    }
+    Ok(())
+}
+
 fn write_mapped_host_fd(
     mapped: &mut crate::state::ActiveMappedHostFd,
     fd: u32,
     contents: &[u8],
     position: Option<u64>,
+    max_filesystem_bytes: Option<u64>,
 ) -> Result<Value, SidecarError> {
+    check_mapped_host_fd_write_budget(mapped, fd, contents.len(), position, max_filesystem_bytes)?;
     let written = match position {
         Some(offset) => mapped.file.write_at(contents, offset),
         None => mapped.file.write(contents),
@@ -4310,7 +4348,9 @@ fn write_all_mapped_host_fd(
     fd: u32,
     contents: &[u8],
     position: Option<u64>,
+    max_filesystem_bytes: Option<u64>,
 ) -> Result<usize, SidecarError> {
+    check_mapped_host_fd_write_budget(mapped, fd, contents.len(), position, max_filesystem_bytes)?;
     let mut total = 0usize;
     while total < contents.len() {
         let write_position = position.map(|offset| offset.saturating_add(total as u64));
