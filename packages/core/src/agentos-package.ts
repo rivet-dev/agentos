@@ -33,7 +33,7 @@ export interface PackageDescriptor {
 	path: string;
 }
 
-/** Discriminate the dir-only package reference. */
+/** Discriminate the path-only package reference. */
 export function isPackageDescriptor(
 	value: unknown,
 ): value is PackageDescriptor {

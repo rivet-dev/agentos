@@ -7,8 +7,9 @@ import { isPackageDescriptor } from "../src/agentos-package.js";
 // + inode-sharing assertions. The only thing left client-side is the descriptor
 // surface, so this is a thin discriminator test.
 describe("agentos-package descriptor surface", () => {
-	it("discriminates the dir-only package descriptor", () => {
-		expect(isPackageDescriptor("/x")).toBe(true);
+	it("discriminates the path-only package descriptor", () => {
+		expect(isPackageDescriptor({ path: "/x" })).toBe(true);
+		expect(isPackageDescriptor("/x")).toBe(false);
 		expect(isPackageDescriptor({ name: "p", dir: "/x" })).toBe(false);
 		expect(isPackageDescriptor({ dir: "/x" })).toBe(false);
 		expect(isPackageDescriptor(null)).toBe(false);
