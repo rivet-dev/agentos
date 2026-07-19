@@ -44,6 +44,17 @@
 			],
 			"dependsOn": ["^build", "check-types"]
 		},
+		"test:nightly": {
+			"inputs": [
+				"src/**",
+				"tests/**",
+				"software/**/test/**",
+				"native/tests/**",
+				"scripts/**",
+				"package.json"
+			],
+			"dependsOn": ["^build", "check-types"]
+		},
 		"@rivet-dev/agentos-sidecar#build": {
 			"cache": false
 		},

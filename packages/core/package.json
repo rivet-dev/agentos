@@ -50,7 +50,8 @@
 		"build": "pnpm run build:protocols && tsc",
 		"build:agentos-protocol": "node ./scripts/compile-agentos-protocol.mjs",
 		"build:protocols": "pnpm run build:agentos-protocol",
-		"test": "vitest run --reporter=verbose"
+		"test": "vitest run --exclude '**/*.nightly.test.ts' --reporter=verbose",
+		"test:nightly": "vitest run tests/*.nightly.test.ts --reporter=verbose --passWithNoTests"
 	},
 	"dependencies": {
 		"@agentclientprotocol/sdk": "0.16.1",

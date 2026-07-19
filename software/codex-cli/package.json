@@ -20,7 +20,8 @@
 	"scripts": {
 		"build": "agentos-toolchain stage --commands-dir ../codex/wasm --if-missing skip && tsc && agentos-toolchain build",
 		"check-types": "tsc --noEmit",
-		"test": "vitest run test/ --passWithNoTests"
+		"test": "vitest run test/ --exclude '**/*.nightly.test.ts' --passWithNoTests",
+		"test:nightly": "vitest run test/*.nightly.test.ts --passWithNoTests"
 	},
 	"devDependencies": {
 		"@agentos-software/manifest": "workspace:*",

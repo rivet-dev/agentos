@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	copyWasmCommands,
+	requiredPackageCommandNames,
 	requiredSoftwareCommandNames,
 } from "../scripts/copy-wasm-commands.mjs";
 
@@ -71,6 +72,36 @@ describe("copy WASM commands", () => {
 	it("derives commands, aliases, and stubs while excluding optional builds", () => {
 		const { softwareRoot } = fixture();
 		expect(requiredSoftwareCommandNames(softwareRoot)).toEqual([
+			"alpha",
+			"alpha-alias",
+			"legacy",
+		]);
+	});
+
+	it("derives a required command contract for selected packages", () => {
+		const { softwareRoot } = fixture();
+		expect(
+			requiredPackageCommandNames(softwareRoot, ["default-tools"]),
+		).toEqual(["alpha", "alpha-alias", "legacy"]);
+	});
+
+	it("validates a selected package without requiring the full registry", () => {
+		const { sourceDir, destDir, softwareRoot } = fixture();
+		for (const name of ["alpha", "alpha-alias", "legacy"]) {
+			writeFileSync(join(sourceDir, name), name);
+		}
+		writeFileSync(join(sourceDir, "unselected-extra"), "extra");
+
+		copyWasmCommands({
+			sourceDir,
+			destDir,
+			softwareRoot,
+			requireCommands: true,
+			requiredPackageNames: ["default-tools"],
+			log: () => {},
+		});
+
+		expect(readdirSync(destDir).sort()).toEqual([
 			"alpha",
 			"alpha-alias",
 			"legacy",

@@ -25,6 +25,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: node --test scripts/generate-secure-exec-mirror.test.mjs
       - run: make -C toolchain commands
+      - run: make -C toolchain cmd/duckdb
       - run: node packages/runtime-core/scripts/copy-wasm-commands.mjs --require
       # Browser support is retained in-tree but disabled during the unified
       # native sidecar reactor migration, so it must not gate native CI.
@@ -32,6 +33,9 @@ jobs:
       - run: cargo clippy --workspace --exclude agentos-sidecar-browser --exclude agentos-native-sidecar-browser --all-targets -- -D warnings
       - run: pnpm check-types
       - run: pnpm test
+        env:
+          AGENTOS_E2E_NETWORK: '1'
+      - run: pnpm test:nightly
         env:
           AGENTOS_E2E_NETWORK: '1'
       # This opt-in gate cold-installs pinned ecosystem fixtures and exercises

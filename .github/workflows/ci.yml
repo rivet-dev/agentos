@@ -87,12 +87,8 @@ jobs:
           cache-workspace-crates: true
           key: wasm-commands-${{ hashFiles('toolchain/Cargo.lock') }}
       - run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos-runtime-core...'
-      - run: make -C toolchain commands
-      # DuckDB is intentionally outside the default command set because it is a
-      # heavy build, but the core integration suite requires its real package.
-      - name: Build required heavy integration commands
-        run: make -C toolchain cmd/duckdb
-      - run: node packages/runtime-core/scripts/copy-wasm-commands.mjs --require
+      - run: make -C toolchain pr-commands
+      - run: node packages/runtime-core/scripts/copy-wasm-commands.mjs --require-coreutils
       - uses: actions/upload-artifact@v4
         with:
           name: wasm-commands
@@ -128,7 +124,7 @@ jobs:
         with:
           name: wasm-commands
           path: packages/runtime-core/commands
-      - run: node packages/runtime-core/scripts/copy-wasm-commands.mjs --require
+      - run: node packages/runtime-core/scripts/copy-wasm-commands.mjs --require-coreutils
       - name: Restore canonical command staging directory
         run: |
           # Software package builds stage from the canonical toolchain output,

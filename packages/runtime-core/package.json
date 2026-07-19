@@ -190,7 +190,8 @@
 		"build": "pnpm run build:protocol && pnpm run build:vm-config && tsc && pnpm run copy-commands",
 		"prepack": "node scripts/copy-wasm-commands.mjs --require",
 		"pretest": "cargo build -q -p agentos-native-sidecar",
-		"test": "vitest run",
+		"test": "vitest run --exclude '**/*.nightly.test.ts'",
+		"test:nightly": "vitest run tests/integration/*.nightly.test.ts --passWithNoTests",
 		"test:ecosystem": "AGENTOS_ECOSYSTEM_E2E=1 vitest run tests/integration/e2e-project-matrix.test.ts -t 'required Node ecosystem reactor matrix' --reporter=verbose"
 	},
 	"dependencies": {
