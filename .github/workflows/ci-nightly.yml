@@ -33,6 +33,8 @@ jobs:
       - run: make -C toolchain commands
       - run: make -C toolchain cmd/duckdb
       - run: node packages/runtime-core/scripts/copy-wasm-commands.mjs --require
+      - name: Use stable Rust for repository validation
+        run: echo "RUSTUP_TOOLCHAIN=stable" >> "$GITHUB_ENV"
       # Browser support is retained in-tree but disabled during the unified
       # native sidecar reactor migration, so it must not gate native CI.
       - run: cargo check --workspace --exclude agentos-sidecar-browser --exclude agentos-native-sidecar-browser
