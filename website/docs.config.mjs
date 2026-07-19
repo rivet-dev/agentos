@@ -34,6 +34,7 @@ import {
 	faArrowsLeftRight,
 	faDiagramNext,
 	faWindowMaximize,
+	faMagnifyingGlass,
 } from "@rivet-gg/icons";
 
 export const siteConfig = {
@@ -82,6 +83,7 @@ export const siteConfig = {
 					pages: [
 						{ title: "Quickstart", href: "/docs/quickstart", icon: faForwardFast },
 						{ title: "Crash Course", href: "/docs/crash-course", icon: faLightbulb },
+						{ title: "Inspector", href: "/docs/inspector", icon: faMagnifyingGlass },
 						{ title: "agentOS vs Sandbox", href: "/docs/versus-sandbox", icon: faScaleBalanced },
 					],
 				},

@@ -39,6 +39,65 @@ export interface AgentOsEvents {
 	cronEvent: SerializableCronEvent;
 }
 
+// --- Observe-only runtime health (reply of the `health` action) ---
+
+/** One buffered near-capacity limit warning (`RuntimeHealth.warnings`). */
+export interface RuntimeLimitWarning {
+	/** Epoch milliseconds when the warning was observed host-side. */
+	ts: number;
+	limit: string;
+	category: string;
+	observed: number;
+	capacity: number;
+	fillPercent: number;
+}
+
+/** One buffered unexpected adapter exit (`RuntimeHealth.agentExits`). */
+export interface RuntimeAgentExit {
+	/** Epoch milliseconds when the exit was observed host-side. */
+	ts: number;
+	sessionId: string;
+	agentType: string;
+	exitCode: number | null;
+	restart: string;
+	restartCount: number;
+}
+
+/**
+ * One buffered adapter stderr line (`RuntimeHealth.stderrTail`). Always empty
+ * today; kept in the reply shape so consumers stay stable when a stderr feed
+ * lands.
+ */
+export interface RuntimeStderrLine {
+	ts: number;
+	line: string;
+}
+
+/** `RuntimeHealth.sidecar`: the non-waking sidecar descriptor subset. */
+export interface RuntimeSidecarInfo {
+	state: string;
+	activeVmCount: number;
+}
+
+/**
+ * Reply of the observe-only `health` action. Reading it never boots the VM;
+ * the post-mortem buffers survive VM sleep so warnings and crash exits stay
+ * readable while `booted` is false.
+ */
+export interface RuntimeHealth {
+	booted: boolean;
+	/**
+	 * Count of sessions with live event subscriptions through this actor since
+	 * the last wake (not total loaded sessions); `null` while the VM is down.
+	 */
+	sessions: number | null;
+	/** Sidecar descriptor; `null` while the VM is down. */
+	sidecar: RuntimeSidecarInfo | null;
+	warnings: RuntimeLimitWarning[];
+	agentExits: RuntimeAgentExit[];
+	stderrTail: RuntimeStderrLine[];
+}
+
 // --- Serializable cron action (excludes callback type) ---
 
 export type SerializableCronAction =

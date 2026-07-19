@@ -46,6 +46,12 @@ body,
 #root {
 	height: 100%;
 	margin: 0;
+	/* The tab app is a fixed-viewport UI (every pane scrolls internally). A
+	   page-level scrollbar must never appear: with classic (space-consuming)
+	   scrollbars, transient overflow during streamed output triggers a
+	   vertical-bar → narrower content → horizontal-bar → refit → retract
+	   feedback loop that visibly flashes both scrollbars. */
+	overflow: hidden;
 }
 
 body {

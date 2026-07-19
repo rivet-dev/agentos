@@ -11,6 +11,10 @@ export const ScrollArea = React.forwardRef<
 	<ScrollAreaPrimitive.Root
 		ref={ref}
 		className={cn("relative overflow-hidden", className)}
+		// "auto": the scrollbar is present whenever content overflows. The
+		// default hover type mounts/unmounts it on scroll and layout events,
+		// which reads as flashing next to polling content (sessions/health).
+		type="auto"
 		{...props}
 	>
 		<ScrollAreaPrimitive.Viewport className="h-full w-full rounded-[inherit] [&>div]:!block">

@@ -1,139 +1,854 @@
-import { useSuspenseQuery } from "@tanstack/react-query";
-import type { SessionStreamEntry } from "@rivet-dev/agentos-core";
-import { useEffect, useRef, useState } from "react";
-import { AgentOsEmpty, StatusDot } from "../common";
+import { useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+	ActionErrorNote,
+	AgentOsEmpty,
+	AgentOsWordmark,
+	ChevronRight,
+	CopyButton,
+	IconButton,
+	PlusIcon,
+	relativeTime,
+	SearchIcon,
+	StatusDot,
+} from "../common";
+import { isInspectorActionError } from "../lib/actor-client";
 import { cn } from "../lib/cn";
 import { useAgentOsActor } from "../lib/rivet";
-import { agentOsSource, mapSessionEvent } from "../lib/source";
-import type { TranscriptEvent } from "../lib/types";
+import {
+	agentOsSource,
+	cancelPrompt,
+	liveSessionIds,
+	mapSessionEvent,
+} from "../lib/source";
+import type {
+	AgentCrashedPayload,
+	SessionStreamEntry,
+	TranscriptEvent,
+} from "../lib/types";
 import { ScrollArea } from "../ui/scroll-area";
+import { VmStatusBadges } from "../vm-status-badges";
 import React from "react";
 
-function EventFrame({ label, meta, children }: { label: string; meta?: string; children: React.ReactNode }) {
-	return (
-		<div className="border-b px-4 py-3">
-			<div className="mb-1 flex items-center gap-2">
-				<span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{label}</span>
-				{meta ? <span className="ml-auto font-mono text-xs text-muted-foreground">{meta}</span> : null}
-			</div>
-			{children}
-		</div>
-	);
-}
-
+// Chat-style transcript rendering. Conversation content (user/assistant) gets
+// bubbles; plumbing (usage updates, unknown ACP events) collapses to one-line
+// chips with the raw JSON behind an expander so it never dominates the pane.
 function TranscriptEventView({ event }: { event: TranscriptEvent }) {
 	switch (event.kind) {
 		case "user":
+			return (
+				<div className="flex justify-end">
+					<div className="max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-muted px-3.5 py-2 text-sm">
+						{event.text || "—"}
+					</div>
+				</div>
+			);
 		case "assistant":
 			return (
-				<EventFrame label={event.kind}>
-					<p className="whitespace-pre-wrap text-sm">{event.text || "—"}</p>
-				</EventFrame>
+				<div className="flex">
+					<div className="max-w-[85%] whitespace-pre-wrap text-sm leading-relaxed">
+						{event.text || "—"}
+					</div>
+				</div>
 			);
 		case "thinking":
 			return (
-				<EventFrame label="thinking">
-					<p className="whitespace-pre-wrap text-sm italic text-muted-foreground">{event.text || "—"}</p>
-				</EventFrame>
+				<div className="flex">
+					<div className="max-w-[85%] whitespace-pre-wrap text-xs italic leading-relaxed text-muted-foreground/70">
+						{event.text || "—"}
+					</div>
+				</div>
 			);
-		case "tool":
+		case "tool": {
+			const hasBody =
+				event.input !== undefined || event.output !== undefined || !!event.locations?.length;
+			const summary = (
+				<>
+					<span className="font-mono">{event.tool}</span>
+					{event.status ? (
+						<span className="rounded-full border px-1.5 py-px text-[10px]">{event.status}</span>
+					) : null}
+				</>
+			);
+			if (!hasBody) {
+				return (
+					<div className="flex items-center gap-2 text-xs text-muted-foreground">{summary}</div>
+				);
+			}
 			return (
-				<EventFrame label={`tool · ${event.tool}`} meta={event.status}>
-					<span className="font-mono text-xs text-muted-foreground">{event.status ?? ""}</span>
-				</EventFrame>
+				<details className="group rounded-lg border border-foreground/10 bg-muted/20 text-xs text-muted-foreground">
+					<summary className="flex cursor-pointer list-none items-center gap-2 px-2.5 py-1.5 [&::-webkit-details-marker]:hidden">
+						<ChevronRight className="size-3 shrink-0 transition-transform group-open:rotate-90" />
+						{summary}
+					</summary>
+					<div className="flex flex-col gap-2 border-t border-foreground/10 px-2.5 py-2">
+						{event.input !== undefined ? (
+							<div>
+								<div className="mb-1 text-[10px] text-muted-foreground/70">Input</div>
+								<pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded bg-muted/50 p-2 font-mono text-[11px] leading-relaxed">
+									{JSON.stringify(event.input, null, 2)}
+								</pre>
+							</div>
+						) : null}
+						{event.output !== undefined ? (
+							<div>
+								<div className="mb-1 text-[10px] text-muted-foreground/70">Output</div>
+								<pre className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded bg-muted/50 p-2 font-mono text-[11px] leading-relaxed">
+									{event.output}
+								</pre>
+							</div>
+						) : null}
+						{event.locations?.length ? (
+							<div className="font-mono text-[11px] text-muted-foreground/70">
+								{event.locations.join("  ")}
+							</div>
+						) : null}
+					</div>
+				</details>
+			);
+		}
+		case "plan":
+			return (
+				<div className="rounded-lg border border-foreground/10 bg-muted/20 px-2.5 py-2 text-xs text-muted-foreground">
+					<div className="mb-1 text-[10px] text-muted-foreground/70">Plan</div>
+					<ul className="flex flex-col gap-1">
+						{event.entries.map((entry, i) => (
+							<li key={`${i}-${entry.content.slice(0, 24)}`} className="flex items-start gap-2">
+								<StatusDot
+									color={
+										entry.status === "completed"
+											? "green"
+											: entry.status === "in_progress"
+												? "amber"
+												: "muted"
+									}
+									className="mt-1"
+								/>
+								<span
+									className={cn(
+										"min-w-0 flex-1",
+										entry.status === "completed" && "text-muted-foreground/60 line-through",
+									)}
+								>
+									{entry.content}
+								</span>
+							</li>
+						))}
+					</ul>
+				</div>
+			);
+		case "notice":
+			return (
+				<div className="text-center text-[11px] text-muted-foreground/60">{event.text}</div>
+			);
+		case "permission":
+			return (
+				<div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-2.5 py-1.5 text-xs text-amber-500/90">
+					<StatusDot color="amber" className="size-1.5" />
+					{event.text}
+				</div>
+			);
+		case "error":
+			return (
+				<div className="whitespace-pre-wrap text-sm text-destructive">{event.text}</div>
 			);
 		default:
 			return (
-				<EventFrame label={event.label}>
-					<pre className="whitespace-pre-wrap break-words rounded bg-muted/50 p-2 font-mono text-[11px] leading-relaxed text-muted-foreground">
+				<details className="group text-xs text-muted-foreground/70">
+					<summary className="flex cursor-pointer list-none items-center gap-1.5 [&::-webkit-details-marker]:hidden">
+						<ChevronRight className="size-3 shrink-0 transition-transform group-open:rotate-90" />
+						<span className="font-mono">{event.label}</span>
+					</summary>
+					<pre className="mt-1.5 max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded bg-muted/50 p-2 font-mono text-[11px] leading-relaxed">
 						{JSON.stringify(event.json, null, 2)}
 					</pre>
-				</EventFrame>
+				</details>
 			);
 	}
 }
 
+// Pins the transcript to the newest event — but only while the user is already
+// at the bottom. Scrolling up to read history detaches the pin (tracked by an
+// IntersectionObserver against the ScrollArea viewport); returning to the
+// bottom re-attaches it.
+function ScrollAnchor({ count }: { count: number }) {
+	const ref = useRef<HTMLDivElement>(null);
+	const stickRef = useRef(true);
+	useEffect(() => {
+		const el = ref.current;
+		const viewport = el?.closest("[data-radix-scroll-area-viewport]");
+		if (!el || !viewport) return;
+		const observer = new IntersectionObserver(
+			([entry]) => {
+				stickRef.current = entry.isIntersecting;
+			},
+			{ root: viewport, rootMargin: "0px 0px 96px 0px" },
+		);
+		observer.observe(el);
+		return () => observer.disconnect();
+	}, []);
+	useEffect(() => {
+		if (stickRef.current) ref.current?.scrollIntoView({ block: "end" });
+	}, [count]);
+	return <div ref={ref} className="h-px" />;
+}
+
+// ── Render pipeline: raw event list → displayable rows ────────────────────
+// The ACP stream is chunked (one event per message fragment) and tool calls
+// arrive as a `tool_call` plus N `tool_call_update`s. Coalesce so one message
+// renders as one bubble and one tool call as one card that updates in place.
+type KeyedEvent = TranscriptEvent & { key: string };
+
+// Live rows carry a locally unique `liveKey` for React keys: ephemeral
+// streaming deltas share one fractional `seq` (afterSequence + 0.5), so seq
+// alone cannot key the live list. `seq` still does ordering + dedupe work.
+type LiveTranscriptEvent = TranscriptEvent & { liveKey: number };
+
+function coalesceTranscript(events: KeyedEvent[]): KeyedEvent[] {
+	const out: KeyedEvent[] = [];
+	const toolIndex = new Map<string, number>();
+	let planIndex: number | null = null;
+	for (const e of events) {
+		const last = out[out.length - 1];
+		if (
+			(e.kind === "user" || e.kind === "assistant" || e.kind === "thinking") &&
+			last?.kind === e.kind
+		) {
+			out[out.length - 1] = { ...last, text: last.text + e.text };
+			continue;
+		}
+		if (e.kind === "tool" && e.toolCallId) {
+			const idx = toolIndex.get(e.toolCallId);
+			if (idx !== undefined) {
+				const prev = out[idx] as Extract<KeyedEvent, { kind: "tool" }>;
+				out[idx] = {
+					...prev,
+					// Updates often omit the title (the mapper then falls back to the
+					// id) — never overwrite a real title with the id.
+					tool: e.tool !== e.toolCallId ? e.tool : prev.tool,
+					status: e.status ?? prev.status,
+					input: e.input ?? prev.input,
+					output: e.output ?? prev.output,
+					locations: e.locations ?? prev.locations,
+				};
+				continue;
+			}
+			toolIndex.set(e.toolCallId, out.length);
+		}
+		if (e.kind === "plan") {
+			// Plan updates are full snapshots: replace the existing card in place.
+			if (planIndex !== null) {
+				out[planIndex] = { ...out[planIndex], entries: e.entries } as KeyedEvent;
+				continue;
+			}
+			planIndex = out.length;
+		}
+		out.push(e);
+	}
+	return out;
+}
+
+// Subtle three-dot pulse shown as the last row while a turn is in flight.
+function TurnInFlight() {
+	return (
+		<div className="flex items-center gap-1 px-1 py-0.5" aria-label="Turn in progress">
+			{[0, 1, 2].map((i) => (
+				<span
+					key={i}
+					className="size-1.5 animate-pulse rounded-full bg-muted-foreground/50"
+					style={{ animationDelay: `${i * 200}ms` }}
+				/>
+			))}
+		</div>
+	);
+}
+
+// Composer defaults persist in localStorage: they contain the API key the
+// user pastes, which never leaves the browser except inside createSession's
+// env (sent only to this actor).
+const LS_AGENT_TYPE = "agentos-inspector:composer-agent-type";
+const LS_ENV_JSON = "agentos-inspector:composer-env";
+// Selected-session persistence across the per-tab iframe swap.
+const transcriptStateKey = (actorId: string) => `agentos-inspector:transcript:${actorId}`;
+const DEFAULT_ENV_JSON = JSON.stringify(
+	{
+		ANTHROPIC_API_KEY: "",
+		OPENCODE_CONFIG_CONTENT: JSON.stringify({ model: "anthropic/claude-haiku-4-5-20251001" }),
+	},
+	null,
+	2,
+);
+
+// The composer's lazy create path and the sidebar's "+" button build sessions
+// from the same localStorage-backed defaults, so both produce the same thing.
+function newSessionDefaults(): { agentType: string; env: Record<string, string> } {
+	const agentType = (localStorage.getItem(LS_AGENT_TYPE) ?? "opencode").trim() || "opencode";
+	const raw = localStorage.getItem(LS_ENV_JSON) ?? DEFAULT_ENV_JSON;
+	let env: Record<string, string>;
+	try {
+		env = JSON.parse(raw) as Record<string, string>;
+	} catch (error) {
+		throw new Error(`Session env is not valid JSON: ${(error as Error).message}`);
+	}
+	return { agentType, env };
+}
+
+function Composer({
+	actorId,
+	sessionId,
+	sessionStatus,
+	onSessionCreated,
+	onErrorEvent,
+	onBusyChange,
+}: {
+	actorId: string;
+	sessionId: string | null;
+	sessionStatus?: string;
+	onSessionCreated: (sessionId: string) => void;
+	onErrorEvent: (text: string) => void;
+	onBusyChange?: (busy: boolean) => void;
+}) {
+	const [draft, setDraft] = useState("");
+	const [busy, setBusyState] = useState(false);
+	const setBusy = (b: boolean) => {
+		setBusyState(b);
+		onBusyChange?.(b);
+	};
+	const [stopUnsupported, setStopUnsupported] = useState(false);
+	const [optionsOpen, setOptionsOpen] = useState(false);
+	const [agentType, setAgentType] = useState(
+		() => localStorage.getItem(LS_AGENT_TYPE) ?? "opencode",
+	);
+	const [envJson, setEnvJson] = useState(() => localStorage.getItem(LS_ENV_JSON) ?? DEFAULT_ENV_JSON);
+	// The in-flight session survives re-renders; also used by Stop.
+	const activeSessionRef = useRef<string | null>(null);
+	// Agent-type suggestions from the installed software (fetched only while the
+	// options panel is open). Free text stays authoritative: the datalist is a
+	// hint, and agent types are derived from package names heuristically.
+	const software = useQuery({
+		...agentOsSource.softwareQueryOptions(actorId),
+		enabled: optionsOpen,
+	});
+	const agentTypeSuggestions = (software.data ?? [])
+		.filter((bundle) => bundle.name.endsWith("· agent"))
+		.map((bundle) => bundle.name.split(" · ")[0]?.split("/").pop() ?? "")
+		.filter(Boolean);
+
+	const send = async () => {
+		const text = draft.trim();
+		if (!text || busy) return;
+		setBusy(true);
+		setDraft("");
+		try {
+			let sid = sessionId;
+			if (!sid) {
+				let env: Record<string, string>;
+				try {
+					env = JSON.parse(envJson);
+				} catch (e) {
+					throw new Error(`Session env is not valid JSON: ${(e as Error).message}`);
+				}
+				sid = await agentOsSource.createSession(agentType.trim() || "opencode", { env });
+				onSessionCreated(sid);
+			}
+			activeSessionRef.current = sid;
+			await agentOsSource.sendPrompt(sid, text);
+		} catch (error) {
+			let hint = isInspectorActionError(error) ? ` — ${error.hint}` : "";
+			// Prompting a persisted-but-idle session (from an earlier VM boot)
+			// fails inside the runtime; the generic crash hint is misleading there.
+			if (sessionId && sessionStatus !== "running") {
+				hint =
+					" — this session is idle (not live in the current VM boot). Send without a selection to start a fresh session, or resume it from a client.";
+			}
+			onErrorEvent(`${error instanceof Error ? error.message : String(error)}${hint}`);
+		} finally {
+			activeSessionRef.current = null;
+			setBusy(false);
+		}
+	};
+
+	const stop = async () => {
+		const sid = activeSessionRef.current ?? sessionId;
+		if (!sid) return;
+		try {
+			const supported = await cancelPrompt(sid);
+			if (!supported) {
+				setStopUnsupported(true);
+				onErrorEvent("Stop is not supported by this runtime (no cancelPrompt action).");
+			}
+		} catch (error) {
+			onErrorEvent(error instanceof Error ? error.message : String(error));
+		}
+	};
+
+	return (
+		<div className="shrink-0">
+			<div className="mx-auto w-full max-w-3xl px-3 pb-3">
+				{optionsOpen && !sessionId ? (
+					<div className="mb-2 flex flex-col gap-2 rounded-xl border bg-muted/30 p-3 text-xs">
+						<label className="flex items-center gap-2">
+							<span className="w-24 shrink-0 text-muted-foreground">Agent type</span>
+							<input
+								value={agentType}
+								onChange={(e) => {
+									setAgentType(e.target.value);
+									localStorage.setItem(LS_AGENT_TYPE, e.target.value);
+								}}
+								list="agentos-composer-agent-types"
+								className="flex-1 rounded border bg-background px-2 py-1 font-mono"
+							/>
+							<datalist id="agentos-composer-agent-types">
+								{agentTypeSuggestions.map((type) => (
+									<option key={type} value={type} />
+								))}
+							</datalist>
+						</label>
+						<label className="flex items-start gap-2">
+							<span className="w-24 shrink-0 pt-1 text-muted-foreground">Session env</span>
+							<textarea
+								value={envJson}
+								onChange={(e) => {
+									setEnvJson(e.target.value);
+									localStorage.setItem(LS_ENV_JSON, e.target.value);
+								}}
+								rows={4}
+								spellCheck={false}
+								className="flex-1 resize-y rounded border bg-background px-2 py-1 font-mono"
+							/>
+						</label>
+						<div className="text-muted-foreground/70">
+							Used when sending without a session: creates one with these options. Values stay
+							in this browser.
+						</div>
+					</div>
+				) : null}
+				{/* Single-card composer (ChatGPT/Codex style): borderless textarea on
+				    top, inline controls in the same card, circular send/stop. */}
+				<div className="rounded-2xl border bg-muted/40 transition-colors focus-within:border-ring/60">
+					<textarea
+						value={draft}
+						onChange={(e) => setDraft(e.target.value)}
+						onKeyDown={(e) => {
+							if (e.key === "Enter" && !e.shiftKey) {
+								e.preventDefault();
+								void send();
+							}
+						}}
+						placeholder={sessionId ? "Prompt this session…" : "Prompt a new session…"}
+						rows={2}
+						className="max-h-48 min-h-[3.25rem] w-full resize-none bg-transparent px-4 pt-3 text-sm placeholder:text-muted-foreground/50 focus:outline-none"
+					/>
+					<div className="flex items-center gap-1.5 px-2.5 pb-2.5">
+						{/* Agent choice and session env only matter when the next send
+						    CREATES a session — an existing session already carries both,
+						    so the control disappears once one is selected. */}
+						{!sessionId ? (
+							<button
+								type="button"
+								onClick={() => setOptionsOpen((v) => !v)}
+								title="New-session options (agent, env)"
+								className="inline-flex items-center gap-1 rounded px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+							>
+								<span aria-hidden="true" className="text-sm leading-none">
+									+
+								</span>
+								Options
+							</button>
+						) : null}
+						<span className="ml-auto" />
+						{busy ? (
+							<button
+								type="button"
+								onClick={() => void stop()}
+								disabled={stopUnsupported}
+								title={
+									stopUnsupported
+										? "This runtime has no cancelPrompt action"
+										: "Stop the running turn"
+								}
+								className="inline-flex size-8 items-center justify-center rounded-md bg-foreground/90 text-background transition-opacity hover:opacity-80 disabled:opacity-40"
+							>
+								<span aria-hidden="true" className="block size-2.5 rounded-[2px] bg-current" />
+							</button>
+						) : (
+							<button
+								type="button"
+								onClick={() => void send()}
+								disabled={!draft.trim()}
+								title="Send (⏎)"
+								className="inline-flex size-8 items-center justify-center rounded-md bg-primary text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
+							>
+								<svg
+									viewBox="0 0 16 16"
+									className="size-4"
+									fill="none"
+									stroke="currentColor"
+									strokeWidth="2"
+									strokeLinecap="round"
+									strokeLinejoin="round"
+									aria-hidden="true"
+								>
+									<path d="M8 13V3M4 7l4-4 4 4" />
+								</svg>
+							</button>
+						)}
+					</div>
+				</div>
+			</div>
+		</div>
+	);
+}
+
 export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 	const { data: sessions } = useSuspenseQuery(agentOsSource.sessionsQueryOptions(actorId));
-	const [selected, setSelected] = useState<string | null>(null);
-	const sessionId = selected ?? sessions[0]?.sessionId ?? null;
-	// Live-only transcript via the actor event stream.
+	const queryClient = useQueryClient();
+	// undefined = no explicit choice (default to the newest session); null =
+	// explicitly composing a new session. Without the distinction, once any
+	// session exists the UI can never start another one. The choice survives
+	// tab switches (the dashboard swaps the iframe per tab).
+	const [selected, setSelected] = useState<string | null | undefined>(() => {
+		try {
+			const raw = sessionStorage.getItem(transcriptStateKey(actorId));
+			if (!raw) return undefined;
+			const parsed = JSON.parse(raw) as { selected?: unknown };
+			return parsed.selected === null || typeof parsed.selected === "string"
+				? parsed.selected
+				: undefined;
+		} catch {
+			return undefined;
+		}
+	});
+	useEffect(() => {
+		try {
+			if (selected === undefined) sessionStorage.removeItem(transcriptStateKey(actorId));
+			else sessionStorage.setItem(transcriptStateKey(actorId), JSON.stringify({ selected }));
+		} catch (error) {
+			console.warn("agentos inspector: failed to persist transcript state", error);
+		}
+	}, [actorId, selected]);
+	// A restored id whose session no longer exists falls back to the newest.
+	const sessionId =
+		selected === undefined ||
+		(typeof selected === "string" && !sessions.some((s) => s.sessionId === selected))
+			? (sessions[0]?.sessionId ?? null)
+			: selected;
+	// Liveness comes from the same durable records the sidebar renders: a
+	// running (or permission-waiting) `state.status` means live in the VM.
+	const liveIds = useMemo(() => liveSessionIds(sessions), [sessions]);
+	const isLive = (s: (typeof sessions)[number]) => liveIds.has(s.sessionId);
+	// Persisted history (one-off) + live tail (websocket `sessionEvent` stream).
+	const { data: backfill = [] } = useQuery(agentOsSource.transcriptQueryOptions(actorId, sessionId));
+
+	// Live tail via the typed useActor connection, subscribed with the same
+	// cast pattern as permission-prompts.tsx / vm-status-badges.tsx.
 	const actor = useAgentOsActor();
 	const useAgentEvent = actor.useEvent as (
 		name: string,
-		handler: (event: SessionStreamEntry) => void,
+		handler: (payload: unknown) => void,
 	) => void;
-	const [live, setLive] = useState<TranscriptEvent[]>([]);
-	// Keep the latest session id in a ref so the event handler never filters
-	// against a stale selection.
+	const [live, setLive] = useState<LiveTranscriptEvent[]>([]);
+	// Local counter for `liveKey`s; latest sessionId via ref so the (ref-stable)
+	// event handler never filters against a stale value.
+	const liveKeyRef = useRef(0);
 	const sessionIdRef = useRef(sessionId);
 	sessionIdRef.current = sessionId;
 	useEffect(() => {
 		setLive([]);
 	}, [sessionId]);
-	useAgentEvent("sessionEvent", (event) => {
+	// One flat SessionStreamEntry per broadcast: durable history rows and
+	// ephemeral streaming deltas share the union; permission activity arrives
+	// here too (type "permission_request" / "permission_response").
+	useAgentEvent("sessionEvent", (raw) => {
+		const entry = raw as SessionStreamEntry | undefined;
 		const cur = sessionIdRef.current;
-		if (!cur) return;
-		if (event.sessionId !== cur) return;
-		setLive((prev) => [...prev, mapSessionEvent(event)]);
+		if (!cur || !entry?.sessionId || entry.sessionId !== cur) return;
+		let mapped = mapSessionEvent(entry);
+		// Permission requests render inline (non-interactive) so the history
+		// shows "agent asked" in conversation position; the global banner above
+		// the tab is the interactive surface.
+		if (entry.type === "permission_request" && mapped.kind === "permission") {
+			mapped = { ...mapped, text: `${mapped.text} (answer in the banner above)` };
+		}
+		const liveKey = liveKeyRef.current++;
+		setLive((prev) => {
+			if (entry.durability === "durable") {
+				// Duplicate durable deliveries (broadcast vs backfill overlap is
+				// handled below; re-delivery here) keep one copy by sequence. A
+				// durable message/thought commit is the coalesced full message, so
+				// it supersedes the ephemeral deltas (fractional seq) that
+				// streamed it.
+				const supersedesDeltas =
+					entry.type === "agent_message_chunk" || entry.type === "agent_thought_chunk";
+				const next = prev.filter(
+					(e) =>
+						e.seq !== mapped.seq &&
+						!(
+							supersedesDeltas &&
+							e.kind === mapped.kind &&
+							!Number.isInteger(e.seq) &&
+							e.seq < mapped.seq
+						),
+				);
+				return [...next, { ...mapped, liveKey }];
+			}
+			return [...prev, { ...mapped, liveKey }];
+		});
 	});
+	// Unexpected adapter exits surface in the thread; restarts are never implicit.
+	useAgentEvent("agentExit", (raw) => {
+		const exit = raw as AgentCrashedPayload | undefined;
+		const cur = sessionIdRef.current;
+		if (!cur || exit?.sessionId !== cur) return;
+		const liveKey = liveKeyRef.current++;
+		setLive((prev) => [
+			...prev,
+			{
+				kind: "error",
+				// Negative synthetic seq: locally generated rows must never collide
+				// with real stream sequence numbers.
+				seq: -1 - liveKey,
+				liveKey,
+				text: `Agent crashed (exit ${exit.exitCode ?? "?"}) — restart: ${exit.restart}${exit.restartCount ? ` (attempt ${exit.restartCount})` : ""}`,
+			},
+		]);
+	});
+	// Composer callbacks: failed turns render as error rows in the live stream
+	// (fixes invisible failures); new sessions get selected + the list refreshed.
+	const pushErrorEvent = (text: string) => {
+		const liveKey = liveKeyRef.current++;
+		setLive((prev) => [...prev, { kind: "error", seq: -1 - liveKey, liveKey, text }]);
+	};
+	const handleSessionCreated = (sid: string) => {
+		setSelected(sid);
+		void queryClient.invalidateQueries({
+			queryKey: agentOsSource.sessionsQueryOptions(actorId).queryKey,
+		});
+	};
+	// The "+" button creates the session right away (boots the VM if asleep)
+	// instead of arming a compose-first flow that only created on send.
+	const [creatingSession, setCreatingSession] = useState(false);
+	// Sidebar id search, mirroring the dashboard's actor-list search.
+	const [sessionSearchOpen, setSessionSearchOpen] = useState(false);
+	const [sessionSearch, setSessionSearch] = useState("");
+	const sessionQuery = sessionSearch.trim().toLowerCase();
+	const visibleSessions = sessionQuery
+		? sessions.filter(
+				(s) =>
+					s.sessionId.toLowerCase().includes(sessionQuery) ||
+					s.agent.toLowerCase().includes(sessionQuery),
+			)
+		: sessions;
+	const [createError, setCreateError] = useState<unknown>(null);
+	const createSessionNow = async () => {
+		if (creatingSession) return;
+		setCreatingSession(true);
+		setCreateError(null);
+		try {
+			const { agentType, env } = newSessionDefaults();
+			handleSessionCreated(await agentOsSource.createSession(agentType, { env }));
+		} catch (error) {
+			setCreateError(error);
+		} finally {
+			setCreatingSession(false);
+		}
+	};
+	const [turnActive, setTurnActive] = useState(false);
+	// Close ends the live agent process; the persisted transcript stays. Errors
+	// (e.g. the session is idle, nothing to close) land in the thread.
+	const closeSession = async (sid: string) => {
+		try {
+			await agentOsSource.closeSession(sid);
+		} catch (error) {
+			pushErrorEvent(error instanceof Error ? error.message : String(error));
+		}
+		setSelected(undefined);
+		void queryClient.invalidateQueries({
+			queryKey: agentOsSource.sessionsQueryOptions(actorId).queryKey,
+		});
+	};
+	const events = useMemo(() => {
+		// Durable entries reach us on BOTH paths (readHistory backfill and the
+		// live broadcast) under the same sequence number — keep the backfill copy.
+		const backfillSeqs = new Set(backfill.map((e) => e.seq));
+		return coalesceTranscript([
+			...backfill.map((e) => ({ ...e, key: `b-${e.seq}` })),
+			...live
+				.filter((e) => !backfillSeqs.has(e.seq))
+				.map((e) => ({ ...e, key: `l-${e.liveKey}` })),
+		]);
+	}, [backfill, live]);
 	return (
 		<div className="flex h-full min-h-0">
 			<div className="flex h-full w-64 shrink-0 flex-col border-r">
-				<div className="border-b px-3 py-2.5">
-					<div className="text-sm font-semibold">Sessions</div>
-					<div className="text-[11px] uppercase tracking-wider text-muted-foreground">
-						{sessions.length} session{sessions.length === 1 ? "" : "s"}
-					</div>
+				<div className="flex items-center px-3 pb-1 pt-2.5">
+					{/* Live count lives here, next to the rows it describes — the
+					    status strip stays hidden while the VM is simply healthy. */}
+					<span className="text-[11px] font-medium text-muted-foreground">
+						Sessions
+						{liveIds.size > 0 ? ` · ${liveIds.size} live` : ""}
+					</span>
+					<span className="ml-auto" />
+					<IconButton
+						title="Search sessions by id"
+						onClick={() =>
+							setSessionSearchOpen((open) => {
+								if (open) setSessionSearch("");
+								return !open;
+							})
+						}
+						className="mr-1"
+					>
+						<SearchIcon className="size-3.5" />
+					</IconButton>
+					<IconButton
+						title={creatingSession ? "Creating session…" : "New session"}
+						onClick={() => void createSessionNow()}
+						disabled={creatingSession}
+					>
+						<PlusIcon className="size-3.5" />
+					</IconButton>
 				</div>
-				<ScrollArea className="min-h-0 flex-1">
-					{sessions.length === 0 ? (
-						<AgentOsEmpty>No sessions yet.</AgentOsEmpty>
-					) : (
+				{sessionSearchOpen ? (
+					<div className="px-3 pb-1.5">
+						<input
+							value={sessionSearch}
+							onChange={(e) => setSessionSearch(e.target.value)}
+							onKeyDown={(e) => {
+								if (e.key === "Escape") {
+									setSessionSearch("");
+									setSessionSearchOpen(false);
+								}
+							}}
+							spellCheck={false}
+							autoFocus
+							aria-label="Search sessions"
+							placeholder="session id or agent"
+							className="w-full rounded border bg-background px-2 py-1 font-mono text-xs focus:outline-none"
+						/>
+					</div>
+				) : null}
+				{createError ? <ActionErrorNote error={createError} className="border-b py-2" /> : null}
+				{sessions.length === 0 ? (
+					<AgentOsEmpty>No sessions yet.</AgentOsEmpty>
+				) : (
+					<ScrollArea className="min-h-0 flex-1">
 						<div className="p-1.5">
-							{sessions.map((s) => (
-								<button
+							{visibleSessions.length === 0 ? (
+								<div className="px-2 py-3 text-center text-xs text-muted-foreground">
+									No sessions match.
+								</div>
+							) : null}
+							{visibleSessions.map((s) => (
+								<div
 									key={s.sessionId}
-									type="button"
+									role="button"
+									tabIndex={0}
 									onClick={() => setSelected(s.sessionId)}
+									onKeyDown={(e) => {
+										if (e.key === "Enter" || e.key === " ") setSelected(s.sessionId);
+									}}
 									className={cn(
-										"flex w-full items-center gap-2 rounded px-2 py-2 text-left",
+										"group flex w-full cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-left",
 										s.sessionId === sessionId ? "bg-muted" : "hover:bg-muted/50",
 									)}
 								>
-									<StatusDot color="green" />
-									<div className="min-w-0 flex-1">
-										<div className="truncate font-mono text-xs">{s.sessionId}</div>
-										<div className="text-[11px] text-muted-foreground">{s.agentType}</div>
+									<StatusDot color={isLive(s) ? "green" : "muted"} />
+									<div className="min-w-0 flex-1" title={isLive(s) ? "Live in the current VM" : "Idle — persisted, not loaded in the current VM"}>
+										<div className="flex items-center gap-1 text-xs">
+											<span className="truncate font-mono">…{s.sessionId.slice(-12)}</span>
+											<CopyButton
+												value={s.sessionId}
+												className="opacity-0 focus:opacity-100 group-hover:opacity-100"
+											/>
+										</div>
+										<div className="truncate text-[10px] text-muted-foreground/60">
+											{s.agent} · {relativeTime(Date.parse(s.createdAt))}
+										</div>
 									</div>
-								</button>
+									{isLive(s) ? (
+										<button
+											type="button"
+											onClick={(e) => {
+												e.stopPropagation();
+												void closeSession(s.sessionId);
+											}}
+											title="End the live agent process; the transcript stays"
+											aria-label="Close session"
+											className="text-muted-foreground/40 opacity-0 transition-opacity hover:text-foreground focus:opacity-100 group-hover:opacity-100"
+										>
+											<svg
+												viewBox="0 0 12 12"
+												className="size-2.5"
+												fill="none"
+												stroke="currentColor"
+												strokeWidth="1.5"
+												strokeLinecap="round"
+												aria-hidden="true"
+											>
+												<path d="M3 3l6 6M9 3l-6 6" />
+											</svg>
+										</button>
+									) : null}
+								</div>
 							))}
 						</div>
-					)}
-				</ScrollArea>
+					</ScrollArea>
+				)}
 			</div>
-			<div className="flex min-h-0 flex-1 flex-col">
+			<div className="relative flex min-h-0 flex-1 flex-col">
+				{/* VM trouble chips float over the thread's top-right corner;
+				    they render nothing while the VM is healthy. */}
+				<div className="absolute right-3 top-2 z-10">
+					<VmStatusBadges actorId={actorId} />
+				</div>
 				{!sessionId ? (
-					<AgentOsEmpty>Select a session to view its transcript.</AgentOsEmpty>
+					<AgentOsEmpty>
+						<div className="flex flex-col items-center gap-5">
+							<AgentOsWordmark className="w-44" />
+							<span>No session selected — press + or send a prompt below to start one.</span>
+						</div>
+					</AgentOsEmpty>
 				) : (
 					<>
-						<div className="border-b px-4 py-3">
-							<div className="font-mono text-sm">{sessionId}</div>
-							<div className="text-xs text-muted-foreground">
-								{live.length} event{live.length === 1 ? "" : "s"}
-							</div>
-						</div>
-						<ScrollArea className="min-h-0 flex-1">
-							{live.length === 0 ? (
-								<AgentOsEmpty>Events appear here while this tab is connected.</AgentOsEmpty>
-							) : (
-								live.map((event, index) => (
-									<TranscriptEventView key={index} event={event} />
-								))
-							)}
-						</ScrollArea>
+						{/* The empty state lives OUTSIDE the ScrollArea: the Radix
+						    viewport wrapper breaks the h-full chain, which pinned the
+						    watermark to the top instead of centering it. */}
+						{events.length === 0 && !turnActive ? (
+							<AgentOsEmpty>
+								<div className="flex flex-col items-center gap-5">
+									<AgentOsWordmark className="w-44" />
+									<span>No activity yet — send a prompt below.</span>
+								</div>
+							</AgentOsEmpty>
+						) : (
+							<ScrollArea className="min-h-0 flex-1">
+								<div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 py-4">
+									{events.map((e) => (
+										<TranscriptEventView key={e.key} event={e} />
+									))}
+									{turnActive ? <TurnInFlight /> : null}
+									<ScrollAnchor count={backfill.length + live.length} />
+								</div>
+							</ScrollArea>
+						)}
 					</>
 				)}
+				<Composer
+					actorId={actorId}
+					sessionId={sessionId}
+					sessionStatus={
+						sessionId
+							? (() => {
+									const record = sessions.find((s) => s.sessionId === sessionId);
+									return record && isLive(record) ? "running" : "idle";
+								})()
+							: undefined
+					}
+					onSessionCreated={handleSessionCreated}
+					onErrorEvent={pushErrorEvent}
+					onBusyChange={setTurnActive}
+				/>
 			</div>
 		</div>
 	);
