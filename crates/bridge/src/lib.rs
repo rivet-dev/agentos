@@ -254,6 +254,13 @@ pub trait PersistenceBridge: BridgeTypes {
         &mut self,
         request: FlushFilesystemStateRequest,
     ) -> Result<(), Self::Error>;
+    /// Release any state the bridge retains for `vm_id` once that VM is
+    /// disposed. VM ids are monotonic and never reissued, so a disposed VM's
+    /// snapshot can never be loaded again; a bridge that caches snapshots in
+    /// memory MUST drop them here or it grows once per VM lifecycle for the
+    /// process lifetime (LT-022). Defaults to a no-op for bridges that persist
+    /// externally and hold nothing in memory.
+    fn forget_filesystem_state(&mut self, _vm_id: &str) {}
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

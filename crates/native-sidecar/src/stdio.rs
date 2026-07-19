@@ -1092,7 +1092,28 @@ async fn run_async(
             }
             _ = process_event_notify.notified() => {
                 for session in active_sessions.iter().cloned().collect::<Vec<_>>() {
-                    if sidecar.pump_process_events(&session.compat_ownership_scope()).await? {
+                    // Pumping one session's process events MUST NOT be able to
+                    // terminate the sidecar. This pump runs guest-driven work
+                    // (JS sync RPCs, deferred fd wakeups); before this guard a
+                    // guest-triggered kernel error here propagated out of the
+                    // run loop to `main`, which exit(1)'d — killing every other
+                    // VM/actor sharing the process (LT-011). Log and keep
+                    // serving the other sessions instead.
+                    let pumped = match sidecar
+                        .pump_process_events(&session.compat_ownership_scope())
+                        .await
+                    {
+                        Ok(pumped) => pumped,
+                        Err(error) => {
+                            tracing::error!(
+                                session = %session.session_id,
+                                error = %error,
+                                "process-event pump failed for session; continuing to serve other sessions"
+                            );
+                            continue;
+                        }
+                    };
+                    if pumped {
                         match event_ready_tx.try_send(()) {
                             Ok(())
                             | Err(tokio::sync::mpsc::error::TrySendError::Full(())) => {}
@@ -1135,9 +1156,53 @@ async fn handle_protocol_frame(
     } = accounted_frame;
     match frame {
         ProtocolFrame::RequestFrame(request) => {
-            let (dispatch, extra_responses) =
+            let failed_request_id = request.request_id;
+            let failed_ownership = request.ownership.clone();
+            let dispatch_outcome =
                 dispatch_with_prompt_interrupt(sidecar, request.clone(), stdin_rx, pending_frame)
-                    .await?;
+                    .await;
+            let (dispatch, extra_responses) = match dispatch_outcome {
+                Ok(value) => value,
+                Err(error) => {
+                    // A single request handler failing MUST NOT terminate the
+                    // sidecar: it is the trusted enforcement point shared by
+                    // every VM (and, on Rivet Compute, every co-located actor)
+                    // in this process. Previously any handler error propagated
+                    // out of this loop to `main`, which exited(1) — so one
+                    // guest tripping e.g. a kernel EBADF took down every
+                    // co-located VM (cross-tenant DoS). Surface it to the
+                    // originating caller as a typed rejection and keep serving.
+                    let message = error.to_string();
+                    tracing::error!(
+                        error = %message,
+                        "request dispatch failed; returning rejection instead of terminating the sidecar"
+                    );
+                    let rejection = response_frame(
+                        failed_request_id,
+                        failed_ownership,
+                        ResponsePayload::RejectedResponse(wire::RejectedResponse {
+                            code: String::from("ERR_AGENTOS_REQUEST_FAILED"),
+                            message,
+                            limit_name: None,
+                            configured_limit: None,
+                            current_usage: None,
+                            requested: None,
+                            unit: None,
+                            scope: Some(String::from("request")),
+                            vm_id: None,
+                            session_generation: None,
+                            capability_id: None,
+                            operation: None,
+                            configuration_path: None,
+                            retryable: Some(false),
+                            errno: None,
+                        }),
+                    );
+                    send_output_frame(write_tx, ProtocolFrame::ResponseFrame(rejection))?;
+                    flush_sidecar_requests(sidecar, write_tx)?;
+                    return Ok(());
+                }
+            };
             track_session_state(
                 &dispatch.response.payload,
                 active_sessions,
@@ -2712,6 +2777,12 @@ impl PersistenceBridge for LocalBridge {
     ) -> Result<(), Self::Error> {
         self.snapshots.insert(request.vm_id, request.snapshot);
         Ok(())
+    }
+
+    fn forget_filesystem_state(&mut self, vm_id: &str) {
+        // Without this the map retained one full encoded root filesystem per VM
+        // lifecycle for the sidecar's lifetime (~0.5 MiB/VM, LT-022).
+        self.snapshots.remove(vm_id);
     }
 }
 
