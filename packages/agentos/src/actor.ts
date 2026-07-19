@@ -1,4 +1,6 @@
 import crypto from "node:crypto";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
 	AgentOs,
 	type AgentExitEvent,
@@ -1113,6 +1115,50 @@ function assertNoReservedKeys(
 	}
 }
 
+// Absolute path to the built inspector-tabs app (the shared Vite bundle). All
+// custom tabs share this one `source` dir; the app routes on the
+// `/inspector/custom-tabs/<id>/` URL segment. Resolves from both `src/` (tsx
+// dev) and the published `dist/`, since `assets/` sits at the package root in
+// both layouts.
+const INSPECTOR_TABS_ASSET_DIR = join(
+	dirname(fileURLToPath(import.meta.url)),
+	"..",
+	"assets",
+	"inspector-tabs-app",
+);
+
+// Custom inspector tabs shipped by agent-os. Ids MUST match the `TABS`
+// registry in `src/inspector-tabs/main.tsx`. The built-in rivetkit tabs are
+// hidden so the dashboard shows only the agent-os tabs.
+const AGENTOS_INSPECTOR_CONFIG = {
+	tabs: [
+		{
+			id: "transcript",
+			label: "Transcript",
+			source: INSPECTOR_TABS_ASSET_DIR,
+			icon: "comments",
+		},
+		{
+			id: "filesystem",
+			label: "Filesystem",
+			source: INSPECTOR_TABS_ASSET_DIR,
+			icon: "folder-tree",
+		},
+		{
+			id: "system",
+			label: "System",
+			source: INSPECTOR_TABS_ASSET_DIR,
+			icon: "layer-group",
+		},
+		// Processes/software/mounts live as sections inside the System tab.
+		// `metadata` is dashboard-owned and not hideable (the schema only
+		// accepts the six built-in ids below), so it stays.
+		...["workflow", "database", "state", "queue", "connections", "console"].map(
+			(id) => ({ id, hidden: true as const }),
+		),
+	],
+};
+
 export function createAgentOS<
 	TState = undefined,
 	TConnParams = undefined,
@@ -1209,6 +1255,13 @@ export function createAgentOS<
 			sleepGracePeriod: DEFAULT_SLEEP_GRACE_PERIOD_MS,
 			...actorConfig.options,
 		},
+		// Register the custom agent-os inspector tabs (and hide the built-in
+		// rivetkit tabs) so the dashboard renders the agent-os UI. Without
+		// this the shipped tab assets are never surfaced. A caller-supplied
+		// inspector config wins.
+		inspector:
+			(actorConfig as { inspector?: unknown }).inspector ??
+			AGENTOS_INSPECTOR_CONFIG,
 		db: db({ onMigrate: migrateAgentOsActorTables }),
 		events: { ...(actorConfig.events ?? {}), ...builtInEvents },
 		actions: { ...(actorConfig.actions ?? {}), ...actions },

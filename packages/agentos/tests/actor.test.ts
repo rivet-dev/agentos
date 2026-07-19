@@ -109,6 +109,28 @@ describe("agentOS actor", () => {
 		);
 	});
 
+	test("registers the agent-os inspector tabs and hides the built-ins", () => {
+		const definition = agentOS();
+		const tabs = (
+			definition.config as {
+				inspector?: { tabs?: Array<{ id: string; hidden?: boolean }> };
+			}
+		).inspector?.tabs;
+		expect(tabs?.filter((tab) => !tab.hidden).map((tab) => tab.id)).toEqual([
+			"transcript",
+			"filesystem",
+			"system",
+		]);
+		expect(tabs?.filter((tab) => tab.hidden).map((tab) => tab.id)).toEqual([
+			"workflow",
+			"database",
+			"state",
+			"queue",
+			"connections",
+			"console",
+		]);
+	});
+
 	test("health is observe-only and never boots the VM", async () => {
 		const actions = createAgentOsActions();
 		// No db and no actorUds on the context: any boot attempt would throw,
