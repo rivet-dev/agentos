@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import agentOsHeroLogo from "./assets/agentos-hero-logo.svg";
+import { type ActionErrorLayer, isInspectorActionError } from "./lib/actor-client";
 import { cn } from "./lib/cn";
 import React, { useState } from "react";
 
@@ -7,6 +9,52 @@ export function AgentOsEmpty({ children }: { children: ReactNode }) {
 	return (
 		<div className="flex h-full flex-1 items-center justify-center p-8 text-center text-sm text-muted-foreground">
 			{children}
+		</div>
+	);
+}
+
+const LAYER_LABEL: Record<ActionErrorLayer, string> = {
+	gateway: "Gateway unreachable",
+	auth: "Not authorized",
+	contract: "Not supported by this runtime",
+	runtime: "Runtime error",
+	timeout: "Timed out",
+};
+
+/** "This runtime doesn't expose X" empty state for contract-layer failures —
+ * the graceful-degradation path for actors built against other runtimes. */
+export function UnsupportedAction({ action, className }: { action?: string; className?: string }) {
+	return (
+		<div className={cn("flex h-full flex-1 flex-col items-center justify-center gap-1 p-8 text-center", className)}>
+			<span className="text-sm text-muted-foreground">Not supported by this runtime</span>
+			{action ? (
+				<span className="font-mono text-xs text-muted-foreground/70">
+					the actor does not expose <span className="font-semibold">{action}</span>
+				</span>
+			) : null}
+		</div>
+	);
+}
+
+/** Compact inline error note: layer label + message + hint. Used by inline
+ * (non-suspense) error paths; the suspense path renders via TabBoundary. */
+export function ActionErrorNote({ error, className }: { error: unknown; className?: string }) {
+	if (isInspectorActionError(error) && error.layer === "contract") {
+		return <UnsupportedAction action={error.action} className={className} />;
+	}
+	const layer = isInspectorActionError(error) ? error.layer : undefined;
+	const message = error instanceof Error ? error.message : String(error);
+	const hint = isInspectorActionError(error) ? error.hint : undefined;
+	return (
+		<div className={cn("flex flex-col gap-1 p-4 text-sm", className)}>
+			<div className="flex items-center gap-2">
+				<StatusDot color={layer === "timeout" || layer === "gateway" ? "amber" : "red"} />
+				<span className="font-medium text-destructive">
+					{layer ? LAYER_LABEL[layer] : "Error"}
+				</span>
+			</div>
+			<div className="text-muted-foreground">{message}</div>
+			{hint ? <div className="text-xs text-muted-foreground/70">{hint}</div> : null}
 		</div>
 	);
 }
@@ -67,7 +115,7 @@ function CopyIcon({ className }: { className?: string }) {
 		</svg>
 	);
 }
-function CheckIcon({ className }: { className?: string }) {
+export function CheckIcon({ className }: { className?: string }) {
 	return (
 		<svg
 			className={className}
@@ -110,6 +158,145 @@ export function CopyButton({ value, className }: { value: string; className?: st
 		>
 			{copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3.5" />}
 		</button>
+	);
+}
+
+/** agentOS wordmark — the website hero logo, verbatim, bundled as an asset.
+ * The source SVG is stroked black (drawn for light backgrounds); `invert`
+ * flips it white for the dark theme, and the low opacity makes the
+ * empty-state watermark. */
+export function AgentOsWordmark({ className }: { className?: string }) {
+	return (
+		<img
+			src={agentOsHeroLogo}
+			alt=""
+			aria-hidden="true"
+			draggable={false}
+			className={cn("select-none opacity-[0.14] invert", className)}
+		/>
+	);
+}
+
+/** Small bordered icon button for tab chrome (new/refresh/upload/…). The
+ * accessible name comes from `title`, which doubles as the tooltip. */
+export function IconButton({
+	title,
+	onClick,
+	disabled,
+	destructive,
+	className,
+	children,
+}: {
+	title: string;
+	onClick: () => void;
+	disabled?: boolean;
+	destructive?: boolean;
+	className?: string;
+	children: ReactNode;
+}) {
+	return (
+		<button
+			type="button"
+			onClick={onClick}
+			disabled={disabled}
+			title={title}
+			aria-label={title}
+			className={cn(
+				"inline-flex size-6 shrink-0 items-center justify-center rounded border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40",
+				destructive && "border-destructive/50 text-destructive hover:bg-destructive/10 hover:text-destructive",
+				className,
+			)}
+		>
+			{children}
+		</button>
+	);
+}
+
+const iconProps = {
+	viewBox: "0 0 16 16",
+	fill: "none",
+	stroke: "currentColor",
+	strokeWidth: 1.5,
+	strokeLinecap: "round",
+	strokeLinejoin: "round",
+	"aria-hidden": true,
+} as const;
+
+export function PlusIcon({ className }: { className?: string }) {
+	return (
+		<svg className={className} {...iconProps}>
+			<path d="M8 3.5v9M3.5 8h9" />
+		</svg>
+	);
+}
+
+export function SearchIcon({ className }: { className?: string }) {
+	return (
+		<svg className={className} {...iconProps}>
+			<circle cx="7" cy="7" r="4.5" />
+			<path d="M13.5 13.5L10.2 10.2" />
+		</svg>
+	);
+}
+
+export function ArrowLeftIcon({ className }: { className?: string }) {
+	return (
+		<svg className={className} {...iconProps}>
+			<path d="M13 8H3M7 4L3 8l4 4" />
+		</svg>
+	);
+}
+
+export function RefreshIcon({ className }: { className?: string }) {
+	return (
+		<svg className={className} {...iconProps}>
+			<path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" />
+			<path d="M13.5 1.5v3h-3" />
+		</svg>
+	);
+}
+
+export function FolderPlusIcon({ className }: { className?: string }) {
+	return (
+		<svg className={className} {...iconProps}>
+			<path d="M1.5 4.5A1 1 0 0 1 2.5 3.5h3l1.5 1.5h5.5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-10a1 1 0 0 1-1-1z" />
+			<path d="M8 7.5v3M6.5 9h3" />
+		</svg>
+	);
+}
+
+export function UploadIcon({ className }: { className?: string }) {
+	return (
+		<svg className={className} {...iconProps}>
+			<path d="M2.5 10.5v2a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-2" />
+			<path d="M8 10V3M4.5 6.5L8 3l3.5 3.5" />
+		</svg>
+	);
+}
+
+export function DownloadIcon({ className }: { className?: string }) {
+	return (
+		<svg className={className} {...iconProps}>
+			<path d="M2.5 10.5v2a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-2" />
+			<path d="M8 3v7M4.5 6.5L8 10l3.5-3.5" />
+		</svg>
+	);
+}
+
+export function PencilIcon({ className }: { className?: string }) {
+	return (
+		<svg className={className} {...iconProps}>
+			<path d="M11.3 2.7a1.4 1.4 0 0 1 2 2L5.5 12.5l-3 .8.8-3z" />
+		</svg>
+	);
+}
+
+export function TrashIcon({ className }: { className?: string }) {
+	return (
+		<svg className={className} {...iconProps}>
+			<path d="M3 4.5h10M6.5 4.5V3.5a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1v1M4.5 4.5l.5 8a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1l.5-8" />
+			<path d="M6.5 7v4M9.5 7v4" />
+		</svg>
 	);
 }
 

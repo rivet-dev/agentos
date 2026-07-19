@@ -42,6 +42,8 @@ Set up an agentOS actor, create a session, and run your first coding agent.
    npx tsx client.ts
    ```
 
+   With the server running, open http://localhost:6420/ui to watch the VM in the [inspector](/docs/inspector): the live transcript, the filesystem, and its processes.
+
 5. **Customize**
 
    Now that you have a working agent, customize it to fit your needs:

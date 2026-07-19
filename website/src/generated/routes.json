@@ -60,6 +60,10 @@
       "title": "Introduction",
       "description": "Run coding agents inside isolated VMs with full filesystem, process, and network control."
     },
+    "/docs/docs/inspector": {
+      "title": "Inspector",
+      "description": "Watch and drive a live VM from the Rivet dashboard: transcript, filesystem, and system tabs."
+    },
     "/docs/docs/js-runtime": {
       "title": "JavaScript Runtime",
       "description": "How agentOS runs guest JavaScript: native V8 acceleration, low memory overhead, and Node.js compatibility."
@@ -138,7 +142,7 @@
     },
     "/docs/docs/webhooks": {
       "title": "Webhooks",
-      "description": "Trigger agent workflows from external webhooks using Hono and queues."
+      "description": "Trigger agent sessions directly from external webhooks using Hono."
     },
     "/docs/docs/workflows": {
       "title": "Workflow Automation",

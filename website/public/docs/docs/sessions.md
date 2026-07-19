@@ -2,7 +2,7 @@
 
 Open durable ACP sessions, prompt them, read history, and restore adapters.
 
-AgentOS sessions are durable records backed by the VM's SQLite database. The public session ID is stable across VM sleep and adapter restarts; AgentOS keeps the adapter's private ACP session ID internal.
+AgentOS sessions are durable records backed by the VM's SQLite database. The public session ID is stable across VM sleep and adapter restarts; AgentOS keeps the adapter's private ACP session ID internal. The [inspector](/docs/inspector)'s Transcript tab renders the same session stream live, with a composer for prompting sessions by hand.
 
 ## Open a session
 
@@ -20,10 +20,12 @@ Use an `idempotencyKey` when the caller may retry the same request. Reusing a ke
 
 ## Events and history
 
-`sessionEvent` carries exact ACP `SessionUpdate` data in an AgentOS envelope:
+`sessionEvent` is a flat discriminated union. Its top-level `type` is the native ACP `SessionUpdate.sessionUpdate` value, and the corresponding ACP payload fields (such as `content`, `toolCallId`, or `entries`) sit directly beside the durability envelope:
 
 - `durability: "ephemeral"` is a live agent-message or thought delta. It is not sequenced or stored.
 - `durability: "durable"` has a session sequence and is emitted only after its SQLite transaction commits. Completed/coalesced message chunks are durable.
+
+There is no nested `update` wrapper. Permission request and response lifecycle variants use the same flat shape with top-level `options`, `toolCall`, or `outcome` fields.
 
 `readHistory({ sessionId, before, after, limit })` reads only SQLite and never starts an adapter. `before` and `after` are exclusive and mutually exclusive. Consumers deduplicate live durable delivery by `(sessionId, sequence)`.
 

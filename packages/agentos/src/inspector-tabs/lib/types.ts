@@ -1,9 +1,31 @@
 // Display + raw types for the inspector tabs. Raw types match the agentOS
 // action return shapes; the source adapter (source.ts) transforms raw → display.
+// Session/permission shapes come straight from the core public API — the actor
+// actions are thin wrappers over `AgentOs`, so core types ARE the wire types.
+import type {
+	AgentExitEvent,
+	PendingPermissionRequest,
+	SessionInfo,
+} from "@rivet-dev/agentos-core";
+
+export type {
+	AgentExitEvent,
+	DurableSessionEventEntry,
+	PendingPermissionRequest,
+	SessionInfo,
+	SessionStreamEntry,
+} from "@rivet-dev/agentos-core";
+export type {
+	RuntimeAgentExit,
+	RuntimeHealth,
+	RuntimeLimitWarning,
+} from "../../types";
 
 // ── Software ──────────────────────────────────────────────────────────
 export interface SoftwareBundle {
 	name: string;
+	/** Package basename ("coreutils", "claude-code") — keys the logo lookup. */
+	slug: string;
 	version: string;
 	source: "rivet-dev" | "user";
 	binaries: string[]; // command names the package ships (from SoftwareInfo.commands)
@@ -27,6 +49,49 @@ export interface ProcessInfo {
 	/** Epoch milliseconds when the process was spawned. */
 	startedAt: number;
 }
+/** Raw `allProcesses`/`processTree` node fields — the full kernel process
+ * table (every process, not just SDK-spawned). Mirrors the Rust wire shape;
+ * `startTime`/`exitTime` are epoch milliseconds. */
+export interface KernelProcessInfo {
+	pid: number;
+	ppid: number;
+	pgid: number;
+	sid: number;
+	driver: string;
+	command: string;
+	args: string[];
+	cwd: string;
+	status: "running" | "exited";
+	exitCode: number | null;
+	startTime: number;
+	exitTime: number | null;
+}
+/** Raw `processTree` node: kernel info + children. */
+export interface ProcessTreeNode extends KernelProcessInfo {
+	children: ProcessTreeNode[];
+}
+/** Live `processOutput` broadcast payload mirror. `data` arrives
+ * Uint8Array-shaped but encoding-dependent — normalize with
+ * `decodeActionBytes`. Only SDK-`spawn`ed pids have output pumps. */
+export interface ProcessOutputPayload {
+	pid: number;
+	stream: "stdout" | "stderr";
+	data: unknown;
+}
+/** Live `processExit` broadcast payload mirror. */
+export interface ProcessExitPayload {
+	pid: number;
+	exitCode: number;
+}
+
+/** Raw `createPreviewUrl` result. `path` is relative to the gateway
+ * origin serving this iframe. */
+export interface SignedPreviewUrl {
+	path: string;
+	token: string;
+	port: number;
+	expiresAt: number;
+}
 
 // ── Filesystem ────────────────────────────────────────────────────────
 /** Raw `readdirRecursive` entry. */
@@ -43,6 +108,8 @@ export interface FsEntry {
 	path: string;
 	dir: boolean;
 	size?: number;
+	/** Reported lstat-style (not followed); rendered with a link marker. */
+	symlink?: boolean;
 	/** Virtual/system fs (/proc, /sys, …) — shown but not stat-ed or expanded,
 	 * because touching it wedges the VM sidecar. */
 	virtual?: boolean;
@@ -56,6 +123,8 @@ export interface ReaddirEntry {
 }
 /** Raw `stat` shape (subset we use). */
 export interface VirtualStat {
+	/** POSIX mode bits (file type in the top nibble). */
+	mode: number;
 	size: number;
 	mtimeMs: number;
 	isDirectory: boolean;
@@ -65,12 +134,18 @@ export interface FileContent {
 	path: string;
 	sizeBytes: number;
 	mtimeMs: number;
-	text: string | null; // null = binary
+	text: string | null; // null = binary or not loaded
+	/** Raw bytes for download / image preview; null when skipped (oversize). */
+	bytes: Uint8Array | null;
+	/** True when the file exceeded the preview limit and was not read. */
+	oversize: boolean;
+	/** True for device/fifo/socket nodes — streams with no readable contents. */
+	special?: boolean;
 }
 
 // ── Mounts ────────────────────────────────────────────────────────────
-/** Safe `listMounts` metadata derived from the actor's declarative mounts.
- * Native plugin config is intentionally omitted because it may contain secrets. */
+/** Raw `listMounts` entry — echoes the actor's declarative mount config.
+ * The kernel has no runtime mount table to enumerate. */
 export interface MountInfo {
 	path: string;
 	kind: string;
@@ -79,12 +154,50 @@ export interface MountInfo {
 }
 
 // ── Sessions / transcript ─────────────────────────────────────────────
-export interface SessionInfo {
-	sessionId: string;
-	agentType: string;
-}
-/** Mapped, displayable live transcript event (defensive; unknown → "raw"). */
-export type TranscriptEvent =
+/** Mapped, displayable transcript event (defensive; unknown → "raw"). Carries
+ * the source `seq` for stable keys/ordering: the durable `sequence` for
+ * persisted entries, or `afterSequence + 0.5` for ephemeral streaming deltas
+ * (they sort after the durable entry they follow). Tool events keep
+ * `toolCallId` so the render pipeline can merge a call and its status updates
+ * into one card. */
+export type TranscriptEvent = { seq: number } & (
 	| { kind: "user" | "assistant" | "thinking"; text: string }
-	| { kind: "tool"; tool: string; status?: string }
-	| { kind: "raw"; label: string; json: unknown };
+	| {
+			kind: "tool";
+			tool: string;
+			toolCallId?: string;
+			status?: string;
+			input?: unknown;
+			output?: string;
+			locations?: string[];
+	  }
+	| { kind: "plan"; entries: { content: string; status?: string }[] }
+	| { kind: "notice"; text: string }
+	| { kind: "permission"; text: string }
+	| { kind: "raw"; label: string; json: unknown }
+	| { kind: "error"; text: string }
+);
+
+/** One pending permission request flattened for display: the session's
+ * `state.requests` entry (core `PendingPermissionRequest`) plus the session it
+ * belongs to. Backfilled from `listSessions` (sessions with
+ * `state.status === "waiting"`); live updates arrive as `sessionEvent`
+ * entries with `type === "permission_request"` / `"permission_response"`. */
+export interface PendingPermissionDisplay extends PendingPermissionRequest {
+	sessionId: string;
+}
+
+/** Crash-row payload: core's `AgentExitEvent`, broadcast as `agentExit`. */
+export type AgentCrashedPayload = AgentExitEvent;
+
+/** Session liveness derived from core `SessionInfo.state`. */
+export function sessionIsLive(session: SessionInfo): boolean {
+	return (
+		session.state.status === "running" || session.state.status === "waiting"
+	);
+}
+
+/** Live `vmShutdown` broadcast payload mirror. */
+export interface VmShutdownPayload {
+	reason?: "sleep" | "destroy" | "error" | string;
+}

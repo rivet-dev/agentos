@@ -1,5 +1,8 @@
 
+import { QueryErrorResetBoundary } from "@tanstack/react-query";
 import { Component, type ReactNode, Suspense } from "react";
+import { ActionErrorNote, UnsupportedAction } from "./common";
+import { isInspectorActionError } from "./lib/actor-client";
 import React from "react";
 
 function TabFallback() {
@@ -16,27 +19,51 @@ function TabFallback() {
 	);
 }
 
-class ErrorBoundary extends Component<{ children: ReactNode }, { error?: Error }> {
+class ErrorBoundary extends Component<
+	{ children: ReactNode; onReset?: () => void },
+	{ error?: Error }
+> {
 	state: { error?: Error } = {};
 	static getDerivedStateFromError(error: Error) {
 		return { error };
 	}
+	#retry = () => {
+		this.props.onReset?.();
+		this.setState({ error: undefined });
+	};
 	render() {
-		if (this.state.error) {
-			return (
-				<div className="flex h-full flex-1 items-center justify-center p-8 text-center text-sm text-destructive">
-					{this.state.error.message || "Failed to load."}
-				</div>
-			);
+		const { error } = this.state;
+		if (!error) return this.props.children;
+		// Contract-layer failures are a capability gap, not a fault: render the
+		// quiet unsupported state with no retry (retrying cannot succeed).
+		if (isInspectorActionError(error) && error.layer === "contract") {
+			return <UnsupportedAction action={error.action} />;
 		}
-		return this.props.children;
+		return (
+			<div className="flex h-full flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
+				<ActionErrorNote error={error} className="items-center p-0 text-center" />
+				<button
+					type="button"
+					onClick={this.#retry}
+					className="rounded border px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+				>
+					Retry
+				</button>
+			</div>
+		);
 	}
 }
 
 export function TabBoundary({ children }: { children: ReactNode }) {
+	// QueryErrorResetBoundary clears React Query's cached suspense errors so the
+	// Retry button actually refetches instead of re-throwing the stale error.
 	return (
-		<ErrorBoundary>
-			<Suspense fallback={<TabFallback />}>{children}</Suspense>
-		</ErrorBoundary>
+		<QueryErrorResetBoundary>
+			{({ reset }) => (
+				<ErrorBoundary onReset={reset}>
+					<Suspense fallback={<TabFallback />}>{children}</Suspense>
+				</ErrorBoundary>
+			)}
+		</QueryErrorResetBoundary>
 	);
 }
