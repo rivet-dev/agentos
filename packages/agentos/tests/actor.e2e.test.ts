@@ -190,6 +190,7 @@ describe.skipIf(!RUN_E2E)("AgentOS real Rivet actor", () => {
 				"agentos_fs_blocks",
 				"agentos_fs_metadata_chunks",
 				"agentos_fs_metadata_heads",
+				"agentos_fs_schema_version",
 			]);
 			expect(storage.metadataCount).toBe(1);
 			expect(storage.metadataChunkCount).toBeGreaterThan(0);

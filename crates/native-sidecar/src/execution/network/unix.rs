@@ -1,6 +1,11 @@
 use super::super::*;
 use crate::state::SocketFairnessRetirement;
 
+#[cfg(not(target_os = "linux"))]
+fn abstract_unix_unsupported() -> SidecarError {
+    sidecar_net_error(std::io::Error::from_raw_os_error(libc::ENOTSUP))
+}
+
 pub(in crate::execution) fn decode_abstract_unix_name(hex: &str) -> Result<Vec<u8>, SidecarError> {
     if !hex.len().is_multiple_of(2)
         || hex.len() > 214
@@ -839,6 +844,16 @@ impl ActiveUnixSocket {
         Ok(())
     }
 
+    #[cfg(not(target_os = "linux"))]
+    pub(in crate::execution) fn bind_abstract(
+        &mut self,
+        _host_name: &[u8],
+        _guest_name: &[u8],
+        _binding_id: &str,
+    ) -> Result<(), SidecarError> {
+        Err(abstract_unix_unsupported())
+    }
+
     pub(in crate::execution) fn write_all(&self, contents: &[u8]) -> Result<usize, SidecarError> {
         let mut stream = self
             .stream
@@ -929,7 +944,6 @@ impl ActiveUnixSocket {
 #[derive(Clone, Debug)]
 pub(in crate::execution) enum NativeUnixConnectTarget {
     Path(PathBuf),
-    #[cfg(target_os = "linux")]
     Abstract(Vec<u8>),
 }
 
@@ -954,6 +968,8 @@ async fn connect_native_unix_socket(
             connect_socket(socket.as_raw_fd(), &address)
                 .map_err(|error| sidecar_net_error(std::io::Error::from_raw_os_error(error as i32)))
         }
+        #[cfg(not(target_os = "linux"))]
+        NativeUnixConnectTarget::Abstract(_) => return Err(abstract_unix_unsupported()),
     };
     if let Err(error) = connect_result {
         let message = error.to_string();
@@ -1206,6 +1222,16 @@ impl ActiveUnixListener {
         ))
     }
 
+    #[cfg(not(target_os = "linux"))]
+    pub(in crate::execution) fn bind_abstract_unlistened(
+        _host_name: &[u8],
+        _guest_name: &[u8],
+        _registry_binding_id: String,
+        _runtime_context: agentos_runtime::RuntimeContext,
+    ) -> Result<Self, SidecarError> {
+        Err(abstract_unix_unsupported())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(in crate::execution) fn listen_bound(
         mut self,
@@ -1317,6 +1343,21 @@ impl ActiveUnixListener {
             runtime_context,
             reactor_limits,
         )
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::execution) fn bind_abstract(
+        _host_name: &[u8],
+        _guest_name: &[u8],
+        _registry_binding_id: String,
+        _context: JavascriptSocketPathContext,
+        _backlog: Option<u32>,
+        _capabilities: CapabilityRegistry,
+        _runtime_context: agentos_runtime::RuntimeContext,
+        _reactor_limits: ReactorIoLimits,
+    ) -> Result<Self, SidecarError> {
+        Err(abstract_unix_unsupported())
     }
 
     #[allow(clippy::too_many_arguments)]

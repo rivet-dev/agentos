@@ -34,6 +34,8 @@ struct MemEntry {
     is_directory: bool,
     content: Vec<u8>,
     mode: u32,
+    uid: u32,
+    gid: u32,
     symlink_target: Option<String>,
 }
 
@@ -48,15 +50,34 @@ struct MemBridgeFs {
 impl MemBridgeFs {
     fn new() -> Self {
         let fs = Self::default();
-        fs.entries.lock().unwrap().insert(
+        let mut entries = fs.entries.lock().unwrap();
+        entries.insert(
             "/".to_string(),
             MemEntry {
                 is_directory: true,
                 content: Vec::new(),
                 mode: DEFAULT_DIR_MODE,
+                uid: 0,
+                gid: 0,
                 symlink_target: None,
             },
         );
+        // Model the actor VM's persisted working directory. Host filesystem
+        // APIs are trusted and create root-owned entries, while guest commands
+        // run as the default uid/gid 1000 and need an owned directory in which
+        // to create files.
+        entries.insert(
+            "/workspace".to_string(),
+            MemEntry {
+                is_directory: true,
+                content: Vec::new(),
+                mode: DEFAULT_DIR_MODE,
+                uid: 1000,
+                gid: 1000,
+                symlink_target: None,
+            },
+        );
+        drop(entries);
         fs
     }
 
@@ -90,8 +111,8 @@ impl MemBridgeFs {
             "ino": ino_for(path),
             "mode": entry.mode,
             "nlink": 1,
-            "uid": 0,
-            "gid": 0,
+            "uid": entry.uid,
+            "gid": entry.gid,
             "rdev": 0,
             "size": size,
             "blocks": size.div_ceil(512),
@@ -141,6 +162,31 @@ impl MemBridgeFs {
                 let end = start.saturating_add(len).min(entry.content.len());
                 Ok(Some(json!(BASE64.encode(&entry.content[start..end]))))
             }
+            "pwrite" => {
+                let path = path()?;
+                let offset = args.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
+                let content = args
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .map(|encoded| BASE64.decode(encoded))
+                    .transpose()
+                    .map_err(|error| format!("EINVAL bad base64 content: {error}"))?
+                    .unwrap_or_default();
+                let entry = entries
+                    .get_mut(&path)
+                    .ok_or_else(|| format!("ENOENT no such file: {path}"))?;
+                if entry.is_directory {
+                    return Err(format!("EISDIR is a directory: {path}"));
+                }
+                let end = offset
+                    .checked_add(content.len())
+                    .ok_or_else(|| "EFBIG write offset overflow".to_string())?;
+                if entry.content.len() < end {
+                    entry.content.resize(end, 0);
+                }
+                entry.content[offset..end].copy_from_slice(&content);
+                Ok(None)
+            }
             "writeFile" | "createFileExclusive" => {
                 let path = path()?;
                 if operation == "createFileExclusive" && entries.contains_key(&path) {
@@ -164,6 +210,8 @@ impl MemBridgeFs {
                         is_directory: false,
                         content,
                         mode,
+                        uid: 0,
+                        gid: 0,
                         symlink_target: None,
                     },
                 );
@@ -241,6 +289,8 @@ impl MemBridgeFs {
                         is_directory: true,
                         content: Vec::new(),
                         mode,
+                        uid: 0,
+                        gid: 0,
                         symlink_target: None,
                     });
                 }
@@ -332,6 +382,8 @@ impl MemBridgeFs {
                         is_directory: false,
                         content: Vec::new(),
                         mode: 0o777,
+                        uid: 0,
+                        gid: 0,
                         symlink_target: Some(target),
                     },
                 );
@@ -378,7 +430,24 @@ impl MemBridgeFs {
                 entry.mode = mode & 0o7777;
                 Ok(None)
             }
-            "chown" | "utimes" => {
+            "chown" => {
+                let path = path()?;
+                let entry = entries
+                    .get_mut(&path)
+                    .ok_or_else(|| format!("ENOENT no such entry: {path}"))?;
+                entry.uid = args
+                    .get("uid")
+                    .and_then(Value::as_u64)
+                    .map(|uid| uid as u32)
+                    .unwrap_or(entry.uid);
+                entry.gid = args
+                    .get("gid")
+                    .and_then(Value::as_u64)
+                    .map(|gid| gid as u32)
+                    .unwrap_or(entry.gid);
+                Ok(None)
+            }
+            "utimes" => {
                 let path = path()?;
                 if !entries.contains_key(&path) {
                     return Err(format!("ENOENT no such entry: {path}"));

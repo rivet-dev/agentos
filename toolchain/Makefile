@@ -37,6 +37,9 @@ TOOLCHAIN_COMMAND_CRATES := $(wildcard crates/commands/*)
 SKIPPED_BULK_COMMANDS := git codex codex-exec
 COMMAND_NAMES := $(filter-out $(SKIPPED_BULK_COMMANDS),$(patsubst cmd-%,%,$(notdir $(SOFTWARE_COMMAND_CRATES))) $(notdir $(TOOLCHAIN_COMMAND_CRATES)))
 COMMAND_PACKAGES := $(foreach command,$(COMMAND_NAMES),-p $(call cargo_package_for_command,$(command)))
+COREUTILS_COMMAND_CRATES := $(wildcard ../software/coreutils/native/crates/cmd-*)
+PR_COMMAND_NAMES := $(patsubst cmd-%,%,$(notdir $(COREUTILS_COMMAND_CRATES))) _stubs
+PR_COMMAND_PACKAGES := $(foreach command,$(PR_COMMAND_NAMES),-p $(call cargo_package_for_command,$(command)))
 
 # Alias symlinks: link_name:target_binary
 ALIAS_SYMLINKS := \
@@ -56,7 +59,7 @@ STUB_COMMANDS := \
 	pinky who users uptime \
 	stty sync tty
 
-.PHONY: all commands wasm wasm-opt-check host test clean patch-std patch-check vendor patch-vendor vendor-patch-check size-report install c-wasm codex fd-mapping-contract-wasm fd-mapping-contract-native
+.PHONY: all commands pr-commands wasm wasm-opt-check host test clean patch-std patch-check vendor patch-vendor vendor-patch-check size-report install c-wasm codex fd-mapping-contract-wasm fd-mapping-contract-native
 
 all: wasm
 
@@ -67,6 +70,17 @@ all: wasm
 # the generated stub aliases and is built with the default command set.
 commands: wasm
 	$(MAKE) -C c programs install
+
+# PR validation only needs the default coreutils package. Keep the complete
+# registry command build in `commands` for nightly and publish workflows.
+pr-commands:
+	@test "$(abspath $(COMMANDS_DIR))" = "$(abspath $(RELEASE_DIR)/commands)" || \
+		{ echo "refusing to clean unexpected PR command directory: $(COMMANDS_DIR)"; exit 1; }
+	rm -rf "$(COMMANDS_DIR)"
+	$(MAKE) wasm \
+		COMMAND_NAMES="$(PR_COMMAND_NAMES)" \
+		COMMAND_PACKAGES="$(PR_COMMAND_PACKAGES)"
+	$(MAKE) -C c build/mknod install COMMANDS="mknod"
 
 # Build the real wasm32-wasip1 `codex-exec` agent engine and install it where
 # @agentos-software/codex-cli stages commands from.
@@ -200,6 +214,7 @@ wasm: c/sysroot/lib/wasm32-wasi/libc.a vendor patch-vendor patch-std wasm-opt-ch
 	@set -e; \
 	for spec in "fd:vendor/fd-find/Cargo.toml" "rg:vendor/ripgrep/Cargo.toml"; do \
 		bin=$${spec%%:*}; manifest=$${spec#*:}; \
+		case " $(COMMAND_NAMES) " in *" $$bin "*) ;; *) continue ;; esac; \
 		rm -f "$${manifest%/*}/Cargo.lock"; \
 		CC_wasm32_wasip1="$(WASI_C_CC)" \
 		AR_wasm32_wasip1="$(WASI_C_AR)" \

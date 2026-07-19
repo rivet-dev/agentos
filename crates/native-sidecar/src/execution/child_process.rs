@@ -2382,16 +2382,18 @@ where
                 )?;
 
                 // The standalone WASM runner pulls descendant output through
-                // child_process.poll while implementing waitpid. The global
-                // pump may still service one internal RPC per child turn so a
-                // foreground child cannot starve a background sibling, but it
-                // must leave stream and exit events for that pull owner.
+                // child_process.poll while implementing waitpid. Keep stream
+                // and exit delivery single-owner; the parked kernel wait was
+                // already rechecked above without leasing either event lane.
                 let parent_is_pull_driven_wasm = self
                     .vms
                     .get(vm_id)
                     .and_then(|vm| vm.active_processes.get(process_id))
                     .and_then(|root| Self::active_process_by_path(root, &parent_path))
                     .is_some_and(|parent| parent.runtime == GuestRuntimeKind::WebAssembly);
+                if parent_is_pull_driven_wasm {
+                    continue;
+                }
                 self.expire_child_process_sync_if_needed(
                     vm_id,
                     process_id,
@@ -2406,7 +2408,7 @@ where
                         &parent_path,
                         &child_process_id,
                         0,
-                        parent_is_pull_driven_wasm,
+                        false,
                     )
                     .await
                 {
