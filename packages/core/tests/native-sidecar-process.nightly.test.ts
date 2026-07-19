@@ -1,5 +1,4 @@
 // Nightly: its registry helper validates the complete command bundle.
-import { execFileSync } from "node:child_process";
 import {
 	chmodSync,
 	existsSync,
@@ -13,7 +12,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { constants as osConstants, tmpdir } from "node:os";
-import { join, relative, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CreateVmConfig } from "@rivet-dev/agentos-runtime-core/vm-config";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -35,7 +34,6 @@ import {
 	serializeRootFilesystemForSidecar,
 	toSidecarSignalName,
 } from "../src/sidecar/rpc-client.js";
-import { findCargoBinary, resolveCargoBinary } from "../src/sidecar/cargo.js";
 import { serializePermissionsForSidecar } from "../src/sidecar/permissions.js";
 import {
 	findPackageWithCommand,
@@ -43,7 +41,9 @@ import {
 } from "./helpers/registry-commands.js";
 
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
-const SIDECAR_BINARY = join(REPO_ROOT, "target/debug/agentos-sidecar");
+const SIDECAR_BINARY = process.env.AGENTOS_SIDECAR_BIN
+	? resolve(process.env.AGENTOS_SIDECAR_BIN)
+	: join(REPO_ROOT, "target/debug/agentos-sidecar");
 const REGISTRY_COMMANDS_DIR = packageCommandsDir(
 	findPackageWithCommand("sh"),
 );
@@ -93,23 +93,9 @@ function nodeBuiltinsConfig(...allowedBuiltins: string[]) {
 }
 
 function ensureSidecarBinaryReady(): void {
-	const cargoBinary = findCargoBinary();
-	if (cargoBinary) {
-		execFileSync(cargoBinary, ["build", "-q", "-p", "agentos-sidecar"], {
-			cwd: REPO_ROOT,
-			stdio: "pipe",
-		});
-		return;
-	}
-
 	if (!existsSync(SIDECAR_BINARY)) {
-		execFileSync(
-			resolveCargoBinary(),
-			["build", "-q", "-p", "agentos-sidecar"],
-			{
-				cwd: REPO_ROOT,
-				stdio: "pipe",
-			},
+		throw new Error(
+			`agentos-sidecar is missing at ${SIDECAR_BINARY}; build the shared CI/test binary before running this suite`,
 		);
 	}
 }

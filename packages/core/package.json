@@ -51,6 +51,7 @@
 		"build:agentos-protocol": "node ./scripts/compile-agentos-protocol.mjs",
 		"build:protocols": "pnpm run build:agentos-protocol",
 		"test": "vitest run --exclude '**/*.nightly.test.ts' --reporter=verbose",
+		"test:pr": "vitest run tests/migration-parity.test.ts --fileParallelism=false --reporter=verbose",
 		"test:nightly": "vitest run tests/*.nightly.test.ts --reporter=verbose --passWithNoTests"
 	},
 	"dependencies": {

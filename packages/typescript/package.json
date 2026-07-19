@@ -20,7 +20,8 @@
 	"scripts": {
 		"check-types": "tsc --noEmit",
 		"build": "tsc",
-		"test": "vitest run",
+		"test": "vitest run --exclude '**/*.nightly.test.ts'",
+		"test:nightly": "vitest run tests/*.nightly.test.ts --passWithNoTests",
 		"test:smoke": "tsc --noEmit -p tests/tsconfig.quickstart.json"
 	},
 	"dependencies": {
