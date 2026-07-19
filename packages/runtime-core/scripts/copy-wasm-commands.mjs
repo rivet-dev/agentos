@@ -74,7 +74,7 @@ export function requiredSoftwareCommandNames(softwareRoot = SOFTWARE_ROOT) {
 	return [...required].sort();
 }
 
-export function requiredPackageCommandNames(
+export function requiredPackageArtifactNames(
 	softwareRoot = SOFTWARE_ROOT,
 	packageNames = [],
 ) {
@@ -91,6 +91,9 @@ export function requiredPackageCommandNames(
 		const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
 		for (const name of commandNames(manifest, manifestPath)) {
 			required.add(name);
+		}
+		if ((manifest.stubs ?? []).length > 0) {
+			required.add("_stubs");
 		}
 	}
 	return [...required].sort();
@@ -169,7 +172,7 @@ export function copyWasmCommands({
 } = {}) {
 	const required = requireCommands
 		? requiredPackageNames.length > 0
-			? requiredPackageCommandNames(softwareRoot, requiredPackageNames)
+			? requiredPackageArtifactNames(softwareRoot, requiredPackageNames)
 			: requiredSoftwareCommandNames(softwareRoot)
 		: [];
 
