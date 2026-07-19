@@ -4,6 +4,10 @@ AgentOS owns the runtime, kernel, VFS, language execution, registry packages,
 ACP/session layer, AgentOS client APIs, docs, and publish machinery. The
 `secure-exec` repository is now a generated compatibility mirror only.
 
+For future RivetKit work, start with the current documentation index at
+https://rivet.dev/llms.txt and follow the linked page for the surface being
+changed.
+
 ## Boundaries
 
 - Keep AgentOS product versions pinned at `0.0.1` in committed files. Release

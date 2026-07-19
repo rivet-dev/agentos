@@ -81,6 +81,7 @@ scripts/ralph/.codex-last-msg-*
 .claude/scheduled_tasks.lock
 
 # Local caches and stray outputs
+.artifacts/
 crates/execution/assets/v8-bridge.js
 crates/execution/assets/v8-bridge-zlib.js
 crates/execution/.agentos-pyodide-cache/
