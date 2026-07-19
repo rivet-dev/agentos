@@ -25,6 +25,9 @@ import type {
 	AgentOsEvents,
 	ProcessExitPayload,
 	ProcessOutputPayload,
+	RuntimeAgentExit,
+	RuntimeHealth,
+	RuntimeLimitWarning,
 	SerializableCronJobOptions,
 	ShellDataPayload,
 	ShellExitPayload,
@@ -107,6 +110,34 @@ interface RuntimeState {
 
 const runtimes = new Map<string, RuntimeState>();
 
+// Bounded post-mortem buffers for the observe-only `health` action. Kept in
+// their own map — not on RuntimeState — because `disposeVm` drops the runtime
+// entry on sleep while these must stay readable while `booted` is false. They
+// are cleared only when the actor is destroyed.
+const HEALTH_WARNINGS_CAP = 50;
+const HEALTH_AGENT_EXITS_CAP = 50;
+
+interface HealthBuffers {
+	warnings: RuntimeLimitWarning[];
+	agentExits: RuntimeAgentExit[];
+}
+
+const healthBuffers = new Map<string, HealthBuffers>();
+
+function healthBuffersFor(actorId: string): HealthBuffers {
+	let buffers = healthBuffers.get(actorId);
+	if (!buffers) {
+		buffers = { warnings: [], agentExits: [] };
+		healthBuffers.set(actorId, buffers);
+	}
+	return buffers;
+}
+
+function pushCapped<T>(buffer: T[], item: T, cap: number): void {
+	buffer.push(item);
+	while (buffer.length > cap) buffer.shift();
+}
+
 function runtimeFor(c: AnyContext): RuntimeState {
 	let runtime = runtimes.get(c.actorId);
 	if (!runtime) {
@@ -150,6 +181,18 @@ async function ensureVm(
 					msg: "agent-os agent adapter exited unexpectedly",
 					...event,
 				});
+				pushCapped(
+					healthBuffersFor(c.actorId).agentExits,
+					{
+						ts: Date.now(),
+						sessionId: event.sessionId,
+						agentType: event.agentType,
+						exitCode: event.exitCode,
+						restart: event.restart,
+						restartCount: event.restartCount,
+					},
+					HEALTH_AGENT_EXITS_CAP,
+				);
 				c.broadcast("agentExit", event);
 				try {
 					options?.onAgentExit?.(event);
@@ -157,6 +200,26 @@ async function ensureVm(
 					c.log.error({
 						msg: "agent-os onAgentExit hook failed",
 						sessionId: event.sessionId,
+						error,
+					});
+				}
+			},
+			onLimitWarning: (warning) => {
+				c.log.warn({
+					msg: "agent-os runtime limit is near capacity",
+					...warning,
+				});
+				pushCapped(
+					healthBuffersFor(c.actorId).warnings,
+					{ ts: Date.now(), ...warning },
+					HEALTH_WARNINGS_CAP,
+				);
+				try {
+					options?.onLimitWarning?.(warning);
+				} catch (error) {
+					c.log.error({
+						msg: "agent-os onLimitWarning hook failed",
+						limit: warning.limit,
 						error,
 					});
 				}
@@ -206,6 +269,9 @@ async function ensureVm(
 }
 
 async function disposeVm(c: AnyContext, reason: "sleep" | "destroy" | "error") {
+	// Post-mortem health buffers survive sleep and error by design; only a
+	// destroyed actor drops them.
+	if (reason === "destroy") healthBuffers.delete(c.actorId);
 	const runtime = runtimes.get(c.actorId);
 	if (!runtime) return;
 	const vm = runtime.vm;
@@ -638,6 +704,41 @@ export function createAgentOsActions(
 		) => (await ensureVm(c, options)).cancelCronJob(...args),
 		listAgents: async (c: AnyContext) =>
 			(await ensureVm(c, options)).listAgents(),
+		// Observe-only: reports VM liveness and the post-mortem buffers without
+		// ever booting the VM (deliberately no ensureVm).
+		health: async (c: AnyContext): Promise<RuntimeHealth> => {
+			const runtime = runtimes.get(c.actorId);
+			const buffers = healthBuffersFor(c.actorId);
+			let booted = false;
+			let sessions: number | null = null;
+			let sidecar: RuntimeHealth["sidecar"] = null;
+			if (runtime?.vm) {
+				// Sample the boot promise without waiting on it: a VM still
+				// booting (or one whose boot failed) reports not-booted rather
+				// than blocking the observe-only action.
+				const vm = await Promise.race([
+					runtime.vm.catch(() => null),
+					Promise.resolve(null),
+				]);
+				if (vm) {
+					booted = true;
+					sessions = runtime.subscribedSessions.size;
+					const description = vm.sidecar.describe();
+					sidecar = {
+						state: description.state,
+						activeVmCount: description.activeVmCount,
+					};
+				}
+			}
+			return {
+				booted,
+				sessions,
+				sidecar,
+				warnings: [...buffers.warnings],
+				agentExits: [...buffers.agentExits],
+				stderrTail: [],
+			};
+		},
 		openSession: async (c: AnyContext, input: OpenSessionInput) => {
 			const vm = await ensureVm(c, options);
 			await vm.openSession(input);

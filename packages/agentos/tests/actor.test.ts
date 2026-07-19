@@ -100,12 +100,28 @@ describe("agentOS actor", () => {
 				...AGENT_OS_CONFORMANCE_ACTIONS,
 				"createPreviewUrl",
 				"expirePreviewUrl",
+				"health",
 			].sort(),
 		);
 		const definition = agentOS();
 		expect(Object.keys(definition.config.events ?? {}).sort()).toEqual(
 			[...AGENT_OS_CONFORMANCE_EVENTS, "vmBooted", "vmShutdown"].sort(),
 		);
+	});
+
+	test("health is observe-only and never boots the VM", async () => {
+		const actions = createAgentOsActions();
+		// No db and no actorUds on the context: any boot attempt would throw,
+		// so a clean reply proves the action reads without waking anything.
+		const context = { actorId: "health-observe-only-test" } as never;
+		await expect(actions.health(context)).resolves.toEqual({
+			booted: false,
+			sessions: null,
+			sidecar: null,
+			warnings: [],
+			agentExits: [],
+			stderrTail: [],
+		});
 	});
 
 	test("validates the complete actor migration ladder before execution", () => {
