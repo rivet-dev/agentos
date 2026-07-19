@@ -2600,6 +2600,25 @@ importers:
         specifier: npm:zod@^3.25.76
         version: zod@3.25.76
 
+  packages/load-tests:
+    dependencies:
+      '@rivet-dev/agentos':
+        specifier: workspace:*
+        version: link:../agentos
+      '@rivet-dev/agentos-core':
+        specifier: workspace:*
+        version: link:../core
+      rivetkit:
+        specifier: catalog:rivetkit
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+
   packages/manifest:
     devDependencies:
       '@types/node':

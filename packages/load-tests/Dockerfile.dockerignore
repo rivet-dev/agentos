@@ -1,0 +1,15 @@
+.git
+.jj
+.artifacts
+**/node_modules
+**/dist
+**/.turbo
+target
+website
+toolchain/vendor
+toolchain/c/build
+toolchain/c/vendor
+toolchain/c/libs
+toolchain/c/sysroot
+toolchain/c/.cache
+software/*/bin
