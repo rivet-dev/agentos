@@ -40,15 +40,17 @@ class ErrorBoundary extends Component<
 			return <UnsupportedAction action={error.action} />;
 		}
 		return (
-			<div className="flex h-full flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
-				<ActionErrorNote error={error} className="items-center p-0 text-center" />
-				<button
-					type="button"
-					onClick={this.#retry}
-					className="rounded border px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-				>
-					Retry
-				</button>
+			<div className="flex h-full flex-1 flex-col items-center justify-center p-8">
+				<div className="flex w-full max-w-md flex-col items-center gap-3 rounded-xl border bg-card p-6 text-center">
+					<ActionErrorNote error={error} className="items-center p-0 text-center" />
+					<button
+						type="button"
+						onClick={this.#retry}
+						className="rounded border px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+					>
+						Retry
+					</button>
+				</div>
 			</div>
 		);
 	}
