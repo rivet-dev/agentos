@@ -28,10 +28,16 @@ export class StdioSidecarProcess {
 	private constructor(child: ChildProcessWithoutNullStreams, control: Duplex) {
 		this.child = child;
 		this.control = control;
+		// Buffering sidecar stderr and only replaying it on exit means a LIVE
+		// sidecar's warnings/errors are invisible to the host — a guest-triggered
+		// failure that the sidecar survives leaves no host-visible trace at all.
+		// AGENTOS_SIDECAR_STDERR=1 forwards it to host stderr as it arrives.
+		const forwardStderr = process.env.AGENTOS_SIDECAR_STDERR === "1";
 		this.child.stderr.on("data", (chunk: Buffer | string) => {
-			this.stderrChunks.push(
-				typeof chunk === "string" ? Buffer.from(chunk) : Buffer.from(chunk),
-			);
+			const buffer =
+				typeof chunk === "string" ? Buffer.from(chunk) : Buffer.from(chunk);
+			this.stderrChunks.push(buffer);
+			if (forwardStderr) process.stderr.write(buffer);
 		});
 		this.child.on("exit", (code, signal) => {
 			const error = new SidecarProcessExited({
