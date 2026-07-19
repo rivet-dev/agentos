@@ -19,7 +19,9 @@ const SECURE_EXEC_C_ROOT = resolve(
 	REPO_ROOT,
 	"toolchain/c",
 );
-const SIDECAR_BINARY = resolve(REPO_ROOT, "target/debug/agentos-sidecar");
+const SIDECAR_BINARY = process.env.AGENTOS_SIDECAR_BIN
+	? resolve(process.env.AGENTOS_SIDECAR_BIN)
+	: resolve(REPO_ROOT, "target/debug/agentos-sidecar");
 const PTY_PROBE_COMMAND_DIR = resolve(SECURE_EXEC_C_ROOT, "build");
 const PTY_PROBE_BINARY = resolve(PTY_PROBE_COMMAND_DIR, "pty_probe");
 
@@ -73,23 +75,9 @@ function materializePtyProbePackage(): string {
 
 function ensureWorkspaceSidecarBuilt(): void {
 	if (!existsSync(SIDECAR_BINARY)) {
-		const result = spawnSync("cargo", ["build", "-q", "-p", "agentos-sidecar"], {
-			cwd: REPO_ROOT,
-			encoding: "utf8",
-		});
-		if (result.status !== 0) {
-			throw new Error(
-				[
-					"failed to build workspace agentos-sidecar",
-					`cwd=${REPO_ROOT}`,
-					`status=${result.status}`,
-					result.stdout,
-					result.stderr,
-				]
-					.filter(Boolean)
-					.join("\n"),
-			);
-		}
+		throw new Error(
+			`agentos-sidecar is missing at ${SIDECAR_BINARY}; build the shared CI/test binary before running this suite`,
+		);
 	}
 	process.env.AGENTOS_SIDECAR_BIN = SIDECAR_BINARY;
 }

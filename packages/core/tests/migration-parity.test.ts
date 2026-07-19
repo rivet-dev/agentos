@@ -1,7 +1,6 @@
 import { createServer, type IncomingMessage } from "node:http";
 import { resolve } from "node:path";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
-import common from "@agentos-software/common";
 import { afterEach, describe, expect, test } from "vitest";
 import { z } from "zod";
 import { AgentOs, binding, bindings } from "../src/index.js";
@@ -170,7 +169,7 @@ describe("native sidecar migration parity gate", () => {
 
 	test("covers filesystem, process execution, and reusable layer snapshots on the Rust sidecar path", async () => {
 		const vm = await AgentOs.create({
-			software: [common],
+			defaultSoftware: false,
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
@@ -208,6 +207,7 @@ describe("native sidecar migration parity gate", () => {
 			maxBytes: 64 * 1024 * 1024,
 		});
 		const clonedVm = await AgentOs.create({
+			defaultSoftware: false,
 			rootFilesystem: {
 				disableDefaultBaseLayer: true,
 				lowers: [snapshot],
@@ -231,7 +231,7 @@ describe("native sidecar migration parity gate", () => {
 
 	test("covers registered bindings through guest command dispatch on the Rust sidecar path", async () => {
 		const vm = await AgentOs.create({
-			software: [common],
+			defaultSoftware: false,
 			bindings: [mathBindings],
 			permissions: {
 				fs: "allow",
@@ -305,6 +305,7 @@ describe("native sidecar migration parity gate", () => {
 		}
 
 		const vm = await AgentOs.create({
+			defaultSoftware: false,
 			loopbackExemptPorts: [address.port],
 			permissions: {
 				fs: "allow",

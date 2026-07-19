@@ -233,10 +233,19 @@ custom host-syscall imports. Treat that target as **native POSIX**;
 
 ## Tests
 
-- Required PR CI should complete in under 15 minutes of wall-clock time. If it
-  runs longer, warn the user promptly, identify the slow job or step, and check
-  whether the current changes introduced or expanded that work by comparing the
-  workflow diff and recent baseline run times; do not silently normalize slow CI.
+- Required PR CI should target under 10 minutes of wall-clock time and must stay
+  under 15 minutes. Budget the complete critical path, including checkout and
+  dependency setup, cache restore/save, artifact compression, upload, download,
+  extraction, job fan-in, and tests; moving work between jobs does not make that
+  work free. Transfer only the smallest required outputs, never Cargo `target/`,
+  `node_modules/`, duplicated software staging trees, or unstripped debug
+  binaries. Balance total transferred bytes against critical-path latency:
+  parallel consumers may repeat a small, measured setup or download tailored
+  artifacts when that materially reduces wall time and runner capacity is real;
+  do not consolidate them into a slower serial gate merely to minimize bytes. If
+  CI misses the 10-minute target, warn the user promptly, identify the slow job,
+  transfer, or setup step, and compare the workflow diff and recent baseline run
+  times; do not silently normalize slow CI.
 - Cheap gates for normal changes: `cargo check --workspace`, `pnpm build`,
   `pnpm check-types`, publish helper checks, changed script syntax checks, and
   workflow YAML parsing.

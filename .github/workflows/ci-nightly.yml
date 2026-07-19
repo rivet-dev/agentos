@@ -9,6 +9,10 @@ jobs:
   nightly:
     name: Nightly runtime validation
     runs-on: [self-hosted, agentos-builder]
+    env:
+      # Cargo validation and the shared sidecar build are explicit below.
+      # Do not let TypeScript dependency builds compile a second Rust copy.
+      AGENTOS_SKIP_NATIVE_META_BUILD: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -40,17 +44,24 @@ jobs:
       - run: cargo check --workspace --exclude agentos-sidecar-browser --exclude agentos-native-sidecar-browser
       - run: cargo clippy --workspace --exclude agentos-sidecar-browser --exclude agentos-native-sidecar-browser --all-targets -- -D warnings
       - run: pnpm check-types
+      - name: Build sidecars once for all TypeScript runtime suites
+        run: cargo build -p agentos-sidecar -p agentos-native-sidecar
       - run: pnpm test
         env:
           AGENTOS_E2E_NETWORK: '1'
+          AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/target/debug/agentos-sidecar
+          AGENTOS_NATIVE_SIDECAR_BIN: ${{ github.workspace }}/target/debug/agentos-native-sidecar
       - run: pnpm test:nightly
         env:
           AGENTOS_E2E_NETWORK: '1'
+          AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/target/debug/agentos-sidecar
+          AGENTOS_NATIVE_SIDECAR_BIN: ${{ github.workspace }}/target/debug/agentos-native-sidecar
       # This opt-in gate cold-installs pinned ecosystem fixtures and exercises
       # real servers inside embedded V8, so keep it off the cheap PR path.
       - run: pnpm --dir packages/runtime-core test:ecosystem
         env:
           AGENTOS_ECOSYSTEM_E2E: '1'
+          AGENTOS_NATIVE_SIDECAR_BIN: ${{ github.workspace }}/target/debug/agentos-native-sidecar
       - run: cargo test --workspace --exclude agentos-sidecar-browser --exclude agentos-native-sidecar-browser -- --test-threads=1
       - name: Explicit ignored runtime churn gate
         run: cargo test -p agentos-runtime multi_vm_generation_soak_has_no_accounting_or_scheduler_drift --lib -- --ignored --test-threads=1

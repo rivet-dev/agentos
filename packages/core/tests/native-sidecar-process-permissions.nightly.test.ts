@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import {
 	existsSync,
 	mkdtempSync,
@@ -7,7 +6,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CreateVmConfig } from "@rivet-dev/agentos-runtime-core/vm-config";
 import { afterEach, describe, expect, test } from "vitest";
@@ -15,10 +14,11 @@ import {
 	NativeSidecarProcessClient,
 	serializeRootFilesystemForSidecar,
 } from "../src/sidecar/rpc-client.js";
-import { findCargoBinary, resolveCargoBinary } from "../src/sidecar/cargo.js";
 
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
-const SIDECAR_BINARY = join(REPO_ROOT, "target/debug/agentos-sidecar");
+const SIDECAR_BINARY = process.env.AGENTOS_SIDECAR_BIN
+	? resolve(process.env.AGENTOS_SIDECAR_BIN)
+	: join(REPO_ROOT, "target/debug/agentos-sidecar");
 
 type JavaScriptVmConfigOptions = Partial<
 	Pick<
@@ -53,23 +53,9 @@ function nodeBuiltinsConfig(...allowedBuiltins: string[]) {
 }
 
 function ensureSidecarBinaryReady(): void {
-	const cargoBinary = findCargoBinary();
-	if (cargoBinary) {
-		execFileSync(cargoBinary, ["build", "-q", "-p", "agentos-sidecar"], {
-			cwd: REPO_ROOT,
-			stdio: "pipe",
-		});
-		return;
-	}
-
 	if (!existsSync(SIDECAR_BINARY)) {
-		execFileSync(
-			resolveCargoBinary(),
-			["build", "-q", "-p", "agentos-sidecar"],
-			{
-				cwd: REPO_ROOT,
-				stdio: "pipe",
-			},
+		throw new Error(
+			`agentos-sidecar is missing at ${SIDECAR_BINARY}; build the shared CI/test binary before running this suite`,
 		);
 	}
 }

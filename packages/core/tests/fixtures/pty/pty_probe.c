@@ -1,5 +1,5 @@
 // pty_probe.c — argv-dispatched PTY/line-discipline probe for the agent-os
-// terminal test matrix (packages/core/tests/pty-line-discipline.test.ts).
+// terminal test matrix (packages/core/tests/pty-line-discipline.nightly.test.ts).
 //
 // Unlike secure-exec's single-sequence pty_probe.c, this probe runs exactly ONE
 // case, selected by argv[1] (the caseId). The host harness drives the SAME case

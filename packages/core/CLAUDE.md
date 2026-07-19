@@ -142,8 +142,8 @@ See `.agent/specs/test-structure.md` for the full restructuring plan. Target lay
 - `wasm/` -- WASM command and permission tier tests
 - `network/` -- connectivity and fetch behavior inside the VM
 - `tests/migration-parity.test.ts` is the dedicated Rust/native migration gate. Keep it on the default `AgentOs.create()` sidecar path and make it cover filesystem, process, layer snapshot, binding dispatch, networking, and at least one real agent prompt/session flow together; the canonical invocation is `pnpm test:migration-parity` from the repo root.
-- Binding command-path coverage belongs with VM-backed sidecar tests such as `tests/sidecar-binding-dispatch.test.ts`, not a standalone TypeScript RPC server suite.
-- Shell-backed host-binding dispatch coverage in `tests/sidecar-binding-dispatch.test.ts` needs the `@agentos-software/common` software package in the test VM so `/bin/sh` exists; otherwise the suite only proves direct spawn/RPC dispatch and misses the guest-shell path.
+- Binding command-path coverage belongs with VM-backed sidecar tests such as `tests/sidecar-binding-dispatch.nightly.test.ts`, not a standalone TypeScript RPC server suite.
+- Shell-backed host-binding dispatch coverage in `tests/sidecar-binding-dispatch.nightly.test.ts` needs the `@agentos-software/common` software package in the test VM so `/bin/sh` exists; otherwise the suite only proves direct spawn/RPC dispatch and misses the guest-shell path.
 - `sidecar/` -- sidecar client, native process
 - `cron/` -- cron integration
 

@@ -1,4 +1,4 @@
-// pty-line-discipline.test.ts — terminal (PTY) line-discipline matrix.
+// pty-line-discipline.nightly.test.ts — terminal (PTY) line-discipline matrix.
 //
 // ONE shared CASES table is exercised IDENTICALLY through TWO guest runtimes:
 //   - wasm-c : a C probe (tests/fixtures/pty/pty_probe.c) compiled to WASM and
@@ -36,7 +36,7 @@
 // Run:
 //   cd <repo root>
 //   PATH="/home/nathan/.nvm/versions/node/v24.13.0/bin:/tmp/pnpm:/usr/bin:/bin" \
-//     pnpm --dir packages/core exec vitest run tests/pty-line-discipline.test.ts
+//     pnpm --dir packages/core exec vitest run tests/pty-line-discipline.nightly.test.ts
 
 import { spawnSync } from "node:child_process";
 import {

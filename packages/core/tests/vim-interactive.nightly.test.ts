@@ -61,7 +61,7 @@ function assertVimAvailable() {
 // package directory (`bin/vim` + `package.json` + `agentos-package.json`). The
 // sidecar projects it into `/opt/agentos/bin/vim` and registers the command, so
 // `openShell({ command: "vim" })` resolves it. Mirrors packages/shell/src/main.ts
-// and tests/pty-protocol.test.ts's package materialization.
+// and tests/pty-protocol.nightly.test.ts's package materialization.
 function materializeVimPackage(): { packagePath: string } {
 	const packageDir = mkdtempSync(join(tmpdir(), "agentos-vim-pkg-"));
 	const binDir = join(packageDir, "bin");

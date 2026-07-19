@@ -2009,6 +2009,7 @@ function ensureNativeSidecarBinary(): string {
 	// A published install has no in-repo Cargo workspace to build from: resolve
 	// the prebuilt platform binary (or an explicit sidecar override).
 	if (
+		process.env.AGENTOS_NATIVE_SIDECAR_BIN ||
 		process.env.AGENTOS_SIDECAR_BIN ||
 		!fsSync.existsSync(path.join(REPO_ROOT, "Cargo.toml"))
 	) {

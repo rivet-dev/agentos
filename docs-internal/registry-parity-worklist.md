@@ -527,8 +527,8 @@ so a reader sees the whole board at a glance.
   in `2026-07-08T01-37-05-0700-item9-codex-build-rerun.txt`; `pnpm --dir
   software/codex-cli build` stages 2 commands and assembles `package.aospkg` in
   `2026-07-08T01-44-50-0700-item9-codex-cli-build.txt`;
-  `AGENTOS_E2E_FULL=1 pnpm --dir packages/core exec vitest run
-  tests/codex-fullturn.test.ts --reporter=verbose` passes 2 real VM tests in
+  `pnpm --dir packages/core exec vitest run
+  tests/codex-fullturn.nightly.test.ts --reporter=verbose` passes 2 real VM tests in
   `2026-07-08T01-53-55-0700-item9-core-codex-fullturn-pass.txt`.
 - **rev:** `svksnzon` — `build(codex-cli): make the codex-rs fork build reproducible`
 
