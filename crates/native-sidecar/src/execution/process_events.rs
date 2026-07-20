@@ -518,8 +518,55 @@ where
                         // process events. Handle them immediately so a sibling
                         // process can service sync RPCs while another request
                         // waits on VM-local networking.
-                        self.handle_execution_event(&vm_id, &process_id, event.into_event())
-                            .await?;
+                        //
+                        // The event was already LEASED (popped) by the poll
+                        // above, so propagating a handler error with `?`
+                        // consumed and destroyed it. When the event was a
+                        // JavascriptSyncRpcRequest that request then ceased to
+                        // exist anywhere, and the guest blocked on it could
+                        // never be answered — it hung until the bridge deadline
+                        // (~31 s). Capture the waiter's id before handing the
+                        // event over and, on failure, deliver the error to that
+                        // waiter. Answering is preferable to requeueing here: a
+                        // deterministic handler failure would otherwise be
+                        // retried forever, and the guest is owed the errno
+                        // rather than silence.
+                        let stranded_waiter = match event.event() {
+                            ActiveExecutionEvent::JavascriptSyncRpcRequest(request) => {
+                                Some(request.id)
+                            }
+                            _ => None,
+                        };
+                        if let Err(error) = self
+                            .handle_execution_event(&vm_id, &process_id, event.into_event())
+                            .await
+                        {
+                            if let Some(request_id) = stranded_waiter {
+                                if let Some(process) = self
+                                    .vms
+                                    .get_mut(&vm_id)
+                                    .and_then(|vm| vm.active_processes.get_mut(&process_id))
+                                {
+                                    if let Err(respond_error) = process
+                                        .execution
+                                        .respond_javascript_sync_rpc_error(
+                                            request_id,
+                                            javascript_sync_rpc_error_code(&error),
+                                            error.to_string(),
+                                        )
+                                        .or_else(ignore_stale_javascript_sync_rpc_response)
+                                    {
+                                        tracing::error!(
+                                            vm = %vm_id,
+                                            process = %process_id,
+                                            error = %respond_error,
+                                            "failed to answer a sync RPC stranded by a process-event handler error"
+                                        );
+                                    }
+                                }
+                            }
+                            return Err(error);
+                        }
                     } else {
                         let PolledExecutionEvent { event, reservation } = event;
                         let envelope = ProcessEventEnvelope {

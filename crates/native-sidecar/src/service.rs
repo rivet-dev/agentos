@@ -2811,15 +2811,37 @@ where
             other => other,
         };
 
+        // Waking OTHER parked readers/writers is a side effect on behalf of
+        // other waiters; it is not this request's result. Propagating a wake
+        // failure with `?` here aborted the function BEFORE the response below
+        // was delivered, so the guest that just had its work completed
+        // successfully was never answered and blocked until the bridge deadline
+        // (~31 s) — while the side effect had already been applied. Capture the
+        // failure, always deliver this request's response, and report the wake
+        // error afterwards so it is never silently swallowed.
+        let mut wake_failure = None;
         if response.is_ok() && javascript_sync_rpc_may_make_fd_readable(&request) {
             if let Some(vm) = self.vms.get_mut(vm_id) {
-                Self::wake_ready_deferred_fd_reads(vm)?;
+                if let Err(error) = Self::wake_ready_deferred_fd_reads(vm) {
+                    wake_failure = Some(("deferred fd reads", error));
+                }
             }
         }
         if response.is_ok() && javascript_sync_rpc_may_make_fd_writable(&request) {
             if let Some(vm) = self.vms.get_mut(vm_id) {
-                Self::wake_ready_deferred_fd_writes(vm)?;
+                if let Err(error) = Self::wake_ready_deferred_fd_writes(vm) {
+                    wake_failure = Some(("deferred fd writes", error));
+                }
             }
+        }
+        if let Some((phase, error)) = &wake_failure {
+            tracing::error!(
+                vm = %vm_id,
+                process = %process_id,
+                phase = %phase,
+                error = %error,
+                "waking parked fd waiters failed; answering the originating request anyway"
+            );
         }
 
         let Some(vm) = self.vms.get_mut(vm_id) else {
@@ -2848,21 +2870,36 @@ where
                 "fs.chmodSync" | "fs.promises.chmod"
             )
         {
-            let guest_path =
-                javascript_sync_rpc_arg_str(&request.args, 0, "filesystem chmod path")?;
-            let mode =
-                javascript_sync_rpc_arg_u32(&request.args, 1, "filesystem chmod mode")? & 0o7777;
-            let host_path =
-                shadow_host_path_for_process(&shadow_root, &process.guest_cwd, guest_path);
-            if host_path.exists() {
-                fs::set_permissions(&host_path, fs::Permissions::from_mode(mode)).map_err(
-                    |error| {
-                        SidecarError::Io(format!(
-                            "failed to mirror chmod to shadow path {}: {error}",
-                            host_path.display()
-                        ))
-                    },
-                )?;
+            // Same rule as the fd wakes above: mirroring into the shadow root
+            // must not abort the function before the response is delivered, or
+            // a guest whose chmod already succeeded blocks until the bridge
+            // deadline. Report the mirror failure instead of propagating it.
+            let mirror = (|| -> Result<(), SidecarError> {
+                let guest_path =
+                    javascript_sync_rpc_arg_str(&request.args, 0, "filesystem chmod path")?;
+                let mode = javascript_sync_rpc_arg_u32(&request.args, 1, "filesystem chmod mode")?
+                    & 0o7777;
+                let host_path =
+                    shadow_host_path_for_process(&shadow_root, &process.guest_cwd, guest_path);
+                if host_path.exists() {
+                    fs::set_permissions(&host_path, fs::Permissions::from_mode(mode)).map_err(
+                        |error| {
+                            SidecarError::Io(format!(
+                                "failed to mirror chmod to shadow path {}: {error}",
+                                host_path.display()
+                            ))
+                        },
+                    )?;
+                }
+                Ok(())
+            })();
+            if let Err(error) = mirror {
+                tracing::error!(
+                    vm = %vm_id,
+                    process = %process_id,
+                    error = %error,
+                    "mirroring chmod into the shadow root failed; answering the originating request anyway"
+                );
             }
         }
 
