@@ -9,6 +9,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   createIntegrationKernel,
+  describeIf,
   itIf,
   skipUnlessWasmBuilt,
 } from '@rivet-dev/agentos-vm-test-harness';
@@ -34,7 +35,7 @@ async function checkNetwork(): Promise<string | false> {
 }
 
 // TODO(P6): npx resolution E2E depends on npm registry access.
-describe.skip('e2e npx and pipes through kernel', () => {
+describeIf(process.env.AGENTOS_NPM_WORKFLOWS_E2E === '1', 'e2e npx and pipes through kernel', () => {
   describe('npx execution', () => {
     itIf(!networkSkip, 'npx semver outputs parsed version', async () => {
       const { kernel, dispose } = await createIntegrationKernel({
@@ -43,7 +44,10 @@ describe.skip('e2e npx and pipes through kernel', () => {
 
       try {
         const result = await kernel.exec('npx -y semver 1.2.3', { cwd: '/' });
-        expect(result.stdout.trim()).toBe('1.2.3');
+      expect(
+        result.stdout.trim(),
+        `exit=${result.exitCode}\n${result.stderr}`,
+      ).toBe('1.2.3');
       } finally {
         await dispose();
       }

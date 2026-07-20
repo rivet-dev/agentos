@@ -8,14 +8,14 @@
  *   -> child_process routes through kernel -> WasmVM shell -> output
  */
 
-import { describe, expect, it } from 'vitest';
-import { createIntegrationKernel, skipUnlessWasmBuilt } from '@rivet-dev/agentos-vm-test-harness';
+import { expect, it } from 'vitest';
+import { createIntegrationKernel, describeIf, skipUnlessWasmBuilt } from '@rivet-dev/agentos-vm-test-harness';
 
 const skipReason = skipUnlessWasmBuilt();
 void skipReason;
 
 // TODO(P6): npm script E2E depends on registry command artifacts.
-describe.skip('e2e npm run scripts through kernel', () => {
+describeIf(process.env.AGENTOS_NPM_WORKFLOWS_E2E === '1', 'e2e npm run scripts through kernel', () => {
   it('npm run greet echoes hello world', async () => {
     const { kernel, dispose } = await createIntegrationKernel({
       runtimes: ['wasmvm', 'node'],

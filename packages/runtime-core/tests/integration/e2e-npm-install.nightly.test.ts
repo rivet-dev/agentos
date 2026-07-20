@@ -13,7 +13,7 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { expect, it } from 'vitest';
 import {
   describeIf,
   COMMANDS_DIR,
@@ -46,7 +46,7 @@ const skipReason = wasmSkip || (await checkNetwork());
 void skipReason;
 
 // TODO(P6): npm install E2E depends on registry/network package resolution.
-describe.skip('e2e npm install through kernel', () => {
+describeIf(process.env.AGENTOS_NPM_WORKFLOWS_E2E === '1', 'e2e npm install through kernel', () => {
   it(
     'npm install installs left-pad and it is usable by node',
     async () => {
@@ -79,7 +79,10 @@ describe.skip('e2e npm install through kernel', () => {
           const installResult = await kernel.exec('npm install', {
             cwd: '/',
           });
-          expect(installResult.exitCode).toBe(0);
+          expect(
+            installResult.exitCode,
+            installResult.stderr || installResult.stdout,
+          ).toBe(0);
 
           // Verify node_modules/left-pad/ exists in the VFS
           const stat = await vfs.stat('/node_modules/left-pad');

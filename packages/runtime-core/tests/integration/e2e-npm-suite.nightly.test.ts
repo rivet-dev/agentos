@@ -16,7 +16,7 @@ import { existsSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { expect, it } from 'vitest';
 import {
   describeIf,
   COMMANDS_DIR,
@@ -29,6 +29,9 @@ import {
 } from '@rivet-dev/agentos-vm-test-harness';
 
 const wasmSkip = skipUnlessWasmBuilt();
+const ONLINE_NPM_COMMAND_TEST_TIMEOUT_MS = 60_000;
+const ONLINE_NPM_COMPOUND_TEST_TIMEOUT_MS = 90_000;
+const ONLINE_NPX_TEST_TIMEOUT_MS = 120_000;
 
 /** Check if npm registry is reachable (5s timeout). */
 async function checkNetwork(): Promise<string | false> {
@@ -86,7 +89,7 @@ async function checkNpmInstallWorks(): Promise<string | false> {
 // --- Offline tests (no network required) ---
 
 // TODO(P6): npm command suite depends on registry command/runtime artifacts.
-describe.skip('npm suite - offline', () => {
+describeIf(process.env.AGENTOS_NPM_WORKFLOWS_E2E === '1', 'npm suite - offline', () => {
   it('npm init -y creates package.json with default values', async () => {
     const tempDir = await mkdtemp(path.join(tmpdir(), 'kernel-npm-init-'));
 
@@ -198,7 +201,7 @@ const npmInstallSkip = wasmSkip || networkSkip || (await checkNpmInstallWorks())
 void npmInstallSkip;
 
 // TODO(P6): npm install suite depends on registry/network package resolution.
-describe.skip('npm suite - online', () => {
+describeIf(process.env.AGENTOS_NPM_WORKFLOWS_E2E === '1', 'npm suite - online', () => {
   it(
     'npm install left-pad installs package to node_modules',
     async () => {
@@ -239,7 +242,7 @@ describe.skip('npm suite - online', () => {
         await rm(tempDir, { recursive: true, force: true });
       }
     },
-    30_000,
+    ONLINE_NPM_COMMAND_TEST_TIMEOUT_MS,
   );
 
   it(
@@ -281,7 +284,7 @@ describe.skip('npm suite - online', () => {
         await rm(tempDir, { recursive: true, force: true });
       }
     },
-    30_000,
+    ONLINE_NPM_COMPOUND_TEST_TIMEOUT_MS,
   );
 
   it(
@@ -298,14 +301,17 @@ describe.skip('npm suite - online', () => {
         await dispose();
       }
     },
-    45_000,
+    // A cold npx invocation downloads and extracts the full package graph before
+    // launching its bin. Keep this online-only case bounded without applying the
+    // larger allowance to the cheap npm workflow tests.
+    ONLINE_NPX_TEST_TIMEOUT_MS,
   );
 });
 
 // --- Error handling ---
 
 // TODO(P6): npm error-path suite depends on registry command/runtime artifacts.
-describe.skip('npm suite - error handling', () => {
+describeIf(process.env.AGENTOS_NPM_WORKFLOWS_E2E === '1', 'npm suite - error handling', () => {
   it(
     'npm install with unreachable registry returns clear error',
     async () => {
@@ -343,6 +349,6 @@ describe.skip('npm suite - error handling', () => {
         await dispose();
       }
     },
-    30_000,
+    ONLINE_NPM_COMMAND_TEST_TIMEOUT_MS,
   );
 });

@@ -15,7 +15,7 @@
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { expect, it } from 'vitest';
 import {
   describeIf,
   COMMANDS_DIR,
@@ -48,7 +48,7 @@ const skipReason = wasmSkip || (await checkNetwork());
 void skipReason;
 
 // TODO(P6): npm lifecycle E2E depends on registry/network package resolution.
-describe.skip('e2e npm lifecycle scripts through kernel', () => {
+describeIf(process.env.AGENTOS_NPM_WORKFLOWS_E2E === '1', 'e2e npm lifecycle scripts through kernel', () => {
   it(
     'postinstall script writes marker file during npm install',
     async () => {

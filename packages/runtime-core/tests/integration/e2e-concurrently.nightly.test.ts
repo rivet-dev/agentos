@@ -16,7 +16,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { execSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, expect, it } from 'vitest';
 import {
   describeIf,
   COMMANDS_DIR,
@@ -49,7 +49,7 @@ const skipReason = wasmSkip || (await checkNetwork());
 void skipReason;
 
 // TODO(P6): concurrently E2E depends on registry/network package resolution.
-describe.skip('e2e concurrently through kernel', () => {
+describeIf(process.env.AGENTOS_NPM_WORKFLOWS_E2E === '1', 'e2e concurrently through kernel', () => {
   let tempDir: string;
 
   // Pre-install concurrently on host so kernel has node_modules available
