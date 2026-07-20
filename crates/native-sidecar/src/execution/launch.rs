@@ -1110,14 +1110,27 @@ fn sync_host_directory_tree_to_kernel_inner(
             })?;
             if !is_shadow_bootstrap_dir(&guest_path) {
                 if !vm.kernel.exists(&guest_path).unwrap_or(false) {
-                    vm.kernel.mkdir(&guest_path, true).map_err(|error| {
-                        SidecarError::InvalidState(format!(
-                            "failed to sync host shadow directory {} to guest {}: {}",
-                            host_path.display(),
-                            guest_path,
-                            kernel_error(error)
-                        ))
-                    })?;
+                    // Directory creation is charged against the INODE budget, so
+                    // a guest that exhausts `maxInodeCount` with many small
+                    // files/dirs reaches this path. Escalating that to a fatal
+                    // error killed the whole shared sidecar and every co-located
+                    // VM with it — the same blast-radius class the write arm
+                    // below already handles. Tolerate it identically.
+                    match vm.kernel.mkdir(&guest_path, true) {
+                        Ok(()) => {}
+                        Err(error) if is_guest_filesystem_quota_error(&error) => {
+                            warn_shadow_sync_over_budget(&host_path, &guest_path, "mkdir");
+                            continue;
+                        }
+                        Err(error) => {
+                            return Err(SidecarError::InvalidState(format!(
+                                "failed to sync host shadow directory {} to guest {}: {}",
+                                host_path.display(),
+                                guest_path,
+                                kernel_error(error)
+                            )));
+                        }
+                    }
                 }
                 vm.kernel
                     .chmod(&guest_path, host_shadow_mode(&metadata))
@@ -1223,25 +1236,8 @@ fn sync_host_directory_tree_to_kernel_inner(
                 // just unlinked by the guest — vim's swap-file dance). The
                 // entry is mid-churn; skip it rather than failing the VM.
                 Err(error) if error.code() == "ENOENT" => continue,
-                // The guest exhausting its OWN configured filesystem budget is
-                // a guest-caused condition, not a sidecar fault: the offending
-                // write was already correctly rejected with a typed ENOSPC at
-                // the syscall, and the shadow mirror simply cannot hold the
-                // excess. Escalating it to a fatal error here killed the whole
-                // shared sidecar — and every co-located VM/actor with it — from
-                // one guest filling its quota (the LT-011 blast-radius class).
-                // Warn and skip the entry, matching the ENOENT/EPERM tolerance
-                // above, so the failure stays host-visible but bounded.
-                Err(error)
-                    if matches!(error.code(), "ENOSPC" | "EDQUOT" | "EFBIG") =>
-                {
-                    tracing::warn!(
-                        path = %host_path.display(),
-                        guest_path = %guest_path,
-                        error = %error.code(),
-                        "skipping host shadow file that exceeds the VM filesystem budget \
-                         (limits.resources.maxFilesystemBytes)"
-                    );
+                Err(error) if is_guest_filesystem_quota_error(&error) => {
+                    warn_shadow_sync_over_budget(&host_path, &guest_path, "write");
                     continue;
                 }
                 Err(error) => {
@@ -1288,7 +1284,17 @@ fn sync_host_directory_tree_to_kernel_inner(
                     )));
                 }
             };
-            replace_kernel_symlink(vm, &guest_path, &target.to_string_lossy())?;
+            // Symlink targets are charged against BOTH the byte and inode
+            // budgets, so this is reachable by a guest at its quota and must not
+            // be fatal to the shared sidecar either.
+            match replace_kernel_symlink(vm, &guest_path, &target.to_string_lossy()) {
+                Ok(()) => {}
+                Err(error) if is_guest_filesystem_quota_sidecar_error(&error) => {
+                    warn_shadow_sync_over_budget(&host_path, &guest_path, "symlink");
+                    continue;
+                }
+                Err(error) => return Err(error),
+            }
         }
     }
 
@@ -1329,6 +1335,41 @@ fn ensure_kernel_shadow_node_type(
             kernel_error(error)
         ))
     })
+}
+
+/// A guest exhausting its OWN configured filesystem budget during shadow sync.
+///
+/// Only `ENOSPC` qualifies. The kernel raises it for both the byte limit and the
+/// inode limit (`resource_accounting::filesystem_full`), and it is the only code
+/// this path can actually produce for a quota condition. `EDQUOT`/`EFBIG` are
+/// deliberately NOT matched: nothing on this path constructs them, and they
+/// would signal HOST disk/quota exhaustion — a real fault that must keep failing
+/// loudly rather than being downgraded to a skipped entry.
+fn is_guest_filesystem_quota_error(error: &agentos_kernel::kernel::KernelError) -> bool {
+    error.code() == "ENOSPC"
+}
+
+fn is_guest_filesystem_quota_sidecar_error(error: &SidecarError) -> bool {
+    error.to_string().contains("ENOSPC")
+}
+
+/// Report an entry skipped because the VM is at its filesystem budget.
+///
+/// KNOWN GAP: skipping leaves the host shadow copy and the kernel VFS holding
+/// different content for the same path, and the guest is not told. The correct
+/// end state is to fail THIS VM (mark its filesystem quota-exceeded so later
+/// guest fs calls return a typed ENOSPC) rather than silently skipping — which
+/// keeps both the co-tenant isolation this provides and the error-integrity that
+/// skipping gives up. Tracked in docs-internal/load-testing-issues.md.
+fn warn_shadow_sync_over_budget(host_path: &Path, guest_path: &str, operation: &str) {
+    tracing::warn!(
+        path = %host_path.display(),
+        guest_path = %guest_path,
+        operation = %operation,
+        "skipping host shadow entry that exceeds the VM filesystem budget \
+         (limits.resources.maxFilesystemBytes / maxInodeCount); the guest-visible \
+         filesystem is now incomplete at this path"
+    );
 }
 
 fn replace_kernel_symlink(
