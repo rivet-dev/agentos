@@ -143,6 +143,14 @@ impl FdTableError {
     }
 
     fn bad_file_descriptor(fd: u32) -> Self {
+        // TEMPORARY DIAGNOSTIC (load-testing LT-024): capture where a mapped
+        // host fd (>= MAPPED_HOST_FD_START) reaches the kernel fd table.
+        if std::env::var("AGENTOS_DEBUG_EBADF").as_deref() == Ok("1") && fd >= 1_000_000_000 {
+            eprintln!(
+                "AGENTOS_DEBUG_EBADF fd={fd}\n{}",
+                std::backtrace::Backtrace::force_capture()
+            );
+        }
         Self {
             code: "EBADF",
             message: format!("bad file descriptor {fd}"),
