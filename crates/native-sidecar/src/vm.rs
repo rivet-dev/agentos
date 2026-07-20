@@ -1174,6 +1174,16 @@ where
         // steps' `?`, so any failure stranded the engine/extension maps (H1) and
         // the output-buffer map was never reclaimed at all (M6).
         self.reclaim_vm_tracking(session_id, vm_id);
+        // Drop any bridge-retained filesystem snapshot for this VM. VM ids are
+        // monotonic and never reissued, so the snapshot flushed during teardown
+        // can never be loaded again; an in-memory bridge that keeps it grows by
+        // one full root-filesystem blob per VM lifecycle (LT-022). Runs
+        // unconditionally, like the tracking reclaim above, so a failed
+        // teardown cannot strand the entry.
+        let _ = self.bridge.with_mut(|bridge| {
+            bridge.forget_filesystem_state(vm_id);
+            Ok(())
+        });
         let _ = fs::remove_dir_all(&vm.cwd);
         if let Some(staging_root) = vm.packages_staging_root.take() {
             let _ = fs::remove_dir_all(&staging_root);
