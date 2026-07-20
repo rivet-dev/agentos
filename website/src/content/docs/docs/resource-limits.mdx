@@ -24,7 +24,7 @@ Set caps on the `limits` object in the `agentOS` config. Limits are grouped by s
 | `resources.maxProcesses` | Concurrent processes in the VM process table | Caps fork bombs and runaway spawning. New spawns fail with `EAGAIN`. |
 | `resources.maxOpenFds` | Open file descriptors | Exhausting the table fails with `EMFILE` / `ENFILE`. |
 | `resources.maxSockets` | Open sockets in the socket table | Bounds concurrent connections; excess `connect`/`accept` fail. |
-| `resources.maxFilesystemBytes` | Total bytes stored in the virtual filesystem | Bounds VFS storage; writes past the budget fail with a no-space error. |
+| `resources.maxFilesystemBytes` | Bytes stored by the VM, in the virtual filesystem **and** on host-backed paths | Default is `64 MiB`. Writes past the budget fail with a no-space error naming this limit. Host-backed paths (such as a writable `host_dir` mount) never reach the kernel VFS, so they are checked separately on write — see the caveat below. |
 | `resources.maxInodeCount` | Inodes retained by the virtual filesystem | Default is `16384`; creating another file or directory fails with a no-space error. This is the expected upper bound for filesystem-schema sizing and benchmarks. |
 | `resources.maxWasmFuel` | WASM execution budget | Bounds WASM execution work; unset means no explicit fuel budget. |
 | `resources.maxWasmMemoryBytes` | WASM linear memory, in bytes | Default is `128 MiB`. |
@@ -58,9 +58,24 @@ Set caps on the `limits` object in the `agentOS` config. Limits are grouped by s
 - **WASM stack**: deep recursion throws a stack-overflow error in the guest, never a host crash.
 - **JavaScript CPU time**: CPU-bound loops terminate with a CPU-budget error once active JS CPU exceeds `jsRuntime.cpuTimeLimitMs`.
 - **JavaScript wall time**: awaiting or blocked JS terminates only when you set `jsRuntime.wallClockLimitMs`; the default is disabled for long-lived adapters.
-- **Filesystem bytes**: writing past the VFS budget fails with a no-space error to the guest.
+- **Filesystem bytes**: writing past the budget fails with a no-space error to the guest, naming `limits.resources.maxFilesystemBytes`.
 - **Counts (fds / processes / sockets)**: hitting a table cap returns the standard POSIX errno appropriate to that cap (`EMFILE`/`ENFILE`, `EAGAIN`, etc.).
 - **Durable ACP collections**: session, prompt, pending-permission, and terminal-outcome caps fail atomically with typed errors naming the exact `limits.acp.*` field to raise. Per-session caps are validated not to exceed their corresponding per-VM cap.
+
+### Host-backed paths and `maxFilesystemBytes`
+
+Writes to host-backed paths — a writable `host_dir` mount, and other paths the
+runtime maps straight to a host file — do not pass through the virtual
+filesystem, so the VFS accounting that enforces `maxFilesystemBytes` never sees
+them. Those writes are checked separately, at the point the guest writes.
+
+That separate check is currently **per file**, while the VFS side compares
+against the VM's *total* usage. A guest can therefore stay under the cap on
+every individual host-backed file and still exceed its overall budget by
+spreading data across many files. If you rely on `maxFilesystemBytes` as a hard
+storage bound for untrusted code, also bound the underlying host directory (for
+example a dedicated filesystem or quota on the mount source) until the
+host-backed check aggregates per VM.
 
 ### WASM memory residency calls
 

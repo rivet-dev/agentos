@@ -255,6 +255,42 @@
 			"image": "/images/registry/coreutils.svg"
 		},
 		{
+			"slug": "xfsprogs",
+			"title": "xfs_io",
+			"description": "Scriptable low-level filesystem I/O commands used by xfstests.",
+			"types": [
+				"software"
+			],
+			"category": "core",
+			"priority": 43,
+			"package": "@agentos-software/xfsprogs",
+			"status": "available"
+		},
+		{
+			"slug": "acl",
+			"title": "POSIX ACL tools",
+			"description": "Inspect and modify POSIX access and default ACLs.",
+			"types": [
+				"software"
+			],
+			"category": "core",
+			"priority": 42,
+			"package": "@agentos-software/acl",
+			"status": "available"
+		},
+		{
+			"slug": "attr",
+			"title": "attr",
+			"description": "Inspect and modify filesystem extended attributes.",
+			"types": [
+				"software"
+			],
+			"category": "core",
+			"priority": 41,
+			"package": "@agentos-software/attr",
+			"status": "available"
+		},
+		{
 			"slug": "grep",
 			"title": "grep",
 			"description": "GNU grep pattern matching (grep, egrep, fgrep).",
