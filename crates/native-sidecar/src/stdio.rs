@@ -1075,10 +1075,29 @@ async fn run_async(
                 loop {
                     let mut emitted_frame = false;
                     for session in active_sessions.iter().cloned().collect::<Vec<_>>() {
-                        if let Some(frame) = sidecar
+                        // `poll_event_wire` reaches the SAME process-event pump
+                        // that the `process_event_notify` branch below guards,
+                        // so leaving this `?` unguarded meant a guest-triggered
+                        // kernel error delivered to whichever branch happened to
+                        // fire first still propagated to `main` and exit(1) —
+                        // killing every co-located VM/actor. Whether the sidecar
+                        // survived a given error came down to `select!`
+                        // scheduling. Isolate per session here too.
+                        let polled = match sidecar
                             .poll_event_wire(&session.ownership_scope(), Duration::ZERO)
-                            .await?
+                            .await
                         {
+                            Ok(polled) => polled,
+                            Err(error) => {
+                                tracing::error!(
+                                    session = %session.session_id,
+                                    error = %error,
+                                    "event poll failed for session; continuing to serve other sessions"
+                                );
+                                continue;
+                            }
+                        };
+                        if let Some(frame) = polled {
                             send_output_frame(&frame_writer, ProtocolFrame::EventFrame(frame))?;
                             emitted_frame = true;
                         }
