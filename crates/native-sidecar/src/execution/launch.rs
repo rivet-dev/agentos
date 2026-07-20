@@ -1223,6 +1223,27 @@ fn sync_host_directory_tree_to_kernel_inner(
                 // just unlinked by the guest — vim's swap-file dance). The
                 // entry is mid-churn; skip it rather than failing the VM.
                 Err(error) if error.code() == "ENOENT" => continue,
+                // The guest exhausting its OWN configured filesystem budget is
+                // a guest-caused condition, not a sidecar fault: the offending
+                // write was already correctly rejected with a typed ENOSPC at
+                // the syscall, and the shadow mirror simply cannot hold the
+                // excess. Escalating it to a fatal error here killed the whole
+                // shared sidecar — and every co-located VM/actor with it — from
+                // one guest filling its quota (the LT-011 blast-radius class).
+                // Warn and skip the entry, matching the ENOENT/EPERM tolerance
+                // above, so the failure stays host-visible but bounded.
+                Err(error)
+                    if matches!(error.code(), "ENOSPC" | "EDQUOT" | "EFBIG") =>
+                {
+                    tracing::warn!(
+                        path = %host_path.display(),
+                        guest_path = %guest_path,
+                        error = %error.code(),
+                        "skipping host shadow file that exceeds the VM filesystem budget \
+                         (limits.resources.maxFilesystemBytes)"
+                    );
+                    continue;
+                }
                 Err(error) => {
                     return Err(SidecarError::InvalidState(format!(
                         "failed to sync host shadow file {} to guest {}: {}",
