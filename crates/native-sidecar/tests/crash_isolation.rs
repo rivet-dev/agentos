@@ -173,6 +173,85 @@ fn guest_failure_in_one_vm_does_not_break_peer_vm_execution() {
 
     assert_eq!(exit_code, 0);
     assert!(stderr.is_empty(), "unexpected follow-up stderr: {stderr}");
+
+    // Regression: a guest writing to a HOST-BACKED path (the VM cwd is a real
+    // host directory, so these go through mapped host fds, not the kernel VFS).
+    //
+    // This vector produced two successive production failures that the guest
+    // exception above does NOT cover, because a thrown JS error never reaches
+    // the sidecar's own error paths:
+    //
+    //  1. EBADF on a mapped fd escaped the process-event pump to `main`, which
+    //     exit(1)'d — killing every co-located VM/actor (cross-tenant DoS).
+    //  2. After the pump stopped propagating it, the guest's sync-RPC response
+    //     was never delivered and every guest file write hung ~31s.
+    //
+    // Both are asserted here: the DEADLINE inside collect_crash_process_output
+    // catches the hang, and the peer execution afterwards catches the crash.
+    // A test that only checks "did it eventually succeed" would pass while
+    // hanging, which is precisely how the second failure went unnoticed.
+    let write_entry = cwd.join("host_backed_write.cjs");
+    write_fixture(
+        &write_entry,
+        "const fs = require(\"node:fs\");\n\
+         const chunk = Buffer.alloc(64 * 1024, 65);\n\
+         const fd = fs.openSync(\"host_backed_write.bin\", \"w\");\n\
+         for (let i = 0; i < 16; i++) fs.writeSync(fd, chunk);\n\
+         fs.closeSync(fd);\n\
+         console.log(\"wrote\");\n",
+    );
+    execute_wire(
+        &mut sidecar,
+        8,
+        &connection_id,
+        &session_id,
+        &crash_vm_id,
+        "proc-host-write",
+        GuestRuntimeKind::JavaScript,
+        &write_entry,
+        Vec::new(),
+    );
+    let (write_stdout, write_stderr, write_exit) = collect_crash_process_output(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &crash_vm_id,
+        "proc-host-write",
+    );
+    assert_eq!(
+        write_exit, 0,
+        "host-backed write failed (stderr: {write_stderr})"
+    );
+    assert!(
+        write_stdout.contains("wrote"),
+        "host-backed write produced no output: {write_stdout}"
+    );
+
+    // The sidecar is shared: the peer VM must still execute afterwards. This is
+    // the co-tenancy invariant the cross-tenant DoS violated.
+    execute_wire(
+        &mut sidecar,
+        9,
+        &connection_id,
+        &session_id,
+        &healthy_vm_id,
+        "proc-healthy-3",
+        GuestRuntimeKind::JavaScript,
+        &healthy_entry,
+        Vec::new(),
+    );
+    let (_stdout, peer_stderr, peer_exit) = collect_crash_process_output(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &healthy_vm_id,
+        "proc-healthy-3",
+    );
+    assert_eq!(
+        peer_exit, 0,
+        "peer VM stopped working after a co-located host-backed write \
+         (stderr: {peer_stderr})"
+    );
 }
 
 fn collect_crash_process_output(

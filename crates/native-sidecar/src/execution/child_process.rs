@@ -6225,9 +6225,26 @@ where
         }
         if request.method == "process.fd_read" {
             let fd = javascript_sync_rpc_arg_u32(&request.args, 0, "fd_read fd")?;
-            let stat = kernel
-                .fd_stat(EXECUTION_DRIVER_NAME, child.kernel_pid, fd)
-                .map_err(kernel_error)?;
+            // Same class as the `fs.write` deferral pre-check: a guest-supplied
+            // fd was stat'ed against the kernel fd table with a bare `?`, but
+            // mapped host fds live in the per-process map instead. That raised
+            // EBADF, which escapes to the process-event pump and strands the
+            // in-flight sync RPC — the guest then blocks until the ~31s bridge
+            // deadline. The sibling `process.fd_write` arm above already
+            // converts its errors into a delivered RPC error; this one did not.
+            //
+            // A host-backed fd is never a kernel pipe, so it is never parked
+            // here; `Ok(false)` hands it to the normal RPC handler, which does
+            // its own mapped lookup and raises the correct errno if the fd is
+            // genuinely bad.
+            if child.mapped_host_fd(fd).is_some() {
+                return Ok(false);
+            }
+            let stat = match kernel.fd_stat(EXECUTION_DRIVER_NAME, child.kernel_pid, fd) {
+                Ok(stat) => stat,
+                Err(error) if error.code() == "EBADF" => return Ok(false),
+                Err(error) => return Err(kernel_error(error)),
+            };
             if matches!(
                 stat.filetype,
                 agentos_kernel::fd_table::FILETYPE_REGULAR_FILE
