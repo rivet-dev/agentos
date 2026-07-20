@@ -2421,6 +2421,9 @@ importers:
       web-streams-polyfill:
         specifier: ^3.3.3
         version: 3.3.3
+      ws:
+        specifier: 8.21.0
+        version: 8.21.0(bufferutil@4.1.0)
 
   packages/core:
     dependencies:
@@ -10241,7 +10244,7 @@ snapshots:
       node-html-markdown: 1.3.0
       pino: 9.14.0
       pino-pretty: 13.1.3
-      ws: 8.20.0(bufferutil@4.1.0)
+      ws: 8.21.0(bufferutil@4.1.0)
     transitivePeerDependencies:
       - '@cfworker/json-schema'
       - '@opentelemetry/api'
@@ -10301,7 +10304,7 @@ snapshots:
       '@anthropic-ai/sdk': 0.39.0
       '@browserbasehq/sdk': 2.10.0
       '@google/genai': 1.47.0(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)
-      '@langchain/openai': 0.4.9(@langchain/core@0.3.80(@opentelemetry/api@1.9.0)(openai@4.104.0(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)))(ws@8.20.0(bufferutil@4.1.0))
+      '@langchain/openai': 0.4.9(@langchain/core@0.3.80(@opentelemetry/api@1.9.0)(openai@4.104.0(ws@8.21.0(bufferutil@4.1.0))(zod@4.3.6)))(ws@8.21.0(bufferutil@4.1.0))
       '@modelcontextprotocol/sdk': 1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6)
       ai: 5.0.172(zod@4.3.6)
       deepmerge: 4.3.1
@@ -10311,7 +10314,7 @@ snapshots:
       pino: 9.14.0
       pino-pretty: 13.1.3
       uuid: 11.1.0
-      ws: 8.20.0(bufferutil@4.1.0)
+      ws: 8.21.0(bufferutil@4.1.0)
       zod: 4.3.6
       zod-to-json-schema: 3.25.2(zod@4.3.6)
     optionalDependencies:
@@ -10328,7 +10331,7 @@ snapshots:
       '@ai-sdk/perplexity': 2.0.27(zod@4.3.6)
       '@ai-sdk/togetherai': 1.0.38(zod@4.3.6)
       '@ai-sdk/xai': 2.0.67(zod@4.3.6)
-      '@langchain/core': 0.3.80(@opentelemetry/api@1.9.0)(openai@4.104.0(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6))
+      '@langchain/core': 0.3.80(@opentelemetry/api@1.9.0)(openai@4.104.0(ws@8.21.0(bufferutil@4.1.0))(zod@4.3.6))
       bufferutil: 4.1.0
       chrome-launcher: 1.2.1
       ollama-ai-provider-v2: 1.5.5(zod@4.3.6)
@@ -10642,7 +10645,7 @@ snapshots:
       google-auth-library: 10.6.2
       p-retry: 4.6.2
       protobufjs: 7.5.4
-      ws: 8.20.0(bufferutil@4.1.0)
+      ws: 8.21.0(bufferutil@4.1.0)
     optionalDependencies:
       '@modelcontextprotocol/sdk': 1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6)
     transitivePeerDependencies:
@@ -10778,14 +10781,14 @@ snapshots:
 
   '@js-sdsl/ordered-map@4.4.2': {}
 
-  '@langchain/core@0.3.80(@opentelemetry/api@1.9.0)(openai@4.104.0(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6))':
+  '@langchain/core@0.3.80(@opentelemetry/api@1.9.0)(openai@4.104.0(ws@8.21.0(bufferutil@4.1.0))(zod@4.3.6))':
     dependencies:
       '@cfworker/json-schema': 4.1.1
       ansi-styles: 5.2.0
       camelcase: 6.3.0
       decamelize: 1.2.0
       js-tiktoken: 1.0.21
-      langsmith: 0.3.87(@opentelemetry/api@1.9.0)(openai@4.104.0(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6))
+      langsmith: 0.3.87(@opentelemetry/api@1.9.0)(openai@4.104.0(ws@8.21.0(bufferutil@4.1.0))(zod@4.3.6))
       mustache: 4.2.0
       p-queue: 6.6.2
       p-retry: 4.6.2
@@ -10798,11 +10801,11 @@ snapshots:
       - '@opentelemetry/sdk-trace-base'
       - openai
 
-  '@langchain/openai@0.4.9(@langchain/core@0.3.80(@opentelemetry/api@1.9.0)(openai@4.104.0(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)))(ws@8.20.0(bufferutil@4.1.0))':
+  '@langchain/openai@0.4.9(@langchain/core@0.3.80(@opentelemetry/api@1.9.0)(openai@4.104.0(ws@8.21.0(bufferutil@4.1.0))(zod@4.3.6)))(ws@8.21.0(bufferutil@4.1.0))':
     dependencies:
-      '@langchain/core': 0.3.80(@opentelemetry/api@1.9.0)(openai@4.104.0(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6))
+      '@langchain/core': 0.3.80(@opentelemetry/api@1.9.0)(openai@4.104.0(ws@8.21.0(bufferutil@4.1.0))(zod@4.3.6))
       js-tiktoken: 1.0.21
-      openai: 4.104.0(ws@8.20.0(bufferutil@4.1.0))(zod@3.25.76)
+      openai: 4.104.0(ws@8.21.0(bufferutil@4.1.0))(zod@3.25.76)
       zod: 3.25.76
       zod-to-json-schema: 3.25.2(zod@3.25.76)
     transitivePeerDependencies:
@@ -11074,7 +11077,7 @@ snapshots:
 
   '@mistralai/mistralai@1.14.1(bufferutil@4.1.0)':
     dependencies:
-      ws: 8.20.0(bufferutil@4.1.0)
+      ws: 8.21.0(bufferutil@4.1.0)
       zod: 4.3.6
       zod-to-json-schema: 3.25.2(zod@4.3.6)
     transitivePeerDependencies:
@@ -12473,7 +12476,7 @@ snapshots:
       node-html-markdown: 1.3.0
       semver: 7.7.4
       tsx: 4.21.0
-      ws: 8.20.0(bufferutil@4.1.0)
+      ws: 8.21.0(bufferutil@4.1.0)
       zod: 4.3.6
     transitivePeerDependencies:
       - '@cfworker/json-schema'
@@ -13800,7 +13803,7 @@ snapshots:
   koffi@2.15.2:
     optional: true
 
-  langsmith@0.3.87(@opentelemetry/api@1.9.0)(openai@4.104.0(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)):
+  langsmith@0.3.87(@opentelemetry/api@1.9.0)(openai@4.104.0(ws@8.21.0(bufferutil@4.1.0))(zod@4.3.6)):
     dependencies:
       '@types/uuid': 10.0.0
       chalk: 4.1.2
@@ -14087,21 +14090,6 @@ snapshots:
     dependencies:
       mimic-fn: 4.0.0
 
-  openai@4.104.0(ws@8.20.0(bufferutil@4.1.0))(zod@3.25.76):
-    dependencies:
-      '@types/node': 18.19.130
-      '@types/node-fetch': 2.6.13
-      abort-controller: 3.0.0
-      agentkeepalive: 4.6.0
-      form-data-encoder: 1.7.2
-      formdata-node: 4.4.1
-      node-fetch: 2.7.0
-    optionalDependencies:
-      ws: 8.20.0(bufferutil@4.1.0)
-      zod: 3.25.76
-    transitivePeerDependencies:
-      - encoding
-
   openai@4.104.0(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6):
     dependencies:
       '@types/node': 18.19.130
@@ -14114,6 +14102,21 @@ snapshots:
     optionalDependencies:
       ws: 8.20.0(bufferutil@4.1.0)
       zod: 4.3.6
+    transitivePeerDependencies:
+      - encoding
+
+  openai@4.104.0(ws@8.21.0(bufferutil@4.1.0))(zod@3.25.76):
+    dependencies:
+      '@types/node': 18.19.130
+      '@types/node-fetch': 2.6.13
+      abort-controller: 3.0.0
+      agentkeepalive: 4.6.0
+      form-data-encoder: 1.7.2
+      formdata-node: 4.4.1
+      node-fetch: 2.7.0
+    optionalDependencies:
+      ws: 8.21.0(bufferutil@4.1.0)
+      zod: 3.25.76
     transitivePeerDependencies:
       - encoding
 
@@ -14474,7 +14477,7 @@ snapshots:
       chromium-bidi: 0.6.3(devtools-protocol@0.0.1312386)
       debug: 4.4.3(supports-color@8.1.1)
       devtools-protocol: 0.0.1312386
-      ws: 8.20.0(bufferutil@4.1.0)
+      ws: 8.21.0(bufferutil@4.1.0)
     transitivePeerDependencies:
       - bare-abort-controller
       - bare-buffer
@@ -14486,7 +14489,7 @@ snapshots:
 
   pyodide@0.28.3(bufferutil@4.1.0):
     dependencies:
-      ws: 8.20.0(bufferutil@4.1.0)
+      ws: 8.21.0(bufferutil@4.1.0)
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate

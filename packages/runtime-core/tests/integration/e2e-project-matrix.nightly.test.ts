@@ -36,17 +36,24 @@ import {
 	describeIf,
 	NodeFileSystem,
 } from "@rivet-dev/agentos-vm-test-harness";
-import { describe, expect, it } from "vitest";
+import { expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
 const TEST_TIMEOUT_MS = 55_000;
 const COMMAND_TIMEOUT_MS = 45_000;
-// This opt-in gate may populate six isolated fixture stores on a cold runner.
-// Keep the larger allowance scoped to it instead of slowing the default suite.
-const ECOSYSTEM_TEST_TIMEOUT_MS = 180_000;
 const ECOSYSTEM_INSTALL_TIMEOUT_MS = 120_000;
+const ECOSYSTEM_KERNEL_TIMEOUT_MS = 120_000;
+const ECOSYSTEM_CPU_TIME_LIMIT_MS = 300_000;
+// A cold full-catalog fixture may consume each bounded phase in sequence:
+// dependency install, host parity execution, and kernel execution. Keep the
+// aggregate allowance scoped to the opt-in gate and retain teardown margin.
+const ECOSYSTEM_TEST_TIMEOUT_MS =
+	ECOSYSTEM_INSTALL_TIMEOUT_MS +
+	COMMAND_TIMEOUT_MS +
+	ECOSYSTEM_KERNEL_TIMEOUT_MS +
+	30_000;
 const CACHE_READY_MARKER = ".ready";
-const WORKTREE_SCHEMA_VERSION = "v2-isolated-worktrees";
+const WORKTREE_SCHEMA_VERSION = "v3-packed-local-dependencies";
 const TRANSIENT_OUTPUT_DIRS = new Set([
 	".astro",
 	".next",
@@ -77,16 +84,29 @@ const REQUIRED_NODE_ECOSYSTEM_FIXTURES = [
 type PackageManager = "pnpm" | "npm" | "bun" | "yarn";
 type PassFixtureMetadata = {
 	entry: string;
+	args?: string[];
+	code?: number;
 	expectation: "pass";
 	packageManager?: PackageManager;
 };
 type FailFixtureMetadata = {
 	entry: string;
+	args?: string[];
 	expectation: "fail";
-	fail: { code: number; stderrIncludes: string };
+	fail: { code: number; stderrIncludes?: string };
 	packageManager?: PackageManager;
 };
-type FixtureMetadata = PassFixtureMetadata | FailFixtureMetadata;
+type SkipFixtureMetadata = {
+	entry: string;
+	args?: string[];
+	expectation: "skip";
+	reason: string;
+	packageManager?: PackageManager;
+};
+type FixtureMetadata =
+	| PassFixtureMetadata
+	| FailFixtureMetadata
+	| SkipFixtureMetadata;
 type FixtureProject = {
 	name: string;
 	sourceDir: string;
@@ -140,16 +160,30 @@ function parseMetadata(
 	name: string,
 ): FixtureMetadata {
 	const entry = raw.entry as string;
+	const args = Array.isArray(raw.args)
+		? raw.args.map((arg) => String(arg))
+		: undefined;
 	const packageManager = raw.packageManager as PackageManager | undefined;
 	if (raw.expectation === "pass")
 		return {
 			entry,
+			...(args && { args }),
+			...(typeof raw.code === "number" && { code: raw.code }),
 			expectation: "pass",
 			...(packageManager && { packageManager }),
 		};
-	const fail = raw.fail as { code: number; stderrIncludes: string };
+	if (raw.expectation === "skip")
+		return {
+			entry,
+			...(args && { args }),
+			expectation: "skip",
+			reason: raw.reason as string,
+			...(packageManager && { packageManager }),
+		};
+	const fail = raw.fail as { code: number; stderrIncludes?: string };
 	return {
 		entry,
+		...(args && { args }),
 		expectation: "fail",
 		fail,
 		...(packageManager && { packageManager }),
@@ -191,7 +225,10 @@ async function prepareFixtureProject(
 	const pm = fixture.metadata.packageManager ?? "pnpm";
 	let installCmd: { cmd: string; args: string[] };
 	if (pm === "npm") {
-		installCmd = { cmd: "npm", args: ["install", "--prefer-offline"] };
+		installCmd = {
+			cmd: "npm",
+			args: ["install", "--prefer-offline", "--install-links=true"],
+		};
 	} else if (pm === "bun") {
 		installCmd = { cmd: "bun", args: ["install"] };
 	} else if (pm === "yarn") {
@@ -286,7 +323,10 @@ async function cacheHasRequiredInstallArtifacts(
 	fixture: FixtureProject,
 	cacheDir: string,
 ): Promise<boolean> {
-	if (!(await fixtureDeclaresDependencies(fixture))) {
+	if (
+		!(await fixtureDeclaresDependencies(fixture)) &&
+		!(await fixtureUsesWorkspaces(fixture))
+	) {
 		return true;
 	}
 	return pathExists(path.join(cacheDir, "node_modules"));
@@ -311,6 +351,15 @@ async function fixtureDeclaresDependencies(
 			Object.keys(value).length > 0
 		);
 	});
+}
+
+async function fixtureUsesWorkspaces(
+	fixture: FixtureProject,
+): Promise<boolean> {
+	const packageJson = JSON.parse(
+		await readFile(path.join(fixture.sourceDir, "package.json"), "utf8"),
+	) as Record<string, unknown>;
+	return packageJson.workspaces !== undefined;
 }
 
 async function createWorkingFixtureProject(
@@ -343,11 +392,21 @@ async function createWorkingFixtureProject(
 		"node_modules",
 	);
 	if (await pathExists(installedNodeModulesDir)) {
-		await symlink(
-			installedNodeModulesDir,
-			path.join(projectDir, "node_modules"),
-			"dir",
-		);
+		if (await fixtureUsesWorkspaces(fixture)) {
+			// npm workspace links are relative to the project root. Copy this small
+			// layout so those links stay inside the isolated working fixture instead
+			// of resolving through the external prepared-cache directory.
+			await cp(installedNodeModulesDir, path.join(projectDir, "node_modules"), {
+				recursive: true,
+				verbatimSymlinks: true,
+			});
+		} else {
+			await symlink(
+				installedNodeModulesDir,
+				path.join(projectDir, "node_modules"),
+				"dir",
+			);
+		}
 	}
 
 	return {
@@ -435,10 +494,11 @@ async function listFiles(root: string): Promise<string[]> {
 async function runHostExecution(
 	projectDir: string,
 	entryRel: string,
+	args: string[] = [],
 ): Promise<ResultEnvelope> {
 	const entryPath = path.join(projectDir, entryRel);
 	return normalizeEnvelope(
-		await runCommand(process.execPath, [entryPath], projectDir),
+		await runCommand(process.execPath, [entryPath, ...args], projectDir),
 		projectDir,
 	);
 }
@@ -475,11 +535,26 @@ async function runCommand(
 async function runKernelExecution(
 	projectDir: string,
 	entryRel: string,
+	args: string[] = [],
 	includeWasmRuntime = false,
 ): Promise<ResultEnvelope> {
 	// NodeFileSystem rooted at projectDir. require() resolves from node_modules on disk.
 	const vfs = new NodeFileSystem({ root: projectDir });
-	const kernel = createKernel({ filesystem: vfs, cwd: "/" });
+	const kernel = createKernel({
+		filesystem: vfs,
+		cwd: "/",
+		...(includeWasmRuntime
+			? {
+					limits: {
+						reactor: { operationDeadlineMs: ECOSYSTEM_KERNEL_TIMEOUT_MS },
+						jsRuntime: {
+							cpuTimeLimitMs: ECOSYSTEM_CPU_TIME_LIMIT_MS,
+							importCacheMaterializeTimeoutMs: ECOSYSTEM_KERNEL_TIMEOUT_MS,
+						},
+					},
+				}
+			: {}),
+	});
 
 	if (includeWasmRuntime) {
 		await kernel.mount(createWasmVmRuntime({ commandDirs: [COMMANDS_DIR] }));
@@ -488,35 +563,37 @@ async function runKernelExecution(
 
 	try {
 		const vfsEntry = "/" + entryRel.replace(/\\/g, "/");
+		// Execute the catalog entry as the top-level Node process. The WASM runtime
+		// remains mounted for shell/native command children, but wrapping every entry
+		// in `sh -> node` adds a lifecycle layer unrelated to package compatibility.
+		const stdoutChunks: Uint8Array[] = [];
+		const stderrChunks: Uint8Array[] = [];
+		const guestProcess = kernel.spawn("node", [vfsEntry, ...args], {
+			cwd: "/",
+			...(process.env.AGENTOS_ECOSYSTEM_DIAGNOSTICS === "1"
+				? { env: { AGENTOS_CHILD_PROCESS_DIAGNOSTICS: "1" } }
+				: {}),
+			onStdout: (chunk) => stdoutChunks.push(chunk),
+			onStderr: (chunk) => stderrChunks.push(chunk),
+		});
+		const timeout = setTimeout(
+			() => guestProcess.kill(9),
+			includeWasmRuntime ? ECOSYSTEM_KERNEL_TIMEOUT_MS : COMMAND_TIMEOUT_MS,
+		);
 		let result: { exitCode: number; stdout: string; stderr: string };
-		if (includeWasmRuntime) {
-			result = await kernel.exec(`node ${vfsEntry}`, { cwd: "/" });
-		} else {
-			// kernel.exec() intentionally uses the guest shell. The required reactor
-			// gate mounts Node alone, so spawn the Node runtime directly and capture
-			// its process streams without smuggling in a WASM-provided `sh` command.
-			const stdoutChunks: Uint8Array[] = [];
-			const stderrChunks: Uint8Array[] = [];
-			const process = kernel.spawn("node", [vfsEntry], {
-				cwd: "/",
-				onStdout: (chunk) => stdoutChunks.push(chunk),
-				onStderr: (chunk) => stderrChunks.push(chunk),
-			});
-			const timeout = setTimeout(() => process.kill(9), COMMAND_TIMEOUT_MS);
-			try {
-				const exitCode = await process.wait();
-				result = {
-					exitCode,
-					stdout: Buffer.concat(
-						stdoutChunks.map((chunk) => Buffer.from(chunk)),
-					).toString("utf8"),
-					stderr: Buffer.concat(
-						stderrChunks.map((chunk) => Buffer.from(chunk)),
-					).toString("utf8"),
-				};
-			} finally {
-				clearTimeout(timeout);
-			}
+		try {
+			const exitCode = await guestProcess.wait();
+			result = {
+				exitCode,
+				stdout: Buffer.concat(
+					stdoutChunks.map((chunk) => Buffer.from(chunk)),
+				).toString("utf8"),
+				stderr: Buffer.concat(
+					stderrChunks.map((chunk) => Buffer.from(chunk)),
+				).toString("utf8"),
+			};
+		} finally {
+			clearTimeout(timeout);
 		}
 		return normalizeEnvelope(
 			{ code: result.exitCode, stdout: result.stdout, stderr: result.stderr },
@@ -576,22 +653,15 @@ async function pathExists(p: string): Promise<boolean> {
 	}
 }
 
-async function commandAvailable(cmd: string): Promise<boolean> {
-	try {
-		await execFileAsync(cmd, ["--version"], {
-			cwd: WORKSPACE_ROOT,
-			timeout: COMMAND_TIMEOUT_MS,
-		});
-		return true;
-	} catch {
-		return false;
-	}
-}
-
 async function expectFixtureParity(
 	fixture: FixtureProject,
 	options?: { includeWasmRuntime?: boolean; installTimeoutMs?: number },
 ): Promise<void> {
+	if (fixture.metadata.expectation === "skip") {
+		throw new Error(
+			`Skipped fixture ${fixture.name} was executed: ${fixture.metadata.reason}`,
+		);
+	}
 	const prepared = await prepareFixtureProject(
 		fixture,
 		options?.installTimeoutMs,
@@ -613,17 +683,25 @@ async function expectFixtureParity(
 		host = await runHostExecution(
 			hostProject.projectDir,
 			fixture.metadata.entry,
+			fixture.metadata.args,
 		);
 		kernel = await runKernelExecution(
 			kernelProject.projectDir,
 			fixture.metadata.entry,
+			fixture.metadata.args,
 			options?.includeWasmRuntime,
 		);
 	} finally {
 		await Promise.all([hostProject.dispose(), kernelProject.dispose()]);
 	}
+	if (process.env.AGENTOS_ECOSYSTEM_DIAGNOSTICS === "1") {
+		console.error(
+			JSON.stringify({ fixture: fixture.name, host, kernel }, null, 2),
+		);
+	}
 
 	if (fixture.metadata.expectation === "pass") {
+		expect(host.code).toBe(fixture.metadata.code ?? 0);
 		expect(kernel).toEqual(host);
 		return;
 	}
@@ -631,7 +709,9 @@ async function expectFixtureParity(
 	// Fail fixtures: host succeeds, kernel enforces VM restrictions.
 	expect(host.code).toBe(0);
 	expect(kernel.code).toBe(fixture.metadata.fail.code);
-	expect(kernel.stderr).toContain(fixture.metadata.fail.stderrIncludes);
+	if (fixture.metadata.fail.stderrIncludes) {
+		expect(kernel.stderr).toContain(fixture.metadata.fail.stderrIncludes);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -639,7 +719,23 @@ async function expectFixtureParity(
 // ---------------------------------------------------------------------------
 
 const discoveredFixtures = await discoverFixtures();
-const hasHostBun = await commandAvailable("bun");
+const packageManagerAvailability = new Map<PackageManager, boolean>();
+for (const fixture of discoveredFixtures) {
+	const packageManager = fixture.metadata.packageManager ?? "pnpm";
+	if (packageManagerAvailability.has(packageManager)) continue;
+	try {
+		await (packageManager === "npm"
+			? getNpmVersion()
+			: packageManager === "bun"
+				? getBunVersion()
+				: packageManager === "yarn"
+					? getYarnVersion()
+					: getPnpmVersion());
+		packageManagerAvailability.set(packageManager, true);
+	} catch {
+		packageManagerAvailability.set(packageManager, false);
+	}
+}
 const fixturesByName = new Map(
 	discoveredFixtures.map((fixture) => [fixture.name, fixture]),
 );
@@ -676,21 +772,31 @@ describeIf(
 	},
 );
 
-// TODO(P6): project matrix depends on package-manager resolution artifacts.
-describe.skip("e2e project-matrix through kernel", () => {
-	it("discovers at least one fixture project", () => {
-		expect(discoveredFixtures.length).toBeGreaterThan(0);
-	});
+describeIf(
+	process.env.AGENTOS_ECOSYSTEM_FULL_E2E === "1",
+	"full Node ecosystem matrix through kernel",
+	() => {
+		it("discovers at least one fixture project", () => {
+			expect(discoveredFixtures.length).toBeGreaterThan(0);
+		});
 
-	for (const fixture of discoveredFixtures) {
-		const testFixture =
-			fixture.metadata.packageManager === "bun" && !hasHostBun ? it.skip : it;
-		testFixture(
-			`runs fixture ${fixture.name} through kernel with host-node parity`,
-			async () => {
-				await expectFixtureParity(fixture, { includeWasmRuntime: true });
-			},
-			TEST_TIMEOUT_MS,
-		);
-	}
-});
+		for (const fixture of discoveredFixtures) {
+			const packageManager = fixture.metadata.packageManager ?? "pnpm";
+			const fixtureTest =
+				fixture.metadata.expectation === "skip" ||
+				packageManagerAvailability.get(packageManager) === false
+					? it.skip
+					: it;
+			fixtureTest(
+				`runs fixture ${fixture.name} through kernel with host-node parity`,
+				async () => {
+					await expectFixtureParity(fixture, {
+						includeWasmRuntime: true,
+						installTimeoutMs: ECOSYSTEM_INSTALL_TIMEOUT_MS,
+					});
+				},
+				ECOSYSTEM_TEST_TIMEOUT_MS,
+			);
+		}
+	},
+);
