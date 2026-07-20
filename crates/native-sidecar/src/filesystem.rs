@@ -1972,11 +1972,22 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                          {MAX_MAPPED_TRUNCATE_BYTES} for mapped guest fd {fd}"
                     )));
                 }
-                if let Some(guest_path) = mapped_guest_path.as_deref() {
-                    kernel
-                        .truncate_for_process(EXECUTION_DRIVER_NAME, kernel_pid, guest_path, length)
-                        .map_err(|error| kernel_path_error("fs.ftruncate", guest_path, error))?;
-                }
+                // The kernel truncate is the CONFIGURED size enforcement here —
+                // the raw host `set_len` below applies no quota. Today the only
+                // construction site always supplies a guest path, so this always
+                // runs; the guard makes that load-bearing assumption explicit so
+                // a future `guest_path: None` caller fails closed rather than
+                // silently turning maxFilesystemBytes off for truncation.
+                let Some(guest_path) = mapped_guest_path.as_deref() else {
+                    return Err(SidecarError::InvalidState(format!(
+                        "refusing to truncate mapped guest fd {fd} with no guest path: the kernel \
+                         truncate is what enforces limits.resources.maxFilesystemBytes, so a raw \
+                         host resize here would bypass the configured filesystem budget"
+                    )));
+                };
+                kernel
+                    .truncate_for_process(EXECUTION_DRIVER_NAME, kernel_pid, guest_path, length)
+                    .map_err(|error| kernel_path_error("fs.ftruncate", guest_path, error))?;
                 let mapped = process.mapped_host_fd_mut(fd).ok_or_else(|| {
                     SidecarError::Io(format!("mapped guest fd {fd} disappeared during ftruncate"))
                 })?;
@@ -2067,6 +2078,17 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             };
             match mapped_runtime_host_path(kernel, process, path, true) {
                 Some(MappedRuntimeHostAccess::Writable(mapped_host)) => {
+                    // This path allocates no fd, so it never reached the
+                    // fd-based budget check and `fs.writeFileSync` — the most
+                    // common Node write API — could write unbounded bytes to
+                    // the host under any configured maxFilesystemBytes.
+                    // O_TRUNC means the resulting size IS the payload size.
+                    check_mapped_host_write_budget(
+                        contents.len() as u64,
+                        contents.len(),
+                        kernel.resource_limits().max_filesystem_bytes,
+                        &format!("mapped guest file {path}"),
+                    )?;
                     let opened = open_mapped_runtime_beneath(
                         &mapped_host,
                         "fs.writeFile",
@@ -2326,6 +2348,16 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 };
                 return match destination_host {
                     Some(MappedRuntimeHostAccess::Writable(mapped_host)) => {
+                        // Same uncovered shape as fs.writeFile: no fd is
+                        // allocated, so the fd-based budget check never ran and
+                        // a copy could place unbounded bytes on the host.
+                        // O_TRUNC means the resulting size IS the payload size.
+                        check_mapped_host_write_budget(
+                            contents.len() as u64,
+                            contents.len(),
+                            kernel.resource_limits().max_filesystem_bytes,
+                            &format!("mapped guest file {destination}"),
+                        )?;
                         let opened = open_mapped_runtime_beneath(
                             &mapped_host,
                             "fs.copyFile destination",
@@ -4373,6 +4405,37 @@ fn read_mapped_host_fd(
 /// `limits.resources.maxFilesystemBytes` without bound and fill the host disk
 /// (LT-011 / LT-017). Only runs when a limit is configured, so the common
 /// unlimited case keeps the original fast path.
+/// The single admission point for bytes a guest writes through a HOST-backed
+/// path. These writes never reach the kernel VFS, so `check_filesystem_usage`
+/// cannot see them; without this check `maxFilesystemBytes` is unenforceable on
+/// `/tmp`, `/workspace`, and writable host mounts.
+///
+/// KNOWN GAP — the budget is per-FILE, not per-VM. The kernel side compares
+/// against whole-filesystem usage (`measure_filesystem_usage`), so a guest can
+/// still exceed its VM budget by spreading bytes across many host-backed files
+/// that are each individually under the cap. Closing that requires a per-VM
+/// aggregate; every host-backed write is routed through this one function
+/// specifically so the aggregate has a single place to land. Do not add another
+/// mapped write path that bypasses it.
+fn check_mapped_host_write_budget(
+    resulting: u64,
+    len: usize,
+    max_filesystem_bytes: Option<u64>,
+    subject: &str,
+) -> Result<(), SidecarError> {
+    let Some(limit) = max_filesystem_bytes else {
+        return Ok(());
+    };
+    if resulting > limit {
+        return Err(SidecarError::Execution(format!(
+            "ENOSPC: writing {len} byte(s) to {subject} would reach {resulting} bytes, \
+             exceeding the VM filesystem limit of {limit} (limits.resources.maxFilesystemBytes); \
+             raise the limit to store more data"
+        )));
+    }
+    Ok(())
+}
+
 fn check_mapped_host_fd_write_budget(
     mapped: &crate::state::ActiveMappedHostFd,
     fd: u32,
@@ -4380,20 +4443,27 @@ fn check_mapped_host_fd_write_budget(
     position: Option<u64>,
     max_filesystem_bytes: Option<u64>,
 ) -> Result<(), SidecarError> {
-    let Some(limit) = max_filesystem_bytes else {
+    if max_filesystem_bytes.is_none() {
         return Ok(());
-    };
-    let current = mapped.file.metadata().map(|meta| meta.len()).unwrap_or(0);
+    }
+    // Fail CLOSED when the size cannot be determined. Defaulting to 0 made an
+    // unreadable stat look like an empty file, so an append was measured from
+    // offset 0 and any file size passed the check — an enforcement check that
+    // fails open is worse than no check, because it reads as enforced.
+    let current = mapped.file.metadata().map(|meta| meta.len()).map_err(|error| {
+        SidecarError::Io(format!(
+            "failed to stat mapped guest fd {fd} while enforcing \
+             limits.resources.maxFilesystemBytes: {error}"
+        ))
+    })?;
     let start = position.unwrap_or(current);
     let resulting = start.saturating_add(len as u64).max(current);
-    if resulting > limit {
-        return Err(SidecarError::Execution(format!(
-            "ENOSPC: writing {len} byte(s) to mapped guest fd {fd} would reach {resulting} bytes, \
-             exceeding the VM filesystem limit of {limit} (limits.resources.maxFilesystemBytes); \
-             raise the limit to store more data"
-        )));
-    }
-    Ok(())
+    check_mapped_host_write_budget(
+        resulting,
+        len,
+        max_filesystem_bytes,
+        &format!("mapped guest fd {fd}"),
+    )
 }
 
 fn write_mapped_host_fd(
