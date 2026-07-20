@@ -6,6 +6,7 @@ node_modules/
 npm-debug.log*
 pnpm-debug.log*
 .pnpm-store/
+**/.next/
 
 # Rust
 target/
@@ -87,6 +88,7 @@ crates/execution/.agentos-pyodide-cache/
 crates/execution/async-out.txt
 crates/sidecar/.tmp-sidecar-tests/
 packages/browser/.cache/
+packages/runtime-core/.cache/
 
 # Vendored V8 bridge bundles staged at release time for crates.io publishing
 crates/execution/assets/generated/

@@ -19,6 +19,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - uses: oven-sh/setup-bun@v2
+      - run: corepack enable yarn
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -56,11 +58,17 @@ jobs:
           AGENTOS_E2E_NETWORK: '1'
           AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/target/debug/agentos-sidecar
           AGENTOS_NATIVE_SIDECAR_BIN: ${{ github.workspace }}/target/debug/agentos-native-sidecar
-      # This opt-in gate cold-installs pinned ecosystem fixtures and exercises
-      # real servers inside embedded V8, so keep it off the cheap PR path.
+      # These opt-in gates cold-install pinned ecosystem fixtures and exercise
+      # package-manager workflows inside the VM, so keep them off the cheap PR path.
       - run: pnpm --dir packages/runtime-core test:ecosystem
         env:
           AGENTOS_ECOSYSTEM_E2E: '1'
+          AGENTOS_NATIVE_SIDECAR_BIN: ${{ github.workspace }}/target/debug/agentos-native-sidecar
+      - run: pnpm --dir packages/runtime-core test:ecosystem:full
+        env:
+          AGENTOS_NATIVE_SIDECAR_BIN: ${{ github.workspace }}/target/debug/agentos-native-sidecar
+      - run: pnpm --dir packages/runtime-core test:npm-workflows
+        env:
           AGENTOS_NATIVE_SIDECAR_BIN: ${{ github.workspace }}/target/debug/agentos-native-sidecar
       - run: cargo test --workspace --exclude agentos-sidecar-browser --exclude agentos-native-sidecar-browser -- --test-threads=1
       - name: Explicit ignored runtime churn gate
