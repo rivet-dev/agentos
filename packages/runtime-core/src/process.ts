@@ -8,6 +8,15 @@ export {
 
 import { SidecarProcessError, SidecarProcessExited } from "./sidecar-errors.js";
 
+/**
+ * Bounds on the sidecar stderr excerpt retained for {@link SidecarProcessExited}.
+ * Live stderr is always forwarded to the host, so these bound only the
+ * postmortem copy — they must never be unbounded, because the volume is
+ * ultimately driven by guest-triggered sidecar diagnostics.
+ */
+const STDERR_HEAD_MAX_BYTES = 16 * 1024;
+const STDERR_TAIL_MAX_BYTES = 48 * 1024;
+
 export interface StdioSidecarProcessSpawnOptions {
 	command: string;
 	args?: string[];
@@ -17,7 +26,13 @@ export interface StdioSidecarProcessSpawnOptions {
 export class StdioSidecarProcess {
 	readonly child: ChildProcessWithoutNullStreams;
 	readonly control: Duplex;
-	private readonly stderrChunks: Buffer[] = [];
+	/** First bytes of sidecar stderr — the ROOT cause usually appears here. */
+	private readonly stderrHead: Buffer[] = [];
+	private stderrHeadBytes = 0;
+	/** Most recent bytes — the FATAL error appears here. */
+	private readonly stderrTail: Buffer[] = [];
+	private stderrTailBytes = 0;
+	private stderrDroppedBytes = 0;
 	private readonly exitListeners = new Set<
 		(error: SidecarProcessExited) => void
 	>();
@@ -28,16 +43,25 @@ export class StdioSidecarProcess {
 	private constructor(child: ChildProcessWithoutNullStreams, control: Duplex) {
 		this.child = child;
 		this.control = control;
-		// Buffering sidecar stderr and only replaying it on exit means a LIVE
-		// sidecar's warnings/errors are invisible to the host — a guest-triggered
-		// failure that the sidecar survives leaves no host-visible trace at all.
-		// AGENTOS_SIDECAR_STDERR=1 forwards it to host stderr as it arrives.
-		const forwardStderr = process.env.AGENTOS_SIDECAR_STDERR === "1";
+		// Sidecar stderr is handled two ways, and both matter.
+		//
+		// FORWARD, always: buffering it and only replaying on exit means a LIVE
+		// sidecar's warnings/errors are invisible to the host, so a guest-triggered
+		// failure the sidecar SURVIVES leaves no host-visible trace at all. The
+		// Rust client has always forwarded (it spawns with `Stdio::inherit()`), so
+		// gating this behind a flag would also leave the two clients behaviorally
+		// different, which the client-parity rule forbids.
+		//
+		// RETAIN, bounded: the retained copy exists only to populate
+		// SidecarProcessExited.stderr for postmortem, so it needs a bounded
+		// excerpt, not the whole history. An append-only buffer is a
+		// guest-reachable host memory leak: a guest that can drive a high rate of
+		// sidecar warnings would grow this without limit and OOM the host process.
 		this.child.stderr.on("data", (chunk: Buffer | string) => {
 			const buffer =
 				typeof chunk === "string" ? Buffer.from(chunk) : Buffer.from(chunk);
-			this.stderrChunks.push(buffer);
-			if (forwardStderr) process.stderr.write(buffer);
+			process.stderr.write(buffer);
+			this.retainStderr(buffer);
 		});
 		this.child.on("exit", (code, signal) => {
 			const error = new SidecarProcessExited({
@@ -99,8 +123,52 @@ export class StdioSidecarProcess {
 		};
 	}
 
+	/**
+	 * Retain a bounded excerpt: the first {@link STDERR_HEAD_MAX_BYTES} and the
+	 * most recent {@link STDERR_TAIL_MAX_BYTES}. Both ends are kept because the
+	 * root cause is typically the FIRST error while the fatal one is the LAST,
+	 * and a tail-only buffer discards exactly the line that explains the crash.
+	 */
+	private retainStderr(buffer: Buffer): void {
+		let rest = buffer;
+		const headRoom = STDERR_HEAD_MAX_BYTES - this.stderrHeadBytes;
+		if (headRoom > 0) {
+			const take = rest.subarray(0, headRoom);
+			this.stderrHead.push(take);
+			this.stderrHeadBytes += take.length;
+			rest = rest.subarray(take.length);
+		}
+		if (rest.length === 0) return;
+		this.stderrTail.push(rest);
+		this.stderrTailBytes += rest.length;
+		while (this.stderrTailBytes > STDERR_TAIL_MAX_BYTES) {
+			const oldest = this.stderrTail[0];
+			const excess = this.stderrTailBytes - STDERR_TAIL_MAX_BYTES;
+			if (oldest.length <= excess) {
+				this.stderrTail.shift();
+				this.stderrTailBytes -= oldest.length;
+				this.stderrDroppedBytes += oldest.length;
+			} else {
+				// Trim within the chunk rather than dropping it whole, so the
+				// bound holds regardless of how the stream happens to chunk.
+				this.stderrTail[0] = oldest.subarray(excess);
+				this.stderrTailBytes -= excess;
+				this.stderrDroppedBytes += excess;
+			}
+		}
+	}
+
 	stderrText(): string {
-		return Buffer.concat(this.stderrChunks).toString("utf8").trim();
+		const head = Buffer.concat(this.stderrHead).toString("utf8");
+		const tail = Buffer.concat(this.stderrTail).toString("utf8");
+		// Truncation is stated explicitly: a silently shortened diagnostic is
+		// worse than a short one, because it reads as the complete output.
+		const gap =
+			this.stderrDroppedBytes > 0
+				? `\n... [${this.stderrDroppedBytes} bytes of sidecar stderr dropped; ` +
+					`raise STDERR_HEAD_MAX_BYTES/STDERR_TAIL_MAX_BYTES to retain more] ...\n`
+				: "";
+		return `${head}${gap}${tail}`.trim();
 	}
 
 	currentExitError(): SidecarProcessExited | null {
