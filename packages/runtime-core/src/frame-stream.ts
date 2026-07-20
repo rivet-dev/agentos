@@ -221,6 +221,12 @@ export class StdioFrameTransport<TReadFrame, TWriteFrame = TReadFrame>
 		this.stdout.on("data", this.handleData);
 		this.stdout.on("end", this.handleEnd);
 		this.stdout.on("error", this.handleError);
+		// The write side needs its own error listener. Without it, a failed
+		// write (e.g. EPIPE when the sidecar process dies) emits an 'error'
+		// event with no listener, which Node throws as an uncaught exception
+		// and kills the host process (LT-013). Route it to the transport's
+		// error listeners so callers see a normal, typed transport error.
+		this.stdin.on("error", this.handleError);
 	}
 
 	onFrame(handler: (frame: TReadFrame) => void): () => void {
@@ -262,6 +268,7 @@ export class StdioFrameTransport<TReadFrame, TWriteFrame = TReadFrame>
 		this.stdout.off("data", this.handleData);
 		this.stdout.off("end", this.handleEnd);
 		this.stdout.off("error", this.handleError);
+		this.stdin.off("error", this.handleError);
 		this.frameListeners.clear();
 		this.errorListeners.clear();
 		this.endListeners.clear();
