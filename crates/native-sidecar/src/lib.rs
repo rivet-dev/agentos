@@ -9,6 +9,7 @@ pub(crate) mod bindings;
 pub(crate) mod crypto_cipher;
 pub(crate) mod execution;
 pub mod extension;
+pub(crate) mod fault;
 pub(crate) mod filesystem;
 #[allow(dead_code)]
 pub(crate) mod json_rpc;
