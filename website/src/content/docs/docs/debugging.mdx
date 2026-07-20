@@ -41,6 +41,17 @@ The agentOS sidecar emits structured **logfmt** logs for request handling, netwo
 | `AGENTOS_LOG_FILE` | append logs to this file instead of stderr (never stdout, which carries the wire protocol) |
 | `RUST_LOG_{SPAN_NAME,SPAN_PATH,TARGET,LOCATION,MODULE_PATH,ANSI_COLOR}` | per-field toggles (`=1` to enable) |
 
+Sidecar logs are written to the sidecar's stderr, and **both clients forward that
+stream to the host process's stderr as it arrives** — so warnings and errors from
+a sidecar that is still running are visible immediately, not only if it dies.
+
+The clients additionally retain a **bounded excerpt** of sidecar stderr (the
+first 16 KiB and the most recent 48 KiB) to attach to `SidecarProcessExited` for
+postmortem. Both ends are kept because the root cause is usually the *first*
+error while the fatal one is the *last*. If the excerpt is truncated, the omitted
+byte count is stated inline rather than silently shortening the output. Use
+`AGENTOS_LOG_FILE` when you need the complete, untruncated log.
+
 ```bash
 AGENTOS_LOG_LEVEL=debug AGENTOS_LOG_FILE=./sidecar.log RUST_LOG_FORMAT=logfmt node app.mjs
 ```
