@@ -1,6 +1,6 @@
 ---
 title: "Bash"
-description: "Run shell commands, pipes, and file manipulation inside the VM with vm.exec()."
+description: "Run shell commands, pipes, and file manipulation inside the VM with vm.process.exec()."
 category: "Quickstart"
 order: 2
 ---
@@ -9,7 +9,7 @@ Run real shell commands inside a VM. Reach for this when you need to shell out â
 
 ## How it works
 
-Create a VM with `AgentOs.create()`, then call `vm.exec()` with any shell string. Each call runs the command in the VM and resolves to a result carrying `stdout`, `stderr`, and `exitCode`. Because it's a real shell, pipes (`|`), redirects (`>`, `>>`), and tools like `grep` and `tr` work as written, and files persist across calls within the same VM. Call `vm.dispose()` when you're done to release it.
+Create a VM with `AgentOs.create()`, then call `vm.process.exec()` with any shell string. Each call runs the command in the VM and resolves to a result carrying `stdout`, `stderr`, and `exitCode`. Because it's a real shell, pipes (`|`), redirects (`>`, `>>`), and tools like `grep` and `tr` work as written, and files persist across calls within the same VM. Call `vm.dispose()` when you're done to release it.
 
 ## Run it
 

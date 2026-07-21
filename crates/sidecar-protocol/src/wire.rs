@@ -1,4 +1,4 @@
-//! Generated Secure Exec sidecar wire protocol surface.
+//! Generated AgentOS language execution sidecar wire protocol surface.
 //!
 //! This module is the public generated protocol entrypoint. The hand-written
 //! `protocol` module remains an internal compatibility layer while callers move

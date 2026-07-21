@@ -110,7 +110,7 @@ Every guest syscall is mediated by the kernel and checked against the runtime's 
 - **Processes.** `node:child_process` spawns kernel-managed guest processes, never real host processes. Children can only run the commands the VM mounts (WASM-backed `sh` and coreutils, V8-backed `node`). See [Processes](/docs/processes).
 - **Network.** Guest `fetch()`, `node:http`, and raw sockets all flow through the kernel socket table. Guest `fetch()` runs through undici inside the isolate and then through the kernel socket table; it never opens a real host socket. See [Networking](/docs/networking).
 - **DNS, pipes, and PTYs** are likewise kernel-owned: no guest path reaches the host directly.
-- **Bindings.** Registered [bindings](/docs/bindings) are the only sanctioned way to hand the guest a named host capability. The guest invokes a binding by name with JSON input, the call round-trips to the host handler, and only the handler's return value comes back. The guest never receives the underlying host access.
+- **Bindings.** Registered [custom bindings](/docs/extensions/custom-bindings) are the only sanctioned way to hand the guest a named host capability. The guest invokes a binding by name with JSON input, the call round-trips to the host handler, and only the handler's return value comes back. The guest never receives the underlying host access.
 
 ## What enters the VM
 
@@ -159,7 +159,7 @@ The boundary protects the host from the guest. It does **not** harden your host 
 - Hardening the host process and deployment environment. For internet-facing workloads that take untrusted input, run your host inside an already-hardened environment (for example AWS Lambda, Google Cloud Run, or a similar sandboxed platform).
 - Validating authentication tokens in `onBeforeConnect`.
 - Scoping [permissions](/docs/permissions) appropriately for your use case.
-- Managing API keys and secrets on the host side (use the [LLM gateway](/docs/llm-gateway) to avoid passing keys into the VM).
+- Managing API keys and secrets on the host side (see [Models & Credentials](/docs/models-and-credentials)).
 - Configuring [resource limits and network controls](/docs/security-model) to match your threat model.
 - Choosing your blast radius: prefer a fresh VM per untrusted or high-risk task so an escape attempt cannot outlive a single VM.
 

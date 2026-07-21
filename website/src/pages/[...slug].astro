@@ -15,13 +15,54 @@ import config from "virtual:rivet-docs/config";
 
 export async function getStaticPaths() {
   const docs = await getCollection("docs");
-  return docs.map((entry) => ({
-    params: { slug: entry.id },
-    props: { entry },
-  }));
+  const legacyRedirects = {
+    "docs/exec": "/docs/execution/javascript",
+    "docs/exec/crash-course": "/docs/crash-course",
+    "docs/exec/architecture": "/docs/architecture",
+    "docs/exec/security-model": "/docs/security-model",
+    "docs/exec/benchmarks": "/docs/performance",
+    "docs/exec/getting-started/javascript": "/docs/execution/javascript",
+    "docs/exec/getting-started/nodejs": "/docs/execution/javascript",
+    "docs/exec/getting-started/python": "/docs/execution/python",
+    "docs/exec/nodejs-compatibility": "/docs/execution/javascript-compatibility",
+    "docs/exec/python": "/docs/execution/python",
+    "docs/exec/python/packages": "/docs/execution/python",
+    "docs/exec/features/typescript": "/docs/execution/javascript",
+    "docs/exec/features/module-loading": "/docs/execution/javascript",
+    "docs/exec/features/runtime-platform": "/docs/execution/javascript",
+    "docs/exec/features/executing-code": "/docs/execution/javascript",
+    "docs/exec/features/output-capture": "/docs/processes",
+    "docs/exec/features/long-running-processes": "/docs/processes",
+    "docs/exec/features/child-processes": "/docs/processes",
+    "docs/exec/features/bindings": "/docs/extensions/custom-bindings",
+    "docs/exec/features/permissions": "/docs/permissions",
+    "docs/exec/features/filesystem": "/docs/filesystem",
+    "docs/exec/features/networking": "/docs/networking",
+    "docs/exec/features/resource-limits": "/docs/resource-limits",
+    "docs/js-runtime": "/docs/execution/javascript",
+    "docs/nodejs-runtime": "/docs/execution/javascript",
+    "docs/python-runtime": "/docs/execution/python",
+    "docs/bindings": "/docs/extensions/custom-bindings",
+    "docs/browser": "/docs/extensions/browser",
+    "docs/sandbox": "/docs/extensions/sandboxes",
+    "docs/llm-credentials": "/docs/models-and-credentials",
+    "docs/benchmarks": "/docs/performance",
+    "docs/cost-evaluation": "/docs/performance",
+  } as const;
+  return [
+    ...docs.map((entry) => ({
+      params: { slug: entry.id },
+      props: { entry },
+    })),
+    ...Object.entries(legacyRedirects).map(([slug, redirectTo]) => ({
+      params: { slug },
+      props: { redirectTo },
+    })),
+  ];
 }
 
-const { entry } = Astro.props;
+const { entry, redirectTo } = Astro.props;
+if (redirectTo) return Astro.redirect(redirectTo, 301);
 const { Content, headings } = await render(entry);
 
 const { title, description } = entry.data as { title: string; description?: string };

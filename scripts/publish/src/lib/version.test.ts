@@ -88,6 +88,8 @@ test("bumpPackageJsons injects sidecar platform optional dependencies", async ()
 		for (const [rel, name] of [
 			["packages/agentos", "@rivet-dev/agentos"],
 			["packages/core", "@rivet-dev/agentos-core"],
+			["packages/javascript", "@rivet-dev/agentos-javascript"],
+			["packages/python", "@rivet-dev/agentos-python"],
 			["packages/sidecar-binary", "@rivet-dev/agentos-sidecar"],
 			["packages/runtime-sidecar", "@rivet-dev/agentos-runtime-sidecar"],
 			...DEFAULT_SIDECAR_PLATFORMS.map((platform) => [

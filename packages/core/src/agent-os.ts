@@ -12,34 +12,12 @@ import type {
 	MountConfigJsonValue,
 	NativeMountPluginDescriptor,
 } from "@rivet-dev/agentos-runtime-core/descriptors";
+import * as executionProtocol from "@rivet-dev/agentos-runtime-core/protocol";
+import { SidecarRejectedError } from "@rivet-dev/agentos-runtime-core/sidecar-errors";
 import type {
 	CreateVmConfig,
 	VmUserConfig,
 } from "@rivet-dev/agentos-runtime-core/vm-config";
-import type {
-	CancelPromptResult,
-	DurableSessionEventEntry,
-	EphemeralSessionEventEntry,
-	HistoryPage,
-	JsonValue,
-	ListSessionsInput,
-	OpenSessionInput,
-	PermissionResponse,
-	PermissionResponseResult,
-	PermissionTerminalReason,
-	PromptInput,
-	PromptResult as DurablePromptResult,
-	ReadHistoryInput,
-	AcpSessionEvent,
-	SessionCapabilities,
-	SessionAgentInfo,
-	SessionConfig,
-	SessionInfo as DurableSessionInfo,
-	SessionPage,
-	SessionStreamEntry,
-	SessionTarget,
-	SetSessionConfigOptionInput,
-} from "./session-api.js";
 import { type Binding, type Bindings, validateBindings } from "./bindings.js";
 import { zodToJsonSchema } from "./bindings-zod.js";
 import type {
@@ -47,6 +25,30 @@ import type {
 	JsonRpcRequest,
 	JsonRpcResponse,
 } from "./json-rpc.js";
+import type {
+	CodeEvaluationResult,
+	CodeExecutionResult,
+	CodeOutput,
+	DetachedExecution,
+	ExecutionCompletedEvent,
+	ExecutionDescriptor,
+	ExecutionOutputEvent,
+	ExecutionOutputPage,
+	ExecutionSignal,
+	InlineExecutionOptions,
+	JavaScriptEvaluationOptions,
+	JavaScriptExecutionOptions,
+	LanguageExecutionOptions,
+	NpmPackageInstallOptions,
+	NpmProjectInstallOptions,
+	PythonInstallOptions,
+	TypeScriptCheckOptions,
+	TypeScriptCheckResult,
+	TypeScriptDiagnostic,
+	TypeScriptEvaluationOptions,
+	TypeScriptExecutionOptions,
+	TypeScriptFileExecutionOptions,
+} from "./language-execution.js";
 import { parseAgentOsOptions } from "./options-schema.js";
 import type {
 	ConnectTerminalOptions,
@@ -62,6 +64,30 @@ import type {
 	VirtualFileSystem,
 	VirtualStat,
 } from "./runtime-compat.js";
+import type {
+	AcpSessionEvent,
+	CancelPromptResult,
+	PromptResult as DurablePromptResult,
+	DurableSessionEventEntry,
+	SessionInfo as DurableSessionInfo,
+	EphemeralSessionEventEntry,
+	HistoryPage,
+	JsonValue,
+	ListSessionsInput,
+	OpenSessionInput,
+	PermissionResponse,
+	PermissionResponseResult,
+	PermissionTerminalReason,
+	PromptInput,
+	ReadHistoryInput,
+	SessionAgentInfo,
+	SessionCapabilities,
+	SessionConfig,
+	SessionPage,
+	SessionStreamEntry,
+	SessionTarget,
+	SetSessionConfigOptionInput,
+} from "./session-api.js";
 import { resolvePublishedSidecarBinary } from "./sidecar/binary.js";
 import { findCargoBinary, resolveCargoBinary } from "./sidecar/cargo.js";
 
@@ -626,7 +652,7 @@ export interface AgentOsLimits {
 		defaultBindingTimeoutMs?: number;
 		maxBindingTimeoutMs?: number;
 		maxRegisteredCollections?: number;
-		maxRegisteredCollectionsPerVm?: number;
+		maxRegisteredBindingsPerVm?: number;
 		maxBindingsPerCollection?: number;
 		maxBindingSchemaBytes?: number;
 		maxExamplesPerBinding?: number;
@@ -1427,9 +1453,9 @@ async function bootstrapLiveBootstrapDirectories(
 	config: RootFilesystemConfig | undefined,
 ): Promise<void> {
 	const existingPaths = new Set(
-		(await client.snapshotRootFilesystem(session, vm, Number.MAX_SAFE_INTEGER)).map(
-			(entry) => entry.path,
-		),
+		(
+			await client.snapshotRootFilesystem(session, vm, Number.MAX_SAFE_INTEGER)
+		).map((entry) => entry.path),
 	);
 	const entries = buildLiveBootstrapDirectoryEntries(existingPaths, config);
 	if (entries.length === 0) {
@@ -2593,6 +2619,235 @@ async function registerBindingsOnSidecar(
 	return buildBindingReference(bindings);
 }
 
+function executionIdentity(options: {
+	executionId?: string;
+	createIfMissing?: boolean;
+}): executionProtocol.ExecutionIdentityOptions {
+	return {
+		executionId: options.executionId ?? null,
+		createIfMissing: options.createIfMissing ?? null,
+	};
+}
+
+function executionBytes(
+	data: string | Uint8Array | undefined,
+): ArrayBuffer | null {
+	if (data === undefined) return null;
+	const bytes =
+		typeof data === "string" ? new TextEncoder().encode(data) : data;
+	return bytes.slice().buffer;
+}
+
+function processExecutionOptions(
+	options: LanguageExecutionOptions = {},
+): executionProtocol.ProcessExecutionOptions {
+	return {
+		identity: executionIdentity(options),
+		detached: options.detached ?? null,
+		cwd: options.cwd ?? null,
+		env: options.env ? new Map(Object.entries(options.env)) : null,
+		args: options.args ?? [],
+		stdin: executionBytes(options.stdin),
+		timeoutMs: protocolTimeout(options.timeoutMs),
+		pty: options.pty
+			? {
+					cols:
+						options.pty.cols === undefined
+							? null
+							: protocolUnsigned(options.pty.cols, 0xffff, "pty.cols"),
+					rows:
+						options.pty.rows === undefined
+							? null
+							: protocolUnsigned(options.pty.rows, 0xffff, "pty.rows"),
+				}
+			: null,
+	};
+}
+
+function protocolUnsigned(
+	value: number,
+	maximum: number,
+	name: string,
+): number {
+	if (!Number.isSafeInteger(value) || value < 0 || value > maximum) {
+		throw new RangeError(`${name} must be an integer between 0 and ${maximum}`);
+	}
+	return value;
+}
+
+function protocolTimeout(value: number | undefined): bigint | null {
+	if (value === undefined) return null;
+	if (!Number.isSafeInteger(value) || value < 0) {
+		throw new RangeError("timeoutMs must be a non-negative safe integer");
+	}
+	return BigInt(value);
+}
+
+function safeProtocolNumber(value: bigint, name: string): number {
+	const result = Number(value);
+	if (!Number.isSafeInteger(result)) {
+		throw new RangeError(`${name} exceeds JavaScript's safe integer range`);
+	}
+	return result;
+}
+
+function mapExecutionState(
+	state: executionProtocol.ExecutionState,
+): ExecutionDescriptor["state"] {
+	return state.toLowerCase() as ExecutionDescriptor["state"];
+}
+
+function mapExecutionOutcome(
+	outcome: executionProtocol.ExecutionOutcome,
+): CodeExecutionResult["outcome"] {
+	return outcome === executionProtocol.ExecutionOutcome.TimedOut
+		? "timed_out"
+		: (outcome.toLowerCase() as CodeExecutionResult["outcome"]);
+}
+
+function mapExecutionDescriptor(
+	descriptor: executionProtocol.ExecutionDescriptor,
+): ExecutionDescriptor {
+	return {
+		executionId: descriptor.executionId,
+		generation: safeProtocolNumber(
+			descriptor.generation,
+			"execution generation",
+		),
+		state: mapExecutionState(descriptor.state),
+		...(descriptor.retainedLanguage
+			? {
+					retainedLanguage:
+						descriptor.retainedLanguage ===
+						executionProtocol.RetainedExecutionLanguage.JavaScript
+							? ("javascript" as const)
+							: ("python" as const),
+				}
+			: {}),
+		...(descriptor.processId ? { processId: descriptor.processId } : {}),
+		...(descriptor.pid !== null ? { pid: descriptor.pid } : {}),
+		createdAtMs: safeProtocolNumber(descriptor.createdAtMs, "createdAtMs"),
+		...(descriptor.lastStartedAtMs !== null
+			? {
+					lastStartedAtMs: safeProtocolNumber(
+						descriptor.lastStartedAtMs,
+						"lastStartedAtMs",
+					),
+				}
+			: {}),
+		...(descriptor.lastCompletedAtMs !== null
+			? {
+					lastCompletedAtMs: safeProtocolNumber(
+						descriptor.lastCompletedAtMs,
+						"lastCompletedAtMs",
+					),
+				}
+			: {}),
+		...(descriptor.lastOutcome
+			? { lastOutcome: mapExecutionOutcome(descriptor.lastOutcome) }
+			: {}),
+		...(descriptor.lastExitCode !== null
+			? { lastExitCode: descriptor.lastExitCode }
+			: {}),
+	};
+}
+
+function mapExecutionError(
+	error: executionProtocol.ExecutionErrorData | null,
+): CodeExecutionResult["error"] {
+	if (!error) return undefined;
+	return {
+		code: error.code,
+		name: error.name,
+		message: error.message,
+		...(error.stack ? { stack: error.stack } : {}),
+		...(error.details
+			? { details: JSON.parse(error.details) as JsonValue }
+			: {}),
+	};
+}
+
+function mapExecutionResult(
+	result: executionProtocol.ExecutionCompletedResponse,
+): CodeExecutionResult {
+	const base = {
+		executionId: result.execution.executionId,
+		generation: safeProtocolNumber(
+			result.execution.generation,
+			"execution generation",
+		),
+		detached: false as const,
+		...(result.exitCode !== null ? { exitCode: result.exitCode } : {}),
+		stdout: new TextDecoder().decode(result.stdout),
+		stderr: new TextDecoder().decode(result.stderr),
+		stdoutTruncated: result.stdoutTruncated,
+		stderrTruncated: result.stderrTruncated,
+		outputs: JSON.parse(result.outputs) as CodeExecutionResult["outputs"],
+	};
+	const outcome = mapExecutionOutcome(result.outcome);
+	if (outcome === "succeeded") return { ...base, outcome };
+	return {
+		...base,
+		outcome,
+		error: mapExecutionError(result.error) ?? {
+			code: "execution_failed",
+			name: "ExecutionError",
+			message: `execution completed with ${outcome}`,
+		},
+	};
+}
+
+function mapTypeScriptCheckResult(
+	result: CodeExecutionResult,
+): TypeScriptCheckResult {
+	if (result.outcome !== "succeeded") {
+		return { ...result, diagnostics: [] };
+	}
+	const data = result.outputs.find(
+		(output): output is Extract<CodeOutput, { type: "json" }> =>
+			output.type === "json",
+	)?.data;
+	if (!data || Array.isArray(data) || typeof data !== "object") {
+		throw new Error("TypeScript checker returned no diagnostic result");
+	}
+	const hasErrors = data.hasErrors;
+	const diagnostics = data.diagnostics;
+	if (typeof hasErrors !== "boolean" || !Array.isArray(diagnostics)) {
+		throw new Error("TypeScript checker returned an invalid diagnostic result");
+	}
+	return {
+		...result,
+		hasErrors,
+		diagnostics: diagnostics as unknown as TypeScriptDiagnostic[],
+	};
+}
+
+function mapExecutionOutputEvent(
+	event: executionProtocol.ExecutionOutputEvent,
+): ExecutionOutputEvent {
+	return {
+		executionId: event.executionId,
+		generation: safeProtocolNumber(event.generation, "execution generation"),
+		...(event.processId ? { processId: event.processId } : {}),
+		sequence: safeProtocolNumber(event.sequence, "execution output sequence"),
+		channel: event.channel.toLowerCase() as ExecutionOutputEvent["channel"],
+		chunk: new Uint8Array(event.chunk),
+		timestampMs: safeProtocolNumber(event.timestampMs, "execution timestamp"),
+	};
+}
+
+function mapExecutionCompletedEvent(
+	event: executionProtocol.ExecutionCompletedEvent,
+): ExecutionCompletedEvent {
+	return {
+		executionId: event.executionId,
+		generation: safeProtocolNumber(event.generation, "execution generation"),
+		outcome: mapExecutionOutcome(event.outcome),
+		...(event.exitCode !== null ? { exitCode: event.exitCode } : {}),
+		...(event.error ? { error: mapExecutionError(event.error) } : {}),
+	};
+}
+
 export class AgentOs {
 	#kernel: Kernel;
 	readonly sidecar: AgentOsSidecar;
@@ -2610,6 +2865,14 @@ export class AgentOs {
 			outputHandlers: Set<(event: ProcessOutput) => void>;
 			exitHandlers: Set<(event: ProcessExit) => void>;
 		}
+	>();
+	private _executionOutputHandlers = new Map<
+		string,
+		Set<(event: ExecutionOutputEvent) => void>
+	>();
+	private _executionCompletedHandlers = new Map<
+		string,
+		Set<(event: ExecutionCompletedEvent) => void>
 	>();
 	private _shells = new Map<string, ShellEntry>();
 	// Value is the recorded exit code (undefined until/unless the exit
@@ -2637,6 +2900,129 @@ export class AgentOs {
 	private readonly _agentStderrHandler?: AgentStderrHandler;
 	private readonly _agentExitHandler?: AgentExitHandler;
 	private readonly _limitWarningHandler?: LimitWarningHandler;
+
+	/**
+	 * Execute commands and manage child processes in the VM.
+	 *
+	 * `exec` evaluates a command with the configured shell, while `execFile`
+	 * invokes an executable directly with an argv array.
+	 */
+	readonly process = {
+		exec: this._exec.bind(this),
+		execFile: this._execFile.bind(this),
+		spawn: this._spawnProcess.bind(this),
+		get: this._getProcess.bind(this),
+		list: this._listProcesses.bind(this),
+		listAll: this._listAllProcesses.bind(this),
+		tree: this._processTree.bind(this),
+		wait: this._waitProcess.bind(this),
+		stop: this._stopProcess.bind(this),
+		kill: this._killProcess.bind(this),
+		writeStdin: this._writeProcessStdin.bind(this),
+		closeStdin: this._closeProcessStdin.bind(this),
+	};
+
+	readonly javascript = {
+		execute: this._executeJavaScript.bind(this),
+		evaluate: this._evaluateJavaScript.bind(this),
+		executeFile: this._executeJavaScriptFile.bind(this),
+		typescript: {
+			execute: this._executeTypeScript.bind(this),
+			evaluate: this._evaluateTypeScript.bind(this),
+			executeFile: this._executeTypeScriptFile.bind(this),
+			check: this._checkTypeScript.bind(this),
+			checkProject: this._checkTypeScriptProject.bind(this),
+		},
+		npm: {
+			install: this._installNpmPackages.bind(this),
+			runScript: this._executeNpmScript.bind(this),
+			runPackage: this._executeNpmPackage.bind(this),
+		},
+	};
+
+	readonly python = {
+		execute: this._executePython.bind(this),
+		evaluate: this._evaluatePython.bind(this),
+		executeFile: this._executePythonFile.bind(this),
+		executeModule: this._executePythonModule.bind(this),
+		install: this._installPythonPackages.bind(this),
+	};
+
+	readonly executions = {
+		get: this._getExecution.bind(this),
+		list: this._listExecutions.bind(this),
+		wait: this._waitExecution.bind(this),
+		cancel: this._cancelExecution.bind(this),
+		signal: this._signalExecution.bind(this),
+		reset: this._resetExecution.bind(this),
+		delete: this._deleteExecution.bind(this),
+		writeStdin: this._writeExecutionStdin.bind(this),
+		closeStdin: this._closeExecutionStdin.bind(this),
+		resizePty: this._resizeExecutionPty.bind(this),
+		readOutput: this._readExecutionOutput.bind(this),
+	};
+
+	readonly terminal = {
+		open: this._openTerminal.bind(this),
+		write: this._writeTerminal.bind(this),
+		resize: this._resizeTerminal.bind(this),
+		wait: this._waitTerminal.bind(this),
+		close: this._closeTerminal.bind(this),
+	};
+
+	readonly filesystem = {
+		readFile: this._readFile.bind(this),
+		writeFile: this._writeFile.bind(this),
+		readFiles: this._readFiles.bind(this),
+		writeFiles: this._writeFiles.bind(this),
+		stat: this._stat.bind(this),
+		mkdir: this._mkdir.bind(this),
+		readdir: this._readdir.bind(this),
+		readdirEntries: this._readdirEntries.bind(this),
+		readdirRecursive: this._readdirRecursive.bind(this),
+		exists: this._exists.bind(this),
+		move: this._move.bind(this),
+		remove: this._remove.bind(this),
+		export: this._exportRootFilesystem.bind(this),
+		mount: this._mountFs.bind(this),
+		unmount: this._unmountFs.bind(this),
+		listMounts: this._listMounts.bind(this),
+	};
+
+	readonly network = {
+		httpRequest: this._httpRequest.bind(this),
+	};
+
+	readonly software = {
+		list: this._listSoftware.bind(this),
+		link: this._linkSoftware.bind(this),
+	};
+
+	readonly agents = {
+		list: this._listAgents.bind(this),
+	};
+
+	readonly sessions = {
+		open: this._openSession.bind(this),
+		get: this._getSession.bind(this),
+		list: this._listSessions.bind(this),
+		delete: this._deleteSession.bind(this),
+		unload: this._unloadSession.bind(this),
+		prompt: this._prompt.bind(this),
+		cancelPrompt: this._cancelPrompt.bind(this),
+		respondPermission: this._respondPermission.bind(this),
+		readHistory: this._readHistory.bind(this),
+		getConfig: this._getSessionConfig.bind(this),
+		setConfigOption: this._setSessionConfigOption.bind(this),
+		getCapabilities: this._getSessionCapabilities.bind(this),
+		getAgentInfo: this._getSessionAgentInfo.bind(this),
+	};
+
+	readonly cron = {
+		schedule: this._scheduleCron.bind(this),
+		list: this._listCronJobs.bind(this),
+		cancel: this._cancelCronJob.bind(this),
+	};
 
 	private constructor(
 		kernel: Kernel,
@@ -3008,6 +3394,170 @@ export class AgentOs {
 		}
 	}
 
+	private async _executionOperation(
+		payload: Parameters<SidecarProcess["sendVmRequest"]>[2],
+		options: LanguageExecutionOptions,
+	): Promise<CodeExecutionResult | DetachedExecution> {
+		if (options.signal?.aborted) {
+			throw options.signal.reason ?? new DOMException("Aborted", "AbortError");
+		}
+		let executionId: string | undefined;
+		const earlyOutput: ExecutionOutputEvent[] = [];
+		const completedBeforeAdmission = new Set<string>();
+		let resolveCompletion: (() => void) | undefined;
+		const completion = new Promise<void>((resolve) => {
+			resolveCompletion = resolve;
+		});
+		let warnedAboutEarlyEvents = false;
+		const warnAboutEarlyEvents = () => {
+			if (warnedAboutEarlyEvents) return;
+			warnedAboutEarlyEvents = true;
+			console.warn(
+				"[agentos] execution admission received more than 1024 early events; use executions.readOutput() to replay any omitted output",
+			);
+		};
+		const deliverOutput = (event: ExecutionOutputEvent) => {
+			if (event.channel === "stderr") options.onStderr?.(event.chunk);
+			else options.onStdout?.(event.chunk);
+		};
+		const unsubscribeOutput = this.onExecutionOutput("*", (event) => {
+			if (executionId === undefined) {
+				if (earlyOutput.length < 1_024) earlyOutput.push(event);
+				else warnAboutEarlyEvents();
+				return;
+			}
+			if (event.executionId === executionId) deliverOutput(event);
+		});
+		let completed = false;
+		const unsubscribeCompleted = this.onExecutionCompleted("*", (event) => {
+			if (executionId === undefined) {
+				if (completedBeforeAdmission.size < 1_024) {
+					completedBeforeAdmission.add(event.executionId);
+				} else warnAboutEarlyEvents();
+				return;
+			}
+			if (event.executionId === executionId) {
+				completed = true;
+				resolveCompletion?.();
+			}
+		});
+		let response: Awaited<ReturnType<SidecarProcess["sendVmRequest"]>>;
+		try {
+			response = await this._sidecarClient.sendVmRequest(
+				this._sidecarSession,
+				this._sidecarVm,
+				payload,
+			);
+		} catch (error) {
+			unsubscribeOutput();
+			unsubscribeCompleted();
+			throw error;
+		}
+		if (response.type !== "execution_accepted") {
+			unsubscribeOutput();
+			unsubscribeCompleted();
+			throw new Error(`unexpected execution response: ${response.type}`);
+		}
+		const descriptor = mapExecutionDescriptor(response.response.execution);
+		executionId = descriptor.executionId;
+		for (const event of earlyOutput) {
+			if (event.executionId === executionId) deliverOutput(event);
+		}
+		completed = completedBeforeAdmission.has(executionId);
+		if (completed) resolveCompletion?.();
+		let rejectAbort: ((reason?: unknown) => void) | undefined;
+		const aborted =
+			!options.detached && options.signal
+				? new Promise<never>((_resolve, reject) => {
+						rejectAbort = reject;
+					})
+				: undefined;
+		const abort = () => {
+			void this._cancelExecution(descriptor.executionId).catch((error) => {
+				console.error("[agentos] failed to cancel aborted execution", error);
+			});
+			rejectAbort?.(
+				options.signal?.reason ?? new DOMException("Aborted", "AbortError"),
+			);
+		};
+		options.signal?.addEventListener("abort", abort, { once: true });
+		if (options.signal?.aborted) abort();
+		const cleanup = () => {
+			unsubscribeOutput();
+			unsubscribeCompleted();
+			options.signal?.removeEventListener("abort", abort);
+		};
+		if (options.detached) {
+			if (completed) cleanup();
+			else {
+				const unsubscribeDetachedCompletion = this.onExecutionCompleted(
+					descriptor.executionId,
+					() => {
+						unsubscribeDetachedCompletion();
+						cleanup();
+					},
+				);
+			}
+			return { ...descriptor, detached: true };
+		}
+		try {
+			await (aborted ? Promise.race([completion, aborted]) : completion);
+			return await this._waitExecution(descriptor.executionId);
+		} finally {
+			cleanup();
+		}
+	}
+
+	private async _exec(
+		command: string,
+		options?: LanguageExecutionOptions & { detached?: false },
+	): Promise<CodeExecutionResult>;
+	private async _exec(
+		command: string,
+		options: LanguageExecutionOptions & { detached: true },
+	): Promise<DetachedExecution>;
+	private async _exec(
+		command: string,
+		options: LanguageExecutionOptions = {},
+	): Promise<CodeExecutionResult | DetachedExecution> {
+		return this._executionOperation(
+			{
+				type: "shell_execution",
+				request: { process: processExecutionOptions(options), command },
+			},
+			options,
+		);
+	}
+
+	private async _execFile(
+		command: string,
+		args?: readonly string[],
+		options?: Omit<LanguageExecutionOptions, "args"> & { detached?: false },
+	): Promise<CodeExecutionResult>;
+	private async _execFile(
+		command: string,
+		args: readonly string[],
+		options: Omit<LanguageExecutionOptions, "args"> & { detached: true },
+	): Promise<DetachedExecution>;
+	private async _execFile(
+		command: string,
+		args: readonly string[] = [],
+		options: Omit<LanguageExecutionOptions, "args"> = {},
+	): Promise<CodeExecutionResult | DetachedExecution> {
+		const operationOptions = { ...options, args: [...args] };
+		return this._executionOperation(
+			{
+				type: "argv_execution",
+				request: {
+					process: processExecutionOptions(operationOptions),
+					command,
+				},
+			},
+			operationOptions,
+		);
+	}
+
+	/** @deprecated Use `process.exec()` for lifecycle-aware execution. */
 	async exec(
 		command: string,
 		options?: KernelExecOptions,
@@ -3015,6 +3565,7 @@ export class AgentOs {
 		return this.#kernel.exec(command, options);
 	}
 
+	/** @deprecated Use `process.execFile()` for lifecycle-aware execution. */
 	async execArgv(
 		command: string,
 		args: readonly string[] = [],
@@ -3028,6 +3579,692 @@ export class AgentOs {
 			): Promise<KernelExecResult>;
 		};
 		return kernel.execArgv(command, args, options);
+	}
+
+	private async _executeJavaScript(
+		source: string,
+		options?: JavaScriptExecutionOptions & { detached?: false },
+	): Promise<CodeExecutionResult>;
+	private async _executeJavaScript(
+		source: string,
+		options: JavaScriptExecutionOptions & { detached: true },
+	): Promise<DetachedExecution>;
+	private async _executeJavaScript(
+		source: string,
+		options: JavaScriptExecutionOptions = {},
+	): Promise<CodeExecutionResult | DetachedExecution> {
+		return this._executionOperation(
+			{
+				type: "javascript_execution",
+				request: {
+					process: processExecutionOptions(options),
+					source,
+					format:
+						options.format === "commonjs"
+							? executionProtocol.JavaScriptModuleFormat.CommonJs
+							: executionProtocol.JavaScriptModuleFormat.Module,
+					filePath: options.filePath ?? null,
+					inputs: options.inputs ? JSON.stringify(options.inputs) : null,
+				},
+			},
+			options,
+		);
+	}
+
+	private async _evaluationOperation<T>(
+		payload: Parameters<SidecarProcess["sendVmRequest"]>[2],
+		options: Omit<LanguageExecutionOptions, "detached">,
+	): Promise<CodeEvaluationResult<T>> {
+		const result = (await this._executionOperation(payload, {
+			...options,
+			detached: false,
+		})) as CodeExecutionResult;
+		if (result.outcome !== "succeeded") return result;
+		const value = result.outputs.find((output) => output.type === "json");
+		if (value?.type !== "json") {
+			throw new Error(
+				"successful evaluation did not return a JSON-serializable value",
+			);
+		}
+		return { ...result, value: value.data as T };
+	}
+
+	private async _evaluateJavaScript<T = JsonValue>(
+		expression: string,
+		options: JavaScriptEvaluationOptions = {},
+	): Promise<CodeEvaluationResult<T>> {
+		return this._evaluationOperation<T>(
+			{
+				type: "javascript_evaluation",
+				request: {
+					process: processExecutionOptions(options),
+					expression,
+					format:
+						options.format === "commonjs"
+							? executionProtocol.JavaScriptModuleFormat.CommonJs
+							: executionProtocol.JavaScriptModuleFormat.Module,
+					filePath: options.filePath ?? null,
+					inputs: options.inputs ? JSON.stringify(options.inputs) : null,
+				},
+			},
+			options,
+		);
+	}
+
+	private async _executeJavaScriptFile(
+		path: string,
+		options?: LanguageExecutionOptions & { detached?: false },
+	): Promise<CodeExecutionResult>;
+	private async _executeJavaScriptFile(
+		path: string,
+		options: LanguageExecutionOptions & { detached: true },
+	): Promise<DetachedExecution>;
+	private async _executeJavaScriptFile(
+		path: string,
+		options: LanguageExecutionOptions = {},
+	): Promise<CodeExecutionResult | DetachedExecution> {
+		return this._executionOperation(
+			{
+				type: "javascript_file_execution",
+				request: { process: processExecutionOptions(options), path },
+			},
+			options,
+		);
+	}
+
+	private async _executeTypeScript(
+		source: string,
+		options?: TypeScriptExecutionOptions & { detached?: false },
+	): Promise<CodeExecutionResult>;
+	private async _executeTypeScript(
+		source: string,
+		options: TypeScriptExecutionOptions & { detached: true },
+	): Promise<DetachedExecution>;
+	private async _executeTypeScript(
+		source: string,
+		options: TypeScriptExecutionOptions = {},
+	): Promise<CodeExecutionResult | DetachedExecution> {
+		return this._executionOperation(
+			{
+				type: "typescript_execution",
+				request: {
+					process: processExecutionOptions(options),
+					source,
+					filePath: options.filePath ?? null,
+					tsconfigPath: options.tsconfigPath ?? null,
+					compilerOptions: options.compilerOptions
+						? JSON.stringify(options.compilerOptions)
+						: null,
+					inputs: options.inputs ? JSON.stringify(options.inputs) : null,
+				},
+			},
+			options,
+		);
+	}
+
+	private async _evaluateTypeScript<T = JsonValue>(
+		expression: string,
+		options: TypeScriptEvaluationOptions = {},
+	): Promise<CodeEvaluationResult<T>> {
+		return this._evaluationOperation<T>(
+			{
+				type: "typescript_evaluation",
+				request: {
+					process: processExecutionOptions(options),
+					expression,
+					filePath: options.filePath ?? null,
+					tsconfigPath: options.tsconfigPath ?? null,
+					compilerOptions: options.compilerOptions
+						? JSON.stringify(options.compilerOptions)
+						: null,
+					inputs: options.inputs ? JSON.stringify(options.inputs) : null,
+				},
+			},
+			options,
+		);
+	}
+
+	private async _executeTypeScriptFile(
+		path: string,
+		options?: TypeScriptFileExecutionOptions & { detached?: false },
+	): Promise<CodeExecutionResult>;
+	private async _executeTypeScriptFile(
+		path: string,
+		options: TypeScriptFileExecutionOptions & { detached: true },
+	): Promise<DetachedExecution>;
+	private async _executeTypeScriptFile(
+		path: string,
+		options: TypeScriptFileExecutionOptions = {},
+	): Promise<CodeExecutionResult | DetachedExecution> {
+		return this._executionOperation(
+			{
+				type: "typescript_file_execution",
+				request: {
+					process: processExecutionOptions(options),
+					path,
+					tsconfigPath: options.tsconfigPath ?? null,
+					compilerOptions: options.compilerOptions
+						? JSON.stringify(options.compilerOptions)
+						: null,
+				},
+			},
+			options,
+		);
+	}
+
+	private async _checkTypeScript(
+		source: string,
+		options: TypeScriptCheckOptions = {},
+	): Promise<TypeScriptCheckResult> {
+		const result = (await this._executionOperation(
+			{
+				type: "typescript_check",
+				request: {
+					identity: executionIdentity(options),
+					source,
+					cwd: options.cwd ?? null,
+					filePath: options.filePath ?? null,
+					tsconfigPath: options.tsconfigPath ?? null,
+					compilerOptions: options.compilerOptions
+						? JSON.stringify(options.compilerOptions)
+						: null,
+					timeoutMs: protocolTimeout(options.timeoutMs),
+				},
+			},
+			options,
+		)) as CodeExecutionResult;
+		return mapTypeScriptCheckResult(result);
+	}
+
+	private async _checkTypeScriptProject(
+		options: Omit<TypeScriptCheckOptions, "filePath" | "compilerOptions"> = {},
+	): Promise<TypeScriptCheckResult> {
+		const result = (await this._executionOperation(
+			{
+				type: "typescript_project_check",
+				request: {
+					identity: executionIdentity(options),
+					cwd: options.cwd ?? null,
+					tsconfigPath: options.tsconfigPath ?? null,
+					timeoutMs: protocolTimeout(options.timeoutMs),
+				},
+			},
+			options,
+		)) as CodeExecutionResult;
+		return mapTypeScriptCheckResult(result);
+	}
+
+	private async _installNpmPackages(
+		options?: NpmProjectInstallOptions,
+	): Promise<CodeExecutionResult>;
+	private async _installNpmPackages(
+		packages: string | string[],
+		options?: NpmPackageInstallOptions,
+	): Promise<CodeExecutionResult>;
+	private async _installNpmPackages(
+		packagesOrOptions: string | string[] | NpmProjectInstallOptions = {},
+		maybeOptions: NpmPackageInstallOptions = {},
+	): Promise<CodeExecutionResult> {
+		if (
+			typeof packagesOrOptions === "string" ||
+			Array.isArray(packagesOrOptions)
+		) {
+			const packages = Array.isArray(packagesOrOptions)
+				? packagesOrOptions
+				: [packagesOrOptions];
+			return (await this._executionOperation(
+				{
+					type: "npm_package_install",
+					request: {
+						identity: executionIdentity(maybeOptions),
+						cwd: maybeOptions.cwd ?? null,
+						env: maybeOptions.env
+							? new Map(Object.entries(maybeOptions.env))
+							: null,
+						timeoutMs: protocolTimeout(maybeOptions.timeoutMs),
+						packages,
+						dev: maybeOptions.dev ?? null,
+						global: maybeOptions.global ?? null,
+					},
+				},
+				maybeOptions,
+			)) as CodeExecutionResult;
+		}
+		const options = packagesOrOptions;
+		return (await this._executionOperation(
+			{
+				type: "npm_project_install",
+				request: {
+					identity: executionIdentity(options),
+					cwd: options.cwd ?? null,
+					env: options.env ? new Map(Object.entries(options.env)) : null,
+					timeoutMs: protocolTimeout(options.timeoutMs),
+					frozen: options.frozen ?? null,
+				},
+			},
+			options,
+		)) as CodeExecutionResult;
+	}
+
+	private async _executeNpmScript(
+		script: string,
+		options?: LanguageExecutionOptions & { detached?: false },
+	): Promise<CodeExecutionResult>;
+	private async _executeNpmScript(
+		script: string,
+		options: LanguageExecutionOptions & { detached: true },
+	): Promise<DetachedExecution>;
+	private async _executeNpmScript(
+		script: string,
+		options: LanguageExecutionOptions = {},
+	): Promise<CodeExecutionResult | DetachedExecution> {
+		return this._executionOperation(
+			{
+				type: "npm_script_execution",
+				request: { process: processExecutionOptions(options), script },
+			},
+			options,
+		);
+	}
+
+	private async _executeNpmPackage(
+		packageSpec: string,
+		options?: LanguageExecutionOptions & {
+			detached?: false;
+			binary?: string;
+		},
+	): Promise<CodeExecutionResult>;
+	private async _executeNpmPackage(
+		packageSpec: string,
+		options: LanguageExecutionOptions & {
+			detached: true;
+			binary?: string;
+		},
+	): Promise<DetachedExecution>;
+	private async _executeNpmPackage(
+		packageSpec: string,
+		options: LanguageExecutionOptions & { binary?: string } = {},
+	): Promise<CodeExecutionResult | DetachedExecution> {
+		return this._executionOperation(
+			{
+				type: "npm_package_execution",
+				request: {
+					process: processExecutionOptions(options),
+					packageSpec,
+					binary: options.binary ?? null,
+				},
+			},
+			options,
+		);
+	}
+
+	private async _executePython(
+		source: string,
+		options?: InlineExecutionOptions & { detached?: false },
+	): Promise<CodeExecutionResult>;
+	private async _executePython(
+		source: string,
+		options: InlineExecutionOptions & { detached: true },
+	): Promise<DetachedExecution>;
+	private async _executePython(
+		source: string,
+		options: InlineExecutionOptions = {},
+	): Promise<CodeExecutionResult | DetachedExecution> {
+		return this._executionOperation(
+			{
+				type: "python_execution",
+				request: {
+					process: processExecutionOptions(options),
+					source,
+					inputs: options.inputs ? JSON.stringify(options.inputs) : null,
+				},
+			},
+			options,
+		);
+	}
+
+	private async _evaluatePython<T = JsonValue>(
+		expression: string,
+		options: Omit<InlineExecutionOptions, "detached"> = {},
+	): Promise<CodeEvaluationResult<T>> {
+		return this._evaluationOperation<T>(
+			{
+				type: "python_evaluation",
+				request: {
+					process: processExecutionOptions(options),
+					expression,
+					inputs: options.inputs ? JSON.stringify(options.inputs) : null,
+				},
+			},
+			options,
+		);
+	}
+
+	private async _executePythonFile(
+		path: string,
+		options?: LanguageExecutionOptions & { detached?: false },
+	): Promise<CodeExecutionResult>;
+	private async _executePythonFile(
+		path: string,
+		options: LanguageExecutionOptions & { detached: true },
+	): Promise<DetachedExecution>;
+	private async _executePythonFile(
+		path: string,
+		options: LanguageExecutionOptions = {},
+	): Promise<CodeExecutionResult | DetachedExecution> {
+		return this._executionOperation(
+			{
+				type: "python_file_execution",
+				request: { process: processExecutionOptions(options), path },
+			},
+			options,
+		);
+	}
+
+	private async _executePythonModule(
+		module: string,
+		options?: LanguageExecutionOptions & { detached?: false },
+	): Promise<CodeExecutionResult>;
+	private async _executePythonModule(
+		module: string,
+		options: LanguageExecutionOptions & { detached: true },
+	): Promise<DetachedExecution>;
+	private async _executePythonModule(
+		module: string,
+		options: LanguageExecutionOptions = {},
+	): Promise<CodeExecutionResult | DetachedExecution> {
+		return this._executionOperation(
+			{
+				type: "python_module_execution",
+				request: { process: processExecutionOptions(options), module },
+			},
+			options,
+		);
+	}
+
+	private async _installPythonPackages(
+		options?: PythonInstallOptions,
+	): Promise<CodeExecutionResult>;
+	private async _installPythonPackages(
+		packages: string | string[],
+		options?: PythonInstallOptions,
+	): Promise<CodeExecutionResult>;
+	private async _installPythonPackages(
+		packagesOrOptions: string | string[] | PythonInstallOptions = {},
+		maybeOptions: PythonInstallOptions = {},
+	): Promise<CodeExecutionResult> {
+		const packages =
+			typeof packagesOrOptions === "string"
+				? [packagesOrOptions]
+				: Array.isArray(packagesOrOptions)
+					? packagesOrOptions
+					: [];
+		const options =
+			typeof packagesOrOptions === "string" || Array.isArray(packagesOrOptions)
+				? maybeOptions
+				: packagesOrOptions;
+		return (await this._executionOperation(
+			{
+				type: "python_install",
+				request: {
+					identity: executionIdentity(options),
+					cwd: options.cwd ?? null,
+					env: options.env ? new Map(Object.entries(options.env)) : null,
+					timeoutMs: protocolTimeout(options.timeoutMs),
+					packages,
+					upgrade: options.upgrade ?? null,
+					requirementsFile: options.requirementsFile ?? null,
+					indexUrl: options.indexUrl ?? null,
+					extraIndexUrls: options.extraIndexUrls ?? [],
+				},
+			},
+			options,
+		)) as CodeExecutionResult;
+	}
+
+	private async _getExecution(
+		executionId: string,
+	): Promise<ExecutionDescriptor> {
+		const response = await this._sidecarClient.sendVmRequest(
+			this._sidecarSession,
+			this._sidecarVm,
+			{ type: "get_execution", request: { executionId } },
+		);
+		if (response.type !== "execution_descriptor") {
+			throw new Error(`unexpected getExecution response: ${response.type}`);
+		}
+		return mapExecutionDescriptor(response.response.execution);
+	}
+
+	private async _listExecutions(): Promise<ExecutionDescriptor[]> {
+		const response = await this._sidecarClient.sendVmRequest(
+			this._sidecarSession,
+			this._sidecarVm,
+			{ type: "list_executions" },
+		);
+		if (response.type !== "execution_list") {
+			throw new Error(`unexpected listExecutions response: ${response.type}`);
+		}
+		return response.response.executions.map(mapExecutionDescriptor);
+	}
+
+	private async _waitExecution(
+		executionId: string,
+	): Promise<CodeExecutionResult> {
+		let resolveCompletion: (() => void) | undefined;
+		const completion = new Promise<void>((resolve) => {
+			resolveCompletion = resolve;
+		});
+		const unsubscribe = this.onExecutionCompleted(executionId, () => {
+			resolveCompletion?.();
+		});
+		let response: Awaited<ReturnType<SidecarProcess["sendVmRequest"]>>;
+		try {
+			try {
+				response = await this._sidecarClient.sendVmRequest(
+					this._sidecarSession,
+					this._sidecarVm,
+					{ type: "wait_execution", request: { executionId } },
+				);
+			} catch (error) {
+				if (
+					!(error instanceof SidecarRejectedError) ||
+					error.detail.code !== "execution_busy"
+				) {
+					throw error;
+				}
+				await completion;
+				response = await this._sidecarClient.sendVmRequest(
+					this._sidecarSession,
+					this._sidecarVm,
+					{ type: "wait_execution", request: { executionId } },
+				);
+			}
+		} finally {
+			unsubscribe();
+		}
+		if (response.type !== "execution_completed") {
+			throw new Error(`unexpected waitExecution response: ${response.type}`);
+		}
+		return mapExecutionResult(response.response);
+	}
+
+	private async _cancelExecution(
+		executionId: string,
+	): Promise<ExecutionDescriptor> {
+		return this._descriptorLifecycleRequest("cancel_execution", executionId);
+	}
+
+	private async _signalExecution(
+		executionId: string,
+		signal: ExecutionSignal,
+	): Promise<ExecutionDescriptor> {
+		const response = await this._sidecarClient.sendVmRequest(
+			this._sidecarSession,
+			this._sidecarVm,
+			{ type: "signal_execution", request: { executionId, signal } },
+		);
+		if (response.type !== "execution_descriptor") {
+			throw new Error(`unexpected signalExecution response: ${response.type}`);
+		}
+		return mapExecutionDescriptor(response.response.execution);
+	}
+
+	private async _resetExecution(
+		executionId: string,
+	): Promise<ExecutionDescriptor> {
+		return this._descriptorLifecycleRequest("reset_execution", executionId);
+	}
+
+	private async _descriptorLifecycleRequest(
+		type: "cancel_execution" | "reset_execution",
+		executionId: string,
+	): Promise<ExecutionDescriptor> {
+		const payload =
+			type === "cancel_execution"
+				? ({ type, request: { executionId } } as const)
+				: ({ type, request: { executionId } } as const);
+		const response = await this._sidecarClient.sendVmRequest(
+			this._sidecarSession,
+			this._sidecarVm,
+			payload,
+		);
+		if (response.type !== "execution_descriptor") {
+			throw new Error(`unexpected ${type} response: ${response.type}`);
+		}
+		return mapExecutionDescriptor(response.response.execution);
+	}
+
+	private async _deleteExecution(executionId: string): Promise<void> {
+		const response = await this._sidecarClient.sendVmRequest(
+			this._sidecarSession,
+			this._sidecarVm,
+			{ type: "delete_execution", request: { executionId } },
+		);
+		if (response.type !== "execution_deleted") {
+			throw new Error(`unexpected deleteExecution response: ${response.type}`);
+		}
+	}
+
+	private async _writeExecutionStdin(
+		executionId: string,
+		data: string | Uint8Array,
+	): Promise<void> {
+		const response = await this._sidecarClient.sendVmRequest(
+			this._sidecarSession,
+			this._sidecarVm,
+			{
+				type: "write_execution_stdin",
+				request: { executionId, chunk: executionBytes(data) as ArrayBuffer },
+			},
+		);
+		if (response.type !== "execution_io") {
+			throw new Error(
+				`unexpected writeExecutionStdin response: ${response.type}`,
+			);
+		}
+	}
+
+	private async _closeExecutionStdin(executionId: string): Promise<void> {
+		const response = await this._sidecarClient.sendVmRequest(
+			this._sidecarSession,
+			this._sidecarVm,
+			{ type: "close_execution_stdin", request: { executionId } },
+		);
+		if (response.type !== "execution_io") {
+			throw new Error(
+				`unexpected closeExecutionStdin response: ${response.type}`,
+			);
+		}
+	}
+
+	private async _resizeExecutionPty(
+		executionId: string,
+		size: { cols: number; rows: number },
+	): Promise<void> {
+		const cols = protocolUnsigned(size.cols, 0xffff, "size.cols");
+		const rows = protocolUnsigned(size.rows, 0xffff, "size.rows");
+		const response = await this._sidecarClient.sendVmRequest(
+			this._sidecarSession,
+			this._sidecarVm,
+			{
+				type: "resize_execution_pty",
+				request: { executionId, cols, rows },
+			},
+		);
+		if (response.type !== "execution_io") {
+			throw new Error(
+				`unexpected resizeExecutionPty response: ${response.type}`,
+			);
+		}
+	}
+
+	private async _readExecutionOutput(
+		executionId: string,
+		options: { cursor?: string; limit?: number } = {},
+	): Promise<ExecutionOutputPage> {
+		const limit =
+			options.limit === undefined
+				? null
+				: protocolUnsigned(options.limit, 0xffff_ffff, "limit");
+		const response = await this._sidecarClient.sendVmRequest(
+			this._sidecarSession,
+			this._sidecarVm,
+			{
+				type: "read_execution_output",
+				request: {
+					executionId,
+					cursor: options.cursor ?? null,
+					limit,
+				},
+			},
+		);
+		if (response.type !== "execution_output_page") {
+			throw new Error(
+				`unexpected readExecutionOutput response: ${response.type}`,
+			);
+		}
+		return {
+			executionId: response.response.executionId,
+			generation: safeProtocolNumber(
+				response.response.generation,
+				"execution generation",
+			),
+			events: response.response.events.map(mapExecutionOutputEvent),
+			nextCursor: response.response.nextCursor,
+			hasMore: response.response.hasMore,
+			truncated: response.response.truncated,
+		};
+	}
+
+	onExecutionOutput(
+		executionId: string,
+		handler: (event: ExecutionOutputEvent) => void,
+	): () => void {
+		const handlers =
+			this._executionOutputHandlers.get(executionId) ?? new Set();
+		handlers.add(handler);
+		this._executionOutputHandlers.set(executionId, handlers);
+		return () => {
+			handlers.delete(handler);
+			if (handlers.size === 0)
+				this._executionOutputHandlers.delete(executionId);
+		};
+	}
+
+	onExecutionCompleted(
+		executionId: string,
+		handler: (event: ExecutionCompletedEvent) => void,
+	): () => void {
+		const handlers =
+			this._executionCompletedHandlers.get(executionId) ?? new Set();
+		handlers.add(handler);
+		this._executionCompletedHandlers.set(executionId, handlers);
+		return () => {
+			handlers.delete(handler);
+			if (handlers.size === 0)
+				this._executionCompletedHandlers.delete(executionId);
+		};
 	}
 
 	private _trackProcess(
@@ -3058,7 +4295,7 @@ export class AgentOs {
 		return { pid: proc.pid };
 	}
 
-	spawn(
+	private _spawnProcess(
 		command: string,
 		args: string[],
 		options?: SpawnOptions,
@@ -3082,25 +4319,45 @@ export class AgentOs {
 			},
 		});
 
-		return this._trackProcess(proc, command, args, outputHandlers, exitHandlers);
+		return this._trackProcess(
+			proc,
+			command,
+			args,
+			outputHandlers,
+			exitHandlers,
+		);
+	}
+
+	spawn(
+		command: string,
+		args: string[] = [],
+		options?: SpawnOptions,
+	): { pid: number } {
+		return this.process.spawn(command, args, options);
 	}
 
 	/** Write data to a process's stdin. */
-	writeProcessStdin(pid: number, data: string | Uint8Array): Promise<void> {
+	private _writeProcessStdin(
+		pid: number,
+		data: string | Uint8Array,
+	): Promise<void> {
 		const entry = this._processes.get(pid);
 		if (!entry) throw new Error(`Process not found: ${pid}`);
 		return entry.proc.writeStdin(data);
 	}
 
 	/** Close a process's stdin stream. */
-	closeProcessStdin(pid: number): Promise<void> {
+	private _closeProcessStdin(pid: number): Promise<void> {
 		const entry = this._processes.get(pid);
 		if (!entry) throw new Error(`Process not found: ${pid}`);
 		return entry.proc.closeStdin();
 	}
 
 	/** Subscribe to stdout and stderr from a process. */
-	onProcessOutput(pid: number, handler: (event: ProcessOutput) => void): () => void {
+	onProcessOutput(
+		pid: number,
+		handler: (event: ProcessOutput) => void,
+	): () => void {
 		const entry = this._processes.get(pid);
 		if (!entry) throw new Error(`Process not found: ${pid}`);
 		entry.outputHandlers.add(handler);
@@ -3110,7 +4367,10 @@ export class AgentOs {
 	}
 
 	/** Subscribe to process exit. Returns an unsubscribe function. */
-	onProcessExit(pid: number, handler: (event: ProcessExit) => void): () => void {
+	onProcessExit(
+		pid: number,
+		handler: (event: ProcessExit) => void,
+	): () => void {
 		const entry = this._processes.get(pid);
 		if (!entry) throw new Error(`Process not found: ${pid}`);
 		// If already exited, call immediately.
@@ -3125,7 +4385,7 @@ export class AgentOs {
 	}
 
 	/** Wait for a process to exit. Returns the exit code. */
-	waitProcess(pid: number): Promise<number> {
+	private _waitProcess(pid: number): Promise<number> {
 		const entry = this._processes.get(pid);
 		if (!entry) throw new Error(`Process not found: ${pid}`);
 		return entry.proc.wait();
@@ -3151,17 +4411,22 @@ export class AgentOs {
 		return (this.#kernel as unknown as { vfs: VirtualFileSystem }).vfs;
 	}
 
-	async readFile(path: string): Promise<Uint8Array> {
+	private async _readFile(path: string): Promise<Uint8Array> {
 		this._assertSafeAbsolutePath(path);
 		return this.#kernel.readFile(path);
 	}
 
-	async writeFile(path: string, content: string | Uint8Array): Promise<void> {
+	private async _writeFile(
+		path: string,
+		content: string | Uint8Array,
+	): Promise<void> {
 		this._assertWritableAbsolutePath(path);
 		return this.#kernel.writeFile(path, content);
 	}
 
-	async writeFiles(entries: BatchWriteEntry[]): Promise<BatchWriteResult[]> {
+	private async _writeFiles(
+		entries: BatchWriteEntry[],
+	): Promise<BatchWriteResult[]> {
 		const results: BatchWriteResult[] = [];
 		for (const entry of entries) {
 			try {
@@ -3184,7 +4449,7 @@ export class AgentOs {
 		return results;
 	}
 
-	async readFiles(paths: string[]): Promise<BatchReadResult[]> {
+	private async _readFiles(paths: string[]): Promise<BatchReadResult[]> {
 		const results: BatchReadResult[] = [];
 		for (const path of paths) {
 			try {
@@ -3214,7 +4479,10 @@ export class AgentOs {
 		await this.#kernel.mkdir(path);
 	}
 
-	async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
+	private async _mkdir(
+		path: string,
+		options?: { recursive?: boolean },
+	): Promise<void> {
 		if (options?.recursive) {
 			return this._mkdirp(path);
 		}
@@ -3222,12 +4490,12 @@ export class AgentOs {
 		return this.#kernel.mkdir(path);
 	}
 
-	async readdir(path: string): Promise<string[]> {
+	private async _readdir(path: string): Promise<string[]> {
 		this._assertSafeAbsolutePath(path);
 		return this.#kernel.readdir(path);
 	}
 
-	async readdirEntries(path: string): Promise<ReaddirEntry[]> {
+	private async _readdirEntries(path: string): Promise<ReaddirEntry[]> {
 		this._assertSafeAbsolutePath(path);
 		const entries = await this.#kernel.readdirRecursive(path, { maxDepth: 0 });
 		return entries.map((entry) => ({
@@ -3237,7 +4505,7 @@ export class AgentOs {
 		}));
 	}
 
-	async readdirRecursive(
+	private async _readdirRecursive(
 		path: string,
 		options?: ReaddirRecursiveOptions,
 	): Promise<DirEntry[]> {
@@ -3278,17 +4546,17 @@ export class AgentOs {
 		return results;
 	}
 
-	async stat(path: string): Promise<VirtualStat> {
+	private async _stat(path: string): Promise<VirtualStat> {
 		this._assertSafeAbsolutePath(path);
 		return this.#kernel.stat(path);
 	}
 
-	async exists(path: string): Promise<boolean> {
+	private async _exists(path: string): Promise<boolean> {
 		this._assertSafeAbsolutePath(path);
 		return this.#kernel.exists(path);
 	}
 
-	async exportRootFilesystem(
+	private async _exportRootFilesystem(
 		options: ExportRootFilesystemOptions,
 	): Promise<RootSnapshotExport> {
 		if (!Number.isSafeInteger(options.maxBytes) || options.maxBytes <= 0) {
@@ -3315,7 +4583,7 @@ export class AgentOs {
 	 * after the returned promise settles; a delivery failure rejects instead of
 	 * leaving the mount silently host-only.
 	 */
-	async mountFs(descriptor: DynamicMountDescriptor): Promise<void> {
+	private async _mountFs(descriptor: DynamicMountDescriptor): Promise<void> {
 		this._assertSafeAbsolutePath(descriptor.path);
 		if (!(this.#kernel instanceof NativeSidecarKernelProxy)) {
 			throw new Error("portable dynamic mounts require the native sidecar");
@@ -3330,7 +4598,7 @@ export class AgentOs {
 		});
 	}
 
-	async unmountFs(path: string): Promise<void> {
+	private async _unmountFs(path: string): Promise<void> {
 		this._assertSafeAbsolutePath(path);
 		if (!(this.#kernel instanceof NativeSidecarKernelProxy)) {
 			throw new Error("portable dynamic mounts require the native sidecar");
@@ -3338,25 +4606,113 @@ export class AgentOs {
 		await this.#kernel.unmountDescriptor(path);
 	}
 
-	async listMounts(): Promise<MountInfo[]> {
+	private async _listMounts(): Promise<MountInfo[]> {
 		if (!(this.#kernel instanceof NativeSidecarKernelProxy)) return [];
 		return this.#kernel.listMounts();
 	}
 
-	async move(from: string, to: string): Promise<void> {
+	private async _move(from: string, to: string): Promise<void> {
 		this._assertWritableAbsolutePath(from);
 		this._assertWritableAbsolutePath(to);
 		await this.#kernel.movePath(from, to);
 	}
 
-	async remove(path: string, options?: { recursive?: boolean }): Promise<void> {
+	private async _remove(
+		path: string,
+		options?: { recursive?: boolean },
+	): Promise<void> {
 		this._assertWritableAbsolutePath(path);
 		await this.#kernel.removePath(path, {
 			recursive: options?.recursive ?? false,
 		});
 	}
 
-	async httpRequest(request: HttpRequest): Promise<HttpResponse> {
+	/** @deprecated Use `filesystem.readFile()`. */
+	readFile(path: string): Promise<Uint8Array> {
+		return this.filesystem.readFile(path);
+	}
+
+	/** @deprecated Use `filesystem.writeFile()`. */
+	writeFile(path: string, content: string | Uint8Array): Promise<void> {
+		return this.filesystem.writeFile(path, content);
+	}
+
+	/** @deprecated Use `filesystem.writeFiles()`. */
+	writeFiles(entries: BatchWriteEntry[]): Promise<BatchWriteResult[]> {
+		return this.filesystem.writeFiles(entries);
+	}
+
+	/** @deprecated Use `filesystem.readFiles()`. */
+	readFiles(paths: string[]): Promise<BatchReadResult[]> {
+		return this.filesystem.readFiles(paths);
+	}
+
+	/** @deprecated Use `filesystem.mkdir()`. */
+	mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
+		return this.filesystem.mkdir(path, options);
+	}
+
+	/** @deprecated Use `filesystem.readdir()`. */
+	readdir(path: string): Promise<string[]> {
+		return this.filesystem.readdir(path);
+	}
+
+	/** @deprecated Use `filesystem.readdirEntries()`. */
+	readdirEntries(path: string): Promise<ReaddirEntry[]> {
+		return this.filesystem.readdirEntries(path);
+	}
+
+	/** @deprecated Use `filesystem.readdirRecursive()`. */
+	readdirRecursive(
+		path: string,
+		options?: ReaddirRecursiveOptions,
+	): Promise<DirEntry[]> {
+		return this.filesystem.readdirRecursive(path, options);
+	}
+
+	/** @deprecated Use `filesystem.stat()`. */
+	stat(path: string): Promise<VirtualStat> {
+		return this.filesystem.stat(path);
+	}
+
+	/** @deprecated Use `filesystem.exists()`. */
+	exists(path: string): Promise<boolean> {
+		return this.filesystem.exists(path);
+	}
+
+	/** @deprecated Use `filesystem.export()`. */
+	exportRootFilesystem(
+		options: ExportRootFilesystemOptions,
+	): Promise<RootSnapshotExport> {
+		return this.filesystem.export(options);
+	}
+
+	/** @deprecated Use `filesystem.mount()`. */
+	mountFs(descriptor: DynamicMountDescriptor): Promise<void> {
+		return this.filesystem.mount(descriptor);
+	}
+
+	/** @deprecated Use `filesystem.unmount()`. */
+	unmountFs(path: string): Promise<void> {
+		return this.filesystem.unmount(path);
+	}
+
+	/** @deprecated Use `filesystem.listMounts()`. */
+	listMounts(): Promise<MountInfo[]> {
+		return this.filesystem.listMounts();
+	}
+
+	/** @deprecated Use `filesystem.move()`. */
+	move(from: string, to: string): Promise<void> {
+		return this.filesystem.move(from, to);
+	}
+
+	/** @deprecated Use `filesystem.remove()`. */
+	remove(path: string, options?: { recursive?: boolean }): Promise<void> {
+		return this.filesystem.remove(path, options);
+	}
+
+	private async _httpRequest(request: HttpRequest): Promise<HttpResponse> {
 		this._assertSafeAbsolutePath(request.path.split("?")[0] || "/");
 		const method = request.method?.toUpperCase() ?? "GET";
 		const body =
@@ -3393,7 +4749,12 @@ export class AgentOs {
 		};
 	}
 
-	openShell(options?: ShellOptions): { shellId: string } {
+	/** @deprecated Use `network.httpRequest()`. */
+	httpRequest(request: HttpRequest): Promise<HttpResponse> {
+		return this.network.httpRequest(request);
+	}
+
+	private _openTerminal(options?: ShellOptions): { shellId: string } {
 		const shellId = `shell-${++this._shellCounter}`;
 		this._closedShellIds.delete(shellId);
 		const dataHandlers = new Set<(event: ShellData) => void>();
@@ -3448,7 +4809,10 @@ export class AgentOs {
 	}
 
 	/** Write data to a shell's PTY input. */
-	writeShell(shellId: string, data: string | Uint8Array): Promise<void> {
+	private _writeTerminal(
+		shellId: string,
+		data: string | Uint8Array,
+	): Promise<void> {
 		const entry = this._shells.get(shellId);
 		if (!entry) throw new Error(`Shell not found: ${shellId}`);
 		return entry.handle.write(data);
@@ -3483,7 +4847,10 @@ export class AgentOs {
 	}
 
 	/** Subscribe to shell exit. */
-	onShellExit(shellId: string, handler: (event: ShellExit) => void): () => void {
+	onShellExit(
+		shellId: string,
+		handler: (event: ShellExit) => void,
+	): () => void {
 		const entry = this._shells.get(shellId);
 		if (!entry) {
 			const exitCode = this._closedShellIds.get(shellId);
@@ -3498,7 +4865,7 @@ export class AgentOs {
 	}
 
 	/** Notify a shell of terminal resize. */
-	resizeShell(shellId: string, cols: number, rows: number): void {
+	private _resizeTerminal(shellId: string, cols: number, rows: number): void {
 		const entry = this._shells.get(shellId);
 		if (!entry) throw new Error(`Shell not found: ${shellId}`);
 		entry.handle.resize(cols, rows);
@@ -3509,7 +4876,7 @@ export class AgentOs {
 	 * immediately for a shell that has already exited (within the closed-shell
 	 * retention window).
 	 */
-	waitShell(shellId: string): Promise<number> {
+	private _waitTerminal(shellId: string): Promise<number> {
 		const entry = this._shells.get(shellId);
 		if (!entry) {
 			const exitCode = this._closedShellIds.get(shellId);
@@ -3520,7 +4887,7 @@ export class AgentOs {
 	}
 
 	/** Kill a shell process and remove it from tracking. */
-	closeShell(shellId: string): void {
+	private _closeTerminal(shellId: string): void {
 		const entry = this._shells.get(shellId);
 		if (!entry) {
 			if (this._closedShellIds.has(shellId)) {
@@ -3531,6 +4898,31 @@ export class AgentOs {
 		entry.handle.kill();
 		this._shells.delete(shellId);
 		this._closedShellIds.add(shellId);
+	}
+
+	/** @deprecated Use `terminal.open()`. */
+	openShell(options?: ShellOptions): { shellId: string } {
+		return this.terminal.open(options);
+	}
+
+	/** @deprecated Use `terminal.write()`. */
+	writeShell(shellId: string, data: string | Uint8Array): Promise<void> {
+		return this.terminal.write(shellId, data);
+	}
+
+	/** @deprecated Use `terminal.resize()`. */
+	resizeShell(shellId: string, cols: number, rows: number): void {
+		this.terminal.resize(shellId, cols, rows);
+	}
+
+	/** @deprecated Use `terminal.wait()`. */
+	waitShell(shellId: string): Promise<number> {
+		return this.terminal.wait(shellId);
+	}
+
+	/** @deprecated Use `terminal.close()`. */
+	closeShell(shellId: string): void {
+		this.terminal.close(shellId);
 	}
 
 	private _resolveVmPathToHostPath(vmPath: string): string | null {
@@ -3551,7 +4943,7 @@ export class AgentOs {
 	}
 
 	/** Returns info about all processes spawned via spawn(). */
-	listProcesses(): SpawnedProcessInfo[] {
+	private _listProcesses(): SpawnedProcessInfo[] {
 		return [...this._processes.values()].map(({ proc, command, args }) => ({
 			pid: proc.pid,
 			command,
@@ -3562,7 +4954,7 @@ export class AgentOs {
 	}
 
 	/** Returns all kernel processes across all active runtimes (WASM and Node). */
-	allProcesses(): KernelProcessInfo[] {
+	private _listAllProcesses(): KernelProcessInfo[] {
 		if (this.#kernel instanceof NativeSidecarKernelProxy) {
 			return this.#kernel.snapshotProcesses();
 		}
@@ -3570,8 +4962,8 @@ export class AgentOs {
 	}
 
 	/** Returns processes organized as a tree using ppid relationships. */
-	processTree(): ProcessTreeNode[] {
-		const all = this.allProcesses();
+	private _processTree(): ProcessTreeNode[] {
+		const all = this._listAllProcesses();
 		const nodeMap = new Map<number, ProcessTreeNode>();
 
 		// Index: create a tree node for each process
@@ -3594,7 +4986,7 @@ export class AgentOs {
 	}
 
 	/** Returns info about a specific process by PID. Throws if not found. */
-	getProcess(pid: number): SpawnedProcessInfo {
+	private _getProcess(pid: number): SpawnedProcessInfo {
 		const entry = this._processes.get(pid);
 		if (!entry) {
 			throw new Error(`Process not found: ${pid}`);
@@ -3609,7 +5001,7 @@ export class AgentOs {
 	}
 
 	/** Send SIGTERM to gracefully stop a process. No-op if already exited. */
-	stopProcess(pid: number): void {
+	private _stopProcess(pid: number): void {
 		const entry = this._processes.get(pid);
 		if (!entry) {
 			throw new Error(`Process not found: ${pid}`);
@@ -3619,7 +5011,7 @@ export class AgentOs {
 	}
 
 	/** Send SIGKILL to force-kill a process. No-op if already exited. */
-	killProcess(pid: number): void {
+	private _killProcess(pid: number): void {
 		const entry = this._processes.get(pid);
 		if (!entry) {
 			throw new Error(`Process not found: ${pid}`);
@@ -3628,7 +5020,52 @@ export class AgentOs {
 		entry.proc.kill(9);
 	}
 
-	async openSession(input: OpenSessionInput): Promise<void> {
+	/** @deprecated Use `process.writeStdin()`. */
+	writeProcessStdin(pid: number, data: string | Uint8Array): Promise<void> {
+		return this.process.writeStdin(pid, data);
+	}
+
+	/** @deprecated Use `process.closeStdin()`. */
+	closeProcessStdin(pid: number): Promise<void> {
+		return this.process.closeStdin(pid);
+	}
+
+	/** @deprecated Use `process.wait()`. */
+	waitProcess(pid: number): Promise<number> {
+		return this.process.wait(pid);
+	}
+
+	/** @deprecated Use `process.list()`. */
+	listProcesses(): SpawnedProcessInfo[] {
+		return this.process.list();
+	}
+
+	/** @deprecated Use `process.listAll()`. */
+	allProcesses(): KernelProcessInfo[] {
+		return this.process.listAll();
+	}
+
+	/** @deprecated Use `process.tree()`. */
+	processTree(): ProcessTreeNode[] {
+		return this.process.tree();
+	}
+
+	/** @deprecated Use `process.get()`. */
+	getProcess(pid: number): SpawnedProcessInfo {
+		return this.process.get(pid);
+	}
+
+	/** @deprecated Use `process.stop()`. */
+	stopProcess(pid: number): void {
+		this.process.stop(pid);
+	}
+
+	/** @deprecated Use `process.kill()`. */
+	killProcess(pid: number): void {
+		this.process.kill(pid);
+	}
+
+	private async _openSession(input: OpenSessionInput): Promise<void> {
 		const response = await this._sendAcpRequest({
 			tag: "AcpOpenSessionRequest",
 			val: {
@@ -3658,7 +5095,9 @@ export class AgentOs {
 		}
 	}
 
-	async getSession(input?: SessionTarget): Promise<DurableSessionInfo> {
+	private async _getSession(
+		input?: SessionTarget,
+	): Promise<DurableSessionInfo> {
 		const response = await this._sendAcpRequest({
 			tag: "AcpGetDurableSessionRequest",
 			val: { sessionId: input?.sessionId ?? null },
@@ -3669,7 +5108,7 @@ export class AgentOs {
 		return decodeDurableSessionInfo(response.val.session);
 	}
 
-	async listSessions(input?: ListSessionsInput): Promise<SessionPage> {
+	private async _listSessions(input?: ListSessionsInput): Promise<SessionPage> {
 		const response = await this._sendAcpRequest({
 			tag: "AcpListDurableSessionsRequest",
 			val: { cursor: input?.cursor ?? null, limit: input?.limit ?? null },
@@ -3683,7 +5122,7 @@ export class AgentOs {
 		};
 	}
 
-	async deleteSession(input: SessionTarget = {}): Promise<void> {
+	private async _deleteSession(input: SessionTarget = {}): Promise<void> {
 		const response = await this._sendAcpRequest({
 			tag: "AcpDeleteSessionRequest",
 			val: { sessionId: input.sessionId ?? null },
@@ -3693,7 +5132,7 @@ export class AgentOs {
 		}
 	}
 
-	async unloadSession(input?: SessionTarget): Promise<void> {
+	private async _unloadSession(input?: SessionTarget): Promise<void> {
 		const response = await this._sendAcpRequest({
 			tag: "AcpUnloadSessionRequest",
 			val: { sessionId: input?.sessionId ?? null },
@@ -3703,7 +5142,7 @@ export class AgentOs {
 		}
 	}
 
-	async prompt(input: PromptInput): Promise<DurablePromptResult> {
+	private async _prompt(input: PromptInput): Promise<DurablePromptResult> {
 		const response = await this._sendAcpRequest({
 			tag: "AcpPromptRequest",
 			val: {
@@ -3723,7 +5162,9 @@ export class AgentOs {
 		};
 	}
 
-	async cancelPrompt(input?: SessionTarget): Promise<CancelPromptResult> {
+	private async _cancelPrompt(
+		input?: SessionTarget,
+	): Promise<CancelPromptResult> {
 		const response = await this._sendAcpRequest({
 			tag: "AcpCancelPromptRequest",
 			val: { sessionId: input?.sessionId ?? null },
@@ -3740,7 +5181,7 @@ export class AgentOs {
 		return { status: response.val.status };
 	}
 
-	async respondPermission(
+	private async _respondPermission(
 		input: PermissionResponse,
 	): Promise<PermissionResponseResult> {
 		const response = await this._sendAcpRequest({
@@ -3764,7 +5205,9 @@ export class AgentOs {
 		}
 		if (response.val.status === "accepted") {
 			if (response.val.reason !== null) {
-				throw new Error("accepted permission response must not include a reason");
+				throw new Error(
+					"accepted permission response must not include a reason",
+				);
 			}
 			return { status: "accepted" };
 		}
@@ -3774,7 +5217,7 @@ export class AgentOs {
 		};
 	}
 
-	async readHistory(input?: ReadHistoryInput): Promise<HistoryPage> {
+	private async _readHistory(input?: ReadHistoryInput): Promise<HistoryPage> {
 		const response = await this._sendAcpRequest({
 			tag: "AcpReadHistoryRequest",
 			val: {
@@ -3794,7 +5237,9 @@ export class AgentOs {
 		};
 	}
 
-	async getSessionConfig(input?: SessionTarget): Promise<SessionConfig> {
+	private async _getSessionConfig(
+		input?: SessionTarget,
+	): Promise<SessionConfig> {
 		const response = await this._sendAcpRequest({
 			tag: "AcpGetSessionConfigRequest",
 			val: { sessionId: input?.sessionId ?? null },
@@ -3808,7 +5253,7 @@ export class AgentOs {
 		};
 	}
 
-	async setSessionConfigOption(
+	private async _setSessionConfigOption(
 		input: SetSessionConfigOptionInput,
 	): Promise<SessionConfig> {
 		const response = await this._sendAcpRequest({
@@ -3830,7 +5275,7 @@ export class AgentOs {
 		};
 	}
 
-	async getSessionCapabilities(
+	private async _getSessionCapabilities(
 		input?: SessionTarget,
 	): Promise<SessionCapabilities | null> {
 		const response = await this._sendAcpRequest({
@@ -3847,7 +5292,7 @@ export class AgentOs {
 			: normalizeSessionCapabilities(JSON.parse(response.val.capabilities));
 	}
 
-	async getSessionAgentInfo(
+	private async _getSessionAgentInfo(
 		input?: SessionTarget,
 	): Promise<SessionAgentInfo | null> {
 		const response = await this._sendAcpRequest({
@@ -3864,6 +5309,77 @@ export class AgentOs {
 			: JSON.parse(response.val.agentInfo);
 	}
 
+	/** @deprecated Use `sessions.open()`. */
+	openSession(input: OpenSessionInput): Promise<void> {
+		return this.sessions.open(input);
+	}
+
+	/** @deprecated Use `sessions.get()`. */
+	getSession(input?: SessionTarget): Promise<DurableSessionInfo> {
+		return this.sessions.get(input);
+	}
+
+	/** @deprecated Use `sessions.list()`. */
+	listSessions(input?: ListSessionsInput): Promise<SessionPage> {
+		return this.sessions.list(input);
+	}
+
+	/** @deprecated Use `sessions.delete()`. */
+	deleteSession(input: SessionTarget = {}): Promise<void> {
+		return this.sessions.delete(input);
+	}
+
+	/** @deprecated Use `sessions.unload()`. */
+	unloadSession(input?: SessionTarget): Promise<void> {
+		return this.sessions.unload(input);
+	}
+
+	/** @deprecated Use `sessions.prompt()`. */
+	prompt(input: PromptInput): Promise<DurablePromptResult> {
+		return this.sessions.prompt(input);
+	}
+
+	/** @deprecated Use `sessions.cancelPrompt()`. */
+	cancelPrompt(input?: SessionTarget): Promise<CancelPromptResult> {
+		return this.sessions.cancelPrompt(input);
+	}
+
+	/** @deprecated Use `sessions.respondPermission()`. */
+	respondPermission(
+		input: PermissionResponse,
+	): Promise<PermissionResponseResult> {
+		return this.sessions.respondPermission(input);
+	}
+
+	/** @deprecated Use `sessions.readHistory()`. */
+	readHistory(input?: ReadHistoryInput): Promise<HistoryPage> {
+		return this.sessions.readHistory(input);
+	}
+
+	/** @deprecated Use `sessions.getConfig()`. */
+	getSessionConfig(input?: SessionTarget): Promise<SessionConfig> {
+		return this.sessions.getConfig(input);
+	}
+
+	/** @deprecated Use `sessions.setConfigOption()`. */
+	setSessionConfigOption(
+		input: SetSessionConfigOptionInput,
+	): Promise<SessionConfig> {
+		return this.sessions.setConfigOption(input);
+	}
+
+	/** @deprecated Use `sessions.getCapabilities()`. */
+	getSessionCapabilities(
+		input?: SessionTarget,
+	): Promise<SessionCapabilities | null> {
+		return this.sessions.getCapabilities(input);
+	}
+
+	/** @deprecated Use `sessions.getAgentInfo()`. */
+	getSessionAgentInfo(input?: SessionTarget): Promise<SessionAgentInfo | null> {
+		return this.sessions.getAgentInfo(input);
+	}
+
 	/**
 	 * Dynamically link a software package into the RUNNING VM. The package's
 	 * `bin/` commands appear under `/opt/agentos/bin` (on `$PATH`) and its `share/man`
@@ -3872,7 +5388,7 @@ export class AgentOs {
 	 * block registers the package for `openSession({ agent: name })`. Persists for the VM's
 	 * lifetime (and across a snapshot iff the volume persists).
 	 */
-	async linkSoftware(descriptor: PackageDescriptor): Promise<void> {
+	private async _linkSoftware(descriptor: PackageDescriptor): Promise<void> {
 		// Forward to the sidecar, which owns the `/opt/agentos` projection and
 		// appends the package to its live host-backed staging dir; the commands
 		// appear under `/opt/agentos/bin` immediately. The sidecar rejects a
@@ -3901,7 +5417,7 @@ export class AgentOs {
 		// openSession/listAgents from it). Nothing to record client-side.
 	}
 
-	async listSoftware(): Promise<
+	private async _listSoftware(): Promise<
 		{ packageName: string; commands: string[] }[]
 	> {
 		return this._sidecarClient.providedCommands(
@@ -3916,7 +5432,7 @@ export class AgentOs {
 	 * projected `/opt/agentos` packages (the client parses no manifests). Every such
 	 * agent is a package materialized into the VM, so `installed` is always `true`.
 	 */
-	async listAgents(): Promise<AgentRegistryEntry[]> {
+	private async _listAgents(): Promise<AgentRegistryEntry[]> {
 		const response = await this._sendAcpRequest({
 			tag: "AcpListAgentsRequest",
 			val: { reserved: false },
@@ -3928,6 +5444,21 @@ export class AgentOs {
 			id: agent.id,
 			installed: agent.installed,
 		}));
+	}
+
+	/** @deprecated Use `software.link()`. */
+	linkSoftware(descriptor: PackageDescriptor): Promise<void> {
+		return this.software.link(descriptor);
+	}
+
+	/** @deprecated Use `software.list()`. */
+	listSoftware(): Promise<{ packageName: string; commands: string[] }[]> {
+		return this.software.list();
+	}
+
+	/** @deprecated Use `agents.list()`. */
+	listAgents(): Promise<AgentRegistryEntry[]> {
+		return this.agents.list();
 	}
 
 	private _recordAgentStderr(event: {
@@ -4002,6 +5533,32 @@ export class AgentOs {
 			? T
 			: never,
 	): void {
+		if (event.payload.type === "execution_output") {
+			const output = mapExecutionOutputEvent(event.payload.event);
+			for (const key of ["*", output.executionId]) {
+				for (const handler of this._executionOutputHandlers.get(key) ?? []) {
+					try {
+						handler(output);
+					} catch (error) {
+						console.error("AgentOS execution output handler failed", error);
+					}
+				}
+			}
+			return;
+		}
+		if (event.payload.type === "execution_completed") {
+			const completed = mapExecutionCompletedEvent(event.payload.event);
+			for (const key of ["*", completed.executionId]) {
+				for (const handler of this._executionCompletedHandlers.get(key) ?? []) {
+					try {
+						handler(completed);
+					} catch (error) {
+						console.error("AgentOS execution completion handler failed", error);
+					}
+				}
+			}
+			return;
+		}
 		if (event.payload.type === "ext") {
 			this._handleAcpExtEvent(event.payload.envelope);
 			return;
@@ -4046,9 +5603,7 @@ export class AgentOs {
 			const event = decodeAcpEvent(envelope.payload);
 			switch (event.tag) {
 				case "AcpDurableSessionEvent": {
-					this._emitDurableSessionEvent(
-						decodeDurableSessionEvent(event.val),
-					);
+					this._emitDurableSessionEvent(decodeDurableSessionEvent(event.val));
 					return;
 				}
 				case "AcpEphemeralSessionUpdateEvent": {
@@ -4538,12 +6093,14 @@ export class AgentOs {
 		return { terminalId };
 	}
 
-	private _handleAcpWriteTerminal(params: Record<string, unknown>): null {
+	private async _handleAcpWriteTerminal(
+		params: Record<string, unknown>,
+	): Promise<null> {
 		const method = "terminal/write";
 		const terminal = this._requireAcpTerminal(params, method);
 		const data = this._requireAcpStringParam(params, "data", method);
 		const encoding = this._optionalAcpStringParam(params, "encoding", method);
-		terminal.handle.write(
+		await terminal.handle.write(
 			encoding === "base64" ? Buffer.from(data, "base64") : data,
 		);
 		return null;
@@ -4683,18 +6240,33 @@ export class AgentOs {
 	// ── Cron ────────────────────────────────────────────────────
 
 	/** Schedule a cron job. Returns a handle with the job ID and a cancel method. */
-	scheduleCron(options: CronJobOptions): CronJob {
+	private _scheduleCron(options: CronJobOptions): CronJob {
 		return this._cronManager.schedule(options);
 	}
 
 	/** List all registered cron jobs. */
-	listCronJobs(): CronJobInfo[] {
+	private _listCronJobs(): CronJobInfo[] {
 		return this._cronManager.list();
 	}
 
 	/** Cancel a cron job by ID. */
-	cancelCronJob(id: string): void {
+	private _cancelCronJob(id: string): void {
 		this._cronManager.cancel(id);
+	}
+
+	/** @deprecated Use `cron.schedule()`. */
+	scheduleCron(options: CronJobOptions): CronJob {
+		return this.cron.schedule(options);
+	}
+
+	/** @deprecated Use `cron.list()`. */
+	listCronJobs(): CronJobInfo[] {
+		return this.cron.list();
+	}
+
+	/** @deprecated Use `cron.cancel()`. */
+	cancelCronJob(id: string): void {
+		this.cron.cancel(id);
 	}
 
 	/** Subscribe to cron lifecycle events (fire, complete, error). */
@@ -4722,6 +6294,8 @@ export class AgentOs {
 		}
 		this._acpTerminals.clear();
 		this._processes.clear();
+		this._executionOutputHandlers.clear();
+		this._executionCompletedHandlers.clear();
 		await waitForTrackedExitPromises(
 			[...shellExitPromises, ...terminalExitPromises],
 			SHELL_DISPOSE_TIMEOUT_MS,

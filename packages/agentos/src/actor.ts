@@ -3,6 +3,7 @@ import {
 	type AgentExitEvent,
 	AgentOs,
 	type AgentOsOptions,
+	type CodeExecutionResult,
 	type CronEvent,
 	type DynamicMountDescriptor,
 	type OpenSessionInput,
@@ -22,7 +23,19 @@ import {
 } from "rivetkit";
 import { type DatabaseProvider, db, type RawAccess } from "rivetkit/db";
 import type {
+	ActorData,
+	ActorInlineExecutionOptions,
+	ActorJavaScriptExecutionOptions,
+	ActorLanguageExecutionOptions,
+	ActorNpmPackageInstallOptions,
+	ActorNpmProjectInstallOptions,
+	ActorPythonInstallOptions,
+	ActorTypeScriptCheckOptions,
+	ActorTypeScriptExecutionOptions,
+	ActorTypeScriptFileExecutionOptions,
 	AgentOsEvents,
+	ExecutionCompletedPayload,
+	ExecutionOutputPayload,
 	ProcessExitPayload,
 	ProcessOutputPayload,
 	SerializableCronJobOptions,
@@ -89,6 +102,8 @@ const builtInEvents: BuiltInEvents = {
 	vmShutdown: event<VmShutdownPayload>(),
 	processOutput: event<ProcessOutputPayload>(),
 	processExit: event<ProcessExitPayload>(),
+	executionOutput: event<ExecutionOutputPayload>(),
+	executionCompleted: event<ExecutionCompletedPayload>(),
 	shellData: event<ShellDataPayload>(),
 	cronEvent: event<CronEvent>(),
 	agentExit: event<AgentExitEvent>(),
@@ -103,6 +118,7 @@ type AnyContext = ActorContext<any, any, any, any, any, ActorDb, any, any>;
 interface RuntimeState {
 	vm: Promise<AgentOs> | null;
 	subscribedSessions: Map<string, readonly (() => void)[]>;
+	executionUnsubscribers: readonly (() => void)[];
 }
 
 const runtimes = new Map<string, RuntimeState>();
@@ -110,7 +126,11 @@ const runtimes = new Map<string, RuntimeState>();
 function runtimeFor(c: AnyContext): RuntimeState {
 	let runtime = runtimes.get(c.actorId);
 	if (!runtime) {
-		runtime = { vm: null, subscribedSessions: new Map() };
+		runtime = {
+			vm: null,
+			subscribedSessions: new Map(),
+			executionUnsubscribers: [],
+		};
 		runtimes.set(c.actorId, runtime);
 	}
 	return runtime;
@@ -177,12 +197,12 @@ async function ensureVm(
 		});
 		try {
 			for (const row of mountRows) {
-				await vm.mountFs(
+				await vm.filesystem.mount(
 					JSON.parse(row.descriptor_json) as DynamicMountDescriptor,
 				);
 			}
 			for (const row of softwareRows) {
-				await vm.linkSoftware(
+				await vm.software.link(
 					JSON.parse(row.descriptor_json) as PackageDescriptor,
 				);
 			}
@@ -191,6 +211,20 @@ async function ensureVm(
 			throw error;
 		}
 		vm.onCronEvent((cronEvent) => c.broadcast("cronEvent", cronEvent));
+		runtime.executionUnsubscribers = [
+			vm.onExecutionOutput("*", (event) =>
+				c.broadcast("executionOutput", {
+					...event,
+					chunk: {
+						encoding: "base64",
+						data: Buffer.from(event.chunk).toString("base64"),
+					},
+				}),
+			),
+			vm.onExecutionCompleted("*", (event) =>
+				c.broadcast("executionCompleted", event),
+			),
+		];
 		c.broadcast("vmBooted", {});
 		c.log.info({
 			msg: "agent-os vm booted",
@@ -216,6 +250,7 @@ async function disposeVm(c: AnyContext, reason: "sleep" | "destroy" | "error") {
 		for (const unsubscribe of unsubscribers) unsubscribe();
 	}
 	runtime.subscribedSessions.clear();
+	for (const unsubscribe of runtime.executionUnsubscribers) unsubscribe();
 	if (vm) await (await vm).dispose();
 	c.broadcast("vmShutdown", { reason });
 }
@@ -428,6 +463,74 @@ function untrackSessionEvents(c: AnyContext, sessionId: string): void {
 	runtimeFor(c).subscribedSessions.delete(sessionId);
 }
 
+function decodeActorData(value: ActorData): string | Uint8Array;
+function decodeActorData(value: unknown): string | Uint8Array | undefined;
+function decodeActorData(value: unknown): string | Uint8Array | undefined {
+	if (value === undefined) return undefined;
+	if (
+		typeof value !== "object" ||
+		value === null ||
+		!("encoding" in value) ||
+		!("data" in value)
+	) {
+		throw new UserError("stdin must be tagged UTF-8 or base64 actor data", {
+			code: "agentos_execution_invalid_actor_data",
+		});
+	}
+	const input = value as { encoding: unknown; data: unknown };
+	if (typeof input.data !== "string") {
+		throw new UserError("actor data must contain a string", {
+			code: "agentos_execution_invalid_actor_data",
+		});
+	}
+	if (input.encoding === "utf8") return input.data;
+	if (input.encoding === "base64")
+		return new Uint8Array(Buffer.from(input.data, "base64"));
+	throw new UserError("actor data encoding must be utf8 or base64", {
+		code: "agentos_execution_invalid_actor_data",
+	});
+}
+
+function actorExecutionArgs(args: readonly unknown[]): unknown[] {
+	return args.map((arg) => {
+		if (typeof arg !== "object" || arg === null || Array.isArray(arg))
+			return arg;
+		const options = arg as Record<string, unknown>;
+		for (const field of ["signal", "onStdout", "onStderr"] as const) {
+			if (options[field] !== undefined) {
+				throw new UserError(`${field} is not available on actor actions`, {
+					code: "agentos_execution_non_serializable_option",
+				});
+			}
+		}
+		const normalized = { ...options };
+		if ("stdin" in normalized)
+			normalized.stdin = decodeActorData(normalized.stdin);
+		return normalized;
+	});
+}
+
+async function runActorExecution<
+	T extends { executionId: string; detached: boolean },
+>(
+	c: AnyContext,
+	operation: (vm: AgentOs) => Promise<T>,
+	options?: AgentOsOptions,
+): Promise<T> {
+	const vm = await ensureVm(c, options);
+	const result = await c.keepAwake(operation(vm));
+	if (result.detached) {
+		void c.keepAwake(vm.executions.wait(result.executionId)).catch((error) =>
+			c.log.error({
+				msg: "agent-os detached execution wait failed",
+				executionId: result.executionId,
+				error,
+			}),
+		);
+	}
+	return result;
+}
+
 export function createAgentOsActions(
 	options?: AgentOsOptions,
 	hooks: AgentOsEventHooks = {},
@@ -477,13 +580,13 @@ export function createAgentOsActions(
 			code: "agentos_linked_software_invalid_config",
 		});
 	}
-	return {
+	const flat = {
 		readFile: async (
 			c: AnyContext,
-			...args: Parameters<AgentOs["readFile"]>
+			...args: Parameters<AgentOs["filesystem"]["readFile"]>
 		) => {
 			try {
-				return await (await ensureVm(c, options)).readFile(...args);
+				return await (await ensureVm(c, options)).filesystem.readFile(...args);
 			} catch (error) {
 				c.log.error({
 					msg: "agent-os readFile action failed",
@@ -495,43 +598,84 @@ export function createAgentOsActions(
 		},
 		writeFile: async (
 			c: AnyContext,
-			...args: Parameters<AgentOs["writeFile"]>
-		) => (await ensureVm(c, options)).writeFile(...args),
+			...args: Parameters<AgentOs["filesystem"]["writeFile"]>
+		) => (await ensureVm(c, options)).filesystem.writeFile(...args),
 		readFiles: async (
 			c: AnyContext,
-			...args: Parameters<AgentOs["readFiles"]>
-		) => (await ensureVm(c, options)).readFiles(...args),
+			...args: Parameters<AgentOs["filesystem"]["readFiles"]>
+		) => (await ensureVm(c, options)).filesystem.readFiles(...args),
 		writeFiles: async (
 			c: AnyContext,
-			...args: Parameters<AgentOs["writeFiles"]>
-		) => (await ensureVm(c, options)).writeFiles(...args),
-		stat: async (c: AnyContext, ...args: Parameters<AgentOs["stat"]>) =>
-			(await ensureVm(c, options)).stat(...args),
-		mkdir: async (c: AnyContext, ...args: Parameters<AgentOs["mkdir"]>) =>
-			(await ensureVm(c, options)).mkdir(...args),
-		readdir: async (c: AnyContext, ...args: Parameters<AgentOs["readdir"]>) =>
-			(await ensureVm(c, options)).readdir(...args),
+			...args: Parameters<AgentOs["filesystem"]["writeFiles"]>
+		) => (await ensureVm(c, options)).filesystem.writeFiles(...args),
+		stat: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["filesystem"]["stat"]>
+		) => (await ensureVm(c, options)).filesystem.stat(...args),
+		mkdir: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["filesystem"]["mkdir"]>
+		) => (await ensureVm(c, options)).filesystem.mkdir(...args),
+		readdir: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["filesystem"]["readdir"]>
+		) => (await ensureVm(c, options)).filesystem.readdir(...args),
 		readdirEntries: async (
 			c: AnyContext,
-			...args: Parameters<AgentOs["readdirEntries"]>
-		) => (await ensureVm(c, options)).readdirEntries(...args),
+			...args: Parameters<AgentOs["filesystem"]["readdirEntries"]>
+		) => (await ensureVm(c, options)).filesystem.readdirEntries(...args),
 		readdirRecursive: async (
 			c: AnyContext,
-			...args: Parameters<AgentOs["readdirRecursive"]>
-		) => (await ensureVm(c, options)).readdirRecursive(...args),
-		exists: async (c: AnyContext, ...args: Parameters<AgentOs["exists"]>) =>
-			(await ensureVm(c, options)).exists(...args),
-		move: async (c: AnyContext, ...args: Parameters<AgentOs["move"]>) =>
-			(await ensureVm(c, options)).move(...args),
-		remove: async (c: AnyContext, ...args: Parameters<AgentOs["remove"]>) =>
-			(await ensureVm(c, options)).remove(...args),
-		exec: async (c: AnyContext, ...args: Parameters<AgentOs["exec"]>) =>
-			(await ensureVm(c, options)).exec(...args),
-		execArgv: async (c: AnyContext, ...args: Parameters<AgentOs["execArgv"]>) =>
-			(await ensureVm(c, options)).execArgv(...args),
-		spawn: async (c: AnyContext, ...args: Parameters<AgentOs["spawn"]>) => {
+			...args: Parameters<AgentOs["filesystem"]["readdirRecursive"]>
+		) => (await ensureVm(c, options)).filesystem.readdirRecursive(...args),
+		exists: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["filesystem"]["exists"]>
+		) => (await ensureVm(c, options)).filesystem.exists(...args),
+		move: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["filesystem"]["move"]>
+		) => (await ensureVm(c, options)).filesystem.move(...args),
+		remove: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["filesystem"]["remove"]>
+		) => (await ensureVm(c, options)).filesystem.remove(...args),
+		exec: async (
+			c: AnyContext,
+			command: string,
+			actorOptions?: ActorLanguageExecutionOptions,
+		) =>
+			runActorExecution(
+				c,
+				(vm) =>
+					vm.process.exec(
+						command,
+						...(actorExecutionArgs([actorOptions]) as [never]),
+					),
+				options,
+			),
+		execArgv: async (
+			c: AnyContext,
+			command: string,
+			args: readonly string[] = [],
+			actorOptions?: Omit<ActorLanguageExecutionOptions, "args">,
+		) =>
+			runActorExecution(
+				c,
+				(vm) =>
+					vm.process.execFile(
+						command,
+						args,
+						...(actorExecutionArgs([actorOptions]) as [never]),
+					),
+				options,
+			),
+		spawn: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["process"]["spawn"]>
+		) => {
 			const vm = await ensureVm(c, options);
-			const process = vm.spawn(...args);
+			const process = vm.process.spawn(...args);
 			const unsubscribeOutput = vm.onProcessOutput(process.pid, (event) =>
 				c.broadcast("processOutput", event),
 			);
@@ -540,7 +684,7 @@ export function createAgentOsActions(
 			);
 			void c
 				.keepAwake(
-					vm.waitProcess(process.pid).finally(() => {
+					vm.process.wait(process.pid).finally(() => {
 						unsubscribeOutput();
 						unsubscribeExit();
 					}),
@@ -554,42 +698,332 @@ export function createAgentOsActions(
 				);
 			return process;
 		},
+		executeJavaScript: async (
+			c: AnyContext,
+			source: string,
+			actorOptions?: ActorJavaScriptExecutionOptions,
+		) =>
+			runActorExecution(
+				c,
+				(vm) =>
+					vm.javascript.execute(
+						source,
+						...(actorExecutionArgs([actorOptions]) as [never]),
+					),
+				options,
+			),
+		evaluateJavaScript: async (
+			c: AnyContext,
+			expression: string,
+			actorOptions?: Omit<ActorJavaScriptExecutionOptions, "detached">,
+		) =>
+			runActorExecution(
+				c,
+				(vm) =>
+					vm.javascript.evaluate(
+						expression,
+						...(actorExecutionArgs([actorOptions]) as [never]),
+					),
+				options,
+			),
+		executeJavaScriptFile: async (
+			c: AnyContext,
+			path: string,
+			actorOptions?: ActorLanguageExecutionOptions,
+		) =>
+			runActorExecution(
+				c,
+				(vm) =>
+					vm.javascript.executeFile(
+						path,
+						...(actorExecutionArgs([actorOptions]) as [never]),
+					),
+				options,
+			),
+		executeTypeScript: async (
+			c: AnyContext,
+			source: string,
+			actorOptions?: ActorTypeScriptExecutionOptions,
+		) =>
+			runActorExecution(
+				c,
+				(vm) =>
+					vm.javascript.typescript.execute(
+						source,
+						...(actorExecutionArgs([actorOptions]) as [never]),
+					),
+				options,
+			),
+		evaluateTypeScript: async (
+			c: AnyContext,
+			expression: string,
+			actorOptions?: Omit<ActorTypeScriptExecutionOptions, "detached">,
+		) =>
+			runActorExecution(
+				c,
+				(vm) =>
+					vm.javascript.typescript.evaluate(
+						expression,
+						...(actorExecutionArgs([actorOptions]) as [never]),
+					),
+				options,
+			),
+		executeTypeScriptFile: async (
+			c: AnyContext,
+			path: string,
+			actorOptions?: ActorTypeScriptFileExecutionOptions,
+		) =>
+			runActorExecution(
+				c,
+				(vm) =>
+					vm.javascript.typescript.executeFile(
+						path,
+						...(actorExecutionArgs([actorOptions]) as [never]),
+					),
+				options,
+			),
+		checkTypeScript: async (
+			c: AnyContext,
+			source: string,
+			actorOptions?: ActorTypeScriptCheckOptions,
+		) =>
+			runActorExecution(
+				c,
+				(vm) =>
+					vm.javascript.typescript.check(
+						source,
+						...(actorExecutionArgs([actorOptions]) as [never]),
+					),
+				options,
+			),
+		checkTypeScriptProject: async (
+			c: AnyContext,
+			actorOptions?: Omit<
+				ActorTypeScriptCheckOptions,
+				"filePath" | "compilerOptions"
+			>,
+		) =>
+			runActorExecution(
+				c,
+				(vm) =>
+					vm.javascript.typescript.checkProject(
+						...(actorExecutionArgs([actorOptions]) as [never]),
+					),
+				options,
+			),
+		installNpmPackages: async (
+			c: AnyContext,
+			...args:
+				| [options?: ActorNpmProjectInstallOptions]
+				| [packages: string | string[], options?: ActorNpmPackageInstallOptions]
+		) =>
+			runActorExecution(
+				c,
+				(vm) =>
+					(
+						vm.javascript.npm.install as (
+							...callArgs: unknown[]
+						) => Promise<CodeExecutionResult>
+					)(...actorExecutionArgs(args)),
+				options,
+			),
+		executeNpmScript: async (
+			c: AnyContext,
+			script: string,
+			actorOptions?: ActorLanguageExecutionOptions,
+		) =>
+			runActorExecution(
+				c,
+				(vm) =>
+					vm.javascript.npm.runScript(
+						script,
+						...(actorExecutionArgs([actorOptions]) as [never]),
+					),
+				options,
+			),
+		executeNpmPackage: async (
+			c: AnyContext,
+			packageSpec: string,
+			actorOptions?: ActorLanguageExecutionOptions & { binary?: string },
+		) =>
+			runActorExecution(
+				c,
+				(vm) =>
+					vm.javascript.npm.runPackage(
+						packageSpec,
+						...(actorExecutionArgs([actorOptions]) as [never]),
+					),
+				options,
+			),
+		executePython: async (
+			c: AnyContext,
+			source: string,
+			actorOptions?: ActorInlineExecutionOptions,
+		) =>
+			runActorExecution(
+				c,
+				(vm) =>
+					vm.python.execute(
+						source,
+						...(actorExecutionArgs([actorOptions]) as [never]),
+					),
+				options,
+			),
+		evaluatePython: async (
+			c: AnyContext,
+			expression: string,
+			actorOptions?: Omit<ActorInlineExecutionOptions, "detached">,
+		) =>
+			runActorExecution(
+				c,
+				(vm) =>
+					vm.python.evaluate(
+						expression,
+						...(actorExecutionArgs([actorOptions]) as [never]),
+					),
+				options,
+			),
+		executePythonFile: async (
+			c: AnyContext,
+			path: string,
+			actorOptions?: ActorLanguageExecutionOptions,
+		) =>
+			runActorExecution(
+				c,
+				(vm) =>
+					vm.python.executeFile(
+						path,
+						...(actorExecutionArgs([actorOptions]) as [never]),
+					),
+				options,
+			),
+		executePythonModule: async (
+			c: AnyContext,
+			module: string,
+			actorOptions?: ActorLanguageExecutionOptions,
+		) =>
+			runActorExecution(
+				c,
+				(vm) =>
+					vm.python.executeModule(
+						module,
+						...(actorExecutionArgs([actorOptions]) as [never]),
+					),
+				options,
+			),
+		installPythonPackages: async (
+			c: AnyContext,
+			...args:
+				| [options?: ActorPythonInstallOptions]
+				| [packages: string | string[], options?: ActorPythonInstallOptions]
+		) =>
+			runActorExecution(
+				c,
+				(vm) =>
+					(
+						vm.python.install as (
+							...callArgs: unknown[]
+						) => Promise<CodeExecutionResult>
+					)(...actorExecutionArgs(args)),
+				options,
+			),
+		getExecution: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["executions"]["get"]>
+		) => (await ensureVm(c, options)).executions.get(...args),
+		listExecutions: async (c: AnyContext) =>
+			(await ensureVm(c, options)).executions.list(),
+		waitExecution: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["executions"]["wait"]>
+		) => (await ensureVm(c, options)).executions.wait(...args),
+		cancelExecution: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["executions"]["cancel"]>
+		) => (await ensureVm(c, options)).executions.cancel(...args),
+		signalExecution: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["executions"]["signal"]>
+		) => (await ensureVm(c, options)).executions.signal(...args),
+		resetExecution: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["executions"]["reset"]>
+		) => (await ensureVm(c, options)).executions.reset(...args),
+		deleteExecution: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["executions"]["delete"]>
+		) => (await ensureVm(c, options)).executions.delete(...args),
+		writeExecutionStdin: async (
+			c: AnyContext,
+			executionId: string,
+			data: ActorData,
+		) =>
+			(await ensureVm(c, options)).executions.writeStdin(
+				executionId,
+				decodeActorData(data),
+			),
+		closeExecutionStdin: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["executions"]["closeStdin"]>
+		) => (await ensureVm(c, options)).executions.closeStdin(...args),
+		resizeExecutionPty: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["executions"]["resizePty"]>
+		) => (await ensureVm(c, options)).executions.resizePty(...args),
+		readExecutionOutput: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["executions"]["readOutput"]>
+		) => {
+			const page = await (await ensureVm(c, options)).executions.readOutput(
+				...args,
+			);
+			return {
+				...page,
+				events: page.events.map((event) => ({
+					...event,
+					chunk: {
+						encoding: "base64" as const,
+						data: Buffer.from(event.chunk).toString("base64"),
+					},
+				})),
+			};
+		},
 		waitProcess: async (
 			c: AnyContext,
-			...args: Parameters<AgentOs["waitProcess"]>
-		) => (await ensureVm(c, options)).waitProcess(...args),
+			...args: Parameters<AgentOs["process"]["wait"]>
+		) => (await ensureVm(c, options)).process.wait(...args),
 		killProcess: async (
 			c: AnyContext,
-			...args: Parameters<AgentOs["killProcess"]>
-		) => (await ensureVm(c, options)).killProcess(...args),
+			...args: Parameters<AgentOs["process"]["kill"]>
+		) => (await ensureVm(c, options)).process.kill(...args),
 		stopProcess: async (
 			c: AnyContext,
-			...args: Parameters<AgentOs["stopProcess"]>
-		) => (await ensureVm(c, options)).stopProcess(...args),
+			...args: Parameters<AgentOs["process"]["stop"]>
+		) => (await ensureVm(c, options)).process.stop(...args),
 		listProcesses: async (c: AnyContext) =>
-			(await ensureVm(c, options)).listProcesses(),
+			(await ensureVm(c, options)).process.list(),
 		allProcesses: async (c: AnyContext) =>
-			(await ensureVm(c, options)).allProcesses(),
+			(await ensureVm(c, options)).process.listAll(),
 		processTree: async (c: AnyContext) =>
-			(await ensureVm(c, options)).processTree(),
+			(await ensureVm(c, options)).process.tree(),
 		getProcess: async (
 			c: AnyContext,
-			...args: Parameters<AgentOs["getProcess"]>
-		) => (await ensureVm(c, options)).getProcess(...args),
+			...args: Parameters<AgentOs["process"]["get"]>
+		) => (await ensureVm(c, options)).process.get(...args),
 		writeProcessStdin: async (
 			c: AnyContext,
-			...args: Parameters<AgentOs["writeProcessStdin"]>
-		) => (await ensureVm(c, options)).writeProcessStdin(...args),
+			...args: Parameters<AgentOs["process"]["writeStdin"]>
+		) => (await ensureVm(c, options)).process.writeStdin(...args),
 		closeProcessStdin: async (
 			c: AnyContext,
-			...args: Parameters<AgentOs["closeProcessStdin"]>
-		) => (await ensureVm(c, options)).closeProcessStdin(...args),
+			...args: Parameters<AgentOs["process"]["closeStdin"]>
+		) => (await ensureVm(c, options)).process.closeStdin(...args),
 		openShell: async (
 			c: AnyContext,
-			...args: Parameters<AgentOs["openShell"]>
+			...args: Parameters<AgentOs["terminal"]["open"]>
 		) => {
 			const vm = await ensureVm(c, options);
-			const shell = vm.openShell(...args);
+			const shell = vm.terminal.open(...args);
 			const unsubscribeData = vm.onShellData(shell.shellId, (event) =>
 				c.broadcast("shellData", event),
 			);
@@ -601,7 +1035,7 @@ export function createAgentOsActions(
 			);
 			void c
 				.keepAwake(
-					vm.waitShell(shell.shellId).finally(() => {
+					vm.terminal.wait(shell.shellId).finally(() => {
 						unsubscribeData();
 						unsubscribeStderr();
 						unsubscribeExit();
@@ -618,45 +1052,45 @@ export function createAgentOsActions(
 		},
 		writeShell: async (
 			c: AnyContext,
-			...args: Parameters<AgentOs["writeShell"]>
-		) => (await ensureVm(c, options)).writeShell(...args),
+			...args: Parameters<AgentOs["terminal"]["write"]>
+		) => (await ensureVm(c, options)).terminal.write(...args),
 		resizeShell: async (
 			c: AnyContext,
-			...args: Parameters<AgentOs["resizeShell"]>
-		) => (await ensureVm(c, options)).resizeShell(...args),
+			...args: Parameters<AgentOs["terminal"]["resize"]>
+		) => (await ensureVm(c, options)).terminal.resize(...args),
 		closeShell: async (
 			c: AnyContext,
-			...args: Parameters<AgentOs["closeShell"]>
-		) => (await ensureVm(c, options)).closeShell(...args),
+			...args: Parameters<AgentOs["terminal"]["close"]>
+		) => (await ensureVm(c, options)).terminal.close(...args),
 		waitShell: async (
 			c: AnyContext,
-			...args: Parameters<AgentOs["waitShell"]>
-		) => (await ensureVm(c, options)).waitShell(...args),
+			...args: Parameters<AgentOs["terminal"]["wait"]>
+		) => (await ensureVm(c, options)).terminal.wait(...args),
 		httpRequest: async (
 			c: AnyContext,
-			...args: Parameters<AgentOs["httpRequest"]>
-		) => (await ensureVm(c, options)).httpRequest(...args),
+			...args: Parameters<AgentOs["network"]["httpRequest"]>
+		) => (await ensureVm(c, options)).network.httpRequest(...args),
 		scheduleCron: async (
 			c: AnyContext,
 			cronOptions: SerializableCronJobOptions,
 		) => {
-			const job = (await ensureVm(c, options)).scheduleCron(
-				cronOptions as Parameters<AgentOs["scheduleCron"]>[0],
+			const job = (await ensureVm(c, options)).cron.schedule(
+				cronOptions as Parameters<AgentOs["cron"]["schedule"]>[0],
 			);
 			return { id: job.id };
 		},
 		listCronJobs: async (c: AnyContext) =>
-			(await ensureVm(c, options)).listCronJobs(),
+			(await ensureVm(c, options)).cron.list(),
 		cancelCronJob: async (
 			c: AnyContext,
-			...args: Parameters<AgentOs["cancelCronJob"]>
-		) => (await ensureVm(c, options)).cancelCronJob(...args),
+			...args: Parameters<AgentOs["cron"]["cancel"]>
+		) => (await ensureVm(c, options)).cron.cancel(...args),
 		listAgents: async (c: AnyContext) =>
-			(await ensureVm(c, options)).listAgents(),
+			(await ensureVm(c, options)).agents.list(),
 		openSession: async (c: AnyContext, input: OpenSessionInput) => {
 			const vm = await ensureVm(c, options);
 			try {
-				await vm.openSession(input);
+				await vm.sessions.open(input);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				const causeCode =
@@ -685,25 +1119,29 @@ export function createAgentOsActions(
 		},
 		getSession: async (
 			c: AnyContext,
-			...args: Parameters<AgentOs["getSession"]>
-		) => (await ensureVm(c, options)).getSession(...args),
+			...args: Parameters<AgentOs["sessions"]["get"]>
+		) => (await ensureVm(c, options)).sessions.get(...args),
 		listSessions: async (
 			c: AnyContext,
-			...args: Parameters<AgentOs["listSessions"]>
-		) => (await ensureVm(c, options)).listSessions(...args),
+			...args: Parameters<AgentOs["sessions"]["list"]>
+		) => (await ensureVm(c, options)).sessions.list(...args),
 		deleteSession: async (
 			c: AnyContext,
-			...args: Parameters<AgentOs["deleteSession"]>
+			...args: Parameters<AgentOs["sessions"]["delete"]>
 		) => {
-			const result = await (await ensureVm(c, options)).deleteSession(...args);
+			const result = await (await ensureVm(c, options)).sessions.delete(
+				...args,
+			);
 			untrackSessionEvents(c, args[0]?.sessionId ?? "main");
 			return result;
 		},
 		unloadSession: async (
 			c: AnyContext,
-			...args: Parameters<AgentOs["unloadSession"]>
+			...args: Parameters<AgentOs["sessions"]["unload"]>
 		) => {
-			const result = await (await ensureVm(c, options)).unloadSession(...args);
+			const result = await (await ensureVm(c, options)).sessions.unload(
+				...args,
+			);
 			untrackSessionEvents(c, args[0]?.sessionId ?? "main");
 			return result;
 		},
@@ -714,7 +1152,7 @@ export function createAgentOsActions(
 			// The actor is held only through the terminal SQLite commit for this
 			// active turn. Merely having an idle durable session holds nothing.
 			try {
-				return await c.keepAwake(vm.prompt(input));
+				return await c.keepAwake(vm.sessions.prompt(input));
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				const causeCode =
@@ -735,32 +1173,32 @@ export function createAgentOsActions(
 		},
 		cancelPrompt: async (
 			c: AnyContext,
-			...args: Parameters<AgentOs["cancelPrompt"]>
-		) => (await ensureVm(c, options)).cancelPrompt(...args),
+			...args: Parameters<AgentOs["sessions"]["cancelPrompt"]>
+		) => (await ensureVm(c, options)).sessions.cancelPrompt(...args),
 		respondPermission: async (
 			c: AnyContext,
-			...args: Parameters<AgentOs["respondPermission"]>
-		) => (await ensureVm(c, options)).respondPermission(...args),
+			...args: Parameters<AgentOs["sessions"]["respondPermission"]>
+		) => (await ensureVm(c, options)).sessions.respondPermission(...args),
 		readHistory: async (
 			c: AnyContext,
-			...args: Parameters<AgentOs["readHistory"]>
-		) => (await ensureVm(c, options)).readHistory(...args),
+			...args: Parameters<AgentOs["sessions"]["readHistory"]>
+		) => (await ensureVm(c, options)).sessions.readHistory(...args),
 		getSessionConfig: async (
 			c: AnyContext,
-			...args: Parameters<AgentOs["getSessionConfig"]>
-		) => (await ensureVm(c, options)).getSessionConfig(...args),
+			...args: Parameters<AgentOs["sessions"]["getConfig"]>
+		) => (await ensureVm(c, options)).sessions.getConfig(...args),
 		setSessionConfigOption: async (
 			c: AnyContext,
-			...args: Parameters<AgentOs["setSessionConfigOption"]>
-		) => (await ensureVm(c, options)).setSessionConfigOption(...args),
+			...args: Parameters<AgentOs["sessions"]["setConfigOption"]>
+		) => (await ensureVm(c, options)).sessions.setConfigOption(...args),
 		getSessionCapabilities: async (
 			c: AnyContext,
-			...args: Parameters<AgentOs["getSessionCapabilities"]>
-		) => (await ensureVm(c, options)).getSessionCapabilities(...args),
+			...args: Parameters<AgentOs["sessions"]["getCapabilities"]>
+		) => (await ensureVm(c, options)).sessions.getCapabilities(...args),
 		getSessionAgentInfo: async (
 			c: AnyContext,
-			...args: Parameters<AgentOs["getSessionAgentInfo"]>
-		) => (await ensureVm(c, options)).getSessionAgentInfo(...args),
+			...args: Parameters<AgentOs["sessions"]["getAgentInfo"]>
+		) => (await ensureVm(c, options)).sessions.getAgentInfo(...args),
 		createPreviewUrl: async (
 			c: AnyContext,
 			port: number,
@@ -826,8 +1264,8 @@ export function createAgentOsActions(
 		},
 		exportRootFilesystem: async (
 			c: AnyContext,
-			...args: Parameters<AgentOs["exportRootFilesystem"]>
-		) => (await ensureVm(c, options)).exportRootFilesystem(...args),
+			...args: Parameters<AgentOs["filesystem"]["export"]>
+		) => (await ensureVm(c, options)).filesystem.export(...args),
 		mountFs: async (c: AnyContext, descriptor: DynamicMountDescriptor) => {
 			await assertActorCollectionCapacity(
 				c,
@@ -838,7 +1276,7 @@ export function createAgentOsActions(
 				"maxDynamicMounts",
 			);
 			const vm = await ensureVm(c, options);
-			await vm.mountFs(descriptor);
+			await vm.filesystem.mount(descriptor);
 			try {
 				await c.db.execute(
 					"INSERT INTO agentos_actor_dynamic_mounts (path, descriptor_json) VALUES (?, ?) ON CONFLICT(path) DO UPDATE SET descriptor_json = excluded.descriptor_json",
@@ -847,7 +1285,7 @@ export function createAgentOsActions(
 				);
 			} catch (error) {
 				try {
-					await vm.unmountFs(descriptor.path);
+					await vm.filesystem.unmount(descriptor.path);
 				} catch (rollbackError) {
 					c.log.error({
 						msg: "agent-os dynamic mount rollback failed",
@@ -864,7 +1302,7 @@ export function createAgentOsActions(
 				path,
 			);
 			const vm = await ensureVm(c, options);
-			await vm.unmountFs(path);
+			await vm.filesystem.unmount(path);
 			try {
 				await c.db.execute(
 					"DELETE FROM agentos_actor_dynamic_mounts WHERE path = ?",
@@ -873,7 +1311,7 @@ export function createAgentOsActions(
 			} catch (error) {
 				if (rows[0]) {
 					try {
-						await vm.mountFs(
+						await vm.filesystem.mount(
 							JSON.parse(rows[0].descriptor_json) as DynamicMountDescriptor,
 						);
 					} catch (rollbackError) {
@@ -888,9 +1326,9 @@ export function createAgentOsActions(
 			}
 		},
 		listMounts: async (c: AnyContext) =>
-			(await ensureVm(c, options)).listMounts(),
+			(await ensureVm(c, options)).filesystem.listMounts(),
 		listSoftware: async (c: AnyContext) =>
-			(await ensureVm(c, options)).listSoftware(),
+			(await ensureVm(c, options)).software.list(),
 		linkSoftware: async (c: AnyContext, descriptor: PackageDescriptor) => {
 			await assertActorCollectionCapacity(
 				c,
@@ -906,7 +1344,7 @@ export function createAgentOsActions(
 				JSON.stringify(descriptor),
 			);
 			try {
-				await (await ensureVm(c, options)).linkSoftware(descriptor);
+				await (await ensureVm(c, options)).software.link(descriptor);
 			} catch (error) {
 				try {
 					await c.db.execute(
@@ -923,6 +1361,181 @@ export function createAgentOsActions(
 				throw error;
 			}
 		},
+	};
+
+	const nested = {
+		process: {
+			exec: flat.exec,
+			execFile: flat.execArgv,
+			spawn: flat.spawn,
+			get: flat.getProcess,
+			list: flat.listProcesses,
+			listAll: flat.allProcesses,
+			tree: flat.processTree,
+			wait: flat.waitProcess,
+			stop: flat.stopProcess,
+			kill: flat.killProcess,
+			writeStdin: flat.writeProcessStdin,
+			closeStdin: flat.closeProcessStdin,
+		},
+		javascript: {
+			execute: flat.executeJavaScript,
+			evaluate: flat.evaluateJavaScript,
+			executeFile: flat.executeJavaScriptFile,
+			typescript: {
+				execute: flat.executeTypeScript,
+				evaluate: flat.evaluateTypeScript,
+				executeFile: flat.executeTypeScriptFile,
+				check: flat.checkTypeScript,
+				checkProject: flat.checkTypeScriptProject,
+			},
+			npm: {
+				install: flat.installNpmPackages,
+				runScript: flat.executeNpmScript,
+				runPackage: flat.executeNpmPackage,
+			},
+		},
+		python: {
+			execute: flat.executePython,
+			evaluate: flat.evaluatePython,
+			executeFile: flat.executePythonFile,
+			executeModule: flat.executePythonModule,
+			install: flat.installPythonPackages,
+		},
+		executions: {
+			get: flat.getExecution,
+			list: flat.listExecutions,
+			wait: flat.waitExecution,
+			cancel: flat.cancelExecution,
+			signal: flat.signalExecution,
+			reset: flat.resetExecution,
+			delete: flat.deleteExecution,
+			writeStdin: flat.writeExecutionStdin,
+			closeStdin: flat.closeExecutionStdin,
+			resizePty: flat.resizeExecutionPty,
+			readOutput: flat.readExecutionOutput,
+		},
+		terminal: {
+			open: flat.openShell,
+			write: flat.writeShell,
+			resize: flat.resizeShell,
+			wait: flat.waitShell,
+			close: flat.closeShell,
+		},
+		filesystem: {
+			readFile: flat.readFile,
+			writeFile: flat.writeFile,
+			readFiles: flat.readFiles,
+			writeFiles: flat.writeFiles,
+			stat: flat.stat,
+			mkdir: flat.mkdir,
+			readdir: flat.readdir,
+			readdirEntries: flat.readdirEntries,
+			readdirRecursive: flat.readdirRecursive,
+			exists: flat.exists,
+			move: flat.move,
+			remove: flat.remove,
+			export: flat.exportRootFilesystem,
+			mount: flat.mountFs,
+			unmount: flat.unmountFs,
+			listMounts: flat.listMounts,
+		},
+		network: {
+			httpRequest: flat.httpRequest,
+		},
+		software: {
+			list: flat.listSoftware,
+			link: flat.linkSoftware,
+		},
+		agents: {
+			list: flat.listAgents,
+		},
+		sessions: {
+			open: flat.openSession,
+			get: flat.getSession,
+			list: flat.listSessions,
+			delete: flat.deleteSession,
+			unload: flat.unloadSession,
+			prompt: flat.prompt,
+			cancelPrompt: flat.cancelPrompt,
+			respondPermission: flat.respondPermission,
+			readHistory: flat.readHistory,
+			getConfig: flat.getSessionConfig,
+			setConfigOption: flat.setSessionConfigOption,
+			getCapabilities: flat.getSessionCapabilities,
+			getAgentInfo: flat.getSessionAgentInfo,
+		},
+		cron: {
+			schedule: flat.scheduleCron,
+			list: flat.listCronJobs,
+			cancel: flat.cancelCronJob,
+		},
+	};
+
+	return {
+		...nested,
+
+		// Legacy flat actions from the pre-language-execution API. Keep these
+		// as aliases to the canonical nested handlers.
+		readFile: nested.filesystem.readFile,
+		writeFile: nested.filesystem.writeFile,
+		readFiles: nested.filesystem.readFiles,
+		writeFiles: nested.filesystem.writeFiles,
+		stat: nested.filesystem.stat,
+		mkdir: nested.filesystem.mkdir,
+		readdir: nested.filesystem.readdir,
+		readdirEntries: nested.filesystem.readdirEntries,
+		readdirRecursive: nested.filesystem.readdirRecursive,
+		exists: nested.filesystem.exists,
+		move: nested.filesystem.move,
+		remove: nested.filesystem.remove,
+		exportRootFilesystem: nested.filesystem.export,
+		mountFs: nested.filesystem.mount,
+		unmountFs: nested.filesystem.unmount,
+		listMounts: nested.filesystem.listMounts,
+		exec: async (c: AnyContext, ...args: Parameters<AgentOs["exec"]>) =>
+			(await ensureVm(c, options)).exec(...args),
+		execArgv: async (c: AnyContext, ...args: Parameters<AgentOs["execArgv"]>) =>
+			(await ensureVm(c, options)).execArgv(...args),
+		spawn: nested.process.spawn,
+		waitProcess: nested.process.wait,
+		killProcess: nested.process.kill,
+		stopProcess: nested.process.stop,
+		listProcesses: nested.process.list,
+		allProcesses: nested.process.listAll,
+		processTree: nested.process.tree,
+		getProcess: nested.process.get,
+		writeProcessStdin: nested.process.writeStdin,
+		closeProcessStdin: nested.process.closeStdin,
+		openShell: nested.terminal.open,
+		writeShell: nested.terminal.write,
+		resizeShell: nested.terminal.resize,
+		closeShell: nested.terminal.close,
+		waitShell: nested.terminal.wait,
+		httpRequest: nested.network.httpRequest,
+		scheduleCron: nested.cron.schedule,
+		listCronJobs: nested.cron.list,
+		cancelCronJob: nested.cron.cancel,
+		listAgents: nested.agents.list,
+		openSession: nested.sessions.open,
+		getSession: nested.sessions.get,
+		listSessions: nested.sessions.list,
+		deleteSession: nested.sessions.delete,
+		unloadSession: nested.sessions.unload,
+		prompt: nested.sessions.prompt,
+		cancelPrompt: nested.sessions.cancelPrompt,
+		respondPermission: nested.sessions.respondPermission,
+		readHistory: nested.sessions.readHistory,
+		getSessionConfig: nested.sessions.getConfig,
+		setSessionConfigOption: nested.sessions.setConfigOption,
+		getSessionCapabilities: nested.sessions.getCapabilities,
+		getSessionAgentInfo: nested.sessions.getAgentInfo,
+		listSoftware: nested.software.list,
+		linkSoftware: nested.software.link,
+
+		// Preview URLs are RivetKit-specific and intentionally stay flat.
+		createPreviewUrl: flat.createPreviewUrl,
+		expirePreviewUrl: flat.expirePreviewUrl,
 	};
 }
 
@@ -1233,7 +1846,7 @@ export function createAgentOS<
 			request.headers.forEach((value, key) => {
 				requestHeaders[key] = value;
 			});
-			const response = await vm.httpRequest({
+			const response = await vm.network.httpRequest({
 				port: rows[0].port,
 				path: `${target.pathname}${target.search}`,
 				method: request.method,

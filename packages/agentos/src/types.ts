@@ -2,11 +2,22 @@ import type {
 	AgentExitEvent,
 	CronEvent,
 	CronJobInfo,
+	ExecutionCompletedEvent,
+	ExecutionOutputEvent,
+	InlineExecutionOptions,
+	JavaScriptExecutionOptions,
+	LanguageExecutionOptions,
+	NpmPackageInstallOptions,
+	NpmProjectInstallOptions,
 	ProcessExit,
 	ProcessOutput,
 	SessionStreamEntry,
 	ShellData,
 	ShellExit,
+	PythonInstallOptions,
+	TypeScriptCheckOptions,
+	TypeScriptExecutionOptions,
+	TypeScriptFileExecutionOptions,
 } from "@rivet-dev/agentos-core";
 
 export type VmBootedPayload = Record<string, never>;
@@ -20,6 +31,36 @@ export type ProcessExitPayload = ProcessExit;
 export type ShellDataPayload = ShellData;
 export type ShellExitPayload = ShellExit;
 export type SerializableCronEvent = CronEvent;
+export type ActorData =
+	| { encoding: "utf8"; data: string }
+	| { encoding: "base64"; data: string };
+
+export type ActorLanguageExecutionOptions = Omit<
+	LanguageExecutionOptions,
+	"stdin" | "signal" | "onStdout" | "onStderr"
+> & { stdin?: ActorData };
+export type ActorInlineExecutionOptions = Omit<
+	InlineExecutionOptions,
+	"stdin" | "signal" | "onStdout" | "onStderr"
+> & { stdin?: ActorData };
+export type ActorJavaScriptExecutionOptions = Omit<
+	JavaScriptExecutionOptions,
+	"stdin" | "signal" | "onStdout" | "onStderr"
+> & { stdin?: ActorData };
+export type ActorTypeScriptExecutionOptions = Omit<
+	TypeScriptExecutionOptions,
+	"stdin" | "signal" | "onStdout" | "onStderr"
+> & { stdin?: ActorData };
+export type ActorTypeScriptFileExecutionOptions = Omit<
+	TypeScriptFileExecutionOptions,
+	"stdin" | "signal" | "onStdout" | "onStderr"
+> & { stdin?: ActorData };
+export type ActorTypeScriptCheckOptions = Omit<TypeScriptCheckOptions, "signal">;
+export type ActorNpmProjectInstallOptions = Omit<NpmProjectInstallOptions, "signal">;
+export type ActorNpmPackageInstallOptions = Omit<NpmPackageInstallOptions, "signal">;
+export type ActorPythonInstallOptions = Omit<PythonInstallOptions, "signal">;
+export type ExecutionOutputPayload = ExecutionOutputEvent<ActorData>;
+export type ExecutionCompletedPayload = ExecutionCompletedEvent;
 
 // --- Event schema map (used by actor() events config) ---
 
@@ -30,6 +71,8 @@ export interface AgentOsEvents {
 	vmShutdown: VmShutdownPayload;
 	processOutput: ProcessOutputPayload;
 	processExit: ProcessExitPayload;
+	executionOutput: ExecutionOutputPayload;
+	executionCompleted: ExecutionCompletedPayload;
 	/** Ordered PTY output containing stdout and stderr exactly once. */
 	shellData: ShellDataPayload;
 	/** Optional stderr-only diagnostic tap; do not render it with `shellData`. */

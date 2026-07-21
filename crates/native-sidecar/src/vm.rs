@@ -546,6 +546,11 @@ where
                 command_permissions: BTreeMap::new(),
                 bindings: BTreeMap::new(),
                 active_processes: BTreeMap::new(),
+                executions: BTreeMap::new(),
+                execution_processes: BTreeMap::new(),
+                next_public_execution_id: 0,
+                package_mutation_execution_id: None,
+                typescript_compiler_staged: false,
                 exited_process_snapshots: VecDeque::new(),
                 detached_child_processes: BTreeSet::new(),
                 attached_child_event_cursor: 0,
@@ -680,7 +685,7 @@ where
             vm.command_guest_paths = discover_command_guest_paths(&mut vm.kernel);
             // The `{ packageDir }` projection lands each package's `bin/<cmd>` at
             // `/opt/agentos/bin/<cmd>` (on `$PATH`) but does NOT populate
-            // `/__secure_exec/commands`, so `discover_command_guest_paths` alone misses
+            // `/__agentos/commands`, so `discover_command_guest_paths` alone misses
             // projected commands and every projected wasm/js command resolves to
             // ENOEXEC (absolute path) / ENOENT (bare name). Register each projected
             // command by name -> its `/opt/agentos/bin/<cmd>` entrypoint so both the
@@ -3670,9 +3675,8 @@ mod tests {
             .expect("clock should be monotonic")
             .as_nanos();
         let database_path =
-            std::env::temp_dir().join(format!("secure-exec-native-root-{unique}.sqlite"));
-        let block_root =
-            std::env::temp_dir().join(format!("secure-exec-native-root-blocks-{unique}"));
+            std::env::temp_dir().join(format!("agentos-native-root-{unique}.sqlite"));
+        let block_root = std::env::temp_dir().join(format!("agentos-native-root-blocks-{unique}"));
         let native_root =
             native_root_plugin_from_config(Some(&agentos_vm_config::NativeRootFilesystemConfig {
                 plugin: agentos_vm_config::MountPluginDescriptor {

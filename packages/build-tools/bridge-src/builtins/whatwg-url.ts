@@ -11,9 +11,9 @@ var ERR_INVALID_URL = "ERR_INVALID_URL";
 var ERR_ARG_NOT_ITERABLE = "ERR_ARG_NOT_ITERABLE";
 var ERR_INVALID_TUPLE = "ERR_INVALID_TUPLE";
 var URL_SEARCH_PARAMS_TYPE = "URLSearchParams";
-var kLinkedSearchParams = /* @__PURE__ */ Symbol("secureExecLinkedURLSearchParams");
-var kBlobUrlStore = /* @__PURE__ */ Symbol.for("secureExec.blobUrlStore");
-var kBlobUrlCounter = /* @__PURE__ */ Symbol.for("secureExec.blobUrlCounter");
+var kLinkedSearchParams = /* @__PURE__ */ Symbol("agentOsLinkedURLSearchParams");
+var kBlobUrlStore = /* @__PURE__ */ Symbol.for("agentOs.blobUrlStore");
+var kBlobUrlCounter = /* @__PURE__ */ Symbol.for("agentOs.blobUrlCounter");
 var SEARCH_PARAM_METHOD_NAMES = ["append", "delete", "get", "getAll", "has"];
 var SEARCH_PARAM_PAIR_METHOD_NAMES = ["append", "set"];
 var URL_SCHEME_TYPES = {
@@ -274,7 +274,7 @@ function normalizeSearchParamsInit(init) {
   }
   return toNodeUSVString(init);
 }
-var NativeURLSearchParams = typeof globalThis.URLSearchParams === "function" && globalThis.URLSearchParams.__secureExecBootstrapStub !== true ? globalThis.URLSearchParams : class URLSearchParams {
+var NativeURLSearchParams = typeof globalThis.URLSearchParams === "function" && globalThis.URLSearchParams.__agentOsBootstrapStub !== true ? globalThis.URLSearchParams : class URLSearchParams {
   constructor(init = "") {
     this._pairs = [];
     if (typeof init === "string") {
@@ -684,7 +684,7 @@ Object.defineProperties(URLSearchParams.prototype, {
   }
 });
 function canUseNativeUrlImplementation(candidate) {
-  if (typeof candidate !== "function" || candidate.__secureExecBootstrapStub === true) {
+  if (typeof candidate !== "function" || candidate.__agentOsBootstrapStub === true) {
     return false;
   }
   try {
