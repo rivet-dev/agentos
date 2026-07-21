@@ -5,6 +5,7 @@ packages:
   - packages/browser
   - packages/build-tools
   - packages/core
+  - packages/load-tests
   - packages/manifest
   - packages/node-pty
   - packages/playground

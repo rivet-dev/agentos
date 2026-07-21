@@ -1,0 +1,23 @@
+{
+	"name": "@rivet-dev/agentos-load-tests",
+	"version": "0.0.1",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"build": "tsc",
+		"check-types": "tsc --noEmit",
+		"load:limits": "node --expose-gc dist/cli.js limits",
+		"load:churn": "node --expose-gc dist/cli.js churn",
+		"compute:serve": "node dist/cli.js compute-server",
+		"compute:load": "node dist/cli.js compute-load"
+	},
+	"dependencies": {
+		"@rivet-dev/agentos": "workspace:*",
+		"@rivet-dev/agentos-core": "workspace:*",
+		"rivetkit": "catalog:rivetkit"
+	},
+	"devDependencies": {
+		"@types/node": "^22.10.2",
+		"typescript": "^5.9.2"
+	}
+}

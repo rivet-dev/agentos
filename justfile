@@ -200,3 +200,130 @@ test-bounded cmd='pnpm test':
 
 test-risky-probe *tests:
 	./.agent/scripts/run-risky-test-probe.sh "$@"
+
+# Build the exact-workspace image used by every load-test lane. Dockerfile-local
+# ignore rules keep generated artifacts and unrelated website sources out of the
+# build context.
+load-test-image:
+	docker build --file packages/load-tests/Dockerfile --tag agentos-load-tests:local .
+
+# Container-boundary self-test: prove the cgroup envelope, fd ulimit, tmpfs, and
+# network isolation match the flags before trusting any survival verdict. Uses
+# the exact bounded profile of the limit lane.
+load-test-boundary:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	mkdir -p .artifacts/load-tests
+	container="agentos-load-boundary-$$"
+	trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT INT TERM
+	timeout --signal=TERM --kill-after=30s 2m docker run --rm \
+		--name "$container" \
+		--memory=3g --memory-swap=3g --cpus=2 --pids-limit=256 \
+		--ulimit nofile=1024:1024 --network=none \
+		--user "$(id -u):$(id -g)" \
+		--security-opt no-new-privileges --cap-drop=ALL \
+		--tmpfs /tmp:rw,nosuid,nodev,size=512m,mode=1777 \
+		--volume "$PWD/.artifacts/load-tests:/artifacts" \
+		agentos-load-tests:local boundary
+
+# Guest process-limit attack beside a sentinel VM. The workload never runs on
+# the host; the container has hard memory/CPU/PID/fd/swap/time ceilings.
+load-test-limits:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	mkdir -p .artifacts/load-tests
+	container="agentos-load-limits-$$"
+	trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT INT TERM
+	timeout --signal=TERM --kill-after=30s 8m docker run --rm \
+		--name "$container" \
+		--memory=3g --memory-swap=3g --cpus=2 --pids-limit=256 \
+		--ulimit nofile=1024:1024 --network=none \
+		--user "$(id -u):$(id -g)" \
+		--security-opt no-new-privileges --cap-drop=ALL \
+		--tmpfs /tmp:rw,nosuid,nodev,size=512m,mode=1777 \
+		--volume "$PWD/.artifacts/load-tests:/artifacts" \
+		--env LOAD_TEST_PROCESS_LIMIT --env LOAD_TEST_PROCESS_ATTEMPTS \
+		agentos-load-tests:local limits
+
+# High-scale adversarial battery: bounded-but-LARGER cgroup (8 CPU / 8 GiB) so
+# the V8 executor pool (= CPU count) is big enough to actually run hundreds of
+# concurrent VMs. Still a hard-capped container. Runs the `scale` command.
+# Args after the recipe name are passed as the command (default `scale`).
+load-test-scale cmd='scale':
+	#!/usr/bin/env bash
+	set -euo pipefail
+	mkdir -p .artifacts/load-tests
+	container="agentos-load-scale-$$"
+	trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT INT TERM
+	timeout --signal=TERM --kill-after=30s 25m docker run --rm \
+		--name "$container" \
+		--user "$(id -u):$(id -g)" \
+		--memory=8g --memory-swap=8g --cpus=8 --pids-limit=2048 \
+		--ulimit nofile=8192:8192 --network=none \
+		--security-opt no-new-privileges --cap-drop=ALL \
+		--tmpfs /tmp:rw,nosuid,nodev,size=2g,mode=1777 \
+		--volume "$PWD/.artifacts/load-tests:/artifacts" \
+		--env LOAD_TEST_VM_COUNT --env LOAD_TEST_CONCURRENCY --env LOAD_TEST_CYCLES \
+		--env LOAD_TEST_EXEC_CONCURRENCY --env LOAD_TEST_MATRIX_ONLY \
+		agentos-load-tests:local "{{ cmd }}"
+
+# Full deterministic adversarial limit matrix (processes, fds, sockets,
+# filesystem bytes) beside a sentinel, same bounded cgroup as the limit lane.
+load-test-limits-matrix:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	mkdir -p .artifacts/load-tests
+	container="agentos-load-matrix-$$"
+	trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT INT TERM
+	timeout --signal=TERM --kill-after=30s 10m docker run --rm \
+		--name "$container" \
+		--user "$(id -u):$(id -g)" \
+		--memory=3g --memory-swap=3g --cpus=2 --pids-limit=256 \
+		--ulimit nofile=1024:1024 --network=none \
+		--security-opt no-new-privileges --cap-drop=ALL \
+		--tmpfs /tmp:rw,nosuid,nodev,size=512m,mode=1777 \
+		--volume "$PWD/.artifacts/load-tests:/artifacts" \
+		agentos-load-tests:local limits-matrix
+
+# Sequential, burst, and steady-replacement VM churn with leak gates. This is
+# intentionally more generous than the limit lane but remains a bounded cgroup.
+load-test-churn:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	mkdir -p .artifacts/load-tests
+	container="agentos-load-churn-$$"
+	trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT INT TERM
+	timeout --signal=TERM --kill-after=30s 20m docker run --rm \
+		--name "$container" \
+		--memory=4g --memory-swap=4g --cpus=3 --pids-limit=384 \
+		--ulimit nofile=2048:2048 --network=none \
+		--user "$(id -u):$(id -g)" \
+		--security-opt no-new-privileges --cap-drop=ALL \
+		--tmpfs /tmp:rw,nosuid,nodev,size=1g,mode=1777 \
+		--volume "$PWD/.artifacts/load-tests:/artifacts" \
+		--env LOAD_TEST_CYCLES --env LOAD_TEST_BATCH --env LOAD_TEST_SETTLE_MS \
+		--env LOAD_TEST_RSS_SLOPE_BYTES --env LOAD_TEST_RSS_TOTAL_BYTES \
+		--env LOAD_TEST_PSS_TOTAL_BYTES \
+		agentos-load-tests:local churn
+
+# The external Compute load generator is also containerized. Unlike the local
+# lanes it needs egress to the Rivet APIs, but retains hard resource ceilings.
+load-test-compute:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	mkdir -p .artifacts/load-tests
+	container="agentos-load-compute-$$"
+	trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT INT TERM
+	timeout --signal=TERM --kill-after=30s 20m docker run --rm \
+		--name "$container" \
+		--memory=1g --memory-swap=1g --cpus=1 --pids-limit=128 \
+		--ulimit nofile=1024:1024 \
+		--user "$(id -u):$(id -g)" \
+		--security-opt no-new-privileges --cap-drop=ALL \
+		--tmpfs /tmp:rw,nosuid,nodev,size=128m,mode=1777 \
+		--volume "$PWD/.artifacts/load-tests:/artifacts" \
+		--env RIVET_ENDPOINT --env RIVET_PUBLIC_ENDPOINT --env RIVET_RUN_URL \
+		--env COMPUTE_STEPS --env COMPUTE_HOLD_MS --env COMPUTE_SCALE_DOWN_MS \
+		--env COMPUTE_ACTOR_NAME --env COMPUTE_CREATE_CONCURRENCY \
+		--env COMPUTE_READY_TIMEOUT_MS --env COMPUTE_CLEANUP_DEADLINE_MS \
+		agentos-load-tests:local compute-load
