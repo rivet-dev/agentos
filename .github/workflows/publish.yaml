@@ -88,6 +88,12 @@ jobs:
           toolchain: nightly-2026-03-01
           components: rust-src
           targets: wasm32-wasip1
+      - name: Install toolchain build prerequisites
+        run: |
+          if ! command -v cmake >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install --yes cmake
+          fi
       - run: make -C toolchain codex
       - uses: actions/upload-artifact@v4
         with:
