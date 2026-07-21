@@ -455,14 +455,13 @@ pub(super) fn spawn_binding_process_events(request: BindingProcessEventRequest) 
                             eprintln!(
                                 "ERR_AGENTOS_BINDING_EVENT_DELIVERY: failed to enqueue binding failure output; queue limit state retains the typed failure"
                             );
-                        } else if output_enqueued {
-                            if !enqueue(ActiveExecutionEvent::Exited(1))
-                                && !cancelled.load(Ordering::Acquire)
-                            {
-                                eprintln!(
-                                    "ERR_AGENTOS_BINDING_EVENT_DELIVERY: failed to enqueue binding failure exit event; queue limit state retains the typed failure"
-                                );
-                            }
+                        } else if output_enqueued
+                            && !enqueue(ActiveExecutionEvent::Exited(1))
+                            && !cancelled.load(Ordering::Acquire)
+                        {
+                            eprintln!(
+                                "ERR_AGENTOS_BINDING_EVENT_DELIVERY: failed to enqueue binding failure exit event; queue limit state retains the typed failure"
+                            );
                         }
                     }
                     BindingCommandResolution::Invoke { request, timeout } => {
@@ -519,14 +518,13 @@ pub(super) fn spawn_binding_process_events(request: BindingProcessEventRequest) 
                             eprintln!(
                                 "ERR_AGENTOS_BINDING_EVENT_DELIVERY: failed to enqueue binding result output; queue limit state retains the typed failure"
                             );
-                        } else if output_enqueued {
-                            if !enqueue(ActiveExecutionEvent::Exited(exit_code))
-                                && !cancelled.load(Ordering::Acquire)
-                            {
-                                eprintln!(
-                                    "ERR_AGENTOS_BINDING_EVENT_DELIVERY: failed to enqueue binding exit event; queue limit state retains the typed failure"
-                                );
-                            }
+                        } else if output_enqueued
+                            && !enqueue(ActiveExecutionEvent::Exited(exit_code))
+                            && !cancelled.load(Ordering::Acquire)
+                        {
+                            eprintln!(
+                                "ERR_AGENTOS_BINDING_EVENT_DELIVERY: failed to enqueue binding exit event; queue limit state retains the typed failure"
+                            );
                         }
                     }
                 }
@@ -552,14 +550,13 @@ pub(super) fn spawn_binding_process_events(request: BindingProcessEventRequest) 
             eprintln!(
                 "ERR_AGENTOS_BINDING_EVENT_DELIVERY: failed to enqueue blocking-admission failure output; queue limit state retains the typed failure"
             );
-        } else if output_enqueued {
-            if !enqueue_failure(ActiveExecutionEvent::Exited(1))
-                && !failure_cancelled.load(Ordering::Acquire)
-            {
-                eprintln!(
-                    "ERR_AGENTOS_BINDING_EVENT_DELIVERY: failed to enqueue blocking-admission exit event; queue limit state retains the typed failure"
-                );
-            }
+        } else if output_enqueued
+            && !enqueue_failure(ActiveExecutionEvent::Exited(1))
+            && !failure_cancelled.load(Ordering::Acquire)
+        {
+            eprintln!(
+                "ERR_AGENTOS_BINDING_EVENT_DELIVERY: failed to enqueue blocking-admission exit event; queue limit state retains the typed failure"
+            );
         }
     }
 }

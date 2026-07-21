@@ -2558,6 +2558,7 @@ ykAheWCsAteSEWVc0w==\n\
                         env: env.into_iter().collect(),
                         cwd: None,
                         wasm_permission_tier: None,
+                        wasm_backend: None,
                     }),
                 ))
                 .expect("dispatch guest command");
@@ -2973,7 +2974,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
             outputs
         }
 
-        fn ledger_usage_snapshot(resources: &ResourceLedger) -> [usize; 29] {
+        fn ledger_usage_snapshot(resources: &ResourceLedger) -> [usize; 30] {
             ResourceClass::ALL.map(|class| resources.usage(class).used)
         }
 
@@ -11436,6 +11437,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         env: std::collections::HashMap::new(),
                         cwd: None,
                         wasm_permission_tier: None,
+                        wasm_backend: None,
                     }),
                 ))
                 .expect("dispatch lifecycle publication failure");
@@ -11505,6 +11507,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         env: std::collections::HashMap::new(),
                         cwd: None,
                         wasm_permission_tier: None,
+                        wasm_backend: None,
                     }),
                 ))
                 .expect("dispatch python execute");
@@ -11618,6 +11621,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         env: std::collections::HashMap::new(),
                         cwd: None,
                         wasm_permission_tier: None,
+                        wasm_backend: None,
                     }),
                 ))
                 .expect("dispatch wasm command execute");
@@ -11722,6 +11726,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         env: std::collections::HashMap::new(),
                         cwd: None,
                         wasm_permission_tier: None,
+                        wasm_backend: None,
                     }),
                 ))
                 .expect("dispatch wasm command execute");
@@ -11784,6 +11789,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                             env: std::collections::HashMap::new(),
                             cwd: None,
                             wasm_permission_tier: None,
+                            wasm_backend: None,
                         }),
                     ))
                     .expect("dispatch wasm execute");
@@ -11867,6 +11873,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         ]),
                         cwd: Some(String::from("/")),
                         wasm_permission_tier: None,
+                        wasm_backend: None,
                     }),
                 ))
                 .expect("dispatch managed WASM pipe probe");
@@ -11900,7 +11907,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     .collect::<Vec<_>>();
 
                 assert!(
-                    snapshot.pipes >= baseline.pipes + 1,
+                    snapshot.pipes > baseline.pipes,
                     "fd_pipe must allocate in the authoritative kernel pipe table"
                 );
                 assert_eq!(
@@ -12161,6 +12168,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         env: std::collections::HashMap::new(),
                         cwd: Some(String::from("/")),
                         wasm_permission_tier: None,
+                        wasm_backend: None,
                     }),
                 ))
                 .expect("dispatch wasm execute");
@@ -12216,6 +12224,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         env: std::collections::HashMap::new(),
                         cwd: Some(String::from("/")),
                         wasm_permission_tier: None,
+                        wasm_backend: None,
                     }),
                 ))
                 .expect("dispatch wasm execute");
@@ -14837,6 +14846,7 @@ process.stdout.write(`${JSON.stringify({
                         env: std::collections::HashMap::new(),
                         cwd: Some(String::from("/workspace")),
                         wasm_permission_tier: None,
+                        wasm_backend: None,
                     }),
                 ))
                 .expect("dispatch javascript command execute");
@@ -15073,6 +15083,7 @@ if (child.status !== 0) {
                         env: std::collections::HashMap::new(),
                         cwd: Some(String::from("/")),
                         wasm_permission_tier: None,
+                        wasm_backend: None,
                     }),
                 ))
                 .expect("dispatch agentos package execute");
@@ -15143,6 +15154,7 @@ if (child.status !== 0) {
                         env: std::collections::HashMap::new(),
                         cwd: None,
                         wasm_permission_tier: None,
+                        wasm_backend: None,
                     }),
                 ))
                 .expect("dispatch node eval execute");
@@ -15185,6 +15197,7 @@ if (child.status !== 0) {
                         env: std::collections::HashMap::new(),
                         cwd: None,
                         wasm_permission_tier: None,
+                        wasm_backend: None,
                     }),
                 ))
                 .expect("dispatch missing command execute");
@@ -16926,6 +16939,7 @@ console.log(seen.join("\n"));
                         env: std::collections::HashMap::new(),
                         cwd: None,
                         wasm_permission_tier: None,
+                        wasm_backend: None,
                     }),
                 ))
                 .expect("dispatch import fresh execute");

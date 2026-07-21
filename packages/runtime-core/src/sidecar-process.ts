@@ -68,6 +68,7 @@ type GuestRuntimeKind = Extract<
 	"java_script" | "python" | "web_assembly"
 >;
 type WasmPermissionTier = LiveWasmPermissionTier;
+type StandaloneWasmBackend = "v8" | "wasmtime";
 type RootFilesystemEntryEncoding = LiveRootFilesystemEntryEncoding;
 
 type RootFilesystemDescriptor = {
@@ -1232,6 +1233,7 @@ export class SidecarProcess {
 			env?: Record<string, string>;
 			cwd?: string;
 			wasmPermissionTier?: WasmPermissionTier;
+			wasmBackend?: StandaloneWasmBackend;
 		},
 	): Promise<{ pid: number | null }> {
 		const response = await this.sendRequest({
@@ -1252,6 +1254,9 @@ export class SidecarProcess {
 				...(options.cwd ? { cwd: options.cwd } : {}),
 				...(options.wasmPermissionTier
 					? { wasm_permission_tier: options.wasmPermissionTier }
+					: {}),
+				...(options.wasmBackend
+					? { wasm_backend: options.wasmBackend }
 					: {}),
 			},
 		});

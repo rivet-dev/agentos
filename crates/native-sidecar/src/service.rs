@@ -2377,7 +2377,7 @@ where
                 .active_processes
                 .get(process_id)
                 .expect("process existence checked above");
-            deferred_kernel_wait_request_for_process(&request, &vm.kernel, process)?
+            deferred_kernel_wait_request_for_process(request, &vm.kernel, process)?
                 .filter(|request| request.method == "process.fd_write")
         };
 
@@ -2721,7 +2721,7 @@ where
                         process.tty_master_owner.expect("guarded by match arm"),
                     )
                 };
-                self.service_shared_tty_stdio_write(vm_id, writer_kernel_pid, owner, &request)
+                self.service_shared_tty_stdio_write(vm_id, writer_kernel_pid, owner, request)
                     .map(Into::into)
             }
             "__kernel_stdin_read" | "__kernel_poll" => {
@@ -2764,7 +2764,7 @@ where
                     kernel: &mut vm.kernel,
                     kernel_readiness,
                     process,
-                    sync_request: &request,
+                    sync_request: request,
                     capabilities,
                     managed_descriptions: Some(managed_descriptions),
                 })
@@ -2857,12 +2857,12 @@ where
             other => other,
         };
 
-        if response.is_ok() && javascript_sync_rpc_may_make_fd_readable(&request) {
+        if response.is_ok() && javascript_sync_rpc_may_make_fd_readable(request) {
             if let Some(vm) = self.vms.get_mut(vm_id) {
                 Self::wake_ready_deferred_fd_reads(vm)?;
             }
         }
-        if response.is_ok() && javascript_sync_rpc_may_make_fd_writable(&request) {
+        if response.is_ok() && javascript_sync_rpc_may_make_fd_writable(request) {
             if let Some(vm) = self.vms.get_mut(vm_id) {
                 Self::wake_ready_deferred_fd_writes(vm)?;
             }
@@ -3231,6 +3231,7 @@ where
             | ResourceClass::UdpBytes
             | ResourceClass::TlsBytes
             | ResourceClass::ExecutorBytes
+            | ResourceClass::WasmMemoryBytes
             | ResourceClass::Http2BufferedBytes
             | ResourceClass::Http2HeaderBytes
             | ResourceClass::Http2DataBytes
