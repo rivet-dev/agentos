@@ -108,8 +108,8 @@ impl CreateVmConfig {
 #[ts(tag = "type", rename_all = "snake_case")]
 #[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
 pub enum VmSqliteDescriptor {
-    /// Rivet actor SQLite reached through the actor's authenticated UDS.
-    ActorUds { path: String, token: String },
+    /// Rivet actor SQLite reached through the actor's local runtime socket.
+    ActorUds { path: String },
     /// A SQLite database file owned by the native sidecar host.
     SqliteFile { path: String },
 }
@@ -117,13 +117,8 @@ pub enum VmSqliteDescriptor {
 impl VmSqliteDescriptor {
     fn validate(&self) -> Result<(), VmConfigError> {
         match self {
-            Self::ActorUds { path, token } => {
+            Self::ActorUds { path } => {
                 validate_absolute_host_path("database.path", path)?;
-                if token.is_empty() || token.len() > 4096 {
-                    return Err(VmConfigError::new(
-                        "database.token must contain 1..=4096 bytes",
-                    ));
-                }
             }
             Self::SqliteFile { path } => validate_absolute_host_path("database.path", path)?,
         }

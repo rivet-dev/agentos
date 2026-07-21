@@ -155,8 +155,8 @@ describe("full openSession({ agent: 'pi' }) inside the VM", () => {
 			});
 
 			const agentInfo = await vm.getSessionAgentInfo({ sessionId });
-			expect(agentInfo.name).toBe("pi-sdk-acp");
-			expect(agentInfo.title).toBe("Pi SDK ACP adapter");
+			expect(agentInfo.name).toBe("pi-acp");
+			expect(agentInfo.title).toBe("pi ACP adapter");
 			expect(agentInfo.version).toBeTruthy();
 
 			const capabilities = await vm.getSessionCapabilities({ sessionId });

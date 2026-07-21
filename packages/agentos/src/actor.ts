@@ -125,17 +125,17 @@ async function ensureVm(
 
 	const startedAt = Date.now();
 	runtime.vm = (async () => {
-		const actorUds = (
+		const actorRuntimeSocket = (
 			c as AnyContext & {
-				actorUds(): Promise<{ path: string; token: string }>;
+				actorRuntimeSocket(): Promise<{ path: string }>;
 			}
-		).actorUds;
-		if (typeof actorUds !== "function") {
+		).actorRuntimeSocket;
+		if (typeof actorRuntimeSocket !== "function") {
 			throw new Error(
-				"AgentOS actors require a RivetKit runtime with experimental actor UDS support",
+				"AgentOS actors require a RivetKit runtime with Actor Runtime Socket support",
 			);
 		}
-		const { path, token } = await actorUds.call(c);
+		const { path } = await actorRuntimeSocket.call(c);
 		const mountRows = await c.db.execute<{ descriptor_json: string }>(
 			"SELECT descriptor_json FROM agentos_actor_dynamic_mounts ORDER BY path",
 		);
@@ -144,7 +144,7 @@ async function ensureVm(
 		);
 		const vm = await AgentOs.create({
 			...options,
-			database: { type: "actor_uds", path, token },
+			database: { type: "actor_uds", path },
 			onAgentExit: (event) => {
 				c.log.error({
 					msg: "agent-os agent adapter exited unexpectedly",
@@ -203,6 +203,11 @@ async function ensureVm(
 		return await runtime.vm;
 	} catch (error) {
 		runtime.vm = null;
+		c.log.error({
+			msg: "agent-os vm bootstrap failed",
+			actorId: c.actorId,
+			error,
+		});
 		throw error;
 	}
 }
@@ -1159,6 +1164,7 @@ export function createAgentOS<
 			actionTimeout: DEFAULT_ACTION_TIMEOUT_MS,
 			sleepGracePeriod: DEFAULT_SLEEP_GRACE_PERIOD_MS,
 			...actorConfig.options,
+			enableActorRuntimeSocket: true,
 		},
 		db: db({ onMigrate: migrateAgentOsActorTables }),
 		events: { ...(actorConfig.events ?? {}), ...builtInEvents },

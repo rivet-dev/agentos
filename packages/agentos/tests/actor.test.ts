@@ -437,9 +437,8 @@ describe("agentOS actor", () => {
 		const pending: Promise<unknown>[] = [];
 		const context = {
 			actorId: "hook-test",
-			actorUds: vi.fn(async () => ({
+			actorRuntimeSocket: vi.fn(async () => ({
 				path: "/tmp/actor.sock",
-				token: "token",
 			})),
 			broadcast: vi.fn(),
 			db: { execute: vi.fn(async () => []) },
@@ -518,9 +517,8 @@ describe("agentOS actor", () => {
 		const keepAwake = vi.fn(<T>(hold: Promise<T>) => hold);
 		const context = {
 			actorId: "prompt-keep-awake-test",
-			actorUds: vi.fn(async () => ({
+			actorRuntimeSocket: vi.fn(async () => ({
 				path: "/tmp/actor.sock",
-				token: "token",
 			})),
 			broadcast: vi.fn(),
 			db: { execute: vi.fn(async () => []) },
@@ -553,9 +551,8 @@ describe("agentOS actor", () => {
 		const log = { info: vi.fn(), error: vi.fn() };
 		const context = {
 			actorId: "prompt-error-test",
-			actorUds: vi.fn(async () => ({
+			actorRuntimeSocket: vi.fn(async () => ({
 				path: "/tmp/actor.sock",
-				token: "token",
 			})),
 			broadcast: vi.fn(),
 			db: { execute: vi.fn(async () => []) },
@@ -609,9 +606,8 @@ describe("agentOS actor", () => {
 		const log = { info: vi.fn(), error: vi.fn() };
 		const context = {
 			actorId: "terminal-exit-test",
-			actorUds: vi.fn(async () => ({
+			actorRuntimeSocket: vi.fn(async () => ({
 				path: "/tmp/actor.sock",
-				token: "token",
 			})),
 			broadcast: vi.fn(),
 			db: { execute: vi.fn(async () => []) },

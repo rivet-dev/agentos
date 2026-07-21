@@ -379,7 +379,6 @@ export const agentOsOptionFieldSchemas = {
 				.object({
 					type: z.literal("actor_uds"),
 					path: z.string().min(1),
-					token: z.string().min(1).max(4096),
 				})
 				.strict(),
 			z

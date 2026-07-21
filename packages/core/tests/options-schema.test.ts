@@ -6,6 +6,17 @@ import {
 } from "../src/sandbox.js";
 
 describe("AgentOsOptions validation", () => {
+	test("accepts the path-only actor runtime socket descriptor", () => {
+		expect(
+			agentOsOptionsSchema.safeParse({
+				database: {
+					type: "actor_uds",
+					path: "/tmp/actor-runtime.sock",
+				},
+			}).success,
+		).toBe(true);
+	});
+
 	test("accepts a declarative sidecar-native root", () => {
 		expect(
 			agentOsOptionsSchema.safeParse({

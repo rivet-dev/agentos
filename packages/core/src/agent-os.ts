@@ -539,7 +539,7 @@ export type RootFilesystemConfig =
 
 /** VM-scoped SQLite storage shared by VFS and AgentOS durable state. */
 export type VmSqliteConfig =
-	| { type: "actor_uds"; path: string; token: string }
+	| { type: "actor_uds"; path: string }
 	| { type: "sqlite_file"; path: string };
 
 /**
