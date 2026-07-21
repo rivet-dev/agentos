@@ -17,8 +17,11 @@ import type {
 	VmUserConfig,
 } from "@rivet-dev/agentos-runtime-core/vm-config";
 import type {
+	AcpSessionEvent,
 	CancelPromptResult,
+	PromptResult as DurablePromptResult,
 	DurableSessionEventEntry,
+	SessionInfo as DurableSessionInfo,
 	EphemeralSessionEventEntry,
 	HistoryPage,
 	JsonValue,
@@ -28,13 +31,10 @@ import type {
 	PermissionResponseResult,
 	PermissionTerminalReason,
 	PromptInput,
-	PromptResult as DurablePromptResult,
 	ReadHistoryInput,
-	AcpSessionEvent,
-	SessionCapabilities,
 	SessionAgentInfo,
+	SessionCapabilities,
 	SessionConfig,
-	SessionInfo as DurableSessionInfo,
 	SessionPage,
 	SessionStreamEntry,
 	SessionTarget,
@@ -692,6 +692,10 @@ export interface AgentOsLimits {
 		activeCpuTimeLimitMs?: number;
 		wallClockLimitMs?: number;
 		deterministicFuel?: number;
+		/** Maximum threads, including the initial thread, for the explicit Wasmtime threaded backend. */
+		maxThreads?: number;
+		/** Maximum threads reserved by all concurrent threaded WASM processes in this VM. */
+		maxConcurrentThreads?: number;
 	};
 	/** Process spawn, I/O, and lifecycle-event backlog limits. */
 	process?: {
@@ -805,6 +809,8 @@ export interface AgentOsOptions {
 	 * Defaults to the hardened builtin set used by the native sidecar bridge.
 	 */
 	allowedNodeBuiltins?: string[];
+	/** VM-wide default for standalone WASM commands. JavaScript remains on V8. */
+	wasmBackend?: "v8" | "wasmtime" | "wasmtime-threads";
 	/**
 	 * Opt in to a high-resolution monotonic guest clock (microsecond class)
 	 * for guest Node processes. Default `false` keeps the security-oriented
@@ -1443,9 +1449,9 @@ async function bootstrapLiveBootstrapDirectories(
 	config: RootFilesystemConfig | undefined,
 ): Promise<void> {
 	const existingPaths = new Set(
-		(await client.snapshotRootFilesystem(session, vm, Number.MAX_SAFE_INTEGER)).map(
-			(entry) => entry.path,
-		),
+		(
+			await client.snapshotRootFilesystem(session, vm, Number.MAX_SAFE_INTEGER)
+		).map((entry) => entry.path),
 	);
 	const entries = buildLiveBootstrapDirectoryEntries(existingPaths, config);
 	if (entries.length === 0) {
@@ -2807,6 +2813,7 @@ export class AgentOs {
 					serializePermissionsForSidecar(hostPermissions);
 				const createVmConfig: CreateVmConfig = {
 					env,
+					wasmBackend: options?.wasmBackend,
 					database: options?.database,
 					...(options?.user ? { user: options.user } : {}),
 					rootFilesystem: serializeRootFilesystemForSidecar(
@@ -3121,7 +3128,13 @@ export class AgentOs {
 			},
 		});
 
-		return this._trackProcess(proc, command, args, outputHandlers, exitHandlers);
+		return this._trackProcess(
+			proc,
+			command,
+			args,
+			outputHandlers,
+			exitHandlers,
+		);
 	}
 
 	/** Write data to a process's stdin. */
@@ -3139,7 +3152,10 @@ export class AgentOs {
 	}
 
 	/** Subscribe to stdout and stderr from a process. */
-	onProcessOutput(pid: number, handler: (event: ProcessOutput) => void): () => void {
+	onProcessOutput(
+		pid: number,
+		handler: (event: ProcessOutput) => void,
+	): () => void {
 		const entry = this._processes.get(pid);
 		if (!entry) throw new Error(`Process not found: ${pid}`);
 		entry.outputHandlers.add(handler);
@@ -3149,7 +3165,10 @@ export class AgentOs {
 	}
 
 	/** Subscribe to process exit. Returns an unsubscribe function. */
-	onProcessExit(pid: number, handler: (event: ProcessExit) => void): () => void {
+	onProcessExit(
+		pid: number,
+		handler: (event: ProcessExit) => void,
+	): () => void {
 		const entry = this._processes.get(pid);
 		if (!entry) throw new Error(`Process not found: ${pid}`);
 		// If already exited, call immediately.
@@ -3629,7 +3648,10 @@ export class AgentOs {
 	}
 
 	/** Subscribe to shell exit. */
-	onShellExit(shellId: string, handler: (event: ShellExit) => void): () => void {
+	onShellExit(
+		shellId: string,
+		handler: (event: ShellExit) => void,
+	): () => void {
 		const entry = this._shells.get(shellId);
 		if (!entry) {
 			const exitCode = this._closedShellIds.get(shellId);
@@ -3910,7 +3932,9 @@ export class AgentOs {
 		}
 		if (response.val.status === "accepted") {
 			if (response.val.reason !== null) {
-				throw new Error("accepted permission response must not include a reason");
+				throw new Error(
+					"accepted permission response must not include a reason",
+				);
 			}
 			return { status: "accepted" };
 		}
@@ -4047,9 +4071,7 @@ export class AgentOs {
 		// openSession/listAgents from it). Nothing to record client-side.
 	}
 
-	async listSoftware(): Promise<
-		{ packageName: string; commands: string[] }[]
-	> {
+	async listSoftware(): Promise<{ packageName: string; commands: string[] }[]> {
 		return this._sidecarClient.providedCommands(
 			this._sidecarSession,
 			this._sidecarVm,
@@ -4192,9 +4214,7 @@ export class AgentOs {
 			const event = decodeAcpEvent(envelope.payload);
 			switch (event.tag) {
 				case "AcpDurableSessionEvent": {
-					this._emitDurableSessionEvent(
-						decodeDurableSessionEvent(event.val),
-					);
+					this._emitDurableSessionEvent(decodeDurableSessionEvent(event.val));
 					return;
 				}
 				case "AcpEphemeralSessionUpdateEvent": {
@@ -4684,12 +4704,14 @@ export class AgentOs {
 		return { terminalId };
 	}
 
-	private _handleAcpWriteTerminal(params: Record<string, unknown>): null {
+	private async _handleAcpWriteTerminal(
+		params: Record<string, unknown>,
+	): Promise<null> {
 		const method = "terminal/write";
 		const terminal = this._requireAcpTerminal(params, method);
 		const data = this._requireAcpStringParam(params, "data", method);
 		const encoding = this._optionalAcpStringParam(params, "encoding", method);
-		terminal.handle.write(
+		await terminal.handle.write(
 			encoding === "base64" ? Buffer.from(data, "base64") : data,
 		);
 		return null;

@@ -1,9 +1,8 @@
 mod support;
 
 use agentos_native_sidecar::wire::{
-    CreateVmRequest, GuestRuntimeKind, RequestId, RequestPayload, ResponsePayload,
-    RootFilesystemDescriptor, RootFilesystemEntry, RootFilesystemEntryEncoding,
-    RootFilesystemEntryKind, RootFilesystemMode,
+    GuestRuntimeKind, RequestId, RequestPayload, ResponsePayload, RootFilesystemDescriptor,
+    RootFilesystemEntry, RootFilesystemEntryEncoding, RootFilesystemEntryKind, RootFilesystemMode,
 };
 use base64::Engine as _;
 use serde_json::Value;
@@ -13,8 +12,9 @@ use std::process::Command;
 use std::time::Duration;
 use support::{
     assert_node_available, authenticate_wire, collect_process_output_wire_with_timeout,
-    create_vm_wire, dispose_vm_and_close_session, execute_wire, new_sidecar, open_session_wire,
-    temp_dir, wire_permissions_allow_all, wire_request, wire_session,
+    create_vm_request_with_selected_wasm_backend, create_vm_wire, dispose_vm_and_close_session,
+    execute_wire, new_sidecar, open_session_wire, temp_dir, wire_permissions_allow_all,
+    wire_request, wire_session,
 };
 
 const DEFAULT_GUEST_PATH_ENV: &str =
@@ -67,7 +67,7 @@ fn create_vm_with_root_filesystem_and_metadata(
         .dispatch_wire_blocking(wire_request(
             request_id,
             wire_session(connection_id, session_id),
-            RequestPayload::CreateVmRequest(CreateVmRequest::legacy_test_config(
+            RequestPayload::CreateVmRequest(create_vm_request_with_selected_wasm_backend(
                 runtime,
                 metadata,
                 root_filesystem,

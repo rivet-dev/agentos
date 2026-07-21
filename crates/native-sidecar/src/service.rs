@@ -1807,7 +1807,7 @@ where
             event,
         } = envelope;
 
-        let is_exit_event = matches!(event, ActiveExecutionEvent::Exited(_));
+        let is_exit_event = Self::terminal_execution_event(&event);
 
         if is_exit_event {
             record_execute_exit_event_queue_wait(
@@ -1821,7 +1821,7 @@ where
             while let Some(pending) = self.pending_process_events.pop_front() {
                 if pending.vm_id == vm_id
                     && pending.process_id == process_id
-                    && !matches!(pending.event, ActiveExecutionEvent::Exited(_))
+                    && !Self::terminal_execution_event(&pending.event)
                 {
                     trailing.push(pending.event);
                 } else {
@@ -3045,7 +3045,7 @@ where
         format!("conn-{}", self.next_connection_id)
     }
 
-    fn take_matching_process_event_envelope(
+    pub(crate) fn take_matching_process_event_envelope(
         &mut self,
         vm_id: &str,
         process_id: &str,
@@ -3148,7 +3148,11 @@ where
         shared_reject(request, code, message)
     }
 
-    fn reject_error(&self, request: &RequestFrame, error: &SidecarError) -> ResponseFrame {
+    pub(crate) fn reject_error(
+        &self,
+        request: &RequestFrame,
+        error: &SidecarError,
+    ) -> ResponseFrame {
         if let SidecarError::Host(host_error) = error {
             if host_error.code == "ERR_AGENTOS_RESOURCE_LIMIT" {
                 let details = host_error.details.as_ref();
@@ -3237,6 +3241,7 @@ where
             | ResourceClass::Http2DataBytes
             | ResourceClass::Http2CommandBytes
             | ResourceClass::Http2EventBytes => "bytes",
+            ResourceClass::WasmThreads => "threads",
             ResourceClass::Tasks => "tasks",
             ResourceClass::Timers => "timers",
             ResourceClass::Connections | ResourceClass::Http2Connections => "connections",
