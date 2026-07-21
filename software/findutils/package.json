@@ -1,6 +1,6 @@
 {
 	"name": "@agentos-software/findutils",
-	"version": "0.3.3",
+	"version": "0.3.4",
 	"type": "module",
 	"license": "Apache-2.0",
 	"description": "GNU findutils for secure-exec VMs (find, xargs)",

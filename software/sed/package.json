@@ -1,6 +1,6 @@
 {
 	"name": "@agentos-software/sed",
-	"version": "0.3.3",
+	"version": "0.3.4",
 	"type": "module",
 	"license": "Apache-2.0",
 	"description": "GNU sed stream editor for secure-exec VMs",
