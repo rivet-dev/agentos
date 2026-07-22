@@ -160,6 +160,18 @@ dev-website-setup:
 	icons="$theme/vendor/icons"
 	built=0
 
+	# A symlink keeps Node's real module path in the source checkout, where the
+	# workspace-installed build dependencies are not visible. Materialize it.
+	if [ -L "$theme" ]; then
+		src="$(readlink -f "$theme")"
+		[ -f "$src/package.json" ] || { echo "error: docs-theme symlink target is invalid: $src" >&2; exit 1; }
+		tmp="$(mktemp -d website/vendor/theme.XXXXXX)"
+		cp -RL "$src/." "$tmp/"
+		unlink "$theme"
+		mv "$tmp" "$theme"
+		echo "materialized docs-theme from $src"
+	fi
+
 	# 1. Vendor the private docs theme from a sibling workspace if absent.
 	if [ ! -f "$theme/package.json" ]; then
 		src=""

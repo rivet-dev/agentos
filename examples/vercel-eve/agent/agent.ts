@@ -14,6 +14,6 @@ export default defineAgent({
 		],
 	},
 	experimental: {
-		workflow: { world: "./world.ts" },
+		workflow: { world: "#world" },
 	},
 });

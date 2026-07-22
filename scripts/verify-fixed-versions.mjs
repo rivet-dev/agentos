@@ -40,6 +40,7 @@ function isExcluded(relPath) {
 		.some(
 			(part) =>
 				part === ".cache" ||
+				part === ".output" ||
 				part === "fixtures" ||
 				part === "vendor" ||
 				part === "tests",

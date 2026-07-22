@@ -18,6 +18,7 @@
     "beta": true,
     "docsHref": "/docs/agents/claude",
     "image": "/images/registry/claude-code.svg",
+    "category": "agents",
     "priority": 90
   }
 }

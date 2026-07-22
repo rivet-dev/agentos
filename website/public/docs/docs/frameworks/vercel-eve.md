@@ -1,8 +1,8 @@
 # Vercel Eve
 
-Use agentOS as the durable sandbox backend for Vercel Eve.
+Run Vercel Eve with agentOS and Rivet World.
 
-Eve owns the agent runtime and session lifecycle, while agentOS maps every sandbox session to an isolated VM actor with a durable `/workspace` filesystem.
+Eve owns the agent runtime and session lifecycle. agentOS maps every sandbox session to an isolated VM actor with a durable `/workspace` filesystem, while Rivet World runs Eve workflows on Rivet Actors.
 
 [View the complete example →](https://github.com/rivet-dev/agentos/tree/main/examples/vercel-eve)
 
@@ -14,11 +14,12 @@ cd my-agent
 ```
 
 ```sh
-npm add @rivet-dev/agentos @rivet-dev/agentos-eve
+npm add @rivet-dev/agentos @rivet-dev/agentos-eve @rivet-dev/vercel-world
 ```
 
-- `@rivet-dev/agentos`: Provides the durable VM actor.
+- `@rivet-dev/agentos`: Provides the agentOS VM.
 - `@rivet-dev/agentos-eve`: Connects Eve's sandbox API to agentOS.
+- `@rivet-dev/vercel-world`: Runs Eve workflows on [Rivet World](https://workflow-sdk.dev/worlds).
 
 Update `agent/agent.ts`:
 
@@ -26,6 +27,7 @@ Update `agent/agent.ts`:
 import { defineAgent } from "eve";
 
 export default defineAgent({
+	model: "anthropic/claude-sonnet-5",
 	build: {
 		externalDependencies: [
 			"@rivet-dev/agentos",
@@ -33,23 +35,55 @@ export default defineAgent({
 			"@rivet-dev/agentos-eve",
 			"@rivet-dev/agentos-runtime-core",
 			"@rivet-dev/agentos-sidecar",
+			"@rivet-dev/vercel-world",
 			"@rivetkit/engine-cli",
 		],
 	},
+	experimental: {
+		workflow: { world: "#world" },
+	},
 });
 ```
+
+Rivet World lets you run Eve on top of Rivet.
+
+Add the World module import to `package.json`:
+
+```json title="package.json"
+{
+	"imports": {
+		"#world": "./world.ts"
+	}
+}
+```
+
+Create `world.ts`:
+
+```ts title="world.ts"
+import { createWorld as createRivetWorld } from "@rivet-dev/vercel-world";
+import { registry } from "./registry";
+
+export const createWorld = () => createRivetWorld({ registry });
+```
+
+The first World operation starts this registry and waits for the Rivet envoy to
+be ready.
 
 Create `registry.ts`:
 
 ```ts title="registry.ts"
 import { agentOS, setup } from "@rivet-dev/agentos";
+import { vercelWorldActors } from "@rivet-dev/vercel-world/registry";
 
 const vm = agentOS({
 	// Configuration will go here.
 });
 
 export const registry = setup({
-	use: { vm },
+	use: {
+		...vercelWorldActors,
+		vm,
+	},
 });
 ```
 
@@ -65,10 +99,17 @@ export default defineSandbox({
 });
 ```
 
-Run the agent:
+Install the Vercel CLI, then link Eve once so it can call your configured model:
 
 ```sh
-eve dev
+npm install --global vercel@latest
+npm exec -- eve link
+```
+
+Then run the agent:
+
+```sh
+npm exec -- eve dev
 ```
 
 ## Default Filesystem
@@ -90,6 +131,12 @@ See the `agentOS()` [configuration reference](/docs/core#configuration-reference
 | `actor` | Yes | Actor registered with `setup()`, such as `vm`. |
 | `registry` | Yes | The application registry containing that actor. It is started lazily and shared by Eve sessions. |
 | `client` | No | An existing client configured for the same registry. |
+
+### Rivet World
+
+Rivet World stores Eve workflow runs in Rivet Actors so they resume instead of restarting.
+
+[Read the Rivet World documentation →](https://rivet.dev/docs/integrations/vercel-workflows)
 
 ## Advanced
 

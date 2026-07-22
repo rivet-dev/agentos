@@ -14,7 +14,7 @@
 		"test:post-python-parity": "pnpm --dir packages/core build && pnpm --dir packages/core exec vitest run tests/agentos-base-filesystem.nightly.test.ts",
 		"test:watch": "pnpm exec turbo watch test --filter='!@rivet-dev/agentos-browser' --filter='!@rivet-dev/agentos-runtime-browser' --filter='!@rivet-dev/agentos-playground'",
 		"check-layout": "node scripts/check-layout.mjs",
-		"check-types": "node scripts/verify-check-types.mjs && pnpm exec turbo check-types --concurrency=4 --filter='!@rivet-dev/agentos-browser' --filter='!@rivet-dev/agentos-runtime-browser' --filter='!@rivet-dev/agentos-playground'",
+		"check-types": "node scripts/verify-check-types.mjs && pnpm --dir software/codex build:types && pnpm exec turbo check-types --only --concurrency=4 --filter='!@agentos-software/codex' --filter='!@rivet-dev/agentos-browser' --filter='!@rivet-dev/agentos-runtime-browser' --filter='!@rivet-dev/agentos-playground'",
 		"lint": "pnpm biome check .",
 		"fmt": "pnpm biome check --write --diagnostic-level=error .",
 		"shell": "pnpm --filter @rivet-dev/agentos-shell shell",
@@ -47,7 +47,7 @@
 	},
 	"pnpm": {
 		"overrides": {
-		"@rivetkit/rivetkit-wasm": "2.3.6",
+			"@rivetkit/rivetkit-wasm": "2.3.7",
 			"@mariozechner/pi-tui": "0.60.0",
 			"@mariozechner/pi-agent-core": "0.60.0"
 		}

@@ -1185,13 +1185,13 @@
           "memProvenance": "direct child spawn with /proc/<pid>/status VmHWM sampling minus node -e \"\" startup baseline, floored to one page"
         },
         "guest": {
-          "p50Ms": 1.01,
+          "p50Ms": 2.99,
           "memBytes": 19136512,
           "memProvenance": "/proc/<sidecarPid>/clear_refs=5, baseline VmRSS, post-op VmHWM, max(VmHWM - baseline, 0)"
         }
       },
       "tax": {
-        "emulation": 2.3
+        "emulation": 6.8
       }
     },
     {

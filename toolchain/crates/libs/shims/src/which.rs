@@ -91,6 +91,15 @@ where
     Ok(found)
 }
 
+pub(crate) fn resolve_program(command: &str) -> PathBuf {
+    let mut resolved = None;
+    let _ = search_path(command, false, |path| {
+        resolved = Some(path.to_path_buf());
+        Ok(())
+    });
+    resolved.unwrap_or_else(|| PathBuf::from(command))
+}
+
 pub fn which(args: Vec<OsString>) -> i32 {
     let str_args: Vec<String> = args
         .iter()

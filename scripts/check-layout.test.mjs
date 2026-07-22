@@ -8,7 +8,7 @@ import test from "node:test";
 
 const script = join(dirname(fileURLToPath(import.meta.url)), "check-layout.mjs");
 
-test("ignores tests inside nested Claude worktrees", () => {
+test("allows experiment tests and ignores nested Claude worktrees", () => {
 	const root = mkdtempSync(join(tmpdir(), "agentos-layout-"));
 	try {
 		const nestedTest = join(
@@ -17,6 +17,9 @@ test("ignores tests inside nested Claude worktrees", () => {
 		);
 		mkdirSync(dirname(nestedTest), { recursive: true });
 		writeFileSync(nestedTest, "export {};\n");
+		const experimentTest = join(root, "experiments/gigacode/gate.test.ts");
+		mkdirSync(dirname(experimentTest), { recursive: true });
+		writeFileSync(experimentTest, "export {};\n");
 
 		const bin = join(root, "bin");
 		mkdirSync(bin);

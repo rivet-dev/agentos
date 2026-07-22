@@ -1158,19 +1158,19 @@ pub(super) async fn send_json_rpc_request(
                         }
                     }
                 }
-                if response.is_some() {
-                    if method == "session/prompt" {
+                if method == "session/prompt" {
+                    if response.is_some() {
                         // Require a complete quiet window after the most recent
                         // adapter stdout, not merely after the response line.
                         response_drain_deadline =
                             Some(Instant::now() + PROMPT_RESPONSE_DRAIN_QUIET);
-                    } else {
-                        return Ok(JsonRpcExchange {
-                            response: response.expect("matching response was received"),
-                            events,
-                            notifications,
-                        });
                     }
+                } else if let Some(response) = response.take() {
+                    return Ok(JsonRpcExchange {
+                        response,
+                        events,
+                        notifications,
+                    });
                 }
             }
             EventPayload::ProcessOutputEvent(output)

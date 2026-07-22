@@ -15,6 +15,7 @@
     "description": "Run OpenCode, an open-source coding agent, inside agentOS.",
     "docsHref": "/docs/agents/opencode",
     "image": "/images/registry/opencode.svg",
+    "category": "agents",
     "priority": 70
   }
 }

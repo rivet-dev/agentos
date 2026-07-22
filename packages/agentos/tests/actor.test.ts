@@ -244,7 +244,7 @@ describe("agentOS actor", () => {
 		`);
 		const execute = access.execute;
 		access.execute = async (query, ...args) => {
-			if (query.includes("INSERT INTO agentos_actor_schema_version")) {
+			if (/INSERT INTO\s+"?agentos_actor_schema_version"?/i.test(query)) {
 				throw new Error("intentional actor version write failure");
 			}
 			return execute(query, ...args);

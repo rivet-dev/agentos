@@ -11,6 +11,7 @@
     "title": "PI",
     "description": "Run the PI coding agent with lightweight, fast execution.",
     "image": "/images/registry/pi.svg",
+    "category": "agents",
     "priority": 100
   }
 }

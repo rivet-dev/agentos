@@ -75,7 +75,7 @@ defineAgentOsConformanceSuite({
 				if (typeof method !== "function") {
 					throw new Error(`Actor backend does not implement ${action}`);
 				}
-				return (await method.apply(handle, args)) as T;
+				return (await method(...args)) as T;
 			},
 			on(
 				event: AgentOsConformanceEvent,

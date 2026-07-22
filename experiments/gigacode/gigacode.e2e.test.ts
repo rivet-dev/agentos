@@ -62,6 +62,10 @@ type StartedGigacode = {
 	daemon: RunningDaemon;
 };
 
+function rivetClient(endpoint: string): any {
+	return createClient<never>({ endpoint } as never) as any;
+}
+
 async function freePort(): Promise<number> {
 	const server = createServer();
 	await new Promise<void>((resolveReady, reject) => {
@@ -1498,18 +1502,14 @@ describe("Gigacode OpenCode remote API", () => {
 			(actor) => !actor.destroy_ts,
 		)?.actor_id;
 		expect(coordinatorId).toBeTruthy();
-		const coordinatorSessions = await createClient<any>({
-			endpoint: health.rivetEndpoint,
-		})
+		const coordinatorSessions = await rivetClient(health.rivetEndpoint)
 			.coordinator.getForId(coordinatorId as string)
 			.listSessions();
 		expect(
 			coordinatorSessions.map((session: { id: string }) => session.id),
 		).toEqual(expect.arrayContaining([cliSessionId, sdkSessionId]));
 
-		const actor = createClient<any>({
-			endpoint: health.rivetEndpoint,
-		}).vm.getForId(sdkActorId);
+		const actor = rivetClient(health.rivetEndpoint).vm.getForId(sdkActorId);
 		expect(
 			new TextDecoder().decode(
 				await actor.readFile("/home/agentos/.claude/.credentials.json"),
@@ -3326,9 +3326,9 @@ describe("Gigacode OpenCode remote API", () => {
 			(await readFile(resolve(daemon.stateDir, "daemon.pid"), "utf8")).trim(),
 		);
 		expect(pidAfter).toBe(pidBefore);
-		const actor = createClient<any>({
-			endpoint: `http://127.0.0.1:${daemon.env.GIGACODE_RIVET_PORT}`,
-		}).vm.getForId(actorId);
+		const actor = rivetClient(
+			`http://127.0.0.1:${daemon.env.GIGACODE_RIVET_PORT}`,
+		).vm.getForId(actorId);
 		expect(
 			new TextDecoder().decode(
 				await actor.readFile("/workspace/workspace-marker.txt"),
@@ -3653,9 +3653,7 @@ describe("Gigacode OpenCode remote API", () => {
 		const coordinatorId = coordinatorActors.actors?.find(
 			(actor) => !actor.destroy_ts,
 		)?.actor_id as string;
-		const coordinatorRows = await createClient<any>({
-			endpoint: health.rivetEndpoint,
-		})
+		const coordinatorRows = await rivetClient(health.rivetEndpoint)
 			.coordinator.getForId(coordinatorId)
 			.listSessions();
 		expect(coordinatorRows).toEqual([]);

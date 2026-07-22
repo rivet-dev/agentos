@@ -12,6 +12,7 @@
 		"beta": true,
 		"docsHref": "/docs/agents/codex",
 		"image": "/images/registry/codex.svg",
+		"category": "agents",
 		"priority": 80
 	}
 }

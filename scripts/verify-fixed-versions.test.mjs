@@ -37,6 +37,22 @@ test("ignores generated package caches", () => {
 			join(root, "packages", "runtime", ".cache", "fixture", "package.json"),
 			JSON.stringify({ name: "third-party-fixture", version: "9.9.9" }),
 		);
+		mkdirSync(join(root, "examples", "app", ".output", "server", "node_modules", "dependency"), {
+			recursive: true,
+		});
+		writeFileSync(
+			join(
+				root,
+				"examples",
+				"app",
+				".output",
+				"server",
+				"node_modules",
+				"dependency",
+				"package.json",
+			),
+			JSON.stringify({ name: "third-party-output", version: "9.9.9" }),
+		);
 		runGate(root);
 	} finally {
 		rmSync(root, { recursive: true, force: true });

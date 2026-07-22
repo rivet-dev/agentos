@@ -26,6 +26,7 @@
 	],
 	"scripts": {
 		"build": "rm -rf dist && tsc && node ./scripts/stage-codex-wasm.mjs && agentos-toolchain pack . --out dist/package --agent codex-acp --prune-native --omit-optional",
+		"build:types": "rm -rf dist && tsc --emitDeclarationOnly",
 		"check-types": "tsc --noEmit",
 		"test": "pnpm build && node --test --test-force-exit tests/*.test.mjs"
 	},
