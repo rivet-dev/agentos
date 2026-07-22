@@ -212,6 +212,10 @@
       "title": "TLS & SSL",
       "description": "How agentOS uses in-guest mbedTLS plus a VM CA bundle for curl / wget / git, and a hermetic OpenSSL libcrypto build for OpenSSH."
     },
+    "/docs/docs/frameworks/vercel-eve": {
+      "title": "Vercel Eve",
+      "description": "Run Vercel Eve with agentOS and Rivet World."
+    },
     "/docs/docs/custom-software/building-wasm": {
       "title": "Building Binaries",
       "description": "Compile WASM command binaries for agentOS from source."
@@ -223,10 +227,6 @@
     "/docs/docs/custom-software/publishing": {
       "title": "Publishing Packages",
       "description": "Build, publish, and consume agentOS packages — locally, from npm, or from your own repo."
-    },
-    "/docs/docs/frameworks/vercel-eve": {
-      "title": "Vercel Eve",
-      "description": "Use agentOS as the durable sandbox backend for Vercel Eve."
     }
   }
 }
