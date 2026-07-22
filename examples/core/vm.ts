@@ -1,10 +1,20 @@
 // docs:start boot
-import { AgentOs } from "@rivet-dev/agentos-core";
+
+import { mkdirSync } from "node:fs";
+import { resolve } from "node:path";
 import pi from "@agentos-software/pi";
+import { AgentOs } from "@rivet-dev/agentos-core";
 
 // Create a VM directly with the core package — no actor runtime, no
 // client/server split. `AgentOs.create()` boots the VM in-process.
-const vm = await AgentOs.create({ software: [pi] });
+mkdirSync(".agentos", { recursive: true });
+const vm = await AgentOs.create({
+	database: {
+		type: "sqlite_file",
+		path: resolve(".agentos/agentos.sqlite"),
+	},
+	software: [pi],
+});
 
 const result = await vm.exec("echo hello");
 console.log(result.stdout); // "hello\n"
@@ -134,4 +144,4 @@ async function cronJobs() {
 	// docs:end cron
 }
 
-export { filesystem, processes, agentSessions, networking, cronJobs };
+export { agentSessions, cronJobs, filesystem, networking, processes };

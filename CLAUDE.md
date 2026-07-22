@@ -1,15 +1,18 @@
 # agentOS
 
-AgentOS owns the runtime, kernel, VFS, language execution, registry packages,
-ACP/session layer, AgentOS client APIs, docs, and publish machinery. The
+Always spell the product name `agentOS`, never `AgentOS`; do not alter type
+identifiers such as `AgentOSActorConfig`.
+
+agentOS owns the runtime, kernel, VFS, language execution, registry packages,
+ACP/session layer, agentOS client APIs, docs, and publish machinery. The
 `secure-exec` repository is now a generated compatibility mirror only.
 
 ## Boundaries
 
-- Keep AgentOS product versions pinned at `0.0.1` in committed files. Release
+- Keep agentOS product versions pinned at `0.0.1` in committed files. Release
   workflows apply real versions transiently with `scripts/publish`; never commit
   release-version rewrites.
-- AgentOS-owned npm packages must use the `@rivet-dev/agentos-*` namespace.
+- agentOS-owned npm packages must use the `@rivet-dev/agentos-*` namespace.
   Registry software packages must use `@agentos-software/*`. Never introduce
   packages under `@agentos/*`.
 - Call guest environments VMs, not sandboxes, except when referring to a package
@@ -21,7 +24,7 @@ ACP/session layer, AgentOS client APIs, docs, and publish machinery. The
   shimmed public surface.
 - Keep root `package.json` scripts limited to Turbo orchestration; repo-specific
   commands belong in `justfile` recipes or scoped package scripts.
-- AgentOS targets native Linux/container execution. Browser support is not
+- agentOS targets native Linux/container execution. Browser support is not
   needed or supported here: browser sources may remain as dormant reference
   code, but their entrypoints must stay disabled and they must not enter default
   builds, CI, publication, or behavioral-parity requirements without a
@@ -66,13 +69,13 @@ migrate, or delete another owner's schema:
 - Sidecar/core durable state owns `agentos_core_*`, including
   `agentos_core_schema_version`. This namespace is intentionally generic; do
   not name it after sessions, ACP, or another current consumer.
-- The AgentOS TypeScript actor layer owns `agentos_actor_*`, including
+- The agentOS TypeScript actor layer owns `agentos_actor_*`, including
   `agentos_actor_schema_version`.
 
 Do not use a shared schema-version table, a `component` discriminator, or a
 global migration sequence across these owners. Each migration must update its
 owner's version in the same SQLite transaction or savepoint as its schema
-changes. AgentOS-owned tables must be `STRICT`.
+changes. agentOS-owned tables must be `STRICT`.
 
 There is no compatibility requirement for the previous SQLite layout. Remove
 the shared component-version mechanism and rename or replace legacy
@@ -117,11 +120,11 @@ add compatibility views, aliases, legacy adoption paths, or dual writes.
   only when the caller explicitly supplied them.
 - Agent adapters must use real upstream SDKs. Do not replace SDK adapters with
   direct API-call stubs.
-- `rivet-dev/pi-acp` is an AgentOS-maintained fork. When Pi ACP behavior needs
+- `rivet-dev/pi-acp` is an agentOS-maintained fork. When Pi ACP behavior needs
   to change, fix and test the fork directly, push the fork commit, then update
   the pinned commit and verified source-archive checksum in
   `software/pi/scripts/build-pi-acp.mjs`; do not work around fork bugs in the
-  AgentOS package wrapper or resolve `pi-acp` from npm.
+  agentOS package wrapper or resolve `pi-acp` from npm.
 - WASM command binaries and every toolchain build output are generated
   artifacts. Never commit `packages/runtime-core/commands/`, `software/*/bin/`,
   `toolchain/vendor/`, `toolchain/c/{build,vendor,libs,sysroot,.cache}/`, or
@@ -218,7 +221,7 @@ custom host-syscall imports. Treat that target as **native POSIX**;
 
 - `scripts/publish` is the source of truth for npm/crates discovery, version
   rewriting, npm publish, crates publish, release assets, and R2 upload.
-- Publishable npm packages and Rust crates are AgentOS-owned. Compatibility
+- Publishable npm packages and Rust crates are agentOS-owned. Compatibility
   `@secure-exec/*`, `secure-exec`, and `secure-exec-*` artifacts are emitted
   from the generated mirror.
 - The release workflow must build and stage the native sidecar binaries,
@@ -228,7 +231,7 @@ custom host-syscall imports. Treat that target as **native POSIX**;
 
 ## Docs
 
-- The AgentOS website lives in `website/` and deploys to `agentos-sdk.dev`.
+- The agentOS website lives in `website/` and deploys to `agentos-sdk.dev`.
 - Keep docs current in the same change as user-facing behavior: public APIs,
   runtime options, env knobs, limits, architecture, and package names.
 - Runnable docs code must come from real checked example files via the docs
