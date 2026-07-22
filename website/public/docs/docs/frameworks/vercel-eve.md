@@ -99,9 +99,10 @@ export default defineSandbox({
 });
 ```
 
-Link Eve to Vercel once so it can call your configured model:
+Install the Vercel CLI, then link Eve once so it can call your configured model:
 
 ```sh
+npm install --global vercel@latest
 npm exec -- eve link
 ```
 
