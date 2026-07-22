@@ -1162,6 +1162,10 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 .map_err(kernel_error)
         }
         "fs.rmdirSync" | "fs.promises.rmdir" => {
+            let raw_path = javascript_sync_rpc_arg_str(&request.args, 0, "filesystem rmdir path")?;
+            kernel
+                .validate_remove_directory_pathname(raw_path)
+                .map_err(kernel_error)?;
             let path =
                 javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem rmdir path")?;
             let path = path.as_str();

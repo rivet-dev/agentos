@@ -24,6 +24,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-wasip1
+      - name: Materialize the pinned docs theme
+        run: |
+          rm -rf /tmp/docs-theme
+          git clone https://github.com/rivet-dev/docs-theme.git /tmp/docs-theme
+          git -C /tmp/docs-theme checkout 450c498555135098c6a927adfdf13458be9be22a
+          rm -rf website/vendor/theme && mkdir -p website/vendor
+          cp -r /tmp/docs-theme/packages/theme website/vendor/theme
       - run: pnpm install --frozen-lockfile
       - name: Run the pinned filesystem conformance corpus
         run: make -C tests/xfstests run
@@ -44,6 +51,90 @@ jobs:
           AGENTOS_V8_BRIDGE_PREBUILT_DIR: ${{ github.workspace }}/tests/xfstests/.cache/v8-bridge
           CARGO_TARGET_DIR: ${{ github.workspace }}/tests/xfstests/.cache/cargo-target
           CARGO_BUILD_JOBS: '1'
+      - name: Run the full parallel ENOSPC race
+        if: matrix.storage_backend == 'chunked_local'
+        run: |
+          cargo test --release -p agentos-native-sidecar \
+            --test xfstests_correctness \
+            xfstests_wasi_parallel_enospc_endurance_probe -- \
+            --ignored --exact --nocapture --test-threads=1
+        env:
+          AGENTOS_TEST_WASM_BACKEND: ${{ matrix.wasm_backend }}
+          XFSTESTS_ROOT: ${{ github.workspace }}/tests/xfstests/.work/xfstests
+          XFSTESTS_TEST_TIMEOUT_SECONDS: '3600'
+          AGENTOS_V8_BRIDGE_PREBUILT_DIR: ${{ github.workspace }}/tests/xfstests/.cache/v8-bridge
+          CARGO_TARGET_DIR: ${{ github.workspace }}/tests/xfstests/.cache/cargo-target
+          CARGO_BUILD_JOBS: '1'
+      - name: Run the full insert-range reproduction workload
+        if: matrix.storage_backend == 'chunked_local'
+        run: |
+          cargo test --release -p agentos-native-sidecar \
+            --test xfstests_correctness \
+            xfstests_wasi_insert_range_endurance_probe -- \
+            --ignored --exact --nocapture --test-threads=1
+        env:
+          AGENTOS_TEST_WASM_BACKEND: ${{ matrix.wasm_backend }}
+          XFSTESTS_ROOT: ${{ github.workspace }}/tests/xfstests/.work/xfstests
+          XFSTESTS_TEST_TIMEOUT_SECONDS: '3600'
+          AGENTOS_V8_BRIDGE_PREBUILT_DIR: ${{ github.workspace }}/tests/xfstests/.cache/v8-bridge
+          CARGO_TARGET_DIR: ${{ github.workspace }}/tests/xfstests/.cache/cargo-target
+          CARGO_BUILD_JOBS: '1'
+      - name: Run the full 10,000-file rewinddir workload
+        if: matrix.storage_backend == 'chunked_local'
+        run: |
+          cargo test --release -p agentos-native-sidecar \
+            --test xfstests_correctness \
+            xfstests_wasi_rewinddir_endurance_probe -- \
+            --ignored --exact --nocapture --test-threads=1
+        env:
+          AGENTOS_TEST_WASM_BACKEND: ${{ matrix.wasm_backend }}
+          XFSTESTS_ROOT: ${{ github.workspace }}/tests/xfstests/.work/xfstests
+          XFSTESTS_TEST_TIMEOUT_SECONDS: '3600'
+          AGENTOS_V8_BRIDGE_PREBUILT_DIR: ${{ github.workspace }}/tests/xfstests/.cache/v8-bridge
+          CARGO_TARGET_DIR: ${{ github.workspace }}/tests/xfstests/.cache/cargo-target
+          CARGO_BUILD_JOBS: '1'
+      - name: Run the full 10,000-file open-unlink workload
+        if: matrix.storage_backend == 'chunked_local'
+        run: |
+          cargo test --release -p agentos-native-sidecar \
+            --test xfstests_correctness \
+            xfstests_wasi_open_unlink_endurance_probe -- \
+            --ignored --exact --nocapture --test-threads=1
+        env:
+          AGENTOS_TEST_WASM_BACKEND: ${{ matrix.wasm_backend }}
+          XFSTESTS_ROOT: ${{ github.workspace }}/tests/xfstests/.work/xfstests
+          XFSTESTS_TEST_TIMEOUT_SECONDS: '3600'
+          AGENTOS_V8_BRIDGE_PREBUILT_DIR: ${{ github.workspace }}/tests/xfstests/.cache/v8-bridge
+          CARGO_TARGET_DIR: ${{ github.workspace }}/tests/xfstests/.cache/cargo-target
+          CARGO_BUILD_JOBS: '1'
+      - name: Run the full 4,000-file seekdir/getdents workload
+        if: matrix.storage_backend == 'chunked_local'
+        run: |
+          cargo test --release -p agentos-native-sidecar \
+            --test xfstests_correctness \
+            xfstests_wasi_seekdir_endurance_probe -- \
+            --ignored --exact --nocapture --test-threads=1
+        env:
+          AGENTOS_TEST_WASM_BACKEND: ${{ matrix.wasm_backend }}
+          XFSTESTS_ROOT: ${{ github.workspace }}/tests/xfstests/.work/xfstests
+          XFSTESTS_TEST_TIMEOUT_SECONDS: '3600'
+          AGENTOS_V8_BRIDGE_PREBUILT_DIR: ${{ github.workspace }}/tests/xfstests/.cache/v8-bridge
+          CARGO_TARGET_DIR: ${{ github.workspace }}/tests/xfstests/.cache/cargo-target
+          CARGO_BUILD_JOBS: '1'
+      - name: Run the full 5,000-file readdir/rename workload
+        if: matrix.storage_backend == 'chunked_local'
+        run: |
+          cargo test --release -p agentos-native-sidecar \
+            --test xfstests_correctness \
+            xfstests_wasi_readdir_rename_endurance_probe -- \
+            --ignored --exact --nocapture --test-threads=1
+        env:
+          AGENTOS_TEST_WASM_BACKEND: ${{ matrix.wasm_backend }}
+          XFSTESTS_ROOT: ${{ github.workspace }}/tests/xfstests/.work/xfstests
+          XFSTESTS_TEST_TIMEOUT_SECONDS: '3600'
+          AGENTOS_V8_BRIDGE_PREBUILT_DIR: ${{ github.workspace }}/tests/xfstests/.cache/v8-bridge
+          CARGO_TARGET_DIR: ${{ github.workspace }}/tests/xfstests/.cache/cargo-target
+          CARGO_BUILD_JOBS: '1'
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -58,6 +149,7 @@ jobs:
       # Cargo validation and the shared sidecar build are explicit below.
       # Do not let TypeScript dependency builds compile a second Rust copy.
       AGENTOS_SKIP_NATIVE_META_BUILD: '1'
+      XFSTESTS_ROOT: ${{ github.workspace }}/tests/xfstests/.work/xfstests
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -84,19 +176,39 @@ jobs:
             sudo apt-get update
             sudo apt-get install --yes cmake
           fi
+      - name: Materialize the pinned docs theme
+        run: |
+          rm -rf /tmp/docs-theme
+          git clone https://github.com/rivet-dev/docs-theme.git /tmp/docs-theme
+          git -C /tmp/docs-theme checkout 450c498555135098c6a927adfdf13458be9be22a
+          rm -rf website/vendor/theme && mkdir -p website/vendor
+          cp -r /tmp/docs-theme/packages/theme website/vendor/theme
       - run: pnpm install --frozen-lockfile
       - run: node --test scripts/generate-secure-exec-mirror.test.mjs
       - run: make -C toolchain commands
-      - run: make -C toolchain cmd/duckdb
+      - run: make -C toolchain cmd/duckdb cmd/vim
       - run: make -C toolchain codex
       - run: make -C toolchain/c pthread-conformance-wasm pthread-benchmark-wasm
       - run: node packages/runtime-core/scripts/copy-wasm-commands.mjs --require
+      - name: Stage pinned xfstests and its WASM helper corpus
+        run: make -C tests/xfstests helpers XFSTESTS_BUILD_NATIVE_COMMANDS=0
       - name: Use stable Rust for repository validation
         run: echo "RUSTUP_TOOLCHAIN=stable" >> "$GITHUB_ENV"
       # Browser support is retained in-tree but disabled during the unified
       # native sidecar reactor migration, so it must not gate native CI.
       - run: cargo check --workspace --exclude agentos-sidecar-browser --exclude agentos-native-sidecar-browser
       - run: cargo clippy --workspace --exclude agentos-sidecar-browser --exclude agentos-native-sidecar-browser --all-targets -- -D warnings
+      - name: Build JavaScript workspace dependencies
+        run: |
+          pnpm exec turbo build \
+            --only \
+            --concurrency=4 \
+            --filter='!@rivet-dev/agentos-website' \
+            --filter='!@agentos-software/codex' \
+            --filter='!@rivet-dev/agentos-browser' \
+            --filter='!@rivet-dev/agentos-runtime-browser' \
+            --filter='!@rivet-dev/agentos-example-browser-terminal' \
+            --filter='!@rivet-dev/agentos-playground'
       - run: pnpm check-types
       - name: Build sidecars once for all TypeScript runtime suites
         run: cargo build -p agentos-sidecar -p agentos-native-sidecar

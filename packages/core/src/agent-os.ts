@@ -16,30 +16,6 @@ import type {
 	CreateVmConfig,
 	VmUserConfig,
 } from "@rivet-dev/agentos-runtime-core/vm-config";
-import type {
-	AcpSessionEvent,
-	CancelPromptResult,
-	PromptResult as DurablePromptResult,
-	DurableSessionEventEntry,
-	SessionInfo as DurableSessionInfo,
-	EphemeralSessionEventEntry,
-	HistoryPage,
-	JsonValue,
-	ListSessionsInput,
-	OpenSessionInput,
-	PermissionResponse,
-	PermissionResponseResult,
-	PermissionTerminalReason,
-	PromptInput,
-	ReadHistoryInput,
-	SessionAgentInfo,
-	SessionCapabilities,
-	SessionConfig,
-	SessionPage,
-	SessionStreamEntry,
-	SessionTarget,
-	SetSessionConfigOptionInput,
-} from "./session-api.js";
 import { type Binding, type Bindings, validateBindings } from "./bindings.js";
 import { zodToJsonSchema } from "./bindings-zod.js";
 import type {
@@ -67,6 +43,30 @@ import {
 	getSandboxDisposeHooks,
 	resolveSandboxOptions,
 } from "./sandbox.js";
+import type {
+	AcpSessionEvent,
+	CancelPromptResult,
+	PromptResult as DurablePromptResult,
+	DurableSessionEventEntry,
+	SessionInfo as DurableSessionInfo,
+	EphemeralSessionEventEntry,
+	HistoryPage,
+	JsonValue,
+	ListSessionsInput,
+	OpenSessionInput,
+	PermissionResponse,
+	PermissionResponseResult,
+	PermissionTerminalReason,
+	PromptInput,
+	ReadHistoryInput,
+	SessionAgentInfo,
+	SessionCapabilities,
+	SessionConfig,
+	SessionPage,
+	SessionStreamEntry,
+	SessionTarget,
+	SetSessionConfigOptionInput,
+} from "./session-api.js";
 import { resolvePublishedSidecarBinary } from "./sidecar/binary.js";
 import { findCargoBinary, resolveCargoBinary } from "./sidecar/cargo.js";
 
@@ -379,6 +379,7 @@ export interface AgentRegistryEntry {
 import {
 	OPT_AGENTOS_ROOT,
 	type PackageDescriptor,
+	type SoftwarePackageRef,
 	tryReadAgentosPackageManifest,
 } from "./agentos-package.js";
 import { getBaseEnvironment } from "./base-filesystem.js";
@@ -542,7 +543,7 @@ export type RootFilesystemConfig =
 	| OverlayRootFilesystemConfig
 	| NativeRootFilesystemConfig;
 
-/** VM-scoped SQLite storage shared by VFS and AgentOS durable state. */
+/** VM-scoped SQLite storage shared by VFS and agentOS durable state. */
 export type VmSqliteConfig =
 	| { type: "actor_uds"; path: string }
 	| { type: "sqlite_file"; path: string };
@@ -724,7 +725,7 @@ function defaultAgentStderrHandler(event: AgentStderrEvent): void {
 }
 
 /**
- * Restart disposition reported on an {@link AgentExitEvent}. AgentOS never
+ * Restart disposition reported on an {@link AgentExitEvent}. agentOS never
  * respawns an adapter or replays an interrupted request implicitly.
  */
 export type AgentRestartOutcome = "not_attempted";
@@ -742,7 +743,7 @@ export interface AgentExitEvent {
 	pid: number | null;
 	/** Adapter exit code; `null` when the exit was observed indirectly. */
 	exitCode: number | null;
-	/** Always `"not_attempted"`; AgentOS does not restart adapters implicitly. */
+	/** Always `"not_attempted"`; agentOS does not restart adapters implicitly. */
 	restart: AgentRestartOutcome;
 	/** Always zero. */
 	restartCount: number;
@@ -964,6 +965,9 @@ function normalizePackageRef(value: unknown): NormalizedPackageRef | undefined {
 	const record = toRecord(value);
 	if (typeof record.packagePath === "string") {
 		return { path: record.packagePath };
+	}
+	if (typeof record.path === "string") {
+		return { path: record.path };
 	}
 	// Recognizably-legacy shapes fail loudly: silently dropping a software
 	// entry boots a VM with missing packages and no diagnostic.
@@ -2872,6 +2876,17 @@ export class AgentOs {
 						event.ownership.vm_id === nativeVm.vmId,
 					10_000,
 				);
+				if (options?.rootFilesystem?.type !== "native") {
+					// Root bootstrap is a one-way kernel transition. Add any
+					// trusted POSIX directories before configureVm projects
+					// package command stubs and seals a read-only root.
+					await bootstrapLiveBootstrapDirectories(
+						client,
+						session,
+						nativeVm,
+						options?.rootFilesystem,
+					);
+				}
 				const configuredVm = await client.configureVm(session, nativeVm, {
 					mounts: sidecarMounts,
 					permissions: sidecarPermissions,
@@ -2879,6 +2894,7 @@ export class AgentOs {
 					loopbackExemptPorts: options?.loopbackExemptPorts,
 					packages: sidecarPackages,
 					packagesMountAt: OPT_AGENTOS_ROOT,
+					bootstrapCommands,
 					bindingShimCommands: bindingBootstrapCommands,
 				});
 				for (const command of configuredVm.projectedCommands) {
@@ -2916,6 +2932,7 @@ export class AgentOs {
 					// must resend the boot packages and binding shims.
 					packages: sidecarPackages,
 					packagesMountAt: OPT_AGENTOS_ROOT,
+					bootstrapCommands,
 					bindingShimCommands: bindingBootstrapCommands,
 					commandGuestPaths,
 					onDispose: cleanup,
@@ -2923,14 +2940,6 @@ export class AgentOs {
 					// shared across VMs; disposing this VM must not kill the process.
 					ownsClient: false,
 				});
-				if (options?.rootFilesystem?.type !== "native") {
-					await bootstrapLiveBootstrapDirectories(
-						client,
-						session,
-						nativeVm,
-						options?.rootFilesystem,
-					);
-				}
 
 				kernel = rootBridge as unknown as Kernel;
 				const snapshotClient = client;
@@ -3047,7 +3056,7 @@ export class AgentOs {
 			if (cleanupErrors.length > 0) {
 				throw new AggregateError(
 					[error, ...cleanupErrors],
-					"AgentOS VM creation and cleanup failed",
+					"agentOS VM creation and cleanup failed",
 				);
 			}
 			throw error;
@@ -3214,9 +3223,23 @@ export class AgentOs {
 		return this.#kernel.readFile(path);
 	}
 
+	async pread(
+		path: string,
+		offset: number,
+		length: number,
+	): Promise<Uint8Array> {
+		this._assertSafeAbsolutePath(path);
+		return this._vfs().pread(path, offset, length);
+	}
+
 	async writeFile(path: string, content: string | Uint8Array): Promise<void> {
 		this._assertWritableAbsolutePath(path);
 		return this.#kernel.writeFile(path, content);
+	}
+
+	async pwrite(path: string, offset: number, data: Uint8Array): Promise<void> {
+		this._assertWritableAbsolutePath(path);
+		return this._vfs().pwrite(path, offset, data);
 	}
 
 	async writeFiles(entries: BatchWriteEntry[]): Promise<BatchWriteResult[]> {
@@ -4042,15 +4065,23 @@ export class AgentOs {
 	 * block registers the package for `openSession({ agent: name })`. Persists for the VM's
 	 * lifetime (and across a snapshot iff the volume persists).
 	 */
-	async linkSoftware(descriptor: PackageDescriptor): Promise<void> {
+	async linkSoftware(
+		descriptor: PackageDescriptor | SoftwarePackageRef | string,
+	): Promise<void> {
 		// Forward to the sidecar, which owns the `/opt/agentos` projection and
 		// appends the package to its live host-backed staging dir; the commands
 		// appear under `/opt/agentos/bin` immediately. The sidecar rejects a
 		// duplicate command, surfaced here as a thrown error.
+		const normalized = normalizePackageRef(descriptor);
+		if (!normalized) {
+			throw new TypeError(
+				"linkSoftware requires a package path string, { path }, or { packagePath }",
+			);
+		}
 		const commands = await this._sidecarClient.linkPackage(
 			this._sidecarSession,
 			this._sidecarVm,
-			descriptor,
+			normalized,
 		);
 		if (this.#kernel instanceof NativeSidecarKernelProxy) {
 			this.#kernel.registerCommandGuestPaths(
@@ -4064,7 +4095,7 @@ export class AgentOs {
 			// Retain the linked package for runtime mount reconfigures:
 			// `configure_vm` is replace-on-write, so a later `mountFs` that
 			// resent only the boot packages would unproject this one.
-			this.#kernel.registerLinkedPackage(descriptor);
+			this.#kernel.registerLinkedPackage(normalized);
 		}
 		// The client parses no manifests: an `agent` block in the linked package is
 		// picked up by the sidecar (it owns the projected `/opt/agentos` and answers
@@ -4120,7 +4151,7 @@ export class AgentOs {
 				chunk: new Uint8Array(event.chunk),
 			});
 		} catch (error) {
-			console.error("AgentOS stderr handler failed", error);
+			console.error("agentOS stderr handler failed", error);
 		}
 	}
 
@@ -4149,7 +4180,7 @@ export class AgentOs {
 			try {
 				handler(publicEvent);
 			} catch (error) {
-				console.error("AgentOS agent-exit handler failed", error);
+				console.error("agentOS agent-exit handler failed", error);
 			}
 		}
 		for (const key of ["*", event.sessionId]) {
@@ -4157,7 +4188,7 @@ export class AgentOs {
 				try {
 					subscription(publicEvent);
 				} catch (error) {
-					console.error("AgentOS agent-exit subscription failed", error);
+					console.error("agentOS agent-exit subscription failed", error);
 				}
 			}
 		}
@@ -4199,7 +4230,7 @@ export class AgentOs {
 				fillPercent: toNumber(detail.fillPercent),
 			});
 		} catch (error) {
-			console.error("AgentOS limit-warning handler failed", error);
+			console.error("agentOS limit-warning handler failed", error);
 		}
 	}
 
@@ -4243,7 +4274,7 @@ export class AgentOs {
 				}
 			}
 		} catch (error) {
-			console.error("AgentOS failed to decode an ACP sidecar event", error);
+			console.error("agentOS failed to decode an ACP sidecar event", error);
 		}
 	}
 
@@ -4254,7 +4285,7 @@ export class AgentOs {
 			try {
 				handler(entry);
 			} catch (error) {
-				console.error("AgentOS session event handler failed", error);
+				console.error("agentOS session event handler failed", error);
 			}
 		}
 	}
@@ -4917,7 +4948,7 @@ export class AgentOs {
 		);
 		if (errors.length === 1) throw errors[0];
 		if (errors.length > 1) {
-			throw new AggregateError(errors, "AgentOS VM disposal failed");
+			throw new AggregateError(errors, "agentOS VM disposal failed");
 		}
 	}
 }

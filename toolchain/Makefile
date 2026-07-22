@@ -19,7 +19,7 @@ PATCHES := $(wildcard std-patches/*.patch)
 PATCH_SCRIPT := scripts/patch-std.sh
 
 # Disable rustc's stock self-contained WASI libraries and explicitly link the
-# command CRT and libc from AgentOS's owned sysroot. Merely putting this libdir
+# command CRT and libc from agentOS's owned sysroot. Merely putting this libdir
 # first in -L is insufficient: rustc selects its bundled libc internally.
 # Include the libc digest in rustc's metadata so Cargo relinks Rust commands
 # whenever the external sysroot is rebuilt; Cargo does not otherwise track
@@ -47,6 +47,8 @@ COMMAND_PACKAGES := $(foreach command,$(COMMAND_NAMES),-p $(call cargo_package_f
 COREUTILS_COMMAND_CRATES := $(wildcard ../software/coreutils/native/crates/cmd-*)
 PR_COMMAND_NAMES := $(patsubst cmd-%,%,$(notdir $(COREUTILS_COMMAND_CRATES))) _stubs
 PR_COMMAND_PACKAGES := $(foreach command,$(PR_COMMAND_NAMES),-p $(call cargo_package_for_command,$(command)))
+PR_C_COMMANDS := mknod getconf
+PR_C_BUILD_TARGETS := $(addprefix build/,$(PR_C_COMMANDS))
 
 # Alias symlinks: link_name:target_binary
 ALIAS_SYMLINKS := \
@@ -87,7 +89,7 @@ pr-commands:
 	$(MAKE) wasm \
 		COMMAND_NAMES="$(PR_COMMAND_NAMES)" \
 		COMMAND_PACKAGES="$(PR_COMMAND_PACKAGES)"
-	$(MAKE) -C c build/mknod install COMMANDS="mknod"
+	$(MAKE) -C c $(PR_C_BUILD_TARGETS) install COMMANDS="$(PR_C_COMMANDS)"
 
 # Build the real wasm32-wasip1 `codex-exec` agent engine and install it where
 # @agentos-software/codex-cli stages commands from.
@@ -309,7 +311,7 @@ wasm: c/sysroot/lib/wasm32-wasi/libc.a vendor patch-vendor patch-std wasm-opt-ch
 #   codex     the codex fork build    (codex, codex-exec)
 # `just toolchain-cmd <name>` calls this. `make wasm` builds the fast
 # Rust set; `make -C c programs install` builds/installs the fast C set.
-C_COMMANDS := zip unzip envsubst sqlite3 curl wget grep git duckdb vim ssh ssh-keysign ssh-sk-helper
+C_COMMANDS := zip unzip envsubst sqlite3 curl wget grep git duckdb vim ssh ssh-keysign ssh-sk-helper getconf
 
 .PHONY: cmd/%
 cmd/%:

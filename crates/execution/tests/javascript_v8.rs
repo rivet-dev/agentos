@@ -3453,6 +3453,64 @@ if (first.value !== "alpha" || first.done !== false || second.done !== true) {
     assert!(stderr.is_empty(), "unexpected stderr: {stderr}");
 }
 
+fn javascript_execution_v8_finished_observes_web_stream_without_timer_polling() {
+    let temp = tempdir().expect("create temp dir");
+    let mut engine = support::javascript_engine();
+    let context = engine.create_context(CreateJavascriptContextRequest {
+        vm_id: String::from("vm-js"),
+        bootstrap_module: None,
+        compile_cache_root: None,
+    });
+
+    let execution = engine
+        .start_execution(StartJavascriptExecutionRequest {
+            limits: Default::default(),
+            argv0: None,
+            guest_runtime: Default::default(),
+            vm_id: String::from("vm-js"),
+            context_id: context.context_id,
+            argv: vec![String::from("./entry.mjs")],
+            env: BTreeMap::new(),
+            cwd: temp.path().to_path_buf(),
+            wasm_module_bytes: None,
+            inline_code: Some(String::from(
+                r#"
+import { finished } from "node:stream";
+
+const originalSetTimeout = globalThis.setTimeout;
+let timerCalls = 0;
+globalThis.setTimeout = (...args) => {
+  timerCalls += 1;
+  return originalSetTimeout(...args);
+};
+
+try {
+  const readable = new ReadableStream({
+    start(controller) {
+      queueMicrotask(() => controller.close());
+    },
+  });
+  await new Promise((resolve, reject) => {
+    finished(readable, (error) => error ? reject(error) : resolve());
+  });
+} finally {
+  globalThis.setTimeout = originalSetTimeout;
+}
+
+if (timerCalls !== 0) {
+  throw new Error(`stream.finished polled Web Stream state with ${timerCalls} timer(s)`);
+}
+"#,
+            )),
+        })
+        .expect("start JavaScript execution");
+
+    let result = execution.wait().expect("wait for JavaScript execution");
+    let stderr = String::from_utf8(result.stderr).expect("stderr utf8");
+    assert_eq!(result.exit_code, 0, "unexpected stderr: {stderr}");
+    assert!(stderr.is_empty(), "unexpected stderr: {stderr}");
+}
+
 fn javascript_execution_v8_text_codec_streams_support_pipe_through() {
     let temp = tempdir().expect("create temp dir");
     let mut engine = support::javascript_engine();
@@ -4007,7 +4065,7 @@ if (typeof cjsStream.Readable !== "function") {
 
 // readable-stream imports the trailing-slash `process/` package internally.
 // Its browser fallback implements nextTick with setTimeout(0), which inserts a
-// timer turn before `_read()`. AgentOS must route that dependency to the guest
+// timer turn before `_read()`. agentOS must route that dependency to the guest
 // process nextTick queue so stream demand is visible in the same microtask turn.
 let readStarted = false;
 const nextTickReadable = new Readable({
@@ -7244,6 +7302,7 @@ fn javascript_v8_suite() {
     javascript_execution_v8_builtin_wrappers_expose_common_named_exports();
     javascript_execution_v8_child_process_conformance_matches_host_node();
     javascript_execution_v8_web_stream_globals_support_basic_io();
+    javascript_execution_v8_finished_observes_web_stream_without_timer_polling();
     javascript_execution_v8_text_codec_streams_support_pipe_through();
     javascript_execution_v8_abort_controller_dispatches_abort();
     javascript_execution_v8_request_accepts_abort_signal();

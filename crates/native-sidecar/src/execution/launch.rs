@@ -673,7 +673,7 @@ pub(super) fn apply_shell_cwd_prefix(
     }
 
     // Bash accepts login-shell flags between `-c` and its command text (for
-    // example `bash -c -l 'echo ok'`). The compact shell shipped in AgentOS
+    // example `bash -c -l 'echo ok'`). The compact shell shipped in agentOS
     // expects the command immediately after `-c`, so preserve Bash semantics
     // by folding the login flag into the option group before execution.
     if args.len() >= 3 && args[0] == "-c" && matches!(args[1].as_str(), "-l" | "--login") {
@@ -3119,7 +3119,7 @@ pub(super) fn stage_agentos_package_command(
         return Err(SidecarError::host(
             "EACCES",
             format!(
-                "AgentOS package command resolved outside its package mount: {guest_entrypoint} -> {real_entrypoint}"
+                "agentOS package command resolved outside its package mount: {guest_entrypoint} -> {real_entrypoint}"
             ),
         ));
     }
@@ -3174,6 +3174,18 @@ pub(super) fn stage_kernel_wasm_launch_asset(
     }
     .map_err(kernel_error)?;
     let real_entrypoint = normalize_path(&image.canonical_path);
+    if let Some(format) =
+        agentos_execution::wasm::detect_native_binary_format(image.bytes.as_slice())
+    {
+        let header = image.bytes.iter().copied().take(4).collect();
+        return Err(wasm_error(
+            agentos_execution::wasm::WasmExecutionError::NativeBinaryNotSupported {
+                path: PathBuf::from(&real_entrypoint),
+                header,
+                format,
+            },
+        ));
+    }
     let asset_path = runtime_asset_path_for_guest(vm, &real_entrypoint);
     if let Some(parent) = asset_path.parent() {
         fs::create_dir_all(parent).map_err(|error| {
@@ -3355,7 +3367,7 @@ pub(super) fn resolve_agentos_package_javascript_launch_entrypoint(
         return Err(SidecarError::host(
             "EACCES",
             format!(
-                "AgentOS package JavaScript entrypoint resolved outside its package mount: {guest_entrypoint} -> {real_entrypoint}"
+                "agentOS package JavaScript entrypoint resolved outside its package mount: {guest_entrypoint} -> {real_entrypoint}"
             ),
         ));
     }
@@ -4544,6 +4556,13 @@ where
                 payload.process_id
             )));
         }
+        // ConfigureVm normally closes the trusted bootstrap window after
+        // projecting package command stubs. Legacy/create-only callers can
+        // execute without ConfigureVm, so seal here as a final boundary before
+        // any untrusted guest code can observe a writable read-only root.
+        vm.kernel
+            .finish_root_filesystem_bootstrap()
+            .map_err(kernel_error)?;
         let vm_pending_stdin_bytes_budget = Arc::clone(&vm.pending_stdin_bytes_budget);
         let vm_pending_event_bytes_budget = Arc::clone(&vm.pending_event_bytes_budget);
         let standalone_wasm_backend = match payload.wasm_backend {
@@ -4644,6 +4663,10 @@ where
                 }
                 vm.active_processes
                     .insert(payload.process_id.clone(), process);
+                // Registration is the publication boundary for an execution
+                // that may already have queued work. Never rely solely on a
+                // pre-publication executor wake.
+                self.process_event_notify.notify_one();
                 if let Err(error) = self.bridge.emit_lifecycle(&vm_id, LifecycleState::Busy) {
                     rollback_published_top_level_process_start(
                         vm,
@@ -5156,6 +5179,10 @@ where
         }
         vm.active_processes
             .insert(payload.process_id.clone(), process);
+        // A fast executor can publish its first event before this process is
+        // visible to the pump. Rearm after the authoritative registration
+        // commit so that event cannot remain stranded.
+        self.process_event_notify.notify_one();
         if let Err(error) = self.bridge.emit_lifecycle(&vm_id, LifecycleState::Busy) {
             rollback_published_top_level_process_start(
                 vm,

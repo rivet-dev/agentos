@@ -445,26 +445,7 @@ mod kernel_authority {
     }
 
     fn registry_command_root() -> Option<String> {
-        let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .canonicalize()
-            .expect("canonicalize repo root");
-        let copied = repo_root.join("software/coreutils/wasm");
-        if copied.exists() {
-            return Some(copied.to_string_lossy().into_owned());
-        }
-
-        let fallback = repo_root.join("toolchain/target/wasm32-wasip1/release/commands");
-        if fallback.exists() {
-            return Some(fallback.to_string_lossy().into_owned());
-        }
-
-        eprintln!(
-            "registry WASM commands are required for filesystem tests: expected {} or {}",
-            copied.display(),
-            fallback.display()
-        );
-        None
+        support::registry_wasm_command_root().map(|path| path.to_string_lossy().into_owned())
     }
 
     fn guest_filesystem_call(

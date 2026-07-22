@@ -1,8 +1,5 @@
 import { afterEach, describe, expect, test } from "vitest";
-import {
-	AgentOs,
-	type VirtualFileSystem,
-} from "../src/index.js";
+import { AgentOs, type VirtualFileSystem } from "../src/index.js";
 import { createInMemoryFileSystem } from "../src/test/runtime.js";
 
 const VFS_METHODS = [
@@ -166,7 +163,7 @@ describe("mount integration", () => {
 		]);
 		expect(result.exitCode, result.stderr).toBe(0);
 		expect(result.stdout.trim()).toBe("from host api");
-		expect(mounted.calls).toContain("readFile:/host.txt");
+		expect(mounted.calls).toContain("pread:/host.txt");
 		expect(mounted.calls).toContain("writeFile:/guest.txt");
 		expect(
 			new TextDecoder().decode(await vm.readFile("/mnt/custom/guest.txt")),
@@ -227,5 +224,4 @@ describe("mount integration", () => {
 			vm.writeFile("/ro/blocked.txt", "should fail"),
 		).rejects.toThrow("EROFS");
 	});
-
 });

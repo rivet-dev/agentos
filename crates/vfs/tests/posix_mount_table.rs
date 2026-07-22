@@ -229,7 +229,7 @@ fn mount_table_enforces_read_only_and_cross_mount_boundaries() {
 }
 
 #[test]
-fn mount_table_rejects_symlinks_that_cross_mount_boundaries() {
+fn mount_table_allows_symlink_targets_across_mount_boundaries() {
     let mut root = MemoryFileSystem::new();
     root.write_file("/root.txt", b"root".to_vec())
         .expect("seed root file");
@@ -244,10 +244,17 @@ fn mount_table_rejects_symlinks_that_cross_mount_boundaries() {
         .mount("/mounted", mounted, MountOptions::new("memory"))
         .expect("mount memory filesystem");
 
-    let error = table
+    table
         .symlink("../root.txt", "/mounted/root-link")
-        .expect_err("cross-mount symlink should fail");
-    assert_eq!(error.code(), "EXDEV");
+        .expect("symlink targets are path strings and may cross mounts");
+    assert_eq!(
+        table.read_link("/mounted/root-link").unwrap(),
+        "../root.txt"
+    );
+    assert_eq!(
+        table.read_file("/mounted/root-link").unwrap(),
+        b"root".to_vec()
+    );
 }
 
 #[test]
@@ -356,7 +363,9 @@ fn mount_table_realpath_rebases_mounted_absolute_link_after_leaf_mounts() {
         .mount(
             "/opt/agentos/pkgs/pi/1.2.3",
             content,
-            MountOptions::new("package").read_only(true),
+            MountOptions::new("package")
+                .read_only(true)
+                .absolute_symlinks_mount_relative(true),
         )
         .expect("mount package content leaf");
 
@@ -380,7 +389,11 @@ fn mount_table_realpath_keeps_mount_local_absolute_symlinks_inside_mount() {
         .expect("seed mount-local absolute symlink");
 
     table
-        .mount("/mnt", mounted, MountOptions::new("memory"))
+        .mount(
+            "/mnt",
+            mounted,
+            MountOptions::new("memory").absolute_symlinks_mount_relative(true),
+        )
         .expect("mount memory filesystem");
 
     assert_eq!(
@@ -422,6 +435,30 @@ fn mount_table_content_ops_follow_guest_absolute_symlink_targets() {
             .unwrap(),
         b"value"
     );
+}
+
+#[test]
+fn mount_table_guest_absolute_symlinks_cross_mount_boundaries() {
+    let mut root = MemoryFileSystem::new();
+    root.mkdir("/test", true).unwrap();
+    root.write_file("/test/target", b"target".to_vec()).unwrap();
+
+    let mut table = MountTable::new(root);
+    table
+        .mount(
+            "/scratch",
+            MemoryFileSystem::new(),
+            MountOptions::new("memory"),
+        )
+        .unwrap();
+    table.symlink("/test/target", "/scratch/link").unwrap();
+
+    assert_eq!(table.read_link("/scratch/link").unwrap(), "/test/target");
+    assert_eq!(table.realpath("/scratch/link").unwrap(), "/test/target");
+    assert_eq!(table.read_file("/scratch/link").unwrap(), b"target");
+    table.remount("/scratch", "remount,ro").unwrap();
+    table.truncate("/scratch/link", 0).unwrap();
+    assert!(table.read_file("/test/target").unwrap().is_empty());
 }
 
 #[test]
@@ -724,7 +761,7 @@ fn remount_enforces_atime_and_read_only_policies_without_changing_other_times() 
     );
 
     table
-        .remount("/data", "remount,relatime,nodiratime")
+        .remount("/data", "remount,relatime,nodiratime,nosuid")
         .unwrap();
     let directory_before = table.stat("/data/dir").unwrap();
     std::thread::sleep(Duration::from_millis(5));
@@ -749,6 +786,17 @@ fn remount_enforces_atime_and_read_only_policies_without_changing_other_times() 
             .code(),
         "EROFS"
     );
+    assert_eq!(
+        table
+            .get_mounts()
+            .into_iter()
+            .find(|mount| mount.path == "/data")
+            .unwrap()
+            .option_string(),
+        "ro,strictatime,nodiratime,nosuid"
+    );
+
+    table.remount("/data", "remount,suid").unwrap();
     assert_eq!(
         table
             .get_mounts()

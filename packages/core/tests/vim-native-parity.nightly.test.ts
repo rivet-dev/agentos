@@ -102,8 +102,8 @@ describe.skipIf(!canRun)("vim wasm vs native — 1:1 PTY parity", () => {
 		});
 		let cumulative = Buffer.alloc(0);
 		let writes = Promise.resolve();
-		vm.onShellData(shellId, (data) => {
-			const b = Buffer.from(data);
+		vm.onShellData(shellId, (event) => {
+			const b = Buffer.from(event.data);
 			cumulative = Buffer.concat([cumulative, b]);
 			writes = writes.then(() => {});
 		});
@@ -124,7 +124,7 @@ describe.skipIf(!canRun)("vim wasm vs native — 1:1 PTY parity", () => {
 		const vimStart = cumulative.length;
 		const wasmSnaps: Snap[] = [];
 		// Re-capture from a clean emulator per step: feed all bytes from vim start.
-		let base = cumulative.subarray(0, vimStart);
+		const base = cumulative.subarray(0, vimStart);
 		void base;
 		const capture = (label: string) => {
 			wasmSnaps.push({ label, raw: new Uint8Array(cumulative) });

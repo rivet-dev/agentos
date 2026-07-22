@@ -308,8 +308,11 @@ impl WasmtimeExecution {
                             })),
                     )
                 })?;
-            let profile = WasmtimeEngineProfile::new_threaded(request.limits.max_stack_bytes)
-                .map_err(WasmExecutionError::Host)?;
+            let profile = WasmtimeEngineProfile::new_threaded_with_deterministic_fuel(
+                request.limits.max_stack_bytes,
+                request.limits.deterministic_fuel.is_some(),
+            )
+            .map_err(WasmExecutionError::Host)?;
             let async_stack_bytes = profile
                 .async_stack_bytes()
                 .map_err(WasmExecutionError::Host)?;
@@ -623,10 +626,17 @@ async fn run_execution(
         return super::worker::run_worker_process(bytes, request, host, control).await;
     }
     let engine_started = Instant::now();
+    let deterministic_fuel = request.limits.deterministic_fuel.is_some();
     let profile = if threaded {
-        WasmtimeEngineProfile::new_threaded(request.limits.max_stack_bytes)?
+        WasmtimeEngineProfile::new_threaded_with_deterministic_fuel(
+            request.limits.max_stack_bytes,
+            deterministic_fuel,
+        )?
     } else {
-        WasmtimeEngineProfile::new(request.limits.max_stack_bytes)?
+        WasmtimeEngineProfile::new_with_deterministic_fuel(
+            request.limits.max_stack_bytes,
+            deterministic_fuel,
+        )?
     };
     let engine = WasmtimeEngineRegistry::process().get_or_create(profile)?;
     diagnostics.phase("Engine", engine_started.elapsed());
@@ -747,6 +757,12 @@ async fn run_loaded_module_bytes(
     diagnostics.module(bytes.len(), compiled.cache_hit);
     let mut module = compiled.module;
     let mut request = request;
+    // The launch request contains trusted runtime-only AGENTOS_* transport
+    // fields that must be hidden from the first image. An exec replacement's
+    // environment was constructed by guest libc and is already guest-visible;
+    // filtering it again would incorrectly delete ordinary variables whose
+    // names happen to use that prefix.
+    let mut environment_is_guest_visible = false;
     let import_validation_started = Instant::now();
     let threaded = matches!(
         profile.feature_profile,
@@ -769,6 +785,7 @@ async fn run_loaded_module_bytes(
                 profile,
                 Arc::clone(&paused),
                 Arc::clone(&pause_notify),
+                environment_is_guest_visible,
             )?)
         } else {
             None
@@ -779,7 +796,7 @@ async fn run_loaded_module_bytes(
             eprintln!("ERR_AGENTOS_WASMTIME_LINKER: private linker diagnostic: {error:#}");
             HostServiceError::new(
                 "ERR_AGENTOS_WASMTIME_LINKER",
-                "failed to build the AgentOS WebAssembly host linker",
+                "failed to build the agentOS WebAssembly host linker",
             )
         })?;
         diagnostics.phase("Linker", linker_started.elapsed());
@@ -793,6 +810,7 @@ async fn run_loaded_module_bytes(
             active_cpu_started_ns,
             Arc::clone(&paused),
             Arc::clone(&pause_notify),
+            environment_is_guest_visible,
             matches!(
                 profile.feature_profile,
                 super::engine::WasmtimeFeatureProfile::AgentOsOwnedWasiV1Threads
@@ -885,6 +903,7 @@ async fn run_loaded_module_bytes(
                 if let Some(replacement) = store.data_mut().pending_exec_replacement.take() {
                     request.argv = replacement.argv;
                     request.env = replacement.env;
+                    environment_is_guest_visible = true;
                     module = replacement.module;
                     linker::validate_module_imports(&module, request.permission_tier, threaded)?;
                     let teardown_started = Instant::now();
@@ -950,7 +969,10 @@ pub(super) async fn run_worker_loaded_module(
         Arc::clone(runtime.resources()),
         events,
     );
-    let profile = WasmtimeEngineProfile::new_threaded(request.limits.max_stack_bytes)?;
+    let profile = WasmtimeEngineProfile::new_threaded_with_deterministic_fuel(
+        request.limits.max_stack_bytes,
+        request.limits.deterministic_fuel.is_some(),
+    )?;
     let engine = WasmtimeEngineRegistry::process().get_or_create(profile)?;
     run_loaded_module_bytes(
         String::from("<thread-worker>"),

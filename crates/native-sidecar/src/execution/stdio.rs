@@ -476,6 +476,16 @@ pub(super) fn typed_kernel_stdio_write(
 ) -> Result<Value, SidecarError> {
     let is_stdout = kernel_stdio_output_is_stdout(kernel, process.kernel_pid, fd)?;
 
+    // A descendant sharing an ancestor's PTY must write through its inherited
+    // slave without also publishing a child stdout event. The sidecar child
+    // pump drains the owner's master into the one ordered host-facing stream.
+    if process.tty_master_owner.is_some() {
+        let written = kernel
+            .fd_write(EXECUTION_DRIVER_NAME, process.kernel_pid, fd, &chunk)
+            .map_err(kernel_error)?;
+        return Ok(json!(written));
+    }
+
     // COOKED TTY (line shell): route the write through the PTY slave so it flows
     // through process_output (ONLCR) into the master output buffer interleaved
     // with cooked-mode echo, then surface that single ordered master stream so

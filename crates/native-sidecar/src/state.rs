@@ -148,6 +148,9 @@ pub(crate) struct ManagedHostNetDescription {
     pub(crate) local_address: Option<SocketAddress>,
     pub(crate) peer_address: Option<SocketAddress>,
     pub(crate) receive_timeout_ms: Option<u64>,
+    pub(crate) reuse_address: bool,
+    pub(crate) linger_enabled: bool,
+    pub(crate) linger_seconds: u32,
     pub(crate) no_delay: bool,
     pub(crate) keep_alive: bool,
 }
@@ -170,6 +173,9 @@ impl ManagedHostNetDescription {
             local_address: None,
             peer_address: None,
             receive_timeout_ms: None,
+            reuse_address: false,
+            linger_enabled: false,
+            linger_seconds: 0,
             no_delay: false,
             keep_alive: false,
         }
@@ -407,16 +413,21 @@ impl ActiveRealIntervalTimer {
         real_interval_timer_values(&timer, now)
     }
 
-    pub(crate) fn set(&self, value_us: u64, interval_us: u64) -> (u64, u64) {
+    pub(crate) fn set(&self, value_us: u64, interval_us: u64) -> (u64, u64, bool) {
         let mut timer = self.state.lock().unwrap_or_else(|error| error.into_inner());
         let now = Instant::now();
         refresh_real_interval_timer(&mut timer, now);
         let previous = real_interval_timer_values(&timer, now);
+        // Replacing or disabling a timer must atomically transfer an expiry
+        // that became due before this call to the kernel signal plane. Leaving
+        // the executor-local bit set would publish a second SIGALRM after an
+        // already-pending blocked signal is unmasked.
+        let pending_expiry = std::mem::take(&mut timer.pending_expiry);
         timer.deadline = (value_us != 0)
             .then(|| now.checked_add(Duration::from_micros(value_us)))
             .flatten();
         timer.interval = Duration::from_micros(interval_us);
-        previous
+        (previous.0, previous.1, pending_expiry)
     }
 
     pub(crate) fn take_expiry(&self) -> bool {
@@ -514,6 +525,23 @@ mod real_interval_timer_tests {
             "no duplicate expiry before next deadline"
         );
         assert_eq!(timer.deadline, Some(next));
+    }
+
+    #[test]
+    fn replacement_transfers_one_pending_expiry_and_clears_local_state() {
+        let timer = ActiveRealIntervalTimer {
+            state: Mutex::new(RealIntervalTimerState {
+                deadline: Instant::now().checked_sub(Duration::from_millis(1)),
+                interval: Duration::from_millis(10),
+                pending_expiry: false,
+            }),
+        };
+
+        let (_, interval_us, pending_expiry) = timer.set(0, 0);
+        assert_eq!(interval_us, 10_000);
+        assert!(pending_expiry);
+        assert!(!timer.take_expiry());
+        assert_eq!(timer.get(), (0, 0));
     }
 }
 
@@ -1656,6 +1684,10 @@ pub(crate) struct ActiveProcess {
     /// this RPC, so it cannot issue another. The optional absolute deadline is
     /// `None` for a readiness-only wait with no recurring timeout.
     pub(crate) deferred_kernel_wait_rpc: Option<(ExecutionHostCall, Option<Instant>)>,
+    /// The one-shot readiness task associated with
+    /// `deferred_kernel_wait_rpc`. Clearing the parked request aborts this
+    /// task so a signal or teardown cannot enqueue a retry after settlement.
+    pub(crate) deferred_kernel_wait_task: Option<tokio::task::JoinHandle<()>>,
     /// Preserves the one-shot 80% operation-deadline warning across readiness
     /// wakes and re-parks of the same root-process `fd_write` RPC.
     pub(crate) deferred_kernel_wait_deadline_warned: bool,
@@ -3115,6 +3147,10 @@ pub(crate) enum ActiveExecutionEvent {
     Stderr(Vec<u8>),
     HostRpcRequest(ExecutionHostCall),
     HostCallCompletion(HostCallCompletion),
+    /// Durable broker event emitted by a deferred POSIX-poll readiness or
+    /// deadline task. The poll state remains process-owned; this payload only
+    /// guarantees that the owner lane re-enters to probe it.
+    DeferredPosixPollWake,
     ManagedStreamReadRecheck(Box<ManagedStreamReadRecheck>),
     ManagedUdpPollRecheck(Box<ManagedUdpPollRecheck>),
     SignalState {

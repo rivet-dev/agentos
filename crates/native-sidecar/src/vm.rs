@@ -78,7 +78,7 @@ const ROOT_BOOTSTRAP_DIRS: &[(&str, u32, u32, u32)] = &[
     ("/sbin", 0o755, 0, 0),
     ("/boot", 0o755, 0, 0),
     ("/etc", 0o755, 0, 0),
-    // AgentOS retains `/root/node_modules` as a compatibility projection.
+    // agentOS retains `/root/node_modules` as a compatibility projection.
     // Permit traversal without allowing the default guest to list `/root`.
     ("/root", 0o711, 0, 0),
     ("/run", 0o755, 0, 0),
@@ -493,9 +493,6 @@ where
                 execution_commands,
             ))
             .map_err(kernel_error)?;
-        kernel
-            .finish_root_filesystem_bootstrap()
-            .map_err(kernel_error)?;
         self.bridge
             .set_vm_permissions(&vm_id, &permissions_policy)?;
 
@@ -726,6 +723,12 @@ where
                     EXECUTION_DRIVER_NAME,
                     execution_commands,
                 ))
+                .map_err(kernel_error)?;
+            // Package manifests are sidecar-owned, so their command names are
+            // only known during configure. Seal the root after those trusted
+            // `/bin` stubs have been projected, never during create_vm.
+            vm.kernel
+                .finish_root_filesystem_bootstrap()
                 .map_err(kernel_error)?;
             refresh_guest_command_path_env(&mut vm.guest_env, &kernel_commands.search_roots);
             vm.command_permissions = payload.command_permissions.clone().into_iter().collect();
@@ -2238,7 +2241,14 @@ where
                     .guest_fstype(mount.guest_fstype.clone())
                     .read_only(mount.read_only)
                     .max_bytes(max_filesystem_bytes)
-                    .max_inodes(max_inode_count),
+                    .max_inodes(max_inode_count)
+                    .absolute_symlinks_mount_relative(
+                        mount.plugin.id == "agentos_packages"
+                            && matches!(
+                                config_value.get("kind").and_then(serde_json::Value::as_str),
+                                Some("tar" | "hostDir")
+                            ),
+                    ),
             )
             .map_err(kernel_error)?;
         emit_security_audit_event(

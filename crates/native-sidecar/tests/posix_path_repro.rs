@@ -39,25 +39,9 @@ fn strip_benign_child_pid_warnings(stderr: &str) -> String {
 }
 
 fn registry_command_root() -> PathBuf {
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .expect("canonicalize repo root");
-    let copied = repo_root.join("software/coreutils/wasm");
-    if copied.exists() {
-        return copied;
-    }
-
-    let fallback = repo_root.join("toolchain/target/wasm32-wasip1/release/commands");
-    if fallback.exists() {
-        return fallback;
-    }
-
-    panic!(
-        "registry WASM commands are required for posix path repro tests: expected {} or {}",
-        copied.display(),
-        fallback.display()
-    );
+    support::registry_wasm_command_root().expect(
+        "registry WASM commands are required for posix path repro tests; set AGENTOS_WASM_COMMANDS_DIR",
+    )
 }
 
 fn configure_mounts(

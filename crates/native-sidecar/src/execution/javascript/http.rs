@@ -1,4 +1,5 @@
 use super::super::*;
+use agentos_execution::host::{BoundedString, HttpHeader};
 
 const HTTP_LOOPBACK_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const VM_FETCH_STREAM_CHUNK_MAX_BYTES: usize = 64 * 1024;
@@ -150,7 +151,7 @@ pub(in crate::execution) fn serialize_http_loopback_request(
     .map_err(|error| SidecarError::host("ERR_AGENTOS_NODE_SYNC_RPC", format!("{error}")))
 }
 
-fn http_request_target(url: &Url) -> String {
+pub(in crate::execution) fn http_request_target(url: &Url) -> String {
     let path = if url.path().is_empty() {
         "/"
     } else {
@@ -197,30 +198,68 @@ fn serialize_kernel_http_fetch_request(
     options: &JavascriptHttpRequestOptions,
     headers: &HttpHeaderCollection,
     body_bytes: Option<&[u8]>,
-) -> Vec<u8> {
+) -> Result<Vec<u8>, SidecarError> {
     let method = options.method.as_deref().unwrap_or("GET");
     let path = format!("/{}", path.trim_start_matches('/'));
+    let metadata_limit =
+        PayloadLimit::new("vm.fetch.requestMetadata", VM_FETCH_BUFFER_LIMIT_BYTES)?;
+    let metadata_headers = headers
+        .raw_pairs
+        .iter()
+        .map(|(name, value)| {
+            Ok(HttpHeader {
+                name: BoundedString::try_new(name.clone(), &metadata_limit)?,
+                value: BoundedString::try_new(value.clone(), &metadata_limit)?,
+            })
+        })
+        .collect::<Result<Vec<_>, HostServiceError>>()?;
+    validate_http_request_metadata(method, &metadata_headers)?;
+
+    let connection_scoped_headers = headers
+        .normalized
+        .get("connection")
+        .into_iter()
+        .flatten()
+        .flat_map(|value| value.split(','))
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect::<BTreeSet<_>>();
     let mut lines = vec![format!("{method} {path} HTTP/1.1")];
     let mut has_host = false;
-    let mut has_connection = false;
-    let mut has_content_length = false;
     for (name, values) in &headers.normalized {
-        match name.as_str() {
-            "host" => has_host = true,
-            "connection" => has_connection = true,
-            "content-length" => has_content_length = true,
-            _ => {}
+        // This function creates a new HTTP/1.1 message from a decoded request
+        // body. Forwarding the source connection's framing, fixed hop-by-hop
+        // headers, or fields nominated by Connection can produce an invalid
+        // CL/TE combination or leak connection-scoped metadata.
+        if connection_scoped_headers.contains(name)
+            || matches!(
+                name.as_str(),
+                "connection"
+                    | "content-length"
+                    | "keep-alive"
+                    | "proxy-connection"
+                    | "te"
+                    | "proxy-authenticate"
+                    | "proxy-authorization"
+                    | "trailer"
+                    | "transfer-encoding"
+                    | "upgrade"
+            )
+        {
+            continue;
+        }
+        if name == "host" {
+            has_host = true;
         }
         lines.push(format!("{name}: {}", values.join(", ")));
     }
     if !has_host {
         lines.push(format!("Host: 127.0.0.1:{port}"));
     }
-    if !has_connection {
-        lines.push(String::from("Connection: close"));
-    }
+    lines.push(String::from("Connection: close"));
     let body = body_bytes.unwrap_or_else(|| options.body.as_deref().unwrap_or("").as_bytes());
-    if !has_content_length && !body.is_empty() {
+    if !body.is_empty() {
         lines.push(format!("Content-Length: {}", body.len()));
     }
     lines.push(String::new());
@@ -228,18 +267,20 @@ fn serialize_kernel_http_fetch_request(
 
     let mut request = lines.join("\r\n").into_bytes();
     request.extend_from_slice(body);
-    request
+    Ok(request)
 }
 
 fn find_http_header_end(buffer: &[u8]) -> Option<usize> {
     buffer.windows(4).position(|window| window == b"\r\n\r\n")
 }
 
+type VmFetchResponseHead = (u16, String, Vec<(String, String)>, VmFetchBodyMode);
+
 fn parse_stream_response_head(
     bytes: &[u8],
     request_method: &str,
     max_response_bytes: usize,
-) -> Result<(u16, String, Vec<(String, String)>, VmFetchBodyMode), SidecarError> {
+) -> Result<VmFetchResponseHead, SidecarError> {
     let text = std::str::from_utf8(bytes).map_err(|error| {
         SidecarError::Execution(format!(
             "ERR_AGENTOS_VM_FETCH_INVALID_RESPONSE: response headers were not UTF-8: {error}"
@@ -572,6 +613,10 @@ pub(in crate::execution) fn begin_kernel_http_fetch(
     body_bytes: Option<&[u8]>,
     max_fetch_response_bytes: usize,
 ) -> Result<KernelHttpFetch, SidecarError> {
+    // Validate and serialize before reserving capabilities or creating a
+    // socket. Rejected request metadata must have no observable side effects.
+    let request_bytes =
+        serialize_kernel_http_fetch_request(port, path, options, headers, body_bytes)?;
     // Client source ports belong to the kernel socket table. The listen-port
     // allocator does not reserve active client sockets and can hand the same
     // source port to concurrent requests.
@@ -610,8 +655,6 @@ pub(in crate::execution) fn begin_kernel_http_fetch(
             InetSocketAddress::new("127.0.0.1", port),
         )
         .map_err(kernel_error)?;
-    let request_bytes =
-        serialize_kernel_http_fetch_request(port, path, options, headers, body_bytes);
     vm.kernel
         .socket_write(EXECUTION_DRIVER_NAME, kernel_pid, socket_id, &request_bytes)
         .map_err(kernel_error)?;
@@ -704,6 +747,21 @@ pub(in crate::execution) fn poll_kernel_http_fetch(
     if revents.intersects(POLLHUP) {
         fetch.peer_closed = true;
     }
+    // A readiness probe must settle data made available in that same probe.
+    // Returning Pending after draining a complete response forces callers to
+    // wait for a second edge that may instead be the one-shot server's exit.
+    if let Some(response) =
+        parse_kernel_http_fetch_response(&fetch.response_buffer, fetch.peer_closed, &fetch.url)
+            .map_err(sidecar_core_execution_error)?
+    {
+        ensure_vm_fetch_response_within_limit(
+            &response,
+            "vm.fetch",
+            fetch.max_fetch_response_bytes,
+        )
+        .map_err(sidecar_core_execution_error)?;
+        return Ok(Some(response));
+    }
     Ok(None)
 }
 
@@ -740,6 +798,10 @@ where
             VM_FETCH_STREAM_COUNT_LIMIT
         )));
     }
+    // Validate and serialize before reserving capabilities or creating a
+    // socket. Rejected request metadata must have no observable side effects.
+    let request_bytes =
+        serialize_kernel_http_fetch_request(port, path, options, headers, body_bytes)?;
     let socket_paths = build_socket_path_context(vm)?;
     // Keep the source port kernel-owned for the lifetime of the stream. Using
     // the listen-port allocator here can return the same port to every active
@@ -780,8 +842,6 @@ where
                 InetSocketAddress::new("127.0.0.1", port),
             )
             .map_err(kernel_error)?;
-        let request_bytes =
-            serialize_kernel_http_fetch_request(port, path, options, headers, body_bytes);
         vm.kernel
             .socket_write(EXECUTION_DRIVER_NAME, kernel_pid, socket_id, &request_bytes)
             .map_err(kernel_error)?;

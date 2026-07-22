@@ -6,7 +6,7 @@
     },
     "/docs/docs/approvals": {
       "title": "Approvals",
-      "description": "Handle native ACP permission options with durable AgentOS correlation."
+      "description": "Handle native ACP permission options with durable agentOS correlation."
     },
     "/docs/docs/apps": {
       "title": "agentOS Apps",
@@ -168,13 +168,25 @@
       "title": "Pi",
       "description": "Run the Pi coding agent inside a VM with extensions and custom configuration."
     },
+    "/docs/docs/custom-software/building-wasm": {
+      "title": "Building Binaries",
+      "description": "Compile WASM command binaries for agentOS from source."
+    },
+    "/docs/docs/custom-software/definition": {
+      "title": "Software Definition",
+      "description": "The software-package definition for custom commands and agents in an agentOS VM: a package is a packed .aospkg (or a package directory), declared with defineSoftware({ packagePath })."
+    },
+    "/docs/docs/custom-software/publishing": {
+      "title": "Publishing Packages",
+      "description": "Build, publish, and consume agentOS packages — locally, from npm, or from your own repo."
+    },
     "/docs/docs/architecture/agent-sdk-snapshots": {
       "title": "Agent SDK Snapshots",
       "description": "How an agent's SDK is evaluated once per sidecar into a V8 heap snapshot and reused across sessions instead of re-imported on every openSession: the bundle, the userland snapshot, the process-wide cache, pre-warm, per-session restore, isolation, and the snapshot-safety rules an SDK must follow."
     },
     "/docs/docs/architecture/agent-sessions": {
       "title": "Agent Sessions",
-      "description": "How durable sessions, ACP adapters, prompts, permissions, and history flow through AgentOS."
+      "description": "How durable sessions, ACP adapters, prompts, permissions, and history flow through agentOS."
     },
     "/docs/docs/architecture/compiler-toolchain": {
       "title": "Compiler Toolchain",
@@ -210,7 +222,7 @@
     },
     "/docs/docs/architecture/sessions-persistence": {
       "title": "Sessions & Persistence",
-      "description": "How AgentOS stores exact ACP history and restores adapters through VM SQLite."
+      "description": "How agentOS stores exact ACP history and restores adapters through VM SQLite."
     },
     "/docs/docs/architecture/tls-ssl": {
       "title": "TLS & SSL",

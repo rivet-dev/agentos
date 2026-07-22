@@ -1,4 +1,4 @@
-//! AgentOS host-network ABI codecs.
+//! agentOS host-network ABI codecs.
 //!
 //! The sidecar kernel owns socket descriptions and guest fd allocation. These
 //! codecs translate only the owned libc wire format; they do not project or
@@ -972,7 +972,11 @@ fn timeval_ms(bytes: &[u8]) -> Result<Option<u64>, ()> {
 
 fn option_kind(level: u32, name: u32, length: u32) -> Option<&'static str> {
     let socket_level = matches!(level, 1 | 0x7fff_ffff);
-    if socket_level && matches!(name, 20 | 66) && length == 16 {
+    if socket_level && name == 2 && length == 4 {
+        Some("reuse-address")
+    } else if socket_level && name == 13 && length == 8 {
+        Some("linger")
+    } else if socket_level && matches!(name, 20 | 66) && length == 16 {
         Some("receive-timeout")
     } else if (socket_level && name == 9)
         || (level == 6 && name == 1)
@@ -1004,6 +1008,42 @@ async fn set_option(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val])
     let Ok(bytes) = memory::read_bytes(caller, pointer, length as usize) else {
         return ERRNO_FAULT;
     };
+    if kind == "reuse-address" {
+        let Ok(value) = <[u8; 4]>::try_from(bytes.as_slice()) else {
+            return ERRNO_INVAL;
+        };
+        return simple_call(
+            caller,
+            "process.hostnet_set_option",
+            vec![
+                json!(fd),
+                json!(kind),
+                json!(u32::from_le_bytes(value) != 0),
+            ],
+        )
+        .await;
+    }
+    if kind == "linger" {
+        let (Ok(enabled), Ok(seconds)) = (
+            <[u8; 4]>::try_from(&bytes[0..4]),
+            <[u8; 4]>::try_from(&bytes[4..8]),
+        ) else {
+            return ERRNO_INVAL;
+        };
+        return simple_call(
+            caller,
+            "process.hostnet_set_option",
+            vec![
+                json!(fd),
+                json!(kind),
+                json!({
+                    "enabled": u32::from_le_bytes(enabled) != 0,
+                    "seconds": u32::from_le_bytes(seconds),
+                }),
+            ],
+        )
+        .await;
+    }
     let Ok(duration) = timeval_ms(&bytes) else {
         return ERRNO_INVAL;
     };
@@ -1218,24 +1258,32 @@ async fn poll(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i3
             let Some(fds) = value.get("fds").and_then(Value::as_array) else {
                 return ERRNO_IO;
             };
-            for entry in fds {
-                let (Some(fd), Some(revents)) = (
-                    entry.get("fd").and_then(value_u64),
-                    entry.get("revents").and_then(value_u64),
-                ) else {
+            if fds.len() != count {
+                return ERRNO_IO;
+            }
+            for (index, entry) in fds.iter().enumerate() {
+                let Some(fd) = entry.get("fd").and_then(value_u64) else {
                     return ERRNO_IO;
                 };
-                if let Some(index) = (0..count).find(|index| {
-                    memory::read_u32(caller, pointer + (*index * 8) as u32).ok() == Some(fd as u32)
-                }) {
-                    if commit(
-                        caller,
-                        pointer + (index * 8 + 6) as u32,
-                        &(revents as u16).to_le_bytes(),
-                    ) != SUCCESS
-                    {
-                        return ERRNO_FAULT;
-                    }
+                if memory::read_u32(caller, pointer + (index * 8) as u32).ok()
+                    != u32::try_from(fd).ok()
+                {
+                    return ERRNO_IO;
+                }
+                let Some(revents) = entry
+                    .get("revents")
+                    .and_then(value_u64)
+                    .and_then(|value| u16::try_from(value).ok())
+                else {
+                    return ERRNO_IO;
+                };
+                if commit(
+                    caller,
+                    pointer + (index * 8 + 6) as u32,
+                    &revents.to_le_bytes(),
+                ) != SUCCESS
+                {
+                    return ERRNO_FAULT;
                 }
             }
             let ready = value

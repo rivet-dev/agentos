@@ -343,6 +343,7 @@ where
         // users, but feeding it here would replicate state and can double-deliver
         // bytes when the guest also reads fd 0 through the host bridge.
         write_kernel_process_stdin(&mut vm.kernel, process, &payload.chunk)?;
+        self.process_event_notify.notify_one();
 
         Ok(DispatchResult {
             response: stdin_written_response(
@@ -376,6 +377,7 @@ where
                 ))
             })?;
         close_kernel_process_stdin(&mut vm.kernel, process)?;
+        self.process_event_notify.notify_one();
 
         Ok(DispatchResult {
             response: stdin_closed_response(request, payload.process_id),
@@ -662,6 +664,7 @@ where
                     "invalid vm.fetch target {target_path:?}: {error}"
                 ))
             })?;
+        let request_target = http_request_target(&request_url);
         let header_values: BTreeMap<String, Value> = serde_json::from_str(&payload.headers_json)
             .map_err(|error| {
                 SidecarError::InvalidState(format!(
@@ -727,7 +730,7 @@ where
                 vm,
                 &target_process_id,
                 payload.port,
-                &target_path,
+                &request_target,
                 &options,
                 &headers,
                 body_bytes.as_deref(),
@@ -756,6 +759,24 @@ where
                     }
 
                     if self.pump_process_events(&ownership).await? {
+                        // A one-shot server can finish writing the complete
+                        // response and exit in the same process-pump turn. The
+                        // socket transition is durable and must win over the
+                        // subsequently queued exit; otherwise vm.fetch reports
+                        // a clean target exit even though Linux clients can
+                        // read the complete response before EOF.
+                        let response = {
+                            let vm = self.vms.get_mut(&vm_id).ok_or_else(|| {
+                                SidecarError::InvalidState(format!(
+                                    "VM {vm_id} is no longer active during vm.fetch"
+                                ))
+                            })?;
+                            poll_kernel_http_fetch(vm, &mut fetch)?
+                        };
+                        if let Some(response) = response {
+                            break Ok(response);
+                        }
+
                         let queued_exit_code = self.pending_process_events.iter().find_map(
                             |envelope| {
                                 if envelope.vm_id == vm_id

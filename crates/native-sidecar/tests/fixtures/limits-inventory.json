@@ -1925,6 +1925,12 @@
 		"wired": "VmLimits.resources.max_inode_count"
 	},
 	{
+		"name": "AGENTOS_TIMESTAMP_MAX_SECONDS",
+		"path": "crates/vfs/src/posix/vfs.rs",
+		"class": "invariant",
+		"rationale": "Filesystem timestamp ABI ceiling shared by every storage backend; changing it would alter guest-visible metadata semantics."
+	},
+	{
 		"name": "MAX_PATH_LENGTH",
 		"path": "crates/vfs/src/posix/vfs.rs",
 		"class": "invariant",

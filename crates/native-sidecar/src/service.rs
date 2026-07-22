@@ -14,8 +14,8 @@ pub(crate) use crate::execution::{
     parse_signal, record_execute_exit_event_queue_wait, record_execute_phase,
     sanitize_javascript_child_process_internal_bootstrap_env,
     service_javascript_kernel_fd_write_sync_rpc, service_javascript_sync_rpc,
-    settle_execution_host_call, HickoryDnsResolver, JavascriptSyncRpcServiceRequest,
-    LoopbackHttpDispatchRequest,
+    settle_execution_host_call, terminate_child_process_tree, HickoryDnsResolver,
+    JavascriptSyncRpcServiceRequest, LoopbackHttpDispatchRequest,
 };
 use crate::extension::{
     Extension, ExtensionBufferedProcessOutput, ExtensionContext, ExtensionFuture, ExtensionHost,
@@ -36,7 +36,7 @@ use crate::state::{
     ActiveExecutionEvent, BridgeError, ConnectionState, EventSinkTransport, ExecutionHostCall,
     ProcessEventEnvelope, QuarantinedVmGeneration, SessionState, SharedBridge, SharedEventSink,
     SharedSidecarRequestClient, SidecarRequestTransport, SocketFamily, SocketPathContext, VmState,
-    EXECUTION_DRIVER_NAME,
+    DISPOSE_VM_SIGKILL_GRACE, DISPOSE_VM_SIGTERM_GRACE, EXECUTION_DRIVER_NAME,
 };
 use crate::NativeSidecarBridge;
 use agentos_bridge::queue_tracker::{register_queue, QueueGauge, TrackedLimit};
@@ -1026,11 +1026,66 @@ where
         Ok(sidecar)
     }
 
-    pub(crate) fn prune_extension_process_resource(&mut self, process_id: &str) {
+    pub(crate) fn transfer_extension_process_resource(
+        &mut self,
+        process_id: &str,
+        detached_process_ids: &[String],
+    ) {
         self.extension_sessions.retain(|_, resources| {
-            resources.process_ids.remove(process_id);
+            if resources.process_ids.remove(process_id) {
+                resources
+                    .process_ids
+                    .extend(detached_process_ids.iter().cloned());
+            }
             !resources.process_ids.is_empty() || !resources.vm_ids.is_empty()
         });
+    }
+
+    fn terminate_extension_process_tree(
+        &mut self,
+        vm_id: &str,
+        process_id: &str,
+        signal: &str,
+    ) -> Result<(), SidecarError> {
+        let vm = self
+            .vms
+            .get_mut(vm_id)
+            .ok_or_else(|| SidecarError::InvalidState(format!("unknown sidecar VM {vm_id}")))?;
+        let process = vm.active_processes.get_mut(process_id).ok_or_else(|| {
+            SidecarError::InvalidState(format!("VM {vm_id} has no active process {process_id}"))
+        })?;
+        let kernel_readiness = Arc::clone(&vm.kernel_socket_readiness);
+        let unix_address_registry = Arc::clone(&vm.unix_address_registry);
+        terminate_child_process_tree(
+            &mut vm.kernel,
+            process,
+            &kernel_readiness,
+            &unix_address_registry,
+        );
+        self.kill_process_internal(vm_id, process_id, signal)
+    }
+
+    async fn wait_for_extension_processes_to_exit(
+        &mut self,
+        ownership: &OwnershipScope,
+        vm_id: &str,
+        process_ids: &BTreeSet<String>,
+        timeout: Duration,
+        events: &mut Vec<EventFrame>,
+    ) -> Result<(), SidecarError> {
+        let deadline = Instant::now() + timeout;
+        while self.vms.get(vm_id).is_some_and(|vm| {
+            process_ids
+                .iter()
+                .any(|process_id| vm.active_processes.contains_key(process_id))
+        }) && Instant::now() < deadline
+        {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if let Some(event) = self.poll_event(ownership, remaining).await? {
+                events.push(event);
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn prune_extension_vm_resource(&mut self, vm_id: &str) {
@@ -1169,6 +1224,7 @@ where
             }
             ActiveExecutionEvent::HostRpcRequest(_)
             | ActiveExecutionEvent::HostCallCompletion(_)
+            | ActiveExecutionEvent::DeferredPosixPollWake
             | ActiveExecutionEvent::ManagedStreamReadRecheck(_)
             | ActiveExecutionEvent::ManagedUdpPollRecheck(_)
             | ActiveExecutionEvent::SignalState { .. }
@@ -2312,7 +2368,7 @@ where
         let waiter_request = call.clone();
         let envelope_vm_id = vm_id.to_owned();
         let envelope_process_id = process_id.to_owned();
-        runtime
+        let wake_task = runtime
             .spawn(agentos_runtime::TaskClass::Vm, async move {
             // Wake on any kernel poll-state change or the deadline; either way
             // requeue exactly once. The handler re-probes and either replies or
@@ -2351,6 +2407,7 @@ where
             return Ok(None);
         };
         process.deferred_kernel_wait_rpc = Some((call.clone(), deadline));
+        process.deferred_kernel_wait_task = Some(wake_task);
         Ok(None)
     }
 
@@ -2362,6 +2419,13 @@ where
     ) -> Result<(), SidecarError> {
         let request = &call.request;
         record_sync_bridge_request_observed(request.id, &request.method);
+        if call.reply.is_terminal() {
+            eprintln!(
+                "INFO_AGENTOS_STALE_KERNEL_WAIT_RETRY: dropping settled host call {} ({})",
+                request.id, request.method
+            );
+            return Ok(());
+        }
         let Some(vm) = self.vms.get(vm_id) else {
             log_stale_process_event(&self.bridge, vm_id, process_id, "javascript sync RPC");
             return Ok(());
@@ -3676,16 +3740,58 @@ where
                 .remove(&key)
                 .expect("extension resources existed before removal");
             let (connection_id, session_id, vm_id) = self.vm_scope_for(&ownership)?;
-            for process_id in resources.process_ids {
+            let process_ids = resources.process_ids;
+            let mut events = Vec::new();
+            for process_id in &process_ids {
                 if self
                     .vms
                     .get(&vm_id)
-                    .is_some_and(|vm| vm.active_processes.contains_key(&process_id))
+                    .is_some_and(|vm| vm.active_processes.contains_key(process_id))
                 {
-                    self.kill_process_internal(&vm_id, &process_id, "SIGTERM")?;
+                    self.terminate_extension_process_tree(&vm_id, process_id, "SIGTERM")?;
                 }
             }
-            let mut events = Vec::new();
+            self.wait_for_extension_processes_to_exit(
+                &ownership,
+                &vm_id,
+                &process_ids,
+                DISPOSE_VM_SIGTERM_GRACE,
+                &mut events,
+            )
+            .await?;
+            for process_id in &process_ids {
+                if self
+                    .vms
+                    .get(&vm_id)
+                    .is_some_and(|vm| vm.active_processes.contains_key(process_id))
+                {
+                    self.terminate_extension_process_tree(&vm_id, process_id, "SIGKILL")?;
+                }
+            }
+            self.wait_for_extension_processes_to_exit(
+                &ownership,
+                &vm_id,
+                &process_ids,
+                DISPOSE_VM_SIGKILL_GRACE,
+                &mut events,
+            )
+            .await?;
+            let remaining_process_ids = self
+                .vms
+                .get(&vm_id)
+                .map(|vm| {
+                    process_ids
+                        .iter()
+                        .filter(|process_id| vm.active_processes.contains_key(*process_id))
+                        .cloned()
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            if !remaining_process_ids.is_empty() {
+                return Err(SidecarError::InvalidState(format!(
+                    "extension session {key:?} processes did not exit after SIGKILL: {remaining_process_ids:?}"
+                )));
+            }
             for resource_vm_id in resources.vm_ids {
                 if self.vms.contains_key(&resource_vm_id) {
                     events.extend(
@@ -4034,6 +4140,7 @@ pub(crate) fn wasm_error(error: WasmExecutionError) -> SidecarError {
         WasmExecutionError::EventChannelClosed => SidecarError::ExecutionEventChannelClosed {
             backend: ExecutionBackendKind::WebAssembly,
         },
+        WasmExecutionError::Host(error) => SidecarError::Host(error),
         WasmExecutionError::NativeBinaryNotSupported { .. } => {
             SidecarError::host("ERR_NATIVE_BINARY_NOT_SUPPORTED", message)
         }
@@ -4066,6 +4173,32 @@ mod execution_error_tests {
 
         assert_eq!(error.code(), Some("ENOTSUP"));
         assert!(error.to_string().contains("deterministic WebAssembly fuel"));
+    }
+
+    #[test]
+    fn wasmtime_host_errors_preserve_their_typed_code_and_details() {
+        let error = wasm_error(WasmExecutionError::Host(
+            agentos_execution::backend::HostServiceError::new(
+                "ERR_AGENTOS_VM_EXECUTOR_LIMIT",
+                "executor saturated",
+            )
+            .with_details(serde_json::json!({
+                "limitName": "runtime.executor.maxActiveVms",
+                "limit": 6,
+            })),
+        ));
+
+        assert_eq!(error.code(), Some("ERR_AGENTOS_VM_EXECUTOR_LIMIT"));
+        let SidecarError::Host(error) = error else {
+            panic!("typed Wasmtime host error must remain a host error");
+        };
+        assert_eq!(
+            error.details,
+            Some(serde_json::json!({
+                "limitName": "runtime.executor.maxActiveVms",
+                "limit": 6,
+            }))
+        );
     }
 
     #[test]
@@ -4558,6 +4691,47 @@ mod dispose_lifecycle_tests {
             sidecar.take_disposed_sessions(),
             vec![(String::from("conn-1"), String::from("session-1"))],
             "dispose must publish the session scope so stdio can untrack it"
+        );
+    }
+
+    #[test]
+    fn extension_process_ownership_follows_detached_children() {
+        let mut sidecar = test_sidecar();
+        let key = (String::from("dev.test.acp"), String::from("agent-session"));
+        sidecar.extension_sessions.insert(
+            key.clone(),
+            ExtensionSessionResources {
+                ownership: OwnershipScope::vm("conn-1", "session-1", "vm-1"),
+                process_ids: BTreeSet::from([String::from("adapter")]),
+                vm_ids: BTreeSet::new(),
+            },
+        );
+
+        sidecar.transfer_extension_process_resource(
+            "adapter",
+            &[
+                String::from("adapter/child-1"),
+                String::from("adapter/child-2"),
+            ],
+        );
+
+        assert_eq!(
+            sidecar
+                .extension_sessions
+                .get(&key)
+                .expect("detached children retain session ownership")
+                .process_ids,
+            BTreeSet::from([
+                String::from("adapter/child-1"),
+                String::from("adapter/child-2"),
+            ]),
+        );
+
+        sidecar.transfer_extension_process_resource("adapter/child-1", &[]);
+        sidecar.transfer_extension_process_resource("adapter/child-2", &[]);
+        assert!(
+            !sidecar.extension_sessions.contains_key(&key),
+            "the ownership record is reclaimed after its last process exits",
         );
     }
 
