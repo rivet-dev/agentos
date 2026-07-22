@@ -16,6 +16,7 @@ import {
 	faLightbulb,
 	faScaleBalanced,
 	faRobot,
+	faToolbox,
 	faWrench,
 	faMessages,
 	faCheck,
@@ -98,6 +99,19 @@ export const siteConfig = {
 								{ title: "Codex", href: "/docs/agents/codex", badge: "Beta", icon: { src: "/images/registry/codex.svg" } },
 								{ title: "OpenCode", href: "/docs/agents/opencode", icon: { src: "/images/registry/opencode.svg" } },
 								{ title: "Custom Agents", href: "/docs/agents/custom", icon: faWrench },
+							],
+						},
+						{
+							title: "Frameworks",
+							collapsible: true,
+							icon: faToolbox,
+							pages: [
+								{
+									title: "Vercel Eve",
+									href: "/docs/frameworks/vercel-eve",
+									badge: "Beta",
+									icon: { src: "/images/frameworks/eve-icon.svg" },
+								},
 							],
 						},
 						{ title: "Sessions & Transcripts", href: "/docs/sessions", icon: faMessages },
@@ -245,6 +259,10 @@ export const siteConfig = {
 						{ title: "Workflows", href: "/cookbooks/workflows" },
 						{ title: "Webhooks", href: "/cookbooks/webhooks" },
 					],
+				},
+				{
+					title: "Integrations",
+					pages: [{ title: "Vercel Eve", href: "/cookbooks/eve" }],
 				},
 				{
 					title: "Reference",

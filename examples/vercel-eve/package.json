@@ -1,0 +1,28 @@
+{
+	"name": "@rivet-dev/agentos-example-vercel-eve",
+	"version": "0.0.1",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"build": "eve build",
+		"dev": "eve dev",
+		"start": "eve start",
+		"check-types": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@rivet-dev/agentos": "workspace:*",
+		"@rivet-dev/agentos-core": "workspace:*",
+		"@rivet-dev/agentos-eve": "workspace:*",
+		"@vercel/connect": "0.4.0",
+		"ai": "7.0.26",
+		"eve": "0.27.0",
+		"zod": "4.3.6"
+	},
+	"devDependencies": {
+		"@types/node": "^24.0.0",
+		"typescript": "^5.7.2"
+	},
+	"engines": {
+		"node": ">=24"
+	}
+}

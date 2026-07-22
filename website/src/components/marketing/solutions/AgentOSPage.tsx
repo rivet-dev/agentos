@@ -474,6 +474,7 @@ interface SupportedAgent {
 	name: string;
 	href: string;
 	wordmark?: boolean;
+	comingSoon?: boolean;
 }
 
 const agents: SupportedAgent[] = [
@@ -486,8 +487,8 @@ const agents: SupportedAgent[] = [
 // Frameworks agentOS works with. Eve's mark is its wordmark, so its chip
 // renders the logo alone; the others use their square mark.
 const frameworks: SupportedAgent[] = [
-	{ src: '/images/frameworks/eve.svg', name: 'Eve', wordmark: true, href: 'https://vercel.com/eve' },
-	{ src: '/images/frameworks/flue.svg', name: 'Flue', href: 'https://flueframework.com' },
+	{ src: '/images/frameworks/eve.svg', name: 'Eve', wordmark: true, href: '/docs/frameworks/vercel-eve' },
+	{ src: '/images/frameworks/flue.svg', name: 'Flue', href: 'https://flueframework.com', comingSoon: true },
 ];
 
 // Tab metadata for the orchestration code panel, leading with agents
@@ -1769,7 +1770,7 @@ const AgentCompatibilitySection = () => (
 			<Reveal>
 				<div className='mx-auto max-w-4xl text-center'>
 					<h2 className='text-balance text-3xl font-medium leading-[1.08] tracking-[-0.025em] text-ink md:text-5xl'>Bring any agent or framework.</h2>
-					<p className='mx-auto mt-5 max-w-3xl text-balance text-base leading-relaxed text-ink-soft md:text-lg'>Pi, Claude Code, Codex, and OpenCode on the same virtual operating system—with Eve and Flue coming soon.</p>
+					<p className='mx-auto mt-5 max-w-3xl text-balance text-base leading-relaxed text-ink-soft md:text-lg'>Pi, Claude Code, Codex, and OpenCode on the same virtual operating system—with Eve available now and Flue coming soon.</p>
 				</div>
 			</Reveal>
 
@@ -1814,7 +1815,7 @@ const AgentCompatibilitySection = () => (
 									href={framework.href}
 									target='_blank'
 									rel='noopener noreferrer'
-									aria-label={`${framework.name} (coming soon)`}
+									aria-label={framework.comingSoon ? `${framework.name} (coming soon)` : framework.name}
 									variants={{
 										rest: { rotate: tilt, marginLeft: i === 0 ? 0 : -10 },
 										spread: { rotate: 0, marginLeft: i === 0 ? 0 : 7 },
@@ -1829,7 +1830,7 @@ const AgentCompatibilitySection = () => (
 										aria-hidden='true'
 										className={framework.wordmark ? 'w-9 object-contain opacity-90 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 md:w-10' : 'h-8 w-8 object-contain opacity-90 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 md:h-9 md:w-9'}
 									/>
-									<span className='pointer-events-none absolute -bottom-2 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded-full border border-ink/10 bg-paper px-1.5 py-0.5 text-[6px] font-medium uppercase tracking-[0.04em] text-ink/55 shadow-[0_1px_4px_rgba(20,20,22,0.08)] md:text-[7px]'>Coming soon</span>
+									{framework.comingSoon && <span className='pointer-events-none absolute -bottom-2 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded-full border border-ink/10 bg-paper px-1.5 py-0.5 text-[6px] font-medium uppercase tracking-[0.04em] text-ink/55 shadow-[0_1px_4px_rgba(20,20,22,0.08)] md:text-[7px]'>Coming soon</span>}
 									<span className='pointer-events-none absolute top-full left-1/2 mt-2 -translate-x-1/2 whitespace-nowrap text-xs font-medium text-ink-soft opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100'>
 										{framework.name}
 									</span>

@@ -223,6 +223,10 @@
     "/docs/docs/custom-software/publishing": {
       "title": "Publishing Packages",
       "description": "Build, publish, and consume agentOS packages — locally, from npm, or from your own repo."
+    },
+    "/docs/docs/frameworks/vercel-eve": {
+      "title": "Vercel Eve",
+      "description": "Use agentOS as the durable sandbox backend for Vercel Eve."
     }
   }
 }
