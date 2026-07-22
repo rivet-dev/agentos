@@ -3,6 +3,7 @@ packages:
   - packages/agentos
   - packages/agentos-toolchain
   - packages/eve
+  - packages/flue
   - packages/browser
   - packages/build-tools
   - packages/core
@@ -58,9 +59,9 @@ onlyBuiltDependencies:
 # pinned once here and referenced everywhere via `catalog:rivetkit`.
 catalogs:
   rivetkit:
-    rivetkit: 2.3.5
-    '@rivetkit/react': 2.3.5
+    rivetkit: 2.3.6
+    '@rivetkit/react': 2.3.6
 
 overrides:
-  '@rivetkit/rivetkit-wasm': 2.3.5
+  '@rivetkit/rivetkit-wasm': 2.3.6
   web-streams-polyfill: 3.3.3

@@ -1,0 +1,11 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"moduleResolution": "bundler",
+		"noEmit": true,
+		"lib": ["ESNext", "DOM"],
+		"types": ["node"]
+	},
+	"include": ["agents/**/*.ts", "core.ts", "flue.config.ts", "registry.ts"]
+}
+

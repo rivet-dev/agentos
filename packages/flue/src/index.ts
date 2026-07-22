@@ -1,0 +1,352 @@
+import { createHash } from "node:crypto";
+import { posix } from "node:path";
+import {
+	createSandboxSessionEnv,
+	type FileStat,
+	type SandboxApi,
+	type SandboxFactory,
+	type SessionEnv,
+	type ShellResult,
+} from "@flue/runtime";
+import type { AgentOs, VirtualStat } from "@rivet-dev/agentos-core";
+
+const DEFAULT_CWD = "/workspace";
+
+interface AgentOSActorConnection {
+	readonly ready: PromiseLike<void>;
+	exec(
+		command: string,
+		options?: {
+			cwd?: string;
+			env?: Record<string, string>;
+			timeout?: number;
+			captureStdio?: boolean;
+		},
+	): Promise<ShellResult>;
+	readFile(path: string): Promise<unknown>;
+	writeFile(path: string, content: string | Uint8Array): Promise<void>;
+	stat(path: string): Promise<VirtualStat>;
+	readdir(path: string): Promise<string[]>;
+	exists(path: string): Promise<boolean>;
+	mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
+	remove(path: string, options?: { recursive?: boolean }): Promise<void>;
+}
+
+interface AgentOSActorAccessor {
+	getOrCreate(key: string[]): { connect(): AgentOSActorConnection };
+}
+
+type AgentOSActorClient = Record<string, AgentOSActorAccessor | undefined>;
+
+export interface AgentOSRegistry {
+	startAndWait(): Promise<void>;
+	parseConfig(): {
+		endpoint?: string;
+		namespace: string;
+		token?: string;
+		headers?: Record<string, string>;
+		envoy: { poolName: string };
+	};
+}
+
+export interface AgentOSSandboxOptions {
+	/** Registry key of an actor created with `agentOS()`. */
+	actor: string;
+	/** Application registry containing the selected agentOS actor. */
+	registry: AgentOSRegistry;
+	/** Base directory exposed to Flue. Defaults to `/workspace`. */
+	cwd?: string;
+	/** Advanced: an existing client for the same registry. */
+	client?: object;
+}
+
+export interface AgentOSCoreSandboxOptions {
+	/** Creates one caller-configured agentOS Core VM for a Flue context. */
+	create(input: { id: string }): AgentOs | Promise<AgentOs>;
+	/** Base directory exposed to Flue. Defaults to `/workspace`. */
+	cwd?: string;
+}
+
+export class AgentOSFlueConfigurationError extends Error {
+	readonly code = "agentos_flue_configuration";
+
+	constructor(
+		readonly actor: string,
+		message: string,
+		options?: ErrorOptions,
+	) {
+		super(message, options);
+		this.name = "AgentOSFlueConfigurationError";
+	}
+}
+
+/** Uses an existing `agentOS()` actor as the sandbox for each Flue context. */
+export function agentOSSandbox(options: AgentOSSandboxOptions): SandboxFactory {
+	if (!options || typeof options.actor !== "string" || !options.actor.trim()) {
+		throw new TypeError("agentOSSandbox requires the registry actor name");
+	}
+	if (
+		!options.registry ||
+		typeof options.registry.startAndWait !== "function" ||
+		typeof options.registry.parseConfig !== "function"
+	) {
+		throw new TypeError("agentOSSandbox requires the application registry");
+	}
+	const actor = options.actor.trim();
+	const cwd = sandboxCwd(options.cwd);
+	const environments = new Map<string, Promise<SessionEnv>>();
+
+	return {
+		createSessionEnv({ id }) {
+			return cachedEnvironment(environments, id, async () => {
+				const connection = await connectActor(options, actor, actorKey(id));
+				return createSandboxSessionEnv(actorSandboxApi(connection), cwd);
+			});
+		},
+	};
+}
+
+/** Uses caller-created standalone agentOS Core VMs as Flue sandboxes. */
+export function agentOSCoreSandbox(
+	options: AgentOSCoreSandboxOptions,
+): SandboxFactory {
+	if (!options || typeof options.create !== "function") {
+		throw new TypeError("agentOSCoreSandbox requires a create factory");
+	}
+	const cwd = sandboxCwd(options.cwd);
+	const environments = new Map<string, Promise<SessionEnv>>();
+
+	return {
+		createSessionEnv({ id }) {
+			return cachedEnvironment(environments, id, async () => {
+				const vm = await options.create({ id });
+				assertCoreVm(vm);
+				return createSandboxSessionEnv(coreSandboxApi(vm), cwd);
+			});
+		},
+	};
+}
+
+const registryClients = new WeakMap<object, Promise<AgentOSActorClient>>();
+
+async function actorClient(
+	options: AgentOSSandboxOptions,
+): Promise<AgentOSActorClient> {
+	await options.registry.startAndWait();
+	if (options.client) return options.client as AgentOSActorClient;
+
+	const registryKey = options.registry as object;
+	let pending = registryClients.get(registryKey);
+	if (!pending) {
+		pending = (async () => {
+			const config = options.registry.parseConfig();
+			const { createClient } = await import("@rivet-dev/agentos/client");
+			return createClient<never>({
+				endpoint: config.endpoint,
+				namespace: config.namespace,
+				poolName: config.envoy.poolName,
+				token: config.token,
+				headers: config.headers,
+				disableMetadataLookup: true,
+			} as never) as unknown as AgentOSActorClient;
+		})().catch((error) => {
+			registryClients.delete(registryKey);
+			throw error;
+		});
+		registryClients.set(registryKey, pending);
+	}
+	return pending;
+}
+
+async function connectActor(
+	options: AgentOSSandboxOptions,
+	actor: string,
+	key: string[],
+): Promise<AgentOSActorConnection> {
+	try {
+		const accessor = (await actorClient(options))[actor];
+		if (!accessor || typeof accessor.getOrCreate !== "function") {
+			throw new Error(`registry has no actor named ${JSON.stringify(actor)}`);
+		}
+		const connection = accessor.getOrCreate(key).connect();
+		await connection.ready;
+		assertActorConnection(connection);
+		return connection;
+	} catch (cause) {
+		if (cause instanceof AgentOSFlueConfigurationError) throw cause;
+		throw new AgentOSFlueConfigurationError(
+			actor,
+			`agentOS actor ${JSON.stringify(actor)} could not be used; register an agentOS() actor under that exact setup({ use }) key: ${cause instanceof Error ? cause.message : String(cause)}`,
+			{ cause },
+		);
+	}
+}
+
+function assertActorConnection(
+	connection: AgentOSActorConnection,
+): asserts connection is AgentOSActorConnection {
+	const methods = connection as unknown as Record<string, unknown>;
+	for (const method of [
+		"exec",
+		"readFile",
+		"writeFile",
+		"stat",
+		"readdir",
+		"exists",
+		"mkdir",
+		"remove",
+	]) {
+		if (typeof methods[method] !== "function") {
+			throw new Error("selected actor is not an @rivet-dev/agentos actor");
+		}
+	}
+}
+
+function assertCoreVm(vm: AgentOs): void {
+	const methods = vm as unknown as Record<string, unknown>;
+	for (const method of [
+		"exec",
+		"readFile",
+		"writeFile",
+		"stat",
+		"readdir",
+		"exists",
+		"mkdir",
+		"remove",
+	]) {
+		if (typeof methods?.[method] !== "function") {
+			throw new TypeError(
+				"agentOSCoreSandbox create() must return an AgentOs instance",
+			);
+		}
+	}
+}
+
+function actorSandboxApi(connection: AgentOSActorConnection): SandboxApi {
+	return sandboxApi({
+		exec: (command, options) => connection.exec(command, options),
+		readFile: (path) => connection.readFile(path).then(actorBytes),
+		writeFile: (path, content) => connection.writeFile(path, content),
+		stat: (path) => connection.stat(path),
+		readdir: (path) => connection.readdir(path),
+		exists: (path) => connection.exists(path),
+		mkdir: (path, options) => connection.mkdir(path, options),
+		remove: (path, options) => connection.remove(path, options),
+	});
+}
+
+function coreSandboxApi(vm: AgentOs): SandboxApi {
+	return sandboxApi({
+		exec: (command, options) => vm.exec(command, options),
+		readFile: (path) => vm.readFile(path),
+		writeFile: (path, content) => vm.writeFile(path, content),
+		stat: (path) => vm.stat(path),
+		readdir: (path) => vm.readdir(path),
+		exists: (path) => vm.exists(path),
+		mkdir: (path, options) => vm.mkdir(path, options),
+		remove: (path, options) => vm.remove(path, options),
+	});
+}
+
+interface AgentOSSandboxApiSource {
+	exec(
+		command: string,
+		options?: {
+			cwd?: string;
+			env?: Record<string, string>;
+			timeout?: number;
+			captureStdio?: boolean;
+		},
+	): Promise<ShellResult>;
+	readFile(path: string): Promise<Uint8Array>;
+	writeFile(path: string, content: string | Uint8Array): Promise<void>;
+	stat(path: string): Promise<VirtualStat>;
+	readdir(path: string): Promise<string[]>;
+	exists(path: string): Promise<boolean>;
+	mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
+	remove(path: string, options?: { recursive?: boolean }): Promise<void>;
+}
+
+function sandboxApi(source: AgentOSSandboxApiSource): SandboxApi {
+	return {
+		async readFile(path) {
+			return new TextDecoder().decode(await source.readFile(path));
+		},
+		readFileBuffer: source.readFile,
+		writeFile: source.writeFile,
+		async stat(path): Promise<FileStat> {
+			const stat = await source.stat(path);
+			return {
+				isFile: (stat.mode & 0o170000) === 0o100000,
+				isDirectory: stat.isDirectory,
+				isSymbolicLink: stat.isSymbolicLink,
+				size: stat.size,
+				mtime: new Date(stat.mtimeMs),
+			};
+		},
+		readdir: source.readdir,
+		exists: source.exists,
+		mkdir: source.mkdir,
+		async rm(path, options) {
+			if (options?.force && !(await source.exists(path))) return;
+			try {
+				await source.remove(path, { recursive: options?.recursive });
+			} catch (error) {
+				if (options?.force && !(await source.exists(path))) return;
+				throw error;
+			}
+		},
+		exec(command, options) {
+			return source.exec(command, {
+				cwd: options?.cwd,
+				env: options?.env,
+				timeout: options?.timeoutMs,
+				captureStdio: true,
+			});
+		},
+	};
+}
+
+function actorKey(id: string): string[] {
+	return ["flue", "sandbox", stableId(id)];
+}
+
+function stableId(value: string): string {
+	return createHash("sha256").update(value).digest("hex");
+}
+
+function sandboxCwd(value: string | undefined): string {
+	const cwd = value ?? DEFAULT_CWD;
+	if (!posix.isAbsolute(cwd)) {
+		throw new TypeError("agentOS Flue sandbox cwd must be an absolute path");
+	}
+	return posix.normalize(cwd);
+}
+
+function actorBytes(value: unknown): Uint8Array {
+	if (value instanceof Uint8Array) return value;
+	if (
+		Array.isArray(value) &&
+		value.length === 2 &&
+		value[0] === "$Uint8Array" &&
+		typeof value[1] === "string"
+	) {
+		return Buffer.from(value[1], "base64");
+	}
+	throw new TypeError("agentOS returned an invalid binary payload");
+}
+
+async function cachedEnvironment(
+	environments: Map<string, Promise<SessionEnv>>,
+	id: string,
+	create: () => Promise<SessionEnv>,
+): Promise<SessionEnv> {
+	const existing = environments.get(id);
+	if (existing) return existing;
+	const pending = create().catch((error) => {
+		if (environments.get(id) === pending) environments.delete(id);
+		throw error;
+	});
+	environments.set(id, pending);
+	return pending;
+}

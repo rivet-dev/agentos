@@ -488,7 +488,7 @@ const agents: SupportedAgent[] = [
 // renders the logo alone; the others use their square mark.
 const frameworks: SupportedAgent[] = [
 	{ src: '/images/frameworks/eve.svg', name: 'Eve', wordmark: true, href: '/docs/frameworks/vercel-eve' },
-	{ src: '/images/frameworks/flue.svg', name: 'Flue', href: 'https://flueframework.com', comingSoon: true },
+	{ src: '/images/frameworks/flue.svg', name: 'Flue', href: '/docs/frameworks/flue' },
 ];
 
 // Tab metadata for the orchestration code panel, leading with agents
@@ -1770,7 +1770,7 @@ const AgentCompatibilitySection = () => (
 			<Reveal>
 				<div className='mx-auto max-w-4xl text-center'>
 					<h2 className='text-balance text-3xl font-medium leading-[1.08] tracking-[-0.025em] text-ink md:text-5xl'>Bring any agent or framework.</h2>
-					<p className='mx-auto mt-5 max-w-3xl text-balance text-base leading-relaxed text-ink-soft md:text-lg'>Pi, Claude Code, Codex, and OpenCode on the same virtual operating system—with Eve available now and Flue coming soon.</p>
+					<p className='mx-auto mt-5 max-w-3xl text-balance text-base leading-relaxed text-ink-soft md:text-lg'>Pi, Claude Code, Codex, and OpenCode on the same virtual operating system—with integrations for Eve and Flue.</p>
 				</div>
 			</Reveal>
 
