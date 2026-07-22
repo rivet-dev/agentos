@@ -807,6 +807,37 @@ var NativeURL = canUseNativeUrlImplementation(nativeUrlCandidate) ? nativeUrlCan
       }
       return;
     }
+    const opaqueSchemeMatch = full.match(/^([a-zA-Z][a-zA-Z\d+\-.]*:)(?!\/\/)/);
+    if (opaqueSchemeMatch) {
+      const protocol = opaqueSchemeMatch[1];
+      this.protocol = protocol;
+      this.hostname = "";
+      this.port = "";
+      this.host = "";
+      this.pathname = full.slice(protocol.length, pathEnd);
+      this.search = searchValue;
+      this.hash = hashValue;
+      this.href = protocol + this.pathname + this.search + this.hash;
+      this.origin = "null";
+      this.searchParams = new URLSearchParams(this.search);
+      const syncHrefFromSearchParams = () => {
+        const query = this.searchParams.toString();
+        this.search = query ? `?${query}` : "";
+        this.href = protocol + this.pathname + this.search + this.hash;
+      };
+      for (const method of ["append", "delete", "set", "sort"]) {
+        const original = this.searchParams[method]?.bind(this.searchParams);
+        if (!original) {
+          continue;
+        }
+        this.searchParams[method] = (...args) => {
+          const result = original(...args);
+          syncHrefFromSearchParams();
+          return result;
+        };
+      }
+      return;
+    }
     const match = full.match(/^(\w+:)\/\/([^/:?#]+)(:\d+)?(.*)$/);
     this.protocol = match?.[1] || "";
     this.hostname = match?.[2] || "";
