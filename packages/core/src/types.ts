@@ -114,3 +114,16 @@ export type {
 	VirtualFileSystem,
 	VirtualStat,
 } from "./runtime.js";
+export type {
+	AgentOsSandboxClient,
+	AgentOsSandboxClientOptions,
+	AgentOsSandboxCommonOptions,
+	AgentOsSandboxInput,
+	AgentOsSandboxOptions,
+	AgentOsSandboxProcessInfo,
+	AgentOsSandboxProcessLogs,
+	AgentOsSandboxProcessResult,
+	AgentOsSandboxProvider,
+	AgentOsSandboxProviderOptions,
+	SandboxMountPluginConfig,
+} from "./sandbox.js";

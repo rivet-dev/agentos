@@ -4,10 +4,7 @@
 // at /mnt/sandbox, and registers sandbox bindings for running commands.
 
 import { AgentOs } from "@rivet-dev/agentos-core";
-import {
-	createSandboxFs,
-	createSandboxBindings,
-} from "@rivet-dev/agentos-sandbox";
+import { docker } from "@rivet-dev/agentos-sandbox";
 
 const SANDBOX_QUICKSTART_PERMISSIONS = {
 	fs: "allow",
@@ -24,26 +21,10 @@ if (skipDocker) {
 	process.exit(0);
 }
 
-const [{ SandboxAgent }, { docker }] = await Promise.all([
-	import("sandbox-agent"),
-	import("sandbox-agent/docker"),
-]);
-
-// Start a Docker-backed sandbox.
-const sandbox = await SandboxAgent.start({
-	sandbox: docker(),
-});
-
-// Mount the sandbox filesystem and register the bindings.
+// Start a Docker-backed sandbox, mount its filesystem, and register its bindings.
 const vm = await AgentOs.create({
 	permissions: SANDBOX_QUICKSTART_PERMISSIONS,
-	mounts: [
-		{
-			path: SANDBOX_MOUNT,
-			plugin: createSandboxFs({ client: sandbox }),
-		},
-	],
-	bindings: [createSandboxBindings({ client: sandbox })],
+	sandbox: { provider: docker() },
 });
 
 try {
@@ -86,5 +67,4 @@ try {
 	}
 } finally {
 	await vm.dispose();
-	await sandbox.dispose();
 }

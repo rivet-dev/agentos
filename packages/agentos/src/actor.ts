@@ -1013,6 +1013,7 @@ const agentOsOptionKeys = [
 	"database",
 	"rootFilesystem",
 	"mounts",
+	"sandbox",
 	"scheduleDriver",
 	"bindings",
 	"permissions",
@@ -1131,6 +1132,11 @@ export function createAgentOS<
 		maxDynamicMounts,
 		maxLinkedSoftware,
 	} = split;
+	if (agentOsOptions.sandbox && "client" in agentOsOptions.sandbox) {
+		throw new Error(
+			"agentOS() cannot share sandbox: { client } across actor instances; use sandbox: { provider } so each actor VM starts its own client",
+		);
+	}
 	if (agentOsOptions.rootFilesystem) {
 		throw new Error(
 			"agentOS() owns rootFilesystem so it can persist directly through the actor SQLite UDS; use mounts for additional filesystems",

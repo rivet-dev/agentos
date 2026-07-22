@@ -93,6 +93,24 @@ describe("agentOS actor", () => {
 		expect(definition.config.events).toHaveProperty("sessionEvent");
 	});
 
+	test("accepts per-VM sandbox providers", () => {
+		expect(() =>
+			agentOS({
+				sandbox: {
+					provider: { start: async () => ({}) as never },
+				},
+			}),
+		).not.toThrow();
+	});
+
+	test("rejects sandbox clients that would be shared across actor VMs", () => {
+		expect(() =>
+			agentOS({
+				sandbox: { client: {} as never },
+			}),
+		).toThrow(/cannot share sandbox: \{ client \}/);
+	});
+
 	test("keeps the shared conformance inventory in lockstep with actor built-ins", () => {
 		const actions = createAgentOsActions();
 		expect(Object.keys(actions).sort()).toEqual(

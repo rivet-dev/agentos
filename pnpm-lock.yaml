@@ -118,7 +118,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -186,7 +186,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -235,7 +235,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -284,7 +284,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -425,7 +425,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -474,7 +474,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -523,7 +523,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -572,7 +572,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -621,7 +621,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -670,7 +670,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -719,7 +719,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -768,7 +768,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -817,7 +817,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -866,7 +866,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -915,7 +915,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -964,7 +964,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1013,7 +1013,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1062,7 +1062,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1111,7 +1111,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1160,7 +1160,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1209,7 +1209,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1258,7 +1258,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1313,7 +1313,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1365,7 +1365,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1414,7 +1414,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1482,7 +1482,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1531,7 +1531,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1580,7 +1580,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1629,7 +1629,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1678,7 +1678,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1727,7 +1727,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1776,7 +1776,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1825,7 +1825,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1874,7 +1874,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1923,7 +1923,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1972,7 +1972,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -2021,7 +2021,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -2070,7 +2070,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -2128,7 +2128,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -2180,7 +2180,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -2229,7 +2229,7 @@ importers:
         version: 2.3.5(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -2383,15 +2383,15 @@ importers:
       '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../core
-      '@rivet-dev/agentos-runtime-core':
-        specifier: workspace:*
-        version: link:../runtime-core
+      dockerode:
+        specifier: ^4.0.9
+        version: 4.0.10
+      get-port:
+        specifier: ^7.1.0
+        version: 7.2.0
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
-      zod:
-        specifier: ^4.1.11
-        version: 4.3.6
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@3.25.76)
     devDependencies:
       '@agentos-software/common':
         specifier: workspace:*
@@ -2635,7 +2635,7 @@ importers:
         version: 22.19.15
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
@@ -6551,6 +6551,13 @@ packages:
     resolution: {integrity: sha512-Fw28YZpRnA3cAHHDlkt7xQHiJ0fcL+NRcIqsocZQUSmbzeIKRpwttJjik5ZGanXP+vlA4SbTg+AbA3bP363l+w==}
     engines: {node: '>= 20'}
 
+  '@vercel/oidc@3.2.0':
+    resolution: {integrity: sha512-UycprH3T6n3jH0k44NHMa7pnFHGu/N05MjojYr+Mc6I7obkoLIJujSWwin1pCvdy/eOxrI/l3uDLQsmcrOb4ug==}
+    engines: {node: '>= 20'}
+
+  '@vercel/sandbox@2.8.0':
+    resolution: {integrity: sha512-1gmIXWgueeBBwBitVl1xqOsYmVv7xr7qX1qXeqwLGZTKGG1SkkpYkDzpWZ8LIDN0PmPGCqE6lvYao3zP8iz5uw==}
+
   '@vitejs/plugin-react@4.7.0':
     resolution: {integrity: sha512-gUu9hwfWvvEDBBmgtAowQCojwZmJ5mcLn3aufeCsitijs3+f2NsrPtlAWIR6OPiqljl96GVCUbLe0HyqIpVaoA==}
     engines: {node: ^14.18.0 || >=16.0.0}
@@ -6585,6 +6592,9 @@ packages:
 
   '@vitest/utils@2.1.9':
     resolution: {integrity: sha512-v0psaMSkNJ3A2NMrUEHFRzJtDPFn+/VWZ5WxImB21T9fjucJRmS7xCS3ppEnARb9y11OAzaD+P2Ps+b+BGX5iQ==}
+
+  '@workflow/serde@4.1.0-beta.2':
+    resolution: {integrity: sha512-8kkeoQKLDaKXefjV5dbhBj2aErfKp1Mc4pb6tj8144cF+Em5SPbyMbyLCHp+BVrFfFVCBluCtMx+jjvaFVZGww==}
 
   '@xterm/addon-fit@0.10.0':
     resolution: {integrity: sha512-UFYkDm4HUahf2lnEyHvio51TNGiLK66mqP2JoATy7hRZeXaGMRDr00JiSF7m63vR5WKATF605yEggJKsw0JpMQ==}
@@ -6706,6 +6716,9 @@ packages:
   ast-types@0.13.4:
     resolution: {integrity: sha512-x1FCFnFifvYDDzTaLII71vG5uvDwgtmDTEVWAxrgeiR8VjMONcCXJx7E+USjDtHlwFmt9MysbqgF9b9Vjr6w+w==}
     engines: {node: '>=4'}
+
+  async-retry@1.3.3:
+    resolution: {integrity: sha512-wfr/jstw9xNi/0teMHrRW7dsz3Lt5ARhYNZ2ewpadnhaIp5mbALhOAP+EAdsC7t4Z6wqsDVv9+W6gm1Dk9mEyw==}
 
   async@3.2.6:
     resolution: {integrity: sha512-htCUDlxyyCLMgaM3xXg0C0LW2xqfuQ6p05pCEIsXuyQ+a1koYKTuBMzRNwmybfLgvJDMd0r1LTn4+E0Ti6C2AA==}
@@ -8048,8 +8061,8 @@ packages:
     resolution: {integrity: sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ==}
     hasBin: true
 
-  jose@6.2.2:
-    resolution: {integrity: sha512-d7kPDd34KO/YnzaDOlikGpOurfF0ByC2sEV4cANCtdqLlTfBlw2p14O/5d/zv40gJPbIQxfES3nSx1/oYNyuZQ==}
+  jose@6.2.3:
+    resolution: {integrity: sha512-YYVDInQKFJfR/xa3ojUTl8c2KoTwiL1R5Wg9YCydwH0x0B9grbzlg5HC7mMjCtUJjbQ/YnGEZIhI5tCgfTb4Hw==}
 
   joycon@3.1.1:
     resolution: {integrity: sha512-34wB/Y7MW7bzjKRjUKTa46I2Z7eV62Rkhva+KkopW7Qvv/OSWBqvkSY7vusOPrNuZcUG3tApvdVgNB8POj3SPw==}
@@ -8089,6 +8102,9 @@ packages:
 
   jsonc-parser@3.3.1:
     resolution: {integrity: sha512-HUgH65KyejrUFPvHFPbqOY0rsFip3Bo5wb4ngvdi1EpCYWUQDC5V+Y7mZws+DLkr4M//zQJoanu1SP+87Dv1oQ==}
+
+  jsonlines@0.1.1:
+    resolution: {integrity: sha512-ekDrAGso79Cvf+dtm+mL8OBI2bmAOt3gssYs833De/C9NmIpWDWyUO4zPgB5x2/OhY366dkhgfPMYfwZF7yOZA==}
 
   jszip@3.10.1:
     resolution: {integrity: sha512-xXDvecyTpGLrqFrvkrUSoxxfJI5AH7U8zxxtVclpsUtMCq4JQ290LY8AW5c7Ggnr/Y/oK+bQMbqK2qmtk3pN4g==}
@@ -8584,6 +8600,10 @@ packages:
 
   os-browserify@0.3.0:
     resolution: {integrity: sha512-gjcpUc3clBf9+210TRaDWbf+rZZZEshZ+DlXMRCeAjp0xhTrnQsKHypIy1J3d5hKdUzj69t708EHtU8P6bUn0A==}
+
+  os-paths@4.4.0:
+    resolution: {integrity: sha512-wrAwOeXp1RRMFfQY8Sy7VaGVmPocaLwSFOYCGKSyo8qmJ+/yaafCl5BCA1IQZWqFSRBrKDYFeR9d/VyQzfH/jg==}
+    engines: {node: '>= 6.0'}
 
   p-finally@1.0.0:
     resolution: {integrity: sha512-LICb2p9CB7FS+0eR1oqWnHhp0FljGLZCWBE9aix0Uye9W8LTQPwMTYVGWQWIw9RdQiDg4+epXQODwIYJtSJaow==}
@@ -9352,6 +9372,9 @@ packages:
     resolution: {integrity: sha512-ujeqbceABgwMZxEJnk2HDY2DlnUZ+9oEcb1KzTVfYHio0UE6dG71n60d8D2I4qNvleWrrXpmjpt7vZeF1LnMZQ==}
     engines: {node: '>=6'}
 
+  tar-stream@3.1.7:
+    resolution: {integrity: sha512-qJj60CXt7IU1Ffyc3NJMjh6EkuCFej46zUqJ4J7pqYlThyd9bO0XBTmcOIhSzZJVWfsLks0+nle/j538YAW9RQ==}
+
   tar-stream@3.1.8:
     resolution: {integrity: sha512-U6QpVRyCGHva435KoNWy9PRoi2IFYCgtEhq9nmrPPpbRacPs9IH4aJ3gbrFC8dPcXvdSZ4XXfXT5Fshbp2MtlQ==}
 
@@ -9531,6 +9554,10 @@ packages:
 
   undici@7.24.6:
     resolution: {integrity: sha512-Xi4agocCbRzt0yYMZGMA6ApD7gvtUFaxm4ZmeacWI4cZxaF6C+8I8QfofC20NAePiB/IcvZmzkJ7XPa471AEtA==}
+    engines: {node: '>=20.18.1'}
+
+  undici@7.28.0:
+    resolution: {integrity: sha512-cRZYrTDwWznlnRiPjggAGxZXanty6M8RV1ff8Wm4LWXBp7/IG8v5DnOm74DtUBp9OONpK75YlPnIjQqX0dBDtA==}
     engines: {node: '>=20.18.1'}
 
   undici@8.5.0:
@@ -9780,6 +9807,14 @@ packages:
     resolution: {integrity: sha512-h3Fbisa2nKGPxCpm89Hk33lBLsnaGBvctQopaBSOW/uIs6FTe1ATyAnKFJrzVs9vpGdsTe73WF3V4lIsk4Gacw==}
     engines: {node: '>=18'}
 
+  xdg-app-paths@5.1.0:
+    resolution: {integrity: sha512-RAQ3WkPf4KTU1A8RtFx3gWywzVKe00tfOPFfl2NDGqbIFENQO4kqAJp7mhQjNj/33W5x5hiWWUdyfPq/5SU3QA==}
+    engines: {node: '>=6'}
+
+  xdg-portable@7.3.0:
+    resolution: {integrity: sha512-sqMMuL1rc0FmMBOzCpd0yuy9trqF2yTTVe+E9ogwCSWQCdDEtQUwrZPT6AxqtsFGRNxycgncbP/xmOOSPw5ZUw==}
+    engines: {node: '>= 6.0'}
+
   xtend@4.0.2:
     resolution: {integrity: sha512-LKYU1iAXJXUgAXn9URjiu+MWhyUXHsvfp7mcuYm9dSUKK0/CjtrUwFAxD82/mCWbtLsGjFIad0wIsod4zrTAEQ==}
     engines: {node: '>=0.4'}
@@ -9858,6 +9893,10 @@ snapshots:
       - supports-color
 
   '@agentclientprotocol/sdk@0.12.0(zod@3.25.76)':
+    dependencies:
+      zod: 3.25.76
+
+  '@agentclientprotocol/sdk@0.16.1(zod@3.25.76)':
     dependencies:
       zod: 3.25.76
 
@@ -12003,7 +12042,7 @@ snapshots:
       express: 5.2.1
       express-rate-limit: 8.3.2(express@5.2.1)
       hono: 4.12.9
-      jose: 6.2.2
+      jose: 6.2.3
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
       raw-body: 3.0.2
@@ -12027,7 +12066,7 @@ snapshots:
       express: 5.2.1
       express-rate-limit: 8.3.2(express@5.2.1)
       hono: 4.12.9
-      jose: 6.2.2
+      jose: 6.2.3
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
       raw-body: 3.0.2
@@ -13126,6 +13165,27 @@ snapshots:
 
   '@vercel/oidc@3.1.0': {}
 
+  '@vercel/oidc@3.2.0':
+    optional: true
+
+  '@vercel/sandbox@2.8.0':
+    dependencies:
+      '@vercel/oidc': 3.2.0
+      '@workflow/serde': 4.1.0-beta.2
+      async-retry: 1.3.3
+      jose: 6.2.3
+      jsonlines: 0.1.1
+      ms: 2.1.3
+      picocolors: 1.1.1
+      tar-stream: 3.1.7
+      undici: 7.28.0
+      xdg-app-paths: 5.1.0
+      zod: 4.3.6
+    transitivePeerDependencies:
+      - bare-abort-controller
+      - react-native-b4a
+    optional: true
+
   '@vitejs/plugin-react@4.7.0(vite@5.4.21(@types/node@22.19.15))':
     dependencies:
       '@babel/core': 7.29.7
@@ -13190,6 +13250,9 @@ snapshots:
       loupe: 3.2.1
       tinyrainbow: 1.2.0
 
+  '@workflow/serde@4.1.0-beta.2':
+    optional: true
+
   '@xterm/addon-fit@0.10.0(@xterm/xterm@5.5.0)':
     dependencies:
       '@xterm/xterm': 5.5.0
@@ -13208,6 +13271,12 @@ snapshots:
       negotiator: 1.0.0
 
   acorn@8.17.0: {}
+
+  acp-http-client@0.4.2(zod@3.25.76):
+    dependencies:
+      '@agentclientprotocol/sdk': 0.16.1(zod@3.25.76)
+    transitivePeerDependencies:
+      - zod
 
   acp-http-client@0.4.2(zod@4.3.6):
     dependencies:
@@ -13322,6 +13391,11 @@ snapshots:
   ast-types@0.13.4:
     dependencies:
       tslib: 2.8.1
+
+  async-retry@1.3.3:
+    dependencies:
+      retry: 0.13.1
+    optional: true
 
   async@3.2.6: {}
 
@@ -14773,7 +14847,7 @@ snapshots:
 
   jiti@2.7.0: {}
 
-  jose@6.2.2: {}
+  jose@6.2.3: {}
 
   joycon@3.1.1: {}
 
@@ -14803,6 +14877,9 @@ snapshots:
   json5@2.2.3: {}
 
   jsonc-parser@3.3.1: {}
+
+  jsonlines@0.1.1:
+    optional: true
 
   jszip@3.10.1:
     dependencies:
@@ -15227,6 +15304,9 @@ snapshots:
     optional: true
 
   os-browserify@0.3.0: {}
+
+  os-paths@4.4.0:
+    optional: true
 
   p-finally@1.0.0: {}
 
@@ -15865,12 +15945,25 @@ snapshots:
 
   safer-buffer@2.1.2: {}
 
-  sandbox-agent@0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6):
+  sandbox-agent@0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@3.25.76):
+    dependencies:
+      '@sandbox-agent/cli-shared': 0.4.2
+      acp-http-client: 0.4.2(zod@3.25.76)
+    optionalDependencies:
+      '@sandbox-agent/cli': 0.4.2
+      '@vercel/sandbox': 2.8.0
+      dockerode: 4.0.10
+      get-port: 7.2.0
+    transitivePeerDependencies:
+      - zod
+
+  sandbox-agent@0.4.2(@vercel/sandbox@2.8.0)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6):
     dependencies:
       '@sandbox-agent/cli-shared': 0.4.2
       acp-http-client: 0.4.2(zod@4.3.6)
     optionalDependencies:
       '@sandbox-agent/cli': 0.4.2
+      '@vercel/sandbox': 2.8.0
       dockerode: 4.0.10
       get-port: 7.2.0
     transitivePeerDependencies:
@@ -16188,6 +16281,16 @@ snapshots:
       inherits: 2.0.4
       readable-stream: 3.6.2
 
+  tar-stream@3.1.7:
+    dependencies:
+      b4a: 1.8.0
+      fast-fifo: 1.3.2
+      streamx: 2.25.0
+    transitivePeerDependencies:
+      - bare-abort-controller
+      - react-native-b4a
+    optional: true
+
   tar-stream@3.1.8:
     dependencies:
       b4a: 1.8.0
@@ -16409,6 +16512,9 @@ snapshots:
 
   undici@7.24.6: {}
 
+  undici@7.28.0:
+    optional: true
+
   undici@8.5.0: {}
 
   unpipe@1.0.0: {}
@@ -16614,6 +16720,16 @@ snapshots:
   wsl-utils@0.1.0:
     dependencies:
       is-wsl: 3.1.1
+
+  xdg-app-paths@5.1.0:
+    dependencies:
+      xdg-portable: 7.3.0
+    optional: true
+
+  xdg-portable@7.3.0:
+    dependencies:
+      os-paths: 4.4.0
+    optional: true
 
   xtend@4.0.2: {}
 

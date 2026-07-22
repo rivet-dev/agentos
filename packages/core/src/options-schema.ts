@@ -391,6 +391,14 @@ export const agentOsOptionFieldSchemas = {
 		.optional(),
 	rootFilesystem: rootFilesystemConfigSchema.optional(),
 	mounts: z.array(mountConfigSchema).optional(),
+	sandbox: z
+		.custom(
+			(value) =>
+				value === undefined ||
+				(typeof value === "object" && value !== null && !Array.isArray(value)),
+			{ message: "Expected sandbox options object" },
+		)
+		.optional(),
 	scheduleDriver: z
 		.custom((value) => typeof value === "object" && value !== null, {
 			message: "Expected schedule driver object",

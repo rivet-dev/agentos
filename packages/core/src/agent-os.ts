@@ -62,6 +62,11 @@ import type {
 	VirtualFileSystem,
 	VirtualStat,
 } from "./runtime-compat.js";
+import {
+	type AgentOsSandboxInput,
+	getSandboxDisposeHooks,
+	resolveSandboxOptions,
+} from "./sandbox.js";
 import { resolvePublishedSidecarBinary } from "./sidecar/binary.js";
 import { findCargoBinary, resolveCargoBinary } from "./sidecar/cargo.js";
 
@@ -807,6 +812,8 @@ export interface AgentOsOptions {
 	rootFilesystem?: RootFilesystemConfig;
 	/** Filesystems to mount at boot time. */
 	mounts?: MountConfig[];
+	/** External sandbox mounted into this VM with process bindings. */
+	sandbox?: AgentOsSandboxInput;
 	/** Custom schedule driver for cron jobs. Defaults to TimerScheduleDriver. */
 	scheduleDriver?: ScheduleDriver;
 	/** Host-side bindings available to agents inside the VM. */
@@ -2637,6 +2644,7 @@ export class AgentOs {
 	private readonly _agentStderrHandler?: AgentStderrHandler;
 	private readonly _agentExitHandler?: AgentExitHandler;
 	private readonly _limitWarningHandler?: LimitWarningHandler;
+	private readonly _disposeHooks: Array<() => void | Promise<void>> = [];
 
 	private constructor(
 		kernel: Kernel,
@@ -2725,14 +2733,16 @@ export class AgentOs {
 		// sidecar owns agent resolution, agent enumeration, and agent snapshot
 		// bundle loading from the projected package dirs.
 		const localMounts = await resolveCompatLocalMounts(options?.mounts);
-		const bindings = options?.bindings;
-		if (bindings && bindings.length > 0) {
-			validateBindings(bindings);
+		if (options?.bindings && options.bindings.length > 0) {
+			validateBindings(options.bindings);
 		}
 
-		// Resolve the sidecar handle up front so every VM created here leases the
-		// one shared native sidecar process owned by that handle.
+		// Resolve the sidecar handle before starting an external sandbox so option
+		// validation failures cannot leak provider resources.
 		const sidecar = resolveAgentOsSidecar(options?.sidecar);
+		options = await resolveSandboxOptions(options);
+		const sandboxDisposeHooks = getSandboxDisposeHooks(options);
+		const bindings = options.bindings;
 
 		const createVmAdmin = async (): Promise<AgentOsVmAdmin> => {
 			// The `/opt/agentos` projection is built by the sidecar from the
@@ -2995,6 +3005,7 @@ export class AgentOs {
 			vm._bindings = vmAdmin.bindings;
 			vm._bindingReference = vmAdmin.bindingReference;
 			vm._permissions = vmAdmin.permissions;
+			vm._disposeHooks.push(...sandboxDisposeHooks);
 			vm._installSidecarRequestHandler();
 			vm._cronManager = new CronManager(
 				vm,
@@ -3003,7 +3014,26 @@ export class AgentOs {
 
 			return vm;
 		} catch (error) {
-			await sidecarLease?.dispose().catch(() => {});
+			const cleanupErrors: unknown[] = [];
+			try {
+				await sidecarLease?.dispose();
+			} catch (disposeError) {
+				cleanupErrors.push(disposeError);
+			}
+			const sandboxCleanupResults = await Promise.allSettled(
+				sandboxDisposeHooks.map((hook) => hook()),
+			);
+			cleanupErrors.push(
+				...sandboxCleanupResults.flatMap((result) =>
+					result.status === "rejected" ? [result.reason] : [],
+				),
+			);
+			if (cleanupErrors.length > 0) {
+				throw new AggregateError(
+					[error, ...cleanupErrors],
+					"AgentOS VM creation and cleanup failed",
+				);
+			}
 			throw error;
 		}
 	}
@@ -4731,10 +4761,26 @@ export class AgentOs {
 
 		const sidecarLease = this._sidecarLease;
 		this._sidecarLease = null;
-		if (sidecarLease) {
-			return sidecarLease.dispose();
+		const disposeVm = sidecarLease
+			? sidecarLease.dispose()
+			: this.#kernel.dispose();
+		const hooks = this._disposeHooks.splice(0);
+		const errors: unknown[] = [];
+		try {
+			await disposeVm;
+		} catch (error) {
+			errors.push(error);
 		}
-		return this.#kernel.dispose();
+		const hookResults = await Promise.allSettled(hooks.map((hook) => hook()));
+		errors.push(
+			...hookResults.flatMap((result) =>
+				result.status === "rejected" ? [result.reason] : [],
+			),
+		);
+		if (errors.length === 1) throw errors[0];
+		if (errors.length > 1) {
+			throw new AggregateError(errors, "AgentOS VM disposal failed");
+		}
 	}
 }
 

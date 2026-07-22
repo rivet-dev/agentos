@@ -71,6 +71,14 @@ describe("AgentOsOptions validation", () => {
 		).toBe(true);
 	});
 
+	test("accepts a sandbox provider as a public VM option", () => {
+		expect(
+			agentOsOptionsSchema.safeParse({
+				sandbox: { provider: { start: async () => ({}) } },
+			}).success,
+		).toBe(true);
+	});
+
 	test("provider sandbox starts a client and owns disposal", async () => {
 		let disposed = false;
 		const client = {
@@ -107,6 +115,56 @@ describe("AgentOsOptions validation", () => {
 		} as never);
 		expect(options.mounts?.[0]?.path).toBe("/work");
 		expect(getSandboxDisposeHooks(options)).toHaveLength(0);
+	});
+
+	test("disposes a provider client when sandbox expansion fails", async () => {
+		let disposed = 0;
+		await expect(
+			resolveSandboxOptions({
+				sandbox: {
+					provider: {
+						start: async () => ({
+							dispose: () => {
+								disposed += 1;
+							},
+						}),
+					},
+				},
+			} as never),
+		).rejects.toThrow(/serializable baseUrl/);
+		expect(disposed).toBe(1);
+	});
+
+	test("does not start a provider when VM option validation fails", async () => {
+		let started = 0;
+		let disposed = 0;
+		await expect(
+			AgentOs.create({
+				defaultSoftware: false,
+				sandbox: {
+					provider: {
+						start: async () => {
+							started += 1;
+							return {
+								baseUrl: "http://127.0.0.1:1234",
+								dispose: () => {
+									disposed += 1;
+								},
+							} as never;
+						},
+					},
+				},
+				bindings: [
+					{
+						name: "INVALID",
+						description: "Invalid binding collection",
+						bindings: {},
+					},
+				],
+			}),
+		).rejects.toThrow(/must be lowercase alphanumeric/);
+		expect(started).toBe(0);
+		expect(disposed).toBe(0);
 	});
 
 	test("rejects removed sandbox mount and binding toggles", async () => {

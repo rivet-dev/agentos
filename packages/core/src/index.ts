@@ -48,4 +48,10 @@ export type {
 	VirtualDirEntry,
 	VirtualStat,
 } from "./runtime.js";
+export {
+	createSandboxBindings,
+	createSandboxFs,
+	getSandboxDisposeHooks,
+	resolveSandboxOptions,
+} from "./sandbox.js";
 export type * from "./types.js";
