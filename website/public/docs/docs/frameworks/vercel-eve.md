@@ -61,7 +61,7 @@ Create `world.ts`:
 
 ```ts title="world.ts"
 import { createWorld as createRivetWorld } from "@rivet-dev/vercel-world";
-import { registry } from "./registry";
+import { registry } from "./actors";
 
 export const createWorld = () => createRivetWorld({ registry });
 ```
@@ -69,9 +69,9 @@ export const createWorld = () => createRivetWorld({ registry });
 The first World operation starts this registry and waits for the Rivet envoy to
 be ready.
 
-Create `registry.ts`:
+Create `actors.ts`:
 
-```ts title="registry.ts"
+```ts title="actors.ts"
 import { agentOS, setup } from "@rivet-dev/agentos";
 import { vercelWorldActors } from "@rivet-dev/vercel-world/registry";
 
@@ -92,7 +92,7 @@ Create `agent/sandbox.ts`:
 ```ts title="agent/sandbox.ts"
 import { agentOSBackend } from "@rivet-dev/agentos-eve";
 import { defineSandbox } from "eve/sandbox";
-import { registry } from "../registry";
+import { registry } from "../actors";
 
 export default defineSandbox({
 	backend: agentOSBackend({ actor: "vm", registry }),
@@ -103,13 +103,13 @@ Install the Vercel CLI, then link Eve once so it can call your configured model:
 
 ```sh
 npm install --global vercel@latest
-npm exec -- eve link
+npx eve link
 ```
 
 Then run the agent:
 
 ```sh
-npm exec -- eve dev
+npx eve dev
 ```
 
 ## Default Filesystem

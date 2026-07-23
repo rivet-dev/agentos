@@ -9,7 +9,7 @@ skill: true
   rivet-dev/rivet/website/src/content/docs/integrations/flue.mdx.
 */}
 
-Flue owns the agent runtime and session lifecycle, while agentOS maps every sandbox session to an isolated VM actor with a durable `/workspace` filesystem.
+Flue owns the agent runtime and session lifecycle. Rivet maps each agent instance and workflow run to a durable Rivet Actor, while agentOS gives each Flue context an isolated VM with a persistent `/workspace` filesystem.
 
 [View the complete example →](https://github.com/rivet-dev/agentos/tree/main/examples/flue)
 
@@ -17,7 +17,7 @@ Flue owns the agent runtime and session lifecycle, while agentOS maps every sand
 
 <Steps>
 
-<Step title="Create a Flue agent">
+<Step title="Create a Flue project">
 
 ```sh
 mkdir my-agent && cd my-agent
@@ -31,15 +31,16 @@ npx flue init --target node
 <Step title="Install the integrations">
 
 ```sh
-npm add @rivet-dev/agentos @rivet-dev/agentos-flue
+npm add @rivet-dev/flue @rivet-dev/agentos @rivet-dev/agentos-flue
 ```
 
-- `@rivet-dev/agentos`: Provides the durable VM actor.
+- `@rivet-dev/flue`: Runs Flue agents and workflows as Rivet Actors.
+- `@rivet-dev/agentos`: Provides the isolated VM actor.
 - `@rivet-dev/agentos-flue`: Connects Flue's sandbox API to agentOS.
 
 </Step>
 
-<Step title="Register agentOS">
+<Step title="Register agentOS with the Rivet target">
 
 Create `actors.ts`:
 
@@ -55,44 +56,7 @@ export const registry = setup({
 });
 ```
 
-</Step>
-
-<Step title="Use agentOS as the sandbox">
-
-Update `agents/assistant.ts`:
-
-```ts title="agents/assistant.ts"
-import { agentOSSandbox } from "@rivet-dev/agentos-flue";
-import { createAgent } from "@flue/runtime";
-import { registry } from "../actors";
-
-export default createAgent(() => ({
-	model: "anthropic/claude-sonnet-5",
-	sandbox: agentOSSandbox({ actor: "vm", registry }),
-}));
-```
-
-</Step>
-
-<Step title="Run Flue">
-
-```sh
-flue dev
-```
-
-</Step>
-
-</Steps>
-
-## Run the Flue agent on Rivet
-
-Install the Rivet target adapter:
-
-```sh
-npm add @rivet-dev/flue
-```
-
-Then pass the same `actors.ts` registry to the Rivet target in `flue.config.ts`:
+Update `flue.config.ts`:
 
 ```ts title="flue.config.ts"
 import { defineConfig } from "@flue/cli/config";
@@ -103,11 +67,46 @@ export default defineConfig({
 });
 ```
 
-The target adds its generated Flue actors to that registry. The sandbox keeps
-using the `registry` imported from `actors.ts`; no second registry or proxy is
-needed.
+The generated Flue server adds its agent and workflow actors to this registry.
 
-See the [Rivet Flue guide](https://rivet.dev/docs/integrations/flue) for deployment and connection commands.
+</Step>
+
+<Step title="Use agentOS as the Flue sandbox">
+
+Create `agents/assistant.ts`:
+
+```ts title="agents/assistant.ts"
+import { createAgent } from "@flue/runtime";
+import { agentOSSandbox } from "@rivet-dev/agentos-flue";
+import { registry } from "../actors";
+
+const sandbox = agentOSSandbox({
+	actor: "vm",
+	registry,
+});
+
+export default createAgent(() => ({
+	model: "anthropic/claude-sonnet-5",
+	instructions: "Help the user work in the sandboxed repository.",
+	sandbox,
+}));
+```
+
+Set the provider key required by your model, such as `ANTHROPIC_API_KEY`, in `.env`.
+
+</Step>
+
+<Step title="Run Flue">
+
+```sh
+npx flue connect assistant local
+```
+
+Flue builds the Rivet target, starts the local Rivet engine, and connects to the `assistant/local` actor.
+
+</Step>
+
+</Steps>
 
 ## Default filesystem
 

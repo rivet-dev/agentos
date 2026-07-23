@@ -45,6 +45,7 @@
 			"types": [
 				"software"
 			],
+			"category": "agents",
 			"priority": 100,
 			"package": "@agentos-software/pi",
 			"status": "available",
@@ -69,6 +70,7 @@
 			"types": [
 				"software"
 			],
+			"category": "agents",
 			"priority": 90,
 			"package": "@agentos-software/claude-code",
 			"status": "docs",
@@ -108,6 +110,7 @@
 			"types": [
 				"software"
 			],
+			"category": "agents",
 			"priority": 80,
 			"package": "@agentos-software/codex",
 			"status": "docs",
@@ -161,6 +164,7 @@
 			"types": [
 				"software"
 			],
+			"category": "agents",
 			"priority": 70,
 			"package": "@agentos-software/opencode",
 			"status": "docs",
