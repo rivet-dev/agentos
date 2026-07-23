@@ -439,8 +439,12 @@ describe("agentOS actor", () => {
 		expect(onBeforeConnect).toHaveBeenCalledOnce();
 	});
 
-	test("runs generic native session-event hooks with actor context", async () => {
+	test("keeps generic native session-event hooks awake with actor context", async () => {
 		let emitSessionEvent: ((event: unknown) => void) | undefined;
+		let resolveHook!: () => void;
+		const hook = new Promise<void>((resolve) => {
+			resolveHook = resolve;
+		});
 		const vm = {
 			onCronEvent: vi.fn(),
 			openSession: vi.fn(async () => undefined),
@@ -450,9 +454,13 @@ describe("agentOS actor", () => {
 		};
 		vi.spyOn(AgentOs, "create").mockResolvedValue(vm as never);
 
-		const onSessionEvent = vi.fn();
+		const onSessionEvent = vi.fn(() => hook);
 		const actions = createAgentOsActions({}, { onSessionEvent });
 		const pending: Promise<unknown>[] = [];
+		const keepAwake = vi.fn(<T>(promise: Promise<T>) => {
+			pending.push(promise);
+			return promise;
+		});
 		const context = {
 			actorId: "hook-test",
 			actorRuntimeSocket: vi.fn(async () => ({
@@ -460,8 +468,8 @@ describe("agentOS actor", () => {
 			})),
 			broadcast: vi.fn(),
 			db: { execute: vi.fn(async () => []) },
-			keepAwake: <T>(promise: Promise<T>) => promise,
-			waitUntil: (promise: Promise<unknown>) => pending.push(promise),
+			keepAwake,
+			waitUntil: vi.fn(),
 			log: { info: vi.fn(), error: vi.fn() },
 		} as never;
 
@@ -486,6 +494,9 @@ describe("agentOS actor", () => {
 			options: [],
 			toolCall: { toolCallId: "tool-1" },
 		});
+		await vi.waitFor(() => expect(keepAwake).toHaveBeenCalledTimes(2));
+		expect(context.waitUntil).not.toHaveBeenCalled();
+		resolveHook();
 		await Promise.all(pending);
 
 		expect(onSessionEvent).toHaveBeenNthCalledWith(1, context, "main", {
