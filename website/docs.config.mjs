@@ -112,6 +112,12 @@ export const siteConfig = {
 									badge: "Beta",
 									icon: { src: "/images/frameworks/eve-icon.svg" },
 								},
+								{
+									title: "Flue",
+									href: "/docs/frameworks/flue",
+									badge: "Beta",
+									icon: { src: "/images/frameworks/flue.svg" },
+								},
 							],
 						},
 						{ title: "Sessions & Transcripts", href: "/docs/sessions", icon: faMessages },
