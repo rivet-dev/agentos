@@ -21,7 +21,7 @@ npx flue init --target node
 ```
 
 ```sh
-npm add @rivet-dev/flue @rivet-dev/agentos @rivet-dev/agentos-flue
+npm add @rivet-dev/flue @rivet-dev/agentos @rivet-dev/agentos-flue rivetkit
 ```
 
 - `@rivet-dev/labs-flue-*`: Rivet-maintained preview builds of Flue's proposed extension APIs.
@@ -31,49 +31,13 @@ npm add @rivet-dev/flue @rivet-dev/agentos @rivet-dev/agentos-flue
 
 Create `actors.ts`:
 
-```ts title="actors.ts"
-import { agentOS, setup } from "@rivet-dev/agentos";
-
-const vm = agentOS({
-	// Configuration will go here.
-});
-
-export const registry = setup({
-	use: { vm },
-});
-```
-
 Update `flue.config.ts`:
 
-```ts title="flue.config.ts"
-import { defineConfig } from "@flue/cli/config";
-import { rivet } from "@rivet-dev/flue";
-
-export default defineConfig({
-	target: rivet({ actors: "./actors.ts" }),
-});
-```
-
 The generated Flue server adds its agent and workflow actors to this registry.
+It keeps Flue's native router as the public HTTP service; the Rivet target only
+selects and hosts the durable actors behind those routes.
 
 Create `agents/assistant.ts`:
-
-```ts title="agents/assistant.ts"
-import { createAgent } from "@flue/runtime";
-import { agentOSSandbox } from "@rivet-dev/agentos-flue";
-import { registry } from "../actors";
-
-const sandbox = agentOSSandbox({
-	actor: "vm",
-	registry,
-});
-
-export default createAgent(() => ({
-	model: "anthropic/claude-sonnet-5",
-	instructions: "Help the user work in the sandboxed repository.",
-	sandbox,
-}));
-```
 
 Set the provider key required by your model, such as `ANTHROPIC_API_KEY`, in `.env`.
 
@@ -82,6 +46,14 @@ npx flue connect assistant local
 ```
 
 Flue builds the Rivet target, starts the local Rivet engine, and connects to the `assistant/local` actor.
+
+Ask it to use both filesystem and shell operations:
+
+> Write `hello from Flue` to `/workspace/hello.txt`, run `wc -c
+> /workspace/hello.txt`, then read the file back.
+
+Reconnect to `assistant/local` and ask it to read the file again. The same Flue
+context reconnects to the same agentOS actor and persistent filesystem.
 
 By default, agentOS runs locally with `npx rivetkit dev` — no infrastructure needed. To run in production, deploy to any of these targets:
 
@@ -118,7 +90,7 @@ See the `agentOS()` [configuration reference](/docs/core#configuration-reference
 
 ### agentOS Core sandbox
 
-Use `agentOSCoreSandbox()` when Flue should create agentOS Core VMs directly without Rivet Actor orchestration. The `create` callback owns the complete VM configuration:
+Use `agentOSCoreSandbox()` when Flue should use caller-owned agentOS Core VMs directly without Rivet Actor orchestration. The `create` callback must return the retained VM for each Flue context:
 
 ```sh
 pnpm add @rivet-dev/agentos-core

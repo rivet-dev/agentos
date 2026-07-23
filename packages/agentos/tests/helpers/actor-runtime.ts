@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { agentOS, Registry } from "../../src/index.js";
 import { createClient } from "../../src/client.js";
 
 const DEBUG_E2E = process.env.AGENTOS_ACTOR_E2E_DEBUG === "1";
@@ -280,14 +281,15 @@ export async function startActorRuntime(
 	}
 }
 
-function client(endpoint: string): any {
-	return createClient<never>({
+type ActorE2ERegistry = Registry<{ vm: ReturnType<typeof agentOS> }>;
+
+function client(endpoint: string) {
+	return createClient<ActorE2ERegistry>({
 		endpoint,
 		token: ACTOR_E2E_TOKEN,
 		namespace: ACTOR_E2E_NAMESPACE,
 		poolName: ACTOR_E2E_POOL_NAME,
-		disableMetadataLookup: true,
-	} as never) as any;
+	});
 }
 
 export function actorHandle(

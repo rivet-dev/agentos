@@ -5,7 +5,6 @@ import {
 	type FileStat,
 	type SandboxApi,
 	type SandboxFactory,
-	type SessionEnv,
 	type ShellResult,
 } from "@flue/runtime";
 import type { Registry } from "@rivet-dev/agentos";
@@ -62,7 +61,10 @@ export interface AgentOSSandboxOptions<
 }
 
 export interface AgentOSCoreSandboxOptions {
-	/** Creates one caller-configured agentOS Core VM for a Flue context. */
+	/**
+	 * Returns the caller-owned agentOS Core VM for a Flue context. The caller
+	 * must retain and dispose VMs because Flue has no sandbox disposal hook.
+	 */
 	create(input: { id: string }): AgentOs | Promise<AgentOs>;
 	/** Base directory exposed to Flue. Defaults to `/workspace`. */
 	cwd?: string;
@@ -90,17 +92,23 @@ export function agentOSSandbox<TRegistry extends Registry<any>>(
 	}
 	if (
 		!options.registry ||
-		typeof options.registry.startAndWait !== "function" ||
-		typeof options.registry.parseConfig !== "function"
+		typeof options.registry.startAndWait !== "function"
 	) {
 		throw new TypeError("agentOSSandbox requires the application registry");
 	}
 	const actor = options.actor.trim();
 	const cwd = sandboxCwd(options.cwd);
+	const getClient = createActorClient(options);
 
 	return {
 		async createSessionEnv({ id }) {
-			const connection = await connectActor(options, actor, actorKey(id));
+			await options.registry.startAndWait();
+			const connection = await connectActor(
+				await getClient(),
+				actor,
+				actorKey(id),
+				options.params,
+			);
 			return createSandboxSessionEnv(actorSandboxApi(connection), cwd);
 		},
 	};
@@ -114,66 +122,46 @@ export function agentOSCoreSandbox(
 		throw new TypeError("agentOSCoreSandbox requires a create factory");
 	}
 	const cwd = sandboxCwd(options.cwd);
-	const environments = new Map<string, Promise<SessionEnv>>();
 
 	return {
-		createSessionEnv({ id }) {
-			return cachedEnvironment(environments, id, async () => {
-				const vm = await options.create({ id });
-				assertCoreVm(vm);
-				return createSandboxSessionEnv(coreSandboxApi(vm), cwd);
-			});
+		async createSessionEnv({ id }) {
+			const vm = await options.create({ id });
+			assertCoreVm(vm);
+			return createSandboxSessionEnv(coreSandboxApi(vm), cwd);
 		},
 	};
 }
 
-const registryClients = new WeakMap<object, Promise<unknown>>();
-
-async function actorClient<TRegistry extends Registry<any>>(
+function createActorClient<TRegistry extends Registry<any>>(
 	options: AgentOSSandboxOptions<TRegistry>,
-): Promise<Client<TRegistry>> {
-	await options.registry.startAndWait();
-	if (options.client) return options.client;
-
-	const registryKey = options.registry as object;
-	let pending = registryClients.get(registryKey) as
-		| Promise<Client<TRegistry>>
-		| undefined;
-	if (!pending) {
-		pending = (async () => {
-			const config = options.registry.parseConfig();
-			const { createClient } = await import("@rivet-dev/agentos/client");
-			return createClient<TRegistry>({
-				endpoint: config.endpoint,
-				namespace: config.namespace,
-				poolName: config.envoy.poolName,
-				token: config.token,
-				headers: config.headers,
-				disableMetadataLookup: true,
-			});
-		})().catch((error) => {
-			registryClients.delete(registryKey);
-			throw error;
-		});
-		registryClients.set(registryKey, pending);
+): () => Promise<Client<TRegistry>> {
+	if (options.client) {
+		return () => Promise.resolve(options.client as Client<TRegistry>);
 	}
-	return pending;
+	let pending: Promise<Client<TRegistry>> | undefined;
+	return () => {
+		pending ??= import("@rivet-dev/agentos/client").then(({ createClient }) =>
+			createClient<TRegistry>(),
+		);
+		return pending;
+	};
 }
 
 async function connectActor<TRegistry extends Registry<any>>(
-	options: AgentOSSandboxOptions<TRegistry>,
+	client: Client<TRegistry>,
 	actor: string,
 	key: string[],
+	params: unknown,
 ): Promise<AgentOSActorConnection> {
 	try {
-		const accessor = (await actorClient(options))[
+		const accessor = client[
 			actor as keyof Client<TRegistry>
 		] as unknown as AgentOSActorAccessor | undefined;
 		if (!accessor || typeof accessor.getOrCreate !== "function") {
 			throw new Error(`registry has no actor named ${JSON.stringify(actor)}`);
 		}
 		const connection = accessor
-			.getOrCreate(key, { params: options.params })
+			.getOrCreate(key, { params })
 			.connect();
 		await connection.ready;
 		assertActorConnection(connection);
@@ -327,19 +315,4 @@ function sandboxCwd(value: string | undefined): string {
 		throw new TypeError("agentOS Flue sandbox cwd must be an absolute path");
 	}
 	return posix.normalize(cwd);
-}
-
-async function cachedEnvironment(
-	environments: Map<string, Promise<SessionEnv>>,
-	id: string,
-	create: () => Promise<SessionEnv>,
-): Promise<SessionEnv> {
-	const existing = environments.get(id);
-	if (existing) return existing;
-	const pending = create().catch((error) => {
-		if (environments.get(id) === pending) environments.delete(id);
-		throw error;
-	});
-	environments.set(id, pending);
-	return pending;
 }

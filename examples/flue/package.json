@@ -6,14 +6,17 @@
 	"scripts": {
 		"build": "flue build",
 		"dev": "flue dev",
+		"start": "node dist/server.mjs",
 		"check-types": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@flue/cli": "1.0.0-beta.9",
-		"@flue/runtime": "1.0.0-beta.9",
+		"@flue/cli": "npm:@rivet-dev/labs-flue-cli@1.0.0-beta.9-rivet.1",
+		"@flue/runtime": "npm:@rivet-dev/labs-flue-runtime@1.0.0-beta.9-rivet.1",
 		"@rivet-dev/agentos": "workspace:*",
 		"@rivet-dev/agentos-core": "workspace:*",
-		"@rivet-dev/agentos-flue": "workspace:*"
+		"@rivet-dev/agentos-flue": "workspace:*",
+		"@rivet-dev/flue": "2.3.7",
+		"rivetkit": "2.3.7"
 	},
 	"devDependencies": {
 		"@types/node": "^24.0.0",

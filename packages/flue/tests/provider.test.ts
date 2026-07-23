@@ -12,13 +12,6 @@ import { AgentOSFlueConfigurationError, agentOSSandbox } from "../src/index.js";
 function makeRegistry() {
 	return {
 		startAndWait: vi.fn(async () => {}),
-		parseConfig: vi.fn(() => ({
-			endpoint: "http://127.0.0.1:6420",
-			namespace: "default",
-			token: undefined,
-			headers: {},
-			envoy: { poolName: "default" },
-		})),
 	};
 }
 
@@ -78,6 +71,8 @@ describe("agentOSSandbox", () => {
 			],
 		]);
 		expect(harness.getOrCreate).toHaveBeenCalledTimes(2);
+		expect(clientMocks.createClient).toHaveBeenCalledOnce();
+		expect(clientMocks.createClient).toHaveBeenCalledWith();
 	});
 
 	it("forwards actor connection parameters", async () => {

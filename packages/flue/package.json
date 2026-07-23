@@ -37,7 +37,7 @@
 		}
 	},
 	"devDependencies": {
-		"@flue/runtime": "1.0.0-beta.9",
+		"@flue/runtime": "npm:@rivet-dev/labs-flue-runtime@1.0.0-beta.9-rivet.1",
 		"@rivet-dev/agentos": "workspace:*",
 		"@rivet-dev/agentos-core": "workspace:*",
 		"@types/node": "^24.0.0",
