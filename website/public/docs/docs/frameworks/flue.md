@@ -16,10 +16,10 @@ npx flue init --target node
 ```
 
 ```sh
-npm add @rivet-dev/flue @rivet-dev/agentos @rivet-dev/agentos-flue
+npm add @rivet-dev/flue-target @rivet-dev/agentos @rivet-dev/agentos-flue
 ```
 
-- `@rivet-dev/flue`: Runs Flue agents and workflows as Rivet Actors.
+- `@rivet-dev/flue-target`: Runs Flue agents and workflows as Rivet Actors.
 - `@rivet-dev/agentos`: Provides the isolated VM actor.
 - `@rivet-dev/agentos-flue`: Connects Flue's sandbox API to agentOS.
 
@@ -41,7 +41,7 @@ Update `flue.config.ts`:
 
 ```ts title="flue.config.ts"
 import { defineConfig } from "@flue/cli/config";
-import { rivet } from "@rivet-dev/flue";
+import { rivet } from "@rivet-dev/flue-target";
 
 export default defineConfig({
 	target: rivet({ actors: "./actors.ts" }),
