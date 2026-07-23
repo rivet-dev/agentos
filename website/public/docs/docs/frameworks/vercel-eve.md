@@ -17,33 +17,10 @@ cd my-agent
 npm add @rivet-dev/agentos @rivet-dev/agentos-eve @rivet-dev/vercel-world
 ```
 
-- `@rivet-dev/agentos`: Provides the agentOS VM.
-- `@rivet-dev/agentos-eve`: Connects Eve's sandbox API to agentOS.
+- `@rivet-dev/agentos` and `@rivet-dev/agentos-eve`: Provide the agentOS VM and connect Eve's sandbox API to it.
 - `@rivet-dev/vercel-world`: Runs Eve workflows on [Rivet World](https://workflow-sdk.dev/worlds).
 
 Update `agent/agent.ts`:
-
-```ts title="agent/agent.ts"
-import { defineAgent } from "eve";
-
-export default defineAgent({
-	model: "anthropic/claude-sonnet-5",
-	build: {
-		externalDependencies: [
-			"@rivet-dev/agentos",
-			"@rivet-dev/agentos-core",
-			"@rivet-dev/agentos-eve",
-			"@rivet-dev/agentos-runtime-core",
-			"@rivet-dev/agentos-sidecar",
-			"@rivet-dev/vercel-world",
-			"@rivetkit/engine-cli",
-		],
-	},
-	experimental: {
-		workflow: { world: "#world" },
-	},
-});
-```
 
 Rivet World lets you run Eve on top of Rivet.
 
@@ -59,45 +36,12 @@ Add the World module import to `package.json`:
 
 Create `world.ts`:
 
-```ts title="world.ts"
-import { createWorld as createRivetWorld } from "@rivet-dev/vercel-world";
-import { registry } from "./actors";
-
-export const createWorld = () => createRivetWorld({ registry });
-```
-
 The first World operation starts this registry and waits for the Rivet envoy to
 be ready.
 
 Create `actors.ts`:
 
-```ts title="actors.ts"
-import { agentOS, setup } from "@rivet-dev/agentos";
-import { vercelWorldActors } from "@rivet-dev/vercel-world/registry";
-
-const vm = agentOS({
-	// Configuration will go here.
-});
-
-export const registry = setup({
-	use: {
-		...vercelWorldActors,
-		vm,
-	},
-});
-```
-
 Create `agent/sandbox.ts`:
-
-```ts title="agent/sandbox.ts"
-import { agentOSBackend } from "@rivet-dev/agentos-eve";
-import { defineSandbox } from "eve/sandbox";
-import { registry } from "../actors";
-
-export default defineSandbox({
-	backend: agentOSBackend({ actor: "vm", registry }),
-});
-```
 
 Install the Vercel CLI, then link Eve once so it can call your configured model:
 
