@@ -305,12 +305,5 @@ export async function createActorHandle(
 
 export function actorBytes(value: unknown): Uint8Array {
 	if (value instanceof Uint8Array) return value;
-	if (
-		Array.isArray(value) &&
-		value[0] === "$Uint8Array" &&
-		typeof value[1] === "string"
-	) {
-		return Buffer.from(value[1], "base64");
-	}
 	throw new TypeError(`expected Uint8Array, received ${String(value)}`);
 }
