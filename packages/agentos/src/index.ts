@@ -1,5 +1,7 @@
 import { setup as rivetkitSetup } from "rivetkit";
 
+export type { Registry } from "rivetkit";
+
 const AGENTOS_REGISTRY_MESSAGE_SIZE_DEFAULT = 512 * 1024 * 1024;
 
 /**

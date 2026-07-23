@@ -127,6 +127,7 @@ See the `agentOS()` [configuration reference](/docs/core#configuration-reference
 | `actor` | Yes | Actor registered with `setup()`, such as `vm`. |
 | `registry` | Yes | The application registry exported from `actors.ts`. |
 | `cwd` | No | Base directory exposed to Flue. Defaults to `/workspace`. |
+| `params` | No | Connection parameters forwarded to the actor's `onBeforeConnect` hook. |
 | `client` | No | An existing client configured for the same registry. |
 
 ## Advanced
@@ -145,6 +146,10 @@ When using agentOS Core instead of regular agentOS, you lose:
 
 - **Durable filesystem and session history.** Core's root filesystem is ephemeral by default, so you must provide your own persistent mount at `/workspace`.
 - **Stable per-session actor identity.** Core cannot reconnect to the same VM across Flue process restarts.
-- **Automatic sleep and wake.** The VM lives inside Flue's server process. `shutdown()` disposes it.
+- **Automatic sleep, wake, and disposal.** The VM lives inside Flue's server process. Flue's sandbox interface does not expose a lifecycle hook, so the `create` callback's owner must retain and dispose every VM it creates.
 
 Use Core only when your application owns equivalent persistence and lifecycle management.
+
+## Platform support
+
+agentOS is not supported on Cloudflare Workers because its native VM runtime requires a Node.js or container host. Run it on platforms such as Railway, Kubernetes, or Vercel instead.

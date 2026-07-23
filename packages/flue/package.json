@@ -20,7 +20,8 @@
 	"scripts": {
 		"build": "tsc",
 		"check-types": "tsc --noEmit",
-		"test": "vitest run"
+		"test": "vitest run",
+		"test:e2e": "AGENTOS_ACTOR_E2E=1 vitest run tests/actor-e2e.test.ts"
 	},
 	"peerDependencies": {
 		"@flue/runtime": ">=1.0.0-beta.9 <2",
