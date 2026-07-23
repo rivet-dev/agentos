@@ -27,10 +27,7 @@ function makeHarness() {
 	const connection = {
 		ready: Promise.resolve(),
 		exec: vi.fn(async () => ({ exitCode: 0, stdout: "ok", stderr: "" })),
-		readFile: vi.fn(async () => [
-			"$Uint8Array",
-			Buffer.from("hello").toString("base64"),
-		]),
+		readFile: vi.fn(async () => new TextEncoder().encode("hello")),
 		writeFile: vi.fn(async () => {}),
 		stat: vi.fn(async () => ({
 			mode: 0o100644,
@@ -45,10 +42,12 @@ function makeHarness() {
 		remove: vi.fn(async () => {}),
 	};
 	const connect = vi.fn(() => connection);
-	const getOrCreate = vi.fn((key: string[]) => {
-		keyCalls.push(key);
-		return { connect };
-	});
+	const getOrCreate = vi.fn(
+		(key: string[], _options?: { params?: unknown }) => {
+			keyCalls.push(key);
+			return { connect };
+		},
+	);
 	clientMocks.createClient.mockReturnValue({ vm: { getOrCreate } });
 	return { connect, connection, getOrCreate, keyCalls };
 }
@@ -56,23 +55,42 @@ function makeHarness() {
 describe("agentOSSandbox", () => {
 	beforeEach(() => clientMocks.createClient.mockReset());
 
-	it("starts the registry and reuses one actor per Flue context", async () => {
+	it("reconnects to the same actor without retaining session environments", async () => {
 		const registry = makeRegistry();
 		const harness = makeHarness();
 		const sandbox = agentOSSandbox({ actor: "vm", registry });
 		const first = await sandbox.createSessionEnv({ id: "ticket-1" });
 		const second = await sandbox.createSessionEnv({ id: "ticket-1" });
 
-		expect(first).toBe(second);
-		expect(registry.startAndWait).toHaveBeenCalledOnce();
-		expect(harness.connect).toHaveBeenCalledOnce();
+		expect(first).not.toBe(second);
+		expect(registry.startAndWait).toHaveBeenCalledTimes(2);
+		expect(harness.connect).toHaveBeenCalledTimes(2);
 		expect(harness.keyCalls).toEqual([
 			[
 				"flue",
 				"sandbox",
 				createHash("sha256").update("ticket-1").digest("hex"),
 			],
+			[
+				"flue",
+				"sandbox",
+				createHash("sha256").update("ticket-1").digest("hex"),
+			],
 		]);
+		expect(harness.getOrCreate).toHaveBeenCalledTimes(2);
+	});
+
+	it("forwards actor connection parameters", async () => {
+		const harness = makeHarness();
+		await agentOSSandbox({
+			actor: "vm",
+			registry: makeRegistry(),
+			params: { authToken: "allowed" },
+		}).createSessionEnv({ id: "ticket-auth" });
+
+		expect(harness.getOrCreate).toHaveBeenCalledWith(expect.any(Array), {
+			params: { authToken: "allowed" },
+		});
 	});
 
 	it("maps Flue shell and filesystem operations to agentOS", async () => {

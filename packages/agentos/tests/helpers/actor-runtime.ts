@@ -135,11 +135,17 @@ export async function startActorRuntime(
 			`actor E2E requires ${sidecarPath}; run cargo build -p agentos-sidecar`,
 		);
 	}
-	const allocatedPorts = await getFreePorts(requestedPort === undefined ? 3 : 2);
+	const allocatedPorts = await getFreePorts(
+		requestedPort === undefined ? 3 : 2,
+	);
 	const port = requestedPort ?? allocatedPorts[0];
 	const peerPort = allocatedPorts[requestedPort === undefined ? 1 : 0];
 	const metricsPort = allocatedPorts[requestedPort === undefined ? 2 : 1];
-	if (port === undefined || peerPort === undefined || metricsPort === undefined) {
+	if (
+		port === undefined ||
+		peerPort === undefined ||
+		metricsPort === undefined
+	) {
 		throw new Error("failed to allocate actor E2E ports");
 	}
 	const endpoint = `http://127.0.0.1:${port}`;
@@ -305,12 +311,5 @@ export async function createActorHandle(
 
 export function actorBytes(value: unknown): Uint8Array {
 	if (value instanceof Uint8Array) return value;
-	if (
-		Array.isArray(value) &&
-		value[0] === "$Uint8Array" &&
-		typeof value[1] === "string"
-	) {
-		return Buffer.from(value[1], "base64");
-	}
 	throw new TypeError(`expected Uint8Array, received ${String(value)}`);
 }

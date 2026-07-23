@@ -377,7 +377,7 @@ function trackSessionEvents(
 			) as SessionStreamEntry;
 			c.broadcast("sessionEvent", serialized);
 			if (hooks.onSessionEvent) {
-				c.waitUntil(
+				void c.keepAwake(
 					Promise.resolve()
 						.then(() => hooks.onSessionEvent?.(c, sessionId, serialized))
 						.catch((error) =>

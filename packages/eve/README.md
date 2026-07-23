@@ -15,7 +15,7 @@ Register the VM as a normal agentOS actor. Its configuration owns software,
 permissions, limits, sandbox mounting, and persistence:
 
 ```ts
-// registry.ts
+// actors.ts
 import { agentOS, setup } from "@rivet-dev/agentos";
 
 const vm = agentOS({
@@ -33,7 +33,7 @@ Select the actor by its registry key:
 // agent/sandbox.ts
 import { agentOSBackend } from "@rivet-dev/agentos-eve";
 import { defineSandbox } from "eve/sandbox";
-import { registry } from "../registry";
+import { registry } from "../actors";
 
 export default defineSandbox({
 	backend: agentOSBackend({ actor: "vm", registry }),

@@ -8,6 +8,8 @@ import {
 	type SessionEnv,
 	type ShellResult,
 } from "@flue/runtime";
+import type { Registry } from "@rivet-dev/agentos";
+import type { Client } from "@rivet-dev/agentos/client";
 import type { AgentOs, VirtualStat } from "@rivet-dev/agentos-core";
 
 const DEFAULT_CWD = "/workspace";
@@ -23,7 +25,7 @@ interface AgentOSActorConnection {
 			captureStdio?: boolean;
 		},
 	): Promise<ShellResult>;
-	readFile(path: string): Promise<unknown>;
+	readFile(path: string): Promise<Uint8Array>;
 	writeFile(path: string, content: string | Uint8Array): Promise<void>;
 	stat(path: string): Promise<VirtualStat>;
 	readdir(path: string): Promise<string[]>;
@@ -33,31 +35,30 @@ interface AgentOSActorConnection {
 }
 
 interface AgentOSActorAccessor {
-	getOrCreate(key: string[]): { connect(): AgentOSActorConnection };
+	getOrCreate(
+		key: string[],
+		options?: { params?: unknown },
+	): { connect(): AgentOSActorConnection };
 }
 
-type AgentOSActorClient = Record<string, AgentOSActorAccessor | undefined>;
+type ActorName<TRegistry extends Registry<any>> = Extract<
+	keyof TRegistry["config"]["use"],
+	string
+>;
 
-export interface AgentOSRegistry {
-	startAndWait(): Promise<void>;
-	parseConfig(): {
-		endpoint?: string;
-		namespace: string;
-		token?: string;
-		headers?: Record<string, string>;
-		envoy: { poolName: string };
-	};
-}
-
-export interface AgentOSSandboxOptions {
+export interface AgentOSSandboxOptions<
+	TRegistry extends Registry<any> = Registry<any>,
+> {
 	/** Registry key of an actor created with `agentOS()`. */
-	actor: string;
+	actor: ActorName<TRegistry>;
 	/** Application registry containing the selected agentOS actor. */
-	registry: AgentOSRegistry;
+	registry: TRegistry;
 	/** Base directory exposed to Flue. Defaults to `/workspace`. */
 	cwd?: string;
+	/** Connection parameters forwarded to the actor's `onBeforeConnect` hook. */
+	params?: unknown;
 	/** Advanced: an existing client for the same registry. */
-	client?: object;
+	client?: Client<TRegistry>;
 }
 
 export interface AgentOSCoreSandboxOptions {
@@ -81,7 +82,9 @@ export class AgentOSFlueConfigurationError extends Error {
 }
 
 /** Uses an existing `agentOS()` actor as the sandbox for each Flue context. */
-export function agentOSSandbox(options: AgentOSSandboxOptions): SandboxFactory {
+export function agentOSSandbox<TRegistry extends Registry<any>>(
+	options: AgentOSSandboxOptions<TRegistry>,
+): SandboxFactory {
 	if (!options || typeof options.actor !== "string" || !options.actor.trim()) {
 		throw new TypeError("agentOSSandbox requires the registry actor name");
 	}
@@ -94,14 +97,11 @@ export function agentOSSandbox(options: AgentOSSandboxOptions): SandboxFactory {
 	}
 	const actor = options.actor.trim();
 	const cwd = sandboxCwd(options.cwd);
-	const environments = new Map<string, Promise<SessionEnv>>();
 
 	return {
-		createSessionEnv({ id }) {
-			return cachedEnvironment(environments, id, async () => {
-				const connection = await connectActor(options, actor, actorKey(id));
-				return createSandboxSessionEnv(actorSandboxApi(connection), cwd);
-			});
+		async createSessionEnv({ id }) {
+			const connection = await connectActor(options, actor, actorKey(id));
+			return createSandboxSessionEnv(actorSandboxApi(connection), cwd);
 		},
 	};
 }
@@ -127,28 +127,30 @@ export function agentOSCoreSandbox(
 	};
 }
 
-const registryClients = new WeakMap<object, Promise<AgentOSActorClient>>();
+const registryClients = new WeakMap<object, Promise<unknown>>();
 
-async function actorClient(
-	options: AgentOSSandboxOptions,
-): Promise<AgentOSActorClient> {
+async function actorClient<TRegistry extends Registry<any>>(
+	options: AgentOSSandboxOptions<TRegistry>,
+): Promise<Client<TRegistry>> {
 	await options.registry.startAndWait();
-	if (options.client) return options.client as AgentOSActorClient;
+	if (options.client) return options.client;
 
 	const registryKey = options.registry as object;
-	let pending = registryClients.get(registryKey);
+	let pending = registryClients.get(registryKey) as
+		| Promise<Client<TRegistry>>
+		| undefined;
 	if (!pending) {
 		pending = (async () => {
 			const config = options.registry.parseConfig();
 			const { createClient } = await import("@rivet-dev/agentos/client");
-			return createClient<never>({
+			return createClient<TRegistry>({
 				endpoint: config.endpoint,
 				namespace: config.namespace,
 				poolName: config.envoy.poolName,
 				token: config.token,
 				headers: config.headers,
 				disableMetadataLookup: true,
-			} as never) as unknown as AgentOSActorClient;
+			});
 		})().catch((error) => {
 			registryClients.delete(registryKey);
 			throw error;
@@ -158,17 +160,21 @@ async function actorClient(
 	return pending;
 }
 
-async function connectActor(
-	options: AgentOSSandboxOptions,
+async function connectActor<TRegistry extends Registry<any>>(
+	options: AgentOSSandboxOptions<TRegistry>,
 	actor: string,
 	key: string[],
 ): Promise<AgentOSActorConnection> {
 	try {
-		const accessor = (await actorClient(options))[actor];
+		const accessor = (await actorClient(options))[
+			actor as keyof Client<TRegistry>
+		] as unknown as AgentOSActorAccessor | undefined;
 		if (!accessor || typeof accessor.getOrCreate !== "function") {
 			throw new Error(`registry has no actor named ${JSON.stringify(actor)}`);
 		}
-		const connection = accessor.getOrCreate(key).connect();
+		const connection = accessor
+			.getOrCreate(key, { params: options.params })
+			.connect();
 		await connection.ready;
 		assertActorConnection(connection);
 		return connection;
@@ -225,7 +231,7 @@ function assertCoreVm(vm: AgentOs): void {
 function actorSandboxApi(connection: AgentOSActorConnection): SandboxApi {
 	return sandboxApi({
 		exec: (command, options) => connection.exec(command, options),
-		readFile: (path) => connection.readFile(path).then(actorBytes),
+		readFile: (path) => connection.readFile(path),
 		writeFile: (path, content) => connection.writeFile(path, content),
 		stat: (path) => connection.stat(path),
 		readdir: (path) => connection.readdir(path),
@@ -321,19 +327,6 @@ function sandboxCwd(value: string | undefined): string {
 		throw new TypeError("agentOS Flue sandbox cwd must be an absolute path");
 	}
 	return posix.normalize(cwd);
-}
-
-function actorBytes(value: unknown): Uint8Array {
-	if (value instanceof Uint8Array) return value;
-	if (
-		Array.isArray(value) &&
-		value.length === 2 &&
-		value[0] === "$Uint8Array" &&
-		typeof value[1] === "string"
-	) {
-		return Buffer.from(value[1], "base64");
-	}
-	throw new TypeError("agentOS returned an invalid binary payload");
 }
 
 async function cachedEnvironment(
