@@ -87,6 +87,31 @@ describe("Command Code package projection", () => {
 		expect(skills.exitCode, skills.stderr).toBe(0);
 		expect(skills.stdout).toContain("demo");
 
+		const localMod = `${workspace}/local-mod`;
+		await vm.mkdir(`${localMod}/mods`, { recursive: true });
+		await vm.writeFile(
+			`${localMod}/package.json`,
+			`${JSON.stringify({
+				name: "agentos-local-mod",
+				version: "1.0.0",
+				commandcode: { mods: ["./mods/hello.ts"] },
+			})}\n`,
+		);
+		await vm.writeFile(
+			`${localMod}/mods/hello.ts`,
+			'export default function (cmd) { cmd.addCommand({ name: "agentos-hello", handler: () => ({ message: "hello" }) }); }\n',
+		);
+		const modAdd = await vm.execArgv(
+			"cmd",
+			["mods", "add", "-g", "./local-mod"],
+			options,
+		);
+		expect(modAdd.exitCode, modAdd.stderr).toBe(0);
+		const modList = await vm.execArgv("cmd", ["mods", "list"], options);
+		expect(modList.exitCode, modList.stderr).toBe(0);
+		expect(modList.stdout).toContain("hello · package");
+		expect(modList.stdout).toContain(`local:${localMod} · user · installed`);
+
 		const mcpAdd = await vm.execArgv(
 			"cmd",
 			[
@@ -182,5 +207,34 @@ describe("Command Code package projection", () => {
 			}
 		},
 		120_000,
+	);
+
+	test.runIf(process.env.AGENTOS_RUN_COMMAND_CODE_NETWORK_TEST === "1")(
+		"installs an npm mod package",
+		async () => {
+			await vm?.dispose();
+			vm = await AgentOs.create({ software: [commandCode] });
+			const home = "/home/agentos-command-code-network";
+			const workspace = `${home}/workspace`;
+			await vm.mkdir(workspace, { recursive: true });
+			const options = {
+				cwd: workspace,
+				env: {
+					COMMANDCODE_SKIP_UPDATES: "1",
+					DO_NOT_TRACK: "1",
+					HOME: home,
+				},
+			};
+			const add = await vm.execArgv(
+				"cmd",
+				["mods", "add", "-g", "npm:cmd-mod-hi@0.1.1"],
+				options,
+			);
+			expect(add.exitCode, add.stderr).toBe(0);
+			const list = await vm.execArgv("cmd", ["mods", "list"], options);
+			expect(list.exitCode, list.stderr).toBe(0);
+			expect(list.stdout).toContain("npm:cmd-mod-hi · user · installed");
+		},
+		180_000,
 	);
 });
