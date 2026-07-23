@@ -2,7 +2,7 @@
 
 Use agentOS as the durable sandbox backend for Flue.
 
-Flue owns the agent runtime and session lifecycle, while agentOS maps every sandbox session to an isolated VM actor with a durable `/workspace` filesystem.
+Flue owns the agent runtime and session lifecycle. Rivet maps each agent instance and workflow run to a durable Rivet Actor, while agentOS gives each Flue context an isolated VM with a persistent `/workspace` filesystem.
 
 [View the complete example →](https://github.com/rivet-dev/agentos/tree/main/examples/flue)
 
@@ -16,15 +16,16 @@ npx flue init --target node
 ```
 
 ```sh
-npm add @rivet-dev/agentos @rivet-dev/agentos-flue
+npm add @rivet-dev/flue @rivet-dev/agentos @rivet-dev/agentos-flue
 ```
 
-- `@rivet-dev/agentos`: Provides the durable VM actor.
+- `@rivet-dev/flue`: Runs Flue agents and workflows as Rivet Actors.
+- `@rivet-dev/agentos`: Provides the isolated VM actor.
 - `@rivet-dev/agentos-flue`: Connects Flue's sandbox API to agentOS.
 
-Create `registry.ts`:
+Create `actors.ts`:
 
-```ts title="registry.ts"
+```ts title="actors.ts"
 import { agentOS, setup } from "@rivet-dev/agentos";
 
 const vm = agentOS({
@@ -36,62 +37,45 @@ export const registry = setup({
 });
 ```
 
-Update `agents/assistant.ts`:
-
-```ts title="agents/assistant.ts"
-import { agentOSSandbox } from "@rivet-dev/agentos-flue";
-import { createAgent } from "@flue/runtime";
-import { registry } from "../registry";
-
-export default createAgent(() => ({
-	model: "anthropic/claude-sonnet-4-6",
-	sandbox: agentOSSandbox({ actor: "vm", registry }),
-}));
-```
-
-```sh
-flue dev
-```
-
-## Run the Flue agent on Rivet
-
-Install the Rivet target adapter:
-
-```sh
-npm add @rivet-dev/flue
-```
-
-Then export your agentOS actors for the target and select Rivet in `flue.config.ts`:
-
-```ts title="registry.ts"
-import { agentOS } from "@rivet-dev/agentos";
-
-export const actors = { vm: agentOS() };
-```
+Update `flue.config.ts`:
 
 ```ts title="flue.config.ts"
 import { defineConfig } from "@flue/cli/config";
 import { rivet } from "@rivet-dev/flue";
 
 export default defineConfig({
-	target: rivet({ actors: "./registry.ts" }),
+	target: rivet({ actors: "./actors.ts" }),
 });
 ```
 
-When the agent runs inside the Rivet target, use its installed registry proxy instead of starting a second registry:
+The generated Flue server adds its agent and workflow actors to this registry.
+
+Create `agents/assistant.ts`:
 
 ```ts title="agents/assistant.ts"
-import { agentOSSandbox } from "@rivet-dev/agentos-flue";
 import { createAgent } from "@flue/runtime";
-import { flueRegistry } from "@rivet-dev/flue/runtime";
+import { agentOSSandbox } from "@rivet-dev/agentos-flue";
+import { registry } from "../actors";
+
+const sandbox = agentOSSandbox({
+	actor: "vm",
+	registry,
+});
 
 export default createAgent(() => ({
-	model: "anthropic/claude-sonnet-4-6",
-	sandbox: agentOSSandbox({ actor: "vm", registry: flueRegistry }),
+	model: "anthropic/claude-sonnet-5",
+	instructions: "Help the user work in the sandboxed repository.",
+	sandbox,
 }));
 ```
 
-See the [Rivet Flue guide](https://rivet.dev/docs/integrations/flue) for deployment and connection commands.
+Set the provider key required by your model, such as `ANTHROPIC_API_KEY`, in `.env`.
+
+```sh
+npx flue connect assistant local
+```
+
+Flue builds the Rivet target, starts the local Rivet engine, and connects to the `assistant/local` actor.
 
 ## Default filesystem
 
@@ -109,8 +93,8 @@ See the `agentOS()` [configuration reference](/docs/core#configuration-reference
 
 | Option | Required | Description |
 | --- | --- | --- |
-| `actor` | Yes | Actor registered with `setup()` or the Rivet target, such as `vm`. |
-| `registry` | Yes | The application registry or `flueRegistry` proxy containing that actor. |
+| `actor` | Yes | Actor registered with `setup()`, such as `vm`. |
+| `registry` | Yes | The application registry exported from `actors.ts`. |
 | `cwd` | No | Base directory exposed to Flue. Defaults to `/workspace`. |
 | `client` | No | An existing client configured for the same registry. |
 
