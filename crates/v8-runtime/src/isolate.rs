@@ -33,6 +33,31 @@ pub struct PromiseRejectState {
     overflow_count: usize,
 }
 
+#[derive(Default)]
+struct ProcessExitState {
+    code: Option<i32>,
+}
+
+pub fn clear_process_exit(isolate: &mut v8::Isolate) {
+    isolate
+        .get_slot_mut::<ProcessExitState>()
+        .expect("process exit state must be installed")
+        .code = None;
+}
+
+pub fn set_process_exit(isolate: &mut v8::Isolate, code: i32) {
+    isolate
+        .get_slot_mut::<ProcessExitState>()
+        .expect("process exit state must be installed")
+        .code = Some(code);
+}
+
+pub fn process_exit_code(isolate: &v8::Isolate) -> Option<i32> {
+    isolate
+        .get_slot::<ProcessExitState>()
+        .and_then(|state| state.code)
+}
+
 impl PromiseRejectState {
     fn record_unhandled(&mut self, promise_id: i32, error: ExecutionError) {
         use std::collections::hash_map::Entry;
@@ -105,6 +130,7 @@ extern "C" fn promise_reject_callback(msg: v8::PromiseRejectMessage) {
 
 pub fn configure_isolate(isolate: &mut v8::OwnedIsolate) {
     isolate.set_slot(PromiseRejectState::default());
+    isolate.set_slot(ProcessExitState::default());
     isolate.set_promise_reject_callback(promise_reject_callback);
 }
 

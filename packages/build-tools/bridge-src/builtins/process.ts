@@ -645,6 +645,10 @@ var process2 = {
       _emit("exit", exitCode);
     } catch (_e) {
     }
+    if (typeof globalThis.__secureExecProcessExit === "function") {
+      globalThis.__secureExecProcessExit(exitCode);
+      return;
+    }
     throw new ProcessExitError(exitCode);
   },
   abort() {

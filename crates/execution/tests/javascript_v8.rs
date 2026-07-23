@@ -1790,13 +1790,16 @@ fn javascript_execution_imports_node_fs_promises_without_hanging() {
             wasm_module_bytes: None,
             inline_code: Some(String::from(
                 r#"
-import fs from "node:fs/promises";
+import fs, { glob } from "node:fs/promises";
 
 if (typeof fs.access !== "function") {
   throw new Error("node:fs/promises did not expose access()");
 }
 if (typeof fs.readFile !== "function") {
   throw new Error("node:fs/promises did not expose readFile()");
+}
+if (typeof fs.glob !== "function" || glob !== fs.glob) {
+  throw new Error("node:fs/promises did not expose glob()");
 }
 "#,
             )),

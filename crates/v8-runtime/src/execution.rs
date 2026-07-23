@@ -121,6 +121,28 @@ pub fn install_high_resolution_time_global(scope: &mut v8::HandleScope, origin: 
     global.define_own_property(scope, key.into(), func.into(), attr);
 }
 
+pub fn install_process_exit_global(scope: &mut v8::HandleScope) {
+    let context = scope.get_current_context();
+    let global = context.global(scope);
+    let template = v8::FunctionTemplate::builder(process_exit_callback).build(scope);
+    let Some(function) = template.get_function(scope) else {
+        return;
+    };
+    let key = v8::String::new(scope, "__secureExecProcessExit").unwrap();
+    let attributes = v8::PropertyAttribute::READ_ONLY | v8::PropertyAttribute::DONT_DELETE;
+    global.define_own_property(scope, key.into(), function.into(), attributes);
+}
+
+fn process_exit_callback(
+    scope: &mut v8::HandleScope,
+    args: v8::FunctionCallbackArguments,
+    _rv: v8::ReturnValue,
+) {
+    let code = args.get(0).int32_value(scope).unwrap_or(0);
+    crate::isolate::set_process_exit(scope, code);
+    scope.terminate_execution();
+}
+
 pub fn install_require_esm_sync_global(scope: &mut v8::HandleScope) {
     let context = scope.get_current_context();
     let global = context.global(scope);

@@ -145,6 +145,26 @@ describeIf(!skipReason, 'node binary: exec exit codes', () => {
     const result = await ctx.kernel.exec('node -e "process.exit(0)"');
     expect(result.exitCode).toBe(0);
   });
+
+  it('process.exit is not catchable and skips finally blocks', async () => {
+    ctx = await createIntegrationKernel({ runtimes: ['wasmvm', 'node'] });
+    const result = await ctx.kernel.execArgv('node', [
+      '-e',
+      "try { process.exit(23) } catch { console.log('caught') } finally { console.log('finally') }",
+    ]);
+    expect(result.exitCode).toBe(23);
+    expect(result.stdout).toBe('');
+  });
+
+  it('process.exit from an async callback terminates active handles', async () => {
+    ctx = await createIntegrationKernel({ runtimes: ['wasmvm', 'node'] });
+    const result = await ctx.kernel.execArgv('node', [
+      '-e',
+      "setTimeout(() => process.exit(24), 0); setTimeout(() => console.log('late'), 1000)",
+    ]);
+    expect(result.exitCode).toBe(24);
+    expect(result.stdout).toBe('');
+  });
 });
 
 // ---------------------------------------------------------------------------

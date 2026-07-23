@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+node_version="22.19.0"
+node_dir="$HOME/.local/share/node-v$node_version"
+
+if [[ ! -x "$node_dir/bin/node" ]]; then
+	archive="node-v$node_version-linux-x64.tar.xz"
+	tmp_dir="$(mktemp -d)"
+	trap 'rm -rf "$tmp_dir"' EXIT
+	curl -fsSLo "$tmp_dir/$archive" "https://nodejs.org/dist/v$node_version/$archive"
+	curl -fsSLo "$tmp_dir/SHASUMS256.txt" "https://nodejs.org/dist/v$node_version/SHASUMS256.txt"
+	(
+		cd "$tmp_dir"
+		grep "  $archive$" SHASUMS256.txt | sha256sum --check --strict
+	)
+	mkdir -p "$(dirname "$node_dir")"
+	tar -xJf "$tmp_dir/$archive" -C "$(dirname "$node_dir")"
+	mv "$(dirname "$node_dir")/node-v$node_version-linux-x64" "$node_dir"
+fi
+
+mkdir -p "$HOME/.local/bin"
+for command in node npm npx corepack; do
+	ln -sfn "$node_dir/bin/$command" "$HOME/.local/bin/$command"
+done
+
+"$node_dir/bin/corepack" prepare pnpm@10.13.1 --activate
+for command in pnpm pnpx; do
+	ln -sfn "$node_dir/bin/$command" "$HOME/.local/bin/$command"
+done
+
+if [[ ! -x "$HOME/.cargo/bin/cargo" ]]; then
+	curl --proto '=https' --tlsv1.2 -fsS https://sh.rustup.rs |
+		sh -s -- -y --profile minimal --default-toolchain stable
+fi
+for command in cargo rustc rustfmt rustup; do
+	ln -sfn "$HOME/.cargo/bin/$command" "$HOME/.local/bin/$command"
+done
+
+cd "$repo_root"
+if [[ ! -f website/vendor/theme/package.json ]]; then
+	theme_dir="$(mktemp -d)"
+	git -C "$theme_dir" init --quiet
+	git -C "$theme_dir" remote add origin https://github.com/rivet-dev/docs-theme.git
+	git -C "$theme_dir" fetch --quiet --depth=1 origin 450c498555135098c6a927adfdf13458be9be22a
+	git -C "$theme_dir" checkout --quiet FETCH_HEAD
+	mkdir -p website/vendor
+	rm -rf website/vendor/theme
+	cp -R "$theme_dir/packages/theme" website/vendor/theme
+	rm -rf "$theme_dir"
+fi
+
+pnpm install --frozen-lockfile
+pnpm --dir website/vendor/theme build

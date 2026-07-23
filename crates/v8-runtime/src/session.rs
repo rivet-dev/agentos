@@ -2489,12 +2489,20 @@ fn session_thread(
 
                         let iso = v8_isolate.as_mut().unwrap();
                         iso.cancel_terminate_execution();
+                        isolate::clear_process_exit(iso);
 
                         // Create execution context: Context::new on a snapshot-restored
                         // isolate gives a fresh clone of the snapshot's default context
                         // (bridge IIFE already executed, all infrastructure set up).
                         // On a non-snapshot isolate, this gives a blank context.
                         let exec_context = isolate::create_context(iso);
+
+                        {
+                            let scope = &mut v8::HandleScope::new(iso);
+                            let ctx = v8::Local::new(scope, &exec_context);
+                            let scope = &mut v8::ContextScope::new(scope, ctx);
+                            execution::install_process_exit_global(scope);
+                        }
 
                         if high_resolution_time {
                             let scope = &mut v8::HandleScope::new(iso);
@@ -2802,11 +2810,16 @@ fn session_thread(
                                 &mut bridge_cache,
                             )
                         };
+                        let mut process_exit_code = isolate::process_exit_code(iso);
+                        if process_exit_code.is_some() {
+                            exports = None;
+                            error = None;
+                        }
 
                         // Re-check async ESM completion once immediately so
                         // pure-microtask top-level await settles without
                         // needing a bridge event-loop round-trip.
-                        if mode != 0 && error.is_none() {
+                        if mode != 0 && error.is_none() && process_exit_code.is_none() {
                             let scope = &mut v8::HandleScope::new(iso);
                             let ctx = v8::Local::new(scope, &exec_context);
                             let scope = &mut v8::ContextScope::new(scope, ctx);
@@ -2826,9 +2839,10 @@ fn session_thread(
                         // are visible yet — the module body may have registered
                         // timers, stdin listeners, or child_process handles that
                         // need event loop pumping to deliver their callbacks.
-                        let should_enter_event_loop = !pending.is_empty()
-                            || execution::has_pending_module_evaluation()
-                            || execution::has_pending_script_evaluation();
+                        let should_enter_event_loop = process_exit_code.is_none()
+                            && (!pending.is_empty()
+                                || execution::has_pending_module_evaluation()
+                                || execution::has_pending_script_evaluation());
                         let event_loop_status = if should_enter_event_loop {
                             let scope = &mut v8::HandleScope::new(iso);
                             let ctx = v8::Local::new(scope, &exec_context);
@@ -2849,8 +2863,14 @@ fn session_thread(
                             EventLoopStatus::Completed
                         };
 
-                        let mut terminated =
-                            matches!(event_loop_status, EventLoopStatus::Terminated);
+                        process_exit_code =
+                            process_exit_code.or_else(|| isolate::process_exit_code(iso));
+                        if process_exit_code.is_some() {
+                            exports = None;
+                            error = None;
+                        }
+                        let mut terminated = process_exit_code.is_some()
+                            || matches!(event_loop_status, EventLoopStatus::Terminated);
                         if let EventLoopStatus::Failed(next_code, next_error) = event_loop_status {
                             code = next_code;
                             error = Some(next_error);
@@ -2918,21 +2938,23 @@ fn session_thread(
                                 // Phase 2: pump the event loop for that quiescence wait.
                                 if !pending.is_empty() || execution::has_pending_script_evaluation()
                                 {
-                                    let scope = &mut v8::HandleScope::new(iso);
-                                    let ctx = v8::Local::new(scope, &exec_context);
-                                    let scope = &mut v8::ContextScope::new(scope, ctx);
-                                    let event_loop_status = run_event_loop_with_readiness(
-                                        scope,
-                                        EventLoopSources {
-                                            commands: &rx,
-                                            readiness: &ready_broker,
-                                            readiness_wakes: &ready_rx,
-                                            bridge_responses: Some(&async_response_rx),
-                                            abort: Some(&abort_rx),
-                                            pause: Some(&pause_control),
-                                        },
-                                        &pending,
-                                    );
+                                    let event_loop_status = {
+                                        let scope = &mut v8::HandleScope::new(iso);
+                                        let ctx = v8::Local::new(scope, &exec_context);
+                                        let scope = &mut v8::ContextScope::new(scope, ctx);
+                                        run_event_loop_with_readiness(
+                                            scope,
+                                            EventLoopSources {
+                                                commands: &rx,
+                                                readiness: &ready_broker,
+                                                readiness_wakes: &ready_rx,
+                                                bridge_responses: Some(&async_response_rx),
+                                                abort: Some(&abort_rx),
+                                                pause: Some(&pause_control),
+                                            },
+                                            &pending,
+                                        )
+                                    };
 
                                     if matches!(event_loop_status, EventLoopStatus::Terminated) {
                                         terminated = true;
@@ -2942,6 +2964,13 @@ fn session_thread(
                                     {
                                         code = next_code;
                                         error = Some(next_error);
+                                    }
+                                    process_exit_code = process_exit_code
+                                        .or_else(|| isolate::process_exit_code(iso));
+                                    if process_exit_code.is_some() {
+                                        terminated = true;
+                                        exports = None;
+                                        error = None;
                                     }
                                 }
                             }
@@ -3062,6 +3091,15 @@ fn session_thread(
                                     stack: String::new(),
                                     code: "ERR_SCRIPT_WALL_CLOCK_EXCEEDED".into(),
                                 }),
+                            }
+                        } else if let Some(process_exit_code) = process_exit_code.filter(|_| {
+                            !matches!(abort_reason, Some(ExecutionAbortReason::Terminated))
+                        }) {
+                            RuntimeEvent::ExecutionResult {
+                                session_id,
+                                exit_code: process_exit_code,
+                                exports: None,
+                                error: None,
                             }
                         } else if terminated {
                             RuntimeEvent::ExecutionResult {
@@ -3254,6 +3292,9 @@ fn run_event_loop_with_readiness(
         // passes. Check the durable abort lane before any V8 API call; querying
         // promises or timers on an already-terminated isolate can otherwise
         // spin forever and prevent explicit session destruction from joining.
+        if crate::isolate::process_exit_code(scope).is_some() {
+            return EventLoopStatus::Terminated;
+        }
         if abort_rx.is_some_and(execution_abort_requested) {
             scope.terminate_execution();
             return EventLoopStatus::Terminated;
@@ -3270,6 +3311,9 @@ fn run_event_loop_with_readiness(
             control.wait_while_paused();
         }
         pump_v8_message_loop(scope);
+        if crate::isolate::process_exit_code(scope).is_some() {
+            return EventLoopStatus::Terminated;
+        }
 
         // Bound completion work per turn so a response flood cannot starve
         // ordinary stream/control events.
@@ -3302,6 +3346,9 @@ fn run_event_loop_with_readiness(
         // a fixed empty-work floor to every readiness and bridge completion.
         scope.perform_microtask_checkpoint();
         pump_v8_message_loop(scope);
+        if crate::isolate::process_exit_code(scope).is_some() {
+            return EventLoopStatus::Terminated;
+        }
 
         if pending_guest_immediate_count(scope) > 0 {
             match try_recv_session_command(scope, rx, ready_rx, ready_broker, bridge_rx, abort_rx) {
