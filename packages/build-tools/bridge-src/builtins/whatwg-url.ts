@@ -16,6 +16,7 @@ var kBlobUrlStore = /* @__PURE__ */ Symbol.for("secureExec.blobUrlStore");
 var kBlobUrlCounter = /* @__PURE__ */ Symbol.for("secureExec.blobUrlCounter");
 var SEARCH_PARAM_METHOD_NAMES = ["append", "delete", "get", "getAll", "has"];
 var SEARCH_PARAM_PAIR_METHOD_NAMES = ["append", "set"];
+var SEARCH_PARAM_SYNC_METHOD_NAMES = ["append", "delete", "set", "sort"];
 var URL_SCHEME_TYPES = {
   "http:": 0,
   "https:": 2,
@@ -770,6 +771,22 @@ var NativeURL = canUseNativeUrlImplementation(nativeUrlCandidate) ? nativeUrlCan
     const pathEnd = Math.min(searchStart, hashStart);
     const searchValue = queryIndex === -1 ? "" : full.slice(queryIndex, hashStart);
     const hashValue = hashIndex === -1 ? "" : full.slice(hashIndex);
+    const bindSearchParams = (buildHref) => {
+      this.searchParams = new URLSearchParams(this.search);
+      for (const method of SEARCH_PARAM_SYNC_METHOD_NAMES) {
+        const original = this.searchParams[method]?.bind(this.searchParams);
+        if (!original) {
+          continue;
+        }
+        this.searchParams[method] = (...args) => {
+          const result = original(...args);
+          const query = this.searchParams.toString();
+          this.search = query ? `?${query}` : "";
+          this.href = buildHref();
+          return result;
+        };
+      }
+    };
     if (full.startsWith("file:")) {
       let pathname = full.slice(5, pathEnd);
       if (pathname.startsWith("//")) {
@@ -788,23 +805,22 @@ var NativeURL = canUseNativeUrlImplementation(nativeUrlCandidate) ? nativeUrlCan
       this.host = "";
       this.href = `file://${this.pathname}${this.search}${this.hash}`;
       this.origin = "null";
-      this.searchParams = new URLSearchParams(this.search);
-      const syncHrefFromSearchParams = () => {
-        const query = this.searchParams.toString();
-        this.search = query ? `?${query}` : "";
-        this.href = `file://${this.pathname}${this.search}${this.hash}`;
-      };
-      for (const method of ["append", "delete", "set", "sort"]) {
-        const original = this.searchParams[method]?.bind(this.searchParams);
-        if (!original) {
-          continue;
-        }
-        this.searchParams[method] = (...args) => {
-          const result = original(...args);
-          syncHrefFromSearchParams();
-          return result;
-        };
-      }
+      bindSearchParams(() => `file://${this.pathname}${this.search}${this.hash}`);
+      return;
+    }
+    const opaqueSchemeMatch = full.match(/^([a-zA-Z][a-zA-Z\d+\-.]*:)(?!\/\/)/);
+    if (opaqueSchemeMatch) {
+      const protocol = opaqueSchemeMatch[1];
+      this.protocol = protocol;
+      this.hostname = "";
+      this.port = "";
+      this.host = "";
+      this.pathname = full.slice(protocol.length, pathEnd);
+      this.search = searchValue;
+      this.hash = hashValue;
+      this.href = protocol + this.pathname + this.search + this.hash;
+      this.origin = "null";
+      bindSearchParams(() => protocol + this.pathname + this.search + this.hash);
       return;
     }
     const match = full.match(/^(\w+:)\/\/([^/:?#]+)(:\d+)?(.*)$/);
@@ -817,23 +833,7 @@ var NativeURL = canUseNativeUrlImplementation(nativeUrlCandidate) ? nativeUrlCan
     this.host = this.hostname + (this.port ? ":" + this.port : "");
     this.href = this.protocol + "//" + this.host + this.pathname + this.search + this.hash;
     this.origin = this.protocol + "//" + this.host;
-    this.searchParams = new URLSearchParams(this.search);
-    const syncHrefFromSearchParams = () => {
-      const query = this.searchParams.toString();
-      this.search = query ? `?${query}` : "";
-      this.href = this.protocol + "//" + this.host + this.pathname + this.search + this.hash;
-    };
-    for (const method of ["append", "delete", "set", "sort"]) {
-      const original = this.searchParams[method]?.bind(this.searchParams);
-      if (!original) {
-        continue;
-      }
-      this.searchParams[method] = (...args) => {
-        const result = original(...args);
-        syncHrefFromSearchParams();
-        return result;
-      };
-    }
+    bindSearchParams(() => this.protocol + "//" + this.host + this.pathname + this.search + this.hash);
   }
   toString() {
     return this.href;

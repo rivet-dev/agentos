@@ -3714,6 +3714,9 @@ const url = new urlModule.URL("https://example.com/a/b?x=1&y=two#frag");
 url.searchParams.append("z", "3");
 const fileRelative = new urlModule.URL("file:.", "file:///tmp/base/entry.mjs");
 const fileRelativeNoBase = new urlModule.URL("file:./child");
+const dataUrl = new urlModule.URL("data:image/png;base64,aGVsbG8=");
+const dataUrlWithQuery = new urlModule.URL("data:text/plain,hello?x=1#frag");
+const mailto = new urlModule.URL("mailto:dev@example.com");
 const plusDecoded = new URLSearchParamsCtor("?a=foo+bar");
 const invalidPercentDecoded = new URLSearchParamsCtor("?a=%&b=%2&c=%GG&d=%E0%A4%A");
 const sortable = new URLSearchParamsCtor([
@@ -3741,6 +3744,18 @@ console.log(JSON.stringify({
   setSearchParamsSize: setSemantics.size,
   fileRelativeHref: fileRelative.href,
   fileRelativeNoBaseHref: fileRelativeNoBase.href,
+  dataUrlHref: dataUrl.href,
+  dataUrlProtocol: dataUrl.protocol,
+  dataUrlPathname: dataUrl.pathname,
+  dataUrlOrigin: dataUrl.origin,
+  dataUrlToString: dataUrl.toString(),
+  dataUrlWithQueryHref: dataUrlWithQuery.href,
+  dataUrlWithQueryPathname: dataUrlWithQuery.pathname,
+  dataUrlWithQuerySearch: dataUrlWithQuery.search,
+  dataUrlWithQueryHash: dataUrlWithQuery.hash,
+  mailtoHref: mailto.href,
+  mailtoProtocol: mailto.protocol,
+  mailtoPathname: mailto.pathname,
   formatted: urlModule.format(parsed),
   parsedPathname: parsed.pathname,
   parsedQuery: parsed.query,
