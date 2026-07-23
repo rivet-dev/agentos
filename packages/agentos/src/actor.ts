@@ -375,20 +375,20 @@ function trackSessionEvents(
 			const serialized = JSON.parse(
 				JSON.stringify(notification),
 			) as SessionStreamEntry;
-				c.broadcast("sessionEvent", serialized);
-				if (hooks.onSessionEvent) {
-					void c.keepAwake(
-						Promise.resolve()
-							.then(() => hooks.onSessionEvent?.(c, sessionId, serialized))
-							.catch((error) =>
+			c.broadcast("sessionEvent", serialized);
+			if (hooks.onSessionEvent) {
+				void c.keepAwake(
+					Promise.resolve()
+						.then(() => hooks.onSessionEvent?.(c, sessionId, serialized))
+						.catch((error) =>
 							c.log.error({
 								msg: "agent-os session event hook failed",
 								sessionId,
-									error,
-								}),
-							),
-					);
-				}
+								error,
+							}),
+						),
+				);
+			}
 		},
 	);
 	runtime.subscribedSessions.set(sessionId, [unsubscribeSession]);

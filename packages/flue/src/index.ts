@@ -8,8 +8,8 @@ import {
 	type SessionEnv,
 	type ShellResult,
 } from "@flue/runtime";
-import type { Client } from "@rivet-dev/agentos/client";
 import type { Registry } from "@rivet-dev/agentos";
+import type { Client } from "@rivet-dev/agentos/client";
 import type { AgentOs, VirtualStat } from "@rivet-dev/agentos-core";
 
 const DEFAULT_CWD = "/workspace";
@@ -172,9 +172,9 @@ async function connectActor<TRegistry extends Registry<any>>(
 		if (!accessor || typeof accessor.getOrCreate !== "function") {
 			throw new Error(`registry has no actor named ${JSON.stringify(actor)}`);
 		}
-			const connection = accessor
-				.getOrCreate(key, { params: options.params })
-				.connect();
+		const connection = accessor
+			.getOrCreate(key, { params: options.params })
+			.connect();
 		await connection.ready;
 		assertActorConnection(connection);
 		return connection;

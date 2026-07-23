@@ -42,10 +42,12 @@ function makeHarness() {
 		remove: vi.fn(async () => {}),
 	};
 	const connect = vi.fn(() => connection);
-	const getOrCreate = vi.fn((key: string[], _options?: { params?: unknown }) => {
-		keyCalls.push(key);
-		return { connect };
-	});
+	const getOrCreate = vi.fn(
+		(key: string[], _options?: { params?: unknown }) => {
+			keyCalls.push(key);
+			return { connect };
+		},
+	);
 	clientMocks.createClient.mockReturnValue({ vm: { getOrCreate } });
 	return { connect, connection, getOrCreate, keyCalls };
 }
