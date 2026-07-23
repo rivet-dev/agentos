@@ -81,6 +81,7 @@ scripts/ralph/.codex-last-msg-*
 # Agent working files live user-scoped in ~/.agents/; ignore any in-repo .agent/ as a safety net
 .agent/
 .claude/scheduled_tasks.lock
+.amp/portals/
 
 # Local caches and stray outputs
 .agentos/
