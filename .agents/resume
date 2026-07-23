@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# This repository has no long-lived services to repair when an orb resumes.

@@ -1,0 +1,19 @@
+{
+	"name": "@rivet-dev/agentos-example-command-code",
+	"version": "0.0.1",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"check-types": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@agentos-software/command-code": "workspace:*",
+		"@rivet-dev/agentos": "workspace:*",
+		"rivetkit": "catalog:rivetkit"
+	},
+	"devDependencies": {
+		"@types/node": "^22.10.2",
+		"tsx": "^4.19.0",
+		"typescript": "^5.7.2"
+	}
+}

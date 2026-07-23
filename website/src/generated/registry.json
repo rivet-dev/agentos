@@ -129,6 +129,19 @@
 			"image": "/images/registry/jq.svg"
 		},
 		{
+			"slug": "command-code",
+			"title": "Command Code",
+			"description": "Command Code v1 coding-agent CLI.",
+			"types": [
+				"software"
+			],
+			"category": "agents",
+			"priority": 75,
+			"package": "@agentos-software/command-code",
+			"status": "docs",
+			"docsHref": "/docs/agents/command-code"
+		},
+		{
 			"slug": "sqlite3",
 			"title": "SQLite3",
 			"description": "SQLite database command-line interface.",

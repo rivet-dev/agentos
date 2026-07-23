@@ -211,6 +211,9 @@ function formatConsoleValue(value) {
 }
 
 function formatConsoleArgs(args) {
+  if (args.length === 0) {
+    return "";
+  }
   const builtinUtilModule = installBuiltinUtilFormatWithOptions(
     globalThis.__secureExecBuiltinUtilModule
   );

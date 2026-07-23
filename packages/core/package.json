@@ -80,6 +80,7 @@
 	"devDependencies": {
 		"@agentos-software/claude-code": "workspace:*",
 		"@agentos-software/codex": "workspace:*",
+		"@agentos-software/command-code": "workspace:*",
 		"@agentos-software/coreutils": "workspace:*",
 		"@agentos-software/curl": "workspace:*",
 		"@agentos-software/diffutils": "workspace:*",

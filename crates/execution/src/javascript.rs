@@ -6871,6 +6871,7 @@ export const chmod = _m.chmod;
 export const chown = _m.chown;
 export const copyFile = _m.copyFile;
 export const cp = _m.cp;
+export const glob = _m.glob;
 export const lchmod = _m.lchmod;
 export const lchown = _m.lchown;
 export const link = _m.link;

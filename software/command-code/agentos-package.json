@@ -1,0 +1,10 @@
+{
+	"commands": ["cmd", "cmdc", "command-code", "commandcode"],
+	"registry": {
+		"title": "Command Code",
+		"description": "Command Code v1 coding-agent CLI.",
+		"category": "agents",
+		"docsHref": "/docs/agents/command-code",
+		"priority": 75
+	}
+}

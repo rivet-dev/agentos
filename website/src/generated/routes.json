@@ -152,6 +152,10 @@
       "title": "Codex",
       "description": "Run the Codex coding agent inside a VM with skills, MCP servers, and custom configuration."
     },
+    "/docs/docs/agents/command-code": {
+      "title": "Command Code CLI",
+      "description": "Run the genuine Command Code v1 CLI inside an agentOS VM."
+    },
     "/docs/docs/agents/custom": {
       "title": "Custom Agents",
       "description": "Bring your own coding agent to agentOS by speaking the Agent Client Protocol (ACP) inside the VM."
@@ -212,10 +216,6 @@
       "title": "TLS & SSL",
       "description": "How agentOS uses in-guest mbedTLS plus a VM CA bundle for curl / wget / git, and a hermetic OpenSSL libcrypto build for OpenSSH."
     },
-    "/docs/docs/frameworks/vercel-eve": {
-      "title": "Vercel Eve",
-      "description": "Run Vercel Eve with agentOS and Rivet World."
-    },
     "/docs/docs/custom-software/building-wasm": {
       "title": "Building Binaries",
       "description": "Compile WASM command binaries for agentOS from source."
@@ -227,6 +227,10 @@
     "/docs/docs/custom-software/publishing": {
       "title": "Publishing Packages",
       "description": "Build, publish, and consume agentOS packages — locally, from npm, or from your own repo."
+    },
+    "/docs/docs/frameworks/vercel-eve": {
+      "title": "Vercel Eve",
+      "description": "Run Vercel Eve with agentOS and Rivet World."
     }
   }
 }
