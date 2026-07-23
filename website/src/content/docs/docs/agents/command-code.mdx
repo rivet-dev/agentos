@@ -36,35 +36,35 @@ The opt-in network test installs the pinned `cmd-mod-hi@0.1.1` npm mod in a stan
 
 ## Runtime support matrix
 
-Legend: 🟢 **Supported** means the platform provides the required behavior and we are confident it works; 🟡 **Partial** identifies a concrete limitation or an important path that still needs validation; 🔴 **Unsupported** means the platform or deployment model cannot provide the behavior. Rows say when agentOS support was exercised end to end.
+Legend: 🟢 **Supported** means the platform provides the required behavior; notes identify any Command Code path that has not yet been exercised end to end. 🟡 **Partial** identifies a concrete platform limitation, not merely missing test coverage. 🔴 **Not implemented / unsupported** means the current implementation does not provide the behavior; it does not necessarily mean the behavior is impossible to add.
 
 | Command Code surface | Native Linux | agentOS VM | Direct Cloudflare Worker isolate |
 | --- | --- | --- | --- |
 | CLI startup, `--version`, `--help`, aliases | 🟢 Supported | 🟢 Supported — tested end to end | 🔴 Unsupported — no standalone Node CLI/process entrypoint |
 | API-key authentication | 🟢 Supported | 🟢 Supported — tested against the hosted service | 🔴 Unsupported as a full CLI |
-| Browser login / MCP OAuth browser flow | 🟢 Supported | 🟡 Partial — automatic host-browser opening is not validated; API keys are preferred | 🔴 Unsupported as a local CLI |
-| Interactive TUI and TTY input | 🟢 Supported | 🟡 Partial — terminal startup/help works; a funded interactive model turn is untested | 🔴 Unsupported — `node:tty`, `readline`, and REPL are non-functional stubs |
-| Headless `-p`, JSON/NDJSON, piped stdin, exit codes | 🟢 Supported | 🟡 Partial — authentication and the hosted billing boundary work; completed generation and streaming remain untested | 🔴 Unsupported as a full CLI |
+| Browser login / MCP OAuth browser flow | 🟢 Supported | 🟡 Partial — a VM cannot launch the host browser; use an API key or terminal URL/code flow | 🔴 Unsupported as a local CLI |
+| Interactive TUI and TTY input | 🟢 Supported | 🟢 Supported — terminal startup/help tested; a funded interactive model turn is untested | 🔴 Unsupported — `node:tty`, `readline`, and REPL are non-functional stubs |
+| Headless `-p`, JSON/NDJSON, piped stdin, exit codes | 🟢 Supported | 🟢 Supported — authentication and the hosted billing boundary tested; completed generation and streaming remain untested | 🔴 Unsupported as a full CLI |
 | Filesystem read/write and JS glob | 🟢 Supported | 🟢 Supported — backed by the VM VFS and Node `fs`/`fs.promises.glob`; VM policy still applies | 🔴 Unsupported for this CLI — no normal durable project tree |
-| Text search / ripgrep | 🟢 Supported | 🟡 Partial — install `@agentos-software/ripgrep`; a model-driven search is untested | 🔴 Unsupported for this CLI — Worker VFS has no glob APIs or normal project tree |
+| Text search / ripgrep | 🟢 Supported | 🟢 Supported — install `@agentos-software/ripgrep`; a Command Code model-driven search is untested | 🔴 Unsupported for this CLI — Worker VFS has no glob APIs or normal project tree |
 | Shell commands and hooks | 🟢 Supported (permission gated) | 🟢 Supported with the default `common` software bundle; VM process policy still applies | 🔴 Unsupported — `node:child_process` is a non-functional stub |
-| Git and managed worktrees | 🟢 Supported | 🟡 Partial — requires `@agentos-software/git`; Command Code's managed-worktree flow is untested | 🔴 Unsupported — no child processes or durable project filesystem |
+| Git and managed worktrees | 🟢 Supported | 🟢 Supported — install `@agentos-software/git`; Command Code's managed-worktree flow is untested | 🔴 Unsupported — no child processes or durable project filesystem |
 | Persisted sessions, resume, fork, rewind | 🟢 Supported | 🟢 Supported — session files live on the VM filesystem; durability follows the configured filesystem | 🔴 Unsupported — request-local VFS is not persistent |
 | Skills and `.agents/skills/` | 🟢 Supported | 🟢 Supported — project discovery/listing tested end to end | 🔴 Unsupported as a CLI |
 | MCP configuration | 🟢 Supported | 🟢 Supported — project-scoped HTTP add/get tested end to end | 🔴 Unsupported as a full CLI |
-| MCP HTTP/SSE tool use | 🟢 Supported | 🟡 Partial — the VM has HTTP/SSE networking, but a live MCP tool round trip is untested | 🔴 Unsupported as a full CLI, even though Workers can make HTTP requests |
-| MCP stdio servers | 🟢 Supported | 🟡 Partial — process support exists, but a Command Code stdio MCP round trip is untested | 🔴 Unsupported — no child processes |
+| MCP HTTP/SSE tool use | 🟢 Supported | 🟢 Supported — backed by VM HTTP/SSE networking; a live Command Code MCP tool round trip is untested | 🔴 Unsupported as a full CLI, even though Workers can make HTTP requests |
+| MCP stdio servers | 🟢 Supported | 🟢 Supported — backed by VM process and stdio support; a Command Code MCP round trip is untested | 🔴 Unsupported — no child processes |
 | Local TypeScript mods (`--mod`, local `mods add`) | 🟢 Supported | 🟢 Supported — install, compile, and discovery tested end to end | 🔴 Unsupported — no CLI process or persistent mod directory |
 | npm TypeScript mods | 🟢 Supported | 🟢 Supported — pinned registry install tested with the default `common` bundle | 🔴 Unsupported — no package manager or child processes |
-| Git-sourced mods | 🟢 Supported | 🟡 Partial — requires `@agentos-software/git`; this install path is untested | 🔴 Unsupported |
+| Git-sourced mods | 🟢 Supported | 🟢 Supported — install `@agentos-software/git`; this Command Code install path is untested | 🔴 Unsupported |
 | Mods with native Node add-ons | 🟡 Partial — only prebuilt add-ons can work because Command Code installs with `--ignore-scripts` | 🔴 Unsupported — VM Node execution does not load native Node add-ons | 🔴 Unsupported |
 | Clipboard copy and image paste | 🟢 Supported when a host clipboard is available | 🔴 Unsupported — the VM has no host clipboard or native N-API clipboard binding | 🔴 Unsupported — no host terminal clipboard |
 | Update checks (`cmd update --check-only`) | 🟢 Supported | 🟡 Partial — the upstream five-second npm version-query timeout can expire in a VM | 🔴 Unsupported as a CLI |
-| In-place auto/self-update | 🟢 Supported | 🔴 Unsupported by design — `/opt/agentos` packages are immutable; deploy a newer registry package instead | 🔴 Unsupported |
+| In-place auto/self-update | 🟢 Supported | 🔴 Not implemented — Command Code cannot replace the projected package in the current runtime | 🔴 Unsupported |
 
 This Cloudflare column evaluates running the npm CLI directly in a standard Worker isolate with `nodejs_compat`. It does not describe an official Command Code Worker implementation—none was found—and it does not cover [Cloudflare Sandbox](https://developers.cloudflare.com/agents/tools/sandbox/), which is a separate container product with a real filesystem and shell.
 
-Self-update is intentionally different from ordinary command support. `cmd update` replaces the globally installed npm package, while agentOS projects a content-addressed, read-only package at `/opt/agentos`. Mutating that projection would break reproducibility, so run with `--no-auto-update` and upgrade the agentOS registry package from the host. Mods install into writable user/project storage instead, which is why local and pure TypeScript npm mods work; npm-backed installation needs `sh`, while Git sources need Git and native Node add-ons cannot load in the VM.
+agentOS does not currently implement registry-mediated self-update. `cmd update` replaces a globally installed npm package, but it cannot replace the content-addressed, read-only package projected at `/opt/agentos`. A future host-mediated updater could select a newer registry package without mutating that projection; for now, run with `--no-auto-update` and upgrade the registry package from the host. Mods install into writable user/project storage instead, which is why local and pure TypeScript npm mods work; npm-backed installation needs `sh`, while Git sources need Git and native Node add-ons cannot load in the VM.
 
 Sources: [Command Code CLI reference](https://commandcode.ai/docs/reference/cli), [headless mode](https://commandcode.ai/docs/core-concepts/headless), [MCP](https://commandcode.ai/docs/mcp), [skills](https://commandcode.ai/docs/skills), [mods](https://commandcode.ai/docs/mods), [hooks](https://commandcode.ai/docs/hooks), [Cloudflare Node.js compatibility](https://developers.cloudflare.com/workers/runtime-apis/nodejs/), and [Cloudflare Worker filesystem](https://developers.cloudflare.com/workers/runtime-apis/nodejs/fs/).
 
