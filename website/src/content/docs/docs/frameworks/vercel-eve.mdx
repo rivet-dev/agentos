@@ -4,6 +4,8 @@ description: "Run Vercel Eve with agentOS and Rivet World."
 skill: true
 ---
 
+import DeployTargets from '../../../../components/DeployTargets.astro';
+
 {/*
   Keep this guide synchronized with
   rivet-dev/rivet/website/src/content/docs/integrations/vercel-eve.mdx.
@@ -142,6 +144,16 @@ Then run the agent:
 ```sh
 npx eve dev
 ```
+
+</Step>
+
+<Step title="Deploy">
+
+By default, agentOS runs locally with `npx rivetkit dev` — no infrastructure needed. To run in production, deploy to any of these targets:
+
+<DeployTargets />
+
+See [Deployment](/docs/deployment) for managed, self-hosted, and agentOS Core options.
 
 </Step>
 

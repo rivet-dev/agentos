@@ -112,6 +112,10 @@ Then run the agent:
 npx eve dev
 ```
 
+By default, agentOS runs locally with `npx rivetkit dev` — no infrastructure needed. To run in production, deploy to any of these targets:
+
+See [Deployment](/docs/deployment) for managed, self-hosted, and agentOS Core options.
+
 ## Default Filesystem
 
 agentOS persists the VM filesystem, including `/workspace`, to Rivet Actor storage by default. Additional mounts can be configured as needed.
