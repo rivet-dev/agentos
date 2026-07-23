@@ -6,6 +6,5 @@
 		"lib": ["ESNext", "DOM"],
 		"types": ["node"]
 	},
-	"include": ["agents/**/*.ts", "core.ts", "flue.config.ts", "registry.ts"]
+	"include": ["actors.ts", "agents/**/*.ts", "core.ts", "flue.config.ts"]
 }
-

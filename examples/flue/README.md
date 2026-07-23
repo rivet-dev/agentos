@@ -25,7 +25,7 @@ verify that the actor-owned workspace survives sandbox sleep and resume.
 ## Configuration
 
 - Change the actor name passed to `agentOSSandbox()` when your registry uses a name other than `vm`.
-- Configure software, permissions, and resource limits on `agentOS()` in `registry.ts`.
+- Configure software, permissions, and resource limits on `agentOS()` in `actors.ts`.
 - Keep files that must persist under `/workspace`.
 
 See the [Flue integration guide](https://agentos-sdk.dev/docs/frameworks/flue)

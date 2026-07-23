@@ -24,7 +24,7 @@ verify that the actor-owned workspace survives sandbox sleep and resume.
 ## Configuration
 
 - Change the actor name passed to `agentOSBackend()` when your registry uses a name other than `vm`.
-- Configure software, permissions, and resource limits on `agentOS()` in `registry.ts`.
+- Configure software, permissions, and resource limits on `agentOS()` in `actors.ts`.
 - Keep files that must persist under `/workspace`.
 
 agentOS is the default in this example, but Eve accepts any compatible sandbox backend. Changing the sandbox does not require changing the agent or selecting a different World.

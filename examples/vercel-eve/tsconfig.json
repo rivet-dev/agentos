@@ -6,5 +6,5 @@
 		"lib": ["ESNext", "DOM"],
 		"types": ["node"]
 	},
-	"include": ["agent/**/*.ts", "core.ts", "registry.ts", "world.ts"]
+	"include": ["actors.ts", "agent/**/*.ts", "core.ts", "world.ts"]
 }

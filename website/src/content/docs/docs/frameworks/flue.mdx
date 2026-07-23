@@ -36,9 +36,9 @@ npm add @rivet-dev/agentos @rivet-dev/agentos-flue
 
 <Step title="Register agentOS">
 
-Create `registry.ts`:
+Create `actors.ts`:
 
-```ts title="registry.ts"
+```ts title="actors.ts"
 import { agentOS, setup } from "@rivet-dev/agentos";
 
 const vm = agentOS({
@@ -59,7 +59,7 @@ Update `agents/assistant.ts`:
 ```ts title="agents/assistant.ts"
 import { agentOSSandbox } from "@rivet-dev/agentos-flue";
 import { createAgent } from "@flue/runtime";
-import { registry } from "../registry";
+import { registry } from "../actors";
 
 export default createAgent(() => ({
 	model: "anthropic/claude-sonnet-4-6",
@@ -87,35 +87,20 @@ Install the Rivet target adapter:
 npm add @rivet-dev/flue
 ```
 
-Then export your agentOS actors for the target and select Rivet in `flue.config.ts`:
-
-```ts title="registry.ts"
-import { agentOS } from "@rivet-dev/agentos";
-
-export const actors = { vm: agentOS() };
-```
+Then pass the same `actors.ts` registry to the Rivet target in `flue.config.ts`:
 
 ```ts title="flue.config.ts"
 import { defineConfig } from "@flue/cli/config";
 import { rivet } from "@rivet-dev/flue";
 
 export default defineConfig({
-	target: rivet({ actors: "./registry.ts" }),
+	target: rivet({ actors: "./actors.ts" }),
 });
 ```
 
-When the agent runs inside the Rivet target, use its installed registry proxy instead of starting a second registry:
-
-```ts title="agents/assistant.ts"
-import { agentOSSandbox } from "@rivet-dev/agentos-flue";
-import { createAgent } from "@flue/runtime";
-import { flueRegistry } from "@rivet-dev/flue/runtime";
-
-export default createAgent(() => ({
-	model: "anthropic/claude-sonnet-4-6",
-	sandbox: agentOSSandbox({ actor: "vm", registry: flueRegistry }),
-}));
-```
+The target adds its generated Flue actors to that registry. The sandbox keeps
+using the `registry` imported from `actors.ts`; no second registry or proxy is
+needed.
 
 See the [Rivet Flue guide](https://rivet.dev/docs/integrations/flue) for deployment and connection commands.
 
@@ -135,8 +120,8 @@ See the `agentOS()` [configuration reference](/docs/core#configuration-reference
 
 | Option | Required | Description |
 | --- | --- | --- |
-| `actor` | Yes | Actor registered with `setup()` or the Rivet target, such as `vm`. |
-| `registry` | Yes | The application registry or `flueRegistry` proxy containing that actor. |
+| `actor` | Yes | Actor registered with `setup()`, such as `vm`. |
+| `registry` | Yes | The application registry exported from `actors.ts`. |
 | `cwd` | No | Base directory exposed to Flue. Defaults to `/workspace`. |
 | `client` | No | An existing client configured for the same registry. |
 
