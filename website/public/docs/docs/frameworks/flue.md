@@ -4,7 +4,10 @@ Use agentOS as the durable sandbox backend for Flue.
 
 Flue owns the agent runtime and session lifecycle. Rivet maps each agent instance and workflow run to a durable Rivet Actor, while agentOS gives each Flue context an isolated VM with a persistent `/workspace` filesystem.
 
-> **Upstream status:** This integration currently uses [Rivet's Flue fork](https://github.com/rivet-dev/flue). We're working to merge its generic target-authoring and runtime extension APIs [upstream](https://github.com/withastro/flue/discussions/516), allowing Flue to support actor-model runtimes without taking a Rivet dependency.
+This integration currently uses [Rivet's Flue fork](https://github.com/rivet-dev/flue).
+We're working to merge its generic target-authoring and runtime extension APIs
+[upstream](https://github.com/withastro/flue/discussions/516), allowing Flue to
+support actor-model runtimes without taking a Rivet dependency.
 
 [View the complete example →](https://github.com/rivet-dev/agentos/tree/main/examples/flue)
 
@@ -79,6 +82,15 @@ npx flue connect assistant local
 
 Flue builds the Rivet target, starts the local Rivet engine, and connects to the `assistant/local` actor.
 
+By default, agentOS runs locally with `npx rivetkit dev` — no infrastructure needed. To run in production, deploy to any of these targets:
+
+See [Deployment](/docs/deployment) for managed, self-hosted, and agentOS Core options.
+
+## Runtime model
+
+agentOS does not support Cloudflare Workers yet. It works with Node.js, Bun, or
+Deno on platforms such as Railway, Kubernetes, or Vercel.
+
 ## Default filesystem
 
 agentOS persists the VM filesystem, including `/workspace`, to Rivet Actor storage by default. Additional mounts can be configured as needed.
@@ -98,6 +110,7 @@ See the `agentOS()` [configuration reference](/docs/core#configuration-reference
 | `actor` | Yes | Actor registered with `setup()`, such as `vm`. |
 | `registry` | Yes | The application registry exported from `actors.ts`. |
 | `cwd` | No | Base directory exposed to Flue. Defaults to `/workspace`. |
+| `params` | No | Connection parameters forwarded to the actor's `onBeforeConnect` hook. |
 | `client` | No | An existing client configured for the same registry. |
 
 ## Advanced
@@ -114,6 +127,6 @@ When using agentOS Core instead of regular agentOS, you lose:
 
 - **Durable filesystem and session history.** Core's root filesystem is ephemeral by default, so you must provide your own persistent mount at `/workspace`.
 - **Stable per-session actor identity.** Core cannot reconnect to the same VM across Flue process restarts.
-- **Automatic sleep and wake.** The VM lives inside Flue's server process. `shutdown()` disposes it.
+- **Automatic sleep, wake, and disposal.** The VM lives inside Flue's server process. Flue's sandbox interface does not expose a lifecycle hook, so the `create` callback's owner must retain and dispose every VM it creates.
 
 Use Core only when your application owns equivalent persistence and lifecycle management.
