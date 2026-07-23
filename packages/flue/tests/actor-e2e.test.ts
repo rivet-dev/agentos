@@ -18,6 +18,7 @@ import {
 	ACTOR_E2E_NAMESPACE,
 	ACTOR_E2E_TOKEN,
 	type ActorRuntimeHandle,
+	ensureActorE2ESidecarBinary,
 	startActorRuntime,
 } from "../../agentos/tests/helpers/actor-runtime.js";
 
@@ -27,20 +28,26 @@ const workspaceRoot = resolve(packageRoot, "../..");
 const exampleRoot = join(workspaceRoot, "examples/flue");
 const rivetFlueRoot = process.env.AGENTOS_FLUE_RIVET_PACKAGE;
 const flueForkRoot = process.env.AGENTOS_FLUE_FORK_ROOT;
+const engineBinary = process.env.RIVET_ENGINE_BINARY;
 const MAX_LOG_BYTES = 1024 * 1024;
 
 describe.skipIf(!RUN_E2E)("Flue + Rivet + agentOS real actor E2E", () => {
 	let runtime: ActorRuntimeHandle;
 	let storagePath: string;
 	let fixtureRoot: string;
+	let sidecarBinary: string;
 	let server: RunningServer | undefined;
 
 	beforeAll(async () => {
-		if (!rivetFlueRoot || !flueForkRoot) {
+		if (!rivetFlueRoot || !flueForkRoot || !engineBinary) {
 			throw new Error(
-				"Set AGENTOS_FLUE_RIVET_PACKAGE to the local @rivet-dev/flue package and AGENTOS_FLUE_FORK_ROOT to the local rivet-dev/flue checkout.",
+				"Set AGENTOS_FLUE_RIVET_PACKAGE, AGENTOS_FLUE_FORK_ROOT, and RIVET_ENGINE_BINARY to matching local Rivet and Flue builds.",
 			);
 		}
+		if (!existsSync(engineBinary)) {
+			throw new Error(`RIVET_ENGINE_BINARY does not exist: ${engineBinary}`);
+		}
+		sidecarBinary = ensureActorE2ESidecarBinary();
 		storagePath = mkdtempSync(join(tmpdir(), "agentos-flue-combined-e2e-"));
 		fixtureRoot = join(storagePath, "example");
 		createFixture(fixtureRoot, rivetFlueRoot, flueForkRoot);
@@ -49,7 +56,7 @@ describe.skipIf(!RUN_E2E)("Flue + Rivet + agentOS real actor E2E", () => {
 			[join(flueForkRoot, "packages/cli/bin/flue.mjs"), "build"],
 			fixtureRoot,
 		);
-		runtime = await startActorRuntime(storagePath);
+		runtime = await startActorRuntime(storagePath, { engineOnly: true });
 	}, 180_000);
 
 	afterAll(async () => {
@@ -58,45 +65,72 @@ describe.skipIf(!RUN_E2E)("Flue + Rivet + agentOS real actor E2E", () => {
 		if (storagePath) rmSync(storagePath, { recursive: true, force: true });
 	}, 30_000);
 
-	it(
-		"persists filesystem and exec output after reconnecting through the native Flue router",
-		async () => {
-			const poolName = `agentos-flue-${Date.now()}`;
-			await configurePool(runtime.endpoint, poolName);
-			const port = await getFreePort();
-			const instanceId = `combined-${Date.now()}`;
+	it("persists filesystem and exec output after reconnecting through the native Flue router", async () => {
+		const poolName = `agentos-flue-${Date.now()}`;
+		await configurePool(runtime.endpoint, poolName);
+		const port = await getFreePort();
+		const instanceId = `combined-${Date.now()}`;
 
-			server = startServer(fixtureRoot, runtime.endpoint, poolName, port);
-			await waitForServer(port, server);
-			await postPrompt(port, instanceId, "write the persistent file", server);
-			await waitForHistory(
-				port,
-				instanceId,
-				["persisted-through-agentos", "The persistent file was written."],
-				server,
-			);
+		server = startServer(
+			fixtureRoot,
+			runtime.endpoint,
+			poolName,
+			port,
+			sidecarBinary,
+		);
+		await waitForServer(port, server);
+		await postPrompt(port, instanceId, "write the persistent file", server);
+		await waitForHistory(
+			port,
+			instanceId,
+			["persisted-through-agentos", "The persistent file was written."],
+			server,
+		);
 
-			// Drop every Flue-side connection and registry resource. Starting the
-			// generated server again must reconnect the same Flue context to the
-			// same agentOS actor and its actor-owned filesystem.
-			await server.stop();
-			server = startServer(fixtureRoot, runtime.endpoint, poolName, port);
-			await waitForServer(port, server);
-			await postPrompt(port, instanceId, "read the persistent file", server);
-			const history = await waitForHistory(
-				port,
-				instanceId,
-				[
-					"persisted-through-agentos",
-					"The persistent file survived reconnecting.",
-				],
-				server,
-			);
+		// Drop every Flue-side connection and registry resource. Starting the
+		// generated server again must reconnect the same Flue context to the
+		// same agentOS actor and its actor-owned filesystem.
+		await server.stop();
+		server = startServer(
+			fixtureRoot,
+			runtime.endpoint,
+			poolName,
+			port,
+			sidecarBinary,
+		);
+		await waitForServer(port, server);
+		const restoredHistory = await waitForHistory(
+			port,
+			instanceId,
+			["persisted-through-agentos", "The persistent file was written."],
+			server,
+		);
+		const sseAbort = new AbortController();
+		const sse = await openConversationSse(
+			`http://127.0.0.1:${port}/agents/assistant/${instanceId}?view=updates&offset=${encodeURIComponent(restoredHistory.offset)}&live=sse`,
+			sseAbort.signal,
+			server,
+		);
+		const livePrompt = "read the persistent file";
+		const finalText = "The persistent file survived reconnecting.";
+		try {
+			await waitForSseUpToDate(sse, server);
+			await postPrompt(port, instanceId, livePrompt, server);
+			const liveItems = await readLiveTurn(sse, finalText, server);
+			expectLiveTurnOrdering(liveItems, livePrompt, finalText);
+		} finally {
+			sseAbort.abort();
+			await sse.reader.cancel().catch(() => {});
+		}
+		const history = await waitForHistory(
+			port,
+			instanceId,
+			["persisted-through-agentos", finalText],
+			server,
+		);
 
-			expect(JSON.stringify(history)).toContain("cat persisted.txt");
-		},
-		180_000,
-	);
+		expect(JSON.stringify(history)).toContain("cat persisted.txt");
+	}, 180_000);
 });
 
 function createFixture(
@@ -107,7 +141,9 @@ function createFixture(
 	cpSync(exampleRoot, root, {
 		recursive: true,
 		filter: (source) =>
-			!["dist", ".turbo", "node_modules"].includes(source.split("/").at(-1) ?? ""),
+			!["dist", ".turbo", "node_modules"].includes(
+				source.split("/").at(-1) ?? "",
+			),
 	});
 	writeFileSync(
 		join(root, "tsconfig.json"),
@@ -128,18 +164,12 @@ function createFixture(
 	mkdirSync(join(modules, "@flue"), { recursive: true });
 	mkdirSync(join(modules, "@rivet-dev"), { recursive: true });
 
-	link(
-		join(localFlueForkRoot, "packages/cli"),
-		join(modules, "@flue/cli"),
-	);
+	link(join(localFlueForkRoot, "packages/cli"), join(modules, "@flue/cli"));
 	link(
 		join(localFlueForkRoot, "packages/runtime"),
 		join(modules, "@flue/runtime"),
 	);
-	copyPublishedPackage(
-		localRivetFlueRoot,
-		join(modules, "@rivet-dev/flue"),
-	);
+	copyPublishedPackage(localRivetFlueRoot, join(modules, "@rivet-dev/flue"));
 	copyPublishedPackage(packageRoot, join(modules, "@rivet-dev/agentos-flue"));
 	copyPublishedPackage(
 		join(workspaceRoot, "packages/agentos"),
@@ -163,6 +193,8 @@ import { fauxAssistantMessage, registerFauxProvider } from "@flue/runtime/adapte
 import { agentOSSandbox } from "@rivet-dev/agentos-flue";
 import { registry } from "../actors.js";
 
+// This fixture tests Flue's authored public HTTP/SSE route. The route-free
+// example uses the Flue run command, which enables temporary local exposure.
 export const route = async (_context, next) => next();
 
 const provider = registerFauxProvider({ provider: "agentos-flue-e2e" });
@@ -216,14 +248,19 @@ function link(source: string, target: string): void {
 	symlinkSync(source, target, "dir");
 }
 
-async function configurePool(endpoint: string, poolName: string): Promise<void> {
+async function configurePool(
+	endpoint: string,
+	poolName: string,
+): Promise<void> {
 	const headers = { Authorization: `Bearer ${ACTOR_E2E_TOKEN}` };
 	const datacentersResponse = await fetch(
 		`${endpoint}/datacenters?namespace=${ACTOR_E2E_NAMESPACE}`,
 		{ headers },
 	);
 	if (!datacentersResponse.ok) {
-		throw new Error(`failed to list E2E datacenters: ${datacentersResponse.status}`);
+		throw new Error(
+			`failed to list E2E datacenters: ${datacentersResponse.status}`,
+		);
 	}
 	const datacenter = (
 		(await datacentersResponse.json()) as {
@@ -250,17 +287,36 @@ interface RunningServer {
 	stop(): Promise<void>;
 }
 
+interface ConversationHistory {
+	offset: string;
+	[key: string]: unknown;
+}
+
+interface ConversationSse {
+	reader: ReadableStreamDefaultReader<Uint8Array>;
+	state: {
+		buffer: string;
+		decoder: TextDecoder;
+	};
+}
+
+interface FlueSseEvent {
+	event: string;
+	data: unknown;
+}
+
 function startServer(
 	root: string,
 	endpoint: string,
 	poolName: string,
 	port: number,
+	sidecarBinary: string,
 ): RunningServer {
 	const child = spawn(process.execPath, [join(root, "dist/server.mjs")], {
 		cwd: root,
 		env: {
 			...process.env,
-			AGENTOS_SIDECAR_BIN: resolve(workspaceRoot, "target/debug/agentos-sidecar"),
+			AGENTOS_SIDECAR_BIN: sidecarBinary,
 			FLUE_MODE: "local",
 			PORT: String(port),
 			RIVET_ENDPOINT: endpoint,
@@ -326,7 +382,9 @@ async function postPrompt(
 		);
 		if (response.status === 202) return true;
 		if (response.status < 500) {
-			throw new Error(`prompt failed: ${response.status} ${await response.text()}`);
+			throw new Error(
+				`prompt failed: ${response.status} ${await response.text()}`,
+			);
 		}
 		return false;
 	}, server);
@@ -337,18 +395,219 @@ async function waitForHistory(
 	instanceId: string,
 	expected: string[],
 	server: RunningServer,
-): Promise<unknown> {
-	let history: unknown;
-	await retry(async () => {
-		const response = await fetch(
-			`http://127.0.0.1:${port}/agents/assistant/${instanceId}?view=history`,
-		);
-		if (!response.ok) return false;
-		history = await response.json();
-		const text = JSON.stringify(history);
-		return expected.every((value) => text.includes(value));
-	}, server, 120);
+): Promise<ConversationHistory> {
+	let history: ConversationHistory | undefined;
+	await retry(
+		async () => {
+			const response = await fetch(
+				`http://127.0.0.1:${port}/agents/assistant/${instanceId}?view=history`,
+			);
+			if (!response.ok) return false;
+			const candidate = (await response.json()) as {
+				offset?: unknown;
+				[key: string]: unknown;
+			};
+			if (typeof candidate.offset !== "string") {
+				throw new Error(
+					`history response omitted its offset: ${JSON.stringify(candidate)}`,
+				);
+			}
+			history = candidate as ConversationHistory;
+			const text = JSON.stringify(history);
+			return expected.every((value) => text.includes(value));
+		},
+		server,
+		120,
+	);
+	if (!history) throw new Error(`history was not loaded\n${server.logs()}`);
 	return history;
+}
+
+async function openConversationSse(
+	url: string,
+	signal: AbortSignal,
+	server: RunningServer,
+): Promise<ConversationSse> {
+	const connectAbort = new AbortController();
+	const timeout = setTimeout(
+		() => connectAbort.abort(new Error("Flue SSE connection timed out")),
+		10_000,
+	);
+	let response: Response;
+	try {
+		response = await fetch(url, {
+			signal: AbortSignal.any([signal, connectAbort.signal]),
+		});
+	} finally {
+		clearTimeout(timeout);
+	}
+	if (!response.ok) {
+		throw new Error(
+			`Flue SSE failed: ${response.status} ${await response.text()}\n${server.logs()}`,
+		);
+	}
+	if (!response.headers.get("content-type")?.startsWith("text/event-stream")) {
+		throw new Error(
+			`Flue SSE returned ${response.headers.get("content-type")}\n${server.logs()}`,
+		);
+	}
+	if (!response.body) {
+		throw new Error(`Flue SSE response omitted its body\n${server.logs()}`);
+	}
+	return {
+		reader: response.body.getReader(),
+		state: { buffer: "", decoder: new TextDecoder() },
+	};
+}
+
+async function waitForSseUpToDate(
+	sse: ConversationSse,
+	server: RunningServer,
+): Promise<void> {
+	while (true) {
+		const event = await readSseEvent(sse, server);
+		if (
+			event.event === "control" &&
+			isRecord(event.data) &&
+			event.data.upToDate === true
+		) {
+			return;
+		}
+	}
+}
+
+async function readLiveTurn(
+	sse: ConversationSse,
+	finalText: string,
+	server: RunningServer,
+): Promise<Record<string, unknown>[]> {
+	const items: Record<string, unknown>[] = [];
+	while (true) {
+		const event = await readSseEvent(sse, server);
+		if (event.event !== "data") continue;
+		if (!Array.isArray(event.data) || !event.data.every(isRecord)) {
+			throw new Error(
+				`Flue SSE data event was not an object array: ${JSON.stringify(event.data)}`,
+			);
+		}
+		items.push(...event.data);
+		const hasFinal = finalTextIndex(items, finalText) >= 0;
+		const hasSettlement = items.some(
+			(item) =>
+				item.type === "submission-settled" && item.outcome === "completed",
+		);
+		if (hasFinal && hasSettlement) return items;
+	}
+}
+
+function expectLiveTurnOrdering(
+	items: Record<string, unknown>[],
+	userText: string,
+	finalText: string,
+): void {
+	const serialized = items.map((item) => JSON.stringify(item));
+	const userIndex = items.findIndex(
+		(item, index) =>
+			item.type === "message-appended" &&
+			serialized[index]?.includes(`"role":"user"`) &&
+			serialized[index]?.includes(userText),
+	);
+	const toolInputIndex = items.findIndex(
+		(item, index) =>
+			item.type === "tool-input" &&
+			serialized[index]?.includes("cat persisted.txt"),
+	);
+	const toolOutputIndex = items.findIndex(
+		(item, index) =>
+			item.type === "tool-output" &&
+			serialized[index]?.includes("persisted-through-agentos"),
+	);
+	const finalIndex = finalTextIndex(items, finalText);
+	const detail = JSON.stringify(items, null, 2);
+	expect(userIndex, detail).toBeGreaterThanOrEqual(0);
+	expect(toolInputIndex, detail).toBeGreaterThan(userIndex);
+	expect(toolOutputIndex, detail).toBeGreaterThan(toolInputIndex);
+	expect(finalIndex, detail).toBeGreaterThan(toolOutputIndex);
+}
+
+function finalTextIndex(
+	items: Record<string, unknown>[],
+	finalText: string,
+): number {
+	let text = "";
+	for (const [index, item] of items.entries()) {
+		if (item.type !== "message-delta" || typeof item.delta !== "string") {
+			continue;
+		}
+		text += item.delta;
+		if (text.includes(finalText)) return index;
+	}
+	return -1;
+}
+
+async function readSseEvent(
+	sse: ConversationSse,
+	server: RunningServer,
+): Promise<FlueSseEvent> {
+	const deadline = Date.now() + 30_000;
+	while (Date.now() < deadline) {
+		const boundary = sse.state.buffer.indexOf("\n\n");
+		if (boundary !== -1) {
+			const raw = sse.state.buffer.slice(0, boundary);
+			sse.state.buffer = sse.state.buffer.slice(boundary + 2);
+			if (raw.startsWith(":")) continue;
+			const event = raw.match(/^event:\s*(.+)$/m)?.[1];
+			const data = raw
+				.split("\n")
+				.filter((line) => line.startsWith("data:"))
+				.map((line) => line.slice("data:".length).trimStart())
+				.join("\n");
+			if (event && data) {
+				return { event, data: JSON.parse(data) as unknown };
+			}
+			continue;
+		}
+		const result = await readWithTimeout(
+			sse.reader,
+			deadline - Date.now(),
+			server,
+		);
+		if (result.done) {
+			throw new Error(`Flue SSE ended before the live turn\n${server.logs()}`);
+		}
+		sse.state.buffer += sse.state.decoder
+			.decode(result.value, { stream: true })
+			.replaceAll("\r\n", "\n");
+	}
+	throw new Error(`Timed out reading Flue SSE event\n${server.logs()}`);
+}
+
+async function readWithTimeout(
+	reader: ReadableStreamDefaultReader<Uint8Array>,
+	timeoutMs: number,
+	server: RunningServer,
+) {
+	let timeout: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([
+			reader.read(),
+			new Promise<never>((_, reject) => {
+				timeout = setTimeout(
+					() =>
+						reject(
+							new Error(`Timed out reading Flue SSE event\n${server.logs()}`),
+						),
+					timeoutMs,
+				);
+			}),
+		]);
+	} finally {
+		clearTimeout(timeout);
+	}
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 async function retry(

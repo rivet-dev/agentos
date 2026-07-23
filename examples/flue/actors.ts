@@ -4,6 +4,4 @@ const vm = agentOS({
 	// Configure software, permissions, mounts, and resource limits here.
 });
 
-export const registry = setup({
-	use: { vm },
-});
+export const registry = setup({ use: { vm } });

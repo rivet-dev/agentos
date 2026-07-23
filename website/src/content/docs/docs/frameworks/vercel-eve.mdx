@@ -7,8 +7,11 @@ skill: true
 import DeployTargets from '../../../../components/DeployTargets.astro';
 
 {/*
-  Keep this guide synchronized with
+  Sync policy: keep this guide in step with its Rivet counterpart at
   rivet-dev/rivet/website/src/content/docs/integrations/vercel-eve.mdx.
+  The runnable example lives in this repo, so embed it with <CodeSnippet> from
+  examples/vercel-eve. The Rivet guide cannot import across repos, so it hardcodes
+  the same code inline; update both whenever the example changes.
 */}
 
 Eve owns the agent runtime and session lifecycle. agentOS maps every sandbox session to an isolated VM actor with a durable `/workspace` filesystem, while Rivet World runs Eve workflows on Rivet Actors.
@@ -34,8 +37,7 @@ cd my-agent
 npm add @rivet-dev/agentos @rivet-dev/agentos-eve @rivet-dev/vercel-world
 ```
 
-- `@rivet-dev/agentos`: Provides the agentOS VM.
-- `@rivet-dev/agentos-eve`: Connects Eve's sandbox API to agentOS.
+- `@rivet-dev/agentos` and `@rivet-dev/agentos-eve`: Provide the agentOS VM and connect Eve's sandbox API to it.
 - `@rivet-dev/vercel-world`: Runs Eve workflows on [Rivet World](https://workflow-sdk.dev/worlds).
 
 </Step>

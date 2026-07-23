@@ -794,9 +794,6 @@ importers:
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
-      '@rivet-dev/agentos-core':
-        specifier: workspace:*
-        version: link:../../packages/core
       '@rivet-dev/agentos-flue':
         specifier: workspace:*
         version: link:../../packages/flue

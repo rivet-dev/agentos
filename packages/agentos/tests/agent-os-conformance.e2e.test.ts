@@ -21,7 +21,7 @@ async function waitForActorReady(
 	const deadline = Date.now() + timeoutMs;
 	let lastError: unknown;
 	while (Date.now() < deadline) {
-		if (runtime.child.exitCode !== null) {
+		if (runtime.child && runtime.child.exitCode !== null) {
 			throw new Error(`actor runtime exited during startup\n${runtime.logs()}`);
 		}
 		try {
