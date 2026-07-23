@@ -11,7 +11,7 @@ import { createAgent } from "@flue/runtime";
 const registry = setup({ use: { vm: agentOS() } });
 
 export default createAgent(() => ({
-	model: "anthropic/claude-sonnet-4-6",
+	model: "anthropic/claude-sonnet-5",
 	sandbox: agentOSSandbox({ actor: "vm", registry }),
 }));
 ```

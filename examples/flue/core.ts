@@ -3,7 +3,7 @@ import { AgentOs } from "@rivet-dev/agentos-core";
 import { agentOSCoreSandbox } from "@rivet-dev/agentos-flue";
 
 export default createAgent(() => ({
-	model: "anthropic/claude-sonnet-4-6",
+	model: "anthropic/claude-sonnet-5",
 	sandbox: agentOSCoreSandbox({
 		create: ({ id }) =>
 			AgentOs.create({

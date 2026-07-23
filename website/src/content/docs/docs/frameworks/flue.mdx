@@ -4,6 +4,11 @@ description: "Use agentOS as the durable sandbox backend for Flue."
 skill: true
 ---
 
+{/*
+  Keep this guide synchronized with
+  rivet-dev/rivet/website/src/content/docs/integrations/flue.mdx.
+*/}
+
 Flue owns the agent runtime and session lifecycle, while agentOS maps every sandbox session to an isolated VM actor with a durable `/workspace` filesystem.
 
 [View the complete example →](https://github.com/rivet-dev/agentos/tree/main/examples/flue)
@@ -62,7 +67,7 @@ import { createAgent } from "@flue/runtime";
 import { registry } from "../actors";
 
 export default createAgent(() => ({
-	model: "anthropic/claude-sonnet-4-6",
+	model: "anthropic/claude-sonnet-5",
 	sandbox: agentOSSandbox({ actor: "vm", registry }),
 }));
 ```
