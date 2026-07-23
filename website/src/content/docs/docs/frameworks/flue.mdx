@@ -28,6 +28,7 @@ Flue owns the agent runtime and session lifecycle. Rivet maps each agent instanc
 ```sh
 mkdir my-agent && cd my-agent
 npm init -y
+npm pkg set type=module
 
 # Install the Flue packages
 npm add "@flue/runtime@npm:@rivet-dev/labs-flue-runtime@1.0.0-beta.9-rivet.2"
