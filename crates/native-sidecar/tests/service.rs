@@ -12787,6 +12787,40 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
             fs::set_permissions(&host_path, permissions).expect("chmod host fixture");
         }
 
+        fn write_posix_spawnp_symlink(
+            sidecar: &mut NativeSidecar<RecordingBridge>,
+            vm_id: &str,
+            target: &str,
+            link_path: &str,
+        ) {
+            let (host_path, host_target) = {
+                let vm = sidecar.vms.get_mut(vm_id).expect("created vm");
+                let parent = Path::new(link_path)
+                    .parent()
+                    .and_then(Path::to_str)
+                    .expect("symlink fixture parent path");
+                if parent != "/" {
+                    vm.kernel
+                        .mkdir(parent, true)
+                        .expect("create symlink fixture guest parent");
+                }
+                vm.kernel
+                    .symlink(target, link_path)
+                    .expect("create guest symlink fixture");
+                let host_target = if target.starts_with('/') {
+                    vm.cwd.join(target.trim_start_matches('/'))
+                } else {
+                    PathBuf::from(target)
+                };
+                (vm.cwd.join(link_path.trim_start_matches('/')), host_target)
+            };
+
+            fs::create_dir_all(host_path.parent().expect("symlink fixture host parent"))
+                .expect("create symlink fixture host parent");
+            std::os::unix::fs::symlink(host_target, host_path)
+                .expect("create host symlink fixture");
+        }
+
         fn posix_spawnp_request(
             command: &str,
             search_path: &str,
@@ -12913,10 +12947,23 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                     b"#!/interpreter.wasm --inner\n".as_slice(),
                 ),
                 ("/scripts/nested", b"#!/scripts/inner --outer\n".as_slice()),
+                ("/scripts/env", b"#!/usr/bin/env node\n".as_slice()),
+                ("/scripts/env-target", b"#!/usr/bin/env node\n".as_slice()),
+                (
+                    "/scripts/env-s",
+                    b"#!/usr/bin/env -S node --flag\n".as_slice(),
+                ),
                 ("/scripts/missing", b"#!/missing-interpreter\n".as_slice()),
             ] {
                 write_posix_spawnp_fixture(&mut sidecar, &vm_id, path, contents, 0o755);
             }
+            write_posix_spawnp_symlink(&mut sidecar, &vm_id, "env-target", "/scripts/env-link");
+            write_posix_spawnp_symlink(
+                &mut sidecar,
+                &vm_id,
+                "/interpreter.wasm",
+                "/opt/agentos/bin/node",
+            );
 
             sidecar
                 .vms
@@ -12927,6 +12974,12 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                     String::from("registered-only"),
                     String::from("/registered-only"),
                 );
+            sidecar
+                .vms
+                .get_mut(&vm_id)
+                .expect("created vm")
+                .command_guest_paths
+                .insert(String::from("node"), String::from("/interpreter.wasm"));
 
             for nested in [false, true] {
                 let scope = if nested { "nested" } else { "top-level" };
@@ -13039,6 +13092,56 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                         "/scripts/nested",
                         "tail"
                     ])
+                );
+
+                let mut env_request = posix_spawnp_request("env", "/scripts", &["tail"]);
+                env_request
+                    .options
+                    .env
+                    .insert(String::from("PATH"), String::from("/opt/agentos/bin"));
+                let env = spawn_posix_spawnp_fixture(&mut sidecar, &vm_id, nested, env_request)
+                    .unwrap_or_else(|error| panic!("{scope} env shebang failed: {error}"));
+                assert_eq!(env["args"], json!(["node", "/scripts/env", "tail"]));
+
+                let mut env_link_request = posix_spawnp_request("env-link", "/scripts", &["tail"]);
+                env_link_request
+                    .options
+                    .env
+                    .insert(String::from("PATH"), String::from("/opt/agentos/bin"));
+                let env_link =
+                    spawn_posix_spawnp_fixture(&mut sidecar, &vm_id, nested, env_link_request)
+                        .unwrap_or_else(|error| {
+                            panic!("{scope} symlinked env shebang failed: {error}")
+                        });
+                assert_eq!(
+                    env_link["args"],
+                    json!(["node", "/scripts/env-link", "tail"])
+                );
+
+                let mut env_split_request = posix_spawnp_request("env-s", "/scripts", &["tail"]);
+                env_split_request
+                    .options
+                    .env
+                    .insert(String::from("PATH"), String::from("/opt/agentos/bin"));
+                let env_split =
+                    spawn_posix_spawnp_fixture(&mut sidecar, &vm_id, nested, env_split_request)
+                        .unwrap_or_else(|error| panic!("{scope} env -S shebang failed: {error}"));
+                assert_eq!(
+                    env_split["args"],
+                    json!(["node", "--flag", "/scripts/env-s", "tail"])
+                );
+
+                let mut excluded_env_request = posix_spawnp_request("env", "/scripts", &[]);
+                excluded_env_request
+                    .options
+                    .env
+                    .insert(String::from("PATH"), String::from("/nowhere"));
+                let error =
+                    spawn_posix_spawnp_fixture(&mut sidecar, &vm_id, nested, excluded_env_request)
+                        .expect_err("env shebang must honor its explicit PATH");
+                assert!(
+                    error.to_string().contains("ENOENT"),
+                    "{scope} excluded env interpreter returned {error}"
                 );
 
                 let error = spawn_posix_spawnp_fixture(

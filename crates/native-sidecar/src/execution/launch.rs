@@ -2570,6 +2570,32 @@ fn resolve_spawn_shebang(
         }
         interpreter_depth += 1;
 
+        if matches!(shebang.interpreter.as_str(), "/usr/bin/env" | "/bin/env") {
+            let (command, args) =
+                parse_javascript_shebang(&script_argument, &header, &request.args)?.ok_or_else(
+                    || {
+                        SidecarError::Kernel(format!(
+                            "ENOEXEC: invalid env shebang line: {resolved_path}"
+                        ))
+                    },
+                )?;
+            request.command = if is_path_like_specifier(&command) {
+                resolve_path_like_guest_specifier(&guest_cwd, &command)
+            } else {
+                let path_env = request
+                    .options
+                    .env
+                    .get("PATH")
+                    .or_else(|| vm.guest_env.get("PATH"))
+                    .cloned()
+                    .unwrap_or_else(|| String::from("/bin:/usr/bin"));
+                resolve_posix_spawn_path_candidate(vm, &guest_cwd, &command, &path_env)?.lookup_path
+            };
+            request.args = args;
+            request.options.argv0 = Some(command);
+            continue;
+        }
+
         let mut interpreter_args = Vec::with_capacity(request.args.len() + 2);
         if let Some(argument) = shebang.optional_argument {
             interpreter_args.push(argument);
