@@ -370,7 +370,8 @@ export class SidecarProcess {
 			silenceTimeoutMs: options.silenceTimeoutMs,
 			eventBufferCapacity:
 				options.eventBufferCapacity ?? DEFAULT_SIDECAR_EVENT_BUFFER_CAPACITY,
-			gracefulExitMs: options.gracefulExitMs ?? DEFAULT_SIDECAR_GRACEFUL_EXIT_MS,
+			gracefulExitMs:
+				options.gracefulExitMs ?? DEFAULT_SIDECAR_GRACEFUL_EXIT_MS,
 			forceExitMs: options.forceExitMs ?? DEFAULT_SIDECAR_FORCE_EXIT_MS,
 			disposedErrorMessage: "native sidecar disposed",
 			payloadCodec: options.payloadCodec ?? "bare",
@@ -1501,6 +1502,10 @@ export class SidecarProcess {
 			path: string;
 			headersJson: string;
 			body?: string;
+			bodyBase64?: string;
+			streamOperation?: "start" | "read" | "cancel";
+			streamId?: string;
+			maxBytes?: number;
 		},
 	): Promise<string> {
 		const response = await this.sendRequest({
@@ -1517,6 +1522,18 @@ export class SidecarProcess {
 				path: request.path,
 				headers_json: request.headersJson,
 				...(request.body !== undefined ? { body: request.body } : {}),
+				...(request.bodyBase64 !== undefined
+					? { body_base64: request.bodyBase64 }
+					: {}),
+				...(request.streamOperation !== undefined
+					? { stream_operation: request.streamOperation }
+					: {}),
+				...(request.streamId !== undefined
+					? { stream_id: request.streamId }
+					: {}),
+				...(request.maxBytes !== undefined
+					? { max_bytes: request.maxBytes }
+					: {}),
 			},
 		});
 		if (response.payload.type !== "vm_fetch_result") {

@@ -546,6 +546,8 @@ where
                 command_permissions: BTreeMap::new(),
                 bindings: BTreeMap::new(),
                 active_processes: BTreeMap::new(),
+                vm_fetch_streams: BTreeMap::new(),
+                next_vm_fetch_stream_id: 0,
                 exited_process_snapshots: VecDeque::new(),
                 detached_child_processes: BTreeSet::new(),
                 attached_child_event_cursor: 0,

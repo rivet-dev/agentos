@@ -2284,6 +2284,10 @@ export type VmFetchRequest = {
     readonly path: string
     readonly headersJson: string
     readonly body: string | null
+    readonly bodyBase64: string | null
+    readonly streamOperation: string | null
+    readonly streamId: string | null
+    readonly maxBytes: u32 | null
 }
 
 export function readVmFetchRequest(bc: bare.ByteCursor): VmFetchRequest {
@@ -2293,6 +2297,10 @@ export function readVmFetchRequest(bc: bare.ByteCursor): VmFetchRequest {
         path: bare.readString(bc),
         headersJson: bare.readString(bc),
         body: read0(bc),
+        bodyBase64: read0(bc),
+        streamOperation: read0(bc),
+        streamId: read0(bc),
+        maxBytes: read2(bc),
     }
 }
 
@@ -2302,6 +2310,10 @@ export function writeVmFetchRequest(bc: bare.ByteCursor, x: VmFetchRequest): voi
     bare.writeString(bc, x.path)
     bare.writeString(bc, x.headersJson)
     write0(bc, x.body)
+    write0(bc, x.bodyBase64)
+    write0(bc, x.streamOperation)
+    write0(bc, x.streamId)
+    write2(bc, x.maxBytes)
 }
 
 export type RequestPayload =

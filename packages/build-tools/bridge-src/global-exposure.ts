@@ -1591,6 +1591,12 @@ var NODE_CUSTOM_GLOBAL_INVENTORY = [
 			"Network Response API global \u2014 must not be replaceable by sandbox code.",
 	},
 	{
+		name: "WebSocket",
+		classification: "hardened",
+		rationale:
+			"Node WebSocket API global backed by the bounded kernel network stack.",
+	},
+	{
 		name: "DOMException",
 		classification: "hardened",
 		rationale: "DOMException global stub for undici/bootstrap compatibility.",

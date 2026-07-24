@@ -281,12 +281,24 @@ pub trait MountedFileSystem: Any {
     fn pread(&mut self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>>;
     fn pwrite(&mut self, path: &str, content: Vec<u8>, offset: u64) -> VfsResult<()> {
         let mut existing = self.read_file(path)?;
-        let start = usize::try_from(offset)
-            .map_err(|_| VfsError::new("EINVAL", "pwrite offset is too large"))?;
-        let end = start
-            .checked_add(content.len())
-            .ok_or_else(|| VfsError::new("EINVAL", "pwrite length overflow"))?;
-        existing.resize(end.max(existing.len()), 0);
+        let start = usize::try_from(offset).map_err(|_| {
+            VfsError::new("EINVAL", format!("pwrite offset is too large: {offset}"))
+        })?;
+        if start > existing.len() {
+            existing.resize(start, 0);
+        }
+        let end = start.checked_add(content.len()).ok_or_else(|| {
+            VfsError::new(
+                "EINVAL",
+                format!(
+                    "pwrite range overflows usize: offset={offset}, length={}",
+                    content.len()
+                ),
+            )
+        })?;
+        if end > existing.len() {
+            existing.resize(end, 0);
+        }
         existing[start..end].copy_from_slice(&content);
         self.write_file(path, existing)
     }

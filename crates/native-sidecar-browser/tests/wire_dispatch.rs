@@ -1538,6 +1538,10 @@ fn browser_wire_dispatcher_rejects_vm_fetch_when_guest_listener_is_missing() {
                 path: String::from("/"),
                 headers_json: String::from("{}"),
                 body: None,
+                body_base64: None,
+                stream_operation: None,
+                stream_id: None,
+                max_bytes: None,
             }),
         },
     );
@@ -1582,6 +1586,10 @@ fn browser_wire_dispatcher_rejects_vm_fetch_with_invalid_headers_json() {
                 path: String::from("/"),
                 headers_json: String::from("{not-json"),
                 body: None,
+                body_base64: None,
+                stream_operation: None,
+                stream_id: None,
+                max_bytes: None,
             }),
         },
     );
@@ -1653,6 +1661,10 @@ fn browser_wire_dispatcher_vm_fetch_enters_kernel_loopback_when_listener_exists(
                 path: String::from("/health"),
                 headers_json: String::from("{}"),
                 body: None,
+                body_base64: None,
+                stream_operation: None,
+                stream_id: None,
+                max_bytes: None,
             }),
         },
     );

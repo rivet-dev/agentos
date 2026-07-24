@@ -104,17 +104,63 @@ type AnyContext = ActorContext<any, any, any, any, any, ActorDb, any, any>;
 interface RuntimeState {
 	vm: Promise<AgentOs> | null;
 	subscribedSessions: Map<string, readonly (() => void)[]>;
+	onVmStop?: (
+		c: AnyContext,
+		vm: AgentOs,
+		reason: "sleep" | "destroy" | "error",
+	) => void | Promise<void>;
+	onVmDisposed?: (
+		c: AnyContext,
+		reason: "sleep" | "destroy" | "error",
+	) => void | Promise<void>;
+	vmCleanupRan: boolean;
+	fetchStreamHolds: Map<string, () => void>;
 }
 
 const runtimes = new Map<string, RuntimeState>();
+const optionResolvers = new WeakMap<
+	AgentOsOptions,
+	(c: AnyContext) => AgentOsOptions | Promise<AgentOsOptions>
+>();
+const vmStartResolvers = new WeakMap<
+	AgentOsOptions,
+	(c: AnyContext, vm: AgentOs) => void | Promise<void>
+>();
+const vmStopResolvers = new WeakMap<
+	AgentOsOptions,
+	(
+		c: AnyContext,
+		vm: AgentOs,
+		reason: "sleep" | "destroy" | "error",
+	) => void | Promise<void>
+>();
+const vmDisposedResolvers = new WeakMap<
+	AgentOsOptions,
+	(c: AnyContext, reason: "sleep" | "destroy" | "error") => void | Promise<void>
+>();
 
 function runtimeFor(c: AnyContext): RuntimeState {
 	let runtime = runtimes.get(c.actorId);
 	if (!runtime) {
-		runtime = { vm: null, subscribedSessions: new Map() };
+		runtime = {
+			vm: null,
+			subscribedSessions: new Map(),
+			vmCleanupRan: false,
+			fetchStreamHolds: new Map(),
+		};
 		runtimes.set(c.actorId, runtime);
 	}
 	return runtime;
+}
+
+async function runVmDisposedHook(
+	runtime: RuntimeState,
+	c: AnyContext,
+	reason: "sleep" | "destroy" | "error",
+): Promise<void> {
+	if (runtime.vmCleanupRan) return;
+	runtime.vmCleanupRan = true;
+	await runtime.onVmDisposed?.(c, reason);
 }
 
 async function ensureVm(
@@ -125,7 +171,33 @@ async function ensureVm(
 	if (runtime.vm !== null) return runtime.vm;
 
 	const startedAt = Date.now();
+	runtime.vmCleanupRan = false;
 	runtime.vm = (async () => {
+		runtime.onVmStop = options ? vmStopResolvers.get(options) : undefined;
+		runtime.onVmDisposed = options
+			? vmDisposedResolvers.get(options)
+			: undefined;
+		const resolvedOptions = {
+			...options,
+			...(options && optionResolvers.has(options)
+				? await optionResolvers.get(options)?.(c)
+				: undefined),
+		};
+		if (resolvedOptions.rootFilesystem) {
+			throw new Error(
+				"agentOS() owns rootFilesystem so it can persist directly through the actor SQLite UDS; resolveOptions may configure mounts but not rootFilesystem",
+			);
+		}
+		if (resolvedOptions.database) {
+			throw new Error(
+				"agentOS() owns database and injects the actor SQLite UDS descriptor; resolveOptions cannot replace it",
+			);
+		}
+		if (resolvedOptions.sandbox && "client" in resolvedOptions.sandbox) {
+			throw new Error(
+				"agentOS() cannot share sandbox: { client } across actor instances; resolveOptions must use sandbox: { provider }",
+			);
+		}
 		const actorRuntimeSocket = (
 			c as AnyContext & {
 				actorRuntimeSocket(): Promise<{ path: string }>;
@@ -144,7 +216,7 @@ async function ensureVm(
 			"SELECT descriptor_json FROM agentos_actor_linked_software ORDER BY path",
 		);
 		const vm = await AgentOs.create({
-			...options,
+			...resolvedOptions,
 			database: { type: "actor_uds", path },
 			onAgentExit: (event) => {
 				c.log.error({
@@ -153,7 +225,7 @@ async function ensureVm(
 				});
 				c.broadcast("agentExit", event);
 				try {
-					options?.onAgentExit?.(event);
+					resolvedOptions.onAgentExit?.(event);
 				} catch (error) {
 					c.log.error({
 						msg: "agent-os onAgentExit hook failed",
@@ -170,8 +242,10 @@ async function ensureVm(
 						namespace: ROOT_NAMESPACE,
 						chunkSize: ACTOR_SQLITE_CHUNK_SIZE,
 						inlineThreshold: ACTOR_SQLITE_INLINE_THRESHOLD,
-						uid: options?.user?.euid ?? options?.user?.uid ?? 1000,
-						gid: options?.user?.egid ?? options?.user?.gid ?? 1000,
+						uid:
+							resolvedOptions.user?.euid ?? resolvedOptions.user?.uid ?? 1000,
+						gid:
+							resolvedOptions.user?.egid ?? resolvedOptions.user?.gid ?? 1000,
 					},
 				},
 			},
@@ -191,6 +265,24 @@ async function ensureVm(
 			await vm.dispose();
 			throw error;
 		}
+		const onVmStart = options ? vmStartResolvers.get(options) : undefined;
+		if (onVmStart) {
+			try {
+				await onVmStart(c, vm);
+			} catch (error) {
+				try {
+					await vm.dispose();
+				} catch (disposeError) {
+					c.log.error({
+						msg: "failed to dispose AgentOS VM after start hook failure",
+						disposeError,
+					});
+				} finally {
+					await runVmDisposedHook(runtime, c, "error");
+				}
+				throw error;
+			}
+		}
 		vm.onCronEvent((cronEvent) => c.broadcast("cronEvent", cronEvent));
 		c.broadcast("vmBooted", {});
 		c.log.info({
@@ -209,6 +301,7 @@ async function ensureVm(
 			actorId: c.actorId,
 			error,
 		});
+		await runVmDisposedHook(runtime, c, "error");
 		throw error;
 	}
 }
@@ -222,7 +315,39 @@ async function disposeVm(c: AnyContext, reason: "sleep" | "destroy" | "error") {
 		for (const unsubscribe of unsubscribers) unsubscribe();
 	}
 	runtime.subscribedSessions.clear();
-	if (vm) await (await vm).dispose();
+	for (const release of runtime.fetchStreamHolds.values()) release();
+	runtime.fetchStreamHolds.clear();
+	if (vm) {
+		const failures: unknown[] = [];
+		try {
+			const resolvedVm = await vm;
+			try {
+				await runtime.onVmStop?.(c, resolvedVm, reason);
+			} catch (error) {
+				failures.push(error);
+			}
+			try {
+				await resolvedVm.dispose();
+			} catch (error) {
+				failures.push(error);
+			}
+		} catch (error) {
+			failures.push(error);
+		}
+		try {
+			await runVmDisposedHook(runtime, c, reason);
+		} catch (error) {
+			failures.push(error);
+		}
+		if (failures.length === 1) throw failures[0];
+		if (failures.length > 1) {
+			const aggregate = new Error(
+				"failed to stop, dispose, or clean up AgentOS VM",
+			);
+			(aggregate as Error & { errors: unknown[] }).errors = failures;
+			throw aggregate;
+		}
+	}
 	c.broadcast("vmShutdown", { reason });
 }
 
@@ -335,6 +460,33 @@ async function assertActorCollectionCapacity(
 	}
 }
 
+export interface VmFetchOptions {
+	method?: string;
+	headers?: Record<string, string>;
+	body?: string | Uint8Array;
+}
+
+export interface VmFetchResponse {
+	status: number;
+	statusText: string;
+	headers: Record<string, string>;
+	rawHeaders?: Array<[string, string]>;
+	body: Uint8Array;
+}
+
+export interface VmFetchStreamHead {
+	streamId: string;
+	status: number;
+	statusText: string;
+	headers: Record<string, string>;
+	rawHeaders?: Array<[string, string]>;
+}
+
+export interface VmFetchStreamChunk {
+	body: Uint8Array;
+	done: boolean;
+}
+
 export interface AgentOsEventHooks<TContext = AnyContext> {
 	onSessionEvent?: (
 		c: TContext,
@@ -399,6 +551,27 @@ function untrackSessionEvents(c: AnyContext, sessionId: string): void {
 	if (!unsubscribers) return;
 	for (const unsubscribe of unsubscribers) unsubscribe();
 	runtimeFor(c).subscribedSessions.delete(sessionId);
+}
+
+function trackFetchStream(c: AnyContext, streamId: string): void {
+	const runtime = runtimeFor(c);
+	if (runtime.fetchStreamHolds.has(streamId)) return;
+	const hold = new Promise<void>((resolve) => {
+		runtime.fetchStreamHolds.set(streamId, resolve);
+	});
+	void c.keepAwake(hold).catch((error) =>
+		c.log.error({
+			msg: "agent-os fetch stream hold failed",
+			streamId,
+			error,
+		}),
+	);
+}
+
+function releaseFetchStream(c: AnyContext, streamId: string): void {
+	const runtime = runtimeFor(c);
+	runtime.fetchStreamHolds.get(streamId)?.();
+	runtime.fetchStreamHolds.delete(streamId);
 }
 
 export function createAgentOsActions(
@@ -609,6 +782,90 @@ export function createAgentOsActions(
 			c: AnyContext,
 			...args: Parameters<AgentOs["httpRequest"]>
 		) => (await ensureVm(c, options)).httpRequest(...args),
+		vmFetch: async (
+			c: AnyContext,
+			port: number,
+			url: string,
+			requestOptions?: VmFetchOptions,
+		): Promise<VmFetchResponse> => {
+			const vm = await ensureVm(c, options);
+			const body =
+				requestOptions?.body instanceof Uint8Array
+					? Buffer.from(requestOptions.body)
+					: requestOptions?.body;
+			const response = await vm.fetch(
+				port,
+				new Request(url, {
+					method: requestOptions?.method ?? "GET",
+					headers: requestOptions?.headers,
+					body,
+				}),
+			);
+			const headers: Record<string, string> = {};
+			const rawHeaders: Array<[string, string]> = [];
+			response.headers.forEach((value, key) => {
+				headers[key] = value;
+				if (key !== "set-cookie") rawHeaders.push([key, value]);
+			});
+			for (const value of response.headers.getSetCookie?.() ?? []) {
+				rawHeaders.push(["set-cookie", value]);
+			}
+			return {
+				status: response.status,
+				statusText: response.statusText,
+				headers,
+				rawHeaders,
+				body: new Uint8Array(await response.arrayBuffer()),
+			};
+		},
+		vmFetchStreamStart: async (
+			c: AnyContext,
+			port: number,
+			url: string,
+			requestOptions?: VmFetchOptions,
+		): Promise<VmFetchStreamHead> => {
+			const vm = await ensureVm(c, options);
+			const body =
+				requestOptions?.body instanceof Uint8Array
+					? Buffer.from(requestOptions.body)
+					: requestOptions?.body;
+			const head = await vm.fetchStreamStart(
+				port,
+				new Request(url, {
+					method: requestOptions?.method ?? "GET",
+					headers: requestOptions?.headers,
+					body,
+				}),
+			);
+			trackFetchStream(c, head.streamId);
+			const headers: Record<string, string> = {};
+			for (const [name, value] of head.headers) headers[name] = value;
+			return { ...head, headers, rawHeaders: head.headers };
+		},
+		vmFetchStreamRead: async (
+			c: AnyContext,
+			streamId: string,
+			maxBytes?: number,
+		): Promise<VmFetchStreamChunk> => {
+			try {
+				const chunk = await (await ensureVm(c, options)).fetchStreamRead(
+					streamId,
+					maxBytes,
+				);
+				if (chunk.done) releaseFetchStream(c, streamId);
+				return chunk;
+			} catch (error) {
+				releaseFetchStream(c, streamId);
+				throw error;
+			}
+		},
+		vmFetchStreamCancel: async (c: AnyContext, streamId: string) => {
+			try {
+				await (await ensureVm(c, options)).fetchStreamCancel(streamId);
+			} finally {
+				releaseFetchStream(c, streamId);
+			}
+		},
 		scheduleCron: async (
 			c: AnyContext,
 			cronOptions: SerializableCronJobOptions,
@@ -913,6 +1170,25 @@ export type AgentOsActorDefinition<TConnParams = undefined> = ActorDefinition<
 >;
 
 export interface AgentOsActorExtras extends AgentOsOptions {
+	/**
+	 * Resolve trusted VM options from actor state immediately before the VM's
+	 * first boot. Evaluated once per wake. The actor-owned root filesystem and
+	 * database cannot be replaced.
+	 */
+	resolveOptions?: (c: AnyContext) => AgentOsOptions | Promise<AgentOsOptions>;
+	/** Start long-lived processes after each VM boot. Trusted host code only. */
+	onVmStart?: (c: AnyContext, vm: AgentOs) => void | Promise<void>;
+	/** Gracefully stop long-lived processes before the VM is disposed. */
+	onVmStop?: (
+		c: AnyContext,
+		vm: AgentOs,
+		reason: "sleep" | "destroy" | "error",
+	) => void | Promise<void>;
+	/** Clean up host resources after the VM and lazy mount readers close. */
+	onVmDisposed?: (
+		c: AnyContext,
+		reason: "sleep" | "destroy" | "error",
+	) => void | Promise<void>;
 	/** Maximum live session event subscriptions per actor VM. Default: 10,000. */
 	maxSessionSubscriptions?: number;
 	/** Maximum durable dynamic mount descriptors per actor. Default: 10,000. */
@@ -925,6 +1201,10 @@ export interface AgentOsActorExtras extends AgentOsOptions {
 		maxActiveTokens?: number;
 	};
 }
+
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown
+	? Omit<T, K>
+	: never;
 
 export type AgentOsActorConfigInput<
 	TState = undefined,
@@ -944,7 +1224,7 @@ export type AgentOsActorConfigInput<
 		TEvents,
 		TQueues
 	> = Record<never, never>,
-> = Omit<
+> = DistributiveOmit<
 	ActorConfigInput<
 		TState,
 		TConnParams,
@@ -1006,6 +1286,13 @@ function splitConfig(
 	const onSessionEvent =
 		actorConfig.onSessionEvent as AgentOsEventHooks<AnyContext>["onSessionEvent"];
 	const preview = actorConfig.preview as AgentOsActorExtras["preview"];
+	const resolveOptions = actorConfig.resolveOptions as
+		| AgentOsActorExtras["resolveOptions"]
+		| undefined;
+	const onVmStart = actorConfig.onVmStart as AgentOsActorExtras["onVmStart"];
+	const onVmStop = actorConfig.onVmStop as AgentOsActorExtras["onVmStop"];
+	const onVmDisposed =
+		actorConfig.onVmDisposed as AgentOsActorExtras["onVmDisposed"];
 	const maxSessionSubscriptions = actorConfig.maxSessionSubscriptions as
 		| number
 		| undefined;
@@ -1013,6 +1300,10 @@ function splitConfig(
 	const maxLinkedSoftware = actorConfig.maxLinkedSoftware as number | undefined;
 	delete actorConfig.onSessionEvent;
 	delete actorConfig.preview;
+	delete actorConfig.resolveOptions;
+	delete actorConfig.onVmStart;
+	delete actorConfig.onVmStop;
+	delete actorConfig.onVmDisposed;
 	delete actorConfig.maxSessionSubscriptions;
 	delete actorConfig.maxDynamicMounts;
 	delete actorConfig.maxLinkedSoftware;
@@ -1021,6 +1312,10 @@ function splitConfig(
 		agentOsOptions,
 		hooks: { onSessionEvent },
 		preview,
+		resolveOptions,
+		onVmStart,
+		onVmStop,
+		onVmDisposed,
 		maxSessionSubscriptions,
 		maxDynamicMounts,
 		maxLinkedSoftware,
@@ -1100,6 +1395,12 @@ export function createAgentOS<
 		maxDynamicMounts,
 		maxLinkedSoftware,
 	} = split;
+	if (split.resolveOptions)
+		optionResolvers.set(agentOsOptions, split.resolveOptions);
+	if (split.onVmStart) vmStartResolvers.set(agentOsOptions, split.onVmStart);
+	if (split.onVmStop) vmStopResolvers.set(agentOsOptions, split.onVmStop);
+	if (split.onVmDisposed)
+		vmDisposedResolvers.set(agentOsOptions, split.onVmDisposed);
 	if (agentOsOptions.sandbox && "client" in agentOsOptions.sandbox) {
 		throw new Error(
 			"agentOS() cannot share sandbox: { client } across actor instances; use sandbox: { provider } so each actor VM starts its own client",

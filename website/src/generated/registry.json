@@ -250,6 +250,18 @@
 			"image": "/images/registry/coreutils.svg"
 		},
 		{
+			"slug": "sh",
+			"title": "Shell",
+			"description": "POSIX-compatible shell for running command scripts.",
+			"types": [
+				"software"
+			],
+			"category": "core",
+			"priority": 45,
+			"package": "@agentos-software/sh",
+			"status": "available"
+		},
+		{
 			"slug": "xfsprogs",
 			"title": "xfs_io",
 			"description": "Scriptable low-level filesystem I/O commands used by xfstests.",

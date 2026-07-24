@@ -14,23 +14,6 @@
              }
          });
  
-@@ -358,6 +360,6 @@ impl<'a> Input<'a> {
-     /// Instantiate this struct with stdin as a source.
-     fn new_stdin(settings: &'a Settings) -> UResult<Self> {
--        #[cfg(not(unix))]
-+        #[cfg(windows)]
-         let mut src = {
-             let f = File::from(io::stdin().as_handle().try_clone_to_owned()?);
-             let is_file = if let Ok(metadata) = f.metadata() {
-@@ -379,6 +381,8 @@ impl<'a> Input<'a> {
-         };
-         #[cfg(unix)]
-         let mut src = Source::stdin_as_file();
-+        #[cfg(target_os = "wasi")]
-+        let mut src = Source::Stdin(io::stdin());
-         #[cfg(unix)]
-         if let Source::StdinFile(f) = &src {
-             if settings.iflags.directory && !f.metadata()?.is_dir() {
 @@ -597,6 +601,9 @@ enum Dest {
  enum Dest {
      /// Output to stdout.

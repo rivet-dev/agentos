@@ -2881,14 +2881,21 @@ where
                 .execution
                 .respond_javascript_sync_rpc_response(request.id, result)
                 .or_else(ignore_stale_javascript_sync_rpc_response),
-            Err(error) => process
-                .execution
-                .respond_javascript_sync_rpc_error(
-                    request.id,
-                    javascript_sync_rpc_error_code(&error),
-                    error.to_string(),
-                )
-                .or_else(ignore_stale_javascript_sync_rpc_response),
+            Err(error) => {
+                tracing::warn!(
+                    method = %request.method,
+                    error = %error,
+                    "JavaScript sync RPC failed"
+                );
+                process
+                    .execution
+                    .respond_javascript_sync_rpc_error(
+                        request.id,
+                        javascript_sync_rpc_error_code(&error),
+                        error.to_string(),
+                    )
+                    .or_else(ignore_stale_javascript_sync_rpc_response)
+            }
         }
     }
 

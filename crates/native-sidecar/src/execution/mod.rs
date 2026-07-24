@@ -136,11 +136,12 @@ use crate::state::{
     ResolvedChildProcessExecution, ResolvedTcpConnectAddr, ShadowNodeType,
     ShadowSyncInventoryEntry, SharedBridge, SharedSidecarRequestClient, SidecarKernel,
     SocketDescriptionLease, SocketQueryKind, SocketReadinessRegistration,
-    SocketReadinessSubscribers, TlsWritePayload, VmDnsConfig, VmListenPolicy, VmPendingByteBudget,
-    VmState, BINDING_DRIVER_NAME, DEFAULT_JAVASCRIPT_NET_BACKLOG, EXECUTION_DRIVER_NAME,
-    EXECUTION_SANDBOX_ROOT_ENV, JAVASCRIPT_COMMAND, LOOPBACK_EXEMPT_PORTS_ENV,
-    MAPPED_HOST_FD_START, PYTHON_COMMAND, VM_LISTEN_ALLOW_PRIVILEGED_METADATA_KEY, WASM_COMMAND,
-    WASM_EXEC_COMMIT_RPC_ENV, WASM_STDIO_SYNC_RPC_ENV,
+    SocketReadinessSubscribers, TlsWritePayload, VmDnsConfig, VmFetchBodyMode, VmFetchStreamState,
+    VmListenPolicy, VmPendingByteBudget, VmState, BINDING_DRIVER_NAME,
+    DEFAULT_JAVASCRIPT_NET_BACKLOG, EXECUTION_DRIVER_NAME, EXECUTION_SANDBOX_ROOT_ENV,
+    JAVASCRIPT_COMMAND, LOOPBACK_EXEMPT_PORTS_ENV, MAPPED_HOST_FD_START, PYTHON_COMMAND,
+    VM_LISTEN_ALLOW_PRIVILEGED_METADATA_KEY, WASM_COMMAND, WASM_EXEC_COMMIT_RPC_ENV,
+    WASM_STDIO_SYNC_RPC_ENV,
 };
 use crate::wire::{ProtocolFrame as WireProtocolFrame, WireFrameCodec};
 use crate::{DispatchResult, NativeSidecar, NativeSidecarBridge, SidecarError};

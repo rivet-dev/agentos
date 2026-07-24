@@ -683,6 +683,42 @@ describe("agentOS actor", () => {
 		).toThrow("agentOS() action name is reserved: readFile");
 	});
 
+	test("runs host cleanup once after the VM has been disposed", async () => {
+		const order: string[] = [];
+		const vm = {
+			onCronEvent: vi.fn(),
+			readFile: vi.fn(async () => new Uint8Array([1])),
+			dispose: vi.fn(async () => {
+				order.push("dispose");
+			}),
+		};
+		vi.spyOn(AgentOs, "create").mockResolvedValue(vm as never);
+		const definition = agentOS({
+			onVmStop: async () => {
+				order.push("stop");
+			},
+			onVmDisposed: async () => {
+				order.push("cleanup");
+			},
+		});
+		const context = {
+			actorId: "vm-disposed-hook-test",
+			actorRuntimeSocket: vi.fn(async () => ({
+				path: "/tmp/actor.sock",
+			})),
+			broadcast: vi.fn(),
+			db: { execute: vi.fn(async () => []) },
+			keepAwake: <T>(promise: Promise<T>) => promise,
+			log: { info: vi.fn(), error: vi.fn() },
+		} as never;
+
+		await definition.config.actions.readFile(context, "/fixture");
+		await definition.config.onDestroy?.(context);
+		await definition.config.onDestroy?.(context);
+
+		expect(order).toEqual(["stop", "dispose", "cleanup"]);
+	});
+
 	test("keeps AgentOS limits bounded by default", () => {
 		const definition = agentOS();
 		expect(definition.config.options.actionTimeout).toBe(2_147_483_647);

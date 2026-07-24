@@ -3102,15 +3102,32 @@ fn mirror_kernel_path_to_process_shadow(
     process: &ActiveProcess,
     guest_path: &str,
 ) -> Result<(), SidecarError> {
-    let Some(shadow_path) = process_shadow_host_path(process, guest_path) else {
+    // WASM processes deliberately route filesystem calls through the kernel
+    // sync RPC path. The kernel VFS (including non-root mounts) is therefore
+    // their source of truth; they never read the JavaScript process shadow.
+    // Mirroring here is both redundant and harmful for streamed writes because
+    // it rereads the entire growing file after every bounded chunk.
+    if process_prefers_kernel_fs_sync_rpc(process) {
+        return Ok(());
+    }
+    let normalized_guest_path = normalize_path(guest_path);
+    // Mounted host paths are already updated by the mapped-runtime write path.
+    // Mirroring them would read the complete kernel file after each chunk,
+    // making sequential writes quadratic.
+    if host_path_from_runtime_guest_mappings(&process.env, &normalized_guest_path).is_some() {
+        return Ok(());
+    }
+    let Some(shadow_path) = process_shadow_host_path(process, &normalized_guest_path) else {
         return Ok(());
     };
     // This is internal reconciliation after the guest has already completed a
     // permitted write. Reading the resulting bytes as the guest would wrongly
     // reject write-only files even though no contents are returned to guest
     // code; the trusted sidecar only mirrors them into this VM's own shadow.
-    let bytes = kernel.read_file(guest_path).map_err(kernel_error)?;
-    write_process_shadow_file(&shadow_path, guest_path, &bytes)
+    let bytes = kernel
+        .read_file(&normalized_guest_path)
+        .map_err(kernel_error)?;
+    write_process_shadow_file(&shadow_path, &normalized_guest_path, &bytes)
 }
 
 fn mirror_process_mode_to_shadow(
@@ -3477,7 +3494,12 @@ fn normalized_process_guest_path(process: &ActiveProcess, guest_path: &str) -> S
 }
 
 fn process_prefers_kernel_fs_sync_rpc(process: &ActiveProcess) -> bool {
-    process.runtime == GuestRuntimeKind::WebAssembly && process.shadow_root.is_some()
+    (process.runtime == GuestRuntimeKind::WebAssembly
+        // A WASM command executes inside the JavaScript WASI runner, so the
+        // process record is JavaScript even though its filesystem is still the
+        // kernel-authoritative WASM path.
+        || process.env.contains_key("AGENTOS_WASM_MODULE_PATH"))
+        && process.shadow_root.is_some()
 }
 
 fn runtime_host_access_roots(process: &ActiveProcess, key: &str) -> Option<Vec<PathBuf>> {

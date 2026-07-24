@@ -262,6 +262,13 @@ jobs:
         with:
           name: wasm-commands
           path: packages/runtime-core/commands
+      - name: Restore canonical WASM command staging
+        run: |
+          set -euo pipefail
+          commands_dir="toolchain/target/wasm32-wasip1/release/commands"
+          mkdir -p "$commands_dir"
+          cp -a packages/runtime-core/commands/. "$commands_dir/"
+          test -s "$commands_dir/sh"
       - uses: actions/download-artifact@v4
         with:
           name: codex-wasm

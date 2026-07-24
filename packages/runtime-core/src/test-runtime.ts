@@ -508,6 +508,10 @@ export interface Kernel extends KernelInterface {
 		path: string;
 		headersJson: string;
 		body?: string;
+		bodyBase64?: string;
+		streamOperation?: "start" | "read" | "cancel";
+		streamId?: string;
+		maxBytes?: number;
 	}): Promise<string>;
 	registerBindings(bindings: Record<string, BindingDefinition>): Promise<void>;
 	getResourceSnapshot(): Promise<{
@@ -3071,6 +3075,10 @@ class NativeKernel implements Kernel {
 		path: string;
 		headersJson: string;
 		body?: string;
+		bodyBase64?: string;
+		streamOperation?: "start" | "read" | "cancel";
+		streamId?: string;
+		maxBytes?: number;
 	}): Promise<string> {
 		await this.ensureReady();
 		return this.proxy!.vmFetch(request);

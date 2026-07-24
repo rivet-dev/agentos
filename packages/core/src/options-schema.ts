@@ -139,6 +139,10 @@ export const agentOsLimitsSchema = z
 			.object({ maxFetchResponseBytes: positiveInteger.optional() })
 			.strict()
 			.optional(),
+		tls: z
+			.object({ maxBufferedBytes: positiveInteger.optional() })
+			.strict()
+			.optional(),
 		bindings: z
 			.object({
 				defaultBindingTimeoutMs: nonNegativeInteger.optional(),
