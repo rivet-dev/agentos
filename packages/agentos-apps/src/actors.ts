@@ -1086,6 +1086,10 @@ async function buildRelease(
 						];
 						const reconcile = await build.execArgv("npm", reconcileArgs, {
 							cwd: "/workspace",
+							env: {
+								NODE_ENV: "development",
+								NPM_CONFIG_PRODUCTION: "false",
+							},
 							timeout: config.buildTimeoutMs,
 							captureStdio: true,
 						});
@@ -1114,6 +1118,10 @@ async function buildRelease(
 			];
 			const install = await build.execArgv("npm", installArgs, {
 				cwd: "/workspace",
+				env: {
+					NODE_ENV: "development",
+					NPM_CONFIG_PRODUCTION: "false",
+				},
 				timeout: config.buildTimeoutMs,
 				captureStdio: true,
 			});

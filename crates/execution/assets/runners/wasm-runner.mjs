@@ -9810,18 +9810,13 @@ const hostFsImport = {
       if (typeof target !== 'string') {
         return 0;
       }
-      const hostPath = resolveHostFsPath(target);
-      if (typeof hostPath !== 'string') {
-        return 0;
-      }
-      const stat =
-        Number(followSymlinks) === 0
-          ? fsModule.lstatSync(hostPath)
-          : fsModule.statSync(hostPath);
+      const stat = callSyncRpc(
+        Number(followSymlinks) === 0 ? 'fs.lstatSync' : 'fs.statSync',
+        [target],
+      );
       const mode = hostFsModeFromStat(stat);
       traceHostProcess('host-fs-path-mode', {
         target,
-        hostPath,
         followSymlinks: Number(followSymlinks) >>> 0,
         mode,
       });
