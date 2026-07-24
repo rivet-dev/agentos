@@ -8,6 +8,8 @@ Install agentOS Apps in a Node.js 22 or newer project:
 ```sh
 npm add @rivet-dev/agentos @rivet-dev/agentos-apps
 npm add @hono/node-server hono
+npm add --save-dev tsx
+npm pkg set type=module
 ```
 
 RivetKit starts a local Engine automatically. For an existing Rivet deployment,

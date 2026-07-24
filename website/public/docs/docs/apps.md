@@ -59,6 +59,8 @@ orchestrates the pool of prewarmed VMs.
 ```sh
 npm add @rivet-dev/agentos @rivet-dev/agentos-apps
 npm add @hono/node-server hono
+npm add --save-dev tsx
+npm pkg set type=module
 ```
 
 Setup the HTTP server that will serve requests for AI-generated apps. Also set
