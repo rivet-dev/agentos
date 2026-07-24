@@ -15,7 +15,7 @@
 
 - **Runs inside your process**: No microVMs to boot, no containers to pull, no nested virtualization. Warm VM creation takes single-digit milliseconds and each VM costs tens of megabytes.
 - **Embeds in your backend**: Agents call your functions directly via [bindings](https://agentos-sdk.dev/docs/bindings) — ordinary JavaScript calls, not another network service. Credentials stay on the host; agents see only inputs and outputs.
-- **Granular security**: Deny-by-default [permissions](https://agentos-sdk.dev/docs/permissions) for filesystem, network, and process access. Guest JavaScript runs in V8 isolates and compiled tools run as WebAssembly, all inside one compact runtime.
+- **Granular security**: [Permissions](https://agentos-sdk.dev/docs/permissions) gate filesystem, network, process, and environment access, with outward-facing capabilities like network egress denied by default. Guest JavaScript runs in V8 isolates and compiled tools run as WebAssembly, all inside one compact runtime.
 - **Deploy anywhere**: Just an npm package. Run locally with `npx rivetkit dev`, then deploy to [Rivet Cloud](https://agentos-sdk.dev/docs/deployment) for managed infrastructure or self-host on your own.
 - **Open source**: Apache 2.0 licensed.
 
@@ -159,16 +159,16 @@ Simple shell command:
 
 ### Agents
 - **Built-in agents**: Run [Pi](https://agentos-sdk.dev/docs/agents/pi), [Claude Code](https://agentos-sdk.dev/docs/agents/claude) (beta), [Codex](https://agentos-sdk.dev/docs/agents/codex) (beta), and [OpenCode](https://agentos-sdk.dev/docs/agents/opencode) with a unified API, or [bring your own agent](https://agentos-sdk.dev/docs/agents/custom)
-- **[Sessions via ACP](https://agentos-sdk.dev/docs/sessions)**: Create, manage, and resume agent sessions over the [Agent Communication Protocol](https://agentclientprotocol.com)
+- **[Sessions via ACP](https://agentos-sdk.dev/docs/sessions)**: Create, manage, and resume agent sessions over the [Agent Client Protocol](https://agentclientprotocol.com)
 - **Universal transcript format**: One transcript format across all agents for debugging, auditing, and comparison
 - **[Automatic persistence](https://agentos-sdk.dev/docs/persistence)**: Every conversation is saved and replayable without extra code
-- **Framework integrations**: Use agentOS as the execution layer for [Vercel Eve](https://agentos-sdk.dev/docs/frameworks/vercel-eve) and [Flue](https://agentos-sdk.dev/docs/frameworks/flue) (beta)
+- **Framework integrations**: Use agentOS as the sandbox backend for [Vercel Eve](https://agentos-sdk.dev/docs/frameworks/vercel-eve) (beta) and [Flue](https://agentos-sdk.dev/docs/frameworks/flue) (beta)
 
 ### Infrastructure
 - **[Execution](https://agentos-sdk.dev/docs/processes)**: Run Bash, Node.js, Python, and registry software inside the VM with real processes, subprocesses, shells, and in-VM servers
-- **[Mount external storage as a filesystem](https://agentos-sdk.dev/docs/filesystem)**: S3-compatible storage, Google Drive, host directories, overlay filesystems, or custom backends
+- **[Mount external storage as a filesystem](https://agentos-sdk.dev/docs/filesystem)**: S3-compatible storage, Google Drive, host directories, or in-memory mounts, attached at boot or dynamically at runtime
 - **[Bindings](https://agentos-sdk.dev/docs/bindings)**: Define JavaScript functions that agents call as CLI commands inside the VM
-- **[Cron](https://agentos-sdk.dev/docs/cron) and [webhooks](https://agentos-sdk.dev/docs/webhooks)**: Schedule tasks and receive external events with built-in primitives
+- **[Cron](https://agentos-sdk.dev/docs/cron) and [webhooks](https://agentos-sdk.dev/docs/webhooks)**: Schedule tasks with built-in cron jobs, and trigger agents from external webhooks with your own HTTP server
 - **[Browser](https://agentos-sdk.dev/docs/browser)** (beta): Give agents a cloud browser via Browserbase
 - **[Sandbox mounting](https://agentos-sdk.dev/docs/sandbox)** (beta): Pair with full sandboxes (E2B, Daytona, etc.) for heavy workloads like browsers or native compilation
 
@@ -179,14 +179,14 @@ Simple shell command:
 - **[Authentication](https://agentos-sdk.dev/docs/authentication)**: Integrate with your existing auth model (API keys, OAuth, JWTs)
 
 ### Security
-- **[Deny-by-default permissions](https://agentos-sdk.dev/docs/permissions)**: Granular control over filesystem, network, process, and environment access
-- **[Programmatic network control](https://agentos-sdk.dev/docs/networking)**: Allow, deny, or proxy any outbound connection
+- **[Granular permissions](https://agentos-sdk.dev/docs/permissions)**: Control filesystem, network, process, and environment access, with outward-facing capabilities denied by default
+- **[Programmatic network control](https://agentos-sdk.dev/docs/networking)**: Allow or deny any outbound connection with per-host rules, and proxy HTTP into VM services with preview URLs
 - **[Resource limits](https://agentos-sdk.dev/docs/resource-limits)**: Set precise CPU and memory limits per agent
 - **[VM isolation](https://agentos-sdk.dev/docs/security-model)**: Each agent runs in its own VM with no shared state
 
 ## Architecture
 
-agentOS runs each agent in a fully virtualized VM. A trusted sidecar process owns every VM's kernel — virtual filesystem, process table, pipes, PTYs, and a virtual network stack — and brokers every guest syscall; nothing executes on the host. Guest JavaScript runs on native V8 with its full JIT ([JavaScript runtime](https://agentos-sdk.dev/docs/js-runtime)), and compiled tools run as WebAssembly. Many VMs share one sidecar process, so each additional VM costs a V8 isolate plus kernel state, not an OS process. With `@rivet-dev/agentos`, each VM is a Rivet Actor with durable state.
+agentOS runs each agent in a fully virtualized VM. A trusted sidecar process owns every VM's kernel — virtual filesystem, process table, pipes, PTYs, and a virtual network stack — and brokers every guest syscall; nothing the guest does touches the host directly: no real host filesystem, no real host sockets, no real host processes. Guest JavaScript runs on native V8 with its full JIT ([JavaScript runtime](https://agentos-sdk.dev/docs/js-runtime)), and compiled tools run as WebAssembly. Many VMs share one sidecar process, so each additional VM costs a V8 isolate plus kernel state, not an OS process. With `@rivet-dev/agentos`, each VM is a Rivet Actor with durable state.
 
 See the [Architecture docs](https://agentos-sdk.dev/docs/architecture) for details.
 
@@ -194,7 +194,7 @@ See the [Architecture docs](https://agentos-sdk.dev/docs/architecture) for detai
 
 Extend agentOS with agents, filesystems, browsers, and software from one registry. Browse the full catalog at the [agentOS Registry](https://agentos-sdk.dev/registry).
 
-Common POSIX utilities ship out of the box. The registry adds agents (`@agentos-software/pi`, `@agentos-software/claude`, `@agentos-software/codex`, `@agentos-software/opencode`), command packages (`git`, `ripgrep`, `jq`, `sqlite3`, `duckdb`, `curl`, `vim`, `ssh`, and more), meta-packages (`common`, `build-essential`, `everything`), and integrations like the Browserbase cloud browser. Install any of them from npm and pass them via `software: [...]`.
+Common POSIX utilities ship out of the box. The registry adds agents (`@agentos-software/pi`, `@agentos-software/claude-code`, `@agentos-software/codex`, `@agentos-software/opencode`), command packages (`git`, `ripgrep`, `jq`, `sqlite3`, `duckdb`, `curl`, `vim`, and more), meta-packages (`common`, `build-essential`, `everything`), and integrations like the Browserbase cloud browser. Install any of them from npm and pass them via `software: [...]`.
 
 ## License
 

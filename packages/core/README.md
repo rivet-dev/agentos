@@ -1,6 +1,6 @@
 # @rivet-dev/agentos-core
 
-A high-level SDK for running coding agents in isolated VMs. agentOS manages the full lifecycle of virtual machines -- from filesystem setup and process management to launching AI agents via the Agent Communication Protocol (ACP).
+A high-level SDK for running coding agents in isolated VMs. agentOS manages the full lifecycle of virtual machines -- from filesystem setup and process management to launching AI agents via the Agent Client Protocol (ACP).
 
 Agents run inside isolated VMs with their own filesystem, process table, and network stack. The host only communicates through well-defined APIs, keeping agent execution fully contained.
 
