@@ -35,7 +35,7 @@
 
 ## Agent Sessions (ACP)
 
-- Uses the **Agent Communication Protocol** (ACP) -- JSON-RPC 2.0 over stdio (newline-delimited)
+- Uses the **Agent Client Protocol** (ACP) -- JSON-RPC 2.0 over stdio (newline-delimited)
 - No HTTP adapter layer; communicate directly with agent ACP adapters over stdin/stdout
 - Reference `~/sandbox-agent` for ACP integration patterns. Do not copy code from it.
 - ACP docs: https://agentclientprotocol.com/get-started/introduction
