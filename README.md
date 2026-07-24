@@ -165,6 +165,7 @@ Simple shell command:
 - **Framework integrations**: Use agentOS as the execution layer for [Vercel Eve](https://agentos-sdk.dev/docs/frameworks/vercel-eve) and [Flue](https://agentos-sdk.dev/docs/frameworks/flue) (beta)
 
 ### Infrastructure
+- **[Execution](https://agentos-sdk.dev/docs/processes)**: Run Bash, Node.js, Python, and registry software inside the VM with real processes, subprocesses, shells, and in-VM servers
 - **[Mount external storage as a filesystem](https://agentos-sdk.dev/docs/filesystem)**: S3-compatible storage, Google Drive, host directories, overlay filesystems, or custom backends
 - **[Bindings](https://agentos-sdk.dev/docs/bindings)**: Define JavaScript functions that agents call as CLI commands inside the VM
 - **[Cron](https://agentos-sdk.dev/docs/cron) and [webhooks](https://agentos-sdk.dev/docs/webhooks)**: Schedule tasks and receive external events with built-in primitives
