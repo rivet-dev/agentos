@@ -9,6 +9,8 @@ await deployApp({
 			name: "hello-world-app",
 			version: "0.0.0",
 			private: true,
+			type: "module",
+			main: "src/index.ts",
 			dependencies: {
 				hono: "^4.12.9",
 			},
