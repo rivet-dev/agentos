@@ -1,6 +1,6 @@
 //! Architecture / boundary guards (CI hardening, item #2).
 //!
-//! This is a *chokepoint lint*: it scans the AgentOS Rust source tree and
+//! This is a *chokepoint lint*: it scans the agentOS Rust source tree and
 //! FAILS if a security-sensitive host API ("banned API") appears OUTSIDE an
 //! explicit allowlist of sanctioned modules. The goal is to keep host access
 //! funnelled through a small, reviewable set of files so that a NEW use of
@@ -58,19 +58,1194 @@ fn repo_root() -> PathBuf {
 }
 
 #[test]
+fn managed_v8_filesystem_state_is_kernel_authoritative() {
+    let root = repo_root();
+    let runner =
+        std::fs::read_to_string(root.join("crates/execution/assets/runners/wasm-runner.mjs"))
+            .expect("read managed WASM runner");
+    let wasi = std::fs::read_to_string(root.join("crates/execution/assets/runners/wasi-module.js"))
+        .expect("read WASI module");
+    let filesystem = std::fs::read_to_string(root.join("crates/native-sidecar/src/filesystem.rs"))
+        .expect("read sidecar filesystem service");
+    let rpc =
+        std::fs::read_to_string(root.join("crates/native-sidecar/src/execution/javascript/rpc.rs"))
+            .expect("read JavaScript process RPC service");
+
+    for stale_shadow in [
+        "hostFsSizeByGuestPath",
+        "rememberHostFsSize",
+        "rememberedHostFsSize",
+        "forgetHostFsSize",
+    ] {
+        assert!(
+            !runner.contains(stale_shadow),
+            "managed runner must not retain mutable path shadow {stale_shadow}"
+        );
+    }
+    assert!(
+        runner.contains(
+            "if (!Number.isFinite(nextSize) || nextSize < 0) {\n        return WASI_ERRNO_INVAL;"
+        ),
+        "host ftruncate must return the typed EINVAL value, never a numeric sentinel"
+    );
+
+    let path_open = runner
+        .find("  wasiImport.path_open = (")
+        .expect("managed path_open wrapper");
+    let path_open = &runner[path_open..];
+    let kernel_open = path_open
+        .find("callSyncRpc('process.path_open_at'")
+        .expect("dirfd-aware kernel path_open");
+    let kernel_registration = path_open
+        .find("registerKernelDelegateFd(kernelFd)")
+        .expect("kernel descriptor registration");
+    let ambient_delegate = path_open
+        .find("() => delegatePathOpen(")
+        .expect("standalone WASI path_open fallback");
+    assert!(
+        kernel_open < kernel_registration && kernel_registration < ambient_delegate,
+        "managed path_open must return a kernel open description before standalone WASI fallback"
+    );
+
+    assert!(
+        path_open.contains(
+            "const procFdResult = SIDECAR_MANAGED_PROCESS\n      ? null\n      : openProcSelfFdAlias("
+        ),
+        "managed /proc/self/fd aliases must flow through capability-aware kernel path_open"
+    );
+
+    for (start, end) in [
+        ("  path_owner(", "  fd_owner("),
+        ("  path_mode(", "  path_size("),
+        ("  path_size(", "  path_blocks("),
+        ("  path_blocks(", "  path_rdev("),
+        ("  path_rdev(", "  chmod("),
+    ] {
+        let start = runner
+            .find(start)
+            .unwrap_or_else(|| panic!("missing {start}"));
+        let section = &runner[start..];
+        let end = section.find(end).unwrap_or_else(|| panic!("missing {end}"));
+        assert!(
+            section[..end].contains("callSyncRpc('process.path_stat_at'"),
+            "{start} must read dirfd-relative metadata from the kernel"
+        );
+    }
+
+    let wasi_path_open = wasi.find("    _pathOpen(").expect("WASI path_open");
+    let wasi_path_open = &wasi[wasi_path_open..];
+    assert!(
+        wasi_path_open
+            .find("if (this._sidecarManagedProcess())")
+            .expect("managed ambient-open rejection")
+            < wasi_path_open
+                .find("__agentOSFs().openSync")
+                .expect("standalone Node-fs open"),
+        "managed WASI must reject ambient Node-fs path_open fallback"
+    );
+
+    for field in ["mode", "uid", "gid", "blocks", "rdev"] {
+        assert!(
+            rpc.contains(&format!("\"{field}\": stat.{field}")),
+            "kernel stat RPC must expose {field} without a runner-side metadata shadow"
+        );
+    }
+    assert!(
+        filesystem.contains("struct ProcessModuleFsReader")
+            && filesystem.contains("read_file_for_process(")
+            && filesystem.contains("let reader = ProcessModuleFsReader"),
+        "production JavaScript module loading must resolve against the live kernel VFS"
+    );
+}
+
+#[test]
+fn managed_wasm_uses_one_sidecar_owned_posix_poll() {
+    let root = repo_root();
+    let runner =
+        std::fs::read_to_string(root.join("crates/execution/assets/runners/wasm-runner.mjs"))
+            .expect("read managed WASM runner");
+    let sidecar = std::fs::read_to_string(
+        root.join("crates/native-sidecar/src/execution/host_dispatch/network_compat.rs"),
+    )
+    .expect("read POSIX poll dispatcher");
+
+    let net_poll = runner
+        .split("  net_poll(fdsPtr, nfds, timeoutMs, retReadyPtr, temporarySignalMask = null) {")
+        .nth(1)
+        .expect("managed net_poll implementation");
+    let managed = net_poll
+        .split("    const startedAt = Date.now();")
+        .next()
+        .expect("managed poll fast path");
+    assert!(
+        managed.contains("callSyncRpc('process.posix_poll'")
+            && managed.contains("temporarySignalMask"),
+        "managed poll and ppoll must use one typed sidecar RPC carrying the optional mask"
+    );
+    for split_wait in [
+        "callSyncRpc('__kernel_poll'",
+        "callSyncRpc('process.hostnet_poll'",
+        "pumpSpawnedChildren(",
+        "Atomics.wait(",
+    ] {
+        assert!(
+            !managed.contains(split_wait),
+            "managed poll must not regress to a split/pumped wait: {split_wait}"
+        );
+    }
+
+    let ppoll = runner
+        .split("        proc_ppoll_v1(")
+        .nth(1)
+        .expect("ppoll ABI implementation")
+        .split("        },")
+        .next()
+        .expect("ppoll ABI body");
+    assert!(ppoll.contains("hostNetImport.net_poll("));
+    assert!(!ppoll.contains("signal_mask_scope_begin"));
+    assert!(!ppoll.contains("signal_mask_scope_end"));
+
+    assert!(
+        sidecar.contains("pub(in crate::execution) fn service_deferred_posix_poll")
+            && sidecar.contains("task_notify.notified()")
+            && sidecar.contains("wait_handle.wait_for_change_async(observed)")
+            && sidecar.contains("DeferredPosixPollWake")
+            && sidecar.contains("managed_posix_poll_read_notifies")
+            && sidecar.contains("wait_for_managed_posix_poll_readiness")
+            && sidecar.contains("indexed_posix_poll_response")
+            && sidecar.contains("kernel_interest_indexes"),
+        "the sidecar must own one coalesced managed/kernel/deadline wait task"
+    );
+}
+
+#[test]
+fn managed_blocking_socket_operations_wait_through_posix_poll() {
+    let root = repo_root();
+    let runner =
+        std::fs::read_to_string(root.join("crates/execution/assets/runners/wasm-runner.mjs"))
+            .expect("read managed WASM runner");
+    let helper = runner
+        .split("function waitManagedHostNetReadable(")
+        .nth(1)
+        .expect("managed socket wait helper")
+        .split("\n}")
+        .next()
+        .expect("managed socket wait body");
+    assert!(helper.contains("callSyncRpc('process.posix_poll'"));
+    assert!(helper.contains("dispatchPendingWasmSignals(restartableOperation === true)"));
+    assert!(helper.contains("pumpSpawnedChildren(0)"));
+    assert!(helper.contains("Math.min(SPAWNED_CHILD_WAIT_SLICE_MS"));
+    assert!(helper.contains("deadline - Date.now()"));
+
+    for (operation, managed_end) in [
+        ("net_accept", "\n    if (!socket.serverId"),
+        ("net_recv", "\n      if (hostNetSocketBaseType"),
+        ("net_recvfrom", "\n      const udpSocketId"),
+    ] {
+        let body = runner
+            .split(&format!("  {operation}("))
+            .nth(1)
+            .unwrap_or_else(|| panic!("{operation} implementation"));
+        let body = body
+            .split("\n  },")
+            .next()
+            .expect("operation body boundary");
+        let managed = body
+            .split("managed === true")
+            .nth(1)
+            .unwrap_or_else(|| panic!("{operation} managed path"));
+        let managed = managed
+            .split(managed_end)
+            .next()
+            .unwrap_or_else(|| panic!("{operation} managed path boundary"));
+        assert!(
+            managed.contains("waitManagedHostNetReadable"),
+            "managed {operation} must use the interruptible combined wait"
+        );
+        assert!(
+            !managed.contains("pumpSpawnedChildrenOrWaitRestartable"),
+            "managed {operation} must not poll/pump on a timer"
+        );
+    }
+}
+
+#[test]
+fn managed_wasm_socket_reads_probe_before_and_after_readiness_waits() {
+    let runner = std::fs::read_to_string(
+        repo_root().join("crates/execution/assets/runners/wasm-runner.mjs"),
+    )
+    .expect("read managed WASM runner");
+    let read = runner
+        .split("function readHostNetSocketToGuestIovs(")
+        .nth(1)
+        .expect("managed WASM socket read helper")
+        .split("\nfunction writeHostNetSocketFromGuestIovs(")
+        .next()
+        .expect("managed WASM socket read boundary");
+    let managed = read
+        .split("if (socket?.managed === true)")
+        .nth(1)
+        .expect("managed socket branch");
+    let first_receive = managed
+        .find("callSyncRpc('process.hostnet_recv'")
+        .expect("initial receive probe");
+    let readiness_wait = managed
+        .find("waitManagedHostNetReadable(socket, remaining, true)")
+        .expect("readiness wait");
+    assert!(
+        first_receive < readiness_wait,
+        "managed reads must follow the Linux read-then-wait pattern"
+    );
+    let after_wait = &managed[readiness_wait..];
+    assert!(
+        after_wait.contains("const finalResult = callSyncRpc('process.hostnet_recv'")
+            && after_wait.contains("if (finalResult == null)"),
+        "a timeout-boundary receive probe must win over a coalesced readiness wake"
+    );
+}
+
+#[test]
+fn sidecar_publishes_only_one_signal_delivery_scope_at_a_time() {
+    let root = repo_root();
+    let process =
+        std::fs::read_to_string(root.join("crates/native-sidecar/src/execution/process.rs"))
+            .expect("read process owner");
+    let published = process
+        .split("Ok(SignalCheckpointOutcome::Published) => {")
+        .nth(1)
+        .expect("published signal branch")
+        .split("Ok(SignalCheckpointOutcome::ForwardToProcess")
+        .next()
+        .expect("published signal branch end");
+    assert!(
+        published.contains("break;") && !published.contains("continue;"),
+        "kernel signal delivery tokens are strict LIFO; publish one and wait for signal_end"
+    );
+}
+
+#[test]
+fn phase_two_keeps_wasmtime_scoped_to_the_standalone_wasm_adapter() {
+    let root = repo_root();
+    let workspace = std::fs::read_to_string(root.join("Cargo.toml")).expect("read Cargo.toml");
+    let lock = std::fs::read_to_string(root.join("Cargo.lock")).expect("read Cargo.lock");
+    assert!(
+        workspace.contains("wasmtime = { version = \"=46.0.0\", default-features = false")
+            && workspace.contains("wasmparser = \"=0.251.0\"")
+            && lock.contains("name = \"wasmtime\"\nversion = \"46.0.0\"")
+            && !lock.contains("name = \"wasmtime-wasi\""),
+        "Phase 2 must pin reviewed Wasmtime without installing ambient wasmtime-wasi"
+    );
+
+    let wasm_adapter = std::fs::read_to_string(root.join("crates/execution/src/wasm.rs"))
+        .expect("read standalone WASM adapter");
+    let wasmtime_module =
+        std::fs::read_to_string(root.join("crates/execution/src/wasm/wasmtime/module.rs"))
+            .expect("read Wasmtime module compiler");
+    assert!(
+        wasm_adapter
+            .matches("validate_module_profile(&resolved_module)?;")
+            .count()
+            >= 2
+            && wasmtime_module.contains("validate_locked_profile(bytes)?;")
+            && wasmtime_module.contains("validate_locked_threaded_profile(bytes)?;"),
+        "both V8-WASM start paths and both Wasmtime profiles must use the shared wasmparser validators"
+    );
+
+    let publish = std::fs::read_to_string(root.join(".github/workflows/publish.yaml"))
+        .expect("read publish workflow");
+    let linux = std::fs::read_to_string(root.join("docker/build/linux-gnu.Dockerfile"))
+        .expect("read Linux release build");
+    let darwin = std::fs::read_to_string(root.join("docker/build/darwin.Dockerfile"))
+        .expect("read Darwin release build");
+    for (name, source) in [
+        ("publish workflow", publish.as_str()),
+        ("Linux release build", linux.as_str()),
+        ("Darwin release build", darwin.as_str()),
+    ] {
+        assert!(
+            source.contains("1.94.0"),
+            "{name} must use Wasmtime 46's reviewed Rust MSRV"
+        );
+    }
+    assert!(
+        linux.contains("cargo test -p agentos-execution wasmtime --lib --target \"$TARGET\"")
+            && publish.contains("runner: macos-15-intel")
+            && publish.contains("runner: macos-15")
+            && publish.contains("cargo test -p agentos-execution wasmtime --lib")
+            && publish.contains("smoke-sidecar-artifacts:")
+            && publish.contains("scripts/ci/smoke-packed-wasm-backends.mjs")
+            && publish.contains("needs.smoke-sidecar-artifacts.result == 'success'"),
+        "all four release platforms must compile Wasmtime and natively smoke the actual packaged artifact"
+    );
+
+    let mut manifests = Vec::new();
+    for entry in std::fs::read_dir(root.join("crates")).expect("read workspace crates") {
+        let path = entry
+            .expect("read workspace crate entry")
+            .path()
+            .join("Cargo.toml");
+        if path.is_file() {
+            manifests.push(path);
+        }
+    }
+    for manifest in manifests {
+        let source = std::fs::read_to_string(&manifest)
+            .unwrap_or_else(|error| panic!("read {}: {error}", manifest.display()));
+        if source.lines().map(strip_line_comment).any(|line| {
+            let compact = line
+                .chars()
+                .filter(|ch| !ch.is_whitespace())
+                .collect::<String>();
+            compact.starts_with("wasmtime=") || compact.starts_with("wasmtime-")
+        }) {
+            assert_eq!(
+                manifest,
+                root.join("crates/execution/Cargo.toml"),
+                "only the execution crate may depend on Wasmtime"
+            );
+        }
+    }
+
+    for relative in production_source_files(&root) {
+        let source = std::fs::read_to_string(root.join(&relative))
+            .unwrap_or_else(|error| panic!("read {}: {error}", relative.display()));
+        let production = production_source_text(&source);
+        if production.contains("use wasmtime::") || production.contains("extern crate wasmtime") {
+            assert!(
+                relative.starts_with("crates/execution/src/wasm/wasmtime"),
+                "external Wasmtime API use escaped the standalone adapter: {}",
+                relative.display()
+            );
+        }
+    }
+}
+
+#[test]
+fn owned_toolchain_pins_binaryen_for_finalized_wasm_exceptions() {
+    let root = repo_root();
+    let toolchain =
+        std::fs::read_to_string(root.join("toolchain/Makefile")).expect("read toolchain Makefile");
+    let c_toolchain = std::fs::read_to_string(root.join("toolchain/c/Makefile"))
+        .expect("read C toolchain Makefile");
+    let installer = std::fs::read_to_string(root.join("toolchain/scripts/ensure-wasm-opt.sh"))
+        .expect("read pinned Binaryen installer");
+    let duckdb = std::fs::read_to_string(root.join("toolchain/c/scripts/build-duckdb.sh"))
+        .expect("read DuckDB build script");
+
+    assert!(
+        toolchain.contains("BINARYEN_VERSION := 128")
+            && toolchain.contains("./scripts/ensure-wasm-opt.sh \"$(WASM_OPT)\"")
+            && !toolchain.contains("\tcargo install wasm-opt")
+            && c_toolchain.contains("BINARYEN_VERSION := 128")
+            && c_toolchain.contains("../scripts/ensure-wasm-opt.sh \"$(WASM_OPT)\"")
+            && c_toolchain.contains("include/sys/ioctl.h wasm-opt-check"),
+        "all canonical command builds must use the pinned Binaryen tool"
+    );
+    for required in [
+        "BINARYEN_VERSION=128",
+        "--translate-to-exnref",
+        "binaryen-version_${BINARYEN_VERSION}-${PLATFORM}.tar.gz",
+        "https://api.github.com/repos/WebAssembly/binaryen/releases/assets/${ASSET_ID}",
+        "Accept: application/octet-stream",
+        "--retry-all-errors",
+        "--connect-timeout 30",
+        "ASSET_ID=373217228",
+        "ASSET_ID=373212794",
+        "ASSET_ID=373206713",
+        "ASSET_ID=373206711",
+        "4ce79586d1c4762502eebe9a1db071fa5e446ef8897f2f766eb1cce5ec6dee9e",
+        "bafe0468976d923f09052f8ec6a6a0a9d942ee7f02ac113c85a80afea7ba3679",
+        "0b4bbd58c46b73a3de1fd485579a56cd413dd395414306d9f33df407fde58b9b",
+        "0ef730ecedf2dac894812185fc78f5940ab980cdde79427e49fa87331d24422f",
+    ] {
+        assert!(
+            installer.contains(required),
+            "pinned Binaryen installer omitted {required}"
+        );
+    }
+    assert!(
+        duckdb.contains("Binaryen 128 is required") && duckdb.contains("--translate-to-exnref"),
+        "DuckDB must reject a toolchain that cannot finalize exception references"
+    );
+}
+
+#[test]
+fn bounded_pr_corpus_includes_c_backed_coreutils_commands() {
+    let root = repo_root();
+    let toolchain =
+        std::fs::read_to_string(root.join("toolchain/Makefile")).expect("read toolchain Makefile");
+    let wasi_libc = std::fs::read_to_string(root.join("toolchain/scripts/patch-wasi-libc.sh"))
+        .expect("read wasi-libc build script");
+
+    assert!(
+        toolchain.contains("PR_C_COMMANDS := mknod getconf")
+            && toolchain.contains("PR_C_BUILD_TARGETS := $(addprefix build/,$(PR_C_COMMANDS))")
+            && toolchain.contains(
+                "$(MAKE) -C c $(PR_C_BUILD_TARGETS) install COMMANDS=\"$(PR_C_COMMANDS)\""
+            ),
+        "the bounded PR corpus must build every C-backed command in the coreutils manifest"
+    );
+    assert!(
+        wasi_libc.contains("--retry 5")
+            && wasi_libc.contains("--retry-all-errors")
+            && wasi_libc.contains("--connect-timeout 30")
+            && wasi_libc.contains("--tries=5")
+            && wasi_libc.contains("--waitretry=2")
+            && wasi_libc.contains(
+                "https://codeload.github.com/llvm/llvm-project/tar.gz/refs/tags/"
+            )
+            && wasi_libc
+                .contains("e2204b9903cd9d7ee833a2f56a18bef40a33df4793e31cc090906b32cbd8a1f5")
+            && wasi_libc.contains("llvm-project archive checksum mismatch"),
+        "required pinned toolchain downloads must use a verified direct source with bounded retries"
+    );
+}
+
+#[test]
+fn maintained_wasm_surfaces_are_mechanically_gated_on_both_backends() {
+    let root = repo_root();
+    let ci =
+        std::fs::read_to_string(root.join(".github/workflows/ci.yml")).expect("read CI workflow");
+    for required in [
+        "backend: [v8, wasmtime]",
+        "AGENTOS_TEST_WASM_BACKEND: ${{ matrix.backend }}",
+        "needs: [checks, wasm-commands, rust, core-pr, runtime-core-pr, actor-pr, wasm-backend-matrix]",
+        "EXPECT_WASM_BACKEND_MATRIX:",
+        "required dual-backend CI job did not succeed",
+        "cargo test --release -p agentos-native-sidecar --tests -- --test-threads=1",
+        "Run artifact-backed V8-WASM and Wasmtime software parity",
+        "cargo test --release -p agentos-native-sidecar --test wasm_software_parity -- --ignored --nocapture --test-threads=1",
+        "toolchain/conformance/c-parity.test.ts",
+        "wasm-c-parity-fixtures",
+        "packages/runtime-core exec vitest run",
+        "packages/core exec vitest run",
+        "cargo test -p agentos-client -- --test-threads=1",
+        "turbo test --concurrency=1 --filter='@agentos-software/*'",
+        "turbo test:nightly --concurrency=1 --filter='@agentos-software/*'",
+        "make -C toolchain codex-required",
+        "name: codex-wasi",
+        "@rivet-dev/agentos test:e2e:run",
+        "pthread-conformance-wasm pthread-benchmark-wasm",
+        "owned_pthread_libc_mutex_cond_tls_join_detach_and_cancel_conform",
+        "test:wasm-mixed-smoke",
+        "AGENT_OS_CLIENT_ALLOW_E2E_SKIPS: '0'",
+        "XFSTESTS_ROOT: ${{ github.workspace }}/tests/xfstests/.work/xfstests",
+        "helpers XFSTESTS_BUILD_NATIVE_COMMANDS=0",
+        "pnpm --filter @agentos-software/manifest build",
+        "pnpm --filter @rivet-dev/agentos-toolchain build",
+    ] {
+        assert!(
+            ci.contains(required),
+            "CI must mechanically require the dual-backend gate: {required}"
+        );
+    }
+
+    let turbo = std::fs::read_to_string(root.join("turbo.json")).expect("read Turbo configuration");
+    assert!(
+        turbo.contains("\"AGENTOS_TEST_WASM_BACKEND\""),
+        "Turbo must pass and hash the backend selector for registry software tests"
+    );
+
+    for (path, required) in [
+        (
+            "packages/vm-test-harness/src/index.ts",
+            "wasmBackend: options.wasmBackend ?? configuredTestWasmBackend()",
+        ),
+        (
+            "packages/core/tests/helpers/default-vm-permissions.ts",
+            "const backend = process.env.AGENTOS_TEST_WASM_BACKEND",
+        ),
+        (
+            "packages/agentos/tests/fixtures/actor-runtime-server.mjs",
+            "wasmBackend = process.env.AGENTOS_TEST_WASM_BACKEND",
+        ),
+    ] {
+        let source = std::fs::read_to_string(root.join(path))
+            .unwrap_or_else(|error| panic!("read {path}: {error}"));
+        assert!(
+            source.contains(required),
+            "{path} must route its shared WASM tests through the CI backend selector"
+        );
+    }
+
+    let publish = std::fs::read_to_string(root.join(".github/workflows/publish.yaml"))
+        .expect("read publish workflow");
+    let justfile = std::fs::read_to_string(root.join("justfile")).expect("read justfile");
+    assert!(
+        publish.contains("make -C toolchain cmd/duckdb cmd/vim")
+            && publish.contains("smoke-packed-wasm-backends.mjs")
+            && justfile.contains("make -C toolchain cmd/duckdb cmd/vim"),
+        "publish must build the complete parity-tested command corpus before packaged backend smokes"
+    );
+
+    let xfstests = std::fs::read_to_string(root.join("tests/xfstests/Makefile"))
+        .expect("read xfstests Makefile");
+    assert!(
+        xfstests.contains("XFSTESTS_WASM_BACKENDS ?= v8 wasmtime")
+            && xfstests.contains("AGENTOS_TEST_WASM_BACKEND=\"$$wasm_backend\""),
+        "xfstests must execute its WASM helper corpus through V8 and Wasmtime"
+    );
+    assert!(
+        xfstests.contains("$(MAKE) -C \"$(TOOLCHAIN)\" commands")
+            && !xfstests.contains("$(MAKE) -C \"$(TOOLCHAIN)\" wasm"),
+        "xfstests must stage the canonical complete command corpus; the Rust-only `wasm` target overwrites upstream C commands with compatibility binaries"
+    );
+
+    let nightly = std::fs::read_to_string(root.join(".github/workflows/ci-nightly.yml"))
+        .expect("read nightly CI workflow");
+    for required in [
+        "xfstests_wasi_dirstress_process_matrix",
+        "xfstests_wasi_seekdir_endurance_probe",
+        "if: matrix.storage_backend == 'chunked_local'",
+        "AGENTOS_TEST_WASM_BACKEND: ${{ matrix.wasm_backend }}",
+        "make -C toolchain cmd/duckdb cmd/vim",
+        "helpers XFSTESTS_BUILD_NATIVE_COMMANDS=0",
+    ] {
+        assert!(
+            nightly.contains(required),
+            "nightly CI must retain the dual-engine directory stress gate: {required}"
+        );
+    }
+
+    let packaged = std::fs::read_to_string(root.join("scripts/ci/smoke-packed-wasm-backends.mjs"))
+        .expect("read packaged WASM backend smoke");
+    for required in [
+        "[\"v8\", \"wasmtime\", \"wasmtime-threads\"]",
+        "pthread-conformance.wasm",
+        "pack(runtimeSidecarDir)",
+        "--platform-package",
+    ] {
+        assert!(
+            packaged.contains(required),
+            "packaged artifacts must exercise the public backend surface: {required}"
+        );
+    }
+}
+
+#[test]
+fn kernel_process_table_is_the_only_durable_signal_state_owner() {
+    let root = repo_root();
+    let process_table = std::fs::read_to_string(root.join("crates/kernel/src/process_table.rs"))
+        .expect("read kernel process table");
+    let record = rust_braced_item(&process_table, "struct ProcessRecord {");
+    for field in [
+        "pending_signals: SignalSet",
+        "signal_actions: [SignalAction",
+        "signal_threads: BTreeMap<u32, ProcessThreadSignalState>",
+    ] {
+        assert!(
+            record.contains(field),
+            "kernel ProcessRecord is missing {field}"
+        );
+    }
+    let thread_record = rust_braced_item(&process_table, "struct ProcessThreadSignalState {");
+    for field in [
+        "blocked_signals: SignalSet",
+        "signal_deliveries: Vec<InProgressSignalDelivery>",
+        "temporary_signal_masks: Vec<TemporarySignalMask>",
+    ] {
+        assert!(
+            thread_record.contains(field),
+            "kernel thread signal record is missing {field}"
+        );
+    }
+    let schedule = rust_braced_item(&process_table, "fn queue_or_schedule_signal(");
+    assert!(
+        schedule.contains("record.pending_signals.insert(signal)?")
+            && schedule.contains("ProcessControlRequest::Checkpoint")
+            && schedule.contains("ProcessControlRequest::Stop")
+            && schedule.contains("ProcessControlRequest::Terminate"),
+        "one kernel path must decide pending, caught, stop, and terminating signal behavior"
+    );
+    let delivery = rust_braced_item(&process_table, "fn deliver_signals(");
+    assert!(
+        delivery.contains("delivery.runtime_endpoint.request_control(*request)"),
+        "kernel signal decisions must reach adapters only through the runtime endpoint"
+    );
+
+    let signals =
+        std::fs::read_to_string(root.join("crates/native-sidecar/src/execution/signals.rs"))
+            .expect("read signal adapter");
+    let registration =
+        rust_braced_item(&signals, "pub(crate) fn apply_kernel_signal_registration(");
+    assert!(
+        registration.contains("process")
+            && registration.contains(".kernel_handle")
+            && registration.contains(".signal_action(signal, Some(action))"),
+        "adapter registrations must update the authoritative kernel record directly"
+    );
+
+    let non_kernel_files = production_source_files(&root)
+        .into_iter()
+        .filter(|path| {
+            path.starts_with("crates/execution/src")
+                || path.starts_with("crates/native-sidecar/src")
+        })
+        .collect::<Vec<_>>();
+    let duplicated_owner_fields = production_matches(
+        &root,
+        &non_kernel_files,
+        &[
+            "blocked_signals:",
+            "pending_signals:",
+            "signal_actions:",
+            "signal_deliveries:",
+            "temporary_signal_masks:",
+        ],
+    );
+    assert!(
+        duplicated_owner_fields.is_empty(),
+        "durable signal state escaped the kernel process table:\n{}",
+        duplicated_owner_fields.join("\n")
+    );
+}
+
+#[test]
+fn common_posix_semantics_do_not_switch_on_executor_variants() {
+    let root = repo_root();
+
+    // Capability owners and reactors are engine-blind without an allowlist.
+    // Any future occurrence in these directories is a hard architecture
+    // regression, not a line to append to a sampled list.
+    for relative in production_source_files(&root).into_iter().filter(|path| {
+        path.starts_with("crates/native-sidecar/src/execution/host_dispatch")
+            || path.starts_with("crates/native-sidecar/src/execution/network")
+            || matches!(
+                path.to_string_lossy().as_ref(),
+                "crates/native-sidecar/src/execution/signals.rs"
+                    | "crates/native-sidecar/src/execution/stdio.rs"
+                    | "crates/native-sidecar/src/execution/process_events.rs"
+                    | "crates/native-sidecar/src/execution/coordinator.rs"
+                    | "crates/native-sidecar/src/filesystem.rs"
+            )
+    }) {
+        let source = std::fs::read_to_string(root.join(&relative))
+            .unwrap_or_else(|error| panic!("read {}: {error}", relative.display()));
+        let production = production_source_text(&source);
+        for forbidden in [
+            "GuestRuntimeKind",
+            "ActiveExecution::",
+            "ExecutionBackendKind",
+        ] {
+            assert!(
+                !production.contains(forbidden),
+                "common POSIX owner {} contains executor switch token {forbidden}",
+                relative.display()
+            );
+        }
+    }
+
+    let child = production_source_text(
+        &std::fs::read_to_string(root.join("crates/native-sidecar/src/execution/child_process.rs"))
+            .expect("read child process service"),
+    );
+    for forbidden in [
+        "process.runtime == GuestRuntimeKind",
+        "process.runtime != GuestRuntimeKind",
+        "resolved.runtime == GuestRuntimeKind",
+        "resolved.runtime != GuestRuntimeKind",
+        "current_runtime == GuestRuntimeKind",
+        "current_runtime != GuestRuntimeKind",
+    ] {
+        assert!(
+            !child.contains(forbidden),
+            "child process semantics switched on executor identity: {forbidden}"
+        );
+    }
+    assert_eq!(
+        child.matches("match resolved.runtime {").count(),
+        3,
+        "resolved-runtime matches are confined to direct spawn, exec replacement, and nested spawn adapter construction"
+    );
+    assert!(
+        child.contains("resolved.adapter_policy.accepts_inherited_host_network_fds")
+            && child.contains("resolved.adapter_policy.materializes_direct_runtime_stdio")
+            && child.contains("resolved.adapter_policy.canonicalizes_runtime_stdin")
+            && child.contains("supports_prepared_in_place_exec"),
+        "common process code must consume explicit adapter capabilities"
+    );
+
+    let process = production_source_text(
+        &std::fs::read_to_string(root.join("crates/native-sidecar/src/execution/process.rs"))
+            .expect("read ActiveProcess implementation"),
+    );
+    let adapter_impl = process
+        .find("impl ActiveExecution {")
+        .expect("ActiveExecution adapter implementation");
+    assert!(
+        !process[..adapter_impl].contains("ActiveExecution::"),
+        "ActiveProcess common lifecycle must call the backend contract instead of matching its storage enum"
+    );
+
+    let rpc = production_source_text(
+        &std::fs::read_to_string(
+            root.join("crates/native-sidecar/src/execution/javascript/rpc.rs"),
+        )
+        .expect("read compatibility RPC decoder"),
+    );
+    assert!(
+        !rpc.contains("process.runtime == GuestRuntimeKind")
+            && rpc.contains("process.execution.synchronous_fd_write_policy()"),
+        "descriptor write semantics must use an explicit backend policy"
+    );
+}
+
+#[test]
+fn production_backends_route_typed_host_calls_through_family_capabilities() {
+    let root = repo_root();
+    let process =
+        std::fs::read_to_string(root.join("crates/native-sidecar/src/execution/process.rs"))
+            .expect("read active execution adapter");
+    let events =
+        std::fs::read_to_string(root.join("crates/native-sidecar/src/execution/process_events.rs"))
+            .expect("read execution event service");
+    let dispatcher = std::fs::read_to_string(
+        root.join("crates/native-sidecar/src/execution/host_dispatch/mod.rs"),
+    )
+    .expect("read shared host dispatcher");
+
+    // JavaScript, Python's embedded-JavaScript bridge, compatibility WASM, and
+    // native Wasmtime host calls all enter the same typed capability router
+    // before a sidecar semantic operation is chosen.
+    assert_eq!(
+        process
+            .matches("return route_compatibility_host_call(")
+            .count(),
+        4,
+        "every production executor host-call lane must use the bound common submission path"
+    );
+    assert!(
+        process.contains("ExecutionBackend::configure_host_services")
+            && process.contains("poll_event_with_host(")
+            && process.contains("try_poll_event_with_host("),
+        "production backends must receive host services before start and submit through them"
+    );
+    assert!(
+        events.contains("ActiveExecutionEvent::Common(ExecutionEvent::HostCall"),
+        "the production event pump must consume common host-call events"
+    );
+    assert!(
+        events.contains("dispatch_host_operation(generation, kernel, process, operation, reply)"),
+        "common host calls must reach the shared sidecar dispatcher"
+    );
+
+    for family in [
+        "FilesystemCapability",
+        "NetworkCapability",
+        "ProcessCapability",
+        "TerminalCapability",
+        "SignalCapability",
+        "IdentityCapability",
+        "ClockCapability",
+        "EntropyCapability",
+    ] {
+        assert!(
+            dispatcher.contains(family),
+            "shared dispatcher is missing production {family} routing"
+        );
+    }
+    for family in [
+        "filesystem",
+        "network",
+        "process",
+        "terminal",
+        "signal",
+        "identity",
+        "clock",
+        "entropy",
+    ] {
+        let path = root.join(format!(
+            "crates/native-sidecar/src/execution/host_dispatch/{family}.rs"
+        ));
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+        assert!(
+            source.contains("impl SidecarHostCapability<"),
+            "{family} must have a production capability implementation"
+        );
+    }
+}
+
+#[test]
+fn loopback_vm_fetch_uses_the_vm_scoped_event_pump() {
+    let coordinator = include_str!("../src/execution/coordinator.rs");
+    let http = include_str!("../src/execution/javascript/http.rs");
+    let vm_fetch = coordinator
+        .split_once("pub(crate) async fn vm_fetch(")
+        .expect("vm.fetch coordinator")
+        .1
+        .split_once("pub(crate) async fn get_signal_state(")
+        .expect("end of vm.fetch coordinator")
+        .0;
+
+    for required in [
+        "begin_loopback_http_request",
+        "self.pump_process_events(&ownership).await",
+        "process_event_notify.notified()",
+        "take_loopback_http_response",
+    ] {
+        assert!(
+            vm_fetch.contains(required),
+            "loopback vm.fetch must retain main event-pump step {required}"
+        );
+    }
+    assert!(
+        !http.contains("dispatch_host_operation"),
+        "loopback HTTP must not bypass VM-scoped context dispatch through the kernel-only fallback"
+    );
+}
+
+#[test]
+fn stdio_process_events_register_before_probing_durable_state() {
+    let stdio = include_str!("../src/stdio.rs");
+    let protocol_loop = stdio
+        .split_once("let process_event_notified = process_event_notify.notified();")
+        .expect("registered process-event waiter")
+        .1;
+    let enable = protocol_loop
+        .find("process_event_notified.as_mut().enable();")
+        .expect("enable process-event waiter");
+    let probe = protocol_loop
+        .find(".pump_process_events(&session.compat_ownership_scope())")
+        .expect("probe durable process-event state");
+    let select_waiter = protocol_loop
+        .find("_ = process_event_notified.as_mut() =>")
+        .expect("select on the registered process-event waiter");
+
+    assert!(
+        enable < probe && probe < select_waiter,
+        "the stdio event owner must register and enable its waiter before probing durable process state"
+    );
+    assert!(
+        !protocol_loop[..select_waiter].contains("_ = process_event_notify.notified() =>"),
+        "the protocol loop must not recreate an edge-triggered waiter after probing process state"
+    );
+}
+
+#[test]
+fn shared_tcp_connect_has_no_blocking_native_fallback() {
+    let root = repo_root();
+    let tcp =
+        std::fs::read_to_string(root.join("crates/native-sidecar/src/execution/network/tcp.rs"))
+            .expect("read shared TCP implementation");
+
+    assert!(
+        !tcp.contains("TcpStream::connect_timeout"),
+        "native TCP connects must be deferred to the shared Tokio reactor"
+    );
+    assert!(
+        tcp.contains(
+            "native TCP connect reached the synchronous constructor without reactor deferral"
+        ),
+        "the synchronous constructor must fail closed when a caller misses reactor deferral"
+    );
+}
+
+#[test]
+fn compatibility_wasm_rpc_inventory_matches_runner_literals() {
+    let root = repo_root();
+    let runner =
+        std::fs::read_to_string(root.join("crates/execution/assets/runners/wasm-runner.mjs"))
+            .expect("read compatibility WASM runner");
+    let inventory = std::fs::read_to_string(
+        root.join("crates/native-sidecar/src/execution/host_dispatch/inventory.rs"),
+    )
+    .expect("read reviewed compatibility WASM RPC inventory");
+
+    fn quoted_values(section: &str) -> BTreeSet<String> {
+        section
+            .lines()
+            .filter_map(|line| {
+                let line = line.trim();
+                line.strip_prefix('"')
+                    .and_then(|line| line.strip_suffix(","))
+                    .and_then(|line| line.strip_suffix('"'))
+                    .map(str::to_owned)
+            })
+            .collect()
+    }
+
+    let mut dynamic_targets = Vec::new();
+    let runner_methods = runner
+        .match_indices("callSyncRpc(")
+        .filter_map(|(offset, marker)| {
+            let tail = runner[offset + marker.len()..].trim_start();
+            let quote = tail.chars().next()?;
+            if quote != '\'' && quote != '"' {
+                if runner[..offset].ends_with("function ") {
+                    return None;
+                }
+                let line = runner[..offset]
+                    .rsplit_once('\n')
+                    .map(|(_, line)| line)
+                    .unwrap_or(&runner[..offset]);
+                dynamic_targets.push(format!(
+                    "{}{}",
+                    line.trim(),
+                    tail.lines().next().unwrap_or("")
+                ));
+                return None;
+            }
+            let tail = &tail[quote.len_utf8()..];
+            let end = tail.find(quote)?;
+            Some(tail[..end].to_owned())
+        })
+        .collect::<BTreeSet<_>>();
+    assert!(dynamic_targets.is_empty(),
+        "compatibility WASM runner callSyncRpc targets must be literal; add every target to the frozen inventory: {dynamic_targets:?}"
+    );
+    let inventory_section = inventory
+        .split_once("WASM_RUNNER_RPC_INVENTORY: &[&str] = &[")
+        .expect("inventory declaration")
+        .1
+        .split_once("\n];")
+        .expect("inventory terminator")
+        .0;
+    let frozen_methods = quoted_values(inventory_section);
+    assert_eq!(
+        frozen_methods, runner_methods,
+        "update and review the typed/adapter-only WASM RPC inventory whenever the runner changes"
+    );
+
+    // The compatibility bootstrap hides a second semantic surface behind one
+    // generic `process.wasm_sync_rpc` method. Freeze both the wrapper switch
+    // and its delta from the literal runner inventory; otherwise a Linux call
+    // can bypass the typed decoder without changing wasm-runner.mjs.
+    let bootstrap = std::fs::read_to_string(root.join("crates/execution/src/wasm.rs"))
+        .expect("read compatibility WASM bootstrap");
+    let rpc =
+        std::fs::read_to_string(root.join("crates/native-sidecar/src/execution/javascript/rpc.rs"))
+            .expect("read compatibility RPC allowlist");
+    let allowed_section = rpc
+        .split_once("const ALLOWED_WASM_PROCESS_SYNC_RPCS: &[&str] = &[")
+        .expect("wrapped RPC allowlist")
+        .1
+        .split_once("\n];")
+        .expect("wrapped RPC allowlist terminator")
+        .0;
+    let allowed = quoted_values(allowed_section);
+    let wrapped_switch = bootstrap
+        .split_once("case \"process.exec_image_open\":")
+        .expect("wrapped RPC switch")
+        .1
+        .split_once("_processWasmSyncRpc.applySync")
+        .expect("wrapped RPC dispatch")
+        .0;
+    let mut emitted_wrapped = wrapped_switch
+        .lines()
+        .filter_map(|line| {
+            line.trim()
+                .strip_prefix("case \"")
+                .and_then(|line| line.strip_suffix("\":"))
+                .map(str::to_owned)
+        })
+        .collect::<BTreeSet<_>>();
+    emitted_wrapped.insert(String::from("process.exec_image_open"));
+    assert_eq!(
+        allowed, emitted_wrapped,
+        "the generic WASM wrapper switch and sidecar allowlist must remain exact"
+    );
+
+    let wrapped_only_section = inventory
+        .split_once("WASM_WRAPPED_ONLY_RPC_INVENTORY: &[&str] = &[")
+        .expect("wrapped-only inventory declaration")
+        .1
+        .split_once("\n];")
+        .expect("wrapped-only inventory terminator")
+        .0;
+    let frozen_wrapped_only = quoted_values(wrapped_only_section);
+    let actual_wrapped_only = allowed
+        .difference(&runner_methods)
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        frozen_wrapped_only, actual_wrapped_only,
+        "review every semantic RPC hidden behind process.wasm_sync_rpc"
+    );
+
+    let adapter_only_section = inventory
+        .split_once("WASM_ADAPTER_ONLY_RPCS: &[&str] = &[")
+        .expect("adapter-only inventory declaration")
+        .1
+        .split_once("\n];")
+        .expect("adapter-only inventory terminator")
+        .0;
+    assert_eq!(
+        quoted_values(adapter_only_section),
+        BTreeSet::from([
+            String::from("fs.blockingIoTimeoutMsSync"),
+            String::from("process.fd_description_alias_count"),
+            String::from("process.fd_description_identity"),
+            String::from("process.fd_snapshot"),
+        ]),
+        "only read-only V8 projection/configuration queries may bypass typed Linux operations"
+    );
+
+    let filesystem = std::fs::read_to_string(
+        root.join("crates/native-sidecar/src/execution/host_dispatch/filesystem.rs"),
+    )
+    .expect("read typed filesystem decoder");
+    assert!(
+        filesystem.contains("for method in semantic_rpc_inventory()")
+            && filesystem.contains("must not fall through to the legacy bridge"),
+        "the typed decoder proof must cover the union of literal and wrapped-only RPCs"
+    );
+
+    let legacy_exec_routes = production_matches(
+        &root,
+        &[
+            PathBuf::from("crates/native-sidecar/src/execution/child_process.rs"),
+            PathBuf::from("crates/native-sidecar/src/service.rs"),
+        ],
+        &[
+            "request.method == \"process.exec\"",
+            "request.method == \"process.exec_fd_image_commit\"",
+            "\"process.exec\" =>",
+            "\"process.exec_fd_image_commit\" =>",
+        ],
+    );
+    assert!(
+        legacy_exec_routes.is_empty(),
+        "execve/fexecve must enter as typed ProcessOperation::Exec, never a legacy HostRpcRequest:\n{}",
+        legacy_exec_routes.join("\n")
+    );
+}
+
+#[test]
+fn compatibility_wasm_filesystem_inventory_uses_only_typed_kernel_dispatch() {
+    let root = repo_root();
+    let router = std::fs::read_to_string(
+        root.join("crates/native-sidecar/src/execution/host_dispatch/mod.rs"),
+    )
+    .expect("read host dispatcher");
+    let filesystem = std::fs::read_to_string(
+        root.join("crates/native-sidecar/src/execution/host_dispatch/filesystem.rs"),
+    )
+    .expect("read filesystem capability");
+    let process =
+        std::fs::read_to_string(root.join("crates/native-sidecar/src/execution/process.rs"))
+            .expect("read execution event mapper");
+
+    assert!(
+        router.contains("_ if full_filesystem =>")
+            && router.contains(
+                "filesystem::decode(request, full_filesystem, max_reply_bytes)?"
+            ),
+        "the compatibility-WASM router must delegate unmatched calls to the bounded typed filesystem decoder"
+    );
+    let wasm_mapper = process
+        .split_once("fn map_wasm_execution_event_with_host(")
+        .expect("WASM mapper")
+        .1
+        .split_once("pub(super) fn find_socket_state_entry")
+        .expect("end WASM mapper")
+        .0;
+    assert!(
+        wasm_mapper.contains("route_compatibility_host_call(")
+            && wasm_mapper.contains("true,")
+            && wasm_mapper.contains("max_reply_bytes,"),
+        "compatibility WASM must enable complete typed filesystem decoding"
+    );
+    for forbidden in [
+        "service_javascript_fs_sync_rpc",
+        "service_javascript_sync_rpc",
+        "JavascriptSyncRpcServiceRequest",
+        "guest_filesystem_call",
+        "handle_guest_filesystem_call",
+        "javascript::rpc",
+    ] {
+        assert!(
+            !filesystem.contains(forbidden),
+            "typed filesystem capability must not delegate to legacy RPC service {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn typed_process_dispatch_cannot_reconstruct_javascript_launch_protocol_types() {
+    let dispatcher = include_str!("../src/execution/host_dispatch/mod.rs");
+    let process_capability = include_str!("../src/execution/host_dispatch/process.rs");
+    for (label, source) in [
+        ("host dispatcher", dispatcher),
+        ("process capability", process_capability),
+    ] {
+        for forbidden in [
+            "JavascriptChildProcessSpawnRequest",
+            "JavascriptChildProcessSpawnOptions",
+            "JavascriptPosixSpawnFileAction",
+            "JavascriptSpawnHostNetFd",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{label} reconstructs compatibility-only {forbidden} below the adapter decoder"
+            );
+        }
+    }
+
+    let contract = include_str!("../../execution/src/host/process.rs");
+    assert!(
+        contract.contains("Spawn(BoundedProcessLaunchRequest)")
+            && contract.contains("Exec(BoundedProcessLaunchRequest)"),
+        "queued process launch operations must retain their payload admission proof"
+    );
+}
+
+#[test]
+fn neutral_capability_execution_files_do_not_depend_on_executor_protocol_types() {
+    let network = include_str!("../src/execution/host_dispatch/network.rs");
+    let filesystem = include_str!("../src/execution/host_dispatch/filesystem.rs");
+    let filesystem_execution = filesystem
+        .split_once("pub(super) struct FilesystemCapability")
+        .expect("filesystem capability marker")
+        .1
+        .split_once("#[cfg(test)]")
+        .expect("filesystem capability test marker")
+        .0;
+    for (label, source) in [
+        ("network", network),
+        ("filesystem execution", filesystem_execution),
+    ] {
+        for forbidden in [
+            "Javascript",
+            "V8",
+            "Python",
+            "Wasmtime",
+            "HostRpcRequest",
+            "HostRpcServiceResponse",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "neutral {label} capability depends on adapter type {forbidden}"
+            );
+        }
+    }
+    assert!(
+        !filesystem.contains("process.runtime == GuestRuntimeKind"),
+        "filesystem write semantics must be explicit in the typed operation"
+    );
+    let compatibility = include_str!("../src/execution/host_dispatch/network_compat.rs");
+    assert!(
+        compatibility.contains("HostRpcRequest")
+            && compatibility.contains("dispatch_context_managed_network_operation"),
+        "compatibility payload adaptation must stay in the explicitly named adapter module"
+    );
+}
+
+#[test]
 fn unix_listener_close_is_lossless_and_acknowledged() {
     let root = repo_root();
     let unix =
         std::fs::read_to_string(root.join("crates/native-sidecar/src/execution/network/unix.rs"))
             .expect("read Unix reactor source");
-    let rpc =
-        std::fs::read_to_string(root.join("crates/native-sidecar/src/execution/javascript/rpc.rs"))
-            .expect("read JavaScript RPC source");
+    let managed = std::fs::read_to_string(
+        root.join("crates/native-sidecar/src/execution/network/managed.rs"),
+    )
+    .expect("read shared managed-network source");
     let compact_unix: String = unix
         .chars()
         .filter(|character| !character.is_whitespace())
         .collect();
-    let compact_rpc: String = rpc
+    let compact_managed: String = managed
         .chars()
         .filter(|character| !character.is_whitespace())
         .collect();
@@ -87,9 +1262,10 @@ fn unix_listener_close_is_lossless_and_acknowledged() {
         "the Unix listener owner must acknowledge every terminal path after dropping its FD"
     );
     assert!(
-        compact_rpc.contains("tokio::time::timeout(operation_deadline,close_completion).await")
-            && compact_rpc.contains("JavascriptSyncRpcServiceResponse::Deferred"),
-        "the listener close bridge response must await bounded owner-task completion"
+        compact_managed.contains(
+            "operation_deadline_timeout(\"Unixlistenerclose\",deadline,completion,).await"
+        ) && compact_managed.contains("HostServiceResponse::Deferred"),
+        "the shared listener-close operation must await bounded owner-task completion"
     );
 }
 
@@ -225,6 +1401,16 @@ impl CfgTestTracker {
     }
 }
 
+fn production_source_text(source: &str) -> String {
+    let mut tracker = CfgTestTracker::new();
+    source
+        .lines()
+        .filter(|line| !tracker.in_test(line))
+        .map(strip_line_comment)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn count_open(s: &str) -> u32 {
     s.bytes().filter(|&b| b == b'{').count() as u32
 }
@@ -338,6 +1524,9 @@ const FS_ALLOW: &[&str] = &[
     "crates/execution/src/javascript.rs",
     "crates/execution/src/node_import_cache.rs",
     "crates/execution/src/runtime_support.rs",
+    // Process RSS is sampled only for operator-visible Wasmtime diagnostics;
+    // it is not guest filesystem access or an ambient WASI capability.
+    "crates/execution/src/wasm/wasmtime/engine.rs",
     // Host-side V8 diagnostics: module-trace and sync-RPC latency profilers
     // write to an operator-provided file path, and snapshot bootstrap reads the
     // userland bundle from PI_SNAPSHOT_BUNDLE_PATH. Host-only, not guest-reachable.
@@ -352,13 +1541,14 @@ const FS_ALLOW: &[&str] = &[
 
 /// net: host network access.
 ///
-/// Sanctioned surface: the kernel DNS resolver plane, the sidecar host-net
+/// Sanctioned surface: the kernel DNS/socket contract plane, the sidecar host-net
 /// chokepoint (`execution.rs`, which owns all guest TCP/UDP/Unix sockets), the
 /// host-backed storage/agent plugins (which open egress to S3 / Google Drive /
 /// the sandbox-agent control plane), the embedded V8 runtime IPC socketpair,
 /// and the client transport that talks to the spawned sidecar.
 const NET_ALLOW: &[&str] = &[
-    // kernel network plane
+    // Kernel DNS contract: address/config/result values only; host DNS
+    // transport lives in the native-sidecar resolver module below.
     "crates/kernel/src/dns.rs",
     // Shared IP classifier only; no host sockets are opened here.
     "crates/kernel/src/network_policy.rs",
@@ -403,6 +1593,10 @@ const PROCESS_ALLOW: &[&str] = &[
     // (SNAPSHOT_HELPER_ENV) so snapshot creation runs in a clean process.
     // Host-side bootstrap only; no guest-controlled input picks the program.
     "crates/v8-runtime/src/snapshot.rs",
+    // Explicitly threaded WASM is isolated in a re-exec of the reviewed
+    // native-sidecar binary. The parent keeps every kernel capability and the
+    // child receives only bounded typed host-operation IPC.
+    "crates/execution/src/wasm/wasmtime/worker.rs",
 ];
 
 /// env: process-environment reads.
@@ -424,6 +1618,9 @@ const ENV_ALLOW: &[&str] = &[
     // Host-side perf phase diagnostics toggles, read from operator env and not
     // guest-reachable.
     "crates/execution/src/javascript.rs",
+    // Operator/test override for the reviewed native-sidecar worker binary;
+    // guest input cannot select or mutate this path.
+    "crates/execution/src/wasm/wasmtime/worker.rs",
     "crates/native-sidecar/src/filesystem.rs",
     "crates/v8-runtime/src/bridge.rs",
     "crates/native-sidecar/src/execution/",
@@ -565,6 +1762,712 @@ fn env_reads_confined_to_chokepoints() {
     assert_green(&root, &files, env_class());
 }
 
+#[test]
+fn production_execution_lifecycle_is_runtime_neutral_and_delegated() {
+    let root = repo_root();
+    let lifecycle = std::fs::read_to_string(root.join("crates/execution/src/backend/lifecycle.rs"))
+        .expect("read runtime-neutral lifecycle contract");
+    for engine_type in [
+        "JavascriptExecution",
+        "PythonExecution",
+        "WasmExecution",
+        "BindingExecution",
+        "V8SessionHandle",
+    ] {
+        assert!(
+            !lifecycle.contains(engine_type),
+            "common lifecycle contract must not name adapter type {engine_type}"
+        );
+    }
+
+    let process =
+        std::fs::read_to_string(root.join("crates/native-sidecar/src/execution/process.rs"))
+            .expect("read ActiveExecution adapter");
+    let compact: String = process
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    assert!(
+        compact.contains("implExecutionBackendforActiveExecution")
+            && compact.contains("self.backend().kind()")
+            && compact.contains("self.backend().native_process_id()")
+            && compact.contains("self.backend().is_prepared_for_start()")
+            && compact.contains("self.backend_mut().start_prepared()")
+            && compact.contains("self.backend_mut().begin_shutdown(reason)")
+            && compact.contains("self.backend().set_paused(paused)")
+            && compact.contains("self.backend_mut().write_stdin(bytes)")
+            && compact.contains("self.backend_mut().close_stdin()")
+            && compact.contains(
+                "self.backend().deliver_signal_checkpoint(identity,signal,delivery_token,flags,thread_id)"
+            ),
+        "ActiveExecution must delegate every common lifecycle method through ExecutionBackend"
+    );
+
+    for method in [
+        "fn native_process_id(",
+        "fn set_paused(",
+        "fn write_stdin(",
+        "fn close_stdin(",
+        "fn deliver_signal_checkpoint(",
+    ] {
+        assert!(
+            lifecycle.contains(method),
+            "the runtime-neutral lifecycle contract must own {method}"
+        );
+    }
+
+    let controls_start = process
+        .find("pub(crate) fn apply_runtime_controls")
+        .expect("find ActiveProcess runtime controls");
+    let controls_end = process[controls_start..]
+        .find("fn take_pending_runtime_exit_event")
+        .map(|offset| controls_start + offset)
+        .expect("find end of ActiveProcess runtime controls");
+    let controls = &process[controls_start..controls_end];
+    for executor_semantic in [
+        "ActiveExecution::",
+        "matches!(self.execution",
+        "uses_shared_v8_runtime",
+        "child_pid()",
+    ] {
+        assert!(
+            !controls.contains(executor_semantic),
+            "common runtime controls must not branch on executor semantic {executor_semantic}"
+        );
+    }
+    assert!(
+        controls.contains("if controls.checkpoint {")
+            && controls.contains("deliver_signal_checkpoint("),
+        "every backend, including compatibility WASM, must enter the kernel-owned signal checkpoint path"
+    );
+
+    let wasm = std::fs::read_to_string(root.join("crates/execution/src/wasm.rs"))
+        .expect("read standalone WASM adapters");
+    let v8_backend_start = wasm
+        .find("impl ExecutionBackend for V8WasmExecution")
+        .expect("find V8-WASM backend adapter");
+    let v8_backend_end = wasm[v8_backend_start..]
+        .find("impl WasmExecution")
+        .map(|offset| v8_backend_start + offset)
+        .expect("find end of V8-WASM backend adapter");
+    let v8_backend: String = wasm[v8_backend_start..v8_backend_end]
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    assert!(
+        v8_backend.contains("fndeliver_signal_checkpoint(")
+            && v8_backend.contains("self.wake_handle(identity)")
+            && v8_backend.contains("wake.publish_signal(signal,delivery_token)"),
+        "compatibility WASM checkpoints must publish through the runtime-neutral kernel wake capability"
+    );
+    let wasm_backend_start = wasm
+        .find("impl ExecutionBackend for WasmExecution")
+        .expect("find standalone WASM backend adapter");
+    let wasm_backend: String = wasm[wasm_backend_start..]
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    assert!(
+        wasm_backend
+            .matches(
+                "execution.deliver_signal_checkpoint(identity,signal,delivery_token,flags,thread_id,)"
+            )
+            .count()
+            >= 2
+            && wasm_backend.contains("WasmExecutionBackend::Wasmtime(execution)"),
+        "both standalone WASM engines must consume the common signal-checkpoint contract"
+    );
+}
+
+#[test]
+fn common_execution_lifecycle_has_no_backend_specific_signal_or_process_residence_debt() {
+    let root = repo_root();
+    let files = [
+        "crates/execution/src",
+        "crates/execution/tests",
+        "crates/native-sidecar/src",
+        "crates/native-sidecar/tests",
+    ]
+    .into_iter()
+    .flat_map(|relative| {
+        production_source_files(&root)
+            .into_iter()
+            .filter(move |path| path.starts_with(relative))
+    })
+    .collect::<Vec<_>>();
+    let violations = production_matches(
+        &root,
+        &files,
+        &[
+            "NodeSignalDispositionAction",
+            "NodeSignalHandlerRegistration",
+            "WasmSignalDispositionAction",
+            "WasmSignalHandlerRegistration",
+            "JavascriptHostCall",
+            "javascript_host_call",
+            "map_node_signal_registration",
+            "map_wasm_signal_registration",
+            "closed_javascript_event_channel",
+            "closed_python_event_channel",
+            "closed_wasm_event_channel",
+            "EventChannelClosed.to_string()",
+        ],
+    );
+    assert!(
+        violations.is_empty(),
+        "common lifecycle naming or string-matched channel errors reappeared:\n{}",
+        violations.join("\n")
+    );
+
+    let sidecar_files = production_source_files(&root)
+        .into_iter()
+        .filter(|path| path.starts_with("crates/native-sidecar/src"))
+        .collect::<Vec<_>>();
+    let residence_violations = production_matches(
+        &root,
+        &sidecar_files,
+        &["uses_shared_v8_runtime", ".child_pid()"],
+    );
+    assert!(
+        residence_violations.is_empty(),
+        "common sidecar lifecycle must use ExecutionBackend::native_process_id:\n{}",
+        residence_violations.join("\n")
+    );
+
+    let signals =
+        std::fs::read_to_string(root.join("crates/native-sidecar/src/execution/signals.rs"))
+            .expect("read native signal mapper");
+    assert_eq!(
+        signals
+            .matches("fn map_execution_signal_registration(")
+            .count(),
+        1,
+        "native sidecar must have exactly one runtime-neutral execution signal mapper"
+    );
+
+    let active_execution =
+        std::fs::read_to_string(root.join("crates/native-sidecar/src/execution/process.rs"))
+            .expect("read ActiveExecution error adapters");
+    for exact_mapper in [
+        ".map_err(javascript_error)?",
+        ".map_err(python_error)?",
+        ".map_err(wasm_error)?",
+    ] {
+        assert!(
+            active_execution.contains(exact_mapper),
+            "ActiveExecution must preserve typed engine errors through {exact_mapper}"
+        );
+    }
+
+    let process =
+        std::fs::read_to_string(root.join("crates/native-sidecar/src/execution/process_events.rs"))
+            .expect("read root process-event recovery");
+    let recovery = process
+        .find("fn recover_closed_root_runtime_process_event(")
+        .map(|offset| &process[offset..])
+        .expect("find root channel-close recovery");
+    let recovery = recovery
+        .split("pub(super) fn active_process_by_path")
+        .next()
+        .expect("bound root channel-close recovery");
+    for backend_branch in [
+        "GuestRuntimeKind::",
+        "uses_shared_v8_runtime",
+        "child_pid()",
+    ] {
+        assert!(
+            !recovery.contains(backend_branch),
+            "root channel-close recovery must use native_process_id, not {backend_branch}"
+        );
+    }
+    assert!(recovery.contains("execution.native_process_id()"));
+
+    let child =
+        std::fs::read_to_string(root.join("crates/native-sidecar/src/execution/child_process.rs"))
+            .expect("read descendant process-event recovery");
+    let recovery = child
+        .find("fn recover_descendant_runtime_child_process_event(")
+        .map(|offset| &child[offset..])
+        .expect("find descendant channel-close recovery");
+    let recovery = recovery
+        .split("fn write_descendant_process_stdin(")
+        .next()
+        .expect("bound descendant channel-close recovery");
+    for backend_branch in [
+        "GuestRuntimeKind::",
+        "uses_shared_v8_runtime",
+        "child_pid()",
+    ] {
+        assert!(
+            !recovery.contains(backend_branch),
+            "descendant channel-close recovery must use native_process_id, not {backend_branch}"
+        );
+    }
+    assert!(recovery.contains("execution.native_process_id()"));
+
+    let state = std::fs::read_to_string(root.join("crates/native-sidecar/src/state.rs"))
+        .expect("read typed sidecar errors");
+    assert!(state.contains("ExecutionEventChannelClosed { backend: ExecutionBackendKind }"));
+}
+
+#[test]
+fn every_production_active_process_attaches_the_real_kernel_runtime_endpoint() {
+    let root = repo_root();
+
+    // The old stub must not remain available for a production call site to
+    // select accidentally. Deliberately virtual kernel processes use the same
+    // durable RuntimeControlCell without attaching its consumer; once a real
+    // backend is installed it is wrapped by ActiveProcess below.
+    for relative in [
+        "crates/kernel/src",
+        "crates/execution/src",
+        "crates/native-sidecar/src",
+    ] {
+        let files = production_source_files(&root)
+            .into_iter()
+            .filter(|path| path.starts_with(relative))
+            .collect::<Vec<_>>();
+        for path in files {
+            let source = std::fs::read_to_string(root.join(&path))
+                .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+            assert!(
+                !source.contains("StubDriverProcess"),
+                "production runtime endpoint stub reappeared in {}",
+                path.display()
+            );
+        }
+    }
+
+    let process_relative = PathBuf::from("crates/native-sidecar/src/execution/process.rs");
+    let process = std::fs::read_to_string(root.join(&process_relative))
+        .expect("read ActiveProcess implementation");
+    let constructor = rust_braced_item(&process, "pub(crate) fn new(");
+    let compact_constructor = constructor
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    assert!(
+        compact_constructor.contains("Self::attach_runtime_control_before_start(")
+            && compact_constructor.contains("Self::new_with_attached_runtime_control("),
+        "ordinary ActiveProcess construction must attach and retain the real generation-bound kernel runtime endpoint"
+    );
+    let preattached_constructor =
+        rust_braced_item(&process, "pub(crate) fn new_with_attached_runtime_control(");
+    assert!(
+        preattached_constructor
+            .contains("runtime_control: agentos_kernel::process_runtime::RuntimeControlReceiver")
+            && preattached_constructor.contains("runtime_control.identity()")
+            && preattached_constructor.contains("kernel_handle.runtime_identity()"),
+        "startup construction must accept and validate the receiver attached before engine start"
+    );
+
+    let launch =
+        std::fs::read_to_string(root.join("crates/native-sidecar/src/execution/launch.rs"))
+            .expect("read top-level launch implementation");
+    let execute = launch
+        .split_once("    pub(crate) async fn execute(")
+        .expect("top-level execute implementation")
+        .1;
+    let allocated = execute
+        .find("let kernel_handle = vm\n            .kernel\n            .spawn_process(")
+        .expect("top-level kernel process allocation");
+    let startup = &execute[allocated..];
+    let attach = startup
+        .find("ActiveProcess::attach_runtime_control_before_start(")
+        .expect("pre-start runtime endpoint attachment");
+    let pty_setup = startup
+        .find("let tty_master_fd = if requested_tty")
+        .expect("top-level PTY setup");
+    let engine_start = startup
+        .find("let (execution, process_env, started_context) = match resolved.runtime")
+        .expect("top-level engine start");
+    let publish = startup
+        .find("new_with_attached_runtime_control(")
+        .expect("pre-attached ActiveProcess publication");
+    assert!(
+        attach < pty_setup && pty_setup < engine_start && engine_start < publish,
+        "the real endpoint must attach before any fallible setup or engine start"
+    );
+    let fallible_startup = &startup[attach..publish];
+    assert!(
+        startup[..publish].contains("macro_rules! top_level_start_step")
+            && startup[..publish].contains("rollback_failed_top_level_process_start(")
+            && !fallible_startup.contains("?;"),
+        "every fallible post-allocation setup/start step must use the common rollback funnel"
+    );
+    let rollback = rust_braced_item(&launch, "fn rollback_failed_top_level_process_start(");
+    assert!(
+        rollback.contains("execution.terminate()")
+            && rollback.contains("kernel_handle.finish(127)")
+            && rollback.contains("kernel.waitpid(kernel_handle.pid())"),
+        "failed top-level setup must terminate the engine, mark exit, and reap kernel resources"
+    );
+    let published_rollback =
+        rust_braced_item(&launch, "fn rollback_published_top_level_process_start(");
+    assert!(
+        published_rollback.contains("vm.active_processes.remove(process_id)")
+            && published_rollback.contains("rollback_failed_top_level_process_start("),
+        "a failure after active-process publication must remove, terminate, and reap the process"
+    );
+    assert_eq!(
+        launch
+            .matches("if let Err(error) = self.bridge.emit_lifecycle(&vm_id, LifecycleState::Busy)")
+            .count(),
+        2,
+        "both binding and engine lifecycle publications must handle bridge failure"
+    );
+    assert_eq!(
+        launch
+            .matches("rollback_published_top_level_process_start(")
+            .count(),
+        3,
+        "the helper declaration and both lifecycle failure paths must remain wired"
+    );
+
+    // Every production backend-installation path attaches its generation-bound
+    // runtime endpoint before engine or binding-producer start, then transfers
+    // that receiver into ActiveProcess. Test fixtures are ignored.
+    // A direct struct literal would bypass endpoint attachment, so it is
+    // forbidden outside the declaration and impl header.
+    let mut constructors = Vec::new();
+    let mut preattached_constructors = Vec::new();
+    let mut direct_literals = Vec::new();
+    for relative in production_source_files(&root)
+        .into_iter()
+        .filter(|path| path.starts_with("crates/native-sidecar/src/"))
+    {
+        let source = std::fs::read_to_string(root.join(&relative))
+            .unwrap_or_else(|error| panic!("read {}: {error}", relative.display()));
+        let mut tracker = CfgTestTracker::new();
+        for (index, raw) in source.lines().enumerate() {
+            if tracker.in_test(raw) {
+                continue;
+            }
+            let code = strip_line_comment(raw);
+            if code.contains("ActiveProcess::new(") {
+                constructors.push(relative.clone());
+            }
+            if code.contains("ActiveProcess::new_with_attached_runtime_control(") {
+                preattached_constructors.push(relative.clone());
+            }
+            if code.contains("ActiveProcess {")
+                && !code.contains("struct ActiveProcess {")
+                && !code.trim_start().starts_with("impl ")
+            {
+                direct_literals.push(format!(
+                    "{}:{}: {}",
+                    relative.display(),
+                    index + 1,
+                    code.trim()
+                ));
+            }
+        }
+    }
+    constructors.sort();
+    let top_level_launch = PathBuf::from("crates/native-sidecar/src/execution/launch.rs");
+    let top_level_source = std::fs::read_to_string(root.join(&top_level_launch))
+        .expect("read top-level launch implementation");
+    if top_level_source.contains("ActiveProcess::new_with_attached_runtime_control(") {
+        preattached_constructors.push(top_level_launch);
+    }
+    preattached_constructors.sort();
+    preattached_constructors.dedup();
+    assert!(
+        constructors.is_empty(),
+        "production startup must never attach the endpoint after an executor may already be running: {constructors:?}"
+    );
+    assert_eq!(
+        preattached_constructors,
+        [
+            PathBuf::from("crates/native-sidecar/src/execution/child_process.rs"),
+            PathBuf::from("crates/native-sidecar/src/execution/launch.rs"),
+        ],
+        "only reviewed startup paths may transfer a receiver attached before engine start"
+    );
+    assert!(
+        direct_literals.is_empty(),
+        "production ActiveProcess literals bypass endpoint attachment:\n{}",
+        direct_literals.join("\n")
+    );
+}
+
+#[test]
+fn neutral_host_contracts_and_shared_capabilities_have_no_engine_types() {
+    let root = repo_root();
+    let contract_files = production_source_files(&root)
+        .into_iter()
+        .filter(|path| {
+            path.starts_with("crates/execution/src/backend/")
+                || path.starts_with("crates/execution/src/host/")
+        })
+        .collect::<Vec<_>>();
+
+    let mut violations = engine_type_identifier_matches(&root, &contract_files, &[]);
+
+    // These lower-layer host-service models are consumed by every executor.
+    // They are deliberately scanned as complete production files because no
+    // engine adapter belongs in native-sidecar-core.
+    let core_host_files = [
+        "crates/native-sidecar-core/src/guest_fs.rs",
+        "crates/native-sidecar-core/src/guest_net.rs",
+        "crates/native-sidecar-core/src/guest_pty.rs",
+        "crates/native-sidecar-core/src/identity.rs",
+        "crates/native-sidecar-core/src/signals.rs",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .collect::<Vec<_>>();
+    violations.extend(engine_type_identifier_matches(
+        &root,
+        &core_host_files,
+        &["GuestRuntimeKind", "ExecutionBackendKind"],
+    ));
+
+    // host_dispatch/mod.rs starts with the compatibility-wire decoder. Scan
+    // the semantic dispatcher half so the adapter may mention its source
+    // engine while capability routing and kernel effects may not.
+    let dispatcher_relative =
+        PathBuf::from("crates/native-sidecar/src/execution/host_dispatch/mod.rs");
+    let dispatcher = std::fs::read_to_string(root.join(&dispatcher_relative))
+        .unwrap_or_else(|error| panic!("read {}: {error}", dispatcher_relative.display()));
+    let semantic_dispatcher = dispatcher
+        .find("pub(super) fn dispatch_host_operation(")
+        .map(|offset| &dispatcher[offset..])
+        .expect("shared host semantic dispatcher marker");
+    violations.extend(engine_type_identifiers_in_source(
+        &dispatcher_relative,
+        semantic_dispatcher,
+        &["GuestRuntimeKind", "ExecutionBackendKind"],
+    ));
+
+    // Domain files contain compatibility-wire decoders before their shared
+    // capability implementation. Scan only the execution half: JavaScript
+    // request types are permitted in the explicit adapter decoder, never in
+    // the semantic capability that touches kernel state.
+    for family in [
+        "clock",
+        "entropy",
+        "filesystem",
+        "identity",
+        "network",
+        "process",
+        "signal",
+        "terminal",
+    ] {
+        let relative = PathBuf::from(format!(
+            "crates/native-sidecar/src/execution/host_dispatch/{family}.rs"
+        ));
+        let source = std::fs::read_to_string(root.join(&relative))
+            .unwrap_or_else(|error| panic!("read {}: {error}", relative.display()));
+        let marker = format!("pub(super) struct {}Capability", to_pascal_case(family));
+        let capability = source
+            .find(&marker)
+            .map(|offset| &source[offset..])
+            .unwrap_or_else(|| panic!("missing capability marker {marker}"));
+        violations.extend(engine_type_identifiers_in_source(
+            &relative,
+            capability,
+            &["GuestRuntimeKind", "ExecutionBackendKind"],
+        ));
+    }
+
+    // These files are semantic sidecar reactor owners. Engine-specific request
+    // decoding remains allowed only in the explicitly named javascript/* and
+    // host_dispatch/network_compat.rs adapters, never in a shared reactor file.
+    for relative in [
+        "crates/native-sidecar/src/execution/network/tcp.rs",
+        "crates/native-sidecar/src/execution/network/udp.rs",
+        "crates/native-sidecar/src/execution/network/unix.rs",
+        "crates/native-sidecar/src/execution/network/tls.rs",
+        "crates/native-sidecar/src/execution/network/dns.rs",
+        "crates/native-sidecar/src/execution/network/resolver.rs",
+        "crates/native-sidecar/src/execution/network/managed.rs",
+        "crates/native-sidecar/src/execution/network/managed_endpoint.rs",
+        "crates/native-sidecar/src/execution/network/http_client.rs",
+        "crates/native-sidecar/src/execution/network/http2.rs",
+    ] {
+        let relative = PathBuf::from(relative);
+        let source = std::fs::read_to_string(root.join(&relative))
+            .unwrap_or_else(|error| panic!("read {}: {error}", relative.display()));
+        violations.extend(engine_type_identifiers_in_source(
+            &relative,
+            &source,
+            &["GuestRuntimeKind", "ExecutionBackendKind"],
+        ));
+    }
+
+    // state.rs also owns executor sessions, so scan the reviewed shared
+    // networking model declarations rather than granting or denying the whole
+    // mixed-domain file. A newly added field on one of these types is covered
+    // automatically by balanced-brace extraction.
+    let state_relative = PathBuf::from("crates/native-sidecar/src/state.rs");
+    let state = std::fs::read_to_string(root.join(&state_relative))
+        .unwrap_or_else(|error| panic!("read {}: {error}", state_relative.display()));
+    for marker in [
+        "pub(crate) struct SocketDescriptionLease",
+        "pub(crate) struct SocketFairnessRetirement",
+        "pub(crate) struct ListenerConnectionRetirement",
+        "pub(crate) struct HostNetTransferDescription",
+        "pub(crate) struct VmDnsConfig",
+        "pub(crate) struct SocketPathContext",
+        "pub(crate) struct NetworkResourceCounts",
+        "pub(crate) struct GuestUnixAddress",
+        "pub(crate) struct GuestUnixAddressRegistryEntry",
+        "pub(crate) struct HttpLoopbackTarget",
+        "pub(crate) enum SocketFamily",
+        "pub(crate) struct VmListenPolicy",
+        "pub(crate) struct ActiveHttpServer",
+        "pub(crate) enum PendingHttpRequest",
+        "pub(crate) struct ActiveHttp2State",
+        "pub(crate) struct Http2SharedState",
+        "pub(crate) struct ActiveHttp2Server",
+        "pub(crate) struct ActiveHttp2Session",
+        "pub(crate) struct ActiveHttp2Stream",
+        "pub(crate) struct QueuedHttp2Event",
+        "pub(crate) struct QueuedHttp2Command",
+        "pub(crate) struct Http2SocketSnapshot",
+        "pub(crate) struct Http2RuntimeSnapshot",
+        "pub(crate) struct Http2SessionSnapshot",
+        "pub(crate) struct Http2BridgeEvent",
+        "pub(crate) enum Http2SessionCommand",
+        "pub(crate) enum TcpListenerEvent",
+        "pub(crate) struct PendingTcpSocket",
+        "pub(crate) enum TcpSocketEvent",
+        "pub(crate) struct SocketEventPusher",
+        "struct SocketReadinessSubscriber",
+        "pub(crate) struct SocketReadinessSubscribers",
+        "pub(crate) struct SocketReadinessRegistration",
+        "pub(crate) enum KernelSocketReadinessEvent",
+        "pub(crate) struct KernelSocketReadinessTarget",
+        "pub(crate) struct KernelSocketReadinessRegistryState",
+        "pub(crate) struct ActiveTcpSocket",
+        "pub(crate) enum NativeTlsCommand",
+        "pub(crate) enum NativePlainSocketCommand",
+        "pub(crate) struct PlainSocketWritePayload",
+        "pub(crate) struct TlsWritePayload",
+        "pub(crate) struct ReactorIoLimits",
+        "pub(crate) struct LoopbackTlsTransportPair",
+        "pub(crate) struct LoopbackTlsTransportPairState",
+        "pub(crate) struct LoopbackTlsEndpoint",
+        "pub(crate) struct TlsClientHello",
+        "pub(crate) struct TlsBridgeOptions",
+        "pub(crate) enum TlsMaterial",
+        "pub(crate) enum TlsDataValue",
+        "pub(crate) struct ActiveTlsState",
+        "pub(crate) struct ResolvedTcpConnectAddr",
+        "pub(crate) struct ActiveTcpListener",
+        "pub(crate) enum UnixListenerEvent",
+        "pub(crate) struct PendingUnixSocket",
+        "pub(crate) struct GuestUnixConnectionState",
+        "pub(crate) struct PendingUnixConnectionGuard",
+        "pub(crate) struct ActiveUnixSocket",
+        "pub(crate) struct ActiveUnixListener",
+        "pub(crate) enum UdpFamily",
+        "pub(crate) enum DatagramEvent",
+        "pub(crate) struct NativeUdpSendPayload",
+        "pub(crate) enum NativeUdpSocketOption",
+        "pub(crate) enum NativeUdpCommand",
+        "pub(crate) struct ActiveUdpSocket",
+        "pub(crate) struct ManagedUdpPollRecheck",
+        "pub(crate) enum PendingNetConnect",
+        "pub(crate) struct PendingNetConnectState",
+        "pub(crate) enum SocketQueryKind",
+        "pub(crate) struct ProcNetEntry",
+    ] {
+        let declaration = rust_braced_item(&state, marker);
+        violations.extend(engine_type_identifiers_in_source(
+            &state_relative,
+            declaration,
+            &["GuestRuntimeKind", "ExecutionBackendKind"],
+        ));
+    }
+
+    assert!(
+        violations.is_empty(),
+        "runtime-neutral host contracts and capability execution must not contain engine-specific types or executor switchboards; keep those in explicit adapter decoders:\n{}",
+        violations.join("\n")
+    );
+}
+
+fn rust_braced_item<'a>(source: &'a str, marker: &str) -> &'a str {
+    let start = source
+        .find(marker)
+        .unwrap_or_else(|| panic!("missing shared model declaration {marker}"));
+    let item = &source[start..];
+    let open = item
+        .find('{')
+        .unwrap_or_else(|| panic!("shared model declaration {marker} has no body"));
+    let mut depth = 0_usize;
+    for (offset, byte) in item[open..].bytes().enumerate() {
+        match byte {
+            b'{' => depth = depth.saturating_add(1),
+            b'}' => {
+                depth = depth
+                    .checked_sub(1)
+                    .unwrap_or_else(|| panic!("unbalanced shared model declaration {marker}"));
+                if depth == 0 {
+                    return &item[..open + offset + 1];
+                }
+            }
+            _ => {}
+        }
+    }
+    panic!("unterminated shared model declaration {marker}")
+}
+
+fn to_pascal_case(value: &str) -> String {
+    let mut characters = value.chars();
+    characters
+        .next()
+        .map(|first| first.to_ascii_uppercase().to_string() + characters.as_str())
+        .unwrap_or_default()
+}
+
+fn engine_type_identifier_matches(
+    root: &Path,
+    files: &[PathBuf],
+    forbidden_exact: &[&str],
+) -> Vec<String> {
+    files
+        .iter()
+        .flat_map(|relative| {
+            let source = std::fs::read_to_string(root.join(relative))
+                .unwrap_or_else(|error| panic!("read {}: {error}", relative.display()));
+            engine_type_identifiers_in_source(relative, &source, forbidden_exact)
+        })
+        .collect()
+}
+
+fn engine_type_identifiers_in_source(
+    relative: &Path,
+    source: &str,
+    forbidden_exact: &[&str],
+) -> Vec<String> {
+    let mut violations = Vec::new();
+    let mut tracker = CfgTestTracker::new();
+    for (index, raw) in source.lines().enumerate() {
+        if tracker.in_test(raw) {
+            continue;
+        }
+        let code = strip_line_comment(raw);
+        for identifier in
+            code.split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+        {
+            let engine_type = ["Javascript", "V8", "Python", "Wasmtime"]
+                .iter()
+                .any(|prefix| identifier.starts_with(prefix) && identifier.len() > prefix.len());
+            if engine_type || forbidden_exact.contains(&identifier) {
+                violations.push(format!(
+                    "{}:{}: {identifier}",
+                    relative.display(),
+                    index + 1
+                ));
+            }
+        }
+    }
+    violations
+}
+
 /// Sanity: the scan actually sees source files and the allowlisted files exist.
 /// Guards against a refactor silently making the lint scan nothing (which would
 /// make it vacuously pass).
@@ -634,6 +2537,7 @@ fn dependency_keys(manifest: &Path) -> BTreeSet<String> {
 fn generic_runtime_layers_do_not_depend_on_product_or_acp_layers() {
     let root = repo_root();
     let lower_layers = [
+        "resource",
         "runtime",
         "kernel",
         "vfs",
@@ -666,6 +2570,95 @@ fn generic_runtime_layers_do_not_depend_on_product_or_acp_layers() {
 }
 
 #[test]
+fn kernel_dns_contract_has_no_native_resolver_or_runtime_dependency() {
+    let root = repo_root();
+    let manifest = root.join("crates/kernel/Cargo.toml");
+    let dependencies = dependency_keys(&manifest);
+    for forbidden in ["hickory-resolver", "tokio"] {
+        assert!(
+            !dependencies.contains(forbidden),
+            "kernel must not depend on native DNS transport crate {forbidden}"
+        );
+    }
+
+    let kernel_dns = std::fs::read_to_string(root.join("crates/kernel/src/dns.rs"))
+        .expect("read kernel DNS contract");
+    for forbidden in [
+        "agentos_runtime",
+        "BlockingJobError",
+        "RuntimeContext",
+        "hickory_resolver",
+        "TokioResolver",
+        "tokio::",
+    ] {
+        assert!(
+            !kernel_dns.contains(forbidden),
+            "kernel DNS contract contains native resolver/runtime symbol {forbidden}"
+        );
+    }
+
+    let native_resolver = std::fs::read_to_string(
+        root.join("crates/native-sidecar/src/execution/network/resolver.rs"),
+    )
+    .expect("read native DNS resolver");
+    assert!(
+        native_resolver.contains("pub(crate) struct HickoryDnsResolver")
+            && native_resolver.contains("runtime: RuntimeContext")
+            && native_resolver.contains("TokioResolver"),
+        "native sidecar must own Hickory/Tokio DNS transport with an injected RuntimeContext"
+    );
+    let service = std::fs::read_to_string(root.join("crates/native-sidecar/src/service.rs"))
+        .expect("read native sidecar service");
+    assert!(
+        service.contains("HickoryDnsResolver::new(runtime_context.clone())"),
+        "native sidecar must inject its one process RuntimeContext into DNS transport"
+    );
+}
+
+#[test]
+fn kernel_resource_accounting_has_no_runtime_or_tokio_dependency_cycle() {
+    let root = repo_root();
+    let kernel_dependencies = dependency_keys(&root.join("crates/kernel/Cargo.toml"));
+    for forbidden in ["agentos-runtime", "tokio"] {
+        assert!(
+            !kernel_dependencies.contains(forbidden),
+            "kernel resource authority must not depend on {forbidden}"
+        );
+    }
+
+    let runtime_dependencies = dependency_keys(&root.join("crates/runtime/Cargo.toml"));
+    assert!(
+        !runtime_dependencies.contains("agentos-kernel"),
+        "process runtime must not create a runtime -> kernel -> VFS -> runtime cycle"
+    );
+    assert!(
+        runtime_dependencies.contains("agentos-resource")
+            && kernel_dependencies.contains("agentos-resource"),
+        "kernel and process runtime must share the runtime-neutral accounting layer"
+    );
+
+    let resource_dependencies = dependency_keys(&root.join("crates/resource/Cargo.toml"));
+    assert_eq!(
+        resource_dependencies,
+        BTreeSet::from([String::from("event-listener")]),
+        "resource accounting must remain independent of executors, Tokio, VFS, and product layers"
+    );
+
+    for path in [
+        "crates/kernel/src/kernel.rs",
+        "crates/kernel/src/socket_table.rs",
+    ] {
+        let source = std::fs::read_to_string(root.join(path)).expect("read kernel resource owner");
+        for forbidden in ["agentos_runtime", "tokio::"] {
+            assert!(
+                !source.contains(forbidden),
+                "{path} contains concrete runtime symbol {forbidden}"
+            );
+        }
+    }
+}
+
+#[test]
 fn shared_acp_runtime_has_no_adapter_name_policy() {
     let root = repo_root();
     let production = ["mod.rs", "runtime.rs", "restore.rs", "turn.rs"]
@@ -691,7 +2684,7 @@ fn shared_acp_runtime_has_no_adapter_name_policy() {
     ] {
         assert!(
             !production.contains(adapter_name),
-            "shared ACP runtime must not branch on adapter name {adapter_name}; put launch compatibility in the AgentOS-owned package launcher"
+            "shared ACP runtime must not branch on adapter name {adapter_name}; put launch compatibility in the agentOS-owned package launcher"
         );
     }
     assert!(
@@ -816,15 +2809,12 @@ fn native_execution_is_split_by_domain() {
         "crates/native-sidecar/src/execution/network/tls.rs",
         "crates/native-sidecar/src/execution/network/http2.rs",
         "crates/native-sidecar/src/execution/network/dns.rs",
+        "crates/native-sidecar/src/execution/network/resolver.rs",
         "crates/native-sidecar/src/execution/javascript/mod.rs",
         "crates/native-sidecar/src/execution/javascript/rpc.rs",
         "crates/native-sidecar/src/execution/javascript/crypto.rs",
         "crates/native-sidecar/src/execution/javascript/sqlite.rs",
         "crates/native-sidecar/src/execution/javascript/http.rs",
-        "crates/native-sidecar/src/execution/python/mod.rs",
-        "crates/native-sidecar/src/execution/python/rpc.rs",
-        "crates/native-sidecar/src/execution/python/sockets.rs",
-        "crates/native-sidecar/src/execution/python/subprocess.rs",
     ];
 
     for path in expected {
@@ -834,6 +2824,169 @@ fn native_execution_is_split_by_domain() {
         !root.join("crates/native-sidecar/src/execution.rs").exists(),
         "the monolithic execution.rs must not be restored"
     );
+}
+
+#[test]
+fn python_filesystem_and_process_calls_use_common_host_operations() {
+    let root = repo_root();
+    let adapter = std::fs::read_to_string(root.join("crates/execution/src/python.rs"))
+        .expect("read Python execution adapter");
+    let mapper =
+        std::fs::read_to_string(root.join("crates/native-sidecar/src/execution/process.rs"))
+            .expect("read common execution event mapper");
+    let filesystem = std::fs::read_to_string(root.join("crates/native-sidecar/src/filesystem.rs"))
+        .expect("read sidecar filesystem helpers");
+    let state = std::fs::read_to_string(root.join("crates/native-sidecar/src/state.rs"))
+        .expect("read shared sidecar state");
+
+    assert!(
+        adapter.contains("pub fn try_host_call(")
+            && adapter.contains("HostOperation::Filesystem(")
+            && adapter.contains("HostOperation::Process(ProcessOperation::RunCaptured"),
+        "the Python wire adapter must translate filesystem and captured-process calls into runtime-neutral host operations"
+    );
+    assert!(
+        mapper.contains("python_responder.try_host_call(")
+            && mapper.contains("host.submit(call.operation, call.reply.clone(), admission)"),
+        "Python filesystem/process requests must enter the same admitted host-operation lane as other executors"
+    );
+    for removed in [
+        "crates/native-sidecar/src/execution/python/mod.rs",
+        "crates/native-sidecar/src/execution/python/rpc.rs",
+        "crates/native-sidecar/src/execution/python/sockets.rs",
+    ] {
+        assert!(
+            !root.join(removed).exists(),
+            "Python semantics must not return to the deleted sidecar dispatcher ({removed})"
+        );
+    }
+    for removed_state in [
+        "PythonVfsRpcRequest(Box<",
+        "PythonSocketConnectCompletion",
+        "python_sockets:",
+        "next_python_socket_id:",
+    ] {
+        assert!(
+            !state.contains(removed_state),
+            "shared sidecar state must not retain Python-specific semantic state ({removed_state})"
+        );
+    }
+    assert!(
+        !filesystem.contains("PythonVfsRpc")
+            && !filesystem.contains("handle_python_vfs_rpc_request"),
+        "the filesystem source of truth must not contain a Python-specific semantic switch"
+    );
+    assert!(
+        !root
+            .join("crates/native-sidecar/src/execution/python/subprocess.rs")
+            .exists(),
+        "captured subprocess execution belongs to the common process capability, not a Python implementation"
+    );
+}
+
+#[test]
+fn python_common_host_replies_preserve_typed_error_details() {
+    let adapter = include_str!("../../execution/src/python.rs");
+    let target = adapter
+        .split_once("impl DirectHostReplyTarget for PythonHostReplyTarget")
+        .expect("Python direct host reply target")
+        .1
+        .split_once("fn python_host_reply_adapter_error")
+        .expect("end Python direct host reply target")
+        .0;
+
+    assert!(
+        target.contains("respond_claimed_host_error(call_id, error)")
+            && target.contains("respond_host_error(call_id, error)"),
+        "the Python adapter must forward the complete HostServiceError, including structured details"
+    );
+    assert!(
+        !target.contains("error.code") && !target.contains("error.message"),
+        "the Python common reply target must not flatten typed host errors into code/message pairs"
+    );
+}
+
+#[test]
+fn javascript_timer_and_direct_reply_errors_use_typed_classification() {
+    let javascript = include_str!("../../execution/src/javascript.rs");
+    let timer = javascript
+        .split_once("fn timer_dispatch_error(")
+        .expect("JavaScript timer error adapter")
+        .1
+        .split_once("fn javascript_timer_error(")
+        .expect("end JavaScript timer error adapter")
+        .0;
+    assert!(
+        timer.contains("error.code")
+            && timer.contains("error.message")
+            && timer.contains("error.details"),
+        "JavaScript timer dispatch must preserve the typed HostServiceError payload"
+    );
+
+    let direct_reply = javascript
+        .split_once("pub(crate) fn map_host_reply_adapter_response(")
+        .expect("JavaScript direct reply adapter")
+        .1
+        .split_once("fn encode_host_service_error_payload(")
+        .expect("end JavaScript direct reply adapter")
+        .0;
+    assert!(
+        direct_reply.contains("BridgeSettlementErrorKind::StaleCompletion"),
+        "stale direct replies must be classified by the typed V8 settlement kind"
+    );
+
+    for (label, source) in [
+        ("timer dispatch", timer),
+        ("direct host reply", direct_reply),
+    ] {
+        for forbidden in [
+            ".split(",
+            ".split_once(",
+            ".starts_with(",
+            ".strip_prefix(",
+            ".contains(",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{label} errors must not infer behavior from diagnostic strings ({forbidden})"
+            );
+        }
+    }
+}
+
+#[test]
+fn pending_process_event_limits_are_typed_and_actionable() {
+    let service = include_str!("../src/service.rs");
+    let state = include_str!("../src/state.rs");
+    let check = service
+        .split_once("fn check_pending_process_event_capacity(")
+        .expect("pending process-event capacity check")
+        .1
+        .split_once("fn ")
+        .expect("end pending process-event capacity check")
+        .0;
+
+    assert!(
+        check.matches("SidecarError::host_resource_limit(").count() >= 2,
+        "pending event count and byte limits must return typed resource-limit errors"
+    );
+    assert!(
+        !check.contains("SidecarError::InvalidState"),
+        "bounded queue admission failures are resource limits, not invalid internal state"
+    );
+    let typed_details = state
+        .split_once("pub(crate) fn host_resource_limit(")
+        .expect("typed host resource-limit helper")
+        .1
+        .split_once("impl fmt::Display for SidecarError")
+        .expect("end typed host resource-limit helper")
+        .0;
+    for field in ["limitName", "observed", "limit", "configPath"] {
+        assert!(
+            typed_details.contains(field),
+            "pending process-event resource errors must preserve {field} details"
+        );
+    }
 }
 
 fn production_matches(root: &Path, files: &[PathBuf], needles: &[&str]) -> Vec<String> {
@@ -946,10 +3099,12 @@ fn top_level_python_start_uses_the_async_runtime_adapter() {
     let path = repo_root().join("crates/native-sidecar/src/execution/launch.rs");
     let source =
         std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("read {path:?}: {error}"));
+    let compact = source
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
     assert!(
-        source.contains(
-            ".python_engine\n                    .start_execution_with_runtime_async("
-        ),
+        compact.contains(".python_engine.start_execution_with_runtime_async("),
         "top-level Python startup must await cache materialization and prewarm instead of blocking a Tokio worker"
     );
     assert!(
@@ -963,17 +3118,20 @@ fn nested_child_start_never_blocks_the_shared_runtime_worker() {
     let source = native_execution_source(&repo_root());
 
     assert!(
-        source.contains("pub(crate) async fn spawn_javascript_child_process("),
+        source.contains("pub(crate) async fn spawn_child_process("),
         "root child startup must be an async sidecar dispatch path"
     );
     assert!(
-        source.contains("async fn spawn_descendant_javascript_child_process("),
+        source.contains("async fn spawn_descendant_process("),
         "descendant child startup must be an async sidecar dispatch path"
     );
     assert!(
         source
             .matches(".start_execution_with_runtime_async(")
             .count()
+            + source
+                .matches(".start_execution_with_runtime_async_for_backend(")
+                .count()
             >= 6,
         "top-level plus root/descendant Python and WASM startup must use async runtime adapters"
     );
@@ -1088,6 +3246,74 @@ fn native_reactor_has_no_unbounded_channels_or_per_io_thread_names() {
 }
 
 #[test]
+fn common_network_reactor_has_no_executor_specific_control_or_encoding() {
+    let root = repo_root();
+    let network_files = native_execution_source_files(&root)
+        .into_iter()
+        .filter(|path| path.starts_with("crates/native-sidecar/src/execution/network/"))
+        .collect::<Vec<_>>();
+    let violations = production_matches(
+        &root,
+        &network_files,
+        &[
+            "ActiveExecution::",
+            "ExecutionBackendKind::",
+            "V8SessionHandle",
+            "v8_session_handle(",
+            "v8_runtime::",
+        ],
+    );
+    assert!(
+        violations.is_empty(),
+        "shared network ownership must use runtime-neutral wake/reply capabilities; executor selection and engine wire encoding belong in adapters:\n{}",
+        violations.join("\n")
+    );
+
+    let process_file = vec![PathBuf::from(
+        "crates/native-sidecar/src/execution/process.rs",
+    )];
+    let wake_leaks = production_matches(
+        &root,
+        &process_file,
+        &[
+            "V8SessionHandle",
+            "ExecutionWakeTarget",
+            "v8_session_handle(",
+        ],
+    );
+    assert!(
+        wake_leaks.is_empty(),
+        "common process orchestration must obtain ExecutionWakeHandle from the backend contract instead of constructing an engine session target:\n{}",
+        wake_leaks.join("\n")
+    );
+
+    let lifecycle = std::fs::read_to_string(root.join("crates/execution/src/backend/lifecycle.rs"))
+        .expect("read execution backend lifecycle contract");
+    assert!(
+        lifecycle.contains(
+            "fn wake_handle(&self, _identity: ExecutionWakeIdentity) -> Option<ExecutionWakeHandle>"
+        ),
+        "the executor backend contract must own construction of its runtime-neutral wake capability"
+    );
+    assert!(
+        lifecycle.contains("WebAssembly")
+            && !lifecycle.contains("CompatibilityWasm")
+            && !lifecycle.contains("Wasmtime"),
+        "common lifecycle kinds must identify the WebAssembly language backend without predeclaring an engine"
+    );
+
+    let unix =
+        std::fs::read_to_string(root.join("crates/native-sidecar/src/execution/network/unix.rs"))
+            .expect("read Unix reactor source");
+    assert!(
+        unix.contains(
+            "target.pending_connections.len() >= target.pending_connection_limit"
+        ) && unix.contains("listener_accept_capacity(backlog, reactor_limits)"),
+        "Unix pre-accept metadata must be admitted against the same bounded listener capacity as its completion lane"
+    );
+}
+
+#[test]
 fn native_reactor_tasks_enter_through_task_supervision() {
     let root = repo_root();
     let files = native_reactor_source_files(&root)
@@ -1128,6 +3354,31 @@ fn v8_platform_worker_pool_has_a_reviewed_fixed_bound() {
 }
 
 #[test]
+fn canonical_wasm_exceptions_use_one_finalized_artifact_on_both_engines() {
+    let root = repo_root();
+    let v8 = std::fs::read_to_string(root.join("crates/v8-runtime/src/isolate.rs"))
+        .expect("read V8 platform source");
+    assert!(
+        v8.contains("v8::V8::set_flags_from_string(\"--experimental-wasm-exnref\")"),
+        "V8 130 must enable the finalized exception encoding used by canonical C++ commands"
+    );
+
+    let profile = std::fs::read_to_string(root.join("crates/execution/src/wasm/profile.rs"))
+        .expect("read shared WASM profile");
+    assert!(profile.contains("features.set(WasmFeatures::EXCEPTIONS, true)"));
+    assert!(profile.contains("features.set(WasmFeatures::LEGACY_EXCEPTIONS, false)"));
+
+    let duckdb = std::fs::read_to_string(root.join("toolchain/c/scripts/build-duckdb.sh"))
+        .expect("read DuckDB toolchain script");
+    assert!(
+        duckdb.contains("--translate-to-exnref")
+            && duckdb
+                .contains("Binaryen 128 is required to finalize DuckDB exception instructions"),
+        "the owned toolchain must translate LLVM 19's legacy exceptions before staging DuckDB"
+    );
+}
+
+#[test]
 fn production_threads_match_the_reviewed_topology_manifest() {
     const MANIFEST: &[(&str, &str)] = &[
         ("blocking-executor-worker", "crates/runtime/src/lib.rs"),
@@ -1153,6 +3404,26 @@ fn production_threads_match_the_reviewed_topology_manifest() {
             "crates/execution/src/v8_host.rs",
         ),
         (
+            "process-wasmtime-epoch-ticker",
+            "crates/execution/src/wasm/wasmtime/engine.rs",
+        ),
+        (
+            "admitted-wasmtime-guest-executor",
+            "crates/execution/src/wasm/wasmtime/lifecycle.rs",
+        ),
+        (
+            "admitted-threaded-wasmtime-guest",
+            "crates/execution/src/wasm/wasmtime/threads.rs",
+        ),
+        (
+            "threaded-wasmtime-ipc-writer",
+            "crates/execution/src/wasm/wasmtime/worker.rs",
+        ),
+        (
+            "threaded-wasmtime-ipc-reader",
+            "crates/execution/src/wasm/wasmtime/worker.rs",
+        ),
+        (
             "constant-stdio-writer",
             "crates/native-sidecar/src/stdio.rs",
         ),
@@ -1160,6 +3431,7 @@ fn production_threads_match_the_reviewed_topology_manifest() {
             "constant-stdio-reader",
             "crates/native-sidecar/src/stdio.rs",
         ),
+        ("constant-heartbeat", "crates/native-sidecar/src/stdio.rs"),
     ];
 
     let root = repo_root();
@@ -1425,6 +3697,7 @@ fn browser_sources_are_retained_but_disabled_from_native_build_and_publish_gates
         for package in [
             "!@rivet-dev/agentos-browser",
             "!@rivet-dev/agentos-runtime-browser",
+            "!@rivet-dev/agentos-example-browser-terminal",
         ] {
             assert!(
                 source.contains(package),
@@ -1531,6 +3804,7 @@ fn reactor_completion_paths_do_not_silently_drop_settlement() {
                 "limits.javascript.sessionCommandQueue",
                 "runtime.protocol.maxEgressFrames",
                 "let _ = entry.shutdown_tx.try_send",
+                "let _ = crate::bridge::resolve_pending_promise",
             ][..],
         ),
         (
@@ -1538,7 +3812,55 @@ fn reactor_completion_paths_do_not_silently_drop_settlement() {
             &[
                 "let _ = v8_session.send_bridge_response",
                 "let _ = self.v8_session.send_stream_event",
+                "cbor_payload_to_json_args(&payload).unwrap_or_default",
+                "json_to_cbor_payload(&response).unwrap_or_default",
+                "encode_host_service_error_payload(&error).unwrap_or_else",
+                "getrandom(&mut bytes).is_err",
+                "timers.lock().ok()",
             ][..],
+        ),
+        (
+            "crates/execution/src/backend/submission.rs",
+            &["let _ = reply.fail"][..],
+        ),
+        (
+            "crates/execution/src/host/mod.rs",
+            &["let _ = reply.fail"][..],
+        ),
+        (
+            "crates/native-sidecar-core/src/guest_net.rs",
+            &["let _ = kernel.socket_close"][..],
+        ),
+        (
+            "crates/native-sidecar/src/execution/javascript/sqlite.rs",
+            &[
+                "let _ = connection.pragma_update",
+                "let _ = database\n        .connection\n        .execute_batch",
+            ][..],
+        ),
+        (
+            "crates/native-sidecar/src/execution/javascript/rpc.rs",
+            &["let _ = socket.close", "let _ = listener.close"][..],
+        ),
+        (
+            "crates/native-sidecar/src/execution/network/udp.rs",
+            &["let _ = close_kernel_socket_idempotent"][..],
+        ),
+        (
+            "crates/native-sidecar/src/execution/network/unix.rs",
+            &["let _ = stream.shutdown"][..],
+        ),
+        (
+            "crates/native-sidecar/src/execution/process_events.rs",
+            &["let _ = fs::write", "let _ = vm.kernel.wait_and_reap"][..],
+        ),
+        (
+            "crates/native-sidecar/src/filesystem.rs",
+            &["let _ = fs::write"][..],
+        ),
+        (
+            "crates/native-sidecar/src/service.rs",
+            &["self.permissions.lock().ok()?"][..],
         ),
     ] {
         let path = root.join(relative_path);
@@ -1582,47 +3904,28 @@ fn structured_audit_delivery_failures_have_a_non_recursive_stderr_fallback() {
 }
 
 #[test]
-fn python_native_tcp_connect_is_deferred_through_the_shared_runtime() {
-    let source = std::fs::read_to_string(
-        repo_root().join("crates/native-sidecar/src/execution/python/sockets.rs"),
-    )
-    .expect("read native-sidecar Python sockets source");
+fn python_native_tcp_connect_uses_the_common_managed_network_operation() {
+    let root = repo_root();
+    let source = std::fs::read_to_string(root.join("crates/execution/src/python.rs"))
+        .expect("read Python execution adapter");
     let socket_connect_arm = source
         .split("PythonVfsRpcMethod::SocketConnect =>")
         .nth(1)
         .and_then(|tail| tail.split("PythonVfsRpcMethod::SocketSend =>").next())
         .expect("locate Python SocketConnect arm");
     assert!(
-        socket_connect_arm.contains("defer_python_native_tcp_connect"),
-        "Python external TCP connect must leave the dispatcher as deferred shared-runtime work"
+        socket_connect_arm.contains("HostOperation::Network(NetworkOperation::ManagedConnect"),
+        "Python TCP connect must normalize to the common managed-network operation"
     );
     assert!(
-        socket_connect_arm.contains("connect_kernel_loopback"),
-        "VM-local kernel connect may remain immediate only through its explicit nonblocking path"
+        socket_connect_arm.contains("PythonHostReplyKind::SocketCreated(reservation)"),
+        "the Python adapter must retain only its bounded guest-handle reservation"
     );
     assert!(
-        !socket_connect_arm.contains("ActiveTcpSocket::connect("),
-        "Python SocketConnect must not reach the synchronous native TCP constructor"
-    );
-
-    let deferred_connect = source
-        .split("fn defer_python_native_tcp_connect")
-        .nth(1)
-        .and_then(|tail| tail.split("fn python_socket_async_context").next())
-        .expect("locate deferred Python TCP connect helper");
-    for required in [
-        "tokio::net::TcpStream::connect",
-        "ProcessEventEnvelope",
-        "PythonSocketConnectCompletion",
-    ] {
-        assert!(
-            deferred_connect.contains(required),
-            "deferred Python TCP connect is missing {required}"
-        );
-    }
-    assert!(
-        !deferred_connect.contains("connect_timeout"),
-        "deferred Python TCP connect must not call a blocking std socket API"
+        !root
+            .join("crates/native-sidecar/src/execution/python/sockets.rs")
+            .exists(),
+        "Python must not retain a parallel native TCP dispatcher"
     );
 }
 
@@ -1740,5 +4043,134 @@ fn native_udp_has_one_descriptor_owner_and_no_readiness_clone() {
             && !kernel_connect.contains("tokio::")
             && !kernel_connect.contains("spawn"),
         "kernel UDP connect must be table state only, with no task or runtime"
+    );
+}
+
+#[test]
+fn python_bridge_error_classification_uses_typed_codes_only() {
+    let runner = std::fs::read_to_string(
+        repo_root().join("crates/execution/assets/runners/python-runner.mjs"),
+    )
+    .expect("read Python runner");
+    let classifier = runner
+        .split_once("def _agentos_raise_from_error(error):")
+        .expect("Python bridge error classifier")
+        .1
+        .split_once("def _agentos_bridge_error(error):")
+        .expect("end of Python bridge error classifier")
+        .0;
+
+    assert!(classifier.contains("code in (\"EACCES\", \"EPERM\")"));
+    assert!(classifier.contains("code == \"ENOENT\""));
+    assert!(classifier.contains("exception.code = code"));
+    assert!(classifier.contains("exception.details = details"));
+    assert!(
+        !classifier.contains(" in message") && !classifier.contains("message.lower("),
+        "Python exception classes must never be inferred from engine-specific error strings"
+    );
+
+    let bridge_normalizer = runner
+        .split_once("function normalizePythonBridgeError(error) {")
+        .expect("Python bridge error normalizer")
+        .1
+        .split_once("function createPythonBridgeRpcBridge() {")
+        .expect("end of Python bridge error normalizer")
+        .0;
+    assert!(bridge_normalizer.contains("typeof error?.code === 'string'"));
+    assert!(bridge_normalizer.contains("normalized.code = structuredCode"));
+    assert!(bridge_normalizer.contains(": 'EIO'"));
+    assert!(bridge_normalizer.contains("normalized.details = error.details"));
+    for forbidden in [
+        "separatorIndex",
+        "message.indexOf(",
+        "message.slice(",
+        ".test(code)",
+    ] {
+        assert!(
+            !bridge_normalizer.contains(forbidden),
+            "Python bridge errno must come from error.code, not diagnostic parsing ({forbidden})"
+        );
+    }
+
+    let socket_classifier = runner
+        .split_once("def _agentos_socket_oserror(exc):")
+        .expect("Python socket error classifier")
+        .1
+        .split_once("def _agentos_socket_rpc(call):")
+        .expect("end of Python socket error classifier")
+        .0;
+    assert!(socket_classifier.contains("code_name = getattr(exc, \"code\", None)"));
+    assert!(socket_classifier.contains("_agentos_errno.EIO"));
+    assert!(socket_classifier.contains("mapped = OSError(errno_value, message)"));
+    assert!(socket_classifier.contains("mapped.details = details"));
+    for forbidden in [
+        "message.split(",
+        "message.lower(",
+        "message.upper(",
+        " in message",
+        "head =",
+    ] {
+        assert!(
+            !socket_classifier.contains(forbidden),
+            "Python socket errno must come from exc.code, not diagnostic parsing ({forbidden})"
+        );
+    }
+
+    let filesystem_classifier = runner
+        .split_once("  function createFsError(error) {")
+        .expect("Python filesystem error classifier")
+        .1
+        .split_once("  function withFsErrors(operation) {")
+        .expect("end of Python filesystem error classifier")
+        .0;
+    assert!(filesystem_classifier.contains("typeof error?.code === 'string'"));
+    assert!(filesystem_classifier.contains("ERRNO_CODES[code]"));
+    assert!(filesystem_classifier.contains("ERRNO_CODES.EIO"));
+    assert!(filesystem_classifier.contains("mapped.code = code || 'EIO'"));
+    assert!(filesystem_classifier.contains("mapped.message ="));
+    assert!(filesystem_classifier.contains("mapped.details = error.details"));
+    for forbidden in [
+        ".toLowerCase(",
+        ".toUpperCase(",
+        ".test(message)",
+        "message.includes(",
+    ] {
+        assert!(
+            !filesystem_classifier.contains(forbidden),
+            "Python filesystem errno must come from error.code, not diagnostic parsing ({forbidden})"
+        );
+    }
+}
+
+#[test]
+fn reactor_event_errors_preserve_typed_codes() {
+    let root = repo_root();
+    for relative in [
+        "crates/native-sidecar/src/execution/network/managed.rs",
+        "crates/native-sidecar/src/execution/javascript/rpc.rs",
+        "crates/native-sidecar/src/execution/network/tcp.rs",
+    ] {
+        let source = std::fs::read_to_string(root.join(relative)).expect("read reactor adapter");
+        for forbidden in [
+            "SidecarError::Execution(format!(\"{code}: {message}\"))",
+            "SidecarError::Execution(format!(\"{detail}: {message}\"))",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{relative} must carry reactor error codes structurally, not encode them into diagnostics"
+            );
+        }
+    }
+
+    let managed = std::fs::read_to_string(
+        root.join("crates/native-sidecar/src/execution/network/managed.rs"),
+    )
+    .expect("read runtime-neutral network adapter");
+    assert!(
+        managed
+            .matches("code.as_deref().unwrap_or(\"EIO\")")
+            .count()
+            >= 3,
+        "runtime-neutral read and accept errors need stable typed codes"
     );
 }

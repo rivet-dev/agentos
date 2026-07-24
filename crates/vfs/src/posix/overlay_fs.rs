@@ -1,6 +1,6 @@
 use super::vfs::{
-    normalize_path, MemoryFileSystem, VfsError, VfsResult, VirtualDirEntry, VirtualFileSystem,
-    VirtualStat, VirtualUtimeSpec,
+    normalize_path, FileExtent, MemoryFileSystem, VfsError, VfsResult, VirtualDirEntry,
+    VirtualFileSystem, VirtualStat, VirtualUtimeSpec,
 };
 use base64::Engine;
 use std::collections::BTreeSet;
@@ -1603,6 +1603,13 @@ impl VirtualFileSystem for OverlayFileSystem {
         if self.is_whited_out(path) {
             return Err(Self::entry_not_found(path));
         }
+        let stat = self.merged_lstat(path)?;
+        if stat.is_directory && !stat.is_symbolic_link {
+            return Err(VfsError::new(
+                "EISDIR",
+                format!("illegal operation on a directory, unlink '{path}'"),
+            ));
+        }
         // POSIX unlink(2) removes the directory entry itself and never follows
         // a symlink leaf, so existence must be checked with lstat semantics.
         // `exists()` resolves symlinks, which made dangling symlinks (for
@@ -2105,6 +2112,20 @@ impl VirtualFileSystem for OverlayFileSystem {
         }
     }
 
+    fn extent_at(&mut self, path: &str, index: usize) -> VfsResult<Option<FileExtent>> {
+        if self.touches_internal_metadata(path) || self.is_whited_out(path) {
+            return Err(Self::entry_not_found(path));
+        }
+        if self.exists_in_upper(path) {
+            self.writable_upper(path)?.extent_at(path, index)
+        } else {
+            let Some(lower_index) = self.find_lower_by_exists(path) else {
+                return Err(Self::entry_not_found(path));
+            };
+            self.lowers[lower_index].extent_at(path, index)
+        }
+    }
+
     fn pread(&mut self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>> {
         if self.touches_internal_metadata(path) {
             return Err(Self::entry_not_found(path));
@@ -2237,6 +2258,28 @@ mod tests {
             .expect("unlink the symlink entry without following it");
 
         assert_error_code(overlay.lstat("/self"), "ENOENT");
+    }
+
+    #[test]
+    fn remove_file_rejects_lower_layer_directories_without_whiteouting_them() {
+        let mut lower = MemoryFileSystem::new();
+        lower
+            .mkdir("/workspace", true)
+            .expect("create lower directory");
+        let mut overlay = OverlayFileSystem::new(vec![lower], OverlayMode::Ephemeral);
+
+        assert_error_code(overlay.remove_file("/workspace"), "EISDIR");
+        assert!(
+            overlay
+                .lstat("/workspace")
+                .expect("failed unlink must preserve lower directory")
+                .is_directory
+        );
+        assert!(overlay
+            .read_dir("/")
+            .expect("read overlay root")
+            .iter()
+            .any(|entry| entry == "workspace"));
     }
 
     #[test]

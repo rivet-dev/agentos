@@ -1007,6 +1007,9 @@ async fn run_async(
     } else {
         // Rivet's V8 child-process bridge cannot currently inherit fd 3. Keep
         // the logical lane priorities, but multiplex both lanes over stdio.
+        // This branch is mutually exclusive with the fd-3 reader above, so the
+        // process still owns exactly one constant stdio reader thread.
+        // AGENTOS_THREAD_SITE: constant-stdio-reader
         thread::spawn({
             let read_error_tx = write_error_tx.clone();
             move || {
@@ -1065,11 +1068,50 @@ async fn run_async(
             break;
         }
 
+        // Register the level-triggered executor waiter before probing durable
+        // process state. An executor can publish its only event while this
+        // owner is already inside a pump turn; probing first and registering
+        // afterward leaves a window where that edge can be consumed without
+        // the newly queued state being visible. With this ordering, a racing
+        // publication is either drained below or leaves this future ready.
+        let process_event_notified = process_event_notify.notified();
+        tokio::pin!(process_event_notified);
+        process_event_notified.as_mut().enable();
+        let mut process_events_progressed = false;
+        for session in active_sessions.iter().cloned().collect::<Vec<_>>() {
+            process_events_progressed |= sidecar
+                .pump_process_events(&session.compat_ownership_scope())
+                .await?;
+        }
+        if process_events_progressed {
+            match event_ready_tx.try_send(()) {
+                Ok(()) | Err(tokio::sync::mpsc::error::TrySendError::Full(())) => {}
+                Err(tokio::sync::mpsc::error::TrySendError::Closed(())) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "event-ready wake receiver closed",
+                    )
+                    .into());
+                }
+            }
+            flush_sidecar_requests(&mut sidecar, &frame_writer)?;
+        }
+
         tokio::select! {
             biased;
             maybe_shutdown = shutdown_rx.recv() => {
                 let Some(control) = maybe_shutdown else {
-                    break 'protocol;
+                    // The response/control reader owns the only shutdown
+                    // sender. Its disappearance without a typed shutdown
+                    // frame is therefore a transport failure, not a graceful
+                    // ordinary-stdin EOF. Returning an error here also avoids
+                    // racing the identical error notification on the lower-
+                    // priority transport-error branch of this biased select.
+                    return Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "response/control stream closed",
+                    )
+                    .into());
                 };
                 match control.payload {
                     wire::ControlPayload::ShutdownControl(shutdown) => {
@@ -1179,19 +1221,22 @@ async fn run_async(
                 }
                 flush_sidecar_requests(&mut sidecar, &frame_writer)?;
             }
-            _ = process_event_notify.notified() => {
+            _ = process_event_notified.as_mut() => {
                 for session in active_sessions.iter().cloned().collect::<Vec<_>>() {
-                    if sidecar.pump_process_events(&session.compat_ownership_scope()).await? {
-                        match event_ready_tx.try_send(()) {
-                            Ok(())
-                            | Err(tokio::sync::mpsc::error::TrySendError::Full(())) => {}
-                            Err(tokio::sync::mpsc::error::TrySendError::Closed(())) => {
-                                return Err(io::Error::new(
-                                    io::ErrorKind::BrokenPipe,
-                                    "event-ready wake receiver closed",
-                                )
-                                .into());
-                            }
+                    sidecar.pump_process_events(&session.compat_ownership_scope()).await?;
+                    // A request-scoped inline pump can already have moved
+                    // public events into the durable queue before issuing
+                    // this wake, so probe that queue even when this pump turn
+                    // finds no new executor event.
+                    match event_ready_tx.try_send(()) {
+                        Ok(())
+                        | Err(tokio::sync::mpsc::error::TrySendError::Full(())) => {}
+                        Err(tokio::sync::mpsc::error::TrySendError::Closed(())) => {
+                            return Err(io::Error::new(
+                                io::ErrorKind::BrokenPipe,
+                                "event-ready wake receiver closed",
+                            )
+                            .into());
                         }
                     }
                 }
@@ -1821,6 +1866,7 @@ fn spawn_heartbeat_thread(
     write_tx: ProtocolFrameWriter,
     interval: Duration,
 ) -> thread::JoinHandle<()> {
+    // AGENTOS_THREAD_SITE: constant-heartbeat
     thread::spawn(move || {
         loop {
             thread::sleep(interval);

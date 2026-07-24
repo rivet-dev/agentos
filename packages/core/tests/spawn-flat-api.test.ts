@@ -12,7 +12,7 @@ describe("flat spawn API", () => {
 		await vm.dispose();
 	});
 
-	test("onProcessStderr captures stderr, onProcessExit fires with exit code", async () => {
+	test("onProcessOutput captures stderr, onProcessExit fires with exit code", async () => {
 		await vm.writeFile(
 			"/tmp/stderr-exit.mjs",
 			'process.stderr.write("err-data\\n"); process.exit(42);',
@@ -23,12 +23,14 @@ describe("flat spawn API", () => {
 		});
 
 		const stderrChunks: string[] = [];
-		vm.onProcessStderr(pid, (data) => {
-			stderrChunks.push(new TextDecoder().decode(data));
+		vm.onProcessOutput(pid, (event) => {
+			if (event.stream === "stderr") {
+				stderrChunks.push(new TextDecoder().decode(event.data));
+			}
 		});
 
 		const exitCodePromise = new Promise<number>((resolve) => {
-			vm.onProcessExit(pid, resolve);
+			vm.onProcessExit(pid, (event) => resolve(event.exitCode));
 		});
 
 		const exitCode = await exitCodePromise;
@@ -36,7 +38,7 @@ describe("flat spawn API", () => {
 		expect(stderrChunks.join("")).toContain("err-data");
 	}, 30_000);
 
-	test("spawn returns { pid }, writeProcessStdin sends data, onProcessStdout receives it", async () => {
+	test("spawn returns { pid }, writeProcessStdin sends data, onProcessOutput receives it", async () => {
 		await vm.writeFile(
 			"/tmp/echo-stdin.mjs",
 			`process.stdin.on("data", (chunk) => process.stdout.write(chunk));`,
@@ -54,8 +56,9 @@ describe("flat spawn API", () => {
 				reject(new Error("Timed out waiting for spawned stdout"));
 			}, 5_000);
 
-			vm.onProcessStdout(pid, (data) => {
-				chunks.push(new TextDecoder().decode(data));
+			vm.onProcessOutput(pid, (event) => {
+				if (event.stream !== "stdout") return;
+				chunks.push(new TextDecoder().decode(event.data));
 				if (chunks.join("").includes(expectedOutput)) {
 					clearTimeout(timeout);
 					resolve();

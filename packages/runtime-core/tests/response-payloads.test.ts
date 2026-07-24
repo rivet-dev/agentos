@@ -210,6 +210,7 @@ describe("response payload conversion", () => {
 				tag: "ResourceSnapshotResponse",
 				val: {
 					runningProcesses: 2n,
+					stoppedProcesses: 3n,
 					exitedProcesses: 1n,
 					fdTables: 2n,
 					openFds: 6n,
@@ -223,6 +224,16 @@ describe("response payload conversion", () => {
 					socketConnections: 2n,
 					socketBufferedBytes: 256n,
 					socketDatagramQueueLen: 4n,
+					wasmReservedMemoryBytes: 1024n,
+					wasmtimeEngineProfiles: 2n,
+					wasmtimeModuleEntries: 3n,
+					wasmtimeModuleCacheHits: 4n,
+					wasmtimeModuleCacheMisses: 5n,
+					wasmtimeModuleCacheEvictions: 6n,
+					wasmtimeCompiledSourceBytes: 2048n,
+					wasmtimeChargedModuleBytes: 4096n,
+					wasmtimeCompileTimeMicros: 7000n,
+					wasmtimeProcessRetainedRssBytes: 8192n,
 					queueSnapshots: [
 						{
 							name: "pending_process_events",
@@ -238,6 +249,7 @@ describe("response payload conversion", () => {
 		).toEqual({
 			type: "resource_snapshot",
 			running_processes: 2,
+			stopped_processes: 3,
 			exited_processes: 1,
 			fd_tables: 2,
 			open_fds: 6,
@@ -251,6 +263,16 @@ describe("response payload conversion", () => {
 			socket_connections: 2,
 			socket_buffered_bytes: 256,
 			socket_datagram_queue_len: 4,
+			wasm_reserved_memory_bytes: 1024,
+			wasmtime_engine_profiles: 2,
+			wasmtime_module_entries: 3,
+			wasmtime_module_cache_hits: 4,
+			wasmtime_module_cache_misses: 5,
+			wasmtime_module_cache_evictions: 6,
+			wasmtime_compiled_source_bytes: 2048,
+			wasmtime_charged_module_bytes: 4096,
+			wasmtime_compile_time_micros: 7000,
+			wasmtime_process_retained_rss_bytes: 8192,
 			queue_snapshots: [
 				{
 					name: "pending_process_events",

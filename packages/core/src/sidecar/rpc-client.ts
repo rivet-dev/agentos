@@ -307,6 +307,7 @@ interface TrackedProcessEntry {
 	driver: string;
 	cwd: string;
 	env: Record<string, string>;
+	wasmBackend: "v8" | "wasmtime" | "wasmtime-threads" | undefined;
 	startTime: number;
 	exitTime: number | null;
 	hostPid: number | null;
@@ -350,6 +351,7 @@ interface NativeSidecarKernelProxyOptions {
 	 */
 	packages?: Parameters<SidecarProcess["configureVm"]>[2]["packages"];
 	packagesMountAt?: string;
+	bootstrapCommands?: string[];
 	bindingShimCommands?: string[];
 	commandGuestPaths: ReadonlyMap<string, string>;
 	onWasmCommandResolved?: (command: string) => void;
@@ -390,6 +392,7 @@ export class NativeSidecarKernelProxy {
 		Parameters<SidecarProcess["configureVm"]>[2]["packages"]
 	>;
 	private readonly packagesMountAt: string | undefined;
+	private readonly bootstrapCommands: string[] | undefined;
 	private readonly bindingShimCommands: string[] | undefined;
 	private readonly commandDrivers: Map<string, string>;
 	private readonly onWasmCommandResolved:
@@ -442,6 +445,7 @@ export class NativeSidecarKernelProxy {
 		this.loopbackExemptPorts = options.loopbackExemptPorts;
 		this.packages = options.packages ? [...options.packages] : [];
 		this.packagesMountAt = options.packagesMountAt;
+		this.bootstrapCommands = options.bootstrapCommands;
 		this.bindingShimCommands = options.bindingShimCommands;
 		this.commandDrivers = buildCommandMap(options.commandGuestPaths);
 		this.onWasmCommandResolved = options.onWasmCommandResolved;
@@ -581,15 +585,15 @@ export class NativeSidecarKernelProxy {
 			readExitCode?: () => Promise<number>,
 		): Promise<KernelExecResult> => {
 			if (stdinOverride !== undefined) {
-				proc.writeStdin(stdinOverride);
+				await proc.writeStdin(stdinOverride);
 			} else if (options?.stdin !== undefined) {
-				proc.writeStdin(options.stdin);
+				await proc.writeStdin(options.stdin);
 			}
 			// `kernel.exec()` is a non-interactive run-to-completion API: when the
 			// caller does not opt into a streaming stdin handle, the guest process
 			// should observe EOF after any provided input so commands like
 			// `node -e ...` do not linger behind an inherited open stdin pipe.
-			proc.closeStdin();
+			await proc.closeStdin();
 
 			const waitPromise = proc.wait();
 			const shellExitCode =
@@ -678,9 +682,9 @@ export class NativeSidecarKernelProxy {
 			proc: ManagedProcess,
 		): Promise<KernelExecResult> => {
 			if (options?.stdin !== undefined) {
-				proc.writeStdin(options.stdin);
+				await proc.writeStdin(options.stdin);
 			}
-			proc.closeStdin();
+			await proc.closeStdin();
 
 			const waitPromise = proc.wait();
 			const exitCode =
@@ -776,6 +780,7 @@ export class NativeSidecarKernelProxy {
 				...(options?.env ?? {}),
 				...(options?.streamStdin ? { AGENTOS_KEEP_STDIN_OPEN: "1" } : {}),
 			},
+			wasmBackend: options?.wasmBackend,
 			startTime: Date.now(),
 			exitTime: null,
 			hostPid: null,
@@ -1151,6 +1156,7 @@ export class NativeSidecarKernelProxy {
 										{
 											env: shellEnv,
 											cwd: shellCwd,
+											wasmBackend: options?.wasmBackend,
 											streamStdin: true,
 											onStdout: (chunk) =>
 												emitSyntheticTerminal(textDecoder.decode(chunk)),
@@ -1172,6 +1178,7 @@ export class NativeSidecarKernelProxy {
 								const result = await execCommand(nextCommand, {
 									env: shellEnv,
 									cwd: shellCwd,
+									wasmBackend: options?.wasmBackend,
 								});
 								const sanitizedStdout = sanitizeSyntheticShellText(
 									result.stdout,
@@ -1224,6 +1231,7 @@ export class NativeSidecarKernelProxy {
 				AGENTOS_EXEC_TTY: "1",
 			},
 			cwd: options?.cwd,
+			wasmBackend: options?.wasmBackend,
 			streamStdin: true,
 			onStdout: (chunk) => {
 				const sanitized = sanitizeNativeShellOutput(chunk);
@@ -1321,7 +1329,12 @@ export class NativeSidecarKernelProxy {
 		const restoreRawMode =
 			stdin.isTTY && typeof stdin.setRawMode === "function";
 		const onStdinData = (data: Uint8Array | string) => {
-			shell.write(data);
+			void shell.write(data).catch((error) => {
+				console.error(
+					"ERR_AGENTOS_TERMINAL_STDIN: failed to forward terminal input",
+					error,
+				);
+			});
 		};
 		const onResize = () => {
 			shell.resize(stdout.columns, stdout.rows);
@@ -1644,6 +1657,7 @@ export class NativeSidecarKernelProxy {
 				loopbackExemptPorts: this.loopbackExemptPorts,
 				packages: this.packages,
 				packagesMountAt: this.packagesMountAt,
+				bootstrapCommands: this.bootstrapCommands,
 				bindingShimCommands: this.bindingShimCommands,
 			});
 		};
@@ -1659,7 +1673,7 @@ export class NativeSidecarKernelProxy {
 	}
 
 	private async waitForMountReconfigure(): Promise<void> {
-		if (this.mountReconfigurePromise) {
+		if (this.mountReconfigurePromise !== null) {
 			await this.mountReconfigurePromise;
 		}
 	}
@@ -1757,7 +1771,7 @@ export class NativeSidecarKernelProxy {
 	}
 
 	private async refreshProcessSnapshot(): Promise<void> {
-		if (this.processSnapshotRefresh) {
+		if (this.processSnapshotRefresh !== null) {
 			await this.processSnapshotRefresh;
 			return;
 		}
@@ -1827,6 +1841,7 @@ export class NativeSidecarKernelProxy {
 			args: entry.args,
 			env: entry.env,
 			cwd: entry.cwd,
+			wasmBackend: entry.wasmBackend,
 		});
 		entry.hostPid = started.pid;
 		entry.started = true;

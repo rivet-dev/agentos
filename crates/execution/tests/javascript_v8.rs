@@ -2,8 +2,8 @@ mod support;
 
 use agentos_execution::{
     v8_runtime::map_bridge_method, CreateJavascriptContextRequest, GuestRuntimeConfig,
-    JavascriptExecution, JavascriptExecutionEvent, JavascriptExecutionLimits,
-    JavascriptExecutionResult, JavascriptSyncRpcRequest, StartJavascriptExecutionRequest,
+    HostRpcRequest, JavascriptExecution, JavascriptExecutionEvent, JavascriptExecutionLimits,
+    JavascriptExecutionResult, StartJavascriptExecutionRequest,
 };
 use base64::Engine;
 use serde::Deserialize;
@@ -166,7 +166,7 @@ impl HostChildProcessHarness {
     fn handle_request(
         &mut self,
         host_cwd: &Path,
-        request: JavascriptSyncRpcRequest,
+        request: HostRpcRequest,
     ) -> Result<Value, String> {
         match request.method.as_str() {
             "child_process.spawn" => self.spawn(host_cwd, &request.args),
@@ -739,10 +739,7 @@ fn decode_guest_or_string_bytes(value: &Value) -> Result<Vec<u8>, String> {
 /// sync RPCs that surface during module loading. Module resolution now flows as
 /// sync RPCs (`__resolve_module` / `__batch_resolve_modules` / `__load_file` /
 /// `__module_format`); these tests assert on the *next* non-module sync RPC.
-fn expect_next_sync_rpc(
-    execution: &mut JavascriptExecution,
-    what: &str,
-) -> JavascriptSyncRpcRequest {
+fn expect_next_sync_rpc(execution: &mut JavascriptExecution, what: &str) -> HostRpcRequest {
     loop {
         match execution
             .poll_event_blocking(Duration::from_secs(5))
@@ -760,6 +757,70 @@ fn expect_next_sync_rpc(
             other => panic!("expected {what}, got {other:?}"),
         }
     }
+}
+
+#[test]
+fn javascript_execution_v8_preserves_binary_args_for_every_sync_rpc_method() {
+    let temp = tempdir().expect("create temp dir");
+    let mut engine = support::javascript_engine();
+    let context = engine.create_context(CreateJavascriptContextRequest {
+        vm_id: String::from("vm-js"),
+        bootstrap_module: None,
+        compile_cache_root: None,
+    });
+    let mut execution = engine
+        .start_execution(StartJavascriptExecutionRequest {
+            limits: Default::default(),
+            guest_runtime: Default::default(),
+            vm_id: String::from("vm-js"),
+            context_id: context.context_id,
+            argv: vec![String::from("./entry.mjs")],
+            argv0: None,
+            env: BTreeMap::new(),
+            cwd: temp.path().to_path_buf(),
+            wasm_module_bytes: None,
+            inline_code: Some(String::from(
+                r#"
+const payload = Buffer.from([0, 255, 1, 128]);
+_processWasmSyncRpc.applySync(void 0, [
+  "process.fd_sendmsg_rights",
+  7,
+  payload,
+  [8],
+]);
+console.log("BINARY_SYNC_RPC_OK");
+"#,
+            )),
+        })
+        .expect("start JavaScript execution");
+
+    let request = expect_next_sync_rpc(&mut execution, "binary WASM sync RPC");
+    assert_eq!(request.method, "process.wasm_sync_rpc");
+    assert_eq!(
+        request.args.first(),
+        Some(&json!("process.fd_sendmsg_rights"))
+    );
+    assert_eq!(
+        request.raw_bytes_args.get(&2),
+        Some(&vec![0, 255, 1, 128]),
+        "the V8 bridge must preserve bytes at every argument index without a method allowlist"
+    );
+    execution
+        .respond_sync_rpc_success(request.id, json!(0))
+        .expect("respond to binary WASM sync RPC");
+
+    let result = execution.wait().expect("wait for JavaScript execution");
+    assert_eq!(
+        result.exit_code,
+        0,
+        "stderr: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&result.stdout).contains("BINARY_SYNC_RPC_OK"),
+        "stdout: {}",
+        String::from_utf8_lossy(&result.stdout)
+    );
 }
 
 fn wait_with_host_child_process_bridge(
@@ -921,13 +982,9 @@ fn javascript_execution_uses_v8_runtime_without_spawning_guest_node_binary() {
         })
         .expect("start JavaScript execution");
 
-    assert!(
-        execution.uses_shared_v8_runtime(),
-        "guest JS should run inside the shared V8 runtime"
-    );
     assert_eq!(
-        execution.child_pid(),
-        0,
+        execution.native_process_id(),
+        None,
         "shared V8 runtime executions should keep the embedded host pid internal"
     );
 
@@ -3396,6 +3453,64 @@ if (first.value !== "alpha" || first.done !== false || second.done !== true) {
     assert!(stderr.is_empty(), "unexpected stderr: {stderr}");
 }
 
+fn javascript_execution_v8_finished_observes_web_stream_without_timer_polling() {
+    let temp = tempdir().expect("create temp dir");
+    let mut engine = support::javascript_engine();
+    let context = engine.create_context(CreateJavascriptContextRequest {
+        vm_id: String::from("vm-js"),
+        bootstrap_module: None,
+        compile_cache_root: None,
+    });
+
+    let execution = engine
+        .start_execution(StartJavascriptExecutionRequest {
+            limits: Default::default(),
+            argv0: None,
+            guest_runtime: Default::default(),
+            vm_id: String::from("vm-js"),
+            context_id: context.context_id,
+            argv: vec![String::from("./entry.mjs")],
+            env: BTreeMap::new(),
+            cwd: temp.path().to_path_buf(),
+            wasm_module_bytes: None,
+            inline_code: Some(String::from(
+                r#"
+import { finished } from "node:stream";
+
+const originalSetTimeout = globalThis.setTimeout;
+let timerCalls = 0;
+globalThis.setTimeout = (...args) => {
+  timerCalls += 1;
+  return originalSetTimeout(...args);
+};
+
+try {
+  const readable = new ReadableStream({
+    start(controller) {
+      queueMicrotask(() => controller.close());
+    },
+  });
+  await new Promise((resolve, reject) => {
+    finished(readable, (error) => error ? reject(error) : resolve());
+  });
+} finally {
+  globalThis.setTimeout = originalSetTimeout;
+}
+
+if (timerCalls !== 0) {
+  throw new Error(`stream.finished polled Web Stream state with ${timerCalls} timer(s)`);
+}
+"#,
+            )),
+        })
+        .expect("start JavaScript execution");
+
+    let result = execution.wait().expect("wait for JavaScript execution");
+    let stderr = String::from_utf8(result.stderr).expect("stderr utf8");
+    assert_eq!(result.exit_code, 0, "unexpected stderr: {stderr}");
+    assert!(stderr.is_empty(), "unexpected stderr: {stderr}");
+}
+
 fn javascript_execution_v8_text_codec_streams_support_pipe_through() {
     let temp = tempdir().expect("create temp dir");
     let mut engine = support::javascript_engine();
@@ -3950,7 +4065,7 @@ if (typeof cjsStream.Readable !== "function") {
 
 // readable-stream imports the trailing-slash `process/` package internally.
 // Its browser fallback implements nextTick with setTimeout(0), which inserts a
-// timer turn before `_read()`. AgentOS must route that dependency to the guest
+// timer turn before `_read()`. agentOS must route that dependency to the guest
 // process nextTick queue so stream demand is visible in the same microtask turn.
 let readStarted = false;
 const nextTickReadable = new Readable({
@@ -6139,10 +6254,7 @@ fn run_js_runtime_guest(
             inline_code: Some(inline_code.to_owned()),
         })
         .expect("start JavaScript execution");
-    assert!(
-        execution.uses_shared_v8_runtime(),
-        "guest JS must run inside the shared V8 runtime"
-    );
+    assert_eq!(execution.native_process_id(), None);
     execution.wait().expect("wait for JavaScript execution")
 }
 
@@ -7190,6 +7302,7 @@ fn javascript_v8_suite() {
     javascript_execution_v8_builtin_wrappers_expose_common_named_exports();
     javascript_execution_v8_child_process_conformance_matches_host_node();
     javascript_execution_v8_web_stream_globals_support_basic_io();
+    javascript_execution_v8_finished_observes_web_stream_without_timer_polling();
     javascript_execution_v8_text_codec_streams_support_pipe_through();
     javascript_execution_v8_abort_controller_dispatches_abort();
     javascript_execution_v8_request_accepts_abort_signal();

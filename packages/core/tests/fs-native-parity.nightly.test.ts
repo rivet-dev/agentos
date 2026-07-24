@@ -15,10 +15,7 @@ import type { AgentOs } from "../src/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "../../..");
-const SECURE_EXEC_C_ROOT = resolve(
-	REPO_ROOT,
-	"toolchain/c",
-);
+const SECURE_EXEC_C_ROOT = resolve(REPO_ROOT, "toolchain/c");
 const WASM_PROBE_BINARY = resolve(SECURE_EXEC_C_ROOT, "build/fs_probe");
 const NATIVE_PROBE_BINARY = resolve(
 	SECURE_EXEC_C_ROOT,
@@ -37,13 +34,12 @@ const SIDECAR_BINARY = resolve(
 	process.env.CARGO_TARGET_DIR ?? "target",
 	"debug/agentos-sidecar",
 );
-const HAS_PATCHED_SYSROOT = existsSync(PATCHED_LIBC) && existsSync(PATCHED_ERRNO);
+const HAS_PATCHED_SYSROOT =
+	existsSync(PATCHED_LIBC) && existsSync(PATCHED_ERRNO);
 
 function hasCommand(command: string): boolean {
 	try {
-		return (
-			spawnSync(command, ["--version"], { encoding: "utf8" }).status === 0
-		);
+		return spawnSync(command, ["--version"], { encoding: "utf8" }).status === 0;
 	} catch {
 		return false;
 	}
@@ -213,9 +209,8 @@ describe.skipIf(!CAN_RUN)("filesystem native parity", () => {
 			cols: 120,
 			rows: 40,
 		}));
-		unsubscribeShellData = vm.onShellData(shellId, (data) => {
-			rawOutput +=
-				typeof data === "string" ? data : Buffer.from(data).toString("utf8");
+		unsubscribeShellData = vm.onShellData(shellId, (event) => {
+			rawOutput += Buffer.from(event.data).toString("utf8");
 		});
 
 		const status = await vm.waitShell(shellId);

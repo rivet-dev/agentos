@@ -128,8 +128,8 @@ describe.skipIf(!existsSync(VIM_BINARY))("interactive vim over VM PTY", () => {
 				cwd: "/work",
 				env: { TERM: "xterm" },
 			});
-			const offData = vm.onShellData(shellId, (data) => {
-				const bytes = Buffer.from(data);
+			const offData = vm.onShellData(shellId, (event) => {
+				const bytes = Buffer.from(event.data);
 				writes = writes.then(
 					() => new Promise<void>((resolve) => term.write(bytes, resolve)),
 				);
@@ -248,9 +248,9 @@ describe.skipIf(!existsSync(VIM_BINARY))("interactive vim over VM PTY", () => {
 			await vm.writeShell(shellId, ":q\r");
 			await settle(1500);
 
-			const fileContent = Buffer.from(await vm.readFile("/work/hello.txt")).toString(
-				"utf8",
-			);
+			const fileContent = Buffer.from(
+				await vm.readFile("/work/hello.txt"),
+			).toString("utf8");
 			writeFileSync(
 				resolve(SNAP_DIR, "FILE.txt"),
 				`# /work/hello.txt after :w\n${JSON.stringify(fileContent)}\n\n---raw---\n${fileContent}`,
@@ -291,8 +291,8 @@ describe.skipIf(!existsSync(VIM_BINARY))("interactive vim over VM PTY", () => {
 				cwd: "/work",
 				env: { TERM: "xterm" },
 			});
-			const offData = vm.onShellData(shellId, (data) => {
-				const bytes = Buffer.from(data);
+			const offData = vm.onShellData(shellId, (event) => {
+				const bytes = Buffer.from(event.data);
 				writes = writes.then(
 					() => new Promise<void>((resolve) => term.write(bytes, resolve)),
 				);

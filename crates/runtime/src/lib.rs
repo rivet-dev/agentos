@@ -25,11 +25,16 @@ use metrics::{
 
 pub mod accounting;
 pub mod capability;
+pub mod executor;
 pub mod fairness;
 pub mod metrics;
 pub mod readiness;
 pub mod supervision;
 
+pub use executor::{
+    VmExecutorAdmission, VmExecutorAdmissionError, VmExecutorAdmissionSnapshot, VmExecutorPermit,
+    VM_EXECUTOR_LIMIT_CONFIG_PATH,
+};
 pub use supervision::{
     TaskClass, TaskClassSnapshot, TaskOwner, TaskSpawnError, TaskSupervisor, TaskTerminalReason,
     TaskTerminalReport,
@@ -57,6 +62,8 @@ const DEFAULT_MAX_PROCESS_ASYNC_COMPLETION_BYTES: usize = 256 * 1024 * 1024;
 const DEFAULT_MAX_PROCESS_UDP_DATAGRAMS: usize = 65_536;
 const DEFAULT_MAX_PROCESS_UDP_BYTES: usize = 256 * 1024 * 1024;
 const DEFAULT_MAX_PROCESS_TLS_BYTES: usize = 256 * 1024 * 1024;
+const DEFAULT_MAX_PROCESS_WASM_MEMORY_BYTES: usize = 8 * 1024 * 1024 * 1024;
+const DEFAULT_MAX_PROCESS_WASM_THREADS: usize = 256;
 const DEFAULT_MAX_PROCESS_HTTP2_CONNECTIONS: usize = 4_096;
 const DEFAULT_MAX_PROCESS_HTTP2_STREAMS: usize = 65_536;
 const DEFAULT_MAX_PROCESS_HTTP2_BYTES: usize = 512 * 1024 * 1024;
@@ -212,6 +219,11 @@ pub struct RuntimeResourceConfig {
     pub max_udp_datagrams: usize,
     pub max_udp_bytes: usize,
     pub max_tls_bytes: usize,
+    /// Aggregate admitted linear-memory envelopes for active standalone WASM
+    /// Stores. This must not share the blocking-work byte ledger.
+    pub max_wasm_memory_bytes: usize,
+    /// Aggregate admitted native threads across explicitly threaded WASM VMs.
+    pub max_wasm_threads: usize,
     pub max_http2_connections: usize,
     pub max_http2_streams: usize,
     pub max_http2_buffered_bytes: usize,
@@ -244,6 +256,8 @@ impl Default for RuntimeResourceConfig {
             max_udp_datagrams: DEFAULT_MAX_PROCESS_UDP_DATAGRAMS,
             max_udp_bytes: DEFAULT_MAX_PROCESS_UDP_BYTES,
             max_tls_bytes: DEFAULT_MAX_PROCESS_TLS_BYTES,
+            max_wasm_memory_bytes: DEFAULT_MAX_PROCESS_WASM_MEMORY_BYTES,
+            max_wasm_threads: DEFAULT_MAX_PROCESS_WASM_THREADS,
             max_http2_connections: DEFAULT_MAX_PROCESS_HTTP2_CONNECTIONS,
             max_http2_streams: DEFAULT_MAX_PROCESS_HTTP2_STREAMS,
             max_http2_buffered_bytes: DEFAULT_MAX_PROCESS_HTTP2_BYTES,
@@ -352,6 +366,17 @@ impl RuntimeResourceConfig {
             (
                 ResourceClass::TlsBytes,
                 ResourceLimit::new(self.max_tls_bytes, "runtime.resources.maxTlsBytes"),
+            ),
+            (
+                ResourceClass::WasmMemoryBytes,
+                ResourceLimit::new(
+                    self.max_wasm_memory_bytes,
+                    "runtime.resources.maxWasmMemoryBytes",
+                ),
+            ),
+            (
+                ResourceClass::WasmThreads,
+                ResourceLimit::new(self.max_wasm_threads, "runtime.resources.maxWasmThreads"),
             ),
             (
                 ResourceClass::Http2Connections,
@@ -585,6 +610,10 @@ impl RuntimeConfig {
             (
                 "runtime.resources.maxTlsBytes",
                 self.resources.max_tls_bytes,
+            ),
+            (
+                "runtime.resources.maxWasmMemoryBytes",
+                self.resources.max_wasm_memory_bytes,
             ),
             (
                 "runtime.resources.maxHttp2Connections",
@@ -1114,7 +1143,7 @@ pub struct RuntimeContext {
     fairness: FairWorkBroker,
     terminal_failure: Arc<Mutex<Option<TaskTerminalReport>>>,
     task_poll_watchdog: Duration,
-    max_active_vm_executors: usize,
+    vm_executors: VmExecutorAdmission,
     vm_executor_teardown_timeout: Duration,
     blocking_job_timeout: Duration,
     admission_open: Arc<AtomicBool>,
@@ -1146,7 +1175,11 @@ impl RuntimeContext {
     }
 
     pub fn max_active_vm_executors(&self) -> usize {
-        self.max_active_vm_executors
+        self.vm_executors.maximum()
+    }
+
+    pub fn vm_executor_admission(&self) -> &VmExecutorAdmission {
+        &self.vm_executors
     }
 
     pub fn vm_executor_teardown_timeout(&self) -> Duration {
@@ -1257,7 +1290,7 @@ impl RuntimeContext {
             fairness: self.fairness.clone(),
             terminal_failure: Arc::new(Mutex::new(None)),
             task_poll_watchdog: self.task_poll_watchdog,
-            max_active_vm_executors: self.max_active_vm_executors,
+            vm_executors: self.vm_executors.clone(),
             vm_executor_teardown_timeout: self.vm_executor_teardown_timeout,
             blocking_job_timeout: self.blocking_job_timeout,
             admission_open,
@@ -1482,16 +1515,18 @@ impl SidecarRuntime {
             ),
         ));
         let metrics = RuntimeMetrics::new();
+        let vm_executors =
+            VmExecutorAdmission::new(config.max_active_vm_executors, metrics.clone());
         let fairness = FairWorkBroker::new(config.fairness.scheduler_config(), metrics.clone())
             .map_err(|error| {
                 RuntimeBuildError(format!(
                     "ERR_AGENTOS_RUNTIME_FAIRNESS_START: failed to build process fairness broker: {error}"
                 ))
             })?;
-        let resources = Arc::new(ResourceLedger::root_with_metrics(
+        let resources = Arc::new(ResourceLedger::root_with_observer(
             "sidecar-process",
             resource_limits,
-            metrics.clone(),
+            Arc::new(metrics.clone()),
         ));
         let admission_open = Arc::new(AtomicBool::new(true));
         let admission_gate = Arc::new(Mutex::new(()));
@@ -1535,7 +1570,7 @@ impl SidecarRuntime {
             fairness,
             terminal_failure: Arc::new(Mutex::new(None)),
             task_poll_watchdog: Duration::from_millis(config.task_poll_watchdog_ms),
-            max_active_vm_executors: config.max_active_vm_executors,
+            vm_executors,
             vm_executor_teardown_timeout: Duration::from_millis(
                 config.vm_executor_teardown_timeout_ms,
             ),

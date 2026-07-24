@@ -52,6 +52,30 @@ pub fn temp_dir(name: &str) -> PathBuf {
     root
 }
 
+pub fn registry_wasm_command_root() -> Option<PathBuf> {
+    if let Some(configured) = std::env::var_os("AGENTOS_WASM_COMMANDS_DIR") {
+        let configured = PathBuf::from(configured);
+        assert!(
+            configured.is_dir(),
+            "AGENTOS_WASM_COMMANDS_DIR must name an existing directory: {}",
+            configured.display()
+        );
+        return Some(configured);
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .expect("canonicalize repo root");
+    [
+        repo_root.join("packages/runtime-core/commands"),
+        repo_root.join("software/coreutils/wasm"),
+        repo_root.join("toolchain/target/wasm32-wasip1/release/commands"),
+    ]
+    .into_iter()
+    .find(|candidate| candidate.is_dir())
+}
+
 pub fn new_sidecar(name: &str) -> NativeSidecar<RecordingBridge> {
     new_sidecar_with_auth_token(name, TEST_AUTH_TOKEN)
 }
@@ -123,6 +147,50 @@ pub fn wire_vm(
             vm_id: vm_id.to_owned(),
         },
     )
+}
+
+pub fn write_guest_file_wire(
+    sidecar: &mut NativeSidecar<RecordingBridge>,
+    request_id: agentos_native_sidecar::wire::RequestId,
+    connection_id: &str,
+    session_id: &str,
+    vm_id: &str,
+    path: &str,
+    contents: impl Into<String>,
+) {
+    let result = sidecar
+        .dispatch_wire_blocking(wire_request(
+            request_id,
+            wire_vm(connection_id, session_id, vm_id),
+            agentos_native_sidecar::wire::RequestPayload::GuestFilesystemCallRequest(
+                agentos_native_sidecar::wire::GuestFilesystemCallRequest {
+                    operation: agentos_native_sidecar::wire::GuestFilesystemOperation::WriteFile,
+                    path: path.to_owned(),
+                    destination_path: None,
+                    target: None,
+                    content: Some(contents.into()),
+                    encoding: Some(agentos_native_sidecar::wire::RootFilesystemEntryEncoding::Utf8),
+                    recursive: false,
+                    max_depth: None,
+                    mode: None,
+                    uid: None,
+                    gid: None,
+                    atime_ms: None,
+                    mtime_ms: None,
+                    len: None,
+                    offset: None,
+                },
+            ),
+        ))
+        .expect("write guest fixture through wire filesystem API");
+    assert!(
+        matches!(
+            &result.response.payload,
+            agentos_native_sidecar::wire::ResponsePayload::GuestFilesystemResultResponse(_)
+        ),
+        "unexpected guest fixture write response: {:?}",
+        result.response.payload
+    );
 }
 
 pub fn wire_permissions_allow_all() -> agentos_native_sidecar::wire::PermissionsPolicy {
@@ -261,23 +329,23 @@ pub fn create_vm_wire_with_metadata(
         .entry(String::from("cwd"))
         .or_insert_with(|| cwd.to_string_lossy().into_owned());
 
+    let request = create_vm_request_with_selected_wasm_backend(
+        runtime.clone(),
+        metadata,
+        agentos_native_sidecar::wire::RootFilesystemDescriptor {
+            mode: agentos_native_sidecar::wire::RootFilesystemMode::Ephemeral,
+            disable_default_base_layer: false,
+            lowers: Vec::new(),
+            bootstrap_entries: Vec::new(),
+        },
+        Some(wire_permissions_allow_all()),
+    );
+
     let result = sidecar
         .dispatch_wire_blocking(wire_request(
             request_id,
             wire_session(connection_id, session_id),
-            agentos_native_sidecar::wire::RequestPayload::CreateVmRequest(
-                agentos_native_sidecar::wire::CreateVmRequest::legacy_test_config(
-                    runtime,
-                    metadata,
-                    agentos_native_sidecar::wire::RootFilesystemDescriptor {
-                        mode: agentos_native_sidecar::wire::RootFilesystemMode::Ephemeral,
-                        disable_default_base_layer: false,
-                        lowers: Vec::new(),
-                        bootstrap_entries: Vec::new(),
-                    },
-                    Some(wire_permissions_allow_all()),
-                ),
-            ),
+            agentos_native_sidecar::wire::RequestPayload::CreateVmRequest(request),
         ))
         .expect("create sidecar VM through wire");
 
@@ -288,6 +356,29 @@ pub fn create_vm_wire_with_metadata(
         other => panic!("unexpected wire vm create response: {other:?}"),
     };
     (vm_id, result)
+}
+
+pub fn create_vm_request_with_selected_wasm_backend(
+    runtime: agentos_native_sidecar::wire::GuestRuntimeKind,
+    metadata: HashMap<String, String>,
+    root_filesystem: agentos_native_sidecar::wire::RootFilesystemDescriptor,
+    permissions: Option<agentos_native_sidecar::wire::PermissionsPolicy>,
+) -> agentos_native_sidecar::wire::CreateVmRequest {
+    let legacy_request = agentos_native_sidecar::wire::CreateVmRequest::legacy_test_config(
+        runtime.clone(),
+        metadata,
+        root_filesystem,
+        permissions,
+    );
+    let mut config: agentos_vm_config::CreateVmConfig =
+        serde_json::from_str(&legacy_request.config).expect("decode test VM config");
+    config.wasm_backend = match std::env::var("AGENTOS_TEST_WASM_BACKEND").as_deref() {
+        Ok("v8") => Some(agentos_vm_config::StandaloneWasmBackend::V8),
+        Ok("wasmtime") => Some(agentos_vm_config::StandaloneWasmBackend::Wasmtime),
+        Ok(value) => panic!("unknown AGENTOS_TEST_WASM_BACKEND value {value:?}"),
+        Err(_) => None,
+    };
+    agentos_native_sidecar::wire::CreateVmRequest::json_config(runtime, config)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -316,6 +407,7 @@ pub fn execute_wire(
                     env: HashMap::new(),
                     cwd: None,
                     wasm_permission_tier: None,
+                    wasm_backend: None,
                 },
             ),
         ))
@@ -729,6 +821,7 @@ pub fn wasm_signal_state_module() -> Vec<u8> {
   (import "host_process" "proc_sigaction" (func $proc_sigaction (type $proc_sigaction_t)))
   (memory (export "memory") 1)
   (data (i32.const 32) "signal:ready\n")
+  (func (export "__wasi_signal_trampoline") (param i32))
   (func $_start (export "_start")
     (drop
       (call $proc_sigaction

@@ -70,12 +70,16 @@ pub const DEFAULT_WASM_CAPTURED_OUTPUT_LIMIT_BYTES: usize = 16 * 1024 * 1024;
 pub const DEFAULT_WASM_SYNC_READ_LIMIT_BYTES: usize = 16 * 1024 * 1024;
 pub const DEFAULT_WASM_PREWARM_TIMEOUT_MS: u64 = 30_000;
 pub const DEFAULT_WASM_RUNNER_HEAP_LIMIT_MB: u32 = 2048;
-pub const DEFAULT_WASM_RUNNER_CPU_TIME_LIMIT_MS: u32 = 30_000;
+pub const DEFAULT_WASM_ACTIVE_CPU_TIME_LIMIT_MS: u32 = 30_000;
+pub const DEFAULT_WASM_MAX_THREADS: usize = 16;
+pub const DEFAULT_WASM_MAX_CONCURRENT_THREADS: usize = 64;
 pub const DEFAULT_PROCESS_PENDING_STDIN_BYTES: usize = 64 * 1024 * 1024;
 pub const DEFAULT_PROCESS_MAX_SPAWN_FILE_ACTIONS: usize = 4096;
 pub const DEFAULT_PROCESS_MAX_SPAWN_FILE_ACTION_BYTES: usize = 1024 * 1024;
 pub const DEFAULT_PROCESS_PENDING_EVENT_COUNT: usize = 10_000;
 pub const DEFAULT_PROCESS_PENDING_EVENT_BYTES: usize = 64 * 1024 * 1024;
+pub const DEFAULT_PROCESS_MAX_PENDING_CHILD_SYNC_COUNT: usize = 64;
+pub const DEFAULT_PROCESS_MAX_PENDING_CHILD_SYNC_BYTES: usize = 64 * 1024 * 1024;
 
 pub const DEFAULT_REACTOR_MAX_CAPABILITIES: usize = 4096;
 pub const DEFAULT_REACTOR_MAX_READY_HANDLES: usize = 4096;
@@ -343,8 +347,20 @@ pub struct WasmLimits {
     pub prewarm_timeout_ms: u64,
     /// V8 heap cap for the trusted JS runner isolate that hosts WASI/WASM.
     pub runner_heap_limit_mb: u32,
-    /// Active-CPU cap for the trusted JS runner isolate that hosts WASI/WASM.
-    pub runner_cpu_time_limit_ms: u32,
+    /// Active CPU-time cap for standalone WASM execution. The V8 compatibility
+    /// backend applies this to its runner isolate's CPU watchdog.
+    pub active_cpu_time_limit_ms: u32,
+    /// Optional elapsed wall-clock backstop for standalone WASM execution.
+    pub wall_clock_limit_ms: Option<u64>,
+    /// Optional deterministic instruction budget. The V8 compatibility backend
+    /// rejects explicit values because V8 cannot meter deterministic fuel.
+    pub deterministic_fuel: Option<u64>,
+    /// Maximum threads in one explicitly threaded standalone-WASM group,
+    /// including its initial thread.
+    pub max_threads: usize,
+    /// Maximum threads transactionally reserved by all concurrently running
+    /// threaded standalone-WASM groups in one VM.
+    pub max_concurrent_threads: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -359,6 +375,11 @@ pub struct ProcessLimits {
     pub pending_event_count: usize,
     /// Maximum aggregate payload bytes retained at each process-event stage.
     pub pending_event_bytes: usize,
+    /// Maximum concurrent synchronous child-process calls retained by one VM.
+    pub max_pending_child_sync_count: usize,
+    /// Maximum aggregate input and output capacity retained for synchronous
+    /// child-process calls by one VM.
+    pub max_pending_child_sync_bytes: usize,
 }
 
 impl Default for HttpLimits {
@@ -498,7 +519,11 @@ impl Default for WasmLimits {
             sync_read_limit_bytes: DEFAULT_WASM_SYNC_READ_LIMIT_BYTES,
             prewarm_timeout_ms: DEFAULT_WASM_PREWARM_TIMEOUT_MS,
             runner_heap_limit_mb: DEFAULT_WASM_RUNNER_HEAP_LIMIT_MB,
-            runner_cpu_time_limit_ms: DEFAULT_WASM_RUNNER_CPU_TIME_LIMIT_MS,
+            active_cpu_time_limit_ms: DEFAULT_WASM_ACTIVE_CPU_TIME_LIMIT_MS,
+            wall_clock_limit_ms: None,
+            deterministic_fuel: None,
+            max_threads: DEFAULT_WASM_MAX_THREADS,
+            max_concurrent_threads: DEFAULT_WASM_MAX_CONCURRENT_THREADS,
         }
     }
 }
@@ -511,6 +536,8 @@ impl Default for ProcessLimits {
             pending_stdin_bytes: DEFAULT_PROCESS_PENDING_STDIN_BYTES,
             pending_event_count: DEFAULT_PROCESS_PENDING_EVENT_COUNT,
             pending_event_bytes: DEFAULT_PROCESS_PENDING_EVENT_BYTES,
+            max_pending_child_sync_count: DEFAULT_PROCESS_MAX_PENDING_CHILD_SYNC_COUNT,
+            max_pending_child_sync_bytes: DEFAULT_PROCESS_MAX_PENDING_CHILD_SYNC_BYTES,
         }
     }
 }
@@ -796,10 +823,22 @@ pub fn vm_limits_from_config(
             limits.wasm.runner_heap_limit_mb = u32::try_from(value)
                 .map_err(|_| integer_too_large("limits.wasm.runnerHeapLimitMb", value))?;
         }
-        if let Some(value) = wasm.runner_cpu_time_limit_ms {
-            limits.wasm.runner_cpu_time_limit_ms = u32::try_from(value)
-                .map_err(|_| integer_too_large("limits.wasm.runnerCpuTimeLimitMs", value))?;
+        if let Some(value) = wasm.active_cpu_time_limit_ms {
+            limits.wasm.active_cpu_time_limit_ms = u32::try_from(value)
+                .map_err(|_| integer_too_large("limits.wasm.activeCpuTimeLimitMs", value))?;
         }
+        limits.wasm.wall_clock_limit_ms = wasm.wall_clock_limit_ms;
+        limits.wasm.deterministic_fuel = wasm.deterministic_fuel;
+        set_usize(
+            &mut limits.wasm.max_threads,
+            wasm.max_threads,
+            "limits.wasm.maxThreads",
+        )?;
+        set_usize(
+            &mut limits.wasm.max_concurrent_threads,
+            wasm.max_concurrent_threads,
+            "limits.wasm.maxConcurrentThreads",
+        )?;
     }
     if let Some(process) = config.process.as_ref() {
         set_usize(
@@ -826,6 +865,16 @@ pub fn vm_limits_from_config(
             &mut limits.process.pending_event_bytes,
             process.pending_event_bytes,
             "limits.process.pendingEventBytes",
+        )?;
+        set_usize(
+            &mut limits.process.max_pending_child_sync_count,
+            process.max_pending_child_sync_count,
+            "limits.process.maxPendingChildSyncCount",
+        )?;
+        set_usize(
+            &mut limits.process.max_pending_child_sync_bytes,
+            process.max_pending_child_sync_bytes,
+            "limits.process.maxPendingChildSyncBytes",
         )?;
     }
 
@@ -1127,7 +1176,6 @@ fn apply_resource_limits_config(
         config.max_recursive_fs_entries,
         "limits.resources.maxRecursiveFsEntries",
     )?;
-    set_optional_u64(&mut limits.max_wasm_fuel, config.max_wasm_fuel);
     set_optional_u64(
         &mut limits.max_wasm_memory_bytes,
         config.max_wasm_memory_bytes,
@@ -1538,7 +1586,7 @@ pub fn validate_vm_limits(
         )));
     }
 
-    let nonzero_usize: [(&str, usize); 36] = [
+    let nonzero_usize: [(&str, usize); 38] = [
         (
             "limits.bindings.max_registered_collections",
             limits.bindings.max_registered_collections,
@@ -1674,6 +1722,14 @@ pub fn validate_vm_limits(
             "limits.process.pending_event_bytes",
             limits.process.pending_event_bytes,
         ),
+        (
+            "limits.process.max_pending_child_sync_count",
+            limits.process.max_pending_child_sync_count,
+        ),
+        (
+            "limits.process.max_pending_child_sync_bytes",
+            limits.process.max_pending_child_sync_bytes,
+        ),
     ];
     for (key, value) in nonzero_usize {
         if value == 0 {
@@ -1701,6 +1757,21 @@ pub fn validate_vm_limits(
     if limits.wasm.max_module_file_bytes == 0 {
         return Err(SidecarCoreError::new(
             "limits.wasm.max_module_file_bytes must be greater than zero".to_string(),
+        ));
+    }
+    if limits.wasm.max_threads == 0 {
+        return Err(SidecarCoreError::new(
+            "limits.wasm.max_threads must be greater than zero",
+        ));
+    }
+    if limits.wasm.max_concurrent_threads == 0 {
+        return Err(SidecarCoreError::new(
+            "limits.wasm.max_concurrent_threads must be greater than zero",
+        ));
+    }
+    if limits.wasm.max_threads > limits.wasm.max_concurrent_threads {
+        return Err(SidecarCoreError::new(
+            "limits.wasm.max_threads must not exceed limits.wasm.max_concurrent_threads",
         ));
     }
     if limits.js_runtime.v8_ipc_max_frame_bytes == 0 {
@@ -1738,7 +1809,7 @@ mod tests {
     use super::*;
     use agentos_vm_config::{
         AcpLimitsConfig, Http2LimitsConfig, ProcessLimitsConfig, ReactorLimitsConfig,
-        TlsLimitsConfig, UdpLimitsConfig,
+        TlsLimitsConfig, UdpLimitsConfig, WasmLimitsConfig,
     };
 
     const FRAME_CAP: usize = 16 * 1024 * 1024;
@@ -1780,6 +1851,12 @@ mod tests {
             limits.http2.max_pending_events,
             DEFAULT_HTTP2_MAX_PENDING_EVENTS
         );
+        assert_eq!(
+            limits.wasm.active_cpu_time_limit_ms,
+            DEFAULT_WASM_ACTIVE_CPU_TIME_LIMIT_MS
+        );
+        assert_eq!(limits.wasm.wall_clock_limit_ms, None);
+        assert_eq!(limits.wasm.deterministic_fuel, None);
     }
 
     #[test]
@@ -1793,11 +1870,21 @@ mod tests {
             defaults.process.max_spawn_file_action_bytes,
             DEFAULT_PROCESS_MAX_SPAWN_FILE_ACTION_BYTES
         );
+        assert_eq!(
+            defaults.process.max_pending_child_sync_count,
+            DEFAULT_PROCESS_MAX_PENDING_CHILD_SYNC_COUNT
+        );
+        assert_eq!(
+            defaults.process.max_pending_child_sync_bytes,
+            DEFAULT_PROCESS_MAX_PENDING_CHILD_SYNC_BYTES
+        );
 
         let config = VmLimitsConfig {
             process: Some(ProcessLimitsConfig {
                 max_spawn_file_actions: Some(7),
                 max_spawn_file_action_bytes: Some(321),
+                max_pending_child_sync_count: Some(3),
+                max_pending_child_sync_bytes: Some(12_345),
                 ..ProcessLimitsConfig::default()
             }),
             ..VmLimitsConfig::default()
@@ -1805,6 +1892,8 @@ mod tests {
         let overridden = vm_limits_from_config(Some(&config), 64 * 1024 * 1024).expect("overrides");
         assert_eq!(overridden.process.max_spawn_file_actions, 7);
         assert_eq!(overridden.process.max_spawn_file_action_bytes, 321);
+        assert_eq!(overridden.process.max_pending_child_sync_count, 3);
+        assert_eq!(overridden.process.max_pending_child_sync_bytes, 12_345);
 
         for (max_actions, max_bytes, field) in [
             (Some(0), Some(321), "limits.process.max_spawn_file_actions"),
@@ -1824,6 +1913,59 @@ mod tests {
             };
             let error = vm_limits_from_config(Some(&config), 64 * 1024 * 1024)
                 .expect_err("zero process spawn limit must be rejected");
+            assert!(error.to_string().contains(field), "{error}");
+        }
+
+        for (count, bytes, field) in [
+            (
+                Some(0),
+                Some(1024),
+                "limits.process.max_pending_child_sync_count",
+            ),
+            (
+                Some(1),
+                Some(0),
+                "limits.process.max_pending_child_sync_bytes",
+            ),
+        ] {
+            let config = VmLimitsConfig {
+                process: Some(ProcessLimitsConfig {
+                    max_pending_child_sync_count: count,
+                    max_pending_child_sync_bytes: bytes,
+                    ..ProcessLimitsConfig::default()
+                }),
+                ..VmLimitsConfig::default()
+            };
+            let error = vm_limits_from_config(Some(&config), 64 * 1024 * 1024)
+                .expect_err("zero pending child-sync limit must be rejected");
+            assert!(error.to_string().contains(field), "{error}");
+        }
+    }
+
+    #[test]
+    fn process_queue_limits_reject_zero_before_runtime_construction() {
+        type ProcessLimitMutation = fn(&mut ProcessLimitsConfig);
+        let cases: [(&str, ProcessLimitMutation); 3] = [
+            ("limits.process.pending_stdin_bytes", |process| {
+                process.pending_stdin_bytes = Some(0)
+            }),
+            ("limits.process.pending_event_count", |process| {
+                process.pending_event_count = Some(0)
+            }),
+            ("limits.process.pending_event_bytes", |process| {
+                process.pending_event_bytes = Some(0)
+            }),
+        ];
+
+        for (field, set_zero) in cases {
+            let mut process = ProcessLimitsConfig::default();
+            set_zero(&mut process);
+            let config = VmLimitsConfig {
+                process: Some(process),
+                ..VmLimitsConfig::default()
+            };
+            let error = vm_limits_from_config(Some(&config), FRAME_CAP)
+                .expect_err("zero process queue limit must be rejected during VM admission");
             assert!(error.to_string().contains(field), "{error}");
         }
     }
@@ -1879,6 +2021,12 @@ mod tests {
                 max_permission_outcomes_per_vm: Some(45),
                 ..AcpLimitsConfig::default()
             }),
+            wasm: Some(WasmLimitsConfig {
+                active_cpu_time_limit_ms: Some(45_000),
+                wall_clock_limit_ms: Some(90_000),
+                deterministic_fuel: Some(1_000_000),
+                ..WasmLimitsConfig::default()
+            }),
             ..VmLimitsConfig::default()
         };
 
@@ -1900,6 +2048,9 @@ mod tests {
         assert_eq!(limits.acp.max_pending_permissions_per_vm, 23);
         assert_eq!(limits.acp.max_permission_outcomes_per_session, 34);
         assert_eq!(limits.acp.max_permission_outcomes_per_vm, 45);
+        assert_eq!(limits.wasm.active_cpu_time_limit_ms, 45_000);
+        assert_eq!(limits.wasm.wall_clock_limit_ms, Some(90_000));
+        assert_eq!(limits.wasm.deterministic_fuel, Some(1_000_000));
     }
 
     #[test]

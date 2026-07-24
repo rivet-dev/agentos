@@ -1,9 +1,9 @@
-import {
-	type LiveSidecarRequestPayload,
-	type LiveSidecarResponsePayload,
+import type {
+	LiveSidecarRequestPayload,
+	LiveSidecarResponsePayload,
 } from "./callbacks.js";
 import type { MountConfigJsonObject } from "./descriptors.js";
-import { type LiveSidecarEventSelector } from "./event-buffer.js";
+import type { LiveSidecarEventSelector } from "./event-buffer.js";
 import {
 	decodeGuestFilesystemContent,
 	encodeGuestFilesystemContent,
@@ -12,44 +12,45 @@ import {
 	type LiveRootFilesystemLowerDescriptor,
 } from "./filesystem.js";
 import type { CreateVmConfig } from "./generated/CreateVmConfig.js";
-import type { SidecarProcessTransport } from "./sidecar-client.js";
-import { type LiveOwnershipScope } from "./ownership.js";
-import {
-	type LiveFsPermissionRule,
-	type LivePatternPermissionRule,
-	type LivePermissionMode,
-	type LivePermissionScope,
-	type LivePermissionsPolicy,
-	type LiveRulePermissions,
+import type { LiveOwnershipScope } from "./ownership.js";
+import type {
+	LiveFsPermissionRule,
+	LivePatternPermissionRule,
+	LivePermissionMode,
+	LivePermissionScope,
+	LivePermissionsPolicy,
+	LiveRulePermissions,
 } from "./permissions.js";
-import { SIDECAR_PROTOCOL_SCHEMA } from "./protocol-schema.js";
+import type {
+	LiveEventFrame,
+	LiveRequestFrame,
+	LiveResponseFrame,
+	LiveSidecarRequestFrame,
+	LiveSidecarRequestHandler,
+	LiveSidecarResponseFrame,
+	ProtocolFramePayloadCodec,
+} from "./protocol-frames.js";
 import type {
 	LiveFilesystemOperation,
 	LiveGuestRuntimeKind,
 	LiveWasmPermissionTier,
 } from "./protocol-maps.js";
-import {
-	type LiveEventFrame,
-	type LiveSidecarRequestHandler,
-	type LiveRequestFrame,
-	type LiveResponseFrame,
-	type LiveSidecarRequestFrame,
-	type LiveSidecarResponseFrame,
-	type ProtocolFramePayloadCodec,
-} from "./protocol-frames.js";
-import { type LiveRequestPayload } from "./request-payloads.js";
+import { SIDECAR_PROTOCOL_SCHEMA } from "./protocol-schema.js";
+import type { LiveRequestPayload } from "./request-payloads.js";
 import type { LiveGuestDirEntry } from "./response-payloads.js";
-import {
-	type LiveGuestFilesystemStat,
-	type LiveProcessSnapshotEntry,
-	type LiveSocketStateEntry,
+import type { SidecarProcessTransport } from "./sidecar-client.js";
+import type {
+	LiveGuestFilesystemStat,
+	LiveProcessSnapshotEntry,
+	LiveSocketStateEntry,
 } from "./state.js";
+
+export { SidecarEventBufferOverflow } from "./event-buffer.js";
 export {
 	SidecarProcessError,
 	SidecarProcessExited,
 	SidecarSilenceTimeout,
 } from "./sidecar-errors.js";
-export { SidecarEventBufferOverflow } from "./event-buffer.js";
 // `Sidecar` is the public name for the native sidecar process client. The class
 // is `SidecarProcess` internally; consumers import it as `Sidecar` via the
 // `@rivet-dev/agentos-runtime-core/sidecar-client` subpath and the package root.
@@ -68,6 +69,7 @@ type GuestRuntimeKind = Extract<
 	"java_script" | "python" | "web_assembly"
 >;
 type WasmPermissionTier = LiveWasmPermissionTier;
+type StandaloneWasmBackend = "v8" | "wasmtime" | "wasmtime-threads";
 type RootFilesystemEntryEncoding = LiveRootFilesystemEntryEncoding;
 
 type RootFilesystemDescriptor = {
@@ -132,6 +134,7 @@ export interface SidecarQueueSnapshotEntry {
 
 export interface SidecarResourceSnapshot {
 	runningProcesses: number;
+	stoppedProcesses: number;
 	exitedProcesses: number;
 	fdTables: number;
 	openFds: number;
@@ -145,6 +148,16 @@ export interface SidecarResourceSnapshot {
 	socketConnections: number;
 	socketBufferedBytes: number;
 	socketDatagramQueueLen: number;
+	wasmReservedMemoryBytes: number;
+	wasmtimeEngineProfiles: number;
+	wasmtimeModuleEntries: number;
+	wasmtimeModuleCacheHits: number;
+	wasmtimeModuleCacheMisses: number;
+	wasmtimeModuleCacheEvictions: number;
+	wasmtimeCompiledSourceBytes: number;
+	wasmtimeChargedModuleBytes: number;
+	wasmtimeCompileTimeMicros: number;
+	wasmtimeProcessRetainedRssBytes?: number;
 	queueSnapshots: SidecarQueueSnapshotEntry[];
 }
 
@@ -866,7 +879,9 @@ export class SidecarProcess {
 			payload: { type: "list_mounts" },
 		});
 		if (response.payload.type !== "mounts_listed") {
-			throw new Error(`unexpected list_mounts response: ${response.payload.type}`);
+			throw new Error(
+				`unexpected list_mounts response: ${response.payload.type}`,
+			);
 		}
 		return response.payload.mounts.map((mount) => ({
 			path: mount.path,
@@ -1231,6 +1246,7 @@ export class SidecarProcess {
 			env?: Record<string, string>;
 			cwd?: string;
 			wasmPermissionTier?: WasmPermissionTier;
+			wasmBackend?: StandaloneWasmBackend;
 		},
 	): Promise<{ pid: number | null }> {
 		const response = await this.sendRequest({
@@ -1252,6 +1268,7 @@ export class SidecarProcess {
 				...(options.wasmPermissionTier
 					? { wasm_permission_tier: options.wasmPermissionTier }
 					: {}),
+				...(options.wasmBackend ? { wasm_backend: options.wasmBackend } : {}),
 			},
 		});
 		if (response.payload.type !== "process_started") {
@@ -1441,6 +1458,7 @@ export class SidecarProcess {
 		}
 		return {
 			runningProcesses: response.payload.running_processes,
+			stoppedProcesses: response.payload.stopped_processes,
 			exitedProcesses: response.payload.exited_processes,
 			fdTables: response.payload.fd_tables,
 			openFds: response.payload.open_fds,
@@ -1454,6 +1472,24 @@ export class SidecarProcess {
 			socketConnections: response.payload.socket_connections,
 			socketBufferedBytes: response.payload.socket_buffered_bytes,
 			socketDatagramQueueLen: response.payload.socket_datagram_queue_len,
+			wasmReservedMemoryBytes: response.payload.wasm_reserved_memory_bytes,
+			wasmtimeEngineProfiles: response.payload.wasmtime_engine_profiles,
+			wasmtimeModuleEntries: response.payload.wasmtime_module_entries,
+			wasmtimeModuleCacheHits: response.payload.wasmtime_module_cache_hits,
+			wasmtimeModuleCacheMisses: response.payload.wasmtime_module_cache_misses,
+			wasmtimeModuleCacheEvictions:
+				response.payload.wasmtime_module_cache_evictions,
+			wasmtimeCompiledSourceBytes:
+				response.payload.wasmtime_compiled_source_bytes,
+			wasmtimeChargedModuleBytes:
+				response.payload.wasmtime_charged_module_bytes,
+			wasmtimeCompileTimeMicros: response.payload.wasmtime_compile_time_micros,
+			...(response.payload.wasmtime_process_retained_rss_bytes !== undefined
+				? {
+						wasmtimeProcessRetainedRssBytes:
+							response.payload.wasmtime_process_retained_rss_bytes,
+					}
+				: {}),
 			queueSnapshots: response.payload.queue_snapshots.map((queue) => ({
 				name: queue.name,
 				category: queue.category,

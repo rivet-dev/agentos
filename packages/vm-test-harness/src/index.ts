@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, it } from "vitest";
 
@@ -69,13 +69,16 @@ export {
 	SOCK_DGRAM,
 	SOCK_STREAM,
 } from "../../runtime-core/src/test-runtime.js";
+
 import {
 	allowAll,
 	createInMemoryFileSystem,
 	createKernel as createKernelBase,
 	createNodeRuntime,
 	createWasmVmRuntime,
+	NodeFileSystem,
 } from "../../runtime-core/src/test-runtime.js";
+
 export type {
 	DriverProcess,
 	Kernel,
@@ -86,18 +89,41 @@ export type {
 	VirtualFileSystem,
 } from "../../runtime-core/src/test-runtime.js";
 export {
-	createWasmVmRuntime,
-	DEFAULT_FIRST_PARTY_TIERS,
-	WASMVM_COMMANDS,
-	type PermissionTier,
-	type WasmVmRuntimeOptions,
-} from "../../runtime-core/src/test-runtime.js";
-export {
 	createNodeHostNetworkAdapter,
 	createNodeRuntime,
+	createWasmVmRuntime,
+	DEFAULT_FIRST_PARTY_TIERS,
 	NodeFileSystem,
+	type PermissionTier,
+	WASMVM_COMMANDS,
+	type WasmVmRuntimeOptions,
 } from "../../runtime-core/src/test-runtime.js";
 export { TerminalHarness } from "./terminal-harness.js";
+
+type TestWasmBackend = "v8" | "wasmtime";
+
+function configuredTestWasmBackend(): TestWasmBackend | undefined {
+	const backend = process.env.AGENTOS_TEST_WASM_BACKEND;
+	if (backend === undefined || backend === "v8" || backend === "wasmtime") {
+		return backend;
+	}
+	throw new Error(
+		`AGENTOS_TEST_WASM_BACKEND must be "v8" or "wasmtime", got ${JSON.stringify(backend)}`,
+	);
+}
+
+/**
+ * Keep existing V8 regression ceilings while allowing Wasmtime's measured
+ * debug-mode cold compilation cost in dual-backend integration suites.
+ */
+export function wasmBackendTestTimeout(
+	v8TimeoutMs: number,
+	wasmtimeTimeoutMs: number,
+): number {
+	return configuredTestWasmBackend() === "wasmtime"
+		? wasmtimeTimeoutMs
+		: v8TimeoutMs;
+}
 
 /**
  * Registry integration tests assume they can bootstrap runtimes and /bin stubs
@@ -106,9 +132,27 @@ export { TerminalHarness } from "./terminal-harness.js";
 export function createKernel(
 	options: Parameters<typeof createKernelBase>[0],
 ): ReturnType<typeof createKernelBase> {
+	// Node-backed fixtures retain their host numeric ownership in the VM
+	// snapshot. Match that owner by default so tests do not depend on the
+	// runner account happening to use agentOS's usual uid/gid 1000.
+	const fixtureOwner =
+		options.filesystem instanceof NodeFileSystem
+			? statSync(options.filesystem.rootPath)
+			: undefined;
 	return createKernelBase({
 		...options,
 		permissions: options.permissions ?? allowAll,
+		user:
+			options.user ??
+			(fixtureOwner
+				? {
+						uid: fixtureOwner.uid,
+						gid: fixtureOwner.gid,
+						euid: fixtureOwner.uid,
+						egid: fixtureOwner.gid,
+					}
+				: undefined),
+		wasmBackend: options.wasmBackend ?? configuredTestWasmBackend(),
 	});
 }
 
@@ -123,6 +167,8 @@ export interface IntegrationKernelOptions {
 	loopbackExemptPorts?: number[];
 	commandDirs?: string[];
 	permissions?: Parameters<typeof createKernelBase>[0]["permissions"];
+	/** VM-wide engine used by standalone WASM commands in this test kernel. */
+	wasmBackend?: "v8" | "wasmtime" | "wasmtime-threads";
 }
 
 /**
@@ -141,11 +187,14 @@ export async function createIntegrationKernel(
 		filesystem: vfs,
 		loopbackExemptPorts: options?.loopbackExemptPorts,
 		permissions: options?.permissions,
+		wasmBackend: options?.wasmBackend,
 	});
 
 	if (runtimes.includes("wasmvm")) {
 		await kernel.mount(
-			createWasmVmRuntime({ commandDirs: options?.commandDirs ?? [COMMANDS_DIR] }),
+			createWasmVmRuntime({
+				commandDirs: options?.commandDirs ?? [COMMANDS_DIR],
+			}),
 		);
 	}
 	if (runtimes.includes("node")) {

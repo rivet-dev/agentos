@@ -265,6 +265,8 @@ export interface OpenShellOptions {
 	cwd?: string;
 	cols?: number;
 	rows?: number;
+	/** Engine affinity inherited by standalone WASM commands launched by the shell. */
+	wasmBackend?: "v8" | "wasmtime" | "wasmtime-threads";
 	/** Optional stderr-only diagnostic tap; do not render it alongside `onData`. */
 	onStderr?: (data: Uint8Array) => void;
 }
@@ -284,6 +286,7 @@ export interface ExecOptions {
 	filePath?: string;
 	cpuTimeLimitMs?: number;
 	timingMitigation?: TimingMitigation;
+	wasmBackend?: "v8" | "wasmtime" | "wasmtime-threads";
 }
 
 export interface ExecResult {
@@ -516,6 +519,7 @@ export interface Kernel extends KernelInterface {
 	registerBindings(bindings: Record<string, BindingDefinition>): Promise<void>;
 	getResourceSnapshot(): Promise<{
 		runningProcesses: number;
+		stoppedProcesses: number;
 		exitedProcesses: number;
 		fdTables: number;
 		openFds: number;
@@ -529,6 +533,16 @@ export interface Kernel extends KernelInterface {
 		socketConnections: number;
 		socketBufferedBytes: number;
 		socketDatagramQueueLen: number;
+		wasmReservedMemoryBytes: number;
+		wasmtimeEngineProfiles: number;
+		wasmtimeModuleEntries: number;
+		wasmtimeModuleCacheHits: number;
+		wasmtimeModuleCacheMisses: number;
+		wasmtimeModuleCacheEvictions: number;
+		wasmtimeCompiledSourceBytes: number;
+		wasmtimeChargedModuleBytes: number;
+		wasmtimeCompileTimeMicros: number;
+		wasmtimeProcessRetainedRssBytes?: number;
 		queueSnapshots: Array<{
 			name: string;
 			category: string;
@@ -2077,9 +2091,9 @@ function createBootstrapEntries(commandNames: string[]): RootFilesystemEntry[] {
 						? 0o2755
 						: 0o755,
 			uid:
-				entryPath === "/home/agentos" || entryPath === "/workspace" ? 1000 : 0,
+				entryPath === "/workspace" || entryPath === "/home/agentos" ? 1000 : 0,
 			gid:
-				entryPath === "/home/agentos" || entryPath === "/workspace" ? 1000 : 0,
+				entryPath === "/workspace" || entryPath === "/home/agentos" ? 1000 : 0,
 		})),
 		{
 			path: "/usr/bin/env",
@@ -2789,12 +2803,13 @@ class NativeKernel implements Kernel {
 			env?: Record<string, string>;
 			cwd?: string;
 			user?: VmUserConfig;
+			wasmBackend?: "v8" | "wasmtime" | "wasmtime-threads";
+			limits?: VmLimitsConfig;
 			sidecar?: SidecarProcess;
 			onBootTiming?: (timing: KernelBootTiming) => void;
 			hostNetworkAdapter?: unknown;
 			loopbackExemptPorts?: number[];
 			jsRuntime?: Partial<JsRuntimeConfig>;
-			limits?: VmLimitsConfig;
 			mounts?: Array<{
 				path: string;
 				fs: VirtualFileSystem;
@@ -3328,6 +3343,8 @@ class NativeKernel implements Kernel {
 				runtime: "java_script",
 				config: {
 					env: createVmEnv,
+					wasmBackend: this.options.wasmBackend,
+					limits: this.options.limits,
 					...(this.options.user ? { user: this.options.user } : {}),
 					rootFilesystem,
 					...(bootstrapPermissions
@@ -3455,13 +3472,14 @@ export function createKernel(options: {
 	env?: Record<string, string>;
 	cwd?: string;
 	user?: VmUserConfig;
+	wasmBackend?: "v8" | "wasmtime" | "wasmtime-threads";
+	limits?: VmLimitsConfig;
 	sidecar?: SidecarProcess;
 	onBootTiming?: (timing: KernelBootTiming) => void;
 	maxProcesses?: number;
 	hostNetworkAdapter?: unknown;
 	loopbackExemptPorts?: number[];
 	jsRuntime?: Partial<JsRuntimeConfig>;
-	limits?: VmLimitsConfig;
 	logger?: unknown;
 	mounts?: Array<{ path: string; fs: VirtualFileSystem; readOnly?: boolean }>;
 	syncFilesystemOnDispose?: boolean;

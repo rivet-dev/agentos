@@ -1190,6 +1190,9 @@ fn error_response(error: SidecarError) -> AcpResponse {
 }
 
 fn error_code(error: &SidecarError) -> String {
+    if let SidecarError::Host(error) = error {
+        return error.code.clone();
+    }
     let code = match error {
         SidecarError::ResourceLimit(_) => "resource_limit",
         SidecarError::InvalidState(message) => message
@@ -1211,8 +1214,10 @@ fn error_code(error: &SidecarError) -> String {
         SidecarError::Kernel(_) => "kernel",
         SidecarError::Plugin(_) => "plugin",
         SidecarError::Execution(_) => "execution",
+        SidecarError::ExecutionEventChannelClosed { .. } => "execution_event_channel_closed",
         SidecarError::Bridge(_) => "bridge",
         SidecarError::Io(_) => "io",
+        SidecarError::Host(_) => unreachable!("handled above"),
     };
     String::from(code)
 }
@@ -1368,7 +1373,7 @@ mod tests {
 
     #[test]
     fn configured_acp_limit_errors_preserve_stable_wire_codes() {
-        let mut limits = AcpLimits {
+        let limits = AcpLimits {
             max_prompt_bytes: 3,
             ..AcpLimits::default()
         };
@@ -1376,8 +1381,11 @@ mod tests {
             .expect_err("prompt bytes must be bounded");
         assert_eq!(error_code(&bytes_error), "acp_prompt_bytes_limit");
 
-        limits.max_prompt_bytes = 1024;
-        limits.max_prompt_blocks = 1;
+        let limits = AcpLimits {
+            max_prompt_bytes: 1024,
+            max_prompt_blocks: 1,
+            ..AcpLimits::default()
+        };
         let blocks_error = parse_content_blocks("[{},{}]", "main", &limits)
             .expect_err("prompt blocks must be bounded");
         assert_eq!(error_code(&blocks_error), "acp_prompt_blocks_limit");

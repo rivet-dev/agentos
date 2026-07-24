@@ -255,6 +255,310 @@ fn sticky_directory_only_allows_root_directory_owner_or_file_owner() {
 }
 
 #[test]
+fn process_mutation_dac_denials_follow_symlinked_parents_without_mutation() {
+    let mut kernel = kernel();
+    kernel.mkdir("/open", false).unwrap();
+    kernel.chmod("/open", 0o777).unwrap();
+    kernel
+        .write_file("/open/link-source", b"link source".to_vec())
+        .unwrap();
+    kernel
+        .write_file("/open/rename-source", b"rename source".to_vec())
+        .unwrap();
+
+    kernel.mkdir("/restricted-source", false).unwrap();
+    kernel
+        .write_file(
+            "/restricted-source/hidden-link-source",
+            b"hidden source".to_vec(),
+        )
+        .unwrap();
+    kernel.chown("/restricted-source", 1000, 1000).unwrap();
+    kernel.chmod("/restricted-source", 0o700).unwrap();
+    kernel
+        .symlink("/restricted-source", "/source-alias")
+        .unwrap();
+
+    kernel.mkdir("/restricted-destination", false).unwrap();
+    kernel
+        .write_file(
+            "/restricted-destination/remove-file",
+            b"remove file".to_vec(),
+        )
+        .unwrap();
+    kernel
+        .write_file(
+            "/restricted-destination/rename-source",
+            b"restricted rename source".to_vec(),
+        )
+        .unwrap();
+    kernel
+        .write_file(
+            "/restricted-destination/rename-destination",
+            b"rename destination".to_vec(),
+        )
+        .unwrap();
+    kernel
+        .mkdir("/restricted-destination/remove-dir", false)
+        .unwrap();
+    kernel.chown("/restricted-destination", 1000, 1000).unwrap();
+    kernel.chmod("/restricted-destination", 0o555).unwrap();
+    kernel
+        .symlink("/restricted-destination", "/destination-alias")
+        .unwrap();
+
+    let bob = process_as(&mut kernel, 1001);
+
+    let source_traversal = kernel
+        .link_for_process(
+            DRIVER,
+            bob,
+            "/source-alias/hidden-link-source",
+            "/open/hidden-hardlink",
+        )
+        .expect_err("hard-link source traversal should require search permission");
+    assert_eq!(source_traversal.code(), "EACCES");
+    assert!(!kernel.exists("/open/hidden-hardlink").unwrap());
+    assert_eq!(
+        kernel
+            .read_file("/restricted-source/hidden-link-source")
+            .unwrap(),
+        b"hidden source"
+    );
+
+    let link_destination = kernel
+        .link_for_process(
+            DRIVER,
+            bob,
+            "/open/link-source",
+            "/destination-alias/new-hardlink",
+        )
+        .expect_err("hard-link destination parent should require write permission");
+    assert_eq!(link_destination.code(), "EACCES");
+    assert!(!kernel
+        .exists("/restricted-destination/new-hardlink")
+        .unwrap());
+    assert_eq!(
+        kernel.read_file("/open/link-source").unwrap(),
+        b"link source"
+    );
+
+    let remove_file = kernel
+        .remove_file_for_process(DRIVER, bob, "/destination-alias/remove-file")
+        .expect_err("unlink parent should require write permission");
+    assert_eq!(remove_file.code(), "EACCES");
+    assert_eq!(
+        kernel
+            .read_file("/restricted-destination/remove-file")
+            .unwrap(),
+        b"remove file"
+    );
+
+    let remove_dir = kernel
+        .remove_dir_for_process(DRIVER, bob, "/destination-alias/remove-dir")
+        .expect_err("rmdir parent should require write permission");
+    assert_eq!(remove_dir.code(), "EACCES");
+    assert!(
+        kernel
+            .stat("/restricted-destination/remove-dir")
+            .unwrap()
+            .is_directory
+    );
+
+    let rename_source = kernel
+        .rename_for_process(
+            DRIVER,
+            bob,
+            "/destination-alias/rename-source",
+            "/open/moved-from-restricted",
+        )
+        .expect_err("rename source parent should require write permission");
+    assert_eq!(rename_source.code(), "EACCES");
+    assert_eq!(
+        kernel
+            .read_file("/restricted-destination/rename-source")
+            .unwrap(),
+        b"restricted rename source"
+    );
+    assert!(!kernel.exists("/open/moved-from-restricted").unwrap());
+
+    let rename_destination = kernel
+        .rename_for_process(
+            DRIVER,
+            bob,
+            "/open/rename-source",
+            "/destination-alias/rename-destination",
+        )
+        .expect_err("rename destination parent should require write permission");
+    assert_eq!(rename_destination.code(), "EACCES");
+    assert_eq!(
+        kernel.read_file("/open/rename-source").unwrap(),
+        b"rename source"
+    );
+    assert_eq!(
+        kernel
+            .read_file("/restricted-destination/rename-destination")
+            .unwrap(),
+        b"rename destination"
+    );
+
+    let symlink_destination = kernel
+        .symlink_for_process(
+            DRIVER,
+            bob,
+            "/target-does-not-need-to-exist",
+            "/destination-alias/new-symlink",
+        )
+        .expect_err("symlink destination parent should require write permission");
+    assert_eq!(symlink_destination.code(), "EACCES");
+    assert_eq!(
+        kernel
+            .lstat("/restricted-destination/new-symlink")
+            .expect_err("rejected symlink destination must not be created")
+            .code(),
+        "ENOENT"
+    );
+
+    kernel
+        .symlink_for_process(
+            DRIVER,
+            bob,
+            "/source-alias/hidden-target",
+            "/open/dangling-symlink",
+        )
+        .expect("symlink creation must not traverse or authorize its target");
+    assert_eq!(
+        kernel.read_link("/open/dangling-symlink").unwrap(),
+        "/source-alias/hidden-target"
+    );
+}
+
+#[test]
+fn sticky_directory_mutation_matrix_matches_linux_without_partial_changes() {
+    let mut kernel = kernel();
+    kernel.mkdir("/sticky", false).unwrap();
+    kernel.chown("/sticky", 0, 0).unwrap();
+    kernel.chmod("/sticky", 0o1777).unwrap();
+    kernel.symlink("/sticky", "/sticky-alias").unwrap();
+    kernel.mkdir("/open", false).unwrap();
+    kernel.chmod("/open", 0o777).unwrap();
+
+    kernel.mkdir("/sticky/alice-dir", false).unwrap();
+    kernel.chown("/sticky/alice-dir", 1000, 1000).unwrap();
+    kernel
+        .write_file("/sticky/alice-rename-source", b"alice source".to_vec())
+        .unwrap();
+    kernel
+        .chown("/sticky/alice-rename-source", 1000, 1000)
+        .unwrap();
+    kernel
+        .write_file("/sticky/alice-replacement", b"alice replacement".to_vec())
+        .unwrap();
+    kernel
+        .chown("/sticky/alice-replacement", 1000, 1000)
+        .unwrap();
+    kernel
+        .write_file("/sticky/bob-destination", b"bob destination".to_vec())
+        .unwrap();
+    kernel.chown("/sticky/bob-destination", 1001, 1001).unwrap();
+    kernel
+        .write_file("/open/bob-link-source", b"bob source".to_vec())
+        .unwrap();
+    kernel.chown("/open/bob-link-source", 1001, 1001).unwrap();
+
+    let bob = process_as(&mut kernel, 1001);
+    let remove_dir = kernel
+        .remove_dir_for_process(DRIVER, bob, "/sticky-alias/alice-dir")
+        .expect_err("sticky directory should reject removing another user's directory");
+    assert_eq!(remove_dir.code(), "EPERM");
+    assert!(kernel.stat("/sticky/alice-dir").unwrap().is_directory);
+
+    let rename_source = kernel
+        .rename_for_process(
+            DRIVER,
+            bob,
+            "/sticky-alias/alice-rename-source",
+            "/sticky-alias/bob-moved-source",
+        )
+        .expect_err("sticky directory should reject renaming another user's source");
+    assert_eq!(rename_source.code(), "EPERM");
+    assert_eq!(
+        kernel.read_file("/sticky/alice-rename-source").unwrap(),
+        b"alice source"
+    );
+    assert!(!kernel.exists("/sticky/bob-moved-source").unwrap());
+
+    kernel
+        .link_for_process(
+            DRIVER,
+            bob,
+            "/open/bob-link-source",
+            "/sticky-alias/bob-hardlink",
+        )
+        .expect("sticky directories allow creating new hard-link names");
+    assert_eq!(
+        kernel.read_file("/sticky/bob-hardlink").unwrap(),
+        b"bob source"
+    );
+    kernel
+        .symlink_for_process(
+            DRIVER,
+            bob,
+            "/target-does-not-need-to-exist",
+            "/sticky-alias/bob-symlink",
+        )
+        .expect("sticky directories allow creating new symlink names");
+    assert_eq!(
+        kernel.read_link("/sticky/bob-symlink").unwrap(),
+        "/target-does-not-need-to-exist"
+    );
+
+    let alice = process_as(&mut kernel, 1000);
+    let replace_destination = kernel
+        .rename_for_process(
+            DRIVER,
+            alice,
+            "/sticky-alias/alice-replacement",
+            "/sticky-alias/bob-destination",
+        )
+        .expect_err("sticky directory should reject replacing another user's destination");
+    assert_eq!(replace_destination.code(), "EPERM");
+    assert_eq!(
+        kernel.read_file("/sticky/alice-replacement").unwrap(),
+        b"alice replacement"
+    );
+    assert_eq!(
+        kernel.read_file("/sticky/bob-destination").unwrap(),
+        b"bob destination"
+    );
+
+    kernel
+        .remove_dir_for_process(DRIVER, alice, "/sticky-alias/alice-dir")
+        .expect("sticky entry owner should be able to remove their directory");
+    kernel
+        .rename_for_process(
+            DRIVER,
+            alice,
+            "/sticky-alias/alice-rename-source",
+            "/sticky-alias/alice-renamed",
+        )
+        .expect("sticky entry owner should be able to rename their source");
+
+    kernel.mkdir("/alice-sticky", false).unwrap();
+    kernel.chown("/alice-sticky", 1000, 1000).unwrap();
+    kernel.chmod("/alice-sticky", 0o1777).unwrap();
+    kernel
+        .write_file("/alice-sticky/bob-file", b"owned by bob".to_vec())
+        .unwrap();
+    kernel.chown("/alice-sticky/bob-file", 1001, 1001).unwrap();
+    kernel
+        .remove_file_for_process(DRIVER, alice, "/alice-sticky/bob-file")
+        .expect("sticky directory owner should be able to remove another user's entry");
+    assert!(!kernel.exists("/alice-sticky/bob-file").unwrap());
+    assert_eq!(kernel.read_link("/sticky-alias").unwrap(), "/sticky");
+}
+
+#[test]
 fn metadata_changes_and_descriptor_modes_enforce_linux_style_errors() {
     let mut kernel = kernel();
     kernel.mkdir("/work", false).unwrap();
@@ -449,6 +753,126 @@ fn xattrs_enforce_dac_namespaces_and_linux_flags() {
 }
 
 #[test]
+fn xattr_value_limit_accepts_linux_boundary_and_rejects_plus_one_transactionally() {
+    let mut kernel = kernel();
+    kernel.mkdir("/work", false).unwrap();
+    kernel.chmod("/work", 0o777).unwrap();
+    kernel.write_file("/work/file", b"x".to_vec()).unwrap();
+    kernel.chown("/work/file", 1000, 1000).unwrap();
+    let alice = process_as(&mut kernel, 1000);
+    let exact = vec![b'x'; 64 * 1024];
+    let oversized = vec![b'y'; 64 * 1024 + 1];
+
+    kernel
+        .set_xattr_for_process(
+            DRIVER,
+            alice,
+            "/work/file",
+            "user.path-limit",
+            exact.clone(),
+            1,
+            true,
+        )
+        .expect("path xattr exact Linux boundary");
+    let path_error = kernel
+        .set_xattr_for_process(
+            DRIVER,
+            alice,
+            "/work/file",
+            "user.path-limit",
+            oversized.clone(),
+            2,
+            true,
+        )
+        .expect_err("path xattr limit +1");
+    assert_eq!(path_error.code(), "E2BIG");
+    assert_eq!(
+        kernel
+            .get_xattr_for_process(DRIVER, alice, "/work/file", "user.path-limit", true)
+            .expect("path xattr survives rejected replacement"),
+        exact,
+        "oversized path replacement must not partially mutate the prior value"
+    );
+
+    let fd = kernel
+        .fd_open(DRIVER, alice, "/work/file", O_RDONLY, None)
+        .expect("open xattr target");
+    kernel
+        .fd_set_xattr_for_process(DRIVER, alice, fd, "user.fd-limit", exact.clone(), 1)
+        .expect("fd xattr exact Linux boundary");
+    let fd_error = kernel
+        .fd_set_xattr_for_process(DRIVER, alice, fd, "user.fd-limit", oversized, 2)
+        .expect_err("fd xattr limit +1");
+    assert_eq!(fd_error.code(), "E2BIG");
+    assert_eq!(
+        kernel
+            .fd_get_xattr_for_process(DRIVER, alice, fd, "user.fd-limit")
+            .expect("fd xattr survives rejected replacement"),
+        exact,
+        "oversized fd replacement must not partially mutate the prior value"
+    );
+}
+
+#[test]
+fn fd_xattrs_follow_the_open_description_after_unlink() {
+    let mut kernel = kernel();
+    kernel.mkdir("/work", false).unwrap();
+    kernel.chmod("/work", 0o777).unwrap();
+    kernel.write_file("/work/file", b"x".to_vec()).unwrap();
+    kernel.chown("/work/file", 1000, 1000).unwrap();
+    let alice = process_as(&mut kernel, 1000);
+    kernel
+        .set_xattr_for_process(
+            DRIVER,
+            alice,
+            "/work/file",
+            "user.note",
+            b"before".to_vec(),
+            0,
+            true,
+        )
+        .unwrap();
+    let fd = kernel
+        .fd_open(DRIVER, alice, "/work/file", O_RDONLY, None)
+        .unwrap();
+
+    kernel
+        .remove_file_for_process(DRIVER, alice, "/work/file")
+        .unwrap();
+    assert_eq!(
+        kernel
+            .fd_get_xattr_for_process(DRIVER, alice, fd, "user.note")
+            .unwrap(),
+        b"before"
+    );
+    assert_eq!(
+        kernel
+            .fd_list_xattrs_for_process(DRIVER, alice, fd)
+            .unwrap(),
+        vec![String::from("user.note")]
+    );
+    kernel
+        .fd_set_xattr_for_process(DRIVER, alice, fd, "user.note", b"after".to_vec(), 2)
+        .unwrap();
+    assert_eq!(
+        kernel
+            .fd_get_xattr_for_process(DRIVER, alice, fd, "user.note")
+            .unwrap(),
+        b"after"
+    );
+    kernel
+        .fd_remove_xattr_for_process(DRIVER, alice, fd, "user.note")
+        .unwrap();
+    assert_eq!(
+        kernel
+            .fd_get_xattr_for_process(DRIVER, alice, fd, "user.note")
+            .unwrap_err()
+            .code(),
+        "ENODATA"
+    );
+}
+
+#[test]
 fn xattrs_enforce_linux_inode_type_and_symlink_rules() {
     let mut kernel = kernel();
     kernel.mkdir("/work", false).unwrap();
@@ -630,6 +1054,64 @@ fn access_acl_enforces_named_entries_mask_and_chmod_synchronization() {
 }
 
 #[test]
+fn chmod_fchmod_and_access_acl_clear_setgid_outside_process_groups() {
+    let mut kernel = kernel();
+    kernel.mkdir("/work", false).unwrap();
+    kernel.chmod("/work", 0o777).unwrap();
+    kernel.write_file("/work/file", b"data".to_vec()).unwrap();
+    kernel.chown("/work/file", 1000, 4242).unwrap();
+    kernel.chmod("/work/file", 0o2755).unwrap();
+    let alice = process_as(&mut kernel, 1000);
+
+    kernel
+        .chmod_for_process(DRIVER, alice, "/work/file", 0o2777)
+        .unwrap();
+    assert_eq!(kernel.stat("/work/file").unwrap().mode & 0o2777, 0o0777);
+
+    kernel.chmod("/work/file", 0o2755).unwrap();
+    let fd = kernel
+        .fd_open(DRIVER, alice, "/work/file", O_RDONLY, None)
+        .unwrap();
+    kernel
+        .fd_chmod_for_process(DRIVER, alice, fd, 0o2777)
+        .unwrap();
+    assert_eq!(kernel.stat("/work/file").unwrap().mode & 0o2777, 0o0777);
+
+    kernel.chmod("/work/file", 0o2755).unwrap();
+    kernel
+        .set_xattr_for_process(
+            DRIVER,
+            alice,
+            "/work/file",
+            "system.posix_acl_access",
+            extended_acl(0o4, 0o7),
+            0,
+            true,
+        )
+        .unwrap();
+    assert_eq!(kernel.stat("/work/file").unwrap().mode & 0o2777, 0o0670);
+
+    kernel.chown("/work/file", 1000, 2000).unwrap();
+    kernel.chmod("/work/file", 0o2755).unwrap();
+    kernel
+        .set_xattr_for_process(
+            DRIVER,
+            alice,
+            "/work/file",
+            "system.posix_acl_access",
+            extended_acl(0o4, 0o7),
+            2,
+            true,
+        )
+        .unwrap();
+    assert_eq!(
+        kernel.stat("/work/file").unwrap().mode & 0o2777,
+        0o2670,
+        "an owner who belongs to the file group may preserve SGID"
+    );
+}
+
+#[test]
 fn default_acl_is_inherited_and_restricts_requested_mode_instead_of_using_umask() {
     let mut kernel = kernel();
     kernel.mkdir("/parent", false).unwrap();
@@ -679,6 +1161,35 @@ fn malformed_acls_and_symlink_mutation_are_rejected() {
     kernel.write_file("/work/file", b"x".to_vec()).unwrap();
     kernel.symlink("/work/file", "/work/link").unwrap();
     let root = process_as(&mut kernel, 0);
+
+    let noncanonical_ids = acl(&[
+        (ACL_USER_OBJ, 0, 0),
+        (ACL_GROUP_OBJ, 0, 0),
+        (ACL_MASK, 0o4, 0),
+        (ACL_OTHER, 0, 0),
+    ]);
+    kernel
+        .set_xattr_for_process(
+            DRIVER,
+            root,
+            "/work/file",
+            "system.posix_acl_access",
+            noncanonical_ids,
+            0,
+            true,
+        )
+        .unwrap();
+    assert_eq!(
+        kernel
+            .get_xattr("/work/file", "system.posix_acl_access", true)
+            .unwrap(),
+        acl(&[
+            (ACL_USER_OBJ, 0, u32::MAX),
+            (ACL_GROUP_OBJ, 0, u32::MAX),
+            (ACL_MASK, 0o4, u32::MAX),
+            (ACL_OTHER, 0, u32::MAX),
+        ])
+    );
 
     assert_eq!(
         kernel

@@ -5,9 +5,9 @@ use std::time::Duration;
 use vfs::engine::engines::{ChunkedFs, ChunkedFsOptions, ObjectFs};
 use vfs::engine::mem::{InMemoryMetadataStore, MemoryBlockStore, MemoryObjectBackend};
 use vfs::engine::{
-    BlockKey, CachedMetadataStore, ChunkEdit, ChunkRange, CreateInodeAttrs, InodePatch, InodeType,
-    MetadataStore, ObjectBackend, SnapshotId, Storage, VfsResult, VirtualFileSystem, S_IFBLK,
-    S_IFIFO,
+    BlockKey, CachedMetadataStore, ChunkEdit, ChunkRange, CreateInodeAttrs, FileExtent, InodePatch,
+    InodeType, MetadataStore, ObjectBackend, SnapshotId, Storage, VfsResult, VirtualFileSystem,
+    S_IFBLK, S_IFIFO,
 };
 
 #[tokio::test]
@@ -409,11 +409,95 @@ async fn chunked_fs_zero_range_reallocates_exact_bytes_and_honors_keep_size() {
         fs.unwritten_ranges("/zeroed").await.unwrap(),
         vec![(512, 1024), (3072, 3584)]
     );
+    let mut indexed_extents = Vec::new();
+    for index in 0..5 {
+        indexed_extents.push(fs.extent_at("/zeroed", index).await.unwrap());
+    }
+    assert_eq!(
+        indexed_extents,
+        vec![
+            Some(FileExtent {
+                start: 0,
+                end: 512,
+                unwritten: false,
+            }),
+            Some(FileExtent {
+                start: 512,
+                end: 1024,
+                unwritten: true,
+            }),
+            Some(FileExtent {
+                start: 1024,
+                end: 2048,
+                unwritten: false,
+            }),
+            Some(FileExtent {
+                start: 3072,
+                end: 3584,
+                unwritten: true,
+            }),
+            None,
+        ]
+    );
     fs.pwrite("/zeroed", &vec![b'y'; 512], 512).await.unwrap();
     assert_eq!(
         fs.unwritten_ranges("/zeroed").await.unwrap(),
         vec![(3072, 3584)]
     );
+}
+
+#[tokio::test]
+async fn chunked_fs_expansion_preserves_keep_size_allocation_past_new_eof() {
+    let fs = ChunkedFs::with_options(
+        InMemoryMetadataStore::new(),
+        MemoryBlockStore::new(),
+        ChunkedFsOptions {
+            inline_threshold: 1,
+            chunk_size: 512,
+            ..ChunkedFsOptions::default()
+        },
+    );
+    fs.write_file("/reserved", &vec![b'x'; 2048]).await.unwrap();
+    fs.zero_range("/reserved", 2048, 2048, true).await.unwrap();
+    assert_eq!(fs.stat("/reserved").await.unwrap().size, 2048);
+    assert_eq!(
+        fs.unwritten_ranges("/reserved").await.unwrap(),
+        vec![(2048, 4096)]
+    );
+
+    fs.truncate("/reserved", 3072).await.unwrap();
+    assert_eq!(fs.stat("/reserved").await.unwrap().size, 3072);
+    assert_eq!(
+        fs.allocated_ranges("/reserved").await.unwrap(),
+        vec![(0, 4096)]
+    );
+    assert_eq!(
+        fs.unwritten_ranges("/reserved").await.unwrap(),
+        vec![(2048, 4096)]
+    );
+}
+
+#[tokio::test]
+async fn chunked_fs_same_size_truncate_discards_keep_size_allocation_past_eof() {
+    let fs = ChunkedFs::with_options(
+        InMemoryMetadataStore::new(),
+        MemoryBlockStore::new(),
+        ChunkedFsOptions {
+            inline_threshold: 1,
+            chunk_size: 512,
+            ..ChunkedFsOptions::default()
+        },
+    );
+    fs.write_file("/reserved", &vec![b'x'; 2048]).await.unwrap();
+    fs.zero_range("/reserved", 2048, 2048, true).await.unwrap();
+
+    fs.truncate("/reserved", 2048).await.unwrap();
+
+    assert_eq!(
+        fs.allocated_ranges("/reserved").await.unwrap(),
+        vec![(0, 2048)]
+    );
+    assert!(fs.unwritten_ranges("/reserved").await.unwrap().is_empty());
 }
 
 #[tokio::test]

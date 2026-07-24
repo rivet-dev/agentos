@@ -1,7 +1,8 @@
 use super::root_fs::RootFileSystem;
 use super::usage::{FileSystemStats, FileSystemUsage};
 use super::vfs::{
-    VfsError, VfsResult, VirtualDirEntry, VirtualFileSystem, VirtualStat, VirtualUtimeSpec,
+    FileExtent, VfsError, VfsResult, VirtualDirEntry, VirtualFileSystem, VirtualStat,
+    VirtualUtimeSpec,
 };
 use std::any::Any;
 use std::collections::VecDeque;
@@ -278,6 +279,20 @@ pub trait MountedFileSystem: Any {
     fn unwritten_ranges(&mut self, _path: &str) -> VfsResult<Vec<(u64, u64)>> {
         Ok(Vec::new())
     }
+    fn extent_at(&mut self, path: &str, index: usize) -> VfsResult<Option<FileExtent>> {
+        let allocated = self.allocated_ranges(path)?;
+        let unwritten = self.unwritten_ranges(path)?;
+        Ok(crate::extent::classified_file_extent_at(
+            allocated.iter().copied(),
+            unwritten.iter().copied(),
+            index,
+        )
+        .map(|extent| FileExtent {
+            start: extent.start,
+            end: extent.end,
+            unwritten: extent.unwritten,
+        }))
+    }
     fn pread(&mut self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>>;
     fn pwrite(&mut self, path: &str, content: Vec<u8>, offset: u64) -> VfsResult<()> {
         let mut existing = self.read_file(path)?;
@@ -544,6 +559,10 @@ where
         VirtualFileSystem::unwritten_ranges(&mut self.inner, path)
     }
 
+    fn extent_at(&mut self, path: &str, index: usize) -> VfsResult<Option<FileExtent>> {
+        VirtualFileSystem::extent_at(&mut self.inner, path, index)
+    }
+
     fn pread(&mut self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>> {
         VirtualFileSystem::pread(&mut self.inner, path, offset, length)
     }
@@ -740,6 +759,10 @@ where
 
     fn unwritten_ranges(&mut self, path: &str) -> VfsResult<Vec<(u64, u64)>> {
         (**self).unwritten_ranges(path)
+    }
+
+    fn extent_at(&mut self, path: &str, index: usize) -> VfsResult<Option<FileExtent>> {
+        (**self).extent_at(path, index)
     }
 
     fn pread(&mut self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>> {
@@ -1016,6 +1039,10 @@ where
         self.inner.unwritten_ranges(path)
     }
 
+    fn extent_at(&mut self, path: &str, index: usize) -> VfsResult<Option<FileExtent>> {
+        self.inner.extent_at(path, index)
+    }
+
     fn pread(&mut self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>> {
         self.inner.pread(path, offset, length)
     }
@@ -1058,6 +1085,9 @@ impl MountEntry {
         if self.no_dir_atime {
             options.push("nodiratime");
         }
+        if self.no_suid {
+            options.push("nosuid");
+        }
         options.join(",")
     }
 }
@@ -1071,6 +1101,7 @@ pub struct MountEntry {
     pub read_only: bool,
     pub access_time: AccessTimePolicy,
     pub no_dir_atime: bool,
+    pub no_suid: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1081,8 +1112,14 @@ pub struct MountOptions {
     pub read_only: bool,
     pub access_time: AccessTimePolicy,
     pub no_dir_atime: bool,
+    pub no_suid: bool,
     pub max_bytes: Option<u64>,
     pub max_inodes: Option<usize>,
+    /// Interpret absolute symlink targets stored by the backing filesystem in
+    /// that filesystem's root namespace. Package images need this because
+    /// their archive root becomes a guest mount point; ordinary guest-created
+    /// symlinks retain Linux's VM-root absolute semantics.
+    pub absolute_symlinks_mount_relative: bool,
 }
 
 impl MountOptions {
@@ -1095,8 +1132,10 @@ impl MountOptions {
             read_only: false,
             access_time: AccessTimePolicy::Relatime,
             no_dir_atime: false,
+            no_suid: false,
             max_bytes: None,
             max_inodes: None,
+            absolute_symlinks_mount_relative: false,
         }
     }
 
@@ -1125,6 +1164,11 @@ impl MountOptions {
         self
     }
 
+    pub fn no_suid(mut self, no_suid: bool) -> Self {
+        self.no_suid = no_suid;
+        self
+    }
+
     pub fn max_bytes(mut self, max_bytes: Option<u64>) -> Self {
         self.max_bytes = max_bytes;
         self
@@ -1132,6 +1176,11 @@ impl MountOptions {
 
     pub fn max_inodes(mut self, max_inodes: Option<usize>) -> Self {
         self.max_inodes = max_inodes;
+        self
+    }
+
+    pub fn absolute_symlinks_mount_relative(mut self, enabled: bool) -> Self {
+        self.absolute_symlinks_mount_relative = enabled;
         self
     }
 }
@@ -1144,8 +1193,10 @@ struct MountRegistration {
     read_only: bool,
     access_time: AccessTimePolicy,
     no_dir_atime: bool,
+    no_suid: bool,
     max_bytes: Option<u64>,
     max_inodes: Option<usize>,
+    absolute_symlinks_mount_relative: bool,
     cached_usage: Option<FileSystemUsage>,
     filesystem: Box<dyn MountedFileSystem>,
 }
@@ -1166,8 +1217,10 @@ impl MountTable {
                 read_only: false,
                 access_time: AccessTimePolicy::Relatime,
                 no_dir_atime: false,
+                no_suid: false,
                 max_bytes: None,
                 max_inodes: None,
+                absolute_symlinks_mount_relative: false,
                 cached_usage: None,
                 filesystem: Box::new(MountedVirtualFileSystem::new(root_fs)),
             }],
@@ -1191,8 +1244,10 @@ impl MountTable {
                 read_only: options.read_only,
                 access_time: options.access_time,
                 no_dir_atime: options.no_dir_atime,
+                no_suid: options.no_suid,
                 max_bytes: options.max_bytes,
                 max_inodes: options.max_inodes,
+                absolute_symlinks_mount_relative: options.absolute_symlinks_mount_relative,
                 cached_usage: None,
                 filesystem,
             }],
@@ -1269,8 +1324,10 @@ impl MountTable {
             read_only: options.read_only,
             access_time: options.access_time,
             no_dir_atime: options.no_dir_atime,
+            no_suid: options.no_suid,
             max_bytes: options.max_bytes,
             max_inodes: options.max_inodes,
+            absolute_symlinks_mount_relative: options.absolute_symlinks_mount_relative,
             cached_usage: None,
             filesystem,
         });
@@ -1326,6 +1383,7 @@ impl MountTable {
         let mut read_only = mount.read_only;
         let mut access_time = mount.access_time.clone();
         let mut no_dir_atime = mount.no_dir_atime;
+        let mut no_suid = mount.no_suid;
         let mut max_bytes = mount.max_bytes;
         let mut max_inodes = mount.max_inodes;
         for option in options
@@ -1342,6 +1400,8 @@ impl MountTable {
                 "strictatime" => access_time = AccessTimePolicy::StrictAtime,
                 "nodiratime" => no_dir_atime = true,
                 "diratime" => no_dir_atime = false,
+                "nosuid" => no_suid = true,
+                "suid" => no_suid = false,
                 value if value.starts_with("size=") => {
                     max_bytes = Some(parse_mount_limit(value, "size")?);
                 }
@@ -1366,6 +1426,7 @@ impl MountTable {
         mount.read_only = read_only;
         mount.access_time = access_time;
         mount.no_dir_atime = no_dir_atime;
+        mount.no_suid = no_suid;
         mount.max_bytes = max_bytes;
         mount.max_inodes = max_inodes;
         mount.cached_usage = Some(usage);
@@ -1383,6 +1444,7 @@ impl MountTable {
                 read_only: mount.read_only,
                 access_time: mount.access_time.clone(),
                 no_dir_atime: mount.no_dir_atime,
+                no_suid: mount.no_suid,
             })
             .collect()
     }
@@ -2157,27 +2219,25 @@ impl VirtualFileSystem for MountTable {
                     ));
                 }
 
-                // Mounted filesystems express absolute symlink targets in their
-                // own root namespace. Keep the mount index while reading the
-                // link so the component-walk fallback does not accidentally
-                // reinterpret `/target` as the VM root after crossing a
-                // synthetic leaf mount.
+                // Package-image filesystems can explicitly scope absolute
+                // targets to their backing root. All ordinary guest mounts use
+                // Linux semantics, where an absolute target starts at the VM
+                // root even when the link itself lives on another mount.
                 let (link_index, relative_path) = self.resolve_link_leaf_index(&candidate)?;
                 let target = self.mounts[link_index]
                     .filesystem
                     .read_link(&relative_path)?;
                 let target_path = if target.starts_with('/') {
                     let mount_path = &self.mounts[link_index].path;
-                    let guest_absolute_target =
-                        target == *mount_path || target.starts_with(&format!("{mount_path}/"));
-                    if mount_path == "/" || guest_absolute_target {
-                        normalize_path(&target)
-                    } else {
+                    if mount_path != "/" && self.mounts[link_index].absolute_symlinks_mount_relative
+                    {
                         normalize_path(&format!(
                             "{}/{}",
                             mount_path,
                             target.trim_start_matches('/')
                         ))
+                    } else {
+                        normalize_path(&target)
                     }
                 } else {
                     normalize_path(&format!("{}/{}", parent_path(&candidate), target))
@@ -2209,21 +2269,7 @@ impl VirtualFileSystem for MountTable {
 
     fn symlink(&mut self, target: &str, link_path: &str) -> VfsResult<()> {
         let normalized_link_path = normalize_path(link_path);
-        let link_parent = parent_path(&normalized_link_path);
-        let absolute_target = if target.starts_with('/') {
-            normalize_path(target)
-        } else {
-            normalize_path(&format!("{link_parent}/{target}"))
-        };
-
         let (index, relative_path) = self.resolve_index(&normalized_link_path)?;
-        let (target_index, _) = self.resolve_index(&absolute_target)?;
-        if index != target_index {
-            return Err(VfsError::new(
-                "EXDEV",
-                format!("symlink across mounts: {link_path} -> {target}"),
-            ));
-        }
         self.ensure_writable(index, link_path)?;
         let before = self.mounts[index].filesystem.lstat(&relative_path).ok();
         self.check_file_growth(index, &relative_path, target.len() as u64, true)?;
@@ -2370,7 +2416,8 @@ impl VirtualFileSystem for MountTable {
     }
 
     fn truncate(&mut self, path: &str, length: u64) -> VfsResult<()> {
-        let (index, relative_path) = self.resolve_writable_index(path)?;
+        let (index, relative_path) = self.resolve_content_index(path)?;
+        self.ensure_writable(index, path)?;
         let before = self.mounts[index].filesystem.lstat(&relative_path).ok();
         self.check_file_growth(index, &relative_path, length, false)?;
         self.mounts[index]
@@ -2478,6 +2525,13 @@ impl VirtualFileSystem for MountTable {
         self.mounts[index]
             .filesystem
             .unwritten_ranges(&relative_path)
+    }
+
+    fn extent_at(&mut self, path: &str, extent_index: usize) -> VfsResult<Option<FileExtent>> {
+        let (mount_index, relative_path) = self.resolve_content_index(path)?;
+        self.mounts[mount_index]
+            .filesystem
+            .extent_at(&relative_path, extent_index)
     }
 
     fn pread(&mut self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>> {

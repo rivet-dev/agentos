@@ -53,6 +53,7 @@ describe("root public API exports", () => {
 	test("re-exports the main public value surface from the root entrypoint", () => {
 		expect(AgentOs).toBeTypeOf("function");
 		expect(AgentOs.prototype.pread).toBeTypeOf("function");
+		expect(AgentOs.prototype.pwrite).toBeTypeOf("function");
 		expect(AgentOsSidecar).toBeTypeOf("function");
 		expect(CronManager).toBeTypeOf("function");
 		expect(TimerScheduleDriver).toBeTypeOf("function");

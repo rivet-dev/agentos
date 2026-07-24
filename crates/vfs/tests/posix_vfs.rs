@@ -1,12 +1,43 @@
 use std::{fmt::Debug, thread::sleep, time::Duration};
 use vfs::posix::{
-    normalize_path, validate_path, MemoryFileSystem, VfsResult, VirtualFileSystem, RENAME_EXCHANGE,
+    normalize_path, validate_path, FileExtent, MemoryFileSystem, VfsResult, VirtualFileSystem,
+    VirtualTimeSpec, VirtualUtimeSpec, AGENTOS_TIMESTAMP_MAX_SECONDS, RENAME_EXCHANGE,
     RENAME_NOREPLACE, S_IFLNK, S_IFREG, XATTR_CREATE, XATTR_REPLACE,
 };
 
 fn assert_error_code<T: Debug>(result: vfs::posix::VfsResult<T>, expected: &str) {
     let error = result.expect_err("operation should fail");
     assert_eq!(error.code(), expected);
+}
+
+#[test]
+fn timestamps_reject_pre_epoch_values_and_clamp_after_2106() {
+    assert_error_code(
+        VirtualTimeSpec::new(-1, 0).unwrap().to_truncated_millis(),
+        "EINVAL",
+    );
+
+    let beyond = VirtualTimeSpec::new(AGENTOS_TIMESTAMP_MAX_SECONDS + 1, 123_000_000).unwrap();
+    assert_eq!(
+        beyond.to_truncated_millis().unwrap(),
+        AGENTOS_TIMESTAMP_MAX_SECONDS as u64 * 1_000 + 123
+    );
+
+    let mut filesystem = MemoryFileSystem::new();
+    filesystem.write_file("/time", b"").unwrap();
+    filesystem
+        .utimes_spec(
+            "/time",
+            VirtualUtimeSpec::Set(beyond),
+            VirtualUtimeSpec::Set(beyond),
+            true,
+        )
+        .unwrap();
+    let stat = filesystem.stat("/time").unwrap();
+    assert_eq!(
+        stat.mtime_ms,
+        AGENTOS_TIMESTAMP_MAX_SECONDS as u64 * 1_000 + 123
+    );
 }
 
 #[test]
@@ -689,6 +720,34 @@ fn zero_range_zeroes_exact_bytes_reallocates_holes_and_honors_keep_size() {
         filesystem.unwritten_ranges("/zeroed").unwrap(),
         vec![(512, 1024), (3072, 4096)]
     );
+    assert_eq!(
+        (0..5)
+            .map(|index| filesystem.extent_at("/zeroed", index).unwrap())
+            .collect::<Vec<_>>(),
+        vec![
+            Some(FileExtent {
+                start: 0,
+                end: 512,
+                unwritten: false,
+            }),
+            Some(FileExtent {
+                start: 512,
+                end: 1024,
+                unwritten: true,
+            }),
+            Some(FileExtent {
+                start: 1024,
+                end: 2048,
+                unwritten: false,
+            }),
+            Some(FileExtent {
+                start: 3072,
+                end: 4096,
+                unwritten: true,
+            }),
+            None,
+        ]
+    );
     filesystem
         .pwrite("/zeroed", vec![b'b'; 512], 512)
         .expect("convert one unwritten sector to data");
@@ -935,5 +994,69 @@ fn xattrs_follow_inode_identity_and_survive_snapshots() {
     assert_error_code(
         restored.get_xattr("/hardlink", "user.agentos", true),
         "ENODATA",
+    );
+}
+
+#[test]
+fn xattr_value_and_name_list_limits_accept_boundary_and_rollback_plus_one() {
+    let mut filesystem = MemoryFileSystem::new();
+    filesystem.write_file("/value", b"data").unwrap();
+    let exact_value = vec![b'x'; 64 * 1024];
+    filesystem
+        .set_xattr(
+            "/value",
+            "user.limit",
+            exact_value.clone(),
+            XATTR_CREATE,
+            true,
+        )
+        .expect("64 KiB xattr value is Linux-valid");
+    assert_error_code(
+        filesystem.set_xattr(
+            "/value",
+            "user.limit",
+            vec![b'y'; 64 * 1024 + 1],
+            XATTR_REPLACE,
+            true,
+        ),
+        "E2BIG",
+    );
+    assert_eq!(
+        filesystem
+            .get_xattr("/value", "user.limit", true)
+            .expect("rejected replacement preserves old value"),
+        exact_value
+    );
+    let oversized_name = format!("user.{}", "x".repeat(251));
+    assert_eq!(oversized_name.len(), 256);
+    assert_error_code(
+        filesystem.set_xattr("/value", &oversized_name, Vec::new(), XATTR_CREATE, true),
+        "EINVAL",
+    );
+
+    filesystem.write_file("/list", b"data").unwrap();
+    for index in 0..256 {
+        let name = format!("user.{index:04}.{}", "n".repeat(245));
+        assert_eq!(name.len(), 255);
+        filesystem
+            .set_xattr("/list", &name, Vec::new(), XATTR_CREATE, true)
+            .expect("name list entry within 64 KiB boundary");
+    }
+    let names = filesystem
+        .list_xattrs("/list", true)
+        .expect("exact 64 KiB xattr name list");
+    assert_eq!(
+        names.iter().map(|name| name.len() + 1).sum::<usize>(),
+        64 * 1024
+    );
+
+    assert_error_code(
+        filesystem.set_xattr("/list", "user.overflow", Vec::new(), XATTR_CREATE, true),
+        "ENOSPC",
+    );
+    assert_eq!(
+        filesystem.list_xattrs("/list", true).unwrap(),
+        names,
+        "name-list overflow must not partially insert the new attribute"
     );
 }
