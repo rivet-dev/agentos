@@ -144,7 +144,7 @@ export const agentOsLimitsSchema = z
 				defaultBindingTimeoutMs: nonNegativeInteger.optional(),
 				maxBindingTimeoutMs: nonNegativeInteger.optional(),
 				maxRegisteredCollections: positiveInteger.optional(),
-				maxRegisteredCollectionsPerVm: positiveInteger.optional(),
+				maxRegisteredBindingsPerVm: positiveInteger.optional(),
 				maxBindingsPerCollection: positiveInteger.optional(),
 				maxBindingSchemaBytes: positiveInteger.optional(),
 				maxExamplesPerBinding: nonNegativeInteger.optional(),

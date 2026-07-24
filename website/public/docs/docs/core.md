@@ -1,12 +1,13 @@
-# Core Package
+# Direct VM API
 
-Use @rivet-dev/agentos-core standalone for direct VM control without the Rivet Actor runtime.
+Use the direct AgentOS VM API or layer it into an AgentOS actor.
 
-## agentOS vs agentOS Core
+## Direct VM vs actor
 
-The `agentOS()` actor (from `@rivet-dev/agentos`) wraps the core package and adds:
+`@rivet-dev/agentos` includes both the direct `AgentOs` VM API and the
+`agentOS()` actor API:
 
-| | Core (`@rivet-dev/agentos-core`) | Actor (`@rivet-dev/agentos`) |
+| | Direct VM | Actor |
 |-|---|---|
 | Persistence | In-memory by default (pluggable via [mounts](#mounts)) | Persistent filesystem and sessions |
 | Distributed state | Manage yourself | Built-in distributed statefulness |
@@ -19,16 +20,16 @@ The `agentOS()` actor (from `@rivet-dev/agentos`) wraps the core package and add
 | Agent-to-agent communication | Custom | Built into [Rivet Actors](/docs/agent-to-agent) |
 | Authentication | Set up yourself | [Documentation](/docs/authentication) |
 
-We recommend using [Rivet Actors](https://rivet.dev/docs/actors) because they provide a portable way to run `agentOS()` on any infrastructure with built-in persistence, networking, and orchestration. Use the core package if you need the most bare-bones implementation possible.
+We recommend using [Rivet Actors](https://rivet.dev/docs/actors) when you need persistence, networking, and orchestration. Use `AgentOs.create()` from the same package when you need direct VM control in a Node.js process.
 
-`agentOS()` returns an ordinary TypeScript Rivet actor definition. Its config accepts the core VM options together with normal actor state, actions, events, queues, connection types, and lifecycle hooks such as `onBeforeConnect`. AgentOS actions and events are merged in automatically; their names are reserved so they cannot be accidentally shadowed. After a wake, the actor creates the core SDK VM lazily on the first AgentOS action and disposes it on sleep. This lets a connection subscribe before the `vmBooted` event is emitted.
+`agentOS()` returns an ordinary TypeScript Rivet actor definition. Its config accepts the VM options together with normal actor state, actions, events, queues, connection types, and lifecycle hooks such as `onBeforeConnect`. AgentOS actions and events are merged in automatically; their names are reserved so they cannot be accidentally shadowed. After a wake, the actor creates its VM lazily on the first AgentOS action and disposes it on sleep. This lets a connection subscribe before the `vmBooted` event is emitted.
 
 Creation input is inferred from the actor definition and is passed through normal client creation options: `client.vm.create("key", { input })`. The same input reaches `createState(c, input)` and `onCreate(c, input)`.
 
 ## Install
 
 ```bash
-npm install @rivet-dev/agentos-core
+npm install @rivet-dev/agentos
 ```
 
 ## Boot a VM
@@ -37,11 +38,11 @@ Create a VM and drive it directly — no actor runtime, no client/server split. 
 
 ## Sidecar process
 
-Every VM runs inside a **shared sidecar process** rather than a process of its own. By default all VMs are tenants of a single, process-global sidecar (the `default` pool), so each additional VM only adds its marginal cost — a V8 isolate plus its kernel state — instead of a whole OS process. This is what keeps per-VM memory in the tens of MB and warm VM creation in the single-digit milliseconds (see [Benchmarks](/docs/benchmarks)).
+Every VM runs inside a **shared sidecar process** rather than a process of its own. By default all VMs are tenants of a single, process-global sidecar (the `default` pool), so each additional VM only adds its marginal cost — a V8 isolate plus its kernel state — instead of a whole OS process. This is what keeps per-VM memory in the tens of MB and warm VM creation in the single-digit milliseconds (see [Performance](/docs/performance)).
 
 This is automatic — `agentOS()` and `AgentOs.create()` use the shared default sidecar with no configuration, and the same applies to Rivet Actors (each actor's VM is a tenant of the shared process). Disposing a VM tears down only that VM; the shared sidecar process is reused across VMs and stays alive for the lifetime of the host process.
 
-For advanced cases the core package exposes explicit sidecar handles so you can isolate a group of VMs in their own process:
+For advanced cases the direct VM API exposes explicit sidecar handles so you can isolate a group of VMs in their own process:
 
 ## Filesystem
 
@@ -78,8 +79,8 @@ The top-level fields are documented inline above. See [Mounts](#mounts) and [Sof
 
 ### Session events
 
-With the core package, `onSessionEvent` receives a generic union containing exact native ACP `SessionUpdate`, `RequestPermissionRequest`, and `RequestPermissionResponse` payloads wrapped with AgentOS durability metadata. Register it before prompting. On reconnect, also read durable history after your last sequence and deduplicate by `(sessionId, sequence)`:
+With the direct VM API, `onSessionEvent` receives a generic union containing exact native ACP `SessionUpdate`, `RequestPermissionRequest`, and `RequestPermissionResponse` payloads wrapped with AgentOS durability metadata. Register it before prompting. On reconnect, also read durable history after your last sequence and deduplicate by `(sessionId, sequence)`:
 
 ### Timeouts and sleep
 
-Action timeouts and automatic sleep/wake are features of the [`agentOS()` actor](/docs/quickstart), not the core package. A core VM stays alive until you call `dispose()`. See [Persistence & Sleep](/docs/persistence) for the actor's sleep lifecycle.
+Action timeouts and automatic sleep/wake are features of the [`agentOS()` actor](/docs/quickstart), not the direct VM API. A direct VM stays alive until you call `dispose()`. See [Persistence & Sleep](/docs/persistence) for the actor's sleep lifecycle.

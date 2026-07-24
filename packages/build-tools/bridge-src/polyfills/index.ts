@@ -10,7 +10,7 @@ function defineGlobal(name, value) {
 if (typeof globalThis.global === "undefined") {
   defineGlobal("global", globalThis);
 }
-if (typeof globalThis.RegExp === "function" && !("__secureExecRgiEmojiCompat" in globalThis.RegExp)) {
+if (typeof globalThis.RegExp === "function" && !("__agentOsRgiEmojiCompat" in globalThis.RegExp)) {
   const NativeRegExp = globalThis.RegExp;
   const rgiEmojiPattern = "^\\p{RGI_Emoji}$";
   const rgiEmojiBaseClass = "[\\u{00A9}\\u{00AE}\\u{203C}\\u{2049}\\u{2122}\\u{2139}\\u{2194}-\\u{21AA}\\u{231A}-\\u{23FF}\\u{24C2}\\u{25AA}-\\u{27BF}\\u{2934}-\\u{2935}\\u{2B05}-\\u{2B55}\\u{3030}\\u{303D}\\u{3297}\\u{3299}\\u{1F000}-\\u{1FAFF}]";
@@ -41,7 +41,7 @@ if (typeof globalThis.RegExp === "function" && !("__secureExecRgiEmojiCompat" in
       });
       defineGlobal(
         "RegExp",
-        Object.assign(CompatRegExp, { __secureExecRgiEmojiCompat: true })
+        Object.assign(CompatRegExp, { __agentOsRgiEmojiCompat: true })
       );
     }
   }

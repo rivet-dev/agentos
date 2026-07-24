@@ -2,9 +2,9 @@
 
 When to use the lightweight agentOS VM, a full sandbox, or both together.
 
-- **agentOS** is a lightweight VM that runs inside your process. Near-zero cold start, low memory, direct backend integration via [bindings](/docs/bindings).
+- **agentOS** is a lightweight VM that runs inside your process. Near-zero cold start, low memory, direct backend integration via [custom bindings](/docs/extensions/custom-bindings).
 - **Sandboxes** are full Linux environments with root access, system packages, and native binary support.
-- **You can use both.** agentOS works with sandboxes through [sandbox mounting](/docs/sandbox). Agents run in the lightweight VM by default and spin up a full sandbox on demand.
+- **You can use both.** agentOS works with sandboxes through the [external sandbox extension](/docs/extensions/sandboxes). Agents run in the lightweight VM by default and spin up a full sandbox on demand.
 
 ## Comparison
 
@@ -12,8 +12,8 @@ When to use the lightweight agentOS VM, a full sandbox, or both together.
 |---|---|---|
 | **Cost** | Very low. Runs in your process. | Pay per second of uptime. |
 | **Startup** | Near-zero cold start (~6 ms). | Seconds to spin up. |
-| **Backend integration** | Direct. [Bindings](/docs/bindings) call your functions with zero latency. | Indirect. Requires network calls back to your backend. |
-| **Credentials** | Stay on the host. [Bindings](/docs/bindings) run your functions server-side; agents see only inputs and outputs. | Must be injected into the sandbox environment. |
+| **Backend integration** | Direct. [Custom bindings](/docs/extensions/custom-bindings) call your functions with zero latency. | Indirect. Requires network calls back to your backend. |
+| **Credentials** | Stay on the host. [Custom bindings](/docs/extensions/custom-bindings) run your functions server-side; agents see only inputs and outputs. | Must be injected into the sandbox environment. |
 | **Permissions** | Granular, deny-by-default. | Coarse-grained (container-level). |
 | **Infrastructure** | `npm install` | Vendor account + API keys. |
 | **Best for** | Coding, file manipulation, scripting, API calls, orchestration. | Browsers, desktop automation, native compilation, dev servers. |
@@ -41,7 +41,7 @@ Spin up a sandbox when the workload needs a real Linux kernel:
 
 ### Both together
 
-Use agentOS with [sandbox mounting](/docs/sandbox) for workflows that need both:
+Use agentOS with [external sandboxes](/docs/extensions/sandboxes) for workflows that need both:
 
 - Agent runs in the agentOS VM with full access to bindings and permissions
 - Sandbox spins up on demand for heavy tasks

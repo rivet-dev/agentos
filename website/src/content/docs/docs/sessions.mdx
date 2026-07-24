@@ -17,6 +17,20 @@ AgentOS sessions are durable records backed by the VM's SQLite database. The pub
 
 The input supports `agent`, `cwd`, `additionalDirectories`, `env`, `mcpServers`, `permissionPolicy`, `skipOsInstructions`, and `additionalInstructions`. Omitted `cwd` defaults to `/home/agentos` in the sidecar. Actor deployments inject their SQLite UDS database automatically. Standalone core clients must configure a VM SQLite file or UDS descriptor.
 
+## MCP servers
+
+MCP configuration belongs to the session because its tools are part of the
+agent's runtime context. Configure local child-process servers or remote servers
+before opening the session. The exact config path and supported transports come
+from the selected agent adapter; for example, Pi reads `.mcp.json` from its
+AgentOS home directory:
+
+<CodeSnippet file="examples/pi/client.ts" region="mcp" />
+
+Install local MCP server packages before opening the session so first-run
+package-manager output cannot corrupt a stdio handshake. See the selected
+[agent guide](/docs/agents/pi) for adapter-specific configuration.
+
 ## Prompt
 
 `prompt` accepts native ACP `ContentBlock[]`, not a special AgentOS text format. It never creates a missing session. AgentOS commits the complete user message before dispatching it and never automatically replays a prompt whose delivery may have reached the adapter.
@@ -61,7 +75,7 @@ ACP itself does not define a portable history-reading API, and adapters implemen
 `permissionPolicy` is `reject_all`, `ask`, or `allow_all`, and defaults to `allow_all`. It controls how AgentOS answers native ACP permission requests; it does not configure VM permissions or adapter tool access. Set `permissionPolicy: "ask"` when opening the session before subscribing for interactive decisions; subscribing alone does not change the immutable policy. With `ask`, AgentOS durably records the native ACP `RequestPermissionRequest` as a `permission_request` variant in the generic session-event stream. With the default `allow_all`, AgentOS resolves the adapter request automatically and emits no permission event. Reply to an `ask` request with the exact adapter-supplied `optionId` and an explicit public session ID:
 
 ```ts
-await agent.respondPermission({
+await agent.sessions.respondPermission({
   sessionId: request.sessionId,
   requestId: request.requestId,
   optionId: request.options[0].optionId,

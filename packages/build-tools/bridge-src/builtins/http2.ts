@@ -9,7 +9,7 @@ import {
   unregisterCapabilityReadiness,
 } from "./readiness.js";
 
-var HTTP2_K_SOCKET = /* @__PURE__ */ Symbol.for("secure-exec.http2.kSocket");
+var HTTP2_K_SOCKET = /* @__PURE__ */ Symbol.for("agentos.http2.kSocket");
 
 var HTTP2_OPTIONS = /* @__PURE__ */ Symbol("options");
 
@@ -752,7 +752,7 @@ var ClientHttp2Stream = class extends Http2EventEmitter {
   }
   _emitPush(headers, flags) {
     if (process.env.AGENTOS_DEBUG_HTTP2_BRIDGE === "1") {
-      console.error("[secure-exec http2 isolate] push", this._streamId);
+      console.error("[agentos http2 isolate] push", this._streamId);
     }
     this.emit("push", headers, flags ?? 0);
   }
@@ -765,7 +765,7 @@ var ClientHttp2Stream = class extends Http2EventEmitter {
   _emitResponseHeaders(headers) {
     this._receivedResponse = true;
     if (process.env.AGENTOS_DEBUG_HTTP2_BRIDGE === "1") {
-      console.error("[secure-exec http2 isolate] response headers", this._streamId, this._isPushStream);
+      console.error("[agentos http2 isolate] response headers", this._streamId, this._isPushStream);
     }
     if (!this._isPushStream) {
       this.emit("response", headers);
@@ -2101,7 +2101,7 @@ function onHttp2Dispatch(_eventType, payload) {
     return;
   }
   if (process.env.AGENTOS_DEBUG_HTTP2_BRIDGE === "1") {
-    console.error("[secure-exec http2 isolate dispatch]", event.kind, event.id);
+    console.error("[agentos http2 isolate dispatch]", event.kind, event.id);
   }
   const kind = event.kind;
   const id = event.id;

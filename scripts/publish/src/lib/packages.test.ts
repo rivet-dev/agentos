@@ -74,8 +74,12 @@ test("builds platform map for the agent-os sidecar meta package", () => {
 
 test("sanity check passes for the agent-os workspace", () => {
 	const packages = discoverPackages(repoRoot);
+	const names = new Set(packages.map((pkg) => pkg.name));
 
 	assert.doesNotThrow(() => assertDiscoverySanity(packages));
+	assert(names.has("@rivet-dev/agentos"));
+	assert(names.has("@rivet-dev/agentos-javascript"));
+	assert(names.has("@rivet-dev/agentos-python"));
 });
 
 test("browser migration packages stay explicitly excluded from publication", () => {

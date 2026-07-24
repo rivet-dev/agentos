@@ -594,7 +594,7 @@ function loadBuiltinModule(request) {
 	switch (normalized) {
 		case "assert":
 		case "assert/strict":
-			return globalThis.__secureExecBuiltinAssertModule;
+			return globalThis.__agentOsBuiltinAssertModule;
 		case "async_hooks":
 			return builtinAsyncHooksModule;
 		case "buffer":
@@ -863,15 +863,15 @@ function loadBuiltinModule(request) {
 			return ensureBuiltinUrlStdlibModule();
 		case "sys":
 			return installBuiltinUtilFormatWithOptions(
-				globalThis.__secureExecBuiltinUtilModule,
+				globalThis.__agentOsBuiltinUtilModule,
 			);
 		case "util":
 			return installBuiltinUtilFormatWithOptions(
-				globalThis.__secureExecBuiltinUtilModule,
+				globalThis.__agentOsBuiltinUtilModule,
 			);
 		case "util/types":
 			return installBuiltinUtilFormatWithOptions(
-				globalThis.__secureExecBuiltinUtilModule,
+				globalThis.__agentOsBuiltinUtilModule,
 			).types;
 		case "child_process":
 			return _childProcessModule;
@@ -902,7 +902,7 @@ function loadBuiltinModule(request) {
 		case "wasi":
 			throw createAccessDeniedBuiltinError(request);
 		case "zlib":
-			return globalThis.__secureExecBuiltinZlibModule;
+			return globalThis.__agentOsBuiltinZlibModule;
 		case "v8":
 			return builtinV8Module;
 		case "vm":

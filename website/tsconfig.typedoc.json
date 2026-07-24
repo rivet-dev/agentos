@@ -1,0 +1,12 @@
+{
+	"extends": "../tsconfig.base.json",
+	"compilerOptions": {
+		"jsx": "react",
+		"noEmit": true
+	},
+	"include": [
+		"../packages/agentos/src/**/*",
+		"../packages/javascript/src/**/*",
+		"../packages/python/src/**/*"
+	]
+}

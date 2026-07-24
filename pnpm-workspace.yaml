@@ -2,6 +2,8 @@ packages:
   - packages/agentos-sandbox
   - packages/agentos
   - packages/agentos-toolchain
+  - packages/javascript
+  - packages/python
   - packages/browser
   - packages/build-tools
   - packages/core
@@ -9,15 +11,12 @@ packages:
   - packages/node-pty
   - packages/playground
   - packages/posix
-  - packages/python
   - packages/runtime-benchmarks
   - packages/runtime-browser
   - packages/runtime-core
   - packages/runtime-sidecar
   - packages/runtime-sidecar/npm/*
   - packages/vm-test-harness
-  - packages/secure-exec
-  - packages/secure-exec-example-ai-agent-type-check
   - packages/typescript
   - packages/shell
   - packages/sidecar-binary
@@ -57,9 +56,9 @@ onlyBuiltDependencies:
 # pinned once here and referenced everywhere via `catalog:rivetkit`.
 catalogs:
   rivetkit:
-    rivetkit: 0.0.0-sqlite-uds.4e59a38
-    '@rivetkit/react': 0.0.0-sqlite-uds.4e59a38
+    rivetkit: 2.3.7
+    '@rivetkit/react': 2.3.7
 
 overrides:
-  '@rivetkit/rivetkit-wasm': 2.3.2
+  '@rivetkit/rivetkit-wasm': 2.3.7
   web-streams-polyfill: 3.3.3

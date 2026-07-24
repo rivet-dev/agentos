@@ -1,8 +1,10 @@
 {
 	"name": "@rivet-dev/agentos-python",
 	"version": "0.0.1",
+	"description": "AgentOS language execution for Python.",
 	"type": "module",
 	"license": "Apache-2.0",
+	"sideEffects": false,
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
 	"files": [
@@ -14,38 +16,23 @@
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js",
 			"default": "./dist/index.js"
-		},
-		"./internal/driver": {
-			"types": "./dist/driver.d.ts",
-			"import": "./dist/driver.js",
-			"default": "./dist/driver.js"
-		},
-		"./internal/kernel-runtime": {
-			"types": "./dist/kernel-runtime.d.ts",
-			"import": "./dist/kernel-runtime.js",
-			"default": "./dist/kernel-runtime.js"
 		}
+	},
+	"engines": {
+		"node": ">=22.0.0"
 	},
 	"scripts": {
-		"check-types": "node -e \"process.exit(0)\"",
-		"build": "node -e \"process.exit(0)\"",
-		"test": "pnpm build && vitest run --fileParallelism=false --passWithNoTests"
+		"build": "tsup src/index.ts",
+		"check-types": "tsc --noEmit",
+		"test": "vitest run --passWithNoTests"
 	},
 	"dependencies": {
-		"@rivet-dev/agentos-runtime-core": "workspace:*",
-		"pyodide": "^0.28.3"
-	},
-	"peerDependencies": {
-		"pyodide": ">=0.28.0"
-	},
-	"peerDependenciesMeta": {
-		"pyodide": {
-			"optional": true
-		}
+		"@rivet-dev/agentos-core": "workspace:*"
 	},
 	"devDependencies": {
-		"@types/node": "^22.10.2",
-		"typescript": "^5.7.2",
+		"@types/node": "^22.19.15",
+		"tsup": "^8.4.0",
+		"typescript": "^5.7.3",
 		"vitest": "^2.1.8"
 	}
 }

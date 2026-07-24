@@ -1,8 +1,8 @@
 # agentOS
 
 AgentOS owns the runtime, kernel, VFS, language execution, registry packages,
-ACP/session layer, AgentOS client APIs, docs, and publish machinery. The
-`secure-exec` repository is now a generated compatibility mirror only.
+ACP/session layer, AgentOS client APIs, docs, and publish machinery. Agent OS
+Exec is the JavaScript, TypeScript, and Python execution surface of AgentOS.
 
 ## Boundaries
 
@@ -16,9 +16,8 @@ ACP/session layer, AgentOS client APIs, docs, and publish machinery. The
   or public API that already uses the word.
 - The protocol has no backward compatibility guarantee. Client, sidecar, and
   protocol crates ship in same-version lockstep; update both sides together.
-- Generic runtime work belongs here, not in `../secure-exec`. Regenerate that
-  mirror with `node scripts/generate-secure-exec-mirror.mjs` after changing a
-  shimmed public surface.
+- Generic runtime and language-execution work belongs here. Do not add a
+  compatibility mirror or a second package namespace for AgentOS language execution.
 - Keep root `package.json` scripts limited to Turbo orchestration; repo-specific
   commands belong in `justfile` recipes or scoped package scripts.
 - AgentOS targets native Linux/container execution. Browser support is not
@@ -218,9 +217,10 @@ custom host-syscall imports. Treat that target as **native POSIX**;
 
 - `scripts/publish` is the source of truth for npm/crates discovery, version
   rewriting, npm publish, crates publish, release assets, and R2 upload.
-- Publishable npm packages and Rust crates are AgentOS-owned. Compatibility
-  `@secure-exec/*`, `secure-exec`, and `secure-exec-*` artifacts are emitted
-  from the generated mirror.
+- Publishable npm packages and Rust crates are AgentOS-owned. AgentOS language execution is
+  published through `@rivet-dev/agentos-javascript` and
+  `@rivet-dev/agentos-python`; `@rivet-dev/agentos` owns the actor API. Do not
+  publish compatibility artifacts or language subpaths from the actor package.
 - The release workflow must build and stage the native sidecar binaries,
   runtime-sidecar binaries, registry WASM commands, and pyodide assets before
   publish.

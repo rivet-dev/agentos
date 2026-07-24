@@ -60,6 +60,19 @@ describe("AgentOsOptions validation", () => {
 		).toBe(true);
 	});
 
+	test("uses the sidecar wire name for the per-VM binding limit", () => {
+		expect(
+			agentOsOptionsSchema.safeParse({
+				limits: { bindings: { maxRegisteredBindingsPerVm: 256 } },
+			}).success,
+		).toBe(true);
+		expect(
+			agentOsOptionsSchema.safeParse({
+				limits: { bindings: { maxRegisteredCollectionsPerVm: 256 } },
+			}).success,
+		).toBe(false);
+	});
+
 	test("provider sandbox starts a client and owns disposal", async () => {
 		let disposed = false;
 		const client = {

@@ -579,7 +579,7 @@ fn fixture_dns_answers(query: &Query) -> Vec<Record> {
             ),
             fixture_dns_record(
                 "bundle.example.test.",
-                RData::TXT(TXT::new(vec![String::from("secure-exec")])),
+                RData::TXT(TXT::new(vec![String::from("agentos")])),
             ),
         ],
         ("bundle.example.test.", RecordType::ANY) => vec![
@@ -2916,8 +2916,8 @@ console.log(JSON.stringify({
   curvesIncludePrime256v1: curves.includes("prime256v1"),
   curvesIncludeSecp384r1: curves.includes("secp384r1"),
   curvesSorted: curves.join(",") === [...curves].sort().join(","),
-  sha256: crypto.createHash("sha256").update("secure-exec").digest("hex"),
-  hmacSha256: crypto.createHmac("sha256", "shared-secret").update("secure-exec").digest("hex"),
+  sha256: crypto.createHash("sha256").update("agentos").digest("hex"),
+  hmacSha256: crypto.createHmac("sha256", "shared-secret").update("agentos").digest("hex"),
   randomBytesLength: random.length,
   randomBytesHexLength: random.toString("hex").length,
   randomBytesAllZero: Array.from(random).every((value) => value === 0),
@@ -2935,7 +2935,7 @@ import crypto from "node:crypto";
 
 const cipherKey = Buffer.alloc(32, 7);
 const cipherIv = Buffer.alloc(16, 9);
-const cipherPlaintext = Buffer.from("secure-exec-crypto-surface", "utf8");
+const cipherPlaintext = Buffer.from("agentos-crypto-surface", "utf8");
 const cipher = crypto.createCipheriv("aes-256-cbc", cipherKey, cipherIv);
 const encrypted = Buffer.concat([cipher.update(cipherPlaintext), cipher.final()]);
 const decipher = crypto.createDecipheriv("aes-256-cbc", cipherKey, cipherIv);
@@ -2968,24 +2968,24 @@ const importedPrivateKey = crypto.createPrivateKey(privatePem);
 const importedPublicKey = crypto.createPublicKey(publicPem);
 
 const signer = crypto.createSign("sha256");
-signer.update("secure-exec-signature");
+signer.update("agentos-signature");
 const signature = signer.sign(importedPrivateKey);
 
 const verifier = crypto.createVerify("sha256");
-verifier.update("secure-exec-signature");
+verifier.update("agentos-signature");
 const signatureVerified = verifier.verify(importedPublicKey, signature);
 
-const oneShotSignature = crypto.sign("sha256", Buffer.from("secure-exec-signature"), importedPrivateKey);
+const oneShotSignature = crypto.sign("sha256", Buffer.from("agentos-signature"), importedPrivateKey);
 const oneShotVerified = crypto.verify(
   "sha256",
-  Buffer.from("secure-exec-signature"),
+  Buffer.from("agentos-signature"),
   importedPublicKey,
   oneShotSignature,
 );
 
 const rsaCiphertext = crypto.publicEncrypt(
   { key: importedPublicKey, padding: crypto.constants.RSA_PKCS1_PADDING },
-  Buffer.from("secure-exec-rsa", "utf8"),
+  Buffer.from("agentos-rsa", "utf8"),
 );
 const rsaPlaintext = crypto.privateDecrypt(
   { key: importedPrivateKey, padding: crypto.constants.RSA_PKCS1_PADDING },
@@ -3803,7 +3803,7 @@ const promisified = await util.promisify((value, callback) => callback(null, val
 const encodedLength = new util.TextEncoder().encode("Grüße").length;
 const decodedText = new util.TextDecoder().decode(textBytes);
 
-const deflated = zlib.deflateSync(Buffer.from("secure-exec", "utf8"));
+const deflated = zlib.deflateSync(Buffer.from("agentos", "utf8"));
 const inflated = zlib.inflateSync(deflated).toString("utf8");
 
 console.log(JSON.stringify({
@@ -3938,7 +3938,7 @@ const bufferValue = await streamConsumers.buffer(
   makeAsyncStream([Buffer.from("buf")]),
 );
 
-const deflated = zlib.deflateSync(Buffer.from("secure-exec", "utf8"));
+const deflated = zlib.deflateSync(Buffer.from("agentos", "utf8"));
 const inflated = zlib.inflateSync(deflated).toString("utf8");
 
 process.stdout.write(`${JSON.stringify({
@@ -4060,7 +4060,7 @@ process.exit(0);
     assert_eq!(result["zlib"]["importConstantsHasSyncFlush"], true);
     assert_eq!(result["zlib"]["createDeflateType"], "function");
     assert_eq!(result["zlib"]["createInflateType"], "function");
-    assert_eq!(result["zlib"]["inflated"], "secure-exec");
+    assert_eq!(result["zlib"]["inflated"], "agentos");
 }
 
 fn timer_handle_ref_refresh_matches_host_node_impl() {
