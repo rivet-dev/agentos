@@ -10295,12 +10295,9 @@ console.log(JSON.stringify({ status: "ok", summary }));
         fn bridge_permissions_map_symlink_operations_to_symlink_access() {
             let bridge = SharedBridge::new(RecordingBridge::default());
             let permissions = bridge_permissions(bridge.clone(), "vm-symlink");
-            let check = permissions
-                .filesystem
-                .as_ref()
-                .expect("filesystem permission callback");
+            let check = &permissions.filesystem;
 
-            let decision = check(&FsAccessRequest {
+            let decision = check.evaluate(&FsAccessRequest {
                 vm_id: String::from("ignored-by-bridge"),
                 op: FsOperation::Symlink,
                 path: String::from("/workspace/link.txt"),
@@ -10324,12 +10321,9 @@ console.log(JSON.stringify({ status: "ok", summary }));
         fn bridge_permissions_map_readlink_operations_to_readlink_access() {
             let bridge = SharedBridge::new(RecordingBridge::default());
             let permissions = bridge_permissions(bridge.clone(), "vm-readlink");
-            let check = permissions
-                .filesystem
-                .as_ref()
-                .expect("filesystem permission callback");
+            let check = &permissions.filesystem;
 
-            let decision = check(&FsAccessRequest {
+            let decision = check.evaluate(&FsAccessRequest {
                 vm_id: String::from("ignored-by-bridge"),
                 op: FsOperation::ReadLink,
                 path: String::from("/workspace/link.txt"),
@@ -10353,12 +10347,9 @@ console.log(JSON.stringify({ status: "ok", summary }));
         fn bridge_permissions_map_truncate_operations_to_truncate_access() {
             let bridge = SharedBridge::new(RecordingBridge::default());
             let permissions = bridge_permissions(bridge.clone(), "vm-truncate");
-            let check = permissions
-                .filesystem
-                .as_ref()
-                .expect("filesystem permission callback");
+            let check = &permissions.filesystem;
 
-            let decision = check(&FsAccessRequest {
+            let decision = check.evaluate(&FsAccessRequest {
                 vm_id: String::from("ignored-by-bridge"),
                 op: FsOperation::Truncate,
                 path: String::from("/workspace/file.txt"),
@@ -10382,12 +10373,9 @@ console.log(JSON.stringify({ status: "ok", summary }));
         fn bridge_permissions_fail_closed_for_missing_mount_sensitive_policy() {
             let bridge = SharedBridge::new(RecordingBridge::default());
             let permissions = bridge_permissions(bridge, "vm-mount-sensitive");
-            let check = permissions
-                .filesystem
-                .as_ref()
-                .expect("filesystem permission callback");
+            let check = &permissions.filesystem;
 
-            let decision = check(&FsAccessRequest {
+            let decision = check.evaluate(&FsAccessRequest {
                 vm_id: String::from("ignored-by-bridge"),
                 op: FsOperation::MountSensitive,
                 path: String::from("/workspace"),
@@ -26927,6 +26915,11 @@ try {
         }
 
         #[test]
+        fn aac_http2_secure_transport_round_trip() {
+            run_isolated_service_test("http2-secure-transport");
+        }
+
+        #[test]
         fn aac_javascript_imports_guest_written_modules_after_miss() {
             run_isolated_service_test("javascript-import-fresh");
         }
@@ -27135,6 +27128,9 @@ try {
                 }
                 "http2-request-handler-twice" => {
                     javascript_http2_request_handler_round_trip_runs_twice_in_one_vm();
+                }
+                "http2-secure-transport" => {
+                    javascript_http2_secure_listen_connect_request_and_respond_round_trip();
                 }
                 "javascript-import-fresh" => {
                     javascript_imports_guest_written_modules_after_miss_work();

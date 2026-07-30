@@ -4,7 +4,7 @@ use agentos_vm_host_interface::FilesystemAccess;
 use agentos_vm_kernel::permissions::{
     permission_glob_matches, CommandAccessRequest, EnvAccessRequest, EnvironmentOperation,
     FsAccessRequest, FsOperation, NetworkAccessRequest, NetworkOperation, PermissionDecision,
-    Permissions,
+    PermissionEvaluator, Permissions,
 };
 use std::sync::Arc;
 
@@ -310,15 +310,19 @@ pub fn permissions_from_policy(policy: vm_config::PermissionsPolicy) -> Permissi
     let env_policy = Arc::new(policy);
 
     Permissions {
-        filesystem: Some(Arc::new(move |request: &FsAccessRequest| {
-            let capability = fs_permission_capability(request.op);
-            permission_mode_to_kernel_decision(
-                evaluate_permissions_policy(&fs_policy, "fs", capability, Some(&request.path)),
-                capability,
-            )
-        })),
+        filesystem: if filesystem_unrestricted {
+            PermissionEvaluator::Allow
+        } else {
+            PermissionEvaluator::dynamic(move |request: &FsAccessRequest| {
+                let capability = fs_permission_capability(request.op);
+                permission_mode_to_kernel_decision(
+                    evaluate_permissions_policy(&fs_policy, "fs", capability, Some(&request.path)),
+                    capability,
+                )
+            })
+        },
         filesystem_unrestricted,
-        network: Some(Arc::new(move |request: &NetworkAccessRequest| {
+        network: PermissionEvaluator::dynamic(move |request: &NetworkAccessRequest| {
             let capability = network_permission_capability(request.op);
             permission_mode_to_kernel_decision(
                 evaluate_permissions_policy(
@@ -329,8 +333,8 @@ pub fn permissions_from_policy(policy: vm_config::PermissionsPolicy) -> Permissi
                 ),
                 capability,
             )
-        })),
-        child_process: Some(Arc::new(move |request: &CommandAccessRequest| {
+        }),
+        child_process: PermissionEvaluator::dynamic(move |request: &CommandAccessRequest| {
             let capability = "child_process.spawn";
             permission_mode_to_kernel_decision(
                 evaluate_permissions_policy(
@@ -341,14 +345,14 @@ pub fn permissions_from_policy(policy: vm_config::PermissionsPolicy) -> Permissi
                 ),
                 capability,
             )
-        })),
-        environment: Some(Arc::new(move |request: &EnvAccessRequest| {
+        }),
+        environment: PermissionEvaluator::dynamic(move |request: &EnvAccessRequest| {
             let capability = environment_permission_capability(request.op);
             permission_mode_to_kernel_decision(
                 evaluate_permissions_policy(&env_policy, "env", capability, Some(&request.key)),
                 capability,
             )
-        })),
+        }),
     }
 }
 
@@ -577,39 +581,47 @@ mod tests {
         });
 
         assert!(
-            !permissions.filesystem.expect("filesystem callback")(&FsAccessRequest {
-                vm_id: String::from("vm"),
-                op: FsOperation::Read,
-                path: String::from("/workspace/file.txt"),
-            })
-            .allow
+            !permissions
+                .filesystem
+                .evaluate(&FsAccessRequest {
+                    vm_id: String::from("vm"),
+                    op: FsOperation::Read,
+                    path: String::from("/workspace/file.txt"),
+                })
+                .allow
         );
         assert!(
-            !permissions.network.expect("network callback")(&NetworkAccessRequest {
-                vm_id: String::from("vm"),
-                op: NetworkOperation::Http,
-                resource: String::from("example.com:443"),
-            })
-            .allow
+            !permissions
+                .network
+                .evaluate(&NetworkAccessRequest {
+                    vm_id: String::from("vm"),
+                    op: NetworkOperation::Http,
+                    resource: String::from("example.com:443"),
+                })
+                .allow
         );
         assert!(
-            !permissions.child_process.expect("child_process callback")(&CommandAccessRequest {
-                vm_id: String::from("vm"),
-                command: String::from("sh"),
-                args: Vec::new(),
-                cwd: None,
-                env: Default::default(),
-            })
-            .allow
+            !permissions
+                .child_process
+                .evaluate(&CommandAccessRequest {
+                    vm_id: String::from("vm"),
+                    command: String::from("sh"),
+                    args: Vec::new(),
+                    cwd: None,
+                    env: Default::default(),
+                })
+                .allow
         );
         assert!(
-            !permissions.environment.expect("environment callback")(&EnvAccessRequest {
-                vm_id: String::from("vm"),
-                op: EnvironmentOperation::Read,
-                key: String::from("TOKEN"),
-                value: None,
-            })
-            .allow
+            !permissions
+                .environment
+                .evaluate(&EnvAccessRequest {
+                    vm_id: String::from("vm"),
+                    op: EnvironmentOperation::Read,
+                    key: String::from("TOKEN"),
+                    value: None,
+                })
+                .allow
         );
     }
 
@@ -634,29 +646,31 @@ mod tests {
         };
 
         let permissions = permissions_from_policy(policy);
-        let check = permissions.filesystem.expect("filesystem callback");
+        let check = &permissions.filesystem;
 
         assert!(
-            check(&FsAccessRequest {
-                vm_id: String::from("vm"),
-                op: FsOperation::Read,
-                path: String::from("/workspace/file.txt"),
-            })
-            .allow
+            check
+                .evaluate(&FsAccessRequest {
+                    vm_id: String::from("vm"),
+                    op: FsOperation::Read,
+                    path: String::from("/workspace/file.txt"),
+                })
+                .allow
         );
         assert!(
-            !check(&FsAccessRequest {
-                vm_id: String::from("vm"),
-                op: FsOperation::Read,
-                path: String::from("/secrets/file.txt"),
-            })
-            .allow
+            !check
+                .evaluate(&FsAccessRequest {
+                    vm_id: String::from("vm"),
+                    op: FsOperation::Read,
+                    path: String::from("/secrets/file.txt"),
+                })
+                .allow
         );
         assert!(!permissions.filesystem_unrestricted);
     }
 
     #[test]
-    fn only_unconditional_allow_marks_filesystem_unrestricted() {
+    fn only_unconditional_allow_uses_static_evaluator() {
         let unrestricted = permissions_from_policy(vm_config::PermissionsPolicy {
             fs: Some(vm_config::FsPermissionScope::Mode(
                 vm_config::PermissionMode::Allow,
@@ -667,6 +681,7 @@ mod tests {
             env: None,
             binding: None,
         });
+        assert!(unrestricted.filesystem.is_allow());
         assert!(unrestricted.filesystem_unrestricted);
 
         let rule_based = permissions_from_policy(vm_config::PermissionsPolicy {
@@ -682,6 +697,7 @@ mod tests {
             env: None,
             binding: None,
         });
+        assert!(!rule_based.filesystem.is_allow());
         assert!(!rule_based.filesystem_unrestricted);
     }
 

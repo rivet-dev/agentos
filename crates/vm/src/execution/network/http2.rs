@@ -1,8 +1,81 @@
 use super::super::*;
 
-trait Http2AsyncIo: AsyncRead + AsyncWrite + Unpin + Send {}
+// HTTP/2 transport selection is closed: every connection is either the
+// accepted TCP stream or that same stream wrapped in the selected TLS role.
+enum Http2Io<T> {
+    Plain(tokio::net::TcpStream),
+    Tls(T),
+}
 
-impl<T> Http2AsyncIo for T where T: AsyncRead + AsyncWrite + Unpin + Send {}
+impl<T> AsyncRead for Http2Io<T>
+where
+    T: AsyncRead + Unpin,
+{
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        match self.as_mut().get_mut() {
+            Self::Plain(stream) => Pin::new(stream).poll_read(context, buffer),
+            Self::Tls(stream) => Pin::new(stream).poll_read(context, buffer),
+        }
+    }
+}
+
+impl<T> AsyncWrite for Http2Io<T>
+where
+    T: AsyncWrite + Unpin,
+{
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        buffer: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        match self.as_mut().get_mut() {
+            Self::Plain(stream) => Pin::new(stream).poll_write(context, buffer),
+            Self::Tls(stream) => Pin::new(stream).poll_write(context, buffer),
+        }
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        match self.as_mut().get_mut() {
+            Self::Plain(stream) => Pin::new(stream).poll_flush(context),
+            Self::Tls(stream) => Pin::new(stream).poll_flush(context),
+        }
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        match self.as_mut().get_mut() {
+            Self::Plain(stream) => Pin::new(stream).poll_shutdown(context),
+            Self::Tls(stream) => Pin::new(stream).poll_shutdown(context),
+        }
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        match self {
+            Self::Plain(stream) => stream.is_write_vectored(),
+            Self::Tls(stream) => stream.is_write_vectored(),
+        }
+    }
+
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        buffers: &[std::io::IoSlice<'_>],
+    ) -> Poll<std::io::Result<usize>> {
+        match self.as_mut().get_mut() {
+            Self::Plain(stream) => Pin::new(stream).poll_write_vectored(context, buffers),
+            Self::Tls(stream) => Pin::new(stream).poll_write_vectored(context, buffers),
+        }
+    }
+}
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -1950,7 +2023,7 @@ fn spawn_http2_client_session(
                 );
             }
 
-            let io: Pin<Box<dyn Http2AsyncIo>> = if let Some(options) = tls.as_ref() {
+            let io = if let Some(options) = tls.as_ref() {
                 let server_name = match ServerName::try_from(
                     options
                         .servername
@@ -1991,7 +2064,7 @@ fn spawn_http2_client_session(
                     }
                 };
                 match connector.connect(server_name, stream).await {
-                    Ok(tls_stream) => Box::pin(tls_stream),
+                    Ok(tls_stream) => Http2Io::Tls(tls_stream),
                     Err(error) => {
                         push_http2_session_event(
                             &shared,
@@ -2008,7 +2081,7 @@ fn spawn_http2_client_session(
                     }
                 }
             } else {
-                Box::pin(stream)
+                Http2Io::Plain(stream)
             };
 
             let (max_header_bytes, max_streams_per_connection, max_buffered_bytes) = shared
@@ -2417,7 +2490,7 @@ fn spawn_http2_server_session(
                 );
             }
 
-            let io: Pin<Box<dyn Http2AsyncIo>> = if let Some(options) = tls.as_ref() {
+            let io = if let Some(options) = tls.as_ref() {
                 let acceptor = match build_server_tls_config(options) {
                     Ok(config) => TlsAcceptor::from(Arc::new(config)),
                     Err(error) => {
@@ -2436,7 +2509,7 @@ fn spawn_http2_server_session(
                     }
                 };
                 match acceptor.accept(stream).await {
-                    Ok(tls_stream) => Box::pin(tls_stream),
+                    Ok(tls_stream) => Http2Io::Tls(tls_stream),
                     Err(error) => {
                         push_http2_server_event(
                             &shared,
@@ -2453,7 +2526,7 @@ fn spawn_http2_server_session(
                     }
                 }
             } else {
-                Box::pin(stream)
+                Http2Io::Plain(stream)
             };
 
             let (max_header_bytes, max_streams_per_connection, max_buffered_bytes) = shared

@@ -13649,9 +13649,9 @@ mod tests {
     fn trusted_runtime_image_admission_is_bounded_policy_independent_and_accounted() {
         let mut config = KernelVmConfig::new("vm-trusted-runtime-image");
         config.permissions = Permissions {
-            filesystem: Some(Arc::new(|_| {
+            filesystem: crate::permissions::PermissionEvaluator::dynamic(|_| {
                 crate::permissions::PermissionDecision::deny("guest filesystem denied")
-            })),
+            }),
             ..Permissions::allow_all()
         };
         let mut kernel = KernelVm::new(MemoryFileSystem::new(), config);

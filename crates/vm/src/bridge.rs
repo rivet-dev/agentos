@@ -18,9 +18,10 @@ use agentos_vm_kernel::mount_plugin::{
 use agentos_vm_kernel::mount_table::MountedFileSystem;
 use agentos_vm_kernel::permissions::{
     CommandAccessRequest, EnvAccessRequest, FsAccessRequest, FsOperation, NetworkAccessRequest,
-    PermissionDecision, Permissions,
+    PermissionDecision, PermissionEvaluator, Permissions,
 };
 use std::fmt;
+#[cfg(test)]
 use std::sync::Arc;
 
 #[cfg(test)]
@@ -1080,7 +1081,7 @@ where
     let environment_bridge = bridge;
 
     Permissions {
-        filesystem: Some(Arc::new(move |request: &FsAccessRequest| {
+        filesystem: PermissionEvaluator::dynamic(move |request: &FsAccessRequest| {
             let access = match request.op {
                 FsOperation::Read => FilesystemAccess::Read,
                 FsOperation::Write => FilesystemAccess::Write,
@@ -1142,17 +1143,17 @@ where
             }
 
             decision
-        })),
+        }),
         filesystem_unrestricted,
-        network: Some(Arc::new(move |request: &NetworkAccessRequest| {
+        network: PermissionEvaluator::dynamic(move |request: &NetworkAccessRequest| {
             network_bridge.network_decision(&network_vm_id, request)
-        })),
-        child_process: Some(Arc::new(move |request: &CommandAccessRequest| {
+        }),
+        child_process: PermissionEvaluator::dynamic(move |request: &CommandAccessRequest| {
             command_bridge.command_decision(&command_vm_id, request)
-        })),
-        environment: Some(Arc::new(move |request: &EnvAccessRequest| {
+        }),
+        environment: PermissionEvaluator::dynamic(move |request: &EnvAccessRequest| {
             environment_bridge.environment_decision(&vm_id, request)
-        })),
+        }),
     }
 }
 

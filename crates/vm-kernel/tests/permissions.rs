@@ -3,8 +3,8 @@ use agentos_vm_kernel::kernel::{KernelVm, KernelVmConfig, SpawnOptions};
 use agentos_vm_kernel::mount_table::{MountOptions, MountTable};
 use agentos_vm_kernel::permissions::{
     check_command_execution, check_network_access, filter_env, permission_glob_matches,
-    EnvAccessRequest, FsAccessRequest, FsOperation, NetworkOperation, PermissionDecision,
-    PermissionedFileSystem, Permissions,
+    CommandAccessRequest, EnvAccessRequest, FsAccessRequest, FsOperation, NetworkOperation,
+    PermissionDecision, PermissionEvaluator, PermissionedFileSystem, Permissions,
 };
 use agentos_vm_kernel::vfs::{MemoryFileSystem, VfsResult, VirtualFileSystem};
 use std::collections::BTreeMap;
@@ -37,13 +37,13 @@ fn assert_fs_access_denied<T: Debug>(result: VfsResult<T>) {
 #[test]
 fn permission_wrapped_filesystem_denies_write_with_reason() {
     let permissions = Permissions {
-        filesystem: Some(Arc::new(|request: &FsAccessRequest| {
+        filesystem: PermissionEvaluator::dynamic(|request: &FsAccessRequest| {
             if request.path.starts_with("/tmp") {
                 PermissionDecision::allow()
             } else {
                 PermissionDecision::deny("tmp-only sandbox")
             }
-        })),
+        }),
         ..Permissions::default()
     };
 
@@ -77,7 +77,7 @@ fn permission_wrapped_filesystem_denies_access_by_default() {
 #[test]
 fn permission_wrapped_filesystem_allows_access_with_explicit_allow_all_callback() {
     let permissions = Permissions {
-        filesystem: Some(Arc::new(|_: &FsAccessRequest| PermissionDecision::allow())),
+        filesystem: PermissionEvaluator::Allow,
         ..Permissions::default()
     };
     let mut filesystem = wrap_filesystem(permissions);
@@ -174,7 +174,7 @@ fn permission_wrapped_filesystem_resolves_symlinks_before_permission_checks() {
     let checked_paths = Arc::new(Mutex::new(Vec::new()));
     let checked_paths_for_permission = Arc::clone(&checked_paths);
     let permissions = Permissions {
-        filesystem: Some(Arc::new(move |request: &FsAccessRequest| {
+        filesystem: PermissionEvaluator::dynamic(move |request: &FsAccessRequest| {
             checked_paths_for_permission
                 .lock()
                 .expect("permission path lock poisoned")
@@ -184,7 +184,7 @@ fn permission_wrapped_filesystem_resolves_symlinks_before_permission_checks() {
             } else {
                 PermissionDecision::deny("allowed-only")
             }
-        })),
+        }),
         ..Permissions::default()
     };
 
@@ -218,13 +218,13 @@ fn unrestricted_filesystem_skips_permission_only_symlink_resolution() {
     let checked_paths = Arc::new(Mutex::new(Vec::new()));
     let checked_paths_for_permission = Arc::clone(&checked_paths);
     let permissions = Permissions {
-        filesystem: Some(Arc::new(move |request: &FsAccessRequest| {
+        filesystem: PermissionEvaluator::dynamic(move |request: &FsAccessRequest| {
             checked_paths_for_permission
                 .lock()
                 .expect("permission path lock poisoned")
                 .push(request.path.clone());
             PermissionDecision::allow()
-        })),
+        }),
         filesystem_unrestricted: true,
         ..Permissions::default()
     };
@@ -243,7 +243,6 @@ fn unrestricted_filesystem_skips_permission_only_symlink_resolution() {
             .as_slice(),
         [String::from("/workspace/alias.txt")].as_slice()
     );
-
     let error = filesystem
         .read_file("/workspace/missing.txt")
         .expect_err("the underlying filesystem must still reject missing paths");
@@ -266,13 +265,13 @@ fn permission_wrapped_lchown_does_not_follow_the_final_symlink() {
         .expect("seed symlink");
 
     let permissions = Permissions {
-        filesystem: Some(Arc::new(|request: &FsAccessRequest| {
+        filesystem: PermissionEvaluator::dynamic(|request: &FsAccessRequest| {
             if request.path.starts_with("/allowed") {
                 PermissionDecision::allow()
             } else {
                 PermissionDecision::deny("allowed-only")
             }
-        })),
+        }),
         ..Permissions::default()
     };
     let mut filesystem = PermissionedFileSystem::new(inner, "vm-permissions", permissions);
@@ -304,13 +303,13 @@ fn permission_wrapped_filesystem_link_checks_source_and_destination_permissions(
     let checked_paths = Arc::new(Mutex::new(Vec::new()));
     let checked_paths_for_permission = Arc::clone(&checked_paths);
     let permissions = Permissions {
-        filesystem: Some(Arc::new(move |request: &FsAccessRequest| {
+        filesystem: PermissionEvaluator::dynamic(move |request: &FsAccessRequest| {
             checked_paths_for_permission
                 .lock()
                 .expect("permission path lock poisoned")
                 .push(request.path.clone());
             PermissionDecision::allow()
-        })),
+        }),
         ..Permissions::default()
     };
 
@@ -347,7 +346,7 @@ fn permission_wrapped_filesystem_link_resolves_source_as_existing_path() {
     let checked_paths = Arc::new(Mutex::new(Vec::new()));
     let checked_paths_for_permission = Arc::clone(&checked_paths);
     let permissions = Permissions {
-        filesystem: Some(Arc::new(move |request: &FsAccessRequest| {
+        filesystem: PermissionEvaluator::dynamic(move |request: &FsAccessRequest| {
             checked_paths_for_permission
                 .lock()
                 .expect("permission path lock poisoned")
@@ -357,7 +356,7 @@ fn permission_wrapped_filesystem_link_resolves_source_as_existing_path() {
             } else {
                 PermissionDecision::deny("allowed-only")
             }
-        })),
+        }),
         ..Permissions::default()
     };
 
@@ -390,7 +389,7 @@ fn permission_wrapped_filesystem_remove_checks_resolved_destination_path() {
     let checked_paths = Arc::new(Mutex::new(Vec::new()));
     let checked_paths_for_permission = Arc::clone(&checked_paths);
     let permissions = Permissions {
-        filesystem: Some(Arc::new(move |request: &FsAccessRequest| {
+        filesystem: PermissionEvaluator::dynamic(move |request: &FsAccessRequest| {
             checked_paths_for_permission
                 .lock()
                 .expect("permission path lock poisoned")
@@ -400,7 +399,7 @@ fn permission_wrapped_filesystem_remove_checks_resolved_destination_path() {
             } else {
                 PermissionDecision::deny("allowed-only")
             }
-        })),
+        }),
         ..Permissions::default()
     };
 
@@ -421,9 +420,9 @@ fn permission_wrapped_filesystem_remove_checks_resolved_destination_path() {
 #[test]
 fn permission_wrapped_filesystem_exists_fails_closed_on_permission_denied() {
     let permissions = Permissions {
-        filesystem: Some(Arc::new(|_: &FsAccessRequest| {
+        filesystem: PermissionEvaluator::dynamic(|_: &FsAccessRequest| {
             PermissionDecision::deny("hidden")
-        })),
+        }),
         ..Permissions::default()
     };
     let filesystem = wrap_filesystem(permissions);
@@ -438,10 +437,12 @@ fn permission_wrapped_filesystem_exists_fails_closed_on_permission_denied() {
 #[test]
 fn filter_env_only_keeps_allowed_keys() {
     let permissions = Permissions {
-        environment: Some(Arc::new(|request: &EnvAccessRequest| PermissionDecision {
-            allow: request.key != "SECRET_KEY",
-            reason: None,
-        })),
+        environment: PermissionEvaluator::dynamic(|request: &EnvAccessRequest| {
+            PermissionDecision {
+                allow: request.key != "SECRET_KEY",
+                reason: None,
+            }
+        }),
         ..Permissions::default()
     };
 
@@ -491,13 +492,13 @@ fn network_permissions_deny_when_callback_is_absent() {
 fn child_process_permissions_block_spawn() {
     let mut config = KernelVmConfig::new("vm-permissions");
     config.permissions = Permissions {
-        child_process: Some(Arc::new(|request| {
+        child_process: PermissionEvaluator::dynamic(|request: &CommandAccessRequest| {
             if request.command == "blocked" {
                 PermissionDecision::deny("blocked by policy")
             } else {
                 PermissionDecision::allow()
             }
-        })),
+        }),
         ..Permissions::allow_all()
     };
 
@@ -550,13 +551,13 @@ fn kernel_vm_config_defaults_to_deny_all_permissions() {
 fn kernel_write_does_not_require_read_permission_for_write_guard_resolution() {
     let mut config = KernelVmConfig::new("vm-write-only");
     config.permissions = Permissions {
-        filesystem: Some(Arc::new(|request: &FsAccessRequest| {
+        filesystem: PermissionEvaluator::dynamic(|request: &FsAccessRequest| {
             if request.op == FsOperation::Read && request.path == "/blocked.txt" {
                 PermissionDecision::deny("read blocked by policy")
             } else {
                 PermissionDecision::allow()
             }
-        })),
+        }),
         ..Permissions::allow_all()
     };
     let mut kernel = KernelVm::new(MemoryFileSystem::new(), config);
@@ -577,12 +578,12 @@ fn kernel_default_spawn_cwd_matches_workspace() {
 
     let mut config = KernelVmConfig::new("vm-default-cwd");
     config.permissions = Permissions {
-        child_process: Some(Arc::new(move |request| {
+        child_process: PermissionEvaluator::dynamic(move |request: &CommandAccessRequest| {
             *captured_cwd_for_permission
                 .lock()
                 .expect("captured cwd lock poisoned") = request.cwd.clone();
             PermissionDecision::allow()
-        })),
+        }),
         ..Permissions::allow_all()
     };
 
@@ -691,13 +692,13 @@ fn kernel_mounts_require_write_permission_on_the_mount_path() {
     let checked_for_permission = Arc::clone(&checked);
     let mut config = KernelVmConfig::new("vm-mount-permissions");
     config.permissions = Permissions {
-        filesystem: Some(Arc::new(move |request: &FsAccessRequest| {
+        filesystem: PermissionEvaluator::dynamic(move |request: &FsAccessRequest| {
             checked_for_permission
                 .lock()
                 .expect("checked mount paths lock poisoned")
                 .push((request.op, request.path.clone()));
             PermissionDecision::deny("mounts disabled")
-        })),
+        }),
         ..Permissions::default()
     };
 
@@ -730,7 +731,7 @@ fn kernel_sensitive_mounts_require_explicit_sensitive_permission() {
     let checked_for_permission = Arc::clone(&checked);
     let mut config = KernelVmConfig::new("vm-sensitive-mounts");
     config.permissions = Permissions {
-        filesystem: Some(Arc::new(move |request: &FsAccessRequest| {
+        filesystem: PermissionEvaluator::dynamic(move |request: &FsAccessRequest| {
             checked_for_permission
                 .lock()
                 .expect("checked mount paths lock poisoned")
@@ -742,7 +743,7 @@ fn kernel_sensitive_mounts_require_explicit_sensitive_permission() {
                 }
                 other => panic!("unexpected filesystem permission probe: {other:?}"),
             }
-        })),
+        }),
         ..Permissions::default()
     };
 
@@ -779,13 +780,13 @@ fn kernel_unmounts_require_write_permission_on_the_mount_path() {
     let checked_for_permission = Arc::clone(&checked);
     let mut config = KernelVmConfig::new("vm-unmount-permissions");
     config.permissions = Permissions {
-        filesystem: Some(Arc::new(move |request: &FsAccessRequest| {
+        filesystem: PermissionEvaluator::dynamic(move |request: &FsAccessRequest| {
             checked_for_permission
                 .lock()
                 .expect("checked unmount paths lock poisoned")
                 .push((request.op, request.path.clone()));
             PermissionDecision::deny("unmounts disabled")
-        })),
+        }),
         ..Permissions::default()
     };
 
@@ -825,7 +826,7 @@ fn kernel_sensitive_unmounts_require_explicit_sensitive_permission() {
     let checked_for_permission = Arc::clone(&checked);
     let mut config = KernelVmConfig::new("vm-sensitive-unmounts");
     config.permissions = Permissions {
-        filesystem: Some(Arc::new(move |request: &FsAccessRequest| {
+        filesystem: PermissionEvaluator::dynamic(move |request: &FsAccessRequest| {
             checked_for_permission
                 .lock()
                 .expect("checked sensitive unmount paths lock poisoned")
@@ -837,7 +838,7 @@ fn kernel_sensitive_unmounts_require_explicit_sensitive_permission() {
                 }
                 other => panic!("unexpected filesystem permission probe: {other:?}"),
             }
-        })),
+        }),
         ..Permissions::default()
     };
 

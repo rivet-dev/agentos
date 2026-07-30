@@ -4,7 +4,7 @@ use agentos_vm_kernel::dns::{
 };
 use agentos_vm_kernel::kernel::{KernelVm, KernelVmConfig};
 use agentos_vm_kernel::permissions::{
-    NetworkAccessRequest, NetworkOperation, PermissionDecision, Permissions,
+    NetworkAccessRequest, NetworkOperation, PermissionDecision, PermissionEvaluator, Permissions,
 };
 use agentos_vm_kernel::vfs::MemoryFileSystem;
 use hickory_proto::rr::{Record, RecordType};
@@ -229,13 +229,13 @@ fn kernel_dns_resolution_checks_network_permissions_when_requested() {
     let resolver = MockDnsResolver::new(vec![IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))]);
     let mut config = KernelVmConfig::new("vm-dns-permissions");
     config.permissions = Permissions {
-        network: Some(Arc::new(move |request: &NetworkAccessRequest| {
+        network: PermissionEvaluator::dynamic(move |request: &NetworkAccessRequest| {
             permission_requests_for_check
                 .lock()
                 .expect("permission requests")
                 .push(request.clone());
             PermissionDecision::deny("dns denied")
-        })),
+        }),
         ..Permissions::allow_all()
     };
     config.dns_resolver = Arc::new(resolver);

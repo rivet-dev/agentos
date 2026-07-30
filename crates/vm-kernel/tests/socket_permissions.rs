@@ -1,6 +1,6 @@
 use agentos_vm_kernel::kernel::{KernelVm, KernelVmConfig, VirtualProcessOptions};
 use agentos_vm_kernel::permissions::{
-    NetworkAccessRequest, NetworkOperation, PermissionDecision, Permissions,
+    NetworkAccessRequest, NetworkOperation, PermissionDecision, PermissionEvaluator, Permissions,
 };
 use agentos_vm_kernel::socket_table::{InetSocketAddress, SocketSpec, SocketState};
 use agentos_vm_kernel::vfs::MemoryFileSystem;
@@ -25,7 +25,7 @@ fn kernel_with_network_permissions(
 ) -> KernelVm<MemoryFileSystem> {
     let mut config = KernelVmConfig::new("vm-socket-permissions");
     config.permissions = Permissions {
-        network: Some(Arc::new(callback)),
+        network: PermissionEvaluator::dynamic(callback),
         ..Permissions::allow_all()
     };
     KernelVm::new(MemoryFileSystem::new(), config)

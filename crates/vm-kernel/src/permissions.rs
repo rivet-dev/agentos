@@ -10,13 +10,71 @@ use std::sync::Arc;
 
 const IMMUTABLE_XATTR: &str = "user.agentos.immutable";
 
-pub type FsPermissionCheck = Arc<dyn Fn(&FsAccessRequest) -> PermissionDecision + Send + Sync>;
-pub type NetworkPermissionCheck =
-    Arc<dyn Fn(&NetworkAccessRequest) -> PermissionDecision + Send + Sync>;
-pub type CommandPermissionCheck =
-    Arc<dyn Fn(&CommandAccessRequest) -> PermissionDecision + Send + Sync>;
-pub type EnvironmentPermissionCheck =
-    Arc<dyn Fn(&EnvAccessRequest) -> PermissionDecision + Send + Sync>;
+/// A permission decision source with allocation-free static allow/deny paths.
+///
+/// `Dynamic` is intentionally retained for caller-supplied policy evaluators;
+/// those are an open extension point rather than a closed implementation set.
+pub enum PermissionEvaluator<Request> {
+    Deny,
+    Allow,
+    Dynamic(Arc<dyn Fn(&Request) -> PermissionDecision + Send + Sync>),
+}
+
+impl<Request> Clone for PermissionEvaluator<Request> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Deny => Self::Deny,
+            Self::Allow => Self::Allow,
+            Self::Dynamic(check) => Self::Dynamic(Arc::clone(check)),
+        }
+    }
+}
+
+impl<Request> Default for PermissionEvaluator<Request> {
+    fn default() -> Self {
+        Self::Deny
+    }
+}
+
+impl<Request> fmt::Debug for PermissionEvaluator<Request> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Deny => "Deny",
+            Self::Allow => "Allow",
+            Self::Dynamic(_) => "Dynamic",
+        })
+    }
+}
+
+impl<Request> PermissionEvaluator<Request> {
+    pub fn dynamic(check: impl Fn(&Request) -> PermissionDecision + Send + Sync + 'static) -> Self {
+        Self::Dynamic(Arc::new(check))
+    }
+
+    pub fn evaluate(&self, request: &Request) -> PermissionDecision {
+        match self {
+            Self::Deny => PermissionDecision {
+                allow: false,
+                reason: None,
+            },
+            Self::Allow => PermissionDecision::allow(),
+            Self::Dynamic(check) => check(request),
+        }
+    }
+
+    pub const fn is_allow(&self) -> bool {
+        matches!(self, Self::Allow)
+    }
+
+    pub const fn is_deny(&self) -> bool {
+        matches!(self, Self::Deny)
+    }
+}
+
+pub type FsPermissionEvaluator = PermissionEvaluator<FsAccessRequest>;
+pub type NetworkPermissionEvaluator = PermissionEvaluator<NetworkAccessRequest>;
+pub type CommandPermissionEvaluator = PermissionEvaluator<CommandAccessRequest>;
+pub type EnvironmentPermissionEvaluator = PermissionEvaluator<EnvAccessRequest>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PermissionDecision {
@@ -165,30 +223,24 @@ pub struct EnvAccessRequest {
 
 #[derive(Clone, Default)]
 pub struct Permissions {
-    pub filesystem: Option<FsPermissionCheck>,
-    /// Whether filesystem permission checks are unconditionally permissive.
-    ///
-    /// This avoids resolving every path solely to evaluate an already-known
-    /// allow decision. Rule-based policies must leave this disabled so their
-    /// checks continue to receive symlink-resolved paths.
+    pub filesystem: FsPermissionEvaluator,
+    /// Whether filesystem authorization can skip permission-only symlink
+    /// resolution. This is separate from the evaluator because a live bridge
+    /// policy must remain dynamic even when this optimization is enabled.
     pub filesystem_unrestricted: bool,
-    pub network: Option<NetworkPermissionCheck>,
-    pub child_process: Option<CommandPermissionCheck>,
-    pub environment: Option<EnvironmentPermissionCheck>,
+    pub network: NetworkPermissionEvaluator,
+    pub child_process: CommandPermissionEvaluator,
+    pub environment: EnvironmentPermissionEvaluator,
 }
 
 impl Permissions {
     pub fn allow_all() -> Self {
         Self {
-            filesystem: Some(Arc::new(|_: &FsAccessRequest| PermissionDecision::allow())),
+            filesystem: PermissionEvaluator::Allow,
             filesystem_unrestricted: true,
-            network: Some(Arc::new(|_: &NetworkAccessRequest| {
-                PermissionDecision::allow()
-            })),
-            child_process: Some(Arc::new(|_: &CommandAccessRequest| {
-                PermissionDecision::allow()
-            })),
-            environment: Some(Arc::new(|_: &EnvAccessRequest| PermissionDecision::allow())),
+            network: PermissionEvaluator::Allow,
+            child_process: PermissionEvaluator::Allow,
+            environment: PermissionEvaluator::Allow,
         }
     }
 }
@@ -263,10 +315,6 @@ pub fn filter_env(
     env: &BTreeMap<String, String>,
     permissions: &Permissions,
 ) -> BTreeMap<String, String> {
-    let Some(check) = permissions.environment.as_ref() else {
-        return BTreeMap::new();
-    };
-
     env.iter()
         .filter_map(|(key, value)| {
             let request = EnvAccessRequest {
@@ -275,7 +323,7 @@ pub fn filter_env(
                 key: key.clone(),
                 value: Some(value.clone()),
             };
-            let decision = check(&request);
+            let decision = permissions.environment.evaluate(&request);
             decision.allow.then(|| (key.clone(), value.clone()))
         })
         .collect()
@@ -289,13 +337,6 @@ pub fn check_command_execution(
     cwd: Option<&str>,
     env: &BTreeMap<String, String>,
 ) -> Result<(), PermissionError> {
-    let Some(check) = permissions.child_process.as_ref() else {
-        return Err(PermissionError::access_denied(
-            format!("spawn '{command}'"),
-            None,
-        ));
-    };
-
     let request = CommandAccessRequest {
         vm_id: vm_id.to_owned(),
         command: command.to_owned(),
@@ -303,7 +344,7 @@ pub fn check_command_execution(
         cwd: cwd.map(ToOwned::to_owned),
         env: env.clone(),
     };
-    let decision = check(&request);
+    let decision = permissions.child_process.evaluate(&request);
     if decision.allow {
         Ok(())
     } else {
@@ -320,16 +361,12 @@ pub fn check_network_access(
     op: NetworkOperation,
     resource: &str,
 ) -> Result<(), PermissionError> {
-    let Some(check) = permissions.network.as_ref() else {
-        return Err(PermissionError::access_denied(resource, None));
-    };
-
     let request = NetworkAccessRequest {
         vm_id: vm_id.to_owned(),
         op,
         resource: resource.to_owned(),
     };
-    let decision = check(&request);
+    let decision = permissions.network.evaluate(&request);
     if decision.allow {
         Ok(())
     } else {
@@ -382,16 +419,12 @@ impl<F> PermissionedFileSystem<F> {
         if crate::device_layer::is_standard_device_path(path) {
             return Ok(());
         }
-        let Some(check) = self.permissions.filesystem.as_ref() else {
-            return Err(VfsError::access_denied(op.as_str(), path, None));
-        };
-
         let request = FsAccessRequest {
             vm_id: self.vm_id.clone(),
             op,
             path: path.to_owned(),
         };
-        let decision = check(&request);
+        let decision = self.permissions.filesystem.evaluate(&request);
         if decision.allow {
             Ok(())
         } else {

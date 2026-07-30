@@ -110,19 +110,17 @@ fn assert_fs_denied<T: Debug>(result: VfsResult<T>) {
 }
 
 #[test]
-fn default_permissions_have_no_policy() {
-    // The derived Default leaves every capability unset (None), which is what
-    // forces the fail-closed branch in each checker.
+fn default_permissions_deny_every_capability() {
     let permissions = Permissions::default();
-    assert!(permissions.filesystem.is_none(), "fs default must be None");
-    assert!(permissions.network.is_none(), "net default must be None");
+    assert!(permissions.filesystem.is_deny(), "fs default must deny");
+    assert!(permissions.network.is_deny(), "net default must deny");
     assert!(
-        permissions.child_process.is_none(),
-        "child_process default must be None"
+        permissions.child_process.is_deny(),
+        "child_process default must deny"
     );
     assert!(
-        permissions.environment.is_none(),
-        "environment default must be None"
+        permissions.environment.is_deny(),
+        "environment default must deny"
     );
 }
 
