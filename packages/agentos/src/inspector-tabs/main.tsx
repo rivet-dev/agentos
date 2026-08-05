@@ -18,6 +18,8 @@ const TABS: Record<string, () => Promise<{ default: ComponentType<{ actorId: str
 		import("./tabs/filesystem").then((m) => ({ default: m.FilesystemTabConnected })),
 	system: () =>
 		import("./tabs/system").then((m) => ({ default: m.SystemTabConnected })),
+	terminal: () =>
+		import("./tabs/terminal").then((m) => ({ default: m.TerminalTabConnected })),
 };
 
 // Hosts vendor built copies of this bundle and pin their tab-id config at
