@@ -227,6 +227,7 @@ print(json.dumps({
                 env: HashMap::from([(String::from("EXEC_REVIEW"), String::from("visible"))]),
                 cwd: None,
                 wasm_permission_tier: None,
+                retain_output: false,
             }),
         ))
         .expect("start Python identity execution");

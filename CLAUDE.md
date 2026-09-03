@@ -4,7 +4,7 @@ Always spell the product name `agentOS`, never `AgentOS`; do not alter type
 identifiers such as `AgentOSActorConfig`.
 
 agentOS owns the runtime, kernel, VFS, language execution, registry packages,
-ACP/session layer, agentOS client APIs, docs, and publish machinery. agentOS
+agentOS client APIs, docs, and publish machinery. agentOS
 Exec is the JavaScript, TypeScript, and Python execution surface of agentOS.
 
 ## Boundaries
@@ -68,7 +68,7 @@ migrate, or delete another owner's schema:
 - Sidecar/core durable state owns `agentos_core_*`, including
   `agentos_core_schema_version`. This namespace is intentionally generic; do
   not name it after sessions, ACP, or another current consumer.
-- The agentOS TypeScript actor layer owns `agentos_actor_*`, including
+- The static agentOS Rust actor owns `agentos_actor_*`, including
   `agentos_actor_schema_version`.
 
 Do not use a shared schema-version table, a `component` discriminator, or a
@@ -94,36 +94,29 @@ add compatibility views, aliases, legacy adoption paths, or dual writes.
   `website/public/docs/docs/architecture/processes.md` and
   `posix-syscalls.md`, and `crates/kernel/CLAUDE.md`.
 - The projected `/opt/agentos` filesystem is the source of truth for software
-  and agent resolution. Read it live; do not cache package lists captured at VM
+  and command resolution. Read it live; do not cache package lists captured at VM
   configuration time.
-- Packages are packed `.aospkg` files (`crates/vfs/package-format/v1.bare`:
+- Packages are packed `.aospkg` files (`crates/vfs/package-format/v2.bare`:
   header + vbare manifest + mount index + mount tar) projected under
   `/opt/agentos/pkgs/<name>/<version>`; commands are linked under
   `/opt/agentos/bin/`. The vbare chunk1 manifest is the only runtime manifest —
   `agentos-package.json` is toolchain input, stripped at pack time and never
   shipped or materialized into the guest.
-- Agent resolution and enumeration are sidecar-owned. Clients send agent names
-  and forward a single package `path` (the `.aospkg`, or a transition dir);
-  they do not scan `node_modules` or parse adapter manifests for discovery.
+- Software resolution and enumeration are sidecar-owned. Clients forward a
+  closed package source (`url` for hosted actors; trusted local path for embedded
+  Core); they do not scan `node_modules` or parse manifests for discovery.
 - TypeScript and Rust clients must stay behaviorally identical. Any public
   method or wire behavior change in one client must be mirrored in the other.
 - Clients are thin transport adapters, not runtime policy owners. They may
   validate and serialize explicit caller input, forward requests, route host
   callbacks/events, and retain host-only state that the sidecar cannot access.
   VM defaults, base environment, filesystem/bootstrap policy, default software,
-  permission policy, agent/session orchestration, prompt assembly, and other
+  permission policy, package projection, and other
   behavior shared across clients belong in the sidecar/runtime.
 - Behavioral parity must come from one sidecar-owned implementation, not copied
   TypeScript/Rust/actor constants or parallel state machines. Prefer omitted
   wire fields meaning "use the sidecar default"; clients should send overrides
   only when the caller explicitly supplied them.
-- Agent adapters must use real upstream SDKs. Do not replace SDK adapters with
-  direct API-call stubs.
-- `rivet-dev/pi-acp` is an agentOS-maintained fork. When Pi ACP behavior needs
-  to change, fix and test the fork directly, push the fork commit, then update
-  the pinned commit and verified source-archive checksum in
-  `software/pi/scripts/build-pi-acp.mjs`; do not work around fork bugs in the
-  agentOS package wrapper or resolve `pi-acp` from npm.
 - WASM command binaries and every toolchain build output are generated
   artifacts. Never commit `packages/runtime-core/commands/`, `software/*/bin/`,
   `toolchain/vendor/`, `toolchain/c/{build,vendor,libs,sysroot,.cache}/`, or
@@ -272,29 +265,6 @@ custom host-syscall imports. Treat that target as **native POSIX**;
   limits, or watchdog timeouts must be ignored/skipped by default with a clear
   reason. Fast tests where the configured safeguard fires should stay in the
   default suite.
-
-## Gigacode Performance Investigations
-
-- For cold-start latency, run `gigacode` directly and use the plain
-  `[gigacode]` phase lines and durations mirrored from `daemon.log` while the
-  client waits for provider bootstrap. These startup lines are intentionally
-  human-readable and separate from Pino session logs.
-- Investigate Gigacode latency from its per-session Pino JSONL logs, not by
-  inferring timing from the OpenCode screen or the aggregate `daemon.log`.
-- Logs live at
-  `~/.local/state/gigacode/session-logs/<open-code-session-id>.jsonl` by default,
-  or under `$GIGACODE_STATE_DIR/session-logs/` when that override is set.
-- Reproduce one turn in a fresh session, identify the newest log with
-  `ls -lt ~/.local/state/gigacode/session-logs`, then inspect its ordered
-  `event` and `durationMs` fields with `jq`.
-- Compare `rivet.actor.resolved`, `agentos.session.created`,
-  `agentos.prompt.completed`, `prompt.completed`, `session.idle`, and
-  `agentos.connection.disposed` before optimizing. The actor event measures
-  resolution of the shared per-cwd workspace actor; the ACP event measures the
-  distinct harness session created inside it.
-- Preserve the raw JSONL file when reporting a regression. Use
-  `GIGACODE_LOG_LEVEL` to change the Pino level; performance phase records are
-  emitted at `info`.
 
 ## Version Control
 

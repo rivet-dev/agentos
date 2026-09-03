@@ -1,0 +1,20 @@
+[package]
+name = "agentos-preload"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Process-level package preload service and coordinator actor for agentOS"
+
+[dependencies]
+agentos-client = { workspace = true, features = ["actor-internals"] }
+anyhow = "1"
+async-trait = "0.1"
+futures = "0.3"
+rivetkit = "=2.3.12-rc.3"
+rivetkit-core = "=2.3.12-rc.3"
+rivet-metrics = "=2.3.12-rc.3"
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
+tracing = "0.1"
+uuid = { version = "1", features = ["v4"] }

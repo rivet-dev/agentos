@@ -1,12 +1,46 @@
 # 14: Migrate Integrations and Publishing
 
-**Status:** Proposed
+**Status:** Implemented locally; production deployment smoke remains
 
 ## Outcome
 
 Move supported consumers to the static Rust `agentOS` actor and generated
 TypeScript client, remove consumers of agents/sessions/ACP, update release and
 deployment machinery, and ship the sandbox-only architecture in lockstep.
+
+## Implemented changes
+
+- Eve, Flue, hosted examples, and public integration docs use the generated
+  `agentOS` client and dotted nested actions. Embedded examples remain on Core
+  when they need host bindings or trusted host mounts.
+- `@rivet-dev/agentos` exports only the hosted generated contract;
+  `@rivet-dev/agentos-core` is the separate embedded API and is not re-exported
+  as a compatibility surface.
+- Gigacode, ACP tooling, agent/session harnesses, stale TypeScript actor files,
+  and the browser-terminal actor example were deleted rather than adapted.
+- The native `agentos-native-sidecar` executable exposes fixed `actor` and
+  `sidecar` entry points; release builds stage that one binary for every native
+  target.
+- Every `@agentos-software/*` workspace is private and excluded from npm
+  discovery. Their manifests remain build inputs only.
+- Core vendors its eight default `.aospkg` artifacts at package build time, so
+  runtime default resolution never imports npm software descriptors or scans
+  `node_modules`.
+- `scripts/publish` stages 29 runtime packages in a deterministic schema-v1
+  manifest with digest-addressed object paths. The release workflow uploads the
+  tree to commit, version, and optional `latest` R2 prefixes; the local
+  `just software-artifacts-dry-run` target exercises the same staging without
+  credentials.
+- The public registry index names the object artifact for each package and no
+  longer exposes npm package coordinates. Catalog-only meta packages are not
+  emitted as runnable artifacts.
+- Public docs and checked examples describe the static actor, whole-document
+  configuration, URL-only hosted software, safe hosted filesystems, and the
+  separate embedded Core trust boundary.
+
+No production actor or preload-coordinator deployment is performed from this
+workspace. The deployment and live generated-client smoke items below remain
+rollout gates.
 
 ## Consumer inventory
 
@@ -120,18 +154,35 @@ name.
 
 ## Validation
 
-- `cargo check --workspace`
-- `pnpm build`
-- `pnpm check-types`
-- Publish helper and fixed-version checks.
-- Generated-contract clean-tree check.
-- Targeted Rust actor, Core parity, package-download/cache, coordinator, and
-  consumer integration tests.
-- Full release artifact staging without publishing.
-- Public website build and link check for changed routes/navigation.
-- One end-to-end smoke test per supported consumer using the compiled Rust actor.
-- Deployment smoke test for cold cache, warm cache, coordinator unavailable,
-  config restart, process output replay, preview route, and cron wakeup.
+Completed locally:
+
+- `cargo check --workspace` and `cargo test -p agentos-actor` (34 tests).
+- `pnpm check-types` (103 package checks) and `pnpm build` (50 package builds).
+- Core's required PR suite (19 files, 94 tests).
+- Prototype bindgen freshness plus its three nested-action tests.
+- Eve (11 tests), Flue (6 tests), and publish helpers (18 tests).
+- Complete Rust and C WASI tool rebuild: 135 built commands expanded to 166
+  runtime aliases.
+- Full software-package build and dry-run staging of 29 object-store artifacts.
+- Layout validation for 127 colocated Cargo manifests and fixed-version
+  validation for 16 publishable package/crate manifests.
+
+Still required outside this checkout:
+
+- The website build and link crawl. This checkout has no website workspace;
+  `just docs-check-links` matches no build project, scans zero files, and exits
+  successfully without validating the changed routes.
+- One deployed actor/client smoke per supported consumer.
+- Deployment smoke for cold cache, warm cache, coordinator unavailable, config
+  restart, process output replay, preview routing, and cron wakeup.
+
+The optional full Core runtime suite also exposes pre-existing runtime debts
+that are not papered over here: nested guest `npm test` can exit zero without
+running the package script, a dynamically unmounted memory filesystem can
+remain visible through the sidecar shadow root, and guest Node writes to
+writable JS/portable mounts can return `EACCES`. These failures are outside the
+static Rust actor path and retain strict regression assertions for focused
+runtime fixes.
 
 ## Acceptance criteria
 

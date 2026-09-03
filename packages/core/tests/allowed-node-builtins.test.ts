@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SidecarRejectedError } from "@rivet-dev/agentos-runtime-core/sidecar-errors";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type {
 	AuthenticatedSession,
@@ -15,6 +16,7 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 
 	afterEach(async () => {
 		await proxy?.dispose();
+		vi.restoreAllMocks();
 		proxy = null;
 		if (fixtureRoot) {
 			rmSync(fixtureRoot, { recursive: true, force: true });
@@ -23,6 +25,7 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 	});
 
 	function createMockClient() {
+		vi.spyOn(console, "error").mockImplementation(() => {});
 		let stopped = false;
 		const execute = vi.fn(
 			async (
@@ -30,7 +33,23 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 				_vm: CreatedVm,
 				_execution: { env?: Record<string, string> },
 			) => {
-				throw new Error("stop after capture");
+				throw new SidecarRejectedError(1, {
+					code: "ENOENT",
+					message: "stop after capture",
+					errno: "ENOENT",
+					limit_name: null,
+					configured_limit: null,
+					current_usage: null,
+					requested: null,
+					unit: null,
+					scope: null,
+					vm_id: null,
+					session_generation: null,
+					capability_id: null,
+					operation: null,
+					configuration_path: null,
+					retryable: null,
+				});
 			},
 		);
 		const client = {
@@ -74,21 +93,21 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 			cwd: "/workspace",
 			env: { HOME: "/workspace" },
 		});
-		const exitCode = await proc.wait();
-
-		expect(exitCode).toBe(1);
+		await expect(proc.wait()).rejects.toThrow("stop after capture");
+		expect(proc.exitCode).toBeNull();
 		expect(execute).toHaveBeenCalledTimes(1);
 		return execute.mock.calls[0]?.[2];
 	}
 
 	test("leaves internal AGENT_OS runtime env construction to the sidecar", async () => {
-		await expect(captureExecutePayload()).resolves.toMatchObject({
+		const payload = await captureExecutePayload();
+		expect(payload).toMatchObject({
 			command: "node",
 			args: ["/workspace/entry.mjs"],
 			cwd: "/workspace",
 			env: { HOME: "/workspace" },
 		});
-		await expect(captureExecutePayload()).resolves.not.toMatchObject({
+		expect(payload).not.toMatchObject({
 			env: {
 				AGENT_OS_ALLOWED_NODE_BUILTINS: expect.anything(),
 			},
@@ -115,9 +134,7 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 
 		await expect(
 			proxy.exec("node /workspace/entry.mjs --flag"),
-		).resolves.toMatchObject({
-			exitCode: 1,
-		});
+		).rejects.toThrow("stop after capture");
 		expect(execute).toHaveBeenCalledTimes(1);
 		expect(execute.mock.calls[0]?.[2]).toMatchObject({
 			command: "node",

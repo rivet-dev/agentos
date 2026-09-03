@@ -13,6 +13,71 @@ mod common;
 use agentos_client::{ClientError, OpenShellOptions, StdinInput};
 
 #[tokio::test]
+async fn exited_terminal_replay_and_late_subscriptions_survive_registry_removal() {
+    if !common::require_sidecar(
+        "exited_terminal_replay_and_late_subscriptions_survive_registry_removal",
+    ) {
+        return;
+    }
+    let os = common::new_vm().await;
+    let result = async {
+        let shell = os.open_shell(OpenShellOptions {
+            command: Some("node".into()),
+            args: vec![
+                "-e".into(),
+                "process.stdout.write('final-output'); process.exit(7)".into(),
+            ],
+            ..Default::default()
+        })?;
+        let code = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            os.wait_shell(&shell.shell_id),
+        )
+        .await??;
+        anyhow::ensure!(code == 7, "terminal exit code changed");
+        let snapshot = os.snapshot_shell(&shell.shell_id, None, None).await?;
+        anyhow::ensure!(
+            snapshot.exit_code == Some(7),
+            "terminal replay lost its end state"
+        );
+        anyhow::ensure!(
+            snapshot
+                .events
+                .iter()
+                .flat_map(|event| event.data.clone())
+                .collect::<Vec<_>>()
+                .windows(12)
+                .any(|bytes| bytes == b"final-output"),
+            "terminal replay lost its final output"
+        );
+        let _output = os.on_shell_output(&shell.shell_id, |_| {})?;
+        let (exit_tx, exit_rx) = tokio::sync::oneshot::channel();
+        let _exit = os.on_shell_exit(&shell.shell_id, move |exit| {
+            exit_tx.send(exit.exit_code).expect("late exit receiver");
+        })?;
+        anyhow::ensure!(exit_rx.await? == 7, "late subscription lost terminal exit");
+        let bad = os.open_shell(OpenShellOptions {
+            command: Some("agentos-command-that-does-not-exist".into()),
+            ..Default::default()
+        })?;
+        // A rejected Execute must fail the wait, not become PID 0 and wait forever.
+        anyhow::ensure!(
+            tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                os.wait_shell(&bad.shell_id)
+            )
+            .await?
+            .is_err(),
+            "rejected terminal must not report an exit code"
+        );
+        Ok::<(), anyhow::Error>(())
+    }
+    .await;
+    os.shutdown().await.expect("shutdown terminal test VM");
+    result.unwrap();
+}
+
+#[tokio::test]
 async fn shell_surface_open_write_data_resize_close() {
     if !common::require_sidecar("shell_surface_open_write_data_resize_close") {
         return;

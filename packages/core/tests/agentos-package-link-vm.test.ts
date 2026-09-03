@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/index.js";
 
 /**
- * Phase 4 — runtime dynamic linking. `linkSoftware()` adds a package to the
+ * Phase 4 — runtime dynamic linking. `software.link()` adds a package to the
  * already-running VM; its `bin/` command must resolve live (the `/opt/agentos`
  * mount is host-backed, so writing into the staging dir is reflected with no
  * reboot).
@@ -53,17 +53,17 @@ describe("agentos linkSoftware (VM)", () => {
 		expect(await vm.exists("/opt/agentos/bin/linked-cmd")).toBe(false);
 	});
 
-	test("linkSoftware makes the command resolve live via $PATH", async () => {
-		await vm.linkSoftware(pkgDir);
+	test("software.link makes the command resolve live via $PATH", async () => {
+		await vm.software.link({ path: pkgDir });
 		expect(await vm.exists("/opt/agentos/bin/linked-cmd")).toBe(true);
 
 		let out = "";
-		const { pid } = vm.spawn("linked-cmd", [], {
+		const { pid } = await vm.process.spawn("linked-cmd", [], {
 			onStdout: (d) => {
 				out += new TextDecoder().decode(d);
 			},
 		});
-		const code = await vm.waitProcess(pid);
+		const code = (await vm.process.wait(pid)).exitCode;
 		for (let i = 0; i < 20 && out === ""; i++) {
 			await new Promise((r) => setTimeout(r, 25));
 		}
@@ -75,9 +75,7 @@ describe("agentos linkSoftware (VM)", () => {
 		// Projecting an already-projected `<name>/<version>` is idempotent (two
 		// meta-packages can pull in the same sub-package). The sidecar returns the
 		// package's commands without re-staging or erroring.
-		await expect(
-			vm.linkSoftware(pkgDir),
-		).resolves.toBeUndefined();
+		await expect(vm.software.link({ path: pkgDir })).resolves.toBeUndefined();
 		expect(await vm.exists("/opt/agentos/bin/linked-cmd")).toBe(true);
 	});
 
@@ -101,7 +99,7 @@ describe("agentos linkSoftware (VM)", () => {
 			"#!/usr/bin/env node\nprocess.stdout.write('other ran\\n');\n",
 		);
 		chmodSync(otherBin, 0o755);
-		await expect(vm.linkSoftware(otherDir)).rejects.toThrow(
+		await expect(vm.software.link({ path: otherDir })).rejects.toThrow(
 			/already provided by another package/,
 		);
 	});

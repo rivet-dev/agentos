@@ -7,7 +7,7 @@ const runtime = await AgentOs.create({
 try {
 	const result = await runtime.process.execFile(
 		"sh",
-		["-c", "printf 'hello from a WASM-backed AgentOS command\\n'"],
+		["-c", "printf 'hello from a WASM-backed agentOS command\\n'"],
 		{ output: { capture: "all" } },
 	);
 	console.log(result.stdout?.trim());

@@ -1,136 +1,49 @@
-//! Product-specific schema export consumed by `@rivet-dev/agentos-bindgen`.
-//!
-//! This intentionally stays local to agentOS. RivetKit owns transport and the
-//! nested action proxy; this module only exposes the concrete Rust wire shapes.
+//! Product metadata supplied to the shared agentOS contract generator.
 
-use std::any::TypeId;
-use std::collections::{BTreeMap, BTreeSet};
+use agentos_actor_contract::schema::{
+    self, ActorContract, ContractMetadata, EventContract, TypeCollector, TypeScriptShape,
+};
 
-use serde::Serialize;
-use ts_rs::TS;
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ActorContract {
-    pub schema_version: u32,
-    pub actor_name: &'static str,
-    pub create_input: TypeScriptShape,
-    pub actions: Vec<ActionContract>,
-    pub events: Vec<EventContract>,
-    pub types: Vec<TypeContract>,
-    pub error: TypeScriptShape,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TypeScriptShape {
-    pub input: String,
-    pub output: String,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ActionContract {
-    pub name: &'static str,
-    pub public: bool,
-    pub input: String,
-    pub output: String,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EventContract {
-    pub name: &'static str,
-    pub payload: String,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TypeContract {
-    pub name: String,
-    pub declaration: String,
-}
+const API_VERSION: &str = "agentos-sdk.dev/v1alpha1";
+const CONTRACT_MAJOR: u32 = 1;
+const CAPABILITIES: &[&str] = &[
+    "config.merge-patch",
+    "network.pull-streaming",
+    "output.replay",
+    "inspector.filesystem",
+    "inspector.processes",
+    "inspector.software",
+    "inspector.terminals",
+    "inspector.vm",
+    "language.javascript",
+    "language.python",
+    "language.typescript",
+];
 
 pub fn export() -> ActorContract {
     let mut types = TypeCollector::default();
     types.collect::<crate::AgentOsActorCreateInput>();
     crate::action_set::collect_contract_types(&mut types);
     collect_event_types(&mut types);
-    ActorContract {
-        schema_version: 1,
-        actor_name: crate::ACTOR_NAME,
-        create_input: shape::<crate::AgentOsActorCreateInput>(),
-        actions: crate::action_set::contract(),
-        events: event_contract(),
-        types: types.finish(),
-        error: TypeScriptShape {
+
+    schema::build(
+        ContractMetadata {
+            schema_version: 1,
+            api_version: API_VERSION,
+            contract_major: CONTRACT_MAJOR,
+            capabilities: CAPABILITIES,
+            actor_name: crate::ACTOR_NAME,
+        },
+        schema::shape::<crate::AgentOsActorCreateInput>(),
+        crate::action_set::contract(),
+        event_contract(),
+        types.finish(),
+        TypeScriptShape {
             input: "never".to_owned(),
             output: "{ group: string; code: string; message: string; metadata: JsonValue | null }"
                 .to_owned(),
         },
-    }
-}
-
-#[derive(Default)]
-pub(crate) struct TypeCollector {
-    seen: BTreeSet<TypeId>,
-    declarations: BTreeMap<String, String>,
-}
-
-impl TypeCollector {
-    pub(crate) fn collect<T: TS + 'static + ?Sized>(&mut self) {
-        <Self as ts_rs::TypeVisitor>::visit::<T>(self);
-    }
-
-    fn finish(self) -> Vec<TypeContract> {
-        self.declarations
-            .into_iter()
-            .map(|(name, declaration)| TypeContract { name, declaration })
-            .collect()
-    }
-}
-
-impl ts_rs::TypeVisitor for TypeCollector {
-    fn visit<T: TS + 'static + ?Sized>(&mut self) {
-        if !self.seen.insert(TypeId::of::<T>()) {
-            return;
-        }
-        if T::output_path().is_some() {
-            let name = T::ident();
-            let declaration = T::decl();
-            if let Some(previous) = self.declarations.insert(name.clone(), declaration.clone()) {
-                assert_eq!(
-                    previous, declaration,
-                    "two Rust DTOs export the conflicting TypeScript name {name}"
-                );
-            }
-        }
-        T::visit_dependencies(self);
-    }
-}
-
-pub(crate) fn input<T: TS>() -> String {
-    normalize_input(T::inline())
-}
-
-pub(crate) fn output<T: TS>() -> String {
-    normalize_output(T::inline())
-}
-
-fn shape<T: TS>() -> TypeScriptShape {
-    let inline = T::inline();
-    TypeScriptShape {
-        input: normalize_input(inline.clone()),
-        output: normalize_output(inline),
-    }
-}
-
-fn normalize_input(value: String) -> String {
-    value.replace("bigint", "number")
-}
-
-fn normalize_output(value: String) -> String {
-    value.replace("bigint", "number | bigint")
+    )
 }
 
 fn event_contract() -> Vec<EventContract> {
@@ -141,20 +54,19 @@ fn event_contract() -> Vec<EventContract> {
             vec![$(
                 EventContract {
                     name: <$event as Event>::NAME,
-                    payload: output::<$event>(),
+                    payload: schema::output::<$event>(),
                 }
             ),+]
         };
     }
 
     events!(
-        crate::RuntimeBooted,
-        crate::RuntimeShutdown,
-        crate::RuntimeLimitWarning,
+        crate::VmBooted,
+        crate::VmShutdown,
+        crate::VmLimitWarning,
         crate::ProcessOutputEvent,
         crate::ProcessExitEvent,
-        crate::TerminalDataEvent,
-        crate::TerminalStderrEvent,
+        crate::TerminalOutputEvent,
         crate::TerminalExitEvent,
         crate::CronFiredEvent,
     )
@@ -168,13 +80,12 @@ fn collect_event_types(types: &mut TypeCollector) {
     }
 
     events!(
-        crate::RuntimeBooted,
-        crate::RuntimeShutdown,
-        crate::RuntimeLimitWarning,
+        crate::VmBooted,
+        crate::VmShutdown,
+        crate::VmLimitWarning,
         crate::ProcessOutputEvent,
         crate::ProcessExitEvent,
-        crate::TerminalDataEvent,
-        crate::TerminalStderrEvent,
+        crate::TerminalOutputEvent,
         crate::TerminalExitEvent,
         crate::CronFiredEvent,
     );
@@ -206,9 +117,28 @@ mod tests {
     }
 
     #[test]
+    fn contract_export_is_deterministic() {
+        let first = export();
+        let second = export();
+        assert_eq!(first, second);
+        assert!(first
+            .actions
+            .windows(2)
+            .all(|actions| actions[0].name < actions[1].name));
+        assert!(first
+            .types
+            .windows(2)
+            .all(|types| types[0].name < types[1].name));
+    }
+
+    #[test]
     fn contract_covers_prototype_wire_shapes() {
         let contract = export();
         assert_eq!(contract.actor_name, "agentOS");
+        assert_eq!(contract.api_version, "agentos-sdk.dev/v1alpha1");
+        assert_eq!(contract.contract_major, 1);
+        assert_eq!(contract.contract_hash.len(), "sha256:".len() + 64);
+        assert!(contract.capabilities.contains(&"config.merge-patch"));
         assert!(contract
             .types
             .iter()

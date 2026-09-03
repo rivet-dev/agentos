@@ -14,17 +14,28 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type {
-	AgentosPackageManifest,
-	PackageRef as ManifestPackageRef,
-} from "@agentos-software/manifest";
+export interface PackageProvidesFileDescriptor {
+	source: string;
+	target: string;
+}
+
+export interface PackageProvidesDescriptor {
+	env?: Record<string, string>;
+	files?: PackageProvidesFileDescriptor[];
+}
+
+export interface AgentosPackageManifest {
+	name: string;
+	version: string;
+	provides?: PackageProvidesDescriptor;
+}
 
 /** Root of the agentOS package tree inside the VM. */
 export const OPT_AGENTOS_ROOT = "/opt/agentos";
 /** The symlink farm on `$PATH` (commands link here). */
 export const OPT_AGENTOS_BIN = "/opt/agentos/bin";
 
-export type PackageRef = ManifestPackageRef;
+export type PackageRef = string;
 export type SoftwarePackageRef = { packagePath: string };
 /** Portable descriptor used to link a package into a running VM. */
 export interface PackageDescriptor {

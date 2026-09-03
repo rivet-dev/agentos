@@ -1,4 +1,4 @@
-# AgentOS language execution Benchmarks
+# agentOS language execution Benchmarks
 
 These benchmarks measure the public `agentos` SDK paths used by consumers.
 

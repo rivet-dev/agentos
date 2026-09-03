@@ -128,7 +128,7 @@ impl crate::generated_protocol::v1::CreateVmRequest {
         let metadata: std::collections::BTreeMap<_, _> = metadata.into_iter().collect();
         let mut config = agentos_vm_config::CreateVmConfig {
             cwd: metadata.get("cwd").cloned(),
-            env: legacy_env_config(&metadata),
+            env: Some(legacy_env_config(&metadata)),
             root_filesystem: legacy_root_filesystem_config(root_filesystem),
             permissions: permissions.map(permissions_policy_config_from_wire),
             limits: legacy_limits_config(&metadata),
@@ -137,7 +137,8 @@ impl crate::generated_protocol::v1::CreateVmRequest {
             listen: legacy_listen_config(&metadata),
             ..Default::default()
         };
-        config.loopback_exempt_ports = legacy_loopback_exempt_ports(&config.env);
+        config.loopback_exempt_ports =
+            legacy_loopback_exempt_ports(config.env.as_ref().expect("legacy env is present"));
         Self::json_config(runtime, config)
     }
 }
@@ -548,6 +549,11 @@ fn legacy_limits_config(
         pending_stdin_bytes: legacy_u64(metadata, "limits.process.pending_stdin_bytes"),
         pending_event_count: legacy_u64(metadata, "limits.process.pending_event_count"),
         pending_event_bytes: legacy_u64(metadata, "limits.process.pending_event_bytes"),
+        output_replay_events: legacy_u64(metadata, "limits.process.output_replay_events"),
+        output_replay_bytes: legacy_u64(metadata, "limits.process.output_replay_bytes"),
+        output_replay_page_events: legacy_u64(metadata, "limits.process.output_replay_page_events"),
+        output_replay_page_bytes: legacy_u64(metadata, "limits.process.output_replay_page_bytes"),
+        max_output_replays: legacy_u64(metadata, "limits.process.max_output_replays"),
     };
 
     let config = agentos_vm_config::VmLimitsConfig {
@@ -568,6 +574,7 @@ fn legacy_limits_config(
             || execution.live_execution_warning_threshold.is_some())
         .then_some(execution),
         process: legacy_has_process_limits(&process).then_some(process),
+        agentos_packages: None,
     };
 
     if config.resources.is_none()
@@ -704,7 +711,7 @@ impl crate::generated_protocol::v1::OwnershipScope {
 }
 
 pub const PROTOCOL_NAME: &str = "agentos-native-sidecar";
-pub const PROTOCOL_VERSION: u16 = 8;
+pub const PROTOCOL_VERSION: u16 = 11;
 // 16 MiB: large enough to carry a trusted-client CreateVm config that inlines an
 // entire base-filesystem snapshot, while still bounding a single frame.
 pub const DEFAULT_MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
@@ -1361,6 +1368,106 @@ mod tests {
         });
 
         for frame in [request, response] {
+            let encoded = codec.encode(&frame).expect("encode frame");
+            assert_eq!(codec.decode(&encoded).expect("decode frame"), frame);
+        }
+    }
+
+    #[test]
+    fn session_package_acquisition_frames_round_trip_without_host_path() {
+        let codec = WireFrameCodec::default();
+        let ownership = OwnershipScope::SessionOwnership(SessionOwnership {
+            connection_id: String::from("connection"),
+            session_id: String::from("session"),
+        });
+        let request = ProtocolFrame::RequestFrame(RequestFrame {
+            schema: protocol_schema(),
+            request_id: 2,
+            ownership: ownership.clone(),
+            payload: RequestPayload::AcquirePackageRequest(AcquirePackageRequest {
+                source: PackageAcquisitionSource::PackageUrlSource(PackageUrlSource {
+                    url: String::from("https://packages.example/tool.aospkg"),
+                    expected_digest: Some(String::from("sha256:abc")),
+                }),
+                advisory: true,
+                timeout_ms: Some(250),
+                max_package_bytes: None,
+                download_timeout_ms: None,
+                connect_timeout_ms: None,
+                max_redirects: None,
+                allow_insecure_local_http: false,
+            }),
+        });
+        let response = ProtocolFrame::ResponseFrame(ResponseFrame {
+            schema: protocol_schema(),
+            request_id: 2,
+            ownership,
+            payload: ResponsePayload::PackageAcquiredResponse(PackageAcquiredResponse {
+                package_id: String::from("sha256:abc"),
+                digest: String::from("sha256:abc"),
+                size: 123,
+                package_name: String::from("tool"),
+                version: String::from("1"),
+                commands: vec![String::from("tool")],
+            }),
+        });
+        for frame in [request, response] {
+            let encoded = codec.encode(&frame).expect("encode frame");
+            assert_eq!(codec.decode(&encoded).expect("decode frame"), frame);
+        }
+    }
+
+    #[test]
+    fn vm_package_install_frames_round_trip_without_host_path_in_response() {
+        let codec = WireFrameCodec::default();
+        let ownership = OwnershipScope::VmOwnership(VmOwnership {
+            connection_id: "connection".into(),
+            session_id: "session".into(),
+            vm_id: "vm".into(),
+        });
+        let package = PackageAcquiredResponse {
+            package_id: "sha256:abc".into(),
+            digest: "sha256:abc".into(),
+            size: 123,
+            package_name: "tool".into(),
+            version: "1".into(),
+            commands: vec!["tool".into()],
+        };
+        let frames = [
+            ProtocolFrame::RequestFrame(RequestFrame {
+                schema: protocol_schema(),
+                request_id: 3,
+                ownership: ownership.clone(),
+                payload: RequestPayload::InstallPackageRequest(InstallPackageRequest {
+                    acquisition: AcquirePackageRequest {
+                        source: PackageAcquisitionSource::PackageUrlSource(PackageUrlSource {
+                            url: "https://packages.example/tool.aospkg".into(),
+                            expected_digest: Some("sha256:abc".into()),
+                        }),
+                        advisory: false,
+                        timeout_ms: Some(250),
+                        max_package_bytes: None,
+                        download_timeout_ms: None,
+                        connect_timeout_ms: None,
+                        max_redirects: None,
+                        allow_insecure_local_http: false,
+                    },
+                }),
+            }),
+            ProtocolFrame::ResponseFrame(ResponseFrame {
+                schema: protocol_schema(),
+                request_id: 3,
+                ownership,
+                payload: ResponsePayload::PackageInstalledResponse(PackageInstalledResponse {
+                    package,
+                    projected_commands: vec![ProjectedCommand {
+                        name: "tool".into(),
+                        guest_path: "/opt/agentos/bin/tool".into(),
+                    }],
+                }),
+            }),
+        ];
+        for frame in frames {
             let encoded = codec.encode(&frame).expect("encode frame");
             assert_eq!(codec.decode(&encoded).expect("decode frame"), frame);
         }

@@ -49,7 +49,7 @@ async fn fetch_tolerant(
                 )
             })
             .collect(),
-        body: Some(body.to_vec()),
+        body: Some(body.to_vec().into()),
     };
     let handle = tokio::spawn(async move {
         let response = os.http_request(request).await?;
@@ -95,7 +95,7 @@ async fn fetch_tolerant_with_timeout(
                 )
             })
             .collect(),
-        body: Some(body.to_vec()),
+        body: Some(body.to_vec().into()),
     };
     let mut handle = tokio::spawn(async move {
         let response = os.http_request(request).await?;

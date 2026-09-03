@@ -22,8 +22,8 @@ Set `ANTHROPIC_API_KEY` in `.env` before running the agent.
 
 ## Configuration
 
-- Change the actor name passed to `agentOSSandbox()` when your registry uses a name other than `vm`.
-- Configure software, permissions, and resource limits on `agentOS()` in `actors.ts`.
+- Pass `createInput` to `agentOSSandbox()` to configure software, permissions, and resource limits on first creation.
+- Use `clientConfig` when the deployed actor is not discoverable from the default RivetKit environment.
 - Keep files that must persist under `/workspace`.
 
 See the [Flue integration guide](https://agentos-sdk.dev/docs/frameworks/flue)

@@ -97,10 +97,21 @@ test("bumpPackageJsons injects sidecar platform optional dependencies", async ()
 				`@rivet-dev/agentos-runtime-sidecar-${platform}`,
 			]),
 		]) {
-			await writeJson(repoRoot, join(rel, "package.json"), {
+			const manifest: Record<string, unknown> = {
 				name,
 				version: "0.0.0",
-			});
+			};
+			if (name === "@rivet-dev/agentos") {
+				manifest.dependencies = {
+					"@rivet-dev/agentos-core": "workspace:*",
+				};
+			}
+			if (name === "@rivet-dev/agentos-core") {
+				manifest.devDependencies = {
+					"@agentos-software/common": "workspace:*",
+				};
+			}
+			await writeJson(repoRoot, join(rel, "package.json"), manifest);
 		}
 
 		await bumpPackageJsons(repoRoot, "0.3.0", {
@@ -127,7 +138,44 @@ test("bumpPackageJsons injects sidecar platform optional dependencies", async ()
 				]).sort(),
 			),
 		);
+		const clientManifest = JSON.parse(
+			await readFile(join(repoRoot, "packages/agentos/package.json"), "utf8"),
+		);
+		assert.equal(
+			clientManifest.dependencies["@rivet-dev/agentos-core"],
+			"0.3.0",
+		);
+		const coreManifest = JSON.parse(
+			await readFile(join(repoRoot, "packages/core/package.json"), "utf8"),
+		);
+		assert.deepEqual(coreManifest.devDependencies, {});
 
+	} finally {
+		await rm(repoRoot, { recursive: true, force: true });
+	}
+});
+
+test("bumpPackageJsons rejects unpublished workspace runtime dependencies", async () => {
+	const repoRoot = await mkdtemp(join(tmpdir(), "agentos-version-test-"));
+	try {
+		await writeJson(repoRoot, "package.json", {
+			name: "agentos-workspace",
+			private: true,
+			packageManager: "pnpm@10.13.1",
+		});
+		await writeFile(join(repoRoot, "pnpm-workspace.yaml"), "packages:\n  - packages/*\n");
+		await writeJson(repoRoot, "packages/agentos/package.json", {
+			name: "@rivet-dev/agentos",
+			version: "0.0.1",
+			dependencies: { "@agentos-software/tool": "workspace:*" },
+		});
+
+		await assert.rejects(
+			bumpPackageJsons(repoRoot, "0.3.0", {
+				repository: "rivet-dev/agentos",
+			}),
+			/unpublished workspace package @agentos-software\/tool/,
+		);
 	} finally {
 		await rm(repoRoot, { recursive: true, force: true });
 	}

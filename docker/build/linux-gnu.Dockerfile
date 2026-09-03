@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.10.0
 #
-# Build AgentOS Linux GNU native artifacts in one cached container. The sysroot
+# Build agentOS Linux GNU native artifacts in one cached container. The sysroot
 # setup mirrors scripts/ci/setup-linux-gnu-sysroot.sh, but runs inside Docker so
 # Cargo caches can be persisted with BuildKit/GHA like the Darwin build.
 FROM ubuntu:24.04

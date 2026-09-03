@@ -577,6 +577,122 @@ where
         })
     }
 
+    pub(crate) fn read_process_output(
+        &mut self,
+        request: &RequestFrame,
+        payload: ReadProcessOutputRequest,
+    ) -> OwnedVmRouteFuture {
+        let input = self.prepare_owned_vm_route(request);
+        Box::pin(async move {
+            let input = input?;
+            let page = input.vm.try_read("read process output replay", |vm| {
+                let rejection = |code: &str, message: String| {
+                    let ResponsePayload::Rejected(rejection) =
+                        agentos_native_sidecar_core::reject(&input.request, code, &message).payload
+                    else {
+                        unreachable!("reject returns a rejection");
+                    };
+                    rejection
+                };
+                let limit_rejection = |field: &str, unit: &str, requested: usize, limit: usize, retryable, message| {
+                    let mut result = rejection("ERR_AGENTOS_RESOURCE_LIMIT", message);
+                    result.limit_name = Some(field.to_owned());
+                    result.configured_limit = Some(limit as u64);
+                    result.requested = Some(requested as u64);
+                    result.unit = Some(unit.to_owned());
+                    result.scope = Some("vm".into());
+                    result.vm_id = Some(input.vm_id.clone());
+                    result.operation = Some("process.output.read".into());
+                    result.configuration_path = Some(if retryable {
+                        "maxBytes".into()
+                    } else {
+                        format!("limits.process.{field}")
+                    });
+                    result.retryable = Some(retryable);
+                    result.errno = Some("ENOBUFS".into());
+                    result
+                };
+                // Zero is the wire-only omission sentinel. Explicit public
+                // zero is rejected by Core; the serving VM owns defaults.
+                let max_events = if payload.max_events == 0 {
+                    vm.limits.process.output_replay_page_events
+                } else {
+                    payload.max_events as usize
+                };
+                let max_bytes = if payload.max_bytes == 0 {
+                    vm.limits.process.output_replay_page_bytes
+                } else {
+                    payload.max_bytes as usize
+                };
+                if max_events > vm.limits.process.output_replay_page_events {
+                    return Err(limit_rejection("outputReplayPageEvents", "events", max_events,
+                        vm.limits.process.output_replay_page_events, false, format!(
+                            "process.output.read maxEvents requested {max_events}; supported range is 1..={}; lower maxEvents or raise limits.process.outputReplayPageEvents",
+                            vm.limits.process.output_replay_page_events
+                        )));
+                }
+                if max_bytes > vm.limits.process.output_replay_page_bytes {
+                    return Err(limit_rejection("outputReplayPageBytes", "bytes", max_bytes,
+                        vm.limits.process.output_replay_page_bytes, false, format!(
+                            "process.output.read maxBytes requested {max_bytes}; supported range is 1..={}; lower maxBytes or raise limits.process.outputReplayPageBytes",
+                            vm.limits.process.output_replay_page_bytes
+                        )));
+                }
+                let replay = vm.process_output_replays.get(&payload.process_id).ok_or_else(|| {
+                    if vm.active_processes.contains_key(&payload.process_id) {
+                        rejection("invalid_state", format!(
+                            "process {} was not spawned with output retention enabled",
+                            payload.process_id
+                        ))
+                    } else {
+                        rejection("ESRCH", format!(
+                            "process {} does not exist or its replay expired",
+                            payload.process_id
+                        ))
+                    }
+                })?;
+                let page = replay.read(payload.after, max_events, max_bytes);
+                if page.events.is_empty() && page.has_more {
+                    let required = page.next_event_bytes.unwrap_or(max_bytes.saturating_add(1));
+                    return Err(limit_rejection("outputReplayPageBytes", "bytes", required, max_bytes,
+                        true, format!(
+                            "process.output.read next retained event requires {required} bytes, exceeding maxBytes={max_bytes}; raise maxBytes to at least {required} (maximum {})",
+                            vm.limits.process.output_replay_page_bytes
+                        )));
+                }
+                Ok(page)
+            })?;
+            let page = match page {
+                Ok(page) => page,
+                Err(rejected) => {
+                    return Ok(DispatchResult {
+                        response: ResponseFrame::new(
+                            input.request.request_id,
+                            input.request.ownership.clone(),
+                            ResponsePayload::Rejected(rejected),
+                        ),
+                        events: Vec::new(),
+                    })
+                }
+            };
+            Ok(DispatchResult {
+                response: ResponseFrame::new(
+                    input.request.request_id,
+                    input.request.ownership.clone(),
+                    ResponsePayload::ProcessOutputPage(ProcessOutputPageResponse {
+                        process_id: payload.process_id,
+                        events: page.events,
+                        next_cursor: page.next_cursor,
+                        has_more: page.has_more,
+                        truncated: page.truncated,
+                        exit_code: page.exit_code,
+                    }),
+                ),
+                events: Vec::new(),
+            })
+        })
+    }
+
     pub(crate) async fn guest_kernel_call(
         &mut self,
         request: &RequestFrame,

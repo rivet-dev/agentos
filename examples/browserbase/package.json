@@ -4,15 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node --import tsx server-minimal.ts",
+		"start": "node --import tsx client-direct.ts",
     "client": "node --import tsx client-direct.ts",
     "check-types": "tsc --noEmit"
   },
   "dependencies": {
     "@rivet-dev/agentos": "workspace:*",
     "@rivet-dev/agentos-core": "workspace:*",
-    "rivetkit": "catalog:rivetkit",
-    "@agentos-software/browserbase": "workspace:*"
+		"rivetkit": "catalog:rivetkit"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

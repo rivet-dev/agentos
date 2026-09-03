@@ -398,7 +398,7 @@ describe("native sidecar process client", () => {
 			[
 				"import { writeFileSync } from 'node:fs';",
 				"const capturePath = process.argv[2];",
-				"const schema = { name: 'agentos-native-sidecar', version: 8 };",
+				"const schema = { name: 'agentos-native-sidecar', version: 9 };",
 				"let stdinBuffer = Buffer.alloc(0);",
 				BARE_FIXTURE_PROTOCOL_HELPERS,
 				"const drain = () => {",
@@ -562,7 +562,7 @@ describe("native sidecar process client", () => {
 		writeFileSync(
 			driverPath,
 			[
-				"const schema = { name: 'agentos-native-sidecar', version: 8 };",
+				"const schema = { name: 'agentos-native-sidecar', version: 9 };",
 				"const writeFrame = (frame) => {",
 				"  const payload = Buffer.from(JSON.stringify(frame), 'utf8');",
 				"  const prefix = Buffer.allocUnsafe(4);",
@@ -650,7 +650,7 @@ describe("native sidecar process client", () => {
 		writeFileSync(
 			driverPath,
 			[
-				"const schema = { name: 'agentos-native-sidecar', version: 8 };",
+				"const schema = { name: 'agentos-native-sidecar', version: 9 };",
 				"let stdinBuffer = Buffer.alloc(0);",
 				"const writeFrame = (frame) => {",
 				"  const payload = Buffer.from(JSON.stringify(frame), 'utf8');",

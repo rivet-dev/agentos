@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { AgentOs } from "../src/agent-os.js";
+import { AgentOs, type ProcessTreeNode } from "../src/agent-os.js";
 
-describe("allProcesses()", () => {
+function flattenProcessTree(nodes: ProcessTreeNode[]): ProcessTreeNode[] {
+	return nodes.flatMap((node) => [node, ...flattenProcessTree(node.children)]);
+}
+
+describe("process.tree()", () => {
 	let vm: AgentOs;
 
 	beforeEach(async () => {
@@ -14,35 +18,35 @@ describe("allProcesses()", () => {
 		}
 	}, 30_000);
 
-	test("returns empty on a fresh VM with no spawned processes", () => {
-		const all = vm.allProcesses();
+	test("returns empty on a fresh VM with no spawned processes", async () => {
+		const all = flattenProcessTree(await vm.process.tree());
 		expect(all).toEqual([]);
 	});
 
-	test("spawned process appears in allProcesses alongside kernel processes", async () => {
-		const before = vm.allProcesses();
+	test("spawned process appears in process.tree() alongside kernel processes", async () => {
+		const before = flattenProcessTree(await vm.process.tree());
 		await vm.writeFile("/tmp/stay.mjs", "setTimeout(() => {}, 30000);");
-		const { pid } = vm.spawn("node", ["/tmp/stay.mjs"], {
+		const { pid } = await vm.process.spawn("node", ["/tmp/stay.mjs"], {
 			env: { HOME: "/home/agentos" },
 		});
 
-		const after = vm.allProcesses();
+		const after = flattenProcessTree(await vm.process.tree());
 		expect(after.length).toBeGreaterThan(before.length);
 
 		const found = after.find((p) => p.pid === pid);
 		expect(found).toBeDefined();
 		expect(found?.command).toBe("node");
 
-		vm.killProcess(pid);
+		await vm.process.kill(pid);
 	}, 30_000);
 
 	test("ppid relationships are correct", async () => {
 		await vm.writeFile("/tmp/child.mjs", "setTimeout(() => {}, 30000);");
-		const { pid } = vm.spawn("node", ["/tmp/child.mjs"], {
+		const { pid } = await vm.process.spawn("node", ["/tmp/child.mjs"], {
 			env: { HOME: "/home/agentos" },
 		});
 
-		const all = vm.allProcesses();
+		const all = flattenProcessTree(await vm.process.tree());
 		const child = all.find((p) => p.pid === pid);
 		expect(child).toBeDefined();
 		// ppid should reference an existing process (the kernel init or similar)
@@ -52,10 +56,10 @@ describe("allProcesses()", () => {
 			expect(parent).toBeDefined();
 		}
 
-		vm.killProcess(pid);
+		await vm.process.kill(pid);
 	}, 30_000);
 
-	test("guest child_process.spawn children appear in allProcesses()", async () => {
+	test("guest child_process.spawn children appear in process.tree()", async () => {
 		let childPid: string | null = null;
 
 		await vm.writeFile(
@@ -69,7 +73,7 @@ setTimeout(() => {}, 30000);
 		);
 		await vm.writeFile("/tmp/child.mjs", "setTimeout(() => {}, 30000);");
 
-		const { pid } = vm.spawn("node", ["/tmp/parent.mjs"], {
+		const { pid } = await vm.process.spawn("node", ["/tmp/parent.mjs"], {
 			env: { HOME: "/home/agentos" },
 			onStdout: (data) => {
 				const text = new TextDecoder().decode(data);
@@ -89,8 +93,9 @@ setTimeout(() => {}, 30000);
 		let childProcess = null;
 		for (let attempt = 0; attempt < 20; attempt++) {
 			childProcess =
-				vm.allProcesses().find((process) => process.pid === Number(childPid)) ??
-				null;
+				flattenProcessTree(await vm.process.tree()).find(
+					(process) => process.pid === Number(childPid),
+				) ?? null;
 			if (childProcess) {
 				break;
 			}
@@ -101,6 +106,6 @@ setTimeout(() => {}, 30000);
 		expect(childProcess?.command).toBe("node");
 		expect(childProcess?.ppid).toBe(pid);
 
-		vm.killProcess(pid);
+		await vm.process.kill(pid);
 	}, 30_000);
 });

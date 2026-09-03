@@ -117,7 +117,7 @@ describe("agentos package projection (VM)", () => {
 	): Promise<{ code: number; out: string; err: string }> {
 		let out = "";
 		let err = "";
-		const { pid } = vm.spawn(command, [], {
+		const { pid } = await vm.process.spawn(command, [], {
 			cwd,
 			onStdout: (data) => {
 				out += new TextDecoder().decode(data);
@@ -126,7 +126,7 @@ describe("agentos package projection (VM)", () => {
 				err += new TextDecoder().decode(data);
 			},
 		});
-		const code = await vm.waitProcess(pid);
+		const code = (await vm.process.wait(pid)).exitCode ?? -1;
 		// Native-sidecar process_output events can arrive a few turns after the
 		// exit notification; poll briefly until output lands (tiny stdout is the
 		// first thing to get lost if snapshotted immediately).

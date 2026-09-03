@@ -1,18 +1,24 @@
-import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
-
-const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
-const agent = client.vm.getOrCreate("my-agent");
+import { vm } from "./client.js";
 
 // Start a web app in the VM
-await agent.process.spawn("node", ["/home/agentos/app.js"]);
+await vm.process.spawn({
+	command: "node",
+	args: ["/home/agentos/app.js"],
+	options: { env: {} },
+});
 
 // Create a preview URL for port 3000, valid for 1 hour
-const preview = await agent.createPreviewUrl(3000, 3600);
+const preview = await vm.network.preview.create({
+	port: 3000,
+	ttlMs: 60 * 60 * 1_000,
+});
 console.log("Preview path:", preview.path);
 console.log("Token:", preview.token);
-console.log("Expires at:", new Date(preview.expiresAt));
+console.log("Expires at:", new Date(Number(preview.expiresAtMs)));
 
 // Create a preview URL with a shorter expiration
-const shortPreview = await agent.createPreviewUrl(3000, 300); // 5 minutes
+const shortPreview = await vm.network.preview.create({
+	port: 3000,
+	ttlMs: 5 * 60 * 1_000,
+});
 console.log("Short-lived preview:", shortPreview.path);

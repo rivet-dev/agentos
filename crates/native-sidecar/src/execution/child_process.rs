@@ -2634,6 +2634,22 @@ pub(super) fn apply_child_process_argv0(
     }
 }
 
+fn javascript_rpc_requires_owned_supervisor(method: &str) -> bool {
+    matches!(
+        method,
+        "child_process.spawn"
+            | "child_process.spawn_sync"
+            | "child_process.poll"
+            | "child_process.write_stdin"
+            | "child_process.close_stdin"
+            | "child_process.kill"
+            | "process.exec_fd_image_commit"
+            | "process.exec"
+            | "process.signal_state"
+            | "process.kill"
+    )
+}
+
 impl<B> NativeSidecar<B>
 where
     B: NativeSidecarBridge + Send + 'static,
@@ -2756,19 +2772,71 @@ where
 
                 // The standalone WASM runner pulls descendant output through
                 // child_process.poll while implementing waitpid. Keep stream
-                // and exit delivery single-owner; the parked kernel wait was
-                // already rechecked above without leasing either event lane.
-                let parent_is_pull_driven_wasm = self
+                // and exit delivery single-owner, but still claim internal
+                // runtime RPCs from JavaScript children. Otherwise a command
+                // such as `npm test` deadlocks when npm asks the sidecar to
+                // spawn its script shell while the WASM parent is waiting for
+                // npm to exit.
+                let (parent_is_pull_driven_wasm, child_is_javascript, pending_needs_supervisor) = self
                     .vms
                     .get(vm_id)
                     .map(|vm| {
+                        let parent = vm.active_processes
+                            .get(process_id)
+                            .and_then(|root| Self::active_process_by_path(root, &parent_path));
+						let child = parent.and_then(|parent| parent.child_processes.get(&child_process_id));
+						(
+							parent.is_some_and(|parent| parent.runtime == GuestRuntimeKind::WebAssembly),
+							child.is_some_and(|child| child.runtime == GuestRuntimeKind::JavaScript),
+							child
+								.and_then(|child| child.pending_execution_events.front())
+								.is_some_and(|event| {
+									matches!(event, ActiveExecutionEvent::JavascriptSyncRpcRequest(request) if javascript_rpc_requires_owned_supervisor(&request.method))
+								}),
+						)
+                    })
+                    .unwrap_or((false, false, false));
+                if parent_is_pull_driven_wasm && child_is_javascript {
+                    if self.vms.get(vm_id).is_some_and(|vm| {
                         vm.active_processes
                             .get(process_id)
                             .and_then(|root| Self::active_process_by_path(root, &parent_path))
-                            .is_some_and(|parent| parent.runtime == GuestRuntimeKind::WebAssembly)
-                    })
-                    .unwrap_or(false);
-                if parent_is_pull_driven_wasm {
+                            .and_then(|parent| parent.child_processes.get(&child_process_id))
+                            .is_some_and(|child| !child.pending_execution_events.is_empty())
+                    }) && !pending_needs_supervisor
+                    {
+                        continue;
+                    }
+                    let services_before = javascript_services
+                        .len()
+                        .saturating_add(python_services.len())
+                        .saturating_add(python_socket_completions.len());
+                    let claimed = match self.poll_descendant_javascript_child_process_nowait(
+                        vm_id,
+                        process_id,
+                        &parent_path,
+                        &child_process_id,
+                        true,
+                        javascript_services,
+                        python_services,
+                        python_socket_completions,
+                        None,
+                    ) {
+                        Ok(event) => event,
+                        Err(error) if is_javascript_child_process_gone_error(&error) => continue,
+                        Err(error) => return Err(error),
+                    };
+                    drop(claimed.reservation);
+                    let services_after = javascript_services
+                        .len()
+                        .saturating_add(python_services.len())
+                        .saturating_add(python_socket_completions.len());
+                    if services_after > services_before {
+                        emitted_any = true;
+                        emitted_this_round = true;
+                        work += 1;
+                        child_work[candidate_index] += 1;
+                    }
                     continue;
                 }
                 self.expire_child_process_sync_if_needed(
@@ -8977,6 +9045,28 @@ where
                 ActiveExecutionEvent::JavascriptSyncRpcRequest(request) => {
                     let mut current_child_path = current_process_path.to_vec();
                     current_child_path.push(child_process_id);
+                    let requires_owned_supervisor =
+                        javascript_rpc_requires_owned_supervisor(&request.method);
+                    if preserve_pull_owned_events && !requires_owned_supervisor {
+                        let Some(mut vm) = self.vms.get_mut(vm_id) else {
+                            return Ok(Value::Null);
+                        };
+                        let Some(parent) = Self::descendant_parent_process_mut(
+                            &mut vm,
+                            process_id,
+                            current_process_path,
+                        ) else {
+                            return Ok(Value::Null);
+                        };
+                        let Some(child) = parent.child_processes.get_mut(child_process_id) else {
+                            return Ok(Value::Null);
+                        };
+                        child.requeue_pending_execution_event(PolledExecutionEvent {
+                            event: ActiveExecutionEvent::JavascriptSyncRpcRequest(request),
+                            reservation,
+                        })?;
+                        return Ok(Value::Null);
+                    }
                     if let Some(services) = owned_javascript_services.as_deref_mut() {
                         let Some((connection_id, session_id, vm)) =
                             self.vms.get(vm_id).and_then(|state| {
@@ -10903,6 +10993,89 @@ mod child_event_claim_tests {
                     child.pending_execution_events.is_empty(),
                     "nested RPC must be durably claimed and serviced, not requeued"
                 );
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn wasm_parent_pull_lane_still_claims_child_internal_rpc() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let (mut sidecar, vm_id) =
+                    sidecar_with_test_vm(agentos_runtime::DEFAULT_PROTOCOL_MAX_PROCESS_EVENTS)
+                        .await;
+                let root_id = String::from("wasm-pull-root");
+                let child_id = String::from("javascript-child");
+                {
+                    let mut vm = sidecar.vms.get_mut(&vm_id).expect("WASM pull VM");
+                    let mut root = binding_process(&mut vm, "WASM pull root", None);
+                    root.runtime = GuestRuntimeKind::WebAssembly;
+                    let mut child =
+                        binding_process(&mut vm, "JavaScript child", Some(root.kernel_pid));
+                    child
+                        .queue_pending_execution_event(rpc(40))
+                        .expect("queue pull-owned child RPC");
+                    root.child_processes.insert(child_id.clone(), child);
+                    vm.active_processes.insert(root_id.clone(), root);
+                }
+
+                let mut javascript = Vec::new();
+                let mut python = Vec::new();
+                let mut python_socket_completions = Vec::new();
+                let mut child_bridge = Vec::new();
+                assert!(!sidecar
+                    .pump_child_process_events_nowait(
+                        &vm_id,
+                        &mut javascript,
+                        &mut python,
+                        &mut python_socket_completions,
+                        &mut child_bridge,
+                        8,
+                    )
+                    .expect("pump WASM-owned child lane"));
+                assert!(javascript.is_empty());
+                {
+                    let mut vm = sidecar.vms.get_mut(&vm_id).expect("WASM pull VM");
+                    let child = vm
+                        .active_processes
+                        .get_mut(&root_id)
+                        .and_then(|root| root.child_processes.get_mut(&child_id))
+                        .expect("JavaScript child");
+                    let ActiveExecutionEvent::JavascriptSyncRpcRequest(request) = child
+                        .pop_pending_execution_event()
+                        .expect("pull-owned RPC remains queued")
+                    else {
+                        panic!("expected queued JavaScript RPC");
+                    };
+                    assert_eq!(request.method, "fs.stat");
+                    child
+                        .queue_pending_execution_event(
+                            ActiveExecutionEvent::JavascriptSyncRpcRequest(
+                                JavascriptSyncRpcRequest {
+                                    id: 41,
+                                    method: String::from("child_process.spawn"),
+                                    args: Vec::new(),
+                                    raw_bytes_args: Default::default(),
+                                },
+                            ),
+                        )
+                        .expect("queue supervisor-owned child RPC");
+                }
+                assert!(sidecar
+                    .pump_child_process_events_nowait(
+                        &vm_id,
+                        &mut javascript,
+                        &mut python,
+                        &mut python_socket_completions,
+                        &mut child_bridge,
+                        8,
+                    )
+                    .expect("pump supervisor-owned child RPC"));
+                assert_eq!(javascript.len(), 1);
+                assert!(python.is_empty());
+                assert!(python_socket_completions.is_empty());
+                assert!(child_bridge.is_empty());
+                assert_eq!(javascript[0].request.method, "child_process.spawn");
             })
             .await;
     }

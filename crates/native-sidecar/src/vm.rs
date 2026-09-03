@@ -39,20 +39,21 @@ use agentos_bridge::{
 use agentos_kernel::command_registry::CommandDriver;
 use agentos_kernel::kernel::{KernelVm, KernelVmConfig};
 use agentos_kernel::mount_plugin::OpenFileSystemPluginRequest;
-use agentos_kernel::mount_table::{MountOptions, MountTable, MountedFileSystem};
+use agentos_kernel::mount_table::{DetachedMount, MountOptions, MountTable, MountedFileSystem};
 use agentos_kernel::permissions::filter_env;
 use agentos_kernel::resource_accounting::ResourceLimits;
 use agentos_kernel::root_fs::{
     decode_snapshot_with_import_limits, encode_snapshot as encode_root_snapshot,
-    is_supported_root_filesystem_snapshot_format, FilesystemEntryKind as KernelFilesystemEntryKind,
-    RootFilesystemImportLimits, ROOT_FILESYSTEM_SNAPSHOT_FORMAT,
+    is_supported_root_filesystem_snapshot_format, load_bundled_base_environment,
+    FilesystemEntryKind as KernelFilesystemEntryKind, RootFilesystemImportLimits,
+    ROOT_FILESYSTEM_SNAPSHOT_FORMAT,
 };
 use agentos_kernel::socket_table::{SocketReadiness, SocketReadinessKind};
 use agentos_native_sidecar_core::ca::{
     CA_CERTIFICATES_BUNDLE, CA_CERTIFICATES_GUEST_PATH, CA_CERTIFICATES_SYMLINK_PATH,
     CA_CERTIFICATES_SYMLINK_TARGET,
 };
-use agentos_native_sidecar_core::permissions::{allow_all_policy, deny_all_policy};
+use agentos_native_sidecar_core::permissions::{deny_all_policy, resolve_permissions_policy};
 use agentos_native_sidecar_core::{
     layer_created_response, layer_sealed_response, mounts_listed_response,
     overlay_created_response, package_linked_response, package_unlinked_response,
@@ -203,18 +204,17 @@ pub(crate) const DEFAULT_GUEST_PATH_ENV: &str =
 #[cfg(test)]
 const KERNEL_COMMAND_STUB: &[u8] = b"#!/bin/sh\n# kernel command stub\n";
 
-fn projected_command_guest_path(command: &str) -> String {
-    format!("{}/{command}", crate::package_projection::OPT_AGENTOS_BIN)
-}
-
 fn projected_commands_from_guest_paths(
     command_guest_paths: &BTreeMap<String, String>,
+    provided_commands: &BTreeMap<String, Vec<String>>,
 ) -> Vec<ProjectedCommand> {
+    let names = provided_commands
+        .values()
+        .flatten()
+        .collect::<BTreeSet<_>>();
     command_guest_paths
         .iter()
-        .filter(|(_, guest_path)| {
-            guest_path.starts_with(crate::package_projection::OPT_AGENTOS_BIN)
-        })
+        .filter(|(name, _)| names.contains(name))
         .map(|(name, guest_path)| ProjectedCommand {
             name: name.clone(),
             guest_path: guest_path.clone(),
@@ -402,10 +402,13 @@ where
     ) -> Result<PreparedCreateVm<B>, SidecarError> {
         let (connection_id, session_id) = self.session_scope_for(&request.ownership)?;
         self.require_owned_session(&connection_id, &session_id)?;
-        let create_config: vm_config::CreateVmConfig = serde_json::from_str(&payload.config)
+        let mut create_config: vm_config::CreateVmConfig = serde_json::from_str(&payload.config)
             .map_err(|error| {
                 SidecarError::InvalidState(format!("invalid create VM config JSON: {error}"))
             })?;
+        create_config.normalize().map_err(|error| {
+            SidecarError::InvalidState(format!("invalid create VM config: {error}"))
+        })?;
         create_config
             .validate(self.config.max_frame_bytes)
             .map_err(|error| {
@@ -413,10 +416,10 @@ where
             })?;
         let root_filesystem =
             root_filesystem_protocol_descriptor_from_config(&create_config.root_filesystem);
-        let permissions_policy = create_config
-            .permissions
-            .clone()
-            .unwrap_or_else(deny_all_policy);
+        let permissions_policy = resolve_permissions_policy(
+            create_config.defaults_profile(),
+            create_config.permissions.clone(),
+        );
         validate_permissions_policy(&permissions_policy)?;
         let limits = crate::limits::vm_limits_from_config(
             create_config.limits.as_ref(),
@@ -673,6 +676,37 @@ where
         self.complete_create_vm(completed)
     }
 
+    pub(crate) fn compare_vm_config(
+        &self,
+        request: &crate::protocol::RequestFrame,
+        payload: crate::protocol::CompareVmConfigRequest,
+    ) -> Result<DispatchResult, SidecarError> {
+        let (connection_id, session_id) = self.session_scope_for(&request.ownership)?;
+        self.require_owned_session(&connection_id, &session_id)?;
+        let before = serde_json::from_str(&payload.before).map_err(|error| {
+            SidecarError::InvalidState(format!("invalid before VM config JSON: {error}"))
+        })?;
+        let after = serde_json::from_str(&payload.after).map_err(|error| {
+            SidecarError::InvalidState(format!("invalid after VM config JSON: {error}"))
+        })?;
+        let mut before_mounts = payload.before_mounts;
+        let mut after_mounts = payload.after_mounts;
+        canonicalize_comparison_mounts(&self.mount_plugins, &mut before_mounts)?;
+        canonicalize_comparison_mounts(&self.mount_plugins, &mut after_mounts)?;
+        let equivalent = equivalent_vm_creation_config(before, after, self.config.max_frame_bytes)?
+            && before_mounts == after_mounts
+            && payload.before_restart_identity == payload.after_restart_identity;
+        Ok(DispatchResult {
+            response: self.respond(
+                request,
+                crate::protocol::ResponsePayload::VmConfigCompared(
+                    crate::protocol::VmConfigComparedResponse { equivalent },
+                ),
+            ),
+            events: Vec::new(),
+        })
+    }
+
     #[allow(dead_code)]
     async fn create_vm_legacy_impl(
         &mut self,
@@ -682,10 +716,13 @@ where
         let __t = Instant::now();
         let (connection_id, session_id) = self.session_scope_for(&request.ownership)?;
         self.require_owned_session(&connection_id, &session_id)?;
-        let create_config: vm_config::CreateVmConfig = serde_json::from_str(&payload.config)
+        let mut create_config: vm_config::CreateVmConfig = serde_json::from_str(&payload.config)
             .map_err(|error| {
                 SidecarError::InvalidState(format!("invalid create VM config JSON: {error}"))
             })?;
+        create_config.normalize().map_err(|error| {
+            SidecarError::InvalidState(format!("invalid create VM config: {error}"))
+        })?;
         create_config
             .validate(self.config.max_frame_bytes)
             .map_err(|error| {
@@ -693,10 +730,10 @@ where
             })?;
         let root_filesystem =
             root_filesystem_protocol_descriptor_from_config(&create_config.root_filesystem);
-        let permissions_policy = create_config
-            .permissions
-            .clone()
-            .unwrap_or_else(deny_all_policy);
+        let permissions_policy = resolve_permissions_policy(
+            create_config.defaults_profile(),
+            create_config.permissions.clone(),
+        );
         validate_permissions_policy(&permissions_policy)?;
 
         let (vm_id, vm_generation) = self.allocate_vm_identity()?;
@@ -729,6 +766,13 @@ where
                     descriptor,
                     vm_runtime_context.clone(),
                     limits.sqlite.max_result_bytes,
+                    Some((
+                        self.sidecar_requests.clone(),
+                        crate::protocol::OwnershipScope::session(
+                            connection_id.clone(),
+                            session_id.clone(),
+                        ),
+                    )),
                 )
                 .await
                 .map_err(|error| {
@@ -768,11 +812,10 @@ where
         self.bridge
             .set_vm_permissions(&vm_id, &permissions_policy)?;
         let permissions = bridge_permissions(self.bridge.clone(), &vm_id);
-        let mut guest_env = filter_env(&vm_id, &create_config.env, &permissions);
-        // Sidecar-owned bootstrap work still needs to reconcile command stubs and the root
-        // filesystem before the guest-visible policy takes effect.
-        self.bridge
-            .set_vm_permissions(&vm_id, &allow_all_policy())?;
+        let configured_env = create_vm_environment(&create_config)?;
+        let mut guest_env = filter_env(&vm_id, &configured_env, &permissions);
+        // Trusted bootstrap uses operator-only kernel paths; the guest policy
+        // remains active even while the sidecar populates command stubs.
         let native_root = native_root_plugin_from_config(create_config.native_root.as_ref())?;
         let loaded_snapshot = if native_root.is_some() {
             None
@@ -885,23 +928,15 @@ where
                 send_kernel_socket_readiness_event(target, readiness);
             }
         }));
-        let command_guest_paths = discover_command_guest_paths(&mut kernel);
+        let command_guest_paths = discover_command_guest_paths(&mut kernel)?;
         refresh_guest_command_path_env(&mut guest_env, &command_guest_paths);
-        let mut execution_commands = vec![
-            String::from(JAVASCRIPT_COMMAND),
-            String::from(PYTHON_COMMAND),
-            // `python3` resolves to the same Pyodide runtime; register it so the
-            // guest shell can find `/bin/python3` on PATH (the command resolver
-            // already rewrites the alias to `python`).
-            String::from("python3"),
-            String::from(WASM_COMMAND),
-        ];
+        let mut execution_commands = default_execution_commands(create_config.defaults_profile());
         if let Some(bootstrap_commands) = &create_config.bootstrap_commands {
             execution_commands.extend(bootstrap_commands.iter().cloned());
         }
         execution_commands.extend(command_guest_paths.keys().cloned());
         kernel
-            .register_driver(CommandDriver::new(
+            .register_driver_for_operator(CommandDriver::new(
                 EXECUTION_DRIVER_NAME,
                 execution_commands,
             ))
@@ -971,6 +1006,7 @@ where
                 host_net_transfer_descriptions: Arc::new(Mutex::new(BTreeMap::new())),
                 loaded_snapshot,
                 configuration: VmConfiguration {
+                    defaults_profile: create_config.defaults_profile(),
                     permissions: permissions_policy,
                     js_runtime: create_config.js_runtime.clone(),
                     ..VmConfiguration::default()
@@ -979,10 +1015,16 @@ where
                 command_guest_paths,
                 provided_commands: BTreeMap::new(),
                 package_descriptors: Vec::new(),
+                runtime_linked_package_ids: BTreeSet::new(),
+                installed_package_pins: BTreeMap::new(),
+                package_mount_roots: BTreeMap::new(),
+                package_mount_paths: BTreeMap::new(),
                 package_created_mountpoints: BTreeMap::new(),
                 command_permissions: BTreeMap::new(),
                 bindings: BTreeMap::new(),
                 active_processes: BTreeMap::new(),
+                process_output_replays: BTreeMap::new(),
+                process_output_replay_order: VecDeque::new(),
                 vm_fetch_streams: BTreeMap::new(),
                 next_vm_fetch_stream_id: 0,
                 executions: BTreeMap::new(),
@@ -1061,6 +1103,16 @@ where
     ) -> impl std::future::Future<Output = Result<DispatchResult, SidecarError>> + 'static {
         let input = self.prepare_link_package_request(request);
         async move { link_package_owned(input?, payload).await }
+    }
+
+    pub(crate) fn install_package(
+        &mut self,
+        request: &crate::protocol::RequestFrame,
+        payload: crate::protocol::InstallPackageRequest,
+    ) -> impl std::future::Future<Output = Result<DispatchResult, SidecarError>> + 'static {
+        let input = self.prepare_link_package_request(request);
+        let request = request.clone();
+        async move { crate::service::install_package_owned(request, input, payload).await }
     }
 
     /// Remove one exact dynamically linked package and rebuild the live
@@ -1226,13 +1278,10 @@ where
             }
         }
 
-        // Process teardown can require the VM blocking executor to flush
-        // host-materialized state into a persistent filesystem plugin (for
-        // example, a WAL-backed node:sqlite database copied into the actor
-        // SQLite VFS). Closing runtime admission before termination makes that
-        // mandatory final write fail with ERR_AGENTOS_BLOCKING_EXECUTOR_SHUTDOWN.
-        // Dispose requests are serialized by the sidecar, so retire admission
-        // after the process drain but before detaching the VM from its registry.
+        // Process and database teardown can require the VM blocking executor
+        // to flush state and close a local SQLite connection. Keep blocking-job
+        // admission open until both have completed; the VM is detached below
+        // before running the remaining teardown work.
         let (vm_runtime_context, vm_capabilities, vm_generation) = self
             .vms
             .get(vm_id)
@@ -1244,16 +1293,12 @@ where
                 )
             })
             .expect("owned VM should exist before disposal");
-        let capability_admission_error =
-            close_vm_admission(&vm_runtime_context, &vm_capabilities).err();
+        // No new guest capabilities may appear while trusted database cleanup
+        // is still allowed to use the VM's blocking executor.
+        let capability_admission_error = close_vm_capability_admission(&vm_capabilities).err();
         if let Some(error) = capability_admission_error.as_ref() {
             eprintln!("ERR_AGENTOS_VM_CAPABILITY_ADMISSION_CLOSE: vm_id={vm_id} error={error}");
         }
-        let fairness_retirement_result = retire_vm_fairness(&vm_runtime_context, vm_generation);
-        if let Err(error) = fairness_retirement_result.as_ref() {
-            eprintln!("ERR_AGENTOS_VM_FAIRNESS_RETIRE: vm_id={vm_id} error={error}");
-        }
-
         // Detach the VM from `self.vms` BEFORE the remaining fallible teardown so
         // no `?` below can leave the registry entry (or any per-VM map) behind.
         let mut vm = self
@@ -1278,7 +1323,34 @@ where
 
         // Snapshot/flush/kernel-dispose/permission-reset can each fail; run them
         // in a helper whose result is captured so cleanup below is unconditional.
-        let teardown_result = self.finish_vm_teardown(vm_id, &mut vm).await;
+        let mut teardown_result = self.finish_vm_teardown(vm_id, &mut vm).await;
+        let shutdown_deadline = Duration::from_millis(vm.limits.reactor.shutdown_deadline_ms);
+        let teardown_deadline = tokio::time::Instant::now() + shutdown_deadline;
+        let mut sqlite_close_timed_out = false;
+        if let Some(database) = vm.database.take() {
+            let (close_result, timed_out) = close_vm_database_before_deadline(
+                vm_id,
+                database.as_ref(),
+                teardown_deadline,
+                vm.limits.reactor.shutdown_deadline_ms,
+            )
+            .await;
+            sqlite_close_timed_out = timed_out;
+            if let Err(error) = close_result {
+                eprintln!(
+                    "ERR_AGENTOS_VM_TEARDOWN_CLEANUP: vm_id={vm_id} phase=sqlite_close error={error}"
+                );
+                if teardown_result.is_ok() {
+                    teardown_result = Err(error);
+                }
+            }
+        }
+
+        vm_runtime_context.close_admission();
+        let fairness_retirement_result = retire_vm_fairness(&vm_runtime_context, vm_generation);
+        if let Err(error) = fairness_retirement_result.as_ref() {
+            eprintln!("ERR_AGENTOS_VM_FAIRNESS_RETIRE: vm_id={vm_id} error={error}");
+        }
 
         // Reclaim EVERY per-VM tracking entry on EVERY exit path — even when a
         // teardown step above errored. Pre-fix these ran only after the fallible
@@ -1299,14 +1371,14 @@ where
             }
         }
 
-        let shutdown_deadline = Duration::from_millis(vm.limits.reactor.shutdown_deadline_ms);
-        let (reconciliation, deadline_expired) = wait_for_vm_reconciliation(
+        let (reconciliation, reconciliation_timed_out) = wait_for_vm_reconciliation(
             vm.resources.as_ref(),
             &vm.runtime_context,
             &vm.capabilities,
-            shutdown_deadline,
+            teardown_deadline.saturating_duration_since(tokio::time::Instant::now()),
         )
         .await;
+        let deadline_expired = sqlite_close_timed_out || reconciliation_timed_out;
         let quarantine_reason = vm_quarantine_reason(
             capability_admission_error.is_some(),
             fairness_retirement_result.is_err(),
@@ -1315,7 +1387,8 @@ where
         );
 
         if let Some(reason) = quarantine_reason {
-            let diagnostic = match reason {
+            let teardown_deadline_expired = matches!(&reason, VmQuarantineReason::TeardownDeadline);
+            let mut diagnostic = match reason {
                 VmQuarantineReason::TeardownDeadline => format!(
                     "ERR_AGENTOS_VM_TEARDOWN_DEADLINE: vm_id={vm_id} generation={} active_tasks={} outstanding_capabilities={} ledger_zero={} deadline_ms={}; raise limits.reactor.shutdownDeadlineMs",
                     vm.generation,
@@ -1341,6 +1414,9 @@ where
                         .expect_err("fairness quarantine requires a retirement error")
                 ),
             };
+            if sqlite_close_timed_out {
+                diagnostic.push_str("; SQLite close is unconfirmed; generation cannot be reaped; restart the sidecar worker to release quarantine");
+            }
             eprintln!("{diagnostic}");
             if let Err(error) = terminate_result.as_ref() {
                 eprintln!(
@@ -1361,8 +1437,17 @@ where
                 runtime_context: vm.runtime_context.clone(),
                 capabilities: vm.capabilities.clone(),
                 reason,
+                sqlite_close_unconfirmed: sqlite_close_timed_out,
             })?;
-            return Err(SidecarError::Execution(diagnostic));
+            return Err(if teardown_deadline_expired {
+                SidecarError::VmTeardownDeadline {
+                    message: diagnostic,
+                    vm_id: vm_id.to_owned(),
+                    deadline_ms: vm.limits.reactor.shutdown_deadline_ms,
+                }
+            } else {
+                SidecarError::Execution(diagnostic)
+            });
         }
 
         self.observe_active_vm_generations();
@@ -1430,16 +1515,6 @@ where
         }
         if let Err(error) = self.bridge.clear_vm_permissions(vm_id) {
             record_vm_teardown_error(vm_id, "permission_reset", error, &mut first_error);
-        }
-        if let Some(database) = vm.database.take() {
-            if let Err(error) = database.close().await {
-                record_vm_teardown_error(
-                    vm_id,
-                    "sqlite_close",
-                    SidecarError::InvalidState(format!("close VM SQLite database: {error}")),
-                    &mut first_error,
-                );
-            }
         }
         first_error.map_or(Ok(()), Err)
     }
@@ -1549,6 +1624,27 @@ where
     }
 }
 
+fn canonicalize_comparison_mounts<B>(
+    mount_plugins: &agentos_kernel::mount_plugin::FileSystemPluginRegistry<MountPluginContext<B>>,
+    mounts: &mut [crate::protocol::MountDescriptor],
+) -> Result<(), SidecarError>
+where
+    B: NativeSidecarBridge + Send + 'static,
+    BridgeError<B>: fmt::Debug + Send + Sync + 'static,
+{
+    prepare_mount_descriptors(mount_plugins, mounts)?;
+    for mount in mounts.iter_mut() {
+        // Creation resolves paths and parses plugin JSON before applying a
+        // mount. Compare that same identity, not spelling/serialization details.
+        mount.guest_path = normalize_path(&mount.guest_path);
+        let config: serde_json::Value = serde_json::from_str(&mount.plugin.config)
+            .map_err(|error| SidecarError::InvalidState(error.to_string()))?;
+        mount.plugin.config = config.to_string();
+    }
+    mounts.sort_by(|left, right| left.guest_path.cmp(&right.guest_path));
+    Ok(())
+}
+
 impl<B> PreparedCreateVm<B>
 where
     B: NativeSidecarBridge + Send + 'static,
@@ -1593,6 +1689,13 @@ where
                         descriptor,
                         vm_runtime_context.clone(),
                         limits.sqlite.max_result_bytes,
+                        Some((
+                            sidecar_requests.clone(),
+                            crate::protocol::OwnershipScope::session(
+                                connection_id.clone(),
+                                session_id.clone(),
+                            ),
+                        )),
                     )
                     .await
                     .map_err(|error| {
@@ -1624,10 +1727,10 @@ where
             let capabilities = CapabilityRegistry::new(vm_generation, Arc::clone(&vm_resources));
             bridge.set_vm_permissions(&vm_id, &permissions_policy)?;
             let permissions = bridge_permissions(bridge.clone(), &vm_id);
-            let mut guest_env = filter_env(&vm_id, &create_config.env, &permissions);
-            // Bootstrap runs under the trusted sidecar policy, then restores the
-            // caller's guest-visible permissions before publication.
-            bridge.set_vm_permissions(&vm_id, &allow_all_policy())?;
+            let configured_env = create_vm_environment(&create_config)?;
+            let mut guest_env = filter_env(&vm_id, &configured_env, &permissions);
+        // Trusted bootstrap uses operator-only kernel paths; guest permission
+        // enforcement remains active throughout creation.
             let native_root = native_root_plugin_from_config(create_config.native_root.as_ref())?;
             let loaded_snapshot = if native_root.is_some() {
                 None
@@ -1738,20 +1841,16 @@ where
                     send_kernel_socket_readiness_event(target, readiness);
                 }
             }));
-            let command_guest_paths = discover_command_guest_paths(&mut kernel);
+            let command_guest_paths = discover_command_guest_paths(&mut kernel)?;
             refresh_guest_command_path_env(&mut guest_env, &command_guest_paths);
-            let mut execution_commands = vec![
-                String::from(JAVASCRIPT_COMMAND),
-                String::from(PYTHON_COMMAND),
-                String::from("python3"),
-                String::from(WASM_COMMAND),
-            ];
+            let mut execution_commands =
+                default_execution_commands(create_config.defaults_profile());
             if let Some(bootstrap_commands) = &create_config.bootstrap_commands {
                 execution_commands.extend(bootstrap_commands.iter().cloned());
             }
             execution_commands.extend(command_guest_paths.keys().cloned());
             kernel
-                .register_driver(CommandDriver::new(
+                .register_driver_for_operator(CommandDriver::new(
                     EXECUTION_DRIVER_NAME,
                     execution_commands,
                 ))
@@ -1822,6 +1921,7 @@ where
                 host_net_transfer_descriptions: Arc::new(Mutex::new(BTreeMap::new())),
                 loaded_snapshot,
                 configuration: VmConfiguration {
+                    defaults_profile: create_config.defaults_profile(),
                     permissions: permissions_policy,
                     js_runtime: create_config.js_runtime.clone(),
                     ..VmConfiguration::default()
@@ -1830,10 +1930,16 @@ where
                 command_guest_paths,
                 provided_commands: BTreeMap::new(),
                 package_descriptors: Vec::new(),
+                runtime_linked_package_ids: BTreeSet::new(),
+                installed_package_pins: BTreeMap::new(),
+                package_mount_roots: BTreeMap::new(),
+                package_mount_paths: BTreeMap::new(),
                 package_created_mountpoints: BTreeMap::new(),
                 command_permissions: BTreeMap::new(),
                 bindings: BTreeMap::new(),
                 active_processes: BTreeMap::new(),
+                process_output_replays: BTreeMap::new(),
+                process_output_replay_order: VecDeque::new(),
                 vm_fetch_streams: BTreeMap::new(),
                 next_vm_fetch_stream_id: 0,
                 executions: BTreeMap::new(),
@@ -1912,15 +2018,9 @@ where
             }
         }
 
-        let capability_admission_error =
-            close_vm_admission(&self.vm.runtime_context, &self.vm.capabilities).err();
+        let capability_admission_error = close_vm_capability_admission(&self.vm.capabilities).err();
         if let Some(error) = capability_admission_error.as_ref() {
             eprintln!("ERR_AGENTOS_VM_CAPABILITY_ADMISSION_CLOSE: vm_id={vm_id} error={error}");
-        }
-        let fairness_retirement_result =
-            retire_vm_fairness(&self.vm.runtime_context, self.vm.generation);
-        if let Err(error) = fairness_retirement_result.as_ref() {
-            eprintln!("ERR_AGENTOS_VM_FAIRNESS_RETIRE: vm_id={vm_id} error={error}");
         }
 
         let mount_context = MountPluginContext {
@@ -1941,10 +2041,19 @@ where
             );
         }
         let mut teardown_result = finish_vm_teardown_owned(&bridge, &vm_id, &mut self.vm);
+        let shutdown_deadline = Duration::from_millis(self.vm.limits.reactor.shutdown_deadline_ms);
+        let teardown_deadline = tokio::time::Instant::now() + shutdown_deadline;
+        let mut sqlite_close_timed_out = false;
         if let Some(database) = self.vm.database.take() {
-            if let Err(error) = database.close().await {
-                let error =
-                    SidecarError::InvalidState(format!("close VM SQLite database: {error}"));
+            let (close_result, timed_out) = close_vm_database_before_deadline(
+                &vm_id,
+                database.as_ref(),
+                teardown_deadline,
+                self.vm.limits.reactor.shutdown_deadline_ms,
+            )
+            .await;
+            sqlite_close_timed_out = timed_out;
+            if let Err(error) = close_result {
                 eprintln!(
                     "ERR_AGENTOS_VM_TEARDOWN_CLEANUP: vm_id={vm_id} phase=sqlite_close error={error}"
                 );
@@ -1952,6 +2061,13 @@ where
                     teardown_result = Err(error);
                 }
             }
+        }
+
+        self.vm.runtime_context.close_admission();
+        let fairness_retirement_result =
+            retire_vm_fairness(&self.vm.runtime_context, self.vm.generation);
+        if let Err(error) = fairness_retirement_result.as_ref() {
+            eprintln!("ERR_AGENTOS_VM_FAIRNESS_RETIRE: vm_id={vm_id} error={error}");
         }
 
         cleanup_path(&self.vm.cwd, "disposed VM shadow root");
@@ -1963,14 +2079,14 @@ where
             "disposed VM Unix socket namespace",
         );
 
-        let shutdown_deadline = Duration::from_millis(self.vm.limits.reactor.shutdown_deadline_ms);
-        let (reconciliation, deadline_expired) = wait_for_vm_reconciliation(
+        let (reconciliation, reconciliation_timed_out) = wait_for_vm_reconciliation(
             self.vm.resources.as_ref(),
             &self.vm.runtime_context,
             &self.vm.capabilities,
-            shutdown_deadline,
+            teardown_deadline.saturating_duration_since(tokio::time::Instant::now()),
         )
         .await;
+        let deadline_expired = sqlite_close_timed_out || reconciliation_timed_out;
         let quarantine_reason = vm_quarantine_reason(
             capability_admission_error.is_some(),
             fairness_retirement_result.is_err(),
@@ -1979,7 +2095,8 @@ where
         );
 
         let (quarantine, result) = if let Some(reason) = quarantine_reason {
-            let diagnostic = quarantine_diagnostic(
+            let teardown_deadline_expired = matches!(&reason, VmQuarantineReason::TeardownDeadline);
+            let mut diagnostic = quarantine_diagnostic(
                 &vm_id,
                 &self.vm,
                 reconciliation,
@@ -1987,6 +2104,9 @@ where
                 capability_admission_error.as_deref(),
                 fairness_retirement_result.as_ref().err(),
             );
+            if sqlite_close_timed_out {
+                diagnostic.push_str("; SQLite close is unconfirmed; generation cannot be reaped; restart the sidecar worker to release quarantine");
+            }
             eprintln!("{diagnostic}");
             if let Err(error) = terminate_result.as_ref() {
                 eprintln!(
@@ -2008,8 +2128,17 @@ where
                     runtime_context: self.vm.runtime_context.clone(),
                     capabilities: self.vm.capabilities.clone(),
                     reason,
+                    sqlite_close_unconfirmed: sqlite_close_timed_out,
                 }),
-                Err(SidecarError::Execution(diagnostic)),
+                Err(if teardown_deadline_expired {
+                    SidecarError::VmTeardownDeadline {
+                        message: diagnostic,
+                        vm_id: vm_id.clone(),
+                        deadline_ms: self.vm.limits.reactor.shutdown_deadline_ms,
+                    }
+                } else {
+                    SidecarError::Execution(diagnostic)
+                }),
             )
         } else {
             let result = fairness_retirement_result
@@ -2269,55 +2398,115 @@ where
         .unwrap_or_else(|| original_permissions.clone());
     validate_permissions_policy(&configured_permissions)?;
 
-    let mut effective_mounts = payload.mounts.clone();
-    append_module_access_mount(&mut effective_mounts, payload.module_access_cwd.as_ref())?;
-    let package_descriptors = package_descriptors_from_wire(&payload.packages)?;
-    let mut provided_commands: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for descriptor in &package_descriptors {
-        provided_commands.insert(
-            descriptor.name.clone(),
-            descriptor
-                .commands
-                .iter()
-                .map(|target| target.command.clone())
-                .collect(),
-        );
-    }
-    let mut package_mounts =
-        build_packages_projection(&vm_id, &package_descriptors, &payload.packages_mount_at)?;
-    append_package_provides_mounts(&mut package_mounts, &package_descriptors)?;
-    let package_mount_paths = payload
-        .packages
-        .iter()
-        .zip(package_descriptors.iter())
-        .map(|(package, descriptor)| {
-            Ok((
-                format!("path:{}", package.path),
-                package_mount_paths(&vm_id, descriptor, &payload.packages_mount_at)?,
-            ))
-        })
-        .collect::<Result<BTreeMap<_, _>, SidecarError>>()?;
-    effective_mounts.extend(package_mounts);
+    let boot_package_descriptors = package_descriptors_from_wire(&payload.packages)?;
     let mount_plugins = build_mount_plugin_registry::<B>()?;
 
-    bridge.set_vm_permissions(&vm_id, &allow_all_policy())?;
     let reconfigure_result = vm.try_command("configure VM", |vm| {
+        let mut effective_mounts = payload.mounts.clone();
+        append_module_access_mount(&mut effective_mounts, payload.module_access_cwd.as_ref())?;
+        let mut package_descriptors = payload
+            .packages
+            .iter()
+            .zip(boot_package_descriptors.iter().cloned())
+            .map(|(package, descriptor)| (format!("path:{}", package.path), descriptor))
+            .collect::<Vec<_>>();
+        let boot_package_ids = package_descriptors
+            .iter()
+            .map(|(id, _)| id.clone())
+            .collect::<BTreeSet<_>>();
+        let boot_mount_root = normalized_package_mount_root(&payload.packages_mount_at);
+        let mut package_mount_roots = BTreeMap::new();
+        for (id, descriptor) in &package_descriptors {
+            if vm.runtime_linked_package_ids.contains(id) {
+                let existing = vm.package_descriptors.iter().find(|(existing, _)| existing == id);
+                if existing.map(|(_, descriptor)| descriptor) != Some(descriptor)
+                    || vm.package_mount_roots.get(id) != Some(&boot_mount_root)
+                {
+                    return Err(SidecarError::InvalidState(format!(
+                        "package id {id:?} is already linked with a different descriptor or projection root; unlink it before replacing it"
+                    )));
+                }
+            }
+            package_mount_roots.insert(id.clone(), boot_mount_root.clone());
+        }
+        // LinkPackage is an explicit live mutation. ConfigureVm replaces the
+        // boot package set, but must not discard packages linked afterwards by
+        // another client simply because this caller only knows its boot list.
+        for (id, descriptor) in &vm.package_descriptors {
+            if !vm.runtime_linked_package_ids.contains(id) || boot_package_ids.contains(id) {
+                continue;
+            }
+            let mount_root = package_mount_root(vm, id)?;
+            package_descriptors.push((id.clone(), descriptor.clone()));
+            package_mount_roots.insert(id.clone(), mount_root.to_owned());
+        }
+        let mut package_mountpoint_paths = BTreeMap::new();
+        let mut owned_mount_count = 0;
+        for (id, descriptor) in &package_descriptors {
+            let mounts = build_complete_package_projection(
+                &vm_id,
+                descriptor,
+                &package_mount_roots[id],
+                owned_mount_count,
+                vm.limits.agentos_packages.max_mounts,
+            )?;
+            // The builder has checked this sum before appending each leaf.
+            owned_mount_count += mounts.len();
+            package_mountpoint_paths.insert(
+                id.clone(),
+                mounts.iter().map(|mount| mount.guest_path.clone()).collect::<BTreeSet<_>>(),
+            );
+            effective_mounts.extend(mounts);
+        }
+        check_package_mount_limit(
+            &vm_id,
+            0,
+            owned_mount_count,
+            vm.limits.agentos_packages.max_mounts,
+        )?;
+        let mut mount_paths = BTreeSet::new();
+        for mount in &effective_mounts {
+            if !mount_paths.insert(normalize_path(&mount.guest_path)) {
+                return Err(SidecarError::InvalidState(format!(
+                    "duplicate VM mount path: {}",
+                    mount.guest_path
+                )));
+            }
+        }
+        validate_package_names_and_commands(package_descriptors.iter().map(|(_, descriptor)| descriptor))?;
+        let mut provided_commands: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for (_, descriptor) in &package_descriptors {
+            provided_commands.insert(
+                descriptor.name.clone(),
+                descriptor
+                    .commands
+                    .iter()
+                    .map(|target| target.command.clone())
+                    .collect(),
+            );
+        }
         let existing_created_mountpoints = vm.package_created_mountpoints.clone();
         let mut created_mountpoints = BTreeMap::new();
-        for (package_id, paths) in &package_mount_paths {
+        for (package_id, paths) in &package_mountpoint_paths {
             let existing = existing_created_mountpoints.get(package_id);
             let mut created = BTreeSet::new();
             for path in paths {
                 if existing.is_some_and(|paths| paths.contains(path))
-                    || !vm.kernel.exists(path).map_err(kernel_error)?
+                    || !vm.kernel.exists_for_operator(path).map_err(kernel_error)?
                 {
                     created.insert(path.clone());
                 }
             }
             created_mountpoints.insert(package_id.clone(), created);
         }
-        vm.guest_env = vm.base_guest_env.clone();
-        apply_package_provides_env(&mut vm.guest_env, &package_descriptors);
+        let mut next_guest_env = vm.base_guest_env.clone();
+        apply_package_provides_env(
+            &mut next_guest_env,
+            &package_descriptors
+                .iter()
+                .map(|(_, descriptor)| descriptor.clone())
+                .collect::<Vec<_>>(),
+        );
         let mount_context = MountPluginContext {
             bridge: bridge.clone(),
             runtime_context: vm.runtime_context.clone(),
@@ -2329,27 +2518,28 @@ where
             max_pread_bytes: vm.kernel.resource_limits().max_pread_bytes,
         };
         reconcile_mounts(&mount_plugins, vm, &effective_mounts, mount_context)?;
+        vm.guest_env = next_guest_env;
 
-        vm.command_guest_paths = discover_command_guest_paths(&mut vm.kernel);
-        // Package command leaves live under `/opt/agentos/bin`, outside the
-        // legacy discovery tree. Register them explicitly for both absolute
-        // and PATH-based execution.
-        for commands in provided_commands.values() {
-            for command in commands {
+        vm.command_guest_paths = discover_command_guest_paths(&mut vm.kernel)?;
+        // Package command leaves live under their projection root (normally
+        // `/opt/agentos/bin`), outside the legacy discovery tree. Register them
+        // explicitly for both absolute and PATH-based execution.
+        for (id, descriptor) in &package_descriptors {
+            let mount_root = &package_mount_roots[id];
+            for target in &descriptor.commands {
                 vm.command_guest_paths
-                    .entry(command.clone())
-                    .or_insert_with(|| projected_command_guest_path(command));
+                    .entry(target.command.clone())
+                    .or_insert_with(|| package_command_guest_path(mount_root, &target.command));
             }
         }
         let command_guest_paths = vm.command_guest_paths.clone();
         refresh_guest_command_path_env(&mut vm.guest_env, &command_guest_paths);
-        let mut execution_commands =
-            vec![String::from(JAVASCRIPT_COMMAND), String::from(WASM_COMMAND)];
+        let mut execution_commands = default_execution_commands(vm.configuration.defaults_profile);
         execution_commands.extend(payload.bootstrap_commands.iter().cloned());
         execution_commands.extend(payload.binding_shim_commands.iter().cloned());
         execution_commands.extend(vm.command_guest_paths.keys().cloned());
         vm.kernel
-            .register_driver(CommandDriver::new(
+            .register_driver_for_operator(CommandDriver::new(
                 EXECUTION_DRIVER_NAME,
                 execution_commands,
             ))
@@ -2359,6 +2549,7 @@ where
         loopback_exempt_ports.extend(payload.loopback_exempt_ports.iter().copied());
         vm.kernel.set_loopback_exempt_ports(loopback_exempt_ports);
         vm.configuration = VmConfiguration {
+            defaults_profile: vm.configuration.defaults_profile,
             mounts: effective_mounts.clone(),
             software: payload.software.clone(),
             permissions: configured_permissions.clone(),
@@ -2372,42 +2563,50 @@ where
             loopback_exempt_ports: payload.loopback_exempt_ports.clone(),
         };
         vm.provided_commands = provided_commands.clone();
-        vm.package_descriptors = payload
-            .packages
-            .iter()
-            .zip(package_descriptors.iter().cloned())
-            .map(|(package, descriptor)| (format!("path:{}", package.path), descriptor))
-            .collect();
+        vm.package_descriptors = package_descriptors;
+        vm.package_mount_roots = package_mount_roots;
+        vm.package_mount_paths = package_mountpoint_paths;
         vm.package_created_mountpoints = created_mountpoints;
-        let projected_commands = projected_commands_from_guest_paths(&vm.command_guest_paths);
-        Ok(projected_commands)
+        let projected_commands = projected_commands_from_guest_paths(
+            &vm.command_guest_paths,
+            &vm.provided_commands,
+        );
+        Ok((projected_commands, effective_mounts.len() as u32))
     });
 
-    let projected_commands = match reconfigure_result {
-        Ok(projected_commands) => {
-            bridge.set_vm_permissions(&vm_id, &configured_permissions)?;
-            projected_commands
-        }
+    // Publishing the final policy is part of configuration. If it fails,
+    // restore the prior policy just as for a mount/driver failure.
+    let reconfigure_result = reconfigure_result.and_then(|configured| {
+        bridge.set_vm_permissions(&vm_id, &configured_permissions)?;
+        Ok(configured)
+    });
+    let (projected_commands, applied_mounts) = match reconfigure_result {
+        Ok(configured) => configured,
         Err(error) => {
-            match bridge.restore_vm_permissions_fail_closed(
+            let (restored_permissions, error) = match bridge.restore_vm_permissions_fail_closed(
                 &vm_id,
                 &original_permissions,
                 "configure_vm rollback",
                 &error,
             ) {
-                Ok(()) => return Err(error),
-                Err(rollback_error) => {
-                    vm.try_command("configure VM fail-closed rollback", |vm| {
-                        vm.configuration.permissions = deny_all_policy();
-                        Ok(())
-                    })?;
-                    return Err(rollback_error);
-                }
-            }
+                Ok(()) => (original_permissions, error),
+                Err(rollback_error) => (deny_all_policy(), rollback_error),
+            };
+            // The mount/driver phase may already have stored its desired
+            // configuration. Keep reported policy equal to bridge enforcement.
+            vm.try_command("configure VM permission rollback", |vm| {
+                vm.configuration.permissions = restored_permissions;
+                Ok(())
+            })
+            .map_err(|state_error| {
+                SidecarError::InvalidState(format!(
+                    "{error}; recording restored VM permissions failed: {state_error}"
+                ))
+            })?;
+            return Err(error);
         }
     };
 
-    let applied_mounts = effective_mounts.len() as u32;
     let configured_software = payload.software.len() as u32;
 
     tracing::info!(target: "agentos_native_sidecar::perf", phase = "configure_vm", elapsed_ms = __t.elapsed().as_millis() as u64, applied_mounts = applied_mounts as u64, "vm phase");
@@ -2425,6 +2624,30 @@ where
 pub(crate) async fn link_package_owned<B>(
     input: LinkPackageOwnedInput<B>,
     payload: LinkPackageRequest,
+) -> Result<DispatchResult, SidecarError>
+where
+    B: NativeSidecarBridge + Send + 'static,
+    BridgeError<B>: fmt::Debug + Send + Sync + 'static,
+{
+    link_package_owned_with_pin(input, payload, None).await
+}
+
+pub(crate) async fn link_verified_package_owned<B>(
+    input: LinkPackageOwnedInput<B>,
+    payload: LinkPackageRequest,
+    package: agentos_client::VerifiedPackage,
+) -> Result<DispatchResult, SidecarError>
+where
+    B: NativeSidecarBridge + Send + 'static,
+    BridgeError<B>: fmt::Debug + Send + Sync + 'static,
+{
+    link_package_owned_with_pin(input, payload, Some(package)).await
+}
+
+async fn link_package_owned_with_pin<B>(
+    input: LinkPackageOwnedInput<B>,
+    payload: LinkPackageRequest,
+    mut package_pin: Option<agentos_client::VerifiedPackage>,
 ) -> Result<DispatchResult, SidecarError>
 where
     B: NativeSidecarBridge + Send + 'static,
@@ -2449,12 +2672,6 @@ where
             "package id must contain 1..=128 bytes",
         )));
     }
-    let mut new_mounts = build_packages_projection(
-        &vm_id,
-        std::slice::from_ref(&descriptor),
-        crate::package_projection::OPT_AGENTOS_ROOT,
-    )?;
-    append_package_provides_mounts(&mut new_mounts, std::slice::from_ref(&descriptor))?;
     let commands = descriptor
         .commands
         .iter()
@@ -2462,20 +2679,72 @@ where
         .collect::<Vec<_>>();
     let mount_plugins = build_mount_plugin_registry::<B>()?;
 
-    vm.try_command("link VM package", |vm| {
-        if vm
+    let mount_root = vm.try_command("link VM package", |vm| {
+        if let Some((_, existing)) = vm
             .package_descriptors
             .iter()
-            .any(|(package_id, _)| package_id == &payload.package_id)
+            .find(|(package_id, _)| package_id == &payload.package_id)
         {
-            return Ok(());
+            if existing != &descriptor {
+                return Err(SidecarError::InvalidState(format!(
+                    "package id {:?} is already linked with a different descriptor; unlink it before replacing it",
+                    payload.package_id
+                )));
+            }
+            if let Some(pin) = package_pin.as_ref() {
+                match vm.installed_package_pins.get(&payload.package_id) {
+                    Some(installed) if installed.digest == pin.digest => {}
+                    _ => {
+                        return Err(SidecarError::InvalidState(format!(
+                            "package id {:?} is already linked outside verified installation; unlink it before installing",
+                            payload.package_id
+                        )))
+                    }
+                }
+            }
+            let mount_root = package_mount_root(vm, &payload.package_id)?.to_owned();
+            // An explicit link also pins a boot-projected package across
+            // later ConfigureVm replacements of the boot package list.
+            vm.runtime_linked_package_ids
+                .insert(payload.package_id.clone());
+            return Ok(mount_root);
         }
+        validate_package_names_and_commands(
+            vm.package_descriptors.iter().map(|(_, descriptor)| descriptor)
+                .chain(std::iter::once(&descriptor)),
+        )?;
+        let existing_mounts = vm.package_mount_paths.values().try_fold(0usize, |total, paths| {
+            total.checked_add(paths.len()).ok_or(SidecarError::PackageMountLimit {
+                used: total,
+                requested: paths.len(),
+                limit: vm.limits.agentos_packages.max_mounts,
+            })
+        })?;
+        let new_mounts = build_complete_package_projection(
+            &vm_id,
+            &descriptor,
+            crate::package_projection::OPT_AGENTOS_ROOT,
+            existing_mounts,
+            vm.limits.agentos_packages.max_mounts,
+        )?;
+        check_package_mount_limit(
+            &vm_id,
+            existing_mounts,
+            new_mounts.len(),
+            vm.limits.agentos_packages.max_mounts,
+        )?;
+        let mut new_mount_paths = BTreeSet::new();
         for mount in &new_mounts {
+            if !new_mount_paths.insert(normalize_path(&mount.guest_path)) {
+                return Err(SidecarError::InvalidState(format!(
+                    "duplicate package mount path: {}", mount.guest_path
+                )));
+            }
             if vm
                 .configuration
                 .mounts
                 .iter()
-                .any(|existing| existing.guest_path == mount.guest_path)
+                .any(|existing| normalize_path(&existing.guest_path) == normalize_path(&mount.guest_path))
             {
                 if let Some(command) = mount
                     .guest_path
@@ -2497,7 +2766,7 @@ where
             .iter()
             .map(|mount| {
                 vm.kernel
-                    .exists(&mount.guest_path)
+                    .exists_for_operator(&mount.guest_path)
                     .map(|exists| (!exists).then(|| mount.guest_path.clone()))
                     .map_err(kernel_error)
             })
@@ -2519,17 +2788,28 @@ where
         vm.configuration.mounts.extend(new_mounts);
         vm.package_descriptors
             .push((payload.package_id.clone(), descriptor.clone()));
+        vm.runtime_linked_package_ids
+            .insert(payload.package_id.clone());
+        vm.package_mount_roots.insert(
+            payload.package_id.clone(),
+            crate::package_projection::OPT_AGENTOS_ROOT.to_owned(),
+        );
+        vm.package_mount_paths.insert(payload.package_id.clone(), new_mount_paths);
         vm.package_created_mountpoints
             .insert(payload.package_id.clone(), created_mountpoints);
+        if let Some(pin) = package_pin.take() {
+            vm.installed_package_pins
+                .insert(payload.package_id.clone(), pin);
+        }
         refresh_package_runtime_state(vm)?;
-        Ok(())
+        Ok(crate::package_projection::OPT_AGENTOS_ROOT.to_owned())
     })?;
 
     let projected_commands = commands
         .iter()
         .map(|command| ProjectedCommand {
             name: command.clone(),
-            guest_path: projected_command_guest_path(command),
+            guest_path: package_command_guest_path(&mount_root, command),
         })
         .collect();
     Ok(DispatchResult {
@@ -2576,21 +2856,21 @@ where
                     payload.package_id
                 ))
             })?;
-        let mut package_mounts = build_packages_projection(
-            &vm_id,
-            std::slice::from_ref(&descriptor),
-            crate::package_projection::OPT_AGENTOS_ROOT,
-        )?;
-        append_package_provides_mounts(&mut package_mounts, std::slice::from_ref(&descriptor))?;
+        let target_paths = vm
+            .package_mount_paths
+            .get(&payload.package_id)
+            .cloned()
+            .ok_or_else(|| {
+                SidecarError::InvalidState(format!(
+                    "software package {:?} is missing its installed mount paths",
+                    payload.package_id
+                ))
+            })?;
         let created_mountpoints = vm
             .package_created_mountpoints
             .get(&payload.package_id)
             .cloned()
             .unwrap_or_default();
-        let target_paths = package_mounts
-            .iter()
-            .map(|mount| mount.guest_path.clone())
-            .collect::<BTreeSet<_>>();
         if let Some(missing) = target_paths.iter().find(|path| {
             !vm.configuration
                 .mounts
@@ -2606,7 +2886,9 @@ where
         let mut ordered_paths = target_paths.iter().collect::<Vec<_>>();
         ordered_paths.sort_by_key(|path| std::cmp::Reverse(mount_path_depth(path)));
         for path in ordered_paths {
-            vm.kernel.unmount_filesystem(path).map_err(kernel_error)?;
+            vm.kernel
+                .unmount_filesystem_for_operator(path)
+                .map_err(kernel_error)?;
             emit_security_audit_event(
                 &bridge,
                 &vm_id,
@@ -2621,15 +2903,25 @@ where
         let mut created_paths = created_mountpoints.iter().collect::<Vec<_>>();
         created_paths.sort_by_key(|path| std::cmp::Reverse(mount_path_depth(path)));
         for path in created_paths {
-            vm.kernel.remove_path(path, true).map_err(kernel_error)?;
+            // Some read-only parents cannot materialize cosmetic mountpoints.
+            // Remove only empty directories we created, never guest contents.
+            if vm.kernel.exists_for_operator(path).map_err(kernel_error)? {
+                vm.kernel
+                    .remove_dir_for_operator(path)
+                    .map_err(kernel_error)?;
+            }
         }
         vm.configuration
             .mounts
             .retain(|mount| !target_paths.contains(&mount.guest_path));
         vm.package_descriptors
             .retain(|(package_id, _)| package_id != &payload.package_id);
+        vm.runtime_linked_package_ids.remove(&payload.package_id);
+        vm.package_mount_roots.remove(&payload.package_id);
+        vm.package_mount_paths.remove(&payload.package_id);
         vm.package_created_mountpoints.remove(&payload.package_id);
         refresh_package_runtime_state(vm)?;
+        vm.installed_package_pins.remove(&payload.package_id);
         Ok(descriptor
             .commands
             .into_iter()
@@ -2770,15 +3062,10 @@ fn vm_reconciliation_snapshot(
     }
 }
 
-fn close_vm_admission(
-    runtime_context: &agentos_runtime::RuntimeContext,
-    capabilities: &CapabilityRegistry,
-) -> Result<(), String> {
-    let capability_result = capabilities
+fn close_vm_capability_admission(capabilities: &CapabilityRegistry) -> Result<(), String> {
+    capabilities
         .close_admission()
-        .map_err(|error| error.to_string());
-    runtime_context.close_admission();
-    capability_result
+        .map_err(|error| error.to_string())
 }
 
 fn retire_vm_fairness(
@@ -2816,6 +3103,37 @@ fn vm_quarantine_reason(
         Some(VmQuarantineReason::TeardownDeadline)
     } else {
         None
+    }
+}
+
+/// Submit the close before observing the timer so a timed-out local close still
+/// owns its already-admitted blocking job. Reconciliation then observes that
+/// job. Canceling a host callback can lose completion observation, though, so
+/// every timed-out close conservatively prevents automatic quarantine reaping.
+async fn close_vm_database_before_deadline(
+    vm_id: &str,
+    database: &dyn crate::vm_sqlite::VmSqliteDatabase,
+    deadline: tokio::time::Instant,
+    shutdown_deadline_ms: u64,
+) -> (Result<(), SidecarError>, bool) {
+    tokio::select! {
+        biased;
+        result = database.close() => (
+            result.map_err(|error| {
+                SidecarError::InvalidState(format!("close VM SQLite database: {error}"))
+            }),
+            false,
+        ),
+        _ = tokio::time::sleep_until(deadline) => (
+            Err(SidecarError::VmTeardownDeadline {
+                message: format!(
+                    "ERR_AGENTOS_VM_TEARDOWN_DEADLINE: vm_id={vm_id} phase=sqlite_close deadline_ms={shutdown_deadline_ms}; raise limits.reactor.shutdownDeadlineMs"
+                ),
+                vm_id: vm_id.to_owned(),
+                deadline_ms: shutdown_deadline_ms,
+            }),
+            true,
+        ),
     }
 }
 
@@ -3413,8 +3731,157 @@ where
     B: NativeSidecarBridge + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
-    shutdown_configured_mounts(vm, &context, "configure_vm", false)?;
-    mount_leaf_descriptors(mount_plugins, vm, mounts, context)
+    // Parse and validate the entire desired set before changing the live view.
+    let prepared = prepare_mount_descriptors(mount_plugins, mounts)?;
+    let mut existing_mounts = vm.configuration.mounts.clone();
+    existing_mounts.sort_by_key(|mount| std::cmp::Reverse(mount_path_depth(&mount.guest_path)));
+    let mut detached = Vec::with_capacity(existing_mounts.len());
+    for mount in &existing_mounts {
+        match vm.kernel.detach_filesystem_for_operator(&mount.guest_path) {
+            Ok(backend) => detached.push(backend),
+            Err(error) => {
+                return Err(rollback_mount_reconciliation(
+                    vm,
+                    &context,
+                    Vec::new(),
+                    detached,
+                    BTreeSet::new(),
+                    kernel_error(error),
+                ));
+            }
+        }
+    }
+
+    let mut mounted = Vec::with_capacity(prepared.len());
+    let mut created_mountpoints = BTreeSet::new();
+    if let Err(error) = mount_prepared_descriptors(
+        mount_plugins,
+        vm,
+        prepared,
+        &context,
+        &mut mounted,
+        &mut created_mountpoints,
+    ) {
+        return Err(rollback_mount_reconciliation(
+            vm,
+            &context,
+            mounted,
+            detached,
+            created_mountpoints,
+            error,
+        ));
+    }
+
+    // The replacement view is installed. Shutdown is backend cleanup, not a
+    // reason to report that configuration failed after its visible commit.
+    for (mount, backend) in existing_mounts.iter().zip(detached) {
+        if let Err(error) = backend.shutdown() {
+            tracing::error!(vm_id = %context.vm_id, guest_path = %mount.guest_path, error = %error, "detached mount backend shutdown failed after reconfiguration");
+            let _ = emit_structured_event(
+                &context.bridge,
+                &context.vm_id,
+                "filesystem.mount.shutdown_failed",
+                audit_fields([
+                    (String::from("guest_path"), mount.guest_path.clone()),
+                    (String::from("plugin_id"), mount.plugin.id.clone()),
+                    (String::from("phase"), String::from("configure_vm")),
+                    (String::from("error"), error.to_string()),
+                ]),
+            );
+        }
+        emit_mount_audit_event(&context, mount, "security.mount.unmounted");
+    }
+    for mount in &mounted {
+        emit_mount_audit_event(&context, mount, "security.mount.mounted");
+    }
+    Ok(())
+}
+
+fn rollback_mount_reconciliation<B>(
+    vm: &mut VmState,
+    context: &MountPluginContext<B>,
+    mounted: Vec<MountDescriptor>,
+    detached: Vec<DetachedMount>,
+    created_mountpoints: BTreeSet<String>,
+    original_error: SidecarError,
+) -> SidecarError
+where
+    B: NativeSidecarBridge + Send + 'static,
+    BridgeError<B>: fmt::Debug + Send + Sync + 'static,
+{
+    let mut rollback_errors = Vec::new();
+    let mut paths = created_mountpoints
+        .iter()
+        .map(|path| (path.clone(), false))
+        .collect::<BTreeMap<_, _>>();
+    for mount in mounted {
+        paths.insert(normalize_path(&mount.guest_path), true);
+    }
+    let mut paths = paths.into_iter().collect::<Vec<_>>();
+    paths.sort_by_key(|(path, _)| std::cmp::Reverse(mount_path_depth(path)));
+    // Remove a child's new directory before detaching its temporary parent.
+    // Otherwise the same path could resolve to an unrelated, pre-existing
+    // empty directory in the underlying filesystem and wrongly delete it.
+    for (path, mounted) in paths {
+        if mounted {
+            if let Err(error) = vm.kernel.unmount_filesystem_for_operator(&path) {
+                rollback_errors.push(format!("unmount {path}: {error}"));
+                // Shutdown may fail after detachment, but an earlier failure
+                // can leave the mount live. Never remove its root directory.
+                if vm
+                    .kernel
+                    .mounted_filesystems()
+                    .iter()
+                    .any(|mount| mount.path == path)
+                {
+                    continue;
+                }
+            }
+        }
+        if created_mountpoints.contains(&path) {
+            let result = vm.kernel.exists_for_operator(&path).and_then(|exists| {
+                if exists {
+                    vm.kernel.remove_dir_for_operator(&path)
+                } else {
+                    Ok(())
+                }
+            });
+            if let Err(error) = result {
+                rollback_errors.push(format!("remove new mountpoint {path}: {error}"));
+            }
+        }
+    }
+    for backend in detached.into_iter().rev() {
+        let path = backend.path().to_owned();
+        if let Err(error) = vm.kernel.restore_detached_filesystem_for_operator(backend) {
+            rollback_errors.push(format!("restore {path}: {error}"));
+        }
+    }
+    if rollback_errors.is_empty() {
+        return original_error;
+    }
+    let detail = rollback_errors.join("; ");
+    tracing::error!(vm_id = %context.vm_id, error = %original_error, rollback = %detail, "VM mount rollback failed");
+    SidecarError::InvalidState(format!(
+        "{original_error}; VM mount rollback failed: {detail}"
+    ))
+}
+
+fn emit_mount_audit_event<B>(context: &MountPluginContext<B>, mount: &MountDescriptor, name: &str)
+where
+    B: NativeSidecarBridge + Send + 'static,
+    BridgeError<B>: fmt::Debug + Send + Sync + 'static,
+{
+    emit_security_audit_event(
+        &context.bridge,
+        &context.vm_id,
+        name,
+        audit_fields([
+            (String::from("guest_path"), mount.guest_path.clone()),
+            (String::from("plugin_id"), mount.plugin.id.clone()),
+            (String::from("read_only"), mount.read_only.to_string()),
+        ]),
+    );
 }
 
 fn mount_leaf_descriptors<B>(
@@ -3427,21 +3894,103 @@ where
     B: NativeSidecarBridge + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
+    let prepared = prepare_mount_descriptors(mount_plugins, mounts)?;
+    let mut mounted = Vec::with_capacity(prepared.len());
+    let mut created_mountpoints = BTreeSet::new();
+    if let Err(error) = mount_prepared_descriptors(
+        mount_plugins,
+        vm,
+        prepared,
+        &context,
+        &mut mounted,
+        &mut created_mountpoints,
+    ) {
+        return Err(rollback_mount_reconciliation(
+            vm,
+            &context,
+            mounted,
+            Vec::new(),
+            created_mountpoints,
+            error,
+        ));
+    }
+    for mount in &mounted {
+        emit_mount_audit_event(&context, mount, "security.mount.mounted");
+    }
+    Ok(())
+}
+
+fn prepare_mount_descriptors<'a, B>(
+    mount_plugins: &agentos_kernel::mount_plugin::FileSystemPluginRegistry<MountPluginContext<B>>,
+    mounts: &'a [crate::protocol::MountDescriptor],
+) -> Result<Vec<(&'a crate::protocol::MountDescriptor, serde_json::Value)>, SidecarError> {
+    let registered_plugins = mount_plugins
+        .plugin_ids()
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    let mut paths = BTreeSet::new();
+    let mut prepared = Vec::with_capacity(mounts.len());
+    for mount in mounts {
+        agentos_kernel::vfs::validate_path(&mount.guest_path).map_err(vfs_error)?;
+        let path = normalize_path(&mount.guest_path);
+        if path == "/" || !paths.insert(path.clone()) {
+            return Err(SidecarError::InvalidState(format!(
+                "invalid or duplicate VM mount path: {}",
+                mount.guest_path
+            )));
+        }
+        if !registered_plugins.contains(&mount.plugin.id) {
+            return Err(SidecarError::Plugin(format!(
+                "filesystem plugin is not registered: {}",
+                mount.plugin.id
+            )));
+        }
+        let config_value = serde_json::from_str(&mount.plugin.config).map_err(|error| {
+            SidecarError::InvalidState(format!(
+                "mount plugin config for {} is not valid JSON: {error}",
+                mount.plugin.id
+            ))
+        })?;
+        prepared.push((mount, config_value));
+    }
+    prepared.sort_by_key(|(mount, _)| mount_path_depth(&mount.guest_path));
+    Ok(prepared)
+}
+
+fn mount_prepared_descriptors<B>(
+    mount_plugins: &agentos_kernel::mount_plugin::FileSystemPluginRegistry<MountPluginContext<B>>,
+    vm: &mut VmState,
+    mounts: Vec<(&crate::protocol::MountDescriptor, serde_json::Value)>,
+    context: &MountPluginContext<B>,
+    mounted: &mut Vec<MountDescriptor>,
+    created_mountpoints: &mut BTreeSet<String>,
+) -> Result<(), SidecarError>
+where
+    B: NativeSidecarBridge + Send + 'static,
+    BridgeError<B>: fmt::Debug + Send + Sync + 'static,
+{
     let max_filesystem_bytes = vm.kernel.resource_limits().max_filesystem_bytes;
     let max_inode_count = vm.kernel.resource_limits().max_inode_count;
+    let mut checked_paths = BTreeSet::new();
     // Mount parents before nested leaves. Configure payload order is not a
     // filesystem invariant, and mounting a parent after one of its children is
     // rejected by the kernel mount table.
-    let mut ordered_mounts = mounts.iter().collect::<Vec<_>>();
-    ordered_mounts.sort_by_key(|mount| mount_path_depth(&mount.guest_path));
-    for mount in ordered_mounts {
-        let config_value: serde_json::Value =
-            serde_json::from_str(&mount.plugin.config).map_err(|error| {
-                SidecarError::InvalidState(format!(
-                    "mount plugin config for {} is not valid JSON: {error}",
-                    mount.plugin.id
-                ))
-            })?;
+    for (mount, config_value) in mounts {
+        // mount_boxed may recursively mkdir on the underlying parent, even
+        // before a later leaf fails. Record missing ancestors for rollback.
+        let mut path = String::new();
+        for component in normalize_path(&mount.guest_path)
+            .split('/')
+            .filter(|part| !part.is_empty())
+        {
+            path.push('/');
+            path.push_str(component);
+            if checked_paths.insert(path.clone())
+                && !vm.kernel.exists_for_operator(&path).map_err(kernel_error)?
+            {
+                created_mountpoints.insert(path.clone());
+            }
+        }
         let filesystem = mount_plugins
             .open(
                 &mount.plugin.id,
@@ -3450,13 +3999,13 @@ where
                     guest_path: &mount.guest_path,
                     read_only: mount.read_only,
                     config: &config_value,
-                    context: &context,
+                    context,
                 },
             )
             .map_err(plugin_error)?;
 
         vm.kernel
-            .mount_boxed_filesystem(
+            .mount_boxed_filesystem_for_operator(
                 &mount.guest_path,
                 filesystem,
                 MountOptions::new(mount.plugin.id.clone())
@@ -3467,16 +4016,7 @@ where
                     .max_inodes(max_inode_count),
             )
             .map_err(kernel_error)?;
-        emit_security_audit_event(
-            &context.bridge,
-            &context.vm_id,
-            "security.mount.mounted",
-            audit_fields([
-                (String::from("guest_path"), mount.guest_path.clone()),
-                (String::from("plugin_id"), mount.plugin.id.clone()),
-                (String::from("read_only"), mount.read_only.to_string()),
-            ]),
-        );
+        mounted.push(mount.clone());
     }
 
     Ok(())
@@ -3497,7 +4037,10 @@ where
     let mut existing_mounts = vm.configuration.mounts.clone();
     existing_mounts.sort_by_key(|mount| std::cmp::Reverse(mount_path_depth(&mount.guest_path)));
     for existing in existing_mounts {
-        match vm.kernel.unmount_filesystem(&existing.guest_path) {
+        match vm
+            .kernel
+            .unmount_filesystem_for_operator(&existing.guest_path)
+        {
             Ok(()) => emit_security_audit_event(
                 &context.bridge,
                 &context.vm_id,
@@ -3535,7 +4078,8 @@ where
 }
 
 fn mount_path_depth(path: &str) -> usize {
-    path.split('/')
+    normalize_path(path)
+        .split('/')
         .filter(|component| !component.is_empty())
         .count()
 }
@@ -3552,23 +4096,120 @@ fn build_packages_projection(
     _vm_id: &str,
     packages: &[crate::package_projection::PackageDescriptor],
     mount_at: &str,
+    max_mounts: usize,
 ) -> Result<Vec<MountDescriptor>, SidecarError> {
     Ok(
-        crate::package_projection::build_package_leaf_mounts(packages, mount_at)?
-            .into_iter()
-            .map(package_leaf_mount_to_descriptor)
-            .collect(),
+        crate::package_projection::build_package_leaf_mounts_with_limit(
+            packages, mount_at, max_mounts,
+        )?
+        .into_iter()
+        .map(package_leaf_mount_to_descriptor)
+        .collect(),
     )
 }
 
-fn package_mount_paths(
+fn build_complete_package_projection(
     vm_id: &str,
     package: &crate::package_projection::PackageDescriptor,
     mount_at: &str,
-) -> Result<BTreeSet<String>, SidecarError> {
-    let mut mounts = build_packages_projection(vm_id, std::slice::from_ref(package), mount_at)?;
-    append_package_provides_mounts(&mut mounts, std::slice::from_ref(package))?;
-    Ok(mounts.into_iter().map(|mount| mount.guest_path).collect())
+    used: usize,
+    max_mounts: usize,
+) -> Result<Vec<MountDescriptor>, SidecarError> {
+    let mut mounts = build_packages_projection(
+        vm_id,
+        std::slice::from_ref(package),
+        mount_at,
+        max_mounts.saturating_sub(used),
+    )
+    .map_err(|error| match error {
+        SidecarError::PackageMountLimit { requested, .. } => SidecarError::PackageMountLimit {
+            used,
+            requested,
+            limit: max_mounts,
+        },
+        other => other,
+    })?;
+    append_package_provides_mounts(&mut mounts, std::slice::from_ref(package), used, max_mounts)?;
+    Ok(mounts)
+}
+
+fn check_package_mount_limit(
+    vm_id: &str,
+    used: usize,
+    requested: usize,
+    limit: usize,
+) -> Result<(), SidecarError> {
+    let observed = used
+        .checked_add(requested)
+        .ok_or(SidecarError::PackageMountLimit {
+            used,
+            requested,
+            limit,
+        })?;
+    if observed > limit {
+        return Err(SidecarError::PackageMountLimit {
+            used,
+            requested,
+            limit,
+        });
+    }
+    if observed != 0 && observed >= limit - limit / 5 {
+        tracing::warn!(
+            vm_id,
+            observed,
+            capacity = limit,
+            config_path = "limits.agentosPackages.maxMounts",
+            "agentOS package mounts approaching VM limit"
+        );
+    }
+    Ok(())
+}
+
+fn normalized_package_mount_root(root: &str) -> String {
+    if root.is_empty() {
+        crate::package_projection::OPT_AGENTOS_ROOT.to_owned()
+    } else {
+        normalize_path(root)
+    }
+}
+
+fn validate_package_names_and_commands<'a>(
+    descriptors: impl IntoIterator<Item = &'a crate::package_projection::PackageDescriptor>,
+) -> Result<(), SidecarError> {
+    let mut names = BTreeSet::new();
+    let mut commands = BTreeSet::new();
+    for descriptor in descriptors {
+        if !names.insert(&descriptor.name) {
+            return Err(SidecarError::InvalidState(format!(
+                "package {:?} is already projected under another identity",
+                descriptor.name
+            )));
+        }
+        for target in &descriptor.commands {
+            if !commands.insert(&target.command) {
+                return Err(SidecarError::InvalidState(format!(
+                    "command {:?} is already provided by another package",
+                    target.command
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn package_mount_root<'a>(vm: &'a VmState, id: &str) -> Result<&'a str, SidecarError> {
+    vm.package_mount_roots
+        .get(id)
+        .map(String::as_str)
+        .ok_or_else(|| {
+            SidecarError::InvalidState(format!(
+                "software package {id:?} is missing its projection root"
+            ))
+        })
+}
+
+fn package_command_guest_path(root: &str, command: &str) -> String {
+    normalize_path(&format!("{root}/bin/{command}"))
 }
 
 fn package_leaf_mount_to_descriptor(
@@ -3667,9 +4308,10 @@ fn refresh_package_runtime_state(vm: &mut VmState) -> Result<(), SidecarError> {
     vm.guest_env = vm.base_guest_env.clone();
     apply_package_provides_env(&mut vm.guest_env, &descriptors);
 
-    vm.command_guest_paths = discover_command_guest_paths(&mut vm.kernel);
+    vm.command_guest_paths = discover_command_guest_paths(&mut vm.kernel)?;
     let mut provided_commands = BTreeMap::new();
-    for descriptor in &descriptors {
+    for (id, descriptor) in &vm.package_descriptors {
+        let mount_root = package_mount_root(vm, id)?.to_owned();
         let commands = descriptor
             .commands
             .iter()
@@ -3678,7 +4320,7 @@ fn refresh_package_runtime_state(vm: &mut VmState) -> Result<(), SidecarError> {
         for command in &commands {
             vm.command_guest_paths
                 .entry(command.clone())
-                .or_insert_with(|| projected_command_guest_path(command));
+                .or_insert_with(|| package_command_guest_path(&mount_root, command));
         }
         provided_commands.insert(descriptor.name.clone(), commands);
     }
@@ -3687,10 +4329,10 @@ fn refresh_package_runtime_state(vm: &mut VmState) -> Result<(), SidecarError> {
 
     let command_guest_paths = vm.command_guest_paths.clone();
     refresh_guest_command_path_env(&mut vm.guest_env, &command_guest_paths);
-    let mut execution_commands = vec![String::from(JAVASCRIPT_COMMAND), String::from(WASM_COMMAND)];
+    let mut execution_commands = default_execution_commands(vm.configuration.defaults_profile);
     execution_commands.extend(vm.command_guest_paths.keys().cloned());
     vm.kernel
-        .register_driver(CommandDriver::new(
+        .register_driver_for_operator(CommandDriver::new(
             EXECUTION_DRIVER_NAME,
             execution_commands,
         ))
@@ -3700,6 +4342,8 @@ fn refresh_package_runtime_state(vm: &mut VmState) -> Result<(), SidecarError> {
 fn append_package_provides_mounts(
     mounts: &mut Vec<MountDescriptor>,
     packages: &[crate::package_projection::PackageDescriptor],
+    used: usize,
+    limit: usize,
 ) -> Result<(), SidecarError> {
     for package in packages {
         let Some(provides) = package.provides.as_ref() else {
@@ -3711,7 +4355,16 @@ fn append_package_provides_mounts(
                 &file.source,
                 &file.target,
             )? {
-                Some(mount) => mounts.push(package_leaf_mount_to_descriptor(mount)),
+                Some(mount) => {
+                    if mounts.len() >= limit.saturating_sub(used) {
+                        return Err(SidecarError::PackageMountLimit {
+                            used,
+                            requested: mounts.len().saturating_add(1),
+                            limit,
+                        });
+                    }
+                    mounts.push(package_leaf_mount_to_descriptor(mount));
+                }
                 None => {
                     tracing::warn!(
                         package = %package.name,
@@ -4348,6 +5001,76 @@ fn shadow_path_for_guest(shadow_root: &std::path::Path, guest_path: &str) -> Pat
     shadow_root.join(relative)
 }
 
+fn default_execution_commands(profile: vm_config::VmDefaultsProfile) -> Vec<String> {
+    let mut commands = vec![
+        String::from(JAVASCRIPT_COMMAND),
+        String::from(PYTHON_COMMAND),
+        String::from("python3"),
+        String::from(WASM_COMMAND),
+    ];
+    if profile == vm_config::VmDefaultsProfile::AgentOs {
+        commands.extend([String::from("npm"), String::from("npx")]);
+    }
+    commands
+}
+
+fn create_vm_environment(
+    config: &vm_config::CreateVmConfig,
+) -> Result<BTreeMap<String, String>, SidecarError> {
+    if let Some(environment) = &config.env {
+        return Ok(environment.clone());
+    }
+    match config.defaults_profile() {
+        vm_config::VmDefaultsProfile::Secure => Ok(BTreeMap::new()),
+        vm_config::VmDefaultsProfile::AgentOs => load_bundled_base_environment().map_err(|error| {
+            SidecarError::InvalidState(format!(
+                "failed to load sidecar-owned agentOS environment defaults: {error}"
+            ))
+        }),
+    }
+}
+
+/// Compare the policy that VM creation actually applies, while retaining a
+/// fail-safe structural comparison for fields without a resolved form here.
+/// The public comparison request will call this with the serving sidecar's
+/// frame limit, so actor clients do not need to copy VM default values.
+fn equivalent_vm_creation_config(
+    mut before: vm_config::CreateVmConfig,
+    mut after: vm_config::CreateVmConfig,
+    sidecar_max_frame_bytes: usize,
+) -> Result<bool, SidecarError> {
+    let resolve = |config: &mut vm_config::CreateVmConfig| -> Result<_, SidecarError> {
+        config.normalize().map_err(|error| {
+            SidecarError::InvalidState(format!("invalid create VM config: {error}"))
+        })?;
+        config.validate(sidecar_max_frame_bytes).map_err(|error| {
+            SidecarError::InvalidState(format!("invalid create VM config: {error}"))
+        })?;
+        let profile = config.defaults_profile();
+        let permissions = resolve_permissions_policy(profile, config.permissions.clone());
+        validate_permissions_policy(&permissions)?;
+        let limits =
+            crate::limits::vm_limits_from_config(config.limits.as_ref(), sidecar_max_frame_bytes)?;
+        let environment = create_vm_environment(config)?;
+        let mut js_runtime = config.js_runtime.clone().unwrap_or_default();
+        js_runtime.high_resolution_time = Some(js_runtime.high_resolution_time.unwrap_or(false));
+
+        // Keep every other field in the structural comparison, including
+        // omission-sensitive allow-lists, bootstrap commands, and database
+        // descriptors. New fields therefore require replacement by default.
+        config.defaults_profile = Some(profile);
+        config.permissions = None;
+        config.limits = None;
+        config.env = None;
+        config.js_runtime = None;
+        Ok((permissions, limits, environment, js_runtime))
+    };
+
+    let before_resolved = resolve(&mut before)?;
+    let after_resolved = resolve(&mut after)?;
+    Ok(before == after && before_resolved == after_resolved)
+}
+
 fn normalize_guest_path(path: &str) -> String {
     let mut segments = Vec::new();
     let absolute = path.starts_with('/');
@@ -4468,7 +5191,7 @@ fn prune_kernel_command_stub(
 #[cfg(test)]
 mod tests {
     use super::{
-        bootstrap_native_root_filesystem, bootstrap_shadow_root, close_vm_admission,
+        bootstrap_native_root_filesystem, bootstrap_shadow_root, close_vm_capability_admission,
         create_vm_unix_socket_host_dir, initialize_vm_shadow_root,
         materialize_shadow_root_snapshot_entries, native_root_plugin_from_config,
         prune_kernel_command_stub, retire_vm_fairness, shadow_path_for_guest, vm_quarantine_reason,
@@ -4506,9 +5229,33 @@ mod tests {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn mount_preflight_orders_normalized_parents_before_children() {
+        let registry = super::build_mount_plugin_registry::<LocalBridge>().unwrap();
+        let descriptor = |path: &str| crate::protocol::MountDescriptor {
+            guest_path: path.into(),
+            guest_source: "test".into(),
+            guest_fstype: "test".into(),
+            read_only: true,
+            plugin: crate::protocol::MountPluginDescriptor {
+                id: "agentos_packages".into(),
+                config: "{}".into(),
+            },
+        };
+        let mounts = [descriptor("/parent/child"), descriptor("/x/../parent")];
+        let prepared = super::prepare_mount_descriptors(&registry, &mounts).unwrap();
+        assert_eq!(prepared[0].0.guest_path, "/x/../parent");
+        assert_eq!(prepared[1].0.guest_path, "/parent/child");
+        // Teardown uses the same depth in reverse and must also ignore dots.
+        assert_eq!(super::mount_path_depth("/parent/./child/"), 2);
+        let duplicates = [descriptor("/parent"), descriptor("/x/../parent")];
+        assert!(super::prepare_mount_descriptors(&registry, &duplicates).is_err());
+    }
 
     fn reconciliation_handles(
         generation: u64,
@@ -4537,6 +5284,31 @@ mod tests {
         let runtime_context = process.scoped_for_vm(Arc::clone(&resources), generation);
         let capabilities = CapabilityRegistry::new(generation, Arc::clone(&resources));
         (resources, runtime_context, capabilities)
+    }
+
+    #[test]
+    fn create_environment_preserves_omitted_profile_defaults_and_explicit_empty_override() {
+        let mut config = agentos_vm_config::CreateVmConfig::default();
+        assert!(super::create_vm_environment(&config).unwrap().is_empty());
+
+        config.defaults_profile = Some(agentos_vm_config::VmDefaultsProfile::AgentOs);
+        let product_defaults = super::create_vm_environment(&config).unwrap();
+        assert_eq!(
+            product_defaults,
+            super::load_bundled_base_environment().expect("bundled environment")
+        );
+        assert!(!product_defaults.is_empty());
+
+        config.env = Some(BTreeMap::new());
+        assert!(super::create_vm_environment(&config).unwrap().is_empty());
+        config.env = Some(BTreeMap::from([(
+            String::from("EXPLICIT"),
+            String::from("value"),
+        )]));
+        assert_eq!(
+            super::create_vm_environment(&config).unwrap(),
+            config.env.unwrap()
+        );
     }
 
     #[test]
@@ -4569,6 +5341,114 @@ mod tests {
             .build()
             .expect("teardown test runtime")
             .block_on(future)
+    }
+
+    struct PendingCloseDatabase {
+        close_started: Arc<AtomicBool>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::vm_sqlite::VmSqliteDatabase for PendingCloseDatabase {
+        async fn query(
+            &self,
+            _statement: crate::vm_sqlite::SqlStatement,
+        ) -> Result<crate::vm_sqlite::QueryResult, crate::vm_sqlite::VmSqliteError> {
+            unreachable!("pending-close test never queries SQLite")
+        }
+
+        async fn transaction(
+            &self,
+            _statements: Vec<crate::vm_sqlite::SqlStatement>,
+        ) -> Result<Vec<crate::vm_sqlite::QueryResult>, crate::vm_sqlite::VmSqliteError> {
+            unreachable!("pending-close test never transacts SQLite")
+        }
+
+        async fn close(&self) -> Result<(), crate::vm_sqlite::VmSqliteError> {
+            self.close_started.store(true, Ordering::Release);
+            std::future::pending().await
+        }
+    }
+
+    #[test]
+    fn sqlite_close_deadline_polls_close_and_returns_typed_failure() {
+        let close_started = Arc::new(AtomicBool::new(false));
+        let database = PendingCloseDatabase {
+            close_started: Arc::clone(&close_started),
+        };
+        let deadline = tokio::time::Instant::now() - Duration::from_millis(1);
+        let (result, timed_out) = block_on(super::close_vm_database_before_deadline(
+            "vm-close-deadline",
+            &database,
+            deadline,
+            5_000,
+        ));
+        assert!(close_started.load(Ordering::Acquire));
+        assert!(timed_out);
+        assert!(matches!(
+            result,
+            Err(crate::SidecarError::VmTeardownDeadline { message, .. })
+                if message.contains("ERR_AGENTOS_VM_TEARDOWN_DEADLINE")
+                    && message.contains("phase=sqlite_close")
+                    && message.contains("limits.reactor.shutdownDeadlineMs")
+        ));
+    }
+
+    #[test]
+    fn vm_config_comparison_uses_resolved_sidecar_defaults() {
+        let baseline = agentos_vm_config::CreateVmConfig {
+            defaults_profile: Some(agentos_vm_config::VmDefaultsProfile::AgentOs),
+            ..Default::default()
+        };
+        let mut explicit_defaults = baseline.clone();
+        explicit_defaults.limits = Some(agentos_vm_config::VmLimitsConfig::default());
+        explicit_defaults.permissions = Some(agentos_vm_config::PermissionsPolicy {
+            fs: None,
+            network: None,
+            child_process: None,
+            process: None,
+            env: None,
+            binding: None,
+        });
+        explicit_defaults.js_runtime = Some(agentos_vm_config::JsRuntimeConfig {
+            high_resolution_time: Some(false),
+            ..Default::default()
+        });
+        assert!(super::equivalent_vm_creation_config(
+            baseline.clone(),
+            explicit_defaults,
+            crate::protocol::DEFAULT_MAX_FRAME_BYTES,
+        )
+        .expect("compare resolved defaults"));
+
+        let mut empty_environment = baseline.clone();
+        empty_environment.env = Some(Default::default());
+        assert!(!super::equivalent_vm_creation_config(
+            baseline.clone(),
+            empty_environment,
+            crate::protocol::DEFAULT_MAX_FRAME_BYTES,
+        )
+        .expect("explicit empty environment differs from base environment"));
+
+        let mut empty_allowlist = baseline.clone();
+        empty_allowlist.js_runtime = Some(agentos_vm_config::JsRuntimeConfig {
+            allowed_builtins: Some(Vec::new()),
+            ..Default::default()
+        });
+        assert!(!super::equivalent_vm_creation_config(
+            baseline.clone(),
+            empty_allowlist,
+            crate::protocol::DEFAULT_MAX_FRAME_BYTES,
+        )
+        .expect("explicit empty allow-list denies builtins"));
+
+        let mut changed_root = baseline.clone();
+        changed_root.root_filesystem.mode = agentos_vm_config::RootFilesystemMode::ReadOnly;
+        assert!(!super::equivalent_vm_creation_config(
+            baseline,
+            changed_root,
+            crate::protocol::DEFAULT_MAX_FRAME_BYTES,
+        )
+        .expect("root filesystem changes require replacement"));
     }
 
     #[test]
@@ -4618,6 +5498,52 @@ mod tests {
         assert_eq!(sidecar.next_vm_id, 42);
     }
 
+    struct AdmissionCheckingDatabase {
+        inner: crate::vm_sqlite::SharedVmSqliteDatabase,
+        runtime_context: RuntimeContext,
+        capabilities: CapabilityRegistry,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::vm_sqlite::VmSqliteDatabase for AdmissionCheckingDatabase {
+        async fn query(
+            &self,
+            statement: crate::vm_sqlite::SqlStatement,
+        ) -> Result<crate::vm_sqlite::QueryResult, crate::vm_sqlite::VmSqliteError> {
+            self.inner.query(statement).await
+        }
+
+        async fn transaction(
+            &self,
+            statements: Vec<crate::vm_sqlite::SqlStatement>,
+        ) -> Result<Vec<crate::vm_sqlite::QueryResult>, crate::vm_sqlite::VmSqliteError> {
+            self.inner.transaction(statements).await
+        }
+
+        async fn close(&self) -> Result<(), crate::vm_sqlite::VmSqliteError> {
+            assert!(
+                self.runtime_context.admission_is_open(),
+                "SQLite close still needs runtime blocking admission"
+            );
+            let error = self
+                .capabilities
+                .reserve(CapabilityKind::UdpSocket)
+                .expect_err("guest capability admission must close before SQLite cleanup");
+            assert!(error
+                .to_string()
+                .contains("ERR_AGENTOS_CAPABILITY_REGISTRY_CLOSED"));
+            self.inner.close().await
+        }
+    }
+
+    fn check_database_admission_during_teardown(vm: &mut crate::state::VmState) {
+        vm.database = Some(Arc::new(AdmissionCheckingDatabase {
+            inner: vm.database.take().expect("real SQLite database"),
+            runtime_context: vm.runtime_context.clone(),
+            capabilities: vm.capabilities.clone(),
+        }));
+    }
+
     #[test]
     fn create_and_dispose_release_central_state_during_owned_work() {
         let mut sidecar = NativeSidecar::new(LocalBridge::default()).expect("test sidecar");
@@ -4642,19 +5568,31 @@ mod tests {
             },
         );
 
-        let create_payload = CreateVmRequest::legacy_test_config(
+        let sqlite_dir = tempfile::tempdir().expect("VM SQLite test directory");
+        let mut create_payload = CreateVmRequest::legacy_test_config(
             GuestRuntimeKind::JavaScript,
             Default::default(),
             Default::default(),
             None,
         );
+        let mut create_config: agentos_vm_config::CreateVmConfig =
+            serde_json::from_str(&create_payload.config).expect("decode VM creation config");
+        create_config.database = Some(agentos_vm_config::VmSqliteDescriptor::SqliteFile {
+            path: sqlite_dir
+                .path()
+                .join("vm.sqlite")
+                .to_string_lossy()
+                .into_owned(),
+        });
+        create_payload.config =
+            serde_json::to_string(&create_config).expect("encode VM creation config");
         let create_request = RequestFrame::new(
             100,
             OwnershipScope::session(&connection_id, &session_id),
             RequestPayload::CreateVm(create_payload.clone()),
         );
         let prepared = sidecar
-            .prepare_create_vm(&create_request, create_payload)
+            .prepare_create_vm(&create_request, create_payload.clone())
             .expect("prepare owned VM create");
         assert!(sidecar.vms.is_empty());
         sidecar.next_sidecar_request_id = -41;
@@ -4671,6 +5609,7 @@ mod tests {
             .cloned()
             .expect("created VM session membership");
         assert!(sidecar.vms.contains_key(&vm_id));
+        check_database_admission_during_teardown(&mut sidecar.vms.get_mut(&vm_id).unwrap());
 
         let dispose_payload = DisposeVmRequest {
             reason: DisposeReason::Requested,
@@ -4701,6 +5640,119 @@ mod tests {
             .sessions
             .get(&session_id)
             .is_some_and(|session| !session.vm_ids.contains(&vm_id)));
+
+        // The internal disposal path has separate teardown code and must also
+        // close SQLite before closing VM-scoped blocking-job admission.
+        let create_request = RequestFrame::new(
+            102,
+            OwnershipScope::session(&connection_id, &session_id),
+            RequestPayload::CreateVm(create_payload.clone()),
+        );
+        let prepared = sidecar
+            .prepare_create_vm(&create_request, create_payload)
+            .expect("prepare internally disposed VM");
+        let completed = block_on(prepared.execute()).expect("execute internally disposed VM");
+        sidecar
+            .complete_create_vm(completed)
+            .expect("publish internally disposed VM");
+        let vm_id = sidecar
+            .sessions
+            .get(&session_id)
+            .and_then(|session| session.vm_ids.iter().next())
+            .cloned()
+            .expect("internally disposed VM session membership");
+        check_database_admission_during_teardown(&mut sidecar.vms.get_mut(&vm_id).unwrap());
+        block_on(sidecar.dispose_vm_internal(
+            &connection_id,
+            &session_id,
+            &vm_id,
+            DisposeReason::Requested,
+        ))
+        .expect("dispose internally owned VM with local SQLite");
+        assert!(sidecar
+            .sessions
+            .get(&session_id)
+            .is_some_and(|session| !session.vm_ids.contains(&vm_id)));
+
+        // A stalled close must return a typed timeout and quarantine the VM
+        // instead of holding the disposal request indefinitely.
+        for internal_disposal in [false, true] {
+            let create_payload = CreateVmRequest::legacy_test_config(
+                GuestRuntimeKind::JavaScript,
+                Default::default(),
+                Default::default(),
+                None,
+            );
+            let create_request = RequestFrame::new(
+                103,
+                OwnershipScope::session(&connection_id, &session_id),
+                RequestPayload::CreateVm(create_payload.clone()),
+            );
+            let prepared = sidecar
+                .prepare_create_vm(&create_request, create_payload)
+                .expect("prepare VM with pending SQLite close");
+            let completed = block_on(prepared.execute()).expect("execute pending-close VM create");
+            sidecar
+                .complete_create_vm(completed)
+                .expect("publish pending-close VM");
+            let vm_id = sidecar
+                .sessions
+                .get(&session_id)
+                .and_then(|session| session.vm_ids.iter().next())
+                .cloned()
+                .expect("pending-close VM session membership");
+            let close_started = Arc::new(AtomicBool::new(false));
+            let generation = {
+                let mut vm = sidecar.vms.get_mut(&vm_id).expect("pending-close VM");
+                vm.limits.reactor.shutdown_deadline_ms = 10;
+                vm.database = Some(Arc::new(PendingCloseDatabase {
+                    close_started: Arc::clone(&close_started),
+                }));
+                vm.generation
+            };
+            let error = if internal_disposal {
+                block_on(sidecar.dispose_vm_internal(
+                    &connection_id,
+                    &session_id,
+                    &vm_id,
+                    DisposeReason::Requested,
+                ))
+                .expect_err("stalled SQLite close must fail internal disposal")
+            } else {
+                let dispose_payload = DisposeVmRequest {
+                    reason: DisposeReason::Requested,
+                };
+                let dispose_request = RequestFrame::new(
+                    104,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    RequestPayload::DisposeVm(dispose_payload.clone()),
+                );
+                let plan = sidecar
+                    .prepare_dispose_vm(&dispose_request, dispose_payload)
+                    .expect("prepare pending-close VM disposal");
+                let prepared = sidecar
+                    .detach_vm_for_disposal(plan)
+                    .expect("detach pending-close VM");
+                let completed = block_on(prepared.execute());
+                sidecar
+                    .complete_dispose_vm(completed)
+                    .expect_err("stalled SQLite close must fail disposal")
+            };
+            assert!(close_started.load(Ordering::Acquire));
+            assert!(matches!(
+                error,
+                crate::SidecarError::VmTeardownDeadline { .. }
+            ));
+            assert!(sidecar.quarantined_vms.contains_key(&generation));
+            let quarantined = sidecar.quarantined_vms.get(&generation).unwrap();
+            assert!(quarantined.sqlite_close_unconfirmed);
+            assert!(quarantined.reconciliation_snapshot().ledger_zero);
+            sidecar.reap_reconciled_quarantined_vms();
+            assert!(
+                sidecar.quarantined_vms.contains_key(&generation),
+                "local resource counts do not prove canceled SQLite close completion"
+            );
+        }
     }
 
     fn active_vm_metric(sidecar: &NativeSidecar<LocalBridge>) -> usize {
@@ -4715,16 +5767,23 @@ mod tests {
     }
 
     #[test]
-    fn teardown_start_closes_capability_and_executor_admission() {
+    fn teardown_closes_capabilities_before_executor_admission() {
         let (_resources, runtime_context, capabilities) = reconciliation_handles(70_001);
         let stale_runtime_context = runtime_context.clone();
-        close_vm_admission(&runtime_context, &capabilities).expect("close VM admission");
+        close_vm_capability_admission(&capabilities).expect("close VM capability admission");
         let error = capabilities
             .reserve(CapabilityKind::UdpSocket)
             .expect_err("closed VM generation must reject new capabilities");
         assert!(error
             .to_string()
             .contains("ERR_AGENTOS_CAPABILITY_REGISTRY_CLOSED"));
+        assert!(runtime_context.admission_is_open());
+        assert_eq!(
+            block_on(runtime_context.blocking().run(1, || 42)).unwrap(),
+            42,
+            "trusted SQLite close must still be able to schedule blocking work"
+        );
+        runtime_context.close_admission();
         let task_error = stale_runtime_context
             .spawn(TaskClass::Vm, async {})
             .expect_err("stale VM runtime clone must reject new executor work");
@@ -4854,6 +5913,7 @@ mod tests {
             runtime_context,
             capabilities,
             reason: VmQuarantineReason::FairnessIntegrity,
+            sqlite_close_unconfirmed: false,
         };
         assert!(quarantined.reconciliation_snapshot().ledger_zero);
         assert!(!quarantined.can_reap());
@@ -4872,6 +5932,7 @@ mod tests {
             runtime_context,
             capabilities,
             reason: VmQuarantineReason::ResourceIntegrity,
+            sqlite_close_unconfirmed: false,
         };
         assert!(quarantined.reconciliation_snapshot().ledger_zero);
         assert!(!quarantined.can_reap());
@@ -4917,6 +5978,7 @@ mod tests {
                 runtime_context: runtime_context.clone(),
                 capabilities: capabilities.clone(),
                 reason: VmQuarantineReason::TeardownDeadline,
+                sqlite_close_unconfirmed: false,
             };
             assert!(!quarantined.can_reap());
 
@@ -4956,6 +6018,7 @@ mod tests {
                 runtime_context,
                 capabilities,
                 reason: VmQuarantineReason::TeardownDeadline,
+                sqlite_close_unconfirmed: false,
             })
             .expect("retain quarantined generation");
         assert_eq!(active_vm_metric(&sidecar), baseline + 1);

@@ -9,14 +9,17 @@ Back a VM with a real Sandbox Agent container: the sandbox's filesystem appears 
 
 ## How it works
 
-The server passes `docker()` as the sandbox provider. Each actor VM gets its own Docker sandbox, mounted under `/home/agentos/sandbox`, plus a `sandbox` binding collection surfaced as the `agentos-sandbox` CLI command. Disposing the VM destroys its sandbox.
+The embedded Core client passes `docker()` as the sandbox provider. The VM gets
+its own Docker sandbox mounted under `/home/agentos/sandbox`, plus a `sandbox`
+binding collection surfaced as the `agentos-sandbox` CLI command. These host
+mounts and bindings are intentionally unavailable from the hosted Rust actor.
+Disposing the VM destroys its sandbox.
 
 ## Run it
 
 ```sh
 npm install
-npm run server   # starts the VM with the sandbox mount + bindings
-npm run client   # writes a file, runs it, and streams process output
+npx tsx client.ts
 ```
 
 You should see `hello` printed from a file executed inside the Docker sandbox.

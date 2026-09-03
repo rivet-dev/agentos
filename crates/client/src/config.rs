@@ -14,7 +14,19 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::fs::VirtualFileSystem;
-pub use agentos_vm_config::{VmGroupConfig, VmSqliteDescriptor, VmUserAccountConfig, VmUserConfig};
+pub use agentos_vm_config::{
+    VmGroupConfig, VmSqliteCallbackRequest, VmSqliteCallbackResponse, VmSqliteDescriptor,
+    VmSqliteQueryResult, VmSqliteStatement, VmSqliteValue, VmUserAccountConfig, VmUserConfig,
+    VM_SQLITE_CALLBACK_NAMESPACE,
+};
+
+pub type SidecarSqliteCallback = Arc<
+    dyn Fn(
+            VmSqliteCallbackRequest,
+        ) -> futures::future::BoxFuture<'static, Result<VmSqliteCallbackResponse, String>>
+        + Send
+        + Sync,
+>;
 
 /// Resolved client options (= TS `AgentOsOptions`). All fields optional with documented defaults.
 ///
@@ -22,12 +34,15 @@ pub use agentos_vm_config::{VmGroupConfig, VmSqliteDescriptor, VmUserAccountConf
 /// and `packages/core/src/options-schema.ts::agentOsOptionsSchema`.
 #[derive(Default)]
 pub struct AgentOsConfig {
-    /// Temporary VM-scoped local SQLite backend shared by VFS metadata/storage
-    /// and agentOS durable state.
+    /// VM-scoped SQLite backend shared by VFS metadata/storage and agentOS
+    /// durable state.
     pub database: Option<agentos_vm_config::VmSqliteDescriptor>,
+    /// Trusted callback for [`VmSqliteDescriptor::HostCallback`]. Hosted actors
+    /// use this to execute VM database operations through Rivet SQLite.
+    pub sidecar_sqlite_callback: Option<SidecarSqliteCallback>,
     /// Initial virtual Linux credentials and account record. Defaults to `1000:1000` (`agentos`).
     pub user: Option<VmUserConfig>,
-    /// Complete initial VM environment. `None` selects Core's base environment;
+    /// Complete initial VM environment. `None` selects the sidecar's bundled base environment;
     /// `Some(empty)` deliberately starts with an empty environment.
     pub environment: Option<BTreeMap<String, String>>,
     /// Software packages to install (flattened). Default `[]`.
@@ -41,7 +56,7 @@ pub struct AgentOsConfig {
     pub packages_mount_at: Option<String>,
     /// Trusted Core package acquisition limits and local-test transport policy.
     /// Hosted actor callers cannot configure this process-owned policy.
-    pub package_resolver: crate::software::PackageResolverOptions,
+    pub package_resolver: Option<crate::software::PackageResolverOptions>,
     /// Loopback ports exempt from the default outbound-to-host block.
     pub loopback_exempt_ports: Vec<u16>,
     /// Allowed Node.js builtins. Default: the hardened native-bridge set.
@@ -88,6 +103,11 @@ impl AgentOsConfigBuilder {
         self
     }
 
+    pub fn sidecar_sqlite_callback(mut self, callback: SidecarSqliteCallback) -> Self {
+        self.config.sidecar_sqlite_callback = Some(callback);
+        self
+    }
+
     pub fn packages(mut self, packages: Vec<PackageRef>) -> Self {
         self.config.packages = packages;
         self
@@ -99,7 +119,7 @@ impl AgentOsConfigBuilder {
     }
 
     pub fn package_resolver(mut self, options: crate::software::PackageResolverOptions) -> Self {
-        self.config.package_resolver = options;
+        self.config.package_resolver = Some(options);
         self
     }
 
@@ -187,35 +207,6 @@ impl AgentOsConfig {
     pub fn validate(&self) -> Result<(), crate::ClientError> {
         crate::agent_os::validate_config(self)
     }
-}
-
-/// The base process environment used when callers omit
-/// [`AgentOsConfig::environment`]. Keep this generated constant in lockstep
-/// with `packages/core/src/base-filesystem.ts`.
-pub fn default_environment() -> BTreeMap<String, String> {
-    [
-        ("CHARSET", "UTF-8"),
-        ("HOME", "/home/agentos"),
-        ("HOSTNAME", "agentos"),
-        ("LANG", "C.UTF-8"),
-        ("LC_COLLATE", "C"),
-        ("LOGNAME", "agentos"),
-        ("PAGER", "less"),
-        (
-            "PATH",
-            "/usr/local/sbin:/usr/local/bin:/opt/agentos/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-        ),
-        (
-            "MANPATH",
-            "/opt/agentos/share/man:/usr/local/share/man:/usr/share/man",
-        ),
-        ("SHELL", "/bin/sh"),
-        ("USER", "agentos"),
-        ("PS1", "\\h:\\w\\$ "),
-    ]
-    .into_iter()
-    .map(|(key, value)| (key.to_owned(), value.to_owned()))
-    .collect()
 }
 
 /// The kind of a software package, which decides how it is mounted into the VM. Mirrors the TS
@@ -321,11 +312,22 @@ pub struct Bindings {
 #[cfg_attr(feature = "contract", derive(ts_rs::TS))]
 #[cfg_attr(feature = "contract", ts(rename_all = "camelCase"))]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AgentOsLimits {
+    #[serde(
+        default,
+        rename = "agentosPackages",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(feature = "contract", ts(optional))]
+    pub agentos_packages: Option<AgentOsPackageLimits>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resources: Option<ResourceLimits>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub http: Option<HttpLimits>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "contract", ts(optional))]
+    pub tls: Option<TlsLimits>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bindings: Option<BindingLimits>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -339,12 +341,26 @@ pub struct AgentOsLimits {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wasm: Option<WasmLimits>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "contract", ts(optional))]
+    pub execution: Option<ExecutionLimits>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub process: Option<ProcessLimits>,
 }
 
 #[cfg_attr(feature = "contract", derive(ts_rs::TS))]
 #[cfg_attr(feature = "contract", ts(rename_all = "camelCase"))]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentOsPackageLimits {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "contract", ts(optional))]
+    pub max_mounts: Option<u64>,
+}
+
+#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
+#[cfg_attr(feature = "contract", ts(rename_all = "camelCase"))]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ResourceLimits {
     #[serde(default, rename = "cpuCount", skip_serializing_if = "Option::is_none")]
     pub cpu_count: Option<u64>,
@@ -459,6 +475,7 @@ pub struct ResourceLimits {
 #[cfg_attr(feature = "contract", derive(ts_rs::TS))]
 #[cfg_attr(feature = "contract", ts(rename_all = "camelCase"))]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct HttpLimits {
     #[serde(
         default,
@@ -468,9 +485,38 @@ pub struct HttpLimits {
     pub max_fetch_response_bytes: Option<u64>,
 }
 
+/// Per-VM TLS plaintext buffering overrides. Omitted fields use sidecar defaults.
 #[cfg_attr(feature = "contract", derive(ts_rs::TS))]
 #[cfg_attr(feature = "contract", ts(rename_all = "camelCase"))]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TlsLimits {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "contract", ts(optional))]
+    pub max_buffered_bytes: Option<u64>,
+}
+
+/// Per-VM language-execution retention and warning overrides.
+#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
+#[cfg_attr(feature = "contract", ts(rename_all = "camelCase"))]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExecutionLimits {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "contract", ts(optional))]
+    pub completed_ttl_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "contract", ts(optional))]
+    pub max_completed_executions: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "contract", ts(optional))]
+    pub live_execution_warning_threshold: Option<u64>,
+}
+
+#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
+#[cfg_attr(feature = "contract", ts(rename_all = "camelCase"))]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BindingLimits {
     #[serde(
         default,
@@ -525,6 +571,7 @@ pub struct BindingLimits {
 #[cfg_attr(feature = "contract", derive(ts_rs::TS))]
 #[cfg_attr(feature = "contract", ts(rename_all = "camelCase"))]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PluginLimits {
     #[serde(
         default,
@@ -543,6 +590,7 @@ pub struct PluginLimits {
 #[cfg_attr(feature = "contract", derive(ts_rs::TS))]
 #[cfg_attr(feature = "contract", ts(rename_all = "camelCase"))]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SqliteLimits {
     #[serde(
         default,
@@ -555,6 +603,7 @@ pub struct SqliteLimits {
 #[cfg_attr(feature = "contract", derive(ts_rs::TS))]
 #[cfg_attr(feature = "contract", ts(rename_all = "camelCase"))]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct JsRuntimeLimits {
     #[serde(
         default,
@@ -615,6 +664,7 @@ pub struct JsRuntimeLimits {
 #[cfg_attr(feature = "contract", derive(ts_rs::TS))]
 #[cfg_attr(feature = "contract", ts(rename_all = "camelCase"))]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PythonLimits {
     #[serde(
         default,
@@ -645,6 +695,7 @@ pub struct PythonLimits {
 #[cfg_attr(feature = "contract", derive(ts_rs::TS))]
 #[cfg_attr(feature = "contract", ts(rename_all = "camelCase"))]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WasmLimits {
     #[serde(
         default,
@@ -687,6 +738,7 @@ pub struct WasmLimits {
 #[cfg_attr(feature = "contract", derive(ts_rs::TS))]
 #[cfg_attr(feature = "contract", ts(rename_all = "camelCase"))]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProcessLimits {
     #[serde(
         default,
@@ -728,6 +780,7 @@ pub struct ProcessLimits {
 #[cfg_attr(feature = "contract", derive(ts_rs::TS))]
 #[cfg_attr(feature = "contract", ts(rename_all = "camelCase"))]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Permissions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fs: Option<FsPermissions>,
@@ -778,6 +831,7 @@ pub enum PatternPermissions {
 #[cfg_attr(feature = "contract", derive(ts_rs::TS))]
 #[cfg_attr(feature = "contract", ts(rename_all = "camelCase"))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RulePermissions<T> {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<PermissionMode>,
@@ -788,6 +842,7 @@ pub struct RulePermissions<T> {
 #[cfg_attr(feature = "contract", derive(ts_rs::TS))]
 #[cfg_attr(feature = "contract", ts(rename_all = "camelCase"))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FsPermissionRule {
     pub mode: PermissionMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -800,6 +855,7 @@ pub struct FsPermissionRule {
 #[cfg_attr(feature = "contract", derive(ts_rs::TS))]
 #[cfg_attr(feature = "contract", ts(rename_all = "camelCase"))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PatternPermissionRule {
     pub mode: PermissionMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]

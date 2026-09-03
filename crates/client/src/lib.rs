@@ -22,11 +22,55 @@ pub mod error;
 pub mod fs;
 pub mod language_execution;
 pub mod net;
+mod output_replay;
 pub mod process;
 pub mod sidecar;
 pub mod software;
 pub mod stream;
 pub mod transport;
+
+/// Same-version static actor integration, deliberately excluded from the
+/// default public Core SDK. This keeps config projection/transport access out
+/// of the actor without adding an unmatched public AgentOs method.
+#[cfg(feature = "actor-internals")]
+#[doc(hidden)]
+pub mod actor_internals {
+    /// Worker shutdown owns the entire child, including failed VM leases.
+    pub async fn shutdown_package_session(
+        session: &crate::AgentOsPackageSession,
+    ) -> Result<(), crate::ClientError> {
+        session.shutdown_worker().await
+    }
+
+    /// Compare only the VM config document, not runtime kind or ConfigureVm
+    /// fields. The actor fixes its runtime kind and separately classifies
+    /// hosted filesystem/software fields and any fields absent from this projection.
+    pub async fn vm_config_equivalent(
+        vm: &crate::AgentOs,
+        before: &crate::AgentOsConfig,
+        after: &crate::AgentOsConfig,
+        before_restart_identity: Vec<String>,
+        after_restart_identity: Vec<String>,
+    ) -> Result<bool, crate::ClientError> {
+        vm.vm_config_equivalent(
+            before,
+            after,
+            before_restart_identity,
+            after_restart_identity,
+        )
+        .await
+    }
+}
+
+/// Same-version sidecar bridge while the resolver still lives in this crate.
+/// Removed when package acquisition/cache ownership moves out of Core.
+#[cfg(feature = "sidecar-internals")]
+#[doc(hidden)]
+pub mod sidecar_internals {
+    pub fn package_acquisition_timeout_ms(resolver: &crate::PackageResolver) -> u64 {
+        resolver.acquisition_timeout_ms()
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Centralized constants (ADR-001 §6 / spec.md §7)
@@ -55,21 +99,27 @@ pub use language_execution::{
     InlineExecutionOptions, JavaScriptExecutionOptions, JavaScriptModuleFormat,
     LanguageExecutionOptions, LanguageSpawnOptions, ProcessDescriptor, TypeScriptDiagnostic,
 };
+#[cfg(feature = "sidecar-internals")]
+pub use sidecar::configure_shared_sidecar_package_cache;
+#[cfg(any(feature = "actor-internals", feature = "sidecar-internals"))]
+pub use sidecar::AgentOsPackageSession;
 pub use sidecar::{
     AgentOsSidecar, AgentOsSidecarDescription, AgentOsSidecarPlacement, SidecarState,
 };
 pub use stream::{ByteStream, Subscription};
 
 pub use config::{
-    default_environment, node_modules_mount, AgentOsConfig, AgentOsConfigBuilder, AgentOsLimits,
-    AgentOsSidecarConfig, Binding, BindingCallback, BindingLimits, Bindings, FsPermissionRule,
-    FsPermissions, HttpLimits, JsRuntimeLimits, MountConfig, MountPlugin, OverlayMountConfig,
-    PackageRef, PatternPermissionRule, PatternPermissions, PermissionMode, Permissions,
-    PluginLimits, PythonLimits, ResourceLimits, RootFilesystemConfig, RootFilesystemKind,
-    RootFilesystemMode, RootLowerInput, RulePermissions, ScheduleCallback, ScheduleDriver,
-    ScheduleEntry, ScheduleHandle, SidecarJsBridgeCall, SidecarJsBridgeCallback, SoftwareInput,
-    SoftwareKind, TimerScheduleDriver, VmGroupConfig, VmSqliteDescriptor, VmUserAccountConfig,
-    VmUserConfig, WasmLimits,
+    node_modules_mount, AgentOsConfig, AgentOsConfigBuilder, AgentOsLimits, AgentOsPackageLimits,
+    AgentOsSidecarConfig, Binding, BindingCallback, BindingLimits, Bindings, ExecutionLimits,
+    FsPermissionRule, FsPermissions, HttpLimits, JsRuntimeLimits, MountConfig, MountPlugin,
+    OverlayMountConfig, PackageRef, PatternPermissionRule, PatternPermissions, PermissionMode,
+    Permissions, PluginLimits, PythonLimits, ResourceLimits, RootFilesystemConfig,
+    RootFilesystemKind, RootFilesystemMode, RootLowerInput, RulePermissions, ScheduleCallback,
+    ScheduleDriver, ScheduleEntry, ScheduleHandle, SidecarJsBridgeCall, SidecarJsBridgeCallback,
+    SidecarSqliteCallback, SoftwareInput, SoftwareKind, TimerScheduleDriver, TlsLimits,
+    VmGroupConfig, VmSqliteCallbackRequest, VmSqliteCallbackResponse, VmSqliteDescriptor,
+    VmSqliteQueryResult, VmSqliteStatement, VmSqliteValue, VmUserAccountConfig, VmUserConfig,
+    WasmLimits, VM_SQLITE_CALLBACK_NAMESPACE,
 };
 
 pub use process::{
@@ -81,8 +131,8 @@ pub use process::{
 pub use net::{HttpRequest, HttpResponse, HttpStreamChunk, HttpStreamHead};
 
 pub use software::{
-    configure_process_package_cache, process_package_cache_stats, InstalledSoftware,
-    PackageManifestInfo, PackageResolver, PackageResolverOptions, PackageSource,
+    configure_process_package_cache, process_package_cache_stats, validate_package_source,
+    InstalledSoftware, PackageManifestInfo, PackageResolver, PackageResolverOptions, PackageSource,
     ProcessPackageCacheOptions, ProcessPackageCacheStats, VerifiedPackage,
     DEFAULT_MAX_PACKAGE_BYTES,
 };

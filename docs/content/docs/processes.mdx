@@ -1,60 +1,60 @@
 ---
-title: "Processes & Shell"
-description: "Run commands, start long-lived processes, and open interactive shells inside agentOS VMs with controlled environment and lifecycle management."
-skill: true
+title: "Processes & Terminals"
+description: "Execute commands, manage long-running processes, and attach terminals."
 ---
 
-Run commands with one-shot `exec`, spawn long-running processes with streaming stdout/stderr and stdin, manage their lifecycle (stop, kill, wait, inspect), open interactive PTY-backed shells, and inspect the process tree across all VM runtimes.
+`process.run` runs an executable and explicit argument array to completion.
+Run `sh` with `-c` explicitly when shell parsing is required.
+`process.spawn` returns a
+generation-scoped process ID for `get`, `wait`, `signal`, stdin, PTY
+resize, and bounded output replay.
+`process.get` and `process.list` report `startedAtMs`; nodes returned by
+`process.tree` report `startTimeMs` and `exitTimeMs`. These are Unix timestamps
+in milliseconds. Completed tree nodes use the same structured `exit` status as
+`process.get`. Tree timestamps record when agentOS first observed the process
+or its exit, not exact kernel lifecycle times. `exitTimeMs` can be absent when
+agentOS did not observe the exit.
+`process.tree` includes guest child processes as well as processes launched through
+the actor. Only nodes with a `process` handle can be used with actor control and
+output-replay actions; other nodes are inspectable but not controllable through
+those actions. Guest and tracked display PIDs can overlap; use the provided
+`process` handle rather than reconstructing one from a node's `pid`.
+For untracked guest nodes, `args` is the kernel's runtime argument list. For
+example, Node's `-e` source is passed to its runtime separately, so the tree
+shows `-e` but not the source text.
 
-## One-shot execution
-
-Use `exec` to run a command and wait for completion. Returns stdout, stderr, and exit code.
-
-<CodeGroup>
 <CodeSnippet file="examples/processes/exec.ts" />
-<CodeSnippet file="examples/processes/server.ts" />
-</CodeGroup>
 
-## Spawn a long-running process
-
-Use `spawn` for processes that run in the background. Call `connect()` and subscribe to native `processOutput` and `processExit` events, filtering their `pid` in application code.
-
-<CodeGroup>
 <CodeSnippet file="examples/processes/spawn.ts" />
-<CodeSnippet file="examples/processes/server.ts" />
-</CodeGroup>
 
-## Write to stdin
+Process arguments are passed as individual argv entries. An empty string is a
+valid argument; it is not dropped or treated as an omitted argument. Empty
+commands or working directories are invalid input, including when opening a
+terminal.
 
-Send input to a running process.
+Use a RivetKit connection for live `process.output` and `process.exit`
+events. Replay retained output with `process.output.read` after reconnecting.
 
-<CodeGroup>
-<CodeSnippet file="examples/processes/stdin.ts" />
-<CodeSnippet file="examples/processes/server.ts" />
-</CodeGroup>
-
-## Process lifecycle
-
-<CodeGroup>
-<CodeSnippet file="examples/processes/lifecycle.ts" />
-<CodeSnippet file="examples/processes/server.ts" />
-</CodeGroup>
-
-## Interactive shells
-
-Open an interactive shell with PTY support. Subscribe to native `shellData`, `shellStderr`, and `shellExit` events, filtering their `shellId` in application code.
-
-<CodeGroup>
-<CodeSnippet file="examples/processes/shell.ts" />
-<CodeSnippet file="examples/processes/server.ts" />
-</CodeGroup>
+Interactive terminals are separate resources under `terminal.open`,
+`terminal.stdin.write`, `terminal.pty.resize`, `terminal.output.read`,
+`terminal.wait`, and `terminal.close`. Their live events are
+`terminal.output` and `terminal.exit`.
 
 ## Embedded API
 
-Process and terminal methods are identical except for actor-only shell listing
-and replay. Embedded output and exit callbacks are already scoped to one VM and
-one host process.
-
-<CodeSnippet file="examples/embedded/vm.ts" region="processes" title="vm.ts" />
-
-Read more in the [embedded API quickstart](/agentos/docs/quickstart-embedded).
+Embedded Core retains its language-specific convenience methods in addition to
+structured process operations. Read more in the
+[embedded API quickstart](/agentos/docs/quickstart-embedded).
+An embedded process wait returns an exit code only after agentOS observes a
+guest exit. A rejected launch or lost exit observation rejects the wait instead
+of inventing an exit code. An observation failure does not prove the guest has
+stopped; inspect the VM or restart it before assuming it is safe to retry work.
+With output retention enabled, Core output callbacks include the sidecar's
+optional `sequence` and `timestampMs` metadata for correlating live output with
+replay. Local diagnostics without a guest output event omit this metadata.
+Ordinary-process replay returns `exitCode` when the sidecar has confirmed exit
+and reconciles Core's `wait`, `get`, and `list` state, even if the live exit
+notification was missed.
+Real-terminal replay also reconciles `wait_shell` after a missed exit event or
+an earlier observation failure. TypeScript Core's local prompt terminal does
+not provide replay; hosted actor terminals use the real-terminal path.

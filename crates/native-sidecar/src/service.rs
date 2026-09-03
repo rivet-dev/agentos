@@ -52,6 +52,9 @@ use agentos_bridge::{
     FilesystemPermissionRequest, LifecycleEventRecord, LifecycleState, LogLevel, LogRecord,
     NetworkAccess, NetworkPermissionRequest, StructuredEventRecord,
 };
+use agentos_client::{
+    ClientError, PackageResolver, PackageResolverOptions, PackageSource, VerifiedPackage,
+};
 use agentos_execution::{
     record_sync_bridge_request_observed, JavascriptExecutionError, JavascriptSyncRpcRequest,
     PythonExecutionError, WasmExecutionError,
@@ -156,6 +159,343 @@ pub(crate) fn wire_dispatch_result(
 pub use agentos_native_sidecar_core::DispatchResult;
 // NativeSidecarConfig and SidecarError moved to crate::state
 pub use crate::state::{NativeSidecarConfig, SidecarError};
+
+fn package_acquisition_rejection(error: &ClientError) -> RejectedResponse {
+    if let ClientError::OperationTimedOut { message, details } = error {
+        // Retain typed producer/connect/body timeouts, including when they win
+        // the race against the outer waiter deadline. Name the wire override
+        // at this boundary rather than asking a transport caller to edit Rust options.
+        let path = details.configuration_path.as_deref();
+        let wire_path = match path {
+            Some("PackageResolverOptions.connect_timeout_ms") => {
+                Some("AcquirePackageRequest.connectTimeoutMs")
+            }
+            Some("PackageResolverOptions.download_timeout_ms") => {
+                Some("AcquirePackageRequest.downloadTimeoutMs")
+            }
+            _ => path,
+        };
+        let message = match (path, wire_path) {
+            (Some(from), Some(to)) => message.replace(from, to),
+            _ => message.clone(),
+        };
+        return RejectedResponse {
+            code: "timeout".into(),
+            message,
+            limit_name: details.limit_name.clone(),
+            configured_limit: details.configured_limit,
+            current_usage: details.current_usage,
+            requested: details.requested,
+            unit: details.unit.clone(),
+            scope: details.scope.clone(),
+            vm_id: details.vm_id.clone(),
+            session_generation: details.session_generation,
+            capability_id: details.capability_id,
+            operation: details.operation.clone(),
+            configuration_path: wire_path.map(str::to_owned),
+            retryable: details.retryable,
+            errno: details.errno.clone(),
+        };
+    }
+    let (code, errno) = match error {
+        ClientError::InvalidPackageSource(_) => ("invalid_package_source", "EINVAL"),
+        ClientError::InvalidPackageFormat(_) => ("invalid_package_format", "EINVAL"),
+        ClientError::PackageDigestMismatch { .. } => ("package_digest_mismatch", "EINVAL"),
+        ClientError::PackageDownload(_) => ("package_download_failed", "EIO"),
+        ClientError::PackageIo(_) => ("package_io_failed", "EIO"),
+        ClientError::PackageCacheConfiguration(_) => ("package_cache_configuration", "EINVAL"),
+        ClientError::PackageTooLarge { .. }
+        | ClientError::PackageCacheCapacity { .. }
+        | ClientError::PackageCacheEntryCapacity { .. }
+        | ClientError::PackageCachePendingLimit { .. } => ("ERR_AGENTOS_RESOURCE_LIMIT", "ENOSPC"),
+        _ => ("package_acquisition_failed", "EIO"),
+    };
+    let mut rejection = RejectedResponse {
+        code: code.into(),
+        message: error.to_string(),
+        limit_name: None,
+        configured_limit: None,
+        current_usage: None,
+        requested: None,
+        unit: None,
+        scope: Some("session".into()),
+        vm_id: None,
+        session_generation: None,
+        capability_id: None,
+        operation: Some("package.acquire".into()),
+        configuration_path: None,
+        retryable: Some(false),
+        errno: Some(errno.into()),
+    };
+    let limit = match error {
+        ClientError::PackageTooLarge { observed, limit } => Some((
+            "packageBytes",
+            "AcquirePackageRequest.maxPackageBytes",
+            "bytes",
+            "session",
+            *limit,
+            None,
+            Some(*observed),
+        )),
+        ClientError::PackageCacheCapacity {
+            requested,
+            current,
+            limit,
+        } => Some((
+            "packageCacheBytes",
+            "ProcessPackageCacheOptions.max_bytes",
+            "bytes",
+            "process",
+            *limit,
+            Some(*current),
+            Some(*requested),
+        )),
+        ClientError::PackageCacheEntryCapacity { current, limit } => Some((
+            "packageCacheEntries",
+            "ProcessPackageCacheOptions.max_entries",
+            "entries",
+            "process",
+            *limit as u64,
+            Some(*current as u64),
+            Some(1),
+        )),
+        ClientError::PackageCachePendingLimit { limit } => Some((
+            "packageCachePendingAcquisitions",
+            "ProcessPackageCacheOptions.max_pending_acquisitions",
+            "acquisitions",
+            "process",
+            *limit as u64,
+            None,
+            Some(1),
+        )),
+        _ => None,
+    };
+    if let Some((name, path, unit, scope, limit, current, requested)) = limit {
+        rejection.limit_name = Some(name.into());
+        rejection.configuration_path = Some(path.into());
+        rejection.unit = Some(unit.into());
+        rejection.scope = Some(scope.into());
+        rejection.configured_limit = Some(limit);
+        rejection.current_usage = current;
+        rejection.requested = requested;
+        rejection.message.push_str(&format!("; raise {path}"));
+    }
+    rejection
+}
+
+// Bound the waiter, including joins to existing flights. The resolver separately
+// caps each producer. Dropping this future drops its cache waiter; it does not
+// assert that already-admitted blocking file validation has synchronously stopped.
+async fn await_package_acquisition<T>(
+    timeout_ms: Option<u64>,
+    operator_cap_ms: u64,
+    operation: impl std::future::Future<Output = Result<T, ClientError>>,
+) -> Result<T, RejectedResponse> {
+    if timeout_ms == Some(0) {
+        return Err(package_acquisition_rejection(
+            &ClientError::InvalidPackageSource("timeoutMs must be greater than zero".into()),
+        ));
+    }
+    let deadline_ms = timeout_ms.unwrap_or(operator_cap_ms).min(operator_cap_ms);
+    match tokio::time::timeout(Duration::from_millis(deadline_ms), operation).await {
+        Ok(result) => result.map_err(|error| package_acquisition_rejection(&error)),
+        Err(_) => {
+            let path = if deadline_ms < operator_cap_ms {
+                "AcquirePackageRequest.timeoutMs"
+            } else {
+                "ProcessPackageCacheOptions.acquisition_timeout_ms"
+            };
+            let mut rejection = package_acquisition_rejection(&ClientError::PackageDownload(
+                format!("acquisition waiter exceeded {deadline_ms}ms; raise {path}; completion is unconfirmed"),
+            ));
+            rejection.code = "timeout".into();
+            rejection.limit_name = Some("packageAcquisitionWaitMs".into());
+            rejection.configured_limit = Some(deadline_ms);
+            rejection.configuration_path = Some(path.into());
+            rejection.unit = Some("milliseconds".into());
+            rejection.errno = Some("ETIMEDOUT".into());
+            Err(rejection)
+        }
+    }
+}
+
+async fn acquire_package_owned(
+    request: RequestFrame,
+    payload: crate::protocol::AcquirePackageRequest,
+) -> Result<DispatchResult, SidecarError> {
+    let package = match resolve_package_owned(payload).await {
+        Ok(package) => package,
+        Err(rejection) => {
+            return Ok(DispatchResult {
+                response: shared_respond(&request, ResponsePayload::Rejected(rejection)),
+                events: Vec::new(),
+            })
+        }
+    };
+    Ok(DispatchResult {
+        response: shared_respond(
+            &request,
+            ResponsePayload::PackageAcquired(package_acquired_response(&package)),
+        ),
+        events: Vec::new(),
+    })
+}
+
+async fn package_cache_stats_owned(request: RequestFrame) -> Result<DispatchResult, SidecarError> {
+    let stats = match agentos_client::process_package_cache_stats().await {
+        Ok(stats) => stats,
+        Err(error) => {
+            let mut rejection = package_acquisition_rejection(&error);
+            rejection.operation = Some("package.cache_stats".into());
+            return Ok(DispatchResult {
+                response: shared_respond(&request, ResponsePayload::Rejected(rejection)),
+                events: Vec::new(),
+            });
+        }
+    };
+    let count = |value: usize| u64::try_from(value).unwrap_or(u64::MAX);
+    Ok(DispatchResult {
+        response: shared_respond(
+            &request,
+            ResponsePayload::PackageCacheStats(crate::protocol::PackageCacheStatsResponse {
+                entries: count(stats.entries),
+                source_entries: count(stats.source_entries),
+                bytes: stats.bytes,
+                pinned_entries: count(stats.pinned_entries),
+                pending_acquisitions: count(stats.pending_acquisitions),
+                hits: stats.hits,
+                misses: stats.misses,
+                coalesced_waiters: stats.coalesced_waiters,
+                acquisitions: stats.acquisitions,
+                evictions: stats.evictions,
+                capacity_failures: stats.capacity_failures,
+                cancelled_acquisitions: stats.cancelled_acquisitions,
+            }),
+        ),
+        events: Vec::new(),
+    })
+}
+
+fn package_acquired_response(
+    package: &VerifiedPackage,
+) -> crate::protocol::PackageAcquiredResponse {
+    crate::protocol::PackageAcquiredResponse {
+        package_id: package.package_id.clone(),
+        digest: package.digest.clone(),
+        size: package.size,
+        package_name: package.manifest.name.clone(),
+        version: package.manifest.version.clone(),
+        commands: package.manifest.commands.clone(),
+    }
+}
+
+async fn resolve_package_owned(
+    payload: crate::protocol::AcquirePackageRequest,
+) -> Result<VerifiedPackage, RejectedResponse> {
+    let mut options = PackageResolverOptions::default();
+    if let Some(value) = payload.max_package_bytes {
+        options.max_package_bytes = value;
+    }
+    if let Some(value) = payload.download_timeout_ms {
+        options.download_timeout_ms = value;
+    }
+    if let Some(value) = payload.connect_timeout_ms {
+        options.connect_timeout_ms = value;
+    }
+    if let Some(value) = payload.max_redirects {
+        options.max_redirects = value as usize;
+    }
+    options.allow_insecure_local_http = payload.allow_insecure_local_http;
+    let source = match payload.source {
+        crate::protocol::PackageAcquisitionSource::PackageUrlSource(source) => PackageSource::Url {
+            url: source.url,
+            expected_digest: source.expected_digest,
+        },
+        crate::protocol::PackageAcquisitionSource::PackagePathSource(source) => {
+            PackageSource::Path {
+                path: source.path,
+                expected_digest: source.expected_digest,
+            }
+        }
+    };
+    let result = match PackageResolver::new(options) {
+        Ok(resolver) => {
+            await_package_acquisition(
+                payload.timeout_ms,
+                agentos_client::sidecar_internals::package_acquisition_timeout_ms(&resolver),
+                async {
+                    if payload.advisory {
+                        resolver.preload(source).await
+                    } else {
+                        resolver.resolve(source).await
+                    }
+                },
+            )
+            .await
+        }
+        Err(error) => Err(package_acquisition_rejection(&error)),
+    };
+    result
+}
+
+pub(crate) async fn install_package_owned<B>(
+    request: RequestFrame,
+    input: Result<crate::vm::LinkPackageOwnedInput<B>, SidecarError>,
+    payload: crate::protocol::InstallPackageRequest,
+) -> Result<DispatchResult, SidecarError>
+where
+    B: NativeSidecarBridge + Send + 'static,
+    BridgeError<B>: fmt::Debug + Send + Sync + 'static,
+{
+    // Validate VM ownership before opening a URL or trusted local path.
+    let input = input?;
+    if payload.acquisition.advisory {
+        let rejection = package_acquisition_rejection(&ClientError::InvalidPackageSource(
+            "InstallPackageRequest.acquisition.advisory must be false".into(),
+        ));
+        return Ok(DispatchResult {
+            response: shared_respond(&request, ResponsePayload::Rejected(rejection)),
+            events: Vec::new(),
+        });
+    }
+    let package = match resolve_package_owned(payload.acquisition).await {
+        Ok(package) => package,
+        Err(rejection) => {
+            return Ok(DispatchResult {
+                response: shared_respond(&request, ResponsePayload::Rejected(rejection)),
+                events: Vec::new(),
+            })
+        }
+    };
+    let metadata = package_acquired_response(&package);
+    let path = package.path().to_str().ok_or_else(|| {
+        SidecarError::InvalidState("verified package path is not valid UTF-8".into())
+    })?;
+    let linked = crate::vm::link_verified_package_owned(
+        input,
+        crate::protocol::LinkPackageRequest {
+            package: crate::protocol::PackageDescriptor { path: path.into() },
+            package_id: package.package_id.clone(),
+        },
+        package,
+    )
+    .await?;
+    let ResponsePayload::PackageLinked(linked_response) = linked.response.payload else {
+        return Err(SidecarError::InvalidState(
+            "verified package link returned an unexpected response".into(),
+        ));
+    };
+    Ok(DispatchResult {
+        response: shared_respond(
+            &request,
+            ResponsePayload::PackageInstalled(crate::protocol::PackageInstalledResponse {
+                package: metadata,
+                projected_commands: linked_response.projected_commands,
+            }),
+        ),
+        events: linked.events,
+    })
+}
 
 /// An extension request detached from the mutable sidecar coordinator.
 ///
@@ -489,6 +829,8 @@ impl<B> SharedBridge<B> {
             permissions: Arc::new(Mutex::new(BTreeMap::new())),
             #[cfg(test)]
             set_vm_permissions_outcomes: Arc::new(Mutex::new(VecDeque::new())),
+            #[cfg(test)]
+            set_vm_permissions_history: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -802,6 +1144,15 @@ where
             ))
         })?;
         stored.insert(vm_id.to_owned(), permissions.clone());
+        #[cfg(test)]
+        self.set_vm_permissions_history
+            .lock()
+            .map_err(|_| {
+                SidecarError::Bridge(String::from(
+                    "native sidecar test permission history lock poisoned",
+                ))
+            })?
+            .push((vm_id.to_owned(), permissions.clone()));
         Ok(())
     }
 
@@ -2116,6 +2467,7 @@ where
             RequestRoute::Authenticate(payload) => self.authenticate_connection(&request, payload),
             RequestRoute::OpenSession(payload) => self.open_session(&request, payload),
             RequestRoute::CreateVm(payload) => self.create_vm(&request, payload).await,
+            RequestRoute::CompareVmConfig(payload) => self.compare_vm_config(&request, payload),
             RequestRoute::DisposeVm(payload) => self.dispose_vm(&request, payload).await,
             RequestRoute::BootstrapRootFilesystem(payload) => {
                 self.bootstrap_root_filesystem(&request, payload.entries)
@@ -2164,6 +2516,9 @@ where
             RequestRoute::GetProcessSnapshot(payload) => {
                 self.get_process_snapshot(&request, payload).await
             }
+            RequestRoute::ReadProcessOutput(payload) => {
+                self.read_process_output(&request, payload).await
+            }
             RequestRoute::GetResourceSnapshot(payload) => {
                 self.get_resource_snapshot(&request, payload).await
             }
@@ -2175,7 +2530,28 @@ where
                 self.get_zombie_timer_count(&request, payload).await
             }
             RequestRoute::LinkPackage(payload) => self.link_package(&request, payload).await,
+            RequestRoute::InstallPackage(payload) => self.install_package(&request, payload).await,
+            RequestRoute::GetPackageCacheStats(_) => {
+                let result = self.session_scope_for(&request.ownership).and_then(
+                    |(connection_id, session_id)| {
+                        self.require_owned_session(&connection_id, &session_id)
+                    },
+                );
+                result?;
+                package_cache_stats_owned(request.clone()).await
+            }
             RequestRoute::UnlinkPackage(payload) => self.unlink_package(&request, payload).await,
+            RequestRoute::AcquirePackage(payload) => {
+                let result = self.session_scope_for(&request.ownership).and_then(
+                    |(connection_id, session_id)| {
+                        self.require_owned_session(&connection_id, &session_id)
+                    },
+                );
+                match result {
+                    Ok(()) => acquire_package_owned(request.clone(), payload).await,
+                    Err(error) => Err(error),
+                }
+            }
             RequestRoute::ProvidedCommands(payload) => {
                 self.provided_commands(&request, payload).await
             }
@@ -2224,6 +2600,7 @@ where
                 | RequestRoute::OpenSession(_)
                 | RequestRoute::RegisterHostCallbacks(_)
                 | RequestRoute::GetProcessSnapshot(_)
+                | RequestRoute::ReadProcessOutput(_)
                 | RequestRoute::GetResourceSnapshot(_)
                 | RequestRoute::GetZombieTimerCount(_)
                 | RequestRoute::ProvidedCommands(_)
@@ -2239,7 +2616,10 @@ where
                 | RequestRoute::CreateOverlay(_)
                 | RequestRoute::SnapshotRootFilesystem(_)
                 | RequestRoute::LinkPackage(_)
+                | RequestRoute::InstallPackage(_)
+                | RequestRoute::GetPackageCacheStats(_)
                 | RequestRoute::UnlinkPackage(_)
+                | RequestRoute::AcquirePackage(_)
                 | RequestRoute::Execute(_)
                 | RequestRoute::ExecutionOperation(_)
                 | RequestRoute::ExecutionLifecycle(_)
@@ -2399,6 +2779,10 @@ where
                 let future = self.get_process_snapshot(&request, payload);
                 return Ok(Some(PreparedRequest::from_vm_command(request, future)));
             }
+            RequestRoute::ReadProcessOutput(payload) => {
+                let future = self.read_process_output(&request, payload);
+                return Ok(Some(PreparedRequest::from_vm_command(request, future)));
+            }
             RequestRoute::GetResourceSnapshot(payload) => {
                 let future = self.get_resource_snapshot(&request, payload);
                 return Ok(Some(PreparedRequest::from_vm_command(request, future)));
@@ -2451,9 +2835,37 @@ where
                 let future = self.link_package(&request, payload);
                 return Ok(Some(PreparedRequest::from_vm_command(request, future)));
             }
+            RequestRoute::InstallPackage(payload) => {
+                let future = self.install_package(&request, payload);
+                return Ok(Some(PreparedRequest::from_vm_command(request, future)));
+            }
             RequestRoute::UnlinkPackage(payload) => {
                 let future = self.unlink_package(&request, payload);
                 return Ok(Some(PreparedRequest::from_vm_command(request, future)));
+            }
+            RequestRoute::AcquirePackage(payload) => {
+                let ownership = self.session_scope_for(&request.ownership).and_then(
+                    |(connection_id, session_id)| {
+                        self.require_owned_session(&connection_id, &session_id)
+                    },
+                );
+                if let Err(error) = ownership {
+                    return Ok(Some(PreparedRequest::failed(request, error)));
+                }
+                let operation = acquire_package_owned(request.clone(), payload);
+                return Ok(Some(PreparedRequest::from_future(request, operation)));
+            }
+            RequestRoute::GetPackageCacheStats(_) => {
+                let ownership = self.session_scope_for(&request.ownership).and_then(
+                    |(connection_id, session_id)| {
+                        self.require_owned_session(&connection_id, &session_id)
+                    },
+                );
+                if let Err(error) = ownership {
+                    return Ok(Some(PreparedRequest::failed(request, error)));
+                }
+                let operation = package_cache_stats_owned(request.clone());
+                return Ok(Some(PreparedRequest::from_future(request, operation)));
             }
             RequestRoute::Execute(payload) => {
                 let future = self.execute(&request, payload);
@@ -2618,7 +3030,9 @@ where
                     })
                 })));
             }
-            RequestRoute::CreateVm(_) | RequestRoute::DisposeVm(_) => {
+            RequestRoute::CreateVm(_)
+            | RequestRoute::CompareVmConfig(_)
+            | RequestRoute::DisposeVm(_) => {
                 unreachable!("VM creation and disposal use dedicated prepared routes")
             }
         }
@@ -4365,6 +4779,7 @@ where
             );
             return Ok(());
         };
+        let vm = &mut *vm;
         let shadow_root = vm.cwd.clone();
         let Some(process) = vm.active_processes.get_mut(process_id) else {
             log_stale_process_event(
@@ -4388,7 +4803,14 @@ where
                 javascript_sync_rpc_arg_u32(&request.args, 1, "filesystem chmod mode")? & 0o7777;
             let host_path =
                 shadow_host_path_for_process(&shadow_root, &process.guest_cwd, guest_path);
-            if host_path.exists() {
+            let normalized_guest_path = if guest_path.starts_with('/') {
+                normalize_path(guest_path)
+            } else {
+                normalize_path(&format!("{}/{guest_path}", process.guest_cwd))
+            };
+            if !crate::filesystem::is_non_root_mount_path(&vm.kernel, &normalized_guest_path)
+                && host_path.exists()
+            {
                 fs::set_permissions(&host_path, fs::Permissions::from_mode(mode)).map_err(
                     |error| {
                         SidecarError::Io(format!(
@@ -4712,6 +5134,64 @@ where
     }
 
     fn reject_error(&self, request: &RequestFrame, error: &SidecarError) -> ResponseFrame {
+        if let SidecarError::VmTeardownDeadline {
+            vm_id, deadline_ms, ..
+        } = error
+        {
+            return self.respond(
+                request,
+                ResponsePayload::Rejected(RejectedResponse {
+                    code: String::from("timeout"),
+                    message: error.to_string(),
+                    limit_name: Some(String::from("reactor.shutdownDeadlineMs")),
+                    configured_limit: Some(*deadline_ms),
+                    current_usage: None,
+                    requested: None,
+                    unit: Some(String::from("milliseconds")),
+                    scope: Some(String::from("vm")),
+                    vm_id: Some(vm_id.clone()),
+                    session_generation: None,
+                    capability_id: None,
+                    operation: Some(String::from("vm.dispose")),
+                    configuration_path: Some(String::from("limits.reactor.shutdownDeadlineMs")),
+                    retryable: Some(false),
+                    errno: Some(String::from("ETIMEDOUT")),
+                }),
+            );
+        }
+        if let SidecarError::PackageMountLimit {
+            used,
+            requested,
+            limit,
+        } = error
+        {
+            let vm_id = match &request.ownership {
+                OwnershipScope::VmOwnership(owner) => Some(owner.vm_id.clone()),
+                OwnershipScope::ConnectionOwnership(_) | OwnershipScope::SessionOwnership(_) => {
+                    None
+                }
+            };
+            return self.respond(
+                request,
+                ResponsePayload::Rejected(RejectedResponse {
+                    code: String::from("ERR_AGENTOS_RESOURCE_LIMIT"),
+                    message: error.to_string(),
+                    limit_name: Some(String::from("packageMounts")),
+                    configured_limit: Some(u64::try_from(*limit).unwrap_or(u64::MAX)),
+                    current_usage: Some(u64::try_from(*used).unwrap_or(u64::MAX)),
+                    requested: Some(u64::try_from(*requested).unwrap_or(u64::MAX)),
+                    unit: Some(String::from("mounts")),
+                    scope: Some(String::from("vm")),
+                    vm_id,
+                    session_generation: None,
+                    capability_id: None,
+                    operation: Some(String::from("vm.packageProjection")),
+                    configuration_path: Some(String::from("limits.agentosPackages.maxMounts")),
+                    retryable: Some(false),
+                    errno: Some(String::from("ENOSPC")),
+                }),
+            );
+        }
         if let SidecarError::RequestAdmission {
             code,
             message,
@@ -5588,9 +6068,56 @@ fn symlinked_node_modules_hint(stderr: &str) -> Option<&'static str> {
 mod prepared_request_tests {
     use super::*;
     use crate::stdio::LocalBridge;
+    use agentos_kernel::vfs::VirtualFileSystem;
 
     fn test_sidecar() -> NativeSidecar<LocalBridge> {
         NativeSidecar::new(LocalBridge::default()).expect("build test sidecar")
+    }
+
+    #[test]
+    fn teardown_deadline_rejection_names_timeout_and_limit() {
+        let sidecar = test_sidecar();
+        let request = RequestFrame::new(
+            1,
+            OwnershipScope::vm("connection", "session", "vm-deadline"),
+            RequestPayload::DisposeVm(crate::protocol::DisposeVmRequest {
+                reason: crate::protocol::DisposeReason::Requested,
+            }),
+        );
+        let error = SidecarError::VmTeardownDeadline {
+            message: String::from("VM SQLite close exceeded its deadline"),
+            vm_id: String::from("vm-deadline"),
+            deadline_ms: 5_000,
+        };
+        let response = sidecar.reject_error(&request, &error);
+        let wire = crate::protocol::to_generated_protocol_frame(
+            &crate::protocol::ProtocolFrame::Response(response),
+        )
+        .expect("encode typed timeout fields");
+        let crate::protocol::ProtocolFrame::Response(response) =
+            crate::protocol::from_generated_protocol_frame(wire)
+                .expect("decode typed timeout fields")
+        else {
+            panic!("expected a response frame");
+        };
+        let ResponsePayload::Rejected(rejected) = response.payload else {
+            panic!("expected structured VM teardown rejection");
+        };
+        assert_eq!(rejected.code, "timeout");
+        assert_eq!(
+            rejected.limit_name.as_deref(),
+            Some("reactor.shutdownDeadlineMs")
+        );
+        assert_eq!(rejected.retryable, Some(false));
+        assert_eq!(rejected.vm_id.as_deref(), Some("vm-deadline"));
+        assert_eq!(rejected.configured_limit, Some(5_000));
+        assert_eq!(rejected.unit.as_deref(), Some("milliseconds"));
+        assert_eq!(rejected.operation.as_deref(), Some("vm.dispose"));
+        assert_eq!(
+            rejected.configuration_path.as_deref(),
+            Some("limits.reactor.shutdownDeadlineMs")
+        );
+        assert_eq!(rejected.errno.as_deref(), Some("ETIMEDOUT"));
     }
 
     fn wire_request(request: RequestFrame) -> crate::wire::RequestFrame {
@@ -5669,6 +6196,124 @@ mod prepared_request_tests {
 
     fn cleanup_test_ownership(vm_id: &str) -> OwnershipScope {
         OwnershipScope::vm("vm-handle-test-connection", "vm-handle-test-session", vm_id)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pending_process_replay_reservations_are_bounded_and_cancel_safe() {
+        let mut sidecar = test_sidecar();
+        let vm_id = create_test_vms(&mut sidecar, 1).await.remove(0);
+        let vm = sidecar.vms.handle(&vm_id).unwrap();
+        vm.borrow_mut().limits.process.max_output_replays = 1;
+        let launch_vm = vm.clone();
+        let mut pending_launch = Box::pin(async move {
+            let _reservation = launch_vm.reserve_process_output_replay("pending")?;
+            std::future::pending::<()>().await;
+            Ok::<(), SidecarError>(())
+        });
+        std::future::poll_fn(|cx| {
+            assert!(std::future::Future::poll(pending_launch.as_mut(), cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        assert_eq!(vm.borrow().process_output_replays.len(), 1);
+        assert!(matches!(
+            vm.reserve_process_output_replay("concurrent"),
+            Err(SidecarError::RequestAdmission {
+                configuration_path: Some("limits.process.maxOutputReplays"),
+                ..
+            })
+        ));
+        drop(pending_launch);
+        assert!(vm.borrow().process_output_replays.is_empty());
+        assert!(vm.borrow().process_output_replay_order.is_empty());
+        let retry = vm.reserve_process_output_replay("retry").unwrap();
+        drop(retry);
+        assert!(vm.borrow().process_output_replays.is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn process_replay_omitted_bounds_use_vm_defaults_and_explicit_excess_rejects() {
+        let mut sidecar = test_sidecar();
+        let vm_id = create_test_vms(&mut sidecar, 1).await.remove(0);
+        {
+            let mut vm = sidecar.vms.get_mut(&vm_id).unwrap();
+            vm.limits.process.output_replay_page_events = 1;
+            vm.limits.process.output_replay_page_bytes = 3;
+            vm.prepare_process_output_replay_admission("retained")
+                .unwrap();
+            vm.record_process_output("retained", crate::protocol::StreamChannel::Stdout, b"one");
+            vm.record_process_output("retained", crate::protocol::StreamChannel::Stdout, b"two");
+        }
+        let request = RequestFrame::new(
+            1,
+            cleanup_test_ownership(&vm_id),
+            RequestPayload::ReadProcessOutput(crate::protocol::ReadProcessOutputRequest {
+                process_id: "retained".into(),
+                after: None,
+                max_events: 0,
+                max_bytes: 0,
+            }),
+        );
+        let RequestPayload::ReadProcessOutput(payload) = request.payload.clone() else {
+            unreachable!()
+        };
+        let result = sidecar
+            .read_process_output(&request, payload.clone())
+            .await
+            .unwrap();
+        let ResponsePayload::ProcessOutputPage(page) = result.response.payload else {
+            panic!("replay response")
+        };
+        assert_eq!(page.events.len(), 1);
+        assert_eq!(page.events[0].sequence, 0);
+        assert_eq!(page.next_cursor, Some(0));
+        assert!(page.has_more);
+        for (max_events, max_bytes, path, unit, limit, requested) in [
+            (
+                2,
+                0,
+                "limits.process.outputReplayPageEvents",
+                "events",
+                1,
+                2,
+            ),
+            (0, 4, "limits.process.outputReplayPageBytes", "bytes", 3, 4),
+            (0, 1, "maxBytes", "bytes", 1, 3),
+        ] {
+            let result = sidecar
+                .read_process_output(
+                    &request,
+                    crate::protocol::ReadProcessOutputRequest {
+                        max_events,
+                        max_bytes,
+                        ..payload.clone()
+                    },
+                )
+                .await
+                .unwrap();
+            let ResponsePayload::Rejected(rejected) = result.response.payload else {
+                panic!("expected typed replay limit")
+            };
+            assert_eq!(rejected.code, "ERR_AGENTOS_RESOURCE_LIMIT");
+            assert_eq!(rejected.configuration_path.as_deref(), Some(path));
+            assert_eq!(rejected.unit.as_deref(), Some(unit));
+            assert_eq!(rejected.configured_limit, Some(limit));
+            assert_eq!(rejected.requested, Some(requested));
+            assert_eq!(rejected.operation.as_deref(), Some("process.output.read"));
+        }
+        let missing = sidecar
+            .read_process_output(
+                &request,
+                crate::protocol::ReadProcessOutputRequest {
+                    process_id: "expired".into(),
+                    ..payload
+                },
+            )
+            .await
+            .unwrap();
+        assert!(
+            matches!(missing.response.payload, ResponsePayload::Rejected(rejected) if rejected.code == "ESRCH")
+        );
     }
 
     fn extension_tracks_process(
@@ -6245,6 +6890,7 @@ mod prepared_request_tests {
                 env: Default::default(),
                 cwd: None,
                 wasm_permission_tier: None,
+                retain_output: false,
             }),
         );
         let prepared_execute = sidecar
@@ -6658,6 +7304,1091 @@ mod prepared_request_tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn configure_vm_never_elevates_guest_permissions() {
+        let mut sidecar = test_sidecar();
+        let vm_id = create_test_vms(&mut sidecar, 1).await.remove(0);
+        let guest_policy = deny_all_policy();
+        sidecar
+            .bridge
+            .set_vm_permissions(&vm_id, &guest_policy)
+            .expect("apply guest denial");
+        sidecar
+            .vms
+            .get_mut(&vm_id)
+            .expect("test VM")
+            .configuration
+            .permissions = guest_policy.clone();
+        {
+            let mut vm = sidecar.vms.get_mut(&vm_id).unwrap();
+            let filesystem = vm.kernel.filesystem_mut().inner_mut();
+            filesystem.mkdir("/__agentos/commands/0", true).unwrap();
+            filesystem
+                .write_file("/__agentos/commands/0/operator-discovered", Vec::new())
+                .unwrap();
+        }
+        let history_start = sidecar
+            .bridge
+            .set_vm_permissions_history
+            .lock()
+            .expect("permission history")
+            .len();
+        let mut payload = crate::protocol::ConfigureVmRequest {
+            mounts: vec![crate::protocol::MountDescriptor {
+                guest_path: String::from("/operator-mount"),
+                guest_source: String::from("operator-test"),
+                guest_fstype: String::from("operator-test"),
+                read_only: true,
+                plugin: crate::protocol::MountPluginDescriptor {
+                    id: String::from("agentos_packages"),
+                    config: String::from(
+                        r#"{"kind":"singleSymlink","target":"/bin/node","readOnly":true}"#,
+                    ),
+                },
+            }],
+            software: Vec::new(),
+            permissions: None,
+            module_access_cwd: None,
+            instructions: Vec::new(),
+            projected_modules: Vec::new(),
+            command_permissions: Default::default(),
+            loopback_exempt_ports: Vec::new(),
+            packages: Vec::new(),
+            packages_mount_at: String::new(),
+            bootstrap_commands: Vec::new(),
+            binding_shim_commands: Vec::new(),
+        };
+        let request = RequestFrame::new(
+            230,
+            cleanup_test_ownership(&vm_id),
+            RequestPayload::ConfigureVm(payload.clone()),
+        );
+        sidecar
+            .configure_vm(&request, payload.clone())
+            .await
+            .expect("trusted configuration under guest denial");
+        assert!(sidecar
+            .vms
+            .get(&vm_id)
+            .unwrap()
+            .kernel
+            .commands()
+            .contains_key("operator-discovered"));
+        let prior_guest_env = {
+            let mut vm = sidecar.vms.get_mut(&vm_id).unwrap();
+            vm.guest_env
+                .insert(String::from("PRESERVED_ON_REJECTION"), String::from("yes"));
+            vm.guest_env.clone()
+        };
+        let mut invalid = payload.clone();
+        invalid.mounts[0].plugin.config = String::from("{");
+        let error = sidecar.configure_vm(&request, invalid).await.unwrap_err();
+        assert!(error.to_string().contains("not valid JSON"));
+        let mut invalid = payload.clone();
+        invalid.mounts[0].plugin.id = String::from("unregistered-plugin");
+        let error = sidecar.configure_vm(&request, invalid).await.unwrap_err();
+        assert!(error.to_string().contains("not registered"));
+        let mut invalid = payload.clone();
+        invalid.mounts[0].guest_path = String::from("/");
+        let error = sidecar.configure_vm(&request, invalid).await.unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("invalid or duplicate VM mount path"));
+        // A valid replacement must also be reversible when a later plugin
+        // fails to open after the old mount and one new mount were changed.
+        let mut invalid = payload.clone();
+        invalid.mounts[0].guest_path = String::from("/replacement-mount");
+        let mut broken = invalid.mounts[0].clone();
+        broken.guest_path = String::from("/broken-mount");
+        broken.plugin.config = String::from(r#"{"kind":"singleSymlink"}"#);
+        invalid.mounts.push(broken);
+        let error = sidecar.configure_vm(&request, invalid).await.unwrap_err();
+        assert!(error.to_string().contains("target"), "{error}");
+        assert!(
+            !sidecar
+                .vms
+                .get(&vm_id)
+                .unwrap()
+                .kernel
+                .exists_for_operator("/replacement-mount")
+                .unwrap(),
+            "failed replacements must not leave an empty mountpoint"
+        );
+        {
+            let mut vm = sidecar.vms.get_mut(&vm_id).unwrap();
+            vm.kernel
+                .filesystem_mut()
+                .inner_mut()
+                .mkdir("/hidden/keep", true)
+                .unwrap();
+        }
+        let mut nested = payload.clone();
+        let mut parent = payload.mounts[0].clone();
+        parent.guest_path = "/hidden".into();
+        parent.read_only = false;
+        parent.plugin.id = "memory".into();
+        parent.plugin.config = "{}".into();
+        let mut child = parent.clone();
+        child.guest_path = "/hidden/keep/new".into();
+        let mut broken = payload.mounts[0].clone();
+        broken.guest_path = "/failure/invalid/deep/leaf".into();
+        broken.plugin.config = r#"{"kind":"singleSymlink"}"#.into();
+        nested.mounts = vec![parent, child, broken];
+        let error = sidecar.configure_vm(&request, nested).await.unwrap_err();
+        assert!(error.to_string().contains("target"), "{error}");
+        assert!(!error.to_string().contains("rollback failed"), "{error}");
+        {
+            let vm = sidecar.vms.get(&vm_id).unwrap();
+            assert!(
+                vm.kernel.exists_for_operator("/hidden/keep").unwrap(),
+                "rollback must preserve empty directories hidden below temporary parents"
+            );
+            assert!(!vm.kernel.exists_for_operator("/hidden/keep/new").unwrap());
+        }
+        assert!(sidecar
+            .vms
+            .get(&vm_id)
+            .unwrap()
+            .kernel
+            .mounted_filesystems()
+            .iter()
+            .any(|mount| mount.path == "/operator-mount"));
+        assert!(!sidecar
+            .vms
+            .get(&vm_id)
+            .unwrap()
+            .kernel
+            .mounted_filesystems()
+            .iter()
+            .any(|mount| mount.path == "/replacement-mount"));
+        assert_eq!(
+            sidecar.vms.get(&vm_id).unwrap().configuration.mounts,
+            payload.mounts
+        );
+        assert_eq!(sidecar.vms.get(&vm_id).unwrap().guest_env, prior_guest_env);
+        payload.mounts.clear();
+        sidecar
+            .configure_vm(&request, payload)
+            .await
+            .expect("trusted unmount under guest denial");
+        let registration = crate::protocol::RegisterHostCallbacksRequest {
+            name: String::from("operator-bindings"),
+            description: String::from("operator test"),
+            command_aliases: vec![String::from("operator-callback")],
+            registry_command_aliases: Vec::new(),
+            callbacks: std::collections::HashMap::from([(
+                String::from("call"),
+                crate::protocol::RegisteredHostCallbackDefinition {
+                    description: String::from("operator callback"),
+                    input_schema: String::from(r#"{"type":"object"}"#),
+                    timeout_ms: None,
+                    examples: Vec::new(),
+                },
+            )]),
+        };
+        let registration_request = RequestFrame::new(
+            231,
+            cleanup_test_ownership(&vm_id),
+            RequestPayload::RegisterHostCallbacks(registration.clone()),
+        );
+        crate::bindings::register_host_callbacks(&mut sidecar, &registration_request, registration)
+            .await
+            .expect("trusted binding stubs under guest denial");
+        {
+            let mut vm = sidecar.vms.get_mut(&vm_id).unwrap();
+            assert!(vm.kernel.commands().contains_key("operator-callback"));
+            assert!(vm.kernel.read_dir("/__agentos/commands/0").is_err());
+            assert!(vm.kernel.read_file("/bin/operator-callback").is_err());
+        }
+        let history = sidecar
+            .bridge
+            .set_vm_permissions_history
+            .lock()
+            .expect("permission history");
+        assert!(history[history_start..]
+            .iter()
+            .all(|(id, policy)| id != &vm_id || policy == &guest_policy));
+        assert_eq!(
+            sidecar.bridge.permissions.lock().unwrap().get(&vm_id),
+            Some(&guest_policy)
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn unlink_software_cleans_operator_mountpoints_under_guest_denial() {
+        use agentos_kernel::mount_table::{MountOptions, MountedVirtualFileSystem};
+        use agentos_kernel::vfs::MemoryFileSystem;
+
+        let mut sidecar = test_sidecar();
+        let vm_id = create_test_vms(&mut sidecar, 1).await.remove(0);
+        let guest_policy = deny_all_policy();
+        sidecar
+            .bridge
+            .set_vm_permissions(&vm_id, &guest_policy)
+            .unwrap();
+        let paths = [
+            "/opt/agentos/pkgs/operator-cleanup/1.0.0",
+            "/opt/agentos/pkgs/operator-cleanup/current",
+            "/opt/agentos/bin/operator-software",
+        ];
+        {
+            let mut vm = sidecar.vms.get_mut(&vm_id).unwrap();
+            vm.configuration.permissions = guest_policy.clone();
+            vm.configuration.defaults_profile = agentos_vm_config::VmDefaultsProfile::AgentOs;
+            for path in paths {
+                vm.kernel
+                    .mount_boxed_filesystem_for_operator(
+                        path,
+                        Box::new(MountedVirtualFileSystem::new(MemoryFileSystem::new())),
+                        MountOptions::new("operator-test"),
+                    )
+                    .unwrap();
+                vm.configuration
+                    .mounts
+                    .push(crate::protocol::MountDescriptor {
+                        guest_path: path.into(),
+                        guest_source: String::from("operator-test"),
+                        guest_fstype: String::from("operator-test"),
+                        read_only: true,
+                        plugin: crate::protocol::MountPluginDescriptor {
+                            id: String::from("operator-test"),
+                            config: String::from("{}"),
+                        },
+                    });
+            }
+            vm.package_descriptors.push((
+                String::from("operator-package"),
+                crate::package_projection::PackageDescriptor {
+                    name: String::from("operator-cleanup"),
+                    version: String::from("1.0.0"),
+                    dir: String::from("/operator-fixture-not-read-during-unlink"),
+                    tar_path: None,
+                    provides: None,
+                    commands: vec![crate::package_projection::PackageCommandTarget {
+                        command: String::from("operator-software"),
+                        entry: String::from("bin/run"),
+                    }],
+                    man_pages: Vec::new(),
+                },
+            ));
+            vm.package_created_mountpoints.insert(
+                String::from("operator-package"),
+                paths.map(String::from).into_iter().collect(),
+            );
+            vm.package_mount_roots.insert(
+                String::from("operator-package"),
+                String::from("/opt/agentos"),
+            );
+            vm.package_mount_paths.insert(
+                String::from("operator-package"),
+                paths.map(String::from).into_iter().collect(),
+            );
+        }
+        let payload = crate::protocol::UnlinkPackageRequest {
+            package_id: String::from("operator-package"),
+        };
+        let request = RequestFrame::new(
+            233,
+            cleanup_test_ownership(&vm_id),
+            RequestPayload::UnlinkPackage(payload.clone()),
+        );
+        sidecar
+            .unlink_package(&request, payload)
+            .await
+            .expect("unlink under guest denial");
+        let mut vm = sidecar.vms.get_mut(&vm_id).unwrap();
+        assert!(vm.package_descriptors.is_empty());
+        assert!(vm.package_created_mountpoints.is_empty());
+        for path in paths {
+            assert!(
+                !vm.kernel.exists_for_operator(path).unwrap(),
+                "left mountpoint {path}"
+            );
+        }
+        for command in ["node", "python", "python3", "wasm", "npm", "npx"] {
+            assert!(
+                vm.kernel.commands().contains_key(command),
+                "lost profile command {command}"
+            );
+        }
+        assert!(vm.kernel.read_dir("/opt/agentos").is_err());
+        assert_eq!(vm.configuration.permissions, guest_policy);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn link_package_rejects_duplicate_owned_mount_paths_before_mutation() {
+        let package_dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(package_dir.path().join("bin")).unwrap();
+        std::fs::create_dir_all(package_dir.path().join("share/config")).unwrap();
+        std::fs::write(
+            package_dir.path().join("agentos-package.json"),
+            r#"{"name":"duplicate-path","version":"1.0.0","provides":{"files":[{"source":"share/config","target":"/opt/agentos/pkgs/duplicate-path/1.0.0/"}]}}"#,
+        )
+        .unwrap();
+        let mut sidecar = test_sidecar();
+        let vm_id = create_test_vms(&mut sidecar, 1).await.remove(0);
+        let initial_mount_count = sidecar.vms.get(&vm_id).unwrap().configuration.mounts.len();
+        let link = crate::protocol::LinkPackageRequest {
+            package: crate::protocol::PackageDescriptor {
+                path: package_dir.path().to_string_lossy().into_owned(),
+            },
+            package_id: String::from("duplicate-path-test"),
+        };
+        let request = RequestFrame::new(
+            262,
+            cleanup_test_ownership(&vm_id),
+            RequestPayload::LinkPackage(link.clone()),
+        );
+        let error = sidecar.link_package(&request, link).await.unwrap_err();
+        assert!(error.to_string().contains("duplicate package mount path"));
+        let vm = sidecar.vms.get(&vm_id).unwrap();
+        assert!(vm.package_descriptors.is_empty());
+        assert!(vm.package_mount_paths.is_empty());
+        assert_eq!(vm.configuration.mounts.len(), initial_mount_count);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn link_package_rolls_back_earlier_leaves_when_a_later_mount_fails() {
+        let package_dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(package_dir.path().join("share/config")).unwrap();
+        std::fs::write(package_dir.path().join("blocked"), b"not a directory").unwrap();
+        std::fs::write(package_dir.path().join("agentos-package.json"),
+            r#"{"name":"failed-leaf","version":"1.0.0","provides":{"files":[{"source":"share/config","target":"/opt/agentos/pkgs/failed-leaf/1.0.0/blocked/child"}]}}"#).unwrap();
+        let mut sidecar = test_sidecar();
+        let vm_id = create_test_vms(&mut sidecar, 1).await.remove(0);
+        let initial_mounts = sidecar
+            .vms
+            .get(&vm_id)
+            .unwrap()
+            .kernel
+            .mounted_filesystems();
+        let link = crate::protocol::LinkPackageRequest {
+            package: crate::protocol::PackageDescriptor {
+                path: package_dir.path().to_string_lossy().into_owned(),
+            },
+            package_id: "failed-leaf".into(),
+        };
+        let request = RequestFrame::new(
+            263,
+            cleanup_test_ownership(&vm_id),
+            RequestPayload::LinkPackage(link.clone()),
+        );
+        let error = sidecar.link_package(&request, link).await.unwrap_err();
+        assert!(error.to_string().contains("ENOTDIR"), "{error}");
+        assert!(!error.to_string().contains("rollback failed"), "{error}");
+        let vm = sidecar.vms.get(&vm_id).unwrap();
+        assert_eq!(vm.kernel.mounted_filesystems(), initial_mounts);
+        assert!(vm.package_descriptors.is_empty());
+        assert!(vm.package_mount_paths.is_empty());
+        assert!(!vm
+            .kernel
+            .exists_for_operator("/opt/agentos/pkgs/failed-leaf")
+            .unwrap());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn package_mount_limit_covers_boot_provides_and_live_links() {
+        let first_dir = tempfile::tempdir().expect("first package directory");
+        std::fs::create_dir_all(first_dir.path().join("share/config")).unwrap();
+        std::fs::write(
+            first_dir.path().join("agentos-package.json"),
+            r#"{"name":"first-limit-test","version":"1.0.0","provides":{"files":[{"source":"share/config","target":"/etc/first-limit-test"}]}}"#,
+        )
+        .unwrap();
+        let second_dir = tempfile::tempdir().expect("second package directory");
+        std::fs::write(
+            second_dir.path().join("agentos-package.json"),
+            r#"{"name":"second-limit-test","version":"1.0.0"}"#,
+        )
+        .unwrap();
+
+        let mut sidecar = test_sidecar();
+        let vm_id = create_test_vms(&mut sidecar, 1).await.remove(0);
+        let ownership = cleanup_test_ownership(&vm_id);
+        let first = crate::protocol::PackageDescriptor {
+            path: first_dir.path().to_string_lossy().into_owned(),
+        };
+        let configure = crate::protocol::ConfigureVmRequest {
+            mounts: vec![crate::protocol::MountDescriptor {
+                guest_path: String::from("/unrelated-mount"),
+                guest_source: String::from("operator-test"),
+                guest_fstype: String::from("operator-test"),
+                read_only: true,
+                plugin: crate::protocol::MountPluginDescriptor {
+                    id: String::from("agentos_packages"),
+                    config: String::from(
+                        r#"{"kind":"singleSymlink","target":"/tmp","readOnly":true}"#,
+                    ),
+                },
+            }],
+            software: Vec::new(),
+            permissions: None,
+            module_access_cwd: None,
+            instructions: Vec::new(),
+            projected_modules: Vec::new(),
+            command_permissions: Default::default(),
+            loopback_exempt_ports: Vec::new(),
+            packages: vec![first.clone()],
+            packages_mount_at: String::new(),
+            bootstrap_commands: Vec::new(),
+            binding_shim_commands: Vec::new(),
+        };
+        let configure_request = RequestFrame::new(
+            260,
+            ownership.clone(),
+            RequestPayload::ConfigureVm(configure.clone()),
+        );
+        sidecar
+            .vms
+            .get_mut(&vm_id)
+            .unwrap()
+            .limits
+            .agentos_packages
+            .max_mounts = 2;
+        let error = sidecar
+            .configure_vm(&configure_request, configure.clone())
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            SidecarError::PackageMountLimit {
+                used: 0,
+                requested: 3,
+                limit: 2
+            }
+        ));
+        assert!(sidecar
+            .vms
+            .get(&vm_id)
+            .unwrap()
+            .package_descriptors
+            .is_empty());
+
+        sidecar
+            .vms
+            .get_mut(&vm_id)
+            .unwrap()
+            .limits
+            .agentos_packages
+            .max_mounts = 4;
+        sidecar
+            .configure_vm(&configure_request, configure)
+            .await
+            .expect("boot package within limit");
+        // Existing usage is the installed projection, not whatever its source
+        // happens to contain now. Reopening the old provides path would fail.
+        std::fs::rename(
+            first_dir.path().join("share/config"),
+            first_dir.path().join("share/config-moved"),
+        )
+        .unwrap();
+        let live = crate::protocol::LinkPackageRequest {
+            package: crate::protocol::PackageDescriptor {
+                path: second_dir.path().to_string_lossy().into_owned(),
+            },
+            package_id: String::from("second-limit-test"),
+        };
+        let live_request =
+            RequestFrame::new(261, ownership, RequestPayload::LinkPackage(live.clone()));
+        let error = sidecar
+            .link_package(&live_request, live.clone())
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            &error,
+            SidecarError::PackageMountLimit {
+                used: 3,
+                requested: 2,
+                limit: 4
+            }
+        ));
+        let rejected = sidecar.reject_error(&live_request, &error);
+        let ResponsePayload::Rejected(rejected) = rejected.payload else {
+            panic!("expected structured package limit rejection");
+        };
+        assert_eq!(rejected.code, "ERR_AGENTOS_RESOURCE_LIMIT");
+        assert_eq!(rejected.limit_name.as_deref(), Some("packageMounts"));
+        assert_eq!(rejected.current_usage, Some(3));
+        assert_eq!(rejected.requested, Some(2));
+        assert_eq!(rejected.configured_limit, Some(4));
+        assert_eq!(
+            rejected.configuration_path.as_deref(),
+            Some("limits.agentosPackages.maxMounts")
+        );
+        assert_eq!(rejected.errno.as_deref(), Some("ENOSPC"));
+        assert_eq!(
+            sidecar.vms.get(&vm_id).unwrap().package_descriptors.len(),
+            1
+        );
+
+        sidecar
+            .vms
+            .get_mut(&vm_id)
+            .unwrap()
+            .limits
+            .agentos_packages
+            .max_mounts = 5;
+        sidecar
+            .link_package(&live_request, live)
+            .await
+            .expect("raised limit admits live link");
+        assert_eq!(
+            sidecar.vms.get(&vm_id).unwrap().package_descriptors.len(),
+            2
+        );
+
+        // Removal uses the installed path set, remains available below the
+        // old package size, and releases capacity for the next link.
+        sidecar
+            .vms
+            .get_mut(&vm_id)
+            .unwrap()
+            .limits
+            .agentos_packages
+            .max_mounts = 1;
+        for package_id in [
+            format!("path:{}", first.path),
+            String::from("second-limit-test"),
+        ] {
+            let unlink = crate::protocol::UnlinkPackageRequest { package_id };
+            sidecar.unlink_package(&live_request, unlink).await.unwrap();
+        }
+        {
+            let vm = sidecar.vms.get(&vm_id).unwrap();
+            assert!(vm.package_mount_paths.is_empty());
+            assert_eq!(vm.configuration.mounts.len(), 1, "unrelated mount remains");
+        }
+        std::fs::rename(
+            first_dir.path().join("share/config-moved"),
+            first_dir.path().join("share/config"),
+        )
+        .unwrap();
+        sidecar
+            .vms
+            .get_mut(&vm_id)
+            .unwrap()
+            .limits
+            .agentos_packages
+            .max_mounts = 3;
+        sidecar
+            .link_package(
+                &live_request,
+                crate::protocol::LinkPackageRequest {
+                    package: first,
+                    package_id: String::from("relinked-first"),
+                },
+            )
+            .await
+            .expect("unlink releases the complete package budget");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn verified_install_pins_immutable_bytes_until_unlink() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("installed.aospkg");
+        let mut tar = tar::Builder::new(Vec::new());
+        let manifest = br#"{"name":"installed-test","version":"1.0.0"}"#;
+        let mut header = tar::Header::new_gnu();
+        header.set_size(manifest.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        tar.append_data(&mut header, "agentos-package.json", &manifest[..])
+            .unwrap();
+        let bytes =
+            vfs::package_format::pack::pack_aospkg_from_tar_bytes(&tar.into_inner().unwrap())
+                .unwrap()
+                .0;
+        std::fs::write(&source, bytes).unwrap();
+
+        let mut sidecar = test_sidecar();
+        let vm_id = create_test_vms(&mut sidecar, 1).await.remove(0);
+        let ownership = cleanup_test_ownership(&vm_id);
+        let payload = crate::protocol::InstallPackageRequest {
+            acquisition: crate::protocol::AcquirePackageRequest {
+                source: crate::protocol::PackageAcquisitionSource::PackagePathSource(
+                    crate::protocol::PackagePathSource {
+                        path: source.to_string_lossy().into_owned(),
+                        expected_digest: None,
+                    },
+                ),
+                advisory: false,
+                timeout_ms: None,
+                max_package_bytes: None,
+                download_timeout_ms: None,
+                connect_timeout_ms: None,
+                max_redirects: None,
+                allow_insecure_local_http: false,
+            },
+        };
+        let request = RequestFrame::new(
+            273,
+            ownership.clone(),
+            RequestPayload::InstallPackage(payload.clone()),
+        );
+        let installed = sidecar
+            .install_package(&request, payload.clone())
+            .await
+            .expect("install verified package");
+        let ResponsePayload::PackageInstalled(installed) = installed.response.payload else {
+            panic!("expected installed package response");
+        };
+        let package_id = installed.package.package_id;
+        let cached_path = sidecar
+            .vms
+            .get(&vm_id)
+            .unwrap()
+            .installed_package_pins
+            .get(&package_id)
+            .expect("VM must pin installed bytes")
+            .path()
+            .to_path_buf();
+        assert_ne!(cached_path, source);
+        std::fs::remove_file(&source).unwrap();
+        assert!(
+            cached_path.exists(),
+            "installed bytes survive source removal"
+        );
+
+        let mut missing_payload = payload;
+        if let crate::protocol::PackageAcquisitionSource::PackagePathSource(source) =
+            &mut missing_payload.acquisition.source
+        {
+            source.expected_digest = Some(format!("sha256:{}", "0".repeat(64)));
+        }
+        let missing_request = RequestFrame::new(
+            275,
+            ownership.clone(),
+            RequestPayload::InstallPackage(missing_payload.clone()),
+        );
+        let rejected = sidecar
+            .install_package(&missing_request, missing_payload)
+            .await
+            .expect("acquisition failure is a typed response");
+        assert!(matches!(
+            rejected.response.payload,
+            ResponsePayload::Rejected(_)
+        ));
+        assert!(sidecar
+            .vms
+            .get(&vm_id)
+            .unwrap()
+            .installed_package_pins
+            .contains_key(&package_id));
+
+        let unlink = crate::protocol::UnlinkPackageRequest {
+            package_id: package_id.clone(),
+        };
+        let request = RequestFrame::new(
+            274,
+            ownership,
+            RequestPayload::UnlinkPackage(unlink.clone()),
+        );
+        sidecar
+            .unlink_package(&request, unlink)
+            .await
+            .expect("unlink installed package");
+        let vm = sidecar.vms.get(&vm_id).unwrap();
+        assert!(!vm.installed_package_pins.contains_key(&package_id));
+        assert!(!vm.runtime_linked_package_ids.contains(&package_id));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn configuring_mounts_preserves_runtime_linked_package_until_unlink() {
+        let package_dir = tempfile::tempdir().expect("package fixture directory");
+        std::fs::create_dir_all(package_dir.path().join("bin")).unwrap();
+        std::fs::write(
+            package_dir.path().join("agentos-package.json"),
+            r#"{"name":"dynamic-test","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        std::fs::write(package_dir.path().join("bin/dynamic-command"), b"command").unwrap();
+
+        let mut sidecar = test_sidecar();
+        let vm_id = create_test_vms(&mut sidecar, 1).await.remove(0);
+        let ownership = cleanup_test_ownership(&vm_id);
+        let package_id = format!("path:{}", package_dir.path().display());
+        let link = crate::protocol::LinkPackageRequest {
+            package: crate::protocol::PackageDescriptor {
+                path: package_dir.path().to_string_lossy().into_owned(),
+            },
+            package_id: package_id.clone(),
+        };
+        let request = RequestFrame::new(
+            234,
+            ownership.clone(),
+            RequestPayload::LinkPackage(link.clone()),
+        );
+        sidecar
+            .link_package(&request, link.clone())
+            .await
+            .expect("link package");
+
+        // Reusing an ID must not acknowledge commands from a different package
+        // while retaining the old projection. Exercise a changed path-backed
+        // manifest as well as the ConfigureVm boot/live identity collision.
+        std::fs::write(
+            package_dir.path().join("agentos-package.json"),
+            r#"{"name":"replacement-test","version":"2.0.0"}"#,
+        )
+        .unwrap();
+        let error = sidecar
+            .link_package(&request, link.clone())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("different descriptor"));
+
+        let mut configure = crate::protocol::ConfigureVmRequest {
+            mounts: vec![crate::protocol::MountDescriptor {
+                guest_path: String::from("/operator-mount"),
+                guest_source: String::from("operator-test"),
+                guest_fstype: String::from("operator-test"),
+                read_only: true,
+                plugin: crate::protocol::MountPluginDescriptor {
+                    id: String::from("agentos_packages"),
+                    config: String::from(
+                        r#"{"kind":"singleSymlink","target":"/bin/node","readOnly":true}"#,
+                    ),
+                },
+            }],
+            software: Vec::new(),
+            permissions: None,
+            module_access_cwd: None,
+            instructions: Vec::new(),
+            projected_modules: Vec::new(),
+            command_permissions: Default::default(),
+            loopback_exempt_ports: Vec::new(),
+            packages: Vec::new(),
+            packages_mount_at: String::new(),
+            bootstrap_commands: Vec::new(),
+            binding_shim_commands: Vec::new(),
+        };
+        let request = RequestFrame::new(
+            235,
+            ownership.clone(),
+            RequestPayload::ConfigureVm(configure.clone()),
+        );
+        configure.packages.push(link.package.clone());
+        let error = sidecar
+            .configure_vm(&request, configure.clone())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("different descriptor"));
+        configure.packages.clear();
+        std::fs::write(
+            package_dir.path().join("agentos-package.json"),
+            r#"{"name":"dynamic-test","version":"1.0.0"}"#,
+        )
+        .unwrap();
+
+        // Lexically different paths can identify the same mount. Preflight
+        // must reject them before unmounting the already-linked package.
+        let mut duplicate = configure.mounts[0].clone();
+        duplicate.guest_path.push('/');
+        configure.mounts.push(duplicate);
+        let error = sidecar
+            .configure_vm(&request, configure.clone())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("duplicate VM mount path"));
+        configure.mounts.pop();
+        {
+            let mut vm = sidecar.vms.get_mut(&vm_id).unwrap();
+            assert_eq!(
+                vm.kernel
+                    .read_file("/opt/agentos/bin/dynamic-command")
+                    .unwrap(),
+                b"command",
+            );
+            assert_eq!(vm.package_descriptors[0].1.name, "dynamic-test");
+        }
+        sidecar
+            .configure_vm(&request, configure.clone())
+            .await
+            .expect("add unrelated mount");
+        configure.mounts.clear();
+        sidecar
+            .configure_vm(&request, configure)
+            .await
+            .expect("remove unrelated mount");
+
+        {
+            let vm = sidecar.vms.get(&vm_id).unwrap();
+            assert!(vm.runtime_linked_package_ids.contains(&package_id));
+            assert!(vm
+                .package_descriptors
+                .iter()
+                .any(|(id, _)| id == &package_id));
+            assert!(vm.kernel.commands().contains_key("dynamic-command"));
+            assert!(vm
+                .configuration
+                .mounts
+                .iter()
+                .any(|mount| { mount.guest_path == "/opt/agentos/pkgs/dynamic-test/1.0.0" }));
+        }
+
+        let unlink = crate::protocol::UnlinkPackageRequest {
+            package_id: package_id.clone(),
+        };
+        let request = RequestFrame::new(
+            236,
+            ownership,
+            RequestPayload::UnlinkPackage(unlink.clone()),
+        );
+        sidecar
+            .unlink_package(&request, unlink)
+            .await
+            .expect("unlink package");
+        let vm = sidecar.vms.get(&vm_id).unwrap();
+        assert!(!vm.runtime_linked_package_ids.contains(&package_id));
+        assert!(!vm.package_mount_roots.contains_key(&package_id));
+        assert!(!vm
+            .package_descriptors
+            .iter()
+            .any(|(id, _)| id == &package_id));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pinned_boot_package_retains_custom_projection_root_and_provides() {
+        let package_dir = tempfile::tempdir().unwrap();
+        let manifest = r#"{"name":"custom-root-test","version":"1.0.0","provides":{"env":{"PACKAGE_RETAINED":"yes"},"files":[{"source":"share/config","target":"/etc/custom-package"}]}}"#;
+        std::fs::create_dir_all(package_dir.path().join("bin")).unwrap();
+        std::fs::create_dir_all(package_dir.path().join("share/config")).unwrap();
+        std::fs::write(package_dir.path().join("bin/custom-command"), b"custom").unwrap();
+        std::fs::write(package_dir.path().join("share/config/value"), b"retained").unwrap();
+        std::fs::write(package_dir.path().join("agentos-package.json"), manifest).unwrap();
+        let mut sidecar = test_sidecar();
+        let vm_id = create_test_vms(&mut sidecar, 1).await.remove(0);
+        let ownership = cleanup_test_ownership(&vm_id);
+        let package = crate::protocol::PackageDescriptor {
+            path: package_dir.path().to_string_lossy().into_owned(),
+        };
+        let package_id = format!("path:{}", package.path);
+        let mut configure = crate::protocol::ConfigureVmRequest {
+            mounts: Vec::new(),
+            software: Vec::new(),
+            permissions: None,
+            module_access_cwd: None,
+            instructions: Vec::new(),
+            projected_modules: Vec::new(),
+            command_permissions: Default::default(),
+            loopback_exempt_ports: Vec::new(),
+            packages: vec![package.clone()],
+            packages_mount_at: String::from("/custom-software"),
+            bootstrap_commands: Vec::new(),
+            binding_shim_commands: Vec::new(),
+        };
+        let request = RequestFrame::new(
+            237,
+            ownership.clone(),
+            RequestPayload::ConfigureVm(configure.clone()),
+        );
+        let result = sidecar
+            .configure_vm(&request, configure.clone())
+            .await
+            .unwrap();
+        let ResponsePayload::VmConfigured(response) = result.response.payload else {
+            panic!("unexpected configure response");
+        };
+        assert!(response.projected_commands.iter().any(|command| {
+            command.name == "custom-command"
+                && command.guest_path == "/custom-software/bin/custom-command"
+        }));
+        let link = crate::protocol::LinkPackageRequest {
+            package,
+            package_id: package_id.clone(),
+        };
+        let request = RequestFrame::new(
+            238,
+            ownership.clone(),
+            RequestPayload::LinkPackage(link.clone()),
+        );
+        let result = sidecar.link_package(&request, link.clone()).await.unwrap();
+        let ResponsePayload::PackageLinked(response) = result.response.payload else {
+            panic!("unexpected link response");
+        };
+        assert_eq!(
+            response.projected_commands[0].guest_path,
+            "/custom-software/bin/custom-command"
+        );
+
+        // Separate roots do not make duplicate logical package/command names
+        // valid: both providedCommands and command dispatch require uniqueness.
+        let mut duplicate = link.clone();
+        duplicate.package_id = String::from("another-identity");
+        let error = sidecar
+            .link_package(&request, duplicate.clone())
+            .await
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("already projected under another identity"));
+        std::fs::write(
+            package_dir.path().join("agentos-package.json"),
+            r#"{"name":"different-name","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        let error = sidecar.link_package(&request, duplicate).await.unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("already provided by another package"));
+        std::fs::write(package_dir.path().join("agentos-package.json"), manifest).unwrap();
+
+        let request = RequestFrame::new(
+            239,
+            ownership.clone(),
+            RequestPayload::ConfigureVm(configure.clone()),
+        );
+        sidecar
+            .configure_vm(&request, configure.clone())
+            .await
+            .unwrap();
+        configure.packages_mount_at = String::from("/different-root");
+        let error = sidecar
+            .configure_vm(&request, configure.clone())
+            .await
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("different descriptor or projection root"));
+        configure.packages.clear();
+        sidecar.configure_vm(&request, configure).await.unwrap();
+        {
+            let mut vm = sidecar.vms.get_mut(&vm_id).unwrap();
+            assert_eq!(vm.package_mount_roots[&package_id], "/custom-software");
+            assert_eq!(
+                vm.command_guest_paths["custom-command"],
+                "/custom-software/bin/custom-command"
+            );
+            assert_eq!(vm.guest_env["PACKAGE_RETAINED"], "yes");
+            assert_eq!(
+                vm.kernel
+                    .read_file("/custom-software/bin/custom-command")
+                    .unwrap(),
+                b"custom"
+            );
+            assert_eq!(
+                vm.kernel.read_file("/etc/custom-package/value").unwrap(),
+                b"retained"
+            );
+            assert!(!vm
+                .kernel
+                .exists_for_operator("/opt/agentos/pkgs/custom-root-test/1.0.0")
+                .unwrap());
+        }
+        let unlink = crate::protocol::UnlinkPackageRequest {
+            package_id: package_id.clone(),
+        };
+        let request = RequestFrame::new(
+            240,
+            ownership,
+            RequestPayload::UnlinkPackage(unlink.clone()),
+        );
+        sidecar.unlink_package(&request, unlink).await.unwrap();
+        let vm = sidecar.vms.get(&vm_id).unwrap();
+        assert!(!vm.package_mount_roots.contains_key(&package_id));
+        assert!(!vm.guest_env.contains_key("PACKAGE_RETAINED"));
+        assert!(!vm.kernel.commands().contains_key("custom-command"));
+        assert!(!vm
+            .kernel
+            .exists_for_operator("/custom-software/pkgs/custom-root-test/1.0.0")
+            .unwrap());
+        assert!(!vm
+            .kernel
+            .exists_for_operator("/etc/custom-package")
+            .unwrap());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn configure_vm_permission_commit_failure_restores_policy_or_fails_closed() {
+        for fail_rollback in [false, true] {
+            let mut sidecar = test_sidecar();
+            let vm_id = create_test_vms(&mut sidecar, 1).await.remove(0);
+            let mut original_permissions = deny_all_policy();
+            original_permissions.fs =
+                agentos_native_sidecar_core::permissions::allow_all_policy().fs;
+            sidecar
+                .bridge
+                .set_vm_permissions(&vm_id, &original_permissions)
+                .expect("set original policy");
+            sidecar
+                .vms
+                .get_mut(&vm_id)
+                .expect("test VM")
+                .configuration
+                .permissions = original_permissions.clone();
+            sidecar
+                .bridge
+                .queue_set_vm_permissions_result(Err(SidecarError::Bridge(String::from(
+                    "injected configure permission commit failure",
+                ))))
+                .expect("queue commit failure");
+            if fail_rollback {
+                sidecar
+                    .bridge
+                    .queue_set_vm_permissions_result(Err(SidecarError::Bridge(String::from(
+                        "injected configure permission rollback failure",
+                    ))))
+                    .expect("queue rollback failure");
+            }
+            let payload = crate::protocol::ConfigureVmRequest {
+                mounts: Vec::new(),
+                software: Vec::new(),
+                permissions: Some(crate::wire::PermissionsPolicy::deny_all()),
+                module_access_cwd: None,
+                instructions: Vec::new(),
+                projected_modules: Vec::new(),
+                command_permissions: Default::default(),
+                loopback_exempt_ports: Vec::new(),
+                packages: Vec::new(),
+                packages_mount_at: String::new(),
+                bootstrap_commands: Vec::new(),
+                binding_shim_commands: Vec::new(),
+            };
+            let request = RequestFrame::new(
+                231,
+                cleanup_test_ownership(&vm_id),
+                RequestPayload::ConfigureVm(payload.clone()),
+            );
+            let error = sidecar
+                .configure_vm(&request, payload)
+                .await
+                .expect_err("commit must fail");
+            assert!(error
+                .to_string()
+                .contains("injected configure permission commit failure"));
+            if fail_rollback {
+                assert!(error
+                    .to_string()
+                    .contains("injected configure permission rollback failure"));
+                assert!(error.to_string().contains("deny-all fallback"));
+            }
+            let expected = if fail_rollback {
+                deny_all_policy()
+            } else {
+                original_permissions
+            };
+            assert_eq!(
+                sidecar
+                    .vms
+                    .get(&vm_id)
+                    .expect("test VM")
+                    .configuration
+                    .permissions,
+                expected
+            );
+            assert_eq!(
+                sidecar
+                    .bridge
+                    .permissions
+                    .lock()
+                    .expect("bridge permissions")
+                    .get(&vm_id),
+                Some(&expected),
+                "a failed configure must not leave the guest temporarily privileged",
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn owned_host_callback_restore_failure_rolls_back_registry_and_permissions() {
         let mut sidecar = test_sidecar();
         let vm_id = create_test_vms(&mut sidecar, 1)
@@ -6672,10 +8403,6 @@ mod prepared_request_tests {
                 vm.command_guest_paths.clone(),
             )
         };
-        sidecar
-            .bridge
-            .queue_set_vm_permissions_result(Ok(()))
-            .expect("queue temporary allow-all permission set");
         sidecar
             .bridge
             .queue_set_vm_permissions_result(Err(SidecarError::Bridge(String::from(
@@ -7067,6 +8794,452 @@ mod dispose_lifecycle_tests {
                 vm_ids,
             },
         );
+    }
+
+    #[test]
+    fn package_acquisition_is_detached_and_rejects_foreign_sessions_before_io() {
+        let mut sidecar = test_sidecar();
+        insert_session(&mut sidecar, "conn-a", "session-a", BTreeSet::new());
+        insert_session(&mut sidecar, "conn-b", "session-b", BTreeSet::new());
+        let request = crate::wire::RequestFrame {
+            schema: crate::wire::ProtocolSchema::current(),
+            request_id: 87,
+            ownership: crate::wire::OwnershipScope::SessionOwnership(
+                crate::wire::SessionOwnership {
+                    connection_id: String::from("conn-b"),
+                    session_id: String::from("session-a"),
+                },
+            ),
+            payload: crate::wire::RequestPayload::AcquirePackageRequest(
+                crate::wire::AcquirePackageRequest {
+                    source: crate::wire::PackageAcquisitionSource::PackagePathSource(
+                        crate::wire::PackagePathSource {
+                            path: String::from("/does-not-exist.aospkg"),
+                            expected_digest: None,
+                        },
+                    ),
+                    advisory: false,
+                    timeout_ms: None,
+                    max_package_bytes: None,
+                    download_timeout_ms: None,
+                    connect_timeout_ms: None,
+                    max_redirects: None,
+                    allow_insecure_local_http: false,
+                },
+            ),
+        };
+        let prepared = sidecar
+            .prepare_request_wire(request.clone())
+            .expect("prepare package acquisition")
+            .expect("package acquisition is detached");
+        let completed = block_on(prepared.execute());
+        let rejected = completed
+            .result
+            .expect_err("foreign session must be rejected before acquiring a package");
+        assert!(rejected.to_string().contains("not owned by connection"));
+        let result = block_on(sidecar.dispatch_wire(request)).expect("dispatch foreign request");
+        assert!(matches!(
+            result.response.payload,
+            crate::wire::ResponsePayload::RejectedResponse(rejected)
+                if rejected.message.contains("not owned by connection")
+        ));
+        assert!(sidecar.vms.is_empty());
+    }
+
+    #[test]
+    fn package_acquisition_rejections_preserve_error_kinds_and_limit_details() {
+        let timeout = package_acquisition_rejection(&ClientError::OperationTimedOut {
+            message: "raise PackageResolverOptions.download_timeout_ms".into(),
+            details: Box::new(agentos_client::error::ResourceLimitDetails {
+                configured_limit: Some(15),
+                configuration_path: Some("PackageResolverOptions.download_timeout_ms".into()),
+                errno: Some("ETIMEDOUT".into()),
+                ..Default::default()
+            }),
+        });
+        assert_eq!(timeout.code, "timeout");
+        assert_eq!(timeout.configured_limit, Some(15));
+        assert_eq!(
+            timeout.configuration_path.as_deref(),
+            Some("AcquirePackageRequest.downloadTimeoutMs")
+        );
+        assert_eq!(
+            timeout.message,
+            "raise AcquirePackageRequest.downloadTimeoutMs"
+        );
+        for (error, code) in [
+            (
+                ClientError::InvalidPackageSource("bad source".into()),
+                "invalid_package_source",
+            ),
+            (
+                ClientError::InvalidPackageFormat("bad archive".into()),
+                "invalid_package_format",
+            ),
+            (
+                ClientError::PackageDigestMismatch {
+                    expected: "wanted".into(),
+                    actual: "got".into(),
+                },
+                "package_digest_mismatch",
+            ),
+            (
+                ClientError::PackageDownload("fetch failed".into()),
+                "package_download_failed",
+            ),
+            (
+                ClientError::PackageIo("read failed".into()),
+                "package_io_failed",
+            ),
+            (
+                ClientError::PackageCacheConfiguration("conflict".into()),
+                "package_cache_configuration",
+            ),
+        ] {
+            let rejection = package_acquisition_rejection(&error);
+            assert_eq!(rejection.code, code);
+            assert_eq!(rejection.message, error.to_string());
+            assert_eq!(rejection.operation.as_deref(), Some("package.acquire"));
+        }
+        for (error, name, limit, current, requested, path) in [
+            (
+                ClientError::PackageTooLarge {
+                    observed: 11,
+                    limit: 10,
+                },
+                "packageBytes",
+                10,
+                None,
+                Some(11),
+                "AcquirePackageRequest.maxPackageBytes",
+            ),
+            (
+                ClientError::PackageCacheCapacity {
+                    requested: 4,
+                    current: 8,
+                    limit: 10,
+                },
+                "packageCacheBytes",
+                10,
+                Some(8),
+                Some(4),
+                "ProcessPackageCacheOptions.max_bytes",
+            ),
+            (
+                ClientError::PackageCacheEntryCapacity {
+                    current: 2,
+                    limit: 2,
+                },
+                "packageCacheEntries",
+                2,
+                Some(2),
+                Some(1),
+                "ProcessPackageCacheOptions.max_entries",
+            ),
+            (
+                ClientError::PackageCachePendingLimit { limit: 3 },
+                "packageCachePendingAcquisitions",
+                3,
+                None,
+                Some(1),
+                "ProcessPackageCacheOptions.max_pending_acquisitions",
+            ),
+        ] {
+            let rejection = package_acquisition_rejection(&error);
+            assert_eq!(rejection.code, "ERR_AGENTOS_RESOURCE_LIMIT");
+            assert_eq!(rejection.limit_name.as_deref(), Some(name));
+            assert_eq!(rejection.configured_limit, Some(limit));
+            assert_eq!(rejection.current_usage, current);
+            assert_eq!(rejection.requested, requested);
+            assert_eq!(rejection.configuration_path.as_deref(), Some(path));
+        }
+    }
+
+    #[test]
+    fn package_acquisition_deadline_clamps_to_operator_cap_and_drops_waiter() {
+        struct Dropped(Arc<AtomicUsize>);
+        impl Drop for Dropped {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        block_on(async {
+            for (timeout, cap, expected, path) in [
+                (
+                    None,
+                    2,
+                    2,
+                    "ProcessPackageCacheOptions.acquisition_timeout_ms",
+                ),
+                (
+                    Some(u64::MAX),
+                    2,
+                    2,
+                    "ProcessPackageCacheOptions.acquisition_timeout_ms",
+                ),
+                (Some(1), 2, 1, "AcquirePackageRequest.timeoutMs"),
+            ] {
+                let dropped = Arc::new(AtomicUsize::new(0));
+                let guard = Dropped(dropped.clone());
+                let rejection = await_package_acquisition(timeout, cap, async move {
+                    let _guard = guard;
+                    std::future::pending::<Result<(), ClientError>>().await
+                })
+                .await
+                .unwrap_err();
+                assert_eq!(rejection.code, "timeout");
+                assert_eq!(rejection.configured_limit, Some(expected));
+                assert_eq!(rejection.configuration_path.as_deref(), Some(path));
+                assert_eq!(rejection.errno.as_deref(), Some("ETIMEDOUT"));
+                assert_eq!(dropped.load(Ordering::SeqCst), 1);
+            }
+            let rejection = await_package_acquisition(Some(0), 2, async {
+                panic!("invalid deadline must not poll acquisition");
+                #[allow(unreachable_code)]
+                Ok::<(), ClientError>(())
+            })
+            .await
+            .unwrap_err();
+            assert_eq!(rejection.code, "invalid_package_source");
+        });
+    }
+
+    #[test]
+    fn package_acquisition_owned_dispatch_verifies_bytes_without_allocating_vm() {
+        let mut sidecar = test_sidecar();
+        insert_session(&mut sidecar, "conn", "session", BTreeSet::new());
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("demo.aospkg");
+        let mut tar = tar::Builder::new(Vec::new());
+        let manifest = br#"{"name":"acquisition-review","version":"1.0.0"}"#;
+        let mut header = tar::Header::new_gnu();
+        header.set_size(manifest.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        tar.append_data(&mut header, "agentos-package.json", &manifest[..])
+            .unwrap();
+        let bytes =
+            vfs::package_format::pack::pack_aospkg_from_tar_bytes(&tar.into_inner().unwrap())
+                .unwrap()
+                .0;
+        std::fs::write(&path, &bytes).unwrap();
+        let request = |max_package_bytes, expected_digest| crate::wire::RequestFrame {
+            schema: crate::wire::ProtocolSchema::current(),
+            request_id: 88,
+            ownership: crate::wire::OwnershipScope::SessionOwnership(
+                crate::wire::SessionOwnership {
+                    connection_id: "conn".into(),
+                    session_id: "session".into(),
+                },
+            ),
+            payload: crate::wire::RequestPayload::AcquirePackageRequest(
+                crate::wire::AcquirePackageRequest {
+                    source: crate::wire::PackageAcquisitionSource::PackagePathSource(
+                        crate::wire::PackagePathSource {
+                            path: path.to_string_lossy().into_owned(),
+                            expected_digest,
+                        },
+                    ),
+                    advisory: true,
+                    timeout_ms: None,
+                    max_package_bytes,
+                    download_timeout_ms: None,
+                    connect_timeout_ms: None,
+                    max_redirects: None,
+                    allow_insecure_local_http: false,
+                },
+            ),
+        };
+        block_on(async {
+            for (limit, expected, code) in [
+                (Some(0), None, "invalid_package_source"),
+                (Some(1), None, "ERR_AGENTOS_RESOURCE_LIMIT"),
+                (
+                    None,
+                    Some(format!("sha256:{}", "0".repeat(64))),
+                    "package_digest_mismatch",
+                ),
+            ] {
+                let result = sidecar
+                    .dispatch_wire(request(limit, expected))
+                    .await
+                    .unwrap();
+                let crate::wire::ResponsePayload::RejectedResponse(rejection) =
+                    result.response.payload
+                else {
+                    panic!("expected package rejection");
+                };
+                assert_eq!(rejection.code, code);
+                if code == "ERR_AGENTOS_RESOURCE_LIMIT" {
+                    assert_eq!(rejection.configured_limit, Some(1));
+                    assert_eq!(rejection.requested, Some(bytes.len() as u64));
+                }
+            }
+            let prepared = sidecar
+                .prepare_request_wire(request(None, None))
+                .unwrap()
+                .unwrap();
+            let completed = prepared.execute().await.result.unwrap();
+            let ResponsePayload::PackageAcquired(package) = completed.response.payload else {
+                panic!("expected acquired package metadata");
+            };
+            use sha2::Digest;
+            assert_eq!(
+                package.digest,
+                format!("sha256:{:x}", sha2::Sha256::digest(&bytes))
+            );
+            assert_eq!(package.package_id, package.digest);
+            assert_eq!(package.size, bytes.len() as u64);
+            assert_eq!(package.package_name, "acquisition-review");
+            assert_eq!(package.version, "1.0.0");
+        });
+        assert!(sidecar.vms.is_empty());
+    }
+
+    #[test]
+    fn vm_config_comparison_dispatch_is_session_owned_and_does_not_allocate_vm() {
+        let mut sidecar = test_sidecar();
+        insert_session(&mut sidecar, "conn-a", "session-a", BTreeSet::new());
+        insert_session(&mut sidecar, "conn-b", "session-b", BTreeSet::new());
+        let next_vm_id = sidecar.next_vm_id;
+        let next_session_id = sidecar.next_session_id;
+        let ownership = |connection: &str, session: &str| {
+            crate::wire::OwnershipScope::SessionOwnership(crate::wire::SessionOwnership {
+                connection_id: connection.into(),
+                session_id: session.into(),
+            })
+        };
+        let request = |request_id, ownership, after: &str| crate::wire::RequestFrame {
+            schema: crate::wire::ProtocolSchema::current(),
+            request_id,
+            ownership,
+            payload: crate::wire::RequestPayload::CompareVmConfigRequest(
+                crate::wire::CompareVmConfigRequest {
+                    before: r#"{"defaultsProfile":"agent_os"}"#.into(),
+                    after: after.into(),
+                    before_mounts: Vec::new(),
+                    after_mounts: Vec::new(),
+                    before_restart_identity: Vec::new(),
+                    after_restart_identity: Vec::new(),
+                },
+            ),
+        };
+        for (request_id, high_resolution_time, expected) in [(1, false, true), (2, true, false)] {
+            let after = format!(
+                r#"{{"defaultsProfile":"agent_os","jsRuntime":{{"highResolutionTime":{high_resolution_time}}}}}"#
+            );
+            let result = block_on(sidecar.dispatch_wire(request(
+                request_id,
+                ownership("conn-a", "session-a"),
+                &after,
+            )))
+            .expect("compare through wire dispatch");
+            assert!(matches!(
+                result.response.payload,
+                crate::wire::ResponsePayload::VmConfigComparedResponse(compared)
+                    if compared.equivalent == expected
+            ));
+            assert!(result.events.is_empty());
+        }
+        let mut mount_request = request(
+            9,
+            ownership("conn-a", "session-a"),
+            r#"{"defaultsProfile":"agent_os"}"#,
+        );
+        let crate::wire::RequestPayload::CompareVmConfigRequest(comparison) =
+            &mut mount_request.payload
+        else {
+            unreachable!("comparison request");
+        };
+        comparison.after_mounts.push(crate::wire::MountDescriptor {
+            guest_path: String::from("/workspace"),
+            guest_source: String::from("agentos-packages"),
+            guest_fstype: String::from("agentos-packages"),
+            read_only: true,
+            plugin: crate::wire::MountPluginDescriptor {
+                id: String::from("agentos_packages"),
+                config: String::from("{}"),
+            },
+        });
+        let result = block_on(sidecar.dispatch_wire(mount_request.clone()))
+            .expect("compare configured mounts through wire dispatch");
+        assert!(matches!(
+            result.response.payload,
+            crate::wire::ResponsePayload::VmConfigComparedResponse(compared)
+                if !compared.equivalent
+        ));
+
+        let crate::wire::RequestPayload::CompareVmConfigRequest(comparison) =
+            &mut mount_request.payload
+        else {
+            unreachable!("comparison request");
+        };
+        comparison.before_mounts = comparison.after_mounts.clone();
+        comparison.before_mounts[0].guest_path = String::from("/workspace/./nested/..");
+        comparison.before_mounts[0].plugin.config = String::from(r#"{ "b": 2, "a": 1 }"#);
+        comparison.after_mounts[0].plugin.config = String::from(r#"{"a":1,"b":2}"#);
+        let result = block_on(sidecar.dispatch_wire(mount_request))
+            .expect("compare normalized mount paths and parsed plugin configuration");
+        assert!(matches!(
+            result.response.payload,
+            crate::wire::ResponsePayload::VmConfigComparedResponse(compared)
+                if compared.equivalent
+        ));
+
+        let mut identity_request = request(
+            10,
+            ownership("conn-a", "session-a"),
+            r#"{"defaultsProfile":"agent_os"}"#,
+        );
+        let crate::wire::RequestPayload::CompareVmConfigRequest(comparison) =
+            &mut identity_request.payload
+        else {
+            unreachable!("comparison request");
+        };
+        comparison
+            .after_restart_identity
+            .push(String::from("sha256:changed"));
+        let result = block_on(sidecar.dispatch_wire(identity_request))
+            .expect("compare actor runtime identity through wire dispatch");
+        assert!(matches!(
+            result.response.payload,
+            crate::wire::ResponsePayload::VmConfigComparedResponse(compared)
+                if !compared.equivalent
+        ));
+        for (request_id, owner, after) in [
+            (3, ownership("conn-b", "session-a"), "{}"),
+            (4, ownership("unknown", "session-a"), "{}"),
+            (5, ownership("conn-a", "unknown"), "{}"),
+            (6, ownership("conn-a", "session-a"), r#"{"unknown":true}"#),
+            (
+                7,
+                ownership("conn-a", "session-a"),
+                r#"{"jsRuntime":{"allowedBuiltins":["not-a-builtin"]}}"#,
+            ),
+            (
+                8,
+                crate::wire::OwnershipScope::VmOwnership(crate::wire::VmOwnership {
+                    connection_id: "conn-a".into(),
+                    session_id: "session-a".into(),
+                    vm_id: "vm-missing".into(),
+                }),
+                "{}",
+            ),
+        ] {
+            let result = block_on(sidecar.dispatch_wire(request(request_id, owner, after)))
+                .expect("invalid comparison has a rejected response");
+            assert!(matches!(
+                result.response.payload,
+                crate::wire::ResponsePayload::RejectedResponse(_)
+            ));
+            assert!(result.events.is_empty());
+        }
+        assert!(sidecar.vms.is_empty());
+        assert!(sidecar.quarantined_vms.is_empty());
+        assert_eq!(sidecar.next_vm_id, next_vm_id);
+        assert_eq!(sidecar.next_session_id, next_session_id);
+        assert_eq!(sidecar.connections.len(), 2);
+        assert_eq!(sidecar.sessions.len(), 2);
     }
 
     struct RecordingExtension {

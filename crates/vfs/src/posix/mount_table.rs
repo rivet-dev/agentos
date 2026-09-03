@@ -1150,6 +1150,45 @@ struct MountRegistration {
     filesystem: Box<dyn MountedFileSystem>,
 }
 
+/// A mounted filesystem temporarily removed from the mount table without
+/// shutting it down. Trusted reconfiguration can restore this exact backend
+/// when a replacement fails, then shut it down only after commit.
+#[must_use = "restore or shut down the detached filesystem"]
+pub struct DetachedMount {
+    registration: Option<MountRegistration>,
+}
+
+impl DetachedMount {
+    pub fn path(&self) -> &str {
+        &self
+            .registration
+            .as_ref()
+            .expect("owned detached mount")
+            .path
+    }
+
+    pub fn shutdown(mut self) -> VfsResult<()> {
+        self.registration
+            .take()
+            .expect("owned detached mount")
+            .filesystem
+            .shutdown()
+    }
+}
+
+impl Drop for DetachedMount {
+    fn drop(&mut self) {
+        if let Some(mut mount) = self.registration.take() {
+            if let Err(error) = mount.filesystem.shutdown() {
+                eprintln!(
+                    "failed to shut down detached filesystem at {}: {error}",
+                    mount.path
+                );
+            }
+        }
+    }
+}
+
 pub struct MountTable {
     mounts: Vec<MountRegistration>,
     mount_indices: BTreeMap<String, usize>,
@@ -1220,39 +1259,42 @@ impl MountTable {
         options: MountOptions,
     ) -> VfsResult<()> {
         let normalized = normalize_path(path);
-        if normalized == "/" {
-            return Err(VfsError::new("EINVAL", "cannot mount over root"));
-        }
-        if self.mounts.iter().any(|mount| mount.path == normalized) {
-            return Err(VfsError::new(
-                "EEXIST",
-                format!("already mounted at {normalized}"),
-            ));
-        }
-
-        let (parent_index, relative_path) = self.resolve_index(&normalized)?;
-        let parent_mount = &mut self.mounts[parent_index];
-        if !parent_mount.filesystem.exists(&relative_path) {
-            // Materializing the mountpoint directory on the parent is
-            // cosmetic: child mounts resolve by path prefix before the parent
-            // is consulted. A read-only parent (for example a read-only
-            // module-access mount hosting nested package mounts) cannot
-            // materialize the entry, but the mount must still succeed.
-            if let Err(error) = parent_mount.filesystem.mkdir(&relative_path, true) {
-                if error.code() != "EROFS" {
-                    if let Err(shutdown_error) = filesystem.shutdown() {
-                        return Err(VfsError::new(
-                            shutdown_error.code(),
-                            format!(
-                                "failed to shut down filesystem after mount failure ({error}): {}",
-                                shutdown_error.message()
-                            ),
-                        ));
+        let setup = (|| {
+            if normalized == "/" {
+                return Err(VfsError::new("EINVAL", "cannot mount over root"));
+            }
+            if self.mounts.iter().any(|mount| mount.path == normalized) {
+                return Err(VfsError::new(
+                    "EEXIST",
+                    format!("already mounted at {normalized}"),
+                ));
+            }
+            let (parent_index, relative_path) = self.resolve_index(&normalized)?;
+            let parent_mount = &mut self.mounts[parent_index];
+            if !parent_mount.filesystem.exists(&relative_path) {
+                // Materializing the mountpoint directory on the parent is
+                // cosmetic: child mounts resolve by path prefix before the parent
+                // is consulted. A read-only parent (for example a read-only
+                // module-access mount hosting nested package mounts) cannot
+                // materialize the entry, but the mount must still succeed.
+                // Recursive mkdir may partially mutate even when it fails.
+                parent_mount.cached_usage = None;
+                if let Err(error) = parent_mount.filesystem.mkdir(&relative_path, true) {
+                    if error.code() != "EROFS" {
+                        return Err(error);
                     }
-
-                    return Err(error);
                 }
             }
+            Ok(())
+        })();
+        if let Err(error) = setup {
+            return match filesystem.shutdown() {
+                Ok(()) => Err(error),
+                Err(cleanup) => Err(VfsError::new(
+                    error.code(),
+                    format!("{error}; shutting down rejected filesystem failed: {cleanup}"),
+                )),
+            };
         }
 
         let filesystem = if options.read_only {
@@ -1281,6 +1323,12 @@ impl MountTable {
     }
 
     pub fn unmount(&mut self, path: &str) -> VfsResult<()> {
+        self.detach(path)?.shutdown()
+    }
+
+    /// Remove a leaf without closing its backend, for rollback-capable trusted
+    /// mount reconfiguration. This retains the same child/root checks as unmount.
+    pub fn detach(&mut self, path: &str) -> VfsResult<DetachedMount> {
         let normalized = normalize_path(path);
         if normalized == "/" {
             return Err(VfsError::new("EINVAL", "cannot unmount root"));
@@ -1309,9 +1357,38 @@ impl MountTable {
             ));
         };
 
-        let mut mount = self.mounts.remove(index);
+        let mount = self.mounts.remove(index);
         self.rebuild_mount_indices();
-        mount.filesystem.shutdown()?;
+        Ok(DetachedMount {
+            registration: Some(mount),
+        })
+    }
+
+    /// Restore an exact backend removed by `detach`. No new mountpoint is
+    /// materialized, since the backend and its mount metadata already existed.
+    pub fn restore_detached(&mut self, mut mount: DetachedMount) -> VfsResult<()> {
+        if self
+            .mounts
+            .iter()
+            .any(|existing| existing.path == mount.path())
+        {
+            let path = mount.path().to_owned();
+            let cleanup_error = mount.shutdown().err();
+            return Err(VfsError::new(
+                "EEXIST",
+                match cleanup_error {
+                    Some(error) => format!(
+                        "already mounted at {path}; shutting down detached backend failed: {error}"
+                    ),
+                    None => format!("already mounted at {path}"),
+                },
+            ));
+        }
+        self.mounts
+            .push(mount.registration.take().expect("owned detached mount"));
+        self.mounts
+            .sort_by_key(|mount| std::cmp::Reverse(mount.path.len()));
+        self.rebuild_mount_indices();
         Ok(())
     }
 

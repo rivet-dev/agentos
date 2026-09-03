@@ -9,7 +9,7 @@ generated expression invoke it more than once, and returns one structured
 result.
 
 Binding handlers run in the trusted host. Only validated input and JSON output
-cross the AgentOS boundary, so credentials and direct host resources stay out
+cross the agentOS boundary, so credentials and direct host resources stay out
 of generated code.
 
 ## Run it

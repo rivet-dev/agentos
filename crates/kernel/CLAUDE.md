@@ -4,7 +4,7 @@ The kernel provides a POSIX-like userspace environment. The goal is that a progr
 
 ## Linux Compatibility
 
-- **Correct errno values.** Every kernel operation that fails must return the correct POSIX errno (`ENOENT`, `EACCES`, `EEXIST`, `EISDIR`, `ENOTDIR`, `EXDEV`, `EBADF`, `EPERM`, `ENOSYS`, etc.). Agents check errno values to decide control flow -- wrong errnos cause cascading failures.
+- **Correct errno values.** Every kernel operation that fails must return the correct POSIX errno (`ENOENT`, `EACCES`, `EEXIST`, `EISDIR`, `ENOTDIR`, `EXDEV`, `EBADF`, `EPERM`, `ENOSYS`, etc.). Guest programs check errno values to decide control flow -- wrong errnos cause cascading failures.
 - **Standard `/proc` layout.** `/proc/self/`, `/proc/[pid]/`, `/proc/[pid]/fd/`, `/proc/[pid]/environ`, `/proc/[pid]/cwd`, `/proc/[pid]/cmdline` should contain the expected content.
 - **Extend procfs surfaces together.** When adding a new `/proc` entry in `crates/kernel/src/kernel.rs`, update path resolution, `read_dir`, read-bytes helpers, stat/lstat sizing, filetype/inode/canonical-path switches, and the focused `crates/kernel/tests/identity.rs` truth suite in the same change so the synthetic proc layer stays internally consistent.
 - **Synthetic procfs paths use guest-visible permission subjects.** Permission checks for procfs access should authorize the guest-visible proc path directly rather than resolving through the backing VFS realpath.
@@ -34,7 +34,7 @@ The kernel provides a POSIX-like userspace environment. The goal is that a progr
 - **Standard filesystem paths.** `/tmp` must be writable. `/etc/hostname`, `/etc/resolv.conf`, `/etc/passwd`, `/etc/group` should contain valid content. `/usr/bin/env` should exist for shebangs. Shell (`/bin/sh`, `/bin/bash`) must be available.
 - **Direct script exec should resolve registered stubs before reparsing files.** When the kernel executes a path under `/bin/` or `/usr/bin/` that corresponds to a registered command driver, dispatch that driver directly before falling back to shebang parsing.
 - **Environment variable conventions.** `HOME`, `USER`, `PATH`, `SHELL`, `TERM`, `HOSTNAME`, `PWD`, `LANG` must be set to reasonable values. `PATH` must include standard directories where commands are found.
-- **Document deviations in the friction log** at `~/.agents/notes/vm-friction.md`.
+- **Document deviations in the friction log** at `~/.agents/friction/agentos.md`.
 
 ## Virtual Filesystem Design Reference
 
@@ -42,11 +42,13 @@ The kernel provides a POSIX-like userspace environment. The goal is that a progr
 - Key JuiceFS concepts that apply: three-tier data model (Chunk/Slice/Block), pluggable metadata engines (SQLite, Redis, PostgreSQL), fixed-size block storage in object stores (S3), and metadata-data separation.
 - For detailed design analysis: https://juicefs.com/en/blog/engineering/design-metadata-data-storage
 
-### Agent-OS filesystem packages
+### agentOS filesystem crates
 
-- The old `fs-sqlite` and `fs-postgres` packages were deleted. They are replaced by the Agent OS `SqliteMetadataStore` and the `ChunkedVFS` composition layer.
-- File system drivers live in `registry/file-system/`. Prefer their declarative mount helpers when available; the legacy custom-`VirtualFileSystem` path is only for arbitrary caller-supplied filesystems and compatibility fallbacks.
-- The Rivet actor integration currently uses `ChunkedVFS(InMemoryMetadataStore + InMemoryBlockStore)` as legacy temporary infrastructure. This must move to durable metadata and block storage.
+- Filesystem storage and migration ownership live under `crates/vfs` and use the
+  independent `agentos_fs_*` SQLite namespace.
+- The hosted actor accepts only serializable descriptors resolved through its
+  fixed filesystem registry. Embedded Core may additionally provide trusted
+  host-backed implementations.
 
 ## Filesystem Conventions
 
@@ -66,4 +68,3 @@ The kernel provides a POSIX-like userspace environment. The goal is that a progr
 - **`VirtualStat` additions must be propagated end-to-end.** When stat grows new fields, update kernel-backed storage stats, synthetic `/proc` and `/dev` stats, sidecar mount/plugin conversions, sidecar protocol serialization, and the TypeScript `VirtualStat` / `GuestFilesystemStat` adapters together.
 - **Creation-mode-sensitive mounts should use the VFS `*_with_mode` hooks.** If a mounted filesystem needs the guest's requested file or directory mode at create time (for example host-backed mounts), thread it through `write_file_with_mode`, `create_file_exclusive_with_mode`, `create_dir_with_mode`, and `mkdir_with_mode` instead of hardcoding defaults and hoping a later chmod is enough.
 - **Never interfere with the user's filesystem or code.** Don't write config files, instruction files, or metadata into the user's working directory. Use dedicated OS paths or CLI flags instead.
-- **Agent prompt injection must be non-destructive.** Preserve existing user-provided instructions, append rather than replace, and always provide `skipOsInstructions` opt-out.

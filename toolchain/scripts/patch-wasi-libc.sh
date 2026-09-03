@@ -104,7 +104,20 @@ if [ ! -d "$LLVM_PROJECT_DIR/runtimes" ]; then
     fi
     rm -rf "$LLVM_PROJECT_DIR"
     mkdir -p "$LLVM_PROJECT_DIR"
-    tar -xzf "$LLVM_TARBALL" --strip-components=1 -C "$LLVM_PROJECT_DIR"
+    LLVM_ARCHIVE_ROOT="llvm-project-${LLVM_PROJECT_TAG}"
+    # The sysroot only rebuilds libc++, libc++abi, and libunwind. Extracting
+    # the complete llvm-project archive adds roughly 1.8 GiB of unrelated
+    # compiler, debugger, and test sources to every clean release build.
+    tar -xzf "$LLVM_TARBALL" --strip-components=1 -C "$LLVM_PROJECT_DIR" \
+        "$LLVM_ARCHIVE_ROOT/LICENSE.TXT" \
+        "$LLVM_ARCHIVE_ROOT/cmake" \
+        "$LLVM_ARCHIVE_ROOT/libcxx" \
+        "$LLVM_ARCHIVE_ROOT/libcxxabi" \
+        "$LLVM_ARCHIVE_ROOT/libunwind" \
+        "$LLVM_ARCHIVE_ROOT/llvm/cmake" \
+        "$LLVM_ARCHIVE_ROOT/llvm/utils/llvm-lit" \
+        "$LLVM_ARCHIVE_ROOT/runtimes" \
+        "$LLVM_ARCHIVE_ROOT/third-party"
     echo ""
 fi
 

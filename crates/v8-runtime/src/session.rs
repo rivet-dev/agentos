@@ -945,7 +945,7 @@ fn normalize_cpu_time_limit_ms(cpu_time_limit_ms: Option<u32>) -> Option<u32> {
 /// Normalize an opt-in WALL-CLOCK backstop: `Some(0)` means "disabled" and folds
 /// to `None` so the wall-clock `TimeoutGuard` is NOT armed. There is no default —
 /// when the caller passes `None`/`0`, the guest runs with no wall-clock limit
-/// (opt-in by design, so long-lived ACP adapters are never killed by a default).
+/// (opt-in by design, so long-lived guest services are never killed by a default).
 /// This is INDEPENDENT of the CPU-time budget: setting one does not arm the other.
 fn normalize_wall_clock_limit_ms(wall_clock_limit_ms: Option<u32>) -> Option<u32> {
     wall_clock_limit_ms.filter(|limit_ms| *limit_ms > 0)
@@ -2792,7 +2792,7 @@ fn session_thread(
                         // blocks or awaits indefinitely. Armed only when the operator
                         // opts in via `limits.jsRuntime.wallClockLimitMs` (normalized:
                         // `0`/unset => `None` => not armed => NO wall-clock limit, so
-                        // long-lived ACP adapters are never killed by a default).
+                        // long-lived guest services are never killed by a default).
                         // Whichever guard fires first calls `terminate_execution` and
                         // records its abort reason; the result frame reports which.
                         let mut wall_clock_guard = match wall_clock_limit_ms {
@@ -2943,7 +2943,7 @@ fn session_thread(
 
                         // Keep the session alive while handles (timers, child
                         // processes, stdin listeners) are active. Long-lived
-                        // ACP adapters often run as plain scripts, so this
+                        // Persistent services often run as plain scripts, so this
                         // cannot be limited to ESM entrypoints.
                         if !terminated && error.is_none() {
                             // Destruction can race with the short gap before the

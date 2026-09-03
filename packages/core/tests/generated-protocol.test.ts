@@ -15,10 +15,11 @@ import {
 	decodeBareProtocolFrame,
 	encodeBareProtocolFrame,
 } from "@rivet-dev/agentos-runtime-core/protocol-frames";
+import { SIDECAR_PROTOCOL_SCHEMA } from "@rivet-dev/agentos-runtime-core/protocol-schema";
 
 const GENERATED_AUTH_FRAME_HEX =
-	"00166167656e746f732d6e61746976652d73696465636172080007000000000000000006636f6e6e2d31000e67656e6572617465642d7465737405746f6b656e080001000000";
-const PROTOCOL_VERSION = 8;
+	"00166167656e746f732d6e61746976652d736964656361720b0007000000000000000006636f6e6e2d31000e67656e6572617465642d7465737405746f6b656e0b0001000000";
+const PROTOCOL_VERSION = SIDECAR_PROTOCOL_SCHEMA.version;
 
 describe("generated sidecar protocol", () => {
 	test("round-trips request frames", () => {
@@ -57,6 +58,46 @@ describe("generated sidecar protocol", () => {
 		expect(
 			decodeProtocolFrame(Buffer.from(GENERATED_AUTH_FRAME_HEX, "hex")),
 		).toEqual(frame);
+	});
+
+	test("v11 replay encoding preserves default sentinels and sequence zero", () => {
+		const frame: ProtocolFrame = {
+			tag: "RequestFrame",
+			val: {
+				schema: SIDECAR_PROTOCOL_SCHEMA,
+				requestId: 12n,
+				ownership: {
+					tag: "VmOwnership",
+					val: { connectionId: "conn-1", sessionId: "session-1", vmId: "vm-1" },
+				},
+				payload: {
+					tag: "ReadProcessOutputRequest",
+					val: { processId: "process-1", after: 0n, maxEvents: 0, maxBytes: 0 },
+				},
+			},
+		};
+		const native = {
+			frame_type: "request",
+			schema: SIDECAR_PROTOCOL_SCHEMA,
+			request_id: 12,
+			ownership: {
+				scope: "vm",
+				connection_id: "conn-1",
+				session_id: "session-1",
+				vm_id: "vm-1",
+			},
+			payload: {
+				type: "read_process_output",
+				process_id: "process-1",
+				after: 0,
+				max_events: 0,
+				max_bytes: 0,
+			},
+		};
+		expect(Buffer.from(encodeBareProtocolFrame(native))).toEqual(
+			Buffer.from(encodeProtocolFrame(frame)),
+		);
+		expect(decodeProtocolFrame(encodeProtocolFrame(frame))).toEqual(frame);
 	});
 
 	test("live TypeScript BARE encoder matches generated request bytes", () => {

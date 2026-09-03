@@ -493,7 +493,13 @@ impl VirtualFileSystem for RootFileSystem {
 
 #[derive(Debug, Deserialize)]
 struct RawBaseFilesystemSnapshot {
+    environment: RawBaseFilesystemEnvironment,
     filesystem: RawFilesystemEntries,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawBaseFilesystemEnvironment {
+    env: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -628,6 +634,18 @@ pub fn load_bundled_base_snapshot_with_limits(
             RootFilesystemError::new(format!("parse bundled base filesystem: {error}"))
         })?;
     raw_entries_to_snapshot(raw.filesystem.entries, limits, "bundled base filesystem")
+}
+
+/// Returns the environment stored alongside the canonical bundled base layer.
+/// Keeping this in the sidecar-owned snapshot prevents embedded clients and
+/// hosted actors from carrying divergent copies of VM defaults.
+pub fn load_bundled_base_environment(
+) -> Result<std::collections::BTreeMap<String, String>, RootFilesystemError> {
+    let raw: RawBaseFilesystemSnapshot = serde_json::from_str(BUNDLED_BASE_FILESYSTEM_JSON)
+        .map_err(|error| {
+            RootFilesystemError::new(format!("parse bundled base filesystem: {error}"))
+        })?;
+    Ok(raw.environment.env)
 }
 
 fn minimal_root_snapshot() -> RootFilesystemSnapshot {

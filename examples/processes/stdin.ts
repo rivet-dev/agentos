@@ -1,17 +1,17 @@
-import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
+import { vm } from "./client.js";
 
-const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
-const agent = client.vm.getOrCreate("my-agent");
-
-const { pid } = await agent.process.spawn("cat", []);
+const spawned = await vm.process.spawn({
+	command: "cat",
+	args: [],
+	options: { env: {} },
+});
 
 // Write to stdin
-await agent.process.writeStdin(pid, "hello from stdin\n");
+await vm.process.stdin.write({ process: spawned, data: "hello from stdin\n" });
 
 // Close stdin when done
-await agent.process.closeStdin(pid);
+await vm.process.stdin.close({ process: spawned });
 
 // Wait for the process to exit
-const exitCode = await agent.process.wait(pid);
-console.log("exit code:", exitCode);
+const exit = await vm.process.wait({ process: spawned });
+console.log("exit code:", exit.status.exitCode);

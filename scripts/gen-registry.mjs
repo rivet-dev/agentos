@@ -4,12 +4,10 @@
 // time, so the catalog stays owned by the repo that defines it.
 //
 // A package is listed iff its agentos-package.json has a `registry` block with
-// both `title` and `description` — no fallbacks. Everything else is derived:
-// slug from the directory name (overridable via `registry.slug`), type from
-// manifest `kind` (agent/software), npm package name from package.json, and
-// for agents the agent id from the manifest `name` plus docs status when
-// `registry.docsHref` is set. `featured` is deliberately not part of the
-// block — the website hardcodes featured slugs in src/data/registry.ts.
+// both `title` and `description` — no fallbacks. The public catalog references
+// the logical artifact name used by the release manifest, never an npm package.
+// `featured` is deliberately not part of the block — the website hardcodes
+// featured slugs in src/data/registry.ts.
 //
 // The output is committed. When software/ is not present (e.g. the website
 // Docker build, whose context is website/ only), the committed file is used
@@ -42,35 +40,31 @@ for (const dir of readdirSync(softwareRoot, { withFileTypes: true })) {
 	const manifest = readJson(manifestPath);
 	const meta = manifest.registry;
 	if (!meta?.title || !meta?.description) continue;
+	// Meta packages were npm dependency arrays. The URL registry contains only
+	// concrete immutable artifacts; clients install each desired artifact URL.
+	if (
+		(!Array.isArray(manifest.commands) || manifest.commands.length === 0) &&
+		(typeof manifest.name !== "string" || manifest.name.length === 0)
+	) {
+		continue;
+	}
 
-	const type = manifest.kind === "agent" ? "agent" : "software";
-	const pkg = readJson(join(pkgDir, "package.json"));
 	const entry = {
 		slug: meta.slug ?? dir.name,
 		title: meta.title,
 		description: meta.description,
-		// A package's section defaults to manifest kind; `types` overrides it
-		// (e.g. browserbase is a software package listed under Browsers).
-		types: meta.types ?? [type],
+		// `types` may place software in a specialized docs section (for example,
+		// browserbase appears under Browsers).
+		types: meta.types ?? ["software"],
 		category: meta.category,
 		priority: meta.priority ?? 0,
-		package: pkg.name,
+		artifactName: dir.name,
 		status: meta.docsHref ? "docs" : "available",
 	};
 	if (meta.beta) entry.beta = true;
 	if (meta.icon) entry.icon = meta.icon;
 	if (meta.image) entry.image = meta.image;
-	if (type === "agent") {
-		// Every agent has a docs page; link it even for plain "available"
-		// entries (which keep their npm install rendering). Agents whose
-		// manifest carries no runtime `name` (e.g. codex, which only has a
-		// registry block) fall back to the directory name as agent id.
-		const agentId = manifest.name ?? dir.name;
-		entry.docsHref = meta.docsHref ?? `/docs/agents/${agentId}`;
-		entry.agentId = agentId;
-	} else if (meta.docsHref) {
-		entry.docsHref = meta.docsHref;
-	}
+	if (meta.docsHref) entry.docsHref = meta.docsHref;
 	entries.push(entry);
 }
 

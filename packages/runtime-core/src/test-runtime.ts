@@ -241,6 +241,8 @@ export interface ProcessInfo {
 
 export interface ManagedProcess {
 	pid: number;
+	/** Internal sidecar routing identity for output replay. */
+	readonly processId?: string;
 	writeStdin(data: Uint8Array | string): void;
 	closeStdin(): void;
 	kill(signal?: number): void;
@@ -299,11 +301,22 @@ export interface RunResult<T = unknown> {
 }
 
 export interface KernelSpawnOptions extends ExecOptions {
+	/** Internal sidecar replay identity; absent for local/synthetic output. */
+	onStdout?: (
+		data: Uint8Array,
+		metadata?: { sequence?: number; timestampMs?: number },
+	) => void;
+	onStderr?: (
+		data: Uint8Array,
+		metadata?: { sequence?: number; timestampMs?: number },
+	) => void;
 	stdio?: "pipe" | "inherit";
 	stdinFd?: number;
 	stdoutFd?: number;
 	stderrFd?: number;
 	streamStdin?: boolean;
+	/** Internal: ask the sidecar to retain bounded output for pull-based replay. */
+	retainOutput?: boolean;
 }
 
 export type KernelExecOptions = ExecOptions;
@@ -1721,8 +1734,6 @@ export const WASMVM_COMMANDS = Object.freeze([
 	"users",
 	"uptime",
 	"stty",
-	"codex",
-	"codex-exec",
 ]) as readonly string[];
 
 export type PermissionTier = "full" | "read-write" | "read-only" | "isolated";
@@ -1738,8 +1749,6 @@ export const DEFAULT_FIRST_PARTY_TIERS: Readonly<
 	nice: "full",
 	nohup: "full",
 	stdbuf: "full",
-	codex: "full",
-	"codex-exec": "full",
 	git: "full",
 	"git-remote-http": "full",
 	"git-remote-https": "full",

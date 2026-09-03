@@ -20,7 +20,7 @@ US-083 and US-084 should replace only the payload codec first. They should not r
 The migration keeps the current semantic invariants unchanged across codecs:
 
 - `ProtocolSchema.name` is `agentos-native-sidecar`
-- `ProtocolSchema.version` is `8`
+- `ProtocolSchema.version` is `11`
 - host-originated `request_id` values stay positive
 - sidecar-originated `request_id` values stay negative
 - ownership scope rules and response-correlation rules stay exactly the same
@@ -47,6 +47,11 @@ This applies to fields such as runtime config blobs, mount plugin configs, bindi
 6. US-084: keep JSON decode support only for the migration window; once both sides default to BARE and the targeted tests are green, delete JSON encoding and the dual-stack sniffing path.
 
 ## Normalization Notes
+
+`ReadProcessOutputRequest.maxEvents` and `maxBytes` use zero as a wire-only
+omission sentinel: the sidecar selects that VM's configured replay page limit.
+Public Core/actor APIs reject explicitly supplied zero; explicit nonzero bounds
+above the configured VM limit receive a typed rejection, never silent clamping.
 
 BARE does not have Serde's "omitted but defaults to empty list/map" behavior. The codec should therefore normalize these fields explicitly:
 

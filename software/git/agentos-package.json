@@ -11,7 +11,7 @@
 	},
 	"registry": {
 		"title": "git",
-		"description": "Upstream Git version control for AgentOS VMs.",
+		"description": "Upstream Git version control for agentOS VMs.",
 		"priority": 90,
 		"image": "/images/registry/git.svg",
 		"category": "developer-tools"

@@ -9,7 +9,7 @@ Back a VM with a Docker-backed sandbox so guest reads, writes, and commands run 
 
 ## How it works
 
-The `docker()` provider starts one Docker container for the VM. AgentOS mounts its filesystem at `/mnt/sandbox`, registers a `sandbox` binding collection for running commands, and destroys the container when the VM is disposed. Set `SKIP_DOCKER=1` to no-op the example where Docker is unavailable.
+The `docker()` provider starts one Docker container for the VM. agentOS mounts its filesystem at `/mnt/sandbox`, registers a `sandbox` binding collection for running commands, and destroys the container when the VM is disposed. Set `SKIP_DOCKER=1` to no-op the example where Docker is unavailable.
 
 ## Run it
 

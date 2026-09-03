@@ -1,5 +1,6 @@
 {
 	"name": "@agentos-software/tree",
+	"private": true,
 	"version": "0.3.3",
 	"type": "module",
 	"license": "GPL-2.0-or-later",

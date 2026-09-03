@@ -20,6 +20,7 @@
 		"@vercel/connect": "0.4.0",
 		"ai": "7.0.26",
 		"eve": "0.27.0",
+		"rivetkit": "2.3.9",
 		"zod": "4.3.6"
 	},
 	"devDependencies": {

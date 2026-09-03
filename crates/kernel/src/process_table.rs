@@ -301,6 +301,7 @@ pub struct ProcessInfo {
     pub sid: u32,
     pub driver: String,
     pub command: String,
+    pub args: Vec<String>,
     pub status: ProcessStatus,
     pub exit_code: Option<i32>,
     pub identity: ProcessIdentity,
@@ -981,6 +982,7 @@ fn to_process_info(entry: &ProcessEntry) -> ProcessInfo {
         sid: entry.sid,
         driver: entry.driver.clone(),
         command: entry.command.clone(),
+        args: entry.args.clone(),
         status: entry.status,
         exit_code: entry.exit_code,
         identity: entry.identity.clone(),
@@ -1592,6 +1594,45 @@ mod tests {
             ppid,
             ..ProcessContext::default()
         }
+    }
+
+    #[test]
+    fn process_snapshots_preserve_arguments_and_follow_exec() {
+        let table = ProcessTable::with_zombie_ttl(Duration::from_secs(3600));
+        let initial_args = vec![
+            "node".to_owned(),
+            "-e".to_owned(),
+            "".to_owned(),
+            "a b".to_owned(),
+        ];
+        table.register(
+            10,
+            "test",
+            "node",
+            initial_args.clone(),
+            context(0),
+            Arc::new(TestDriverProcess::default()),
+        );
+        assert_eq!(table.list_processes()[&10].args, initial_args);
+
+        let replacement_args = vec!["script.py".to_owned(), "hello world".to_owned()];
+        table
+            .exec(
+                10,
+                "test",
+                "python",
+                replacement_args.clone(),
+                BTreeMap::new(),
+                "/".into(),
+            )
+            .expect("replace process image");
+        let snapshot = table.list_processes();
+        assert_eq!(snapshot[&10].command, "python");
+        assert_eq!(snapshot[&10].args, replacement_args);
+
+        table.mark_exited(10, 0);
+        assert_eq!(table.list_processes()[&10].args, replacement_args);
+        table.waitpid(10).expect("reap regression process");
     }
 
     #[test]

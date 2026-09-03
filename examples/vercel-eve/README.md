@@ -16,15 +16,15 @@ pnpm install
 AI_GATEWAY_API_KEY=... pnpm dev
 ```
 
-`eve dev` starts the Eve server. The first World or sandbox operation lazily
-starts the shared registry in the same process and waits for it to become ready,
-so there is no second development server. Reconnect to the same Eve session to
-verify that the actor-owned workspace survives sandbox sleep and resume.
+`eve dev` starts the Eve server and its World registry. The sandbox backend
+connects separately to the deployed Rust agentOS actor. Reconnect to the same
+Eve session to verify that the actor-owned workspace survives VM sleep and
+resume.
 
 ## Configuration
 
-- Change the actor name passed to `agentOSBackend()` when your registry uses a name other than `vm`.
-- Configure software, permissions, and resource limits on `agentOS()` in `actors.ts`.
+- Pass `createInput` to `agentOSBackend()` to configure software, permissions, and resource limits on first creation.
+- Use `clientConfig` when the deployed actor is not discoverable from the default RivetKit environment.
 - Keep files that must persist under `/workspace`.
 
 agentOS is the default in this example, but Eve accepts any compatible sandbox backend. Changing the sandbox does not require changing the agent or selecting a different World.

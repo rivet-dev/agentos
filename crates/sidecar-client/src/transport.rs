@@ -69,6 +69,7 @@ pub type WireSidecarCallback = Arc<
 pub struct SidecarTransport {
     /// The spawned sidecar process (stdout/stdin taken by the I/O tasks; kept for kill on drop).
     child: parking_lot::Mutex<Option<Child>>,
+    child_termination: tokio::sync::Mutex<()>,
     /// Pending host-initiated requests, keyed by positive `RequestId`.
     pending: SccHashMap<wire::RequestId, oneshot::Sender<wire::ResponsePayload>>,
     pending_request_lock: parking_lot::Mutex<()>,
@@ -94,9 +95,17 @@ impl SidecarTransport {
     /// Does NOT run the handshake. Product clients drive Authenticate and any follow-up setup using
     /// [`request_wire`](Self::request_wire) once the transport is live.
     pub async fn spawn(binary_path: Option<String>) -> Result<Arc<Self>, TransportError> {
+        Self::spawn_with_args(binary_path, Vec::new()).await
+    }
+
+    /// Spawn with trusted operator-owned command-line configuration.
+    pub async fn spawn_with_args(
+        binary_path: Option<String>,
+        args: Vec<String>,
+    ) -> Result<Arc<Self>, TransportError> {
         #[cfg(not(unix))]
         {
-            let _ = binary_path;
+            let _ = (binary_path, args);
             return Err(TransportError::Sidecar(
                 "the native sidecar response/control transport is unsupported on this platform"
                     .to_string(),
@@ -105,12 +114,15 @@ impl SidecarTransport {
 
         #[cfg(unix)]
         {
-            Self::spawn_unix(binary_path).await
+            Self::spawn_unix(binary_path, args).await
         }
     }
 
     #[cfg(unix)]
-    async fn spawn_unix(binary_path: Option<String>) -> Result<Arc<Self>, TransportError> {
+    async fn spawn_unix(
+        binary_path: Option<String>,
+        args: Vec<String>,
+    ) -> Result<Arc<Self>, TransportError> {
         let bin = resolve_sidecar_binary_path(binary_path);
         let (control_parent, control_child) = StdUnixStream::pair().map_err(|error| {
             TransportError::Sidecar(format!(
@@ -124,6 +136,7 @@ impl SidecarTransport {
         })?;
         let mut command = Command::new(&bin);
         command
+            .args(&args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -155,6 +168,7 @@ impl SidecarTransport {
 
         let transport = Arc::new(Self {
             child: parking_lot::Mutex::new(Some(child)),
+            child_termination: tokio::sync::Mutex::new(()),
             pending: SccHashMap::new(),
             pending_request_lock: parking_lot::Mutex::new(()),
             request_counter: AtomicI64::new(1),
@@ -294,9 +308,56 @@ impl SidecarTransport {
 
     /// Kill the child sidecar process if this transport still owns one.
     pub fn kill_child(&self) {
-        if let Some(mut child) = self.child.lock().take() {
-            let _ = child.start_kill();
+        if let Some(child) = self.child.lock().as_mut() {
+            match child.try_wait() {
+                Ok(None) => {
+                    if let Err(error) = child.start_kill() {
+                        tracing::error!(?error, "kill disconnected sidecar child");
+                    }
+                }
+                Ok(Some(_)) => {}
+                Err(error) => tracing::error!(?error, "poll disconnected sidecar child"),
+            }
         }
+    }
+
+    /// Stop the child and reap it before its caller releases owned resources
+    /// such as a temporary package-cache directory.
+    pub async fn terminate_child(&self) -> Result<(), TransportError> {
+        let _termination = self.child_termination.lock().await;
+        let Some(child) = self.child.lock().take() else {
+            return Ok(());
+        };
+        let mut owned = ReapingChild {
+            slot: &self.child,
+            child: Some(child),
+        };
+        let child = owned.child.as_mut().expect("owned reaping child");
+        if child
+            .try_wait()
+            .map_err(|error| TransportError::Sidecar(format!("poll sidecar child: {error}")))?
+            .is_none()
+        {
+            if let Err(kill_error) = child.start_kill() {
+                if child
+                    .try_wait()
+                    .map_err(|error| {
+                        TransportError::Sidecar(format!("poll sidecar child after kill: {error}"))
+                    })?
+                    .is_none()
+                {
+                    return Err(TransportError::Sidecar(format!(
+                        "kill sidecar child: {kill_error}"
+                    )));
+                }
+            }
+        }
+        child
+            .wait()
+            .await
+            .map_err(|error| TransportError::Sidecar(format!("reap sidecar child: {error}")))?;
+        owned.child.take();
+        Ok(())
     }
 
     fn encode_wire_frame(
@@ -620,12 +681,75 @@ fn resolve_sidecar_binary_path(binary_path: Option<String>) -> String {
         .unwrap_or_else(|| "agentos-native-sidecar".to_string())
 }
 
+// Child::wait is cancellation-safe, but moving Child out of its owner before
+// awaiting it is not. Restore ownership on cancellation/error so the next
+// terminate_child caller must confirm exit rather than seeing an empty slot.
+struct ReapingChild<'a> {
+    slot: &'a parking_lot::Mutex<Option<Child>>,
+    child: Option<Child>,
+}
+
+impl Drop for ReapingChild<'_> {
+    fn drop(&mut self) {
+        if let Some(child) = self.child.take() {
+            *self.slot.lock() = Some(child);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Mutex;
+    use std::time::Duration;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[tokio::test]
+    async fn cancelled_reaping_restores_child_ownership_for_confirmed_retry() {
+        let transport = test_transport();
+        let child = Command::new("sleep")
+            .arg("30")
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let pid = child.id().unwrap();
+        transport.child.lock().replace(child);
+        let child = transport.child.lock().take();
+        let reaping = ReapingChild {
+            slot: &transport.child,
+            child,
+        };
+        assert!(transport.child.lock().is_none());
+        // This is the same ownership rollback run if terminate_child's wait
+        // future is dropped before it can confirm exit.
+        drop(reaping);
+        assert_eq!(transport.child.lock().as_ref().unwrap().id(), Some(pid));
+        tokio::time::timeout(Duration::from_secs(2), transport.terminate_child())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(transport.child.lock().is_none());
+        transport.terminate_child().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn disconnected_child_is_retained_until_reaped() {
+        let transport = test_transport();
+        let child = Command::new("sleep")
+            .arg("30")
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        transport.child.lock().replace(child);
+        transport.kill_child();
+        assert!(transport.child.lock().is_some());
+        tokio::time::timeout(Duration::from_secs(2), transport.terminate_child())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(transport.child.lock().is_none());
+    }
 
     fn test_transport() -> SidecarTransport {
         let (request_writer_tx, _request_writer_rx) = mpsc::channel(REQUEST_FRAME_QUEUE_CAPACITY);
@@ -633,6 +757,7 @@ mod tests {
         let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
         SidecarTransport {
             child: parking_lot::Mutex::new(None),
+            child_termination: tokio::sync::Mutex::new(()),
             pending: SccHashMap::new(),
             pending_request_lock: parking_lot::Mutex::new(()),
             request_counter: AtomicI64::new(1),
@@ -747,6 +872,8 @@ mod tests {
                     process_id: "proc-1".to_string(),
                     channel: wire::StreamChannel::Stdout,
                     chunk: b"hello".to_vec(),
+                    sequence: None,
+                    timestamp_ms: None,
                 }),
             }))
             .await;
@@ -766,6 +893,8 @@ mod tests {
                 process_id,
                 channel: wire::StreamChannel::Stdout,
                 chunk,
+                sequence: None,
+                timestamp_ms: None,
             }) if process_id == "proc-1" && chunk == b"hello".to_vec()
         ));
     }
@@ -974,6 +1103,7 @@ mod tests {
         let (event_tx, _) = broadcast::channel(4);
         let transport = SidecarTransport {
             child: parking_lot::Mutex::new(None),
+            child_termination: tokio::sync::Mutex::new(()),
             pending: SccHashMap::new(),
             pending_request_lock: parking_lot::Mutex::new(()),
             request_counter: AtomicI64::new(1),

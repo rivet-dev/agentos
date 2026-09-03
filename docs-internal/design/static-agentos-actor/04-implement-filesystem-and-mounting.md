@@ -65,8 +65,8 @@ open(validated_descriptor, actor_storage) -> CoreFilesystem
 The MVP registry is deliberately small and closed:
 
 - Root `default` selects Core's default ephemeral overlay and bundled base.
-- Root `actor-sqlite` selects an actor-owned, SQLite-backed root namespace.
-- Mount backend `actor-sqlite` selects an actor-owned, SQLite-backed namespace.
+- Root `durable` selects a Rivet SQLite-backed root namespace.
+- Mount backend `durable` selects a Rivet SQLite-backed namespace.
 
 The actor DTO never contains the internal `chunked_sqlite` plugin id. It maps
 the public descriptor to that plugin only after validation. Immutable artifact

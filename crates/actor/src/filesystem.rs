@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
+use agentos_actor_contract::filesystem::*;
+#[cfg(test)]
+use agentos_client::{DirEntry, DirEntryType, VirtualStat};
 use agentos_client::{
-    BatchWriteEntry, FileContent, MkdirOptions, MountInfo, ReaddirRecursiveOptions, RemoveOptions,
-    RootSnapshotExport, VirtualStat,
+    MkdirOptions, MountInfo, ReaddirRecursiveOptions, RemoveOptions, RootSnapshotExport,
 };
 use anyhow::{bail, Result};
-use rivetkit::{Action, Ctx, Handles};
-use serde::{Deserialize, Serialize};
+use rivetkit::{Ctx, Handles};
 
 use crate::actions::BoxFuture;
 use crate::AgentOsActor;
@@ -18,239 +19,20 @@ const MAX_DIRECTORY_ENTRIES: usize = 4_096;
 const MAX_DIRECTORY_RESULT_BYTES: usize = 512 * 1024;
 const MAX_RECURSION_DEPTH: u32 = 64;
 
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct FileBytes(
-    #[serde(with = "serde_bytes")]
-    #[cfg_attr(feature = "contract", ts(type = "Uint8Array"))]
-    pub Vec<u8>,
-);
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum FileContentInput {
-    Text(String),
-    Bytes(
-        #[serde(with = "serde_bytes")]
-        #[cfg_attr(feature = "contract", ts(type = "Uint8Array"))]
-        Vec<u8>,
-    ),
-}
-
-impl FileContentInput {
-    pub(crate) fn byte_len(&self) -> usize {
-        match self {
-            Self::Text(value) => value.len(),
-            Self::Bytes(value) => value.len(),
-        }
-    }
-
-    fn into_core(self) -> FileContent {
-        match self {
-            Self::Text(value) => FileContent::Text(value),
-            Self::Bytes(value) => FileContent::Bytes(value),
-        }
-    }
-}
-
-macro_rules! path_action {
-    ($name:ident, $output:ty, $wire_name:literal) => {
-        #[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-        #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-        #[serde(rename_all = "camelCase", deny_unknown_fields)]
-        pub struct $name {
-            pub path: String,
-        }
-
-        impl Action for $name {
-            type Output = $output;
-            const NAME: &'static str = $wire_name;
-        }
-    };
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct FilesystemReadFile {
-    pub path: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_bytes: Option<usize>,
-}
-
-impl Action for FilesystemReadFile {
-    type Output = FileBytes;
-    const NAME: &'static str = "filesystem.readFile";
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct FilesystemWriteFile {
-    pub path: String,
-    pub content: FileContentInput,
-}
-
-impl Action for FilesystemWriteFile {
-    type Output = ();
-    const NAME: &'static str = "filesystem.writeFile";
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct FilesystemReadFiles {
-    pub paths: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_bytes: Option<usize>,
-}
-
-impl Action for FilesystemReadFiles {
-    type Output = Vec<FilesystemReadResult>;
-    const NAME: &'static str = "filesystem.readFiles";
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FilesystemReadResult {
-    pub path: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub content: Option<FileBytes>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct FilesystemWriteFiles {
-    pub entries: Vec<FilesystemWriteEntry>,
-}
-
-impl Action for FilesystemWriteFiles {
-    type Output = Vec<FilesystemWriteResult>;
-    const NAME: &'static str = "filesystem.writeFiles";
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct FilesystemWriteEntry {
-    pub path: String,
-    pub content: FileContentInput,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FilesystemWriteResult {
-    pub path: String,
-    pub success: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-path_action!(FilesystemStat, VirtualStat, "filesystem.stat");
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct FilesystemMkdir {
-    pub path: String,
-    #[serde(default)]
-    pub recursive: bool,
-}
-
-impl Action for FilesystemMkdir {
-    type Output = ();
-    const NAME: &'static str = "filesystem.mkdir";
-}
-
-path_action!(FilesystemReaddir, Vec<String>, "filesystem.readdir");
-path_action!(
-    FilesystemReaddirEntries,
-    Vec<FilesystemDirectoryEntry>,
-    "filesystem.readdirEntries"
-);
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FilesystemDirectoryEntry {
-    pub name: String,
-    pub is_directory: bool,
-    pub is_symbolic_link: bool,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct FilesystemReaddirRecursive {
-    pub path: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_depth: Option<u32>,
-    #[serde(default)]
-    pub exclude: Vec<String>,
-}
-
-impl Action for FilesystemReaddirRecursive {
-    type Output = Vec<agentos_client::DirEntry>;
-    const NAME: &'static str = "filesystem.readdirRecursive";
-}
-
-path_action!(FilesystemExists, bool, "filesystem.exists");
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct FilesystemMove {
-    pub from: String,
-    pub to: String,
-}
-
-impl Action for FilesystemMove {
-    type Output = ();
-    const NAME: &'static str = "filesystem.move";
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct FilesystemRemove {
-    pub path: String,
-    #[serde(default)]
-    pub recursive: bool,
-}
-
-impl Action for FilesystemRemove {
-    type Output = ();
-    const NAME: &'static str = "filesystem.remove";
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct FilesystemExport {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_bytes: Option<usize>,
-}
-
-impl Action for FilesystemExport {
-    type Output = RootSnapshotExport;
-    const NAME: &'static str = "filesystem.export";
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FilesystemListMounts;
-
-impl Action for FilesystemListMounts {
-    type Output = Vec<MountInfo>;
-    const NAME: &'static str = "filesystem.listMounts";
-}
+crate::register_contract_action!(FilesystemReadFile);
+crate::register_contract_action!(FilesystemWriteFile);
+crate::register_contract_action!(FilesystemReadFiles);
+crate::register_contract_action!(FilesystemWriteFiles);
+crate::register_contract_action!(FilesystemStat);
+crate::register_contract_action!(FilesystemMkdir);
+crate::register_contract_action!(FilesystemReaddir);
+crate::register_contract_action!(FilesystemReaddirEntries);
+crate::register_contract_action!(FilesystemReaddirRecursive);
+crate::register_contract_action!(FilesystemExists);
+crate::register_contract_action!(FilesystemMove);
+crate::register_contract_action!(FilesystemRemove);
+crate::register_contract_action!(FilesystemExport);
+crate::register_contract_action!(FilesystemListMounts);
 
 impl Handles<FilesystemReadFile> for AgentOsActor {
     type Future = BoxFuture<FileBytes>;
@@ -282,7 +64,7 @@ impl Handles<FilesystemWriteFile> for AgentOsActor {
             self.runtime
                 .vm()
                 .await?
-                .write_file(&action.path, action.content.into_core())
+                .write_file(&action.path, action.content)
                 .await
         })
     }
@@ -297,11 +79,12 @@ impl Handles<FilesystemReadFiles> for AgentOsActor {
             validate_paths(&action.paths)?;
             let max_bytes = transfer_limit(action.max_bytes)?;
             let vm = self.runtime.vm().await?;
+            let read_results = vm.read_files(action.paths).await;
             let mut total = 0usize;
-            let mut results = Vec::with_capacity(action.paths.len());
-            for path in action.paths {
-                match vm.read_file(&path).await {
-                    Ok(content) => {
+            let mut results = Vec::with_capacity(read_results.len());
+            for result in read_results {
+                match result.content {
+                    Some(content) => {
                         total = total.checked_add(content.len()).ok_or_else(|| {
                             anyhow::anyhow!(
                                 "limit_exceeded: filesystem.readFiles byte count overflow"
@@ -309,15 +92,15 @@ impl Handles<FilesystemReadFiles> for AgentOsActor {
                         })?;
                         validate_bytes("filesystem.readFiles result", total, max_bytes)?;
                         results.push(FilesystemReadResult {
-                            path,
+                            path: result.path,
                             content: Some(FileBytes(content)),
-                            error: None,
+                            error: result.error,
                         });
                     }
-                    Err(error) => results.push(FilesystemReadResult {
-                        path,
+                    None => results.push(FilesystemReadResult {
+                        path: result.path,
                         content: None,
-                        error: Some(error.to_string()),
+                        error: result.error,
                     }),
                 }
             }
@@ -338,37 +121,20 @@ impl Handles<FilesystemWriteFiles> for AgentOsActor {
                 MAX_BATCH_PATHS,
             )?;
             let mut total = 0usize;
-            let mut entries = Vec::with_capacity(action.entries.len());
-            for entry in action.entries {
+            for entry in &action.entries {
                 validate_path(&entry.path)?;
                 total = total.checked_add(entry.content.byte_len()).ok_or_else(|| {
                     anyhow::anyhow!("limit_exceeded: filesystem.writeFiles byte count overflow")
                 })?;
-                entries.push(BatchWriteEntry {
-                    path: entry.path,
-                    content: entry.content.into_core(),
-                });
             }
             validate_bytes("filesystem.writeFiles content", total, MAX_TRANSFER_BYTES)?;
-            Ok(self
-                .runtime
-                .vm()
-                .await?
-                .write_files(entries)
-                .await
-                .into_iter()
-                .map(|result| FilesystemWriteResult {
-                    path: result.path,
-                    success: result.success,
-                    error: result.error,
-                })
-                .collect())
+            Ok(self.runtime.vm().await?.write_files(action.entries).await)
         })
     }
 }
 
 impl Handles<FilesystemStat> for AgentOsActor {
-    type Future = BoxFuture<VirtualStat>;
+    type Future = BoxFuture<ActorFileStat>;
 
     fn handle(self: Arc<Self>, _ctx: Ctx<Self>, action: FilesystemStat) -> Self::Future {
         Box::pin(async move {
@@ -431,20 +197,13 @@ impl Handles<FilesystemReaddirEntries> for AgentOsActor {
                 entries.len(),
                 entries.iter().map(|entry| entry.name.len()).sum(),
             )?;
-            Ok(entries
-                .into_iter()
-                .map(|entry| FilesystemDirectoryEntry {
-                    name: entry.name,
-                    is_directory: entry.is_directory,
-                    is_symbolic_link: entry.is_symbolic_link,
-                })
-                .collect())
+            Ok(entries)
         })
     }
 }
 
 impl Handles<FilesystemReaddirRecursive> for AgentOsActor {
-    type Future = BoxFuture<Vec<agentos_client::DirEntry>>;
+    type Future = BoxFuture<Vec<ActorDirectoryEntry>>;
 
     fn handle(
         self: Arc<Self>,
@@ -651,5 +410,41 @@ mod tests {
         let mut encoded = Vec::new();
         ciborium::into_writer(&FileBytes(vec![1, 2, 3]), &mut encoded).expect("encode bytes");
         assert_eq!(encoded, vec![0x43, 1, 2, 3]);
+    }
+
+    #[test]
+    fn file_metadata_names_byte_counts() {
+        let stat = ActorFileStat::from(VirtualStat {
+            mode: 0,
+            size: 42,
+            blocks: 0,
+            dev: 0,
+            rdev: 0,
+            is_directory: false,
+            is_symbolic_link: false,
+            atime_ms: 0.0,
+            mtime_ms: 0.0,
+            ctime_ms: 0.0,
+            birthtime_ms: 0.0,
+            ino: 0,
+            nlink: 0,
+            uid: 0,
+            gid: 0,
+        });
+        let encoded = serde_json::to_value(stat).expect("encode file stat");
+        assert_eq!(encoded["sizeBytes"], 42);
+        assert!(encoded.get("size").is_none());
+
+        let entry = ActorDirectoryEntry::from(DirEntry {
+            path: "/file".into(),
+            entry_type: DirEntryType::File,
+            size: 42,
+        });
+        let encoded = serde_json::to_value(entry).expect("encode directory entry");
+        assert_eq!(encoded["path"], "/file");
+        assert_eq!(encoded["type"], "file");
+        assert_eq!(encoded["sizeBytes"], 42);
+        assert!(encoded.get("size").is_none());
+        assert!(encoded.get("entryType").is_none());
     }
 }

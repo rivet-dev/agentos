@@ -1,5 +1,5 @@
 /**
- * Memory overhead benchmark for AgentOS VMs.
+ * Memory overhead benchmark for agentOS VMs.
  *
  * Staircase approach: all VMs lease one shared sidecar process. A throwaway
  * cold-run VM is created and disposed first (paying process spawn + bootstrap),

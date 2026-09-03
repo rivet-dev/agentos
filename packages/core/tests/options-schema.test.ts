@@ -126,6 +126,54 @@ describe("AgentOsOptions validation", () => {
 			).toBe(false);
 		}
 	});
+
+	test("accepts optional TLS/execution fields and validates TLS bytes", () => {
+		for (const limits of [
+			{ tls: {}, execution: {} },
+			{ tls: { maxBufferedBytes: 2048 } },
+		]) {
+			expect(agentOsOptionsSchema.parse({ limits }).limits).toEqual(limits);
+		}
+		for (const maxBufferedBytes of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+			expect(
+				agentOsOptionsSchema.safeParse({
+					limits: { tls: { maxBufferedBytes } },
+				}).success,
+			).toBe(false);
+		}
+		expect(
+			agentOsOptionsSchema.safeParse({
+				limits: { tls: { max_buffered_bytes: 2048 } },
+			}).success,
+		).toBe(false);
+		expect(
+			agentOsOptionsSchema.safeParse({
+				limits: { execution: { completedTtl: 60_000 } },
+			}).success,
+		).toBe(false);
+	});
+
+	test("accepts package mount limits and rejects invalid or unknown fields", () => {
+		for (const packages of [{}, { maxMounts: 8192 }]) {
+			expect(
+				agentOsOptionsSchema.safeParse({
+					limits: { agentosPackages: packages },
+				}).success,
+			).toBe(true);
+		}
+		for (const maxMounts of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+			expect(
+				agentOsOptionsSchema.safeParse({
+					limits: { agentosPackages: { maxMounts } },
+				}).success,
+			).toBe(false);
+		}
+		expect(
+			agentOsOptionsSchema.safeParse({
+				limits: { agentosPackages: { maxMount: 8 } },
+			}).success,
+		).toBe(false);
+	});
 	test("provider sandbox starts a client and owns disposal", async () => {
 		let disposed = false;
 		const client = {

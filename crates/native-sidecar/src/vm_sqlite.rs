@@ -1,10 +1,7 @@
-//! VM-scoped local SQLite substrate shared by VFS and agentOS Core state.
-//!
-//! This is a temporary adapter boundary. Callers depend only on the async
-//! database trait so the local connection can later be replaced by Rivet's
-//! SQLite API without restoring the Actor Runtime Socket.
+//! VM-scoped SQLite substrate shared by VFS and agentOS Core state.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -12,9 +9,16 @@ use async_trait::async_trait;
 use rusqlite::types::{Value, ValueRef};
 use thiserror::Error;
 
-use agentos_vm_config::VmSqliteDescriptor;
+use agentos_vm_config::{
+    VmSqliteCallbackRequest, VmSqliteCallbackResponse, VmSqliteDescriptor, VmSqliteQueryResult,
+    VmSqliteStatement, VmSqliteValue, VM_SQLITE_CALLBACK_NAMESPACE,
+};
+
+use crate::protocol::{ExtEnvelope, OwnershipScope, SidecarRequestPayload, SidecarResponsePayload};
+use crate::state::SharedSidecarRequestClient;
 
 const LOCAL_SQLITE_JOB_BYTES: usize = 64 * 1024;
+const HOST_CALLBACK_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SqlValue {
@@ -80,6 +84,8 @@ pub enum VmSqliteError {
     UnexpectedChanges { expected: i64, actual: i64 },
     #[error("SQLite database is closed")]
     Closed,
+    #[error("Rivet SQLite callback failed: {0}")]
+    Callback(String),
     #[error(
         "schema component {component} is at future version {found}; sidecar supports {supported}"
     )]
@@ -109,15 +115,247 @@ pub trait VmSqliteDatabase: Send + Sync {
 
 pub type SharedVmSqliteDatabase = Arc<dyn VmSqliteDatabase>;
 
-pub async fn resolve_vm_sqlite(
-    descriptor: &VmSqliteDescriptor,
+/// Open a trusted local SQLite database for embedded VM storage.
+pub(crate) async fn open_local_vm_sqlite(
+    path: PathBuf,
     runtime: agentos_runtime::RuntimeContext,
     max_result_bytes: usize,
 ) -> Result<SharedVmSqliteDatabase, VmSqliteError> {
+    Ok(Arc::new(
+        LocalVmSqliteDatabase::open(path, runtime, max_result_bytes).await?,
+    ))
+}
+
+pub(crate) async fn resolve_vm_sqlite(
+    descriptor: &VmSqliteDescriptor,
+    runtime: agentos_runtime::RuntimeContext,
+    max_result_bytes: usize,
+    host: Option<(SharedSidecarRequestClient, OwnershipScope)>,
+) -> Result<SharedVmSqliteDatabase, VmSqliteError> {
     match descriptor {
-        VmSqliteDescriptor::SqliteFile { path } => Ok(Arc::new(
-            LocalVmSqliteDatabase::open(PathBuf::from(path), runtime, max_result_bytes).await?,
+        VmSqliteDescriptor::SqliteFile { path } => {
+            open_local_vm_sqlite(PathBuf::from(path), runtime, max_result_bytes).await
+        }
+        VmSqliteDescriptor::HostCallback { namespace } => {
+            let (requests, ownership) = host.ok_or_else(|| {
+                VmSqliteError::Callback(String::from(
+                    "sidecar request transport is unavailable for host_callback",
+                ))
+            })?;
+            Ok(Arc::new(HostCallbackVmSqliteDatabase {
+                database: namespace.clone(),
+                requests,
+                ownership,
+                max_result_bytes,
+                closed: AtomicBool::new(false),
+            }))
+        }
+    }
+}
+
+struct HostCallbackVmSqliteDatabase {
+    database: String,
+    requests: SharedSidecarRequestClient,
+    ownership: OwnershipScope,
+    max_result_bytes: usize,
+    closed: AtomicBool,
+}
+
+impl HostCallbackVmSqliteDatabase {
+    async fn invoke(
+        &self,
+        request: VmSqliteCallbackRequest,
+    ) -> Result<VmSqliteCallbackResponse, VmSqliteError> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(VmSqliteError::Closed);
+        }
+        let payload = serde_json::to_vec(&request)
+            .map_err(|error| VmSqliteError::Callback(format!("encode request: {error}")))?;
+        let response = self
+            .requests
+            .invoke_async(
+                self.ownership.clone(),
+                SidecarRequestPayload::Ext(ExtEnvelope {
+                    namespace: VM_SQLITE_CALLBACK_NAMESPACE.to_owned(),
+                    payload,
+                }),
+                HOST_CALLBACK_TIMEOUT,
+            )
+            .await
+            .map_err(|error| VmSqliteError::Callback(error.to_string()))?;
+        let SidecarResponsePayload::ExtResult(envelope) = response else {
+            return Err(VmSqliteError::Callback(String::from(
+                "host returned the wrong callback response type",
+            )));
+        };
+        if envelope.namespace != VM_SQLITE_CALLBACK_NAMESPACE {
+            return Err(VmSqliteError::Callback(format!(
+                "host returned callback namespace {:?}",
+                envelope.namespace
+            )));
+        }
+        serde_json::from_slice(&envelope.payload)
+            .map_err(|error| VmSqliteError::Callback(format!("decode response: {error}")))
+    }
+}
+
+#[async_trait]
+impl VmSqliteDatabase for HostCallbackVmSqliteDatabase {
+    async fn query(&self, statement: SqlStatement) -> Result<QueryResult, VmSqliteError> {
+        let expected_changes = statement.expected_changes;
+        let response = self
+            .invoke(VmSqliteCallbackRequest::Query {
+                database: self.database.clone(),
+                statement: statement.into(),
+            })
+            .await?;
+        let VmSqliteCallbackResponse::Query { result } = response else {
+            return Err(callback_response_error(response, "query"));
+        };
+        let result = QueryResult::from(result);
+        validate_query_result_size(&result, self.max_result_bytes)?;
+        validate_expected_changes(expected_changes, &result)?;
+        Ok(result)
+    }
+
+    async fn transaction(
+        &self,
+        statements: Vec<SqlStatement>,
+    ) -> Result<Vec<QueryResult>, VmSqliteError> {
+        let expected_changes = statements
+            .iter()
+            .map(|statement| statement.expected_changes)
+            .collect::<Vec<_>>();
+        let response = self
+            .invoke(VmSqliteCallbackRequest::Transaction {
+                database: self.database.clone(),
+                statements: statements.into_iter().map(Into::into).collect(),
+            })
+            .await?;
+        let VmSqliteCallbackResponse::Transaction { results } = response else {
+            return Err(callback_response_error(response, "transaction"));
+        };
+        if results.len() != expected_changes.len() {
+            return Err(VmSqliteError::InvalidResult(format!(
+                "Rivet SQLite transaction returned {} results for {} statements",
+                results.len(),
+                expected_changes.len()
+            )));
+        }
+        let results = results
+            .into_iter()
+            .map(QueryResult::from)
+            .collect::<Vec<_>>();
+        for (expected, result) in expected_changes.into_iter().zip(&results) {
+            validate_query_result_size(result, self.max_result_bytes)?;
+            validate_expected_changes(expected, result)?;
+        }
+        Ok(results)
+    }
+
+    async fn close(&self) -> Result<(), VmSqliteError> {
+        if self.closed.swap(true, Ordering::AcqRel) {
+            return Ok(());
+        }
+        let payload = serde_json::to_vec(&VmSqliteCallbackRequest::Close {
+            database: self.database.clone(),
+        })
+        .map_err(|error| VmSqliteError::Callback(format!("encode close request: {error}")))?;
+        let response = self
+            .requests
+            .invoke_async(
+                self.ownership.clone(),
+                SidecarRequestPayload::Ext(ExtEnvelope {
+                    namespace: VM_SQLITE_CALLBACK_NAMESPACE.to_owned(),
+                    payload,
+                }),
+                HOST_CALLBACK_TIMEOUT,
+            )
+            .await
+            .map_err(|error| VmSqliteError::Callback(error.to_string()))?;
+        let SidecarResponsePayload::ExtResult(envelope) = response else {
+            return Err(VmSqliteError::Callback(String::from(
+                "host returned the wrong close response type",
+            )));
+        };
+        let response: VmSqliteCallbackResponse = serde_json::from_slice(&envelope.payload)
+            .map_err(|error| VmSqliteError::Callback(format!("decode close response: {error}")))?;
+        match response {
+            VmSqliteCallbackResponse::Closed => Ok(()),
+            other => Err(callback_response_error(other, "close")),
+        }
+    }
+}
+
+fn callback_response_error(response: VmSqliteCallbackResponse, operation: &str) -> VmSqliteError {
+    match response {
+        VmSqliteCallbackResponse::Error { message } => VmSqliteError::Callback(message),
+        other => VmSqliteError::InvalidResult(format!(
+            "Rivet SQLite {operation} returned unexpected response {other:?}"
         )),
+    }
+}
+
+fn validate_query_result_size(result: &QueryResult, limit: usize) -> Result<(), VmSqliteError> {
+    let used = result
+        .columns
+        .iter()
+        .map(String::len)
+        .chain(result.rows.iter().flatten().map(sql_value_bytes))
+        .try_fold(0usize, |total, bytes| total.checked_add(bytes))
+        .unwrap_or(usize::MAX);
+    if used > limit {
+        return Err(VmSqliteError::ResultTooLarge { used, limit });
+    }
+    Ok(())
+}
+
+impl From<SqlStatement> for VmSqliteStatement {
+    fn from(statement: SqlStatement) -> Self {
+        Self {
+            sql: statement.sql,
+            params: statement.params.into_iter().map(Into::into).collect(),
+            expected_changes: statement.expected_changes,
+        }
+    }
+}
+
+impl From<SqlValue> for VmSqliteValue {
+    fn from(value: SqlValue) -> Self {
+        match value {
+            SqlValue::SqlNull => Self::Null,
+            SqlValue::SqlInteger(value) => Self::Integer(value),
+            SqlValue::SqlReal(value) => Self::Real(value),
+            SqlValue::SqlText(value) => Self::Text(value),
+            SqlValue::SqlBlob(value) => Self::Blob(value),
+        }
+    }
+}
+
+impl From<VmSqliteValue> for SqlValue {
+    fn from(value: VmSqliteValue) -> Self {
+        match value {
+            VmSqliteValue::Null => Self::SqlNull,
+            VmSqliteValue::Integer(value) => Self::SqlInteger(value),
+            VmSqliteValue::Real(value) => Self::SqlReal(value),
+            VmSqliteValue::Text(value) => Self::SqlText(value),
+            VmSqliteValue::Blob(value) => Self::SqlBlob(value),
+        }
+    }
+}
+
+impl From<VmSqliteQueryResult> for QueryResult {
+    fn from(result: VmSqliteQueryResult) -> Self {
+        Self {
+            columns: result.columns,
+            rows: result
+                .rows
+                .into_iter()
+                .map(|row| row.into_iter().map(Into::into).collect())
+                .collect(),
+            changes: result.changes,
+            last_insert_row_id: result.last_insert_row_id,
+        }
     }
 }
 
@@ -180,6 +418,18 @@ impl LocalVmSqliteDatabase {
 #[async_trait]
 impl VmSqliteDatabase for LocalVmSqliteDatabase {
     async fn query(&self, statement: SqlStatement) -> Result<QueryResult, VmSqliteError> {
+        if statement.expected_changes.is_some() {
+            return self
+                .transaction(vec![statement])
+                .await?
+                .into_iter()
+                .next()
+                .ok_or_else(|| {
+                    VmSqliteError::InvalidResult(
+                        "single-statement transaction returned no result".to_owned(),
+                    )
+                });
+        }
         let max_result_bytes = self.max_result_bytes;
         self.run(move |connection| {
             execute_local_statement(connection, &statement, max_result_bytes)
@@ -282,6 +532,7 @@ fn execute_local_statement(
         .map(sql_value_to_local)
         .collect::<Result<Vec<_>, _>>()?;
     let mut prepared = connection.prepare(&statement.sql)?;
+    let readonly = prepared.readonly();
     let columns = prepared
         .column_names()
         .into_iter()
@@ -331,11 +582,17 @@ fn execute_local_statement(
         }
         rows.push(output);
     }
+    drop(cursor);
+    drop(prepared);
     Ok(QueryResult {
         columns,
         rows,
-        changes: 0,
-        last_insert_row_id: None,
+        changes: if readonly {
+            0
+        } else {
+            i64::try_from(connection.changes()).unwrap_or(i64::MAX)
+        },
+        last_insert_row_id: (!readonly).then(|| connection.last_insert_rowid()),
     })
 }
 
@@ -509,6 +766,64 @@ mod tests {
     }
 
     #[test]
+    fn local_query_cas_rolls_back_and_returning_preserves_write_metadata() {
+        let runtime = runtime();
+        runtime.block_on(async {
+            let directory = tempfile::tempdir().unwrap();
+            let database =
+                open_local_vm_sqlite(directory.path().join("cas.sqlite"), runtime.context(), 1024)
+                    .await
+                    .unwrap();
+            database
+                .query(SqlStatement::plain(
+                    "CREATE TABLE test_cas (id INTEGER PRIMARY KEY, value INTEGER NOT NULL) STRICT",
+                ))
+                .await
+                .unwrap();
+            let inserted = database
+                .query(
+                    SqlStatement::plain("INSERT INTO test_cas VALUES (1, 10) RETURNING id")
+                        .expect_changes(1),
+                )
+                .await
+                .unwrap();
+            assert_eq!(inserted.rows, vec![vec![SqlValue::SqlInteger(1)]]);
+            assert_eq!(inserted.changes, 1);
+            assert_eq!(inserted.last_insert_row_id, Some(1));
+            for statement in [
+                "INSERT INTO test_cas VALUES (2, 20)",
+                "UPDATE test_cas SET value = 30 RETURNING value",
+            ] {
+                let error = database
+                    .query(SqlStatement::plain(statement).expect_changes(0))
+                    .await
+                    .unwrap_err();
+                assert!(matches!(
+                    error,
+                    VmSqliteError::UnexpectedChanges {
+                        expected: 0,
+                        actual: 1
+                    }
+                ));
+            }
+            let result = database
+                .query(SqlStatement::plain("SELECT id, value FROM test_cas"))
+                .await
+                .unwrap();
+            assert_eq!(
+                result.rows,
+                vec![vec![SqlValue::SqlInteger(1), SqlValue::SqlInteger(10)]]
+            );
+            assert_eq!(
+                result.changes, 0,
+                "SELECT must not reuse the prior write count"
+            );
+            assert_eq!(result.last_insert_row_id, None);
+            database.close().await.unwrap();
+        });
+    }
+
+    #[test]
     fn local_transactions_commit_and_roll_back() {
         let runtime = runtime();
         let context = runtime.context();
@@ -520,6 +835,7 @@ mod tests {
                 },
                 context,
                 agentos_native_sidecar_core::limits::DEFAULT_SQLITE_MAX_RESULT_BYTES,
+                None,
             )
             .await
             .expect("database");
@@ -595,6 +911,7 @@ mod tests {
                 },
                 context,
                 agentos_native_sidecar_core::limits::DEFAULT_SQLITE_MAX_RESULT_BYTES,
+                None,
             )
             .await
             .expect("database");
@@ -728,6 +1045,7 @@ mod tests {
                 },
                 context,
                 agentos_native_sidecar_core::limits::DEFAULT_SQLITE_MAX_RESULT_BYTES,
+                None,
             )
             .await
             .expect("database");
@@ -816,6 +1134,7 @@ mod tests {
                 },
                 context,
                 agentos_native_sidecar_core::limits::DEFAULT_SQLITE_MAX_RESULT_BYTES,
+                None,
             )
             .await
             .expect("database");
@@ -856,6 +1175,7 @@ mod tests {
                 },
                 context,
                 32,
+                None,
             )
             .await
             .expect("database");

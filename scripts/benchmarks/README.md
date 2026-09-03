@@ -1,7 +1,7 @@
 # agentOS benchmarks
 
-This directory contains the product-level VM benchmarks that remain after
-removing agents, sessions, and ACP:
+This directory contains the product-level VM benchmarks for the sandbox-only
+runtime:
 
 - `coldstart.bench.ts` measures VM creation through the first workload.
 - `memory.bench.ts` measures marginal memory overhead per VM.

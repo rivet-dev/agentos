@@ -3,6 +3,7 @@ use std::fmt;
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -28,6 +29,7 @@ pub const DEFAULT_PACKAGE_CACHE_MAX_PENDING_ACQUISITIONS: usize = 64;
 pub const DEFAULT_PACKAGE_CACHE_ACQUISITION_TIMEOUT_MS: u64 = 60_000;
 pub const DEFAULT_PACKAGE_CACHE_MAX_SOURCE_ENTRIES: usize = 1024;
 pub const DEFAULT_PACKAGE_CACHE_SOURCE_TTL_MS: u64 = 60_000;
+pub const DEFAULT_PACKAGE_CACHE_MIN_FREE_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_PACKAGE_URL_BYTES: usize = 4 * 1024;
 const MAX_PACKAGE_RESPONSE_HEADERS: usize = 128;
 const MAX_PACKAGE_RESPONSE_HEADER_BYTES: usize = 64 * 1024;
@@ -48,6 +50,10 @@ static PROCESS_PACKAGE_CACHE: OnceCell<Arc<ProcessPackageCache>> = OnceCell::new
 /// in this process. Hosted actor inputs cannot override these values.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessPackageCacheOptions {
+    /// Persistent cache directory. `None` uses a process-lifetime temporary
+    /// directory, which is useful for embedded Core and tests.
+    pub root: Option<PathBuf>,
+    pub min_free_bytes: u64,
     pub max_bytes: u64,
     pub max_entries: usize,
     pub max_concurrent_acquisitions: usize,
@@ -60,6 +66,8 @@ pub struct ProcessPackageCacheOptions {
 impl Default for ProcessPackageCacheOptions {
     fn default() -> Self {
         Self {
+            root: None,
+            min_free_bytes: DEFAULT_PACKAGE_CACHE_MIN_FREE_BYTES,
             max_bytes: DEFAULT_PACKAGE_CACHE_MAX_BYTES,
             max_entries: DEFAULT_PACKAGE_CACHE_MAX_ENTRIES,
             max_concurrent_acquisitions: DEFAULT_PACKAGE_CACHE_MAX_CONCURRENT_ACQUISITIONS,
@@ -111,6 +119,7 @@ pub struct ProcessPackageCacheStats {
     pub acquisitions: u64,
     pub evictions: u64,
     pub capacity_failures: u64,
+    pub cancelled_acquisitions: u64,
 }
 
 /// Configure the process cache before constructing a [`PackageResolver`]. A
@@ -279,6 +288,10 @@ struct CachedSourceEntry {
 struct PackageAcquisitionFlight {
     result: Mutex<Option<Result<VerifiedPackage, ClientError>>>,
     ready: Notify,
+    cancelled: AtomicBool,
+    cancellation: Notify,
+    waiters: AtomicUsize,
+    required_waiters: AtomicUsize,
 }
 
 impl PackageAcquisitionFlight {
@@ -286,6 +299,10 @@ impl PackageAcquisitionFlight {
         Self {
             result: Mutex::new(None),
             ready: Notify::new(),
+            cancelled: AtomicBool::new(false),
+            cancellation: Notify::new(),
+            waiters: AtomicUsize::new(0),
+            required_waiters: AtomicUsize::new(0),
         }
     }
 
@@ -303,6 +320,45 @@ impl PackageAcquisitionFlight {
         *self.result.lock().await = Some(result);
         self.ready.notify_waiters();
     }
+
+    fn register_waiter(self: &Arc<Self>, required: bool) -> PackageAcquisitionWaiter {
+        self.waiters.fetch_add(1, Ordering::AcqRel);
+        if required {
+            self.required_waiters.fetch_add(1, Ordering::AcqRel);
+        }
+        PackageAcquisitionWaiter {
+            flight: Arc::clone(self),
+            required,
+        }
+    }
+
+    async fn cancelled(&self) {
+        loop {
+            let notified = self.cancellation.notified();
+            if self.cancelled.load(Ordering::Acquire) {
+                return;
+            }
+            notified.await;
+        }
+    }
+}
+
+struct PackageAcquisitionWaiter {
+    flight: Arc<PackageAcquisitionFlight>,
+    required: bool,
+}
+
+impl Drop for PackageAcquisitionWaiter {
+    fn drop(&mut self) {
+        if self.required {
+            self.flight.required_waiters.fetch_sub(1, Ordering::AcqRel);
+        }
+        let previous = self.flight.waiters.fetch_sub(1, Ordering::AcqRel);
+        if previous == 1 && self.flight.required_waiters.load(Ordering::Acquire) == 0 {
+            self.flight.cancelled.store(true, Ordering::Release);
+            self.flight.cancellation.notify_waiters();
+        }
+    }
 }
 
 struct ProcessPackageCacheState {
@@ -317,40 +373,211 @@ struct ProcessPackageCacheState {
     acquisitions: u64,
     evictions: u64,
     capacity_failures: u64,
+    cancelled_acquisitions: u64,
 }
 
 struct ProcessPackageCache {
     options: ProcessPackageCacheOptions,
-    root: tempfile::TempDir,
+    root: ProcessPackageCacheRoot,
     acquisition_slots: Arc<Semaphore>,
     state: Mutex<ProcessPackageCacheState>,
+}
+
+enum ProcessPackageCacheRoot {
+    Temporary(tempfile::TempDir),
+    Persistent {
+        path: PathBuf,
+        // Recovery, eviction, and generation pins are process-local. Hold an
+        // OS lock so another worker cannot remove this process's live files.
+        _lock: std::fs::File,
+    },
+}
+
+impl ProcessPackageCacheRoot {
+    fn path(&self) -> &Path {
+        match self {
+            Self::Temporary(root) => root.path(),
+            Self::Persistent { path, .. } => path,
+        }
+    }
+}
+
+fn recover_package_cache(
+    root: &Path,
+    options: &ProcessPackageCacheOptions,
+) -> Result<BTreeMap<String, CachedPackageEntry>, ClientError> {
+    let mut candidates = Vec::new();
+    for entry in std::fs::read_dir(root)
+        .map_err(|error| ClientError::PackageIo(format!("scan package cache directory: {error}")))?
+    {
+        let entry = entry.map_err(|error| {
+            ClientError::PackageIo(format!("read package cache directory entry: {error}"))
+        })?;
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if name.starts_with(".package-staging-") {
+            if let Err(error) = std::fs::remove_file(&path) {
+                tracing::warn!(%error, cache_path = %path.display(), "failed to remove stale package cache staging file");
+            }
+            continue;
+        }
+        let Some(digest_hex) = name.strip_suffix(".aospkg").map(str::to_owned) else {
+            continue;
+        };
+        if digest_hex.len() != 64
+            || !digest_hex
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        {
+            quarantine_invalid_cache_file(&path, "invalid cache filename");
+            continue;
+        }
+        let metadata = match std::fs::metadata(&path) {
+            Ok(metadata) if metadata.is_file() => metadata,
+            Ok(_) => {
+                quarantine_invalid_cache_file(&path, "cache entry is not a regular file");
+                continue;
+            }
+            Err(error) => {
+                tracing::warn!(%error, cache_path = %path.display(), "failed to stat package cache entry during recovery");
+                continue;
+            }
+        };
+        let modified = metadata
+            .modified()
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        candidates.push((
+            modified,
+            path,
+            format!("sha256:{digest_hex}"),
+            metadata.len(),
+        ));
+    }
+    candidates.sort_by(|left, right| right.0.cmp(&left.0));
+
+    let mut recovered = BTreeMap::new();
+    let mut recovered_bytes = 0u64;
+    let total = candidates.len();
+    for (index, (_, path, expected_digest, size)) in candidates.into_iter().enumerate() {
+        let validation = (|| {
+            enforce_package_size(size, options.max_bytes.min(DEFAULT_MAX_PACKAGE_BYTES))?;
+            let digest = digest_file_sync(&path, options.max_bytes)?;
+            verify_expected_digest(&digest, Some(&expected_digest))?;
+            let manifest = validate_package_file_sync(&path, size)?;
+            Ok::<_, ClientError>((digest, manifest))
+        })();
+        let (digest, manifest) = match validation {
+            Ok(value) => value,
+            Err(error) => {
+                tracing::warn!(?error, cache_path = %path.display(), "discarding invalid package cache entry during recovery");
+                quarantine_invalid_cache_file(&path, "validation failure");
+                continue;
+            }
+        };
+        if recovered.len() >= options.max_entries
+            || recovered_bytes.saturating_add(size) > options.max_bytes
+        {
+            quarantine_invalid_cache_file(&path, "entry exceeds recovered cache capacity");
+            continue;
+        }
+        recovered_bytes = recovered_bytes.saturating_add(size);
+        let artifact = Arc::new(CachedPackageArtifact {
+            path,
+            package_id: digest.clone(),
+            digest: digest.clone(),
+            size,
+            manifest,
+        });
+        recovered.insert(
+            digest,
+            CachedPackageEntry {
+                artifact,
+                last_access: u64::try_from(total.saturating_sub(index)).unwrap_or(u64::MAX),
+            },
+        );
+    }
+    Ok(recovered)
+}
+
+fn quarantine_invalid_cache_file(path: &Path, reason: &'static str) {
+    if let Err(error) = std::fs::remove_file(path) {
+        tracing::error!(%error, %reason, cache_path = %path.display(), "failed to remove invalid package cache entry");
+    }
+}
+
+fn ensure_cache_disk_reserve(
+    root: &Path,
+    requested: u64,
+    min_free_bytes: u64,
+) -> Result<(), ClientError> {
+    let available = fs2::available_space(root).map_err(|error| {
+        ClientError::PackageIo(format!("inspect package cache free space: {error}"))
+    })?;
+    if available.saturating_sub(requested) < min_free_bytes {
+        return Err(ClientError::PackageCacheConfiguration(format!(
+            "package cache needs {requested} bytes while preserving a {min_free_bytes}-byte free-disk reserve; only {available} bytes are available"
+        )));
+    }
+    Ok(())
 }
 
 impl ProcessPackageCache {
     fn new(options: ProcessPackageCacheOptions) -> Result<Self, ClientError> {
         options.validate()?;
-        let root = tempfile::Builder::new()
-            .prefix("agentos-process-package-cache-")
-            .tempdir()
-            .map_err(|error| {
-                ClientError::PackageIo(format!("create process package cache: {error}"))
-            })?;
+        let root = match &options.root {
+            Some(path) => {
+                std::fs::create_dir_all(path).map_err(|error| {
+                    ClientError::PackageIo(format!("create persistent package cache: {error}"))
+                })?;
+                let lock = std::fs::OpenOptions::new()
+                    .create(true)
+                    .truncate(false)
+                    .read(true)
+                    .write(true)
+                    .open(path.join(".cache.lock"))
+                    .map_err(|error| {
+                        ClientError::PackageIo(format!("open package cache lock: {error}"))
+                    })?;
+                fs2::FileExt::try_lock_exclusive(&lock).map_err(|error| {
+                    ClientError::PackageCacheConfiguration(format!(
+                        "package cache directory {} is already in use or cannot be locked: {error}; configure a distinct --package-cache-dir for each worker process",
+                        path.display()
+                    ))
+                })?;
+                ProcessPackageCacheRoot::Persistent {
+                    path: path.clone(),
+                    _lock: lock,
+                }
+            }
+            None => ProcessPackageCacheRoot::Temporary(
+                tempfile::Builder::new()
+                    .prefix("agentos-process-package-cache-")
+                    .tempdir()
+                    .map_err(|error| {
+                        ClientError::PackageIo(format!("create process package cache: {error}"))
+                    })?,
+            ),
+        };
+        let recovered = recover_package_cache(root.path(), &options)?;
         Ok(Self {
             acquisition_slots: Arc::new(Semaphore::new(options.max_concurrent_acquisitions)),
             options,
             root,
             state: Mutex::new(ProcessPackageCacheState {
-                entries: BTreeMap::new(),
+                bytes: recovered.values().map(|entry| entry.artifact.size).sum(),
+                access_clock: recovered.len() as u64,
+                entries: recovered,
                 source_index: BTreeMap::new(),
                 flights: BTreeMap::new(),
-                bytes: 0,
-                access_clock: 0,
                 hits: 0,
                 misses: 0,
                 coalesced_waiters: 0,
                 acquisitions: 0,
                 evictions: 0,
                 capacity_failures: 0,
+                cancelled_acquisitions: 0,
             }),
         })
     }
@@ -440,10 +667,41 @@ impl ProcessPackageCache {
         }
     }
 
+    async fn invalidate_source(&self, source_key: &str) {
+        self.state.lock().await.source_index.remove(source_key);
+    }
+
     async fn get_or_acquire<F>(
         self: &Arc<Self>,
         flight_key: String,
         expected_digest: Option<&str>,
+        acquisition: F,
+    ) -> Result<VerifiedPackage, ClientError>
+    where
+        F: std::future::Future<Output = Result<VerifiedPackage, ClientError>> + Send + 'static,
+    {
+        self.get_or_acquire_with_priority(flight_key, expected_digest, true, acquisition)
+            .await
+    }
+
+    async fn get_or_acquire_optional<F>(
+        self: &Arc<Self>,
+        flight_key: String,
+        expected_digest: Option<&str>,
+        acquisition: F,
+    ) -> Result<VerifiedPackage, ClientError>
+    where
+        F: std::future::Future<Output = Result<VerifiedPackage, ClientError>> + Send + 'static,
+    {
+        self.get_or_acquire_with_priority(flight_key, expected_digest, false, acquisition)
+            .await
+    }
+
+    async fn get_or_acquire_with_priority<F>(
+        self: &Arc<Self>,
+        flight_key: String,
+        expected_digest: Option<&str>,
+        required: bool,
         acquisition: F,
     ) -> Result<VerifiedPackage, ClientError>
     where
@@ -457,19 +715,27 @@ impl ProcessPackageCache {
             return Ok(package);
         }
 
-        let (flight, leader) = {
+        let (flight, leader, waiter) = {
             let mut state = self.state.lock().await;
             state.misses = state.misses.saturating_add(1);
-            if let Some(flight) = state.flights.get(&flight_key).cloned() {
+            let existing = state
+                .flights
+                .get(&flight_key)
+                .filter(|flight| !flight.cancelled.load(Ordering::Acquire))
+                .cloned();
+            if let Some(flight) = existing {
                 state.coalesced_waiters = state.coalesced_waiters.saturating_add(1);
-                (flight, false)
+                let waiter = flight.register_waiter(required);
+                (flight, false, waiter)
             } else {
+                state.flights.remove(&flight_key);
                 if state.flights.len() >= self.options.max_pending_acquisitions {
                     return Err(ClientError::PackageCachePendingLimit {
                         limit: self.options.max_pending_acquisitions,
                     });
                 }
                 let flight = Arc::new(PackageAcquisitionFlight::new());
+                let waiter = flight.register_waiter(required);
                 state.flights.insert(flight_key.clone(), flight.clone());
                 if state.flights.len() * 100 / self.options.max_pending_acquisitions >= 80 {
                     tracing::warn!(
@@ -480,7 +746,7 @@ impl ProcessPackageCache {
                         "process package cache pending acquisitions approaching configured limit"
                     );
                 }
-                (flight, true)
+                (flight, true, waiter)
             }
         };
 
@@ -489,17 +755,25 @@ impl ProcessPackageCache {
             let completion = Arc::clone(&flight);
             let record_source = expected_digest.is_none();
             tokio::spawn(async move {
-                let result = tokio::time::timeout(
-                    Duration::from_millis(cache.options.acquisition_timeout_ms),
-                    cache.run_acquisition(acquisition),
-                )
-                .await
-                .unwrap_or_else(|_| {
-                    Err(ClientError::PackageDownload(format!(
-                        "package cache acquisition exceeded {}ms; raise ProcessPackageCacheOptions.acquisition_timeout_ms",
-                        cache.options.acquisition_timeout_ms
-                    )))
-                });
+                let result = tokio::select! {
+                    _ = completion.cancelled() => {
+                        let mut state = cache.state.lock().await;
+                        state.cancelled_acquisitions =
+                            state.cancelled_acquisitions.saturating_add(1);
+                        Err(ClientError::PackageDownload(String::from(
+                            "optional package preload acquisition was cancelled after its final waiter left",
+                        )))
+                    }
+                    result = tokio::time::timeout(
+                        Duration::from_millis(cache.options.acquisition_timeout_ms),
+                        cache.run_acquisition(acquisition),
+                    ) => result.unwrap_or_else(|_| {
+                        Err(package_timeout_error(
+                            "package cache acquisition", cache.options.acquisition_timeout_ms,
+                            "ProcessPackageCacheOptions.acquisition_timeout_ms", "process",
+                        ))
+                    }),
+                };
                 if record_source {
                     if let Ok(package) = &result {
                         cache
@@ -522,7 +796,9 @@ impl ProcessPackageCache {
         } else {
             drop(acquisition);
         }
-        flight.wait().await
+        let result = flight.wait().await;
+        drop(waiter);
+        result
     }
 
     async fn run_acquisition<F>(
@@ -565,7 +841,10 @@ impl ProcessPackageCache {
                     limit: self.options.max_bytes,
                 });
             }
+            self.evict_for_insert(&mut state, package.size)?;
         }
+
+        ensure_cache_disk_reserve(self.root.path(), package.size, self.options.min_free_bytes)?;
 
         let staged = stage_cached_package(
             package.path().to_path_buf(),
@@ -703,6 +982,7 @@ impl ProcessPackageCache {
             acquisitions: state.acquisitions,
             evictions: state.evictions,
             capacity_failures: state.capacity_failures,
+            cancelled_acquisitions: state.cancelled_acquisitions,
         }
     }
 }
@@ -781,12 +1061,13 @@ async fn stage_cached_package(
 }
 
 #[cfg_attr(feature = "contract", derive(ts_rs::TS))]
+#[cfg_attr(feature = "contract", ts(rename = "ActorInstalledSoftware"))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstalledSoftware {
     pub package_id: String,
     pub digest: String,
-    pub size: u64,
+    pub size_bytes: u64,
     pub package_name: String,
     pub version: String,
     pub commands: Vec<String>,
@@ -797,7 +1078,7 @@ impl From<&VerifiedPackage> for InstalledSoftware {
         Self {
             package_id: package.package_id.clone(),
             digest: package.digest.clone(),
-            size: package.size,
+            size_bytes: package.size,
             package_name: package.manifest.name.clone(),
             version: package.manifest.version.clone(),
             commands: package.manifest.commands.clone(),
@@ -811,7 +1092,37 @@ pub struct PackageResolver {
     cache: Arc<ProcessPackageCache>,
 }
 
+/// Validate source syntax without initializing the process package cache.
+pub fn validate_package_source(source: &PackageSource) -> Result<(), ClientError> {
+    match source {
+        PackageSource::Url {
+            url,
+            expected_digest,
+        } => {
+            parse_package_url(url)?;
+            normalize_expected_digest(expected_digest.as_deref())?;
+        }
+        PackageSource::Path {
+            path,
+            expected_digest,
+        } => {
+            if path.is_empty() {
+                return Err(ClientError::InvalidPackageSource(String::from(
+                    "package path cannot be empty",
+                )));
+            }
+            normalize_expected_digest(expected_digest.as_deref())?;
+        }
+    }
+    Ok(())
+}
+
 impl PackageResolver {
+    #[cfg(feature = "sidecar-internals")]
+    pub(crate) fn acquisition_timeout_ms(&self) -> u64 {
+        self.cache.options.acquisition_timeout_ms
+    }
+
     pub fn new(options: PackageResolverOptions) -> Result<Self, ClientError> {
         options.validate()?;
         Ok(Self {
@@ -821,7 +1132,28 @@ impl PackageResolver {
     }
 
     pub async fn resolve(&self, source: PackageSource) -> Result<VerifiedPackage, ClientError> {
+        self.resolve_with_priority(source, true).await
+    }
+
+    /// Resolve an advisory preload. If every advisory waiter is dropped and no
+    /// required resolution has joined the same single-flight acquisition, the
+    /// download is cancelled and its temporary file is removed on drop.
+    pub async fn preload(&self, source: PackageSource) -> Result<VerifiedPackage, ClientError> {
+        self.resolve_with_priority(source, false).await
+    }
+
+    async fn resolve_with_priority(
+        &self,
+        source: PackageSource,
+        required: bool,
+    ) -> Result<VerifiedPackage, ClientError> {
         self.validate_source(&source)?;
+        if let PackageSource::Url { url, .. } = &source {
+            // A shared cache hit is not permission to use a source rejected by
+            // this resolver's policy (including cached loopback artifacts).
+            self.validate_url_addresses(&parse_package_url(url)?)
+                .await?;
+        }
         let source_key = match &source {
             PackageSource::Url { url, .. } => format!("url:{}", parse_package_url(url)?.as_str()),
             PackageSource::Path { path, .. } => format!("path:{path}"),
@@ -834,18 +1166,32 @@ impl PackageResolver {
                 expected_digest, ..
             } => normalize_expected_digest(expected_digest.as_deref())?,
         };
+        // Local package paths are trusted but mutable. Do not let a URL-style
+        // source alias hide replaced or deleted bytes. Requests that overlap
+        // still coalesce on the path flight key, and the immutable digest
+        // entry is reused after the current file has been hashed.
+        if matches!(&source, PackageSource::Path { .. }) && expected_digest.is_none() {
+            self.cache.invalidate_source(&source_key).await;
+        }
         let flight_key = if let Some(digest) = &expected_digest {
             format!("digest:{digest}")
         } else {
             source_key.clone()
         };
         let resolver = self.clone();
-        let package = self
-            .cache
-            .get_or_acquire(flight_key, expected_digest.as_deref(), async move {
-                resolver.resolve_uncached(source).await
-            })
-            .await?;
+        let package = if required {
+            self.cache
+                .get_or_acquire(flight_key, expected_digest.as_deref(), async move {
+                    resolver.resolve_uncached(source).await
+                })
+                .await?
+        } else {
+            self.cache
+                .get_or_acquire_optional(flight_key, expected_digest.as_deref(), async move {
+                    resolver.resolve_uncached(source).await
+                })
+                .await?
+        };
         enforce_package_size(package.size, self.options.max_package_bytes)?;
         // Exact coordinator preloads use a digest flight for correctness. Also
         // remember the bounded short-lived source alias so a later actor whose
@@ -881,24 +1227,13 @@ impl PackageResolver {
     /// Validate source syntax and digest form without opening a path, resolving
     /// DNS, or starting a download.
     pub fn validate_source(&self, source: &PackageSource) -> Result<(), ClientError> {
-        match source {
-            PackageSource::Url {
-                url,
-                expected_digest,
-            } => {
-                parse_package_url(url)?;
-                normalize_expected_digest(expected_digest.as_deref())?;
-            }
-            PackageSource::Path {
-                path,
-                expected_digest,
-            } => {
-                if path.is_empty() {
-                    return Err(ClientError::InvalidPackageSource(String::from(
-                        "package path cannot be empty",
-                    )));
-                }
-                normalize_expected_digest(expected_digest.as_deref())?;
+        validate_package_source(source)?;
+        if let PackageSource::Url { url, .. } = source {
+            if parse_package_url(url)?.scheme() == "http" && !self.options.allow_insecure_local_http
+            {
+                return Err(ClientError::InvalidPackageSource(String::from(
+                    "plain HTTP packages require allow_insecure_local_http and a loopback address",
+                )));
             }
         }
         Ok(())
@@ -954,7 +1289,7 @@ impl PackageResolver {
                 .header(ACCEPT_ENCODING, "identity")
                 .send()
                 .await
-                .map_err(|error| package_request_error(&label, &error))?;
+                .map_err(|error| package_request_error(&label, &error, &self.options))?;
             enforce_response_header_limits(response.headers())?;
 
             if is_redirect(response.status()) {
@@ -1009,11 +1344,18 @@ impl PackageResolver {
         let mut size = 0u64;
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(|error| {
-                ClientError::PackageDownload(if error.is_timeout() {
-                    String::from("package response timed out while reading the body")
+                if error.is_timeout() {
+                    package_timeout_error(
+                        "package response body",
+                        self.options.download_timeout_ms,
+                        "PackageResolverOptions.download_timeout_ms",
+                        "session",
+                    )
                 } else {
-                    String::from("package response failed while reading the body")
-                })
+                    ClientError::PackageDownload(String::from(
+                        "package response failed while reading the body",
+                    ))
+                }
             })?;
             size = size
                 .checked_add(chunk.len() as u64)
@@ -1043,7 +1385,10 @@ impl PackageResolver {
         ))
     }
 
-    async fn client_for_url(&self, url: &Url) -> Result<(reqwest::Client, String), ClientError> {
+    async fn validate_url_addresses(
+        &self,
+        url: &Url,
+    ) -> Result<Vec<std::net::SocketAddr>, ClientError> {
         validate_package_url_shape(url)?;
         let label = redacted_url(url);
         let host = url.host_str().ok_or_else(|| {
@@ -1070,7 +1415,13 @@ impl PackageResolver {
                 "package URL {label} resolves to a private or special-purpose address"
             )));
         }
+        Ok(addresses)
+    }
 
+    async fn client_for_url(&self, url: &Url) -> Result<(reqwest::Client, String), ClientError> {
+        let addresses = self.validate_url_addresses(url).await?;
+        let label = redacted_url(url);
+        let host = url.host_str().expect("validated package URL host");
         let mut builder = reqwest::Client::builder()
             .connect_timeout(Duration::from_millis(self.options.connect_timeout_ms))
             .timeout(Duration::from_millis(self.options.download_timeout_ms))
@@ -1131,83 +1482,115 @@ async fn digest_file(path: &Path, limit: u64) -> Result<String, ClientError> {
     ))
 }
 
+fn digest_file_sync(path: &Path, limit: u64) -> Result<String, ClientError> {
+    let mut file = std::fs::File::open(path)
+        .map_err(|error| ClientError::PackageIo(format!("open package file: {error}")))?;
+    let mut buffer = vec![0u8; DOWNLOAD_CHUNK_BYTES];
+    let mut hasher = Sha256::new();
+    let mut size = 0u64;
+    loop {
+        let count = file
+            .read(&mut buffer)
+            .map_err(|error| ClientError::PackageIo(format!("read package file: {error}")))?;
+        if count == 0 {
+            break;
+        }
+        size = size
+            .checked_add(count as u64)
+            .ok_or(ClientError::PackageTooLarge {
+                observed: u64::MAX,
+                limit,
+            })?;
+        enforce_package_size(size, limit)?;
+        hasher.update(&buffer[..count]);
+    }
+    Ok(format!(
+        "sha256:{}",
+        hex_digest(hasher.finalize().as_slice())
+    ))
+}
+
 async fn validate_package_file(
     path: PathBuf,
     size: u64,
 ) -> Result<PackageManifestInfo, ClientError> {
-    tokio::task::spawn_blocking(move || {
-        let mut file = std::fs::File::open(&path)
-            .map_err(|error| ClientError::PackageIo(format!("open verified package: {error}")))?;
-        let mut prefix = [0u8; vfs::package_format::AOSPKG_HEADER_LEN];
-        file.read_exact(&mut prefix).map_err(|error| {
-            ClientError::InvalidPackageFormat(format!("read .aospkg header: {error}"))
-        })?;
-        let size_usize = usize::try_from(size).map_err(|_| {
-            ClientError::InvalidPackageFormat(String::from(
-                ".aospkg size cannot be represented on this platform",
-            ))
-        })?;
-        let header = vfs::package_format::parse_aospkg_header_from_prefix(&prefix, size_usize)
-            .map_err(|error| ClientError::InvalidPackageFormat(error.to_string()))?;
-        if header.manifest.len() > MAX_PACKAGE_MANIFEST_BYTES {
+    tokio::task::spawn_blocking(move || validate_package_file_sync(&path, size))
+        .await
+        .map_err(|error| {
+            ClientError::PackageIo(format!("package validation task failed: {error}"))
+        })?
+}
+
+fn validate_package_file_sync(path: &Path, size: u64) -> Result<PackageManifestInfo, ClientError> {
+    let mut file = std::fs::File::open(path)
+        .map_err(|error| ClientError::PackageIo(format!("open verified package: {error}")))?;
+    let mut prefix = [0u8; vfs::package_format::AOSPKG_HEADER_LEN];
+    file.read_exact(&mut prefix).map_err(|error| {
+        ClientError::InvalidPackageFormat(format!("read .aospkg header: {error}"))
+    })?;
+    let size_usize = usize::try_from(size).map_err(|_| {
+        ClientError::InvalidPackageFormat(String::from(
+            ".aospkg size cannot be represented on this platform",
+        ))
+    })?;
+    let header = vfs::package_format::parse_aospkg_header_from_prefix(&prefix, size_usize)
+        .map_err(|error| ClientError::InvalidPackageFormat(error.to_string()))?;
+    if header.manifest.len() > MAX_PACKAGE_MANIFEST_BYTES {
+        return Err(ClientError::InvalidPackageFormat(format!(
+            ".aospkg manifest is {} bytes; limit is {MAX_PACKAGE_MANIFEST_BYTES}",
+            header.manifest.len()
+        )));
+    }
+    if header.index.len() > MAX_PACKAGE_INDEX_BYTES {
+        return Err(ClientError::InvalidPackageFormat(format!(
+            ".aospkg mount index is {} bytes; limit is {MAX_PACKAGE_INDEX_BYTES}",
+            header.index.len()
+        )));
+    }
+    // Decode and validate the bounded mount index before immutable bytes
+    // enter the shared cache. Projection reuses the same VFS parser and
+    // mmap path, so cache hits cannot defer malformed-index failures until
+    // a VM mutation.
+    vfs::posix::TarFileSystem::open(path)
+        .map_err(|error| ClientError::InvalidPackageFormat(error.to_string()))?;
+    let manifest = vfs::package_format::read_manifest_chunk_from_file(path)
+        .map_err(|error| ClientError::InvalidPackageFormat(error.to_string()))?;
+    validate_manifest_component("name", &manifest.name, MAX_PACKAGE_NAME_BYTES)?;
+    validate_manifest_component("version", &manifest.version, MAX_PACKAGE_VERSION_BYTES)?;
+    if manifest.commands.len() > MAX_PACKAGE_COMMANDS {
+        return Err(ClientError::InvalidPackageFormat(format!(
+            "package manifest commands exceeds limit of {MAX_PACKAGE_COMMANDS}"
+        )));
+    }
+    for command in &manifest.commands {
+        validate_manifest_component("command", &command.command, MAX_PACKAGE_COMMAND_BYTES)?;
+        validate_relative_manifest_path("command entry", &command.entry)?;
+    }
+    if let Some(provides) = &manifest.provides {
+        if provides.env.len() > MAX_PACKAGE_PROVIDES_ENV {
             return Err(ClientError::InvalidPackageFormat(format!(
-                ".aospkg manifest is {} bytes; limit is {MAX_PACKAGE_MANIFEST_BYTES}",
-                header.manifest.len()
+                "package provides.env exceeds limit of {MAX_PACKAGE_PROVIDES_ENV}"
             )));
         }
-        if header.index.len() > MAX_PACKAGE_INDEX_BYTES {
+        if provides.files.len() > MAX_PACKAGE_PROVIDES_FILES {
             return Err(ClientError::InvalidPackageFormat(format!(
-                ".aospkg mount index is {} bytes; limit is {MAX_PACKAGE_INDEX_BYTES}",
-                header.index.len()
+                "package provides.files exceeds limit of {MAX_PACKAGE_PROVIDES_FILES}"
             )));
         }
-        // Decode and validate the bounded mount index before immutable bytes
-        // enter the shared cache. Projection reuses the same VFS parser and
-        // mmap path, so cache hits cannot defer malformed-index failures until
-        // a VM mutation.
-        vfs::posix::TarFileSystem::open(&path)
-            .map_err(|error| ClientError::InvalidPackageFormat(error.to_string()))?;
-        let manifest = vfs::package_format::read_manifest_chunk_from_file(&path)
-            .map_err(|error| ClientError::InvalidPackageFormat(error.to_string()))?;
-        validate_manifest_component("name", &manifest.name, MAX_PACKAGE_NAME_BYTES)?;
-        validate_manifest_component("version", &manifest.version, MAX_PACKAGE_VERSION_BYTES)?;
-        if manifest.commands.len() > MAX_PACKAGE_COMMANDS {
-            return Err(ClientError::InvalidPackageFormat(format!(
-                "package manifest commands exceeds limit of {MAX_PACKAGE_COMMANDS}"
-            )));
+        for file in &provides.files {
+            validate_relative_manifest_path("provided file source", &file.source)?;
+            validate_absolute_manifest_path("provided file target", &file.target)?;
         }
-        for command in &manifest.commands {
-            validate_manifest_component("command", &command.command, MAX_PACKAGE_COMMAND_BYTES)?;
-            validate_relative_manifest_path("command entry", &command.entry)?;
-        }
-        if let Some(provides) = &manifest.provides {
-            if provides.env.len() > MAX_PACKAGE_PROVIDES_ENV {
-                return Err(ClientError::InvalidPackageFormat(format!(
-                    "package provides.env exceeds limit of {MAX_PACKAGE_PROVIDES_ENV}"
-                )));
-            }
-            if provides.files.len() > MAX_PACKAGE_PROVIDES_FILES {
-                return Err(ClientError::InvalidPackageFormat(format!(
-                    "package provides.files exceeds limit of {MAX_PACKAGE_PROVIDES_FILES}"
-                )));
-            }
-            for file in &provides.files {
-                validate_relative_manifest_path("provided file source", &file.source)?;
-                validate_absolute_manifest_path("provided file target", &file.target)?;
-            }
-        }
-        Ok(PackageManifestInfo {
-            name: manifest.name,
-            version: manifest.version,
-            commands: manifest
-                .commands
-                .into_iter()
-                .map(|command| command.command)
-                .collect(),
-        })
+    }
+    Ok(PackageManifestInfo {
+        name: manifest.name,
+        version: manifest.version,
+        commands: manifest
+            .commands
+            .into_iter()
+            .map(|command| command.command)
+            .collect(),
     })
-    .await
-    .map_err(|error| ClientError::PackageIo(format!("package validation task failed: {error}")))?
 }
 
 fn validate_manifest_component(name: &str, value: &str, limit: usize) -> Result<(), ClientError> {
@@ -1318,7 +1701,14 @@ async fn resolve_addresses(
         tokio::net::lookup_host((host, port)),
     )
     .await
-    .map_err(|_| ClientError::PackageDownload(String::from("package DNS lookup timed out")))?
+    .map_err(|_| {
+        package_timeout_error(
+            "package DNS lookup",
+            timeout_ms,
+            "PackageResolverOptions.connect_timeout_ms",
+            "session",
+        )
+    })?
     .map_err(|_| ClientError::PackageDownload(String::from("package DNS lookup failed")))?;
     let mut addresses = resolved.take(16).collect::<Vec<_>>();
     addresses.sort();
@@ -1454,10 +1844,51 @@ fn redacted_url(url: &Url) -> String {
     redacted.to_string()
 }
 
-fn package_request_error(label: &str, error: &reqwest::Error) -> ClientError {
-    let reason = if error.is_timeout() {
-        "timed out"
-    } else if error.is_connect() {
+fn package_timeout_error(label: &str, timeout_ms: u64, path: &str, scope: &str) -> ClientError {
+    ClientError::OperationTimedOut {
+        message: format!(
+            "{label} exceeded {timeout_ms}ms; raise {path}; completion is unconfirmed"
+        ),
+        details: Box::new(crate::error::ResourceLimitDetails {
+            limit_name: Some("packageAcquisitionTimeMs".into()),
+            configured_limit: Some(timeout_ms),
+            unit: Some("milliseconds".into()),
+            scope: Some(scope.into()),
+            operation: Some("package.acquire".into()),
+            configuration_path: Some(path.into()),
+            retryable: Some(false),
+            errno: Some("ETIMEDOUT".into()),
+            ..Default::default()
+        }),
+    }
+}
+
+fn package_request_error(
+    label: &str,
+    error: &reqwest::Error,
+    options: &PackageResolverOptions,
+) -> ClientError {
+    if error.is_timeout() {
+        let (timeout_ms, path) =
+            if error.is_connect() && options.connect_timeout_ms < options.download_timeout_ms {
+                (
+                    options.connect_timeout_ms,
+                    "PackageResolverOptions.connect_timeout_ms",
+                )
+            } else {
+                (
+                    options.download_timeout_ms,
+                    "PackageResolverOptions.download_timeout_ms",
+                )
+            };
+        return package_timeout_error(
+            &format!("package request to {label}"),
+            timeout_ms,
+            path,
+            "session",
+        );
+    }
+    let reason = if error.is_connect() {
         "failed to connect"
     } else if error.is_request() {
         "request failed"
@@ -1517,14 +1948,75 @@ mod tests {
 
     fn test_cache_options() -> ProcessPackageCacheOptions {
         ProcessPackageCacheOptions {
+            root: None,
+            min_free_bytes: 0,
             max_bytes: 16 * 1024 * 1024,
             max_entries: 8,
             max_concurrent_acquisitions: 2,
             max_pending_acquisitions: 128,
-            acquisition_timeout_ms: 5_000,
+            acquisition_timeout_ms: 30_000,
             max_source_entries: 32,
             source_ttl_ms: 5_000,
         }
+    }
+
+    #[tokio::test]
+    async fn persistent_cache_recovers_verified_entries_and_cleans_crash_files() {
+        let root = tempfile::tempdir().unwrap();
+        let source = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(source.path(), test_package()).unwrap();
+        let mut options = test_cache_options();
+        options.root = Some(root.path().to_path_buf());
+        let cache = Arc::new(ProcessPackageCache::new(options.clone()).unwrap());
+        let installed = cache
+            .get_or_acquire(
+                String::from("source"),
+                None,
+                uncached_package(source.path().to_path_buf()),
+            )
+            .await
+            .unwrap();
+        let digest = installed.digest.clone();
+        drop(installed);
+        drop(cache);
+
+        let stale_staging = root.path().join(".package-staging-abandoned");
+        std::fs::write(&stale_staging, b"partial").unwrap();
+        let invalid = root.path().join(format!("{}.aospkg", "0".repeat(64)));
+        std::fs::write(&invalid, b"invalid").unwrap();
+
+        let recovered = Arc::new(ProcessPackageCache::new(options).unwrap());
+        assert_eq!(recovered.stats().await.entries, 1);
+        assert_eq!(recovered.get(&digest).await.unwrap().digest, digest);
+        assert!(!stale_staging.exists());
+        assert!(!invalid.exists());
+    }
+
+    #[test]
+    fn package_cache_reserves_operator_configured_free_disk_space() {
+        let root = tempfile::tempdir().unwrap();
+        let error = ensure_cache_disk_reserve(root.path(), 1, u64::MAX)
+            .expect_err("a reserve greater than available disk must reject an insert");
+        assert!(matches!(error, ClientError::PackageCacheConfiguration(_)));
+    }
+
+    #[test]
+    fn persistent_cache_rejects_concurrent_owners_before_recovery() {
+        let root = tempfile::tempdir().unwrap();
+        let mut options = test_cache_options();
+        options.root = Some(root.path().to_path_buf());
+        let first = ProcessPackageCache::new(options.clone()).unwrap();
+        let staging = root.path().join(".package-staging-live");
+        std::fs::write(&staging, b"in progress").unwrap();
+        let error = ProcessPackageCache::new(options.clone())
+            .err()
+            .expect("the process owning live staging files must retain exclusive ownership");
+        assert!(error.to_string().contains("package-cache-dir"));
+        assert!(staging.exists());
+        drop(first);
+        let recovered = ProcessPackageCache::new(options).unwrap();
+        assert!(!staging.exists());
+        drop(recovered);
     }
 
     #[test]
@@ -1617,6 +2109,73 @@ mod tests {
         assert_eq!(from_url.size, from_path.size);
         assert_eq!(from_url.manifest, from_path.manifest);
         assert_eq!(from_url.manifest.commands, vec!["demo"]);
+
+        // Both source aliases and digest-addressed hits must still enforce the
+        // requesting resolver's policy, even though no download is needed.
+        for expected_digest in [None, Some(from_url.digest.clone())] {
+            let error = path_resolver
+                .resolve(PackageSource::Url {
+                    url: format!("http://{address}/demo.aospkg"),
+                    expected_digest,
+                })
+                .await
+                .unwrap_err();
+            assert!(matches!(error, ClientError::InvalidPackageSource(_)));
+        }
+        let error = path_resolver
+            .resolve(PackageSource::Url {
+                url: format!("https://{address}/demo.aospkg"),
+                expected_digest: Some(from_url.digest.clone()),
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(error, ClientError::InvalidPackageSource(_)));
+    }
+
+    #[tokio::test]
+    async fn package_http_timeouts_preserve_limit_details_before_and_after_headers() {
+        // Leave time for the local HTTP handshake under the parallel unit-test
+        // runner; 25ms could expire before any request reached the fixture.
+        const DOWNLOAD_TIMEOUT_MS: u64 = 500;
+        for send_headers in [false, true] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let (stop, stopped) = tokio::sync::oneshot::channel();
+            let server = async {
+                tokio::select! {
+                    _ = stopped => {},
+                    _ = async {
+                        let (mut stream, _) = listener.accept().await.unwrap();
+                        let mut request = [0u8; 2048];
+                        assert!(stream.read(&mut request).await.unwrap() > 0);
+                        if send_headers {
+                            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 999\r\n\r\n").await.unwrap();
+                        }
+                        std::future::pending::<()>().await;
+                    } => unreachable!(),
+                }
+            };
+            let acquisition = async {
+                let resolver = PackageResolver::new(PackageResolverOptions {
+                    allow_insecure_local_http: true,
+                    download_timeout_ms: DOWNLOAD_TIMEOUT_MS,
+                    ..Default::default()
+                })
+                .unwrap();
+                let result = resolver
+                    .resolve_url(&format!("http://{address}/demo.aospkg"), None)
+                    .await;
+                stop.send(()).expect("server stop receiver remains alive");
+                result
+            };
+            let (result, ()) = tokio::join!(acquisition, server);
+            assert!(
+                matches!(result, Err(ClientError::OperationTimedOut { details, .. })
+                if details.configured_limit == Some(DOWNLOAD_TIMEOUT_MS)
+                    && details.configuration_path.as_deref() == Some("PackageResolverOptions.download_timeout_ms")
+                    && details.errno.as_deref() == Some("ETIMEDOUT"))
+            );
+        }
     }
 
     #[tokio::test]
@@ -1732,7 +2291,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn exact_resolution_primes_the_advisory_source_alias() {
+    async fn local_path_resolution_does_not_reuse_a_source_alias() {
         let bytes = test_package();
         let package = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(package.path(), &bytes).unwrap();
@@ -1743,7 +2302,7 @@ mod tests {
             cache: Arc::new(ProcessPackageCache::new(test_cache_options()).unwrap()),
         };
 
-        let exact = resolver
+        resolver
             .resolve(PackageSource::Path {
                 path: path.clone(),
                 expected_digest: Some(expected_digest.clone()),
@@ -1751,16 +2310,44 @@ mod tests {
             .await
             .unwrap();
         std::fs::remove_file(&path).unwrap();
-        let from_alias = resolver
+        let error = resolver
             .resolve(PackageSource::Path {
                 path,
                 expected_digest: None,
             })
             .await
-            .expect("unresolved source reuses exact preload alias");
-        assert_eq!(from_alias.digest, expected_digest);
-        assert_eq!(from_alias.digest, exact.digest);
-        assert_eq!(resolver.cache_stats().await.acquisitions, 1);
+            .expect_err("a deleted local path must not resolve from a stale alias");
+        assert!(matches!(error, ClientError::PackageIo(_)));
+    }
+
+    #[tokio::test]
+    async fn local_path_resolution_observes_replaced_bytes() {
+        let package = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(package.path(), test_package_with_version("1.0.0")).unwrap();
+        let path = package.path().to_string_lossy().into_owned();
+        let resolver = PackageResolver {
+            options: PackageResolverOptions::default(),
+            cache: Arc::new(ProcessPackageCache::new(test_cache_options()).unwrap()),
+        };
+
+        let first = resolver
+            .resolve(PackageSource::Path {
+                path: path.clone(),
+                expected_digest: None,
+            })
+            .await
+            .unwrap();
+        std::fs::write(package.path(), test_package_with_version("2.0.0")).unwrap();
+        let second = resolver
+            .resolve(PackageSource::Path {
+                path,
+                expected_digest: None,
+            })
+            .await
+            .unwrap();
+
+        assert_ne!(first.digest, second.digest);
+        assert_eq!(second.manifest.version, "2.0.0");
     }
 
     #[tokio::test]
@@ -1795,12 +2382,8 @@ mod tests {
 
     #[tokio::test]
     async fn timed_out_flight_is_removed_before_retry() {
-        let package = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(package.path(), test_package()).unwrap();
         let mut options = test_cache_options();
-        // Leave enough headroom for the successful retry to validate and copy
-        // its package even when the test suite is contending for disk I/O.
-        options.acquisition_timeout_ms = 250;
+        options.acquisition_timeout_ms = 25;
         let cache = Arc::new(ProcessPackageCache::new(options).unwrap());
 
         let error = cache
@@ -1810,17 +2393,124 @@ mod tests {
             .await
             .expect_err("acquisition must time out");
         assert!(error.to_string().contains("acquisition_timeout_ms"));
+        assert!(
+            matches!(&error, ClientError::OperationTimedOut { details, .. }
+            if details.configured_limit == Some(25)
+                && details.configuration_path.as_deref() == Some("ProcessPackageCacheOptions.acquisition_timeout_ms")
+                && details.errno.as_deref() == Some("ETIMEDOUT"))
+        );
 
-        let resolved = cache
-            .get_or_acquire(
-                String::from("timeout"),
-                None,
-                uncached_package(package.path().to_path_buf()),
-            )
+        // Prove that the replacement closure runs, without requiring a package
+        // fsync to finish inside the deliberately tiny timeout under disk load.
+        // Successful package publication is covered by the cache tests above.
+        let error = cache
+            .get_or_acquire(String::from("timeout"), None, async {
+                Err(ClientError::PackageIo(String::from("retry started")))
+            })
             .await
-            .expect("retry starts after timed-out flight cleanup");
-        assert_eq!(resolved.manifest.name, "demo");
-        assert_eq!(cache.stats().await.pending_acquisitions, 0);
+            .expect_err("replacement acquisition returns its own result");
+        assert!(matches!(error, ClientError::PackageIo(message) if message == "retry started"));
+        let stats = cache.stats().await;
+        assert_eq!(stats.acquisitions, 2);
+        assert_eq!(stats.pending_acquisitions, 0);
+    }
+
+    #[tokio::test]
+    async fn optional_flight_is_cancelled_after_last_waiter_leaves() {
+        struct DropProbe(Arc<AtomicUsize>);
+        impl Drop for DropProbe {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        let cache = Arc::new(ProcessPackageCache::new(test_cache_options()).unwrap());
+        let dropped = Arc::new(AtomicUsize::new(0));
+        let task_cache = Arc::clone(&cache);
+        let task_dropped = Arc::clone(&dropped);
+        let waiter = tokio::spawn(async move {
+            task_cache
+                .get_or_acquire_optional(String::from("optional"), None, async move {
+                    let _probe = DropProbe(task_dropped);
+                    std::future::pending::<Result<VerifiedPackage, ClientError>>().await
+                })
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while cache.stats().await.acquisitions != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("optional acquisition starts");
+
+        waiter.abort();
+        let _ = waiter.await;
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let stats = cache.stats().await;
+                if stats.pending_acquisitions == 0 && stats.cancelled_acquisitions == 1 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("orphaned optional acquisition is cancelled");
+        assert_eq!(dropped.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn required_waiter_keeps_optional_flight_alive() {
+        let package = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(package.path(), test_package()).unwrap();
+        let cache = Arc::new(ProcessPackageCache::new(test_cache_options()).unwrap());
+        let gate = Arc::new(Semaphore::new(0));
+
+        let optional_cache = Arc::clone(&cache);
+        let optional_gate = Arc::clone(&gate);
+        let path = package.path().to_path_buf();
+        let optional = tokio::spawn(async move {
+            optional_cache
+                .get_or_acquire_optional(String::from("shared"), None, async move {
+                    optional_gate
+                        .acquire_owned()
+                        .await
+                        .expect("optional gate")
+                        .forget();
+                    uncached_package(path).await
+                })
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while cache.stats().await.acquisitions != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("optional acquisition starts");
+
+        let required_cache = Arc::clone(&cache);
+        let required = tokio::spawn(async move {
+            required_cache
+                .get_or_acquire(String::from("shared"), None, async {
+                    panic!("required waiter must coalesce with the optional flight")
+                })
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while cache.stats().await.coalesced_waiters != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("required waiter joins the flight");
+
+        optional.abort();
+        let _ = optional.await;
+        gate.add_permits(1);
+        required.await.unwrap().unwrap();
+        assert_eq!(cache.stats().await.cancelled_acquisitions, 0);
     }
 
     #[tokio::test]

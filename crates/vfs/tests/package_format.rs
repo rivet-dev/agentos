@@ -180,7 +180,7 @@ fn pack_strips_agentos_package_json_and_uses_it_as_manifest_input() {
 /// Cross-language validation hook: point `AOSPKG_CROSS_CHECK` at a `.aospkg`
 /// produced by the TS toolchain packer (`packages/agentos-toolchain/src/aospkg.ts`)
 /// and this test decodes it with the Rust reader — both packers encode
-/// `crates/vfs/package-format/v1.bare`, and this catches codec drift.
+/// `crates/vfs/package-format/v2.bare`, and this catches codec drift.
 #[test]
 fn cross_validates_toolchain_built_aospkg() {
     let Ok(path) = std::env::var("AOSPKG_CROSS_CHECK") else {

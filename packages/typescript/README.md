@@ -1,7 +1,7 @@
-# AgentOS internal TypeScript compiler
+# agentOS internal TypeScript compiler
 
-Public AgentOS TypeScript companion package backed by AgentOS runtime primitives.
+Public agentOS TypeScript companion package backed by agentOS runtime primitives.
 
-This private workspace module implements the compiler used by AgentOS. It is
+This private workspace module implements the compiler used by agentOS. It is
 not a supported install target. Use `vm.typescript` when you need
 isolated TypeScript type checking or compilation.

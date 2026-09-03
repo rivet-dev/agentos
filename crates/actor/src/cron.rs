@@ -1,12 +1,14 @@
 use std::sync::Arc;
 
+use agentos_actor_contract::cron::*;
 use anyhow::{anyhow, bail, Context, Result};
-use rivetkit::{Action, CronSetOptions, Ctx, Handles};
-use serde::{Deserialize, Serialize};
+use rivetkit::{CronSetOptions, Ctx, Handles};
 
 use crate::actions::BoxFuture;
 use crate::events::CronFiredEvent;
-use crate::process::{validate_arguments, validate_command, ActorSpawnOptions};
+#[cfg(test)]
+use crate::process::ActorSpawnOptions;
+use crate::process::{validate_arguments, validate_command, validate_spawn_options};
 use crate::{AgentOsActor, ProcessSpawn};
 
 const PRIVATE_CRON_ACTION: &str = "__agentos.cron.invoke";
@@ -19,83 +21,10 @@ const DEFAULT_CRON_HISTORY: i64 = 32;
 const MAX_CRON_HISTORY: i64 = 256;
 const MAX_CRON_ERROR_BYTES: usize = 16 * 1024;
 
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CronSchedule {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    pub expression: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timezone: Option<String>,
-    pub command: String,
-    #[serde(default)]
-    pub args: Vec<String>,
-    #[serde(default)]
-    pub options: ActorSpawnOptions,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_history: Option<i64>,
-}
-
-impl Action for CronSchedule {
-    type Output = ActorCronJob;
-    const NAME: &'static str = "cron.schedule";
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CronList;
-
-impl Action for CronList {
-    type Output = Vec<ActorCronJob>;
-    const NAME: &'static str = "cron.list";
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CronCancel {
-    pub name: String,
-}
-
-impl Action for CronCancel {
-    type Output = bool;
-    const NAME: &'static str = "cron.cancel";
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ActorCronJob {
-    pub name: String,
-    pub expression: String,
-    pub timezone: Option<String>,
-    pub command: String,
-    pub args: Vec<String>,
-    pub options: ActorSpawnOptions,
-    pub config_revision: u64,
-    pub next_run_at: i64,
-    pub last_run_at: Option<i64>,
-    pub max_history: i64,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct CronInvoke {
-    pub schedule_name: String,
-    pub command: String,
-    #[serde(default)]
-    pub args: Vec<String>,
-    #[serde(default)]
-    pub options: ActorSpawnOptions,
-    pub config_revision: u64,
-}
-
-impl Action for CronInvoke {
-    type Output = ();
-    const NAME: &'static str = PRIVATE_CRON_ACTION;
-}
+crate::register_contract_action!(CronSchedule);
+crate::register_contract_action!(CronList);
+crate::register_contract_action!(CronCancel);
+crate::register_contract_action!(CronInvoke);
 
 impl Handles<CronSchedule> for AgentOsActor {
     type Future = BoxFuture<ActorCronJob>;
@@ -103,6 +32,9 @@ impl Handles<CronSchedule> for AgentOsActor {
     fn handle(self: Arc<Self>, ctx: Ctx<Self>, action: CronSchedule) -> Self::Future {
         Box::pin(async move {
             let _permit = self.admit_action()?;
+            // Keep the capacity check and captured configuration revision
+            // stable until the scheduler has durably registered the command.
+            let _mutation = self.config_mutation.lock().await;
             let current = ctx.cron().list().await?;
             if current.len() >= MAX_CRON_JOBS {
                 let replacing = action
@@ -130,7 +62,7 @@ impl Handles<CronSchedule> for AgentOsActor {
             }
             validate_command(&action.command)?;
             validate_arguments(&action.args)?;
-            action.options.validate()?;
+            validate_spawn_options(&action.options)?;
             let max_history = action.max_history.unwrap_or(DEFAULT_CRON_HISTORY);
             if !(0..=MAX_CRON_HISTORY).contains(&max_history) {
                 bail!("limit_exceeded: cron maxHistory must be between 0 and {MAX_CRON_HISTORY}");
@@ -138,6 +70,7 @@ impl Handles<CronSchedule> for AgentOsActor {
             let config_revision = self.snapshot().await.revision;
             let invocation = CronInvoke {
                 schedule_name: name.clone(),
+                invoke_token: uuid::Uuid::new_v4().simple().to_string(),
                 command: action.command,
                 args: action.args,
                 options: action.options,
@@ -200,6 +133,7 @@ impl Handles<CronCancel> for AgentOsActor {
         Box::pin(async move {
             let _permit = self.admit_action()?;
             validate_nonempty_bytes("cron name", &action.name, MAX_CRON_NAME_BYTES)?;
+            let _mutation = self.config_mutation.lock().await;
             ctx.cron().delete(&action.name).await
         })
     }
@@ -217,15 +151,19 @@ impl Handles<CronInvoke> for AgentOsActor {
             )?;
             validate_command(&action.command)?;
             validate_arguments(&action.args)?;
-            action.options.validate()?;
+            validate_spawn_options(&action.options)?;
+            let _mutation = self.config_mutation.lock().await;
+            let scheduled = ctx.cron().get(&action.schedule_name).await?;
+            if let Err(error) = validate_durable_invocation(&action, scheduled.as_ref()) {
+                return Err(emit_cron_failure(&ctx, &action.schedule_name, error)?);
+            }
             let current_revision = self.snapshot().await.revision;
             if action.config_revision != current_revision {
-                let error = format!(
-                    "stale_config_revision: cron job was validated at revision {} but current revision is {current_revision}",
+                let error = anyhow!(
+                    "revision_conflict: cron job was validated at revision {} but current revision is {current_revision}",
                     action.config_revision
                 );
-                emit_cron_failure(&ctx, &action.schedule_name, &error)?;
-                bail!(error);
+                return Err(emit_cron_failure(&ctx, &action.schedule_name, error)?);
             }
 
             let schedule_name = action.schedule_name;
@@ -234,7 +172,12 @@ impl Handles<CronInvoke> for AgentOsActor {
                 args: action.args,
                 options: action.options,
             };
-            match <AgentOsActor as Handles<ProcessSpawn>>::handle(self, ctx.clone(), process).await
+            match <AgentOsActor as Handles<ProcessSpawn>>::handle(
+                self.clone(),
+                ctx.clone(),
+                process,
+            )
+            .await
             {
                 Ok(process) => {
                     ctx.emit(CronFiredEvent {
@@ -245,13 +188,40 @@ impl Handles<CronInvoke> for AgentOsActor {
                     })?;
                     Ok(())
                 }
-                Err(error) => {
-                    emit_cron_failure(&ctx, &schedule_name, &error.to_string())?;
-                    Err(error)
-                }
+                Err(error) => Err(emit_cron_failure(&ctx, &schedule_name, error)?),
             }
         })
     }
+}
+
+fn validate_durable_invocation(
+    invocation: &CronInvoke,
+    scheduled: Option<&rivetkit::context::CronJobInfo>,
+) -> Result<()> {
+    let scheduled = scheduled.ok_or_else(|| {
+        anyhow!(
+            "not_found: cron job {:?} was cancelled before invocation",
+            invocation.schedule_name
+        )
+    })?;
+    if scheduled.name != invocation.schedule_name
+        || scheduled.kind != rivetkit::ScheduleKind::Cron
+        || scheduled.action != PRIVATE_CRON_ACTION
+    {
+        bail!(
+            "revision_conflict: cron job {:?} no longer targets the agentOS command action",
+            invocation.schedule_name
+        );
+    }
+    let current: CronInvoke = rivetkit::action::decode_positional(&scheduled.args)
+        .with_context(|| format!("decode cron job {:?} invocation", scheduled.name))?;
+    if &current != invocation {
+        bail!(
+            "revision_conflict: cron job {:?} was replaced before invocation",
+            invocation.schedule_name
+        );
+    }
+    Ok(())
 }
 
 fn actor_cron_job(info: rivetkit::context::CronJobInfo) -> Result<ActorCronJob> {
@@ -274,19 +244,39 @@ fn actor_cron_job(info: rivetkit::context::CronJobInfo) -> Result<ActorCronJob> 
         args: invocation.args,
         options: invocation.options,
         config_revision: invocation.config_revision,
-        next_run_at: info.next_run_at,
-        last_run_at: info.last_run_at,
+        next_run_at_ms: info.next_run_at,
+        last_run_at_ms: info.last_run_at,
         max_history: info.max_history,
     })
 }
 
-fn emit_cron_failure(ctx: &Ctx<AgentOsActor>, schedule_name: &str, error: &str) -> Result<()> {
+fn emit_cron_failure(
+    ctx: &Ctx<AgentOsActor>,
+    schedule_name: &str,
+    error: anyhow::Error,
+) -> Result<anyhow::Error> {
+    let error = crate::action_set::classify_public_error(error);
     ctx.emit(CronFiredEvent {
         schedule_name: schedule_name.to_owned(),
         process: None,
-        error: Some(bounded_error(error)),
+        error: Some(cron_launch_error(&error)),
         fired_at_ms: crate::runtime::now_ms()?,
-    })
+    })?;
+    Ok(error)
+}
+
+fn cron_launch_error(error: &anyhow::Error) -> CronLaunchError {
+    let code = error
+        .downcast_ref::<rivet_error::RivetError>()
+        .and_then(|error| match &error.kind {
+            rivet_error::RivetErrorKind::Dynamic { code, .. } => Some(code.as_str()),
+            _ => None,
+        })
+        .unwrap_or("internal");
+    CronLaunchError {
+        code: bounded_error(code),
+        message: bounded_error(&error.to_string()),
+    }
 }
 
 fn bounded_error(error: &str) -> String {
@@ -317,19 +307,68 @@ fn validate_nonempty_bytes(label: &str, value: &str, max: usize) -> Result<()> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn private_cron_payload_round_trips_through_positional_cbor() {
-        let action = CronInvoke {
+    fn invocation() -> CronInvoke {
+        CronInvoke {
             schedule_name: String::from("nightly"),
+            invoke_token: String::from("0123456789abcdef0123456789abcdef"),
             command: String::from("echo"),
             args: vec![String::from("hello")],
             options: ActorSpawnOptions::default(),
             config_revision: 7,
-        };
+        }
+    }
+
+    fn scheduled_job(invocation: &CronInvoke) -> rivetkit::context::CronJobInfo {
+        rivetkit::context::CronJobInfo {
+            name: invocation.schedule_name.clone(),
+            kind: rivetkit::ScheduleKind::Cron,
+            action: String::from(PRIVATE_CRON_ACTION),
+            args: rivetkit::action::encode_positional(invocation).expect("encode cron payload"),
+            next_run_at: 100,
+            last_run_at: None,
+            expression: Some(String::from("* * * * *")),
+            timezone: None,
+            interval: None,
+            max_history: DEFAULT_CRON_HISTORY,
+        }
+    }
+
+    #[test]
+    fn private_cron_payload_round_trips_through_positional_cbor() {
+        let action = invocation();
         let encoded = rivetkit::action::encode_positional(&action).expect("encode cron action");
         let decoded: CronInvoke =
             rivetkit::action::decode_positional(&encoded).expect("decode cron action");
         assert_eq!(decoded, action);
+    }
+
+    #[test]
+    fn private_cron_invocation_requires_current_durable_job() {
+        let action = invocation();
+        let scheduled = scheduled_job(&action);
+        validate_durable_invocation(&action, Some(&scheduled)).expect("current durable job");
+
+        let missing = validate_durable_invocation(&action, None).unwrap_err();
+        assert!(missing.to_string().starts_with("not_found:"));
+
+        let mut forged = action.clone();
+        forged.invoke_token = String::from("ffffffffffffffffffffffffffffffff");
+        let mismatch = validate_durable_invocation(&forged, Some(&scheduled)).unwrap_err();
+        assert!(mismatch.to_string().starts_with("revision_conflict:"));
+
+        let mut replaced = scheduled_job(&action);
+        replaced.args = rivetkit::action::encode_positional(&CronInvoke {
+            command: String::from("sh"),
+            ..action.clone()
+        })
+        .unwrap();
+        let mismatch = validate_durable_invocation(&action, Some(&replaced)).unwrap_err();
+        assert!(mismatch.to_string().starts_with("revision_conflict:"));
+
+        let mut wrong_kind = scheduled_job(&action);
+        wrong_kind.kind = rivetkit::ScheduleKind::Every;
+        let mismatch = validate_durable_invocation(&action, Some(&wrong_kind)).unwrap_err();
+        assert!(mismatch.to_string().starts_with("revision_conflict:"));
     }
 
     #[test]
@@ -338,5 +377,25 @@ mod tests {
         let bounded = bounded_error(&error);
         assert!(bounded.len() <= MAX_CRON_ERROR_BYTES + '…'.len_utf8());
         assert!(bounded.ends_with('…'));
+    }
+
+    #[test]
+    fn cron_launch_errors_preserve_public_error_codes() {
+        let error = crate::action_set::classify_public_error(anyhow!(
+            "revision_conflict: scheduled configuration is no longer current"
+        ));
+        let event = CronFiredEvent {
+            schedule_name: "nightly".into(),
+            process: None,
+            error: Some(cron_launch_error(&error)),
+            fired_at_ms: 123,
+        };
+        let value = serde_json::to_value(event).unwrap();
+        assert_eq!(value["error"]["code"], "revision_conflict");
+        assert_eq!(value["firedAtMs"], 123);
+        assert!(value["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("scheduled configuration"));
     }
 }

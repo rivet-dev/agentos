@@ -1,9 +1,12 @@
-import {
-	type LiveSidecarRequestPayload,
-	type LiveSidecarResponsePayload,
+import type {
+	LiveSidecarRequestPayload,
+	LiveSidecarResponsePayload,
 } from "./callbacks.js";
-import type { MountConfigJsonObject } from "./descriptors.js";
-import { type LiveSidecarEventSelector } from "./event-buffer.js";
+import type {
+	LiveMountDescriptor,
+	MountConfigJsonObject,
+} from "./descriptors.js";
+import type { LiveSidecarEventSelector } from "./event-buffer.js";
 import {
 	decodeGuestFilesystemContent,
 	encodeGuestFilesystemContent,
@@ -12,47 +15,48 @@ import {
 	type LiveRootFilesystemLowerDescriptor,
 } from "./filesystem.js";
 import type { CreateVmConfig } from "./generated/CreateVmConfig.js";
-import type { SidecarProcessTransport } from "./sidecar-client.js";
-import { type LiveOwnershipScope } from "./ownership.js";
-import {
-	type LiveFsPermissionRule,
-	type LivePatternPermissionRule,
-	type LivePermissionMode,
-	type LivePermissionScope,
-	type LivePermissionsPolicy,
-	type LiveRulePermissions,
+import type { LiveOwnershipScope } from "./ownership.js";
+import type {
+	LiveFsPermissionRule,
+	LivePatternPermissionRule,
+	LivePermissionMode,
+	LivePermissionScope,
+	LivePermissionsPolicy,
+	LiveRulePermissions,
 } from "./permissions.js";
-import { SIDECAR_PROTOCOL_SCHEMA } from "./protocol-schema.js";
+import type {
+	LiveEventFrame,
+	LiveRequestFrame,
+	LiveResponseFrame,
+	LiveSidecarRequestFrame,
+	LiveSidecarRequestHandler,
+	LiveSidecarResponseFrame,
+	ProtocolFramePayloadCodec,
+} from "./protocol-frames.js";
 import type {
 	LiveFilesystemOperation,
 	LiveGuestRuntimeKind,
 	LiveWasmPermissionTier,
 } from "./protocol-maps.js";
-import {
-	type LiveEventFrame,
-	type LiveSidecarRequestHandler,
-	type LiveRequestFrame,
-	type LiveResponseFrame,
-	type LiveSidecarRequestFrame,
-	type LiveSidecarResponseFrame,
-	type ProtocolFramePayloadCodec,
-} from "./protocol-frames.js";
-import { type LiveRequestPayload } from "./request-payloads.js";
+import { SIDECAR_PROTOCOL_SCHEMA } from "./protocol-schema.js";
+import type { LiveRequestPayload } from "./request-payloads.js";
 import type {
 	LiveGuestDirEntry,
 	LiveResponsePayload,
 } from "./response-payloads.js";
-import {
-	type LiveGuestFilesystemStat,
-	type LiveProcessSnapshotEntry,
-	type LiveSocketStateEntry,
+import type { SidecarProcessTransport } from "./sidecar-client.js";
+import type {
+	LiveGuestFilesystemStat,
+	LiveProcessSnapshotEntry,
+	LiveSocketStateEntry,
 } from "./state.js";
+
+export { SidecarEventBufferOverflow } from "./event-buffer.js";
 export {
 	SidecarProcessError,
 	SidecarProcessExited,
 	SidecarSilenceTimeout,
 } from "./sidecar-errors.js";
-export { SidecarEventBufferOverflow } from "./event-buffer.js";
 // `Sidecar` is the public name for the native sidecar process client. The class
 // is `SidecarProcess` internally; consumers import it as `Sidecar` via the
 // `@rivet-dev/agentos-runtime-core/sidecar-client` subpath and the package root.
@@ -430,6 +434,98 @@ export class SidecarProcess {
 		};
 	}
 
+	/**
+	 * Read-only VM-config comparison using this sidecar's defaults; no VM is allocated.
+	 * Does not compare the runtime kind or fields supplied separately to configureVm.
+	 */
+	async compareVmConfig(
+		session: AuthenticatedSession,
+		before: CreateVmConfig,
+		after: CreateVmConfig,
+		options: {
+			beforeMounts?: LiveMountDescriptor[];
+			afterMounts?: LiveMountDescriptor[];
+			beforeRestartIdentity?: string[];
+			afterRestartIdentity?: string[];
+		} = {},
+	): Promise<boolean> {
+		const response = await this.sendRequest({
+			ownership: {
+				scope: "session",
+				connection_id: session.connectionId,
+				session_id: session.sessionId,
+			},
+			payload: {
+				type: "compare_vm_config",
+				before,
+				after,
+				before_mounts: options.beforeMounts ?? [],
+				after_mounts: options.afterMounts ?? [],
+				before_restart_identity: options.beforeRestartIdentity ?? [],
+				after_restart_identity: options.afterRestartIdentity ?? [],
+			},
+		});
+		if (response.payload.type !== "vm_config_compared") {
+			throw new Error(
+				`unexpected compare_vm_config response: ${response.payload.type}`,
+			);
+		}
+		return response.payload.equivalent;
+	}
+
+	/**
+	 * Acquire verified metadata/warm cache without a VM. Does not pin an artifact
+	 * for later installation. The sidecar clamps timeout_ms to its operator cap;
+	 * dropping the client waiter does not immediately cancel server acquisition.
+	 */
+	async acquirePackage(
+		session: AuthenticatedSession,
+		options: Omit<
+			Extract<LiveRequestPayload, { type: "acquire_package" }>,
+			"type"
+		>,
+	): Promise<
+		Omit<Extract<LiveResponsePayload, { type: "package_acquired" }>, "type">
+	> {
+		const response = await this.sendRequest({
+			ownership: {
+				scope: "session",
+				connection_id: session.connectionId,
+				session_id: session.sessionId,
+			},
+			payload: { ...options, type: "acquire_package" },
+		});
+		if (response.payload.type !== "package_acquired") {
+			throw new Error(
+				`unexpected acquire_package response: ${response.payload.type}`,
+			);
+		}
+		const { type: _type, ...metadata } = response.payload;
+		return metadata;
+	}
+
+	async getPackageCacheStats(
+		session: AuthenticatedSession,
+	): Promise<
+		Omit<Extract<LiveResponsePayload, { type: "package_cache_stats" }>, "type">
+	> {
+		const response = await this.sendRequest({
+			ownership: {
+				scope: "session",
+				connection_id: session.connectionId,
+				session_id: session.sessionId,
+			},
+			payload: { type: "get_package_cache_stats" },
+		});
+		if (response.payload.type !== "package_cache_stats") {
+			throw new Error(
+				`unexpected get_package_cache_stats response: ${response.payload.type}`,
+			);
+		}
+		const { type: _type, ...stats } = response.payload;
+		return stats;
+	}
+
 	async createVm(
 		session: AuthenticatedSession,
 		options: {
@@ -579,6 +675,35 @@ export class SidecarProcess {
 				guestPath: command.guest_path,
 			})),
 		};
+	}
+
+	/** Resolve, verify, and pin one artifact in the sidecar before projection. */
+	async installPackage(
+		session: AuthenticatedSession,
+		vm: CreatedVm,
+		acquisition: Extract<
+			LiveRequestPayload,
+			{ type: "install_package" }
+		>["acquisition"],
+	): Promise<
+		Omit<Extract<LiveResponsePayload, { type: "package_installed" }>, "type">
+	> {
+		const response = await this.sendRequest({
+			ownership: {
+				scope: "vm",
+				connection_id: session.connectionId,
+				session_id: session.sessionId,
+				vm_id: vm.vmId,
+			},
+			payload: { type: "install_package", acquisition },
+		});
+		if (response.payload.type !== "package_installed") {
+			throw new Error(
+				`unexpected install_package response: ${response.payload.type}`,
+			);
+		}
+		const { type: _type, ...installed } = response.payload;
+		return installed;
 	}
 
 	async unlinkPackage(
@@ -1250,6 +1375,7 @@ export class SidecarProcess {
 			env?: Record<string, string>;
 			cwd?: string;
 			wasmPermissionTier?: WasmPermissionTier;
+			retainOutput?: boolean;
 		},
 	): Promise<{ pid: number | null }> {
 		const response = await this.sendRequest({
@@ -1271,6 +1397,7 @@ export class SidecarProcess {
 				...(options.wasmPermissionTier
 					? { wasm_permission_tier: options.wasmPermissionTier }
 					: {}),
+				retain_output: options.retainOutput ?? false,
 			},
 		});
 		if (response.payload.type !== "process_started") {

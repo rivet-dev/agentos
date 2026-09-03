@@ -1,6 +1,6 @@
 --- a/src/walk.rs
 +++ b/src/walk.rs
-@@ -1353,6 +1353,49 @@
+@@ -1353,6 +1353,50 @@
      /// synchronization. Then, once traversal is complete, all of the results
      /// can be merged together into a single data structure.
      pub fn visit(mut self, builder: &mut dyn ParallelVisitorBuilder<'_>) {
@@ -33,6 +33,7 @@
 +                it: None,
 +                ig_root: self.ig_root.clone(),
 +                ig: self.ig_root,
++                max_depth: self.max_depth,
 +                max_filesize: self.max_filesize,
 +                skip: self.skip,
 +                filter: self.filter,

@@ -9,12 +9,16 @@ Run bash inside the VM. Shell commands are the simplest agentOS execution
 surface, and share the same execution lifecycle as JavaScript, TypeScript,
 Python, and package workflows.
 
+This page uses embedded Core. For hosted actors, use `process.run` with an
+explicit executable and argument array, or run `sh` with `-c` for shell parsing;
+see [Processes & Terminals](/agentos/docs/processes).
+
 - **`process.exec()`**: Runs a bash command line. Use for pipes, redirects, globs.
 - **`process.execFile()`**: Injection-safe; args are never parsed by a shell.
 - **In-VM only**: Commands run inside the VM, never in the host shell.
 
-For multi-step work, consider letting the agent write [JavaScript](/agentos/docs/javascript)
-or [Python](/agentos/docs/python) instead — one round trip and real data structures
+For multi-step work, consider [JavaScript](/agentos/docs/javascript) or
+[Python](/agentos/docs/python) instead — one round trip and real data structures
 rather than a chain of shell calls.
 
 ## Run commands
@@ -31,7 +35,7 @@ stdin, a PTY, output replay, signals, and waiting.
 ## Files and software
 
 Shell commands see the persistent [filesystem](/agentos/docs/filesystem) shared by
-agents, JavaScript, and Python. Common POSIX commands ship by default; more is
+JavaScript and Python. Common POSIX commands ship by default; more is
 projected through the [software registry](/agentos/docs/software).
 
 <CodeSnippet file="examples/quickstart/bash/files.ts" />

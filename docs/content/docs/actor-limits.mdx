@@ -1,0 +1,139 @@
+---
+title: "Hosted Actor Limits"
+description: "Reference the payload, collection, replay, timeout, and cache limits enforced by the hosted agentOS stack."
+---
+
+Every action is bounded below RivetKit's 1 MiB encoded message ceiling. Limits
+apply to the complete encoded request or response. Encoding overhead means a
+payload should not be constructed to exactly equal the message ceiling.
+The actor reserves 1 KiB for RivetKit's envelope and checks the encoded result,
+including batch paths, errors, and JSON string escaping. A batch can therefore
+reach the message limit before reaching its content-byte limit.
+
+Keep RivetKit's default `encoding: "bare"` for binary file, network, and replay
+results. The pinned RivetKit JSON transport cannot preserve CBOR byte strings.
+Uploaded `Uint8Array` values use a base64 wrapper even inside BARE arguments,
+so choose chunks smaller than 768 KiB to leave room for that wrapper and the
+action envelope. The actor decodes the wrapper before applying each action's
+content-byte limit. Integer action fields accept `bigint` when exact values
+exceed JavaScript's safe integer range; do not coerce returned revisions,
+generation IDs, or cursors to `number` without checking that range.
+
+| Area | Default or maximum |
+| --- | --- |
+| Actor messages | 1 MiB incoming and outgoing; 64 concurrent actions |
+| Action input structure | 64 nesting levels; 131,072 values including map keys |
+| Actor action deadline | 6 minutes, including guest work and response handling |
+| VM initialization | 30 seconds total for creation and required-package installation; failed-boot shutdown has a separate 10 second limit |
+| Paths | 4 KiB each |
+| File transfer | 768 KiB aggregate per read, write, batch, or export action |
+| File batches | 128 paths or entries |
+| Directory results | 4,096 entries, 512 KiB encoded data, depth 64 |
+| Process command | 16 KiB command; 1,024 arguments; 16 KiB per argument |
+| Process environment | 1,024 entries; 256 KiB aggregate |
+| Process and terminal input | 256 KiB per stdin/write action |
+| Captured process output | 768 KiB per result |
+| Process and terminal replay | 256 events; 768 KiB per read |
+| Retained process and terminal output | 1,024 events or 1 MiB per process or terminal, whichever fills first |
+| Retained process and terminal replays | 1,024 per VM; oldest exited replay is evicted first |
+| Retained process registry | 1,024 command and language processes per VM, including pending spawn admissions; oldest exited entries are evicted first under pressure |
+| Active or starting terminals | 1,024 per VM; closing a terminal does not release admission until its observation task ends |
+| Process and terminal wait | 30 seconds per `wait` action; call again to continue waiting |
+| `process.run` timeout | 5 minute default and maximum, including ready-VM lookup, process launch, stdin delivery, and execution; up to 30 more seconds for termination confirmation |
+| PTY dimensions | 1 through 4,096 columns or rows |
+| Process and terminal lists | 4,096 entries |
+| Terminal lifetime | Until closed, exited, or its VM generation ends; no separate terminal TTL |
+| HTTP request | 32 byte method; 16 KiB path; 128 headers; 64 KiB headers; 512 KiB body |
+| HTTP response | 768 KiB for `network.fetch` |
+| HTTP stream read | 64 KiB default; 128 KiB maximum; 1 hour stream lifetime |
+| Language source and file paths | 512 KiB source; 4 KiB path |
+| Language arguments and environment | 1,024 arguments; 16 KiB each; 1,024 environment entries; 256 KiB aggregate |
+| Language input and result | 256 KiB stdin or JSON input; 768 KiB result; synchronous actions default to a 5 minute timeout and cannot exceed it |
+| Language contexts and packages | 256 byte context ID; 1,024 contexts; 256 requested packages; 16 package index URLs |
+| Language diagnostics | 1,024 entries; 512 KiB aggregate |
+| Software config | 128 packages |
+| VM package projection | 4,096 package-owned mounts by default; override with `config.limits.agentosPackages.maxMounts` |
+| Package download | 4 KiB URL; 512 MiB content; 30 second download; 5 second connect; 3 redirects; 128 response headers and 64 KiB header bytes |
+| Package format | 1 MiB manifest; 64 MiB mount index |
+| Process package cache | 2 GiB; 256 entries; 8 active and 64 pending acquisitions; 512 MiB minimum free disk reserve |
+| Package source hints | 1,024 entries retained for 60 seconds |
+| Cache acquisition | 60 seconds |
+| Hosted filesystems | 32 additional mounts |
+| Config environment | 256 entries; 256 byte keys; 8 KiB values; 64 KiB aggregate |
+| Config runtime lists | 256 allowed Node builtins of 128 bytes each; 256 loopback-exempt ports |
+| Config permissions | 256 KiB encoded; 256 rules per domain; 128 values per rule of 4 KiB each |
+| Preview leases | 128 active; 15 minute default; 24 hour maximum |
+| Cron | 1,024 jobs; 256 byte name and expression; 128 byte timezone; 64 KiB encoded action; 32 retained runs per job by default (256 maximum) |
+| Runtime issues | 32 retained issues |
+
+A single output chunk larger than the maximum replay page is omitted and
+reported through `truncated`; later chunks remain readable. If a retained chunk
+does not fit your requested `maxBytes`, the typed limit error reports the minimum
+page size needed to advance the cursor.
+
+The actor deadline limits how long an action can wait; it is not itself proof
+that guest work stopped. `process.run` requests `SIGKILL` when its run timer
+expires. It returns `timeout` only after observing the guest exit event. If
+launch never acknowledges, or the exit cannot be confirmed within 30 seconds,
+it returns `termination_failed` instead. Cancelling the actor action starts a
+best-effort cleanup task that waits for exit and logs confirmation failures,
+but cannot confirm exit to the cancelled caller. A launch accepted after cleanup
+expires may still start; inspect or restart the VM before assuming execution has ended.
+
+Sidecar-originated limit errors and VM-disposal timeouts expose structured
+details in the actor error's `metadata.limit`, including `limitName`,
+`configuredLimit`, `unit`, `operation`, and `configurationPath` when available.
+An actor-side deadline can return `timeout` without those sidecar details;
+it does not confirm that remote teardown completed.
+
+The package cache and preload limits are operator settings. Actor creation
+input cannot raise them. VM resource limits under `config.limits` are caller
+overrides, subject to sidecar hard limits.
+The package-mount limit counts the entire live VM projection: boot packages,
+packages installed later, command and manpage aliases, and directory leaves
+from `provides.files`. It does not count unrelated filesystem mounts. A boot
+configuration or install that would exceed the limit fails before changing
+mounts. The sidecar warns when the projection reaches 80% of the configured
+limit and returns a structured resource-limit error naming the override.
+Installed mounts count until the package is uninstalled, even if a local
+package source changes or disappears. Uninstall releases that capacity and
+does not require spare mount capacity.
+An isolated temporary cache is removed when the standalone worker shuts down
+normally; forced termination and host crashes require host temporary-directory
+cleanup. Persistent cache directories must be distinct for concurrent workers.
+
+Startup advisory preloading defaults to a 10 second process deadline, a 1.5
+second coordinator-plan read timeout, 64 plan entries or 2 GiB, and four
+concurrent downloads. Usage observations are coalesced into at most 128 entries
+and flushed every five minutes. Operators can change these process settings
+before starting the actor; the maximum startup deadline is five minutes, the
+plan read timeout is one minute, and the plan format caps entries at 512 and
+predicted bytes at 64 GiB. Preload timeout never waives the required-package
+readiness check. If VM initialization times out, the actor reports `timeout`
+and starts cleanup of any VM created before or just after the deadline. Check
+`vm.status` for a failed or degraded state before retrying.
+
+Large files and exports must be split into bounded application-level pieces.
+The actor does not expose a host mount or increase the action ceiling to move a
+large object. Native backpressured action streaming is a future transport
+feature. The existing pull actions remain the compatibility path when that
+transport becomes available.
+
+Near-capacity runtime conditions emit `vm.limitWarning`. A rejected operation
+returns `limit_exceeded` with the observed limit and the setting that controls
+it when that limit is configurable.
+
+Replay retention, sequencing, exit status, and pagination are enforced once in
+the sidecar for ordinary processes and real terminals. Rust Core and TypeScript
+Core forward cursors and requested bounds; the actor forwards Core's result.
+An invalid page limit returns structured `limit_exceeded` metadata from the
+sidecar rather than being reinterpreted by a client or the actor. Configure the
+retention and page bounds with `config.limits.process.outputReplayEvents`,
+`outputReplayBytes`, `outputReplayPageEvents`, `outputReplayPageBytes`, and
+`maxOutputReplays`.
+
+## Embedded API
+
+Embedded Core does not have the actor's 1 MiB action envelope, but its VM,
+sidecar, package, queue, and resource limits still apply. Read more in the
+[embedded API quickstart](/agentos/docs/quickstart-embedded).

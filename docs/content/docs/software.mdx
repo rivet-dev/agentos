@@ -1,41 +1,49 @@
 ---
 title: "Software"
-description: "Install and configure agentOS software packages to control the commands, tools, and coding-agent adapters available inside each VM."
-skill: true
+description: "Install immutable .aospkg command packages."
 ---
 
-agentOS ships with a common set of POSIX utilities (coreutils, sed, grep, gawk, findutils, diffutils, tar, gzip) out of the box. The `software` option installs additional packages, each providing one or more CLI commands.
-
-## Install
-
-```bash
-npm install @rivet-dev/agentos @agentos-software/pi
-```
-
-Add packages like `@agentos-software/ripgrep` or `@agentos-software/jq` for anything beyond the default utilities. Browse the full catalog on the [Registry](/agentos/registry/).
-
-## Usage
-
-Import the software packages you want, list them in the `software` array on the actor, then run commands through the client handle.
-
-<CodeGroup>
-<CodeSnippet file="examples/software/server.ts" />
+The hosted actor accepts a remote HTTPS package source and optional exact
+`sha256:<64 lowercase hex>` digest.
 
 <CodeSnippet file="examples/software/client.ts" />
-</CodeGroup>
 
-## Available Packages
+`software.list()` reads the live installed set. `software.uninstall` removes
+one package by its digest-derived `packageId`. Desired package sources live in
+`config.get`, not `software.list`. If the VM is unavailable, `software.list`
+returns `not_ready`; the desired sources remain readable from config.
 
-Browse all available software packages on the [Registry](/agentos/registry/).
+Software changes apply live when the VM is ready and its desired configuration
+is fully applied. Otherwise they update desired configuration and report
+`restart_required`; call `vm.restart({})` to apply it. Uninstalling a desired
+package does not require a working VM or a fresh download.
 
-## Custom Software
+Both mutations return `{ source, software, config }`. `source` identifies the
+configured package, and `config` reports the new revision and state. `software`
+contains resolved or installed metadata, or is `null` when uninstall changes
+only desired configuration. Installed metadata reports package bytes as
+`sizeBytes`; a resolved source in `config.get` uses the same field.
 
-Package your own agents, command packages, and WASM commands. See [Software Definition](/agentos/docs/custom-software/definition) to define a package, and [Building Binaries](/agentos/docs/custom-software/building-wasm) to compile WASM commands from source in the [agentos registry](https://github.com/rivet-dev/agentos/tree/main/registry).
+Packages are cached per process by content digest. URL-to-digest observations
+may avoid a repeat download, but the exact bytes are always verified before
+projection.
+
+The central preload coordinator supplies a low-frequency popularity hint so a
+worker can warm likely packages before its first VM needs them. Required
+packages still determine readiness. Advisory preload timeout or coordinator
+failure only reduces cache hit rate. See
+[Software Installation and Preloading](/agentos/docs/architecture/software-cache).
+
+Registry software is not installed from npm. Releases upload digest-addressed
+`.aospkg` files and a relative-URL manifest to S3-compatible object storage.
+Embedded Core can additionally install a trusted local artifact path. In
+TypeScript, `software.install(source)` and `software.uninstall(packageId)` use
+the same sidecar verification and projection path as Rust's `install_software`
+and `uninstall_software`. `software.installed()` in TypeScript (or
+`installed_software()` in Rust) returns packages installed through that API.
+Legacy `software.link` remains a separate trusted-directory operation.
 
 ## Embedded API
 
-Pass software packages directly to `AgentOs.create()`.
-
-<CodeSnippet file="examples/embedded/software.ts" title="software.ts" />
-
-Read more in the [embedded API quickstart](/agentos/docs/quickstart-embedded).
+Embedded Core accepts trusted local package paths as well as URLs. Read more in
+the [embedded API quickstart](/agentos/docs/quickstart-embedded).

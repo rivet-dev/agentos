@@ -1,7 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { SidecarRejectedError } from "@rivet-dev/agentos-runtime-core/sidecar-errors";
+import type { SidecarProcessSnapshotEntry } from "../src/sidecar/native-process-client.js";
+import { AgentOs } from "../src/agent-os.js";
 import {
 	type LocalCompatMount,
 	NativeSidecarKernelProxy,
+	runManagedProcessToCompletion,
 } from "../src/sidecar/rpc-client.js";
 
 // Regression coverage for the NativeSidecarKernelProxy tracking-collection leaks:
@@ -15,6 +19,11 @@ import {
 
 const session = { connectionId: "conn-1", sessionId: "sess-1" };
 const vm = { vmId: "vm-test" };
+
+afterEach(() => {
+	vi.useRealTimers();
+	vi.restoreAllMocks();
+});
 
 interface PumpEvent {
 	ownership: { scope: string; vm_id: string };
@@ -31,7 +40,7 @@ function createStubClient() {
 		async execute() {
 			return { pid: 4242 };
 		},
-		async getProcessSnapshot() {
+		async getProcessSnapshot(): Promise<SidecarProcessSnapshotEntry[]> {
 			return [];
 		},
 		async getSignalState() {
@@ -109,6 +118,510 @@ function createProxy(client: unknown, localMounts: LocalCompatMount[] = []) {
 		options as ConstructorParameters<typeof NativeSidecarKernelProxy>[0],
 	);
 }
+
+it("ordinary Core output callbacks preserve sidecar replay identity without duplication", async () => {
+	const stub = createStubClient();
+	const proxy = createProxy(stub.client);
+	const core = Reflect.construct(AgentOs, [
+		proxy, {}, [], [], {}, {},
+		{ onEvent: () => () => {} }, session, vm,
+	]) as AgentOs;
+	const output = vi.fn();
+	const stdout = vi.fn();
+	try {
+		const process = await core.process.spawn("node", [], {
+			output: { retainEvents: true }, onStdout: stdout,
+		});
+		core.onProcessOutput(process.pid, output);
+		for (const [sequence, channel] of [[0, "stdout"], [1, "stderr"]] as const) {
+			stub.pushEvent({
+				ownership: { scope: "vm", vm_id: vm.vmId },
+				payload: {
+					type: "process_output", process_id: `proc-${process.pid}`,
+					channel, chunk: Uint8Array.of(65 + sequence), sequence,
+					timestamp_ms: sequence,
+				},
+			});
+		}
+		await vi.waitFor(() => expect(output).toHaveBeenCalledTimes(2));
+		expect(output.mock.calls.map(([event]) => event)).toEqual([
+			{ pid: process.pid, stream: "stdout", data: Uint8Array.of(65), sequence: 0, timestampMs: 0 },
+			{ pid: process.pid, stream: "stderr", data: Uint8Array.of(66), sequence: 1, timestampMs: 1 },
+		]);
+		expect(stdout).toHaveBeenCalledOnce();
+		expect(stdout).toHaveBeenCalledWith(Uint8Array.of(65));
+		stub.pushEvent({
+			ownership: { scope: "vm", vm_id: vm.vmId },
+			payload: { type: "process_exited", process_id: `proc-${process.pid}`, exit_code: 0 },
+		});
+		await core.process.wait(process.pid);
+	} finally {
+		await proxy.dispose();
+	}
+});
+
+it.each([false, true])("replay reconciles a missed exit after observation failure=%s", async (failed) => {
+	vi.spyOn(console, "error").mockImplementation(() => {});
+	const stub = createStubClient();
+	if (failed) stub.client.writeStdin = async () => { throw new Error("lost observation"); };
+	const proxy = createProxy(stub.client);
+	const core = Reflect.construct(AgentOs, [
+		proxy, {}, [], [], {}, {}, {
+			onEvent: () => () => {},
+			sendVmRequest: async () => ({ type: "process_output_page", response: {
+				events: [], nextCursor: null, hasMore: false, truncated: false, exitCode: 23,
+			} }),
+		}, session, vm,
+	]) as AgentOs;
+	try {
+		const process = await core.process.spawn("node", [], {
+			stdin: failed ? "input" : undefined, output: { retainEvents: true },
+		});
+		const exited = vi.fn();
+		core.onProcessExit(process.pid, exited);
+		const waiting = core.process.wait(process.pid);
+		if (failed) await expect(waiting).rejects.toThrow("termination_failed");
+		const replay = await core.process.readOutput(process.pid);
+		expect(replay.exitCode).toBe(23);
+		if (!failed) expect((await waiting).exitCode).toBe(23);
+		expect((await core.process.wait(process.pid)).exitCode).toBe(23);
+		expect((await core.process.get(process.pid)).state).toBe("exited");
+		expect((await core.process.list())[0].state).toBe("exited");
+		await core.process.readOutput(process.pid);
+		expect(exited).toHaveBeenCalledOnce();
+	} finally {
+		await proxy.dispose();
+	}
+});
+
+it("VM disposal preserves typed rejection after secondary cleanup and remains idempotent", async () => {
+	vi.spyOn(console, "error").mockImplementation(() => {});
+	const stub = createStubClient();
+	const rejection = new SidecarRejectedError(1, {
+		code: "timeout",
+		message: "SQLite close is unconfirmed",
+		limit_name: "reactor.shutdownDeadlineMs",
+		configured_limit: 5_000,
+		current_usage: null,
+		requested: null,
+		unit: "milliseconds",
+		scope: "vm",
+		vm_id: vm.vmId,
+		session_generation: null,
+		capability_id: null,
+		operation: "vm.dispose",
+		configuration_path: "limits.reactor.shutdownDeadlineMs",
+		retryable: false,
+		errno: "ETIMEDOUT",
+	});
+	const disposeVm = vi.spyOn(stub.client, "disposeVm").mockRejectedValue(rejection);
+	const cleanup = vi.spyOn(stub.client, "dispose").mockRejectedValue(new Error("secondary cleanup"));
+	const proxy = createProxy(stub.client);
+	await expect(proxy.dispose()).rejects.toBe(rejection);
+	expect(cleanup).toHaveBeenCalledOnce();
+	expect(proxy.__trackingSizesForTest()).toEqual({
+		trackedProcesses: 0,
+		trackedProcessesById: 0,
+		signalStates: 0,
+		signalRefreshes: 0,
+		localMounts: 0,
+	});
+	await expect(proxy.dispose()).resolves.toBeUndefined();
+	expect(disposeVm).toHaveBeenCalledOnce();
+});
+
+it("exec timeout does not mistake a proxy's background failure for termination", async () => {
+	vi.useFakeTimers();
+	vi.spyOn(console, "error").mockImplementation(() => {});
+	const stub = createStubClient();
+	stub.client.writeStdin = async () => {
+		throw new Error("stdin transport failed");
+	};
+	const kill = vi.spyOn(stub.client, "killProcess");
+	const proxy = createProxy(stub.client);
+	try {
+		const proc = proxy.spawn("node", [], { stdin: "input" });
+		await vi.advanceTimersByTimeAsync(0);
+		expect(proc.exitCode).toBeNull();
+		const run = runManagedProcessToCompletion(
+			proc,
+			() => new Promise<void>(() => {}),
+			Date.now(),
+		);
+		const assertion = expect(run).rejects.toThrow(/^termination_failed:/);
+		await vi.runAllTimersAsync();
+		await assertion;
+		expect(kill).toHaveBeenCalledOnce();
+	} finally {
+		await proxy.dispose();
+	}
+});
+
+it("spawn wait rejects a transport launch failure without inventing an exit", async () => {
+	vi.spyOn(console, "error").mockImplementation(() => {});
+	const stub = createStubClient();
+	stub.client.execute = async () => {
+		throw new Error("Execute transport failed");
+	};
+	const proxy = createProxy(stub.client);
+	try {
+		const proc = proxy.spawn("node", []);
+		await expect(proc.wait()).rejects.toThrow(
+			/^termination_failed:.*Execute transport failed/,
+		);
+		expect(proc.exitCode).toBeNull();
+		expect(proxy.__trackingSizesForTest().trackedProcesses).toBe(1);
+		await expect(
+			proc.writeStdin("cannot enqueue after failure"),
+		).rejects.toThrow(/^termination_failed:/);
+		const tracked = (
+			proxy as unknown as {
+				trackedProcesses: Map<number, { pendingStdin: unknown[] }>;
+			}
+		).trackedProcesses.get(proc.pid);
+		expect(tracked?.pendingStdin).toHaveLength(0);
+		const kill = vi.spyOn(stub.client, "killProcess");
+		proc.kill(9);
+		await waitFor(() => kill.mock.calls.length > 0);
+		expect(kill).toHaveBeenCalledOnce();
+	} finally {
+		await proxy.dispose();
+	}
+});
+
+it("deterministic launch rejection releases tracking and exec skips termination cleanup", async () => {
+	vi.spyOn(console, "error").mockImplementation(() => {});
+	const stub = createStubClient();
+	const rejection = new SidecarRejectedError(1, {
+		code: "ENOENT",
+		message: "command missing",
+		limit_name: null,
+		configured_limit: null,
+		current_usage: null,
+		requested: null,
+		unit: null,
+		scope: null,
+		vm_id: null,
+		session_generation: null,
+		capability_id: null,
+		operation: null,
+		configuration_path: null,
+		retryable: null,
+		errno: "ENOENT",
+	});
+	stub.client.execute = async () => {
+		throw rejection;
+	};
+	const kill = vi.spyOn(stub.client, "killProcess");
+	const proxy = createProxy(stub.client);
+	try {
+		const proc = proxy.spawn("missing", []);
+		proc.kill(9); // Rejection must also discard a signal queued before admission.
+		await expect(
+			runManagedProcessToCompletion(proc, () => proc.closeStdin(), undefined),
+		).rejects.toBe(rejection);
+		expect(proc.exitCode).toBeNull();
+		expect(kill).not.toHaveBeenCalled();
+		expect(proxy.__trackingSizesForTest().trackedProcesses).toBe(0);
+
+		// The timeout may win just before Execute's deterministic rejection.
+		// Do not spend the cleanup deadline waiting for a nonexistent exit.
+		vi.useFakeTimers();
+		let rejectLaunch!: (error: Error) => void;
+		stub.client.execute = () =>
+			new Promise((_resolve, reject) => {
+				rejectLaunch = reject;
+			});
+		const late = proxy.spawn("missing", []);
+		const timedOut = expect(
+			runManagedProcessToCompletion(late, () => late.closeStdin(), Date.now()),
+		).rejects.toThrow(/^timeout:/);
+		await vi.advanceTimersByTimeAsync(0);
+		rejectLaunch(rejection);
+		await vi.advanceTimersByTimeAsync(0);
+		await timedOut;
+		expect(kill).not.toHaveBeenCalled();
+		expect(late.exitCode).toBeNull();
+		expect(vi.getTimerCount()).toBe(0);
+	} finally {
+		await proxy.dispose();
+	}
+});
+
+it("missing snapshots fail wait but retain tracking for a later real exit", async () => {
+	vi.useFakeTimers();
+	vi.spyOn(console, "error").mockImplementation(() => {});
+	const stub = createStubClient();
+	const proxy = createProxy(stub.client);
+	try {
+		const proc = proxy.spawn("node", []);
+		const assertion = expect(proc.wait()).rejects.toThrow(
+			/^termination_failed:.*disappeared/,
+		);
+		await vi.advanceTimersByTimeAsync(700);
+		await assertion;
+		expect(proc.exitCode).toBeNull();
+		expect(proxy.__trackingSizesForTest().trackedProcesses).toBe(1);
+		expect(vi.getTimerCount()).toBe(0);
+		stub.pushEvent({
+			ownership: { scope: "vm", vm_id: vm.vmId },
+			payload: {
+				type: "process_exited",
+				process_id: `proc-${proc.pid}`,
+				exit_code: 7,
+			},
+		});
+		await vi.advanceTimersByTimeAsync(0);
+		await expect(proc.wait()).resolves.toBe(7);
+		expect(proc.exitCode).toBe(7);
+	} finally {
+		await proxy.dispose();
+	}
+});
+
+it("pump failure rejects wait and further spawn without declaring live processes exited", async () => {
+	vi.spyOn(console, "error").mockImplementation(() => {});
+	const stub = createStubClient();
+	let rejectPump!: (error: Error) => void;
+	stub.client.waitForEvent = () =>
+		new Promise((_resolve, reject) => {
+			rejectPump = reject;
+		});
+	const proxy = createProxy(stub.client);
+	try {
+		const proc = proxy.spawn("node", []);
+		const assertion = expect(proc.wait()).rejects.toThrow(
+			/^termination_failed:.*event stream failed/,
+		);
+		rejectPump(new Error("event stream failed"));
+		await assertion;
+		expect(proc.exitCode).toBeNull();
+		expect(() => proxy.spawn("node", [])).toThrow(/^not_ready:/);
+	} finally {
+		await proxy.dispose();
+	}
+});
+
+it("late stdin failure never overwrites a confirmed successful exit", async () => {
+	vi.useFakeTimers();
+	vi.spyOn(console, "error").mockImplementation(() => {});
+	const stub = createStubClient();
+	let rejectWrite!: (error: Error) => void;
+	stub.client.writeStdin = () =>
+		new Promise((_resolve, reject) => {
+			rejectWrite = reject;
+		});
+	const proxy = createProxy(stub.client);
+	try {
+		const proc = proxy.spawn("node", [], { streamStdin: true });
+		const assertion = expect(proc.writeStdin("input")).rejects.toThrow(
+			"late stdin failure",
+		);
+		await vi.advanceTimersByTimeAsync(0);
+		stub.pushEvent({
+			ownership: { scope: "vm", vm_id: vm.vmId },
+			payload: {
+				type: "process_exited",
+				process_id: `proc-${proc.pid}`,
+				exit_code: 0,
+			},
+		});
+		await vi.advanceTimersByTimeAsync(0);
+		rejectWrite(new Error("late stdin failure"));
+		await assertion;
+		await expect(proc.wait()).resolves.toBe(0);
+		expect(proc.exitCode).toBe(0);
+	} finally {
+		await proxy.dispose();
+	}
+});
+
+it("ordinary kill rejection is observed by wait instead of an unhandled promise", async () => {
+	vi.spyOn(console, "error").mockImplementation(() => {});
+	const stub = createStubClient();
+	stub.client.killProcess = async () => {
+		throw new Error("signal transport failed");
+	};
+	const proxy = createProxy(stub.client);
+	try {
+		const proc = proxy.spawn("node", []);
+		const assertion = expect(proc.wait()).rejects.toThrow(
+			/^termination_failed:.*signal transport failed/,
+		);
+		proc.kill(9);
+		await assertion;
+		expect(proc.exitCode).toBeNull();
+	} finally {
+		await proxy.dispose();
+	}
+});
+
+it("VM disposal rejects pending wait rather than manufacturing signal exit 143", async () => {
+	vi.spyOn(console, "error").mockImplementation(() => {});
+	const stub = createStubClient();
+	const proxy = createProxy(stub.client);
+	const proc = proxy.spawn("node", []);
+	await waitFor(() => stub.stdinCloseCount() > 0);
+	const assertion = expect(proc.wait()).rejects.toThrow(
+		/^termination_failed:.*disposed/,
+	);
+	await proxy.dispose();
+	await assertion;
+	expect(proc.exitCode).toBeNull();
+	expect(() => proxy.spawn("node", [])).toThrow(/^not_ready:/);
+});
+
+it("a real exit wakes wait even while the snapshot RPC is stalled", async () => {
+	vi.useFakeTimers();
+	const stub = createStubClient();
+	stub.client.getProcessSnapshot = () => new Promise(() => {});
+	const proxy = createProxy(stub.client);
+	try {
+		const proc = proxy.spawn("node", []);
+		const result = proc.wait();
+		await vi.advanceTimersByTimeAsync(100);
+		stub.pushEvent({
+			ownership: { scope: "vm", vm_id: vm.vmId },
+			payload: {
+				type: "process_exited",
+				process_id: `proc-${proc.pid}`,
+				exit_code: 23,
+			},
+		});
+		await vi.advanceTimersByTimeAsync(0);
+		await expect(result).resolves.toBe(23);
+		expect(vi.getTimerCount()).toBe(0);
+	} finally {
+		await proxy.dispose();
+	}
+});
+
+it("disposal wakes wait before a stalled teardown signal completes", async () => {
+	vi.useFakeTimers();
+	vi.spyOn(console, "error").mockImplementation(() => {});
+	const stub = createStubClient();
+	stub.client.getProcessSnapshot = () => new Promise(() => {});
+	let acknowledgeKill!: () => void;
+	stub.client.killProcess = () =>
+		new Promise((resolve) => {
+			acknowledgeKill = resolve;
+		});
+	const proxy = createProxy(stub.client);
+	const proc = proxy.spawn("node", []);
+	const assertion = expect(proc.wait()).rejects.toThrow(
+		/^termination_failed:.*disposed/,
+	);
+	await vi.advanceTimersByTimeAsync(100);
+	const disposal = proxy.dispose();
+	try {
+		await assertion;
+		expect(proc.exitCode).toBeNull();
+	} finally {
+		acknowledgeKill();
+		await disposal;
+	}
+});
+
+it("an exited snapshot without an exit code cannot manufacture success", async () => {
+	vi.useFakeTimers();
+	vi.spyOn(console, "error").mockImplementation(() => {});
+	const stub = createStubClient();
+	const proxy = createProxy(stub.client);
+	try {
+		const proc = proxy.spawn("node", []);
+		stub.client.getProcessSnapshot = async () => [
+			{
+				processId: `proc-${proc.pid}`,
+				pid: 42,
+				ppid: 0,
+				pgid: 42,
+				sid: 42,
+				driver: "node",
+				cwd: "/work",
+				command: "node",
+				args: [],
+				status: "exited",
+				exitCode: null,
+			},
+		];
+		const assertion = expect(proc.wait()).rejects.toThrow(
+			/exited snapshot has no exit status/,
+		);
+		await vi.advanceTimersByTimeAsync(100);
+		await assertion;
+		expect(proc.exitCode).toBeNull();
+	} finally {
+		await proxy.dispose();
+	}
+});
+
+it("disposal before launch admission never sends Execute", async () => {
+	vi.spyOn(console, "error").mockImplementation(() => {});
+	const stub = createStubClient();
+	const execute = vi.spyOn(stub.client, "execute");
+	const proxy = createProxy(stub.client);
+	const proc = proxy.spawn("node", []);
+	const wait = expect(proc.wait()).rejects.toThrow(
+		/^(not_ready|termination_failed):/,
+	);
+	await proxy.dispose();
+	await wait;
+	expect(execute).not.toHaveBeenCalled();
+	expect(proc.exitCode).toBeNull();
+});
+
+it("exec timeout accepts a real proxy exit event as termination proof", async () => {
+	vi.useFakeTimers();
+	const stub = createStubClient();
+	stub.client.killProcess = async () => {
+		stub.pushEvent({
+			ownership: { scope: "vm", vm_id: vm.vmId },
+			payload: {
+				type: "process_exited",
+				process_id: "proc-1000000",
+				exit_code: 137,
+			},
+		});
+	};
+	const proxy = createProxy(stub.client);
+	try {
+		const proc = proxy.spawn("node", []);
+		const run = runManagedProcessToCompletion(
+			proc,
+			() => new Promise<void>(() => {}),
+			Date.now(),
+		);
+		const assertion = expect(run).rejects.toThrow(/^timeout:.*was stopped$/);
+		await vi.runAllTimersAsync();
+		await assertion;
+	} finally {
+		await proxy.dispose();
+	}
+});
+
+it("exec timeout surfaces a real proxy kill rejection as termination_failed", async () => {
+	vi.useFakeTimers();
+	const stub = createStubClient();
+	stub.client.killProcess = async () => {
+		throw new Error("kill transport failed");
+	};
+	const proxy = createProxy(stub.client);
+	try {
+		const proc = proxy.spawn("node", []);
+		const run = runManagedProcessToCompletion(
+			proc,
+			() => new Promise<void>(() => {}),
+			Date.now(),
+		);
+		const assertion = expect(run).rejects.toThrow(
+			/^termination_failed:.*kill transport failed/,
+		);
+		await vi.runAllTimersAsync();
+		await assertion;
+	} finally {
+		await proxy.dispose();
+	}
+});
 
 async function waitFor(predicate: () => boolean, timeoutMs = 500) {
 	const start = Date.now();

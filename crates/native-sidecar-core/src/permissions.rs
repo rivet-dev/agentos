@@ -54,6 +54,82 @@ pub fn allow_all_policy() -> vm_config::PermissionsPolicy {
     }
 }
 
+/// Canonical agentOS VM policy used whenever an embedded or hosted client
+/// omits permission fields. All local VM capabilities are enabled, while
+/// outbound networking starts with the hosted LLM endpoint allowlist.
+pub fn agentos_default_permissions_policy() -> vm_config::PermissionsPolicy {
+    const EGRESS_HOSTS: &[&str] = &[
+        "api.anthropic.com",
+        "api.openai.com",
+        "generativelanguage.googleapis.com",
+        "openrouter.ai",
+    ];
+    let patterns = EGRESS_HOSTS
+        .iter()
+        .flat_map(|host| [format!("dns://{host}"), format!("tcp://{host}:*")])
+        .collect();
+    vm_config::PermissionsPolicy {
+        fs: Some(vm_config::FsPermissionScope::Mode(
+            vm_config::PermissionMode::Allow,
+        )),
+        network: Some(vm_config::PatternPermissionScope::Rules(
+            vm_config::PatternPermissionRuleSet {
+                default: Some(vm_config::PermissionMode::Deny),
+                rules: vec![vm_config::PatternPermissionRule {
+                    mode: vm_config::PermissionMode::Allow,
+                    operations: vec![String::from("*")],
+                    patterns,
+                }],
+            },
+        )),
+        child_process: Some(vm_config::PatternPermissionScope::Mode(
+            vm_config::PermissionMode::Allow,
+        )),
+        process: Some(vm_config::PatternPermissionScope::Mode(
+            vm_config::PermissionMode::Allow,
+        )),
+        env: Some(vm_config::PatternPermissionScope::Mode(
+            vm_config::PermissionMode::Allow,
+        )),
+        binding: Some(vm_config::PatternPermissionScope::Mode(
+            vm_config::PermissionMode::Allow,
+        )),
+    }
+}
+
+/// Applies an optional field-by-field policy over the selected profile. This
+/// gives explicit partial permission objects the same defaults in every client.
+pub fn resolve_permissions_policy(
+    profile: vm_config::VmDefaultsProfile,
+    overrides: Option<vm_config::PermissionsPolicy>,
+) -> vm_config::PermissionsPolicy {
+    let mut resolved = match profile {
+        vm_config::VmDefaultsProfile::Secure => deny_all_policy(),
+        vm_config::VmDefaultsProfile::AgentOs => agentos_default_permissions_policy(),
+    };
+    if let Some(overrides) = overrides {
+        if overrides.fs.is_some() {
+            resolved.fs = overrides.fs;
+        }
+        if overrides.network.is_some() {
+            resolved.network = overrides.network;
+        }
+        if overrides.child_process.is_some() {
+            resolved.child_process = overrides.child_process;
+        }
+        if overrides.process.is_some() {
+            resolved.process = overrides.process;
+        }
+        if overrides.env.is_some() {
+            resolved.env = overrides.env;
+        }
+        if overrides.binding.is_some() {
+            resolved.binding = overrides.binding;
+        }
+    }
+    resolved
+}
+
 pub fn evaluate_permissions_policy(
     permissions: &vm_config::PermissionsPolicy,
     domain: &str,
@@ -410,6 +486,56 @@ pub fn environment_permission_capability(operation: EnvironmentOperation) -> &'s
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agentos_profile_materializes_defaults_and_merges_partial_overrides() {
+        let defaults = resolve_permissions_policy(vm_config::VmDefaultsProfile::AgentOs, None);
+        assert_eq!(
+            defaults.child_process,
+            Some(vm_config::PatternPermissionScope::Mode(
+                vm_config::PermissionMode::Allow
+            ))
+        );
+        let Some(vm_config::PatternPermissionScope::Rules(network)) = &defaults.network else {
+            panic!("agentOS network default must be an allowlist");
+        };
+        assert_eq!(network.default, Some(vm_config::PermissionMode::Deny));
+        assert_eq!(network.rules.len(), 1);
+        for expected in [
+            "dns://api.anthropic.com",
+            "tcp://api.anthropic.com:*",
+            "dns://api.openai.com",
+            "dns://generativelanguage.googleapis.com",
+            "dns://openrouter.ai",
+        ] {
+            assert!(network.rules[0]
+                .patterns
+                .iter()
+                .any(|value| value == expected));
+        }
+
+        let overridden = resolve_permissions_policy(
+            vm_config::VmDefaultsProfile::AgentOs,
+            Some(vm_config::PermissionsPolicy {
+                fs: None,
+                network: Some(vm_config::PatternPermissionScope::Mode(
+                    vm_config::PermissionMode::Deny,
+                )),
+                child_process: None,
+                process: None,
+                env: None,
+                binding: None,
+            }),
+        );
+        assert_eq!(overridden.fs, defaults.fs);
+        assert_eq!(overridden.child_process, defaults.child_process);
+        assert_eq!(
+            overridden.network,
+            Some(vm_config::PatternPermissionScope::Mode(
+                vm_config::PermissionMode::Deny
+            ))
+        );
+    }
 
     #[test]
     fn permissions_default_to_deny() {

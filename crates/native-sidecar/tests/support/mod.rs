@@ -316,6 +316,7 @@ pub fn execute_wire(
                     env: HashMap::new(),
                     cwd: None,
                     wasm_permission_tier: None,
+                    retain_output: false,
                 },
             ),
         ))

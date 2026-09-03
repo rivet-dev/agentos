@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// AgentOS-owned crates published to crates.io in dependency order. Crates with
+// agentOS-owned crates published to crates.io in dependency order. Crates with
 // `publish = false` stay out of this list.
 export const RUST_CRATE_ORDER = [
 	"agentos-build-support",

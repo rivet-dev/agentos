@@ -12,6 +12,7 @@
 
 const { existsSync } = require("node:fs");
 const { join, dirname } = require("node:path");
+const { version: RESOLVER_VERSION } = require("./package.json");
 
 const BINARY_BASENAME = "agentos-native-sidecar";
 
@@ -89,7 +90,7 @@ function getSidecarPath() {
 	if (!platformPkg) {
 		throw new Error(
 			`@rivet-dev/agentos-runtime-sidecar: unsupported platform ${process.platform}/${process.arch}. ` +
-				"The AgentOS sidecar supports linux (x64/arm64, glibc/musl), " +
+				"The agentOS sidecar supports linux (x64/arm64, glibc/musl), " +
 				"macOS (x64/arm64), and Windows (x64). " +
 				"Set AGENTOS_SIDECAR_BIN to a local agentos-native-sidecar binary to override.",
 		);
@@ -102,12 +103,26 @@ function getSidecarPath() {
 		throw new Error(
 			`@rivet-dev/agentos-runtime-sidecar: platform package ${platformPkg} is not installed.\n` +
 				"This usually means the platform is unsupported or optionalDependencies were\n" +
-				`skipped during install. Try: npm install --include=optional ${platformPkg}\n` +
+				`skipped during install. Try: npm install --include=optional ${platformPkg}@${RESOLVER_VERSION}\n` +
 				"Or set AGENTOS_SIDECAR_BIN to a local agentos-native-sidecar binary.",
 		);
 	}
 
-	return join(dirname(pkgJsonPath), BINARY_NAME);
+	const platformVersion = require(pkgJsonPath).version;
+	if (platformVersion !== RESOLVER_VERSION) {
+		throw new Error(
+			`@rivet-dev/agentos-runtime-sidecar: platform package ${platformPkg} has version ${platformVersion}; expected ${RESOLVER_VERSION}. ` +
+				"Reinstall agentOS so the resolver and native binary use the same version.",
+		);
+	}
+	const binaryPath = join(dirname(pkgJsonPath), BINARY_NAME);
+	if (!existsSync(binaryPath)) {
+		throw new Error(
+			`@rivet-dev/agentos-runtime-sidecar: platform package ${platformPkg} is missing ${BINARY_NAME}. ` +
+				"Reinstall the platform package or set AGENTOS_SIDECAR_BIN to a local binary.",
+		);
+	}
+	return binaryPath;
 }
 
 module.exports = { getSidecarPath };

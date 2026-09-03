@@ -1,6 +1,6 @@
 # 12: Prototype the TypeScript Contract Generator
 
-**Status:** Prototype implemented; runtime conformance remains for step 14
+**Status:** Prototype implemented and integrated; deployed actor smoke remains
 
 ## Outcome
 
@@ -93,8 +93,9 @@ drift silently.
 3. Emit a committed JSON IR and generated TypeScript contract.
 4. Reconstruct dotted action names as the nested vanilla RivetKit proxy shape.
 5. Fail package builds and typechecks when generated files differ.
-6. In step 14, add runtime fixtures that verify positional CBOR mapping and run
-   the generated client against the compiled Rust actor.
+6. Step 14 adds CBOR byte and integer fixtures, then migrates supported
+   consumers to the generated client. A production actor smoke remains part of
+   deployment validation.
 
 This is intentionally a prototype with a product-specific registry. Do not add
 a handwritten parallel TypeScript contract or make RivetKit generalization part
@@ -190,9 +191,10 @@ and TypeScript.
 - Type tests for the complete nested action tree.
 - Absence tests for TypeScript actor code and removed APIs.
 
-The runtime fixtures, error round trips, binary/stream/event fixtures, wrapper
-cleanup, and generated-client smoke test are required before the step 14
-release cutover.
+Rust fixtures cover positional CBOR and native byte strings; generator and type
+tests cover integer widening, binary action fields, events, and nested calls.
+The final deployed-client smoke test remains a rollout gate, not another local
+TypeScript actor harness.
 
 ## Acceptance criteria
 
@@ -201,8 +203,11 @@ release cutover.
 - [x] Rust is the single source of public hosted actor DTOs and names.
 - [x] The TypeScript client uses vanilla RivetKit actor actions.
 - [x] Publication does not require shipping TypeScript actor source.
-- [ ] Transport-only wrappers are implemented and contain no runtime policy.
-- [ ] Rust and TypeScript pass shared runtime conformance fixtures.
+- [x] The public client is the generated nested vanilla actor proxy and contains
+  no runtime policy wrapper.
+- [x] Rust CBOR fixtures and TypeScript generator/type fixtures cover the shared
+  byte, integer, event, and action shapes.
+- [ ] The generated client passes a smoke test against a deployed Rust actor.
 
 ## Prototype limitations
 
@@ -212,8 +217,8 @@ release cutover.
   explicit schema override or richer IR metadata.
 - The schema exports one common structured error shape, not per-action error
   code unions.
-- Runtime transport and generated-client smoke coverage is intentionally
-  deferred to step 14 rather than implemented as a second actor harness here.
+- A production transport smoke still requires a deployed Rivet actor; no local
+  TypeScript actor is retained solely to simulate that path.
 
 ## Dependencies and follow-up
 

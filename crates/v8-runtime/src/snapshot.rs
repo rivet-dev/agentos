@@ -1841,45 +1841,7 @@ pub fn run_snapshot_consolidated_checks() {
         }
     }
 
-    // --- Part 22: REAL agent-SDK bundle snapshots + restores (env-gated). ---
-    // End-to-end primitive validation against the actual pi SDK snapshot bundle:
-    // the real bridge bundle + the real esbuild IIFE evaluate together into the
-    // snapshot, and a fresh restored isolate exposes the SDK runtime global with a
-    // working createAgentSession. Gated on PI_SNAPSHOT_BUNDLE_PATH so CI without the
-    // bundle skips it; run with that env var pointing at dist/pi-sdk-snapshot.js.
-    if let Ok(bundle_path) = std::env::var("PI_SNAPSHOT_BUNDLE_PATH") {
-        let userland = std::fs::read_to_string(&bundle_path)
-            .unwrap_or_else(|e| panic!("read pi bundle at {bundle_path}: {e}"));
-        let bridge_code = concat!(
-            include_str!(concat!(env!("OUT_DIR"), "/v8-bridge.js")),
-            "\n",
-            include_str!(concat!(env!("OUT_DIR"), "/v8-bridge-zlib.js"))
-        );
-
-        let blob = create_snapshot_with_userland(bridge_code, &userland)
-            .expect("real pi SDK bundle should snapshot cleanly (pure-JS, no top-level I/O)");
-        let mut isolate = create_isolate_from_snapshot(blob, None);
-        let scope = &mut v8::HandleScope::new(&mut isolate);
-        let context = v8::Context::new(scope, Default::default());
-        let scope = &mut v8::ContextScope::new(scope, context);
-
-        let check = v8::String::new(
-            scope,
-            "(function(){ var r = globalThis.__PI_SDK_RUNTIME__; \
-             return r && typeof r.createAgentSession === 'function' && \
-             typeof r.createAllTools === 'function' ? 'ok' : 'missing'; })()",
-        )
-        .unwrap();
-        let script = v8::Script::compile(scope, check, None).unwrap();
-        let result = script.run(scope).unwrap();
-        assert_eq!(
-            result.to_rust_string_lossy(scope),
-            "ok",
-            "restored isolate must expose the pi SDK runtime global from the snapshot"
-        );
-    }
-
-    // --- Part 23: cross-thread snapshot build → restore (diagnoses pre-warm). ---
+    // --- Part 22: cross-thread snapshot build → restore (diagnoses pre-warm). ---
     // Build a userland snapshot on a SEPARATE spawned+joined thread, then restore and
     // eval it on the main thread. If V8 fundamentally forbids restoring a blob built
     // on a different thread (the suspected cause of the pre-warm wedge), this aborts.

@@ -1,11 +1,20 @@
 ---
 title: "Software"
-description: "Install command packages in an agentOS VM."
+description: "Install immutable command packages in an agentOS VM."
 category: "Runtime"
 order: 5
 ---
 
-Software packages add commands to the guest VM. This example installs
-`ripgrep` and `jq` and invokes them through the process API. The embedded
-Core accepts trusted local package paths; the hosted Rust actor will expose only
-remote URL sources.
+The hosted actor installs an HTTPS `.aospkg` URL with
+`software.install`, lists live installed packages with `software.list`, and
+removes one by content-derived package ID with `software.uninstall`.
+
+Set `AGENTOS_PACKAGE_URL` and optionally `AGENTOS_PACKAGE_DIGEST`, then run:
+
+```bash
+npm install
+npx tsx client.ts
+```
+
+The `quickstart-node` and `quickstart-wasm` examples show the separate
+embedded Core API, which also accepts trusted local artifact paths.

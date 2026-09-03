@@ -582,6 +582,16 @@ fn mirror_guest_filesystem_shadow_after_call(
     vm: &mut VmState,
     payload: &GuestFilesystemCallRequest,
 ) -> Result<(), SidecarError> {
+    // Copy may cross filesystems: only its destination determines whether the
+    // result belongs in the root shadow. Rename/move/link cannot cross mounts.
+    let target = if payload.operation == GuestFilesystemOperation::Copy {
+        payload.destination_path.as_deref().unwrap_or(&payload.path)
+    } else {
+        &payload.path
+    };
+    if is_non_root_mount_path(&vm.kernel, target) {
+        return Ok(());
+    }
     match payload.operation {
         GuestFilesystemOperation::WriteFile => {
             let bytes = decode_guest_filesystem_content(
@@ -721,6 +731,9 @@ fn mirror_guest_filesystem_shadow_after_call(
 /// read-side reconciliation and the kernel copy will be resurrected because
 /// that pathname was never part of the previous inventory.
 fn refresh_shadow_inventory_path(vm: &mut VmState, guest_path: &str) -> Result<(), SidecarError> {
+    if is_non_root_mount_path(&vm.kernel, guest_path) {
+        return Ok(());
+    }
     let guest_path = normalize_path(guest_path);
     let mut updates = collect_shadow_inventory_ancestors(vm, &guest_path)?;
     let Some(node_type) = shadow_inventory_kernel_node_type(vm, &guest_path)? else {
@@ -1036,7 +1049,8 @@ where
                         // so the next shadow->kernel reconcile keeps the guest's
                         // change. Never *create* a shadow stub for a kernel-only
                         // guest file (that resurrected empty content).
-                        let mirror = shadow_host_path_for_guest(&vm.cwd, &path).exists();
+                        let mirror = !is_non_root_mount_path(&vm.kernel, &path)
+                            && shadow_host_path_for_guest(&vm.cwd, &path).exists();
                         if let Some(mode) = request.mode {
                             vm.kernel.chmod(&path, mode).map_err(kernel_error)?;
                             if mirror {
@@ -1993,12 +2007,15 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             let mode = javascript_sync_rpc_arg_u32(&request.args, 1, "filesystem chmod mode")?;
             let mut result =
                 kernel.chmod_for_process(EXECUTION_DRIVER_NAME, kernel_pid, &path, mode);
-            if result.as_ref().is_err_and(|error| error.code() == "ENOENT") {
-                let shadow_path = process_shadow_host_path(process, &path).ok_or_else(|| {
-                    SidecarError::InvalidState(format!(
-                        "filesystem chmod cannot resolve process shadow path for {path}"
-                    ))
-                })?;
+            if result.as_ref().is_err_and(|error| error.code() == "ENOENT")
+                && !is_non_root_mount_path(kernel, &path)
+            {
+                let shadow_path =
+                    process_shadow_host_path(kernel, process, &path).ok_or_else(|| {
+                        SidecarError::InvalidState(format!(
+                            "filesystem chmod cannot resolve process shadow path for {path}"
+                        ))
+                    })?;
                 let contents = fs::read(&shadow_path).map_err(|error| {
                     SidecarError::Io(format!(
                         "failed to materialize chmod target {}: {error}",
@@ -2018,7 +2035,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             }
             result.map_err(|error| kernel_path_error("fs.chmod", &path, error))?;
             mirror_kernel_path_to_process_shadow(kernel, process, &path)?;
-            mirror_process_mode_to_shadow(process, &path, mode)?;
+            mirror_process_mode_to_shadow(kernel, process, &path, mode)?;
             Ok(Value::Null)
         }
         "fs.ftruncateSync" => {
@@ -2561,7 +2578,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             // exit-time shadow->kernel sync resurrects the stale source path
             // (the shadow walk only copies entries in, it cannot express
             // deletions).
-            rename_process_shadow_path(process, source, destination)?;
+            rename_process_shadow_path(kernel, process, source, destination)?;
             Ok(Value::Null)
         }
         "fs.renameAt2Sync" => {
@@ -2607,7 +2624,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                     flags,
                 )
                 .map_err(kernel_error)?;
-            rename_process_shadow_path_at2(process, source, destination, flags)?;
+            rename_process_shadow_path_at2(kernel, process, source, destination, flags)?;
             Ok(Value::Null)
         }
         "fs.rmdirSync" | "fs.promises.rmdir" => {
@@ -2647,7 +2664,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 .map_err(kernel_error)?;
             // Mirror the removal into the process shadow tree, otherwise the
             // exit-time shadow->kernel sync resurrects the deleted directory.
-            remove_process_shadow_path(process, path)?;
+            remove_process_shadow_path(kernel, process, path)?;
             Ok(Value::Null)
         }
         "fs.unlinkSync" | "fs.promises.unlink" => {
@@ -2705,7 +2722,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             // deletions route kernel-direct, and without removing the shadow
             // copy the exit-time shadow->kernel sync resurrects the file for
             // later builtins in the same shell and for subsequent execs.
-            remove_process_shadow_path(process, path)?;
+            remove_process_shadow_path(kernel, process, path)?;
             Ok(Value::Null)
         }
         "fs.chmodSync" | "fs.promises.chmod" => {
@@ -2849,7 +2866,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                     .stat_for_process(EXECUTION_DRIVER_NAME, kernel_pid, path.as_str())
                     .map_err(kernel_error)?
                     .mode;
-                mirror_process_mode_to_shadow(process, path.as_str(), mode)?;
+                mirror_process_mode_to_shadow(kernel, process, path.as_str(), mode)?;
             }
             Ok(Value::Null)
         }
@@ -2885,7 +2902,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 request.method.as_str(),
                 "fs.lutimesSync" | "fs.promises.lutimes"
             );
-            if let Some(shadow_path) = process_shadow_host_path(process, path) {
+            if let Some(shadow_path) = process_shadow_host_path(kernel, process, path) {
                 if fs::symlink_metadata(&shadow_path).is_ok() {
                     let result = kernel.utimes_spec_for_process(
                         EXECUTION_DRIVER_NAME,
@@ -3150,7 +3167,7 @@ fn mirror_kernel_path_to_process_shadow(
     // their source of truth; they never read the JavaScript process shadow.
     // Mirroring here is both redundant and harmful for streamed writes because
     // it rereads the entire growing file after every bounded chunk.
-    if process_prefers_kernel_fs_sync_rpc(process) {
+    if process_prefers_kernel_fs_sync_rpc(process) || is_non_root_mount_path(kernel, guest_path) {
         return Ok(());
     }
     let normalized_guest_path = normalize_path(guest_path);
@@ -3160,7 +3177,8 @@ fn mirror_kernel_path_to_process_shadow(
     if host_path_from_runtime_guest_mappings(&process.env, &normalized_guest_path).is_some() {
         return Ok(());
     }
-    let Some(shadow_path) = process_shadow_host_path(process, &normalized_guest_path) else {
+    let Some(shadow_path) = process_shadow_host_path(kernel, process, &normalized_guest_path)
+    else {
         return Ok(());
     };
     // This is internal reconciliation after the guest has already completed a
@@ -3174,11 +3192,12 @@ fn mirror_kernel_path_to_process_shadow(
 }
 
 fn mirror_process_mode_to_shadow(
+    kernel: &SidecarKernel,
     process: &ActiveProcess,
     guest_path: &str,
     mode: u32,
 ) -> Result<(), SidecarError> {
-    let Some(shadow_path) = process_shadow_host_path(process, guest_path) else {
+    let Some(shadow_path) = process_shadow_host_path(kernel, process, guest_path) else {
         return Ok(());
     };
     match fs::symlink_metadata(&shadow_path) {
@@ -3476,8 +3495,15 @@ fn mapped_runtime_host_path_for_read(
     }
 }
 
-fn process_shadow_host_path(process: &ActiveProcess, guest_path: &str) -> Option<PathBuf> {
+fn process_shadow_host_path(
+    kernel: &SidecarKernel,
+    process: &ActiveProcess,
+    guest_path: &str,
+) -> Option<PathBuf> {
     let normalized_guest_path = normalized_process_guest_path(process, guest_path);
+    if is_non_root_mount_path(kernel, &normalized_guest_path) {
+        return None;
+    }
     let shadow_root = process.shadow_root.as_ref()?;
     Some(shadow_host_path_for_guest(
         shadow_root,
@@ -3491,7 +3517,7 @@ fn materialize_process_shadow_symlink(
     kernel_pid: u32,
     guest_path: &str,
 ) -> Result<bool, SidecarError> {
-    let Some(shadow_path) = process_shadow_host_path(process, guest_path) else {
+    let Some(shadow_path) = process_shadow_host_path(kernel, process, guest_path) else {
         return Ok(false);
     };
     let metadata = match fs::symlink_metadata(&shadow_path) {
@@ -5236,6 +5262,9 @@ fn mirror_guest_truncate_to_shadow(
 }
 
 fn remove_guest_shadow_path(vm: &mut VmState, guest_path: &str) -> Result<(), SidecarError> {
+    if is_non_root_mount_path(&vm.kernel, guest_path) {
+        return Ok(());
+    }
     let guest_path = normalize_path(guest_path);
     let shadow_path = shadow_host_path_for_guest(&vm.cwd, &guest_path);
     remove_shadow_path_if_exists(&shadow_path, &guest_path)
@@ -5246,6 +5275,9 @@ fn rename_guest_shadow_path(
     from_path: &str,
     to_path: &str,
 ) -> Result<(), SidecarError> {
+    if is_non_root_mount_path(&vm.kernel, from_path) {
+        return Ok(());
+    }
     let from_path = normalize_path(from_path);
     let to_path = normalize_path(to_path);
     let from_shadow_path = shadow_host_path_for_guest(&vm.cwd, &from_path);
@@ -5319,7 +5351,9 @@ fn sync_active_shadow_path_to_kernel(
 ) -> Result<(), SidecarError> {
     sync_active_process_host_writes_to_kernel(vm)?;
     let guest_path = normalize_path(guest_path);
-    if is_protected_agentos_shadow_sync_path(&guest_path) {
+    if is_protected_agentos_shadow_sync_path(&guest_path)
+        || is_non_root_mount_path(&vm.kernel, &guest_path)
+    {
         return Ok(());
     }
     let mut host_paths = active_process_shadow_host_paths_for_guest(vm, &guest_path);
@@ -5356,6 +5390,19 @@ fn sync_active_shadow_path_to_kernel(
     }
 
     Ok(())
+}
+
+/// Non-root mounts own their data independently of the root staging shadow.
+/// Mirroring their content into that shadow would resurrect it in the root
+/// filesystem after unmount, or overwrite a hidden root file with mount data.
+pub(crate) fn is_non_root_mount_path(kernel: &SidecarKernel, guest_path: &str) -> bool {
+    // Use the indexed mount lookup rather than cloning every mount descriptor
+    // for each file visited during a shadow walk.
+    !kernel
+        .filesystem()
+        .inner()
+        .inner()
+        .path_uses_root_filesystem(guest_path)
 }
 
 fn active_process_shadow_host_paths_for_guest(vm: &VmState, guest_path: &str) -> Vec<PathBuf> {
@@ -5463,10 +5510,11 @@ fn resolve_process_guest_path_to_host(
 /// Removes the host shadow copy of `guest_path` after a kernel-direct guest
 /// deletion so the exit-time shadow->kernel sync cannot resurrect it.
 pub(crate) fn remove_process_shadow_path(
+    kernel: &SidecarKernel,
     process: &ActiveProcess,
     guest_path: &str,
 ) -> Result<(), SidecarError> {
-    let Some(shadow_path) = process_shadow_host_path(process, guest_path) else {
+    let Some(shadow_path) = process_shadow_host_path(kernel, process, guest_path) else {
         return Ok(());
     };
     remove_shadow_path_if_exists(&shadow_path, guest_path)
@@ -5476,14 +5524,15 @@ pub(crate) fn remove_process_shadow_path(
 /// source shadow entry is missing the stale destination copy is still removed
 /// so the shadow walk cannot resurrect pre-rename content.
 pub(crate) fn rename_process_shadow_path(
+    kernel: &SidecarKernel,
     process: &ActiveProcess,
     source: &str,
     destination: &str,
 ) -> Result<(), SidecarError> {
-    let Some(source_shadow) = process_shadow_host_path(process, source) else {
+    let Some(source_shadow) = process_shadow_host_path(kernel, process, source) else {
         return Ok(());
     };
-    let Some(destination_shadow) = process_shadow_host_path(process, destination) else {
+    let Some(destination_shadow) = process_shadow_host_path(kernel, process, destination) else {
         return Ok(());
     };
 
@@ -5507,18 +5556,20 @@ pub(crate) fn rename_process_shadow_path(
 }
 
 fn rename_process_shadow_path_at2(
+    kernel: &SidecarKernel,
     process: &ActiveProcess,
     source: &str,
     destination: &str,
     flags: u32,
 ) -> Result<(), SidecarError> {
     match flags {
-        0 | RENAME_NOREPLACE => rename_process_shadow_path(process, source, destination),
+        0 | RENAME_NOREPLACE => rename_process_shadow_path(kernel, process, source, destination),
         RENAME_EXCHANGE => {
-            let Some(source_shadow) = process_shadow_host_path(process, source) else {
+            let Some(source_shadow) = process_shadow_host_path(kernel, process, source) else {
                 return Ok(());
             };
-            let Some(destination_shadow) = process_shadow_host_path(process, destination) else {
+            let Some(destination_shadow) = process_shadow_host_path(kernel, process, destination)
+            else {
                 return Ok(());
             };
             if fs::symlink_metadata(&source_shadow).is_err()
@@ -5926,6 +5977,28 @@ mod tests {
             )
             .expect("spawn kernel process");
         (kernel, handle.pid())
+    }
+
+    #[test]
+    fn shadow_exclusion_tracks_actual_non_root_mount_boundaries() {
+        use agentos_kernel::mount_table::{MountOptions, MountedVirtualFileSystem};
+
+        let (mut kernel, _) = test_kernel_with_process();
+        kernel
+            .mount_boxed_filesystem_for_operator(
+                "/mnt/data",
+                Box::new(MountedVirtualFileSystem::new(MemoryFileSystem::new())),
+                MountOptions::new("test-memory"),
+            )
+            .unwrap();
+        for path in ["/mnt/data", "/mnt/data/file", "/mnt/other/../data/file"] {
+            assert!(super::is_non_root_mount_path(&kernel, path), "{path}");
+        }
+        for path in ["/", "/mnt", "/mnt/data-other/file", "/mnt/data/../root"] {
+            assert!(!super::is_non_root_mount_path(&kernel, path), "{path}");
+        }
+        kernel.unmount_filesystem_for_operator("/mnt/data").unwrap();
+        assert!(!super::is_non_root_mount_path(&kernel, "/mnt/data/file"));
     }
 
     #[test]

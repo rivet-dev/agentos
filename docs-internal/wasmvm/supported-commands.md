@@ -222,17 +222,6 @@
 | git-remote-http | — | done | Symlink → git (HTTP transport for clone/fetch/push) | — |
 | git-remote-https | — | done | Symlink → git (HTTPS transport for clone/fetch/push) | — |
 
-## AI Tools
-
-| Command | just-bash | Status | Implementation | Target |
-|---------|-----------|--------|----------------|--------|
-| codex | — | done | Rust binary (`rivet-dev/codex` fork, TUI mode via ratatui/crossterm, `host_net` + `host_process`) | — |
-| codex-exec | — | partial | Rust binary placeholder; provider-backed headless mode is not wired | — |
-
-- **codex** is the TUI (interactive terminal UI) mode — requires a PTY for rendering
-- **codex-exec** currently accepts prompt arguments only as a placeholder and fails fast for ACP session-turn mode
-- Provider-backed Codex commands require `OPENAI_API_KEY` and network access (`host_net`) when that path is wired
-
 ## Package Management (Node Runtime)
 
 | Command | just-bash | Status | Implementation | Target |

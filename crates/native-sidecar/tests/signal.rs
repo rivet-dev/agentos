@@ -805,6 +805,7 @@ fn pty_resize_delivers_sigwinch_to_nested_foreground_runtime() {
                 env: HashMap::from([(String::from("AGENTOS_EXEC_TTY"), String::from("1"))]),
                 cwd: None,
                 wasm_permission_tier: None,
+                retain_output: false,
             }),
         ))
         .expect("start PTY parent");

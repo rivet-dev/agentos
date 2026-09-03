@@ -1,15 +1,11 @@
-import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
-
-const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
+import { vm } from "./client.js";
 
 // Schedule a cleanup script every hour
-const { id } = await client.vm.getOrCreate("my-agent").cron.schedule({
-  schedule: "0 * * * *",
-  action: {
-    type: "exec",
-    command: "rm",
-    args: ["-rf", "/tmp/cache/*"],
-  },
+const job = await vm.cron.schedule({
+	name: "cleanup",
+	expression: "0 * * * *",
+	command: "rm",
+	args: ["-rf", "/tmp/cache"],
+	options: { env: {} },
 });
-console.log("Cron job ID:", id);
+console.log("Cron job name:", job.name);

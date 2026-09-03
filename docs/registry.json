@@ -3,63 +3,27 @@
 		{
 			"slug": "browserbase",
 			"title": "Browserbase",
-			"description": "The Browserbase browse CLI for cloud-browser access from VM programs.",
+			"description": "The Browserbase `browse` CLI for controlling a cloud browser from guest programs.",
 			"types": [
 				"browser"
 			],
 			"category": "browser",
 			"priority": 0,
-			"package": "@agentos-software/browserbase",
+			"artifactName": "browserbase",
 			"status": "available",
 			"beta": true,
 			"image": "/images/registry/browserbase.svg"
 		},
 		{
-			"slug": "everything",
-			"title": "Everything",
-			"description": "Meta-package: all available WASM command packages.",
-			"types": [
-				"software"
-			],
-			"category": "meta",
-			"priority": 110,
-			"package": "@agentos-software/everything",
-			"status": "available"
-		},
-		{
-			"slug": "build-essential",
-			"title": "Build Essential",
-			"description": "Meta-package: common + git + curl.",
-			"types": [
-				"software"
-			],
-			"category": "meta",
-			"priority": 100,
-			"package": "@agentos-software/build-essential",
-			"status": "available"
-		},
-		{
-			"slug": "common",
-			"title": "Common",
-			"description": "Meta-package: coreutils + sed + grep + gawk + findutils + diffutils + tar + gzip.",
-			"types": [
-				"software"
-			],
-			"category": "meta",
-			"priority": 95,
-			"package": "@agentos-software/common",
-			"status": "available"
-		},
-		{
 			"slug": "git",
 			"title": "git",
-			"description": "Upstream Git version control for AgentOS VMs.",
+			"description": "Upstream Git version control for agentOS VMs.",
 			"types": [
 				"software"
 			],
 			"category": "developer-tools",
 			"priority": 90,
-			"package": "@agentos-software/git",
+			"artifactName": "git",
 			"status": "available",
 			"image": "/images/registry/git.svg"
 		},
@@ -72,7 +36,7 @@
 			],
 			"category": "developer-tools",
 			"priority": 85,
-			"package": "@agentos-software/ripgrep",
+			"artifactName": "ripgrep",
 			"status": "available"
 		},
 		{
@@ -84,7 +48,7 @@
 			],
 			"category": "data",
 			"priority": 80,
-			"package": "@agentos-software/jq",
+			"artifactName": "jq",
 			"status": "available",
 			"image": "/images/registry/jq.svg"
 		},
@@ -97,7 +61,7 @@
 			],
 			"category": "data",
 			"priority": 75,
-			"package": "@agentos-software/sqlite3",
+			"artifactName": "sqlite3",
 			"status": "available",
 			"image": "/images/registry/sqlite3.svg"
 		},
@@ -110,7 +74,7 @@
 			],
 			"category": "data",
 			"priority": 70,
-			"package": "@agentos-software/duckdb",
+			"artifactName": "duckdb",
 			"status": "available",
 			"image": "/images/registry/duckdb.svg"
 		},
@@ -123,7 +87,7 @@
 			],
 			"category": "editors",
 			"priority": 65,
-			"package": "@agentos-software/vim",
+			"artifactName": "vim",
 			"status": "available",
 			"image": "/images/registry/vim.svg"
 		},
@@ -136,7 +100,7 @@
 			],
 			"category": "core",
 			"priority": 60,
-			"package": "@agentos-software/tar",
+			"artifactName": "tar",
 			"status": "available",
 			"image": "/images/registry/tar.svg"
 		},
@@ -149,7 +113,7 @@
 			],
 			"category": "networking",
 			"priority": 55,
-			"package": "@agentos-software/ssh",
+			"artifactName": "ssh",
 			"status": "available",
 			"image": "/images/registry/ssh.svg"
 		},
@@ -162,7 +126,7 @@
 			],
 			"category": "networking",
 			"priority": 55,
-			"package": "@agentos-software/wget",
+			"artifactName": "wget",
 			"status": "available",
 			"image": "/images/registry/wget.svg"
 		},
@@ -175,7 +139,7 @@
 			],
 			"category": "networking",
 			"priority": 50,
-			"package": "@agentos-software/curl",
+			"artifactName": "curl",
 			"status": "available",
 			"image": "/images/registry/curl.svg"
 		},
@@ -188,7 +152,7 @@
 			],
 			"category": "core",
 			"priority": 45,
-			"package": "@agentos-software/coreutils",
+			"artifactName": "coreutils",
 			"status": "available",
 			"image": "/images/registry/coreutils.svg"
 		},
@@ -201,7 +165,7 @@
 			],
 			"category": "core",
 			"priority": 45,
-			"package": "@agentos-software/sh",
+			"artifactName": "sh",
 			"status": "available"
 		},
 		{
@@ -213,7 +177,7 @@
 			],
 			"category": "core",
 			"priority": 43,
-			"package": "@agentos-software/xfsprogs",
+			"artifactName": "xfsprogs",
 			"status": "available"
 		},
 		{
@@ -225,7 +189,7 @@
 			],
 			"category": "core",
 			"priority": 42,
-			"package": "@agentos-software/acl",
+			"artifactName": "acl",
 			"status": "available"
 		},
 		{
@@ -237,7 +201,7 @@
 			],
 			"category": "core",
 			"priority": 41,
-			"package": "@agentos-software/attr",
+			"artifactName": "attr",
 			"status": "available"
 		},
 		{
@@ -249,7 +213,7 @@
 			],
 			"category": "core",
 			"priority": 40,
-			"package": "@agentos-software/grep",
+			"artifactName": "grep",
 			"status": "available",
 			"image": "/images/registry/grep.svg"
 		},
@@ -262,7 +226,7 @@
 			],
 			"category": "core",
 			"priority": 35,
-			"package": "@agentos-software/sed",
+			"artifactName": "sed",
 			"status": "available",
 			"image": "/images/registry/sed.svg"
 		},
@@ -275,7 +239,7 @@
 			],
 			"category": "developer-tools",
 			"priority": 30,
-			"package": "@agentos-software/fd",
+			"artifactName": "fd",
 			"status": "available"
 		},
 		{
@@ -287,7 +251,7 @@
 			],
 			"category": "core",
 			"priority": 25,
-			"package": "@agentos-software/tree",
+			"artifactName": "tree",
 			"status": "available"
 		},
 		{
@@ -299,7 +263,7 @@
 			],
 			"category": "core",
 			"priority": 20,
-			"package": "@agentos-software/gawk",
+			"artifactName": "gawk",
 			"status": "available",
 			"image": "/images/registry/gawk.svg"
 		},
@@ -312,7 +276,7 @@
 			],
 			"category": "core",
 			"priority": 15,
-			"package": "@agentos-software/findutils",
+			"artifactName": "findutils",
 			"status": "available",
 			"image": "/images/registry/findutils.svg"
 		},
@@ -325,7 +289,7 @@
 			],
 			"category": "core",
 			"priority": 12,
-			"package": "@agentos-software/zip",
+			"artifactName": "zip",
 			"status": "available"
 		},
 		{
@@ -337,7 +301,7 @@
 			],
 			"category": "core",
 			"priority": 10,
-			"package": "@agentos-software/envsubst",
+			"artifactName": "envsubst",
 			"status": "available"
 		},
 		{
@@ -349,7 +313,7 @@
 			],
 			"category": "core",
 			"priority": 10,
-			"package": "@agentos-software/unzip",
+			"artifactName": "unzip",
 			"status": "available"
 		},
 		{
@@ -361,7 +325,7 @@
 			],
 			"category": "core",
 			"priority": 8,
-			"package": "@agentos-software/gzip",
+			"artifactName": "gzip",
 			"status": "available",
 			"image": "/images/registry/gzip.svg"
 		},
@@ -374,7 +338,7 @@
 			],
 			"category": "core",
 			"priority": 6,
-			"package": "@agentos-software/diffutils",
+			"artifactName": "diffutils",
 			"status": "available",
 			"image": "/images/registry/diffutils.svg"
 		},
@@ -387,7 +351,7 @@
 			],
 			"category": "data",
 			"priority": 4,
-			"package": "@agentos-software/yq",
+			"artifactName": "yq",
 			"status": "available"
 		},
 		{
@@ -399,7 +363,7 @@
 			],
 			"category": "core",
 			"priority": 2,
-			"package": "@agentos-software/file",
+			"artifactName": "file",
 			"status": "available"
 		}
 	]

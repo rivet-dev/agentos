@@ -1,4 +1,4 @@
-# AgentOS language execution Browser
+# agentOS language execution Browser
 
 Browser driver primitives for agentos.
 

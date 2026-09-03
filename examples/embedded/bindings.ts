@@ -1,8 +1,8 @@
 import { AgentOs, type Bindings } from "@rivet-dev/agentos-core";
 import { z } from "zod";
 
-// Binding groups are defined exactly as they are for the actor. Pass them to
-// AgentOs.create() and `execute` runs in this host process.
+// Host binding groups are embedded-only. Pass them to AgentOs.create() and
+// `execute` runs in this trusted host process.
 const weather: Bindings = {
 	name: "weather",
 	description: "Weather data bindings",
@@ -20,7 +20,7 @@ const weather: Bindings = {
 
 const vm = await AgentOs.create({ bindings: [weather] });
 
-// The agent calls it as `agentos-weather forecast --city Paris`.
+// Guest code calls it as `agentos-weather forecast --city Paris`.
 const result = await vm.process.exec("agentos-weather forecast --city Paris");
 console.log(result.stdout);
 await vm.dispose();

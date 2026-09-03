@@ -16,51 +16,80 @@ mod runtime;
 mod software;
 mod store;
 
-use std::str::FromStr;
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use rivetkit::prelude::*;
 use rivetkit::{action, Actor, ActorConfig, Registry, Request, Response};
-use serde::{Deserialize, Serialize};
+use rivetkit_core::inspector::InspectorTabEntry;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 
-pub use actions::{ConfigGet, ConfigSet, RuntimeRestart, RuntimeStatusGet};
-pub use config::{
+pub use agentos_actor_contract::config::{
     AgentOsActorConfig, AgentOsActorConfigInput, HostedFilesystemBackend,
     HostedFilesystemBackendInput, HostedFilesystemConfig, HostedFilesystemConfigInput,
     HostedFilesystemMount, HostedFilesystemMountInput, HostedRootFilesystem,
     HostedRootFilesystemInput, PreviewPolicy, PreviewPolicyInput, RemotePackageSource,
     RemotePackageSourceInput,
 };
-pub use cron::*;
-pub use events::{
-    CronFiredEvent, ProcessExitEvent, ProcessOutputEvent, RuntimeBooted, RuntimeLimitWarning,
-    RuntimeShutdown, TerminalDataEvent, TerminalExitEvent, TerminalStderrEvent,
+pub use agentos_actor_contract::cron::{
+    ActorCronJob, CronCancel, CronLaunchError, CronList, CronSchedule,
 };
-pub use filesystem::{
-    FileBytes, FileContentInput, FilesystemDirectoryEntry, FilesystemExists, FilesystemExport,
-    FilesystemListMounts, FilesystemMkdir, FilesystemMove, FilesystemReadFile, FilesystemReadFiles,
-    FilesystemReadResult, FilesystemReaddir, FilesystemReaddirEntries, FilesystemReaddirRecursive,
-    FilesystemRemove, FilesystemStat, FilesystemWriteEntry, FilesystemWriteFile,
-    FilesystemWriteFiles, FilesystemWriteResult,
+pub use agentos_actor_contract::events::{
+    CronFiredEvent, ProcessExitEvent, ProcessOutputEvent, TerminalExitEvent, TerminalOutputEvent,
+    VmBooted, VmLimitWarning, VmShutdown,
 };
-pub use language::*;
-pub use network::*;
+pub use agentos_actor_contract::filesystem::{
+    ActorDirectoryEntry, ActorFileStat, FileBytes, FileContentInput, FilesystemDirectoryEntry,
+    FilesystemExists, FilesystemExport, FilesystemListMounts, FilesystemMkdir, FilesystemMove,
+    FilesystemReadFile, FilesystemReadFiles, FilesystemReadResult, FilesystemReaddir,
+    FilesystemReaddirEntries, FilesystemReaddirRecursive, FilesystemRemove, FilesystemStat,
+    FilesystemWriteEntry, FilesystemWriteFile, FilesystemWriteFiles, FilesystemWriteResult,
+};
+pub use agentos_actor_contract::language::{
+    ActorCodeEvaluationResult, ActorCodeExecutionResult, ActorContextDescriptor, ActorContextId,
+    ActorExecutionDescriptor, ActorExecutionError, ActorExecutionOutcome,
+    ActorExecutionOutputOptions, ActorExecutionPtyOptions, ActorInlineExecutionOptions,
+    ActorJavaScriptExecutionOptions, ActorJavaScriptModuleFormat, ActorLanguageExecutionOptions,
+    ActorLanguageSpawnOptions, ActorNpmInstallOptions, ActorOutputCapture,
+    ActorPythonInstallOptions, ActorTypeScriptCheckOptions, ActorTypeScriptCheckResult,
+    ActorTypeScriptDiagnostic, ActorTypeScriptExecutionOptions, ContextsCreate, ContextsDelete,
+    ContextsGet, ContextsList, ContextsReset, JavaScriptEvaluate, JavaScriptExecute,
+    JavaScriptExecuteFile, JavaScriptNpmInstall, JavaScriptNpmRunPackage, JavaScriptNpmRunScript,
+    JavaScriptSpawn, JavaScriptSpawnFile, PythonEvaluate, PythonExecute, PythonExecuteFile,
+    PythonExecuteModule, PythonInstall, PythonSpawn, PythonSpawnFile, PythonSpawnModule,
+    TypeScriptCheck, TypeScriptCheckProject, TypeScriptEvaluate, TypeScriptExecute,
+    TypeScriptExecuteFile, TypeScriptSpawn, TypeScriptSpawnFile,
+};
+pub use agentos_actor_contract::lifecycle::*;
+pub use agentos_actor_contract::network::{
+    ActorFetchStreamChunk, ActorFetchStreamHead, ActorFetchStreamId, ActorHttpRequest,
+    ActorHttpResponse, ActorPreview, NetworkFetch, NetworkFetchStreamCancel,
+    NetworkFetchStreamRead, NetworkFetchStreamStart, NetworkPreviewCreate, NetworkPreviewExpire,
+};
+pub use agentos_actor_contract::process::{
+    ActorExecOptions, ActorExecResult, ActorExitStatus, ActorOutputEvent, ActorOutputReplay,
+    ActorProcessExit, ActorProcessId, ActorProcessInfo, ActorProcessTree, ActorProcessTreeNode,
+    ActorSignal, ActorSpawnOptions, ActorTerminalExit, ActorTerminalId, ActorTerminalInfo,
+    ActorTerminalOptions, ProcessGet, ProcessList, ProcessOutputRead, ProcessPtyResize, ProcessRun,
+    ProcessSignal, ProcessSpawn, ProcessStdinClose, ProcessStdinWrite, ProcessTree, ProcessWait,
+    TerminalClose, TerminalList, TerminalOpen, TerminalOutputRead, TerminalPtyResize,
+    TerminalStdinWrite, TerminalWait,
+};
+pub use agentos_actor_contract::software::{
+    ActorInstalledSoftware, SoftwareInstall, SoftwareList, SoftwareMutationResult,
+    SoftwareUninstall,
+};
 pub use preload::{
-    configure_process_preload, PreloadArtifact, PreloadBaselineReplaced, PreloadCoordinatorActor,
-    PreloadCoordinatorConfig, PreloadCoordinatorConfigInput, PreloadCoordinatorCreateInput,
-    PreloadCoordinatorStatus, PreloadGetPlan, PreloadPlan, PreloadProcessOptions,
-    PreloadRecordUsage, PreloadReplaceBaseline, PreloadStatus, PreloadUsageAccepted,
-    PreloadUsageObservation, ProcessPreloadReport, PRELOAD_COORDINATOR_ACTOR_KEY,
-    PRELOAD_COORDINATOR_ACTOR_NAME, PRELOAD_PROTOCOL_VERSION,
+    configure_process_preload, shutdown_process_preload, PreloadArtifact, PreloadBaselineReplaced,
+    PreloadCoordinatorActor, PreloadCoordinatorConfig, PreloadCoordinatorConfigInput,
+    PreloadCoordinatorCreateInput, PreloadCoordinatorStatus, PreloadGetPlan, PreloadPlan,
+    PreloadProcessOptions, PreloadRecordUsage, PreloadReplaceBaseline, PreloadStatus,
+    PreloadUsageAccepted, PreloadUsageObservation, ProcessPreloadReport,
+    PRELOAD_COORDINATOR_ACTOR_KEY, PRELOAD_COORDINATOR_ACTOR_NAME, PRELOAD_PROTOCOL_VERSION,
 };
-pub use process::*;
-pub use runtime::{
-    CoreSidecarStatus, PackageStartupStatus, RuntimeIssue, RuntimeLifecycleState, RuntimeStatus,
-};
-pub use software::{SoftwareInstall, SoftwareList, SoftwareMutationResult, SoftwareUninstall};
 
 use action_set::AgentOsActionSet;
 use runtime::RuntimeController;
@@ -68,70 +97,6 @@ use runtime::RuntimeController;
 pub const ACTOR_NAME: &str = "agentOS";
 const ACTION_CONCURRENCY_LIMIT: usize = 64;
 const ACTOR_MESSAGE_SIZE_LIMIT: u32 = 1024 * 1024;
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct AgentOsActorCreateInput {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub config: Option<AgentOsActorConfigInput>,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ConfigApplyState {
-    Applying,
-    Ready,
-    RestartRequired,
-    Failed,
-}
-
-impl ConfigApplyState {
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Applying => "applying",
-            Self::Ready => "ready",
-            Self::RestartRequired => "restart_required",
-            Self::Failed => "failed",
-        }
-    }
-}
-
-impl FromStr for ConfigApplyState {
-    type Err = anyhow::Error;
-
-    fn from_str(value: &str) -> Result<Self> {
-        match value {
-            "applying" => Ok(Self::Applying),
-            "ready" => Ok(Self::Ready),
-            "restart_required" => Ok(Self::RestartRequired),
-            "failed" => Ok(Self::Failed),
-            _ => bail!("invalid actor config apply state {value:?}"),
-        }
-    }
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConfigSnapshot {
-    pub revision: u64,
-    pub desired: AgentOsActorConfig,
-    pub applied_revision: Option<u64>,
-    #[serde(rename = "state")]
-    pub status: ConfigApplyState,
-    pub issues: Vec<RuntimeIssue>,
-    pub created_at_ms: i64,
-    pub updated_at_ms: i64,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentOsActorState {
-    pub config: ConfigSnapshot,
-}
 
 pub struct AgentOsActor {
     config: Mutex<ConfigSnapshot>,
@@ -146,13 +111,12 @@ impl Actor for AgentOsActor {
     type Input = AgentOsActorCreateInput;
     type Actions = AgentOsActionSet;
     type Events = (
-        RuntimeBooted,
-        RuntimeShutdown,
-        RuntimeLimitWarning,
+        VmBooted,
+        VmShutdown,
+        VmLimitWarning,
         ProcessOutputEvent,
         ProcessExitEvent,
-        TerminalDataEvent,
-        TerminalStderrEvent,
+        TerminalOutputEvent,
         TerminalExitEvent,
         CronFiredEvent,
     );
@@ -202,9 +166,13 @@ impl Actor for AgentOsActor {
             .set_process_preload_report(&process_preload)
             .await;
 
-        // A failed Core boot does not make runtime.status unreachable. Persist
+        // A failed Core boot does not make vm.status unreachable. Persist
         // the failure and let the actor start in the failed lifecycle state.
-        match actor.runtime.boot(&durable.desired, durable.revision).await {
+        match actor
+            .runtime
+            .boot(ctx, &durable.desired, durable.revision)
+            .await
+        {
             Ok(status) => {
                 actor.pin_runtime_software(ctx).await?;
                 actor.mark_runtime_result(ctx, &status).await?;
@@ -220,8 +188,8 @@ impl Actor for AgentOsActor {
 
     async fn on_start(self: Arc<Self>, ctx: Ctx<Self>) -> Result<()> {
         let status = self.runtime.status().await;
-        if status.lifecycle == RuntimeLifecycleState::Ready {
-            ctx.emit(RuntimeBooted {
+        if status.lifecycle == VmLifecycleState::Ready {
+            ctx.emit(VmBooted {
                 generation: status.generation,
                 config_revision: status.applied_config_revision.ok_or_else(|| {
                     anyhow::anyhow!("ready runtime has no applied config revision")
@@ -254,7 +222,7 @@ impl AgentOsActor {
             .try_acquire_owned()
             .map_err(|_| {
                 anyhow::anyhow!(
-                    "actor action concurrency limit {ACTION_CONCURRENCY_LIMIT} reached; raise ACTION_CONCURRENCY_LIMIT"
+                    "limit_exceeded: actor action concurrency limit {ACTION_CONCURRENCY_LIMIT} reached; raise ACTION_CONCURRENCY_LIMIT"
                 )
             })
     }
@@ -267,7 +235,7 @@ impl AgentOsActor {
         let before = self.runtime.status().await;
         self.runtime.stop(reason).await?;
         if before.generation > 0 {
-            ctx.emit(RuntimeShutdown {
+            ctx.emit(VmShutdown {
                 generation: before.generation,
                 reason: reason.into(),
                 shutdown_at_ms: runtime::now_ms()?,
@@ -278,12 +246,49 @@ impl AgentOsActor {
 }
 
 pub fn registry() -> Registry {
+    registry_with_inspector_tabs(None)
+}
+
+pub fn registry_with_inspector_tabs(inspector_root: Option<PathBuf>) -> Registry {
     let mut registry = Registry::new();
+    let inspector_tabs = inspector_root.map_or_else(Vec::new, |root| {
+        vec![
+            inspector_tab("filesystem", "Filesystem", "folder-tree", &root),
+            inspector_tab("processes", "Processes", "list-tree", &root),
+            inspector_tab("terminal", "Terminal", "terminal", &root),
+            inspector_tab("system", "System", "layer-group", &root),
+            InspectorTabEntry::HideBuiltin {
+                id: String::from("workflow"),
+            },
+            InspectorTabEntry::HideBuiltin {
+                id: String::from("database"),
+            },
+            InspectorTabEntry::HideBuiltin {
+                id: String::from("state"),
+            },
+            InspectorTabEntry::HideBuiltin {
+                id: String::from("queue"),
+            },
+            InspectorTabEntry::HideBuiltin {
+                id: String::from("schedules"),
+            },
+            InspectorTabEntry::HideBuiltin {
+                id: String::from("connections"),
+            },
+            InspectorTabEntry::HideBuiltin {
+                id: String::from("console"),
+            },
+        ]
+    });
     registry.register_actor_with::<AgentOsActor>(
         ACTOR_NAME,
         ActorConfig {
+            // Language/process actions permit up to five minutes of guest work.
+            // Leave time for actor admission and response serialization.
+            action_timeout: Duration::from_secs(6 * 60),
             max_incoming_message_size: ACTOR_MESSAGE_SIZE_LIMIT,
             max_outgoing_message_size: ACTOR_MESSAGE_SIZE_LIMIT,
+            inspector_tabs,
             ..ActorConfig::default()
         },
     );
@@ -298,6 +303,15 @@ pub fn registry() -> Registry {
     registry
 }
 
+fn inspector_tab(id: &str, label: &str, icon: &str, root: &std::path::Path) -> InspectorTabEntry {
+    InspectorTabEntry::Custom {
+        id: id.to_owned(),
+        label: label.to_owned(),
+        icon: Some(icon.to_owned()),
+        root: root.to_owned(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use rivetkit::{ActionSet, EventSet};
@@ -307,105 +321,104 @@ mod tests {
     #[test]
     fn actor_name_and_initial_contract_are_fixed() {
         assert_eq!(ACTOR_NAME, "agentOS");
-        assert_eq!(
-            <<AgentOsActor as Actor>::Actions as ActionSet<AgentOsActor>>::entries()
-                .into_iter()
-                .map(|entry| entry.name)
-                .collect::<Vec<_>>(),
-            [
-                "config.get",
-                "config.set",
-                "runtime.status",
-                "runtime.restart",
-                "filesystem.readFile",
-                "filesystem.writeFile",
-                "filesystem.readFiles",
-                "filesystem.writeFiles",
-                "filesystem.stat",
-                "filesystem.mkdir",
-                "filesystem.readdir",
-                "filesystem.readdirEntries",
-                "filesystem.readdirRecursive",
-                "filesystem.exists",
-                "filesystem.move",
-                "filesystem.remove",
-                "filesystem.export",
-                "filesystem.listMounts",
-                "process.exec",
-                "process.execFile",
-                "process.spawn",
-                "process.get",
-                "process.list",
-                "process.tree",
-                "process.wait",
-                "process.signal",
-                "process.writeStdin",
-                "process.closeStdin",
-                "process.resizePty",
-                "process.readOutput",
-                "terminal.open",
-                "terminal.list",
-                "terminal.snapshot",
-                "terminal.write",
-                "terminal.resize",
-                "terminal.wait",
-                "terminal.close",
-                "contexts.create",
-                "contexts.get",
-                "contexts.list",
-                "contexts.reset",
-                "contexts.delete",
-                "javascript.execute",
-                "javascript.evaluate",
-                "javascript.executeFile",
-                "javascript.spawn",
-                "javascript.spawnFile",
-                "javascript.npm.install",
-                "javascript.npm.runScript",
-                "javascript.npm.runPackage",
-                "typescript.execute",
-                "typescript.evaluate",
-                "typescript.executeFile",
-                "typescript.spawn",
-                "typescript.spawnFile",
-                "typescript.check",
-                "typescript.checkProject",
-                "python.execute",
-                "python.evaluate",
-                "python.executeFile",
-                "python.executeModule",
-                "python.spawn",
-                "python.spawnFile",
-                "python.spawnModule",
-                "python.install",
-                "network.fetch",
-                "network.fetchStream.start",
-                "network.fetchStream.read",
-                "network.fetchStream.cancel",
-                "network.preview.create",
-                "network.preview.expire",
-                "cron.schedule",
-                "cron.list",
-                "cron.cancel",
-                "__agentos.cron.invoke",
-                "software.install",
-                "software.uninstall",
-                "software.list",
-            ]
-        );
+        let actions = <<AgentOsActor as Actor>::Actions as ActionSet<AgentOsActor>>::entries()
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect::<Vec<_>>();
+        let mut expected_actions = vec![
+            "config.get",
+            "config.set",
+            "config.patch",
+            "vm.status",
+            "vm.restart",
+            "filesystem.readFile",
+            "filesystem.writeFile",
+            "filesystem.readFiles",
+            "filesystem.writeFiles",
+            "filesystem.stat",
+            "filesystem.mkdir",
+            "filesystem.readdir",
+            "filesystem.readdirEntries",
+            "filesystem.readdirRecursive",
+            "filesystem.exists",
+            "filesystem.move",
+            "filesystem.remove",
+            "filesystem.export",
+            "filesystem.listMounts",
+            "process.run",
+            "process.spawn",
+            "process.get",
+            "process.list",
+            "process.tree",
+            "process.wait",
+            "process.signal",
+            "process.stdin.write",
+            "process.stdin.close",
+            "process.pty.resize",
+            "process.output.read",
+            "terminal.open",
+            "terminal.list",
+            "terminal.output.read",
+            "terminal.stdin.write",
+            "terminal.pty.resize",
+            "terminal.wait",
+            "terminal.close",
+            "contexts.create",
+            "contexts.get",
+            "contexts.list",
+            "contexts.reset",
+            "contexts.delete",
+            "javascript.execute",
+            "javascript.evaluate",
+            "javascript.executeFile",
+            "javascript.spawn",
+            "javascript.spawnFile",
+            "javascript.npm.install",
+            "javascript.npm.runScript",
+            "javascript.npm.runPackage",
+            "typescript.execute",
+            "typescript.evaluate",
+            "typescript.executeFile",
+            "typescript.spawn",
+            "typescript.spawnFile",
+            "typescript.check",
+            "typescript.checkProject",
+            "python.execute",
+            "python.evaluate",
+            "python.executeFile",
+            "python.executeModule",
+            "python.spawn",
+            "python.spawnFile",
+            "python.spawnModule",
+            "python.install",
+            "network.fetch",
+            "network.fetchStream.start",
+            "network.fetchStream.read",
+            "network.fetchStream.cancel",
+            "network.preview.create",
+            "network.preview.expire",
+            "cron.schedule",
+            "cron.list",
+            "cron.cancel",
+            "__agentos.cron.invoke",
+            "software.install",
+            "software.uninstall",
+            "software.list",
+        ];
+        expected_actions.sort_unstable();
+        assert_eq!(actions, expected_actions);
         assert_eq!(
             <AgentOsActor as Actor>::Events::entries()
                 .into_iter()
                 .map(|entry| entry.name)
                 .collect::<Vec<_>>(),
             [
-                "runtime.booted",
-                "runtime.shutdown",
-                "runtime.limitWarning",
+                "vm.booted",
+                "vm.shutdown",
+                "vm.limitWarning",
                 "process.output",
                 "process.exit",
-                "terminal.data",
-                "terminal.stderr",
+                "terminal.output",
                 "terminal.exit",
                 "cron.fired",
             ]

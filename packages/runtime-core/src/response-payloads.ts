@@ -99,6 +99,10 @@ export type LiveResponsePayload =
 			vm_id: string;
 	  }
 	| {
+			type: "vm_config_compared";
+			equivalent: boolean;
+	  }
+	| {
 			type: "vm_configured";
 			applied_mounts: number;
 			applied_software: number;
@@ -111,6 +115,38 @@ export type LiveResponsePayload =
 	| {
 			type: "package_unlinked";
 			removed_commands: string[];
+	  }
+	| {
+			type: "package_acquired";
+			package_id: string;
+			digest: string;
+			size: bigint;
+			package_name: string;
+			version: string;
+			commands: string[];
+	  }
+	| {
+			type: "package_installed";
+			package: Omit<
+				Extract<LiveResponsePayload, { type: "package_acquired" }>,
+				"type"
+			>;
+			projected_commands: LiveProjectedCommand[];
+	  }
+	| {
+			type: "package_cache_stats";
+			entries: bigint;
+			source_entries: bigint;
+			bytes: bigint;
+			pinned_entries: bigint;
+			pending_acquisitions: bigint;
+			hits: bigint;
+			misses: bigint;
+			coalesced_waiters: bigint;
+			acquisitions: bigint;
+			evictions: bigint;
+			capacity_failures: bigint;
+			cancelled_acquisitions: bigint;
 	  }
 	| {
 			type: "provided_commands_response";
@@ -282,6 +318,10 @@ export type LiveResponsePayload =
 			response: protocol.ExecutionOutputPageResponse;
 	  }
 	| {
+			type: "process_output_page";
+			response: protocol.ProcessOutputPageResponse;
+	  }
+	| {
 			type: "ext_result";
 			envelope: LiveExtEnvelope;
 	  };
@@ -305,6 +345,8 @@ export function fromGeneratedResponsePayload(
 			};
 		case "VmCreatedResponse":
 			return { type: "vm_created", vm_id: payload.val.vmId };
+		case "VmConfigComparedResponse":
+			return { type: "vm_config_compared", equivalent: payload.val.equivalent };
 		case "VmDisposedResponse":
 			return { type: "vm_disposed", vm_id: payload.val.vmId };
 		case "RootFilesystemBootstrappedResponse":
@@ -334,6 +376,48 @@ export function fromGeneratedResponsePayload(
 			return {
 				type: "package_unlinked",
 				removed_commands: [...payload.val.removedCommands],
+			};
+		case "PackageAcquiredResponse":
+			return {
+				type: "package_acquired",
+				package_id: payload.val.packageId,
+				digest: payload.val.digest,
+				size: payload.val.size,
+				package_name: payload.val.packageName,
+				version: payload.val.version,
+				commands: [...payload.val.commands],
+			};
+		case "PackageInstalledResponse":
+			return {
+				type: "package_installed",
+				package: {
+					package_id: payload.val.package.packageId,
+					digest: payload.val.package.digest,
+					size: payload.val.package.size,
+					package_name: payload.val.package.packageName,
+					version: payload.val.package.version,
+					commands: [...payload.val.package.commands],
+				},
+				projected_commands: payload.val.projectedCommands.map((command) => ({
+					name: command.name,
+					guest_path: command.guestPath,
+				})),
+			};
+		case "PackageCacheStatsResponse":
+			return {
+				type: "package_cache_stats",
+				entries: payload.val.entries,
+				source_entries: payload.val.sourceEntries,
+				bytes: payload.val.bytes,
+				pinned_entries: payload.val.pinnedEntries,
+				pending_acquisitions: payload.val.pendingAcquisitions,
+				hits: payload.val.hits,
+				misses: payload.val.misses,
+				coalesced_waiters: payload.val.coalescedWaiters,
+				acquisitions: payload.val.acquisitions,
+				evictions: payload.val.evictions,
+				capacity_failures: payload.val.capacityFailures,
+				cancelled_acquisitions: payload.val.cancelledAcquisitions,
 			};
 		case "ProvidedCommandsResponse":
 			return {
@@ -663,5 +747,7 @@ export function fromGeneratedResponsePayload(
 			return { type: "execution_io", response: payload.val };
 		case "ExecutionOutputPageResponse":
 			return { type: "execution_output_page", response: payload.val };
+		case "ProcessOutputPageResponse":
+			return { type: "process_output_page", response: payload.val };
 	}
 }

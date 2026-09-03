@@ -31,6 +31,78 @@ fn parse_runtime_config(
     Ok(config)
 }
 
+fn parse_sidecar_options(
+    args: impl Iterator<Item = String>,
+) -> Result<
+    (
+        agentos_runtime::RuntimeConfig,
+        Option<agentos_client::ProcessPackageCacheOptions>,
+    ),
+    String,
+> {
+    let mut runtime_args = Vec::new();
+    let mut cache = agentos_client::ProcessPackageCacheOptions::default();
+    let mut cache_configured = false;
+    let mut args = args.peekable();
+    while let Some(argument) = args.next() {
+        let (name, inline_value) = argument
+            .split_once('=')
+            .map_or((argument.as_str(), None), |(name, value)| {
+                (name, Some(value))
+            });
+        let value = match inline_value {
+            Some(value) => value.to_owned(),
+            None => args
+                .next()
+                .ok_or_else(|| format!("{name} requires a value"))?,
+        };
+        if name == "--max-active-vms" {
+            runtime_args.extend([name.to_owned(), value]);
+            continue;
+        }
+        cache_configured = true;
+        match name {
+            "--package-cache-dir" => {
+                if value.is_empty() {
+                    return Err("--package-cache-dir must not be empty".into());
+                }
+                cache.root = Some(std::path::PathBuf::from(value));
+            }
+            "--package-cache-min-free-bytes" => {
+                cache.min_free_bytes = parse_cache_min_free_bytes(name, &value)?;
+            }
+            "--package-cache-max-bytes" => {
+                cache.max_bytes = parse_positive_actor_option(name, &value)?;
+            }
+            "--package-cache-max-entries" => {
+                cache.max_entries = parse_positive_actor_option(name, &value)?;
+            }
+            "--package-cache-max-concurrent-acquisitions" => {
+                cache.max_concurrent_acquisitions = parse_positive_actor_option(name, &value)?;
+            }
+            "--package-cache-max-pending-acquisitions" => {
+                cache.max_pending_acquisitions = parse_positive_actor_option(name, &value)?;
+            }
+            "--package-cache-acquisition-timeout-ms" => {
+                cache.acquisition_timeout_ms = parse_positive_actor_option(name, &value)?;
+            }
+            "--package-cache-max-source-entries" => {
+                cache.max_source_entries = parse_positive_actor_option(name, &value)?;
+            }
+            "--package-cache-source-ttl-ms" => {
+                cache.source_ttl_ms = parse_positive_actor_option(name, &value)?;
+            }
+            _ => return Err(format!("unknown agentOS sidecar argument: {argument}")),
+        }
+    }
+    let runtime_config = parse_runtime_config(runtime_args.into_iter())?;
+    if cache_configured {
+        validate_actor_cache_directory(&cache)?;
+        cache.validate().map_err(|error| error.to_string())?;
+    }
+    Ok((runtime_config, cache_configured.then_some(cache)))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Entrypoint {
     Actor,
@@ -51,13 +123,22 @@ fn parse_entrypoint(args: &mut impl Iterator<Item = String>) -> Result<Entrypoin
 struct ActorProcessOptions {
     package_cache: agentos_client::ProcessPackageCacheOptions,
     preload: agentos_actor::PreloadProcessOptions,
+    inspector_tabs_dir: Option<std::path::PathBuf>,
 }
 
 fn parse_actor_options(
     mut args: impl Iterator<Item = String>,
 ) -> Result<ActorProcessOptions, String> {
     let mut package_cache = agentos_client::ProcessPackageCacheOptions::default();
+    // The default is an isolated process-lifetime cache. A shared fixed path
+    // would make a second worker on the same host fail the exclusive cache
+    // lock during startup. Operators opt into recovery with a distinct stable
+    // directory for each concurrently running actor worker.
+    package_cache.root =
+        std::env::var_os("AGENTOS_PACKAGE_CACHE_DIR").map(std::path::PathBuf::from);
     let mut preload = agentos_actor::PreloadProcessOptions::default();
+    let mut inspector_tabs_dir =
+        std::env::var_os("AGENTOS_INSPECTOR_TABS_DIR").map(std::path::PathBuf::from);
     while let Some(argument) = args.next() {
         let (name, inline_value) = argument
             .split_once('=')
@@ -68,9 +149,18 @@ fn parse_actor_options(
             Some(value) => value,
             None => args
                 .next()
-                .ok_or_else(|| format!("{name} requires a positive integer"))?,
+                .ok_or_else(|| format!("{name} requires a value"))?,
         };
         match name {
+            "--package-cache-dir" => {
+                if value.is_empty() {
+                    return Err(String::from("--package-cache-dir must not be empty"));
+                }
+                package_cache.root = Some(std::path::PathBuf::from(value));
+            }
+            "--package-cache-min-free-bytes" => {
+                package_cache.min_free_bytes = parse_cache_min_free_bytes(name, &value)?;
+            }
             "--package-cache-max-bytes" => {
                 package_cache.max_bytes = parse_positive_actor_option(name, &value)?;
             }
@@ -117,19 +207,43 @@ fn parse_actor_options(
             "--preload-action-timeout-ms" => {
                 preload.action_timeout_ms = parse_positive_actor_option(name, &value)?;
             }
+            "--inspector-tabs-dir" => {
+                if value.is_empty() {
+                    return Err(String::from("--inspector-tabs-dir must not be empty"));
+                }
+                inspector_tabs_dir = Some(std::path::PathBuf::from(value));
+            }
             _ => return Err(format!("unknown agentOS actor argument: {argument}")),
         }
     }
+    validate_actor_cache_directory(&package_cache)?;
     package_cache
         .validate()
         .map_err(|error| format!("invalid agentOS actor package cache configuration: {error}"))?;
     preload
         .validate()
         .map_err(|error| format!("invalid agentOS actor preload configuration: {error:#}"))?;
+    if let Some(path) = &inspector_tabs_dir {
+        if !path.is_dir() || !path.join("index.html").is_file() {
+            return Err(format!(
+                "agentOS inspector tabs directory must contain index.html: {}",
+                path.display()
+            ));
+        }
+    }
     Ok(ActorProcessOptions {
         package_cache,
         preload,
+        inspector_tabs_dir,
     })
+}
+
+fn parse_cache_min_free_bytes(name: &str, value: &str) -> Result<u64, String> {
+    // Zero intentionally disables the disk reserve; unlike queue/size caps it
+    // does not make acquisition unbounded (the max-byte cap still applies).
+    value
+        .parse()
+        .map_err(|_| format!("{name} requires a non-negative integer, received {value:?}"))
 }
 
 fn parse_positive_actor_option<T>(name: &str, value: &str) -> Result<T, String>
@@ -177,18 +291,96 @@ fn main() {
 }
 
 fn run_actor(args: impl Iterator<Item = String>) -> Result<(), String> {
-    let options = parse_actor_options(args)?;
-    agentos_client::configure_process_package_cache(options.package_cache)
-        .map_err(|error| format!("configure agentOS process package cache: {error}"))?;
-    agentos_actor::configure_process_preload(options.preload)
-        .map_err(|error| format!("configure agentOS process preload: {error:#}"))?;
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .map_err(|error| format!("build agentOS actor runtime: {error}"))?;
-    runtime
-        .block_on(agentos_actor::registry().start())
-        .map_err(|error| format!("run agentOS actor: {error:#}"))
+    let ActorProcessOptions {
+        mut package_cache,
+        preload,
+        inspector_tabs_dir,
+    } = parse_actor_options(args)?;
+    let temporary_cache = prepare_actor_cache_directory(&mut package_cache)?;
+    let mut child_shutdown_confirmed = true;
+    let result = (|| {
+        agentos_client::configure_shared_sidecar_package_cache(package_cache)
+            .map_err(|error| format!("configure agentOS sidecar package cache: {error}"))?;
+        agentos_actor::configure_process_preload(preload)
+            .map_err(|error| format!("configure agentOS process preload: {error:#}"))?;
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| format!("build agentOS actor runtime: {error}"))?;
+        let run_result = runtime
+            .block_on(agentos_actor::registry_with_inspector_tabs(inspector_tabs_dir).start())
+            .map_err(|error| format!("run agentOS actor: {error:#}"));
+        let shutdown_result = runtime
+            .block_on(agentos_actor::shutdown_process_preload())
+            .map_err(|error| format!("close agentOS package session: {error:#}"));
+        child_shutdown_confirmed = shutdown_result.is_ok();
+        match (run_result, shutdown_result) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+            (Err(run_error), Err(shutdown_error)) => Err(format!("{run_error}; {shutdown_error}")),
+        }
+    })();
+    // The runtime has drained and dropped before removing this worker's own
+    // temporary directory. Static cache state otherwise never drops its TempDir.
+    finish_actor_cache_directory(temporary_cache, result, child_shutdown_confirmed)
+}
+
+fn validate_actor_cache_directory(
+    options: &agentos_client::ProcessPackageCacheOptions,
+) -> Result<(), String> {
+    if options
+        .root
+        .as_ref()
+        .is_some_and(|path| path.as_os_str().is_empty())
+    {
+        return Err(String::from("AGENTOS_PACKAGE_CACHE_DIR or --package-cache-dir must not be empty; unset it to use an isolated temporary cache"));
+    }
+    Ok(())
+}
+
+fn prepare_actor_cache_directory(
+    options: &mut agentos_client::ProcessPackageCacheOptions,
+) -> Result<Option<tempfile::TempDir>, String> {
+    validate_actor_cache_directory(options)?;
+    if options.root.is_some() {
+        return Ok(None);
+    }
+    let directory = tempfile::Builder::new()
+        .prefix("agentos-actor-package-cache-")
+        .tempdir()
+        .map_err(|error| format!("create actor temporary package cache: {error}"))?;
+    options.root = Some(directory.path().to_path_buf());
+    Ok(Some(directory))
+}
+
+fn finish_actor_cache_directory(
+    directory: Option<tempfile::TempDir>,
+    result: Result<(), String>,
+    child_shutdown_confirmed: bool,
+) -> Result<(), String> {
+    if let Some(directory) = directory {
+        if !child_shutdown_confirmed {
+            let path = directory.keep();
+            tracing::error!(cache_path = %path.display(), "retaining actor temporary package cache because sidecar shutdown is unconfirmed; remove it only after stopping the worker");
+            return result.and(Err(format!(
+                "sidecar shutdown unconfirmed; package cache retained at {}",
+                path.display()
+            )));
+        }
+        let path = directory.path().to_path_buf();
+        if let Err(error) = directory.close() {
+            tracing::error!(%error, cache_path = %path.display(), "remove actor temporary package cache");
+            let cleanup = format!(
+                "remove actor temporary package cache {}: {error}",
+                path.display()
+            );
+            return Err(match result {
+                Ok(()) => cleanup,
+                Err(original) => format!("{original}; {cleanup}"),
+            });
+        }
+    }
+    result
 }
 
 fn run_sidecar(args: impl Iterator<Item = String>) -> Result<(), String> {
@@ -202,7 +394,11 @@ fn run_sidecar(args: impl Iterator<Item = String>) -> Result<(), String> {
             "missing inherited sidecar response/control descriptor: {error}"
         ));
     }
-    let runtime_config = parse_runtime_config(args)?;
+    let (runtime_config, package_cache) = parse_sidecar_options(args)?;
+    if let Some(package_cache) = package_cache {
+        agentos_client::configure_process_package_cache(package_cache)
+            .map_err(|error| format!("configure sidecar package cache: {error}"))?;
+    }
     // SAFETY: the process launch contract reserves fd 3 for the inherited
     // response/control socket and transfers its sole ownership to the sidecar.
     // The fcntl probe above establishes that the descriptor is open before it
@@ -214,7 +410,10 @@ fn run_sidecar(args: impl Iterator<Item = String>) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_actor_options, parse_entrypoint, parse_runtime_config, Entrypoint};
+    use super::{
+        finish_actor_cache_directory, parse_actor_options, parse_entrypoint, parse_runtime_config,
+        parse_sidecar_options, prepare_actor_cache_directory, Entrypoint,
+    };
 
     #[test]
     fn executable_entrypoints_are_fixed() {
@@ -247,9 +446,53 @@ mod tests {
     }
 
     #[test]
+    fn cache_minimum_disk_reserve_accepts_explicit_zero() {
+        let actor =
+            parse_actor_options([String::from("--package-cache-min-free-bytes=0")].into_iter())
+                .unwrap();
+        assert_eq!(actor.package_cache.min_free_bytes, 0);
+        let (_, cache) = super::parse_sidecar_options(
+            [String::from("--package-cache-min-free-bytes=0")].into_iter(),
+        )
+        .unwrap();
+        assert_eq!(cache.unwrap().min_free_bytes, 0);
+    }
+
+    #[test]
+    fn sidecar_accepts_worker_package_cache_settings() {
+        let (runtime, cache) = parse_sidecar_options(
+            [
+                String::from("--max-active-vms=7"),
+                String::from("--package-cache-dir=/tmp/agentos-child-cache-test"),
+                String::from("--package-cache-max-entries=4"),
+            ]
+            .into_iter(),
+        )
+        .expect("parse child sidecar options");
+        assert_eq!(runtime.max_active_vm_executors, Some(7));
+        let cache = cache.expect("package cache override");
+        assert_eq!(cache.max_entries, 4);
+        assert_eq!(
+            cache.root,
+            Some(std::path::PathBuf::from("/tmp/agentos-child-cache-test"))
+        );
+        assert!(
+            parse_sidecar_options([String::from("--package-cache-max-entries=0")].into_iter())
+                .is_err()
+        );
+    }
+
+    #[test]
     fn actor_package_cache_limits_are_startup_only_and_bounded() {
+        let default = parse_actor_options(std::iter::empty()).expect("parse actor defaults");
+        assert_eq!(
+            default.package_cache.root,
+            std::env::var_os("AGENTOS_PACKAGE_CACHE_DIR").map(std::path::PathBuf::from),
+            "without an operator override, each worker needs its own temporary cache"
+        );
         let options = parse_actor_options(
             [
+                String::from("--package-cache-dir=/tmp/agentos-test-worker-cache"),
                 String::from("--package-cache-max-bytes=1024"),
                 String::from("--package-cache-max-entries"),
                 String::from("4"),
@@ -270,6 +513,10 @@ mod tests {
             .into_iter(),
         )
         .expect("parse actor package cache limits");
+        assert_eq!(
+            options.package_cache.root,
+            Some(std::path::PathBuf::from("/tmp/agentos-test-worker-cache"))
+        );
         assert_eq!(options.package_cache.max_bytes, 1024);
         assert_eq!(options.package_cache.max_entries, 4);
         assert_eq!(options.package_cache.max_concurrent_acquisitions, 2);
@@ -297,5 +544,65 @@ mod tests {
             .into_iter()
         )
         .is_err());
+    }
+
+    #[test]
+    fn actor_temporary_cache_is_isolated_and_removed_after_success_or_failure() {
+        for result in [Ok(()), Err(String::from("actor startup failed"))] {
+            let mut options = agentos_client::ProcessPackageCacheOptions::default();
+            let directory = prepare_actor_cache_directory(&mut options).unwrap();
+            let path = options.root.unwrap();
+            assert!(path.is_dir());
+            std::fs::write(path.join("cached-package"), b"test package").unwrap();
+            assert_eq!(
+                finish_actor_cache_directory(directory, result.clone(), true),
+                result
+            );
+            assert!(!path.exists(), "temporary cache survived actor shutdown");
+        }
+    }
+
+    #[test]
+    fn actor_persistent_cache_is_preserved_and_empty_paths_are_rejected() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut options = agentos_client::ProcessPackageCacheOptions {
+            root: Some(directory.path().to_path_buf()),
+            ..Default::default()
+        };
+        let cleanup = prepare_actor_cache_directory(&mut options).unwrap();
+        assert!(cleanup.is_none());
+        finish_actor_cache_directory(cleanup, Ok(()), true).unwrap();
+        assert!(directory.path().is_dir());
+        options.root = Some(std::path::PathBuf::new());
+        assert!(prepare_actor_cache_directory(&mut options)
+            .unwrap_err()
+            .contains("must not be empty"));
+    }
+
+    #[test]
+    fn actor_temporary_cache_survives_unconfirmed_child_shutdown() {
+        let mut options = agentos_client::ProcessPackageCacheOptions::default();
+        let directory = prepare_actor_cache_directory(&mut options).unwrap();
+        let path = options.root.unwrap();
+        let failure = Err(String::from("child termination failed"));
+        assert_eq!(
+            finish_actor_cache_directory(directory, failure.clone(), false),
+            failure
+        );
+        assert!(path.is_dir());
+        // This test has no child; reclaim its isolated retained directory.
+        std::fs::remove_dir(&path).unwrap();
+    }
+
+    #[test]
+    fn actor_inspector_tabs_require_built_assets() {
+        let root = tempfile::tempdir().expect("temp inspector root");
+        let option = format!("--inspector-tabs-dir={}", root.path().display());
+        assert!(parse_actor_options([option.clone()].into_iter())
+            .expect_err("missing index must fail")
+            .contains("index.html"));
+        std::fs::write(root.path().join("index.html"), "<html></html>")
+            .expect("write tab entrypoint");
+        assert!(parse_actor_options([option].into_iter()).is_ok());
     }
 }

@@ -1,5 +1,6 @@
-import { agentOS, setup } from "@rivet-dev/agentos";
-import type { Permissions } from "@rivet-dev/agentos";
+import { createAgentOsClient, type Input } from "@rivet-dev/agentos";
+
+type Permissions = NonNullable<Input.AgentOsActorConfigInput["permissions"]>;
 
 // docs:start grant-network
 // Grant the network, leave everything else at the secure default.
@@ -19,30 +20,24 @@ const denyVault = {
 const allowOneHost = {
 	network: {
 		default: "deny",
-		rules: [{ mode: "allow", operations: ["*"], patterns: ["api.example.com"] }],
+		rules: [
+			{ mode: "allow", operations: ["*"], patterns: ["api.example.com"] },
+		],
 	},
 } satisfies Permissions;
 // docs:end allow-one-host
 
-// docs:start allow-one-binding
-// Deny all bindings by default, allow only the "add" binding by name.
-const allowOneBinding = {
-	binding: {
-		default: "deny",
-		rules: [{ mode: "allow", operations: ["*"], patterns: ["add"] }],
-	},
-} satisfies Permissions;
-// docs:end allow-one-binding
-
-// Combine the policies above and bind them to the VM via `agentOS`.
-const vm = agentOS({
-	permissions: {
-		...grantNetwork,
-		...denyVault,
-		...allowOneHost,
-		...allowOneBinding,
+const client = createAgentOsClient();
+export const vm = client.agentOS.getOrCreate(["examples", "permissions"], {
+	createWithInput: {
+		config: {
+			permissions: {
+				...grantNetwork,
+				...denyVault,
+				...allowOneHost,
+			},
+		},
 	},
 });
 
-export const registry = setup({ use: { vm } });
-registry.start();
+console.log(await vm.vm.status({}));

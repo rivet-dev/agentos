@@ -45,7 +45,7 @@ pub fn process_snapshot_entry_from_kernel(
         sid: info.sid,
         driver: info.driver.clone(),
         command: info.command.clone(),
-        args: Vec::new(),
+        args: info.args.clone(),
         cwd: cwd.into(),
         status: if exit_code.is_some() {
             SharedProcessSnapshotStatus::Exited
@@ -89,6 +89,7 @@ mod tests {
             sid: 42,
             driver: "javascript".to_owned(),
             command: "node".to_owned(),
+            args: vec!["node".to_owned(), "-e".to_owned(), "1 + 1".to_owned()],
             status,
             exit_code,
             identity: ProcessIdentity::default(),
@@ -127,7 +128,7 @@ mod tests {
         assert_eq!(entry.sid, 42);
         assert_eq!(entry.driver, "javascript");
         assert_eq!(entry.command, "node");
-        assert_eq!(entry.args, Vec::<String>::new());
+        assert_eq!(entry.args, vec!["node", "-e", "1 + 1"]);
         assert_eq!(entry.cwd, "/workspace");
         assert_eq!(entry.status, SharedProcessSnapshotStatus::Running);
         assert_eq!(entry.exit_code, None);

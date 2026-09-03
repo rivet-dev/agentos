@@ -1,23 +1,28 @@
-import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
+import { vm } from "./client.js";
 
-const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
-const agent = client.vm.getOrCreate("my-agent");
-const conn = agent.connect();
+const conn = vm.connect();
+await conn.ready;
 
 // Spawn an interactive shell process
-const { pid } = await agent.process.spawn("sh", []);
+const spawned = await conn.process.spawn({
+	command: "sh",
+	args: [],
+	options: { env: {} },
+});
 
 // Stream this process's output as it is produced
-conn.on("processOutput", (data) => {
-	if (data.pid !== pid) return;
-  const text = new TextDecoder().decode(data.data);
-  process.stdout.write(text);
+conn.on("process.output", (data) => {
+	if (data.process.pid !== spawned.pid) return;
+	const text = new TextDecoder().decode(data.data);
+	process.stdout.write(text);
 });
 
 // Drive it by writing commands to stdin
-await agent.process.writeStdin(pid, "ls -la /home/agentos\n");
+await conn.process.stdin.write({
+	process: spawned,
+	data: "ls -la /home/agentos\n",
+});
 
 // Close stdin to let the shell exit, then wait for it
-await agent.process.closeStdin(pid);
-await agent.process.wait(pid);
+await conn.process.stdin.close({ process: spawned });
+await conn.process.wait({ process: spawned });

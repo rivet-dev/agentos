@@ -115,7 +115,7 @@ export const WORKLOADS: Record<string, Workload> = {
 // ── VM creation helpers ─────────────────────────────────────────────
 
 /**
- * Create a fresh AgentOS VM with only coreutils (WASM shell + echo).
+ * Create a fresh agentOS VM with only coreutils (WASM shell + echo).
  * This is the minimal setup needed to run shell commands.
  */
 export async function createBenchVm(): Promise<AgentOs> {

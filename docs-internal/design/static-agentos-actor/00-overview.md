@@ -1,6 +1,6 @@
 # Static agentOS Actor Refactor
 
-**Status:** In progress
+**Status:** Implemented locally; production deployment smoke remains
 
 ## Outcome
 
@@ -669,45 +669,37 @@ generalization.
 - Cheap workspace checks pass after each PR; targeted runtime and integration
   tests are added with the layer that introduces the behavior.
 
-## Questions that must be resolved before implementation reaches the named layer
+## Resolved MVP decisions
 
-1. **Uninstall semantics:** decide whether uninstalling an absent exact package
-   id is idempotent or returns not found.
-2. **Package replacement:** define whether installing a different digest with
-   the same manifest name/version replaces, coexists, or returns a collision.
-3. **Private URLs:** stable public HTTPS URLs work for the initial design.
-   Expiring signed URLs and renewable registry authentication need a later
-   durable identity that does not persist secrets in actor config.
-4. **Artifact signing:** decide whether digest plus HTTPS/object-store integrity is
-   enough for the first release or whether upload manifests must also be signed
-   before the production package registry exists.
-5. **Package format:** agent fields currently exist in package metadata. Removal
-   should use a new format version if the packed layout changes; published v1
-   format documentation must not be silently rewritten.
-6. **Preload source:** what seeds a new coordinator before it has observations?
-    Options are an operator-configured baseline, image-baked packages, recent
-    package usage, or a combination.
-7. **Preload ranking:** define the bounded hot-set algorithm and decay period.
-    A count-min sketch is unnecessary at the expected frequency; a small
-    recency-weighted exact map with deterministic eviction is easier to operate.
-8. **Filesystem descriptors:** enumerate the filesystem kinds compiled into the
-   hosted registry and the serializable config accepted by each one. Unknown ids
-   and every host filesystem descriptor are rejected.
-9. **Event naming:** confirm the move from legacy camel-case events to dotted
-    names. There is no compatibility requirement, so aligning actions and events
-    now is preferable.
-10. **Binary transport:** select one byte representation for actions and events.
-    Base64 is universally serializable but costly; native byte support is better
-    if the Rust and TypeScript RivetKit paths guarantee it.
-11. **Actor action limits:** define per-action byte, item, stream, terminal,
-    process, and concurrency defaults independently of the RivetKit type-level
-    action-count limit.
-12. **Remaining adapters:** identify Eve, Flue, Gigacode, and other consumers
-    that need sandbox-only migrations versus complete removal after the
-    agent/session API disappears.
-13. **agentOS bindgen schema:** the prototype must choose a product-local
-    representation for positional arguments, bytes, integers, tagged enums,
-    errors, and dotted names. It does not need to be a generic RivetKit API.
+1. **Uninstall semantics:** uninstalling an absent exact package id returns the
+   typed `software_not_found` error.
+2. **Package replacement:** reinstalling the same digest is idempotent. A
+   different package that collides on a projected package or command name is
+   rejected rather than replacing existing content implicitly.
+3. **Private URLs:** durable config accepts stable HTTPS URLs. Expiring URLs and
+   renewable registry authentication remain follow-up registry work.
+4. **Artifact signing:** the MVP relies on HTTPS plus the expected SHA-256 digest.
+   Signed release manifests remain follow-up work.
+5. **Package format:** runtime packages use `.aospkg` v2 without agent metadata;
+   v1 support and documentation were deleted with no compatibility path.
+6. **Preload source:** an operator baseline and the bounded observed hot set are
+   combined. Either source is advisory and may be stale.
+7. **Preload ranking:** the coordinator uses a bounded recency-weighted exact map
+   with deterministic eviction, not a probabilistic sketch.
+8. **Filesystem descriptors:** the hosted whitelist contains `default` and
+   `durable` roots plus `durable` mounts. Unknown backends and every
+   host path are rejected during config normalization.
+9. **Event naming:** public events use dotted names.
+10. **Binary transport:** RivetKit CBOR carries byte strings as `Uint8Array`;
+    generated outputs permit `number | bigint` for 64-bit values.
+11. **Actor action limits:** every action family has its own bounded byte, item,
+    concurrency, replay, stream, process, or terminal policy. These limits are
+    independent of RivetKit's type-level action-count limit.
+12. **Remaining adapters:** Eve and Flue use the generated sandbox-only client;
+    Gigacode and the stale agent/session harnesses were removed.
+13. **agentOS bindgen schema:** the prototype is product-local, exports the Rust
+    action/event registry, and generates dotted nested TypeScript actions. A
+    generic RivetKit bindgen remains optional follow-up work.
 
 ## Primary concerns
 

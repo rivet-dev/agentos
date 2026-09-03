@@ -1,7 +1,7 @@
 import { AgentOs, type Permissions } from "@rivet-dev/agentos-core";
 
-// The kernel permission policy is the same object the actor takes. Pass it to
-// AgentOs.create() instead of agentOS().
+// Embedded Core accepts the same kernel permission tree as the hosted actor,
+// plus policies for embedded-only host bindings and mounts.
 const permissions = {
 	network: {
 		default: "deny",

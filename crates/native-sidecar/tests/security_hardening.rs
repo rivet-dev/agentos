@@ -383,6 +383,7 @@ fn vm_resource_limits_cap_active_processes_without_poisoning_followup_execs() {
                 env: HashMap::new(),
                 cwd: None,
                 wasm_permission_tier: None,
+                retain_output: false,
             }),
         ))
         .expect("dispatch second execute");
@@ -456,6 +457,7 @@ fn execute_rejects_cwd_outside_vm_sandbox_root() {
                 env: HashMap::new(),
                 cwd: Some(String::from("/")),
                 wasm_permission_tier: None,
+                retain_output: false,
             }),
         ))
         .expect("dispatch execute request");
@@ -529,6 +531,7 @@ fn execute_rejects_host_only_absolute_command_path() {
                 env: HashMap::new(),
                 cwd: None,
                 wasm_permission_tier: None,
+                retain_output: false,
             }),
         ))
         .expect("dispatch host-only command execute");
@@ -598,6 +601,7 @@ fn execute_ignores_host_node_binary_override_for_javascript_runtime() {
                 env: HashMap::new(),
                 cwd: Some(nested_cwd.to_string_lossy().into_owned()),
                 wasm_permission_tier: None,
+                retain_output: false,
             }),
         ))
         .expect("dispatch execute request");

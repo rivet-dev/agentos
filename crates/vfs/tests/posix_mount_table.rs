@@ -602,6 +602,80 @@ fn mount_table_shuts_down_boxed_filesystem_when_mount_point_creation_fails() {
 }
 
 #[test]
+fn detached_mount_shutdown_follows_ownership_and_restore() {
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let mut table = MountTable::new(MemoryFileSystem::new());
+    table
+        .mount_boxed(
+            "/data",
+            Box::new(ShutdownTrackingFileSystem::new(shutdown.clone())),
+            MountOptions::new("tracking"),
+        )
+        .unwrap();
+    let detached = table.detach("/data").unwrap();
+    assert!(!shutdown.load(Ordering::SeqCst));
+    table.restore_detached(detached).unwrap();
+    assert!(
+        !shutdown.load(Ordering::SeqCst),
+        "restoration must transfer ownership without shutdown"
+    );
+    let detached = table.detach("/data").unwrap();
+    drop(detached);
+    assert!(
+        shutdown.load(Ordering::SeqCst),
+        "abandoned detached backend must shut down"
+    );
+}
+
+#[test]
+fn rejected_mount_and_restore_shut_down_the_unpublished_backend() {
+    let mut table = MountTable::new(MemoryFileSystem::new());
+    table
+        .mount(
+            "/data",
+            MemoryFileSystem::new(),
+            MountOptions::new("existing"),
+        )
+        .unwrap();
+    for path in ["/", "/data"] {
+        let shutdown = Arc::new(AtomicBool::new(false));
+        assert!(table
+            .mount_boxed(
+                path,
+                Box::new(ShutdownTrackingFileSystem::new(shutdown.clone())),
+                MountOptions::new("rejected")
+            )
+            .is_err());
+        assert!(shutdown.load(Ordering::SeqCst));
+    }
+    let shutdown = Arc::new(AtomicBool::new(false));
+    table
+        .mount_boxed(
+            "/old",
+            Box::new(ShutdownTrackingFileSystem::new(shutdown.clone())),
+            MountOptions::new("old"),
+        )
+        .unwrap();
+    let detached = table.detach("/old").unwrap();
+    table
+        .mount(
+            "/old",
+            MemoryFileSystem::new(),
+            MountOptions::new("replacement"),
+        )
+        .unwrap();
+    assert_eq!(
+        table.restore_detached(detached).unwrap_err().code(),
+        "EEXIST"
+    );
+    assert!(shutdown.load(Ordering::SeqCst));
+    assert!(table
+        .get_mounts()
+        .iter()
+        .any(|mount| mount.path == "/old" && mount.plugin_id == "replacement"));
+}
+
+#[test]
 fn mount_table_unmount_rejects_parent_mounts_with_children() {
     let mut table = MountTable::new(MemoryFileSystem::new());
     table

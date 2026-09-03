@@ -7,7 +7,7 @@ skill: true
 agentOS runs JavaScript and TypeScript on native V8 inside the VM, backed by a
 real Node.js surface: `node:fs`, `node:child_process`, sockets, and npm.
 
-Letting an agent write code instead of chaining one tool call per step is called
+Running a multi-step operation as code instead of chaining one host call per step is called
 [Code Mode](https://blog.cloudflare.com/code-mode/). It has a few advantages over
 driving [Bash](/agentos/docs/bash):
 
@@ -62,8 +62,8 @@ the VM is disposed; create them lazily on the first stateful use after wake.
 
 ## Type check before running
 
-Executing TypeScript transpiles it without a semantic check, so validate the
-agent's generated code explicitly.
+Executing TypeScript transpiles it without a semantic check, so validate
+generated code explicitly.
 
 <CodeSnippet file="examples/js-typescript/src/index.ts" />
 
@@ -87,8 +87,8 @@ Spawned processes always start with fresh state, so they take no `contextId`.
 ## A full Linux environment underneath
 
 There is a real Linux environment behind all of this, shared by every language.
-Files and installed packages are immediately visible to Bash, Python, agents, and
-other executions.
+Files and installed packages are immediately visible to Bash, Python, and other
+executions.
 
 <CodeSnippet file="examples/js-sdk-overview/src/platform.ts" />
 

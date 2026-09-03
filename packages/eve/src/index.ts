@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
 import { isAbsolute, posix } from "node:path";
+import {
+	createAgentOsClient,
+	type AgentOsActorCreateInput,
+	type AgentOsActorConnection as GeneratedAgentOsActorConnection,
+	type AgentOsClient,
+	type Output,
+} from "@rivet-dev/agentos";
 import type { AgentOs } from "@rivet-dev/agentos-core";
 import type {
 	SandboxBackend,
@@ -17,6 +24,8 @@ const PROCESS_STOP_TIMEOUT_MS = 5_000;
 const WORKSPACE_ROOT = "/workspace";
 const AGENTOS_HOME = "/home/agentos";
 const METADATA_VERSION = 1;
+
+type AgentOsClientConfig = Parameters<typeof createAgentOsClient>[0];
 
 interface AgentOSActorConnection {
 	readonly ready: PromiseLike<void>;
@@ -38,30 +47,13 @@ interface AgentOSActorConnection {
 	remove(path: string, options: { recursive?: boolean }): Promise<void>;
 }
 
-interface AgentOSActorAccessor {
-	getOrCreate(key: string[]): { connect(): AgentOSActorConnection };
-}
-
-type AgentOSActorClient = Record<string, AgentOSActorAccessor | undefined>;
-
-export interface AgentOSRegistry {
-	startAndWait(): Promise<void>;
-	parseConfig(): {
-		endpoint?: string;
-		namespace: string;
-		token?: string;
-		headers?: Record<string, string>;
-		envoy: { poolName: string };
-	};
-}
-
 export interface AgentOSBackendOptions {
-	/** Registry key of an actor created with `agentOS()`. */
-	actor: string;
-	/** Application registry containing the selected agentOS actor. */
-	registry: AgentOSRegistry;
-	/** Advanced: an existing client for the same registry. */
-	client?: object;
+	/** Creation input used only when the actor does not already exist. */
+	createInput?: AgentOsActorCreateInput;
+	/** RivetKit client configuration for the deployed agentOS actor. */
+	clientConfig?: AgentOsClientConfig;
+	/** Advanced: an existing generated agentOS client. */
+	client?: AgentOsClient;
 }
 
 export interface AgentOSCoreCreateInput {
@@ -77,11 +69,7 @@ export interface AgentOSCoreBackendOptions {
 export class AgentOSActorConfigurationError extends Error {
 	readonly code = "agentos_actor_configuration";
 
-	constructor(
-		readonly actor: string,
-		message: string,
-		options?: ErrorOptions,
-	) {
+	constructor(message: string, options?: ErrorOptions) {
 		super(message, options);
 		this.name = "AgentOSActorConfigurationError";
 	}
@@ -99,22 +87,16 @@ export class AgentOSTemplateUnsupportedError extends Error {
 }
 
 /**
- * Uses an existing `agentOS()` actor as Eve's sandbox. The actor owns its VM,
- * filesystem configuration, mounts, persistence, limits, and permissions.
+ * Uses the deployed Rust agentOS actor as Eve's VM. The actor owns its VM,
+ * filesystem configuration, persistence, limits, and permissions.
  */
-export function agentOSBackend(options: AgentOSBackendOptions): SandboxBackend {
-	if (!options || typeof options.actor !== "string" || !options.actor.trim()) {
-		throw new TypeError("agentOSBackend requires the registry actor name");
-	}
-	if (
-		!options.registry ||
-		typeof options.registry.startAndWait !== "function" ||
-		typeof options.registry.parseConfig !== "function"
-	) {
-		throw new TypeError("agentOSBackend requires the application registry");
-	}
-	const actor = options.actor.trim();
+export function agentOSBackend(
+	options: AgentOSBackendOptions = {},
+): SandboxBackend {
 	const handles = new Map<string, Promise<SandboxBackendHandle>>();
+	let client = options.client;
+	const getClient = () =>
+		(client ??= createAgentOsClient(options.clientConfig));
 
 	return {
 		name: ACTOR_BACKEND_NAME,
@@ -126,15 +108,16 @@ export function agentOSBackend(options: AgentOSBackendOptions): SandboxBackend {
 			if (input.templateKey !== null) {
 				throw new AgentOSTemplateUnsupportedError(input.templateKey);
 			}
-			validateActorMetadata(input, actor);
+			validateActorMetadata(input);
 			const key = actorKey(input.sessionKey);
 			return cachedHandle({
 				backendName: ACTOR_BACKEND_NAME,
 				cacheKey: key.join("\0"),
-				connect: () => connectActor(options, actor, key),
+				connect: () => connectActor(getClient(), key, options.createInput),
 				handles,
-				metadata: { version: METADATA_VERSION, actor, key },
-				networkPolicyOwner: `actor ${JSON.stringify(actor)}; configure permissions on agentOS({...})`,
+				metadata: { version: METADATA_VERSION, key },
+				networkPolicyOwner:
+					"the deployed agentOS actor; configure permissions in its creation config",
 				sessionKey: input.sessionKey,
 			});
 		},
@@ -181,95 +164,112 @@ function actorKey(sessionKey: string): string[] {
 	return ["eve", "session", stableId(sessionKey)];
 }
 
-const registryClients = new WeakMap<object, Promise<AgentOSActorClient>>();
-
-async function actorClient(
-	options: AgentOSBackendOptions,
-): Promise<AgentOSActorClient> {
-	await options.registry.startAndWait();
-	if (options.client) return options.client as AgentOSActorClient;
-
-	const registryKey = options.registry as object;
-	let pending = registryClients.get(registryKey);
-	if (!pending) {
-		pending = (async () => {
-			const config = options.registry.parseConfig();
-			const { createClient } = await import("@rivet-dev/agentos/client");
-			return createClient<never>({
-				endpoint: config.endpoint,
-				namespace: config.namespace,
-				poolName: config.envoy.poolName,
-				token: config.token,
-				headers: config.headers,
-				disableMetadataLookup: true,
-			} as never) as unknown as AgentOSActorClient;
-		})().catch((error) => {
-			registryClients.delete(registryKey);
-			throw error;
-		});
-		registryClients.set(registryKey, pending);
-	}
-	return pending;
-}
-
 async function connectActor(
-	options: AgentOSBackendOptions,
-	actor: string,
+	client: AgentOsClient,
 	key: string[],
+	createInput: AgentOsActorCreateInput | undefined,
 ): Promise<AgentOSActorConnection> {
 	try {
-		const accessor = (await actorClient(options))[actor];
-		if (!accessor || typeof accessor.getOrCreate !== "function") {
-			throw new Error(`registry has no actor named ${JSON.stringify(actor)}`);
-		}
-		const connection = accessor.getOrCreate(key).connect();
+		const handle = client.agentOS.getOrCreate(key, {
+			createWithInput: createInput,
+		});
+		const connection = handle.connect();
 		await connection.ready;
-		const methods = connection as unknown as Record<string, unknown>;
-		for (const method of [
-			"on",
-			"dispose",
-			"spawn",
-			"waitProcess",
-			"killProcess",
-			"readFile",
-			"writeFile",
-			"exists",
-			"mkdir",
-			"remove",
-		]) {
-			if (typeof methods[method] !== "function") {
-				await connection.dispose();
-				throw new Error("selected actor is not an @rivet-dev/agentos actor");
-			}
-		}
-		return connection;
+		return actorConnection(connection);
 	} catch (cause) {
 		if (cause instanceof AgentOSActorConfigurationError) throw cause;
 		throw new AgentOSActorConfigurationError(
-			actor,
-			`agentOS actor ${JSON.stringify(actor)} could not be used; register an agentOS() actor under that exact setup({ use }) key: ${cause instanceof Error ? cause.message : String(cause)}`,
+			`the deployed agentOS actor could not be used: ${cause instanceof Error ? cause.message : String(cause)}`,
 			{ cause },
 		);
 	}
 }
 
-function validateActorMetadata(
-	input: SandboxBackendCreateInput,
-	actor: string,
-): void {
+function actorConnection(
+	handle: GeneratedAgentOsActorConnection,
+): AgentOSActorConnection {
+	const processes = new Map<number, Output.ActorProcessId>();
+
+	function processId(pid: number): { generation: number; pid: number } {
+		const process = processes.get(pid);
+		if (!process) throw new Error(`agentOS process ${pid} is not tracked`);
+		const generation = Number(process.generation);
+		if (!Number.isSafeInteger(generation)) {
+			throw new RangeError(
+				"agentOS process generation exceeds JavaScript's safe integer range",
+			);
+		}
+		return { generation, pid: process.pid };
+	}
+
+	return {
+		ready: handle.ready,
+		on(event, listener) {
+			if (event !== "processOutput") {
+				throw new Error(`unsupported agentOS actor event: ${event}`);
+			}
+			return handle.on("process.output", (payload) =>
+				listener({
+					pid: payload.process.pid,
+					stream: payload.stream,
+					data: payload.data,
+				}),
+			);
+		},
+		dispose: () => handle.dispose(),
+		async spawn(command, args, options) {
+			const process = await handle.process.spawn({
+				command,
+				args,
+				options: {
+					cwd: options.cwd,
+					env: options.env ?? {},
+				},
+			});
+			processes.set(process.pid, process);
+			return { pid: process.pid };
+		},
+		async waitProcess(pid) {
+			const exit = await handle.process.wait({ process: processId(pid) });
+			processes.delete(pid);
+			return exit.status.exitCode;
+		},
+		async killProcess(pid) {
+			await handle.process.signal({
+				process: processId(pid),
+				signal: "SIGKILL",
+			});
+		},
+		async readFile(path) {
+			return handle.filesystem.readFile({ path });
+		},
+		async writeFile(path, content) {
+			await handle.filesystem.writeFile({ path, content });
+		},
+		exists: (path) => handle.filesystem.exists({ path }),
+		async mkdir(path, options) {
+			await handle.filesystem.mkdir({ path, recursive: options.recursive });
+		},
+		async remove(path, options) {
+			await handle.filesystem.remove({
+				path,
+				recursive: options.recursive ?? false,
+			});
+		},
+	};
+}
+
+function validateActorMetadata(input: SandboxBackendCreateInput): void {
 	if (input.existingMetadata === undefined) return;
 	const expectedKey = actorKey(input.sessionKey);
 	const metadata = input.existingMetadata;
 	if (
 		metadata.version !== METADATA_VERSION ||
-		metadata.actor !== actor ||
 		!Array.isArray(metadata.key) ||
 		metadata.key.length !== expectedKey.length ||
 		metadata.key.some((value, index) => value !== expectedKey[index])
 	) {
-		throw new Error(
-			`corrupt or incompatible agentOS actor reconnect metadata for ${JSON.stringify(actor)}`,
-		);
+		throw new Error("corrupt or incompatible agentOS actor reconnect metadata");
 	}
 }
 

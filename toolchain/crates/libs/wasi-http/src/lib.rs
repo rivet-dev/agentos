@@ -514,10 +514,7 @@ impl HttpClient {
     /// `bytes_stream`, which codex's `transport.rs` SSE-parses) receive the
     /// unmodified body. Transfer-Encoding/Content-Length are de-framed; the reader
     /// owns the socket and closes it on drop.
-    pub fn send_raw_stream(
-        &self,
-        req: &Request,
-    ) -> Result<(Response, RawBodyReader), HttpError> {
+    pub fn send_raw_stream(&self, req: &Request) -> Result<(Response, RawBodyReader), HttpError> {
         let request_bytes = req.to_bytes()?;
         let fd = self.connect(&req.url)?;
         if let Err(error) = send_all(fd, &request_bytes) {
@@ -584,7 +581,7 @@ impl HttpClient {
         // non-zero recv timeout the host polls briefly then returns EAGAIN
         // (surfaced as `RecvOutcome::WouldBlock`) instead of monopolizing the
         // single guest thread while a body is in flight. The async layers
-        // (reqwest-shim) yield on WouldBlock so other runtime tasks make
+        // HTTP clients yield on WouldBlock so other runtime tasks make
         // progress. Best-effort: if the host rejects the option we fall back to
         // the previous blocking behavior rather than failing the request.
         let _ = wasi_ext::set_recv_timeout_ms(fd, HTTP_RECV_TIMEOUT_MS);
@@ -671,8 +668,8 @@ impl RawBodyReader {
                         let size_str = std::str::from_utf8(&self.buf[..pos]).map_err(|e| {
                             HttpError::Protocol(format!("invalid chunk size: {}", e))
                         })?;
-                        let chunk_size = usize::from_str_radix(size_str.trim(), 16)
-                            .map_err(|e| {
+                        let chunk_size =
+                            usize::from_str_radix(size_str.trim(), 16).map_err(|e| {
                                 HttpError::Protocol(format!("invalid chunk size: {}", e))
                             })?;
                         self.buf.drain(..pos + 2); // skip size line + CRLF

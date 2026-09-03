@@ -32,6 +32,7 @@ pub const MAX_PERSISTED_MANIFEST_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_PERSISTED_MANIFEST_FILE_BYTES: u64 = 1024 * 1024 * 1024;
 
 pub const DEFAULT_SQLITE_MAX_RESULT_BYTES: usize = 128 * 1024 * 1024;
+pub const DEFAULT_AGENTOS_PACKAGE_MAX_MOUNTS: usize = 4096;
 
 pub const DEFAULT_JS_CAPTURED_OUTPUT_LIMIT_BYTES: usize = 16 * 1024 * 1024;
 pub const DEFAULT_JS_STDIN_BUFFER_LIMIT_BYTES: usize = 16 * 1024 * 1024;
@@ -60,6 +61,11 @@ pub const DEFAULT_PROCESS_MAX_SPAWN_FILE_ACTIONS: usize = 4096;
 pub const DEFAULT_PROCESS_MAX_SPAWN_FILE_ACTION_BYTES: usize = 1024 * 1024;
 pub const DEFAULT_PROCESS_PENDING_EVENT_COUNT: usize = 10_000;
 pub const DEFAULT_PROCESS_PENDING_EVENT_BYTES: usize = 64 * 1024 * 1024;
+pub const DEFAULT_PROCESS_OUTPUT_REPLAY_EVENTS: usize = 1_024;
+pub const DEFAULT_PROCESS_OUTPUT_REPLAY_BYTES: usize = 1024 * 1024;
+pub const DEFAULT_PROCESS_OUTPUT_REPLAY_PAGE_EVENTS: usize = 256;
+pub const DEFAULT_PROCESS_OUTPUT_REPLAY_PAGE_BYTES: usize = 768 * 1024;
+pub const DEFAULT_PROCESS_MAX_OUTPUT_REPLAYS: usize = 1_024;
 pub const DEFAULT_EXECUTION_COMPLETED_TTL_MS: u64 = 5 * 60 * 1000;
 pub const DEFAULT_EXECUTION_MAX_COMPLETED_EXECUTIONS: usize = 1_024;
 pub const DEFAULT_EXECUTION_LIVE_WARNING_THRESHOLD: usize = 64;
@@ -120,6 +126,20 @@ pub struct VmLimits {
     pub wasm: WasmLimits,
     pub execution: ExecutionLimits,
     pub process: ProcessLimits,
+    pub agentos_packages: AgentOsPackageLimits,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentOsPackageLimits {
+    pub max_mounts: usize,
+}
+
+impl Default for AgentOsPackageLimits {
+    fn default() -> Self {
+        Self {
+            max_mounts: DEFAULT_AGENTOS_PACKAGE_MAX_MOUNTS,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -323,6 +343,16 @@ pub struct ProcessLimits {
     pub pending_event_count: usize,
     /// Maximum aggregate payload bytes retained at each process-event stage.
     pub pending_event_bytes: usize,
+    /// Maximum retained output events for one ordinary process or terminal.
+    pub output_replay_events: usize,
+    /// Maximum retained output bytes for one ordinary process or terminal.
+    pub output_replay_bytes: usize,
+    /// Maximum events returned by one ordinary-process replay request.
+    pub output_replay_page_events: usize,
+    /// Maximum bytes returned by one ordinary-process replay request.
+    pub output_replay_page_bytes: usize,
+    /// Maximum ordinary process/terminal replay buffers retained by one VM.
+    pub max_output_replays: usize,
 }
 
 impl Default for HttpLimits {
@@ -450,6 +480,11 @@ impl Default for ProcessLimits {
             pending_stdin_bytes: DEFAULT_PROCESS_PENDING_STDIN_BYTES,
             pending_event_count: DEFAULT_PROCESS_PENDING_EVENT_COUNT,
             pending_event_bytes: DEFAULT_PROCESS_PENDING_EVENT_BYTES,
+            output_replay_events: DEFAULT_PROCESS_OUTPUT_REPLAY_EVENTS,
+            output_replay_bytes: DEFAULT_PROCESS_OUTPUT_REPLAY_BYTES,
+            output_replay_page_events: DEFAULT_PROCESS_OUTPUT_REPLAY_PAGE_EVENTS,
+            output_replay_page_bytes: DEFAULT_PROCESS_OUTPUT_REPLAY_PAGE_BYTES,
+            max_output_replays: DEFAULT_PROCESS_MAX_OUTPUT_REPLAYS,
         }
     }
 }
@@ -470,6 +505,13 @@ pub fn vm_limits_from_config(
 
     if let Some(resources) = config.resources.as_ref() {
         apply_resource_limits_config(&mut limits.resources, resources)?;
+    }
+    if let Some(packages) = config.agentos_packages.as_ref() {
+        set_usize(
+            &mut limits.agentos_packages.max_mounts,
+            packages.max_mounts,
+            "limits.agentosPackages.maxMounts",
+        )?;
     }
     if let Some(http) = config.http.as_ref() {
         set_usize(
@@ -690,6 +732,31 @@ pub fn vm_limits_from_config(
             &mut limits.process.pending_event_bytes,
             process.pending_event_bytes,
             "limits.process.pendingEventBytes",
+        )?;
+        set_usize(
+            &mut limits.process.output_replay_events,
+            process.output_replay_events,
+            "limits.process.outputReplayEvents",
+        )?;
+        set_usize(
+            &mut limits.process.output_replay_bytes,
+            process.output_replay_bytes,
+            "limits.process.outputReplayBytes",
+        )?;
+        set_usize(
+            &mut limits.process.output_replay_page_events,
+            process.output_replay_page_events,
+            "limits.process.outputReplayPageEvents",
+        )?;
+        set_usize(
+            &mut limits.process.output_replay_page_bytes,
+            process.output_replay_page_bytes,
+            "limits.process.outputReplayPageBytes",
+        )?;
+        set_usize(
+            &mut limits.process.max_output_replays,
+            process.max_output_replays,
+            "limits.process.maxOutputReplays",
         )?;
     }
 
@@ -1068,6 +1135,11 @@ pub fn validate_vm_limits(
     limits: &VmLimits,
     sidecar_max_frame_bytes: usize,
 ) -> Result<(), SidecarCoreError> {
+    if limits.agentos_packages.max_mounts == 0 {
+        return Err(SidecarCoreError::new(
+            "limits.agentosPackages.maxMounts must be greater than zero",
+        ));
+    }
     for (path, value) in [
         (
             "limits.execution.completedTtlMs",
@@ -1449,6 +1521,26 @@ pub fn validate_vm_limits(
             "limits.process.pending_event_bytes",
             limits.process.pending_event_bytes,
         ),
+        (
+            "limits.process.output_replay_events",
+            limits.process.output_replay_events,
+        ),
+        (
+            "limits.process.output_replay_bytes",
+            limits.process.output_replay_bytes,
+        ),
+        (
+            "limits.process.output_replay_page_events",
+            limits.process.output_replay_page_events,
+        ),
+        (
+            "limits.process.output_replay_page_bytes",
+            limits.process.output_replay_page_bytes,
+        ),
+        (
+            "limits.process.max_output_replays",
+            limits.process.max_output_replays,
+        ),
     ];
     for (key, value) in nonzero_usize {
         if value == 0 {
@@ -1457,6 +1549,18 @@ pub fn validate_vm_limits(
             )));
         }
     }
+    validate_parent_limit(
+        "limits.process.outputReplayPageEvents",
+        limits.process.output_replay_page_events,
+        "limits.process.outputReplayEvents",
+        limits.process.output_replay_events,
+    )?;
+    validate_parent_limit(
+        "limits.process.outputReplayPageBytes",
+        limits.process.output_replay_page_bytes,
+        "limits.process.outputReplayBytes",
+        limits.process.output_replay_bytes,
+    )?;
 
     if limits.wasm.sync_read_limit_bytes == 0 {
         return Err(SidecarCoreError::new(

@@ -21,6 +21,83 @@ use vfs::engine::types::{
 };
 use vfs::engine::CachedMetadataStore;
 
+#[cfg(test)]
+mod persistence_tests {
+    use super::*;
+
+    #[test]
+    fn metadata_and_blocks_survive_local_database_reopen() {
+        let runtime =
+            agentos_runtime::SidecarRuntime::process(&agentos_runtime::RuntimeConfig::default())
+                .unwrap();
+        runtime.block_on(async {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("state.sqlite");
+            let database = crate::vm_sqlite::open_local_vm_sqlite(
+                path.clone(),
+                runtime.context(),
+                128 * 1024 * 1024,
+            )
+            .await
+            .unwrap();
+            bootstrap_schema(database.as_ref()).await.unwrap();
+            {
+                let metadata = SqliteMetadataStore::new(
+                    database.clone(),
+                    "test".to_owned(),
+                    DEFAULT_MAX_METADATA_BYTES,
+                );
+                let root = metadata.resolve("/").await.unwrap();
+                metadata
+                    .create(
+                        root.ino,
+                        "workspace",
+                        CreateInodeAttrs::directory(0o755, 1000, 1000),
+                    )
+                    .await
+                    .unwrap();
+                let blocks = SqliteBlockStore::new(database.clone(), "test".to_owned());
+                blocks
+                    .put(&BlockKey("first".to_owned()), b"persisted bytes")
+                    .await
+                    .unwrap();
+                blocks
+                    .copy(
+                        &BlockKey("first".to_owned()),
+                        &BlockKey("copied".to_owned()),
+                    )
+                    .await
+                    .unwrap();
+            }
+            database.close().await.unwrap();
+            drop(database);
+
+            let database =
+                crate::vm_sqlite::open_local_vm_sqlite(path, runtime.context(), 128 * 1024 * 1024)
+                    .await
+                    .unwrap();
+            bootstrap_schema(database.as_ref()).await.unwrap();
+            {
+                let metadata = SqliteMetadataStore::new(
+                    database.clone(),
+                    "test".to_owned(),
+                    DEFAULT_MAX_METADATA_BYTES,
+                );
+                let workspace = metadata.resolve("/workspace").await.unwrap();
+                assert_eq!(workspace.uid, 1000);
+                let blocks = SqliteBlockStore::new(database.clone(), "test".to_owned());
+                for key in ["first", "copied"] {
+                    assert_eq!(
+                        blocks.get(&BlockKey(key.to_owned())).await.unwrap(),
+                        b"persisted bytes"
+                    );
+                }
+            }
+            database.close().await.unwrap();
+        });
+    }
+}
+
 const DEFAULT_METADATA_CACHE_ENTRIES: usize = 4096;
 const MAX_METADATA_CACHE_ENTRIES: usize = 1_000_000;
 const METADATA_CHUNK_SIZE: usize = 256 * 1024;

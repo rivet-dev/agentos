@@ -12,7 +12,7 @@ release-fast *args:
 release-preview REF:
 	gh workflow run publish.yaml --repo rivet-dev/agentos --ref "{{ REF }}"
 
-# --- @agentos-software/* software packages (independent, PER-PACKAGE versions) ---
+# --- private @agentos-software/* build workspaces ---
 toolchain-build:
 	make -C toolchain commands
 
@@ -39,6 +39,12 @@ toolchain-copy-commands:
 software-build:
 	pnpm --filter '@agentos-software/*' build
 
+# Build the catalog and stage exactly what a release would upload. This is the
+# local, credential-free dry run for object-store software publication.
+software-artifacts-dry-run output="target/software-artifacts":
+	just tools-rebuild
+	pnpm --filter=publish exec tsx src/ci/bin.ts stage-software --output "{{ output }}"
+
 # Rebuild and stage the complete default WASM tool set from source. All outputs
 # land in ignored build/bin/commands directories and must not be committed.
 tools-rebuild:
@@ -59,25 +65,6 @@ install-shell:
 		PATH="$global_bin_dir:$PATH" pnpm --global remove "$package" >/dev/null 2>&1 || true
 	done
 	(cd packages/shell && PATH="$global_bin_dir:$PATH" pnpm link --global)
-
-install-gigacode:
-	#!/usr/bin/env bash
-	set -euo pipefail
-	repo_root='{{justfile_directory()}}'
-	pnpm --dir "$repo_root" install
-	make -C "$repo_root/toolchain" wasm
-	if [[ -n "${CODEX_REPO:-}" ]]; then
-		make -C "$repo_root/toolchain" codex-required CODEX_REPO="$CODEX_REPO"
-	else
-		make -C "$repo_root/toolchain" codex-required
-	fi
-	if [[ -n "${AGENTOS_SIDECAR_BIN:-}" ]]; then
-		export AGENTOS_SKIP_NATIVE_META_BUILD=1
-	fi
-	pnpm --dir "$repo_root" --filter '@rivet-dev/agentos-experiment-gigacode...' build
-	pnpm --dir "$repo_root/experiments/gigacode" check-types
-	pnpm --dir "$repo_root/experiments/gigacode" install-global
-	"$HOME/.local/bin/gigacode" --version
 
 shell *args:
 	#!/usr/bin/env bash

@@ -4,6 +4,8 @@ exclude = ["software"]
 members = [
     "packages/agentos-bindgen/rust",
     "crates/actor",
+    "crates/actor-contract",
+    "crates/preload",
     "crates/client",
     "crates/bridge",
     "crates/build-support",
@@ -52,6 +54,8 @@ repository = "https://github.com/rivet-dev/agent-os"
 # this workspace.
 [workspace.dependencies]
 agentos-actor = { path = "crates/actor", version = "0.0.1" }
+agentos-actor-contract = { path = "crates/actor-contract", version = "0.0.1" }
+agentos-preload = { path = "crates/preload", version = "0.0.1" }
 agentos-bridge = { path = "crates/bridge", version = "0.0.1" }
 agentos-build-support = { path = "crates/build-support", version = "0.0.1" }
 agentos-client = { path = "crates/client", version = "0.0.1" }

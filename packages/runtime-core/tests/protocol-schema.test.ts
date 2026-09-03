@@ -9,7 +9,7 @@ describe("protocol schema", () => {
 		expect(
 			validateSidecarProtocolSchema({
 				name: "agentos-native-sidecar",
-				version: 8,
+				version: 11,
 			}),
 		).toBe(SIDECAR_PROTOCOL_SCHEMA);
 	});
@@ -18,8 +18,8 @@ describe("protocol schema", () => {
 		expect(() =>
 			validateSidecarProtocolSchema({
 				name: "agentos-native-sidecar",
-				version: 4,
+				version: 8,
 			}),
-		).toThrow("unsupported sidecar protocol schema agentos-native-sidecar@4");
+		).toThrow("unsupported sidecar protocol schema agentos-native-sidecar@8");
 	});
 });

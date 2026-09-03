@@ -25,6 +25,11 @@ export function readRustContract() {
 
 export function validateContract(contract) {
 	assert.equal(contract.schemaVersion, 1, "unsupported contract schema version");
+	assert.match(contract.apiVersion, /^agentos-sdk\.dev\/v\d+(alpha\d+)?$/);
+	assert.ok(Number.isInteger(contract.contractMajor) && contract.contractMajor > 0);
+	assert.match(contract.contractHash, /^sha256:[0-9a-f]{64}$/);
+	assert.ok(Array.isArray(contract.capabilities));
+	assert.equal(new Set(contract.capabilities).size, contract.capabilities.length);
 	assert.equal(contract.actorName, "agentOS", "actor name must remain agentOS");
 	assert.ok(Array.isArray(contract.actions));
 	assert.ok(Array.isArray(contract.events));
@@ -74,7 +79,9 @@ function optionalizeNullableFields(declaration) {
 function typeDeclaration(declaration, direction) {
 	const normalized =
 		direction === "input"
-			? optionalizeNullableFields(declaration.replaceAll("bigint", "number"))
+			? optionalizeNullableFields(
+					declaration.replaceAll("bigint", "number | bigint"),
+				)
 			: optionalizeNullableFields(
 					declaration.replaceAll("bigint", "number | bigint"),
 				);
@@ -160,11 +167,25 @@ export function emitTypeScript(contract) {
 		'import { createClient } from "rivetkit/client";',
 		'import type {',
 		"\tActorAccessor,",
+		"\tActorConnectOptions,",
+		"\tActorConn,",
 		"\tActorHandle,",
 		"\tClientConfigInput,",
 		"\tCreateOptions,",
 		"\tGetOptions,",
+		"\tGetWithIdOptions,",
 		'} from "rivetkit/client";',
+		"",
+		`export const AGENTOS_API_VERSION = ${JSON.stringify(contract.apiVersion)} as const;`,
+		`export const AGENTOS_CONTRACT_MAJOR = ${contract.contractMajor} as const;`,
+		`export const AGENTOS_CONTRACT_HASH = ${JSON.stringify(contract.contractHash)} as const;`,
+		`export const AGENTOS_CAPABILITIES = ${JSON.stringify(contract.capabilities)} as const;`,
+		"export const AGENTOS_CONTRACT = {",
+		"\tapiVersion: AGENTOS_API_VERSION,",
+		"\tcontractMajor: AGENTOS_CONTRACT_MAJOR,",
+		"\tcontractHash: AGENTOS_CONTRACT_HASH,",
+		"\tcapabilities: AGENTOS_CAPABILITIES,",
+		"} as const;",
 		"",
 		"export namespace Input {",
 		...contract.types.map((type) => `\t${typeDeclaration(type.declaration, "input")}`),
@@ -214,7 +235,11 @@ export function emitTypeScript(contract) {
 		"\tRecord<never, never>,",
 		"\tRecord<never, never>",
 		">;",
-		"export type AgentOsActorHandle = ActorHandle<AgentOsActorDefinition> & AgentOsActions;",
+		"export type AgentOsActorConnection = ActorConn<AgentOsActorDefinition> & AgentOsActions;",
+		"export type AgentOsActorHandle = Omit<ActorHandle<AgentOsActorDefinition>, \"connect\"> &",
+		"\tAgentOsActions & {",
+		"\t\tconnect(params?: unknown, options?: ActorConnectOptions): AgentOsActorConnection;",
+		"\t};",
 		"export type AgentOsRegistry = Registry<{ agentOS: AgentOsActorDefinition }>;",
 		"",
 		"export type AgentOsCreateOptions = Omit<CreateOptions, \"input\"> & {",
@@ -237,8 +262,9 @@ export function emitTypeScript(contract) {
 		"\t\toptions?: AgentOsCreateOptions,",
 		"\t): Promise<AgentOsActorHandle>;",
 		"};",
-		"export type AgentOsClient = Omit<Client<AgentOsRegistry>, \"agentOS\"> & {",
+		"export type AgentOsClient = Omit<Client<AgentOsRegistry>, \"agentOS\" | \"getForId\"> & {",
 		"\treadonly agentOS: AgentOsActorAccessor;",
+		"\tgetForId(name: \"agentOS\", actorId: string, options?: GetWithIdOptions): AgentOsActorHandle;",
 		"};",
 		"",
 		"/** Creates a vanilla RivetKit client with the generated agentOS contract. */",

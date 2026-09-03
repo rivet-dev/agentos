@@ -14,7 +14,7 @@ use crate::fd_table::{
     FILETYPE_SOCKET_STREAM, FILETYPE_SYMBOLIC_LINK, F_DUPFD, O_APPEND, O_CREAT, O_DIRECT,
     O_DIRECTORY, O_EXCL, O_NOFOLLOW, O_NONBLOCK, O_RDONLY, O_RDWR, O_TRUNC, O_WRONLY,
 };
-use crate::mount_table::{MountEntry, MountOptions, MountTable, MountedFileSystem};
+use crate::mount_table::{DetachedMount, MountEntry, MountOptions, MountTable, MountedFileSystem};
 use crate::network_policy::format_tcp_resource;
 use crate::permissions::{
     check_command_execution, check_network_access, FsOperation, NetworkOperation, PermissionError,
@@ -1138,15 +1138,37 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
     }
 
     pub fn register_driver(&mut self, driver: CommandDriver) -> KernelResult<()> {
+        self.register_driver_internal(driver, false)
+    }
+
+    /// Register sidecar-owned commands without consulting guest filesystem policy.
+    /// Never expose this operation through guest calls.
+    pub fn register_driver_for_operator(&mut self, driver: CommandDriver) -> KernelResult<()> {
+        self.register_driver_internal(driver, true)
+    }
+
+    fn register_driver_internal(
+        &mut self,
+        driver: CommandDriver,
+        operator: bool,
+    ) -> KernelResult<()> {
         self.assert_not_terminated()?;
         let driver_name = driver.name().to_owned();
-        let populate_driver = driver.clone();
-        self.commands.register(driver)?;
+        let mut commands = self.commands.clone();
+        commands.register(driver.clone())?;
+        let populated = if operator {
+            commands.populate_driver_bin(self.filesystem.inner_mut(), &driver)
+        } else {
+            commands.populate_driver_bin(&mut self.filesystem, &driver)
+        };
+        // Failed population can still have created stubs. Quota observations
+        // must include those writes even when the registry is not published.
+        self.invalidate_filesystem_usage_cache();
+        populated?;
+        self.commands = commands;
         lock_or_recover(&self.driver_pids)
             .entry(driver_name)
             .or_default();
-        self.commands
-            .populate_driver_bin(&mut self.filesystem, &populate_driver)?;
         Ok(())
     }
 
@@ -1650,6 +1672,18 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         self.exists_internal(None, path)
     }
 
+    /// Inspect a trusted runtime path without interpreting guest denial as
+    /// absence. Used when tracking sidecar-created mountpoints.
+    pub fn exists_for_operator(&self, path: &str) -> KernelResult<bool> {
+        self.assert_not_terminated()?;
+        crate::vfs::validate_path(path).map_err(KernelError::from)?;
+        match self.filesystem.inner().lstat(path) {
+            Ok(_) => Ok(true),
+            Err(error) if error.code() == "ENOENT" => Ok(false),
+            Err(error) => Err(error.into()),
+        }
+    }
+
     pub fn exists_for_process(
         &mut self,
         requester_driver: &str,
@@ -1778,6 +1812,20 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
     pub fn read_dir(&mut self, path: &str) -> KernelResult<Vec<String>> {
         self.assert_not_terminated()?;
         let entries = self.read_dir_internal(None, path)?;
+        self.resources.check_readdir_entries(entries.len())?;
+        Ok(entries)
+    }
+
+    /// Discover trusted runtime entries while keeping guest policy unchanged.
+    /// The ordinary directory-entry limit also applies to operator discovery.
+    pub fn read_dir_for_operator(&mut self, path: &str) -> KernelResult<Vec<String>> {
+        self.assert_not_terminated()?;
+        crate::vfs::validate_path(path).map_err(KernelError::from)?;
+        let max_entries = self.resources.max_readdir_entries().unwrap_or(usize::MAX);
+        let entries = self
+            .filesystem
+            .inner_mut()
+            .read_dir_limited(path, max_entries)?;
         self.resources.check_readdir_entries(entries.len())?;
         Ok(entries)
     }
@@ -1947,11 +1995,29 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
     }
 
     pub fn remove_dir(&mut self, path: &str) -> KernelResult<()> {
+        self.remove_dir_internal(path, false)
+    }
+
+    /// Remove an empty sidecar-created mountpoint without guest authorization
+    /// or guest-only protected-path guards. Backend read-only enforcement,
+    /// open-directory handles, and resource accounting remain unchanged.
+    pub fn remove_dir_for_operator(&mut self, path: &str) -> KernelResult<()> {
+        self.remove_dir_internal(path, true)
+    }
+
+    fn remove_dir_internal(&mut self, path: &str, operator: bool) -> KernelResult<()> {
         self.assert_not_terminated()?;
-        self.reject_read_only_entry_write_path(path)?;
+        crate::vfs::validate_path(path).map_err(KernelError::from)?;
+        if !operator {
+            self.reject_read_only_entry_write_path(path)?;
+        }
         let removed = self.storage_lstat(path)?;
         let detached = self.prepare_detached_directory_backing(path, removed.as_ref());
-        self.filesystem.remove_dir(path)?;
+        if operator {
+            self.filesystem.inner_mut().remove_dir(path)?;
+        } else {
+            self.filesystem.remove_dir(path)?;
+        }
         if let Some((descriptions, stat)) = detached {
             for description in descriptions {
                 description.detach_directory(path, stat.clone());
@@ -8463,13 +8529,14 @@ impl KernelVm<MountTable> {
     ) -> KernelResult<()> {
         self.assert_not_terminated()?;
         self.check_mount_permissions(path)?;
-        self.filesystem
+        let result = self
+            .filesystem
             .inner_mut()
             .inner_mut()
             .mount(path, filesystem, options)
-            .map_err(KernelError::from)?;
+            .map_err(KernelError::from);
         self.invalidate_filesystem_usage_cache();
-        Ok(())
+        result
     }
 
     pub fn mount_boxed_filesystem(
@@ -8480,22 +8547,89 @@ impl KernelVm<MountTable> {
     ) -> KernelResult<()> {
         self.assert_not_terminated()?;
         self.check_mount_permissions(path)?;
-        self.filesystem
+        let result = self
+            .filesystem
             .inner_mut()
             .inner_mut()
             .mount_boxed(path, filesystem, options)
-            .map_err(KernelError::from)?;
+            .map_err(KernelError::from);
         self.invalidate_filesystem_usage_cache();
-        Ok(())
+        result
+    }
+
+    /// Attach a mount during trusted runtime configuration, bypassing only
+    /// guest authorization while retaining mount-table and resource checks.
+    pub fn mount_boxed_filesystem_for_operator(
+        &mut self,
+        path: &str,
+        filesystem: Box<dyn MountedFileSystem>,
+        options: MountOptions,
+    ) -> KernelResult<()> {
+        self.assert_not_terminated()?;
+        crate::vfs::validate_path(path).map_err(KernelError::from)?;
+        let result = self
+            .filesystem
+            .inner_mut()
+            .inner_mut()
+            .mount_boxed(path, filesystem, options)
+            .map_err(KernelError::from);
+        self.invalidate_filesystem_usage_cache();
+        result
     }
 
     pub fn unmount_filesystem(&mut self, path: &str) -> KernelResult<()> {
         self.assert_not_terminated()?;
         self.check_mount_permissions(path)?;
-        self.filesystem
+        let result = self
+            .filesystem
             .inner_mut()
             .inner_mut()
             .unmount(path)
+            .map_err(KernelError::from);
+        self.invalidate_filesystem_usage_cache();
+        result
+    }
+
+    /// Detach a mount during trusted runtime configuration or teardown,
+    /// bypassing guest authorization but retaining mount-table checks.
+    pub fn unmount_filesystem_for_operator(&mut self, path: &str) -> KernelResult<()> {
+        self.assert_not_terminated()?;
+        crate::vfs::validate_path(path).map_err(KernelError::from)?;
+        let result = self
+            .filesystem
+            .inner_mut()
+            .inner_mut()
+            .unmount(path)
+            .map_err(KernelError::from);
+        self.invalidate_filesystem_usage_cache();
+        result
+    }
+
+    /// Temporarily detach an existing leaf without shutting down its backend.
+    /// Only trusted reconfiguration can hold and later restore this capability.
+    pub fn detach_filesystem_for_operator(&mut self, path: &str) -> KernelResult<DetachedMount> {
+        self.assert_not_terminated()?;
+        crate::vfs::validate_path(path).map_err(KernelError::from)?;
+        let mount = self
+            .filesystem
+            .inner_mut()
+            .inner_mut()
+            .detach(path)
+            .map_err(KernelError::from)?;
+        self.invalidate_filesystem_usage_cache();
+        Ok(mount)
+    }
+
+    /// Put a detached backend back without reopening it or changing its policy.
+    pub fn restore_detached_filesystem_for_operator(
+        &mut self,
+        mount: DetachedMount,
+    ) -> KernelResult<()> {
+        self.assert_not_terminated()?;
+        self.filesystem
+            .inner_mut()
+            .inner_mut()
+            .restore_detached(mount)
             .map_err(KernelError::from)?;
         self.invalidate_filesystem_usage_cache();
         Ok(())
@@ -9730,11 +9864,205 @@ impl<F> Drop for KernelVm<F> {
 mod tests {
     use super::*;
     use crate::fd_table::{FD_CLOEXEC, F_GETFD, F_SETFD, O_RDONLY};
+    use crate::mount_table::MountedVirtualFileSystem;
     use crate::process_table::SIGTERM;
     use crate::vfs::MemoryFileSystem;
     use std::panic::{catch_unwind, AssertUnwindSafe};
     use std::thread;
 
+    #[test]
+    fn operator_mounts_and_command_stubs_keep_guest_fs_denial_active() {
+        let kernel_config = KernelVmConfig::new("vm-operator-setup");
+        let mut kernel = KernelVm::new(MountTable::new(MemoryFileSystem::new()), kernel_config);
+        kernel
+            .filesystem
+            .inner_mut()
+            .mkdir("/data", true)
+            .expect("prepare trusted mountpoint");
+
+        assert!(kernel
+            .filesystem
+            .check_path(FsOperation::Write, "/bin")
+            .is_err());
+        kernel
+            .register_driver_for_operator(CommandDriver::new("runtime", ["sh"]))
+            .expect("trusted command registration");
+        assert!(kernel.commands().contains_key("sh"));
+        assert!(kernel.filesystem.inner_mut().exists("/bin/sh"));
+        assert!(kernel.exists_for_operator("/bin/sh").unwrap());
+        assert!(!kernel.exists("/bin/sh").unwrap());
+        assert!(kernel.read_dir("/bin").is_err());
+        assert_eq!(kernel.read_dir_for_operator("/bin").unwrap(), vec!["sh"]);
+        assert!(kernel
+            .filesystem
+            .check_path(FsOperation::Write, "/bin")
+            .is_err());
+
+        let mount_options = MountOptions::new("test");
+        assert!(kernel
+            .mount_boxed_filesystem(
+                "/data",
+                Box::new(MountedVirtualFileSystem::new(MemoryFileSystem::new())),
+                mount_options.clone(),
+            )
+            .is_err());
+        kernel
+            .mount_boxed_filesystem_for_operator(
+                "/data",
+                Box::new(MountedVirtualFileSystem::new(MemoryFileSystem::new())),
+                mount_options,
+            )
+            .expect("trusted mount");
+        kernel
+            .filesystem
+            .inner_mut()
+            .write_file("/data/preserved", b"same backend".to_vec())
+            .expect("write mounted backend state");
+        assert!(kernel.unmount_filesystem("/data").is_err());
+        let detached = kernel
+            .detach_filesystem_for_operator("/data")
+            .expect("detach trusted mount without closing it");
+        assert!(!kernel
+            .mounted_filesystems()
+            .iter()
+            .any(|mount| mount.path == "/data"));
+        kernel
+            .restore_detached_filesystem_for_operator(detached)
+            .expect("restore exact backend");
+        assert_eq!(
+            kernel
+                .filesystem
+                .inner_mut()
+                .read_file("/data/preserved")
+                .expect("read restored backend"),
+            b"same backend"
+        );
+        kernel
+            .unmount_filesystem_for_operator("/data")
+            .expect("trusted unmount");
+        assert!(kernel.remove_dir("/data").is_err());
+        kernel
+            .remove_dir_for_operator("/data")
+            .expect("remove empty operator mountpoint");
+        assert!(!kernel.exists_for_operator("/data").unwrap());
+
+        kernel
+            .filesystem
+            .inner_mut()
+            .mkdir("/opt/agentos/placeholder", true)
+            .unwrap();
+        assert_eq!(
+            kernel
+                .remove_dir("/opt/agentos/placeholder")
+                .unwrap_err()
+                .code(),
+            "EACCES"
+        );
+        kernel
+            .remove_dir_for_operator("/opt/agentos/placeholder")
+            .unwrap();
+
+        kernel.filesystem.inner_mut().mkdir("/keep", true).unwrap();
+        kernel
+            .filesystem
+            .inner_mut()
+            .write_file("/keep/user-data", b"keep".to_vec())
+            .unwrap();
+        assert_eq!(
+            kernel.remove_dir_for_operator("/keep").unwrap_err().code(),
+            "ENOTEMPTY"
+        );
+        assert!(kernel.exists_for_operator("/keep/user-data").unwrap());
+    }
+
+    #[test]
+    fn operator_failed_mount_invalidates_filesystem_usage_cache() {
+        let mut filesystem = MemoryFileSystem::new();
+        filesystem.write_file("/blocked", Vec::new()).unwrap();
+        let mut kernel = KernelVm::new(
+            MountTable::new(filesystem),
+            KernelVmConfig::new("vm-operator-failed-mount"),
+        );
+        kernel.filesystem_usage_cache = Some(FileSystemUsage::default());
+        let error = kernel
+            .mount_boxed_filesystem_for_operator(
+                "/blocked/child",
+                Box::new(MountedVirtualFileSystem::new(MemoryFileSystem::new())),
+                MountOptions::new("test"),
+            )
+            .unwrap_err();
+        assert_eq!(error.code(), "ENOTDIR");
+        // A backend may partially mkdir before returning an error. The kernel
+        // cannot retain a pre-attempt quota snapshot even on this error path.
+        assert!(kernel.filesystem_usage_cache.is_none());
+    }
+
+    #[test]
+    fn operator_discovery_keeps_directory_limits_and_mount_errors() {
+        let mut config = KernelVmConfig::new("vm-operator-limits");
+        config.resources.max_readdir_entries = Some(1);
+        let mut filesystem = MemoryFileSystem::new();
+        filesystem.mkdir("/commands", true).unwrap();
+        filesystem.write_file("/commands/one", Vec::new()).unwrap();
+        filesystem.write_file("/commands/two", Vec::new()).unwrap();
+        let mut kernel = KernelVm::new(MountTable::new(filesystem), config);
+        assert_eq!(
+            kernel
+                .read_dir_for_operator("/commands")
+                .unwrap_err()
+                .code(),
+            "ENOMEM"
+        );
+        assert_eq!(
+            kernel.read_dir_for_operator("/missing").unwrap_err().code(),
+            "ENOENT"
+        );
+        assert_eq!(
+            kernel.exists_for_operator("bad\0path").unwrap_err().code(),
+            "EINVAL"
+        );
+        assert_eq!(
+            kernel
+                .unmount_filesystem_for_operator("/")
+                .unwrap_err()
+                .code(),
+            "EINVAL"
+        );
+        kernel
+            .mount_boxed_filesystem_for_operator(
+                "/mounted",
+                Box::new(MountedVirtualFileSystem::new(MemoryFileSystem::new())),
+                MountOptions::new("test"),
+            )
+            .unwrap();
+        assert_eq!(
+            kernel
+                .mount_boxed_filesystem_for_operator(
+                    "/mounted",
+                    Box::new(MountedVirtualFileSystem::new(MemoryFileSystem::new())),
+                    MountOptions::new("test"),
+                )
+                .unwrap_err()
+                .code(),
+            "EEXIST"
+        );
+        let mut read_only = MemoryFileSystem::new();
+        read_only.mkdir("/keep", true).unwrap();
+        kernel
+            .mount_boxed_filesystem_for_operator(
+                "/readonly",
+                Box::new(MountedVirtualFileSystem::new(read_only)),
+                MountOptions::new("test").read_only(true),
+            )
+            .unwrap();
+        assert_eq!(
+            kernel
+                .remove_dir_for_operator("/readonly/keep")
+                .unwrap_err()
+                .code(),
+            "EROFS"
+        );
+    }
     fn kernel_with_process() -> (KernelVm<MemoryFileSystem>, KernelProcessHandle) {
         let mut config = KernelVmConfig::new("vm-fd-socket-test");
         config.permissions = Permissions::allow_all();

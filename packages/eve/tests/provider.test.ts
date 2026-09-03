@@ -2,11 +2,12 @@ import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const clientMocks = vi.hoisted(() => ({
-	createClient: vi.fn(),
+	createAgentOsClient: vi.fn(),
 }));
 
-vi.mock("@rivet-dev/agentos/client", () => ({
-	createClient: clientMocks.createClient,
+vi.mock("@rivet-dev/agentos", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@rivet-dev/agentos")>()),
+	createAgentOsClient: clientMocks.createAgentOsClient,
 }));
 
 import {
@@ -22,23 +23,8 @@ const createInput = {
 	runtimeContext: { appRoot: "/app" },
 } as const;
 
-function makeRegistry() {
-	return {
-		startAndWait: vi.fn(async () => {}),
-		parseConfig: vi.fn(() => ({
-			endpoint: "http://127.0.0.1:6420",
-			namespace: "default",
-			token: undefined,
-			headers: {},
-			envoy: { poolName: "default" },
-		})),
-	};
-}
-
-let registry = makeRegistry();
-
-function actorBackend(actor = "vm") {
-	return agentOSBackend({ actor, registry });
+function actorBackend() {
+	return agentOSBackend();
 }
 
 function deferred<T>() {
@@ -52,15 +38,10 @@ function deferred<T>() {
 }
 
 function makeHarness() {
-	const listeners = new Set<(event: unknown) => void>();
+	const listeners = new Set<(event: any) => void>();
 	const keys: string[][] = [];
 	let nextPid = 1;
 	const connection = {
-		ready: Promise.resolve(),
-		on: vi.fn((_event: string, listener: (event: unknown) => void) => {
-			listeners.add(listener);
-			return () => listeners.delete(listener);
-		}),
 		dispose: vi.fn(async () => {}),
 		spawn: vi.fn(async () => ({ pid: nextPid++ })),
 		waitProcess: vi.fn(async () => 0),
@@ -71,17 +52,56 @@ function makeHarness() {
 		mkdir: vi.fn(async () => {}),
 		remove: vi.fn(async () => {}),
 	};
-	const connect = vi.fn(() => connection);
+	const actorConnection = {
+		ready: Promise.resolve(),
+		on: vi.fn((_event: string, listener: (event: any) => void) => {
+			listeners.add(listener);
+			return () => listeners.delete(listener);
+		}),
+		dispose: connection.dispose,
+		process: {
+			spawn: vi.fn(async ({ command, args, options }: any) => ({
+				generation: 1,
+				...(await connection.spawn(command, args, options)),
+			})),
+			wait: vi.fn(async ({ process }: any) => ({
+				process,
+				exitCode: await connection.waitProcess(process.pid),
+			})),
+			signal: vi.fn(async ({ process }: any) =>
+				connection.killProcess(process.pid),
+			),
+		},
+		filesystem: {
+			readFile: vi.fn(({ path }: any) => connection.readFile(path)),
+			writeFile: vi.fn(({ path, content }: any) =>
+				connection.writeFile(path, content),
+			),
+			exists: vi.fn(({ path }: any) => connection.exists(path)),
+			mkdir: vi.fn(({ path, recursive }: any) =>
+				connection.mkdir(path, { recursive }),
+			),
+			remove: vi.fn(({ path, recursive }: any) =>
+				connection.remove(path, { recursive }),
+			),
+		},
+	};
+	const connect = vi.fn(() => actorConnection);
 	const getOrCreate = vi.fn((key: string[]) => {
 		keys.push(key);
 		return { connect };
 	});
-	clientMocks.createClient.mockReturnValue({ vm: { getOrCreate } });
+	clientMocks.createAgentOsClient.mockReturnValue({ agentOS: { getOrCreate } });
 	return {
 		connect,
 		connection,
-		emit(event: unknown) {
-			for (const listener of listeners) listener(event);
+		emit(event: any) {
+			for (const listener of listeners) {
+				listener({
+					...event,
+					process: { generation: 1, pid: event.pid },
+				});
+			}
 		},
 		getOrCreate,
 		keys,
@@ -94,8 +114,7 @@ async function streamText(stream: ReadableStream<Uint8Array>): Promise<string> {
 
 describe("agentOSBackend", () => {
 	beforeEach(() => {
-		clientMocks.createClient.mockReset();
-		registry = makeRegistry();
+		clientMocks.createAgentOsClient.mockReset();
 	});
 
 	afterEach(() => {
@@ -114,21 +133,16 @@ describe("agentOSBackend", () => {
 		await expect(
 			backend.create({ ...createInput, templateKey: "template-1" }),
 		).rejects.toBeInstanceOf(AgentOSTemplateUnsupportedError);
-		expect(clientMocks.createClient).not.toHaveBeenCalled();
+		expect(clientMocks.createAgentOsClient).not.toHaveBeenCalled();
 	});
 
-	it("waits for the application registry and reuses its resolved config", async () => {
+	it("creates the generated client and connects the fixed actor accessor", async () => {
 		const harness = makeHarness();
 		const backend = actorBackend();
 		await backend.create(createInput);
-		expect(registry.startAndWait).toHaveBeenCalledOnce();
-		expect(clientMocks.createClient).toHaveBeenCalledWith({
-			endpoint: "http://127.0.0.1:6420",
-			namespace: "default",
-			poolName: "default",
-			token: undefined,
-			headers: {},
-			disableMetadataLookup: true,
+		expect(clientMocks.createAgentOsClient).toHaveBeenCalledWith(undefined);
+		expect(harness.getOrCreate).toHaveBeenCalledWith(expect.any(Array), {
+			createWithInput: undefined,
 		});
 		expect(harness.connect).toHaveBeenCalledOnce();
 	});
@@ -144,7 +158,6 @@ describe("agentOSBackend", () => {
 		const state = await first.captureState();
 		expect(state.metadata).toEqual({
 			version: 1,
-			actor: "vm",
 			key: [
 				"eve",
 				"session",
@@ -345,7 +358,7 @@ describe("agentOSBackend", () => {
 		const second = await backend.create(createInput);
 		expect(second).toBe(first);
 		expect(create).toHaveBeenCalledOnce();
-		expect(clientMocks.createClient).not.toHaveBeenCalled();
+		expect(clientMocks.createAgentOsClient).not.toHaveBeenCalled();
 		expect(create).toHaveBeenCalledWith({ sessionKey: "session-1" });
 
 		await expect(

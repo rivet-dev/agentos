@@ -285,6 +285,15 @@ jobs:
             --filter='!@rivet-dev/agentos-runtime-browser' \
             --filter='!./examples/*' \
             --filter='!./examples/quickstart/*'
+      - name: Stage immutable software artifacts
+        run: |
+          pnpm --filter=publish exec tsx src/ci/bin.ts stage-software \
+            --output "$GITHUB_WORKSPACE/software-artifacts"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: software-artifacts
+          path: software-artifacts
+          if-no-files-found: error
       - name: Finalize package versions for publish
         run: |
           pnpm --filter=publish exec tsx src/ci/bin.ts bump-versions \
@@ -298,6 +307,22 @@ jobs:
             --parallel 16 \
             --retries 3 \
             ${{ needs.context.outputs.trigger == 'release' && '--release-mode' || '' }}
+      - name: Upload software artifacts to R2
+        if: ${{ needs.context.outputs.trigger == 'release' }}
+        env:
+          R2_RELEASES_ACCESS_KEY_ID: ${{ secrets.R2_RELEASES_ACCESS_KEY_ID }}
+          R2_RELEASES_SECRET_ACCESS_KEY: ${{ secrets.R2_RELEASES_SECRET_ACCESS_KEY }}
+          VERSION: ${{ needs.context.outputs.version }}
+          SHA: ${{ needs.context.outputs.sha }}
+          LATEST: ${{ needs.context.outputs.latest }}
+        run: |
+          set -euo pipefail
+          test -n "$R2_RELEASES_ACCESS_KEY_ID"
+          test -n "$R2_RELEASES_SECRET_ACCESS_KEY"
+          pnpm --filter=publish exec tsx src/ci/bin.ts upload-r2 \
+            --source "$GITHUB_WORKSPACE/software-artifacts" --sha "$SHA" --name software
+          pnpm --filter=publish exec tsx src/ci/bin.ts copy-r2 \
+            --sha "$SHA" --version "$VERSION" --latest "$LATEST" --name software
 
   release-assets:
     needs: [context, build-sidecar, build-sidecar-darwin]

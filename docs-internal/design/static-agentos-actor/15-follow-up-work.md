@@ -41,21 +41,7 @@ If added, the hosted actor may expose a closed `FilesystemPath` source that Core
 resolves through the actor VFS. It must never mean a host path and must remain a
 different wire variant from embedded Core's trusted local `Path` source.
 
-## 3. Rivet SQLite adapter
-
-Replace the proof-of-concept local SQLite implementations with the new Rivet
-SQLite API. Preserve the adapter contracts and three schema owners established by
-this refactor:
-
-- `agentos_fs_*`
-- `agentos_core_*`
-- `agentos_actor_*`
-
-The follow-up owns transaction semantics, remote error mapping, shutdown and
-flush behavior, query limits, migration tests, and production observability. No
-Actor Runtime Socket compatibility path is required.
-
-## 4. Large-file streaming
+## 3. Large-file streaming
 
 Design one bounded streaming mechanism shared by filesystem reads, writes,
 exports, imports, process input/output where applicable, and large network
@@ -65,7 +51,7 @@ The design must cover backpressure, cancellation, runtime-generation scoping,
 resume or replay behavior, byte quotas, idle and absolute timeouts, cleanup on
 disconnect/sleep/restart, and TypeScript ergonomics.
 
-## 5. Graceful runtime restart and process draining
+## 4. Graceful runtime restart and process draining
 
 Define the shutdown behavior deliberately after the actor API is working. The
 design should cover admission closure, in-flight action handling, process and
@@ -75,9 +61,9 @@ fails to become ready.
 
 Until this lands, the actor exposes only the guarantees of the existing bounded
 Core runtime replacement primitive. Do not infer graceful process semantics from
-`runtime.restart`.
+`vm.restart`.
 
-## 6. Possible RivetKit bindgen generalization
+## 5. Possible RivetKit bindgen generalization
 
 After the agentOS-only prototype proves useful, separately decide whether a
 generic RivetKit contract generator is worth building. This is optional future

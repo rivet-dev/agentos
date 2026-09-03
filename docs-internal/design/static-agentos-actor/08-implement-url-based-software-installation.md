@@ -1,7 +1,7 @@
 # 08: Implement URL-Based Software Installation
 
-**Status:** Implemented; process-local caching and publication migration remain
-in steps 09 and 14.
+**Status:** Implemented; process-local caching and publication migration were
+completed in steps 09 and 14
 
 ## Outcome
 
@@ -15,9 +15,9 @@ digest of the downloaded bytes. The hosted Rust actor never accepts or opens a
 local path, host mount, file URL, descriptor, or caller-supplied filesystem.
 
 This revision does not add package names, semantic versions, ranges, dist-tags,
-dependency resolution, or a registry protocol. Removing registry-software npm
-publication and uploading `.aospkg` artifacts to S3-compatible object storage
-is step 14.
+dependency resolution, or a registry protocol. Step 14 removed
+registry-software npm publication and added `.aospkg` artifact staging for
+S3-compatible object storage.
 
 ## Public actor actions
 
@@ -164,9 +164,9 @@ warm packages before an actor starts because the URL is globally resolvable.
 Usage messages remain approximate and coalesced; only desired package state is a
 correctness source.
 
-## Deferred npm publication removal
+## npm publication removal completed in step 14
 
-Step 14 performs all work in this section; none of it is part of this revision:
+Step 14 completed the publication cutover:
 
 - Remove `@agentos-software/*` from npm publish discovery.
 - Remove runtime imports of software package JavaScript descriptors.
@@ -182,20 +182,21 @@ Step 14 performs all work in this section; none of it is part of this revision:
 This does not remove npm from untrusted guest JavaScript projects.
 `javascript.npm.*` remains a guest execution feature with normal VM policy.
 
-## Deferred artifact publication
+## Artifact publication completed in step 14
 
-Use immutable object keys such as:
+The publisher stages immutable object keys as:
 
 ```text
-software/<package-name>/<build-id>/<sha256>.aospkg
-software/<package-name>/<build-id>/manifest.json
+packages/<package-name>/<sha256>.aospkg
+manifest.json
 ```
 
-The manifest records the stable HTTPS download URL, SHA-256 digest, exact size,
-`.aospkg` format version, runtime package metadata, and release provenance.
-`scripts/publish` rebuilds all default tools, packs every artifact, validates the
-index, uploads immutable objects, and rejects different bytes at an existing
-digest key.
+The schema-v1 manifest records each package name, `sha256:` digest, exact size,
+and relative immutable artifact path. Release aliases and provenance live in the
+object-store prefix selected by `scripts/publish`: commit SHA, release version,
+and optional `latest`. The release workflow requires the complete canonical
+command set, packs every artifact, validates the index, uploads the digest-keyed
+objects, and publishes no `@agentos-software/*` package to npm.
 
 The actor consumes only the URL and optional expected digest. S3 endpoint,
 bucket, credentials, and upload policy are never actor configuration.
@@ -204,7 +205,8 @@ bucket, credentials, and upload policy are never actor configuration.
 
 Resolver tests pack artifacts into a temporary directory and serve them through
 an explicit loopback HTTP test server. The actor never receives the temporary
-host path. Publisher-local artifact generation remains step 14.
+host path. `just software-artifacts-dry-run` rebuilds the complete tool set and
+stages the exact credential-free artifact tree used by the release workflow.
 
 Use the same download, digest, validation, and projection path as production.
 Local HTTP is enabled only by the operator environment
@@ -222,9 +224,10 @@ Local HTTP is enabled only by the operator environment
   cosmetic VFS mountpoints created by the package.
 - Unlink request and response wire round trips.
 
-Step 09 adds concurrent acquisition, cache identity, eviction, and pin tests.
-Step 11 adds full desired-versus-live replacement and restart reconciliation
-tests. Step 14 adds publisher and hosted actor URL smoke tests.
+Step 09 added concurrent acquisition, cache identity, eviction, and pin tests.
+Step 11 added full desired-versus-live replacement and restart reconciliation
+tests. Step 14 added publisher tests; a hosted deployment URL smoke remains a
+rollout gate.
 
 ## Acceptance criteria
 
@@ -232,12 +235,12 @@ tests. Step 14 adds publisher and hosted actor URL smoke tests.
 - No hosted DTO can identify or open a host or guest filesystem path.
 - Core supports trusted embedded path sources and remote URL sources through one
   verified package pipeline.
-- Installed content is keyed by digest and pinned for the lifetime of its live
-  projection; process-wide deduplication is deferred to step 09.
+- Installed content is keyed by digest, pinned for the lifetime of its live
+  projection, and deduplicated by the process-local cache from step 09.
 - A mutable URL cannot silently change an actor's installed package.
 - `software.list` reflects the live installed view.
 - The actor and Core installation APIs do not resolve package names or npm
-  metadata. Removing npm publication is deferred to step 14.
+  metadata. Registry software is staged as direct object-store artifacts.
 - No semantic-versioning or registry protocol is implemented.
 - A future registry can return `{ url, digest, size }` without changing the Core
   installation boundary.

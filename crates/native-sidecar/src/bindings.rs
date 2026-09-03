@@ -21,9 +21,7 @@ pub(crate) use agentos_native_sidecar_core::bindings::{
     MAX_BINDING_SCHEMA_BYTES, MAX_BINDING_SCHEMA_DEPTH, MAX_BINDING_TIMEOUT_MS,
     MAX_EXAMPLES_PER_BINDING, MAX_REGISTERED_BINDINGS_PER_VM, MAX_REGISTERED_BINDING_COLLECTIONS,
 };
-use agentos_native_sidecar_core::permissions::{
-    allow_all_policy, deny_all_policy, evaluate_permissions_policy,
-};
+use agentos_native_sidecar_core::permissions::{deny_all_policy, evaluate_permissions_policy};
 use agentos_native_sidecar_core::respond as shared_respond;
 use agentos_vm_config::PermissionMode;
 use serde_json::{json, Map, Number, Value};
@@ -74,7 +72,8 @@ where
                     vm.command_guest_paths.clone(),
                 )
             })?;
-        bridge.set_vm_permissions(&input.vm_id, &allow_all_policy())?;
+        // Command-stub writes use the operator-only kernel path. Never relax
+        // guest permissions while a live VM registers host callbacks.
         let registration_result = input.vm.try_command("register host callbacks", |vm| {
             ensure_collection_name_available(&vm.bindings, &registered_name)?;
             ensure_command_aliases_available(&vm.bindings, &payload)?;
@@ -187,7 +186,7 @@ where
 fn refresh_binding_registry(vm: &mut VmState) -> Result<(), SidecarError> {
     let commands = binding_command_names(vm);
     vm.kernel
-        .register_driver(CommandDriver::new(
+        .register_driver_for_operator(CommandDriver::new(
             BINDING_DRIVER_NAME,
             commands.iter().cloned(),
         ))

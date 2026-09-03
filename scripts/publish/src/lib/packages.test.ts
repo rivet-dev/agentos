@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
 	EXCLUDED,
-	LOCKSTEP_SOFTWARE_PACKAGES,
 	assertDiscoverySanity,
 	buildMetaPlatformMap,
 	discoverPackages,
@@ -63,15 +62,10 @@ test("sanity check passes for the agent-os workspace", () => {
 	assert(names.has("@rivet-dev/agentos"));
 });
 
-test("publishes only platform-owned software packages in lockstep", () => {
+test("never publishes registry software packages to npm", () => {
 	const names = discoverPackages(repoRoot).map((pkg) => pkg.name);
 
-	assert(LOCKSTEP_SOFTWARE_PACKAGES.has("@agentos-software/common"));
-	assert(LOCKSTEP_SOFTWARE_PACKAGES.has("@agentos-software/sh"));
-	assert(!LOCKSTEP_SOFTWARE_PACKAGES.has("@agentos-software/tar"));
-	assert(names.includes("@agentos-software/common"));
-	assert(names.includes("@agentos-software/sh"));
-	assert(!names.includes("@agentos-software/tar"));
+	assert(!names.some((name) => name.startsWith("@agentos-software/")));
 });
 
 test("browser runtime stays explicitly excluded from publication", () => {

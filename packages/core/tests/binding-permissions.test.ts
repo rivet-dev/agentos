@@ -126,7 +126,7 @@ const duplicateMathBindings = bindings({
 async function runCommand(vm: AgentOs, command: string, args: string[]) {
 	const stdoutChunks: string[] = [];
 	const stderrChunks: string[] = [];
-	const { pid } = vm.spawn(command, args, {
+	const { pid } = await vm.process.spawn(command, args, {
 		onStdout: (chunk) => {
 			stdoutChunks.push(new TextDecoder().decode(chunk));
 		},
@@ -136,7 +136,7 @@ async function runCommand(vm: AgentOs, command: string, args: string[]) {
 	});
 
 	return {
-		exitCode: await vm.waitProcess(pid),
+		exitCode: (await vm.process.wait(pid)).exitCode,
 		stdout: stdoutChunks.join(""),
 		stderr: stderrChunks.join(""),
 	};
@@ -160,6 +160,7 @@ describe("binding collection permissions", () => {
 
 	test("allows binding collection invocation with default permissions", async () => {
 		vm = await AgentOs.create({
+			defaultSoftware: false,
 			software: [common],
 			bindings: [mathBindings],
 		});
@@ -180,6 +181,7 @@ describe("binding collection permissions", () => {
 
 	test("denies binding collection invocation by default until binding permissions are granted", async () => {
 		vm = await AgentOs.create({
+			defaultSoftware: false,
 			software: [common],
 			bindings: [mathBindings],
 			permissions: {
@@ -203,6 +205,7 @@ describe("binding collection permissions", () => {
 
 	test("allows binding collection invocation when a matching binding permission is granted", async () => {
 		vm = await AgentOs.create({
+			defaultSoftware: false,
 			software: [common],
 			bindings: [mathBindings],
 			permissions: {

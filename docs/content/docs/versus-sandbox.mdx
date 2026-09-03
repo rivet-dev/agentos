@@ -6,7 +6,9 @@ skill: true
 
 - **agentOS** is a lightweight VM that runs inside your process. Near-zero cold start, low memory, direct backend integration via [bindings](/agentos/docs/bindings).
 - **Sandboxes** are full Linux environments with root access, system packages, and native binary support.
-- **You can use both.** agentOS works with sandboxes through the [external sandbox extension](/agentos/docs/sandboxes). Agents run in the lightweight VM by default and spin up a full sandbox on demand.
+- **Embedded applications can compose both.** Embedded Core can register a full
+  sandbox through trusted host bindings and mounts. The static hosted actor does
+  not expose those host capabilities.
 
 ## Comparison
 
@@ -15,22 +17,22 @@ skill: true
 | **Cost** | Very low. Runs in your process. | Pay per second of uptime. |
 | **Startup** | Near-zero cold start (~6 ms). | Seconds to spin up. |
 | **Backend integration** | Direct. [Bindings](/agentos/docs/bindings) call your functions with zero latency. | Indirect. Requires network calls back to your backend. |
-| **Credentials** | Stay on the host. [Bindings](/agentos/docs/bindings) run your functions server-side; agents see only inputs and outputs. | Must be injected into the sandbox environment. |
+| **Credentials** | Embedded [bindings](/agentos/docs/bindings) keep credentials on the host. Hosted VMs use serializable config. | Must be injected into the sandbox environment. |
 | **Permissions** | Granular, deny-by-default. | Coarse-grained (container-level). |
-| **Infrastructure** | `npm install` | Vendor account + API keys. |
+| **Infrastructure** | Static actor binary or embedded Core | Vendor account + API keys. |
 | **Best for** | Coding, file manipulation, scripting, API calls, orchestration. | Browsers, desktop automation, native compilation, dev servers. |
 
 ## When to use each
 
 ### agentOS VM
 
-Use the lightweight VM for most agent workloads:
+Use the lightweight VM for isolated command and language workloads:
 
 - Coding and file editing
 - Running scripts and CLI tools
 - Calling APIs and services via bindings
-- Multi-agent orchestration and workflows
-- Tasks where backend integration matters (permissions, tool access, LLM routing)
+- Durable command workflows
+- Tasks where backend integration matters (permissions and tool access)
 
 ### Full sandbox
 
@@ -43,9 +45,13 @@ Spin up a sandbox when the workload needs a real Linux kernel:
 
 ### Both together
 
-Use agentOS with [external sandboxes](/agentos/docs/sandboxes) for workflows that need both:
+Embedded applications can use agentOS with
+[external sandboxes](/agentos/docs/sandboxes) when a workflow needs both:
 
-- Agent runs in the agentOS VM with full access to bindings and permissions
+- Guest code runs in the agentOS VM with access to configured bindings and permissions
 - Sandbox spins up on demand for heavy tasks
 - Sandbox filesystem is mounted into the VM as a native directory
-- Agent reads and writes sandbox files the same way it reads local files
+- Guest code reads and writes sandbox files the same way it reads local files
+
+This composition requires trusted in-process callbacks and is therefore not a
+hosted actor feature.

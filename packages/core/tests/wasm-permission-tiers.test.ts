@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SidecarRejectedError } from "@rivet-dev/agentos-runtime-core/sidecar-errors";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { KernelSpawnOptions } from "../src/runtime-compat.js";
 import type {
@@ -16,6 +17,7 @@ describe("WASM command permission tiers", () => {
 
 	afterEach(async () => {
 		await proxy?.dispose();
+		vi.restoreAllMocks();
 		proxy = null;
 		if (fixtureRoot) {
 			rmSync(fixtureRoot, { recursive: true, force: true });
@@ -24,9 +26,26 @@ describe("WASM command permission tiers", () => {
 	});
 
 	function createMockClient() {
+		vi.spyOn(console, "error").mockImplementation(() => {});
 		let stopped = false;
 		const execute = vi.fn(async () => {
-			throw new Error("stop after capture");
+			throw new SidecarRejectedError(1, {
+				code: "ENOENT",
+				message: "stop after capture",
+				errno: "ENOENT",
+				limit_name: null,
+				configured_limit: null,
+				current_usage: null,
+				requested: null,
+				unit: null,
+				scope: null,
+				vm_id: null,
+				session_generation: null,
+				capability_id: null,
+				operation: null,
+				configuration_path: null,
+				retryable: null,
+			});
 		});
 		const client = {
 			waitForEvent: vi.fn(async () => {
@@ -68,9 +87,8 @@ describe("WASM command permission tiers", () => {
 		const proc = proxy.spawn("grep", ["needle", "haystack.txt"], {
 			cwd: "/workspace",
 		});
-		const exitCode = await proc.wait();
-
-		expect(exitCode).toBe(1);
+		await expect(proc.wait()).rejects.toThrow("stop after capture");
+		expect(proc.exitCode).toBeNull();
 		expect(execute).toHaveBeenCalledTimes(1);
 		expect(execute.mock.calls[0]?.[2]).toMatchObject({
 			command: "grep",

@@ -63,7 +63,9 @@ When the guest calls, say, `readFileSync("/mnt/data/report.csv")`:
 4. **Backend operation.** The owning engine's backend services the read/write/stat/etc. against its store (in-memory pages, the persisted base, a host directory, S3, ...).
 5. **Reply.** The result crosses back to the executor, which unblocks.
 
-Host-side APIs (`agent.writeFile`, `agent.readFile`) enter the *same* VFS from the trusted side, which is why the host can seed and read files the guest sees, without ever exposing the real host disk to the guest.
+Host-side APIs (`filesystem.writeFile`, `filesystem.readFile`) enter the *same*
+VFS from the trusted side, which is why the caller can seed and read files the
+guest sees without exposing the real host disk to the guest.
 
 ## Mount confinement
 

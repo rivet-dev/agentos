@@ -1,4 +1,4 @@
-// Run a Python program inside an AgentOS VM.
+// Run a Python program inside an agentOS VM.
 
 import { AgentOs } from "@rivet-dev/agentos-core";
 

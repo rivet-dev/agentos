@@ -4,11 +4,16 @@ description: "Understand current agentOS VM limitations, unsupported features, a
 skill: true
 ---
 
-agentOS is a Linux environment with a POSIX-compliant virtual kernel. It handles most agent workloads (coding, scripting, file I/O, networking) with near-zero overhead.
+agentOS is a Linux environment with a POSIX-compatible virtual kernel. It
+handles scripting, file I/O, networking, and language execution with low
+overhead.
 
 ## Sandbox mounting
 
-When a workload needs a full Linux OS, agents can escalate to a full sandbox on demand without changing code. The [external sandbox](/agentos/docs/sandboxes) extension mounts the sandbox as a filesystem and lets you execute commands on it, like mounting a hard drive on your own machine. Files written in the VM are available in the sandbox and vice versa.
+When a workload needs a full Linux OS, an embedded application can compose Core
+with the [external sandbox](/agentos/docs/sandboxes) extension. That extension
+uses trusted host bindings and mounts, so it is unavailable from the static
+hosted actor.
 
 See [agentOS vs Sandbox](/agentos/docs/versus-sandbox) for a detailed comparison.
 

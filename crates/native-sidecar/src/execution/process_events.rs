@@ -966,6 +966,25 @@ where
     /// Apply one already-polled public process event without suspending the
     /// protocol coordinator. Internal RPC events are never valid broker
     /// payloads; they stay on the owned VM event-service path.
+    fn record_ordinary_process_output(
+        &mut self,
+        vm_id: &str,
+        process_id: &str,
+        channel: StreamChannel,
+        chunk: &[u8],
+    ) -> Option<(u64, u64)> {
+        if let Some(mut vm) = self.vms.get_mut(vm_id) {
+            return vm.record_process_output(process_id, channel, chunk);
+        }
+        None
+    }
+
+    fn record_ordinary_process_exit(&mut self, vm_id: &str, process_id: &str, exit_code: i32) {
+        if let Some(mut vm) = self.vms.get_mut(vm_id) {
+            vm.record_process_exit(process_id, exit_code);
+        }
+    }
+
     pub(crate) fn handle_public_execution_event_nowait(
         &mut self,
         vm_id: &str,
@@ -1010,23 +1029,44 @@ where
                     chunk,
                 )
                 .map(|payload| EventFrame::new(ownership, payload))),
-            ActiveExecutionEvent::Stdout(chunk) => Ok(Some(EventFrame::new(
-                ownership,
-                EventPayload::ProcessOutput(ProcessOutputEvent {
-                    process_id: process_id.to_owned(),
-                    channel: StreamChannel::Stdout,
-                    chunk,
-                }),
-            ))),
-            ActiveExecutionEvent::Stderr(chunk) => Ok(Some(EventFrame::new(
-                ownership,
-                EventPayload::ProcessOutput(ProcessOutputEvent {
-                    process_id: process_id.to_owned(),
-                    channel: StreamChannel::Stderr,
-                    chunk,
-                }),
-            ))),
+            ActiveExecutionEvent::Stdout(chunk) => {
+                let replay_identity = self.record_ordinary_process_output(
+                    vm_id,
+                    process_id,
+                    StreamChannel::Stdout,
+                    &chunk,
+                );
+                Ok(Some(EventFrame::new(
+                    ownership,
+                    EventPayload::ProcessOutput(ProcessOutputEvent {
+                        process_id: process_id.to_owned(),
+                        channel: StreamChannel::Stdout,
+                        chunk,
+                        sequence: replay_identity.map(|identity| identity.0),
+                        timestamp_ms: replay_identity.map(|identity| identity.1),
+                    }),
+                )))
+            }
+            ActiveExecutionEvent::Stderr(chunk) => {
+                let replay_identity = self.record_ordinary_process_output(
+                    vm_id,
+                    process_id,
+                    StreamChannel::Stderr,
+                    &chunk,
+                );
+                Ok(Some(EventFrame::new(
+                    ownership,
+                    EventPayload::ProcessOutput(ProcessOutputEvent {
+                        process_id: process_id.to_owned(),
+                        channel: StreamChannel::Stderr,
+                        chunk,
+                        sequence: replay_identity.map(|identity| identity.0),
+                        timestamp_ms: replay_identity.map(|identity| identity.1),
+                    }),
+                )))
+            }
             ActiveExecutionEvent::Exited(exit_code) => {
+                self.record_ordinary_process_exit(vm_id, process_id, exit_code);
                 record_execute_response_to_exit_milestone(
                     "execute_response_to_exit_event_handle",
                     vm_id,
@@ -1523,22 +1563,42 @@ where
                     chunk,
                 )
                 .map(|payload| EventFrame::new(ownership, payload))),
-            ActiveExecutionEvent::Stdout(chunk) => Ok(Some(EventFrame::new(
-                ownership,
-                EventPayload::ProcessOutput(ProcessOutputEvent {
-                    process_id: process_id.to_owned(),
-                    channel: StreamChannel::Stdout,
-                    chunk,
-                }),
-            ))),
-            ActiveExecutionEvent::Stderr(chunk) => Ok(Some(EventFrame::new(
-                ownership,
-                EventPayload::ProcessOutput(ProcessOutputEvent {
-                    process_id: process_id.to_owned(),
-                    channel: StreamChannel::Stderr,
-                    chunk,
-                }),
-            ))),
+            ActiveExecutionEvent::Stdout(chunk) => {
+                let replay_identity = self.record_ordinary_process_output(
+                    vm_id,
+                    process_id,
+                    StreamChannel::Stdout,
+                    &chunk,
+                );
+                Ok(Some(EventFrame::new(
+                    ownership,
+                    EventPayload::ProcessOutput(ProcessOutputEvent {
+                        process_id: process_id.to_owned(),
+                        channel: StreamChannel::Stdout,
+                        chunk,
+                        sequence: replay_identity.map(|identity| identity.0),
+                        timestamp_ms: replay_identity.map(|identity| identity.1),
+                    }),
+                )))
+            }
+            ActiveExecutionEvent::Stderr(chunk) => {
+                let replay_identity = self.record_ordinary_process_output(
+                    vm_id,
+                    process_id,
+                    StreamChannel::Stderr,
+                    &chunk,
+                );
+                Ok(Some(EventFrame::new(
+                    ownership,
+                    EventPayload::ProcessOutput(ProcessOutputEvent {
+                        process_id: process_id.to_owned(),
+                        channel: StreamChannel::Stderr,
+                        chunk,
+                        sequence: replay_identity.map(|identity| identity.0),
+                        timestamp_ms: replay_identity.map(|identity| identity.1),
+                    }),
+                )))
+            }
             ActiveExecutionEvent::JavascriptSyncRpcRequest(request) => {
                 self.handle_javascript_sync_rpc_request(vm_id, process_id, request)
                     .await?;
@@ -1574,6 +1634,7 @@ where
                 Ok(None)
             }
             ActiveExecutionEvent::Exited(exit_code) => {
+                self.record_ordinary_process_exit(vm_id, process_id, exit_code);
                 record_execute_response_to_exit_milestone(
                     "execute_response_to_exit_event_handle",
                     vm_id,

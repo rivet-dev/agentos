@@ -19,6 +19,11 @@
 					"icon": "faForwardFast"
 				},
 				{
+					"title": "Hosted Actor API",
+					"href": "/agentos/docs/actor-api",
+					"icon": "faCode"
+				},
+				{
 					"title": "agentOS vs Sandbox",
 					"href": "/agentos/docs/versus-sandbox",
 					"icon": "faScaleBalanced"
@@ -87,6 +92,11 @@
 					"title": "Resource Limits",
 					"href": "/agentos/docs/resource-limits",
 					"icon": "faGauge"
+				},
+				{
+					"title": "Hosted Actor Limits",
+					"href": "/agentos/docs/actor-limits",
+					"icon": "faGauge"
 				}
 			]
 		},
@@ -126,6 +136,10 @@
 						{
 							"title": "Building Binaries",
 							"href": "/agentos/docs/custom-software/building-wasm"
+						},
+						{
+							"title": "Publishing",
+							"href": "/agentos/docs/custom-software/publishing"
 						},
 						{
 							"title": "Request Software",
@@ -186,6 +200,10 @@
 								{
 									"title": "Packages & Command Resolution",
 									"href": "/agentos/docs/architecture/packages-and-command-resolution"
+								},
+								{
+									"title": "Software Installation & Preloading",
+									"href": "/agentos/docs/architecture/software-cache"
 								},
 								{
 									"title": "Compiler Toolchain",

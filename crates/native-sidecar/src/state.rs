@@ -5,9 +5,10 @@
 
 use crate::protocol::{
     ExecutionCompletedResponse, ExecutionDescriptor, ExecutionOutputCapture, ExecutionOutputEvent,
-    GuestRuntimeKind, MountDescriptor, ProjectedModuleDescriptor, RegisterHostCallbacksRequest,
-    SidecarRequestFrame, SidecarRequestPayload, SidecarResponseFrame, SidecarResponsePayload,
-    SignalHandlerRegistration, SoftwareDescriptor, WasmPermissionTier,
+    GuestRuntimeKind, MountDescriptor, ProcessOutputReplayEvent, ProjectedModuleDescriptor,
+    RegisterHostCallbacksRequest, SidecarRequestFrame, SidecarRequestPayload, SidecarResponseFrame,
+    SidecarResponsePayload, SignalHandlerRegistration, SoftwareDescriptor, StreamChannel,
+    WasmPermissionTier,
 };
 use crate::wire::DEFAULT_MAX_FRAME_BYTES;
 use agentos_bridge::{
@@ -53,6 +54,191 @@ use tokio::sync::oneshot::Sender as SyncSender;
 use tokio::sync::Notify;
 
 const DEFAULT_MAX_SOCKET_READINESS_SUBSCRIBERS: usize = 16_384;
+
+#[derive(Debug)]
+pub(crate) struct ProcessOutputReplay {
+    events: VecDeque<ProcessOutputReplayEvent>,
+    retained_bytes: usize,
+    next_sequence: u64,
+    truncated_before: Option<u64>,
+    pub(crate) exit_code: Option<i32>,
+}
+
+#[derive(Debug)]
+pub(crate) struct ProcessOutputReplayPage {
+    pub(crate) events: Vec<ProcessOutputReplayEvent>,
+    pub(crate) next_cursor: Option<u64>,
+    pub(crate) has_more: bool,
+    pub(crate) truncated: bool,
+    pub(crate) next_event_bytes: Option<usize>,
+    pub(crate) exit_code: Option<i32>,
+}
+
+impl ProcessOutputReplay {
+    pub(crate) fn new() -> Self {
+        Self {
+            events: VecDeque::new(),
+            retained_bytes: 0,
+            next_sequence: 0,
+            truncated_before: None,
+            exit_code: None,
+        }
+    }
+
+    pub(crate) fn push(
+        &mut self,
+        channel: StreamChannel,
+        chunk: &[u8],
+        event_limit: usize,
+        byte_limit: usize,
+        page_byte_limit: usize,
+    ) -> (u64, u64) {
+        let sequence = self.next_sequence;
+        self.next_sequence = self.next_sequence.saturating_add(1);
+        let timestamp_ms = epoch_ms_now_u64();
+        if chunk.len() > page_byte_limit {
+            self.truncated_before = Some(sequence);
+            return (sequence, timestamp_ms);
+        }
+        let event = ProcessOutputReplayEvent {
+            sequence,
+            channel,
+            chunk: chunk.to_vec(),
+            timestamp_ms,
+        };
+        self.retained_bytes = self.retained_bytes.saturating_add(chunk.len());
+        self.events.push_back(event);
+        while self.events.len() > event_limit || self.retained_bytes > byte_limit {
+            let Some(expired) = self.events.pop_front() else {
+                break;
+            };
+            self.retained_bytes = self.retained_bytes.saturating_sub(expired.chunk.len());
+            self.truncated_before = Some(
+                self.truncated_before
+                    .map_or(expired.sequence, |current| current.max(expired.sequence)),
+            );
+        }
+        (sequence, timestamp_ms)
+    }
+
+    pub(crate) fn read(
+        &self,
+        after: Option<u64>,
+        max_events: usize,
+        max_bytes: usize,
+    ) -> ProcessOutputReplayPage {
+        let cursor = after;
+        let include_all = after.is_none();
+        let after = after.unwrap_or(0);
+        let mut bytes = 0usize;
+        let mut events = Vec::new();
+        let mut has_more = false;
+        let mut next_event_bytes = None;
+        for event in &self.events {
+            if !include_all && event.sequence <= after {
+                continue;
+            }
+            if events.len() == max_events || bytes.saturating_add(event.chunk.len()) > max_bytes {
+                has_more = true;
+                next_event_bytes = Some(event.chunk.len());
+                break;
+            }
+            bytes = bytes.saturating_add(event.chunk.len());
+            events.push(event.clone());
+        }
+        let requested_next = if include_all {
+            0
+        } else {
+            after.saturating_add(1)
+        };
+        ProcessOutputReplayPage {
+            next_cursor: if has_more {
+                events.last().map(|event| event.sequence).or(cursor)
+            } else {
+                events
+                    .last()
+                    .map(|event| event.sequence)
+                    .or(cursor)
+                    .max(self.truncated_before)
+            },
+            events,
+            has_more,
+            truncated: self
+                .truncated_before
+                .is_some_and(|sequence| sequence >= requested_next),
+            next_event_bytes,
+            exit_code: self.exit_code,
+        }
+    }
+}
+
+fn epoch_ms_now_u64() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64)
+        .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod process_output_replay_tests {
+    use super::*;
+
+    #[test]
+    fn replay_pages_preserve_order_cursors_and_exit_status() {
+        let mut replay = ProcessOutputReplay::new();
+        replay.push(StreamChannel::Stdout, b"one", 8, 1024, 1024);
+        replay.push(StreamChannel::Stderr, b"two", 8, 1024, 1024);
+        replay.exit_code = Some(7);
+
+        let first = replay.read(None, 1, 1024);
+        assert_eq!(first.events.len(), 1);
+        assert_eq!(first.events[0].sequence, 0);
+        assert_eq!(first.next_cursor, Some(0));
+        assert!(first.has_more);
+        assert!(!first.truncated);
+        assert_eq!(first.exit_code, Some(7));
+
+        let second = replay.read(first.next_cursor, 8, 1024);
+        assert_eq!(second.events.len(), 1);
+        assert_eq!(second.events[0].sequence, 1);
+        assert_eq!(second.next_cursor, Some(1));
+        assert!(!second.has_more);
+    }
+
+    #[test]
+    fn replay_reports_eviction_and_oversized_chunk_gaps_without_stalling() {
+        let mut replay = ProcessOutputReplay::new();
+        replay.push(StreamChannel::Stdout, b"zero", 2, 1024, 4);
+        replay.push(StreamChannel::Stdout, b"one", 2, 1024, 4);
+        replay.push(StreamChannel::Stdout, b"two", 2, 1024, 4);
+        replay.push(StreamChannel::Stdout, b"large", 2, 1024, 4);
+        replay.push(StreamChannel::Stdout, b"end", 2, 1024, 4);
+
+        let page = replay.read(None, 8, 1024);
+        assert_eq!(
+            page.events
+                .iter()
+                .map(|event| event.sequence)
+                .collect::<Vec<_>>(),
+            vec![2, 4]
+        );
+        assert!(page.truncated);
+        assert_eq!(page.next_cursor, Some(4));
+        assert!(!page.has_more);
+    }
+
+    #[test]
+    fn replay_reports_required_bytes_when_page_cannot_advance() {
+        let mut replay = ProcessOutputReplay::new();
+        replay.push(StreamChannel::Stdout, b"hello", 8, 1024, 1024);
+
+        let page = replay.read(None, 8, 2);
+        assert!(page.events.is_empty());
+        assert!(page.has_more);
+        assert_eq!(page.next_event_bytes, Some(5));
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Type aliases
@@ -566,12 +752,22 @@ impl Default for NativeSidecarConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SidecarError {
     ResourceLimit(agentos_runtime::accounting::LimitError),
+    PackageMountLimit {
+        used: usize,
+        requested: usize,
+        limit: usize,
+    },
     RequestAdmission {
         code: &'static str,
         message: String,
         configuration_path: Option<&'static str>,
         retryable: bool,
         errno: &'static str,
+    },
+    VmTeardownDeadline {
+        message: String,
+        vm_id: String,
+        deadline_ms: u64,
     },
     InvalidState(String),
     ProtocolVersionMismatch(String),
@@ -591,7 +787,12 @@ impl fmt::Display for SidecarError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ResourceLimit(error) => error.fmt(f),
-            Self::RequestAdmission { message, .. } => f.write_str(message),
+            Self::PackageMountLimit { used, requested, limit } => write!(
+                f,
+                "ERR_AGENTOS_RESOURCE_LIMIT: scope=vm resource=packageMounts used={used} requested={requested} limit={limit}; raise limits.agentosPackages.maxMounts"
+            ),
+            Self::RequestAdmission { message, .. }
+            | Self::VmTeardownDeadline { message, .. } => f.write_str(message),
             Self::InvalidState(message)
             | Self::ProtocolVersionMismatch(message)
             | Self::BridgeVersionMismatch(message)
@@ -678,7 +879,7 @@ pub trait SidecarRequestTransport: Send + Sync {
         &'a self,
         request: SidecarRequestFrame,
         timeout: Duration,
-    ) -> Pin<Box<dyn Future<Output = Result<SidecarResponseFrame, SidecarError>> + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<SidecarResponseFrame, SidecarError>> + Send + 'a>> {
         Box::pin(async move { self.send_request(request, timeout) })
     }
 }
@@ -804,6 +1005,8 @@ pub(crate) struct SharedBridge<B> {
     pub(crate) permissions: Arc<Mutex<BTreeMap<String, PermissionsPolicy>>>,
     #[cfg(test)]
     pub(crate) set_vm_permissions_outcomes: Arc<Mutex<VecDeque<Option<SidecarError>>>>,
+    #[cfg(test)]
+    pub(crate) set_vm_permissions_history: Arc<Mutex<Vec<(String, PermissionsPolicy)>>>,
 }
 
 impl<B> Clone for SharedBridge<B> {
@@ -813,6 +1016,8 @@ impl<B> Clone for SharedBridge<B> {
             permissions: Arc::clone(&self.permissions),
             #[cfg(test)]
             set_vm_permissions_outcomes: Arc::clone(&self.set_vm_permissions_outcomes),
+            #[cfg(test)]
+            set_vm_permissions_history: Arc::clone(&self.set_vm_permissions_history),
         }
     }
 }
@@ -840,6 +1045,7 @@ pub(crate) struct SessionState {
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) struct VmConfiguration {
+    pub(crate) defaults_profile: vm_config::VmDefaultsProfile,
     pub(crate) mounts: Vec<MountDescriptor>,
     pub(crate) software: Vec<SoftwareDescriptor>,
     pub(crate) permissions: PermissionsPolicy,
@@ -858,6 +1064,7 @@ pub(crate) struct VmConfiguration {
 impl Default for VmConfiguration {
     fn default() -> Self {
         Self {
+            defaults_profile: vm_config::VmDefaultsProfile::Secure,
             mounts: Vec::new(),
             software: Vec::new(),
             permissions: agentos_native_sidecar_core::permissions::deny_all_policy(),
@@ -1010,6 +1217,19 @@ pub(crate) struct VmState {
     /// used to rebuild package environment and command projections after a
     /// dynamic unlink.
     pub(crate) package_descriptors: Vec<(String, crate::package_projection::PackageDescriptor)>,
+    /// Identities added by LinkPackage rather than the boot ConfigureVm payload.
+    /// Reconfiguration must retain these until an explicit UnlinkPackage, even
+    /// when a client only knows its creation-time package list.
+    pub(crate) runtime_linked_package_ids: BTreeSet<String>,
+    /// Verified package bytes stay pinned while their leaves are projected.
+    /// Trusted LinkPackage paths are deliberately not represented here.
+    pub(crate) installed_package_pins: BTreeMap<String, agentos_client::VerifiedPackage>,
+    /// Projection roots are part of package identity. Pinning a boot package
+    /// must retain its custom root through later configuration and unlink.
+    pub(crate) package_mount_roots: BTreeMap<String, String>,
+    /// Successfully installed package-owned leaves. Accounting and unlink
+    /// must not reconstruct these by reopening a mutable or removed source.
+    pub(crate) package_mount_paths: BTreeMap<String, BTreeSet<String>>,
     /// Cosmetic mountpoints materialized by the VFS for each package. Unlink
     /// removes only entries created for that package, revealing pre-existing
     /// paths underneath package-provided overlays without deleting them.
@@ -1017,6 +1237,10 @@ pub(crate) struct VmState {
     pub(crate) command_permissions: BTreeMap<String, WasmPermissionTier>,
     pub(crate) bindings: BTreeMap<String, RegisterHostCallbacksRequest>,
     pub(crate) active_processes: BTreeMap<String, ActiveProcess>,
+    /// Sidecar-owned replay for ordinary processes and terminals. Live events
+    /// remain push-based; this bounded store is the authoritative recovery path.
+    pub(crate) process_output_replays: BTreeMap<String, ProcessOutputReplay>,
+    pub(crate) process_output_replay_order: VecDeque<String>,
     /// Pull-driven host fetches retained between sidecar requests. A stream
     /// owns exactly one kernel socket and capability lease; reads advance it
     /// only when the trusted client asks for another bounded chunk.
@@ -1058,6 +1282,85 @@ pub(crate) struct VmState {
     pub(crate) unix_socket_host_dir: PathBuf,
 }
 
+impl VmState {
+    pub(crate) fn prepare_process_output_replay_admission(
+        &mut self,
+        process_id: &str,
+    ) -> Result<(), SidecarError> {
+        if self.process_output_replays.contains_key(process_id)
+            || self.active_processes.contains_key(process_id)
+        {
+            return Err(SidecarError::Conflict(format!(
+                "process output replay already exists for {process_id}"
+            )));
+        }
+        let limit = self.limits.process.max_output_replays;
+        while self.process_output_replays.len() >= limit {
+            let evict_index = self
+                .process_output_replay_order
+                .iter()
+                .position(|candidate| {
+                    self.process_output_replays
+                        .get(candidate)
+                        .is_some_and(|replay| replay.exit_code.is_some())
+                });
+            let Some(evict_index) = evict_index else {
+                return Err(SidecarError::RequestAdmission {
+                    code: "ERR_AGENTOS_RESOURCE_LIMIT",
+                    message: format!(
+                        "process output replay limit {limit} reached; wait for a retained process to exit or raise limits.process.maxOutputReplays"
+                    ),
+                    configuration_path: Some("limits.process.maxOutputReplays"),
+                    retryable: true,
+                    errno: "ENOSPC",
+                });
+            };
+            if let Some(expired) = self.process_output_replay_order.remove(evict_index) {
+                self.process_output_replays.remove(&expired);
+            }
+        }
+        let admitted = self.process_output_replays.len().saturating_add(1);
+        if admitted >= limit.saturating_mul(4) / 5 {
+            eprintln!(
+                "agentos VM process output replay count reached {admitted} of {limit}; raise limits.process.maxOutputReplays for more retained processes"
+            );
+        }
+        // Reserve before execution startup can yield. Pending launches count
+        // against the same cap as active and completed retained processes.
+        self.process_output_replay_order
+            .push_back(process_id.to_owned());
+        self.process_output_replays
+            .insert(process_id.to_owned(), ProcessOutputReplay::new());
+        Ok(())
+    }
+
+    pub(crate) fn record_process_output(
+        &mut self,
+        process_id: &str,
+        channel: StreamChannel,
+        chunk: &[u8],
+    ) -> Option<(u64, u64)> {
+        let limits = &self.limits.process;
+        self.process_output_replays
+            .get_mut(process_id)
+            .map(|replay| {
+                replay.push(
+                    channel,
+                    chunk,
+                    limits.output_replay_events,
+                    limits.output_replay_bytes,
+                    limits.output_replay_page_bytes,
+                )
+            })
+    }
+
+    pub(crate) fn record_process_exit(&mut self, process_id: &str, exit_code: i32) {
+        if let Some(replay) = self.process_output_replays.get_mut(process_id) {
+            replay.exit_code = Some(exit_code);
+        }
+    }
+}
+
 /// Cloneable, thread-affine access to one VM's mutable state.
 ///
 /// Guest execution is deliberately driven by the protocol process's
@@ -1069,7 +1372,46 @@ pub(crate) struct VmHandle {
     inner: Rc<RefCell<VmState>>,
 }
 
+/// Holds a replay reservation across asynchronous startup. Failure or canceled
+/// startup releases it; registration of an active process transfers ownership
+/// to the VM's normal replay/exit lifecycle.
+pub(crate) struct ProcessOutputReplayAdmission {
+    vm: VmHandle,
+    process_id: String,
+}
+
+impl Drop for ProcessOutputReplayAdmission {
+    fn drop(&mut self) {
+        if let Err(error) = self.vm.try_command("release pending process replay", |vm| {
+            if !vm.active_processes.contains_key(&self.process_id) {
+                vm.process_output_replays.remove(&self.process_id);
+                vm.process_output_replay_order
+                    .retain(|id| id != &self.process_id);
+            }
+            Ok(())
+        }) {
+            eprintln!(
+                "agentos failed to release pending process replay {}: {error}",
+                self.process_id
+            );
+        }
+    }
+}
+
 impl VmHandle {
+    pub(crate) fn reserve_process_output_replay(
+        &self,
+        process_id: &str,
+    ) -> Result<ProcessOutputReplayAdmission, SidecarError> {
+        self.try_command("reserve process output replay", |vm| {
+            vm.prepare_process_output_replay_admission(process_id)
+        })?;
+        Ok(ProcessOutputReplayAdmission {
+            vm: self.clone(),
+            process_id: process_id.to_owned(),
+        })
+    }
+
     pub(crate) fn new(state: VmState) -> Self {
         Self {
             inner: Rc::new(RefCell::new(state)),
@@ -1320,7 +1662,7 @@ pub(crate) struct VmFetchStreamState {
 
 /// Minimal ownership retained when a VM generation misses its teardown
 /// barrier. Kernel, adapter, filesystem, and routing state are deliberately not
-/// retained; only the handles needed to prove eventual reconciliation survive.
+/// retained; only reconciliation handles and unconfirmed-cleanup evidence survive.
 #[derive(Debug)]
 pub(crate) struct QuarantinedVmGeneration {
     pub(crate) connection_id: String,
@@ -1331,6 +1673,9 @@ pub(crate) struct QuarantinedVmGeneration {
     pub(crate) runtime_context: agentos_runtime::RuntimeContext,
     pub(crate) capabilities: agentos_runtime::capability::CapabilityRegistry,
     pub(crate) reason: VmQuarantineReason,
+    /// A canceled close may have unobserved external work. Zero local counts
+    /// cannot prove its completion, so retain this generation until restart.
+    pub(crate) sqlite_close_unconfirmed: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1360,7 +1705,7 @@ impl QuarantinedVmGeneration {
     }
 
     pub(crate) fn can_reap(&self) -> bool {
-        if self.reason != VmQuarantineReason::TeardownDeadline {
+        if self.sqlite_close_unconfirmed || self.reason != VmQuarantineReason::TeardownDeadline {
             return false;
         }
         let snapshot = self.reconciliation_snapshot();

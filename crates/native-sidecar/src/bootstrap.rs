@@ -34,10 +34,14 @@ where
         .map_err(|error| SidecarError::InvalidState(error.to_string()))
 }
 
-pub(crate) fn discover_command_guest_paths(kernel: &mut SidecarKernel) -> BTreeMap<String, String> {
+pub(crate) fn discover_command_guest_paths(
+    kernel: &mut SidecarKernel,
+) -> Result<BTreeMap<String, String>, SidecarError> {
     let mut command_guest_paths = BTreeMap::new();
-    let Ok(command_roots) = kernel.read_dir("/__agentos/commands") else {
-        return command_guest_paths;
+    let command_roots = match kernel.read_dir_for_operator("/__agentos/commands") {
+        Ok(roots) => roots,
+        Err(error) if error.code() == "ENOENT" => return Ok(command_guest_paths),
+        Err(error) => return Err(crate::service::kernel_error(error)),
     };
 
     let mut ordered_roots = command_roots
@@ -48,9 +52,9 @@ pub(crate) fn discover_command_guest_paths(kernel: &mut SidecarKernel) -> BTreeM
 
     for root in ordered_roots {
         let guest_root = format!("/__agentos/commands/{root}");
-        let Ok(entries) = kernel.read_dir(&guest_root) else {
-            continue;
-        };
+        let entries = kernel
+            .read_dir_for_operator(&guest_root)
+            .map_err(crate::service::kernel_error)?;
 
         for entry in entries {
             if entry.starts_with('.') || command_guest_paths.contains_key(&entry) {
@@ -60,5 +64,5 @@ pub(crate) fn discover_command_guest_paths(kernel: &mut SidecarKernel) -> BTreeM
         }
     }
 
-    command_guest_paths
+    Ok(command_guest_paths)
 }

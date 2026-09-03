@@ -408,6 +408,9 @@ fn to_generated_request_payload(
         RequestPayload::CreateVm(inner) => {
             generated_protocol::RequestPayload::CreateVmRequest(inner.clone())
         }
+        RequestPayload::CompareVmConfig(inner) => {
+            generated_protocol::RequestPayload::CompareVmConfigRequest(inner.clone())
+        }
         RequestPayload::DisposeVm(inner) => generated_protocol::RequestPayload::DisposeVmRequest(
             generated_protocol::DisposeVmRequest {
                 reason: to_generated_dispose_reason(&inner.reason),
@@ -505,6 +508,15 @@ fn to_generated_request_payload(
         RequestPayload::UnlinkPackage(inner) => {
             generated_protocol::RequestPayload::UnlinkPackageRequest(inner.clone())
         }
+        RequestPayload::AcquirePackage(inner) => {
+            generated_protocol::RequestPayload::AcquirePackageRequest(inner.clone())
+        }
+        RequestPayload::InstallPackage(inner) => {
+            generated_protocol::RequestPayload::InstallPackageRequest(inner.clone())
+        }
+        RequestPayload::GetPackageCacheStats(_) => {
+            generated_protocol::RequestPayload::GetPackageCacheStatsRequest
+        }
         RequestPayload::ProvidedCommands(_) => {
             generated_protocol::RequestPayload::ProvidedCommandsRequest
         }
@@ -601,6 +613,9 @@ fn to_generated_request_payload(
         RequestPayload::ReadExecutionOutput(inner) => {
             generated_protocol::RequestPayload::ReadExecutionOutputRequest(inner.clone())
         }
+        RequestPayload::ReadProcessOutput(inner) => {
+            generated_protocol::RequestPayload::ReadProcessOutputRequest(inner.clone())
+        }
     })
 }
 
@@ -616,6 +631,9 @@ fn from_generated_request_payload(
         }
         generated_protocol::RequestPayload::CreateVmRequest(inner) => {
             RequestPayload::CreateVm(inner)
+        }
+        generated_protocol::RequestPayload::CompareVmConfigRequest(inner) => {
+            RequestPayload::CompareVmConfig(inner)
         }
         generated_protocol::RequestPayload::DisposeVmRequest(inner) => {
             RequestPayload::DisposeVm(DisposeVmRequest {
@@ -711,6 +729,15 @@ fn from_generated_request_payload(
         }
         generated_protocol::RequestPayload::UnlinkPackageRequest(inner) => {
             RequestPayload::UnlinkPackage(inner)
+        }
+        generated_protocol::RequestPayload::AcquirePackageRequest(inner) => {
+            RequestPayload::AcquirePackage(inner)
+        }
+        generated_protocol::RequestPayload::InstallPackageRequest(inner) => {
+            RequestPayload::InstallPackage(inner)
+        }
+        generated_protocol::RequestPayload::GetPackageCacheStatsRequest => {
+            RequestPayload::GetPackageCacheStats(())
         }
         generated_protocol::RequestPayload::ProvidedCommandsRequest => {
             RequestPayload::ProvidedCommands(ProvidedCommandsRequest {})
@@ -808,6 +835,9 @@ fn from_generated_request_payload(
         generated_protocol::RequestPayload::ReadExecutionOutputRequest(inner) => {
             RequestPayload::ReadExecutionOutput(inner)
         }
+        generated_protocol::RequestPayload::ReadProcessOutputRequest(inner) => {
+            RequestPayload::ReadProcessOutput(inner)
+        }
     })
 }
 
@@ -823,6 +853,9 @@ fn to_generated_response_payload(
         }
         ResponsePayload::VmCreated(inner) => {
             generated_protocol::ResponsePayload::VmCreatedResponse(inner.clone())
+        }
+        ResponsePayload::VmConfigCompared(inner) => {
+            generated_protocol::ResponsePayload::VmConfigComparedResponse(inner.clone())
         }
         ResponsePayload::VmDisposed(inner) => {
             generated_protocol::ResponsePayload::VmDisposedResponse(inner.clone())
@@ -965,6 +998,15 @@ fn to_generated_response_payload(
         ResponsePayload::PackageUnlinked(inner) => {
             generated_protocol::ResponsePayload::PackageUnlinkedResponse(inner.clone())
         }
+        ResponsePayload::PackageAcquired(inner) => {
+            generated_protocol::ResponsePayload::PackageAcquiredResponse(inner.clone())
+        }
+        ResponsePayload::PackageInstalled(inner) => {
+            generated_protocol::ResponsePayload::PackageInstalledResponse(inner.clone())
+        }
+        ResponsePayload::PackageCacheStats(inner) => {
+            generated_protocol::ResponsePayload::PackageCacheStatsResponse(inner.clone())
+        }
         ResponsePayload::ProvidedCommands(inner) => {
             generated_protocol::ResponsePayload::ProvidedCommandsResponse(inner.clone())
         }
@@ -995,6 +1037,9 @@ fn to_generated_response_payload(
         ResponsePayload::ExecutionOutputPage(inner) => {
             generated_protocol::ResponsePayload::ExecutionOutputPageResponse(inner.clone())
         }
+        ResponsePayload::ProcessOutputPage(inner) => {
+            generated_protocol::ResponsePayload::ProcessOutputPageResponse(inner.clone())
+        }
     })
 }
 
@@ -1010,6 +1055,9 @@ fn from_generated_response_payload(
         }
         generated_protocol::ResponsePayload::VmCreatedResponse(inner) => {
             ResponsePayload::VmCreated(inner)
+        }
+        generated_protocol::ResponsePayload::VmConfigComparedResponse(inner) => {
+            ResponsePayload::VmConfigCompared(inner)
         }
         generated_protocol::ResponsePayload::VmDisposedResponse(inner) => {
             ResponsePayload::VmDisposed(inner)
@@ -1139,6 +1187,15 @@ fn from_generated_response_payload(
         generated_protocol::ResponsePayload::PackageUnlinkedResponse(inner) => {
             ResponsePayload::PackageUnlinked(inner)
         }
+        generated_protocol::ResponsePayload::PackageAcquiredResponse(inner) => {
+            ResponsePayload::PackageAcquired(inner)
+        }
+        generated_protocol::ResponsePayload::PackageInstalledResponse(inner) => {
+            ResponsePayload::PackageInstalled(inner)
+        }
+        generated_protocol::ResponsePayload::PackageCacheStatsResponse(inner) => {
+            ResponsePayload::PackageCacheStats(inner)
+        }
         generated_protocol::ResponsePayload::ProvidedCommandsResponse(inner) => {
             ResponsePayload::ProvidedCommands(inner)
         }
@@ -1169,6 +1226,9 @@ fn from_generated_response_payload(
         generated_protocol::ResponsePayload::ExecutionOutputPageResponse(inner) => {
             ResponsePayload::ExecutionOutputPage(inner)
         }
+        generated_protocol::ResponsePayload::ProcessOutputPageResponse(inner) => {
+            ResponsePayload::ProcessOutputPage(inner)
+        }
     })
 }
 
@@ -1184,6 +1244,8 @@ fn to_generated_event_payload(payload: &EventPayload) -> generated_protocol::Eve
                 process_id: inner.process_id.clone(),
                 channel: to_generated_stream_channel(&inner.channel),
                 chunk: inner.chunk.clone(),
+                sequence: inner.sequence,
+                timestamp_ms: inner.timestamp_ms,
             },
         ),
         EventPayload::ProcessExited(inner) => {
@@ -1216,6 +1278,8 @@ fn from_generated_event_payload(payload: generated_protocol::EventPayload) -> Ev
                 process_id: inner.process_id,
                 channel: from_generated_stream_channel(inner.channel),
                 chunk: inner.chunk,
+                sequence: inner.sequence,
+                timestamp_ms: inner.timestamp_ms,
             })
         }
         generated_protocol::EventPayload::ProcessExitedEvent(inner) => {
@@ -1523,6 +1587,7 @@ pub enum RequestPayload {
     Authenticate(AuthenticateRequest),
     OpenSession(OpenSessionRequest),
     CreateVm(CreateVmRequest),
+    CompareVmConfig(CompareVmConfigRequest),
     DisposeVm(DisposeVmRequest),
     BootstrapRootFilesystem(BootstrapRootFilesystemRequest),
     ConfigureVm(ConfigureVmRequest),
@@ -1554,6 +1619,9 @@ pub enum RequestPayload {
     GetResourceSnapshot(GetResourceSnapshotRequest),
     LinkPackage(LinkPackageRequest),
     UnlinkPackage(UnlinkPackageRequest),
+    AcquirePackage(AcquirePackageRequest),
+    InstallPackage(InstallPackageRequest),
+    GetPackageCacheStats(GetPackageCacheStatsRequest),
     ProvidedCommands(ProvidedCommandsRequest),
     ShellExecution(ShellExecutionRequest),
     ArgvExecution(ArgvExecutionRequest),
@@ -1586,6 +1654,7 @@ pub enum RequestPayload {
     CloseExecutionStdin(CloseExecutionStdinRequest),
     ResizeExecutionPty(ResizeExecutionPtyRequest),
     ReadExecutionOutput(ReadExecutionOutputRequest),
+    ReadProcessOutput(ReadProcessOutputRequest),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1593,6 +1662,7 @@ pub enum ResponsePayload {
     Authenticated(AuthenticatedResponse),
     SessionOpened(SessionOpenedResponse),
     VmCreated(VmCreatedResponse),
+    VmConfigCompared(VmConfigComparedResponse),
     VmDisposed(VmDisposedResponse),
     RootFilesystemBootstrapped(RootFilesystemBootstrappedResponse),
     VmConfigured(VmConfiguredResponse),
@@ -1626,6 +1696,9 @@ pub enum ResponsePayload {
     ResourceSnapshot(ResourceSnapshotResponse),
     PackageLinked(PackageLinkedResponse),
     PackageUnlinked(PackageUnlinkedResponse),
+    PackageAcquired(PackageAcquiredResponse),
+    PackageInstalled(PackageInstalledResponse),
+    PackageCacheStats(PackageCacheStatsResponse),
     ProvidedCommands(ProvidedCommandsResponse),
     ExecutionAccepted(ExecutionAcceptedResponse),
     ExecutionCompleted(ExecutionCompletedResponse),
@@ -1636,6 +1709,7 @@ pub enum ResponsePayload {
     ExecutionDeleted(ExecutionDeletedResponse),
     ExecutionIo(ExecutionIoResponse),
     ExecutionOutputPage(ExecutionOutputPageResponse),
+    ProcessOutputPage(ProcessOutputPageResponse),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1710,6 +1784,7 @@ pub type AuthenticateRequest = crate::wire::AuthenticateRequest;
 pub type OpenSessionRequest = crate::wire::OpenSessionRequest;
 
 pub type CreateVmRequest = crate::wire::CreateVmRequest;
+pub type CompareVmConfigRequest = crate::wire::CompareVmConfigRequest;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DisposeVmRequest {
@@ -1746,6 +1821,15 @@ pub type PackageCommands = crate::wire::PackageCommands;
 pub type ProjectedCommand = crate::wire::ProjectedCommand;
 pub type LinkPackageRequest = crate::wire::LinkPackageRequest;
 pub type UnlinkPackageRequest = crate::wire::UnlinkPackageRequest;
+pub type PackageAcquisitionSource = crate::wire::PackageAcquisitionSource;
+pub type PackageUrlSource = crate::wire::PackageUrlSource;
+pub type PackagePathSource = crate::wire::PackagePathSource;
+pub type AcquirePackageRequest = crate::wire::AcquirePackageRequest;
+pub type PackageAcquiredResponse = crate::wire::PackageAcquiredResponse;
+pub type InstallPackageRequest = crate::wire::InstallPackageRequest;
+pub type PackageInstalledResponse = crate::wire::PackageInstalledResponse;
+pub type GetPackageCacheStatsRequest = crate::wire::GetPackageCacheStatsRequest;
+pub type PackageCacheStatsResponse = crate::wire::PackageCacheStatsResponse;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ProvidedCommandsRequest {}
@@ -1774,6 +1858,7 @@ pub type ProjectedModuleDescriptor = crate::wire::ProjectedModuleDescriptor;
 pub type WasmPermissionTier = crate::wire::WasmPermissionTier;
 
 pub type ExecuteRequest = crate::wire::ExecuteRequest;
+pub type ReadProcessOutputRequest = crate::wire::ReadProcessOutputRequest;
 
 pub type ExecutionState = crate::wire::ExecutionState;
 pub type ExecutionOutcome = crate::wire::ExecutionOutcome;
@@ -1862,6 +1947,7 @@ pub type AuthenticatedResponse = crate::wire::AuthenticatedResponse;
 pub type SessionOpenedResponse = crate::wire::SessionOpenedResponse;
 
 pub type VmCreatedResponse = crate::wire::VmCreatedResponse;
+pub type VmConfigComparedResponse = crate::wire::VmConfigComparedResponse;
 
 pub type VmDisposedResponse = crate::wire::VmDisposedResponse;
 
@@ -1904,6 +1990,8 @@ pub type ProcessSnapshotStatus = crate::wire::ProcessSnapshotStatus;
 pub type ProcessSnapshotEntry = crate::wire::ProcessSnapshotEntry;
 
 pub type ProcessSnapshotResponse = crate::wire::ProcessSnapshotResponse;
+pub type ProcessOutputReplayEvent = crate::wire::ProcessOutputReplayEvent;
+pub type ProcessOutputPageResponse = crate::wire::ProcessOutputPageResponse;
 
 pub type QueueSnapshotEntry = crate::wire::QueueSnapshotEntry;
 
@@ -2046,6 +2134,11 @@ impl_bare_newtype_union_enum!(
         ResizeExecutionPty(ResizeExecutionPtyRequest) = 63,
         ReadExecutionOutput(ReadExecutionOutputRequest) = 64,
         UnlinkPackage(UnlinkPackageRequest) = 65,
+        CompareVmConfig(CompareVmConfigRequest) = 66,
+        AcquirePackage(AcquirePackageRequest) = 67,
+        InstallPackage(InstallPackageRequest) = 68,
+        GetPackageCacheStats(GetPackageCacheStatsRequest) = 69,
+        ReadProcessOutput(ReadProcessOutputRequest) = 70,
     }
 );
 
@@ -2100,6 +2193,11 @@ impl_bare_newtype_union_enum!(
         ExecutionIo(ExecutionIoResponse) = 43,
         ExecutionOutputPage(ExecutionOutputPageResponse) = 44,
         PackageUnlinked(PackageUnlinkedResponse) = 45,
+        VmConfigCompared(VmConfigComparedResponse) = 46,
+        PackageAcquired(PackageAcquiredResponse) = 47,
+        PackageInstalled(PackageInstalledResponse) = 48,
+        PackageCacheStats(PackageCacheStatsResponse) = 49,
+        ProcessOutputPage(ProcessOutputPageResponse) = 50,
     }
 );
 
@@ -2649,6 +2747,7 @@ enum ExpectedResponseKind {
     Authenticated,
     SessionOpened,
     VmCreated,
+    VmConfigCompared,
     VmDisposed,
     RootFilesystemBootstrapped,
     VmConfigured,
@@ -2683,6 +2782,9 @@ enum ExpectedResponseKind {
     PtyResized,
     PackageLinked,
     PackageUnlinked,
+    PackageAcquired,
+    PackageInstalled,
+    PackageCacheStats,
     ProvidedCommands,
     MountsListed,
     ExecutionOperation,
@@ -2694,6 +2796,7 @@ enum ExpectedResponseKind {
     ExecutionDeleted,
     ExecutionIo,
     ExecutionOutputPage,
+    ProcessOutputPage,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2709,6 +2812,7 @@ impl ExpectedResponseKind {
             Self::Authenticated => "authenticated",
             Self::SessionOpened => "session_opened",
             Self::VmCreated => "vm_created",
+            Self::VmConfigCompared => "vm_config_compared",
             Self::VmDisposed => "vm_disposed",
             Self::RootFilesystemBootstrapped => "root_filesystem_bootstrapped",
             Self::VmConfigured => "vm_configured",
@@ -2740,6 +2844,9 @@ impl ExpectedResponseKind {
             Self::PtyResized => "pty_resized",
             Self::PackageLinked => "package_linked",
             Self::PackageUnlinked => "package_unlinked",
+            Self::PackageAcquired => "package_acquired",
+            Self::PackageInstalled => "package_installed",
+            Self::PackageCacheStats => "package_cache_stats",
             Self::ProvidedCommands => "provided_commands_response",
             Self::MountsListed => "mounts_listed",
             Self::ExecutionOperation => "execution_operation",
@@ -2751,6 +2858,7 @@ impl ExpectedResponseKind {
             Self::ExecutionDeleted => "execution_deleted",
             Self::ExecutionIo => "execution_io",
             Self::ExecutionOutputPage => "execution_output_page",
+            Self::ProcessOutputPage => "process_output_page",
         }
     }
 
@@ -2785,9 +2893,12 @@ impl RequestPayload {
     fn ownership_requirement(&self) -> OwnershipRequirement {
         match self {
             Self::Authenticate(_) | Self::OpenSession(_) => OwnershipRequirement::Connection,
-            Self::CreateVm(_) | Self::PersistenceLoad(_) | Self::PersistenceFlush(_) => {
-                OwnershipRequirement::Session
-            }
+            Self::CreateVm(_)
+            | Self::CompareVmConfig(_)
+            | Self::AcquirePackage(_)
+            | Self::GetPackageCacheStats(_)
+            | Self::PersistenceLoad(_)
+            | Self::PersistenceFlush(_) => OwnershipRequirement::Session,
             Self::DisposeVm(_)
             | Self::BootstrapRootFilesystem(_)
             | Self::ConfigureVm(_)
@@ -2815,6 +2926,7 @@ impl RequestPayload {
             | Self::ResizePty(_)
             | Self::LinkPackage(_)
             | Self::UnlinkPackage(_)
+            | Self::InstallPackage(_)
             | Self::ProvidedCommands(_)
             | Self::ShellExecution(_)
             | Self::ArgvExecution(_)
@@ -2847,6 +2959,7 @@ impl RequestPayload {
             | Self::CloseExecutionStdin(_)
             | Self::ResizeExecutionPty(_)
             | Self::ReadExecutionOutput(_)
+            | Self::ReadProcessOutput(_)
             | Self::HostFilesystemCall(_) => OwnershipRequirement::Vm,
             Self::Ext(_) => OwnershipRequirement::Any,
         }
@@ -2857,6 +2970,7 @@ impl RequestPayload {
             Self::Authenticate(_) => ExpectedResponseKind::Authenticated,
             Self::OpenSession(_) => ExpectedResponseKind::SessionOpened,
             Self::CreateVm(_) => ExpectedResponseKind::VmCreated,
+            Self::CompareVmConfig(_) => ExpectedResponseKind::VmConfigCompared,
             Self::DisposeVm(_) => ExpectedResponseKind::VmDisposed,
             Self::BootstrapRootFilesystem(_) => ExpectedResponseKind::RootFilesystemBootstrapped,
             Self::ConfigureVm(_) => ExpectedResponseKind::VmConfigured,
@@ -2888,6 +3002,9 @@ impl RequestPayload {
             Self::ResizePty(_) => ExpectedResponseKind::PtyResized,
             Self::LinkPackage(_) => ExpectedResponseKind::PackageLinked,
             Self::UnlinkPackage(_) => ExpectedResponseKind::PackageUnlinked,
+            Self::AcquirePackage(_) => ExpectedResponseKind::PackageAcquired,
+            Self::InstallPackage(_) => ExpectedResponseKind::PackageInstalled,
+            Self::GetPackageCacheStats(_) => ExpectedResponseKind::PackageCacheStats,
             Self::ProvidedCommands(_) => ExpectedResponseKind::ProvidedCommands,
             Self::ShellExecution(_)
             | Self::ArgvExecution(_)
@@ -2921,6 +3038,7 @@ impl RequestPayload {
             | Self::CloseExecutionStdin(_)
             | Self::ResizeExecutionPty(_) => ExpectedResponseKind::ExecutionIo,
             Self::ReadExecutionOutput(_) => ExpectedResponseKind::ExecutionOutputPage,
+            Self::ReadProcessOutput(_) => ExpectedResponseKind::ProcessOutputPage,
         }
     }
 }
@@ -2943,9 +3061,12 @@ impl ResponsePayload {
     fn ownership_requirement(&self) -> OwnershipRequirement {
         match self {
             Self::Authenticated(_) | Self::SessionOpened(_) => OwnershipRequirement::Connection,
-            Self::VmCreated(_) | Self::PersistenceState(_) | Self::PersistenceFlushed(_) => {
-                OwnershipRequirement::Session
-            }
+            Self::VmCreated(_)
+            | Self::VmConfigCompared(_)
+            | Self::PackageAcquired(_)
+            | Self::PackageCacheStats(_)
+            | Self::PersistenceState(_)
+            | Self::PersistenceFlushed(_) => OwnershipRequirement::Session,
             Self::Rejected(_) => OwnershipRequirement::Any,
             Self::VmDisposed(_)
             | Self::RootFilesystemBootstrapped(_)
@@ -2976,6 +3097,7 @@ impl ResponsePayload {
             | Self::PtyResized(_)
             | Self::PackageLinked(_)
             | Self::PackageUnlinked(_)
+            | Self::PackageInstalled(_)
             | Self::ProvidedCommands(_)
             | Self::ExecutionAccepted(_)
             | Self::ExecutionCompleted(_)
@@ -2985,7 +3107,8 @@ impl ResponsePayload {
             | Self::ExecutionList(_)
             | Self::ExecutionDeleted(_)
             | Self::ExecutionIo(_)
-            | Self::ExecutionOutputPage(_) => OwnershipRequirement::Vm,
+            | Self::ExecutionOutputPage(_)
+            | Self::ProcessOutputPage(_) => OwnershipRequirement::Vm,
             Self::ExtResult(_) => OwnershipRequirement::Any,
         }
     }
@@ -2995,6 +3118,7 @@ impl ResponsePayload {
             Self::Authenticated(_) => "authenticated",
             Self::SessionOpened(_) => "session_opened",
             Self::VmCreated(_) => "vm_created",
+            Self::VmConfigCompared(_) => "vm_config_compared",
             Self::VmDisposed(_) => "vm_disposed",
             Self::RootFilesystemBootstrapped(_) => "root_filesystem_bootstrapped",
             Self::VmConfigured(_) => "vm_configured",
@@ -3028,6 +3152,9 @@ impl ResponsePayload {
             Self::PtyResized(_) => "pty_resized",
             Self::PackageLinked(_) => "package_linked",
             Self::PackageUnlinked(_) => "package_unlinked",
+            Self::PackageAcquired(_) => "package_acquired",
+            Self::PackageInstalled(_) => "package_installed",
+            Self::PackageCacheStats(_) => "package_cache_stats",
             Self::ProvidedCommands(_) => "provided_commands_response",
             Self::ExecutionAccepted(_) => "execution_accepted",
             Self::ExecutionCompleted(_) => "execution_completed",
@@ -3038,6 +3165,7 @@ impl ResponsePayload {
             Self::ExecutionDeleted(_) => "execution_deleted",
             Self::ExecutionIo(_) => "execution_io",
             Self::ExecutionOutputPage(_) => "execution_output_page",
+            Self::ProcessOutputPage(_) => "process_output_page",
         }
     }
 }

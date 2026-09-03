@@ -53,15 +53,23 @@ dependencies = [
 name = "agentos-actor"
 version = "0.0.1"
 dependencies = [
+ "agentos-actor-contract",
  "agentos-client",
+ "agentos-preload",
  "agentos-sidecar-client",
+ "agentos-vm-config",
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "ciborium",
  "futures",
  "hex",
  "http 1.4.2",
+ "inventory",
+ "rivet-error",
  "rivetkit",
+ "rivetkit-core",
+ "rusqlite",
  "serde",
  "serde_bytes",
  "serde_json",
@@ -71,6 +79,27 @@ dependencies = [
  "tracing",
  "ts-rs",
  "uuid",
+]
+
+[[package]]
+name = "agentos-actor-contract"
+version = "0.0.1"
+dependencies = [
+ "agentos-client",
+ "agentos-sidecar-client",
+ "agentos-vm-config",
+ "anyhow",
+ "base64 0.22.1",
+ "ciborium",
+ "hex",
+ "rivet-error",
+ "rivetkit",
+ "serde",
+ "serde_bytes",
+ "serde_json",
+ "sha2 0.10.9",
+ "tracing",
+ "ts-rs",
 ]
 
 [[package]]
@@ -108,6 +137,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "chrono",
+ "fs2",
  "futures",
  "http 1.4.2",
  "once_cell",
@@ -116,6 +146,7 @@ dependencies = [
  "scc 2.4.0",
  "serde",
  "serde_bare",
+ "serde_bytes",
  "serde_json",
  "sha2 0.10.9",
  "tar",
@@ -188,6 +219,7 @@ dependencies = [
  "agentos-vfs",
  "agentos-vfs-core",
  "agentos-vm-config",
+ "anyhow",
  "async-trait",
  "aws-config",
  "aws-credential-types",
@@ -215,6 +247,7 @@ dependencies = [
  "oxc_span",
  "oxc_transformer",
  "pbkdf2",
+ "rivetkit",
  "rusqlite",
  "rustix 1.1.4",
  "rustls 0.23.41",
@@ -270,6 +303,23 @@ dependencies = [
  "base64 0.22.1",
  "serde_json",
  "webpki-root-certs",
+]
+
+[[package]]
+name = "agentos-preload"
+version = "0.0.1"
+dependencies = [
+ "agentos-client",
+ "anyhow",
+ "async-trait",
+ "futures",
+ "rivet-metrics",
+ "rivetkit",
+ "rivetkit-core",
+ "serde",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -1740,6 +1790,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fs2"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
+dependencies = [
+ "libc",
+ "winapi",
+]
+
+[[package]]
 name = "fs_extra"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2497,6 +2557,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "879f10e63c20629ecabbb64a8010319738c66a5cd0c29b02d63d272b03751d01"
 dependencies = [
  "generic-array",
+]
+
+[[package]]
+name = "inventory"
+version = "0.3.24"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4f0c30c76f2f4ccee3fe55a2435f691ca00c0e4bd87abe4f4a851b1d4dac39b"
+dependencies = [
+ "rustversion",
 ]
 
 [[package]]

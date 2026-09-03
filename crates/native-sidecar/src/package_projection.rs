@@ -36,10 +36,11 @@ pub const OPT_AGENTOS_BIN: &str = "/opt/agentos/bin";
 pub const DEFAULT_PACKAGE_FILE_NAME: &str = "package.aospkg";
 /// Back-compat alias for the packed container file name.
 pub const DEFAULT_PACKAGE_TAR_NAME: &str = DEFAULT_PACKAGE_FILE_NAME;
-pub const MAX_AGENTOS_PACKAGE_MOUNTS: usize = 4096;
+pub const MAX_AGENTOS_PACKAGE_MOUNTS: usize =
+    agentos_native_sidecar_core::limits::DEFAULT_AGENTOS_PACKAGE_MAX_MOUNTS;
 
 /// A package to project, derived from chunk1 of `package.aospkg`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageDescriptor {
     pub name: String,
     pub version: String,
@@ -79,13 +80,13 @@ pub enum PackageLeafMount {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageProvidesDescriptor {
     pub env: HashMap<String, String>,
     pub files: Vec<PackageProvidesFileDescriptor>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageProvidesFileDescriptor {
     pub source: String,
     pub target: String,
@@ -319,6 +320,14 @@ pub fn build_package_leaf_mounts(
     packages: &[PackageDescriptor],
     mount_at: &str,
 ) -> Result<Vec<PackageLeafMount>, SidecarError> {
+    build_package_leaf_mounts_with_limit(packages, mount_at, MAX_AGENTOS_PACKAGE_MOUNTS)
+}
+
+pub fn build_package_leaf_mounts_with_limit(
+    packages: &[PackageDescriptor],
+    mount_at: &str,
+    max_mounts: usize,
+) -> Result<Vec<PackageLeafMount>, SidecarError> {
     let mount_at = normalize_mount_root(mount_at);
     let mut mounts = Vec::new();
     let mut command_paths = HashSet::new();
@@ -334,6 +343,7 @@ pub fn build_package_leaf_mounts(
                     tar_path: tar_path.to_owned(),
                     root: String::from("/"),
                 },
+                max_mounts,
             )?;
         } else {
             push_mount(
@@ -342,6 +352,7 @@ pub fn build_package_leaf_mounts(
                     guest_path: version_path,
                     host_path: package.dir.clone(),
                 },
+                max_mounts,
             )?;
         }
         push_mount(
@@ -350,6 +361,7 @@ pub fn build_package_leaf_mounts(
                 guest_path: normalize_path(&format!("{package_root}/current")),
                 target: package.version.clone(),
             },
+            max_mounts,
         )?;
 
         for target in &package.commands {
@@ -366,6 +378,7 @@ pub fn build_package_leaf_mounts(
                     guest_path,
                     target: format!("../pkgs/{}/current/{}", package.name, target.entry),
                 },
+                max_mounts,
             )?;
         }
 
@@ -382,6 +395,7 @@ pub fn build_package_leaf_mounts(
                         package.name, page.section, page.page
                     ),
                 },
+                max_mounts,
             )?;
         }
     }
@@ -434,22 +448,15 @@ pub fn package_provides_file_mount(
 fn push_mount(
     mounts: &mut Vec<PackageLeafMount>,
     mount: PackageLeafMount,
+    max_mounts: usize,
 ) -> Result<(), SidecarError> {
     let observed = mounts.len() + 1;
-    if observed > MAX_AGENTOS_PACKAGE_MOUNTS {
-        return Err(SidecarError::InvalidState(format!(
-            "agentos package mount count exceeded: {observed} mounts > {MAX_AGENTOS_PACKAGE_MOUNTS} mounts (raise via limits.agentosPackages.maxMounts)"
-        )));
-    }
-    if observed * 100 / MAX_AGENTOS_PACKAGE_MOUNTS >= 80 {
-        tracing::warn!(
-            limit = "agentos_package_mounts",
-            observed,
-            capacity = MAX_AGENTOS_PACKAGE_MOUNTS,
-            fill_percent = observed * 100 / MAX_AGENTOS_PACKAGE_MOUNTS,
-            wired = "limits.agentosPackages.maxMounts",
-            "agentos package mount count approaching configured limit"
-        );
+    if observed > max_mounts {
+        return Err(SidecarError::PackageMountLimit {
+            used: 0,
+            requested: observed,
+            limit: max_mounts,
+        });
     }
     mounts.push(mount);
     Ok(())

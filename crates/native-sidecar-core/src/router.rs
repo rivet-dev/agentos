@@ -1,14 +1,16 @@
 use crate::frames::{reject, DispatchResult};
 use agentos_sidecar_protocol::protocol::{
-    AuthenticateRequest, BootstrapRootFilesystemRequest, CloseStdinRequest, ConfigureVmRequest,
-    CreateLayerRequest, CreateOverlayRequest, CreateVmRequest, DisposeVmRequest, ExecuteRequest,
-    ExportSnapshotRequest, ExtEnvelope, FindBoundUdpRequest, FindListenerRequest,
+    AcquirePackageRequest, AuthenticateRequest, BootstrapRootFilesystemRequest, CloseStdinRequest,
+    CompareVmConfigRequest, ConfigureVmRequest, CreateLayerRequest, CreateOverlayRequest,
+    CreateVmRequest, DisposeVmRequest, ExecuteRequest, ExportSnapshotRequest, ExtEnvelope,
+    FindBoundUdpRequest, FindListenerRequest, GetPackageCacheStatsRequest,
     GetProcessSnapshotRequest, GetResourceSnapshotRequest, GetSignalStateRequest,
     GetZombieTimerCountRequest, GuestFilesystemCallRequest, GuestKernelCallRequest,
-    ImportSnapshotRequest, KillProcessRequest, LinkPackageRequest, ListMountsRequest,
-    OpenSessionRequest, OwnershipScope, ProvidedCommandsRequest, RegisterHostCallbacksRequest,
-    RequestFrame, RequestPayload, ResizePtyRequest, SealLayerRequest,
-    SnapshotRootFilesystemRequest, UnlinkPackageRequest, VmFetchRequest, WriteStdinRequest,
+    ImportSnapshotRequest, InstallPackageRequest, KillProcessRequest, LinkPackageRequest,
+    ListMountsRequest, OpenSessionRequest, OwnershipScope, ProvidedCommandsRequest,
+    ReadProcessOutputRequest, RegisterHostCallbacksRequest, RequestFrame, RequestPayload,
+    ResizePtyRequest, SealLayerRequest, SnapshotRootFilesystemRequest, UnlinkPackageRequest,
+    VmFetchRequest, WriteStdinRequest,
 };
 
 pub const UNSUPPORTED_HOST_CALLBACK_DIRECTION_CODE: &str = "unsupported_direction";
@@ -29,6 +31,7 @@ pub enum RequestRoute {
     Authenticate(AuthenticateRequest),
     OpenSession(OpenSessionRequest),
     CreateVm(CreateVmRequest),
+    CompareVmConfig(CompareVmConfigRequest),
     DisposeVm(DisposeVmRequest),
     BootstrapRootFilesystem(BootstrapRootFilesystemRequest),
     ConfigureVm(ConfigureVmRequest),
@@ -48,6 +51,7 @@ pub enum RequestRoute {
     CloseStdin(CloseStdinRequest),
     KillProcess(KillProcessRequest),
     GetProcessSnapshot(GetProcessSnapshotRequest),
+    ReadProcessOutput(ReadProcessOutputRequest),
     GetResourceSnapshot(GetResourceSnapshotRequest),
     FindListener(FindListenerRequest),
     FindBoundUdp(FindBoundUdpRequest),
@@ -56,6 +60,9 @@ pub enum RequestRoute {
     GetZombieTimerCount(GetZombieTimerCountRequest),
     LinkPackage(LinkPackageRequest),
     UnlinkPackage(UnlinkPackageRequest),
+    AcquirePackage(AcquirePackageRequest),
+    InstallPackage(InstallPackageRequest),
+    GetPackageCacheStats(GetPackageCacheStatsRequest),
     ProvidedCommands(ProvidedCommandsRequest),
     ExecutionOperation(RequestPayload),
     ExecutionLifecycle(RequestPayload),
@@ -68,6 +75,7 @@ pub fn route_request_payload(request: &RequestFrame) -> RequestRoute {
         RequestPayload::Authenticate(payload) => RequestRoute::Authenticate(payload),
         RequestPayload::OpenSession(payload) => RequestRoute::OpenSession(payload),
         RequestPayload::CreateVm(payload) => RequestRoute::CreateVm(payload),
+        RequestPayload::CompareVmConfig(payload) => RequestRoute::CompareVmConfig(payload),
         RequestPayload::DisposeVm(payload) => RequestRoute::DisposeVm(payload),
         RequestPayload::BootstrapRootFilesystem(payload) => {
             RequestRoute::BootstrapRootFilesystem(payload)
@@ -93,6 +101,7 @@ pub fn route_request_payload(request: &RequestFrame) -> RequestRoute {
         RequestPayload::CloseStdin(payload) => RequestRoute::CloseStdin(payload),
         RequestPayload::KillProcess(payload) => RequestRoute::KillProcess(payload),
         RequestPayload::GetProcessSnapshot(payload) => RequestRoute::GetProcessSnapshot(payload),
+        RequestPayload::ReadProcessOutput(payload) => RequestRoute::ReadProcessOutput(payload),
         RequestPayload::GetResourceSnapshot(payload) => RequestRoute::GetResourceSnapshot(payload),
         RequestPayload::FindListener(payload) => RequestRoute::FindListener(payload),
         RequestPayload::FindBoundUdp(payload) => RequestRoute::FindBoundUdp(payload),
@@ -101,6 +110,11 @@ pub fn route_request_payload(request: &RequestFrame) -> RequestRoute {
         RequestPayload::GetZombieTimerCount(payload) => RequestRoute::GetZombieTimerCount(payload),
         RequestPayload::LinkPackage(payload) => RequestRoute::LinkPackage(payload),
         RequestPayload::UnlinkPackage(payload) => RequestRoute::UnlinkPackage(payload),
+        RequestPayload::AcquirePackage(payload) => RequestRoute::AcquirePackage(payload),
+        RequestPayload::InstallPackage(payload) => RequestRoute::InstallPackage(payload),
+        RequestPayload::GetPackageCacheStats(payload) => {
+            RequestRoute::GetPackageCacheStats(payload)
+        }
         RequestPayload::ProvidedCommands(payload) => RequestRoute::ProvidedCommands(payload),
         payload @ (RequestPayload::ShellExecution(_)
         | RequestPayload::ArgvExecution(_)
@@ -146,6 +160,7 @@ pub fn request_dispatch_mode(request: &RequestFrame) -> RequestDispatchMode {
         RequestPayload::Authenticate(_)
         | RequestPayload::OpenSession(_)
         | RequestPayload::CreateVm(_)
+        | RequestPayload::CompareVmConfig(_)
         | RequestPayload::BootstrapRootFilesystem(_)
         | RequestPayload::ConfigureVm(_)
         | RequestPayload::RegisterHostCallbacks(_)
@@ -164,6 +179,7 @@ pub fn request_dispatch_mode(request: &RequestFrame) -> RequestDispatchMode {
         | RequestPayload::CloseStdin(_)
         | RequestPayload::KillProcess(_)
         | RequestPayload::GetProcessSnapshot(_)
+        | RequestPayload::ReadProcessOutput(_)
         | RequestPayload::GetResourceSnapshot(_)
         | RequestPayload::FindListener(_)
         | RequestPayload::FindBoundUdp(_)
@@ -172,6 +188,9 @@ pub fn request_dispatch_mode(request: &RequestFrame) -> RequestDispatchMode {
         | RequestPayload::GetZombieTimerCount(_)
         | RequestPayload::LinkPackage(_)
         | RequestPayload::UnlinkPackage(_)
+        | RequestPayload::AcquirePackage(_)
+        | RequestPayload::InstallPackage(_)
+        | RequestPayload::GetPackageCacheStats(_)
         | RequestPayload::ProvidedCommands(_)
         | RequestPayload::ShellExecution(_)
         | RequestPayload::ArgvExecution(_)

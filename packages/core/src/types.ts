@@ -14,6 +14,7 @@ export type {
 	ExportRootFilesystemOptions,
 	HttpRequest,
 	HttpResponse,
+	InstalledSoftware,
 	LimitWarning,
 	LimitWarningHandler,
 	MountConfig,
@@ -36,7 +37,31 @@ export type {
 	ShellData,
 	ShellExit,
 	ShellOptions,
+	SoftwarePackageSource,
 } from "./agent-os.js";
+export type {
+	PackageDescriptor,
+	PackageRef,
+	SoftwarePackageRef,
+} from "./agentos-package.js";
+export type { Binding, BindingExample, Bindings } from "./bindings.js";
+export type {
+	CronAction,
+	CronActionInfo,
+	CronEvent,
+	CronEventHandler,
+	CronJob,
+	CronJobInfo,
+	CronJobOptions,
+	ScheduleDriver,
+	ScheduleEntry,
+	ScheduleHandle,
+} from "./cron/index.js";
+export type {
+	HostDirBackendOptions,
+	HostDirMountPluginConfig,
+	NodeModulesMountConfig,
+} from "./host-dir-mount.js";
 export type {
 	CodeEvaluationResult,
 	CodeExecutionResult,
@@ -65,29 +90,6 @@ export type {
 	TypeScriptExecutionOptions,
 	TypeScriptFileExecutionOptions,
 } from "./language-execution.js";
-export type {
-	PackageDescriptor,
-	PackageRef,
-	SoftwarePackageRef,
-} from "./agentos-package.js";
-export type { Binding, BindingExample, Bindings } from "./bindings.js";
-export type {
-	CronAction,
-	CronActionInfo,
-	CronEvent,
-	CronEventHandler,
-	CronJob,
-	CronJobInfo,
-	CronJobOptions,
-	ScheduleDriver,
-	ScheduleEntry,
-	ScheduleHandle,
-} from "./cron/index.js";
-export type {
-	HostDirBackendOptions,
-	HostDirMountPluginConfig,
-	NodeModulesMountConfig,
-} from "./host-dir-mount.js";
 export type {
 	FilesystemSnapshotExport,
 	LayerHandle,

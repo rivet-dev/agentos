@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { posix as posixPath } from "node:path";
+import { SidecarRejectedError } from "@rivet-dev/agentos-runtime-core/sidecar-errors";
 import type {
 	RootFilesystemConfig as VmConfigRootFilesystemConfig,
 	RootFilesystemEntry as VmConfigRootFilesystemEntry,
@@ -15,6 +16,7 @@ import type {
 } from "../agent-os.js";
 import type { FilesystemEntry } from "../filesystem-snapshot.js";
 import type { RootSnapshotExport } from "../layers.js";
+import type { ProcessForestRecord } from "../process-forest.js";
 import type {
 	ConnectTerminalOptions,
 	Kernel,
@@ -45,6 +47,118 @@ const PROTECTED_READ_ONLY_GUEST_ROOTS = ["/etc/agentos"] as const;
 const TRAILING_OUTPUT_DRAIN_INTERVAL_MS = 10;
 const TRAILING_OUTPUT_DRAIN_MAX_MS = 250;
 const TRAILING_OUTPUT_DRAIN_QUIET_TURNS = 2;
+const EXEC_TERMINATION_CONFIRMATION_MS = 30_000;
+
+// Termination proof must remain observable even after an ordinary wait failed.
+// Weak keys keep this private adapter from retaining completed public process handles.
+const execTermination = new WeakMap<
+	ManagedProcess,
+	{
+		wait: () => Promise<number>;
+		kill: () => Promise<void>;
+		needsCleanup: () => boolean;
+	}
+>();
+
+async function killAndConfirmManagedProcess(
+	proc: ManagedProcess,
+): Promise<void> {
+	let confirmationTimer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		const control = execTermination.get(proc);
+		const exit = control ? control.wait() : proc.wait();
+		// Normalize synchronous and asynchronous signal failures, without delaying exit
+		// observation behind a slow acknowledgement or an in-flight launch.
+		const kill = Promise.resolve().then(() =>
+			control ? control.kill() : proc.kill(9),
+		);
+		const confirmed = await Promise.race([
+			exit.then(() => true),
+			// A late deterministic rejection proves there was no admitted process.
+			kill
+				.then(() => (control?.needsCleanup() === false ? 0 : exit))
+				.then(() => true),
+			new Promise<false>((resolve) => {
+				confirmationTimer = setTimeout(
+					() => resolve(false),
+					EXEC_TERMINATION_CONFIRMATION_MS,
+				);
+			}),
+		]).catch((error: unknown) => {
+			throw new Error(
+				`termination_failed: process ${proc.pid} could not confirm exit after SIGKILL: ${String(error)}`,
+			);
+		});
+		if (!confirmed) {
+			throw new Error(
+				`termination_failed: process ${proc.pid} did not confirm exit within ${EXEC_TERMINATION_CONFIRMATION_MS}ms after SIGKILL`,
+			);
+		}
+	} finally {
+		if (confirmationTimer !== undefined) {
+			clearTimeout(confirmationTimer);
+		}
+	}
+}
+
+/** @internal Shared completion policy for shell-string and structured-argv execution. */
+export async function runManagedProcessToCompletion(
+	proc: ManagedProcess,
+	prepareStdin: () => Promise<void>,
+	deadlineMs: number | undefined,
+): Promise<number> {
+	const run = async () => {
+		await prepareStdin();
+		return proc.wait();
+	};
+	if (deadlineMs === undefined) {
+		try {
+			return await run();
+		} catch (error) {
+			if (
+				proc.exitCode === null &&
+				execTermination.get(proc)?.needsCleanup() !== false
+			) {
+				await killAndConfirmManagedProcess(proc);
+			}
+			throw error;
+		}
+	}
+
+	const timedOut = Symbol("execution timeout");
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const deadline = new Promise<typeof timedOut>((resolve) => {
+		timer = setTimeout(
+			() => resolve(timedOut),
+			Math.max(0, deadlineMs - Date.now()),
+		);
+	});
+	try {
+		let result: number | typeof timedOut;
+		try {
+			result = await Promise.race([run(), deadline]);
+		} catch (error) {
+			if (
+				proc.exitCode === null &&
+				execTermination.get(proc)?.needsCleanup() !== false
+			) {
+				await killAndConfirmManagedProcess(proc);
+			}
+			throw error;
+		}
+		if (result !== timedOut) {
+			return result;
+		}
+		await killAndConfirmManagedProcess(proc);
+		throw new Error(
+			`timeout: process ${proc.pid} exceeded its execution deadline and was stopped`,
+		);
+	} finally {
+		if (timer !== undefined) {
+			clearTimeout(timer);
+		}
+	}
+}
 
 function shouldLogStructuredSidecarEvent(name: string): boolean {
 	const normalized = name.toLowerCase();
@@ -307,17 +421,19 @@ interface TrackedProcessEntry {
 	driver: string;
 	cwd: string;
 	env: Record<string, string>;
+	retainOutput: boolean;
 	startTime: number;
 	exitTime: number | null;
 	hostPid: number | null;
 	exitCode: number | null;
 	started: boolean;
+	launchRejected: boolean;
 	startPromise: Promise<void>;
-	waitPromise: Promise<number>;
-	resolveWait: (exitCode: number) => void;
-	rejectWait: (error: Error) => void;
-	onStdout: Set<(data: Uint8Array) => void>;
-	onStderr: Set<(data: Uint8Array) => void>;
+	waitError: Error | null;
+	wakeWait: (() => void) | null;
+	confirmExit: (exitCode: number) => void;
+	onStdout: Set<NonNullable<KernelSpawnOptions["onStdout"]>>;
+	onStderr: Set<NonNullable<KernelSpawnOptions["onStderr"]>>;
 	pendingStdin: Array<string | Uint8Array>;
 	stdinFlushPromise: Promise<void> | null;
 	pendingCloseStdin: boolean;
@@ -342,11 +458,9 @@ interface NativeSidecarKernelProxyOptions {
 	>[2]["commandPermissions"];
 	loopbackExemptPorts?: number[];
 	/**
-	 * The boot `configureVm` payload pieces beyond mounts/permissions. Rust
-	 * `configure_vm` rebuilds the whole VM configuration from each payload, so
-	 * every runtime mount reconfigure must resend these or a post-boot
-	 * `mountFs()` silently drops the `/opt/agentos` package projections and
-	 * binding shim commands applied at boot.
+	 * Boot `configureVm` fields beyond mounts/permissions. Reconfiguration
+	 * replaces the boot package set; the sidecar retains packages added with
+	 * `linkPackage` until an explicit `unlinkPackage`.
 	 */
 	packages?: Parameters<SidecarProcess["configureVm"]>[2]["packages"];
 	packagesMountAt?: string;
@@ -384,9 +498,9 @@ export class NativeSidecarKernelProxy {
 		| Parameters<SidecarProcess["configureVm"]>[2]["commandPermissions"]
 		| undefined;
 	private readonly loopbackExemptPorts: number[] | undefined;
-	// Mutable: runtime `linkSoftware` appends via `registerLinkedPackage` so
-	// later mount reconfigures resend linked packages too, not just boot ones.
-	private packages: NonNullable<
+	// Boot packages are resent when mounts change. Runtime-linked packages are
+	// retained by the sidecar and are not mirrored in this client.
+	private readonly packages: NonNullable<
 		Parameters<SidecarProcess["configureVm"]>[2]["packages"]
 	>;
 	private readonly packagesMountAt: string | undefined;
@@ -472,15 +586,9 @@ export class NativeSidecarKernelProxy {
 		}
 	}
 
-	/**
-	 * Record a runtime-linked package (`linkSoftware`) so mount reconfigures
-	 * resend it. Rust `configure_vm` rebuilds the whole VM configuration from
-	 * each payload, so a linked package omitted here would be silently
-	 * unprojected from `/opt/agentos` by the next `mountFs`/`unmountFs`.
-	 */
-	registerLinkedPackage(descriptor: { path: string }): void {
-		if (!this.packages.some((pkg) => pkg.path === descriptor.path)) {
-			this.packages.push({ path: descriptor.path });
+	unregisterCommandGuestPaths(commandNames: readonly string[]): void {
+		for (const name of commandNames) {
+			this.commandDrivers.delete(name);
 		}
 	}
 
@@ -490,33 +598,60 @@ export class NativeSidecarKernelProxy {
 		}
 		this.disposed = true;
 		this.eventPumpAbortController.abort();
-		await this.mountReconfigurePromise?.catch(() => {});
-
 		const liveProcesses = [...this.trackedProcesses.values()].filter(
 			(entry) => entry.exitCode === null,
 		);
-		await Promise.allSettled(
-			liveProcesses.map((entry) => this.signalProcess(entry, 15)),
+		// Wake ordinary waits before any teardown RPC can stall. Termination is
+		// still unconfirmed; disposing a VM cannot supply a guest exit status.
+		for (const entry of liveProcesses) {
+			this.handleBackgroundProcessError(
+				entry,
+				new Error("VM disposed before process exit was observed"),
+			);
+		}
+		await this.mountReconfigurePromise?.catch((error) => {
+			console.error(
+				"[agentOS] mount reconfiguration failed during disposal",
+				error,
+			);
+		});
+		await Promise.all(
+			liveProcesses
+				.filter((entry) => !entry.launchRejected)
+				.map((entry) =>
+					this.signalProcess(entry, 15).catch((error) => {
+						console.error(
+							`[agentOS] process ${entry.pid} teardown signal failed`,
+							error,
+						);
+					}),
+				),
 		);
 
-		await this.client.disposeVm(this.session, this.vm).catch(() => {});
-		for (const entry of liveProcesses) {
-			if (entry.exitCode === null) {
-				// The sidecar dispose path already performs TERM/KILL escalation for any
-				// guest executions that are still live. Resolve local waiters eagerly so
-				// VM teardown does not hang on killed guest processes that never
-				// surface a terminal process_exited event back to the JS bridge.
-				this.finishProcess(entry, 143);
-			}
-		}
+		let disposalFailed = false;
+		let disposalError: unknown;
+		await this.client.disposeVm(this.session, this.vm).catch((error) => {
+			disposalFailed = true;
+			disposalError = error;
+			console.error(
+				"[agentOS] VM disposal failed; guest termination is unconfirmed",
+				error,
+			);
+		});
 		// Only tear down the shared sidecar process when this proxy owns it. VMs
 		// leased from an `AgentOsSidecar` handle share one process, which is
 		// disposed when the handle is disposed.
 		if (this.ownsClient) {
-			await this.client.dispose().catch(() => {});
+			await this.client.dispose().catch((error) => {
+				console.error("[agentOS] owned sidecar disposal failed", error);
+			});
 		}
-		await this.eventPump.catch(() => {});
-		await this.onDispose?.().catch(() => {});
+		await this.eventPump.catch((error) => {
+			console.error("[agentOS] process event pump teardown failed", error);
+		});
+		await this.onDispose?.().catch((error) => {
+			console.error("[agentOS] VM disposal callback failed", error);
+		});
 
 		// Drop all per-VM tracking state so a disposed proxy retains nothing.
 		for (const entry of this.trackedProcesses.values()) {
@@ -528,6 +663,7 @@ export class NativeSidecarKernelProxy {
 		this.signalStates.clear();
 		this.signalRefreshes.clear();
 		this.localMounts.length = 0;
+		if (disposalFailed) throw disposalError;
 	}
 
 	/** Test-only snapshot of the per-VM tracking collection sizes. */
@@ -573,6 +709,12 @@ export class NativeSidecarKernelProxy {
 
 		const stdoutChunks: Uint8Array[] = [];
 		const stderrChunks: Uint8Array[] = [];
+		const deadlineMs =
+			typeof options?.timeout === "number" &&
+			Number.isFinite(options.timeout) &&
+			options.timeout >= 0
+				? Date.now() + options.timeout
+				: undefined;
 		const effectiveCwd = options?.cwd ?? this.defaultExecCwd ?? this.cwd;
 		const parsedCommand = parseSimpleExecCommand(command);
 		const runAndCapture = async (
@@ -580,31 +722,19 @@ export class NativeSidecarKernelProxy {
 			stdinOverride?: string | Uint8Array,
 			readExitCode?: () => Promise<number>,
 		): Promise<KernelExecResult> => {
-			if (stdinOverride !== undefined) {
-				await proc.writeStdin(stdinOverride);
-			} else if (options?.stdin !== undefined) {
-				await proc.writeStdin(options.stdin);
-			}
-			// `kernel.exec()` is a non-interactive run-to-completion API: when the
-			// caller does not opt into a streaming stdin handle, the guest process
-			// should observe EOF after any provided input so commands like
-			// `node -e ...` do not linger behind an inherited open stdin pipe.
-			await proc.closeStdin();
-
-			const waitPromise = proc.wait();
-			const shellExitCode =
-				typeof options?.timeout === "number"
-					? await new Promise<number>((resolve) => {
-							const timer = setTimeout(() => {
-								proc.kill(9);
-								void proc.wait().then(resolve);
-							}, options.timeout);
-							void waitPromise.then((code) => {
-								clearTimeout(timer);
-								resolve(code);
-							});
-						})
-					: await waitPromise;
+			const shellExitCode = await runManagedProcessToCompletion(
+				proc,
+				async () => {
+					if (stdinOverride !== undefined) {
+						await proc.writeStdin(stdinOverride);
+					} else if (options?.stdin !== undefined) {
+						await proc.writeStdin(options.stdin);
+					}
+					// Non-interactive runs must observe EOF after any provided input.
+					await proc.closeStdin();
+				},
+				deadlineMs,
+			);
 
 			const exitCode = readExitCode
 				? await readExitCode().catch(() => shellExitCode)
@@ -673,29 +803,26 @@ export class NativeSidecarKernelProxy {
 	): Promise<KernelExecResult> {
 		const stdoutChunks: Uint8Array[] = [];
 		const stderrChunks: Uint8Array[] = [];
+		const deadlineMs =
+			typeof options?.timeout === "number" &&
+			Number.isFinite(options.timeout) &&
+			options.timeout >= 0
+				? Date.now() + options.timeout
+				: undefined;
 		const effectiveCwd = options?.cwd ?? this.defaultExecCwd ?? this.cwd;
 		const runAndCapture = async (
 			proc: ManagedProcess,
 		): Promise<KernelExecResult> => {
-			if (options?.stdin !== undefined) {
-				await proc.writeStdin(options.stdin);
-			}
-			await proc.closeStdin();
-
-			const waitPromise = proc.wait();
-			const exitCode =
-				typeof options?.timeout === "number"
-					? await new Promise<number>((resolve) => {
-							const timer = setTimeout(() => {
-								proc.kill(9);
-								void proc.wait().then(resolve);
-							}, options.timeout);
-							void waitPromise.then((code) => {
-								clearTimeout(timer);
-								resolve(code);
-							});
-						})
-					: await waitPromise;
+			const exitCode = await runManagedProcessToCompletion(
+				proc,
+				async () => {
+					if (options?.stdin !== undefined) {
+						await proc.writeStdin(options.stdin);
+					}
+					await proc.closeStdin();
+				},
+				deadlineMs,
+			);
 
 			await drainTrailingProcessOutputTurn();
 
@@ -735,6 +862,11 @@ export class NativeSidecarKernelProxy {
 		args: string[],
 		options?: KernelSpawnOptions,
 	): ManagedProcess {
+		if (this.disposed || this.pumpError) {
+			throw new Error(
+				`not_ready: cannot spawn on a ${this.disposed ? "disposed VM" : "failed process event stream"}`,
+			);
+		}
 		let spawnCommand = command;
 		let spawnArgs = [...args];
 		const shellOption = (
@@ -753,11 +885,9 @@ export class NativeSidecarKernelProxy {
 		}
 		const pid = this.nextSyntheticPid++;
 		const processId = `proc-${pid}`;
-		let resolveWait!: (exitCode: number) => void;
-		let rejectWait!: (error: Error) => void;
-		const waitPromise = new Promise<number>((resolve, reject) => {
-			resolveWait = resolve;
-			rejectWait = reject;
+		let confirmExit!: (exitCode: number) => void;
+		const confirmedExit = new Promise<number>((resolve) => {
+			confirmExit = resolve;
 		});
 
 		const entry: TrackedProcessEntry = {
@@ -776,15 +906,17 @@ export class NativeSidecarKernelProxy {
 				...(options?.env ?? {}),
 				...(options?.streamStdin ? { AGENTOS_KEEP_STDIN_OPEN: "1" } : {}),
 			},
+			retainOutput: options?.retainOutput ?? false,
 			startTime: Date.now(),
 			exitTime: null,
 			hostPid: null,
 			exitCode: null,
 			started: false,
+			launchRejected: false,
 			startPromise: Promise.resolve(),
-			waitPromise,
-			resolveWait,
-			rejectWait,
+			waitError: null,
+			wakeWait: null,
+			confirmExit,
 			onStdout: new Set(options?.onStdout ? [options.onStdout] : []),
 			onStderr: new Set(options?.onStderr ? [options.onStderr] : []),
 			pendingStdin: options?.stdin === undefined ? [] : [options.stdin],
@@ -801,34 +933,47 @@ export class NativeSidecarKernelProxy {
 
 		const proc: ManagedProcess = {
 			pid,
+			processId,
 			writeStdin: (data) => {
 				if (entry.exitCode !== null) {
 					return Promise.resolve();
 				}
+				if (entry.waitError) return Promise.reject(entry.waitError);
 				entry.pendingStdin.push(data);
 				return this.flushPendingStdin(entry).catch((error) => {
 					this.handleBackgroundProcessError(entry, error);
+					throw error;
 				});
 			},
 			closeStdin: () => {
+				if (entry.waitError) return Promise.reject(entry.waitError);
 				entry.pendingCloseStdin = true;
 				return this.closeTrackedStdin(entry).catch((error) => {
 					this.handleBackgroundProcessError(entry, error);
+					throw error;
 				});
 			},
 			kill: (signal = 15) => {
-				if (entry.exitCode !== null) {
+				if (entry.exitCode !== null || entry.launchRejected) {
 					return;
 				}
 				entry.pendingKillSignal = signal;
-				void entry.startPromise.then(async () => {
-					if (entry.exitCode !== null || entry.pendingKillSignal === null) {
-						return;
-					}
-					const pendingSignal = entry.pendingKillSignal;
-					entry.pendingKillSignal = null;
-					await this.signalProcess(entry, pendingSignal);
-				});
+				void entry.startPromise
+					.then(async () => {
+						if (
+							entry.exitCode !== null ||
+							entry.launchRejected ||
+							entry.pendingKillSignal === null
+						) {
+							return;
+						}
+						const pendingSignal = entry.pendingKillSignal;
+						entry.pendingKillSignal = null;
+						await this.signalProcess(entry, pendingSignal);
+					})
+					.catch((error) => {
+						this.handleBackgroundProcessError(entry, error);
+					});
 			},
 			wait: async () => {
 				const exitCode = await this.waitForTrackedProcess(entry);
@@ -839,15 +984,32 @@ export class NativeSidecarKernelProxy {
 				return entry.exitCode;
 			},
 		};
+		execTermination.set(proc, {
+			wait: () => confirmedExit,
+			needsCleanup: () => !entry.launchRejected,
+			kill: async () => {
+				await entry.startPromise;
+				if (entry.launchRejected) return;
+				// A failed ordinary wait does not close this independent control path.
+				await this.signalProcess(entry, 9);
+			},
+		});
 
 		entry.startPromise = this.startTrackedProcess(entry).catch((error) => {
-			const normalized =
-				error instanceof Error ? error : new Error(String(error));
-			const stderr = new TextEncoder().encode(`${normalized.message}\n`);
-			for (const handler of entry.onStderr) {
-				handler(stderr);
+			entry.launchRejected ||=
+				!entry.started && error instanceof SidecarRejectedError;
+			this.handleBackgroundProcessError(entry, error);
+			if (entry.launchRejected) {
+				// Rejected admission is not a process exit. Release this non-process's
+				// tracking while retaining the rejection on the returned handle.
+				this.processes.delete(entry.pid);
+				void this.releaseProcessTrackingAfterDrain(entry).catch((error) => {
+					console.error(
+						`[agentOS] rejected process ${entry.pid} cleanup failed`,
+						error,
+					);
+				});
 			}
-			this.finishProcess(entry, 1);
 		});
 
 		return proc;
@@ -1225,6 +1387,7 @@ export class NativeSidecarKernelProxy {
 			},
 			cwd: options?.cwd,
 			streamStdin: true,
+			retainOutput: true,
 			onStdout: (chunk) => {
 				const sanitized = sanitizeNativeShellOutput(chunk);
 				if (!sanitized) {
@@ -1362,9 +1525,12 @@ export class NativeSidecarKernelProxy {
 			shell.kill();
 			throw error;
 		}
-		void shell.wait().finally(() => {
-			cleanup();
-		});
+		void shell
+			.wait()
+			.catch((error) => {
+				console.error(`[agentOS] terminal ${shell.pid} wait failed`, error);
+			})
+			.finally(cleanup);
 		return shell.pid;
 	}
 
@@ -1635,10 +1801,8 @@ export class NativeSidecarKernelProxy {
 			if (this.disposed) {
 				return;
 			}
-			// Rust `configure_vm` rebuilds the whole VM configuration from this
-			// payload, so resend the boot packages / binding shim commands too —
-			// omitting them here strips the `/opt/agentos` projections and binding
-			// shims from the VM as a side effect of a runtime mount change.
+			// Re-send boot packages and binding shims. The sidecar preserves
+			// runtime-linked packages independently of this client payload.
 			await this.client.configureVm(this.session, this.vm, {
 				mounts: this.desiredSidecarMounts(),
 				permissions: this.permissions,
@@ -1667,6 +1831,11 @@ export class NativeSidecarKernelProxy {
 	}
 
 	snapshotProcesses(): ProcessInfo[] {
+		return this.snapshotProcessTopology().map((record) => record.info);
+	}
+
+	/** Internal, host-side topology; never part of the guest or public DTO wire. */
+	snapshotProcessTopology(): ProcessForestRecord<ProcessInfo>[] {
 		return this.buildProcessSnapshot();
 	}
 
@@ -1823,17 +1992,27 @@ export class NativeSidecarKernelProxy {
 
 	private async startTrackedProcess(entry: TrackedProcessEntry): Promise<void> {
 		await this.waitForMountReconfigure();
+		if (this.disposed || this.pumpError) {
+			entry.launchRejected = true; // No Execute request was sent.
+			throw new Error(
+				"not_ready: process launch cancelled before admission because the VM is unavailable",
+			);
+		}
 		const started = await this.client.execute(this.session, this.vm, {
 			processId: entry.processId,
 			command: entry.command,
 			args: entry.args,
 			env: entry.env,
 			cwd: entry.cwd,
+			retainOutput: entry.retainOutput,
 		});
 		entry.hostPid = started.pid;
 		entry.started = true;
+		entry.wakeWait?.();
 		this.updateTrackedProcessSnapshot(entry);
-		void this.refreshProcessSnapshot().catch(() => {});
+		void this.refreshProcessSnapshot().catch((error) => {
+			console.error("[agentOS] post-launch process snapshot failed", error);
+		});
 		// Signal metadata is advisory and must not hold process startup behind a
 		// second sidecar RPC. Very short binding commands can finish while the
 		// original execute response is still in flight; synchronously refreshing
@@ -1873,7 +2052,12 @@ export class NativeSidecarKernelProxy {
 						continue;
 					}
 					entry.outputGeneration += 1;
-					void this.refreshProcessSnapshot().catch(() => {});
+					void this.refreshProcessSnapshot().catch((error) => {
+						console.error(
+							"[agentOS] process output snapshot refresh failed",
+							error,
+						);
+					});
 					this.scheduleSignalStateRefresh(entry);
 					const chunk = event.payload.chunk;
 					const listeners =
@@ -1881,7 +2065,10 @@ export class NativeSidecarKernelProxy {
 							? entry.onStdout
 							: entry.onStderr;
 					for (const listener of listeners) {
-						listener(chunk);
+						listener(chunk, {
+							sequence: event.payload.sequence,
+							timestampMs: event.payload.timestamp_ms,
+						});
 					}
 					continue;
 				}
@@ -1891,7 +2078,10 @@ export class NativeSidecarKernelProxy {
 					if (!entry) {
 						continue;
 					}
-					void this.refreshProcessSnapshot().catch(() => {});
+					void this.refreshProcessSnapshot().catch((error) => {
+						console.error("[agentOS] post-exit process snapshot failed", error);
+					});
+					entry.confirmExit(event.payload.exit_code);
 					this.finishProcess(entry, event.payload.exit_code);
 					continue;
 				}
@@ -1905,21 +2095,24 @@ export class NativeSidecarKernelProxy {
 				}
 				this.pumpError =
 					error instanceof Error ? error : new Error(String(error));
+				console.error("[agentOS] process event stream failed", this.pumpError);
 				for (const entry of this.trackedProcesses.values()) {
 					if (entry.exitCode !== null) {
 						continue;
 					}
-					const stderr = new TextEncoder().encode(
-						`${this.pumpError.message}\n`,
-					);
-					for (const listener of entry.onStderr) {
-						listener(stderr);
-					}
-					this.finishProcess(entry, 1);
+					this.handleBackgroundProcessError(entry, this.pumpError);
 				}
 				return;
 			}
 		}
+	}
+
+	/** Internal: replay carries the same authoritative exit proof as a live event. */
+	reconcileReplayExit(processId: string, exitCode: number): void {
+		const entry = this.trackedProcessesById.get(processId);
+		if (!entry) return;
+		entry.confirmExit(exitCode);
+		this.finishProcess(entry, exitCode);
 	}
 
 	private finishProcess(entry: TrackedProcessEntry, exitCode: number): void {
@@ -1929,13 +2122,18 @@ export class NativeSidecarKernelProxy {
 		entry.exitCode = exitCode;
 		entry.exitTime = Date.now();
 		this.updateTrackedProcessSnapshot(entry);
-		entry.resolveWait(exitCode);
+		entry.wakeWait?.();
 		// Release per-process tracking now that the process has terminated so these
 		// maps/Sets don't grow without bound. Defer the release until trailing
 		// output has drained: `wait()`'s drain and late `process_output` events
 		// still need the entry + its listeners during the drain window. The exited
 		// record lives on in `processes` for listing.
-		void this.releaseProcessTrackingAfterDrain(entry);
+		void this.releaseProcessTrackingAfterDrain(entry).catch((error) => {
+			console.error(
+				`[agentOS] process ${entry.pid} tracking cleanup failed`,
+				error,
+			);
+		});
 	}
 
 	private async releaseProcessTrackingAfterDrain(
@@ -1957,28 +2155,63 @@ export class NativeSidecarKernelProxy {
 		if (entry.exitCode !== null) {
 			return Promise.resolve(entry.exitCode);
 		}
+		if (entry.waitError) {
+			return Promise.reject(entry.waitError);
+		}
 		if (entry.waitWithFallbackPromise !== null) {
 			return entry.waitWithFallbackPromise;
 		}
 
 		entry.waitWithFallbackPromise = (async () => {
-			await entry.startPromise.catch(() => {});
-			while (entry.exitCode === null && !this.disposed) {
-				const maybeExit = await Promise.race<number | null>([
-					entry.waitPromise.then((exitCode) => exitCode),
-					new Promise<null>((resolve) => setTimeout(() => resolve(null), 50)),
-				]);
-				if (maybeExit !== null) {
-					return maybeExit;
+			while (entry.exitCode === null && !entry.waitError && !this.disposed) {
+				// One cancellable wake per process, rather than another Promise.race
+				// reaction retained on an unresolved exit promise every 50ms.
+				await new Promise<void>((resolve) => {
+					const timer = setTimeout(() => {
+						entry.wakeWait = null;
+						resolve();
+					}, 50);
+					entry.wakeWait = () => {
+						clearTimeout(timer);
+						entry.wakeWait = null;
+						resolve();
+					};
+				});
+				if (entry.exitCode !== null || entry.waitError || this.disposed) {
+					break;
+				}
+				if (!entry.started) {
+					continue;
 				}
 
 				try {
-					await this.refreshProcessSnapshot();
+					// Metadata cannot hold terminal delivery hostage. Keep a wake armed
+					// while the coalesced snapshot RPC is in flight, too.
+					let wake!: () => void;
+					const terminal = new Promise<void>((resolve) => {
+						wake = resolve;
+						entry.wakeWait = resolve;
+					});
+					try {
+						await Promise.race([this.refreshProcessSnapshot(), terminal]);
+					} finally {
+						if (entry.wakeWait === wake) entry.wakeWait = null;
+					}
+					if (entry.exitCode !== null || entry.waitError || this.disposed)
+						break;
 					const snapshot = this.sidecarProcessSnapshot.find(
 						(candidate) => candidate.processId === entry.processId,
 					);
 					if (snapshot?.status === "exited") {
-						this.finishProcess(entry, snapshot.exitCode ?? 0);
+						if (snapshot.exitCode === undefined || snapshot.exitCode === null) {
+							this.handleBackgroundProcessError(
+								entry,
+								new Error("exited snapshot has no exit status"),
+							);
+						} else {
+							entry.confirmExit(snapshot.exitCode);
+							this.finishProcess(entry, snapshot.exitCode);
+						}
 						break;
 					}
 					if (snapshot) {
@@ -1986,11 +2219,8 @@ export class NativeSidecarKernelProxy {
 						continue;
 					}
 
-					// Fast guest processes can exit before the sidecar emits a
-					// `process_exited` event. Once a started process disappears from the
-					// authoritative VM snapshot for a full grace window, treat it as
-					// reaped even if the `pid` returned at launch was only a kernel/shared
-					// runtime identifier rather than a probeable host PID.
+					// A missing snapshot can mean reaping, lost metadata, or a launch race.
+					// None provides an exit status. Bound the grace period and fail closed.
 					if (!snapshot) {
 						const now = Date.now();
 						if (entry.hostExitObservedAt === null) {
@@ -1998,16 +2228,27 @@ export class NativeSidecarKernelProxy {
 							continue;
 						}
 						if (now - entry.hostExitObservedAt >= MISSING_EXIT_EVENT_GRACE_MS) {
-							this.finishProcess(entry, 0);
+							this.handleBackgroundProcessError(
+								entry,
+								new Error(
+									"process disappeared from snapshots without an exit event",
+								),
+							);
 							break;
 						}
 					}
-				} catch {
-					// Fall back to the next wait interval if the sidecar snapshot query fails.
+				} catch (error) {
+					this.handleBackgroundProcessError(entry, error);
 				}
 			}
 
-			return entry.waitPromise;
+			if (entry.exitCode !== null) return entry.exitCode;
+			throw (
+				entry.waitError ??
+				new Error(
+					`termination_failed: process ${entry.pid} VM disposed before exit was observed`,
+				)
+			);
 		})().finally(() => {
 			entry.waitWithFallbackPromise = null;
 		});
@@ -2019,19 +2260,12 @@ export class NativeSidecarKernelProxy {
 		entry: TrackedProcessEntry,
 		signal: number,
 	): Promise<void> {
-		try {
-			await this.client.killProcess(
-				this.session,
-				this.vm,
-				entry.processId,
-				toSidecarSignalName(signal),
-			);
-		} catch (error) {
-			if (isNoSuchProcessError(error) || isUnknownVmError(error)) {
-				return;
-			}
-			throw error;
-		}
+		await this.client.killProcess(
+			this.session,
+			this.vm,
+			entry.processId,
+			toSidecarSignalName(signal),
+		);
 	}
 
 	private flushPendingStdin(entry: TrackedProcessEntry): Promise<void> {
@@ -2041,6 +2275,7 @@ export class NativeSidecarKernelProxy {
 
 		entry.stdinFlushPromise = entry.startPromise
 			.then(async () => {
+				if (entry.waitError) throw entry.waitError;
 				if (entry.exitCode !== null) {
 					return;
 				}
@@ -2058,14 +2293,21 @@ export class NativeSidecarKernelProxy {
 				}
 			})
 			.catch((error) => {
-				if (isNoSuchProcessError(error) || isUnknownVmError(error)) {
+				if (
+					entry.exitCode !== null &&
+					(isNoSuchProcessError(error) || isUnknownVmError(error))
+				) {
 					return;
 				}
 				throw error;
 			})
 			.finally(() => {
 				entry.stdinFlushPromise = null;
-				if (entry.pendingStdin.length > 0 && entry.exitCode === null) {
+				if (
+					entry.pendingStdin.length > 0 &&
+					entry.exitCode === null &&
+					!entry.waitError
+				) {
 					void this.flushPendingStdin(entry).catch((error) => {
 						this.handleBackgroundProcessError(entry, error);
 					});
@@ -2076,6 +2318,7 @@ export class NativeSidecarKernelProxy {
 
 	private async closeTrackedStdin(entry: TrackedProcessEntry): Promise<void> {
 		await entry.startPromise;
+		if (entry.waitError) throw entry.waitError;
 		await this.flushPendingStdin(entry);
 		if (entry.exitCode !== null || !entry.pendingCloseStdin) {
 			return;
@@ -2084,7 +2327,10 @@ export class NativeSidecarKernelProxy {
 		try {
 			await this.client.closeStdin(this.session, this.vm, entry.processId);
 		} catch (error) {
-			if (isNoSuchProcessError(error) || isUnknownVmError(error)) {
+			if (
+				entry.exitCode !== null &&
+				(isNoSuchProcessError(error) || isUnknownVmError(error))
+			) {
 				return;
 			}
 			throw error;
@@ -2095,38 +2341,31 @@ export class NativeSidecarKernelProxy {
 		entry: TrackedProcessEntry,
 		error: unknown,
 	): void {
-		if (
-			this.disposed ||
-			isNoSuchProcessError(error) ||
-			isUnknownVmError(error)
-		) {
-			return;
-		}
 		if (entry.exitCode !== null) {
-			this.recordCompletedProcessError(entry, error);
+			// An I/O failure after exit must never rewrite the guest's real status.
+			if (!isNoSuchProcessError(error) && !isUnknownVmError(error)) {
+				this.emitBackgroundProcessError(entry, error);
+			}
 			return;
 		}
-		this.emitBackgroundProcessError(entry, error);
-		this.finishProcess(entry, 1);
-	}
-
-	private recordCompletedProcessError(
-		entry: TrackedProcessEntry,
-		error: unknown,
-	): number {
-		if (
-			this.disposed ||
-			isNoSuchProcessError(error) ||
-			isUnknownVmError(error)
-		) {
-			return entry.exitCode ?? 1;
+		if (entry.waitError) {
+			if (error !== entry.waitError && error !== entry.waitError.cause) {
+				this.emitBackgroundProcessError(entry, error);
+			}
+			return;
 		}
-		this.emitBackgroundProcessError(entry, error);
-		entry.exitCode =
-			entry.exitCode === null || entry.exitCode === 0 ? 1 : entry.exitCode;
-		entry.exitTime ??= Date.now();
-		this.updateTrackedProcessSnapshot(entry);
-		return entry.exitCode;
+		const cause = error instanceof Error ? error : new Error(String(error));
+		entry.waitError = entry.launchRejected
+			? cause
+			: new Error(
+					`termination_failed: process ${entry.pid} failed before exit was confirmed: ${cause.message}`,
+					{ cause },
+				);
+		entry.pendingStdin.length = 0;
+		entry.pendingCloseStdin = false;
+		entry.wakeWait?.();
+		// Keep the entry and signal routing alive: failure is not proof of exit.
+		this.emitBackgroundProcessError(entry, entry.waitError);
 	}
 
 	private emitBackgroundProcessError(
@@ -2135,9 +2374,20 @@ export class NativeSidecarKernelProxy {
 	): void {
 		const normalized =
 			error instanceof Error ? error : new Error(String(error));
+		console.error(
+			`[agentOS] process ${entry.pid} operation failed`,
+			normalized,
+		);
 		const stderr = new TextEncoder().encode(`${normalized.message}\n`);
 		for (const handler of entry.onStderr) {
-			handler(stderr);
+			try {
+				handler(stderr);
+			} catch (callbackError) {
+				console.error(
+					`[agentOS] process ${entry.pid} stderr callback failed`,
+					callbackError,
+				);
+			}
 		}
 	}
 
@@ -2469,9 +2719,13 @@ export class NativeSidecarKernelProxy {
 		};
 	}
 
-	private buildProcessSnapshot(): ProcessInfo[] {
-		void this.refreshProcessSnapshot().catch(() => {});
-		const processMap = new Map<number, ProcessInfo>();
+	private buildProcessSnapshot(): ProcessForestRecord<ProcessInfo>[] {
+		void this.refreshProcessSnapshot().catch((error) => {
+			console.warn("agentOS process snapshot refresh failed", error);
+		});
+		const records: ProcessForestRecord<ProcessInfo>[] = [];
+		const seenProcessIds = new Set<string>();
+		const trackedKeys = new Set<string>();
 		const displayPidByKernelPid = new Map<number, number>();
 
 		for (const entry of this.sidecarProcessSnapshot) {
@@ -2483,7 +2737,7 @@ export class NativeSidecarKernelProxy {
 
 		for (const entry of this.sidecarProcessSnapshot) {
 			const tracked = this.trackedProcessesById.get(entry.processId);
-			const displayPid = displayPidByKernelPid.get(entry.pid) ?? entry.pid;
+			const displayPid = tracked?.pid ?? entry.pid;
 			const displayPpid = displayPidByKernelPid.get(entry.ppid) ?? entry.ppid;
 			const displayPgid = displayPidByKernelPid.get(entry.pgid) ?? entry.pgid;
 			const displaySid = displayPidByKernelPid.get(entry.sid) ?? entry.sid;
@@ -2494,55 +2748,69 @@ export class NativeSidecarKernelProxy {
 				Date.now();
 			this.observedProcessStartTimes.set(processKey, startTime);
 
-			processMap.set(displayPid, {
-				pid: displayPid,
-				ppid: displayPpid,
-				pgid: displayPgid,
-				sid: displaySid,
-				driver: tracked?.driver ?? entry.driver,
-				command: tracked?.command ?? entry.command,
-				args: tracked?.args ?? entry.args,
-				cwd: tracked?.cwd ?? entry.cwd,
-				status:
-					tracked?.exitCode !== null
-						? "exited"
-						: tracked
-							? "running"
-							: entry.status === "exited"
-								? "exited"
-								: "running",
-				exitCode: tracked?.exitCode ?? entry.exitCode,
-				startTime,
-				exitTime: tracked?.exitTime ?? null,
+			seenProcessIds.add(entry.processId);
+			if (tracked) trackedKeys.add(`kernel:${entry.pid}`);
+			records.push({
+				key: `kernel:${entry.pid}`,
+				parentKey: `kernel:${entry.ppid}`,
+				info: {
+					pid: displayPid,
+					ppid: displayPpid,
+					pgid: displayPgid,
+					sid: displaySid,
+					driver: tracked?.driver ?? entry.driver,
+					command: tracked?.command ?? entry.command,
+					args: tracked?.args ?? entry.args,
+					cwd: tracked?.cwd ?? entry.cwd,
+					status: tracked
+						? tracked.exitCode !== null
+							? "exited"
+							: "running"
+						: entry.status === "exited"
+							? "exited"
+							: "running",
+					exitCode: tracked?.exitCode ?? entry.exitCode,
+					startTime,
+					exitTime: tracked?.exitTime ?? null,
+				},
 			});
 		}
 
 		for (const entry of this.trackedProcesses.values()) {
-			if (processMap.has(entry.pid)) {
+			if (seenProcessIds.has(entry.processId)) {
 				continue;
 			}
-			processMap.set(entry.pid, {
-				pid: entry.pid,
-				ppid: 0,
-				pgid: entry.pid,
-				sid: entry.pid,
-				driver: entry.driver,
-				command: entry.command,
-				args: entry.args,
-				cwd: entry.cwd,
-				status: entry.exitCode === null ? "running" : "exited",
-				exitCode: entry.exitCode,
-				startTime: entry.startTime,
-				exitTime: entry.exitTime,
+			trackedKeys.add(`tracked:${entry.pid}`);
+			records.push({
+				key: `tracked:${entry.pid}`,
+				parentKey: null,
+				info: {
+					pid: entry.pid,
+					ppid: 0,
+					pgid: entry.pid,
+					sid: entry.pid,
+					driver: entry.driver,
+					command: entry.command,
+					args: entry.args,
+					cwd: entry.cwd,
+					status: entry.exitCode === null ? "running" : "exited",
+					exitCode: entry.exitCode,
+					startTime: entry.startTime,
+					exitTime: entry.exitTime,
+				},
 			});
 		}
 
 		this.processes.clear();
-		for (const process of processMap.values()) {
-			this.processes.set(process.pid, process);
+		for (const { info, key } of records) {
+			// The legacy numeric lookup cannot represent collisions. Prefer the
+			// tracked process for control lookup; tree/list preserve every record.
+			if (!this.processes.has(info.pid) || trackedKeys.has(key)) {
+				this.processes.set(info.pid, info);
+			}
 		}
 
-		return [...processMap.values()].sort((left, right) => left.pid - right.pid);
+		return records.sort((left, right) => left.info.pid - right.info.pid);
 	}
 
 	private dispatchRead<T>(
@@ -2951,7 +3219,7 @@ export class AgentOsSidecarClient {
 		this.now = options.now ?? Date.now;
 	}
 
-	/** Open a physical sidecar ownership scope, not a durable ACP session. */
+	/** Open a physical sidecar ownership scope for one client connection. */
 	async createOwnershipSession(
 		options: AgentOsSidecarSessionOptions = {},
 	): Promise<AgentOsSidecarSessionHandle> {

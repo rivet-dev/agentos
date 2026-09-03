@@ -195,7 +195,7 @@ The observed failure was:
 Error: sync bridge deferred message queue exceeded limit of 256
   at Function.applySyncPromise (...)
 ...
-ACP adapter auto-restart unsupported ... session evicted
+guest service exited after bridge overload
 ~~~
 
 The host call itself succeeded. The crash happened after that success.
@@ -208,7 +208,7 @@ queue. The command-channel capacity and deferred-queue limit are both 256. The
 producer can send more than 256 messages over time because the receiver drains
 the first queue into the second. If it defers a 257th stream event before
 observing the expected response, the deferred queue fails the execution. The
-ACP layer then sees a dead adapter and cannot resume it.
+The caller then sees a dead guest service.
 
 The callHost success line means the host-side tool operation produced a
 successful result. It does not mean ChannelResponseReceiver had received the
@@ -216,7 +216,7 @@ corresponding BridgeResponse before the event flood exhausted its deferred
 queue.
 
 The reproduction in crates/v8-runtime/tests/embedded_runtime_session.rs proves
-the queue failure without ACP or a real network: block a guest in a
+the queue failure without a real network: block a guest in a
 synchronous bridge call, deliberately withhold its response, send 257
 net_socket StreamEvents, and observe the same applySyncPromise error. This
 isolates the failing runtime mechanism; it does not claim to reproduce the
@@ -1673,7 +1673,7 @@ long-term selectable runtime modes.
 
 Exit gate:
 
-- the incident reproduces deterministically without ACP;
+- the incident reproduces deterministically with a generic guest process;
 - every production runtime/thread/unbounded-channel/timer/task site is
   classified with an owner, bound, cancellation path, and destination phase;
 - CI can distinguish the reviewed production allowlist from test fixtures.
@@ -2290,13 +2290,10 @@ The completion revision was validated on the non-browser surface with:
 - the local Node ecosystem matrix against the exact rebuilt sidecar: Express,
   Fastify, WebSocket, Axios, node-fetch, and a real Hono Node server/client flow
   (7 of 7 runnable cases);
-- the packaged AgentOS core adapters against local Anthropic-compatible model
-  fixtures: Pi tool execution and live updates (2 of 2), OpenCode session,
-  provider, tool, permission, cancellation, and resume flows (9 of 9 runnable
-  cases), and Claude shell, nested child process, session, cancellation, mode,
-  and raw ACP flows (8 of 8); plus the incident regression delivering 256
-  ordinary updates during a delayed tool response and then reusing the same ACP
-  session;
+- the packaged agentOS Core filesystem, process, network, binding, and
+  language-execution fixtures, plus the incident regression delivering 256
+  ordinary updates during a delayed host response and then reusing the same
+  process;
 - npm and Rust publish discovery, fixed-version, frozen-lockfile, and
   idempotent generated compatibility-mirror checks;
 - the release-mode runtime benchmark drift and latency gates.

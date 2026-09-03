@@ -1436,6 +1436,7 @@ mod shadow_root {
                     env: HashMap::new(),
                     cwd: Some(String::from("/workspace")),
                     wasm_permission_tier: None,
+                    retain_output: false,
                 }),
             ))
             .expect("dispatch execute");
@@ -1472,6 +1473,7 @@ mod shadow_root {
                     env: HashMap::new(),
                     cwd: Some(String::from("/workspace")),
                     wasm_permission_tier: None,
+                    retain_output: false,
                 }),
             ))
             .expect("dispatch execute");

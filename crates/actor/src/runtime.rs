@@ -1,11 +1,9 @@
 use std::collections::VecDeque;
-use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use agentos_actor_contract::lifecycle::*;
 use agentos_client::{AgentOs, InstalledSoftware, SidecarState};
 use anyhow::{anyhow, Context, Result};
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 
 use crate::config::{AgentOsActorConfig, RemotePackageSource};
@@ -15,82 +13,20 @@ const INITIALIZATION_TIMEOUT: Duration = Duration::from_secs(30);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_RUNTIME_ISSUES: usize = 32;
 
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RuntimeLifecycleState {
-    Initializing,
-    Preloading,
-    Booting,
-    Ready,
-    Degraded,
-    Stopping,
-    Failed,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RuntimeIssue {
-    pub code: String,
-    pub message: String,
-    pub at_ms: i64,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PackageStartupStatus {
-    pub required_total: u32,
-    pub required_ready: u32,
-    pub optional_preload_total: u32,
-    pub optional_preload_ready: u32,
-    pub optional_preload_failed: u32,
-    pub optional_preload_skipped: u32,
-    pub optional_preload_warmed_bytes: u64,
-    pub optional_preload_deadline_hit: bool,
-    pub optional_preload_coordinator_available: bool,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CoreSidecarStatus {
-    pub state: String,
-    pub active_vm_count: u32,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RuntimeStatus {
-    pub lifecycle: RuntimeLifecycleState,
-    pub config_state: crate::ConfigApplyState,
-    pub desired_config_revision: u64,
-    pub applied_config_revision: Option<u64>,
-    pub generation: u64,
-    pub last_boot_at_ms: Option<i64>,
-    pub last_shutdown_at_ms: Option<i64>,
-    pub packages: PackageStartupStatus,
-    pub issues: Vec<RuntimeIssue>,
-    pub core: Option<CoreSidecarStatus>,
-}
-
 pub(crate) struct RuntimeController {
-    actor_id: String,
     operation: Mutex<()>,
     state: Mutex<RuntimeState>,
 }
 
 struct RuntimeState {
-    lifecycle: RuntimeLifecycleState,
+    lifecycle: VmLifecycleState,
     desired_config_revision: u64,
     applied_config_revision: Option<u64>,
     generation: u64,
     last_boot_at_ms: Option<i64>,
     last_shutdown_at_ms: Option<i64>,
     packages: PackageStartupStatus,
-    issues: VecDeque<RuntimeIssue>,
+    issues: VecDeque<VmIssue>,
     resolved_software: Vec<ResolvedSoftware>,
     vm: Option<AgentOs>,
 }
@@ -102,12 +38,11 @@ pub(crate) struct ResolvedSoftware {
 }
 
 impl RuntimeController {
-    pub(crate) fn new(actor_id: impl Into<String>, desired_config_revision: u64) -> Self {
+    pub(crate) fn new(_actor_id: impl Into<String>, desired_config_revision: u64) -> Self {
         Self {
-            actor_id: actor_id.into(),
             operation: Mutex::new(()),
             state: Mutex::new(RuntimeState {
-                lifecycle: RuntimeLifecycleState::Initializing,
+                lifecycle: VmLifecycleState::Initializing,
                 desired_config_revision,
                 applied_config_revision: None,
                 generation: 0,
@@ -144,19 +79,33 @@ impl RuntimeController {
 
     pub(crate) async fn boot(
         &self,
+        ctx: &rivetkit::Ctx<crate::AgentOsActor>,
         desired: &AgentOsActorConfig,
         revision: u64,
-    ) -> Result<RuntimeStatus> {
+    ) -> Result<VmStatusSnapshot> {
         let _operation = self.operation.lock().await;
         self.stop_inner("replacement").await?;
+        let generation = match crate::store::allocate_vm_generation(ctx).await {
+            Ok(generation) => generation,
+            Err(error) => {
+                let mut state = self.state.lock().await;
+                state.lifecycle = VmLifecycleState::Failed;
+                push_issue(
+                    &mut state,
+                    VmIssue {
+                        code: "vm_generation_allocation_failed".into(),
+                        message: error.to_string(),
+                        at_ms: now_ms()?,
+                    },
+                );
+                return Err(error.context("reserve durable VM generation"));
+            }
+        };
         {
             let mut state = self.state.lock().await;
-            state.lifecycle = RuntimeLifecycleState::Booting;
+            state.lifecycle = VmLifecycleState::Booting;
             state.desired_config_revision = revision;
-            state.generation = state
-                .generation
-                .checked_add(1)
-                .ok_or_else(|| anyhow!("runtime generation overflow"))?;
+            state.generation = generation;
             state.packages.required_total = u32::try_from(desired.software.len())
                 .context("required software count exceeds u32")?;
             state.packages.required_ready = 0;
@@ -168,42 +117,80 @@ impl RuntimeController {
             .into_os_string()
             .into_string()
             .map_err(|_| anyhow!("agentOS executable path is not valid UTF-8"))?;
-        let database_path = runtime_database_path(&self.actor_id)?;
-        if let Some(parent) = database_path.parent() {
-            std::fs::create_dir_all(parent).with_context(|| {
-                format!(
-                    "create agentOS runtime state directory {}",
-                    parent.display()
-                )
-            })?;
-        }
+        let database_namespace = String::from("agentos-vm");
         let config = desired.to_core_config(
             Some(binary_path),
-            Some(database_path.to_string_lossy().into_owned()),
+            Some(agentos_client::VmSqliteDescriptor::HostCallback {
+                namespace: database_namespace.clone(),
+            }),
+            Some(crate::store::rivet_sqlite_callback(
+                ctx.clone(),
+                database_namespace,
+            )),
         );
+
+        let deadline = tokio::time::Instant::now() + INITIALIZATION_TIMEOUT;
+        let mut creation = tokio::spawn(AgentOs::create(config));
+        let vm = match tokio::time::timeout_at(deadline, &mut creation).await {
+            Ok(Ok(Ok(vm))) => vm,
+            Ok(Ok(Err(error))) => {
+                return self
+                    .fail_boot(
+                        "runtime_boot_failed",
+                        anyhow!(error).context("create agentOS VM"),
+                    )
+                    .await;
+            }
+            Ok(Err(error)) => {
+                return self
+                    .fail_boot(
+                        "runtime_boot_failed",
+                        anyhow!(error).context("join agentOS VM creation"),
+                    )
+                    .await;
+            }
+            Err(_) => {
+                // Do not cancel VM creation after it may have opened a sidecar VM.
+                // Reap any late result, including a successful VM, in the background.
+                tokio::spawn(async move {
+                    match creation.await {
+                        Ok(Ok(vm)) => {
+                            if let Err(error) = vm.shutdown().await {
+                                tracing::error!(?error, "clean up VM created after boot deadline");
+                            }
+                        }
+                        Ok(Err(error)) => {
+                            tracing::warn!(?error, "late VM creation failed after boot deadline");
+                        }
+                        Err(error) => {
+                            tracing::error!(?error, "join late VM creation after boot deadline");
+                        }
+                    }
+                });
+                return self
+                    .fail_boot(
+                        "runtime_boot_timeout",
+                        anyhow!(
+                            "timeout: runtime initialization exceeded {}ms while creating the VM; late creation cleanup is pending",
+                            INITIALIZATION_TIMEOUT.as_millis()
+                        ),
+                    )
+                    .await;
+            }
+        };
+        {
+            let mut state = self.state.lock().await;
+            state.lifecycle = VmLifecycleState::Preloading;
+            // Own the VM before awaiting package installation so cancelling
+            // the install future cannot drop its only cleanup handle.
+            state.vm = Some(vm.clone());
+        }
 
         let desired_software = desired.software.clone();
         let initialize = async {
-            let vm = AgentOs::create(config).await?;
-            {
-                let mut state = self.state.lock().await;
-                state.lifecycle = RuntimeLifecycleState::Preloading;
-            }
             let mut resolved = Vec::with_capacity(desired_software.len());
             for source in desired_software {
-                let installed = match vm.install_software(source.to_core()).await {
-                    Ok(installed) => installed,
-                    Err(error) => {
-                        return match vm.shutdown().await {
-                            Ok(()) => Err(error),
-                            Err(shutdown_error) => Err(agentos_client::ClientError::Sidecar(
-                                format!(
-                                    "required package installation failed: {error}; cleanup failed: {shutdown_error}"
-                                ),
-                            )),
-                        };
-                    }
-                };
+                let installed = vm.install_software(source.to_core()).await?;
                 resolved.push(ResolvedSoftware {
                     url: source.url,
                     installed,
@@ -219,56 +206,65 @@ impl RuntimeController {
                         ))
                     })?;
             }
-            Ok::<_, agentos_client::ClientError>((vm, resolved))
+            Ok::<_, agentos_client::ClientError>(resolved)
         };
 
-        match tokio::time::timeout(INITIALIZATION_TIMEOUT, initialize).await {
-            Ok(Ok((vm, resolved_software))) => {
+        match tokio::time::timeout_at(deadline, initialize).await {
+            Ok(Ok(resolved_software)) => {
                 let booted_at_ms = now_ms()?;
                 let mut state = self.state.lock().await;
-                state.lifecycle = RuntimeLifecycleState::Ready;
+                state.lifecycle = VmLifecycleState::Ready;
                 state.applied_config_revision = Some(revision);
                 state.last_boot_at_ms = Some(booted_at_ms);
                 state.resolved_software = resolved_software;
-                state.vm = Some(vm);
                 Ok(snapshot(&state))
             }
-            Ok(Err(error)) => {
-                let mut state = self.state.lock().await;
-                state.lifecycle = RuntimeLifecycleState::Failed;
-                push_issue(
-                    &mut state,
-                    RuntimeIssue {
-                        code: "runtime_boot_failed".into(),
-                        message: error.to_string(),
-                        at_ms: now_ms()?,
-                    },
-                );
-                Err(anyhow!(error).context("boot agentOS Core runtime"))
-            }
-            Err(_) => {
-                let mut state = self.state.lock().await;
-                state.lifecycle = RuntimeLifecycleState::Failed;
-                push_issue(
-                    &mut state,
-                    RuntimeIssue {
-                        code: "runtime_boot_timeout".into(),
-                        message: format!(
-                            "runtime initialization exceeded {}ms; raise the actor initialization deadline",
-                            INITIALIZATION_TIMEOUT.as_millis()
-                        ),
-                        at_ms: now_ms()?,
-                    },
-                );
-                Err(anyhow!(
-                    "runtime initialization exceeded {}ms",
-                    INITIALIZATION_TIMEOUT.as_millis()
-                ))
-            }
+            Ok(Err(error)) => self
+                .fail_boot(
+                    "runtime_boot_failed",
+                    anyhow!(error).context("install required VM packages"),
+                )
+                .await,
+            Err(_) => self
+                .fail_boot(
+                    "runtime_boot_timeout",
+                    anyhow!(
+                        "timeout: runtime initialization exceeded {}ms while installing required packages; raise the actor initialization deadline",
+                        INITIALIZATION_TIMEOUT.as_millis()
+                    ),
+                )
+                .await,
         }
     }
 
-    pub(crate) async fn stop(&self, reason: &str) -> Result<RuntimeStatus> {
+    async fn fail_boot(
+        &self,
+        code: &'static str,
+        error: anyhow::Error,
+    ) -> Result<VmStatusSnapshot> {
+        let cleanup = self.stop_inner("failed boot").await;
+        let mut state = self.state.lock().await;
+        state.lifecycle = if cleanup.is_ok() {
+            VmLifecycleState::Failed
+        } else {
+            VmLifecycleState::Degraded
+        };
+        let error = match cleanup {
+            Ok(()) => error,
+            Err(cleanup_error) => error.context(format!("VM cleanup failed: {cleanup_error:#}")),
+        };
+        push_issue(
+            &mut state,
+            VmIssue {
+                code: code.into(),
+                message: error.to_string(),
+                at_ms: now_ms()?,
+            },
+        );
+        Err(error)
+    }
+
+    pub(crate) async fn stop(&self, reason: &str) -> Result<VmStatusSnapshot> {
         let _operation = self.operation.lock().await;
         self.stop_inner(reason).await?;
         Ok(self.status().await)
@@ -341,7 +337,7 @@ impl RuntimeController {
             let Some(vm) = state.vm.take() else {
                 return Ok(());
             };
-            state.lifecycle = RuntimeLifecycleState::Stopping;
+            state.lifecycle = VmLifecycleState::Stopping;
             state.resolved_software.clear();
             state.packages.required_ready = 0;
             vm
@@ -350,18 +346,19 @@ impl RuntimeController {
         match tokio::time::timeout(SHUTDOWN_TIMEOUT, vm.shutdown()).await {
             Ok(Ok(())) => {
                 let mut state = self.state.lock().await;
-                state.lifecycle = RuntimeLifecycleState::Initializing;
+                state.lifecycle = VmLifecycleState::Initializing;
                 state.applied_config_revision = None;
                 state.last_shutdown_at_ms = Some(now_ms()?);
-                tracing::info!(actor_id = %self.actor_id, %reason, "agentOS Core runtime stopped");
+                tracing::info!(%reason, "agentOS Core runtime stopped");
                 Ok(())
             }
             Ok(Err(error)) => {
                 let mut state = self.state.lock().await;
-                state.lifecycle = RuntimeLifecycleState::Degraded;
+                state.lifecycle = VmLifecycleState::Degraded;
+                state.vm = Some(vm);
                 push_issue(
                     &mut state,
-                    RuntimeIssue {
+                    VmIssue {
                         code: "runtime_shutdown_failed".into(),
                         message: error.to_string(),
                         at_ms: now_ms()?,
@@ -371,67 +368,68 @@ impl RuntimeController {
             }
             Err(_) => {
                 let mut state = self.state.lock().await;
-                state.lifecycle = RuntimeLifecycleState::Degraded;
+                state.lifecycle = VmLifecycleState::Degraded;
+                state.vm = Some(vm);
                 push_issue(
                     &mut state,
-                    RuntimeIssue {
+                    VmIssue {
                         code: "runtime_shutdown_timeout".into(),
                         message: format!(
-                            "runtime shutdown exceeded {}ms; raise the actor shutdown deadline",
+                            "runtime shutdown exceeded the fixed actor deadline of {}ms; completion is unconfirmed",
                             SHUTDOWN_TIMEOUT.as_millis()
                         ),
                         at_ms: now_ms()?,
                     },
                 );
                 Err(anyhow!(
-                    "runtime shutdown exceeded {}ms",
+                    "timeout: runtime shutdown exceeded {}ms",
                     SHUTDOWN_TIMEOUT.as_millis()
                 ))
             }
         }
     }
 
-    pub(crate) async fn status(&self) -> RuntimeStatus {
+    pub(crate) async fn status(&self) -> VmStatusSnapshot {
         let state = self.state.lock().await;
         snapshot(&state)
     }
 
     pub(crate) async fn vm(&self) -> Result<AgentOs> {
         let state = self.state.lock().await;
-        if state.lifecycle != RuntimeLifecycleState::Ready {
+        if state.lifecycle != VmLifecycleState::Ready {
             return Err(anyhow!(
-                "runtime_not_ready: agentOS runtime is {:?}; inspect runtime.status and retry",
+                "not_ready: agentOS VM is {:?}; inspect vm.status and retry",
                 state.lifecycle
             ));
         }
         state
             .vm
             .clone()
-            .ok_or_else(|| anyhow!("runtime_not_ready: ready runtime has no Core VM"))
+            .ok_or_else(|| anyhow!("not_ready: ready VM has no Core handle"))
     }
 
     pub(crate) async fn vm_at_generation(&self, generation: u64) -> Result<AgentOs> {
         let state = self.state.lock().await;
         if state.generation != generation {
             return Err(anyhow!(
-                "stale_runtime_handle: handle generation {generation} does not match current generation {}",
+                "stale_generation: handle generation {generation} does not match current generation {}",
                 state.generation
             ));
         }
-        if state.lifecycle != RuntimeLifecycleState::Ready {
+        if state.lifecycle != VmLifecycleState::Ready {
             return Err(anyhow!(
-                "runtime_not_ready: agentOS runtime is {:?}; inspect runtime.status and retry",
+                "not_ready: agentOS VM is {:?}; inspect vm.status and retry",
                 state.lifecycle
             ));
         }
         state
             .vm
             .clone()
-            .ok_or_else(|| anyhow!("runtime_not_ready: ready runtime has no Core VM"))
+            .ok_or_else(|| anyhow!("not_ready: ready VM has no Core handle"))
     }
 }
 
-fn snapshot(state: &RuntimeState) -> RuntimeStatus {
+fn snapshot(state: &RuntimeState) -> VmStatusSnapshot {
     let core = state.vm.as_ref().map(|vm| {
         let description = vm.sidecar().describe();
         CoreSidecarStatus {
@@ -444,22 +442,22 @@ fn snapshot(state: &RuntimeState) -> RuntimeStatus {
             active_vm_count: description.active_vm_count,
         }
     });
-    RuntimeStatus {
+    VmStatusSnapshot {
         lifecycle: state.lifecycle,
         config_state: match state.lifecycle {
-            RuntimeLifecycleState::Failed | RuntimeLifecycleState::Degraded => {
+            VmLifecycleState::Failed | VmLifecycleState::Degraded => {
                 crate::ConfigApplyState::Failed
             }
-            RuntimeLifecycleState::Initializing
-            | RuntimeLifecycleState::Preloading
-            | RuntimeLifecycleState::Booting
-            | RuntimeLifecycleState::Stopping => crate::ConfigApplyState::Applying,
-            RuntimeLifecycleState::Ready
+            VmLifecycleState::Initializing
+            | VmLifecycleState::Preloading
+            | VmLifecycleState::Booting
+            | VmLifecycleState::Stopping => crate::ConfigApplyState::Applying,
+            VmLifecycleState::Ready
                 if state.applied_config_revision != Some(state.desired_config_revision) =>
             {
                 crate::ConfigApplyState::RestartRequired
             }
-            RuntimeLifecycleState::Ready => crate::ConfigApplyState::Ready,
+            VmLifecycleState::Ready => crate::ConfigApplyState::Ready,
         },
         desired_config_revision: state.desired_config_revision,
         applied_config_revision: state.applied_config_revision,
@@ -472,24 +470,11 @@ fn snapshot(state: &RuntimeState) -> RuntimeStatus {
     }
 }
 
-fn push_issue(state: &mut RuntimeState, issue: RuntimeIssue) {
+fn push_issue(state: &mut RuntimeState, issue: VmIssue) {
     if state.issues.len() == MAX_RUNTIME_ISSUES {
         state.issues.pop_front();
     }
     state.issues.push_back(issue);
-}
-
-fn runtime_database_path(actor_id: &str) -> Result<PathBuf> {
-    let root = std::env::var_os("AGENTOS_ACTOR_RUNTIME_STATE_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::temp_dir().join("agentos-actor-runtime"));
-    if !root.is_absolute() {
-        return Err(anyhow!(
-            "AGENTOS_ACTOR_RUNTIME_STATE_DIR must be an absolute path"
-        ));
-    }
-    let digest = Sha256::digest(actor_id.as_bytes());
-    Ok(root.join(format!("{}.sqlite", hex::encode(digest))))
 }
 
 pub(crate) fn now_ms() -> Result<i64> {
@@ -504,30 +489,18 @@ pub(crate) fn now_ms() -> Result<i64> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn runtime_database_path_does_not_embed_actor_id() {
-        let path = runtime_database_path("../../other/actor").expect("runtime database path");
-        let name = path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .expect("database file name");
-        assert!(name.ends_with(".sqlite"));
-        assert!(!name.contains(".."));
-        assert!(!name.contains("actor"));
-    }
-
     #[tokio::test]
     async fn ready_runtime_reports_a_pending_desired_revision() {
         let runtime = RuntimeController::new("actor", 1);
         {
             let mut state = runtime.state.lock().await;
-            state.lifecycle = RuntimeLifecycleState::Ready;
+            state.lifecycle = VmLifecycleState::Ready;
             state.applied_config_revision = Some(1);
         }
         runtime.set_desired_config_revision(2).await;
 
         let status = runtime.status().await;
-        assert_eq!(status.lifecycle, RuntimeLifecycleState::Ready);
+        assert_eq!(status.lifecycle, VmLifecycleState::Ready);
         assert_eq!(
             status.config_state,
             crate::ConfigApplyState::RestartRequired

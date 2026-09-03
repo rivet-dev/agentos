@@ -19,21 +19,22 @@ struct ScannedConst {
     path: String,
 }
 
-/// Resolve the workspace root from `CARGO_MANIFEST_DIR` (which points at `crates/sidecar`).
+/// Resolve the workspace root from `CARGO_MANIFEST_DIR` (`crates/native-sidecar`).
 fn workspace_root() -> PathBuf {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     manifest
         .parent()
         .and_then(Path::parent)
-        .expect("crates/sidecar has a workspace root two levels up")
+        .expect("crates/native-sidecar has a workspace root two levels up")
         .to_path_buf()
 }
 
 const SKIP_DIRS: &[&str] = &["target", "node_modules", "dist", "tests", "fixtures"];
 
-/// Decide whether a constant name is a limit-shaped bound that must be classified. Mirrors the
-/// rule documented in `limits-config.md`. Env-var-name constants (`*_ENV`) and error-code string
-/// constants (`*_ERROR_CODE`) are excluded because they name a knob or code, not a bound.
+/// Decide whether a constant name is a limit-shaped bound that must be classified.
+/// Env-var-name constants (`*_ENV`) and error-code strings (`*_ERROR_CODE`) are
+/// excluded because they name a knob or code, not a bound. `numeric_env_bound`
+/// keeps numeric Rust constants ending in `_ENV` in the scan.
 fn name_qualifies(name: &str) -> bool {
     if name.ends_with("_ENV") || name.ends_with("_ERROR_CODE") {
         return false;
@@ -56,6 +57,40 @@ fn name_qualifies(name: &str) -> bool {
         }
     }
     false
+}
+
+/// The `_ENV` exclusion is for environment-key strings, not numeric budgets
+/// such as `MAX_PACKAGE_PROVIDES_ENV`. Keep typed Rust numeric bounds visible.
+fn numeric_env_bound(name: &str, declaration: &str) -> bool {
+    let Some(prefix) = name.strip_suffix("_ENV") else {
+        return false;
+    };
+    if !name_qualifies(prefix) {
+        return false;
+    }
+    let Some((_, rest)) = declaration.split_once(':') else {
+        return false;
+    };
+    let Some((ty, _)) = rest.split_once('=') else {
+        return false;
+    };
+    matches!(
+        ty.trim(),
+        "usize"
+            | "isize"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "i8"
+            | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "f32"
+            | "f64"
+    )
 }
 
 /// Extract a constant name from a Rust `const` declaration line, if present.
@@ -139,7 +174,7 @@ fn scan_file(full: &Path, rel: &str, is_ts: bool, found: &mut Vec<ScannedConst>)
             rust_const_name(line)
         };
         if let Some(name) = name {
-            if name_qualifies(name) {
+            if name_qualifies(name) || (!is_ts && numeric_env_bound(name, line)) {
                 found.push(ScannedConst {
                     name: name.to_string(),
                     path: rel.to_string(),
@@ -150,10 +185,8 @@ fn scan_file(full: &Path, rel: &str, is_ts: bool, found: &mut Vec<ScannedConst>)
 }
 
 fn scan_dir(root: &Path, dir: &Path, extension: &str, is_ts: bool, found: &mut Vec<ScannedConst>) {
-    let entries = match fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(_) => return,
-    };
+    let entries = fs::read_dir(dir)
+        .unwrap_or_else(|error| panic!("failed to read scanned directory {dir:?}: {error}"));
     for entry in entries {
         let entry = entry.expect("readable directory entry");
         let path = entry.path();
@@ -229,13 +262,23 @@ fn load_inventory() -> Vec<InventoryEntry> {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/limits-inventory.json");
     let raw = fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("failed to read limits inventory {path:?}: {error}"));
-    let value: Value = serde_json::from_str(&raw).expect("inventory is valid JSON");
+    parse_inventory(&raw)
+}
+
+fn parse_inventory(raw: &str) -> Vec<InventoryEntry> {
+    let value: Value = serde_json::from_str(raw).expect("inventory is valid JSON");
     let array = value.as_array().expect("inventory is a JSON array");
     array
         .iter()
         .map(|entry| {
             let name = entry["name"].as_str().expect("entry has name").to_string();
             let path = entry["path"].as_str().expect("entry has path").to_string();
+            assert!(
+                entry["rationale"]
+                    .as_str()
+                    .is_some_and(|rationale| !rationale.trim().is_empty()),
+                "inventory entry {name} ({path}) must have a nonempty rationale"
+            );
             let class = entry["class"]
                 .as_str()
                 .expect("entry has class")
@@ -289,7 +332,7 @@ fn limit_constants_are_classified() {
             failures.push(format!(
                 "unclassified limit constant {} in {}: wire it through a typed configuration field and mark it \
                  \"policy\", or add an \"invariant\"/\"policy-deferred\" entry to \
-                 crates/sidecar/tests/fixtures/limits-inventory.json with a one-line rationale",
+                 crates/native-sidecar/tests/fixtures/limits-inventory.json with a one-line rationale",
                 c.name, c.path
             ));
         }
@@ -315,7 +358,7 @@ fn limit_constants_are_classified() {
             let wired_ok = entry
                 .wired
                 .as_deref()
-                .map(|w| !w.is_empty())
+                .map(|w| !w.trim().is_empty())
                 .unwrap_or(false);
             if !wired_ok {
                 failures.push(format!(
@@ -334,6 +377,46 @@ fn limit_constants_are_classified() {
             failures.join("\n")
         );
     }
+}
+
+#[test]
+fn numeric_environment_budgets_are_not_mistaken_for_key_names() {
+    let directory = tempfile::tempdir().expect("audit fixture directory");
+    let path = directory.path().join("limits.rs");
+    fs::write(
+        &path,
+        "const MAX_PACKAGE_PROVIDES_ENV: usize = 1024;\n\
+         const AGENTOS_MAX_PACKAGE_ENV: &str = \"AGENTOS_MAX_PACKAGE\";\n",
+    )
+    .expect("write fixture declarations");
+    let mut found = Vec::new();
+    scan_file(&path, "limits.rs", false, &mut found);
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].name, "MAX_PACKAGE_PROVIDES_ENV");
+}
+
+#[test]
+fn inventory_entries_require_a_rationale() {
+    for rationale in [None, Some(""), Some("   ")] {
+        let mut entry = serde_json::json!({
+            "name": "MAX_EXAMPLE", "path": "example.rs", "class": "invariant"
+        });
+        if let Some(rationale) = rationale {
+            entry["rationale"] = Value::String(rationale.to_owned());
+        }
+        let raw = serde_json::json!([entry]).to_string();
+        assert!(std::panic::catch_unwind(|| parse_inventory(&raw)).is_err());
+    }
+}
+
+#[test]
+fn directory_read_failures_do_not_silently_skip_the_audit() {
+    let directory = tempfile::tempdir().expect("audit fixture directory");
+    let missing = directory.path().join("missing");
+    assert!(std::panic::catch_unwind(|| {
+        scan_dir(directory.path(), &missing, "rs", false, &mut Vec::new());
+    })
+    .is_err());
 }
 
 #[test]

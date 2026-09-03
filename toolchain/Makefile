@@ -35,7 +35,7 @@ cargo_package_for_command = $(if $(filter _stubs,$(1)),cmd-stubs,cmd-$(1))
 
 SOFTWARE_COMMAND_CRATES := $(wildcard ../software/*/native/crates/cmd-*)
 TOOLCHAIN_COMMAND_CRATES := $(wildcard crates/commands/*)
-SKIPPED_BULK_COMMANDS := git codex codex-exec
+SKIPPED_BULK_COMMANDS := git
 COMMAND_NAMES := $(filter-out $(SKIPPED_BULK_COMMANDS),$(patsubst cmd-%,%,$(notdir $(SOFTWARE_COMMAND_CRATES))) $(notdir $(TOOLCHAIN_COMMAND_CRATES)))
 COMMAND_PACKAGES := $(foreach command,$(COMMAND_NAMES),-p $(call cargo_package_for_command,$(command)))
 COREUTILS_COMMAND_CRATES := $(wildcard ../software/coreutils/native/crates/cmd-*)
@@ -60,13 +60,13 @@ STUB_COMMANDS := \
 	pinky who users uptime \
 	stty sync tty
 
-.PHONY: all commands pr-commands wasm wasm-opt-check host test clean patch-std patch-check vendor patch-vendor vendor-patch-check size-report install c-wasm codex fd-mapping-contract-wasm fd-mapping-contract-native
+.PHONY: all commands pr-commands wasm wasm-opt-check host test clean patch-std patch-check vendor patch-vendor vendor-patch-check size-report install c-wasm fd-mapping-contract-wasm fd-mapping-contract-native
 
 all: wasm
 
 # Build the fast command set that lands in COMMANDS_DIR: Rust commands except
-# known heavy/external ones, then the opted-in fast C commands. Heavy commands
-# (git, duckdb, vim) and the external codex build are intentionally excluded
+# known heavy ones, then the opted-in fast C commands. Heavy commands
+# (git, duckdb, vim) are intentionally excluded
 # from the default software-build gate; `_stubs` is a required Rust input for
 # the generated stub aliases and is built with the default command set.
 commands: wasm
@@ -83,56 +83,11 @@ pr-commands:
 		COMMAND_PACKAGES="$(PR_COMMAND_PACKAGES)"
 	$(MAKE) -C c build/mknod install COMMANDS="mknod"
 
-# Build the real wasm32-wasip1 `codex-exec` agent engine and install it where
-# @agentos-software/codex-cli stages commands from.
-#
-# Two modes:
-#   - default (CODEX_REPO unset): REPRODUCIBLE build. clone-and-build-codex-wasi.sh
-#     shallow-clones the fork pinned in toolchain/codex-ref, rewrites its
-#     [patch.crates-io] to the toolchain stubs + vendored/patched tokio, and builds.
-#     No local checkout needed; deterministic from the pin.
-#   - CODEX_REPO=/path/to/codex-rs/codex-rs: DEV override. Builds that existing
-#     checkout in place via scripts/build-codex-wasi.sh (fast local iteration).
-AGENTOS_ROOT := $(abspath $(CURDIR)/..)
-CODEX_REF := $(shell cat $(CURDIR)/codex-ref 2>/dev/null)
-CODEX_REPO ?=
-CODEX_WASI_SDK_DIR := $(abspath $(CURDIR)/c/vendor/wasi-sdk)
-codex: c/vendor/wasi-sdk/bin/clang c/sysroot/lib/wasm32-wasi/libc.a
-ifeq ($(strip $(CODEX_REPO)),)
-	@echo "codex: reproducible build from pin $(CODEX_REF)"
-	@WASI_SDK_DIR="$(CODEX_WASI_SDK_DIR)" \
-		"$(CURDIR)/scripts/clone-and-build-codex-wasi.sh"
-else
-	@if [ -x "$(CODEX_REPO)/scripts/build-wasi-codex-exec.sh" ]; then \
-		echo "codex: CODEX_REPO override -> building $(CODEX_REPO) in place"; \
-		CODEX_REPO="$(CODEX_REPO)" \
-		WASI_SDK_DIR="$(CODEX_WASI_SDK_DIR)" \
-		"$(CURDIR)/scripts/build-codex-wasi.sh"; \
-	else \
-		echo "codex: CODEX_REPO=$(CODEX_REPO) has no scripts/build-wasi-codex-exec.sh"; \
-		echo "       Unset CODEX_REPO to build reproducibly from the pin instead."; \
-		exit 1; \
-	fi
-endif
-
 c/vendor/wasi-sdk/bin/clang:
 	$(MAKE) -C c wasi-sdk
 
 c/sysroot/lib/wasm32-wasi/libc.a:
 	$(MAKE) -C c sysroot
-
-# Strict variant for environments that require the codex artifact. With CODEX_REPO
-# unset it builds reproducibly from the pin; with CODEX_REPO set it fails hard if
-# that checkout lacks the fork build script.
-.PHONY: codex-required
-codex-required:
-ifeq ($(strip $(CODEX_REPO)),)
-	@$(MAKE) codex
-else
-	@test -x "$(CODEX_REPO)/scripts/build-wasi-codex-exec.sh" || { \
-		echo "ERROR: codex fork build script not found at $(CODEX_REPO); unset CODEX_REPO to build from the pin"; exit 1; }
-	@$(MAKE) codex
-endif
 
 # Apply std patches if they exist
 patch-std:
@@ -201,9 +156,8 @@ wasm-opt-check:
 
 # Build all standalone command binaries, optimize, strip .wasm extension, create symlinks
 wasm: c/sysroot/lib/wasm32-wasi/libc.a vendor patch-vendor patch-std wasm-opt-check
-	# --cfg tokio_unstable lifts tokio's wasm `compile_error!` so the patched
-	# tokio process/net modules (std-patches/crates/tokio) compile on wasm32-wasip1.
-	# Needed by codex (tokio::process/net). Harmless for commands not using tokio.
+	# --cfg tokio_unstable enables the patched Tokio process support used by
+	# process-conformance commands.
 	CC_wasm32_wasip1="$(WASI_C_CC)" \
 	AR_wasm32_wasip1="$(WASI_C_AR)" \
 	CFLAGS_wasm32_wasip1="--sysroot=$(WASI_C_SYSROOT)" \
@@ -297,7 +251,6 @@ wasm: c/sysroot/lib/wasm32-wasi/libc.a vendor patch-vendor patch-std wasm-opt-ch
 #   Rust      software/*/native/crates/cmd-<name> or crates/commands/<name>
 #             (cargo package cmd-<name>, via wasm-cmd)
 #   C         the C opt-in set below  (toolchain/c, patched sysroot)
-#   codex     the codex fork build    (codex, codex-exec)
 # `just toolchain-cmd <name>` calls this. `make wasm` builds the fast
 # Rust set; `make -C c programs install` builds/installs the fast C set.
 C_COMMANDS := zip unzip envsubst sqlite3 curl wget grep git duckdb vim ssh ssh-keysign ssh-sk-helper
@@ -315,10 +268,8 @@ cmd/%:
 		[ "$$name" = "ssh" ] && install_commands="ssh ssh-keysign ssh-sk-helper"; \
 		$(MAKE) -C c sysroot "build/$$src" && \
 			$(MAKE) -C c install COMMANDS="$$install_commands"; \
-	elif [ "$$name" = "codex" ] || [ "$$name" = "codex-exec" ]; then \
-		$(MAKE) codex-required; \
 	else \
-		echo "ERROR: unknown command '$$name' (no software/*/native/crates/cmd-$$name or crates/commands/$$name; not in C_COMMANDS or codex)"; \
+		echo "ERROR: unknown command '$$name' (no software/*/native/crates/cmd-$$name or crates/commands/$$name; not in C_COMMANDS)"; \
 		exit 1; \
 	fi
 

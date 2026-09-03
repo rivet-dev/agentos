@@ -3,6 +3,18 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+/// Selects the sidecar-owned defaults applied when a create field is omitted.
+/// Low-level callers keep the secure profile; agentOS clients select the
+/// product profile instead of copying its environment and permission policy.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+pub enum VmDefaultsProfile {
+    #[default]
+    Secure,
+    AgentOs,
+}
+
 /// Canonical Rust-side VM config. Unknown fields must stay rejected here and in
 /// the TS preflight schema at
 /// `packages/core/src/node-runtime-options-schema.ts`; update both when a
@@ -12,12 +24,19 @@ use ts_rs::TS;
 #[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
 #[derive(Default)]
 pub struct CreateVmConfig {
+    #[serde(
+        default,
+        rename = "defaultsProfile",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional)]
+    pub defaults_profile: Option<VmDefaultsProfile>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub cwd: Option<String>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    #[ts(type = "Record<string, string>")]
-    pub env: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "Record<string, string>")]
+    pub env: Option<BTreeMap<String, String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub database: Option<VmSqliteDescriptor>,
@@ -64,7 +83,41 @@ pub struct CreateVmConfig {
 }
 
 impl CreateVmConfig {
+    pub fn defaults_profile(&self) -> VmDefaultsProfile {
+        self.defaults_profile.unwrap_or_default()
+    }
+
+    /// Canonicalize set-like VM overrides before storing or applying them.
+    /// Validation also checks the raw collection size, so duplicate-heavy
+    /// input cannot bypass the admission bound by being deduplicated first.
+    pub fn normalize(&mut self) -> Result<(), VmConfigError> {
+        validate_loopback_exempt_ports(&self.loopback_exempt_ports, "loopbackExemptPorts")?;
+        if let Some(allowed) = self
+            .js_runtime
+            .as_ref()
+            .and_then(|runtime| runtime.allowed_builtins.as_ref())
+        {
+            validate_allowed_node_builtins(allowed, "jsRuntime.allowedBuiltins")?;
+        }
+        self.loopback_exempt_ports = normalize_loopback_exempt_ports(
+            std::mem::take(&mut self.loopback_exempt_ports),
+            "loopbackExemptPorts",
+        )?;
+        if let Some(allowed) = self
+            .js_runtime
+            .as_mut()
+            .and_then(|runtime| runtime.allowed_builtins.as_mut())
+        {
+            *allowed = normalize_allowed_node_builtins(
+                std::mem::take(allowed),
+                "jsRuntime.allowedBuiltins",
+            )?;
+        }
+        Ok(())
+    }
+
     pub fn validate(&self, max_frame_bytes: usize) -> Result<(), VmConfigError> {
+        validate_loopback_exempt_ports(&self.loopback_exempt_ports, "loopbackExemptPorts")?;
         if let Some(cwd) = self.cwd.as_deref() {
             validate_guest_path("cwd", cwd)?;
         }
@@ -102,23 +155,148 @@ impl CreateVmConfig {
     }
 }
 
+pub const MAX_VM_ALLOWED_NODE_BUILTINS: usize = 256;
+pub const MAX_VM_ALLOWED_NODE_BUILTIN_BYTES: usize = 128;
+pub const MAX_VM_LOOPBACK_EXEMPT_PORTS: usize = 256;
+
+pub fn normalize_allowed_node_builtins(
+    mut values: Vec<String>,
+    field: &str,
+) -> Result<Vec<String>, VmConfigError> {
+    validate_allowed_node_builtins(&values, field)?;
+    values.sort();
+    values.dedup();
+    Ok(values)
+}
+
+pub fn normalize_loopback_exempt_ports(
+    mut values: Vec<u16>,
+    field: &str,
+) -> Result<Vec<u16>, VmConfigError> {
+    validate_loopback_exempt_ports(&values, field)?;
+    values.sort_unstable();
+    values.dedup();
+    Ok(values)
+}
+
+fn validate_allowed_node_builtins(values: &[String], field: &str) -> Result<(), VmConfigError> {
+    if values.len() > MAX_VM_ALLOWED_NODE_BUILTINS {
+        return Err(VmConfigError::new(format!(
+            "limit_exceeded: {field} has {} entries; maximum is {MAX_VM_ALLOWED_NODE_BUILTINS}; reduce the list or raise MAX_VM_ALLOWED_NODE_BUILTINS",
+            values.len()
+        )));
+    }
+    if let Some(value) = values
+        .iter()
+        .find(|value| value.is_empty() || value.len() > MAX_VM_ALLOWED_NODE_BUILTIN_BYTES)
+    {
+        return Err(VmConfigError::new(format!(
+            "invalid_input: {field} entry {value:?} must contain 1..={MAX_VM_ALLOWED_NODE_BUILTIN_BYTES} bytes"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_loopback_exempt_ports(values: &[u16], field: &str) -> Result<(), VmConfigError> {
+    if values.len() > MAX_VM_LOOPBACK_EXEMPT_PORTS {
+        return Err(VmConfigError::new(format!(
+            "limit_exceeded: {field} has {} entries; maximum is {MAX_VM_LOOPBACK_EXEMPT_PORTS}; reduce the list or raise MAX_VM_LOOPBACK_EXEMPT_PORTS",
+            values.len()
+        )));
+    }
+    Ok(())
+}
+
 /// Transport used by the VM-scoped SQLite substrate.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 #[ts(tag = "type", rename_all = "snake_case")]
 #[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
 pub enum VmSqliteDescriptor {
-    /// Temporary local SQLite database owned by the native sidecar host.
+    /// Local SQLite database for trusted embedded callers.
     SqliteFile { path: String },
+    /// SQLite operations are delegated to the trusted host over the sidecar
+    /// extension callback lane. Hosted actors use this to bind the VM to their
+    /// Rivet SQLite database without exposing a host path.
+    HostCallback { namespace: String },
 }
 
 impl VmSqliteDescriptor {
     fn validate(&self) -> Result<(), VmConfigError> {
         match self {
             Self::SqliteFile { path } => validate_absolute_host_path("database.path", path)?,
+            Self::HostCallback { namespace } => {
+                if namespace.is_empty()
+                    || namespace.len() > 128
+                    || !namespace.bytes().all(|byte| {
+                        byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_')
+                    })
+                {
+                    return Err(VmConfigError::new(
+                        "database.namespace must contain 1..=128 ASCII letters, digits, '.', '-', or '_'",
+                    ));
+                }
+            }
         }
         Ok(())
     }
+}
+
+pub const VM_SQLITE_CALLBACK_NAMESPACE: &str = "dev.agentos.sqlite.v1";
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VmSqliteValue {
+    Null,
+    Integer(i64),
+    Real(f64),
+    Text(String),
+    Blob(Vec<u8>),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VmSqliteStatement {
+    pub sql: String,
+    #[serde(default)]
+    pub params: Vec<VmSqliteValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_changes: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum VmSqliteCallbackRequest {
+    Query {
+        database: String,
+        statement: VmSqliteStatement,
+    },
+    Transaction {
+        database: String,
+        statements: Vec<VmSqliteStatement>,
+    },
+    Close {
+        database: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VmSqliteQueryResult {
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<VmSqliteValue>>,
+    pub changes: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_insert_row_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum VmSqliteCallbackResponse {
+    Query { result: VmSqliteQueryResult },
+    Transaction { results: Vec<VmSqliteQueryResult> },
+    Closed,
+    Error { message: String },
 }
 
 fn validate_absolute_host_path(field: &str, path: &str) -> Result<(), VmConfigError> {
@@ -355,6 +533,7 @@ pub struct JsRuntimeConfig {
 impl JsRuntimeConfig {
     fn validate(&self) -> Result<(), VmConfigError> {
         if let Some(allowed) = &self.allowed_builtins {
+            validate_allowed_node_builtins(allowed, "jsRuntime.allowedBuiltins")?;
             if self.platform != JsRuntimePlatform::Node {
                 return Err(VmConfigError::new(
                     "jsRuntime.allowedBuiltins is only valid when jsRuntime.platform is \"node\"",
@@ -789,10 +968,20 @@ pub struct VmLimitsConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub process: Option<ProcessLimitsConfig>,
+    #[serde(
+        default,
+        rename = "agentosPackages",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional)]
+    pub agentos_packages: Option<AgentOsPackageLimitsConfig>,
 }
 
 impl VmLimitsConfig {
     fn validate(&self, max_frame_bytes: usize) -> Result<(), VmConfigError> {
+        if let Some(packages) = &self.agentos_packages {
+            validate_nonzero_options([("limits.agentosPackages.maxMounts", packages.max_mounts)])?;
+        }
         if let Some(reactor) = &self.reactor {
             validate_nonzero_options([
                 ("limits.reactor.maxCapabilities", reactor.max_capabilities),
@@ -1084,6 +1273,50 @@ impl VmLimitsConfig {
                 }
             }
         }
+        if let Some(process) = &self.process {
+            validate_nonzero_options([
+                (
+                    "limits.process.maxSpawnFileActions",
+                    process.max_spawn_file_actions,
+                ),
+                (
+                    "limits.process.maxSpawnFileActionBytes",
+                    process.max_spawn_file_action_bytes,
+                ),
+                (
+                    "limits.process.pendingStdinBytes",
+                    process.pending_stdin_bytes,
+                ),
+                (
+                    "limits.process.pendingEventCount",
+                    process.pending_event_count,
+                ),
+                (
+                    "limits.process.pendingEventBytes",
+                    process.pending_event_bytes,
+                ),
+                (
+                    "limits.process.outputReplayEvents",
+                    process.output_replay_events,
+                ),
+                (
+                    "limits.process.outputReplayBytes",
+                    process.output_replay_bytes,
+                ),
+                (
+                    "limits.process.outputReplayPageEvents",
+                    process.output_replay_page_events,
+                ),
+                (
+                    "limits.process.outputReplayPageBytes",
+                    process.output_replay_page_bytes,
+                ),
+                (
+                    "limits.process.maxOutputReplays",
+                    process.max_output_replays,
+                ),
+            ])?;
+        }
         Ok(())
     }
 }
@@ -1224,6 +1457,8 @@ limits_struct!(PluginLimitsConfig {
 
 limits_struct!(SqliteLimitsConfig { max_result_bytes });
 
+limits_struct!(AgentOsPackageLimitsConfig { max_mounts });
+
 limits_struct!(JsRuntimeLimitsConfig {
     v8_heap_limit_mb,
     sync_rpc_wait_timeout_ms,
@@ -1265,6 +1500,11 @@ limits_struct!(ProcessLimitsConfig {
     pending_stdin_bytes,
     pending_event_count,
     pending_event_bytes,
+    output_replay_events,
+    output_replay_bytes,
+    output_replay_page_events,
+    output_replay_page_bytes,
+    max_output_replays,
 });
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1397,9 +1637,70 @@ mod tests {
     #[test]
     fn default_config_round_trips() {
         let config = CreateVmConfig::default();
+        assert_eq!(config.defaults_profile(), VmDefaultsProfile::Secure);
         let json = serde_json::to_string(&config).expect("serialize config");
         let decoded: CreateVmConfig = serde_json::from_str(&json).expect("decode config");
         assert_eq!(decoded, config);
+        assert_eq!(decoded.defaults_profile(), VmDefaultsProfile::Secure);
+
+        let product: CreateVmConfig =
+            serde_json::from_str(r#"{"defaultsProfile":"agent_os","rootFilesystem":{}}"#)
+                .expect("decode explicit agentOS profile");
+        assert_eq!(product.defaults_profile(), VmDefaultsProfile::AgentOs);
+    }
+
+    #[test]
+    fn create_vm_normalizes_set_like_overrides() {
+        let mut config = CreateVmConfig {
+            loopback_exempt_ports: vec![8080, 80, 8080],
+            js_runtime: Some(JsRuntimeConfig {
+                allowed_builtins: Some(vec!["path".into(), "fs".into(), "path".into()]),
+                ..JsRuntimeConfig::default()
+            }),
+            ..CreateVmConfig::default()
+        };
+        config.normalize().expect("normalize overrides");
+        assert_eq!(config.loopback_exempt_ports, vec![80, 8080]);
+        assert_eq!(
+            config.js_runtime.unwrap().allowed_builtins,
+            Some(vec!["fs".into(), "path".into()])
+        );
+    }
+
+    #[test]
+    fn create_vm_rejects_duplicate_heavy_unbounded_overrides() {
+        let mut ports = CreateVmConfig {
+            loopback_exempt_ports: vec![80; MAX_VM_LOOPBACK_EXEMPT_PORTS + 1],
+            ..CreateVmConfig::default()
+        };
+        assert!(ports
+            .normalize()
+            .unwrap_err()
+            .to_string()
+            .contains("limit_exceeded"));
+        assert!(ports
+            .validate(usize::MAX)
+            .unwrap_err()
+            .to_string()
+            .contains("limit_exceeded"));
+
+        let mut builtins = CreateVmConfig {
+            js_runtime: Some(JsRuntimeConfig {
+                allowed_builtins: Some(vec!["fs".into(); MAX_VM_ALLOWED_NODE_BUILTINS + 1]),
+                ..JsRuntimeConfig::default()
+            }),
+            ..CreateVmConfig::default()
+        };
+        assert!(builtins
+            .normalize()
+            .unwrap_err()
+            .to_string()
+            .contains("limit_exceeded"));
+        assert!(builtins
+            .validate(usize::MAX)
+            .unwrap_err()
+            .to_string()
+            .contains("limit_exceeded"));
     }
 
     #[test]

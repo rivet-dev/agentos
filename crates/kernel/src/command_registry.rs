@@ -126,7 +126,17 @@ impl CommandRegistry {
             let path = format!("/bin/{command}");
             if !vfs.exists(&path) {
                 vfs.write_file(&path, COMMAND_STUB.to_vec())?;
-                let _ = vfs.chmod(&path, 0o755);
+                if let Err(error) = vfs.chmod(&path, 0o755) {
+                    // A failed stub must not make retries skip chmod simply
+                    // because the non-executable file now exists.
+                    return match vfs.remove_file(&path) {
+                        Ok(()) => Err(error),
+                        Err(cleanup_error) => Err(VfsError::new(
+                            error.code(),
+                            format!("{error}; removing failed command stub {path} also failed: {cleanup_error}"),
+                        )),
+                    };
+                }
             }
         }
 

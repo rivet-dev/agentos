@@ -79,9 +79,7 @@ const TRAILING_OUTPUT_DRAIN_INTERVAL_MS = 10;
 const TRAILING_OUTPUT_DRAIN_MAX_MS = 250;
 const TRAILING_OUTPUT_DRAIN_QUIET_TURNS = 2;
 
-async function drainTrailingProcessOutputTurn(
-	delayMs = 0,
-): Promise<void> {
+async function drainTrailingProcessOutputTurn(delayMs = 0): Promise<void> {
 	// Native-sidecar `process_output` events can lag one macrotask behind the
 	// terminal `process_exited` notification for very short-lived processes, and
 	// under suite load the sidecar event pump can need a little extra time to
@@ -307,6 +305,7 @@ interface TrackedProcessEntry {
 	driver: string;
 	cwd: string;
 	env: Record<string, string>;
+	retainOutput: boolean;
 	startTime: number;
 	exitTime: number | null;
 	hostPid: number | null;
@@ -316,8 +315,8 @@ interface TrackedProcessEntry {
 	waitPromise: Promise<number>;
 	resolveWait: (exitCode: number) => void;
 	rejectWait: (error: Error) => void;
-	onStdout: Set<(data: Uint8Array) => void>;
-	onStderr: Set<(data: Uint8Array) => void>;
+	onStdout: Set<NonNullable<KernelSpawnOptions["onStdout"]>>;
+	onStderr: Set<NonNullable<KernelSpawnOptions["onStderr"]>>;
 	pendingStdin: Array<string | Uint8Array>;
 	stdinFlushPromise: Promise<void> | null;
 	pendingCloseStdin: boolean;
@@ -340,6 +339,20 @@ interface NativeSidecarKernelProxyOptions {
 	commandGuestPaths: ReadonlyMap<string, string>;
 	onWasmCommandResolved?: (command: string) => void;
 	onDispose?: () => Promise<void>;
+}
+
+class VmDisposalTimeoutError extends Error {
+	readonly code = "timeout";
+	readonly operation = "vm.dispose";
+	constructor(
+		readonly vmId: string,
+		readonly deadlineMs: number,
+	) {
+		super(
+			`timeout: VM ${vmId} disposal was not confirmed within ${deadlineMs}ms`,
+		);
+		this.name = "VmDisposalTimeoutError";
+	}
 }
 
 export class NativeSidecarKernelProxy {
@@ -431,28 +444,85 @@ export class NativeSidecarKernelProxy {
 		const liveProcesses = [...this.trackedProcesses.values()].filter(
 			(entry) => entry.exitCode === null,
 		);
-		await Promise.allSettled(
+		const signals = await Promise.allSettled(
 			liveProcesses.map((entry) => this.signalProcess(entry, 15)),
 		);
+		for (const result of signals) {
+			if (result.status === "rejected") {
+				console.error(
+					"agentOS process signal during disposal failed:",
+					result.reason,
+				);
+			}
+		}
 
-		await Promise.race([
-			this.client.disposeVm(this.session, this.vm),
-			new Promise<void>((resolve) => setTimeout(resolve, 1000)),
-		]).catch(() => {});
+		let disposalFailed = false;
+		let disposalError: unknown;
+		let timedOut = false;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		try {
+			const deadlineMs = 1000;
+			await Promise.race([
+				this.client.disposeVm(this.session, this.vm).catch((error) => {
+					if (timedOut) {
+						console.error(
+							"agentOS VM disposal failed after its client deadline:",
+							error,
+						);
+					}
+					throw error;
+				}),
+				new Promise<never>((_resolve, reject) => {
+					timer = setTimeout(() => {
+						timedOut = true;
+						reject(new VmDisposalTimeoutError(this.vm.vmId, deadlineMs));
+					}, deadlineMs);
+				}),
+			]);
+		} catch (error) {
+			disposalFailed = true;
+			disposalError = error;
+			console.error("agentOS VM disposal failed:", error);
+		} finally {
+			clearTimeout(timer);
+		}
 		for (const entry of liveProcesses) {
 			if (entry.exitCode === null) {
+				if (disposalFailed) {
+					// A rejected or timed-out disposal cannot prove guest termination.
+					// Observe rejection even when the caller never invokes proc.wait().
+					void entry.waitPromise.catch((error) => {
+						console.error(
+							"agentOS process wait aborted by failed VM disposal:",
+							error,
+						);
+					});
+					entry.rejectWait(
+						disposalError instanceof Error
+							? disposalError
+							: new Error(String(disposalError)),
+					);
+					continue;
+				}
 				// The sidecar dispose path already performs TERM/KILL escalation for any
 				// guest executions that are still live. Resolve local waiters eagerly so
-				// VM teardown does not hang on killed ACP adapter processes that never
+				// VM teardown does not hang on killed guest processes that never
 				// surface a terminal process_exited event back to the JS bridge.
 				this.finishProcess(entry, 143);
 			}
 		}
 		if (this.disposeClient) {
-			await this.client.dispose().catch(() => {});
+			await this.client.dispose().catch((error) => {
+				console.error("agentOS secondary sidecar disposal failed:", error);
+			});
 		}
-		await this.eventPump.catch(() => {});
-		await this.onDispose?.().catch(() => {});
+		await this.eventPump.catch((error) => {
+			console.error("agentOS event pump failed during disposal:", error);
+		});
+		await this.onDispose?.().catch((error) => {
+			console.error("agentOS disposal callback failed:", error);
+		});
+		if (disposalFailed) throw disposalError;
 	}
 
 	async exec(
@@ -619,8 +689,9 @@ export class NativeSidecarKernelProxy {
 	): ManagedProcess {
 		let spawnCommand = command;
 		let spawnArgs = [...args];
-		const shellOption = (options as ({ shell?: unknown } & KernelSpawnOptions) | undefined)
-			?.shell;
+		const shellOption = (
+			options as ({ shell?: unknown } & KernelSpawnOptions) | undefined
+		)?.shell;
 		if (shellOption === true || typeof shellOption === "string") {
 			// Node's shell mode hands the raw command line to the shell. Shell
 			// grammar belongs to the guest shell, so the bridge never parses it.
@@ -652,6 +723,7 @@ export class NativeSidecarKernelProxy {
 				...(options?.env ?? {}),
 				...(options?.streamStdin ? { AGENTOS_KEEP_STDIN_OPEN: "1" } : {}),
 			},
+			retainOutput: options?.retainOutput ?? false,
 			startTime: Date.now(),
 			exitTime: null,
 			hostPid: null,
@@ -678,6 +750,7 @@ export class NativeSidecarKernelProxy {
 
 		const proc: ManagedProcess = {
 			pid,
+			processId,
 			writeStdin: (data) => {
 				if (entry.exitCode !== null) {
 					return;
@@ -710,10 +783,7 @@ export class NativeSidecarKernelProxy {
 					.catch((error) => {
 						this.handleBackgroundProcessError(entry, error);
 					});
-				if (
-					(signal === 9 || signal === 15) &&
-					entry.exitCode === null
-				) {
+				if ((signal === 9 || signal === 15) && entry.exitCode === null) {
 					this.finishProcess(entry, 128 + signal);
 				}
 			},
@@ -749,8 +819,7 @@ export class NativeSidecarKernelProxy {
 			(command === "sh" || command === "/bin/sh" ? ["-i"] : []);
 		const synthesizePrompt = !options?.command && !options?.args;
 		const autoCloseExplicitCommandStdin =
-			Boolean(options?.command) &&
-			!["sh", "/bin/sh", "bash"].includes(command);
+			Boolean(options?.command) && !["sh", "/bin/sh", "bash"].includes(command);
 		const promptText = "sh-0.4$ ";
 		const textEncoder = new TextEncoder();
 		const textDecoder = new TextDecoder();
@@ -961,7 +1030,9 @@ export class NativeSidecarKernelProxy {
 						if (newlineIndex < 0) {
 							break;
 						}
-						const line = bufferedInput.slice(0, newlineIndex).replace(/\r$/, "");
+						const line = bufferedInput
+							.slice(0, newlineIndex)
+							.replace(/\r$/, "");
 						bufferedInput = bufferedInput.slice(newlineIndex + 1);
 						emitSyntheticStdout(`${line}\n`);
 						const nextCommand = bufferedCommand
@@ -981,7 +1052,9 @@ export class NativeSidecarKernelProxy {
 								}
 								const exitMatch = trimmed.match(/^exit(?:\s+(-?\d+))?$/);
 								if (exitMatch) {
-									finishSyntheticShell(Number.parseInt(exitMatch[1] ?? "0", 10));
+									finishSyntheticShell(
+										Number.parseInt(exitMatch[1] ?? "0", 10),
+									);
 									return;
 								}
 								const exportMatch = trimmed.match(
@@ -1081,6 +1154,7 @@ export class NativeSidecarKernelProxy {
 			env: options?.env,
 			cwd: options?.cwd,
 			streamStdin: true,
+			retainOutput: true,
 			onStdout: (chunk) => {
 				for (const handler of terminalHandlers) {
 					handler(chunk);
@@ -1508,9 +1582,7 @@ export class NativeSidecarKernelProxy {
 				return;
 			}
 
-			await drainTrailingProcessOutputTurn(
-				Math.min(delayMs, remainingMs),
-			);
+			await drainTrailingProcessOutputTurn(Math.min(delayMs, remainingMs));
 			if (entry.outputGeneration === observedGeneration) {
 				quietTurns += 1;
 			} else {
@@ -1528,6 +1600,7 @@ export class NativeSidecarKernelProxy {
 			args: entry.args,
 			env: entry.env,
 			cwd: entry.cwd,
+			retainOutput: entry.retainOutput,
 		});
 		entry.hostPid = started.pid;
 		entry.started = true;
@@ -1555,13 +1628,9 @@ export class NativeSidecarKernelProxy {
 	private async runEventPump(): Promise<void> {
 		while (!this.disposed) {
 			try {
-				const event = await this.client.waitForEvent(
-					{ any: true },
-					undefined,
-					{
-						signal: this.eventPumpAbortController.signal,
-					},
-				);
+				const event = await this.client.waitForEvent({ any: true }, undefined, {
+					signal: this.eventPumpAbortController.signal,
+				});
 				if (event.payload.type === "process_output") {
 					const entry = this.trackedProcessesById.get(event.payload.process_id);
 					if (!entry) {
@@ -1581,7 +1650,10 @@ export class NativeSidecarKernelProxy {
 							? entry.onStdout
 							: entry.onStderr;
 					for (const listener of listeners) {
-						listener(chunk);
+						listener(chunk, {
+							sequence: event.payload.sequence,
+							timestampMs: event.payload.timestamp_ms,
+						});
 					}
 					continue;
 				}
@@ -1676,9 +1748,7 @@ export class NativeSidecarKernelProxy {
 							entry.hostExitObservedAt = now;
 							continue;
 						}
-						if (
-							now - entry.hostExitObservedAt >= MISSING_EXIT_EVENT_GRACE_MS
-						) {
+						if (now - entry.hostExitObservedAt >= MISSING_EXIT_EVENT_GRACE_MS) {
 							this.finishProcess(entry, 0);
 							break;
 						}
@@ -1746,39 +1816,39 @@ export class NativeSidecarKernelProxy {
 		}
 
 		entry.stdinFlushPromise = entry.startPromise
-				.then(async () => {
-					if (entry.exitCode !== null) {
-						return;
-					}
-					while (entry.pendingStdin.length > 0) {
+			.then(async () => {
+				if (entry.exitCode !== null) {
+					return;
+				}
+				while (entry.pendingStdin.length > 0) {
 					const chunk = entry.pendingStdin.shift();
 					if (chunk === undefined) {
 						break;
 					}
-						await this.client.writeStdin(
-							this.session,
-							this.vm,
-							entry.processId,
-							chunk,
-						);
-					}
-				})
-				.catch((error) => {
-					if (isNoSuchProcessError(error) || isUnknownVmError(error)) {
-						return;
-					}
-					throw error;
-				})
-				.finally(() => {
+					await this.client.writeStdin(
+						this.session,
+						this.vm,
+						entry.processId,
+						chunk,
+					);
+				}
+			})
+			.catch((error) => {
+				if (isNoSuchProcessError(error) || isUnknownVmError(error)) {
+					return;
+				}
+				throw error;
+			})
+			.finally(() => {
 				entry.stdinFlushPromise = null;
-					if (entry.pendingStdin.length > 0 && entry.exitCode === null) {
-						void this.flushPendingStdin(entry).catch((error) => {
-							this.handleBackgroundProcessError(entry, error);
-						});
-					}
-				});
-			return entry.stdinFlushPromise;
-		}
+				if (entry.pendingStdin.length > 0 && entry.exitCode === null) {
+					void this.flushPendingStdin(entry).catch((error) => {
+						this.handleBackgroundProcessError(entry, error);
+					});
+				}
+			});
+		return entry.stdinFlushPromise;
+	}
 
 	private async closeTrackedStdin(entry: TrackedProcessEntry): Promise<void> {
 		await entry.startPromise;
@@ -1786,14 +1856,14 @@ export class NativeSidecarKernelProxy {
 		if (entry.exitCode !== null || !entry.pendingCloseStdin) {
 			return;
 		}
-			entry.pendingCloseStdin = false;
-			try {
-				await this.client.closeStdin(this.session, this.vm, entry.processId);
-			} catch (error) {
-				if (isNoSuchProcessError(error) || isUnknownVmError(error)) {
-					return;
-				}
-				throw error;
+		entry.pendingCloseStdin = false;
+		try {
+			await this.client.closeStdin(this.session, this.vm, entry.processId);
+		} catch (error) {
+			if (isNoSuchProcessError(error) || isUnknownVmError(error)) {
+				return;
+			}
+			throw error;
 		}
 	}
 
@@ -1801,7 +1871,11 @@ export class NativeSidecarKernelProxy {
 		entry: TrackedProcessEntry,
 		error: unknown,
 	): void {
-		if (this.disposed || isNoSuchProcessError(error) || isUnknownVmError(error)) {
+		if (
+			this.disposed ||
+			isNoSuchProcessError(error) ||
+			isUnknownVmError(error)
+		) {
 			return;
 		}
 		if (entry.exitCode !== null) {
@@ -1816,7 +1890,11 @@ export class NativeSidecarKernelProxy {
 		entry: TrackedProcessEntry,
 		error: unknown,
 	): number {
-		if (this.disposed || isNoSuchProcessError(error) || isUnknownVmError(error)) {
+		if (
+			this.disposed ||
+			isNoSuchProcessError(error) ||
+			isUnknownVmError(error)
+		) {
 			return entry.exitCode ?? 1;
 		}
 		this.emitBackgroundProcessError(entry, error);
@@ -2196,10 +2274,7 @@ export class NativeSidecarKernelProxy {
 	private assertGuestPathWritable(path: string): void {
 		const normalizedPath = posixPath.normalize(path);
 		for (const root of PROTECTED_READ_ONLY_GUEST_ROOTS) {
-			if (
-				normalizedPath === root ||
-				normalizedPath.startsWith(`${root}/`)
-			) {
+			if (normalizedPath === root || normalizedPath.startsWith(`${root}/`)) {
 				throw errnoError("EROFS", "read-only file system");
 			}
 		}

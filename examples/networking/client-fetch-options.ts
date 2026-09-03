@@ -1,14 +1,13 @@
-import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
+import { vm } from "./client.js";
 
-const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
-
-const response = await client.vm.getOrCreate("my-agent").network.httpRequest({
-  port: 3000,
-  path: "/api/data",
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ key: "value" }),
+const response = await vm.network.fetch({
+	request: {
+		port: 3000,
+		path: "/api/data",
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ key: "value" }),
+	},
 });
 
 console.log("Status:", response.status, response.statusText);

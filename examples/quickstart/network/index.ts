@@ -1,7 +1,7 @@
 // Networking: start a server inside the VM and fetch from it.
 //
 // vm.network.httpRequest() routes HTTP requests to services running inside the VM.
-// Note: Preview URLs (agent.createPreviewUrl) are only available in the
+// Note: Preview URLs (network.preview.create) are only available in the
 // RivetKit actor wrapper, not in the embedded API. See the actor examples for that.
 
 import { AgentOs } from "@rivet-dev/agentos-core";

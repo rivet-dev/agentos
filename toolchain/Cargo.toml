@@ -4,7 +4,6 @@ members = [
     "crates/wasi-ext",
     "crates/libs/*",
     "crates/commands/*",
-    "stubs/codex-otel",
     "stubs/ctrlc",
     "stubs/hostname",
     "../software/*/native/crates/*",
@@ -25,6 +24,4 @@ strip = true
 ctrlc = { path = "stubs/ctrlc" }
 hostname = { path = "stubs/hostname" }
 uucore = { path = "stubs/uucore" }
-codex-network-proxy = { path = "stubs/codex-network-proxy" }
-codex-otel = { path = "stubs/codex-otel" }
 wasi-ext = { path = "crates/wasi-ext" }

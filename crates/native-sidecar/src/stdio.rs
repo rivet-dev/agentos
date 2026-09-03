@@ -10435,7 +10435,8 @@ impl SidecarRequestTransport for FrameSidecarRequestTransport {
         Box<
             dyn std::future::Future<
                     Output = Result<crate::protocol::SidecarResponseFrame, SidecarError>,
-                > + 'a,
+                > + Send
+                + 'a,
         >,
     > {
         Box::pin(async move {

@@ -2410,6 +2410,7 @@ ykAheWCsAteSEWVc0w==\n\
                         env: env.into_iter().collect(),
                         cwd: None,
                         wasm_permission_tier: None,
+                        retain_output: false,
                     }),
                 ))
                 .expect("dispatch guest command");
@@ -11602,6 +11603,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         env: std::collections::HashMap::new(),
                         cwd: None,
                         wasm_permission_tier: None,
+                        retain_output: false,
                     }),
                 ))
                 .expect("dispatch python execute");
@@ -11715,6 +11717,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         env: std::collections::HashMap::new(),
                         cwd: None,
                         wasm_permission_tier: None,
+                        retain_output: false,
                     }),
                 ))
                 .expect("dispatch wasm command execute");
@@ -11817,6 +11820,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         env: std::collections::HashMap::new(),
                         cwd: None,
                         wasm_permission_tier: None,
+                        retain_output: false,
                     }),
                 ))
                 .expect("dispatch wasm command execute");
@@ -11879,6 +11883,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                             env: std::collections::HashMap::new(),
                             cwd: None,
                             wasm_permission_tier: None,
+                            retain_output: false,
                         }),
                     ))
                     .expect("dispatch wasm execute");
@@ -11961,6 +11966,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         env: std::collections::HashMap::new(),
                         cwd: Some(String::from("/")),
                         wasm_permission_tier: None,
+                        retain_output: false,
                     }),
                 ))
                 .expect("dispatch wasm execute");
@@ -12016,6 +12022,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         env: std::collections::HashMap::new(),
                         cwd: Some(String::from("/")),
                         wasm_permission_tier: None,
+                        retain_output: false,
                     }),
                 ))
                 .expect("dispatch wasm execute");
@@ -14706,6 +14713,7 @@ process.stdout.write(`${JSON.stringify({
                         env: std::collections::HashMap::new(),
                         cwd: Some(String::from("/workspace")),
                         wasm_permission_tier: None,
+                        retain_output: false,
                     }),
                 ))
                 .expect("dispatch javascript command execute");
@@ -14942,6 +14950,7 @@ if (child.status !== 0) {
                         env: std::collections::HashMap::new(),
                         cwd: Some(String::from("/")),
                         wasm_permission_tier: None,
+                        retain_output: false,
                     }),
                 ))
                 .expect("dispatch agentos package execute");
@@ -15015,6 +15024,7 @@ if (child.status !== 0) {
                         env: std::collections::HashMap::new(),
                         cwd: None,
                         wasm_permission_tier: None,
+                    retain_output: false,
                     }),
                 ))
                 .expect("dispatch node eval execute");
@@ -15057,6 +15067,7 @@ if (child.status !== 0) {
                         env: std::collections::HashMap::new(),
                         cwd: None,
                         wasm_permission_tier: None,
+                        retain_output: false,
                     }),
                 ))
                 .expect("dispatch missing command execute");
@@ -16957,6 +16968,7 @@ console.log(seen.join("\n"));
                         env: std::collections::HashMap::new(),
                         cwd: None,
                         wasm_permission_tier: None,
+                        retain_output: false,
                     }),
                 ))
                 .expect("dispatch import fresh execute");

@@ -26,7 +26,7 @@ const generatedAuthOwnership = {
 };
 
 const GENERATED_AUTH_FRAME_HEX =
-	"00166167656e746f732d6e61746976652d73696465636172080007000000000000000006636f6e6e2d31000e67656e6572617465642d7465737405746f6b656e080001000000";
+	"00166167656e746f732d6e61746976652d736964656361720b0007000000000000000006636f6e6e2d31000e67656e6572617465642d7465737405746f6b656e0b0001000000";
 
 const hostCallbackRequest = {
 	frame_type: "sidecar_request" as const,
@@ -43,6 +43,254 @@ const hostCallbackRequest = {
 };
 
 describe("protocol frame conversion", () => {
+	it("roundtrips both package sources, omitted limits, and exact acquisition sizes", () => {
+		for (const source of [
+			{
+				type: "url" as const,
+				url: "https://packages.gameinc.io/tool.aospkg",
+				expected_digest: "sha256:abc",
+			},
+			{ type: "path" as const, path: "/trusted/tool.aospkg" },
+		]) {
+			const session = {
+				scope: "session" as const,
+				connection_id: "conn",
+				session_id: "session",
+			};
+			const decoded = protocol.decodeProtocolFrame(
+				encodeBareProtocolFrame({
+					frame_type: "request",
+					schema: SIDECAR_PROTOCOL_SCHEMA,
+					request_id: 12,
+					ownership: session,
+					payload: {
+						type: "acquire_package",
+						source,
+						timeout_ms: 250n,
+						max_package_bytes: 9007199254740993n,
+					},
+				}),
+			);
+			if (
+				decoded.tag !== "RequestFrame" ||
+				decoded.val.payload.tag !== "AcquirePackageRequest"
+			) {
+				throw new Error("wrong acquisition request frame");
+			}
+			expect(decoded.val.payload.val).toEqual({
+				source:
+					source.type === "url"
+						? {
+								tag: "PackageUrlSource",
+								val: {
+									url: source.url,
+									expectedDigest: source.expected_digest,
+								},
+							}
+						: {
+								tag: "PackagePathSource",
+								val: { path: source.path, expectedDigest: null },
+							},
+				advisory: false,
+				timeoutMs: 250n,
+				maxPackageBytes: 9007199254740993n,
+				downloadTimeoutMs: null,
+				connectTimeoutMs: null,
+				maxRedirects: null,
+				allowInsecureLocalHttp: false,
+			});
+			const metadata = {
+				packageId: "sha256:abc",
+				digest: "sha256:abc",
+				size: 9007199254740993n,
+				packageName: "tool",
+				version: "1",
+				commands: ["tool"],
+			};
+			expect(
+				decodeBareProtocolFrame(
+					protocol.encodeProtocolFrame({
+						tag: "ResponseFrame",
+						val: {
+							schema: SIDECAR_PROTOCOL_SCHEMA,
+							requestId: 12n,
+							ownership: decoded.val.ownership,
+							payload: { tag: "PackageAcquiredResponse", val: metadata },
+						},
+					}),
+				),
+			).toEqual({
+				frame_type: "response",
+				schema: SIDECAR_PROTOCOL_SCHEMA,
+				request_id: 12,
+				ownership: session,
+				payload: {
+					type: "package_acquired",
+					package_id: metadata.packageId,
+					digest: metadata.digest,
+					size: metadata.size,
+					package_name: metadata.packageName,
+					version: metadata.version,
+					commands: metadata.commands,
+				},
+			});
+		}
+	});
+
+	it("roundtrips VM package installation and returns no host path", () => {
+		const vm = {
+			scope: "vm" as const,
+			connection_id: "conn",
+			session_id: "session",
+			vm_id: "vm",
+		};
+		const decoded = protocol.decodeProtocolFrame(
+			encodeBareProtocolFrame({
+				frame_type: "request",
+				schema: SIDECAR_PROTOCOL_SCHEMA,
+				request_id: 14,
+				ownership: vm,
+				payload: {
+					type: "install_package",
+					acquisition: {
+						source: {
+							type: "url",
+							url: "https://packages.gameinc.io/tool.aospkg",
+						},
+						max_package_bytes: 9007199254740993n,
+					},
+				},
+			}),
+		);
+		if (
+			decoded.tag !== "RequestFrame" ||
+			decoded.val.payload.tag !== "InstallPackageRequest"
+		) {
+			throw new Error("wrong installation request frame");
+		}
+		expect(decoded.val.payload.val.acquisition.advisory).toBe(false);
+		expect(decoded.val.payload.val.acquisition.maxPackageBytes).toBe(
+			9007199254740993n,
+		);
+		const response = decodeBareProtocolFrame(
+			protocol.encodeProtocolFrame({
+				tag: "ResponseFrame",
+				val: {
+					schema: SIDECAR_PROTOCOL_SCHEMA,
+					requestId: 14n,
+					ownership: decoded.val.ownership,
+					payload: {
+						tag: "PackageInstalledResponse",
+						val: {
+							package: {
+								packageId: "sha256:abc",
+								digest: "sha256:abc",
+								size: 9007199254740993n,
+								packageName: "tool",
+								version: "1",
+								commands: ["tool"],
+							},
+							projectedCommands: [
+								{ name: "tool", guestPath: "/opt/agentos/bin/tool" },
+							],
+						},
+					},
+				},
+			}),
+		);
+		expect(response.payload).toEqual({
+			type: "package_installed",
+			package: {
+				package_id: "sha256:abc",
+				digest: "sha256:abc",
+				size: 9007199254740993n,
+				package_name: "tool",
+				version: "1",
+				commands: ["tool"],
+			},
+			projected_commands: [
+				{ name: "tool", guest_path: "/opt/agentos/bin/tool" },
+			],
+		});
+	});
+
+	it("roundtrips session-scoped config comparison through BARE", () => {
+		const session = {
+			scope: "session" as const,
+			connection_id: "conn",
+			session_id: "session",
+		};
+		const before = {
+			defaultsProfile: "agent_os" as const,
+			rootFilesystem: {
+				mode: "ephemeral" as const,
+				disableDefaultBaseLayer: false,
+				lowers: [],
+				bootstrapEntries: [],
+			},
+			loopbackExemptPorts: [],
+		};
+		const after = {
+			...before,
+			env: {},
+			jsRuntime: {
+				platform: "node" as const,
+				moduleResolution: "node" as const,
+				allowedBuiltins: [],
+			},
+		};
+		const decoded = protocol.decodeProtocolFrame(
+			encodeBareProtocolFrame({
+				frame_type: "request",
+				schema: SIDECAR_PROTOCOL_SCHEMA,
+				request_id: 10,
+				ownership: session,
+				payload: {
+					type: "compare_vm_config",
+					before,
+					after,
+					before_mounts: [],
+					after_mounts: [],
+					before_restart_identity: [],
+					after_restart_identity: [],
+				},
+			}),
+		);
+		expect(decoded.tag).toBe("RequestFrame");
+		if (
+			decoded.tag !== "RequestFrame" ||
+			decoded.val.payload.tag !== "CompareVmConfigRequest"
+		)
+			throw new Error("wrong request frame");
+		expect(decoded.val.ownership).toEqual({
+			tag: "SessionOwnership",
+			val: { connectionId: "conn", sessionId: "session" },
+		});
+		expect(JSON.parse(decoded.val.payload.val.before)).toEqual(before);
+		expect(JSON.parse(decoded.val.payload.val.after)).toEqual(after);
+		for (const equivalent of [true, false]) {
+			expect(
+				decodeBareProtocolFrame(
+					protocol.encodeProtocolFrame({
+						tag: "ResponseFrame",
+						val: {
+							schema: SIDECAR_PROTOCOL_SCHEMA,
+							requestId: 10n,
+							ownership: decoded.val.ownership,
+							payload: { tag: "VmConfigComparedResponse", val: { equivalent } },
+						},
+					}),
+				),
+			).toEqual({
+				frame_type: "response",
+				schema: SIDECAR_PROTOCOL_SCHEMA,
+				request_id: 10,
+				ownership: session,
+				payload: { type: "vm_config_compared", equivalent },
+			});
+		}
+	});
+
 	it("creates host-written request, response, and control frames", () => {
 		const factory = new HostProtocolFrameFactory();
 
@@ -52,7 +300,7 @@ describe("protocol frame conversion", () => {
 				type: "authenticate",
 				client_name: "agentos",
 				auth_token: "token",
-				protocol_version: 8,
+				protocol_version: 11,
 				bridge_version: 1,
 			},
 		});
@@ -146,7 +394,7 @@ describe("protocol frame conversion", () => {
 					type: "authenticate",
 					client_name: "agentos",
 					auth_token: "token",
-					protocol_version: 8,
+					protocol_version: 11,
 					bridge_version: 1,
 				},
 			}),

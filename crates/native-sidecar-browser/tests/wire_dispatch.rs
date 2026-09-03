@@ -175,6 +175,7 @@ fn execute_wire_process(
                 env: Default::default(),
                 cwd: Some(String::from("/workspace")),
                 wasm_permission_tier: None,
+                retain_output: false,
             }),
         },
     )
@@ -362,6 +363,7 @@ fn browser_wire_dispatcher_handles_lifecycle_and_execution_frames() {
                 env: Default::default(),
                 cwd: Some(String::from("/workspace")),
                 wasm_permission_tier: None,
+                retain_output: false,
             }),
         },
     );
@@ -1244,6 +1246,7 @@ fn browser_wire_dispatcher_configures_wasm_command_permissions() {
                 env: Default::default(),
                 cwd: Some(String::from("/workspace")),
                 wasm_permission_tier: None,
+                retain_output: false,
             }),
         },
     );
@@ -1278,6 +1281,7 @@ fn browser_wire_dispatcher_configures_wasm_command_permissions() {
                 env: Default::default(),
                 cwd: Some(String::from("/workspace")),
                 wasm_permission_tier: Some(WasmPermissionTier::ReadWrite),
+                retain_output: false,
             }),
         },
     );

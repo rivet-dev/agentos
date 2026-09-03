@@ -1,8 +1,6 @@
-import { agentOS, setup } from "@rivet-dev/agentos";
 import { vercelWorldActors } from "@rivet-dev/vercel-world/registry";
-
-const vm = agentOS();
+import { setup } from "rivetkit";
 
 export const registry = setup({
-	use: { ...vercelWorldActors, vm },
+	use: vercelWorldActors,
 });

@@ -384,6 +384,8 @@ pub fn process_output_event(
             process_id: process_id.to_owned(),
             channel,
             chunk,
+            sequence: None,
+            timestamp_ms: None,
         }),
     )
 }

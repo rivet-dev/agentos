@@ -113,11 +113,12 @@ use crate::protocol::{
     JavascriptDnsResolveRequest, JavascriptNetBindConnectedUnixRequest,
     JavascriptNetConnectRequest, JavascriptNetListenRequest, JavascriptNetReserveTcpPortRequest,
     JavascriptPosixSpawnFileAction, JavascriptSpawnHostNetFd, KillProcessRequest, OwnershipScope,
-    ProcessExitedEvent, ProcessOutputEvent, ProcessSnapshotEntry, ProcessSnapshotStatus,
-    PtyResizedResponse, QueueSnapshotEntry, RequestFrame, ResizePtyRequest,
-    ResourceSnapshotResponse, ResponseFrame, ResponsePayload, RetainedExecutionLanguage,
-    SidecarRequestPayload, SignalDispositionAction, SignalHandlerRegistration, SocketStateEntry,
-    StreamChannel, VmFetchRequest, VmFetchResponse, WasmPermissionTier, WriteStdinRequest,
+    ProcessExitedEvent, ProcessOutputEvent, ProcessOutputPageResponse, ProcessSnapshotEntry,
+    ProcessSnapshotStatus, PtyResizedResponse, QueueSnapshotEntry, ReadProcessOutputRequest,
+    RequestFrame, ResizePtyRequest, ResourceSnapshotResponse, ResponseFrame, ResponsePayload,
+    RetainedExecutionLanguage, SidecarRequestPayload, SignalDispositionAction,
+    SignalHandlerRegistration, SocketStateEntry, StreamChannel, VmFetchRequest, VmFetchResponse,
+    WasmPermissionTier, WriteStdinRequest,
 };
 use crate::service::{
     audit_fields, dirname, emit_security_audit_event, emit_structured_event_or_stderr,

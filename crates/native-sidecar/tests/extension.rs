@@ -106,6 +106,7 @@ impl Extension for EchoExtension {
                     env: HashMap::new(),
                     cwd: None,
                     wasm_permission_tier: None,
+                    retain_output: false,
                 })
                 .await?;
             assert_eq!(started.process_id, process_id);
@@ -129,6 +130,7 @@ impl Extension for EchoExtension {
                     env: HashMap::new(),
                     cwd: None,
                     wasm_permission_tier: None,
+                    retain_output: false,
                 })
                 .await?;
             assert_eq!(lifecycle_started.process_id, lifecycle_process_id);

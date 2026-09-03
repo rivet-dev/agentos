@@ -2,8 +2,8 @@
 
 use agentos_native_sidecar::limits::{vm_limits_from_config, VmLimits};
 use agentos_vm_config::{
-    BindingLimitsConfig, HttpLimitsConfig, JsRuntimeLimitsConfig, PythonLimitsConfig,
-    ResourceLimitsConfig, VmLimitsConfig, WasmLimitsConfig,
+    AgentOsPackageLimitsConfig, BindingLimitsConfig, HttpLimitsConfig, JsRuntimeLimitsConfig,
+    PythonLimitsConfig, ResourceLimitsConfig, VmLimitsConfig, WasmLimitsConfig,
 };
 use serde_json::json;
 
@@ -16,6 +16,7 @@ fn defaults_match_struct_default() {
     let parsed =
         vm_limits_from_config(None, SIDECAR_FRAME_CAP).expect("empty config parses to defaults");
     assert_eq!(parsed, VmLimits::default());
+    assert_eq!(parsed.agentos_packages.max_mounts, 4096);
     assert_eq!(
         parsed.js_runtime.v8_heap_limit_mb,
         Some(128),
@@ -26,6 +27,29 @@ fn defaults_match_struct_default() {
         Some(128 * 1024 * 1024),
         "WASM memory must be bounded by default"
     );
+}
+
+#[test]
+fn package_mount_limit_is_configurable_and_nonzero() {
+    let config = VmLimitsConfig {
+        agentos_packages: Some(AgentOsPackageLimitsConfig {
+            max_mounts: Some(8192),
+        }),
+        ..Default::default()
+    };
+    let parsed = vm_limits_from_config(Some(&config), SIDECAR_FRAME_CAP).unwrap();
+    assert_eq!(parsed.agentos_packages.max_mounts, 8192);
+
+    let zero = VmLimitsConfig {
+        agentos_packages: Some(AgentOsPackageLimitsConfig {
+            max_mounts: Some(0),
+        }),
+        ..Default::default()
+    };
+    let error = vm_limits_from_config(Some(&zero), SIDECAR_FRAME_CAP).unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("limits.agentosPackages.maxMounts"));
 }
 
 #[test]

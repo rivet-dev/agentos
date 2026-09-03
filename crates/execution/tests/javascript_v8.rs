@@ -6886,8 +6886,8 @@ fn javascript_cpu_budget_only_does_not_impose_wall_clock_limit() {
 // WALL-CLOCK OPT-IN: with no explicit `limits.jsRuntime.wallClockLimitMs`, there is no
 // wall-clock limit. A guest that awaits well past any default a former
 // wall-clock timer might have imposed must run to completion. This guards the
-// requirement that long-lived ACP adapters (which run indefinitely on
-// wall-clock) are never killed by a wall-clock default. The default CPU budget
+// requirement that long-lived guest services are never killed by a wall-clock
+// default. The default CPU budget
 // remains armed but excludes idle/await time.
 fn javascript_no_time_limit_when_neither_env_set() {
     let (tx, rx) = mpsc::channel::<(i32, String, String)>();

@@ -52,6 +52,11 @@ export interface LiveRegisteredHostCallbackDefinition {
 	examples?: LiveRegisteredHostCallbackExample[];
 }
 
+/** Trusted session input; hosted adapters must accept only the URL branch. */
+export type LivePackageAcquisitionSource =
+	| { type: "url"; url: string; expected_digest?: string }
+	| { type: "path"; path: string; expected_digest?: string };
+
 export type LiveRequestPayload =
 	| {
 			type: "authenticate";
@@ -70,6 +75,34 @@ export type LiveRequestPayload =
 			runtime: LiveGuestRuntimeKind;
 			config: CreateVmConfig;
 	  }
+	| {
+			type: "compare_vm_config";
+			before: CreateVmConfig;
+			after: CreateVmConfig;
+			before_mounts: LiveMountDescriptor[];
+			after_mounts: LiveMountDescriptor[];
+			before_restart_identity: string[];
+			after_restart_identity: string[];
+	  }
+	| {
+			type: "acquire_package";
+			source: LivePackageAcquisitionSource;
+			advisory?: boolean;
+			timeout_ms?: bigint;
+			max_package_bytes?: bigint;
+			download_timeout_ms?: bigint;
+			connect_timeout_ms?: bigint;
+			max_redirects?: number;
+			allow_insecure_local_http?: boolean;
+	  }
+	| {
+			type: "install_package";
+			acquisition: Omit<
+				Extract<LiveRequestPayload, { type: "acquire_package" }>,
+				"type" | "advisory"
+			>;
+	  }
+	| { type: "get_package_cache_stats" }
 	| {
 			type: "configure_vm";
 			mounts: LiveMountDescriptor[];
@@ -175,6 +208,7 @@ export type LiveRequestPayload =
 			env?: Record<string, string>;
 			cwd?: string;
 			wasm_permission_tier?: LiveWasmPermissionTier;
+			retain_output: boolean;
 	  }
 	| {
 			type: "write_stdin";
@@ -198,6 +232,13 @@ export type LiveRequestPayload =
 	  }
 	| {
 			type: "get_process_snapshot";
+	  }
+	| {
+			type: "read_process_output";
+			process_id: string;
+			after?: number;
+			max_events: number;
+			max_bytes: number;
 	  }
 	| {
 			type: "get_resource_snapshot";
@@ -328,6 +369,39 @@ export type LiveRequestPayload =
 			envelope: LiveExtEnvelope;
 	  };
 
+function toGeneratedAcquisition(
+	payload: Omit<
+		Extract<LiveRequestPayload, { type: "acquire_package" }>,
+		"type"
+	>,
+): protocol.AcquirePackageRequest {
+	return {
+		source:
+			payload.source.type === "url"
+				? {
+						tag: "PackageUrlSource",
+						val: {
+							url: payload.source.url,
+							expectedDigest: payload.source.expected_digest ?? null,
+						},
+					}
+				: {
+						tag: "PackagePathSource",
+						val: {
+							path: payload.source.path,
+							expectedDigest: payload.source.expected_digest ?? null,
+						},
+					},
+		advisory: payload.advisory ?? false,
+		timeoutMs: payload.timeout_ms ?? null,
+		maxPackageBytes: payload.max_package_bytes ?? null,
+		downloadTimeoutMs: payload.download_timeout_ms ?? null,
+		connectTimeoutMs: payload.connect_timeout_ms ?? null,
+		maxRedirects: payload.max_redirects ?? null,
+		allowInsecureLocalHttp: payload.allow_insecure_local_http ?? false,
+	};
+}
+
 export function toGeneratedRequestPayload(
 	payload: LiveRequestPayload,
 ): protocol.RequestPayload {
@@ -358,6 +432,32 @@ export function toGeneratedRequestPayload(
 					config: stringifyJsonUtf8(payload.config, "create VM config"),
 				},
 			};
+		case "compare_vm_config":
+			return {
+				tag: "CompareVmConfigRequest",
+				val: {
+					before: stringifyJsonUtf8(payload.before, "before VM config"),
+					after: stringifyJsonUtf8(payload.after, "after VM config"),
+					beforeMounts: payload.before_mounts.map(toGeneratedMountDescriptor),
+					afterMounts: payload.after_mounts.map(toGeneratedMountDescriptor),
+					beforeRestartIdentity: payload.before_restart_identity,
+					afterRestartIdentity: payload.after_restart_identity,
+				},
+			};
+		case "acquire_package":
+			return {
+				tag: "AcquirePackageRequest",
+				val: toGeneratedAcquisition(payload),
+			};
+		case "install_package":
+			return {
+				tag: "InstallPackageRequest",
+				val: {
+					acquisition: toGeneratedAcquisition(payload.acquisition),
+				},
+			};
+		case "get_package_cache_stats":
+			return { tag: "GetPackageCacheStatsRequest", val: null };
 		case "dispose_vm":
 			return {
 				tag: "DisposeVmRequest",
@@ -526,6 +626,7 @@ export function toGeneratedRequestPayload(
 						payload.wasm_permission_tier === undefined
 							? null
 							: toGeneratedWasmPermissionTier(payload.wasm_permission_tier),
+					retainOutput: payload.retain_output,
 				},
 			};
 		case "write_stdin":
@@ -557,6 +658,16 @@ export function toGeneratedRequestPayload(
 			};
 		case "get_process_snapshot":
 			return { tag: "GetProcessSnapshotRequest", val: null };
+		case "read_process_output":
+			return {
+				tag: "ReadProcessOutputRequest",
+				val: {
+					processId: payload.process_id,
+					after: payload.after === undefined ? null : BigInt(payload.after),
+					maxEvents: payload.max_events,
+					maxBytes: payload.max_bytes,
+				},
+			};
 		case "get_resource_snapshot":
 			return { tag: "GetResourceSnapshotRequest", val: null };
 		case "find_listener":

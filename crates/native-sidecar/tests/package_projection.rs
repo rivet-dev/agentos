@@ -239,6 +239,34 @@ fn duplicate_commands_are_rejected_before_mounting() {
 }
 
 #[test]
+fn package_leaf_builder_honors_adjustable_limit() {
+    let pkg = tempfile::tempdir().unwrap();
+    write_package(pkg.path(), "limited", "1.0.0", &["limited"]);
+    let descriptor = read_package_manifest_from_path(pkg.path().to_str().unwrap()).unwrap();
+    let error = agentos_native_sidecar::package_projection::build_package_leaf_mounts_with_limit(
+        std::slice::from_ref(&descriptor),
+        "/opt/agentos",
+        2,
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        agentos_native_sidecar::SidecarError::PackageMountLimit {
+            used: 0,
+            requested: 3,
+            limit: 2
+        }
+    ));
+    let mounts = agentos_native_sidecar::package_projection::build_package_leaf_mounts_with_limit(
+        &[descriptor],
+        "/opt/agentos",
+        3,
+    )
+    .unwrap();
+    assert_eq!(mounts.len(), 3);
+}
+
+#[test]
 fn provides_files_mounts_tar_subtree() {
     let pkg = unique_dir("provides");
     write_package(&pkg, "provider", "1.0.0", &["provider"]);

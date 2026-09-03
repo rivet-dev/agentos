@@ -1,6 +1,6 @@
 ---
 title: "Plugin Systems"
-description: "Evaluate untrusted JavaScript plugins with a narrow AgentOS policy."
+description: "Evaluate untrusted JavaScript plugins with a narrow agentOS policy."
 ---
 
 This example evaluates plugin source inside an isolated VM and returns a

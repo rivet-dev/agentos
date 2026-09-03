@@ -1,0 +1,16 @@
+import react from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
+
+// Builds the shared inspector-tab app to a single static asset dir that ships
+// with the package (declared in package.json `files`). `base: "./"` keeps asset
+// URLs relative so they resolve under any `/inspector/custom-tabs/<id>/` path.
+export default defineConfig({
+	root: "src/inspector-tabs",
+	base: "./",
+	build: {
+		outDir: "../../assets/inspector-tabs-app",
+		emptyOutDir: true,
+		sourcemap: false,
+	},
+	plugins: [react()],
+});

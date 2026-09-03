@@ -53,7 +53,6 @@ function fixture() {
 		stubs: ["legacy"],
 	});
 	for (const [packageName, command] of [
-		["codex-cli", "codex"],
 		["duckdb", "duckdb"],
 		["vim", "vim"],
 	]) {
@@ -130,7 +129,7 @@ describe("copy WASM commands", () => {
 
 	it("copies optional extras with exact basenames and dereferences aliases", () => {
 		const { sourceDir, destDir, softwareRoot } = fixture();
-		for (const name of ["alpha", "alpha-alias", "legacy", "codex"]) {
+		for (const name of ["alpha", "alpha-alias", "legacy", "duckdb"]) {
 			writeFileSync(join(sourceDir, name), name);
 		}
 		writeFileSync(join(sourceDir, "extra-real"), "extra");

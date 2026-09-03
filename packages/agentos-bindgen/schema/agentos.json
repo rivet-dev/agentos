@@ -1,5 +1,21 @@
 {
   "schemaVersion": 1,
+  "apiVersion": "agentos-sdk.dev/v1alpha1",
+  "contractMajor": 1,
+  "contractHash": "sha256:e7ef633672a92030fd225d21bd4d5d7a8c45f3de239bd2d6831636e739ead29f",
+  "capabilities": [
+    "config.merge-patch",
+    "network.pull-streaming",
+    "output.replay",
+    "inspector.filesystem",
+    "inspector.processes",
+    "inspector.software",
+    "inspector.terminals",
+    "inspector.vm",
+    "language.javascript",
+    "language.python",
+    "language.typescript"
+  ],
   "actorName": "agentOS",
   "createInput": {
     "input": "{ config: AgentOsActorConfigInput | null, }",
@@ -7,28 +23,106 @@
   },
   "actions": [
     {
+      "name": "__agentos.cron.invoke",
+      "public": false,
+      "input": "{ scheduleName: string, \n/**\n * Kept only in RivetKit's durable schedule payload, never in public job\n * metadata. A raw actor action call cannot forge a scheduled invocation.\n */\ninvokeToken: string, command: string, args: Array<string>, options: ActorSpawnOptions, configRevision: number | bigint, }",
+      "output": "null"
+    },
+    {
       "name": "config.get",
       "public": true,
-      "input": "null",
-      "output": "{ revision: number | bigint, desired: AgentOsActorConfig, appliedRevision: number | bigint | null, state: ConfigApplyState, issues: Array<RuntimeIssue>, createdAtMs: number | bigint, updatedAtMs: number | bigint, }"
+      "input": "Record<string, never>",
+      "output": "{ revision: number | bigint, desired: AgentOsActorConfig, appliedRevision: number | bigint | null, state: ConfigApplyState, issues: Array<VmIssue>, createdAtMs: number | bigint, updatedAtMs: number | bigint, }"
+    },
+    {
+      "name": "config.patch",
+      "public": true,
+      "input": "{ patch: JsonValue, expectedRevision: number | bigint | null, }",
+      "output": "{ revision: number | bigint, desired: AgentOsActorConfig, appliedRevision: number | bigint | null, state: ConfigApplyState, issues: Array<VmIssue>, createdAtMs: number | bigint, updatedAtMs: number | bigint, }"
     },
     {
       "name": "config.set",
       "public": true,
-      "input": "{ config: AgentOsActorConfigInput, expectedRevision: number | null, }",
-      "output": "{ revision: number | bigint, desired: AgentOsActorConfig, appliedRevision: number | bigint | null, state: ConfigApplyState, issues: Array<RuntimeIssue>, createdAtMs: number | bigint, updatedAtMs: number | bigint, }"
+      "input": "{ config: AgentOsActorConfigInput, expectedRevision: number | bigint | null, }",
+      "output": "{ revision: number | bigint, desired: AgentOsActorConfig, appliedRevision: number | bigint | null, state: ConfigApplyState, issues: Array<VmIssue>, createdAtMs: number | bigint, updatedAtMs: number | bigint, }"
     },
     {
-      "name": "runtime.status",
+      "name": "contexts.create",
       "public": true,
-      "input": "null",
-      "output": "{ lifecycle: RuntimeLifecycleState, configState: ConfigApplyState, desiredConfigRevision: number | bigint, appliedConfigRevision: number | bigint | null, generation: number | bigint, lastBootAtMs: number | bigint | null, lastShutdownAtMs: number | bigint | null, packages: PackageStartupStatus, issues: Array<RuntimeIssue>, core: CoreSidecarStatus | null, }"
+      "input": "{ contextId: string, }",
+      "output": "{ context: ActorContextId, state: string, language: string | null, createdAtMs: number | bigint, lastStartedAtMs: number | bigint | null, lastCompletedAtMs: number | bigint | null, }"
     },
     {
-      "name": "runtime.restart",
+      "name": "contexts.delete",
       "public": true,
-      "input": "null",
-      "output": "{ lifecycle: RuntimeLifecycleState, configState: ConfigApplyState, desiredConfigRevision: number | bigint, appliedConfigRevision: number | bigint | null, generation: number | bigint, lastBootAtMs: number | bigint | null, lastShutdownAtMs: number | bigint | null, packages: PackageStartupStatus, issues: Array<RuntimeIssue>, core: CoreSidecarStatus | null, }"
+      "input": "{ context: ActorContextId, }",
+      "output": "null"
+    },
+    {
+      "name": "contexts.get",
+      "public": true,
+      "input": "{ context: ActorContextId, }",
+      "output": "{ context: ActorContextId, state: string, language: string | null, createdAtMs: number | bigint, lastStartedAtMs: number | bigint | null, lastCompletedAtMs: number | bigint | null, }"
+    },
+    {
+      "name": "contexts.list",
+      "public": true,
+      "input": "Record<string, never>",
+      "output": "Array<{ context: ActorContextId, state: string, language: string | null, createdAtMs: number | bigint, lastStartedAtMs: number | bigint | null, lastCompletedAtMs: number | bigint | null, }>"
+    },
+    {
+      "name": "contexts.reset",
+      "public": true,
+      "input": "{ context: ActorContextId, }",
+      "output": "{ context: ActorContextId, state: string, language: string | null, createdAtMs: number | bigint, lastStartedAtMs: number | bigint | null, lastCompletedAtMs: number | bigint | null, }"
+    },
+    {
+      "name": "cron.cancel",
+      "public": true,
+      "input": "{ name: string, }",
+      "output": "boolean"
+    },
+    {
+      "name": "cron.list",
+      "public": true,
+      "input": "Record<string, never>",
+      "output": "Array<{ name: string, expression: string, timezone: string | null, command: string, args: Array<string>, options: ActorSpawnOptions, configRevision: number | bigint, nextRunAtMs: number | bigint, lastRunAtMs: number | bigint | null, maxHistory: number | bigint, }>"
+    },
+    {
+      "name": "cron.schedule",
+      "public": true,
+      "input": "{ name: string | null, expression: string, timezone: string | null, command: string, args?: Array<string>, options?: ActorSpawnOptions, maxHistory: number | bigint | null, }",
+      "output": "{ name: string, expression: string, timezone: string | null, command: string, args: Array<string>, options: ActorSpawnOptions, configRevision: number | bigint, nextRunAtMs: number | bigint, lastRunAtMs: number | bigint | null, maxHistory: number | bigint, }"
+    },
+    {
+      "name": "filesystem.exists",
+      "public": true,
+      "input": "{ path: string, }",
+      "output": "boolean"
+    },
+    {
+      "name": "filesystem.export",
+      "public": true,
+      "input": "{ maxBytes: number | null, }",
+      "output": "{ kind: SnapshotExportKind, source: FilesystemSnapshotExport, }"
+    },
+    {
+      "name": "filesystem.listMounts",
+      "public": true,
+      "input": "Record<string, never>",
+      "output": "Array<{ path: string, kind: string, readOnly: boolean, }>"
+    },
+    {
+      "name": "filesystem.mkdir",
+      "public": true,
+      "input": "{ path: string, recursive?: boolean, }",
+      "output": "null"
+    },
+    {
+      "name": "filesystem.move",
+      "public": true,
+      "input": "{ from: string, to: string, }",
+      "output": "null"
     },
     {
       "name": "filesystem.readFile",
@@ -37,34 +131,10 @@
       "output": "Uint8Array"
     },
     {
-      "name": "filesystem.writeFile",
-      "public": true,
-      "input": "{ path: string, content: FileContentInput, }",
-      "output": "null"
-    },
-    {
       "name": "filesystem.readFiles",
       "public": true,
       "input": "{ paths: Array<string>, maxBytes: number | null, }",
       "output": "Array<{ path: string, content: FileBytes | null, error: string | null, }>"
-    },
-    {
-      "name": "filesystem.writeFiles",
-      "public": true,
-      "input": "{ entries: Array<FilesystemWriteEntry>, }",
-      "output": "Array<{ path: string, success: boolean, error: string | null, }>"
-    },
-    {
-      "name": "filesystem.stat",
-      "public": true,
-      "input": "{ path: string, }",
-      "output": "{ mode: number, size: number | bigint, blocks: number | bigint, dev: number | bigint, rdev: number | bigint, isDirectory: boolean, isSymbolicLink: boolean, atimeMs: number, mtimeMs: number, ctimeMs: number, birthtimeMs: number, ino: number | bigint, nlink: number | bigint, uid: number, gid: number, }"
-    },
-    {
-      "name": "filesystem.mkdir",
-      "public": true,
-      "input": "{ path: string, recursive: boolean, }",
-      "output": "null"
     },
     {
       "name": "filesystem.readdir",
@@ -81,320 +151,80 @@
     {
       "name": "filesystem.readdirRecursive",
       "public": true,
-      "input": "{ path: string, maxDepth: number | null, exclude: Array<string>, }",
-      "output": "Array<{ path: string, type: DirEntryType, size: number | bigint, }>"
-    },
-    {
-      "name": "filesystem.exists",
-      "public": true,
-      "input": "{ path: string, }",
-      "output": "boolean"
-    },
-    {
-      "name": "filesystem.move",
-      "public": true,
-      "input": "{ from: string, to: string, }",
-      "output": "null"
+      "input": "{ path: string, maxDepth: number | null, exclude?: Array<string>, }",
+      "output": "Array<{ path: string, type: DirEntryType, sizeBytes: number | bigint, }>"
     },
     {
       "name": "filesystem.remove",
       "public": true,
-      "input": "{ path: string, recursive: boolean, }",
+      "input": "{ path: string, recursive?: boolean, }",
       "output": "null"
     },
     {
-      "name": "filesystem.export",
+      "name": "filesystem.stat",
       "public": true,
-      "input": "{ maxBytes: number | null, }",
-      "output": "{ kind: SnapshotExportKind, source: FilesystemSnapshotExport, }"
+      "input": "{ path: string, }",
+      "output": "{ mode: number, sizeBytes: number | bigint, blocks: number | bigint, dev: number | bigint, rdev: number | bigint, isDirectory: boolean, isSymbolicLink: boolean, atimeMs: number, mtimeMs: number, ctimeMs: number, birthtimeMs: number, ino: number | bigint, nlink: number | bigint, uid: number, gid: number, }"
     },
     {
-      "name": "filesystem.listMounts",
+      "name": "filesystem.writeFile",
       "public": true,
-      "input": "null",
-      "output": "Array<{ path: string, kind: string, readOnly: boolean, }>"
-    },
-    {
-      "name": "process.exec",
-      "public": true,
-      "input": "{ command: string, options: ActorExecOptions, }",
-      "output": "{ exitCode: number, stdout: string, stderr: string, }"
-    },
-    {
-      "name": "process.execFile",
-      "public": true,
-      "input": "{ command: string, args: Array<string>, options: ActorExecOptions, }",
-      "output": "{ exitCode: number, stdout: string, stderr: string, }"
-    },
-    {
-      "name": "process.spawn",
-      "public": true,
-      "input": "{ command: string, args: Array<string>, options: ActorSpawnOptions, }",
-      "output": "{ generation: number | bigint, pid: number, }"
-    },
-    {
-      "name": "process.get",
-      "public": true,
-      "input": "{ process: ActorProcessId, }",
-      "output": "{ process: ActorProcessId, command: string, args: Array<string>, running: boolean, exitCode: number | null, startedAt: number | bigint, }"
-    },
-    {
-      "name": "process.list",
-      "public": true,
-      "input": "null",
-      "output": "Array<{ process: ActorProcessId, command: string, args: Array<string>, running: boolean, exitCode: number | null, startedAt: number | bigint, }>"
-    },
-    {
-      "name": "process.tree",
-      "public": true,
-      "input": "null",
-      "output": "{ generation: number | bigint, roots: Array<ProcessTreeNode>, }"
-    },
-    {
-      "name": "process.wait",
-      "public": true,
-      "input": "{ process: ActorProcessId, }",
-      "output": "{ process: ActorProcessId, exitCode: number, }"
-    },
-    {
-      "name": "process.signal",
-      "public": true,
-      "input": "{ process: ActorProcessId, signal: ActorSignal, }",
+      "input": "{ path: string, content: FileContentInput, }",
       "output": "null"
     },
     {
-      "name": "process.writeStdin",
+      "name": "filesystem.writeFiles",
       "public": true,
-      "input": "{ process: ActorProcessId, data: FileContentInput, }",
-      "output": "null"
-    },
-    {
-      "name": "process.closeStdin",
-      "public": true,
-      "input": "{ process: ActorProcessId, }",
-      "output": "null"
-    },
-    {
-      "name": "process.resizePty",
-      "public": true,
-      "input": "{ process: ActorProcessId, cols: number, rows: number, }",
-      "output": "null"
-    },
-    {
-      "name": "process.readOutput",
-      "public": true,
-      "input": "{ process: ActorProcessId, after: number | null, maxEvents: number | null, maxBytes: number | null, }",
-      "output": "{ process: ActorProcessId, events: Array<ActorProcessOutputEvent>, nextCursor: number | bigint | null, hasMore: boolean, truncated: boolean, }"
-    },
-    {
-      "name": "terminal.open",
-      "public": true,
-      "input": "{ options: ActorTerminalOptions, }",
-      "output": "{ generation: number | bigint, shellId: string, }"
-    },
-    {
-      "name": "terminal.list",
-      "public": true,
-      "input": "null",
-      "output": "Array<{ terminal: ActorTerminalId, pid: number, running: boolean, exitCode: number | null, }>"
-    },
-    {
-      "name": "terminal.snapshot",
-      "public": true,
-      "input": "{ terminal: ActorTerminalId, after: number | null, maxBytes: number | null, }",
-      "output": "{ terminal: ActorTerminalId, pid: number, events: Array<ActorTerminalOutputEvent>, nextCursor: number | bigint | null, hasMore: boolean, truncated: boolean, }"
-    },
-    {
-      "name": "terminal.write",
-      "public": true,
-      "input": "{ terminal: ActorTerminalId, data: FileContentInput, }",
-      "output": "null"
-    },
-    {
-      "name": "terminal.resize",
-      "public": true,
-      "input": "{ terminal: ActorTerminalId, cols: number, rows: number, }",
-      "output": "null"
-    },
-    {
-      "name": "terminal.wait",
-      "public": true,
-      "input": "{ terminal: ActorTerminalId, }",
-      "output": "{ terminal: ActorTerminalId, exitCode: number, }"
-    },
-    {
-      "name": "terminal.close",
-      "public": true,
-      "input": "{ terminal: ActorTerminalId, }",
-      "output": "null"
-    },
-    {
-      "name": "contexts.create",
-      "public": true,
-      "input": "{ contextId: string, }",
-      "output": "{ context: ActorContextId, state: string, language: string | null, createdAtMs: number | bigint, lastStartedAtMs: number | bigint | null, lastCompletedAtMs: number | bigint | null, }"
-    },
-    {
-      "name": "contexts.get",
-      "public": true,
-      "input": "{ context: ActorContextId, }",
-      "output": "{ context: ActorContextId, state: string, language: string | null, createdAtMs: number | bigint, lastStartedAtMs: number | bigint | null, lastCompletedAtMs: number | bigint | null, }"
-    },
-    {
-      "name": "contexts.list",
-      "public": true,
-      "input": "null",
-      "output": "Array<{ context: ActorContextId, state: string, language: string | null, createdAtMs: number | bigint, lastStartedAtMs: number | bigint | null, lastCompletedAtMs: number | bigint | null, }>"
-    },
-    {
-      "name": "contexts.reset",
-      "public": true,
-      "input": "{ context: ActorContextId, }",
-      "output": "{ context: ActorContextId, state: string, language: string | null, createdAtMs: number | bigint, lastStartedAtMs: number | bigint | null, lastCompletedAtMs: number | bigint | null, }"
-    },
-    {
-      "name": "contexts.delete",
-      "public": true,
-      "input": "{ context: ActorContextId, }",
-      "output": "null"
-    },
-    {
-      "name": "javascript.execute",
-      "public": true,
-      "input": "{ source: string, options: ActorJavaScriptExecutionOptions, }",
-      "output": "{ execution: ActorExecutionDescriptor | null, outcome: ActorExecutionOutcome, exitCode: number | null, error: ActorExecutionError | null, stdout: FileBytes | null, stderr: FileBytes | null, stdoutTruncated: boolean | null, stderrTruncated: boolean | null, }"
+      "input": "{ entries: Array<FilesystemWriteEntry>, }",
+      "output": "Array<{ path: string, success: boolean, error: string | null, }>"
     },
     {
       "name": "javascript.evaluate",
       "public": true,
-      "input": "{ expression: string, options: ActorJavaScriptExecutionOptions, }",
+      "input": "{ expression: string, options?: ActorJavaScriptExecutionOptions, }",
       "output": "{ result: ActorCodeExecutionResult, value: JsonValue | null, }"
+    },
+    {
+      "name": "javascript.execute",
+      "public": true,
+      "input": "{ source: string, options?: ActorJavaScriptExecutionOptions, }",
+      "output": "{ execution: ActorExecutionDescriptor | null, outcome: ActorExecutionOutcome, exitCode: number | null, error: ActorExecutionError | null, stdout: FileBytes | null, stderr: FileBytes | null, stdoutTruncated: boolean | null, stderrTruncated: boolean | null, }"
     },
     {
       "name": "javascript.executeFile",
       "public": true,
-      "input": "{ path: string, options: ActorLanguageExecutionOptions, }",
+      "input": "{ path: string, options?: ActorLanguageExecutionOptions, }",
       "output": "{ execution: ActorExecutionDescriptor | null, outcome: ActorExecutionOutcome, exitCode: number | null, error: ActorExecutionError | null, stdout: FileBytes | null, stderr: FileBytes | null, stdoutTruncated: boolean | null, stderrTruncated: boolean | null, }"
-    },
-    {
-      "name": "javascript.spawn",
-      "public": true,
-      "input": "{ source: string, options: ActorLanguageSpawnOptions, }",
-      "output": "{ generation: number | bigint, pid: number, }"
-    },
-    {
-      "name": "javascript.spawnFile",
-      "public": true,
-      "input": "{ path: string, options: ActorLanguageSpawnOptions, }",
-      "output": "{ generation: number | bigint, pid: number, }"
     },
     {
       "name": "javascript.npm.install",
       "public": true,
-      "input": "{ packages: Array<string>, options: ActorNpmInstallOptions, }",
-      "output": "{ execution: ActorExecutionDescriptor | null, outcome: ActorExecutionOutcome, exitCode: number | null, error: ActorExecutionError | null, stdout: FileBytes | null, stderr: FileBytes | null, stdoutTruncated: boolean | null, stderrTruncated: boolean | null, }"
-    },
-    {
-      "name": "javascript.npm.runScript",
-      "public": true,
-      "input": "{ script: string, options: ActorLanguageExecutionOptions, }",
+      "input": "{ packages?: Array<string>, options?: ActorNpmInstallOptions, }",
       "output": "{ execution: ActorExecutionDescriptor | null, outcome: ActorExecutionOutcome, exitCode: number | null, error: ActorExecutionError | null, stdout: FileBytes | null, stderr: FileBytes | null, stdoutTruncated: boolean | null, stderrTruncated: boolean | null, }"
     },
     {
       "name": "javascript.npm.runPackage",
       "public": true,
-      "input": "{ packageSpec: string, binary: string | null, options: ActorLanguageExecutionOptions, }",
+      "input": "{ packageSpec: string, binary: string | null, options?: ActorLanguageExecutionOptions, }",
       "output": "{ execution: ActorExecutionDescriptor | null, outcome: ActorExecutionOutcome, exitCode: number | null, error: ActorExecutionError | null, stdout: FileBytes | null, stderr: FileBytes | null, stdoutTruncated: boolean | null, stderrTruncated: boolean | null, }"
     },
     {
-      "name": "typescript.execute",
+      "name": "javascript.npm.runScript",
       "public": true,
-      "input": "{ source: string, options: ActorTypeScriptExecutionOptions, }",
+      "input": "{ script: string, options?: ActorLanguageExecutionOptions, }",
       "output": "{ execution: ActorExecutionDescriptor | null, outcome: ActorExecutionOutcome, exitCode: number | null, error: ActorExecutionError | null, stdout: FileBytes | null, stderr: FileBytes | null, stdoutTruncated: boolean | null, stderrTruncated: boolean | null, }"
     },
     {
-      "name": "typescript.evaluate",
+      "name": "javascript.spawn",
       "public": true,
-      "input": "{ expression: string, options: ActorTypeScriptExecutionOptions, }",
-      "output": "{ result: ActorCodeExecutionResult, value: JsonValue | null, }"
-    },
-    {
-      "name": "typescript.executeFile",
-      "public": true,
-      "input": "{ path: string, options: ActorTypeScriptExecutionOptions, }",
-      "output": "{ execution: ActorExecutionDescriptor | null, outcome: ActorExecutionOutcome, exitCode: number | null, error: ActorExecutionError | null, stdout: FileBytes | null, stderr: FileBytes | null, stdoutTruncated: boolean | null, stderrTruncated: boolean | null, }"
-    },
-    {
-      "name": "typescript.spawn",
-      "public": true,
-      "input": "{ source: string, options: ActorLanguageSpawnOptions, }",
+      "input": "{ source: string, options?: ActorLanguageSpawnOptions, }",
       "output": "{ generation: number | bigint, pid: number, }"
     },
     {
-      "name": "typescript.spawnFile",
+      "name": "javascript.spawnFile",
       "public": true,
-      "input": "{ path: string, options: ActorLanguageSpawnOptions, }",
+      "input": "{ path: string, options?: ActorLanguageSpawnOptions, }",
       "output": "{ generation: number | bigint, pid: number, }"
-    },
-    {
-      "name": "typescript.check",
-      "public": true,
-      "input": "{ source: string, options: ActorTypeScriptCheckOptions, }",
-      "output": "{ result: ActorCodeExecutionResult, hasErrors: boolean | null, diagnostics: Array<ActorTypeScriptDiagnostic>, }"
-    },
-    {
-      "name": "typescript.checkProject",
-      "public": true,
-      "input": "{ options: ActorTypeScriptCheckOptions, }",
-      "output": "{ result: ActorCodeExecutionResult, hasErrors: boolean | null, diagnostics: Array<ActorTypeScriptDiagnostic>, }"
-    },
-    {
-      "name": "python.execute",
-      "public": true,
-      "input": "{ source: string, options: ActorInlineExecutionOptions, }",
-      "output": "{ execution: ActorExecutionDescriptor | null, outcome: ActorExecutionOutcome, exitCode: number | null, error: ActorExecutionError | null, stdout: FileBytes | null, stderr: FileBytes | null, stdoutTruncated: boolean | null, stderrTruncated: boolean | null, }"
-    },
-    {
-      "name": "python.evaluate",
-      "public": true,
-      "input": "{ expression: string, options: ActorInlineExecutionOptions, }",
-      "output": "{ result: ActorCodeExecutionResult, value: JsonValue | null, }"
-    },
-    {
-      "name": "python.executeFile",
-      "public": true,
-      "input": "{ path: string, options: ActorLanguageExecutionOptions, }",
-      "output": "{ execution: ActorExecutionDescriptor | null, outcome: ActorExecutionOutcome, exitCode: number | null, error: ActorExecutionError | null, stdout: FileBytes | null, stderr: FileBytes | null, stdoutTruncated: boolean | null, stderrTruncated: boolean | null, }"
-    },
-    {
-      "name": "python.executeModule",
-      "public": true,
-      "input": "{ module: string, options: ActorLanguageExecutionOptions, }",
-      "output": "{ execution: ActorExecutionDescriptor | null, outcome: ActorExecutionOutcome, exitCode: number | null, error: ActorExecutionError | null, stdout: FileBytes | null, stderr: FileBytes | null, stdoutTruncated: boolean | null, stderrTruncated: boolean | null, }"
-    },
-    {
-      "name": "python.spawn",
-      "public": true,
-      "input": "{ source: string, options: ActorLanguageSpawnOptions, }",
-      "output": "{ generation: number | bigint, pid: number, }"
-    },
-    {
-      "name": "python.spawnFile",
-      "public": true,
-      "input": "{ path: string, options: ActorLanguageSpawnOptions, }",
-      "output": "{ generation: number | bigint, pid: number, }"
-    },
-    {
-      "name": "python.spawnModule",
-      "public": true,
-      "input": "{ module: string, options: ActorLanguageSpawnOptions, }",
-      "output": "{ generation: number | bigint, pid: number, }"
-    },
-    {
-      "name": "python.install",
-      "public": true,
-      "input": "{ packages: Array<string>, options: ActorPythonInstallOptions, }",
-      "output": "{ execution: ActorExecutionDescriptor | null, outcome: ActorExecutionOutcome, exitCode: number | null, error: ActorExecutionError | null, stdout: FileBytes | null, stderr: FileBytes | null, stdoutTruncated: boolean | null, stderrTruncated: boolean | null, }"
     },
     {
       "name": "network.fetch",
@@ -403,10 +233,10 @@
       "output": "{ status: number, statusText: string, headers: Array<[string, string]>, body: FileBytes, }"
     },
     {
-      "name": "network.fetchStream.start",
+      "name": "network.fetchStream.cancel",
       "public": true,
-      "input": "{ request: ActorHttpRequest, }",
-      "output": "{ stream: ActorFetchStreamId, status: number, statusText: string, headers: Array<[string, string]>, }"
+      "input": "{ stream: ActorFetchStreamId, }",
+      "output": "null"
     },
     {
       "name": "network.fetchStream.read",
@@ -415,15 +245,15 @@
       "output": "{ body: FileBytes, done: boolean, }"
     },
     {
-      "name": "network.fetchStream.cancel",
+      "name": "network.fetchStream.start",
       "public": true,
-      "input": "{ stream: ActorFetchStreamId, }",
-      "output": "null"
+      "input": "{ request: ActorHttpRequest, }",
+      "output": "{ stream: ActorFetchStreamId, status: number, statusText: string, headers: Array<[string, string]>, }"
     },
     {
       "name": "network.preview.create",
       "public": true,
-      "input": "{ port: number, ttlMs: number | null, }",
+      "input": "{ port: number, ttlMs: number | bigint | null, }",
       "output": "{ token: string, path: string, port: number, expiresAtMs: number | bigint, }"
     },
     {
@@ -433,59 +263,245 @@
       "output": "boolean"
     },
     {
-      "name": "cron.schedule",
+      "name": "process.get",
       "public": true,
-      "input": "{ name: string | null, expression: string, timezone: string | null, command: string, args: Array<string>, options: ActorSpawnOptions, maxHistory: number | null, }",
-      "output": "{ name: string, expression: string, timezone: string | null, command: string, args: Array<string>, options: ActorSpawnOptions, configRevision: number | bigint, nextRunAt: number | bigint, lastRunAt: number | bigint | null, maxHistory: number | bigint, }"
+      "input": "{ process: ActorProcessId, }",
+      "output": "{ process: ActorProcessId, command: string, args: Array<string>, running: boolean, exit: ActorExitStatus | null, startedAtMs: number | bigint, }"
     },
     {
-      "name": "cron.list",
+      "name": "process.list",
       "public": true,
-      "input": "null",
-      "output": "Array<{ name: string, expression: string, timezone: string | null, command: string, args: Array<string>, options: ActorSpawnOptions, configRevision: number | bigint, nextRunAt: number | bigint, lastRunAt: number | bigint | null, maxHistory: number | bigint, }>"
+      "input": "Record<string, never>",
+      "output": "Array<{ process: ActorProcessId, command: string, args: Array<string>, running: boolean, exit: ActorExitStatus | null, startedAtMs: number | bigint, }>"
     },
     {
-      "name": "cron.cancel",
+      "name": "process.output.read",
       "public": true,
-      "input": "{ name: string, }",
-      "output": "boolean"
+      "input": "{ process: ActorProcessId, after: number | bigint | null, maxEvents: number | null, maxBytes: number | null, }",
+      "output": "{ generation: number | bigint, events: Array<ActorOutputEvent>, nextCursor: number | bigint | null, hasMore: boolean, truncated: boolean, end: ActorExitStatus | null, }"
     },
     {
-      "name": "__agentos.cron.invoke",
-      "public": false,
-      "input": "{ scheduleName: string, command: string, args: Array<string>, options: ActorSpawnOptions, configRevision: number, }",
+      "name": "process.pty.resize",
+      "public": true,
+      "input": "{ process: ActorProcessId, cols: number, rows: number, }",
       "output": "null"
+    },
+    {
+      "name": "process.run",
+      "public": true,
+      "input": "{ command: string, args?: Array<string>, options?: ActorExecOptions, }",
+      "output": "{ status: ActorExitStatus, stdout: string, stderr: string, }"
+    },
+    {
+      "name": "process.signal",
+      "public": true,
+      "input": "{ process: ActorProcessId, signal: ActorSignal, }",
+      "output": "null"
+    },
+    {
+      "name": "process.spawn",
+      "public": true,
+      "input": "{ command: string, args?: Array<string>, options?: ActorSpawnOptions, }",
+      "output": "{ generation: number | bigint, pid: number, }"
+    },
+    {
+      "name": "process.stdin.close",
+      "public": true,
+      "input": "{ process: ActorProcessId, }",
+      "output": "null"
+    },
+    {
+      "name": "process.stdin.write",
+      "public": true,
+      "input": "{ process: ActorProcessId, data: FileContentInput, }",
+      "output": "null"
+    },
+    {
+      "name": "process.tree",
+      "public": true,
+      "input": "Record<string, never>",
+      "output": "{ generation: number | bigint, roots: Array<ActorProcessTreeNode>, }"
+    },
+    {
+      "name": "process.wait",
+      "public": true,
+      "input": "{ process: ActorProcessId, }",
+      "output": "{ process: ActorProcessId, status: ActorExitStatus, }"
+    },
+    {
+      "name": "python.evaluate",
+      "public": true,
+      "input": "{ expression: string, options?: ActorInlineExecutionOptions, }",
+      "output": "{ result: ActorCodeExecutionResult, value: JsonValue | null, }"
+    },
+    {
+      "name": "python.execute",
+      "public": true,
+      "input": "{ source: string, options?: ActorInlineExecutionOptions, }",
+      "output": "{ execution: ActorExecutionDescriptor | null, outcome: ActorExecutionOutcome, exitCode: number | null, error: ActorExecutionError | null, stdout: FileBytes | null, stderr: FileBytes | null, stdoutTruncated: boolean | null, stderrTruncated: boolean | null, }"
+    },
+    {
+      "name": "python.executeFile",
+      "public": true,
+      "input": "{ path: string, options?: ActorLanguageExecutionOptions, }",
+      "output": "{ execution: ActorExecutionDescriptor | null, outcome: ActorExecutionOutcome, exitCode: number | null, error: ActorExecutionError | null, stdout: FileBytes | null, stderr: FileBytes | null, stdoutTruncated: boolean | null, stderrTruncated: boolean | null, }"
+    },
+    {
+      "name": "python.executeModule",
+      "public": true,
+      "input": "{ module: string, options?: ActorLanguageExecutionOptions, }",
+      "output": "{ execution: ActorExecutionDescriptor | null, outcome: ActorExecutionOutcome, exitCode: number | null, error: ActorExecutionError | null, stdout: FileBytes | null, stderr: FileBytes | null, stdoutTruncated: boolean | null, stderrTruncated: boolean | null, }"
+    },
+    {
+      "name": "python.install",
+      "public": true,
+      "input": "{ packages?: Array<string>, options?: ActorPythonInstallOptions, }",
+      "output": "{ execution: ActorExecutionDescriptor | null, outcome: ActorExecutionOutcome, exitCode: number | null, error: ActorExecutionError | null, stdout: FileBytes | null, stderr: FileBytes | null, stdoutTruncated: boolean | null, stderrTruncated: boolean | null, }"
+    },
+    {
+      "name": "python.spawn",
+      "public": true,
+      "input": "{ source: string, options?: ActorLanguageSpawnOptions, }",
+      "output": "{ generation: number | bigint, pid: number, }"
+    },
+    {
+      "name": "python.spawnFile",
+      "public": true,
+      "input": "{ path: string, options?: ActorLanguageSpawnOptions, }",
+      "output": "{ generation: number | bigint, pid: number, }"
+    },
+    {
+      "name": "python.spawnModule",
+      "public": true,
+      "input": "{ module: string, options?: ActorLanguageSpawnOptions, }",
+      "output": "{ generation: number | bigint, pid: number, }"
     },
     {
       "name": "software.install",
       "public": true,
-      "input": "{ source: RemotePackageSourceInput, expectedRevision: number | null, }",
-      "output": "{ software: InstalledSoftware, config: ConfigSnapshot, }"
-    },
-    {
-      "name": "software.uninstall",
-      "public": true,
-      "input": "{ packageId: string, expectedRevision: number | null, }",
-      "output": "{ software: InstalledSoftware, config: ConfigSnapshot, }"
+      "input": "{ source: RemotePackageSourceInput, expectedRevision: number | bigint | null, }",
+      "output": "{ software: ActorInstalledSoftware | null, source: RemotePackageSource, config: ConfigSnapshot, }"
     },
     {
       "name": "software.list",
       "public": true,
-      "input": "null",
-      "output": "Array<{ packageId: string, digest: string, size: number | bigint, packageName: string, version: string, commands: Array<string>, }>"
+      "input": "Record<string, never>",
+      "output": "Array<{ packageId: string, digest: string, sizeBytes: number | bigint, packageName: string, version: string, commands: Array<string>, }>"
+    },
+    {
+      "name": "software.uninstall",
+      "public": true,
+      "input": "{ packageId: string, expectedRevision: number | bigint | null, }",
+      "output": "{ software: ActorInstalledSoftware | null, source: RemotePackageSource, config: ConfigSnapshot, }"
+    },
+    {
+      "name": "terminal.close",
+      "public": true,
+      "input": "{ terminal: ActorTerminalId, }",
+      "output": "null"
+    },
+    {
+      "name": "terminal.list",
+      "public": true,
+      "input": "Record<string, never>",
+      "output": "Array<{ terminal: ActorTerminalId, pid: number, running: boolean, exit: ActorExitStatus | null, }>"
+    },
+    {
+      "name": "terminal.open",
+      "public": true,
+      "input": "{ options?: ActorTerminalOptions, }",
+      "output": "{ generation: number | bigint, shellId: string, }"
+    },
+    {
+      "name": "terminal.output.read",
+      "public": true,
+      "input": "{ terminal: ActorTerminalId, after: number | bigint | null, maxBytes: number | null, maxEvents: number | null, }",
+      "output": "{ generation: number | bigint, events: Array<ActorOutputEvent>, nextCursor: number | bigint | null, hasMore: boolean, truncated: boolean, end: ActorExitStatus | null, }"
+    },
+    {
+      "name": "terminal.pty.resize",
+      "public": true,
+      "input": "{ terminal: ActorTerminalId, cols: number, rows: number, }",
+      "output": "null"
+    },
+    {
+      "name": "terminal.stdin.write",
+      "public": true,
+      "input": "{ terminal: ActorTerminalId, data: FileContentInput, }",
+      "output": "null"
+    },
+    {
+      "name": "terminal.wait",
+      "public": true,
+      "input": "{ terminal: ActorTerminalId, }",
+      "output": "{ terminal: ActorTerminalId, status: ActorExitStatus, }"
+    },
+    {
+      "name": "typescript.check",
+      "public": true,
+      "input": "{ source: string, options?: ActorTypeScriptCheckOptions, }",
+      "output": "{ result: ActorCodeExecutionResult, hasErrors: boolean | null, diagnostics: Array<ActorTypeScriptDiagnostic>, }"
+    },
+    {
+      "name": "typescript.checkProject",
+      "public": true,
+      "input": "{ options?: ActorTypeScriptCheckOptions, }",
+      "output": "{ result: ActorCodeExecutionResult, hasErrors: boolean | null, diagnostics: Array<ActorTypeScriptDiagnostic>, }"
+    },
+    {
+      "name": "typescript.evaluate",
+      "public": true,
+      "input": "{ expression: string, options?: ActorTypeScriptExecutionOptions, }",
+      "output": "{ result: ActorCodeExecutionResult, value: JsonValue | null, }"
+    },
+    {
+      "name": "typescript.execute",
+      "public": true,
+      "input": "{ source: string, options?: ActorTypeScriptExecutionOptions, }",
+      "output": "{ execution: ActorExecutionDescriptor | null, outcome: ActorExecutionOutcome, exitCode: number | null, error: ActorExecutionError | null, stdout: FileBytes | null, stderr: FileBytes | null, stdoutTruncated: boolean | null, stderrTruncated: boolean | null, }"
+    },
+    {
+      "name": "typescript.executeFile",
+      "public": true,
+      "input": "{ path: string, options?: ActorTypeScriptExecutionOptions, }",
+      "output": "{ execution: ActorExecutionDescriptor | null, outcome: ActorExecutionOutcome, exitCode: number | null, error: ActorExecutionError | null, stdout: FileBytes | null, stderr: FileBytes | null, stdoutTruncated: boolean | null, stderrTruncated: boolean | null, }"
+    },
+    {
+      "name": "typescript.spawn",
+      "public": true,
+      "input": "{ source: string, options?: ActorLanguageSpawnOptions, }",
+      "output": "{ generation: number | bigint, pid: number, }"
+    },
+    {
+      "name": "typescript.spawnFile",
+      "public": true,
+      "input": "{ path: string, options?: ActorLanguageSpawnOptions, }",
+      "output": "{ generation: number | bigint, pid: number, }"
+    },
+    {
+      "name": "vm.restart",
+      "public": true,
+      "input": "Record<string, never>",
+      "output": "{ lifecycle: VmLifecycleState, configState: ConfigApplyState, desiredConfigRevision: number | bigint, appliedConfigRevision: number | bigint | null, generation: number | bigint, lastBootAtMs: number | bigint | null, lastShutdownAtMs: number | bigint | null, packages: PackageStartupStatus, issues: Array<VmIssue>, core: CoreSidecarStatus | null, }"
+    },
+    {
+      "name": "vm.status",
+      "public": true,
+      "input": "Record<string, never>",
+      "output": "{ lifecycle: VmLifecycleState, configState: ConfigApplyState, desiredConfigRevision: number | bigint, appliedConfigRevision: number | bigint | null, generation: number | bigint, lastBootAtMs: number | bigint | null, lastShutdownAtMs: number | bigint | null, packages: PackageStartupStatus, issues: Array<VmIssue>, core: CoreSidecarStatus | null, }"
     }
   ],
   "events": [
     {
-      "name": "runtime.booted",
+      "name": "vm.booted",
       "payload": "{ generation: number | bigint, configRevision: number | bigint, bootedAtMs: number | bigint, }"
     },
     {
-      "name": "runtime.shutdown",
+      "name": "vm.shutdown",
       "payload": "{ generation: number | bigint, reason: string, shutdownAtMs: number | bigint, }"
     },
     {
-      "name": "runtime.limitWarning",
+      "name": "vm.limitWarning",
       "payload": "{ limit: string, observed: number | bigint, capacity: number | bigint, message: string, }"
     },
     {
@@ -494,23 +510,19 @@
     },
     {
       "name": "process.exit",
-      "payload": "{ process: ActorProcessId, exitCode: number, signal: ActorSignal | null, }"
+      "payload": "{ process: ActorProcessId, status: ActorExitStatus, }"
     },
     {
-      "name": "terminal.data",
+      "name": "terminal.output",
       "payload": "{ terminal: ActorTerminalId, sequence: number | bigint, stream: ProcessStream, data: FileBytes, timestampMs: number | bigint, }"
     },
     {
-      "name": "terminal.stderr",
-      "payload": "{ terminal: ActorTerminalId, sequence: number | bigint, data: FileBytes, timestampMs: number | bigint, }"
-    },
-    {
       "name": "terminal.exit",
-      "payload": "{ terminal: ActorTerminalId, exitCode: number, }"
+      "payload": "{ terminal: ActorTerminalId, status: ActorExitStatus, }"
     },
     {
       "name": "cron.fired",
-      "payload": "{ scheduleName: string, process: ActorProcessId | null, error: string | null, firedAtMs: number | bigint, }"
+      "payload": "{ scheduleName: string, process: ActorProcessId | null, error: CronLaunchError | null, firedAtMs: number | bigint, }"
     }
   ],
   "types": [
@@ -532,15 +544,15 @@
     },
     {
       "name": "ActorCronJob",
-      "declaration": "type ActorCronJob = { name: string, expression: string, timezone: string | null, command: string, args: Array<string>, options: ActorSpawnOptions, configRevision: bigint, nextRunAt: bigint, lastRunAt: bigint | null, maxHistory: bigint, };"
+      "declaration": "type ActorCronJob = { name: string, expression: string, timezone: string | null, command: string, args: Array<string>, options: ActorSpawnOptions, configRevision: bigint, nextRunAtMs: bigint, lastRunAtMs: bigint | null, maxHistory: bigint, };"
     },
     {
       "name": "ActorExecOptions",
-      "declaration": "type ActorExecOptions = { env: { [key in string]?: string }, cwd: string | null, stdin: FileContentInput | null, timeoutMs: bigint | null, captureStdio: boolean | null, };"
+      "declaration": "type ActorExecOptions = { env?: { [key in string]?: string }, cwd: string | null, stdin: FileContentInput | null, timeoutMs: bigint | null, captureStdio: boolean | null, };"
     },
     {
       "name": "ActorExecResult",
-      "declaration": "type ActorExecResult = { exitCode: number, stdout: string, stderr: string, };"
+      "declaration": "type ActorExecResult = { status: ActorExitStatus, stdout: string, stderr: string, };"
     },
     {
       "name": "ActorExecutionDescriptor",
@@ -563,6 +575,10 @@
       "declaration": "type ActorExecutionPtyOptions = { cols: number | null, rows: number | null, };"
     },
     {
+      "name": "ActorExitStatus",
+      "declaration": "type ActorExitStatus = { exitCode: number, signal: ActorSignal | null, };"
+    },
+    {
       "name": "ActorFetchStreamChunk",
       "declaration": "type ActorFetchStreamChunk = { body: FileBytes, done: boolean, };"
     },
@@ -575,8 +591,12 @@
       "declaration": "type ActorFetchStreamId = { generation: bigint, streamId: string, expiresAtMs: bigint, };"
     },
     {
+      "name": "ActorFileStat",
+      "declaration": "type ActorFileStat = { mode: number, sizeBytes: bigint, blocks: bigint, dev: bigint, rdev: bigint, isDirectory: boolean, isSymbolicLink: boolean, atimeMs: number, mtimeMs: number, ctimeMs: number, birthtimeMs: number, ino: bigint, nlink: bigint, uid: number, gid: number, };"
+    },
+    {
       "name": "ActorHttpRequest",
-      "declaration": "type ActorHttpRequest = { port: number, path: string, method: string, headers: { [key in string]?: string }, body: FileContentInput | null, };"
+      "declaration": "type ActorHttpRequest = { port: number, path: string, method?: string, headers?: { [key in string]?: string }, body: FileContentInput | null, };"
     },
     {
       "name": "ActorHttpResponse",
@@ -584,11 +604,15 @@
     },
     {
       "name": "ActorInlineExecutionOptions",
-      "declaration": "type ActorInlineExecutionOptions = { process: ActorLanguageExecutionOptions, inputs: { [key in string]?: JsonValue } | null, };"
+      "declaration": "type ActorInlineExecutionOptions = { process?: ActorLanguageExecutionOptions, inputs: { [key in string]?: JsonValue } | null, };"
+    },
+    {
+      "name": "ActorInstalledSoftware",
+      "declaration": "type ActorInstalledSoftware = { packageId: string, digest: string, sizeBytes: bigint, packageName: string, version: string, commands: Array<string>, };"
     },
     {
       "name": "ActorJavaScriptExecutionOptions",
-      "declaration": "type ActorJavaScriptExecutionOptions = { inline: ActorInlineExecutionOptions, format: ActorJavaScriptModuleFormat | null, filePath: string | null, };"
+      "declaration": "type ActorJavaScriptExecutionOptions = { inline?: ActorInlineExecutionOptions, format: ActorJavaScriptModuleFormat | null, filePath: string | null, };"
     },
     {
       "name": "ActorJavaScriptModuleFormat",
@@ -596,19 +620,27 @@
     },
     {
       "name": "ActorLanguageExecutionOptions",
-      "declaration": "type ActorLanguageExecutionOptions = { context: ActorContextId | null, cwd: string | null, env: { [key in string]?: string }, args: Array<string>, stdin: FileContentInput | null, timeoutMs: bigint | null, pty: ActorExecutionPtyOptions | null, output: ActorExecutionOutputOptions, };"
+      "declaration": "type ActorLanguageExecutionOptions = { context: ActorContextId | null, cwd: string | null, env?: { [key in string]?: string }, args?: Array<string>, stdin: FileContentInput | null, timeoutMs: bigint | null, pty: ActorExecutionPtyOptions | null, output?: ActorExecutionOutputOptions, };"
     },
     {
       "name": "ActorLanguageSpawnOptions",
-      "declaration": "type ActorLanguageSpawnOptions = { cwd: string | null, env: { [key in string]?: string }, args: Array<string>, stdin: FileContentInput | null, timeoutMs: bigint | null, pty: ActorExecutionPtyOptions | null, };"
+      "declaration": "type ActorLanguageSpawnOptions = { cwd: string | null, env?: { [key in string]?: string }, args?: Array<string>, stdin: FileContentInput | null, timeoutMs: bigint | null, pty: ActorExecutionPtyOptions | null, };"
     },
     {
       "name": "ActorNpmInstallOptions",
-      "declaration": "type ActorNpmInstallOptions = { context: ActorContextId | null, cwd: string | null, env: { [key in string]?: string }, timeoutMs: bigint | null, frozen: boolean | null, dev: boolean | null, global: boolean | null, output: ActorExecutionOutputOptions, };"
+      "declaration": "type ActorNpmInstallOptions = { context: ActorContextId | null, cwd: string | null, env?: { [key in string]?: string }, timeoutMs: bigint | null, frozen: boolean | null, dev: boolean | null, global: boolean | null, output?: ActorExecutionOutputOptions, };"
     },
     {
       "name": "ActorOutputCapture",
       "declaration": "type ActorOutputCapture = \"none\" | \"stderr\" | \"all\";"
+    },
+    {
+      "name": "ActorOutputEvent",
+      "declaration": "type ActorOutputEvent = { sequence: bigint, stream: ProcessStream, data: FileBytes, timestampMs: bigint, };"
+    },
+    {
+      "name": "ActorOutputReplay",
+      "declaration": "type ActorOutputReplay = { generation: bigint, events: Array<ActorOutputEvent>, nextCursor: bigint | null, hasMore: boolean, truncated: boolean, end: ActorExitStatus | null, };"
     },
     {
       "name": "ActorPreview",
@@ -616,7 +648,7 @@
     },
     {
       "name": "ActorProcessExit",
-      "declaration": "type ActorProcessExit = { process: ActorProcessId, exitCode: number, };"
+      "declaration": "type ActorProcessExit = { process: ActorProcessId, status: ActorExitStatus, };"
     },
     {
       "name": "ActorProcessId",
@@ -624,23 +656,19 @@
     },
     {
       "name": "ActorProcessInfo",
-      "declaration": "type ActorProcessInfo = { process: ActorProcessId, command: string, args: Array<string>, running: boolean, exitCode: number | null, startedAt: bigint, };"
-    },
-    {
-      "name": "ActorProcessOutputEvent",
-      "declaration": "type ActorProcessOutputEvent = { sequence: bigint, stream: ProcessStream, data: FileBytes, timestampMs: bigint, };"
-    },
-    {
-      "name": "ActorProcessOutputReplay",
-      "declaration": "type ActorProcessOutputReplay = { process: ActorProcessId, events: Array<ActorProcessOutputEvent>, nextCursor: bigint | null, hasMore: boolean, truncated: boolean, };"
+      "declaration": "type ActorProcessInfo = { process: ActorProcessId, command: string, args: Array<string>, running: boolean, exit: ActorExitStatus | null, startedAtMs: bigint, };"
     },
     {
       "name": "ActorProcessTree",
-      "declaration": "type ActorProcessTree = { generation: bigint, roots: Array<ProcessTreeNode>, };"
+      "declaration": "type ActorProcessTree = { generation: bigint, roots: Array<ActorProcessTreeNode>, };"
+    },
+    {
+      "name": "ActorProcessTreeNode",
+      "declaration": "type ActorProcessTreeNode = { process: ActorProcessId | null, pid: number, ppid: number, pgid: number, sid: number, driver: string, command: string, args: Array<string>, cwd: string, status: ProcessStatus, exit: ActorExitStatus | null, startTimeMs: number, exitTimeMs: number | null, children: Array<ActorProcessTreeNode>, };"
     },
     {
       "name": "ActorPythonInstallOptions",
-      "declaration": "type ActorPythonInstallOptions = { context: ActorContextId | null, cwd: string | null, env: { [key in string]?: string }, timeoutMs: bigint | null, upgrade: boolean | null, requirementsFile: string | null, indexUrl: string | null, extraIndexUrls: Array<string>, output: ActorExecutionOutputOptions, };"
+      "declaration": "type ActorPythonInstallOptions = { context: ActorContextId | null, cwd: string | null, env?: { [key in string]?: string }, timeoutMs: bigint | null, upgrade: boolean | null, requirementsFile: string | null, indexUrl: string | null, extraIndexUrls?: Array<string>, output?: ActorExecutionOutputOptions, };"
     },
     {
       "name": "ActorSignal",
@@ -648,11 +676,11 @@
     },
     {
       "name": "ActorSpawnOptions",
-      "declaration": "type ActorSpawnOptions = { env: { [key in string]?: string }, cwd: string | null, stdio: SpawnStdio | null, stdinFd: number | null, stdoutFd: number | null, stderrFd: number | null, };"
+      "declaration": "type ActorSpawnOptions = { env?: { [key in string]?: string }, cwd: string | null, stdio: SpawnStdio | null, stdinFd: number | null, stdoutFd: number | null, stderrFd: number | null, };"
     },
     {
       "name": "ActorTerminalExit",
-      "declaration": "type ActorTerminalExit = { terminal: ActorTerminalId, exitCode: number, };"
+      "declaration": "type ActorTerminalExit = { terminal: ActorTerminalId, status: ActorExitStatus, };"
     },
     {
       "name": "ActorTerminalId",
@@ -660,19 +688,11 @@
     },
     {
       "name": "ActorTerminalOptions",
-      "declaration": "type ActorTerminalOptions = { command: string | null, args: Array<string>, env: { [key in string]?: string }, cwd: string | null, cols: number | null, rows: number | null, };"
-    },
-    {
-      "name": "ActorTerminalOutputEvent",
-      "declaration": "type ActorTerminalOutputEvent = { sequence: bigint, stream: ProcessStream, data: FileBytes, timestampMs: bigint, };"
-    },
-    {
-      "name": "ActorTerminalSnapshot",
-      "declaration": "type ActorTerminalSnapshot = { terminal: ActorTerminalId, pid: number, events: Array<ActorTerminalOutputEvent>, nextCursor: bigint | null, hasMore: boolean, truncated: boolean, };"
+      "declaration": "type ActorTerminalOptions = { command: string | null, args?: Array<string>, env?: { [key in string]?: string }, cwd: string | null, cols: number | null, rows: number | null, };"
     },
     {
       "name": "ActorTypeScriptCheckOptions",
-      "declaration": "type ActorTypeScriptCheckOptions = { context: ActorContextId | null, cwd: string | null, filePath: string | null, tsconfigPath: string | null, compilerOptions: { [key in string]?: JsonValue } | null, timeoutMs: bigint | null, output: ActorExecutionOutputOptions, };"
+      "declaration": "type ActorTypeScriptCheckOptions = { context: ActorContextId | null, cwd: string | null, filePath: string | null, tsconfigPath: string | null, compilerOptions: { [key in string]?: JsonValue } | null, timeoutMs: bigint | null, output?: ActorExecutionOutputOptions, };"
     },
     {
       "name": "ActorTypeScriptCheckResult",
@@ -684,11 +704,11 @@
     },
     {
       "name": "ActorTypeScriptExecutionOptions",
-      "declaration": "type ActorTypeScriptExecutionOptions = { inline: ActorInlineExecutionOptions, filePath: string | null, tsconfigPath: string | null, compilerOptions: { [key in string]?: JsonValue } | null, };"
+      "declaration": "type ActorTypeScriptExecutionOptions = { inline?: ActorInlineExecutionOptions, filePath: string | null, tsconfigPath: string | null, compilerOptions: { [key in string]?: JsonValue } | null, };"
     },
     {
       "name": "AgentOsActorConfig",
-      "declaration": "type AgentOsActorConfig = { user: VmUserConfig | null, environment: { [key in string]?: string } | null, allowedNodeBuiltins: Array<string> | null, highResolutionTime: boolean, loopbackExemptPorts: Array<number>, limits: AgentOsLimits | null, permissions: Permissions | null, filesystem: HostedFilesystemConfig, software: Array<RemotePackageSource>, preview: PreviewPolicy, };"
+      "declaration": "type AgentOsActorConfig = { user: VmUserConfig | null, environment: { [key in string]?: string } | null, allowedNodeBuiltins: Array<string> | null, highResolutionTime: boolean | null, loopbackExemptPorts: Array<number>, limits: AgentOsLimits | null, permissions: Permissions | null, filesystem: HostedFilesystemConfig, software: Array<RemotePackageSource>, preview: PreviewPolicy, };"
     },
     {
       "name": "AgentOsActorConfigInput",
@@ -700,7 +720,11 @@
     },
     {
       "name": "AgentOsLimits",
-      "declaration": "type AgentOsLimits = { resources: ResourceLimits | null, http: HttpLimits | null, bindings: BindingLimits | null, plugins: PluginLimits | null, sqlite: SqliteLimits | null, jsRuntime: JsRuntimeLimits | null, python: PythonLimits | null, wasm: WasmLimits | null, process: ProcessLimits | null, };"
+      "declaration": "type AgentOsLimits = { agentosPackages?: AgentOsPackageLimits, resources: ResourceLimits | null, http: HttpLimits | null, tls?: TlsLimits, bindings: BindingLimits | null, plugins: PluginLimits | null, sqlite: SqliteLimits | null, jsRuntime: JsRuntimeLimits | null, python: PythonLimits | null, wasm: WasmLimits | null, execution?: ExecutionLimits, process: ProcessLimits | null, };"
+    },
+    {
+      "name": "AgentOsPackageLimits",
+      "declaration": "type AgentOsPackageLimits = { maxMounts?: bigint, };"
     },
     {
       "name": "BindingLimits",
@@ -712,7 +736,11 @@
     },
     {
       "name": "ConfigGet",
-      "declaration": "type ConfigGet = null;"
+      "declaration": "type ConfigGet = Record<string, never>;"
+    },
+    {
+      "name": "ConfigPatch",
+      "declaration": "type ConfigPatch = { patch: JsonValue, expectedRevision: bigint | null, };"
     },
     {
       "name": "ConfigSet",
@@ -720,7 +748,7 @@
     },
     {
       "name": "ConfigSnapshot",
-      "declaration": "type ConfigSnapshot = { revision: bigint, desired: AgentOsActorConfig, appliedRevision: bigint | null, state: ConfigApplyState, issues: Array<RuntimeIssue>, createdAtMs: bigint, updatedAtMs: bigint, };"
+      "declaration": "type ConfigSnapshot = { revision: bigint, desired: AgentOsActorConfig, appliedRevision: bigint | null, state: ConfigApplyState, issues: Array<VmIssue>, createdAtMs: bigint, updatedAtMs: bigint, };"
     },
     {
       "name": "ContextsCreate",
@@ -736,7 +764,7 @@
     },
     {
       "name": "ContextsList",
-      "declaration": "type ContextsList = null;"
+      "declaration": "type ContextsList = Record<string, never>;"
     },
     {
       "name": "ContextsReset",
@@ -752,19 +780,27 @@
     },
     {
       "name": "CronFiredEvent",
-      "declaration": "type CronFiredEvent = { scheduleName: string, process: ActorProcessId | null, error: string | null, firedAtMs: bigint, };"
+      "declaration": "type CronFiredEvent = { scheduleName: string, process: ActorProcessId | null, error: CronLaunchError | null, firedAtMs: bigint, };"
+    },
+    {
+      "name": "CronLaunchError",
+      "declaration": "type CronLaunchError = { code: string, message: string, };"
     },
     {
       "name": "CronList",
-      "declaration": "type CronList = null;"
+      "declaration": "type CronList = Record<string, never>;"
     },
     {
       "name": "CronSchedule",
-      "declaration": "type CronSchedule = { name: string | null, expression: string, timezone: string | null, command: string, args: Array<string>, options: ActorSpawnOptions, maxHistory: bigint | null, };"
+      "declaration": "type CronSchedule = { name: string | null, expression: string, timezone: string | null, command: string, args?: Array<string>, options?: ActorSpawnOptions, maxHistory: bigint | null, };"
     },
     {
       "name": "DirEntryType",
       "declaration": "type DirEntryType = \"file\" | \"directory\" | \"symlink\";"
+    },
+    {
+      "name": "ExecutionLimits",
+      "declaration": "type ExecutionLimits = { completedTtlMs?: bigint, maxCompletedExecutions?: bigint, liveExecutionWarningThreshold?: bigint, };"
     },
     {
       "name": "FileBytes",
@@ -792,11 +828,11 @@
     },
     {
       "name": "FilesystemListMounts",
-      "declaration": "type FilesystemListMounts = null;"
+      "declaration": "type FilesystemListMounts = Record<string, never>;"
     },
     {
       "name": "FilesystemMkdir",
-      "declaration": "type FilesystemMkdir = { path: string, recursive: boolean, };"
+      "declaration": "type FilesystemMkdir = { path: string, recursive?: boolean, };"
     },
     {
       "name": "FilesystemMove",
@@ -820,11 +856,11 @@
     },
     {
       "name": "FilesystemReaddirRecursive",
-      "declaration": "type FilesystemReaddirRecursive = { path: string, maxDepth: number | null, exclude: Array<string>, };"
+      "declaration": "type FilesystemReaddirRecursive = { path: string, maxDepth: number | null, exclude?: Array<string>, };"
     },
     {
       "name": "FilesystemRemove",
-      "declaration": "type FilesystemRemove = { path: string, recursive: boolean, };"
+      "declaration": "type FilesystemRemove = { path: string, recursive?: boolean, };"
     },
     {
       "name": "FilesystemSnapshotEntries",
@@ -860,11 +896,11 @@
     },
     {
       "name": "HostedFilesystemBackend",
-      "declaration": "type HostedFilesystemBackend = { \"type\": \"actor-sqlite\", namespace: string, };"
+      "declaration": "type HostedFilesystemBackend = { \"type\": \"durable\", namespace: string, };"
     },
     {
       "name": "HostedFilesystemBackendInput",
-      "declaration": "type HostedFilesystemBackendInput = { \"type\": \"actor-sqlite\", namespace: string | null, };"
+      "declaration": "type HostedFilesystemBackendInput = { \"type\": \"durable\", namespace: string | null, };"
     },
     {
       "name": "HostedFilesystemConfig",
@@ -884,51 +920,47 @@
     },
     {
       "name": "HostedRootFilesystem",
-      "declaration": "type HostedRootFilesystem = { \"type\": \"default\" } | { \"type\": \"actor-sqlite\", namespace: string, readOnly: boolean, };"
+      "declaration": "type HostedRootFilesystem = { \"type\": \"default\" } | { \"type\": \"durable\", namespace: string, readOnly: boolean, };"
     },
     {
       "name": "HostedRootFilesystemInput",
-      "declaration": "type HostedRootFilesystemInput = { \"type\": \"default\" } | { \"type\": \"actor-sqlite\", namespace: string | null, readOnly?: boolean, };"
+      "declaration": "type HostedRootFilesystemInput = { \"type\": \"default\", } | { \"type\": \"durable\", namespace: string | null, readOnly?: boolean, };"
     },
     {
       "name": "HttpLimits",
       "declaration": "type HttpLimits = { maxFetchResponseBytes: bigint | null, };"
     },
     {
-      "name": "InstalledSoftware",
-      "declaration": "type InstalledSoftware = { packageId: string, digest: string, size: bigint, packageName: string, version: string, commands: Array<string>, };"
-    },
-    {
       "name": "JavaScriptEvaluate",
-      "declaration": "type JavaScriptEvaluate = { expression: string, options: ActorJavaScriptExecutionOptions, };"
+      "declaration": "type JavaScriptEvaluate = { expression: string, options?: ActorJavaScriptExecutionOptions, };"
     },
     {
       "name": "JavaScriptExecute",
-      "declaration": "type JavaScriptExecute = { source: string, options: ActorJavaScriptExecutionOptions, };"
+      "declaration": "type JavaScriptExecute = { source: string, options?: ActorJavaScriptExecutionOptions, };"
     },
     {
       "name": "JavaScriptExecuteFile",
-      "declaration": "type JavaScriptExecuteFile = { path: string, options: ActorLanguageExecutionOptions, };"
+      "declaration": "type JavaScriptExecuteFile = { path: string, options?: ActorLanguageExecutionOptions, };"
     },
     {
       "name": "JavaScriptNpmInstall",
-      "declaration": "type JavaScriptNpmInstall = { packages: Array<string>, options: ActorNpmInstallOptions, };"
+      "declaration": "type JavaScriptNpmInstall = { packages?: Array<string>, options?: ActorNpmInstallOptions, };"
     },
     {
       "name": "JavaScriptNpmRunPackage",
-      "declaration": "type JavaScriptNpmRunPackage = { packageSpec: string, binary: string | null, options: ActorLanguageExecutionOptions, };"
+      "declaration": "type JavaScriptNpmRunPackage = { packageSpec: string, binary: string | null, options?: ActorLanguageExecutionOptions, };"
     },
     {
       "name": "JavaScriptNpmRunScript",
-      "declaration": "type JavaScriptNpmRunScript = { script: string, options: ActorLanguageExecutionOptions, };"
+      "declaration": "type JavaScriptNpmRunScript = { script: string, options?: ActorLanguageExecutionOptions, };"
     },
     {
       "name": "JavaScriptSpawn",
-      "declaration": "type JavaScriptSpawn = { source: string, options: ActorLanguageSpawnOptions, };"
+      "declaration": "type JavaScriptSpawn = { source: string, options?: ActorLanguageSpawnOptions, };"
     },
     {
       "name": "JavaScriptSpawnFile",
-      "declaration": "type JavaScriptSpawnFile = { path: string, options: ActorLanguageSpawnOptions, };"
+      "declaration": "type JavaScriptSpawnFile = { path: string, options?: ActorLanguageSpawnOptions, };"
     },
     {
       "name": "JsRuntimeLimits",
@@ -995,20 +1027,8 @@
       "declaration": "type PreviewPolicyInput = { defaultTtlMs: bigint | null, maxTtlMs: bigint | null, maxActive: number | null, };"
     },
     {
-      "name": "ProcessCloseStdin",
-      "declaration": "type ProcessCloseStdin = { process: ActorProcessId, };"
-    },
-    {
-      "name": "ProcessExec",
-      "declaration": "type ProcessExec = { command: string, options: ActorExecOptions, };"
-    },
-    {
-      "name": "ProcessExecFile",
-      "declaration": "type ProcessExecFile = { command: string, args: Array<string>, options: ActorExecOptions, };"
-    },
-    {
       "name": "ProcessExitEvent",
-      "declaration": "type ProcessExitEvent = { process: ActorProcessId, exitCode: number, signal: ActorSignal | null, };"
+      "declaration": "type ProcessExitEvent = { process: ActorProcessId, status: ActorExitStatus, };"
     },
     {
       "name": "ProcessGet",
@@ -1020,19 +1040,23 @@
     },
     {
       "name": "ProcessList",
-      "declaration": "type ProcessList = null;"
+      "declaration": "type ProcessList = Record<string, never>;"
     },
     {
       "name": "ProcessOutputEvent",
       "declaration": "type ProcessOutputEvent = { process: ActorProcessId, sequence: bigint, stream: ProcessStream, data: FileBytes, timestampMs: bigint, };"
     },
     {
-      "name": "ProcessReadOutput",
-      "declaration": "type ProcessReadOutput = { process: ActorProcessId, after: bigint | null, maxEvents: number | null, maxBytes: number | null, };"
+      "name": "ProcessOutputRead",
+      "declaration": "type ProcessOutputRead = { process: ActorProcessId, after: bigint | null, maxEvents: number | null, maxBytes: number | null, };"
     },
     {
-      "name": "ProcessResizePty",
-      "declaration": "type ProcessResizePty = { process: ActorProcessId, cols: number, rows: number, };"
+      "name": "ProcessPtyResize",
+      "declaration": "type ProcessPtyResize = { process: ActorProcessId, cols: number, rows: number, };"
+    },
+    {
+      "name": "ProcessRun",
+      "declaration": "type ProcessRun = { command: string, args?: Array<string>, options?: ActorExecOptions, };"
     },
     {
       "name": "ProcessSignal",
@@ -1040,11 +1064,19 @@
     },
     {
       "name": "ProcessSpawn",
-      "declaration": "type ProcessSpawn = { command: string, args: Array<string>, options: ActorSpawnOptions, };"
+      "declaration": "type ProcessSpawn = { command: string, args?: Array<string>, options?: ActorSpawnOptions, };"
     },
     {
       "name": "ProcessStatus",
       "declaration": "type ProcessStatus = \"running\" | \"exited\";"
+    },
+    {
+      "name": "ProcessStdinClose",
+      "declaration": "type ProcessStdinClose = { process: ActorProcessId, };"
+    },
+    {
+      "name": "ProcessStdinWrite",
+      "declaration": "type ProcessStdinWrite = { process: ActorProcessId, data: FileContentInput, };"
     },
     {
       "name": "ProcessStream",
@@ -1052,39 +1084,31 @@
     },
     {
       "name": "ProcessTree",
-      "declaration": "type ProcessTree = null;"
-    },
-    {
-      "name": "ProcessTreeNode",
-      "declaration": "type ProcessTreeNode = { children: Array<ProcessTreeNode>, pid: number, ppid: number, pgid: number, sid: number, driver: string, command: string, args: Array<string>, cwd: string, status: ProcessStatus, exitCode: number | null, startTime: number, exitTime: number | null, };"
+      "declaration": "type ProcessTree = Record<string, never>;"
     },
     {
       "name": "ProcessWait",
       "declaration": "type ProcessWait = { process: ActorProcessId, };"
     },
     {
-      "name": "ProcessWriteStdin",
-      "declaration": "type ProcessWriteStdin = { process: ActorProcessId, data: FileContentInput, };"
-    },
-    {
       "name": "PythonEvaluate",
-      "declaration": "type PythonEvaluate = { expression: string, options: ActorInlineExecutionOptions, };"
+      "declaration": "type PythonEvaluate = { expression: string, options?: ActorInlineExecutionOptions, };"
     },
     {
       "name": "PythonExecute",
-      "declaration": "type PythonExecute = { source: string, options: ActorInlineExecutionOptions, };"
+      "declaration": "type PythonExecute = { source: string, options?: ActorInlineExecutionOptions, };"
     },
     {
       "name": "PythonExecuteFile",
-      "declaration": "type PythonExecuteFile = { path: string, options: ActorLanguageExecutionOptions, };"
+      "declaration": "type PythonExecuteFile = { path: string, options?: ActorLanguageExecutionOptions, };"
     },
     {
       "name": "PythonExecuteModule",
-      "declaration": "type PythonExecuteModule = { module: string, options: ActorLanguageExecutionOptions, };"
+      "declaration": "type PythonExecuteModule = { module: string, options?: ActorLanguageExecutionOptions, };"
     },
     {
       "name": "PythonInstall",
-      "declaration": "type PythonInstall = { packages: Array<string>, options: ActorPythonInstallOptions, };"
+      "declaration": "type PythonInstall = { packages?: Array<string>, options?: ActorPythonInstallOptions, };"
     },
     {
       "name": "PythonLimits",
@@ -1092,23 +1116,23 @@
     },
     {
       "name": "PythonSpawn",
-      "declaration": "type PythonSpawn = { source: string, options: ActorLanguageSpawnOptions, };"
+      "declaration": "type PythonSpawn = { source: string, options?: ActorLanguageSpawnOptions, };"
     },
     {
       "name": "PythonSpawnFile",
-      "declaration": "type PythonSpawnFile = { path: string, options: ActorLanguageSpawnOptions, };"
+      "declaration": "type PythonSpawnFile = { path: string, options?: ActorLanguageSpawnOptions, };"
     },
     {
       "name": "PythonSpawnModule",
-      "declaration": "type PythonSpawnModule = { module: string, options: ActorLanguageSpawnOptions, };"
+      "declaration": "type PythonSpawnModule = { module: string, options?: ActorLanguageSpawnOptions, };"
     },
     {
       "name": "RemotePackageSource",
-      "declaration": "type RemotePackageSource = { url: string, digest: string | null, size: bigint | null, packageId: string | null, };"
+      "declaration": "type RemotePackageSource = { url: string, digest: string | null, sizeBytes: bigint | null, packageId: string | null, };"
     },
     {
       "name": "RemotePackageSourceInput",
-      "declaration": "type RemotePackageSourceInput = { url: string, digest: string | null, \n/**\n * Resolution metadata is accepted so a `config.get` snapshot can be sent\n * back to `config.set`. Core re-resolves the source and never trusts it.\n */\nsize: bigint | null, packageId: string | null, };"
+      "declaration": "type RemotePackageSourceInput = { url: string, digest: string | null, \n/**\n * Resolution metadata is accepted so a `config.get` snapshot can be sent\n * back to `config.set`. Core re-resolves the source and never trusts it.\n */\nsizeBytes: bigint | null, packageId: string | null, };"
     },
     {
       "name": "ResourceLimits",
@@ -1123,38 +1147,6 @@
       "declaration": "type RulePermissions<T> = { default: PermissionMode | null, rules: Array<T>, };"
     },
     {
-      "name": "RuntimeBooted",
-      "declaration": "type RuntimeBooted = { generation: bigint, configRevision: bigint, bootedAtMs: bigint, };"
-    },
-    {
-      "name": "RuntimeIssue",
-      "declaration": "type RuntimeIssue = { code: string, message: string, atMs: bigint, };"
-    },
-    {
-      "name": "RuntimeLifecycleState",
-      "declaration": "type RuntimeLifecycleState = \"initializing\" | \"preloading\" | \"booting\" | \"ready\" | \"degraded\" | \"stopping\" | \"failed\";"
-    },
-    {
-      "name": "RuntimeLimitWarning",
-      "declaration": "type RuntimeLimitWarning = { limit: string, observed: bigint, capacity: bigint, message: string, };"
-    },
-    {
-      "name": "RuntimeRestart",
-      "declaration": "type RuntimeRestart = null;"
-    },
-    {
-      "name": "RuntimeShutdown",
-      "declaration": "type RuntimeShutdown = { generation: bigint, reason: string, shutdownAtMs: bigint, };"
-    },
-    {
-      "name": "RuntimeStatus",
-      "declaration": "type RuntimeStatus = { lifecycle: RuntimeLifecycleState, configState: ConfigApplyState, desiredConfigRevision: bigint, appliedConfigRevision: bigint | null, generation: bigint, lastBootAtMs: bigint | null, lastShutdownAtMs: bigint | null, packages: PackageStartupStatus, issues: Array<RuntimeIssue>, core: CoreSidecarStatus | null, };"
-    },
-    {
-      "name": "RuntimeStatusGet",
-      "declaration": "type RuntimeStatusGet = null;"
-    },
-    {
       "name": "SnapshotExportKind",
       "declaration": "type SnapshotExportKind = \"snapshot-export\";"
     },
@@ -1164,11 +1156,11 @@
     },
     {
       "name": "SoftwareList",
-      "declaration": "type SoftwareList = null;"
+      "declaration": "type SoftwareList = Record<string, never>;"
     },
     {
       "name": "SoftwareMutationResult",
-      "declaration": "type SoftwareMutationResult = { software: InstalledSoftware, config: ConfigSnapshot, };"
+      "declaration": "type SoftwareMutationResult = { software: ActorInstalledSoftware | null, source: RemotePackageSource, config: ConfigSnapshot, };"
     },
     {
       "name": "SoftwareUninstall",
@@ -1187,76 +1179,104 @@
       "declaration": "type TerminalClose = { terminal: ActorTerminalId, };"
     },
     {
-      "name": "TerminalDataEvent",
-      "declaration": "type TerminalDataEvent = { terminal: ActorTerminalId, sequence: bigint, stream: ProcessStream, data: FileBytes, timestampMs: bigint, };"
-    },
-    {
       "name": "TerminalExitEvent",
-      "declaration": "type TerminalExitEvent = { terminal: ActorTerminalId, exitCode: number, };"
+      "declaration": "type TerminalExitEvent = { terminal: ActorTerminalId, status: ActorExitStatus, };"
     },
     {
       "name": "TerminalList",
-      "declaration": "type TerminalList = null;"
+      "declaration": "type TerminalList = Record<string, never>;"
     },
     {
       "name": "TerminalOpen",
-      "declaration": "type TerminalOpen = { options: ActorTerminalOptions, };"
+      "declaration": "type TerminalOpen = { options?: ActorTerminalOptions, };"
     },
     {
-      "name": "TerminalResize",
-      "declaration": "type TerminalResize = { terminal: ActorTerminalId, cols: number, rows: number, };"
+      "name": "TerminalOutputEvent",
+      "declaration": "type TerminalOutputEvent = { terminal: ActorTerminalId, sequence: bigint, stream: ProcessStream, data: FileBytes, timestampMs: bigint, };"
     },
     {
-      "name": "TerminalSnapshot",
-      "declaration": "type TerminalSnapshot = { terminal: ActorTerminalId, after: bigint | null, maxBytes: number | null, };"
+      "name": "TerminalOutputRead",
+      "declaration": "type TerminalOutputRead = { terminal: ActorTerminalId, after: bigint | null, maxBytes: number | null, maxEvents: number | null, };"
     },
     {
-      "name": "TerminalStderrEvent",
-      "declaration": "type TerminalStderrEvent = { terminal: ActorTerminalId, sequence: bigint, data: FileBytes, timestampMs: bigint, };"
+      "name": "TerminalPtyResize",
+      "declaration": "type TerminalPtyResize = { terminal: ActorTerminalId, cols: number, rows: number, };"
+    },
+    {
+      "name": "TerminalStdinWrite",
+      "declaration": "type TerminalStdinWrite = { terminal: ActorTerminalId, data: FileContentInput, };"
     },
     {
       "name": "TerminalWait",
       "declaration": "type TerminalWait = { terminal: ActorTerminalId, };"
     },
     {
-      "name": "TerminalWrite",
-      "declaration": "type TerminalWrite = { terminal: ActorTerminalId, data: FileContentInput, };"
+      "name": "TlsLimits",
+      "declaration": "type TlsLimits = { maxBufferedBytes?: bigint, };"
     },
     {
       "name": "TypeScriptCheck",
-      "declaration": "type TypeScriptCheck = { source: string, options: ActorTypeScriptCheckOptions, };"
+      "declaration": "type TypeScriptCheck = { source: string, options?: ActorTypeScriptCheckOptions, };"
     },
     {
       "name": "TypeScriptCheckProject",
-      "declaration": "type TypeScriptCheckProject = { options: ActorTypeScriptCheckOptions, };"
+      "declaration": "type TypeScriptCheckProject = { options?: ActorTypeScriptCheckOptions, };"
     },
     {
       "name": "TypeScriptEvaluate",
-      "declaration": "type TypeScriptEvaluate = { expression: string, options: ActorTypeScriptExecutionOptions, };"
+      "declaration": "type TypeScriptEvaluate = { expression: string, options?: ActorTypeScriptExecutionOptions, };"
     },
     {
       "name": "TypeScriptExecute",
-      "declaration": "type TypeScriptExecute = { source: string, options: ActorTypeScriptExecutionOptions, };"
+      "declaration": "type TypeScriptExecute = { source: string, options?: ActorTypeScriptExecutionOptions, };"
     },
     {
       "name": "TypeScriptExecuteFile",
-      "declaration": "type TypeScriptExecuteFile = { path: string, options: ActorTypeScriptExecutionOptions, };"
+      "declaration": "type TypeScriptExecuteFile = { path: string, options?: ActorTypeScriptExecutionOptions, };"
     },
     {
       "name": "TypeScriptSpawn",
-      "declaration": "type TypeScriptSpawn = { source: string, options: ActorLanguageSpawnOptions, };"
+      "declaration": "type TypeScriptSpawn = { source: string, options?: ActorLanguageSpawnOptions, };"
     },
     {
       "name": "TypeScriptSpawnFile",
-      "declaration": "type TypeScriptSpawnFile = { path: string, options: ActorLanguageSpawnOptions, };"
+      "declaration": "type TypeScriptSpawnFile = { path: string, options?: ActorLanguageSpawnOptions, };"
     },
     {
-      "name": "VirtualStat",
-      "declaration": "type VirtualStat = { mode: number, size: bigint, blocks: bigint, dev: bigint, rdev: bigint, isDirectory: boolean, isSymbolicLink: boolean, atimeMs: number, mtimeMs: number, ctimeMs: number, birthtimeMs: number, ino: bigint, nlink: bigint, uid: number, gid: number, };"
+      "name": "VmBooted",
+      "declaration": "type VmBooted = { generation: bigint, configRevision: bigint, bootedAtMs: bigint, };"
     },
     {
       "name": "VmGroupConfig",
       "declaration": "type VmGroupConfig = { gid: number, name: string, members: Array<string>, };"
+    },
+    {
+      "name": "VmIssue",
+      "declaration": "type VmIssue = { code: string, message: string, atMs: bigint, };"
+    },
+    {
+      "name": "VmLifecycleState",
+      "declaration": "type VmLifecycleState = \"initializing\" | \"preloading\" | \"booting\" | \"ready\" | \"degraded\" | \"stopping\" | \"failed\";"
+    },
+    {
+      "name": "VmLimitWarning",
+      "declaration": "type VmLimitWarning = { limit: string, observed: bigint, capacity: bigint, message: string, };"
+    },
+    {
+      "name": "VmRestart",
+      "declaration": "type VmRestart = Record<string, never>;"
+    },
+    {
+      "name": "VmShutdown",
+      "declaration": "type VmShutdown = { generation: bigint, reason: string, shutdownAtMs: bigint, };"
+    },
+    {
+      "name": "VmStatus",
+      "declaration": "type VmStatus = Record<string, never>;"
+    },
+    {
+      "name": "VmStatusSnapshot",
+      "declaration": "type VmStatusSnapshot = { lifecycle: VmLifecycleState, configState: ConfigApplyState, desiredConfigRevision: bigint, appliedConfigRevision: bigint | null, generation: bigint, lastBootAtMs: bigint | null, lastShutdownAtMs: bigint | null, packages: PackageStartupStatus, issues: Array<VmIssue>, core: CoreSidecarStatus | null, };"
     },
     {
       "name": "VmUserAccountConfig",

@@ -105,6 +105,8 @@ fn ext_envelope_event_encoding_microbench() {
         process_id: String::from("proc-1"),
         channel: StreamChannel::Stdout,
         chunk: vec![b'x'; 256],
+        sequence: None,
+        timestamp_ms: None,
     };
     let direct_frame = ProtocolFrame::Event(EventFrame::new(
         ownership.clone(),

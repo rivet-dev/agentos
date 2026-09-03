@@ -242,9 +242,9 @@ one cross-boundary event per packet.
 
 ## Relationship to Node.js
 
-AgentOS copies Node's evented-I/O invariants, not its process topology.
+agentOS copies Node's evented-I/O invariants, not its process topology.
 
-| Concern | Node.js | AgentOS |
+| Concern | Node.js | agentOS |
 | --- | --- | --- |
 | I/O runtime | One libuv loop per Node process | One Tokio runtime shared by the sidecar process |
 | JavaScript execution | Event-loop thread enters V8 | Separate admitted V8 executor thread enters its isolate |

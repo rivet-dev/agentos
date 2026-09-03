@@ -108,6 +108,10 @@ export const permissionsSchema = z
 
 export const agentOsLimitsSchema = z
 	.object({
+		agentosPackages: z
+			.object({ maxMounts: positiveInteger.optional() })
+			.strict()
+			.optional(),
 		resources: z
 			.object({
 				cpuCount: positiveInteger.optional(),

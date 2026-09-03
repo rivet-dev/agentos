@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Native AgentOS language execution sidecar runtime"
+description = "Native agentOS language execution sidecar runtime"
 
 [lib]
 name = "agentos_native_sidecar"
@@ -16,7 +16,7 @@ path = "src/main.rs"
 [dependencies]
 agentos-actor = { workspace = true }
 agentos-bridge = { workspace = true }
-agentos-client = { workspace = true }
+agentos-client = { workspace = true, features = ["sidecar-internals"] }
 agentos-kernel = { workspace = true }
 agentos-sidecar-protocol = { workspace = true }
 agentos-native-sidecar-core = { workspace = true }
@@ -74,7 +74,8 @@ sha2 = "0.10"
 shlex = "1.3"
 socket2 = "0.6"
 thiserror = "2"
-tokio = { version = "1", features = ["io-std", "io-util", "macros", "net", "rt", "rt-multi-thread", "signal", "sync", "time"] }
+tempfile = "3"
+tokio = { version = "1", features = ["io-std", "io-util", "macros", "net", "process", "rt", "rt-multi-thread", "signal", "sync", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
 ureq = { version = "2.10", features = ["json"] }
@@ -83,9 +84,10 @@ uuid = { version = "1", features = ["v4"] }
 vfs = { workspace = true }
 
 [dev-dependencies]
+anyhow = "1"
 command-fds = "0.3"
+rivetkit = "=2.3.12-rc.3"
 tar = "0.4"
-tempfile = "3"
 vbare.workspace = true
 wat = "1.0"
 v8 = "130"

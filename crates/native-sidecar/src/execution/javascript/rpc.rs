@@ -517,8 +517,8 @@ pub(in crate::execution) fn javascript_sync_rpc_base64_arg(
 // ── Sync-RPC round-trip counting (opt-in via AGENTOS_SYNC_RPC_TRACE=1) ──
 // Each guest fs/module/net sync RPC funnels through service_javascript_sync_rpc,
 // so this is the one place to measure the kernel-VFS "syscall storm" that makes
-// metadata-heavy phases (resourceLoader.reload, createAgentSession) 40-90x slower
-// in the VM than on bare node. Emits a perf log line every 200 calls with the
+// metadata-heavy module-resolution phases much slower in the VM than on bare
+// node. Emits a perf log line every 200 calls with the
 // running per-method breakdown.
 
 fn wasm_process_resolve_at_path(
@@ -1101,7 +1101,7 @@ where
             let path = javascript_sync_rpc_arg_str(&request.args, 1, "path_remove_dir_at path")?;
             let path = wasm_process_resolve_at_path(kernel, process.kernel_pid, dir_fd, path)?;
             kernel.remove_dir(&path).map_err(kernel_error)?;
-            remove_process_shadow_path(process, &path)?;
+            remove_process_shadow_path(kernel, process, &path)?;
             Ok(Value::Null)
         }
         "process.path_rename_at" => {
@@ -1116,7 +1116,7 @@ where
             let new_path =
                 wasm_process_resolve_at_path(kernel, process.kernel_pid, new_fd, new_path)?;
             kernel.rename(&old_path, &new_path).map_err(kernel_error)?;
-            rename_process_shadow_path(process, &old_path, &new_path)?;
+            rename_process_shadow_path(kernel, process, &old_path, &new_path)?;
             Ok(Value::Null)
         }
         "process.path_symlink_at" => {
@@ -1134,7 +1134,7 @@ where
             let path = javascript_sync_rpc_arg_str(&request.args, 1, "path_unlink_at path")?;
             let path = wasm_process_resolve_at_path(kernel, process.kernel_pid, dir_fd, path)?;
             kernel.remove_file(&path).map_err(kernel_error)?;
-            remove_process_shadow_path(process, &path)?;
+            remove_process_shadow_path(kernel, process, &path)?;
             Ok(Value::Null)
         }
         "process.fd_snapshot" => kernel
@@ -2239,7 +2239,7 @@ where
         "fs.chmodSync" | "fs.promises.chmod" => {
             let response =
                 service_javascript_fs_sync_rpc(kernel, process, process.kernel_pid, request)?;
-            mirror_process_chmod_to_host(process, request)?;
+            mirror_process_chmod_to_host(kernel, process, request)?;
             Ok(response)
         }
         _ => service_javascript_fs_sync_rpc(kernel, process, process.kernel_pid, request),
@@ -2320,12 +2320,22 @@ fn service_javascript_internal_bridge_sync_rpc(
 }
 
 fn mirror_process_chmod_to_host(
+    kernel: &SidecarKernel,
     process: &ActiveProcess,
     request: &JavascriptSyncRpcRequest,
 ) -> Result<(), SidecarError> {
-    let guest_path = javascript_sync_rpc_arg_str(&request.args, 0, "filesystem chmod path")?;
+    let guest_path =
+        javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem chmod path")?;
+    let guest_path = if guest_path.starts_with('/') {
+        normalize_path(&guest_path)
+    } else {
+        normalize_path(&format!("{}/{guest_path}", process.guest_cwd))
+    };
+    if crate::filesystem::is_non_root_mount_path(kernel, &guest_path) {
+        return Ok(());
+    }
     let mode = javascript_sync_rpc_arg_u32(&request.args, 1, "filesystem chmod mode")? & 0o7777;
-    let Some(host_path) = resolve_process_guest_path_to_host(process, guest_path) else {
+    let Some(host_path) = resolve_process_guest_path_to_host(process, &guest_path) else {
         return Ok(());
     };
     if !host_path.exists() {
@@ -4979,7 +4989,9 @@ fn format_unix_socket_resource(
 pub(crate) fn error_code(error: &SidecarError) -> &'static str {
     match error {
         SidecarError::ResourceLimit(_) => "ERR_AGENTOS_RESOURCE_LIMIT",
+        SidecarError::PackageMountLimit { .. } => "ERR_AGENTOS_RESOURCE_LIMIT",
         SidecarError::RequestAdmission { code, .. } => code,
+        SidecarError::VmTeardownDeadline { .. } => "timeout",
         SidecarError::InvalidState(_) => "invalid_state",
         SidecarError::ProtocolVersionMismatch(_) => "protocol_version_mismatch",
         SidecarError::BridgeVersionMismatch(_) => "bridge_version_mismatch",
