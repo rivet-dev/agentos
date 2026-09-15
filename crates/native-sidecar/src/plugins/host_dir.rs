@@ -1463,6 +1463,21 @@ impl VirtualFileSystem for HostDirFilesystem {
         // an escaped host path).
         let (parent_dir, _, name, normalized) = self.split_parent(path, false)?;
         self.reject_symlink_leaf(&parent_dir, name.as_os_str(), &normalized, "chown")?;
+        let leaf = fstatat(
+            Some(parent_dir.as_raw_fd()),
+            name.as_os_str(),
+            AtFlags::AT_SYMLINK_NOFOLLOW,
+        )
+        .map_err(|error| io_error_to_vfs("chown", &normalized, nix_to_io(error)))?;
+        // The projected view has fixed ownership — guest stat surfaces carry no
+        // uid/gid, so every entry reads as 0:0 — and an unprivileged sidecar
+        // cannot change real host ownership at all. Assigning either the fixed
+        // guest-visible identity or the entry's current host owner/group is a
+        // no-op (matching Linux, where an owner re-assigning its own uid/gid
+        // succeeds without privilege); anything else attempts the real chown.
+        if (uid == 0 && gid == 0) || (uid == leaf.st_uid && gid == leaf.st_gid) {
+            return Ok(());
+        }
         fchownat(
             Some(parent_dir.as_raw_fd()),
             name.as_os_str(),

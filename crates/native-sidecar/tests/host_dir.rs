@@ -272,6 +272,42 @@ mod host_dir {
             fs::remove_dir_all(host_dir).expect("remove temp dir");
         }
 
+        // Regression: the mount projects a fixed guest-visible identity (0:0 —
+        // guest stat surfaces carry no uid/gid), and an unprivileged sidecar
+        // cannot `fchownat` at all. `chown` requests that assign either that
+        // projected identity or the entry's current host owner must succeed as
+        // no-ops, or every guest file creation under a root identity EPERMs in
+        // `apply_process_creation_metadata` (guests cannot write the mount).
+        #[test]
+        fn filesystem_chown_noops_for_projected_and_current_ownership() {
+            let host_dir = temp_dir("host-dir-plugin-chown-noop");
+            let target = host_dir.join("owned.txt");
+            fs::write(&target, b"data").expect("seed host file");
+            let meta = fs::metadata(&target).expect("metadata before");
+            let (uid, gid) = (meta.uid(), meta.gid());
+            if uid == 0 {
+                // A root test runner can `fchownat` anything, so the no-op
+                // boundary this test pins is not observable here.
+                fs::remove_dir_all(host_dir).expect("remove temp dir");
+                return;
+            }
+
+            let mut filesystem = HostDirFilesystem::new(&host_dir).expect("create host dir fs");
+            // Assigning the fixed guest-visible identity (0:0) is a no-op even
+            // though the real host owner differs — an unprivileged sidecar can
+            // never `fchownat`, and guests only ever observe 0:0 here.
+            filesystem
+                .chown("/owned.txt", 0, 0)
+                .expect("chown to the projected identity must no-op");
+            // Assigning the entry's current host owner/group is equally a no-op
+            // for an owner re-assigning its own ids.
+            filesystem
+                .chown("/owned.txt", uid, gid)
+                .expect("chown to the current owner must no-op");
+
+            fs::remove_dir_all(host_dir).expect("remove temp dir");
+        }
+
         // Regression: an intermediate directory with execute-but-not-read
         // permission (mode 0111) must still be traversable — the walk falls back
         // to an `O_PATH` traversal anchor on Linux instead of failing `EACCES`
