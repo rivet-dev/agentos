@@ -15,8 +15,10 @@ pub(in crate::execution) fn decode_abstract_unix_name(hex: &str) -> Result<Vec<u
             "abstract Unix socket names must be at most 107 bytes of hexadecimal data",
         )));
     }
-    hex.as_bytes()
-        .chunks_exact(2)
+    let (pairs, remainder) = hex.as_bytes().as_chunks::<2>();
+    debug_assert!(remainder.is_empty());
+    pairs
+        .iter()
         .map(|pair| {
             let high = (pair[0] as char).to_digit(16).expect("validated hex digit");
             let low = (pair[1] as char).to_digit(16).expect("validated hex digit");
@@ -1668,6 +1670,22 @@ mod guest_unix_metadata_tests {
             None,
         )
         .expect("register Unix address");
+    }
+
+    #[test]
+    fn abstract_unix_name_hex_round_trips_through_decoder() {
+        let name = [0x00, 0x7f, 0xab, 0xff, b'a'];
+        let hex = abstract_unix_name_hex(&name);
+        assert_eq!(
+            decode_abstract_unix_name(&hex).expect("decode hex name"),
+            name
+        );
+        assert_eq!(
+            decode_abstract_unix_name("64656E696564").expect("decode uppercase hex"),
+            b"denied"
+        );
+        assert!(decode_abstract_unix_name("abc").is_err());
+        assert!(decode_abstract_unix_name("zz").is_err());
     }
 
     #[test]
