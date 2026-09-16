@@ -156,6 +156,7 @@ pub struct TypeScriptCheckResult {
     pub diagnostics: Vec<TypeScriptDiagnostic>,
 }
 
+#[allow(clippy::large_enum_variant)] // This private enum avoids an allocation on the synchronous completion path.
 #[derive(Debug, Clone)]
 enum ExecutionSubmission {
     Completed(CodeExecutionResult),
