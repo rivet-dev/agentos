@@ -4,7 +4,7 @@ description: "Expose trusted host functions to agentOS coding agents as typed CL
 skill: true
 ---
 
-Expose your host JavaScript functions (defined with Zod input schemas) to agents as auto-generated CLI commands installed at `/usr/local/bin/agentos-{name}` inside the VM, injected into the agent's [system prompt](/agentos/docs/system-prompt) and callable inside scripts for code-mode token savings.
+Expose your host JavaScript functions (defined with Zod input schemas) to agents as auto-generated CLI commands installed at `/bin/agentos-{name}` inside the VM, injected into the agent's [system prompt](/agentos/docs/system-prompt) and callable inside scripts for code-mode token savings.
 
 ## Getting started
 
@@ -34,7 +34,7 @@ Optional fields (via `.optional()`) become optional flags. Required fields are e
 
 ### What the agent sees
 
-When bindings are registered, CLI shims are installed at `/usr/local/bin/agentos-{name}` inside the VM and the binding list is injected into the agent's [system prompt](/agentos/docs/system-prompt), so keep binding descriptions concise to save tokens.
+When bindings are registered, CLI shims are installed at `/bin/agentos-{name}` inside the VM and the binding list is injected into the agent's [system prompt](/agentos/docs/system-prompt), so keep binding descriptions concise to save tokens.
 
 The agent interacts with bindings as shell commands:
 

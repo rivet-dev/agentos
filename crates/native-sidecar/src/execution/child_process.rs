@@ -3983,7 +3983,15 @@ where
             (request.command.clone(), request.args.clone())
         };
         let process_args = apply_shell_cwd_prefix(&command, process_args, &guest_cwd);
-        if !exact_exec_path && is_binding_command(vm, &command) {
+        // A POSIX spawn (for example from the guest shell) has already resolved
+        // PATH to the exact `/bin/agentos-*` stub, so an exact path must still
+        // dispatch to the binding when it names the registered binding command.
+        let resolves_to_registered_binding_command = exact_exec_path
+            && registered_command_name_for_path(vm, &command)
+                .is_some_and(|name| is_binding_command(vm, &name));
+        if (!exact_exec_path || resolves_to_registered_binding_command)
+            && is_binding_command(vm, &command)
+        {
             let command = normalized_binding_command_name(&command).unwrap_or(command);
             return Ok(ResolvedChildProcessExecution {
                 command: command.clone(),

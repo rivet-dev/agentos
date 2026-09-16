@@ -9,7 +9,7 @@ Give an agent access to your own host code—API calls, database lookups, intern
 
 ## How it works
 
-A binding collection bundles a `name`, a `description`, and a map of named `bindings`. Each binding declares a Zod `inputSchema`, an `execute` handler that runs on the host, and optional `examples`. Pass collections to `agentOS({ bindings: [...] })`; AgentOS exposes each collection as `/usr/local/bin/agentos-{name}` inside the VM. When an agent invokes a binding, its schema validates the arguments before the handler executes host-side.
+A binding collection bundles a `name`, a `description`, and a map of named `bindings`. Each binding declares a Zod `inputSchema`, an `execute` handler that runs on the host, and optional `examples`. Pass collections to `agentOS({ bindings: [...] })`; AgentOS exposes each collection as `/bin/agentos-{name}` inside the VM. When an agent invokes a binding, its schema validates the arguments before the handler executes host-side.
 
 ## Run it
 

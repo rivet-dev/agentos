@@ -3,7 +3,7 @@ import { z } from "zod";
 
 // Define a group of bindings (host functions). Each binding has a Zod input
 // schema and an `execute` handler that runs on the host. The group is exposed to
-// the agent as a CLI command at /usr/local/bin/agentos-{name} inside the VM.
+// the agent as a CLI command at /bin/agentos-{name} inside the VM.
 const weatherBindings = {
 	name: "weather",
 	description: "Weather data bindings",
