@@ -66,6 +66,7 @@ impl OwnedJavascriptEventService {
 }
 
 impl OwnedPythonEventService {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         ownership: OwnershipScope,
         vm_id: String,
@@ -1065,6 +1066,8 @@ where
         }
     }
 
+    // TODO(clippy-1.98): release the VM/engine RefCell borrow before awaiting; holding it can panic with "already borrowed".
+    #[allow(clippy::await_holding_refcell_ref)]
     pub async fn pump_process_events(
         &mut self,
         ownership: &OwnershipScope,

@@ -1001,6 +1001,8 @@ where
     /// process records, so this path deliberately excludes untracked members:
     /// signaling those through `signal_vm_kernel_pid` would deliver the same
     /// signal to the kernel twice.
+    // TODO(clippy-1.98): unused; wire up or remove.
+    #[allow(dead_code)]
     pub(crate) fn deliver_kernel_process_group_signal_to_tracked_runtimes(
         &mut self,
         vm_id: &str,

@@ -1835,11 +1835,13 @@ mod tests {
 
     #[test]
     fn progress_admission_uses_reserved_lane_limits_not_ordinary_limits() {
-        let mut protocol = RuntimeProtocolConfig::default();
-        protocol.max_in_flight_requests = 1;
-        protocol.max_in_flight_request_bytes = 1;
-        protocol.max_progress_frames = 2;
-        protocol.max_progress_bytes = 10;
+        let protocol = RuntimeProtocolConfig {
+            max_in_flight_requests: 1,
+            max_in_flight_request_bytes: 1,
+            max_progress_frames: 2,
+            max_progress_bytes: 10,
+            ..Default::default()
+        };
         let ordinary_registry = OperationTable::from_protocol_config(&protocol);
         let registry = ordinary_registry.progress_requests();
         let first_key = RequestOperationKey::new("a", 1);

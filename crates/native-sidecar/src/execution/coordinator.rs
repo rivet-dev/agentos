@@ -708,6 +708,8 @@ where
     }
 
     #[allow(dead_code)]
+    // TODO(clippy-1.98): release the VM/engine RefCell borrow before awaiting; holding it can panic with "already borrowed".
+    #[allow(clippy::await_holding_refcell_ref)]
     async fn vm_fetch_legacy(
         &mut self,
         request: &RequestFrame,

@@ -243,6 +243,7 @@ pub(crate) struct ProcessEventPublishFailure {
     pub(crate) envelope: ProcessEventEnvelope,
 }
 
+#[cfg_attr(not(test), allow(dead_code))] // TODO(clippy-1.98): broker API awaiting unified-sidecar-runtime migration callers
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ProcessEventBrokerSnapshot {
     pub(crate) pending_events: usize,
@@ -333,6 +334,7 @@ pub(crate) struct ProcessEventLease {
     retained: Option<RetainedProcessEvent>,
 }
 
+#[cfg_attr(not(test), allow(dead_code))] // TODO(clippy-1.98): broker API awaiting unified-sidecar-runtime migration callers
 #[derive(Clone, Debug)]
 pub(crate) struct ProcessEventWaiterCancellation {
     broker: Weak<ProcessEventBrokerInner>,
@@ -347,6 +349,7 @@ pub(crate) struct ProcessEventDisposalReport {
     pub(crate) discarded_events: usize,
 }
 
+#[allow(clippy::large_enum_variant)] // transient probe result; boxing adds an allocation per delivered event
 enum ConsumerProbe {
     Event(RetainedProcessEvent),
     Pending,
@@ -541,6 +544,7 @@ impl ProcessEventBroker {
         Ok(report)
     }
 
+    #[cfg_attr(not(test), allow(dead_code))] // TODO(clippy-1.98): broker API awaiting unified-sidecar-runtime migration callers
     pub(crate) fn snapshot(&self) -> Result<ProcessEventBrokerSnapshot, ProcessEventBrokerError> {
         let state = self.lock_state()?;
         let retained_targets = state
@@ -621,6 +625,7 @@ impl ProcessEventBroker {
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))] // TODO(clippy-1.98): broker API awaiting unified-sidecar-runtime migration callers
     fn cancel_consumer(
         &self,
         target: &ProcessEventTarget,
@@ -775,6 +780,8 @@ impl ProcessEventBroker {
 }
 
 impl ProcessEventIngress {
+    #[cfg_attr(not(test), allow(dead_code))] // TODO(clippy-1.98): broker API awaiting unified-sidecar-runtime migration callers
+    #[allow(clippy::result_large_err)] // failure returns the envelope to the caller without allocating
     pub(crate) async fn publish(
         &self,
         envelope: ProcessEventEnvelope,
@@ -811,6 +818,7 @@ impl ProcessEventIngress {
         }
     }
 
+    #[allow(clippy::result_large_err)] // failure returns the envelope to the caller without allocating
     pub(crate) fn try_publish(
         &self,
         envelope: ProcessEventEnvelope,
@@ -904,6 +912,7 @@ impl ProcessEventBrokerDriver {
 }
 
 impl ProcessEventWaiter {
+    #[cfg_attr(not(test), allow(dead_code))] // TODO(clippy-1.98): broker API awaiting unified-sidecar-runtime migration callers
     pub(crate) fn cancellation_handle(&self) -> ProcessEventWaiterCancellation {
         ProcessEventWaiterCancellation {
             broker: self.broker.clone(),
@@ -913,6 +922,7 @@ impl ProcessEventWaiter {
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))] // TODO(clippy-1.98): broker API awaiting unified-sidecar-runtime migration callers
     pub(crate) async fn next(&self) -> Result<ProcessEventEnvelope, ProcessEventBrokerError> {
         self.next_lease().await?.commit()
     }
@@ -1009,6 +1019,7 @@ impl Drop for ProcessEventWaiter {
 }
 
 impl ProcessEventWaiterCancellation {
+    #[cfg_attr(not(test), allow(dead_code))] // TODO(clippy-1.98): broker API awaiting unified-sidecar-runtime migration callers
     pub(crate) fn cancel(
         &self,
         reason: OperationCancellationReason,

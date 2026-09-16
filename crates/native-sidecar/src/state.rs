@@ -1145,6 +1145,8 @@ impl VmRegistry {
         self.vms.len()
     }
 
+    // TODO(clippy-1.98): unused; wire up or remove.
+    #[allow(dead_code)]
     pub(crate) fn is_empty(&self) -> bool {
         self.vms.is_empty()
     }
@@ -1221,6 +1223,8 @@ impl VmRegistry {
         }
     }
 
+    // TODO(clippy-1.98): unused; wire up or remove.
+    #[allow(dead_code)]
     pub(crate) fn clear(&mut self) -> Result<(), SidecarError> {
         if let Some((key, _)) = self
             .vms
@@ -1241,6 +1245,8 @@ impl VmRegistry {
         Ok(())
     }
 
+    // TODO(clippy-1.98): unused; wire up or remove.
+    #[allow(dead_code)]
     pub(crate) fn retain(&mut self, mut keep: impl FnMut(&String, &mut VmState) -> bool) {
         self.vms.retain(|key, handle| {
             match handle.inner.try_borrow_mut() {

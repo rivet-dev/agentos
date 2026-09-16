@@ -4786,6 +4786,8 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
+// TODO(clippy-1.98): release the VM/engine RefCell borrow before awaiting; holding it can panic with "already borrowed".
+#[allow(clippy::await_holding_refcell_ref)]
 pub(crate) async fn execute_owned<B>(
     input: OwnedVmRouteInput,
     payload: ExecuteRequest,

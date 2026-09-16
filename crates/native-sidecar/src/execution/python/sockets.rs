@@ -1208,6 +1208,7 @@ where
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(in crate::execution) async fn service_owned_python_socket_rpc_request<B>(
     bridge: SharedBridge<B>,
     vm: VmHandle,

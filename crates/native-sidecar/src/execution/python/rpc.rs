@@ -21,6 +21,7 @@ pub(crate) fn respond_owned_python_rpc(
 
 /// Service an already-claimed root Python runtime request without borrowing
 /// the protocol router's `NativeSidecar`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn service_owned_python_vfs_rpc_request<B>(
     bridge: SharedBridge<B>,
     vm: VmHandle,

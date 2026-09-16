@@ -4190,6 +4190,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
             ))
         }
 
+        // TODO(clippy-1.98): release the VM RefCell borrow before awaiting; holding it can panic with "already borrowed".
+        #[allow(clippy::await_holding_refcell_ref)]
         async fn call_javascript_sync_rpc_response_async(
             sidecar: &mut NativeSidecar<RecordingBridge>,
             vm_id: &str,
@@ -17301,7 +17303,9 @@ await new Promise(() => {});
             fn decode_hex(input: &str) -> Vec<u8> {
                 input
                     .as_bytes()
-                    .as_chunks::<2>().0.iter()
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .map(|chunk| {
                         u8::from_str_radix(std::str::from_utf8(chunk).expect("hex utf8"), 16)
                             .expect("hex byte")
@@ -17711,7 +17715,9 @@ await new Promise(() => {});
             fn decode_hex(input: &str) -> Vec<u8> {
                 input
                     .as_bytes()
-                    .as_chunks::<2>().0.iter()
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .map(|chunk| {
                         u8::from_str_radix(std::str::from_utf8(chunk).expect("hex utf8"), 16)
                             .expect("hex byte")

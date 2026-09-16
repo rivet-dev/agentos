@@ -70,9 +70,7 @@ fn now_ms() -> u64 {
         .unwrap_or(u64::MAX)
 }
 
-fn options(
-    process: ProcessExecutionOptions,
-) -> (
+type ProcessOptionParts = (
     ExecutionIdentityOptions,
     ExecutionOutputOptions,
     Option<String>,
@@ -83,7 +81,9 @@ fn options(
     Option<Vec<u8>>,
     Option<ExecutionPtyOptions>,
     Option<u64>,
-) {
+);
+
+fn options(process: ProcessExecutionOptions) -> ProcessOptionParts {
     (
         process.identity,
         process.output,
@@ -1100,12 +1100,17 @@ where
             .map(|vm| {
                 vm.executions
                     .iter()
-                    .filter(|&(_execution_id, execution)| execution.public
+                    .filter(|&(_execution_id, execution)| {
+                        execution.public
                             && !execution.context
                             && execution.descriptor.state != ExecutionState::Running
                             && execution
                                 .expires_at_ms
-                                .is_some_and(|expires_at| now >= expires_at)).map(|(execution_id, execution)| (execution_id.clone(), execution.resident_process_id.clone()))
+                                .is_some_and(|expires_at| now >= expires_at)
+                    })
+                    .map(|(execution_id, execution)| {
+                        (execution_id.clone(), execution.resident_process_id.clone())
+                    })
                     .take(expired_budget)
                     .collect::<Vec<_>>()
             })
@@ -2501,16 +2506,21 @@ where
             .flat_map(|(vm_id, vm)| {
                 vm.executions
                     .iter()
-                    .filter(|&(_execution_id, execution)| execution.public
+                    .filter(|&(_execution_id, execution)| {
+                        execution.public
                             && !execution.context
                             && execution.descriptor.state != ExecutionState::Running
                             && execution
                                 .expires_at_ms
-                                .is_some_and(|expires_at| now >= expires_at)).map(|(execution_id, execution)| (
-                                vm_id.clone(),
-                                execution_id.clone(),
-                                execution.resident_process_id.clone(),
-                            ))
+                                .is_some_and(|expires_at| now >= expires_at)
+                    })
+                    .map(|(execution_id, execution)| {
+                        (
+                            vm_id.clone(),
+                            execution_id.clone(),
+                            execution.resident_process_id.clone(),
+                        )
+                    })
                     .collect::<Vec<_>>()
             })
             .take(64)
@@ -2580,7 +2590,9 @@ where
             .vms
             .iter()
             .flat_map(|(vm_id, vm)| {
-                vm.executions.values().filter_map(|execution| {
+                vm.executions
+                    .values()
+                    .filter_map(|execution| {
                         (execution.descriptor.state == ExecutionState::Running
                             && execution
                                 .deadline_ms

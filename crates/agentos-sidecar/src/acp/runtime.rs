@@ -1506,15 +1506,8 @@ pub(super) async fn handle_inbound_request(
             }
         }
         _ => {
-            forward_inbound_host_request(
-                ctx,
-                session_id,
-                message,
-                &id,
-                method,
-                cancellation,
-            )
-            .await?
+            forward_inbound_host_request(ctx, session_id, message, &id, method, cancellation)
+                .await?
         }
     };
     let mut line = serde_json::to_vec(&response).map_err(|error| {

@@ -717,6 +717,7 @@ pub(crate) fn prepare_owned_child_bridge_event_service(
     with_internal_vm_event_admission(prepared, coordinator, &ownership)
 }
 
+#[allow(clippy::large_enum_variant)] // consumed by value immediately; boxing adds an allocation per event service
 pub(crate) enum OwnedProcessEventService {
     Javascript(OwnedJavascriptEventService),
     Python(OwnedPythonEventService),

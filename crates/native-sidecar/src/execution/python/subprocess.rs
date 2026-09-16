@@ -66,6 +66,7 @@ where
 /// response are owned by the request rather than the protocol dispatcher.
 /// Every VM-state access is a short synchronous command; the returned future
 /// never retains `NativeSidecar` or a `VmState` borrow across an await.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn prepare_owned_python_subprocess_run<B>(
     vm: VmHandle,
     vm_id: String,

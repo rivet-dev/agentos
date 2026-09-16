@@ -151,6 +151,7 @@ struct DetachedRequestCompletion {
     result: DetachedRequestResult,
 }
 
+#[allow(clippy::large_enum_variant)] // one short-lived completion per detached request; boxing adds an allocation per request
 enum DetachedRequestResult {
     Generic(Result<CompletedRequest, SidecarError>),
     Create(Result<CompletedCreateVm<LocalBridge>, SidecarError>),
@@ -3622,6 +3623,7 @@ fn reap_output_tasks_nowait(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn schedule_prepared_request(
     prepared: PreparedRequest,
     request: RequestFrame,
@@ -5135,19 +5137,21 @@ mod tests {
             control_capacity,
         ));
         let maximum_encoded_bytes = codec.max_frame_bytes().saturating_add(4);
-        let mut protocol = agentos_runtime::RuntimeProtocolConfig::default();
-        protocol.max_egress_frames = ordinary_capacity;
-        protocol.max_egress_bytes = ordinary_capacity.saturating_mul(maximum_encoded_bytes);
-        protocol.max_control_frames = control_capacity;
-        protocol.max_control_bytes = control_capacity.saturating_mul(maximum_encoded_bytes);
-        protocol.max_in_flight_requests = max_in_flight;
-        protocol.max_terminal_frames = max_in_flight;
-        protocol.max_terminal_bytes = max_in_flight.saturating_mul(maximum_encoded_bytes);
-        protocol.terminal_fallback_bytes = maximum_encoded_bytes;
-        protocol.max_progress_frames = 1;
-        protocol.max_progress_bytes = maximum_encoded_bytes;
-        protocol.max_rejection_frames = 1;
-        protocol.max_rejection_bytes = maximum_encoded_bytes;
+        let protocol = agentos_runtime::RuntimeProtocolConfig {
+            max_egress_frames: ordinary_capacity,
+            max_egress_bytes: ordinary_capacity.saturating_mul(maximum_encoded_bytes),
+            max_control_frames: control_capacity,
+            max_control_bytes: control_capacity.saturating_mul(maximum_encoded_bytes),
+            max_in_flight_requests: max_in_flight,
+            max_terminal_frames: max_in_flight,
+            max_terminal_bytes: max_in_flight.saturating_mul(maximum_encoded_bytes),
+            terminal_fallback_bytes: maximum_encoded_bytes,
+            max_progress_frames: 1,
+            max_progress_bytes: maximum_encoded_bytes,
+            max_rejection_frames: 1,
+            max_rejection_bytes: maximum_encoded_bytes,
+            ..Default::default()
+        };
         (
             ProtocolFrameWriter::new(
                 Arc::clone(&output),
@@ -5339,6 +5343,8 @@ mod tests {
             .run_until(async {
                 const SERVICE_CAPACITY: usize = 4;
                 const WAVES: usize = 32;
+                // The test must drive more work than one service-capacity wave.
+                const _: () = assert!(WAVES * SERVICE_CAPACITY > SERVICE_CAPACITY);
 
                 let mut extension_service_tasks = JoinSet::new();
                 let mut progress_service_tasks = JoinSet::new();
@@ -5449,7 +5455,6 @@ mod tests {
                     completed.load(Ordering::Acquire),
                     WAVES * (SERVICE_CAPACITY * 4 + 1)
                 );
-                assert!(WAVES * SERVICE_CAPACITY > SERVICE_CAPACITY);
             })
             .await;
     }
@@ -6118,6 +6123,8 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    // TODO(clippy-1.98): release the VM/engine RefCell borrow before awaiting; holding it can panic with "already borrowed".
+    #[allow(clippy::await_holding_refcell_ref)]
     async fn root_and_child_python_vfs_and_socket_work_runs_while_independent_request_is_blocked() {
         tokio::task::LocalSet::new()
             .run_until(async {
@@ -7492,9 +7499,11 @@ export async function loadPyodide() {
                 let mut active_sessions = BTreeSet::new();
                 let mut active_connections = BTreeSet::new();
 
-                let mut count_protocol = agentos_runtime::RuntimeProtocolConfig::default();
-                count_protocol.max_in_flight_requests = 1;
-                count_protocol.max_in_flight_request_bytes = 8;
+                let count_protocol = agentos_runtime::RuntimeProtocolConfig {
+                    max_in_flight_requests: 1,
+                    max_in_flight_request_bytes: 8,
+                    ..Default::default()
+                };
                 let count_operations = OperationTable::from_protocol_config(&count_protocol);
                 let count_progress_requests =
                     ProgressOperationView::from_protocol_config(&count_protocol);
@@ -7564,9 +7573,11 @@ export async function loadPyodide() {
                 );
                 assert_eq!(count_operations.snapshot().in_flight_requests, 0);
 
-                let mut byte_protocol = agentos_runtime::RuntimeProtocolConfig::default();
-                byte_protocol.max_in_flight_requests = 2;
-                byte_protocol.max_in_flight_request_bytes = 1;
+                let byte_protocol = agentos_runtime::RuntimeProtocolConfig {
+                    max_in_flight_requests: 2,
+                    max_in_flight_request_bytes: 1,
+                    ..Default::default()
+                };
                 let byte_operations = OperationTable::from_protocol_config(&byte_protocol);
                 let byte_progress_requests =
                     ProgressOperationView::from_protocol_config(&byte_protocol);
@@ -9404,19 +9415,21 @@ export async function loadPyodide() {
         let codec = WireFrameCodec::new(8192);
         let maximum_encoded_bytes = codec.max_frame_bytes().saturating_add(4);
         let output = Arc::new(ProtocolOutputQueue::new(4, 4));
-        let mut protocol = agentos_runtime::RuntimeProtocolConfig::default();
-        protocol.max_egress_frames = 4;
-        protocol.max_egress_bytes = 4 * maximum_encoded_bytes;
-        protocol.max_control_frames = 4;
-        protocol.max_control_bytes = 4 * maximum_encoded_bytes;
-        protocol.max_in_flight_requests = 1;
-        protocol.max_terminal_frames = 1;
-        protocol.max_terminal_bytes = 1024;
-        protocol.terminal_fallback_bytes = 512;
-        protocol.max_progress_frames = 1;
-        protocol.max_progress_bytes = maximum_encoded_bytes;
-        protocol.max_rejection_frames = 1;
-        protocol.max_rejection_bytes = maximum_encoded_bytes;
+        let protocol = agentos_runtime::RuntimeProtocolConfig {
+            max_egress_frames: 4,
+            max_egress_bytes: 4 * maximum_encoded_bytes,
+            max_control_frames: 4,
+            max_control_bytes: 4 * maximum_encoded_bytes,
+            max_in_flight_requests: 1,
+            max_terminal_frames: 1,
+            max_terminal_bytes: 1024,
+            terminal_fallback_bytes: 512,
+            max_progress_frames: 1,
+            max_progress_bytes: maximum_encoded_bytes,
+            max_rejection_frames: 1,
+            max_rejection_bytes: maximum_encoded_bytes,
+            ..Default::default()
+        };
         let writer = ProtocolFrameWriter::new(
             Arc::clone(&output),
             codec,
@@ -9499,9 +9512,11 @@ export async function loadPyodide() {
     #[test]
     fn live_event_handoff_is_bounded_nonblocking_and_releases_exactly() {
         let codec = WireFrameCodec::new(4096);
-        let mut protocol = agentos_runtime::RuntimeProtocolConfig::default();
-        protocol.max_egress_frames = 1;
-        protocol.max_egress_bytes = codec.max_frame_bytes().saturating_add(4);
+        let protocol = agentos_runtime::RuntimeProtocolConfig {
+            max_egress_frames: 1,
+            max_egress_bytes: codec.max_frame_bytes().saturating_add(4),
+            ..Default::default()
+        };
         let (transport, mut receiver) = FrameEventTransport::new(
             codec,
             &protocol,

@@ -228,7 +228,9 @@ fn hex_encode(bytes: &[u8]) -> String {
 fn hex_decode(hex: &str) -> Vec<u8> {
     assert_eq!(hex.len() % 2, 0, "hex length must be even");
     hex.as_bytes()
-        .as_chunks::<2>().0.iter()
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| (hex_nibble(pair[0]) << 4) | hex_nibble(pair[1]))
         .collect()
 }

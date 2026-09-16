@@ -1209,6 +1209,7 @@ impl Drop for OwnedKernelFetchSocket {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn open_owned_kernel_fetch_socket(
     vm: &crate::state::VmHandle,
     target_process_id: &str,
@@ -1770,6 +1771,7 @@ async fn wait_for_owned_fetch_progress(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn dispatch_owned_kernel_http_fetch(
     vm: &crate::state::VmHandle,
     target_process_id: &str,
@@ -1826,6 +1828,7 @@ async fn dispatch_owned_kernel_http_fetch(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn start_owned_kernel_http_fetch_stream(
     vm: &crate::state::VmHandle,
     target_process_id: &str,

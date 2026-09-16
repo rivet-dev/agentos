@@ -1745,6 +1745,8 @@ where
     /// the independent broker. Pumping and registry access are short-lived;
     /// the caller awaits its broker lease after this method releases `&mut
     /// NativeSidecar`.
+    // TODO(clippy-1.98): unused; wire up or remove.
+    #[allow(dead_code)]
     pub(crate) async fn route_owned_process_event_to_broker(
         &mut self,
         ownership: OwnershipScope,
@@ -3774,6 +3776,8 @@ where
         Ok(None)
     }
 
+    // TODO(clippy-1.98): release the VM/engine RefCell borrow before awaiting; holding it can panic with "already borrowed".
+    #[allow(clippy::await_holding_refcell_ref)]
     pub(crate) async fn handle_javascript_sync_rpc_request(
         &mut self,
         vm_id: &str,

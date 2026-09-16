@@ -2909,6 +2909,7 @@ where
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn route_child_process_bridge_event(
         &mut self,
         vm_id: &str,
@@ -3158,7 +3159,7 @@ where
         javascript_services: &mut Vec<OwnedJavascriptEventService>,
         python_services: &mut Vec<OwnedPythonEventService>,
         python_socket_completions: &mut Vec<OwnedPythonSocketCompletionService>,
-        child_bridge_services: &mut Vec<OwnedChildBridgeEventService>,
+        child_bridge_services: &mut [OwnedChildBridgeEventService],
         max_service_claims: usize,
     ) -> Result<bool, SidecarError> {
         let mut detached_process_ids = self
@@ -4279,6 +4280,8 @@ where
         })
     }
 
+    // TODO(clippy-1.98): only reached from tests/service.rs; wire up or remove.
+    #[allow(dead_code)]
     fn resolve_javascript_child_process_with_shebang(
         &mut self,
         vm_id: &str,
@@ -4335,6 +4338,10 @@ where
         Ok(resolved)
     }
 
+    // TODO(clippy-1.98): only reached from tests/service.rs; wire up or remove.
+    #[allow(dead_code)]
+    // TODO(clippy-1.98): release the VM/engine RefCell borrow before awaiting; holding it can panic with "already borrowed".
+    #[allow(clippy::await_holding_refcell_ref)]
     pub(crate) async fn spawn_javascript_child_process(
         &mut self,
         vm_id: &str,
@@ -5428,11 +5435,9 @@ where
                 } else {
                     execution_env.remove("AGENTOS_FORWARD_KERNEL_STDIN_RPC");
                 }
-                let launch_entrypoint = resolve_agentos_package_javascript_launch_entrypoint(
-                    vm,
-                    &mut execution_env,
-                )
-                .unwrap_or_else(|| resolved.entrypoint.clone());
+                let launch_entrypoint =
+                    resolve_agentos_package_javascript_launch_entrypoint(vm, &mut execution_env)
+                        .unwrap_or_else(|| resolved.entrypoint.clone());
                 let inline_code = load_javascript_entrypoint_source(
                     vm,
                     &resolved.host_cwd,
@@ -5879,6 +5884,9 @@ where
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
+    // TODO(clippy-1.98): release the VM/engine RefCell borrow before awaiting; holding it can panic with "already borrowed".
+    #[allow(clippy::await_holding_refcell_ref)]
     pub(crate) fn build_owned_descendant_javascript_child_process_spawn(
         handle: VmHandle,
         vm_id: String,
@@ -7220,6 +7228,7 @@ where
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn poll_owned_descendant_javascript_child_process(
         bridge: &SharedBridge<B>,
         vm: &VmHandle,
@@ -7558,6 +7567,7 @@ where
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn kill_descendant_javascript_child_process_owned(
         bridge: &SharedBridge<B>,
         vm: &VmHandle,
@@ -8465,6 +8475,7 @@ where
         child.requeue_pending_execution_event(PolledExecutionEvent { event, reservation })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn poll_descendant_javascript_child_process_nowait(
         &mut self,
         vm_id: &str,
@@ -8505,6 +8516,9 @@ where
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    // TODO(clippy-1.98): release the VM/engine RefCell borrow before awaiting; holding it can panic with "already borrowed".
+    #[allow(clippy::await_holding_refcell_ref)]
     async fn poll_descendant_javascript_child_process(
         &mut self,
         vm_id: &str,
@@ -8874,11 +8888,9 @@ where
                         parent_is_wasm,
                         should_signal_parent,
                     ) = {
-                        let Some(parent) = Self::descendant_parent_process(
-                            &vm,
-                            process_id,
-                            current_process_path,
-                        ) else {
+                        let Some(parent) =
+                            Self::descendant_parent_process(&vm, process_id, current_process_path)
+                        else {
                             return Ok(Value::Null);
                         };
                         (
