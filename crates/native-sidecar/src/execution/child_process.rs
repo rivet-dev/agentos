@@ -4371,8 +4371,8 @@ where
                 .vms
                 .get_mut(vm_id)
                 .ok_or_else(|| missing_vm_error(vm_id))?;
-            let mut vm = &mut *vm;
-            let current_network_counts = vm_spawn_host_net_resource_counts(&mut vm);
+            let vm = &mut *vm;
+            let current_network_counts = vm_spawn_host_net_resource_counts(vm);
             let (kernel, active_processes) = (&mut vm.kernel, &mut vm.active_processes);
             let parent = active_processes
                 .get_mut(process_id)
@@ -4759,7 +4759,7 @@ where
                     );
                     prepare_javascript_shadow(&mut vm, &resolved, &execution_env)?;
 
-                    let built_reader = build_module_reader(&mut vm, &resolved);
+                    let built_reader = build_module_reader(&vm, &resolved);
                     let guest_reader = built_reader.clone().map(|reader| {
                         Box::new(crate::plugins::host_dir::SessionModuleReader::new(reader))
                             as Box<dyn GuestModuleReader>
@@ -4777,7 +4777,7 @@ where
                         .start_execution_with_module_reader_and_runtime(
                             StartJavascriptExecutionRequest {
                                 guest_runtime: guest_runtime_identity(
-                                    &mut vm,
+                                    &vm,
                                     Some(u64::from(kernel_pid)),
                                     Some(u64::from(parent_kernel_pid)),
                                 ),
@@ -4789,7 +4789,7 @@ where
                                 argv0: request.options.argv0.clone(),
                                 env: execution_env,
                                 cwd: resolved.host_cwd.clone(),
-                                limits: javascript_execution_limits(&mut vm),
+                                limits: javascript_execution_limits(&vm),
                                 inline_code,
                                 wasm_module_bytes: None,
                             },
@@ -4811,9 +4811,9 @@ where
                     ));
                     execution_env.insert(String::from(WASM_STDIO_SYNC_RPC_ENV), String::from("1"));
                     execution_env.insert(String::from(WASM_EXEC_COMMIT_RPC_ENV), String::from("1"));
-                    let wasm_limits = wasm_execution_limits(&mut vm);
+                    let wasm_limits = wasm_execution_limits(&vm);
                     let wasm_guest_runtime = guest_runtime_identity(
-                        &mut vm,
+                        &vm,
                         Some(u64::from(kernel_pid)),
                         Some(u64::from(parent_kernel_pid)),
                     );
@@ -4906,9 +4906,9 @@ where
                                 file_path: python_file_path,
                                 env: execution_env,
                                 cwd: resolved.host_cwd.clone(),
-                                limits: python_execution_limits(&mut vm),
+                                limits: python_execution_limits(&vm),
                                 guest_runtime: guest_runtime_identity(
-                                    &mut vm,
+                                    &vm,
                                     Some(u64::from(kernel_pid)),
                                     Some(u64::from(parent_kernel_pid)),
                                 ),
@@ -5402,7 +5402,7 @@ where
         }
 
         let mut vm = vms.get_mut(vm_id).ok_or_else(|| missing_vm_error(vm_id))?;
-        let mut vm = &mut *vm;
+        let vm = &mut *vm;
         let execution_engines = vm.execution_engines.clone();
         let mut execution_env = resolved.env.clone();
         execution_env.insert(
@@ -5429,18 +5429,18 @@ where
                     execution_env.remove("AGENTOS_FORWARD_KERNEL_STDIN_RPC");
                 }
                 let launch_entrypoint = resolve_agentos_package_javascript_launch_entrypoint(
-                    &mut vm,
+                    vm,
                     &mut execution_env,
                 )
                 .unwrap_or_else(|| resolved.entrypoint.clone());
                 let inline_code = load_javascript_entrypoint_source(
-                    &mut vm,
+                    vm,
                     &resolved.host_cwd,
                     &launch_entrypoint,
                     &execution_env,
                 );
-                prepare_javascript_shadow(&mut vm, &resolved, &execution_env)?;
-                let built_reader = build_module_reader(&mut vm, &resolved);
+                prepare_javascript_shadow(vm, &resolved, &execution_env)?;
+                let built_reader = build_module_reader(vm, &resolved);
                 let guest_reader = built_reader.clone().map(|reader| {
                     Box::new(crate::plugins::host_dir::SessionModuleReader::new(reader))
                         as Box<dyn GuestModuleReader>
@@ -5457,7 +5457,7 @@ where
                     .prepare_execution_with_module_reader_and_runtime(
                         StartJavascriptExecutionRequest {
                             guest_runtime: guest_runtime_identity(
-                                &mut vm,
+                                vm,
                                 Some(u64::from(kernel_pid)),
                                 Some(u64::from(parent_kernel_pid)),
                             ),
@@ -5469,7 +5469,7 @@ where
                             argv0: request.options.argv0.clone(),
                             env: execution_env,
                             cwd: resolved.host_cwd.clone(),
-                            limits: javascript_execution_limits(&mut vm),
+                            limits: javascript_execution_limits(vm),
                             inline_code,
                             wasm_module_bytes: None,
                         },
@@ -5504,9 +5504,9 @@ where
                             .wasm_permission_tier
                             .unwrap_or(WasmPermissionTier::Full),
                     ),
-                    limits: wasm_execution_limits(&mut vm),
+                    limits: wasm_execution_limits(vm),
                     guest_runtime: guest_runtime_identity(
-                        &mut vm,
+                        vm,
                         Some(u64::from(kernel_pid)),
                         Some(u64::from(parent_kernel_pid)),
                     ),
@@ -5571,9 +5571,9 @@ where
                         file_path: python_file_path,
                         env: execution_env,
                         cwd: resolved.host_cwd.clone(),
-                        limits: python_execution_limits(&mut vm),
+                        limits: python_execution_limits(vm),
                         guest_runtime: guest_runtime_identity(
-                            &mut vm,
+                            vm,
                             Some(u64::from(kernel_pid)),
                             Some(u64::from(parent_kernel_pid)),
                         ),
@@ -5940,8 +5940,8 @@ where
             }
             let prepared_host_net_fds = {
                 let mut vm = vms.get_mut(vm_id).ok_or_else(|| missing_vm_error(vm_id))?;
-                let mut vm = &mut *vm;
-                let current_network_counts = vm_spawn_host_net_resource_counts(&mut vm);
+                let vm = &mut *vm;
+                let current_network_counts = vm_spawn_host_net_resource_counts(vm);
                 let (kernel, active_processes) = (&mut vm.kernel, &mut vm.active_processes);
                 let root = active_processes
                     .get_mut(process_id)
@@ -6371,7 +6371,7 @@ where
                         );
                         prepare_javascript_shadow(&mut vm, &resolved, &execution_env)?;
 
-                        let built_reader = build_module_reader(&mut vm, &resolved);
+                        let built_reader = build_module_reader(&vm, &resolved);
                         let guest_reader = built_reader.clone().map(|reader| {
                             Box::new(crate::plugins::host_dir::SessionModuleReader::new(reader))
                                 as Box<dyn GuestModuleReader>
@@ -6389,7 +6389,7 @@ where
                             .start_execution_with_module_reader_and_runtime(
                                 StartJavascriptExecutionRequest {
                                     guest_runtime: guest_runtime_identity(
-                                        &mut vm,
+                                        &vm,
                                         Some(u64::from(kernel_pid)),
                                         Some(u64::from(parent_kernel_pid)),
                                     ),
@@ -6401,7 +6401,7 @@ where
                                     argv0: request.options.argv0.clone(),
                                     env: execution_env,
                                     cwd: resolved.host_cwd.clone(),
-                                    limits: javascript_execution_limits(&mut vm),
+                                    limits: javascript_execution_limits(&vm),
                                     inline_code,
                                     wasm_module_bytes: None,
                                 },
@@ -6423,9 +6423,9 @@ where
                             .insert(String::from(WASM_STDIO_SYNC_RPC_ENV), String::from("1"));
                         execution_env
                             .insert(String::from(WASM_EXEC_COMMIT_RPC_ENV), String::from("1"));
-                        let wasm_limits = wasm_execution_limits(&mut vm);
+                        let wasm_limits = wasm_execution_limits(&vm);
                         let wasm_guest_runtime = guest_runtime_identity(
-                            &mut vm,
+                            &vm,
                             Some(u64::from(kernel_pid)),
                             Some(u64::from(parent_kernel_pid)),
                         );
@@ -6478,9 +6478,9 @@ where
                         } else {
                             python_file_entrypoint(&resolved.entrypoint)
                         };
-                        let python_limits = python_execution_limits(&mut vm);
+                        let python_limits = python_execution_limits(&vm);
                         let python_guest_runtime = guest_runtime_identity(
-                            &mut vm,
+                            &vm,
                             Some(u64::from(kernel_pid)),
                             Some(u64::from(parent_kernel_pid)),
                         );
@@ -8875,7 +8875,7 @@ where
                         should_signal_parent,
                     ) = {
                         let Some(parent) = Self::descendant_parent_process(
-                            &mut vm,
+                            &vm,
                             process_id,
                             current_process_path,
                         ) else {
@@ -9191,8 +9191,8 @@ where
                         let Some(mut vm) = self.vms.get_mut(vm_id) else {
                             return Ok(Value::Null);
                         };
-                        let mut vm = &mut *vm;
-                        let socket_paths = build_javascript_socket_path_context(&mut vm)?;
+                        let vm = &mut *vm;
+                        let socket_paths = build_javascript_socket_path_context(vm)?;
                         let kernel_readiness = Arc::clone(&vm.kernel_socket_readiness);
                         let capabilities = vm.capabilities.clone();
                         let Some(root) = vm.active_processes.get_mut(process_id) else {

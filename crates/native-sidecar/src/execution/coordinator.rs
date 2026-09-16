@@ -802,7 +802,7 @@ where
             reject_unauthorized: None,
         };
         let headers = parse_http_header_collection(&options.headers, "vm.fetch headers")?;
-        let target_process_id = find_kernel_http_listener_process(&mut vm, payload.port);
+        let target_process_id = find_kernel_http_listener_process(&vm, payload.port);
         if let Some(target_process_id) = target_process_id {
             let max_fetch_response_bytes = vm.limits.http.max_fetch_response_bytes;
             let fetch_result = if stream_operation.as_deref() == Some("start") {
@@ -882,7 +882,7 @@ where
                 "binary vm.fetch bodies require a kernel-backed HTTP listener",
             )));
         }
-        let socket_paths = build_javascript_socket_path_context(&mut vm)?;
+        let socket_paths = build_javascript_socket_path_context(&vm)?;
         let kernel_readiness = Arc::clone(&vm.kernel_socket_readiness);
         let capabilities = vm.capabilities.clone();
         let dns = vm.dns.clone();

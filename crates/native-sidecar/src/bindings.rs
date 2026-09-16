@@ -88,7 +88,7 @@ where
                 if let Err(restore_error) =
                     bridge.set_vm_permissions(&input.vm_id, &original_permissions)
                 {
-                    if let Err(rollback_error) = rollback_host_callback_registration(
+                    rollback_host_callback_registration(
                         &input.vm,
                         &bridge,
                         &input.vm_id,
@@ -96,9 +96,7 @@ where
                         original_bindings,
                         original_command_guest_paths,
                         &restore_error,
-                    ) {
-                        return Err(rollback_error);
-                    }
+                    )?;
                     return Err(restore_error);
                 }
                 result

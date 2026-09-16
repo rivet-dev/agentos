@@ -451,7 +451,7 @@ impl OperationTable {
                 reason: *reason,
             });
         }
-        if state.operations.contains_key(&key) {
+        if state.operations.contains_key(key) {
             return Err(RequestAdmissionError::DuplicateRequest { key: key.clone() });
         }
         let ordinary_count = state

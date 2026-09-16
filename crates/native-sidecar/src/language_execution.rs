@@ -1100,15 +1100,12 @@ where
             .map(|vm| {
                 vm.executions
                     .iter()
-                    .filter_map(|(execution_id, execution)| {
-                        (execution.public
+                    .filter(|&(_execution_id, execution)| execution.public
                             && !execution.context
                             && execution.descriptor.state != ExecutionState::Running
                             && execution
                                 .expires_at_ms
-                                .is_some_and(|expires_at| now >= expires_at))
-                        .then(|| (execution_id.clone(), execution.resident_process_id.clone()))
-                    })
+                                .is_some_and(|expires_at| now >= expires_at)).map(|(execution_id, execution)| (execution_id.clone(), execution.resident_process_id.clone()))
                     .take(expired_budget)
                     .collect::<Vec<_>>()
             })
@@ -2504,21 +2501,16 @@ where
             .flat_map(|(vm_id, vm)| {
                 vm.executions
                     .iter()
-                    .filter_map(move |(execution_id, execution)| {
-                        (execution.public
+                    .filter(|&(_execution_id, execution)| execution.public
                             && !execution.context
                             && execution.descriptor.state != ExecutionState::Running
                             && execution
                                 .expires_at_ms
-                                .is_some_and(|expires_at| now >= expires_at))
-                        .then(|| {
-                            (
+                                .is_some_and(|expires_at| now >= expires_at)).map(|(execution_id, execution)| (
                                 vm_id.clone(),
                                 execution_id.clone(),
                                 execution.resident_process_id.clone(),
-                            )
-                        })
-                    })
+                            ))
                     .collect::<Vec<_>>()
             })
             .take(64)
@@ -2588,9 +2580,7 @@ where
             .vms
             .iter()
             .flat_map(|(vm_id, vm)| {
-                vm.executions
-                    .iter()
-                    .filter_map(move |(_, execution)| {
+                vm.executions.values().filter_map(|execution| {
                         (execution.descriptor.state == ExecutionState::Running
                             && execution
                                 .deadline_ms

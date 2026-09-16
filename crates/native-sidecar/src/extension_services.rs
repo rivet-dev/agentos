@@ -1350,221 +1350,6 @@ impl ExtensionServices for RoutedExtensionServices {
     }
 }
 
-#[cfg(test)]
-mod internal_event_lifecycle_tests {
-    use super::*;
-    use crate::ownership_coordinator::OwnershipCoordinatorLimits;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::task::{Context, Poll};
-
-    struct DropCounter(Arc<AtomicUsize>);
-
-    impl Drop for DropCounter {
-        fn drop(&mut self) {
-            self.0.fetch_add(1, Ordering::AcqRel);
-        }
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn write_stdin_uses_the_reserved_progress_service_lane() {
-        let (ordinary_tx, mut ordinary_rx) = mpsc::channel(1);
-        let (progress_tx, mut progress_rx) = mpsc::channel(1);
-        let services = RoutedExtensionServices {
-            commands: ordinary_tx,
-            progress_commands: progress_tx,
-            routed_process_event_notify: Arc::new(Notify::new()),
-            process_event_broker: None,
-            completed_process_events: CompletedProcessEventStore::new(1),
-        };
-        let ownership = OwnershipScope::vm("connection-a", "session-a", "vm-a");
-        let write = services.write_stdin(
-            ownership.clone(),
-            WriteStdinRequest {
-                process_id: String::from("process-a"),
-                chunk: b"cancel\n".to_vec(),
-            },
-        );
-        let service = async {
-            assert!(matches!(
-                ordinary_rx.try_recv(),
-                Err(mpsc::error::TryRecvError::Empty)
-            ));
-            let command = progress_rx
-                .recv()
-                .await
-                .expect("WriteStdin reaches the progress service lane");
-            let ExtensionServiceCommand::WriteStdin {
-                ownership: actual_ownership,
-                request,
-                reply,
-            } = command
-            else {
-                panic!("progress lane received a different service command");
-            };
-            assert_eq!(actual_ownership, ownership);
-            assert_eq!(request.process_id, "process-a");
-            assert_eq!(request.chunk, b"cancel\n");
-            reply
-                .send(Ok(StdinWrittenResponse {
-                    process_id: request.process_id,
-                    accepted_bytes: request.chunk.len() as u64,
-                }))
-                .expect("WriteStdin caller retains its reply waiter");
-        };
-        let (response, ()) = tokio::join!(write, service);
-        let response = response.expect("WriteStdin response");
-        assert_eq!(response.accepted_bytes, 7);
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn saturated_progress_service_lane_returns_a_typed_limit() {
-        let (ordinary_tx, _ordinary_rx) = mpsc::channel(1);
-        let (progress_tx, _progress_rx) = mpsc::channel(1);
-        let services = RoutedExtensionServices {
-            commands: ordinary_tx,
-            progress_commands: progress_tx,
-            routed_process_event_notify: Arc::new(Notify::new()),
-            process_event_broker: None,
-            completed_process_events: CompletedProcessEventStore::new(1),
-        };
-        let ownership = OwnershipScope::vm("connection-a", "session-a", "vm-a");
-        let mut first = services.write_stdin(
-            ownership.clone(),
-            WriteStdinRequest {
-                process_id: String::from("process-a"),
-                chunk: vec![1],
-            },
-        );
-        let waker = std::task::Waker::noop();
-        let mut context = Context::from_waker(waker);
-        assert!(matches!(first.as_mut().poll(&mut context), Poll::Pending));
-
-        let error = services
-            .write_stdin(
-                ownership,
-                WriteStdinRequest {
-                    process_id: String::from("process-a"),
-                    chunk: vec![2],
-                },
-            )
-            .await
-            .expect_err("full progress lane rejects without waiting");
-        assert!(error
-            .to_string()
-            .contains("ERR_AGENTOS_PROGRESS_SERVICE_LIMIT"));
-        assert!(error
-            .to_string()
-            .contains("runtime.protocol.maxProgressFrames"));
-    }
-
-    fn prepared_internal_event(
-        coordinator: &OwnershipCoordinator,
-        ownership: &OwnershipScope,
-        panic_count: Arc<AtomicUsize>,
-        reservation_drop_count: Arc<AtomicUsize>,
-    ) -> PreparedExtensionServiceCommand {
-        let reservation = DropCounter(reservation_drop_count);
-        let prepared = PreparedExtensionServiceCommand {
-            operation: "test_claimed_internal_event",
-            future: Box::pin(async move {
-                drop(reservation);
-                Box::new(|_sidecar: &mut NativeSidecar<LocalBridge>| None)
-                    as ExtensionServiceCompletionMutation
-            }),
-            panic_reply: Box::new(move |_error| {
-                panic_count.fetch_add(1, Ordering::AcqRel);
-            }),
-            admission: None,
-        };
-        with_internal_vm_event_admission(prepared, coordinator, ownership)
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn deferred_claimed_event_stays_owned_until_disposal_cancels_it_once() {
-        let coordinator = OwnershipCoordinator::new(OwnershipCoordinatorLimits {
-            max_connections: 1,
-            max_sessions_per_connection: 1,
-            max_vms_per_session: 1,
-            max_operations_per_entity: 1,
-            max_internal_event_operations_per_entity: 1,
-        });
-        let connection = coordinator
-            .register_connection("connection-a")
-            .expect("register connection");
-        let session = connection.open_session("session-a").expect("open session");
-        session.open_vm("vm-a").expect("open VM");
-        let ownership = OwnershipScope::vm("connection-a", "session-a", "vm-a");
-
-        let active = prepared_internal_event(
-            &coordinator,
-            &ownership,
-            Arc::new(AtomicUsize::new(0)),
-            Arc::new(AtomicUsize::new(0)),
-        )
-        .admit_vm_event_nowait()
-        .expect("admit first claimed event");
-        let VmEventAdmissionResult::Admitted(active) = active else {
-            panic!("first claimed event must fill active capacity");
-        };
-
-        let panic_count = Arc::new(AtomicUsize::new(0));
-        let reservation_drop_count = Arc::new(AtomicUsize::new(0));
-        let deferred = prepared_internal_event(
-            &coordinator,
-            &ownership,
-            Arc::clone(&panic_count),
-            Arc::clone(&reservation_drop_count),
-        )
-        .admit_vm_event_nowait()
-        .expect("track second claimed event");
-        let VmEventAdmissionResult::Deferred(deferred) = deferred else {
-            panic!("second claimed event must defer at the independent bound");
-        };
-        let deferred_cancellation = deferred
-            .admission
-            .as_ref()
-            .expect("deferred admission metadata")
-            .cancellation
-            .clone();
-        assert_eq!(reservation_drop_count.load(Ordering::Acquire), 0);
-
-        let disposal = coordinator
-            .begin_vm_disposal(&ownership, OperationCancellationReason::Explicit)
-            .expect("begin VM disposal");
-        assert_eq!(
-            deferred_cancellation.reason(),
-            Some(OperationCancellationReason::Explicit)
-        );
-        let mut drained = Box::pin(disposal.wait_drained());
-        let waker = std::task::Waker::noop();
-        let mut context = Context::from_waker(waker);
-        assert!(matches!(drained.as_mut().poll(&mut context), Poll::Pending));
-        assert_eq!(reservation_drop_count.load(Ordering::Acquire), 0);
-
-        assert!(
-            deferred.admit_vm_event_nowait().is_err(),
-            "disposal cancellation must reject the exact deferred target"
-        );
-        assert_eq!(panic_count.load(Ordering::Acquire), 1);
-        assert_eq!(
-            reservation_drop_count.load(Ordering::Acquire),
-            1,
-            "the retained source reservation must release exactly once"
-        );
-        assert!(
-            matches!(drained.as_mut().poll(&mut context), Poll::Pending),
-            "the first active event still owns disposal"
-        );
-
-        drop(active);
-        drained.as_mut().await;
-        drop(drained);
-        disposal.complete().expect("complete drained disposal");
-        assert_eq!(panic_count.load(Ordering::Acquire), 1);
-        assert_eq!(reservation_drop_count.load(Ordering::Acquire), 1);
-    }
-}
-
 fn unexpected_service_response(operation: &str, payload: ResponsePayload) -> SidecarError {
     match payload {
         ResponsePayload::Rejected(response) => SidecarError::InvalidState(format!(
@@ -2038,5 +1823,220 @@ pub(crate) fn prepare_extension_service_command(
     match admission_ownership {
         Some(ownership) => with_vm_admission(prepared, coordinator, &ownership),
         None => prepared,
+    }
+}
+
+#[cfg(test)]
+mod internal_event_lifecycle_tests {
+    use super::*;
+    use crate::ownership_coordinator::OwnershipCoordinatorLimits;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::task::{Context, Poll};
+
+    struct DropCounter(Arc<AtomicUsize>);
+
+    impl Drop for DropCounter {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::AcqRel);
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn write_stdin_uses_the_reserved_progress_service_lane() {
+        let (ordinary_tx, mut ordinary_rx) = mpsc::channel(1);
+        let (progress_tx, mut progress_rx) = mpsc::channel(1);
+        let services = RoutedExtensionServices {
+            commands: ordinary_tx,
+            progress_commands: progress_tx,
+            routed_process_event_notify: Arc::new(Notify::new()),
+            process_event_broker: None,
+            completed_process_events: CompletedProcessEventStore::new(1),
+        };
+        let ownership = OwnershipScope::vm("connection-a", "session-a", "vm-a");
+        let write = services.write_stdin(
+            ownership.clone(),
+            WriteStdinRequest {
+                process_id: String::from("process-a"),
+                chunk: b"cancel\n".to_vec(),
+            },
+        );
+        let service = async {
+            assert!(matches!(
+                ordinary_rx.try_recv(),
+                Err(mpsc::error::TryRecvError::Empty)
+            ));
+            let command = progress_rx
+                .recv()
+                .await
+                .expect("WriteStdin reaches the progress service lane");
+            let ExtensionServiceCommand::WriteStdin {
+                ownership: actual_ownership,
+                request,
+                reply,
+            } = command
+            else {
+                panic!("progress lane received a different service command");
+            };
+            assert_eq!(actual_ownership, ownership);
+            assert_eq!(request.process_id, "process-a");
+            assert_eq!(request.chunk, b"cancel\n");
+            reply
+                .send(Ok(StdinWrittenResponse {
+                    process_id: request.process_id,
+                    accepted_bytes: request.chunk.len() as u64,
+                }))
+                .expect("WriteStdin caller retains its reply waiter");
+        };
+        let (response, ()) = tokio::join!(write, service);
+        let response = response.expect("WriteStdin response");
+        assert_eq!(response.accepted_bytes, 7);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn saturated_progress_service_lane_returns_a_typed_limit() {
+        let (ordinary_tx, _ordinary_rx) = mpsc::channel(1);
+        let (progress_tx, _progress_rx) = mpsc::channel(1);
+        let services = RoutedExtensionServices {
+            commands: ordinary_tx,
+            progress_commands: progress_tx,
+            routed_process_event_notify: Arc::new(Notify::new()),
+            process_event_broker: None,
+            completed_process_events: CompletedProcessEventStore::new(1),
+        };
+        let ownership = OwnershipScope::vm("connection-a", "session-a", "vm-a");
+        let mut first = services.write_stdin(
+            ownership.clone(),
+            WriteStdinRequest {
+                process_id: String::from("process-a"),
+                chunk: vec![1],
+            },
+        );
+        let waker = std::task::Waker::noop();
+        let mut context = Context::from_waker(waker);
+        assert!(matches!(first.as_mut().poll(&mut context), Poll::Pending));
+
+        let error = services
+            .write_stdin(
+                ownership,
+                WriteStdinRequest {
+                    process_id: String::from("process-a"),
+                    chunk: vec![2],
+                },
+            )
+            .await
+            .expect_err("full progress lane rejects without waiting");
+        assert!(error
+            .to_string()
+            .contains("ERR_AGENTOS_PROGRESS_SERVICE_LIMIT"));
+        assert!(error
+            .to_string()
+            .contains("runtime.protocol.maxProgressFrames"));
+    }
+
+    fn prepared_internal_event(
+        coordinator: &OwnershipCoordinator,
+        ownership: &OwnershipScope,
+        panic_count: Arc<AtomicUsize>,
+        reservation_drop_count: Arc<AtomicUsize>,
+    ) -> PreparedExtensionServiceCommand {
+        let reservation = DropCounter(reservation_drop_count);
+        let prepared = PreparedExtensionServiceCommand {
+            operation: "test_claimed_internal_event",
+            future: Box::pin(async move {
+                drop(reservation);
+                Box::new(|_sidecar: &mut NativeSidecar<LocalBridge>| None)
+                    as ExtensionServiceCompletionMutation
+            }),
+            panic_reply: Box::new(move |_error| {
+                panic_count.fetch_add(1, Ordering::AcqRel);
+            }),
+            admission: None,
+        };
+        with_internal_vm_event_admission(prepared, coordinator, ownership)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn deferred_claimed_event_stays_owned_until_disposal_cancels_it_once() {
+        let coordinator = OwnershipCoordinator::new(OwnershipCoordinatorLimits {
+            max_connections: 1,
+            max_sessions_per_connection: 1,
+            max_vms_per_session: 1,
+            max_operations_per_entity: 1,
+            max_internal_event_operations_per_entity: 1,
+        });
+        let connection = coordinator
+            .register_connection("connection-a")
+            .expect("register connection");
+        let session = connection.open_session("session-a").expect("open session");
+        session.open_vm("vm-a").expect("open VM");
+        let ownership = OwnershipScope::vm("connection-a", "session-a", "vm-a");
+
+        let active = prepared_internal_event(
+            &coordinator,
+            &ownership,
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(AtomicUsize::new(0)),
+        )
+        .admit_vm_event_nowait()
+        .expect("admit first claimed event");
+        let VmEventAdmissionResult::Admitted(active) = active else {
+            panic!("first claimed event must fill active capacity");
+        };
+
+        let panic_count = Arc::new(AtomicUsize::new(0));
+        let reservation_drop_count = Arc::new(AtomicUsize::new(0));
+        let deferred = prepared_internal_event(
+            &coordinator,
+            &ownership,
+            Arc::clone(&panic_count),
+            Arc::clone(&reservation_drop_count),
+        )
+        .admit_vm_event_nowait()
+        .expect("track second claimed event");
+        let VmEventAdmissionResult::Deferred(deferred) = deferred else {
+            panic!("second claimed event must defer at the independent bound");
+        };
+        let deferred_cancellation = deferred
+            .admission
+            .as_ref()
+            .expect("deferred admission metadata")
+            .cancellation
+            .clone();
+        assert_eq!(reservation_drop_count.load(Ordering::Acquire), 0);
+
+        let disposal = coordinator
+            .begin_vm_disposal(&ownership, OperationCancellationReason::Explicit)
+            .expect("begin VM disposal");
+        assert_eq!(
+            deferred_cancellation.reason(),
+            Some(OperationCancellationReason::Explicit)
+        );
+        let mut drained = Box::pin(disposal.wait_drained());
+        let waker = std::task::Waker::noop();
+        let mut context = Context::from_waker(waker);
+        assert!(matches!(drained.as_mut().poll(&mut context), Poll::Pending));
+        assert_eq!(reservation_drop_count.load(Ordering::Acquire), 0);
+
+        assert!(
+            deferred.admit_vm_event_nowait().is_err(),
+            "disposal cancellation must reject the exact deferred target"
+        );
+        assert_eq!(panic_count.load(Ordering::Acquire), 1);
+        assert_eq!(
+            reservation_drop_count.load(Ordering::Acquire),
+            1,
+            "the retained source reservation must release exactly once"
+        );
+        assert!(
+            matches!(drained.as_mut().poll(&mut context), Poll::Pending),
+            "the first active event still owns disposal"
+        );
+
+        drop(active);
+        drained.as_mut().await;
+        drop(drained);
+        disposal.complete().expect("complete drained disposal");
+        assert_eq!(panic_count.load(Ordering::Acquire), 1);
+        assert_eq!(reservation_drop_count.load(Ordering::Acquire), 1);
     }
 }

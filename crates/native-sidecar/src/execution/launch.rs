@@ -4870,7 +4870,7 @@ where
             let runtime_context = vm.runtime_context.clone();
             let limits = vm.limits.clone();
             let shadow_root = normalize_host_path(&vm.cwd);
-            let host_cwd = resolve_vm_guest_path_to_host(&mut vm, &guest_cwd);
+            let host_cwd = resolve_vm_guest_path_to_host(&vm, &guest_cwd);
             vm.active_processes.insert(
                 payload.process_id.clone(),
                 ActiveProcess::new(
@@ -4920,7 +4920,7 @@ where
         .get(EXECUTION_REQUEST_TTY_ENV)
         .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
     let phase_start = Instant::now();
-    let mut resolved = resolve_execute_request(&mut vm, &payload)?;
+    let mut resolved = resolve_execute_request(&vm, &payload)?;
     stage_agentos_package_command(&mut vm, &mut resolved)?;
     let resolved = resolved;
     record_execute_phase("resolve_execute_request", phase_start.elapsed());
@@ -5025,7 +5025,7 @@ where
             });
             record_execute_phase("js_create_context", phase_start.elapsed());
             let phase_start = Instant::now();
-            let built_reader = build_module_reader(&mut vm, &resolved);
+            let built_reader = build_module_reader(&vm, &resolved);
             let guest_reader = built_reader.clone().map(|reader| {
                 Box::new(crate::plugins::host_dir::SessionModuleReader::new(reader))
                     as Box<dyn GuestModuleReader>
@@ -5037,7 +5037,7 @@ where
             let execution = javascript_engine
                 .start_execution_with_module_reader_and_runtime(
                     StartJavascriptExecutionRequest {
-                        guest_runtime: guest_runtime_identity(&mut vm, None, None),
+                        guest_runtime: guest_runtime_identity(&vm, None, None),
                         vm_id: vm_id.clone(),
                         context_id: context.context_id,
                         argv: std::iter::once(launch_entrypoint.clone())
@@ -5046,7 +5046,7 @@ where
                         argv0: None,
                         env: env.clone(),
                         cwd: resolved.host_cwd.clone(),
-                        limits: javascript_execution_limits(&mut vm),
+                        limits: javascript_execution_limits(&vm),
                         inline_code,
                         wasm_module_bytes: None,
                     },
@@ -5069,8 +5069,8 @@ where
                 python_file_entrypoint(&resolved.entrypoint)
             };
             let runtime_context = vm.runtime_context.clone();
-            let python_limits = python_execution_limits_with_env(&mut vm, &env);
-            let python_guest_runtime = guest_runtime_identity(&mut vm, None, None);
+            let python_limits = python_execution_limits_with_env(&vm, &env);
+            let python_guest_runtime = guest_runtime_identity(&vm, None, None);
             // Pyodide discovery and runtime warmup can await bounded workers.
             // They own only the VM-local Python service, not the mutable VM
             // coordinator, so filesystem/kernel commands can still enter this
@@ -5137,12 +5137,12 @@ where
             (ActiveExecution::Python(execution), env.clone())
         }
         GuestRuntimeKind::WebAssembly => {
-            let wasm_limits = wasm_execution_limits(&mut vm);
+            let wasm_limits = wasm_execution_limits(&vm);
             let wasm_guest_runtime =
-                guest_runtime_identity(&mut vm, Some(u64::from(kernel_pid)), Some(0));
+                guest_runtime_identity(&vm, Some(u64::from(kernel_pid)), Some(0));
             let wasm_permission_tier = resolved.wasm_permission_tier.unwrap_or_else(|| {
                 resolve_wasm_permission_tier(
-                    &mut vm,
+                    &vm,
                     Some(&resolved.command),
                     None,
                     &resolved.entrypoint,

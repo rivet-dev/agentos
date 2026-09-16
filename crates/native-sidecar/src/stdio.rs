@@ -598,8 +598,7 @@ impl ProtocolOutputQueue {
             self.ordinary_capacity
         };
         if lane_len >= capacity {
-            return Err(ProtocolTrySendError::Rejected(io::Error::new(
-                io::ErrorKind::Other,
+            return Err(ProtocolTrySendError::Rejected(io::Error::other(
                 "ERR_AGENTOS_PROTOCOL_OUTPUT_ACCOUNTING: physical output queue filled despite logical reservation",
             )));
         }

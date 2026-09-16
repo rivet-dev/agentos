@@ -2344,7 +2344,7 @@ where
                     connection_id,
                     auth_token: payload.auth_token,
                 };
-                return Ok(Some(PreparedRequest::from_future_with_membership(
+                Ok(Some(PreparedRequest::from_future_with_membership(
                     request,
                     async move {
                         Ok(DispatchResult {
@@ -2353,7 +2353,7 @@ where
                         })
                     },
                     membership,
-                )));
+                )))
             }
             RequestRoute::OpenSession(payload) => {
                 let connection_id = match self.connection_id_for(&request.ownership) {
@@ -2383,7 +2383,7 @@ where
                     placement: payload.placement,
                     metadata: payload.metadata.into_iter().collect(),
                 };
-                return Ok(Some(PreparedRequest::from_future_with_membership(
+                Ok(Some(PreparedRequest::from_future_with_membership(
                     request,
                     async move {
                         Ok(DispatchResult {
@@ -2392,117 +2392,117 @@ where
                         })
                     },
                     membership,
-                )));
+                )))
             }
             RequestRoute::RegisterHostCallbacks(payload) => {
                 let future = register_host_callbacks(self, &request, payload);
-                return Ok(Some(PreparedRequest::from_vm_command(request, future)));
+                Ok(Some(PreparedRequest::from_vm_command(request, future)))
             }
             RequestRoute::GetProcessSnapshot(payload) => {
                 let future = self.get_process_snapshot(&request, payload);
-                return Ok(Some(PreparedRequest::from_vm_command(request, future)));
+                Ok(Some(PreparedRequest::from_vm_command(request, future)))
             }
             RequestRoute::GetResourceSnapshot(payload) => {
                 let future = self.get_resource_snapshot(&request, payload);
-                return Ok(Some(PreparedRequest::from_vm_command(request, future)));
+                Ok(Some(PreparedRequest::from_vm_command(request, future)))
             }
             RequestRoute::GetZombieTimerCount(payload) => {
                 let future = self.get_zombie_timer_count(&request, payload);
-                return Ok(Some(PreparedRequest::from_vm_command(request, future)));
+                Ok(Some(PreparedRequest::from_vm_command(request, future)))
             }
             RequestRoute::ProvidedCommands(payload) => {
                 let future = self.provided_commands(&request, payload);
-                return Ok(Some(PreparedRequest::from_vm_command(request, future)));
+                Ok(Some(PreparedRequest::from_vm_command(request, future)))
             }
             RequestRoute::ListMounts(payload) => {
                 let future = self.list_mounts(&request, payload);
-                return Ok(Some(PreparedRequest::from_vm_command(request, future)));
+                Ok(Some(PreparedRequest::from_vm_command(request, future)))
             }
             RequestRoute::BootstrapRootFilesystem(payload) => {
                 let future = self.bootstrap_root_filesystem(&request, payload.entries);
-                return Ok(Some(PreparedRequest::from_vm_command(request, future)));
+                Ok(Some(PreparedRequest::from_vm_command(request, future)))
             }
             RequestRoute::ConfigureVm(payload) => {
                 let future = self.configure_vm(&request, payload);
-                return Ok(Some(PreparedRequest::from_vm_command(request, future)));
+                Ok(Some(PreparedRequest::from_vm_command(request, future)))
             }
             RequestRoute::CreateLayer(payload) => {
                 let future = self.create_layer(&request, payload);
-                return Ok(Some(PreparedRequest::from_vm_command(request, future)));
+                Ok(Some(PreparedRequest::from_vm_command(request, future)))
             }
             RequestRoute::SealLayer(payload) => {
                 let future = self.seal_layer(&request, payload);
-                return Ok(Some(PreparedRequest::from_vm_command(request, future)));
+                Ok(Some(PreparedRequest::from_vm_command(request, future)))
             }
             RequestRoute::ImportSnapshot(payload) => {
                 let future = self.import_snapshot(&request, payload);
-                return Ok(Some(PreparedRequest::from_vm_command(request, future)));
+                Ok(Some(PreparedRequest::from_vm_command(request, future)))
             }
             RequestRoute::ExportSnapshot(payload) => {
                 let future = self.export_snapshot(&request, payload);
-                return Ok(Some(PreparedRequest::from_vm_command(request, future)));
+                Ok(Some(PreparedRequest::from_vm_command(request, future)))
             }
             RequestRoute::CreateOverlay(payload) => {
                 let future = self.create_overlay(&request, payload);
-                return Ok(Some(PreparedRequest::from_vm_command(request, future)));
+                Ok(Some(PreparedRequest::from_vm_command(request, future)))
             }
             RequestRoute::SnapshotRootFilesystem(payload) => {
                 let future = self.snapshot_root_filesystem(&request, payload);
-                return Ok(Some(PreparedRequest::from_vm_command(request, future)));
+                Ok(Some(PreparedRequest::from_vm_command(request, future)))
             }
             RequestRoute::LinkPackage(payload) => {
                 let future = self.link_package(&request, payload);
-                return Ok(Some(PreparedRequest::from_vm_command(request, future)));
+                Ok(Some(PreparedRequest::from_vm_command(request, future)))
             }
             RequestRoute::Execute(payload) => {
                 let future = self.execute(&request, payload);
-                return Ok(Some(PreparedRequest::from_future(request, future)));
+                Ok(Some(PreparedRequest::from_future(request, future)))
             }
             RequestRoute::ExecutionOperation(payload) => {
                 let effects = self.request_completion_effects(&request);
                 let future = self.execute_language_operation(&request, payload, effects.clone());
-                return Ok(Some(PreparedRequest::from_future_with_effects(
+                Ok(Some(PreparedRequest::from_future_with_effects(
                     request, future, effects,
-                )));
+                )))
             }
             RequestRoute::ExecutionLifecycle(payload) => {
                 let effects = self.request_completion_effects(&request);
                 let future = self.handle_execution_lifecycle(&request, payload, effects.clone());
-                return Ok(Some(PreparedRequest::from_future_with_effects(
+                Ok(Some(PreparedRequest::from_future_with_effects(
                     request, future, effects,
-                )));
+                )))
             }
             RequestRoute::WriteStdin(payload) => {
                 let future = self.write_stdin(&request, payload);
-                return Ok(Some(PreparedRequest::from_vm_command(request, future)));
+                Ok(Some(PreparedRequest::from_vm_command(request, future)))
             }
             RequestRoute::ResizePty(payload) => {
                 let future = self.resize_pty(&request, payload);
-                return Ok(Some(PreparedRequest::from_vm_command(request, future)));
+                Ok(Some(PreparedRequest::from_vm_command(request, future)))
             }
             RequestRoute::CloseStdin(payload) => {
                 let future = self.close_stdin(&request, payload);
-                return Ok(Some(PreparedRequest::from_vm_command(request, future)));
+                Ok(Some(PreparedRequest::from_vm_command(request, future)))
             }
             RequestRoute::KillProcess(payload) => {
                 let future = self.kill_process(&request, payload);
-                return Ok(Some(PreparedRequest::from_vm_command(request, future)));
+                Ok(Some(PreparedRequest::from_vm_command(request, future)))
             }
             RequestRoute::FindListener(payload) => {
                 let future = self.find_listener(&request, payload);
-                return Ok(Some(PreparedRequest::from_vm_command(request, future)));
+                Ok(Some(PreparedRequest::from_vm_command(request, future)))
             }
             RequestRoute::FindBoundUdp(payload) => {
                 let future = self.find_bound_udp(&request, payload);
-                return Ok(Some(PreparedRequest::from_vm_command(request, future)));
+                Ok(Some(PreparedRequest::from_vm_command(request, future)))
             }
             RequestRoute::VmFetch(payload) => {
                 let future = self.vm_fetch(&request, payload);
-                return Ok(Some(PreparedRequest::from_future(request, future)));
+                Ok(Some(PreparedRequest::from_future(request, future)))
             }
             RequestRoute::GetSignalState(payload) => {
                 let future = self.get_signal_state(&request, payload);
-                return Ok(Some(PreparedRequest::from_vm_command(request, future)));
+                Ok(Some(PreparedRequest::from_vm_command(request, future)))
             }
             RequestRoute::GuestFilesystemCall(payload) => {
                 let (connection_id, session_id, vm_id) = match self.vm_scope_for(&request.ownership)
@@ -2522,7 +2522,7 @@ where
                     )));
                 };
                 let response_request = request.clone();
-                return Ok(Some(PreparedRequest::from_vm_command(
+                Ok(Some(PreparedRequest::from_vm_command(
                     request,
                     async move {
                         let response = handle.try_command("guest filesystem call", |vm| {
@@ -2536,7 +2536,7 @@ where
                             events: Vec::new(),
                         })
                     },
-                )));
+                )))
             }
             RequestRoute::GuestKernelCall(payload) => {
                 let (connection_id, session_id, vm_id) = match self.vm_scope_for(&request.ownership)
@@ -2556,7 +2556,7 @@ where
                     )));
                 };
                 let response_request = request.clone();
-                return Ok(Some(PreparedRequest::from_vm_command(
+                Ok(Some(PreparedRequest::from_vm_command(
                     request,
                     async move {
                         let response = handle.try_command("guest kernel call", |vm| {
@@ -2591,19 +2591,19 @@ where
                             events: Vec::new(),
                         })
                     },
-                )));
+                )))
             }
             RequestRoute::UnsupportedHostCallbackDirection => {
                 let response_request = request.clone();
-                return Ok(Some(PreparedRequest::from_future(request, async move {
+                Ok(Some(PreparedRequest::from_future(request, async move {
                     Ok(unsupported_host_callback_direction_dispatch(
                         &response_request,
                     ))
-                })));
+                })))
             }
             RequestRoute::Ext(envelope) => {
                 let response_request = request.clone();
-                return Ok(Some(PreparedRequest::from_future(request, async move {
+                Ok(Some(PreparedRequest::from_future(request, async move {
                     Ok(DispatchResult {
                         response: shared_reject(
                             &response_request,
@@ -2615,7 +2615,7 @@ where
                         ),
                         events: Vec::new(),
                     })
-                })));
+                })))
             }
             RequestRoute::CreateVm(_) | RequestRoute::DisposeVm(_) => {
                 unreachable!("VM creation and disposal use dedicated prepared routes")
@@ -4140,7 +4140,7 @@ where
                         );
                         return Ok(());
                     };
-                    let socket_paths = build_javascript_socket_path_context(&mut vm)?;
+                    let socket_paths = build_javascript_socket_path_context(&vm)?;
                     let target_is_current =
                         [JavascriptSocketFamily::Ipv4, JavascriptSocketFamily::Ipv6]
                             .iter()
@@ -4231,7 +4231,7 @@ where
                         );
                         return Ok(());
                     };
-                    let socket_paths = build_javascript_socket_path_context(&mut vm)?;
+                    let socket_paths = build_javascript_socket_path_context(&vm)?;
                     let VmState {
                         dns,
                         kernel,

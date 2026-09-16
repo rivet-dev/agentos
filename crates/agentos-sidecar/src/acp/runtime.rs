@@ -1512,7 +1512,7 @@ pub(super) async fn handle_inbound_request(
                 message,
                 &id,
                 method,
-                cancellation.as_deref_mut(),
+                cancellation,
             )
             .await?
         }
@@ -1535,7 +1535,7 @@ pub(super) async fn forward_inbound_host_request(
     message: &Value,
     id: &Value,
     method: &str,
-    mut cancellation: Option<&mut tokio::sync::watch::Receiver<bool>>,
+    cancellation: Option<&mut tokio::sync::watch::Receiver<bool>>,
 ) -> Result<Value, SidecarError> {
     let callback = AcpCallback::AcpHostRequestCallback(AcpHostRequestCallback {
         session_id: session_id.to_string(),
@@ -1551,7 +1551,7 @@ pub(super) async fn forward_inbound_host_request(
         ACP_MACHINE_HOST_CALLBACK_TIMEOUT,
     );
     tokio::pin!(callback);
-    let response = if let Some(cancellation) = cancellation.as_deref_mut() {
+    let response = if let Some(cancellation) = cancellation {
         if *cancellation.borrow() {
             return Ok(callback_cancelled_response(id.clone(), method));
         }
