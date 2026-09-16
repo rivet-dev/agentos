@@ -239,3 +239,108 @@ test("published Claude Agent ACP prompts a second process while the first remain
 		await mock.stop();
 	}
 });
+
+async function systemPromptForPrompt(extraEnv, promptText) {
+	const mock = new LLMock({ port: 0, logLevel: "silent" });
+	mock.addFixtures([
+		{ match: { userMessage: promptText }, response: { content: "ok" } },
+	]);
+	const baseUrl = await mock.start();
+	try {
+		await withAdapter(
+			async (connection) => {
+				await connection.initialize({
+					protocolVersion: PROTOCOL_VERSION,
+					clientCapabilities: {},
+					clientInfo: { name: "agentos-test", version: "0.0.1" },
+				});
+				const session = await connection.newSession({
+					cwd: packageDir,
+					mcpServers: [],
+				});
+				const result = await connection.prompt({
+					sessionId: session.sessionId,
+					prompt: [{ type: "text", text: promptText }],
+				});
+				assert.equal(result.stopReason, "end_turn");
+			},
+			{ ANTHROPIC_BASE_URL: baseUrl, ...extraEnv },
+		);
+		const request = mock.getRequests().find((entry) =>
+			entry.body?.messages?.some(
+				(message) =>
+					message.role === "user" &&
+					JSON.stringify(message.content).includes(promptText),
+			),
+		);
+		assert.ok(request, "Claude should send the prompt to the model");
+		return request.body.messages
+			.filter((message) => message.role === "system")
+			.map((message) => message.content)
+			.join("\n");
+	} finally {
+		await mock.stop();
+	}
+}
+
+// The claude_code preset always describes Claude Code's CLI tooling.
+const PRESET_MARKER = "TodoWrite";
+
+test("Claude Agent ACP appends ACP_APPEND_SYSTEM_PROMPT to the claude_code preset by default", async () => {
+	const system = await systemPromptForPrompt(
+		{ ACP_APPEND_SYSTEM_PROMPT: "agentos-append-marker-1833" },
+		"Reply with append-mode",
+	);
+	assert.ok(
+		system.includes("agentos-append-marker-1833"),
+		"the agentOS system prompt should reach the model",
+	);
+	assert.ok(
+		system.includes(PRESET_MARKER),
+		"append mode should keep the claude_code preset",
+	);
+});
+
+test("Claude Agent ACP replaces the claude_code preset when ACP_SYSTEM_PROMPT_MODE=replace", async () => {
+	const system = await systemPromptForPrompt(
+		{
+			ACP_APPEND_SYSTEM_PROMPT: "agentos-replace-marker-1833",
+			ACP_SYSTEM_PROMPT_MODE: "replace",
+		},
+		"Reply with replace-mode",
+	);
+	assert.ok(
+		system.includes("agentos-replace-marker-1833"),
+		"the caller's system prompt should reach the model",
+	);
+	assert.ok(
+		!system.includes(PRESET_MARKER),
+		"replace mode should drop the claude_code preset",
+	);
+});
+
+test("Claude Agent ACP rejects an invalid ACP_SYSTEM_PROMPT_MODE at startup", async () => {
+	const child = spawn(process.execPath, [adapterPath], {
+		cwd: packageDir,
+		env: {
+			...process.env,
+			CLAUDE_CODE_EXECUTABLE: claudePath,
+			ANTHROPIC_API_KEY: "agentos-test-key",
+			DISABLE_TELEMETRY: "1",
+			ACP_SYSTEM_PROMPT_MODE: "prepend",
+		},
+		stdio: ["pipe", "pipe", "pipe"],
+	});
+	let stderr = "";
+	child.stderr.setEncoding("utf8");
+	child.stderr.on("data", (chunk) => {
+		stderr += chunk;
+	});
+	const timer = setTimeout(() => child.kill("SIGKILL"), 10_000);
+	const [code] = await once(child, "exit");
+	clearTimeout(timer);
+	assert.notEqual(code, 0, "adapter should exit with a failure status");
+	assert.equal(child.signalCode, null, `adapter should exit on its own: ${stderr}`);
+	assert.match(stderr, /ACP_SYSTEM_PROMPT_MODE/);
+	assert.match(stderr, /prepend/);
+});

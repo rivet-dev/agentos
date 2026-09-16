@@ -27,6 +27,23 @@ Set the relevant variable(s) on the session's `env`, sourced from your server's 
 
 See [Models & Credentials](/agentos/docs/models-and-credentials), and Claude Code's [environment variables](https://code.claude.com/docs/en/env-vars) for the full list.
 
+## System prompt
+
+By default, the agentOS [system prompt](/agentos/docs/system-prompt), including your `additionalInstructions`, is appended to Claude Code's built-in `claude_code` system prompt.
+
+To use only your own system prompt, set `ACP_SYSTEM_PROMPT_MODE=replace` on the session's `env`. The built-in Claude Code prompt is dropped, and Claude receives the assembled agentOS prompt instead. Use `skipOsInstructions: true` with `additionalInstructions` to send only your text.
+
+```ts
+await agent.sessions.open({
+	agent: "claude",
+	env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY!, ACP_SYSTEM_PROMPT_MODE: "replace" },
+	skipOsInstructions: true,
+	additionalInstructions: "You are a support assistant for Acme's billing API.",
+});
+```
+
+`ACP_SYSTEM_PROMPT_MODE` accepts `append` (the default) or `replace`. Any other value makes the session fail to start with an error that names the variable. `replace` also needs a non-empty prompt, so don't combine it with `skipOsInstructions` unless you set `additionalInstructions`.
+
 ## Skills
 
 Claude Code discovers [agent skills](https://docs.claude.com/en/docs/claude-code/skills) from `SKILL.md` files under its skills directory. Write the skill into the VM before creating a session and Claude Code loads it automatically.

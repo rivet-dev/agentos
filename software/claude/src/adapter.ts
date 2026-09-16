@@ -136,7 +136,42 @@ async function addEffortOption<
 	return { ...response, configOptions };
 }
 
+const SYSTEM_PROMPT_MODE_ENV = "ACP_SYSTEM_PROMPT_MODE";
+const SYSTEM_PROMPT_MODES = ["append", "replace"] as const;
+type SystemPromptMode = (typeof SYSTEM_PROMPT_MODES)[number];
+
+/**
+ * Translates the adapter-neutral agentOS prompt contract into the upstream
+ * adapter's `_meta.systemPrompt`: appended to the `claude_code` preset by
+ * default, or replacing the preset when ACP_SYSTEM_PROMPT_MODE=replace.
+ */
+function systemPromptFromEnvironment(): string | { append: string } | undefined {
+	const rawMode = process.env[SYSTEM_PROMPT_MODE_ENV];
+	const mode = (rawMode === undefined || rawMode === "" ? "append" : rawMode) as SystemPromptMode;
+	if (!SYSTEM_PROMPT_MODES.includes(mode)) {
+		throw new Error(
+			`Invalid ${SYSTEM_PROMPT_MODE_ENV} value "${rawMode}": expected one of ${SYSTEM_PROMPT_MODES.join(", ")}`,
+		);
+	}
+	const prompt = process.env.ACP_APPEND_SYSTEM_PROMPT ?? "";
+	if (mode === "replace") {
+		if (!prompt) {
+			throw new Error(
+				`${SYSTEM_PROMPT_MODE_ENV}=replace requires a non-empty system prompt; provide additionalInstructions or leave skipOsInstructions unset`,
+			);
+		}
+		return prompt;
+	}
+	return prompt ? { append: prompt } : undefined;
+}
+
+const environmentSystemPrompt = systemPromptFromEnvironment();
+
 type AgentPrototype = {
+	createSession(
+		params: Record<string, unknown>,
+		creationOpts?: Record<string, unknown>,
+	): Promise<Record<string, unknown>>;
 	newSession(params: Record<string, unknown>): Promise<Record<string, unknown>>;
 	unstable_resumeSession(
 		params: Record<string, unknown>,
@@ -150,6 +185,20 @@ const prototype = ClaudeAcpAgent.prototype as unknown as AgentPrototype;
 const upstreamNewSession = prototype.newSession;
 const upstreamResumeSession = prototype.unstable_resumeSession;
 const upstreamSetConfigOption = prototype.setSessionConfigOption;
+const upstreamCreateSession = prototype.createSession;
+
+// new, fork, resume, and load all create the SDK query through createSession.
+prototype.createSession = async function (params, creationOpts) {
+	const meta = (params._meta ?? {}) as Record<string, unknown>;
+	if (environmentSystemPrompt === undefined || meta.systemPrompt !== undefined) {
+		return await upstreamCreateSession.call(this, params, creationOpts);
+	}
+	return await upstreamCreateSession.call(
+		this,
+		{ ...params, _meta: { ...meta, systemPrompt: environmentSystemPrompt } },
+		creationOpts,
+	);
+};
 
 prototype.newSession = async function (params) {
 	const response = await upstreamNewSession.call(this, params);
