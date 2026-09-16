@@ -983,7 +983,21 @@ impl HostDirFilesystem {
         mtime: VirtualUtimeSpec,
         follow_symlinks: bool,
     ) -> VfsResult<()> {
-        let (parent_dir, _, name, normalized) = self.split_parent(path, false)?;
+        // The mount root has no final component, so `split_parent` would reject
+        // it with EINVAL. It is always a directory (never a symlink), so anchor
+        // on the root itself and operate on ".". This keeps `touch <mount>` and
+        // the mount table's atime update after listing the mount root working.
+        let (normalized_root, root_relative) = self.relative_virtual_path(path);
+        let (parent_dir, name, normalized) = if root_relative.file_name().is_none() {
+            (
+                self.open_dir_anchor_beneath(Path::new("."))?,
+                std::ffi::OsString::from("."),
+                normalized_root,
+            )
+        } else {
+            let (parent_dir, _, name, normalized) = self.split_parent(path, false)?;
+            (parent_dir, name, normalized)
+        };
         if follow_symlinks {
             // `utimes` (follow) rejects a symlink leaf, matching `chmod`/`chown`;
             // the richer `lutimes` path (`follow_symlinks == false`) instead
