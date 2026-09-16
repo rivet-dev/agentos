@@ -231,9 +231,12 @@ pub(crate) fn deferred_kernel_wait_request_for_process(
     if process.mapped_host_fd(fd).is_some() {
         return Ok(None);
     }
-    let stat = kernel
-        .fd_stat(EXECUTION_DRIVER_NAME, process.kernel_pid, fd)
-        .map_err(kernel_error)?;
+    // A descriptor the kernel cannot stat is not a pipe. Leave it to the
+    // normal `fs.write*` handler, which answers the guest with the errno;
+    // failing this pre-check would leave the sync RPC unanswered.
+    let Ok(stat) = kernel.fd_stat(EXECUTION_DRIVER_NAME, process.kernel_pid, fd) else {
+        return Ok(None);
+    };
     if stat.filetype != agentos_kernel::fd_table::FILETYPE_PIPE {
         return Ok(None);
     }

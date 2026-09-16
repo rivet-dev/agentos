@@ -8182,9 +8182,13 @@ where
         }
         if request.method == "process.fd_read" {
             let fd = javascript_sync_rpc_arg_u32(&request.args, 0, "fd_read fd")?;
-            let stat = kernel
-                .fd_stat(EXECUTION_DRIVER_NAME, child.kernel_pid, fd)
-                .map_err(kernel_error)?;
+            // A descriptor the kernel cannot stat (for example a closed fd or
+            // a process-local mapped host fd) is never parked here. The normal
+            // RPC handler answers the guest with the errno; failing this
+            // pre-check would leave the sync RPC unanswered.
+            let Ok(stat) = kernel.fd_stat(EXECUTION_DRIVER_NAME, child.kernel_pid, fd) else {
+                return Ok(false);
+            };
             if matches!(
                 stat.filetype,
                 agentos_kernel::fd_table::FILETYPE_REGULAR_FILE
@@ -10698,6 +10702,56 @@ mod child_event_claim_tests {
                     .is_some_and(|handlers| handlers.contains_key(&(libc::SIGUSR2 as u32))));
             })
             .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn descendant_kernel_wait_pre_checks_leave_unknown_fds_to_the_normal_handler() {
+        let (mut sidecar, vm_id) =
+            sidecar_with_test_vm(agentos_runtime::DEFAULT_PROTOCOL_MAX_PROCESS_EVENTS).await;
+        let root_id = String::from("unknown-fd-root");
+        let child_id = String::from("unknown-fd-child");
+        {
+            let mut vm = sidecar.vms.get_mut(&vm_id).expect("unknown fd VM");
+            let mut root = binding_process(&mut vm, "unknown fd root", None);
+            let child = binding_process(&mut vm, "unknown fd child", Some(root.kernel_pid));
+            root.child_processes.insert(child_id.clone(), child);
+            vm.active_processes.insert(root_id.clone(), root);
+        }
+        let unknown_fd = 987_654;
+
+        // The deferral pre-checks must not turn an unknown fd into a sidecar
+        // error: that error escapes without answering the guest's sync RPC.
+        let write = JavascriptSyncRpcRequest {
+            id: 1,
+            method: String::from("fs.writeSync"),
+            args: vec![json!(unknown_fd), json!("x")],
+            raw_bytes_args: Default::default(),
+        };
+        {
+            let vm = sidecar.vms.get(&vm_id).expect("unknown fd VM");
+            let child = vm
+                .active_processes
+                .get(&root_id)
+                .and_then(|root| root.child_processes.get(&child_id))
+                .expect("unknown fd child");
+            let deferred = deferred_kernel_wait_request_for_process(&write, &vm.kernel, child)
+                .expect("fs.writeSync pre-check must not fail for an unknown fd");
+            assert!(deferred.is_none());
+        }
+
+        let read = JavascriptSyncRpcRequest {
+            id: 2,
+            method: String::from("process.fd_read"),
+            args: vec![json!(unknown_fd), json!(16), json!(0)],
+            raw_bytes_args: Default::default(),
+        };
+        let handled = sidecar
+            .service_child_kernel_wait_rpc(&vm_id, &root_id, &[], &child_id, &read)
+            .expect("process.fd_read pre-check must not fail for an unknown fd");
+        assert!(
+            !handled,
+            "an unknown fd must fall through to the normal RPC handler"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
