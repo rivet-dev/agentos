@@ -4201,7 +4201,14 @@ where
             });
         }
 
-        if !exact_exec_path && is_python_runtime_command(&command) {
+        // posix_spawnp (guest shells, pipelines) execs the `/bin/python3` kernel
+        // command stub by exact path; route it to Pyodide like the bare name.
+        let resolves_to_registered_python_runtime = exact_exec_path
+            && registered_command_name_for_path(vm, &command)
+                .is_some_and(|name| is_python_runtime_command(&name));
+        if (!exact_exec_path || resolves_to_registered_python_runtime)
+            && is_python_runtime_command(&command)
+        {
             return resolve_python_command_execution(
                 vm,
                 &command,

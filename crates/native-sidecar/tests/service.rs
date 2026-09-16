@@ -13540,6 +13540,87 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
             }
         }
 
+        fn posix_spawnp_routes_python_runtime_stubs_to_pyodide() {
+            assert_node_available();
+
+            let mut sidecar = create_test_sidecar();
+            let (connection_id, session_id) =
+                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
+            let vm_id = create_vm(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                PermissionsPolicy::allow_all(),
+            )
+            .expect("create vm");
+            let host_cwd = sidecar.vms.get(&vm_id).expect("created vm").cwd.clone();
+            let parent_id = "posix-spawnp-python-parent";
+            insert_fake_javascript_parent_process(&mut sidecar, &vm_id, &host_cwd, parent_id);
+
+            // A guest shell (`sh -c "python3 ..."`, pipelines) spawns through
+            // posix_spawnp, which resolves the bare name to the `/bin/<name>`
+            // kernel command stub and then execs that exact path. The stub must
+            // still route to the embedded Pyodide runtime.
+            let requests = [
+                posix_spawnp_request("python3", "/bin", &["-c", "print(40 + 2)"]),
+                posix_spawnp_request("python", "/bin", &["-c", "print(40 + 2)"]),
+                crate::protocol::JavascriptChildProcessSpawnRequest {
+                    command: String::from("/bin/python3"),
+                    args: vec![String::from("-c"), String::from("print(40 + 2)")],
+                    options: crate::protocol::JavascriptChildProcessSpawnOptions {
+                        spawn_exact_path: true,
+                        ..Default::default()
+                    },
+                },
+            ];
+            for request in requests {
+                let label = format!(
+                    "{} (exact={})",
+                    request.command, request.options.spawn_exact_path
+                );
+                let spawned = spawn_javascript_child_process_for_test(
+                    &mut sidecar,
+                    &vm_id,
+                    parent_id,
+                    request,
+                )
+                .unwrap_or_else(|error| panic!("{label} spawn failed: {error}"));
+                let child_id = spawned["childId"]
+                    .as_str()
+                    .unwrap_or_else(|| panic!("{label} spawn returned no child id: {spawned}"))
+                    .to_owned();
+                assert_eq!(
+                    sidecar
+                        .vms
+                        .get(&vm_id)
+                        .expect("created vm")
+                        .active_processes
+                        .get(parent_id)
+                        .expect("python parent")
+                        .child_processes
+                        .get(&child_id)
+                        .expect("python child")
+                        .runtime,
+                    GuestRuntimeKind::Python,
+                    "{label} must run on the Python runtime"
+                );
+
+                assert_eq!(
+                    spawned["command"],
+                    json!("python"),
+                    "{label} spawn: {spawned}"
+                );
+                assert_eq!(
+                    spawned["args"].as_array().map(|args| &args[1..]),
+                    Some(&[json!("-c"), json!("print(40 + 2)")][..]),
+                    "{label} spawn: {spawned}"
+                );
+                sidecar
+                    .kill_javascript_child_process(&vm_id, parent_id, &child_id, "SIGKILL")
+                    .unwrap_or_else(|error| panic!("{label} kill failed: {error}"));
+            }
+        }
+
         fn repeated_malformed_wasm_spawns_restore_top_level_and_nested_baselines() {
             let mut sidecar = create_test_sidecar();
             let (connection_id, session_id) =
@@ -25810,6 +25891,11 @@ try {
         #[test]
         fn service_posix_spawnp_path_and_recursive_shebang_match_linux() {
             posix_spawnp_path_and_recursive_shebang_match_linux();
+        }
+
+        #[test]
+        fn service_posix_spawnp_routes_python_runtime_stubs_to_pyodide() {
+            posix_spawnp_routes_python_runtime_stubs_to_pyodide();
         }
 
         #[test]
