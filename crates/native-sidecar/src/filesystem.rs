@@ -3156,8 +3156,20 @@ fn mirror_kernel_path_to_process_shadow(
     let normalized_guest_path = normalize_path(guest_path);
     // Mounted host paths are already updated by the mapped-runtime write path.
     // Mirroring them would read the complete kernel file after each chunk,
-    // making sequential writes quadratic.
-    if host_path_from_runtime_guest_mappings(&process.env, &normalized_guest_path).is_some() {
+    // making sequential writes quadratic. Ask the same resolver the write path
+    // uses: JavaScript skips the root shadow mapping and writes the kernel, so
+    // a raw mapping match here would leave the shadow stale and the next
+    // shadow-to-kernel reconciliation would revert the guest write (#1961).
+    if mapped_runtime_host_path(kernel, process, &normalized_guest_path, false).is_some() {
+        return Ok(());
+    }
+    // Shadow reconciliation never imports paths below non-root kernel mounts,
+    // so a shadow copy there would be dead weight on every streamed chunk.
+    if kernel.mounted_filesystems().iter().any(|mount| {
+        mount.path != "/"
+            && (normalized_guest_path == mount.path
+                || normalized_guest_path.starts_with(&format!("{}/", mount.path)))
+    }) {
         return Ok(());
     }
     let Some(shadow_path) = process_shadow_host_path(process, &normalized_guest_path) else {
