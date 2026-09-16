@@ -5,7 +5,8 @@
 //! all guest HTTP, including agent SDK -> LLM traffic).
 mod common;
 use agentos_client::config::{AgentOsConfig, PatternPermissions, PermissionMode, Permissions};
-use agentos_client::ExecOptions;
+use agentos_client::language_execution::{ExecutionOutputOptions, OutputCapture};
+use agentos_client::LanguageExecutionOptions;
 use std::io::Write;
 use std::time::Duration;
 
@@ -45,17 +46,32 @@ async fn guest_fetch_reaches_host_loopback() {
     let args = vec![String::from("-e"), script];
     let result = tokio::time::timeout(
         Duration::from_secs(15),
-        os.exec_argv("node", &args, ExecOptions::default()),
+        os.exec_argv(
+            "node",
+            args,
+            LanguageExecutionOptions {
+                output: ExecutionOutputOptions {
+                    capture: OutputCapture::All,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ),
     )
     .await
     .expect("guest fetch timed out")
     .expect("exec");
     println!(
-        "exit={} stdout={:?} stderr={:?}",
+        "exit={:?} stdout={:?} stderr={:?}",
         result.exit_code, result.stdout, result.stderr
     );
     assert!(
-        result.stdout.contains("PROBE_PONG"),
+        result
+            .stdout
+            .as_deref()
+            .unwrap_or_default()
+            .windows(b"PROBE_PONG".len())
+            .any(|window| window == b"PROBE_PONG"),
         "stdout={:?} stderr={:?}",
         result.stdout,
         result.stderr

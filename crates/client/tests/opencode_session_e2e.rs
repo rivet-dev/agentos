@@ -18,10 +18,21 @@ use agentos_client::config::{
 };
 use agentos_client::fs::MkdirOptions;
 use agentos_client::{
-    AgentOs, ContentBlock, ExecOptions, ListSessionsInput, OpenSessionInput, PromptInput,
+    AgentOs, ContentBlock, LanguageExecutionOptions, ListSessionsInput, OpenSessionInput,
+    PromptInput,
 };
 
 const LLMOCK_SENTINEL: &str = "PONG_FROM_LLMOCK";
+
+fn captured_execution_options() -> LanguageExecutionOptions {
+    LanguageExecutionOptions {
+        output: agentos_client::language_execution::ExecutionOutputOptions {
+            capture: agentos_client::language_execution::OutputCapture::All,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -167,7 +178,7 @@ async fn packed_opencode_initializes_and_creates_session() {
     let temp_dir_probe = os
         .exec_argv(
             "node",
-            &[
+            vec![
                 "-e".to_string(),
                 r#"(async () => {
 const { mkdtemp } = require("node:fs");
@@ -185,22 +196,26 @@ console.log(JSON.stringify({
 })();"#
                     .to_string(),
             ],
-            ExecOptions::default(),
+            captured_execution_options(),
         )
         .await
         .expect("run Node fs.mkdtemp compatibility probe");
     assert_eq!(
-        temp_dir_probe.exit_code, 0,
+        temp_dir_probe.exit_code,
+        Some(0),
         "node:fs mkdtemp failed: stdout={:?} stderr={:?}",
-        temp_dir_probe.stdout, temp_dir_probe.stderr
+        temp_dir_probe.stdout,
+        temp_dir_probe.stderr
     );
     assert!(
-        temp_dir_probe.stdout.contains(r#""error":null"#),
+        String::from_utf8_lossy(temp_dir_probe.stdout.as_deref().unwrap_or_default())
+            .contains(r#""error":null"#),
         "node:fs mkdtemp callback returned an error: {:?}",
         temp_dir_probe.stdout
     );
     assert!(
-        temp_dir_probe.stdout.contains(r#""esmOpen":"function""#),
+        String::from_utf8_lossy(temp_dir_probe.stdout.as_deref().unwrap_or_default())
+            .contains(r#""esmOpen":"function""#),
         "node:fs ESM namespace omitted open(): {:?}",
         temp_dir_probe.stdout
     );
@@ -245,7 +260,7 @@ console.log(JSON.stringify({
         let log = os
             .exec_argv(
                 "node",
-                &[
+                vec![
                     "-e".to_string(),
                     r#"const fs = require("node:fs");
 const path = "/home/agentos/.local/share/opencode/log/opencode.log";
@@ -255,7 +270,7 @@ try {
 catch (error) { process.stderr.write(String(error)); process.exitCode = 1; }"#
                         .to_string(),
                 ],
-                ExecOptions::default(),
+                captured_execution_options(),
             )
             .await
             .expect("read OpenCode diagnostic log");
@@ -326,14 +341,14 @@ catch (error) { process.stderr.write(String(error)); process.exitCode = 1; }"#
         let log = os
             .exec_argv(
                 "node",
-                &[
+                vec![
                     "-e".to_string(),
                     r#"const fs = require("node:fs");
 const path = "/home/agentos/.local/share/opencode/log/opencode.log";
 process.stdout.write(fs.readFileSync(path, "utf8"));"#
                         .to_string(),
                 ],
-                ExecOptions::default(),
+                captured_execution_options(),
             )
             .await
             .expect("read OpenCode empty prompt log");
