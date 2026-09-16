@@ -47,11 +47,15 @@ const vm = await AgentOs.create({
 });
 
 try {
-	const weather = await vm.process.exec("agentos-weather get --city London");
-	console.log("Weather:", weather.stdout.trim());
+	const weather = await vm.process.exec("agentos-weather get --city London", {
+		output: { capture: "all" },
+	});
+	console.log("Weather:", (weather.stdout ?? "").trim());
 
-	const sum = await vm.process.exec("agentos-calc add --a 10 --b 32");
-	console.log("Sum:", sum.stdout.trim());
+	const sum = await vm.process.exec("agentos-calc add --a 10 --b 32", {
+		output: { capture: "all" },
+	});
+	console.log("Sum:", (sum.stdout ?? "").trim());
 } finally {
 	await vm.dispose();
 }

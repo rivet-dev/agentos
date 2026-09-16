@@ -16,7 +16,7 @@
 		"@rivet-dev/agentos": "workspace:*",
 		"@rivet-dev/agentos-core": "workspace:*",
 		"@rivet-dev/agentos-eve": "workspace:*",
-		"@rivet-dev/vercel-world": "2.3.9",
+		"@rivet-dev/vercel-world": "2.3.10",
 		"@vercel/connect": "0.4.0",
 		"ai": "7.0.26",
 		"eve": "0.27.0",

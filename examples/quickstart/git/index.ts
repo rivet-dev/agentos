@@ -51,13 +51,13 @@ const vm = await AgentOs.create({
 });
 
 async function run(command: string): Promise<ExecResult> {
-	const result = await vm.process.exec(command);
+	const result = await vm.process.exec(command, { output: { capture: "all" } });
+	const stdout = result.stdout ?? "";
+	const stderr = result.stderr ?? "";
 	if (result.exitCode !== 0) {
-		throw new Error(
-			`command failed: ${command}\n${result.stderr || result.stdout}`,
-		);
+		throw new Error(`command failed: ${command}\n${stderr || stdout}`);
 	}
-	return result;
+	return { stdout, stderr, exitCode: result.exitCode ?? 0 };
 }
 
 await run("git init /tmp/origin");

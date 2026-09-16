@@ -2554,8 +2554,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/eve
       '@rivet-dev/vercel-world':
-        specifier: 2.3.9
-        version: 2.3.9(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(sql.js@1.14.1)(ws@8.21.0(bufferutil@4.1.0))
+        specifier: 2.3.10
+        version: 2.3.10(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(sql.js@1.14.1)(ws@8.21.0(bufferutil@4.1.0))
       '@vercel/connect':
         specifier: 0.4.0
         version: 0.4.0(ai@7.0.26(zod@4.3.6))(eve@0.27.0(@opentelemetry/api@1.9.0)(ai@7.0.26(zod@4.3.6))(aws4fetch@1.0.20)(better-sqlite3@12.8.0)(chokidar@5.0.0)(dotenv@16.6.1)(drizzle-orm@0.44.7(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(sql.js@1.14.1))(jiti@2.7.0)(just-bash@3.1.0)(lru-cache@11.2.7)(miniflare@4.20260721.0(bufferutil@4.1.0))(vite@8.1.5(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.0))(wrangler@4.113.0(bufferutil@4.1.0)))
@@ -6805,8 +6805,8 @@ packages:
   '@rivet-dev/labs-flue-sdk@1.0.0-beta.9-rivet.2':
     resolution: {integrity: sha512-Hts14CWUNUSB9FMTg21maatBEoqbpX80UDmTuMp8N1HNdkEow1pBhIg122ZnfaUyNdzx6vzrQaNhKCfDb7YkeA==}
 
-  '@rivet-dev/vercel-world@2.3.9':
-    resolution: {integrity: sha512-Yy7zGFx1M11styEFVHOo+jEJwRPbqIxcpDkBFoDHSZPhTbdw82pkBo+2p9z+TbX6wdw3CrlHoayLUsVVXPm01Q==}
+  '@rivet-dev/vercel-world@2.3.10':
+    resolution: {integrity: sha512-eIFFFD/0w2UaBbjccGA+DXg6W3QnWYvoMuznHEzuo45qLoAKRubB2TO6GC+Mch5/msKFmAAVcZVlgl2O7WMNeQ==}
     engines: {node: '>=22.0.0'}
     deprecated: Renamed to @rivet-dev/workflow-world.
 
@@ -15053,12 +15053,12 @@ snapshots:
     dependencies:
       '@durable-streams/client': 0.2.6
 
-  '@rivet-dev/vercel-world@2.3.9(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(sql.js@1.14.1)(ws@8.21.0(bufferutil@4.1.0))':
+  '@rivet-dev/vercel-world@2.3.10(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(sql.js@1.14.1)(ws@8.21.0(bufferutil@4.1.0))':
     dependencies:
       '@workflow/errors': 5.0.0-beta.11
       '@workflow/world': 5.0.0-beta.21
       cbor-x: 1.6.4
-      rivetkit: 2.3.9(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(sql.js@1.14.1)(ws@8.21.0(bufferutil@4.1.0))
+      rivetkit: 2.3.10(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(sql.js@1.14.1)(ws@8.21.0(bufferutil@4.1.0))
       ulid: 3.0.2
     transitivePeerDependencies:
       - '@aws-sdk/client-rds-data'
@@ -18534,7 +18534,8 @@ snapshots:
       detect-libc: 2.1.2
     optional: true
 
-  node-gyp-build@4.8.4: {}
+  node-gyp-build@4.8.4:
+    optional: true
 
   node-html-markdown@1.3.0:
     dependencies:
