@@ -559,9 +559,9 @@ fn javascript_execution_reuses_retained_context() {
             wire::RequestPayload::JavaScriptExecutionRequest(wire::JavaScriptExecutionRequest {
                 process: context_process_options("test-execution"),
                 source: String::from(
-                    "import { sep } from 'node:path'; let retainedAnswer = sep === '/' ? 41 : 0;",
+                    "const { sep } = require('node:path'); let retainedAnswer = sep === '/' ? 41 : 0;",
                 ),
-                format: Some(wire::JavaScriptModuleFormat::Module),
+                format: Some(wire::JavaScriptModuleFormat::CommonJs),
                 file_path: None,
                 inputs: None,
             }),
@@ -637,7 +637,7 @@ fn javascript_execution_reuses_retained_context() {
             wire::RequestPayload::JavaScriptEvaluationRequest(wire::JavaScriptEvaluationRequest {
                 process: context_process_options(&execution_id),
                 expression: String::from("typedAnswer"),
-                format: Some(wire::JavaScriptModuleFormat::Module),
+                format: Some(wire::JavaScriptModuleFormat::CommonJs),
                 file_path: None,
                 inputs: None,
             }),
@@ -662,6 +662,154 @@ fn javascript_execution_reuses_retained_context() {
         &execution_id,
     );
     dispose_vm_and_close_session_wire(&mut sidecar, &connection_id, &session_id, &vm_id);
+}
+
+#[test]
+fn javascript_module_execution_accepts_inline_exports_in_a_context() {
+    let mut sidecar = new_sidecar("language-execution-inline-esm");
+    let connection_id = authenticate_wire(&mut sidecar, "language-execution-inline-esm");
+    let session_id = open_session_wire(&mut sidecar, 2, &connection_id);
+    let cwd = temp_dir("language-execution-inline-esm-cwd");
+    let (vm_id, _) = create_vm_wire(
+        &mut sidecar,
+        3,
+        &connection_id,
+        &session_id,
+        wire::GuestRuntimeKind::JavaScript,
+        &cwd,
+    );
+    create_context(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "module-context",
+    );
+
+    let started = sidecar
+        .dispatch_wire_blocking(wire_request(
+            4,
+            wire_vm(&connection_id, &session_id, &vm_id),
+            wire::RequestPayload::JavaScriptExecutionRequest(wire::JavaScriptExecutionRequest {
+                process: context_process_options("module-context"),
+                source: String::from("export const y = 1;"),
+                format: Some(wire::JavaScriptModuleFormat::Module),
+                file_path: None,
+                inputs: None,
+            }),
+        ))
+        .expect("start inline ES module");
+    let execution_id = accepted_execution_id(started);
+    let result = wait_for_execution(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        &execution_id,
+    );
+    assert_eq!(result.outcome, wire::ExecutionOutcome::Succeeded);
+    assert_eq!(result.exit_code, Some(0));
+
+    reset_execution(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        &execution_id,
+    );
+    dispose_vm_and_close_session_wire(&mut sidecar, &connection_id, &session_id, &vm_id);
+}
+
+fn run_module_context_pair(
+    name: &str,
+    first_source: &str,
+    expression: &str,
+) -> wire::ExecutionCompletedResponse {
+    let mut sidecar = new_sidecar(name);
+    let connection_id = authenticate_wire(&mut sidecar, name);
+    let session_id = open_session_wire(&mut sidecar, 2, &connection_id);
+    let cwd = temp_dir(&format!("{name}-cwd"));
+    let (vm_id, _) = create_vm_wire(
+        &mut sidecar,
+        3,
+        &connection_id,
+        &session_id,
+        wire::GuestRuntimeKind::JavaScript,
+        &cwd,
+    );
+    create_context(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "analysis",
+    );
+
+    let first = sidecar
+        .dispatch_wire_blocking(wire_request(
+            4,
+            wire_vm(&connection_id, &session_id, &vm_id),
+            wire::RequestPayload::JavaScriptExecutionRequest(wire::JavaScriptExecutionRequest {
+                process: context_process_options("analysis"),
+                source: String::from(first_source),
+                format: Some(wire::JavaScriptModuleFormat::Module),
+                file_path: None,
+                inputs: None,
+            }),
+        ))
+        .expect("start module context execution");
+    let execution_id = accepted_execution_id(first);
+    let first_result = wait_for_execution(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        &execution_id,
+    );
+    assert_eq!(first_result.outcome, wire::ExecutionOutcome::Succeeded);
+
+    let second = sidecar
+        .dispatch_wire_blocking(wire_request(
+            5,
+            wire_vm(&connection_id, &session_id, &vm_id),
+            wire::RequestPayload::JavaScriptEvaluationRequest(wire::JavaScriptEvaluationRequest {
+                process: context_process_options(&execution_id),
+                expression: String::from(expression),
+                format: Some(wire::JavaScriptModuleFormat::Module),
+                file_path: None,
+                inputs: None,
+            }),
+        ))
+        .expect("start module context evaluation");
+    assert_eq!(accepted_execution_id(second), execution_id);
+    let result = wait_for_execution(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        &execution_id,
+    );
+
+    reset_execution(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        &execution_id,
+    );
+    dispose_vm_and_close_session_wire(&mut sidecar, &connection_id, &session_id, &vm_id);
+    result
+}
+
+#[test]
+fn javascript_module_context_shares_state_through_global_this() {
+    let result = run_module_context_pair(
+        "language-execution-module-globalthis",
+        "globalThis.answer = 40",
+        "globalThis.answer + 2",
+    );
+    assert_eq!(result.outcome, wire::ExecutionOutcome::Succeeded);
+    assert_eq!(result.evaluation_value.as_deref(), Some("42"));
 }
 
 #[test]
