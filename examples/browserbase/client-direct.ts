@@ -17,7 +17,11 @@ const env = {
 
 const { stdout } = await agent.process.exec("browse cloud fetch https://example.com", {
 	env,
+	output: { capture: "all" },
 });
+if (!stdout) {
+	throw new Error("Browserbase command returned no output");
+}
 
 const page = JSON.parse(stdout) as { statusCode: number; content: string };
 console.log(`fetched status ${page.statusCode}`);
