@@ -92,7 +92,8 @@ jobs:
             --exclude='software/*/dist/package.tar' \
             --exclude='software/*/dist/package.aospkg' \
             -czf /tmp/agentos-js-dist.tar.gz \
-            packages/*/dist software/*/dist test-harness/dist
+            packages/*/dist software/*/dist test-harness/dist \
+            packages/agentos/assets/inspector-tabs-app
       - uses: actions/upload-artifact@v4
         with:
           name: js-dist
