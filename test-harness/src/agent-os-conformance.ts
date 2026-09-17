@@ -272,11 +272,15 @@ export function defineAgentOsConformanceSuite(
 			const execResult = await backend.call<any>(
 				"process.exec",
 				"printf exec-ok",
+				{ output: { capture: "all" } },
 			);
 			expect(execResult).toMatchObject({ exitCode: 0, stdout: "exec-ok" });
-			const argvResult = await backend.call<any>("process.execFile", "printf", [
-				"argv-ok",
-			]);
+			const argvResult = await backend.call<any>(
+				"process.execFile",
+				"printf",
+				["argv-ok"],
+				{ output: { capture: "all" } },
+			);
 			expect(argvResult).toMatchObject({ exitCode: 0, stdout: "argv-ok" });
 
 			const output: any[] = [];

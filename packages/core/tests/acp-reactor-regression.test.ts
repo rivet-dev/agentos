@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
-import common from "@agentos-software/common";
+// The PR CI lane builds only coreutils; these tests need nothing else.
+import { coreutils } from "@agentos-software/common";
 import { afterEach, describe, expect, test } from "vitest";
 import { z } from "zod";
 import { AgentOs, binding, bindings } from "../src/index.js";
@@ -330,7 +331,7 @@ describe("ACP adapter reactor regression", () => {
 		const vm = await AgentOs.create({
 			mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
 			defaultSoftware: false,
-			software: [common, agentPackage.software],
+			software: [coreutils, agentPackage.software],
 			bindings: [mathBindings],
 			permissions: {
 				fs: "allow",
@@ -429,7 +430,7 @@ describe("ACP adapter reactor regression", () => {
 			sidecar: { kind: "shared", pool: "acp-prompt-concurrency" },
 			mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
 			defaultSoftware: false,
-			software: [common, agentPackage.software],
+			software: [coreutils, agentPackage.software],
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
