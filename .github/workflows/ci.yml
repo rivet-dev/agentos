@@ -200,7 +200,7 @@ jobs:
   core-pr:
     name: Core PR
     if: github.event_name != 'pull_request' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
-    needs: [checks, rust]
+    needs: [checks, rust, wasm-commands]
     runs-on: ubuntu-latest
     env:
       AGENTOS_SKIP_NATIVE_META_BUILD: '1'
@@ -221,10 +221,16 @@ jobs:
         with:
           name: agentos-sidecar
           path: ci-artifacts/agentos-sidecar
+      - uses: actions/download-artifact@v4
+        with:
+          name: wasm-commands
+          path: packages/runtime-core/commands
       - name: Restore runtime inputs
         run: |
           tar -xzf ci-artifacts/js/agentos-js-dist.tar.gz
           chmod +x ci-artifacts/agentos-sidecar/agentos-sidecar
+          node packages/runtime-core/scripts/copy-wasm-commands.mjs --require-coreutils
+          pnpm --filter @agentos-software/coreutils build:runtime
       - run: pnpm --dir packages/core test:pr
         env:
           AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/ci-artifacts/agentos-sidecar/agentos-sidecar
