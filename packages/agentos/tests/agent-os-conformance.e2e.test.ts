@@ -78,7 +78,8 @@ defineAgentOsConformanceSuite({
 				if (typeof method !== "function") {
 					throw new Error(`Actor backend does not implement ${action}`);
 				}
-				return (await method.apply(owner, args)) as T;
+				// Reflect.apply: rivetkit action proxies turn `.apply` into a nested action.
+				return (await Reflect.apply(method, owner, args)) as T;
 			},
 			on(
 				event: AgentOsConformanceEvent,
