@@ -1516,6 +1516,10 @@ impl VirtualFileSystem for HostDirFilesystem {
     }
 
     fn pread(&mut self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>> {
+        self.peek(path, offset, length)
+    }
+
+    fn peek(&self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>> {
         self.check_read_length(path, length)?;
         let (_, relative) = self.relative_virtual_path(path);
         let handle = self.open_beneath(&relative, OFlag::O_RDONLY, Mode::empty())?;

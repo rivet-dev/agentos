@@ -279,6 +279,13 @@ pub trait MountedFileSystem: Any {
         Ok(Vec::new())
     }
     fn pread(&mut self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>>;
+    fn peek(&self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>> {
+        let _ = (offset, length);
+        Err(VfsError::new(
+            "ENOSYS",
+            format!("immutable peek is not supported for {path}"),
+        ))
+    }
     fn pwrite(&mut self, path: &str, content: Vec<u8>, offset: u64) -> VfsResult<()> {
         let mut existing = self.read_file(path)?;
         let start = usize::try_from(offset).map_err(|_| {
@@ -548,6 +555,10 @@ where
         VirtualFileSystem::pread(&mut self.inner, path, offset, length)
     }
 
+    fn peek(&self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>> {
+        VirtualFileSystem::peek(&self.inner, path, offset, length)
+    }
+
     fn pwrite(&mut self, path: &str, content: Vec<u8>, offset: u64) -> VfsResult<()> {
         VirtualFileSystem::pwrite(&mut self.inner, path, content, offset)
     }
@@ -744,6 +755,10 @@ where
 
     fn pread(&mut self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>> {
         (**self).pread(path, offset, length)
+    }
+
+    fn peek(&self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>> {
+        (**self).peek(path, offset, length)
     }
 
     fn pwrite(&mut self, path: &str, content: Vec<u8>, offset: u64) -> VfsResult<()> {
@@ -1018,6 +1033,10 @@ where
 
     fn pread(&mut self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>> {
         self.inner.pread(path, offset, length)
+    }
+
+    fn peek(&self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>> {
+        self.inner.peek(path, offset, length)
     }
 
     fn pwrite(&mut self, path: &str, _content: Vec<u8>, _offset: u64) -> VfsResult<()> {
@@ -2488,6 +2507,13 @@ impl VirtualFileSystem for MountTable {
             .pread(&relative_path, offset, length)?;
         self.finish_atime_update(index, &relative_path, before)?;
         Ok(content)
+    }
+
+    fn peek(&self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>> {
+        let (index, relative_path) = self.resolve_content_index(path)?;
+        self.mounts[index]
+            .filesystem
+            .peek(&relative_path, offset, length)
     }
 
     fn pwrite(&mut self, path: &str, content: impl Into<Vec<u8>>, offset: u64) -> VfsResult<()> {

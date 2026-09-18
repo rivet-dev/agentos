@@ -184,4 +184,8 @@ impl VirtualFileSystem for SingleSymlinkFileSystem {
     fn pread(&mut self, path: &str, _offset: u64, _length: usize) -> VfsResult<Vec<u8>> {
         Err(Self::not_found(path))
     }
+
+    fn peek(&self, path: &str, _offset: u64, _length: usize) -> VfsResult<Vec<u8>> {
+        Err(Self::not_found(path))
+    }
 }

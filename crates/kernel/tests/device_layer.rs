@@ -110,6 +110,20 @@ fn kernel_direct_device_pread_obeys_resource_limits_before_allocation() {
 }
 
 #[test]
+fn kernel_peek_file_header_does_not_require_mut() {
+    let mut config = KernelVmConfig::new("vm-peek-header");
+    config.permissions = Permissions::allow_all();
+    let mut kernel = KernelVm::new(MemoryFileSystem::new(), config);
+    kernel
+        .write_file("/cmd", b"\0asm\x01\x00\x00\x00")
+        .expect("write wasm header");
+
+    let kernel = &kernel;
+    let peeked = kernel.peek_file_header("/cmd", 4).expect("peek wasm magic");
+    assert_eq!(peeked, b"\0asm");
+}
+
+#[test]
 fn device_paths_exist_and_stat_as_devices() {
     let mut filesystem = create_test_vfs();
 

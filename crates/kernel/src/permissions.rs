@@ -861,6 +861,11 @@ impl<F: VirtualFileSystem> VirtualFileSystem for PermissionedFileSystem<F> {
         self.inner.pread(path, offset, length)
     }
 
+    fn peek(&self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>> {
+        self.check_subject(FsOperation::Read, path)?;
+        self.inner.peek(path, offset, length)
+    }
+
     fn pwrite(&mut self, path: &str, content: impl Into<Vec<u8>>, offset: u64) -> VfsResult<()> {
         self.check_subject(FsOperation::Write, path)?;
         self.check_not_immutable(path, "write")?;

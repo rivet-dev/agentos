@@ -1209,6 +1209,16 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         )?)
     }
 
+    /// Reads the first `length` bytes of a guest file without exclusive kernel
+    /// access or atime updates. Used by sidecar exec classification so resolve
+    /// can stay on a shared VM borrow.
+    pub fn peek_file_header(&self, path: &str, length: usize) -> KernelResult<Vec<u8>> {
+        self.assert_not_terminated()?;
+        self.reject_unix_socket_data_path_at(path, "ENXIO")?;
+        self.resources.check_pread_length(length)?;
+        Ok(VirtualFileSystem::peek(&self.filesystem, path, 0, length)?)
+    }
+
     pub fn pread_file_for_process(
         &mut self,
         requester_driver: &str,
@@ -6402,10 +6412,26 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
     }
 
     fn reject_unix_socket_data_path(&mut self, path: &str, code: &'static str) -> KernelResult<()> {
-        if self
-            .storage_stat(path)?
-            .is_some_and(|stat| stat.mode & 0o170000 == 0o140000)
-        {
+        Self::reject_unix_socket_stat(path, code, self.storage_stat(path)?.as_ref())
+    }
+
+    /// Immutable counterpart of [`Self::reject_unix_socket_data_path`] for
+    /// [`Self::peek_file_header`]. Uses `lstat` so it can stay `&self`; after
+    /// `realpath` this agrees with the follow-`stat` path.
+    fn reject_unix_socket_data_path_at(&self, path: &str, code: &'static str) -> KernelResult<()> {
+        match self.filesystem.lstat(path) {
+            Ok(stat) => Self::reject_unix_socket_stat(path, code, Some(&stat)),
+            Err(error) if error.code() == "ENOENT" => Ok(()),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    fn reject_unix_socket_stat(
+        path: &str,
+        code: &'static str,
+        stat: Option<&VirtualStat>,
+    ) -> KernelResult<()> {
+        if stat.is_some_and(|stat| stat.mode & 0o170000 == UNIX_SOCKET_FILE_TYPE) {
             return Err(KernelError::new(
                 code,
                 format!("Unix socket pathname does not support file data I/O, '{path}'"),

@@ -2125,6 +2125,26 @@ impl VirtualFileSystem for OverlayFileSystem {
         self.lowers[index].pread(path, offset, length)
     }
 
+    fn peek(&self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>> {
+        if self.touches_internal_metadata(path) {
+            return Err(Self::entry_not_found(path));
+        }
+        if self.is_whited_out(path) {
+            return Err(Self::entry_not_found(path));
+        }
+        if self.exists_in_upper(path) {
+            return self
+                .upper
+                .as_ref()
+                .expect("upper must exist when path exists")
+                .peek(path, offset, length);
+        }
+        let Some(index) = self.find_lower_by_exists(path) else {
+            return Err(Self::entry_not_found(path));
+        };
+        self.lowers[index].peek(path, offset, length)
+    }
+
     fn pwrite(&mut self, path: &str, content: impl Into<Vec<u8>>, offset: u64) -> VfsResult<()> {
         if self.touches_internal_metadata(path) {
             return Err(VfsError::permission_denied("pwrite", path));

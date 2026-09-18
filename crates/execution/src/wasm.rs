@@ -292,7 +292,7 @@ pub enum NativeBinaryFormat {
 }
 
 impl NativeBinaryFormat {
-    fn display_name(self) -> &'static str {
+    pub fn display_name(self) -> &'static str {
         match self {
             Self::Elf => "ELF",
             Self::MachO => "Mach-O",
@@ -4321,7 +4321,7 @@ fn verify_wasm_module_header(
     })
 }
 
-fn detect_native_binary_format(header: &[u8]) -> Option<NativeBinaryFormat> {
+pub fn detect_native_binary_format(header: &[u8]) -> Option<NativeBinaryFormat> {
     if header.len() >= 4 && &header[..4] == b"\x7fELF" {
         return Some(NativeBinaryFormat::Elf);
     }

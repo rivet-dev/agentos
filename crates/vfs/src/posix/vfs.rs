@@ -671,6 +671,19 @@ pub trait VirtualFileSystem {
         Ok(Vec::new())
     }
     fn pread(&mut self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>>;
+    /// Reads a bounded byte range without exclusive access or atime updates.
+    ///
+    /// [`pread`] stays `&mut self` because some backends (mount atime, overlay
+    /// copy-up adjacent paths) mutate. Classification and other header peeks
+    /// need a non-mutating path; backends that cannot peek without mutation
+    /// return `ENOSYS`.
+    fn peek(&self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>> {
+        let _ = (offset, length);
+        Err(VfsError::new(
+            "ENOSYS",
+            format!("immutable peek is not supported for {path}"),
+        ))
+    }
     /// Writes caller-owned bytes at an offset after checking that the in-memory
     /// file can grow without overflowing addressable memory.
     fn pwrite(&mut self, path: &str, content: impl Into<Vec<u8>>, offset: u64) -> VfsResult<()> {
@@ -2122,13 +2135,23 @@ impl VirtualFileSystem for MemoryFileSystem {
         match &mut inode.kind {
             InodeKind::File { data } => {
                 inode.metadata.atime_ms = now_ms();
-                let start = offset as usize;
-                if start >= data.len() {
-                    return Ok(Vec::new());
-                }
-                let end = start.saturating_add(length).min(data.len());
-                Ok(data[start..end].to_vec())
+                Ok(peek_file_bytes(data, offset, length))
             }
+            InodeKind::Directory => Err(VfsError::is_directory("open", path)),
+            InodeKind::SymbolicLink { .. } => Err(VfsError::not_found("open", path)),
+            InodeKind::CharacterDevice { .. } | InodeKind::BlockDevice { .. } | InodeKind::Fifo => {
+                Err(VfsError::new(
+                    "ENXIO",
+                    format!("device I/O requires kernel dispatch: {path}"),
+                ))
+            }
+        }
+    }
+
+    fn peek(&self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>> {
+        let inode = self.inode_for_existing_path(path, "open", true)?;
+        match &inode.kind {
+            InodeKind::File { data } => Ok(peek_file_bytes(data, offset, length)),
             InodeKind::Directory => Err(VfsError::is_directory("open", path)),
             InodeKind::SymbolicLink { .. } => Err(VfsError::not_found("open", path)),
             InodeKind::CharacterDevice { .. } | InodeKind::BlockDevice { .. } | InodeKind::Fifo => {
@@ -2461,6 +2484,15 @@ fn allocation_byte_ranges(extents: &[(u64, u64)], size: u64) -> Vec<(u64, u64)> 
             (start < end).then_some((start, end))
         })
         .collect()
+}
+
+fn peek_file_bytes(data: &[u8], offset: u64, length: usize) -> Vec<u8> {
+    let start = offset as usize;
+    if start >= data.len() {
+        return Vec::new();
+    }
+    let end = start.saturating_add(length).min(data.len());
+    data[start..end].to_vec()
 }
 
 fn checked_file_len(value: u64, description: &'static str) -> VfsResult<usize> {

@@ -4246,7 +4246,7 @@ where
                 .and_then(|name| vm.command_permissions.get(name).copied())
         });
         if let Some((javascript_guest_entrypoint, javascript_host_entrypoint)) =
-            resolve_javascript_command_entrypoint(vm, &guest_entrypoint, &host_entrypoint)
+            resolve_javascript_command_entrypoint(vm, &guest_entrypoint, &host_entrypoint)?
         {
             prepare_guest_runtime_env(
                 vm,

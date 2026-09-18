@@ -65,6 +65,14 @@ fn tar_filesystem_reads_files_dirs_symlinks_and_realpaths() {
 }
 
 #[test]
+fn tar_filesystem_peek_reads_header_without_mut() {
+    let tar_path = write_fixture_tar();
+    let fs = TarFileSystem::open(&tar_path).expect("open tar filesystem");
+    let peeked = VirtualFileSystem::peek(&fs, "/pkg/bin/pi", 0, 2).expect("peek shebang");
+    assert_eq!(peeked, b"#!");
+}
+
+#[test]
 fn tar_filesystem_rejects_writes_as_read_only() {
     let tar_path = write_fixture_tar();
     let mut fs = TarFileSystem::open(&tar_path).expect("open tar filesystem");

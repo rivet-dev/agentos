@@ -457,6 +457,18 @@ impl<V: VirtualFileSystem> VirtualFileSystem for DeviceLayer<V> {
         self.inner.pread(path, offset, length)
     }
 
+    fn peek(&self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>> {
+        if let Some(bytes) = read_stream_device(path, length) {
+            return bytes;
+        }
+
+        if is_device_path(path) || is_device_dir(path) {
+            return Ok(Vec::new());
+        }
+
+        self.inner.peek(path, offset, length)
+    }
+
     fn pwrite(&mut self, path: &str, content: impl Into<Vec<u8>>, offset: u64) -> VfsResult<()> {
         if is_sink_device_path(path)
             || self

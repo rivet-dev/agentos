@@ -217,6 +217,38 @@ impl TarFileSystem {
     fn readonly_error(op: &str, path: &str) -> VfsError {
         VfsError::new("EROFS", format!("read-only tar filesystem, {op} '{path}'"))
     }
+
+    fn peek_bytes(&self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>> {
+        let resolved = self.resolve_path(path, true)?;
+        let node = self.archive.node(&resolved)?;
+        let TarNodeKind::File {
+            offset: file_offset,
+            size,
+        } = node.kind
+        else {
+            return Err(if matches!(node.kind, TarNodeKind::Directory) {
+                VfsError::new(
+                    "EISDIR",
+                    format!("illegal operation on a directory, pread '{path}'"),
+                )
+            } else {
+                VfsError::new("EINVAL", format!("not a regular file, pread '{path}'"))
+            });
+        };
+        if offset >= size {
+            return Ok(Vec::new());
+        }
+        let readable = (size - offset).min(length as u64);
+        self.archive.validate_backing_file()?;
+        let range = validate_mount_range(
+            &self.archive.container,
+            file_offset
+                .checked_add(offset)
+                .ok_or_else(|| VfsError::new("EOVERFLOW", "pread offset overflows u64"))?,
+            readable,
+        )?;
+        Ok(self.archive.mmap[range].to_vec())
+    }
 }
 
 impl VirtualFileSystem for TarFileSystem {
@@ -378,35 +410,11 @@ impl VirtualFileSystem for TarFileSystem {
     }
 
     fn pread(&mut self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>> {
-        let resolved = self.resolve_path(path, true)?;
-        let node = self.archive.node(&resolved)?;
-        let TarNodeKind::File {
-            offset: file_offset,
-            size,
-        } = node.kind
-        else {
-            return Err(if matches!(node.kind, TarNodeKind::Directory) {
-                VfsError::new(
-                    "EISDIR",
-                    format!("illegal operation on a directory, pread '{path}'"),
-                )
-            } else {
-                VfsError::new("EINVAL", format!("not a regular file, pread '{path}'"))
-            });
-        };
-        if offset >= size {
-            return Ok(Vec::new());
-        }
-        let readable = (size - offset).min(length as u64);
-        self.archive.validate_backing_file()?;
-        let range = validate_mount_range(
-            &self.archive.container,
-            file_offset
-                .checked_add(offset)
-                .ok_or_else(|| VfsError::new("EOVERFLOW", "pread offset overflows u64"))?,
-            readable,
-        )?;
-        Ok(self.archive.mmap[range].to_vec())
+        self.peek_bytes(path, offset, length)
+    }
+
+    fn peek(&self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>> {
+        self.peek_bytes(path, offset, length)
     }
 }
 
