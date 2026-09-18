@@ -1,0 +1,26 @@
+---
+title: "TypeScript"
+description: "Run and type-check TypeScript in Secure Exec with the secure-exec/typescript entry point."
+---
+
+`secure-exec/typescript` exports the same `execute` and `evaluate` as the main
+entry point, plus `check`.
+
+<CodeSnippet file="secure-exec/examples/typescript/src/index.ts" />
+
+## Running strips types
+
+`execute` and `evaluate` transpile TypeScript and run it. They do **not** type
+check, so code with type errors still runs. This keeps the hot path fast.
+
+## Checking runs the real compiler
+
+`check` runs the TypeScript compiler inside the VM and returns structured
+diagnostics without running your code. Each diagnostic has a `code`,
+`category`, `message`, and, when known, a `filePath`, `line`, and `column`.
+
+`filePath` only labels the source in diagnostics. It is never read from disk.
+Pass `compilerOptions` or `tsconfigPath` to change compiler settings.
+
+Feeding diagnostics back to a model is the cheapest way to fix generated code.
+See [AI Agent Code Exec](/secure-exec/docs/use-cases/ai-agent-code-exec).

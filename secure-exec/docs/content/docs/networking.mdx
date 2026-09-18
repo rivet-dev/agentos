@@ -1,0 +1,17 @@
+---
+title: "Networking"
+description: "How guest networking works in Secure Exec: fetch, HTTP, and sockets run through a virtual network stack gated by permissions."
+---
+
+Guest `fetch`, `node:http`, `node:net`, and DNS all run through a virtual
+network stack inside the VM. No guest code ever holds a real host socket.
+
+- The network is **denied by default**. Grant it, or specific hosts, with
+  [permissions](/secure-exec/docs/permissions).
+- Read response bodies you request. An unread body keeps its connection open,
+  which slows VM teardown.
+- Secure Exec has no API for calling into a server running in the guest. For dev
+  servers and previews, [use agentOS](/secure-exec/docs/agentos).
+
+Read the [agentOS networking docs](/agentos/docs/networking) for how the stack
+works and what it supports.

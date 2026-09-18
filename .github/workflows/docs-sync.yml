@@ -9,7 +9,11 @@ name: Sync docs
 on:
   push:
     branches: [main]
-    paths: ["docs/**", "examples/**", ".github/workflows/docs-sync.yml"]
+    paths:
+      - "docs/**"
+      - "examples/**"
+      - "secure-exec/**"
+      - ".github/workflows/docs-sync.yml"
   workflow_dispatch:
 
 jobs:
@@ -22,3 +26,16 @@ jobs:
           product: agentos
           token: ${{ secrets.RIVET_WEBSITE_TOKEN }}
           extra-paths: examples
+
+  # Secure Exec ships from this repository but is its own product on rivet.dev,
+  # so it syncs as a second bundle with its own examples.
+  sync-secure-exec:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rivet-dev/website/.github/actions/sync-docs@main
+        with:
+          product: secure-exec
+          source: secure-exec/docs
+          token: ${{ secrets.RIVET_WEBSITE_TOKEN }}
+          extra-paths: secure-exec/examples

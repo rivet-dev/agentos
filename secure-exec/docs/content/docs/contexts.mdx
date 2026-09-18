@@ -1,0 +1,37 @@
+---
+title: "Contexts"
+description: "Keep variables, files, and installed packages between calls with a Secure Exec context."
+---
+
+A call without a context runs in a fresh VM and leaves nothing behind. A
+**context** is a dedicated VM that stays alive, so later calls see earlier state.
+Use one for a REPL, a notebook, or an agent that builds on its previous steps.
+
+## Keep state between calls
+
+<CodeSnippet file="secure-exec/examples/contexts/src/index.ts" region="retain" />
+
+- JavaScript and TypeScript share one context.
+- Each call is its own ES module, so top-level `const` and `let` stay scoped to
+  that call. Put values on `globalThis` to share them.
+- A context runs one call at a time. A second call while one is running fails
+  immediately instead of queueing.
+- Files written and packages installed in a context also persist, because the
+  context owns its VM's filesystem.
+
+## Isolation
+
+Contexts do not leak into other calls, and two contexts never share anything.
+
+<CodeSnippet file="secure-exec/examples/contexts/src/index.ts" region="isolated" />
+
+## Reset
+
+<CodeSnippet file="secure-exec/examples/contexts/src/index.ts" region="reset" />
+
+## VM options and cleanup
+
+<CodeSnippet file="secure-exec/examples/contexts/src/options.ts" region="options" />
+
+A context holds a VM until you dispose it. Dispose contexts you no longer need,
+and give each tenant its own context rather than sharing one.

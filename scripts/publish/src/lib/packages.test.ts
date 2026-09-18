@@ -79,6 +79,7 @@ test("sanity check passes for the agent-os workspace", () => {
 
 	assert.doesNotThrow(() => assertDiscoverySanity(packages));
 	assert(names.has("@rivet-dev/agentos"));
+	assert(names.has("secure-exec"));
 });
 
 test("publishes only new AgentOS Apps software packages in lockstep", () => {

@@ -1,0 +1,56 @@
+---
+title: "Quickstart"
+description: "Install Secure Exec and run untrusted JavaScript in an isolated VM in a few minutes."
+---
+
+<Steps>
+
+<Step title="Install">
+
+```sh
+npm install secure-exec
+```
+
+Secure Exec requires Node.js 22 or newer on Linux or macOS. The native sidecar
+binary for your platform installs with the package.
+
+</Step>
+
+<Step title="Evaluate an expression">
+
+`evaluate` runs one expression in a fresh VM and returns its JSON value.
+
+<CodeSnippet file="secure-exec/examples/quickstart/src/index.ts" region="evaluate" />
+
+</Step>
+
+<Step title="Pass data in">
+
+<CodeSnippet file="secure-exec/examples/quickstart/src/index.ts" region="inputs" />
+
+</Step>
+
+<Step title="Run a module">
+
+`execute` runs a whole ES module for its side effects.
+
+<CodeSnippet file="secure-exec/examples/quickstart/src/index.ts" region="execute" />
+
+</Step>
+
+<Step title="Handle failures">
+
+Guest failures are returned, never thrown, so untrusted code cannot crash your
+process.
+
+<CodeSnippet file="secure-exec/examples/quickstart/src/index.ts" region="errors" />
+
+</Step>
+
+</Steps>
+
+## Next steps
+
+- [Crash Course](/secure-exec/docs/crash-course) covers contexts, TypeScript, npm, and permissions.
+- [Execute & Evaluate](/secure-exec/docs/execute-and-evaluate) explains results and options in detail.
+- [Permissions](/secure-exec/docs/permissions) shows how to grant the network.

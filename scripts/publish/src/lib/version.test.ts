@@ -108,6 +108,11 @@ test("bumpPackageJsons injects sidecar platform optional dependencies", async ()
 				version: "0.0.0",
 			});
 		}
+		await writeJson(repoRoot, "packages/secure-exec/package.json", {
+			name: "secure-exec",
+			version: "0.0.1",
+			dependencies: { "@rivet-dev/agentos-core": "workspace:*" },
+		});
 
 		await bumpPackageJsons(repoRoot, "0.3.0", {
 			repository: "rivet-dev/agentos",
@@ -119,6 +124,16 @@ test("bumpPackageJsons injects sidecar platform optional dependencies", async ()
 				"utf8",
 			),
 		);
+		const secureExecManifest = JSON.parse(
+			await readFile(join(repoRoot, "packages/secure-exec/package.json"), "utf8"),
+		);
+		assert.equal(secureExecManifest.version, "0.3.0");
+		assert.equal(secureExecManifest.dependencies["@rivet-dev/agentos-core"], "0.3.0");
+		assert.deepEqual(secureExecManifest.repository, {
+			type: "git",
+			url: "https://github.com/rivet-dev/agentos.git",
+			directory: "packages/secure-exec",
+		});
 		assert.deepEqual(
 			sidecarManifest.optionalDependencies,
 			Object.fromEntries(

@@ -1,0 +1,37 @@
+---
+title: "Going Further with agentOS"
+description: "Secure Exec is a small API over agentOS. Use agentOS directly for processes, a shell, Python, host bindings, and agent sessions."
+---
+
+Secure Exec is a thin function-style API over
+[agentOS](/agentos/docs). Every Secure Exec VM **is** an agentOS VM, so anything
+you learn there applies here.
+
+## Shared reference
+
+These topics are identical in both, and are documented once in agentOS.
+
+| Topic | agentOS page |
+|---|---|
+| Node.js builtins and globals available to guest code | [JavaScript Compatibility](/agentos/docs/javascript-compatibility) |
+| Trust boundaries and what the VM guarantees | [Security Model](/agentos/docs/security-model) |
+| How the VM, kernel, and sidecar fit together | [Architecture](/agentos/docs/architecture) |
+| Cold start, memory, and cost measurements | [Performance](/agentos/docs/performance) |
+| Lightweight VM or full sandbox | [agentOS vs Sandbox](/agentos/docs/versus-sandbox) |
+| Known gaps | [Limitations](/agentos/docs/limitations) |
+
+## When to use agentOS directly
+
+Reach for `@rivet-dev/agentos-core` when you need more than running snippets.
+
+| You need | agentOS |
+|---|---|
+| Long-running processes, stdin, signals, and web servers | [Processes](/agentos/docs/processes) |
+| A shell and real Linux tools | [Bash](/agentos/docs/bash) |
+| Python | [Python](/agentos/docs/python) |
+| Host functions that guest code can call | [Bindings](/agentos/docs/bindings) |
+| Reading and writing guest files from the host | [Filesystem](/agentos/docs/filesystem) |
+| Several contexts sharing one VM and filesystem | [Node.js](/agentos/docs/javascript) |
+| Coding agents such as Claude Code, Codex, and Pi | [Sessions](/agentos/docs/sessions) |
+
+Both packages can be used in the same process. They share one sidecar.

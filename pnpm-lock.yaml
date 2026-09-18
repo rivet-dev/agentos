@@ -3317,6 +3317,22 @@ importers:
 
   packages/runtime-sidecar/npm/linux-x64-gnu: {}
 
+  packages/secure-exec:
+    dependencies:
+      '@rivet-dev/agentos-core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.19.15
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.15)(lightningcss@1.33.0)
+
   packages/shell:
     dependencies:
       '@agentos-software/codex-cli':
@@ -3477,6 +3493,150 @@ importers:
         version: 4.21.0
       typescript:
         specifier: ^5.5.2
+        version: 5.9.3
+
+  secure-exec/examples/ai-agent:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../../../packages/secure-exec
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/contexts:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../../../packages/secure-exec
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/limits:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../../../packages/secure-exec
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/mounts:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../../../packages/secure-exec
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/npm:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../../../packages/secure-exec
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/permissions:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../../../packages/secure-exec
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/plugins:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../../../packages/secure-exec
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/quickstart:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../../../packages/secure-exec
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/typescript:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../../../packages/secure-exec
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
         version: 5.9.3
 
   software/acl:

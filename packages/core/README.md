@@ -11,5 +11,5 @@ Install the public package instead:
 pnpm add @rivet-dev/agentos
 ```
 
-See the [AgentOS documentation](https://agentos-sdk.dev/docs) for supported
+See the [AgentOS documentation](https://rivet.dev/agentos/docs) for supported
 APIs.

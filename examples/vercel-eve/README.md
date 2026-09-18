@@ -29,7 +29,7 @@ verify that the actor-owned workspace survives sandbox sleep and resume.
 
 agentOS is the default in this example, but Eve accepts any compatible sandbox backend. Changing the sandbox does not require changing the agent or selecting a different World.
 
-See the [Vercel Eve integration guide](https://agentos-sdk.dev/docs/frameworks/vercel-eve) for the complete setup.
+See the [Vercel Eve integration guide](https://rivet.dev/agentos/docs/frameworks/vercel-eve) for the complete setup.
 
 ## Source
 

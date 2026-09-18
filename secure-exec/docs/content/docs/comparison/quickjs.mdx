@@ -1,0 +1,56 @@
+---
+title: "Secure Exec vs QuickJS"
+description: "How Secure Exec and QuickJS differ in isolation model, performance, language coverage, and system surface."
+---
+
+Both run guest JavaScript, but at different layers. QuickJS is a small embeddable
+engine that you link into your process and build a sandbox around. Secure Exec is
+a complete virtualized runtime on V8, with a kernel, a virtual filesystem, and a
+permission policy around the engine.
+
+## At a glance
+
+| | Secure Exec | QuickJS |
+|---|---|---|
+| **Engine** | V8 with JIT | Bytecode interpreter |
+| **Isolation** | Virtualized VM in a separate sidecar process | Interpreter embedded in your process |
+| **Performance** | High throughput on compute-heavy code | Small footprint, slower sustained compute |
+| **Language** | Full modern ECMAScript, as V8 ships it | Most of the spec, on its own cadence |
+| **Node.js and npm** | Node-compatible builtins and real npm packages | None built in |
+| **System surface** | Virtual filesystem, processes, sockets, DNS | None. Only the host bindings you write |
+| **Permissions** | Deny-by-default policy per VM | Whatever your bindings allow |
+
+## Isolation model
+
+QuickJS runs inside your host process. Anything the guest can reach is whatever
+your bindings expose, and there is no process boundary by default. The sandbox,
+its permission checks, and the audit of every binding are yours to build.
+
+Secure Exec runs guest code in a V8 isolate inside a separate sidecar process,
+behind a virtualized kernel. Guest code never calls a real Node.js builtin, opens
+a real host socket, or touches the real disk. Every operation is checked against
+a [deny-by-default policy](/secure-exec/docs/permissions).
+
+## Performance
+
+V8 compiles hot code to machine code, so sustained throughput is far higher.
+The trade is a larger engine and a heavier baseline per VM. QuickJS starts a
+single instance quickly and stays small, but interprets everything. See
+[Performance](/agentos/docs/performance) for measured numbers.
+
+## Ecosystem
+
+Secure Exec runs real npm packages unmodified, either
+[installed into a context](/secure-exec/docs/npm) or mounted from the host.
+QuickJS ships no Node.js standard library and no npm resolution. Any package or
+builtin support is something you bind in yourself.
+
+## When to choose which
+
+Choose **QuickJS** when you need the smallest possible engine, run short
+self-contained scripts with no system needs, and will build and audit the
+boundary yourself.
+
+Choose **Secure Exec** when you need npm and Node.js compatibility, JIT
+throughput, and a ready-made isolation boundary with a filesystem, networking,
+and permissions you control.

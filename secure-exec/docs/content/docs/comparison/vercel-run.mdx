@@ -1,0 +1,35 @@
+---
+title: "Secure Exec vs Vercel Run"
+description: "How Secure Exec and the Vercel Run SDK differ: a tool-call orchestrator on QuickJS compared with a full Node.js runtime on V8."
+---
+
+Both are npm libraries that run model-generated code with one function call.
+They make opposite bets about what that code should be able to do.
+
+Run executes code in a fresh QuickJS context in a worker thread. The code can
+compute and call the host functions you pass in, and nothing else: no Node.js
+APIs, no network, no filesystem, no npm. Secure Exec executes code on V8 in an
+isolated VM with a Node.js surface, a virtual filesystem, and npm.
+
+## At a glance
+
+| | Secure Exec | Vercel Run |
+|---|---|---|
+| **Engine** | V8 with JIT, in a separate sidecar process | QuickJS interpreter, in a worker thread |
+| **Guest capabilities** | Node.js builtins, virtual filesystem, processes, npm | ECMAScript plus your host functions |
+| **TypeScript** | Runs, and type-checks with the real compiler | Runs with types stripped |
+| **Host functions** | Not in this API. agentOS has [bindings](/agentos/docs/bindings) | First class, called as globals |
+| **Human in the loop** | Not built in | Interrupt and resume with a signed token |
+| **State between calls** | [Contexts](/secure-exec/docs/contexts) | A new context per run |
+| **Network** | Denied by default, grantable per host | None. Only through host functions |
+| **Install** | Native sidecar binary, Linux and macOS | Pure JavaScript, Node.js and Bun |
+
+## When to choose which
+
+Choose **Run** when generated code only needs to orchestrate your own tools:
+fetch some records, combine them, return a result. It is smaller, has no native
+dependency, and its interrupt and resume flow fits approval steps well.
+
+Choose **Secure Exec** when generated code needs to be a real program: import an
+npm package, parse a file, run a computation at JIT speed, or be type-checked
+before it runs.

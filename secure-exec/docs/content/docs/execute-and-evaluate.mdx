@@ -1,0 +1,61 @@
+---
+title: "Execute & Evaluate"
+description: "Run untrusted JavaScript with evaluate and execute, pass data in with inputs, and read structured results."
+---
+
+## Evaluate an expression
+
+`evaluate` runs **one expression** and returns its JSON-serializable value.
+
+<CodeSnippet file="secure-exec/examples/quickstart/src/index.ts" region="evaluate" />
+
+The expression may be a promise, which is awaited. Returning `undefined`, a
+function, a symbol, or a circular value fails instead of silently losing the
+value.
+
+Several statements go in a function:
+
+<CodeSnippet file="secure-exec/examples/quickstart/src/index.ts" region="statements" />
+
+## Execute a module
+
+`execute` runs source as an ES module, so `import` and top-level `await` work.
+It returns captured output instead of a value.
+
+<CodeSnippet file="secure-exec/examples/quickstart/src/index.ts" region="execute" />
+
+## Pass data in
+
+<CodeSnippet file="secure-exec/examples/quickstart/src/index.ts" region="inputs" />
+
+## Results
+
+Both functions resolve to a result with an `outcome`.
+
+| `outcome` | Meaning |
+|---|---|
+| `succeeded` | The code finished. `evaluate` results carry `value`. |
+| `failed` | The code threw or exited non-zero. |
+| `timed_out` | `timeoutMs` elapsed. |
+| `cancelled` | The `signal` you passed was aborted. |
+
+Every outcome other than `succeeded` carries an `error` with a `code` and
+`message`. The guest's own stack trace arrives on `stderr`, so capture it when
+you want to show it to a user or a model.
+
+<CodeSnippet file="secure-exec/examples/quickstart/src/index.ts" region="errors" />
+
+Guest failures are never thrown. A call rejects only when the host cannot run
+it at all, such as an invalid option.
+
+## Options
+
+Execution options: `inputs`, `timeoutMs`, `signal`, `env`, `cwd`, `args`,
+`stdin`, `output`, `onStdout`, `onStderr`, `format`, and `filePath`.
+
+Placement options decide where the code runs:
+
+- Omit `context` to run in a fresh VM. [VM options](/secure-exec/docs/permissions)
+  such as `permissions`, `limits`, and `mounts` go on the same call.
+- Pass `context` to run in a [context](/secure-exec/docs/contexts). VM options
+  belong on `createContext` instead, and combining them is an error.

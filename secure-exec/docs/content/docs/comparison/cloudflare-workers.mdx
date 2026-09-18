@@ -1,0 +1,51 @@
+---
+title: "Secure Exec vs Cloudflare Workers"
+description: "How Secure Exec and Cloudflare Workers differ in form factor, isolation, permissions, and Node.js compatibility."
+---
+
+Both run untrusted JavaScript on V8, but they solve different problems. Workers
+is a managed edge platform: you deploy code and Cloudflare runs it. Secure Exec
+is a library you embed in your own application to run guest code where your app
+already runs.
+
+## At a glance
+
+| | Secure Exec | Cloudflare Workers |
+|---|---|---|
+| **Form factor** | A library. Runs where your app runs | A managed platform you deploy to |
+| **Who operates it** | You | Cloudflare |
+| **Guest runtime** | V8 inside a virtualized Linux kernel | V8 with the `workerd` runtime |
+| **Running code** | A function call with source text | A deployment, or Dynamic Workers for generated code |
+| **Permissions** | Deny-by-default policy you set per call | Platform-managed bindings |
+| **Subprocesses** | `node:child_process` against virtual processes | Not available |
+| **Filesystem** | Full virtual filesystem per VM | Limited and ephemeral |
+| **npm at runtime** | Install or mount packages per context | Bundled at deploy time |
+
+## Isolation model
+
+Workers schedules many tenants into a shared pool of isolates across Cloudflare's
+network, with platform-level mitigations layered on top.
+
+Secure Exec gives you one boundary per VM, placed by you. Every call without a
+[context](/secure-exec/docs/contexts) gets a fresh VM, and two VMs share no
+filesystem, globals, or module state. You choose the blast radius by choosing
+what goes in each VM.
+
+## Node.js compatibility
+
+Workers implements a subset of Node.js APIs behind a compatibility flag, inside a
+runtime designed around the `fetch` handler model.
+
+Secure Exec presents a Linux environment. Guest code uses `node:fs`,
+`node:net`, and `node:child_process` against a virtual kernel, so programs
+written for Node.js on Linux are expected to run unmodified. See
+[JavaScript Compatibility](/agentos/docs/javascript-compatibility).
+
+## When to choose which
+
+Choose **Cloudflare Workers** when you want a managed global platform for your
+own request-handling code and do not want to operate anything.
+
+Choose **Secure Exec** when you need to run someone else's code from inside your
+own backend, with per-call permissions, real Node.js semantics, and no vendor in
+the path.

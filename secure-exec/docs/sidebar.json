@@ -1,0 +1,57 @@
+{
+	"docs": [
+		{
+			"title": "General",
+			"pages": [
+				{ "title": "Introduction", "href": "/secure-exec/docs", "icon": "faSquareInfo" },
+				{ "title": "Quickstart", "href": "/secure-exec/docs/quickstart", "icon": "faForwardFast" },
+				{ "title": "Crash Course", "href": "/secure-exec/docs/crash-course", "icon": "faTerminal" }
+			]
+		},
+		{
+			"title": "Use Cases",
+			"pages": [
+				{ "title": "AI Agent Code Exec", "href": "/secure-exec/docs/use-cases/ai-agent-code-exec", "icon": "faRobot" },
+				{ "title": "Plugin Systems", "href": "/secure-exec/docs/use-cases/plugin-systems", "icon": "faWrench" }
+			]
+		},
+		{
+			"title": "Running Code",
+			"pages": [
+				{ "title": "Execute & Evaluate", "href": "/secure-exec/docs/execute-and-evaluate", "icon": "faNodeJs" },
+				{ "title": "Output Capture", "href": "/secure-exec/docs/output-capture", "icon": "faMessages" },
+				{ "title": "Contexts", "href": "/secure-exec/docs/contexts", "icon": "faLayerGroup" },
+				{ "title": "TypeScript", "href": "/secure-exec/docs/typescript", "icon": "faCheck" },
+				{ "title": "npm Packages", "href": "/secure-exec/docs/npm", "icon": "faDownload" },
+				{ "title": "Warm-up", "href": "/secure-exec/docs/warm-up", "icon": "faBolt" }
+			]
+		},
+		{
+			"title": "Isolation",
+			"pages": [
+				{ "title": "Permissions", "href": "/secure-exec/docs/permissions", "icon": "faKey" },
+				{ "title": "Resource Limits", "href": "/secure-exec/docs/resource-limits", "icon": "faGauge" },
+				{ "title": "Filesystem & Mounts", "href": "/secure-exec/docs/filesystem", "icon": "faHardDrive" },
+				{ "title": "Networking", "href": "/secure-exec/docs/networking", "icon": "faGlobe" }
+			]
+		},
+		{
+			"title": "Reference",
+			"pages": [
+				{ "title": "Going Further with agentOS", "href": "/secure-exec/docs/agentos", "icon": "faArrowsLeftRight" },
+				{
+					"title": "Comparison",
+					"collapsible": true,
+					"icon": "faScaleBalanced",
+					"pages": [
+						{ "title": "vs Vercel Run", "href": "/secure-exec/docs/comparison/vercel-run" },
+						{ "title": "vs QuickJS", "href": "/secure-exec/docs/comparison/quickjs" },
+						{ "title": "vs isolated-vm", "href": "/secure-exec/docs/comparison/isolated-vm" },
+						{ "title": "vs Cloudflare Workers", "href": "/secure-exec/docs/comparison/cloudflare-workers" }
+					]
+				}
+			]
+		}
+	],
+	"tutorials": []
+}

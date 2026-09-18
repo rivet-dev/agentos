@@ -28,7 +28,7 @@ unchanged.
 ## `pack`
 
 Produces `<out>/<name>/<version>/` — a package in the agentOS
-[package format](https://agentos-sdk.dev/docs/architecture/packages-and-command-resolution):
+[package format](https://rivet.dev/agentos/docs/architecture/packages-and-command-resolution):
 
 The output is a **flat, self-contained package directory** — a plain npm dependency, no
 agentOS-specific manifest and no symlinks:

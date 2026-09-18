@@ -1,6 +1,6 @@
 # @rivet-dev/agentos-flue
 
-Use [agentOS](https://agentos-sdk.dev) as the sandbox for a
+Use [agentOS](https://rivet.dev/agentos) as the sandbox for a
 [Flue](https://flueframework.com) agent.
 
 ```ts
@@ -19,5 +19,5 @@ export default createAgent(() => ({
 Each Flue context maps to a stable agentOS actor with a durable `/workspace`
 filesystem. The registry starts lazily in the same process.
 
-See the [Flue integration guide](https://agentos-sdk.dev/docs/frameworks/flue)
+See the [Flue integration guide](https://rivet.dev/agentos/docs/frameworks/flue)
 and [complete example](https://github.com/rivet-dev/agentos/tree/main/examples/flue).

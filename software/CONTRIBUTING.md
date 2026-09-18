@@ -4,9 +4,9 @@ Software and agent packages for agentOS VMs, published under the
 `@agentos-software/*` npm scope. This is the quick path to adding one; the
 full documentation lives on the website:
 
-- [Software Definition](https://agentos-sdk.dev/docs/custom-software/definition) — package anatomy and manifest fields
-- [Building Binaries](https://agentos-sdk.dev/docs/custom-software/building-wasm) — compiling commands to WASM
-- [Publishing Packages](https://agentos-sdk.dev/docs/custom-software/publishing) — shipping to npm with the toolchain
+- [Software Definition](https://rivet.dev/agentos/docs/custom-software/definition) — package anatomy and manifest fields
+- [Building Binaries](https://rivet.dev/agentos/docs/custom-software/building-wasm) — compiling commands to WASM
+- [Publishing Packages](https://rivet.dev/agentos/docs/custom-software/publishing) — shipping to npm with the toolchain
 
 ## File structure
 
@@ -22,7 +22,7 @@ software/<pkg>/
 ├── package.json           name, per-package semver, build script
 ├── agentos-package.json   runtime manifest (commands/aliases/provides) +
 │                          `registry` block (title/description/priority/image)
-│                          that lists the package on agentos-sdk.dev/registry
+│                          that lists the package on rivet.dev/agentos/registry
 ├── src/index.ts           descriptor export consumed by `software: []`
 ├── bin/                   staged binaries (gitignored, built)
 └── dist/package/          assembled runtime dir shipped in the npm tarball
@@ -39,7 +39,7 @@ just software-build <pkg>       # stage bin/ + assemble dist/package/
 pnpm --filter './software/*' test
 ```
 
-See [Building Binaries](https://agentos-sdk.dev/docs/custom-software/building-wasm)
+See [Building Binaries](https://rivet.dev/agentos/docs/custom-software/building-wasm)
 for toolchain details (Rust vs C builds, the patched WASI sysroot).
 
 ## Adding a package
@@ -55,7 +55,7 @@ for toolchain details (Rust vs C builds, the patched WASI sysroot).
    `software/*` glob) and run `pnpm install`.
 5. `just software-build <pkg>`.
 
-See [Software Definition](https://agentos-sdk.dev/docs/custom-software/definition)
+See [Software Definition](https://rivet.dev/agentos/docs/custom-software/definition)
 for every manifest field.
 
 ## Testing in an external project
@@ -79,7 +79,7 @@ const vm = agentOS({ software: [myPkg] });
 ```
 
 Real publishes go through `agentos-toolchain publish` (dist-tag `dev` by
-default) — see [Publishing Packages](https://agentos-sdk.dev/docs/custom-software/publishing).
+default) — see [Publishing Packages](https://rivet.dev/agentos/docs/custom-software/publishing).
 
 ## Opening a PR
 

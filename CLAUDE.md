@@ -222,7 +222,10 @@ custom host-syscall imports. Treat that target as **native POSIX**;
   rewriting, npm publish, crates publish, release assets, and R2 upload.
 - Publishable npm packages and Rust crates are agentOS-owned. agentOS language
   execution is exposed through `@rivet-dev/agentos`; do not publish separate
-  language packages, compatibility artifacts, or language subpaths.
+  language packages, compatibility artifacts, or language subpaths. The one
+  exception is `secure-exec`, a small function-style facade over
+  `@rivet-dev/agentos-core` that exposes `secure-exec/typescript` and
+  `secure-exec/npm`; keep it a thin forwarding layer.
 - The release workflow must build and stage the native sidecar binaries,
   runtime-sidecar binaries, registry WASM commands, and pyodide assets before
   publish.
@@ -233,19 +236,27 @@ custom host-syscall imports. Treat that target as **native POSIX**;
 
 ## Docs
 
-- The agentOS website lives in `website/`. Its canonical public domain is
-  `agentos-sdk.dev`. This is the only accepted AgentOS domain for URLs, schema
-  IDs, email addresses, package metadata, and documentation.
+- Docs are authored here and published on rivet.dev by the `rivet-dev/website`
+  repo. This repo ships two bundles, each `sidebar.json` plus
+  `content/docs/**.mdx`: `docs/` (agentOS, with snippets from `examples/`) and
+  `secure-exec/docs/` (Secure Exec, with snippets from `secure-exec/examples/`).
+  `.github/workflows/docs-sync.yml` syncs both on merge to `main`. Follow
+  `docs/CLAUDE.md` for page, sidebar, snippet, and writing rules; they apply to
+  both bundles.
+- Secure Exec docs cover only the `secure-exec` API. Anything the runtime
+  already documents (permissions, limits, filesystem, networking, security,
+  compatibility, performance) stays a short page that links to the agentOS docs.
+- `https://rivet.dev/agentos` is the canonical agentOS site. Use it for URLs,
+  schema IDs, and package metadata; never `agentos-sdk.dev`. Secure Exec lives
+  at `https://rivet.dev/secure-exec`.
 - Keep docs current in the same change as user-facing behavior: public APIs,
   runtime options, env knobs, limits, architecture, and package names.
-- Runnable docs code must come from real checked example files via the docs
-  theme `<CodeSnippet>` mechanism. Inline code is fine only for shell commands,
-  config fragments, or non-runnable examples.
-- Validate docs changes with `pnpm --dir website build` when the site changes.
-- Run `just docs-check-links` when changing documentation paths, routes,
-  redirects, headings used as link anchors, or shared navigation links. It
-  builds and crawls the rendered Astro site. Pass `true` to include external
-  URLs (`just docs-check-links true`).
+- Runnable docs code must come from real checked example files via
+  `<CodeSnippet>`. Inline code is fine only for shell commands, config
+  fragments, or non-runnable examples.
+- Docs render in the website repo, not here. Validate a change by type-checking
+  the examples it embeds and previewing with a sibling website checkout as
+  described in `docs/CLAUDE.md`.
 
 ## Tests
 

@@ -212,7 +212,7 @@ jobs:
           node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos-core...'
+      - run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos-core...' --filter 'secure-exec...'
       - uses: actions/download-artifact@v4
         with:
           name: js-dist
@@ -232,6 +232,9 @@ jobs:
           node packages/runtime-core/scripts/copy-wasm-commands.mjs --require-coreutils
           pnpm --filter @agentos-software/coreutils build:runtime
       - run: pnpm --dir packages/core test:pr
+        env:
+          AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/ci-artifacts/agentos-sidecar/agentos-sidecar
+      - run: pnpm --dir packages/secure-exec test
         env:
           AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/ci-artifacts/agentos-sidecar/agentos-sidecar
 

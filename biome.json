@@ -4,6 +4,7 @@
 		"includes": [
 			"packages/**/*.ts",
 			"examples/**/*.ts",
+			"secure-exec/examples/**/*.ts",
 			"!packages/browser",
 			"!packages/runtime-browser",
 			"!packages/playground",

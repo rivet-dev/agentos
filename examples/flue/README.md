@@ -26,7 +26,7 @@ Set `ANTHROPIC_API_KEY` in `.env` before running the agent.
 - Configure software, permissions, and resource limits on `agentOS()` in `actors.ts`.
 - Keep files that must persist under `/workspace`.
 
-See the [Flue integration guide](https://agentos-sdk.dev/docs/frameworks/flue)
+See the [Flue integration guide](https://rivet.dev/agentos/docs/frameworks/flue)
 for the complete setup.
 
 ## Source

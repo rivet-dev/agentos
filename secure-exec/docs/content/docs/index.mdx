@@ -1,0 +1,34 @@
+---
+title: "Introduction"
+description: "Secure Exec runs untrusted JavaScript and TypeScript in an isolated VM with real Node.js APIs, npm packages, and a virtual filesystem."
+---
+
+Secure Exec is a library for running code you do not trust. Give an AI agent,
+a plugin author, or a user the ability to write and run code, without giving
+them your host.
+
+<CodeSnippet file="secure-exec/examples/quickstart/src/index.ts" region="evaluate" />
+
+- **One function call.** `evaluate` and `execute` are all you need. There is no
+  runtime object to create, configure, and dispose.
+- **Real Node.js inside.** Guest code runs on V8 with `node:fs`,
+  `node:child_process`, sockets, and npm packages. It is not a stripped-down
+  interpreter.
+- **A fresh VM per call.** Nothing is shared between calls unless you opt in
+  with a [context](/secure-exec/docs/contexts).
+- **Deny by default.** The guest sees a virtual filesystem and no network until
+  you [allow it](/secure-exec/docs/permissions).
+- **No infrastructure.** `npm install secure-exec`. No containers, no vendor
+  account, no API keys.
+
+## Where to start
+
+- [Quickstart](/secure-exec/docs/quickstart) installs the package and runs your first snippet.
+- [Crash Course](/secure-exec/docs/crash-course) tours the whole API on one page.
+- [AI Agent Code Exec](/secure-exec/docs/use-cases/ai-agent-code-exec) wires it into an agent tool.
+
+## Built on agentOS
+
+Secure Exec is a small function-style API over [agentOS](/agentos/docs), the
+same VM that runs full coding agents. When you need processes, a shell, Python,
+or agent sessions, [use agentOS directly](/secure-exec/docs/agentos).

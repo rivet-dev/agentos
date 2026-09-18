@@ -1,4 +1,5 @@
 packages:
+  - packages/secure-exec
   - packages/agentos-sandbox
   - packages/agentos-apps
   - packages/agentos
@@ -29,6 +30,7 @@ packages:
   # Nested example packages (e.g. examples/quickstart/hello-world) so every
   # embeddable example is a workspace member that `turbo check-types` covers.
   - examples/*/*
+  - secure-exec/examples/*
   - experiments/gigacode
   - scripts/publish
 

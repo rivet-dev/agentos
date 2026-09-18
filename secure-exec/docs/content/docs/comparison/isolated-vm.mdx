@@ -1,0 +1,63 @@
+---
+title: "Secure Exec vs isolated-vm"
+description: "How Secure Exec and isolated-vm differ in isolation surface, security confinement, performance, and developer experience."
+---
+
+Both run untrusted JavaScript in V8 isolates. isolated-vm is a low-level library
+that hands you a bare isolate with manual value marshaling and no system surface.
+Secure Exec wraps isolates in a virtualized kernel with a filesystem, processes,
+sockets, permissions, and resource limits.
+
+## At a glance
+
+| | Secure Exec | isolated-vm |
+|---|---|---|
+| **Layer** | Full virtualized runtime around V8 isolates | Bare V8 isolate primitive |
+| **Where guest code runs** | A separate sidecar process | Inside your Node.js process |
+| **System surface** | Virtual filesystem, processes, sockets, DNS | None. You build any surface yourself |
+| **Host and guest data** | JSON `inputs` in, JSON values out | Manual `Reference`, `Copy`, and `ExternalCopy` |
+| **Permissions** | Deny-by-default policy per VM | None. Whatever you expose is reachable |
+| **Resource limits** | Timeouts, heap, processes, sockets, filesystem bytes, and more | Memory limit and timeout per isolate |
+| **npm and Node.js** | Real npm packages and Node-compatible builtins | No module system and no `node:` builtins |
+
+## Security
+
+A bare isolate confines memory and CPU, and nothing else, because there is
+nothing else inside it. The security of an isolated-vm deployment is a property
+of the bridge code you write around it. Every function you inject is attack
+surface, and a mistake in the marshaling layer, such as handing the guest a live
+host `Reference`, is a sandbox escape.
+
+Secure Exec moves that boundary into a kernel. The surface the guest sees is
+virtualized rather than hand-wired per project, and a denied operation fails
+with `EACCES`. Outbound traffic flows through a virtual network stack, so it
+can be allowed, denied, or matched against rules.
+
+<CodeSnippet file="secure-exec/examples/permissions/src/index.ts" region="default" />
+
+## Performance
+
+Both execute guest code in V8, so raw JavaScript throughput is comparable.
+isolated-vm is the thinner layer: creating an isolate is cheap and the main cost
+is marshaling. Secure Exec adds syscall virtualization, so operations that touch
+the system carry overhead that a bare isolate does not have. Pure compute runs at
+isolate speed.
+
+## Developer experience
+
+With isolated-vm you write to the isolate API. There is no module loader, no
+normal I/O, and running an existing npm package is not a goal of the library.
+
+With Secure Exec the guest sees normal Linux and Node.js semantics, and the host
+side is one function call.
+
+<CodeSnippet file="secure-exec/examples/quickstart/src/index.ts" region="evaluate" />
+
+## When to choose which
+
+Choose **isolated-vm** when you want a minimal isolate primitive and intend to
+design and own the whole sandbox surface yourself.
+
+Choose **Secure Exec** when you want to run untrusted or generated code with a
+virtual filesystem, networking, permissions, and limits, without hand-building
+the sandbox.

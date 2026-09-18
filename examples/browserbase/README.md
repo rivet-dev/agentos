@@ -38,5 +38,5 @@ pnpm client         # run browse directly, then let a Claude Code agent use it
 `browse`'s interactive driver commands (`browse open`, `browse snapshot`, `browse click`, …) drive a
 live browser session step by step. That mode runs a local driver daemon that the in-VM runtime does
 not host — for interactive, multi-step browser automation, run `browse` inside a full sandbox via
-[External Sandboxes](https://agentos-sdk.dev/docs/sandboxes). The `browse cloud` commands used here need
+[External Sandboxes](https://rivet.dev/agentos/docs/sandboxes). The `browse cloud` commands used here need
 no daemon and run directly in the VM.

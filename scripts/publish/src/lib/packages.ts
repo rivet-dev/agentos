@@ -179,6 +179,7 @@ export function discoverPackages(
 		if (
 			!p.name.startsWith("@rivet-dev/agentos-") &&
 			p.name !== "@rivet-dev/agentos" &&
+			p.name !== "secure-exec" &&
 			!p.name.startsWith("@agentos-software/")
 		) {
 			continue;

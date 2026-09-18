@@ -1,0 +1,131 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/rivet-dev/agentos/main/.github/media/secure-exec-logo.png" alt="Secure Exec" height="160" />
+</p>
+
+<p align="center">
+  Secure Node.js execution without a sandbox.<br/>Run untrusted JavaScript and TypeScript in an isolated VM with real Node.js APIs, npm packages, and a virtual filesystem.<br/>Powered by <a href="https://rivet.dev/agentos">agentOS</a>.
+</p>
+
+<p align="center">
+  <a href="https://rivet.dev/secure-exec/docs/quickstart">Quickstart</a> | <a href="https://rivet.dev/secure-exec/docs">Documentation</a> | <a href="https://rivet.dev/discord">Discord</a>
+</p>
+
+## Install
+
+```bash
+npm install secure-exec
+```
+
+Requires Node.js 22+ on Linux or macOS.
+
+## Run Code
+
+Each call runs in a fresh VM that is disposed when the call finishes. Nothing is
+shared between calls.
+
+```ts
+import { evaluate, execute } from "secure-exec";
+
+const sum = await evaluate<number>("1 + 2");
+if (sum.outcome === "succeeded") console.log(sum.value); // 3
+
+const run = await execute(`console.log("hello")`, {
+  output: { capture: "all" },
+  timeoutMs: 5_000,
+});
+console.log(run.stdout); // hello
+```
+
+`evaluate` takes one expression and returns its JSON value; wrap several
+statements in a function. `execute` runs a whole module for its side effects.
+
+`outcome` is `succeeded`, `failed`, `cancelled`, or `timed_out`. Every outcome
+other than `succeeded` carries an `error`, and guest stack traces arrive on
+`stderr` when you capture it.
+
+## Configure the VM
+
+VM options go on the call: `permissions`, `limits`, `mounts`, and the rest of
+the agentOS VM options. The network is denied unless you allow it, and a policy
+is merged over the defaults.
+
+```ts
+await evaluate(
+  `(async () => {
+    const response = await fetch("https://example.com");
+    await response.text();
+    return response.status;
+  })()`,
+  { permissions: { network: "allow" } },
+);
+```
+
+## Keep state with a context
+
+A context is a dedicated VM that keeps variables, imports, files, and installed
+packages between calls. JavaScript and TypeScript share the same state.
+
+```ts
+import { createContext, execute } from "secure-exec";
+import { evaluate } from "secure-exec/typescript";
+
+await using context = await createContext({ permissions: { network: "allow" } });
+
+await execute("globalThis.total = 40", { context });
+const result = await evaluate<number>("(globalThis.total as number) + 2", { context });
+
+await context.reset(); // clear state, keep the VM
+```
+
+Without `await using`, call `context.dispose()` when you are done.
+
+## TypeScript
+
+`secure-exec/typescript` has the same `execute` and `evaluate`, plus `check`.
+Running TypeScript strips types without checking them, so check first when it
+matters.
+
+```ts
+import { check, evaluate } from "secure-exec/typescript";
+
+const checked = await check(`const total: number = "nope";`);
+for (const diagnostic of checked.diagnostics) console.log(diagnostic.message);
+```
+
+## npm
+
+`secure-exec/npm` installs packages into a context's VM.
+
+```ts
+import { createContext, evaluate } from "secure-exec";
+import { install } from "secure-exec/npm";
+
+await using context = await createContext({ permissions: { network: "allow" } });
+await install(["zod"], { context });
+
+// Packages install into /workspace. Inline code resolves imports from
+// `filePath`, so place it next to node_modules.
+await evaluate(`import("zod").then(({ z }) => z.string().parse("ok"))`, {
+  context,
+  filePath: "/workspace/main.mjs",
+});
+```
+
+`runScript` and `runPackage` work like `npm run` and `npx`.
+
+## Warm up
+
+The first call starts a shared sidecar process. Call `init()` at startup to pay
+that cost ahead of time.
+
+```ts
+import { init } from "secure-exec";
+
+await init();
+```
+
+## More
+
+For processes, filesystem access, Python, and agent sessions, use
+[`@rivet-dev/agentos-core`](https://rivet.dev/agentos) directly. Read the [documentation](https://rivet.dev/secure-exec/docs), or browse the examples in
+[`secure-exec/examples`](https://github.com/rivet-dev/agentos/tree/main/secure-exec/examples).
