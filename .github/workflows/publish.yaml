@@ -486,3 +486,20 @@ jobs:
           pnpm --filter=publish exec tsx src/ci/bin.ts publish-crates \
             --version ${{ needs.context.outputs.version }} \
             --allow-dirty
+
+  notify-managed-services:
+    name: Notify managed services
+    needs: [context, publish-npm, release-assets, publish-crates]
+    if: ${{ success() && needs.context.outputs.trigger == 'release' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify managed services
+        env:
+          GH_TOKEN: ${{ secrets.MANAGED_SERVICES_DISPATCH_TOKEN }}
+          VERSION: ${{ needs.context.outputs.version }}
+        run: |
+          gh api --method POST /repos/rivet-dev/services/dispatches \
+            -f event_type=downstream-release \
+            -f client_payload[product]=agentos \
+            -f client_payload[version]="$VERSION" \
+            -f client_payload[sha]="$GITHUB_SHA"
