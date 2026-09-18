@@ -1,8 +1,7 @@
 // docs:start basic
 import { agentOS, setup } from "@rivet-dev/agentos";
 import pi from "@agentos-software/pi";
-import { actor } from "rivetkit";
-import { type WorkflowStepContextOf, workflow } from "rivetkit/workflow";
+import { type WorkflowStepContextOf, workflow } from "@rivet-dev/workflows";
 
 const vm = agentOS({ software: [pi] });
 
@@ -13,7 +12,7 @@ interface BugFixInput {
 
 // Each actor instance is one durable workflow run. Its creation input is stored
 // in actor state, so no queue is needed to trigger or order agent prompts.
-const bugFixer = actor({
+const bugFixer = workflow({
 	state: {
 		repo: "",
 		issue: "",
@@ -24,7 +23,7 @@ const bugFixer = actor({
 		c.state.repo = input.repo;
 		c.state.issue = input.issue;
 	},
-	run: workflow(async (ctx) => {
+	run: async (ctx) => {
 		await ctx.step("clone-repo", (step) => cloneRepo(step, step.state.repo));
 		await ctx.step("fix-bug", (step) =>
 			fixBugWithAgent(step, step.state.issue),
@@ -34,7 +33,7 @@ const bugFixer = actor({
 			step.state.exitCode = exitCode;
 			step.state.status = "complete";
 		});
-	}),
+	},
 	actions: {
 		getState: (c) => c.state,
 	},
@@ -76,7 +75,7 @@ interface CodeReviewInput {
 	filePath: string;
 }
 
-const codeReviewer = actor({
+const codeReviewer = workflow({
 	state: {
 		filePath: "",
 		status: "running" as "running" | "complete",
@@ -84,7 +83,7 @@ const codeReviewer = actor({
 	onCreate: (c, input: CodeReviewInput) => {
 		c.state.filePath = input.filePath;
 	},
-	run: workflow(async (ctx) => {
+	run: async (ctx) => {
 		await ctx.step("review", (step) =>
 			reviewCode(step, step.state.filePath),
 		);
@@ -93,7 +92,7 @@ const codeReviewer = actor({
 		await ctx.step("record-review", async (step) => {
 			step.state.status = "complete";
 		});
-	}),
+	},
 	actions: {
 		getState: (c) => c.state,
 	},

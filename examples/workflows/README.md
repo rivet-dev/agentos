@@ -11,7 +11,7 @@ Run multi-step agent work that survives crashes and restarts. Reach for this whe
 
 ## How it works
 
-A RivetKit `actor` whose `run` handler is built with `workflow()` orchestrates the steps, while a separate `agentOS` VM actor does the actual work over the client. Each workflow actor instance represents one run and stores its immutable creation input in actor state. Each `ctx.step(...)` is recorded, retried, and resumed independently: if the process crashes mid-run, replay skips completed steps and continues from where it left off. Output flows step-to-step through return values and the VM filesystem — the bug-fixer chains clone -> fix -> test -> record, and the code-reviewer writes a review file and feeds it into the next step. No application queue is required; AgentOS itself serializes prompts targeting the same session.
+A `workflow({ ... })` actor from `@rivet-dev/workflows` orchestrates the steps, while a separate `agentOS` VM actor does the actual work over the client. Each workflow actor instance represents one run and stores its immutable creation input in actor state. Each `ctx.step(...)` is recorded, retried, and resumed independently: if the process crashes mid-run, replay skips completed steps and continues from where it left off. Output flows step-to-step through return values and the VM filesystem — the bug-fixer chains clone -> fix -> test -> record, and the code-reviewer writes a review file and feeds it into the next step. No application queue is required; AgentOS itself serializes prompts targeting the same session.
 
 ## Run it
 

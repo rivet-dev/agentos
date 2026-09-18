@@ -17,7 +17,7 @@
     "@agentos-software/opencode": "workspace:*",
     "@agentos-software/pi": "workspace:*",
     "zod": "^4.1.11",
-    "@rivet-dev/agentos": "workspace:*",
+    "@rivet-dev/workflows": "1.0.0",
     "rivetkit": "catalog:rivetkit"
   },
   "devDependencies": {
