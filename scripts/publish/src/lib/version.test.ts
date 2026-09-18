@@ -83,6 +83,7 @@ test("bumpPackageJsons injects sidecar platform optional dependencies", async ()
 			join(repoRoot, "pnpm-workspace.yaml"),
 			[
 				"packages:",
+				"  - secure-exec",
 				"  - packages/*",
 				"  - packages/sidecar-binary/npm/*",
 				"  - packages/runtime-sidecar/npm/*",
@@ -108,7 +109,7 @@ test("bumpPackageJsons injects sidecar platform optional dependencies", async ()
 				version: "0.0.0",
 			});
 		}
-		await writeJson(repoRoot, "packages/secure-exec/package.json", {
+		await writeJson(repoRoot, "secure-exec/package.json", {
 			name: "secure-exec",
 			version: "0.0.1",
 			dependencies: { "@rivet-dev/agentos-core": "workspace:*" },
@@ -125,14 +126,14 @@ test("bumpPackageJsons injects sidecar platform optional dependencies", async ()
 			),
 		);
 		const secureExecManifest = JSON.parse(
-			await readFile(join(repoRoot, "packages/secure-exec/package.json"), "utf8"),
+			await readFile(join(repoRoot, "secure-exec/package.json"), "utf8"),
 		);
 		assert.equal(secureExecManifest.version, "0.3.0");
 		assert.equal(secureExecManifest.dependencies["@rivet-dev/agentos-core"], "0.3.0");
 		assert.deepEqual(secureExecManifest.repository, {
 			type: "git",
 			url: "https://github.com/rivet-dev/agentos.git",
-			directory: "packages/secure-exec",
+			directory: "secure-exec",
 		});
 		assert.deepEqual(
 			sidecarManifest.optionalDependencies,

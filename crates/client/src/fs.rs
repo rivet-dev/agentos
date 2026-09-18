@@ -934,7 +934,7 @@ impl AgentOs {
                 wire::RequestPayload::ConfigureVmRequest(wire::ConfigureVmRequest {
                     mounts,
                     software: Vec::new(),
-                    permissions: Some(crate::agent_os::permissions_policy(config)),
+                    permissions: crate::agent_os::permissions_policy(config),
                     module_access_cwd: None,
                     instructions: config.additional_instructions.clone().into_iter().collect(),
                     projected_modules: Vec::new(),

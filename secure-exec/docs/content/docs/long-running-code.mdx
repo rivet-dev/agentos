@@ -1,0 +1,52 @@
+---
+title: "Long-Running Code"
+description: "Run servers, watchers, and other background processes in Secure Exec with spawn, and reach them from the host."
+skill: true
+---
+
+`execute` and `evaluate` wait for your code to finish, so a server started that
+way runs until `timeoutMs` and returns `timed_out`. For code that is meant to
+keep running, `spawn` it in a [VM](/secure-exec/docs/vms). The
+[execution model](/secure-exec/docs/execution-model) explains why.
+
+## Spawn a background process
+
+`spawn` returns as soon as the process is running.
+
+<CodeSnippet file="secure-exec/examples/dev-server/src/index.ts" region="spawn" />
+
+`vm.typescript.spawn` does the same for TypeScript source, and `spawnFile` for
+a file that is already in the VM.
+
+## What a spawned process shares
+
+A spawned process is its own program in the VM, like a process on Linux.
+
+| Shared with everything else in the VM | Not shared |
+|---|---|
+| The filesystem, including files you write from the host | JavaScript memory, including any [context](/secure-exec/docs/contexts) |
+| Installed npm packages | |
+| The virtual network, so other code in the VM can reach its ports | |
+
+Other calls keep working while it runs. Code in the same VM can reach the
+process on `127.0.0.1`, which makes a spawned server a good home for state that
+several calls or contexts need to share.
+
+## Reach it from the host
+
+`vm.network.httpRequest` sends a request to a port inside the VM. Nothing is
+exposed on the host's own network.
+
+<CodeSnippet file="secure-exec/examples/dev-server/src/index.ts" region="request" />
+
+## Manage the process
+
+`vm.process` controls processes by `pid`.
+
+<CodeSnippet file="secure-exec/examples/dev-server/src/index.ts" region="stop" />
+
+`wait(pid)` resolves when the process exits, `kill(pid)` and `signal(pid, signal)`
+stop it, and `list()` shows what is running. `onStdout` and `onStderr` on `spawn` stream its output live. Stop spawned processes before you dispose the VM.
+
+Read the [agentOS processes docs](/agentos/docs/processes) for the full process
+model.

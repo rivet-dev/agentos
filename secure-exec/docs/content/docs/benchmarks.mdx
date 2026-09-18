@@ -1,0 +1,62 @@
+---
+title: "Benchmarks"
+description: "Measured call overhead and compute speed for Secure Exec, quickjs-emscripten, and Vercel Run on the same guest code."
+---
+
+Secure Exec runs guest code on V8 with a JIT compiler, in a separate process.
+QuickJS-based libraries run an interpreter compiled to WebAssembly, inside your
+process. That trade shows up as two different numbers: how long a call takes
+before any guest code runs, and how fast the guest code then goes.
+
+## Results
+
+Median of five runs, in milliseconds, end to end from the host.
+
+| | No work | 50,000 records | Numeric loops | 1 MB of text |
+|---|---:|---:|---:|---:|
+| Secure Exec, one-shot call | 40.7 | 47.7 | 83.9 | 85.1 |
+| Secure Exec, existing [VM](/secure-exec/docs/vms) | 13.7 | 23.6 | 61.4 | 69.9 |
+| quickjs-emscripten | 0.4 | 43.5 | 481.3 | 177.0 |
+| Vercel Run | 5.1 | 60.9 | 588.6 | 324.1 |
+
+Subtracting the "no work" column leaves the time spent computing:
+
+| | 50,000 records | Numeric loops | 1 MB of text |
+|---|---:|---:|---:|
+| Secure Exec | 9.9 | 47.7 | 56.2 |
+| quickjs-emscripten | 43.1 (4.4x) | 480.9 (10.1x) | 176.6 (3.1x) |
+| Vercel Run | 55.8 (5.6x) | 583.5 (12.2x) | 319.0 (5.7x) |
+
+## What it means
+
+- **Secure Exec has a fixed cost per call.** A one-shot call creates and disposes
+  a VM, which costs about 40 ms. A call on an existing VM costs about 14 ms. The
+  QuickJS libraries start in under 6 ms, because there is no process boundary to
+  cross.
+- **V8 computes 3 to 12 times faster.** The gap is widest on tight numeric loops
+  and narrowest on string work that already runs in native code.
+- **The crossover is small.** Once guest code does a few tens of milliseconds of
+  real work, Secure Exec finishes first, even counting its fixed cost. A snippet
+  that only calls a host function and returns will finish first on QuickJS.
+
+## Workloads
+
+Each workload builds its own data inside the guest, so no engine pays to move
+data across its boundary.
+
+<CodeSnippet file="secure-exec/examples/benchmark/src/index.ts" region="workloads" />
+
+<CodeSnippet file="secure-exec/examples/benchmark/src/index.ts" region="engines" />
+
+## Method
+
+- Measured on 2026-09-18 on a 20-core x64 Linux machine with Node.js 22.23.
+- Versions: the `secure-exec` 0.2.20 release sidecar, `quickjs-emscripten`
+  0.32.0, and `run` 2.1.4.
+- Every engine gets one warm-up call. quickjs-emscripten creates a fresh context
+  per call, and Run creates one by design, so every row pays for a clean
+  environment.
+- These are small, single-threaded workloads on one machine. Run the benchmark
+  on your own hardware before relying on the ratios. Inside this repository it
+  uses the locally built sidecar, which is a slower debug build unless you set
+  `AGENTOS_SIDECAR_BIN` to a release binary.

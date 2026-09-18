@@ -1,0 +1,77 @@
+---
+title: "Secure Exec vs Container Sandboxes"
+description: "When to use a hosted container or microVM sandbox such as E2B, Daytona, Modal, or Vercel Sandbox, and when Secure Exec is the better fit."
+---
+
+Hosted sandboxes such as E2B, Daytona, Modal Sandboxes, Vercel Sandbox, and the
+Cloudflare Sandbox SDK give generated code a full Linux machine in someone else's
+cloud. Secure Exec gives it a lightweight VM inside your own process. If the job
+is "run the snippet the model just wrote", a Linux machine across the network is
+a lot of machinery.
+
+## At a glance
+
+| | Secure Exec | Hosted container sandbox |
+|---|---|---|
+| **Runs** | In your process, on your machines | In a vendor's cloud |
+| **To get started** | `npm install` | A vendor account and API key |
+| **Startup** | Tens of milliseconds, measured from your code | Vendor-side creation time, plus a network round trip per operation |
+| **Cost** | None | Per-second CPU and memory, with plan caps |
+| **Per-call isolation** | A fresh VM for every call | One sandbox per call, if you pay the startup and the bill |
+| **Outbound network** | Denied by default, allowed per host | Allowed by default |
+| **Your functions** | [Host functions](/secure-exec/docs/host-functions) run in your process | Reached back over the network |
+| **Languages and binaries** | JavaScript and TypeScript, WebAssembly tools | Anything that runs on Linux |
+
+## Where container sandboxes fall short
+
+- **Every vendor needs an account and a key**, and generated code and its data
+  leave your infrastructure. Self-hosting is rarely a real option: E2B's
+  self-hosted packages need "a Linux host with KVM" and are described as
+  "single-machine evaluation packages, not deployment patterns", and Daytona's
+  open source repository says it "is no longer maintained".
+- **The network is open by default.** E2B: "every sandbox has outbound access to
+  the internet by default". Modal sandboxes "can make outbound connections to any
+  public IP address". Vercel's default policy is `allow-all`.
+- **Domain allowlists are leaky.** They match the HTTP Host header or the TLS SNI
+  field. Vercel documents that "plain-text HTTP cannot be filtered by domain",
+  and E2B's filtering does not support QUIC.
+- **They are not all microVMs.** Daytona "sandboxes run as **Linux containers**
+  by default", and Modal uses gVisor. If hardware virtualization is the reason
+  you want a sandbox, check that your vendor provides it.
+- **Isolation stops at the sandbox.** Inside one, as Cloudflare puts it, "all
+  code shares resources". Isolating each call means creating a sandbox per call.
+- **Plans cap what you can run.** Session lengths, concurrent sandboxes, and
+  creation rates are all limited by plan. Entry tiers allow sessions of about an
+  hour or less and a small number of concurrent sandboxes.
+- **Secrets are only partly kept out.** Several vendors now inject credentials at
+  the network edge, which works for HTTP headers to allowlisted hosts. Anything
+  else, such as a database connection, still means putting the secret inside the
+  sandbox.
+
+## What container sandboxes do well
+
+They give you a real Linux kernel: native binaries, browsers, GPUs, `apt`
+packages, any language, tens of gigabytes of memory, and snapshots. Vendors built
+on Firecracker give each sandbox its own kernel behind hardware virtualization,
+which is a stronger and better understood boundary than any userland approach,
+Secure Exec included. There is nothing for you to run.
+
+## Only choose a container sandbox when
+
+All of these hold:
+
+1. The workload needs a real kernel: native binaries, a browser, a GPU, `apt`
+   packages, or a language other than JavaScript and TypeScript.
+2. It is a long-lived, stateful environment that needs many gigabytes of memory
+   or snapshots.
+3. If your threat model requires hardware virtualization, the vendor you pick
+   actually provides it.
+4. You accept a vendor account, per-second billing, plan caps, and your code and
+   data leaving your infrastructure.
+
+## Choose Secure Exec when
+
+The code is JavaScript or TypeScript, it should start in milliseconds, and it
+should call your own functions without a network hop or a credential leaving your
+process. You can also combine them: agentOS can
+[mount a full sandbox](/agentos/docs/sandboxes) for the workloads that need one.

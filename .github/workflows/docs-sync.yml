@@ -12,7 +12,8 @@ on:
     paths:
       - "docs/**"
       - "examples/**"
-      - "secure-exec/**"
+      - "secure-exec/docs/**"
+      - "secure-exec/examples/**"
       - ".github/workflows/docs-sync.yml"
   workflow_dispatch:
 

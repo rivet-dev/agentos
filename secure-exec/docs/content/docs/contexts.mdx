@@ -1,37 +1,49 @@
 ---
 title: "Contexts"
-description: "Keep variables, files, and installed packages between calls with a Secure Exec context."
+description: "Keep JavaScript variables and imports between calls with a context, and run several contexts in parallel in one VM."
+skill: true
 ---
 
-A call without a context runs in a fresh VM and leaves nothing behind. A
-**context** is a dedicated VM that stays alive, so later calls see earlier state.
-Use one for a REPL, a notebook, or an agent that builds on its previous steps.
+Every call on a [VM](/secure-exec/docs/vms) starts with fresh JavaScript memory.
+A **context** keeps it: variables and imports from one call are still there in
+the next. Use one for a REPL, a notebook, or an agent that builds on its earlier
+steps.
+
+Files, packages, and processes belong to the VM, not to a context, so you do not
+need a context for those.
 
 ## Keep state between calls
 
 <CodeSnippet file="secure-exec/examples/contexts/src/index.ts" region="retain" />
 
-- JavaScript and TypeScript share one context.
-- Each call is its own ES module, so top-level `const` and `let` stay scoped to
-  that call. Put values on `globalThis` to share them.
-- A context runs one call at a time. A second call while one is running fails
-  immediately instead of queueing.
-- Files written and packages installed in a context also persist, because the
-  context owns its VM's filesystem.
+Each call is its own ES module, so top-level `const` and `let` stay scoped to
+that call. Put values on `globalThis` to share them. A context holds memory and
+does nothing between calls. See the
+[execution model](/secure-exec/docs/execution-model) for the details.
+
+## TypeScript
+
+<CodeSnippet file="secure-exec/examples/contexts/src/index.ts" region="typescript" />
 
 ## Isolation
 
-Contexts do not leak into other calls, and two contexts never share anything.
-
 <CodeSnippet file="secure-exec/examples/contexts/src/index.ts" region="isolated" />
 
-## Reset
+## Run in parallel
+
+A context runs **one call at a time**. A second call while one is running fails
+with `execution_busy` instead of queueing. For parallel work, create several
+contexts in the same VM. Each has its own memory, and they share the VM's files
+and packages.
+
+<CodeSnippet file="secure-exec/examples/contexts/src/parallel.ts" region="parallel" />
+
+When parallel contexts need shared mutable state, keep it in a file, or in a
+[background process](/secure-exec/docs/long-running-code) that they all call.
+
+## Reset and dispose
 
 <CodeSnippet file="secure-exec/examples/contexts/src/index.ts" region="reset" />
 
-## VM options and cleanup
-
-<CodeSnippet file="secure-exec/examples/contexts/src/options.ts" region="options" />
-
-A context holds a VM until you dispose it. Dispose contexts you no longer need,
-and give each tenant its own context rather than sharing one.
+`context.dispose()` deletes the context and leaves the VM running. Disposing the
+VM removes every context in it.

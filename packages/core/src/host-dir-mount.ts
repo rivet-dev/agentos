@@ -34,10 +34,29 @@ export function createHostDirBackend(
 }
 
 /** A native `host_dir` mount, the serializable form `AgentOsOptions.mounts` accepts. */
-export interface NodeModulesMountConfig {
+export interface HostDirMountConfig {
 	path: string;
 	plugin: NativeMountPluginDescriptor<HostDirMountPluginConfig>;
 	readOnly: boolean;
+}
+
+export type NodeModulesMountConfig = HostDirMountConfig;
+
+/**
+ * Mount a host directory into the VM at `path`. Read-only unless `readOnly` is
+ * `false`. The guest sees only the mounted subtree, never the rest of the host.
+ */
+export function hostDirMount(
+	path: string,
+	hostPath: string,
+	opts?: { readOnly?: boolean },
+): HostDirMountConfig {
+	const readOnly = opts?.readOnly ?? true;
+	return {
+		path,
+		plugin: createHostDirBackend({ hostPath, readOnly }),
+		readOnly,
+	};
 }
 
 /**
@@ -55,10 +74,5 @@ export function nodeModulesMount(
 	hostNodeModulesDir: string,
 	opts?: { readOnly?: boolean },
 ): NodeModulesMountConfig {
-	const readOnly = opts?.readOnly ?? true;
-	return {
-		path: "/root/node_modules",
-		plugin: createHostDirBackend({ hostPath: hostNodeModulesDir, readOnly }),
-		readOnly,
-	};
+	return hostDirMount("/root/node_modules", hostNodeModulesDir, opts);
 }

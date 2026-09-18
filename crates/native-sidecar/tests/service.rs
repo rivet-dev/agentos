@@ -10604,7 +10604,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                 .expect_err("read should be denied");
             assert_eq!(read_error.code(), "EACCES");
         }
-        fn create_vm_without_permissions_defaults_to_static_deny_all() {
+        fn create_vm_without_permissions_defaults_to_sandboxed_vm() {
             let mut sidecar = create_test_sidecar();
             let (connection_id, session_id) =
                 authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
@@ -10621,26 +10621,40 @@ console.log(JSON.stringify({ status: "ok", summary }));
                 ))
                 .expect("create vm");
             let vm_id = created_vm_id(response).expect("vm created");
-            let permission_check_count_before_write = sidecar
-                .with_bridge_mut(|bridge| bridge.permission_checks.len())
-                .expect("read bootstrap permission checks");
-
-            let write_error = sidecar
+            let permissions = sidecar
                 .vms
-                .get_mut(&vm_id)
-                .expect("configured vm")
-                .kernel
-                .filesystem_mut()
-                .write_file("/blocked.txt", b"nope".to_vec())
-                .expect_err("write should be denied");
-            assert_eq!(write_error.code(), "EACCES");
+                .get(&vm_id)
+                .expect("created vm")
+                .configuration
+                .permissions
+                .clone();
 
-            let permission_check_count_after_write = sidecar
-                .with_bridge_mut(|bridge| bridge.permission_checks.len())
-                .expect("read bridge permission checks");
+            // The guest's own virtual filesystem, processes, and environment work.
+            for (domain, capability, resource) in [
+                ("fs", "fs.write", "/workspace/file.txt"),
+                ("child_process", "child_process.spawn", "node"),
+                ("env", "env.read", "HOME"),
+            ] {
+                assert_eq!(
+                    agentos_native_sidecar_core::permissions::evaluate_permissions_policy(
+                        &permissions,
+                        domain,
+                        capability,
+                        Some(resource)
+                    ),
+                    agentos_vm_config::PermissionMode::Allow,
+                    "{capability} should be allowed by default"
+                );
+            }
+            // The network is denied apart from the default egress hosts.
             assert_eq!(
-                permission_check_count_after_write, permission_check_count_before_write,
-                "guest writes under default-deny should not fall through to bridge callbacks"
+                agentos_native_sidecar_core::permissions::evaluate_permissions_policy(
+                    &permissions,
+                    "network",
+                    "network.http",
+                    Some("tcp://example.com:443"),
+                ),
+                agentos_vm_config::PermissionMode::Deny
             );
         }
         fn configure_vm_rollback_restore_failure_falls_back_to_static_deny_all() {
@@ -11333,7 +11347,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                 other => panic!("expected configured response, got {other:?}"),
             }
         }
-        fn guest_mount_request_default_deny_rejects_without_changing_operator_mounts() {
+        fn guest_mount_request_under_deny_all_rejects_without_changing_operator_mounts() {
             let mut sidecar = create_test_sidecar();
             let (connection_id, session_id) =
                 authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
@@ -11345,7 +11359,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         GuestRuntimeKind::JavaScript,
                         std::collections::HashMap::new(),
                         Default::default(),
-                        None,
+                        Some(PermissionsPolicy::default()),
                     )),
                 ))
                 .expect("create vm");
@@ -11426,7 +11440,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     MemoryFileSystem::new(),
                     MountOptions::new("memory"),
                 )
-                .expect_err("guest mount under default-deny should be rejected");
+                .expect_err("guest mount under deny-all should be rejected");
             assert_eq!(mount_error.code(), "EACCES");
 
             let mounts_after_guest_request = sidecar
@@ -14392,6 +14406,74 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                 None,
             )
             .expect("spawn denied binding command");
+
+            assert_eq!(result["code"], json!(1));
+            assert!(
+                result["pid"].as_u64().is_some_and(|pid| pid > 0),
+                "spawnSync must preserve the admitted child pid"
+            );
+            assert_eq!(result["stdout"], json!(""));
+            let stderr = result["stderr"]
+                .as_str()
+                .expect("stderr should be captured as a string");
+            assert!(
+                stderr.contains("blocked by binding.invoke policy for math:add"),
+                "unexpected denied stderr: {stderr:?}"
+            );
+        }
+        fn bindings_registry_command_denies_host_callback_without_permission() {
+            let mut sidecar = create_test_sidecar();
+            let (connection_id, session_id) =
+                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
+            let vm_id = create_vm(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                PermissionsPolicy {
+                    fs: Some(FsPermissionScope::PermissionMode(PermissionMode::Allow)),
+                    network: None,
+                    child_process: Some(PatternPermissionScope::PermissionMode(
+                        PermissionMode::Allow,
+                    )),
+                    process: None,
+                    env: None,
+                    binding: Some(PatternPermissionScope::PermissionMode(PermissionMode::Deny)),
+                },
+            )
+            .expect("create vm");
+
+            sidecar
+                .dispatch_blocking(request(
+                    11,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    RequestPayload::RegisterHostCallbacks(test_bindings_payload(
+                        "math",
+                        "Math utilities",
+                        "add",
+                    )),
+                ))
+                .expect("register math binding collection");
+
+            let cwd = temp_dir("agentos-native-sidecar-binding-registry-denied");
+            insert_fake_javascript_parent_process(
+                &mut sidecar,
+                &vm_id,
+                &cwd,
+                "proc-js-binding-registry-denied",
+            );
+
+            let result = spawn_javascript_child_process_sync_for_test(
+                &mut sidecar,
+                &vm_id,
+                "proc-js-binding-registry-denied",
+                crate::protocol::JavascriptChildProcessSpawnRequest {
+                    command: String::from("/usr/local/bin/agentos"),
+                    args: vec![String::from("math"), String::from("add")],
+                    options: crate::protocol::JavascriptChildProcessSpawnOptions::default(),
+                },
+                None,
+            )
+            .expect("spawn denied registry command");
 
             assert_eq!(result["code"], json!(1));
             assert!(
@@ -25707,7 +25789,7 @@ try {
             bridge_permissions_map_symlink_operations_to_symlink_access();
             vm_limits_config_reads_filesystem_limits();
             create_vm_applies_filesystem_permission_descriptors_to_kernel_access();
-            create_vm_without_permissions_defaults_to_static_deny_all();
+            create_vm_without_permissions_defaults_to_sandboxed_vm();
             configure_vm_rollback_restore_failure_falls_back_to_static_deny_all();
             binding_registration_rollback_restore_failure_keeps_registry_consistent();
             binding_registration_success_restore_failure_rolls_back_owned_mutation();
@@ -25716,7 +25798,7 @@ try {
             configure_vm_mounts_bypass_guest_fs_write_policy();
             guest_filesystem_link_and_truncate_preserve_hard_link_semantics();
             configure_vm_sensitive_mounts_bypass_guest_fs_mount_sensitive_policy();
-            guest_mount_request_default_deny_rejects_without_changing_operator_mounts();
+            guest_mount_request_under_deny_all_rejects_without_changing_operator_mounts();
             scoped_host_filesystem_unscoped_target_requires_exact_guest_root_prefix();
             scoped_host_filesystem_realpath_preserves_paths_outside_guest_root();
             host_filesystem_realpath_fails_closed_on_circular_symlinks();
@@ -25738,6 +25820,7 @@ try {
             bindings_register_host_callbacks_rejects_registry_overflow_without_mutating_vm();
             bindings_register_host_callbacks_rejects_total_binding_overflow_without_mutating_vm();
             bindings_javascript_child_process_denies_host_callback_without_permission();
+            bindings_registry_command_denies_host_callback_without_permission();
             bindings_javascript_child_process_invokes_binding_with_matching_permission();
             bindings_javascript_child_process_rejects_invalid_json_file_input_before_dispatch();
             bindings_javascript_child_process_accepts_valid_json_input();

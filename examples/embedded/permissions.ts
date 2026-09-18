@@ -6,7 +6,11 @@ const permissions = {
 	network: {
 		default: "deny",
 		rules: [
-			{ mode: "allow", operations: ["*"], patterns: ["api.example.com"] },
+			{
+				mode: "allow",
+				operations: ["*"],
+				patterns: ["dns://api.example.com", "tcp://api.example.com:*"],
+			},
 		],
 	},
 } satisfies Permissions;

@@ -441,7 +441,7 @@ import {
 } from "./layers.js";
 import type { SoftwareInput, SoftwareRoot } from "./packages.js";
 import type { PermissionTier } from "./runtime.js";
-import { allowAll, createNodeHostNetworkAdapter } from "./runtime-compat.js";
+import { createNodeHostNetworkAdapter } from "./runtime-compat.js";
 import {
 	type AcpDurableEvent,
 	type AcpDurableSessionInfo,
@@ -533,7 +533,6 @@ interface AgentOsVmAdmin extends InProcessSidecarVmAdmin {
 	rootView: VirtualFileSystem;
 	hostMounts: HostMountInfo[];
 	env: Record<string, string>;
-	permissions: Permissions;
 	sidecarMounts: SidecarMountDescriptor[];
 	sidecarPermissions: SidecarPermissionsPolicy | undefined;
 	commandPermissions: Record<string, PermissionTier>;
@@ -866,8 +865,10 @@ export interface AgentOsOptions {
 	/** Host-side bindings available to agents inside the VM. */
 	bindings?: Bindings[];
 	/**
-	 * Custom permission policy for the kernel. Controls access to filesystem,
-	 * network, child process, and environment operations. Defaults to allowAll.
+	 * Permission policy for the kernel. By default the guest behaves like a
+	 * sandboxed machine: its virtual filesystem, processes, and environment are
+	 * allowed, and the network is denied apart from the default model-provider
+	 * hosts. Your policy is merged over that default, so an omitted scope keeps it.
 	 */
 	permissions?: Permissions;
 	/**
@@ -1957,17 +1958,8 @@ async function handleHostCallback(
 		};
 	}
 
-	const permissionMode = bindingPermissionMode(
-		context.permissions,
-		payload.callback_key,
-	);
-	if (permissionMode !== "allow") {
-		return {
-			type: "host_callback_result",
-			invocation_id: payload.invocation_id,
-			error: `EACCES: blocked by binding.invoke policy for ${payload.callback_key}`,
-		};
-	}
+	// The sidecar checks the `binding` permission scope before it forwards a
+	// binding call, so a call that reaches the host is already permitted.
 
 	const parsed = definition.inputSchema.safeParse(payload.input);
 	if (!parsed.success) {
@@ -2019,7 +2011,6 @@ interface HostCommandCallbackInput {
 interface HostCallbackContext {
 	bindings: Bindings[];
 	bindingMap: ReadonlyMap<string, Binding>;
-	permissions: Permissions;
 	readFile(path: string): Promise<Uint8Array>;
 }
 
@@ -2321,16 +2312,9 @@ async function invokeBinding({
 			`No binding "${bindingName}" in collection "${bindingCollection.name}". Available: ${bindingNames(bindingCollection)}`,
 		);
 	}
+	// The sidecar checks the `binding` permission scope for registry commands
+	// before forwarding them, the same as for collection commands.
 	const callbackKey = `${bindingCollection.name}:${bindingName}`;
-	const permissionMode = bindingPermissionMode(
-		context.permissions,
-		callbackKey,
-	);
-	if (permissionMode !== "allow") {
-		throw new Error(
-			`EACCES: blocked by binding.invoke policy for ${callbackKey}`,
-		);
-	}
 	const input = await parseBindingInput(
 		definition,
 		args,
@@ -2547,48 +2531,6 @@ function describeBindingPayload(
 				input: example.input,
 			})) ?? [],
 	};
-}
-
-function bindingPermissionMode(
-	permissions: Permissions,
-	callbackKey: string,
-): "allow" | "deny" {
-	const scope = permissions.binding;
-	if (!scope) {
-		return "deny";
-	}
-	if (typeof scope === "string") {
-		return scope;
-	}
-	let mode: "allow" | "deny" = scope.default ?? "deny";
-	for (const rule of scope.rules) {
-		const operations = rule.operations ?? ["*"];
-		const patterns = rule.patterns ?? ["**"];
-		if (
-			operations.some(
-				(operation) => operation === "*" || operation === "invoke",
-			) &&
-			patterns.some((pattern) => permissionPatternMatches(pattern, callbackKey))
-		) {
-			mode = rule.mode;
-		}
-	}
-	return mode;
-}
-
-function permissionPatternMatches(pattern: string, value: string): boolean {
-	if (pattern === "*" || pattern === "**" || pattern === value) {
-		return true;
-	}
-	const parts = pattern.split(/(\*\*|\*)/u);
-	const source = parts
-		.map((part) => {
-			if (part === "**") return ".*";
-			if (part === "*") return "[^:]*";
-			return part.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
-		})
-		.join("");
-	return new RegExp(`^${source}$`).test(value);
 }
 
 function bindingsNames(bindings: Bindings[]): string {
@@ -2990,7 +2932,6 @@ export class AgentOs {
 	private _cronManager!: CronManager;
 	private _bindings: Bindings[] = [];
 	private _bindingReference = "";
-	private _permissions: Permissions = allowAll;
 	private _hostMounts: HostMountInfo[];
 	private _env: Record<string, string>;
 	private _rootFilesystem: VirtualFileSystem;
@@ -3273,12 +3214,9 @@ export class AgentOs {
 				client = shared.client;
 				const session = shared.session;
 				nativeSession = session;
-				const hostPermissions = options?.permissions ?? {
-					...allowAll,
-					binding: "allow",
-				};
-				const sidecarPermissions =
-					serializePermissionsForSidecar(hostPermissions);
+				const sidecarPermissions = serializePermissionsForSidecar(
+					options?.permissions,
+				);
 				const createVmConfig: CreateVmConfig = {
 					env,
 					database: options?.database,
@@ -3414,7 +3352,6 @@ export class AgentOs {
 					sidecarClient: client,
 					sidecarSession: session,
 					sidecarVm: nativeVm,
-					permissions: hostPermissions,
 					snapshotRootFilesystem: async (maxBytes) =>
 						createSnapshotExport(
 							convertSidecarRootSnapshotEntries(
@@ -3487,7 +3424,6 @@ export class AgentOs {
 			vm._sidecarLease = sidecarLease;
 			vm._bindings = vmAdmin.bindings;
 			vm._bindingReference = vmAdmin.bindingReference;
-			vm._permissions = vmAdmin.permissions;
 			vm._disposeHooks.push(...sandboxDisposeHooks);
 			vm._installSidecarRequestHandler();
 			vm._cronManager = new CronManager(
@@ -6204,7 +6140,6 @@ export class AgentOs {
 		const context: HostCallbackContext = {
 			bindings: this._bindings,
 			bindingMap: buildBindingMap(this._bindings),
-			permissions: this._permissions,
 			readFile: (path) => this.readFile(path),
 		};
 		this._sidecarClient.setSidecarRequestHandler((request) => {

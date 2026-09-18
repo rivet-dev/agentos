@@ -1,0 +1,51 @@
+---
+title: "Execution Model"
+description: "How Secure Exec runs a call: what is isolated at each level, when a call finishes, and how state and processes relate."
+skill: true
+---
+
+You do not need this page to use Secure Exec. It explains the behavior behind
+[VMs](/secure-exec/docs/vms), [contexts](/secure-exec/docs/contexts), and
+[long-running code](/secure-exec/docs/long-running-code).
+
+## Three levels of isolation
+
+| You call | Runs in | Shares with other calls |
+|---|---|---|
+| `evaluate(code)` | A fresh VM, disposed afterwards | Nothing |
+| `vm.javascript.evaluate(code)` | Fresh JavaScript memory in that VM | Files, packages, network, limits |
+| `context.evaluate(code)` | That context's JavaScript memory | The above, plus variables and imports |
+
+Every VM runs inside one sidecar process, separate from your own. A VM has its
+own virtual kernel: filesystem, process table, sockets, and permission policy.
+
+## When a call finishes
+
+`execute` and `evaluate` run your code the way `node -e` would. A call finishes
+when the code's **event loop drains**, not when its last line runs. An un-awaited
+promise or a pending timer keeps the call open until it settles. A server or an
+interval that never ends keeps it open until `timeoutMs`, and the call returns
+`timed_out`.
+
+Each call is its own ES module. Top-level `const` and `let` are scoped to that
+call, and `import` and top-level `await` work.
+
+## Contexts are idle between calls
+
+A context holds JavaScript memory. It does not keep running.
+
+- Nothing executes between calls. A timer or promise left over from a finished
+  call never fires, even during a later call.
+- A context runs one call at a time. A second call while one is running rejects
+  with `execution_busy`.
+- A call that times out clears the context's state.
+
+For work that should run at the same time, create several contexts in one VM. For
+work that should keep running, use a process.
+
+## Processes keep running
+
+`vm.javascript.spawn` starts a program that lives until it exits or you stop it,
+like a process on Linux. Any number can run at once, alongside your calls. A
+process shares the VM's filesystem, packages, and network with everything else in
+the VM, and shares JavaScript memory with nothing.

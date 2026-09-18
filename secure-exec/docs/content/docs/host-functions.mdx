@@ -1,0 +1,39 @@
+---
+title: "Host Functions"
+description: "Give untrusted code a narrow set of host-backed functions it calls as plain JavaScript. Credentials stay in your process."
+skill: true
+---
+
+Untrusted code should never hold your database password or API key. A host
+function runs in your process with your credentials, and the guest only sees its
+inputs and outputs. This is what makes
+[code mode](/secure-exec/docs/use-cases/ai-agent-code-exec) useful: the model
+writes one program that chains your tools.
+
+## Define host functions
+
+Host functions are grouped into named collections with `bindings`. Each function
+has a Zod input schema, so arguments from the guest are validated before your
+code runs.
+
+<CodeSnippet file="secure-exec/examples/host-functions/src/index.ts" region="define" />
+
+## Call them from guest code
+
+`bindings` is a VM option. Pass it on a call, or on `createVm`. Inside the VM,
+each collection is a global object and each function is async.
+
+<CodeSnippet file="secure-exec/examples/host-functions/src/index.ts" region="call" />
+
+- Names become camelCase identifiers: a collection named `order-store` with a
+  function `list-orders` is `orderStore.listOrders(input)`.
+- Each function takes one input object and resolves to what your `execute`
+  returned. A schema violation, a thrown error, or a timeout rejects the promise.
+- The globals are frozen. A collection whose name is already a global, such as
+  `process`, is not defined, and a warning is written to stderr.
+- The `binding` permission scope gates which functions a guest may call. See
+  [permissions](/secure-exec/docs/permissions).
+
+The same functions are also available to shell scripts and other languages as
+commands. Read the [agentOS bindings reference](/agentos/docs/bindings) for that,
+and for schemas, timeouts, and examples.

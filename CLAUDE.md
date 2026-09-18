@@ -224,8 +224,9 @@ custom host-syscall imports. Treat that target as **native POSIX**;
   execution is exposed through `@rivet-dev/agentos`; do not publish separate
   language packages, compatibility artifacts, or language subpaths. The one
   exception is `secure-exec`, a small function-style facade over
-  `@rivet-dev/agentos-core` that exposes `secure-exec/typescript` and
-  `secure-exec/npm`; keep it a thin forwarding layer.
+  `@rivet-dev/agentos-core` that exposes `secure-exec/typescript`. Its
+  top-level functions are one-shot conveniences, and `createVm()` returns the
+  agentOS VM's own namespaces; keep it a thin forwarding layer.
 - The release workflow must build and stage the native sidecar binaries,
   runtime-sidecar binaries, registry WASM commands, and pyodide assets before
   publish.
@@ -240,6 +241,8 @@ custom host-syscall imports. Treat that target as **native POSIX**;
   repo. This repo ships two bundles, each `sidebar.json` plus
   `content/docs/**.mdx`: `docs/` (agentOS, with snippets from `examples/`) and
   `secure-exec/docs/` (Secure Exec, with snippets from `secure-exec/examples/`).
+  The `secure-exec` npm package itself lives in the same directory
+  (`secure-exec/src`, `secure-exec/tests`), not under `packages/`.
   `.github/workflows/docs-sync.yml` syncs both on merge to `main`. Follow
   `docs/CLAUDE.md` for page, sidebar, snippet, and writing rules; they apply to
   both bundles.

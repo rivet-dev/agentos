@@ -25,9 +25,9 @@ use agentos_sidecar_client::wire;
 use agentos_vm_config as vm_config;
 
 use crate::config::{
-    AgentOsConfig, AgentOsLimits, Binding, Bindings, MountConfig, PermissionMode, Permissions,
-    RootFilesystemConfig, RootFilesystemKind, RootFilesystemMode as ConfigRootFilesystemMode,
-    RootLowerInput, SidecarJsBridgeCall, SidecarJsBridgeCallback, TimerScheduleDriver,
+    AgentOsConfig, AgentOsLimits, Binding, Bindings, MountConfig, RootFilesystemConfig,
+    RootFilesystemKind, RootFilesystemMode as ConfigRootFilesystemMode, RootLowerInput,
+    SidecarJsBridgeCall, SidecarJsBridgeCallback, TimerScheduleDriver,
 };
 use crate::cron::CronManager;
 use crate::error::ClientError;
@@ -407,7 +407,7 @@ impl AgentOs {
                     // The legacy `software`/SoftwareDescriptor provisioning path is
                     // retired: all boot software is projected via `packages`.
                     software: Vec::new(),
-                    permissions: Some(permissions),
+                    permissions,
                     // Client-side `moduleAccessCwd` was removed in favor of an
                     // explicit `nodeModulesMount(...)` entry in `mounts`; the
                     // agentos wire field is left unset.
@@ -582,7 +582,6 @@ impl AgentOs {
                 Arc::new(VmBindingRegistry {
                     bindings: config.bindings.clone(),
                     binding_map,
-                    permissions: config.permissions.clone(),
                 }),
             );
             transport.register_wire_callback("host_callback", host_callback_callback());
@@ -1074,7 +1073,7 @@ fn serialize_create_vm_config_for_sidecar(
         env: BTreeMap::new(),
         user: config.user.clone(),
         root_filesystem,
-        permissions: Some(permissions_policy_config(config)),
+        permissions: permissions_policy_config(config),
         limits: serialize_limits_config_for_sidecar(config.limits.as_ref())?,
         dns: None,
         native_root,
@@ -1239,137 +1238,33 @@ fn serialize_limits_config_for_sidecar(
     })
 }
 
-/// Hosts the VM may reach by default (egress). The default network policy is an
-/// allowlist of the common hosted LLM provider API endpoints so the standard
-/// agent quickstart works with zero network configuration, while still matching
-/// the Workers-style default-deny egress model: every other host is denied
-/// unless the client widens the `network` permission. Clients opt out by
-/// configuring `network` explicitly (e.g. `{ network: "allow" }`).
-const DEFAULT_EGRESS_HOSTS: &[&str] = &[
-    "api.anthropic.com",
-    "api.openai.com",
-    "generativelanguage.googleapis.com",
-    "openrouter.ai",
-];
-
-/// Resource patterns for the default egress allowlist. Network permission
-/// resources are `dns://<host>` for name resolution and `tcp://<host>:<port>`
-/// for the connection itself, so each allowed host needs both forms.
-fn default_egress_patterns() -> Vec<String> {
-    DEFAULT_EGRESS_HOSTS
-        .iter()
-        .flat_map(|host| [format!("dns://{host}"), format!("tcp://{host}:*")])
-        .collect()
-}
-
-/// vm_config variant of the default egress allowlist (deny-by-default rule set).
-fn default_network_egress_scope_config() -> vm_config::PatternPermissionScope {
-    vm_config::PatternPermissionScope::Rules(vm_config::PatternPermissionRuleSet {
-        default: Some(vm_config::PermissionMode::Deny),
-        rules: vec![vm_config::PatternPermissionRule {
-            mode: vm_config::PermissionMode::Allow,
-            operations: vec!["*".to_string()],
-            patterns: default_egress_patterns(),
-        }],
+/// The caller's policy, with only the scopes they set. Omitted scopes, and an
+/// omitted policy, take the sidecar's defaults.
+fn permissions_policy_config(config: &AgentOsConfig) -> Option<vm_config::PermissionsPolicy> {
+    let permissions = config.permissions.as_ref()?;
+    Some(vm_config::PermissionsPolicy {
+        fs: permissions.fs.as_ref().map(serialize_fs_permissions_config),
+        network: permissions
+            .network
+            .as_ref()
+            .map(serialize_pattern_permissions_config),
+        child_process: permissions
+            .child_process
+            .as_ref()
+            .map(serialize_pattern_permissions_config),
+        process: permissions
+            .process
+            .as_ref()
+            .map(serialize_pattern_permissions_config),
+        env: permissions
+            .env
+            .as_ref()
+            .map(serialize_pattern_permissions_config),
+        binding: permissions
+            .binding
+            .as_ref()
+            .map(serialize_pattern_permissions_config),
     })
-}
-
-/// Wire variant of the default egress allowlist (deny-by-default rule set).
-fn default_network_egress_scope() -> wire::PatternPermissionScope {
-    wire::PatternPermissionScope::PatternPermissionRuleSet(wire::PatternPermissionRuleSet {
-        default: Some(wire::PermissionMode::Deny),
-        rules: vec![wire::PatternPermissionRule {
-            mode: wire::PermissionMode::Allow,
-            operations: vec!["*".to_string()],
-            patterns: default_egress_patterns(),
-        }],
-    })
-}
-
-fn permissions_policy_config(config: &AgentOsConfig) -> vm_config::PermissionsPolicy {
-    let Some(permissions) = config.permissions.as_ref() else {
-        return default_permissions_policy_config();
-    };
-
-    vm_config::PermissionsPolicy {
-        fs: Some(
-            permissions
-                .fs
-                .as_ref()
-                .map(serialize_fs_permissions_config)
-                .unwrap_or(vm_config::FsPermissionScope::Mode(
-                    vm_config::PermissionMode::Allow,
-                )),
-        ),
-        network: Some(
-            permissions
-                .network
-                .as_ref()
-                .map(serialize_pattern_permissions_config)
-                .unwrap_or_else(default_network_egress_scope_config),
-        ),
-        child_process: Some(
-            permissions
-                .child_process
-                .as_ref()
-                .map(serialize_pattern_permissions_config)
-                .unwrap_or(vm_config::PatternPermissionScope::Mode(
-                    vm_config::PermissionMode::Allow,
-                )),
-        ),
-        process: Some(
-            permissions
-                .process
-                .as_ref()
-                .map(serialize_pattern_permissions_config)
-                .unwrap_or(vm_config::PatternPermissionScope::Mode(
-                    vm_config::PermissionMode::Allow,
-                )),
-        ),
-        env: Some(
-            permissions
-                .env
-                .as_ref()
-                .map(serialize_pattern_permissions_config)
-                .unwrap_or(vm_config::PatternPermissionScope::Mode(
-                    vm_config::PermissionMode::Allow,
-                )),
-        ),
-        binding: Some(
-            permissions
-                .binding
-                .as_ref()
-                .map(serialize_pattern_permissions_config)
-                .unwrap_or(vm_config::PatternPermissionScope::Mode(
-                    vm_config::PermissionMode::Allow,
-                )),
-        ),
-    }
-}
-
-/// Default permission policy when the client supplies no `permissions`:
-/// allow-all for fs/childProcess/process/env/binding (the VM is itself the
-/// isolation boundary), with network egress restricted to the default LLM
-/// allowlist (see [`default_network_egress_scope_config`]).
-fn default_permissions_policy_config() -> vm_config::PermissionsPolicy {
-    vm_config::PermissionsPolicy {
-        fs: Some(vm_config::FsPermissionScope::Mode(
-            vm_config::PermissionMode::Allow,
-        )),
-        network: Some(default_network_egress_scope_config()),
-        child_process: Some(vm_config::PatternPermissionScope::Mode(
-            vm_config::PermissionMode::Allow,
-        )),
-        process: Some(vm_config::PatternPermissionScope::Mode(
-            vm_config::PermissionMode::Allow,
-        )),
-        env: Some(vm_config::PatternPermissionScope::Mode(
-            vm_config::PermissionMode::Allow,
-        )),
-        binding: Some(vm_config::PatternPermissionScope::Mode(
-            vm_config::PermissionMode::Allow,
-        )),
-    }
 }
 
 fn serialize_fs_permissions_config(
@@ -1477,7 +1372,6 @@ static VM_BINDINGS: OnceCell<SccHashMap<String, Arc<VmBindingRegistry>>> = OnceC
 struct VmBindingRegistry {
     bindings: Vec<Bindings>,
     binding_map: HashMap<String, Binding>,
-    permissions: Option<Permissions>,
 }
 
 fn vm_bindings() -> &'static SccHashMap<String, Arc<VmBindingRegistry>> {
@@ -2624,13 +2518,8 @@ async fn invoke_binding(
         ));
     };
 
-    if binding_permission_mode(registry.permissions.as_ref(), &callback_key)
-        != PermissionMode::Allow
-    {
-        return Err(format!(
-            "EACCES: blocked by binding.invoke policy for {callback_key}"
-        ));
-    }
+    // The sidecar checks the `binding` permission scope before it forwards a
+    // binding call here, for both the collection command and the registry command.
 
     let input = parse_binding_input(ownership, &binding, args, cwd).await?;
     validate_binding_input(&binding.input_schema, &input).map_err(|error| error.to_string())?;
@@ -3365,107 +3254,6 @@ fn describe_binding_flag_type(schema: &Value) -> String {
     }
 }
 
-fn binding_permission_mode(
-    permissions: Option<&Permissions>,
-    callback_key: &str,
-) -> PermissionMode {
-    let Some(permissions) = permissions else {
-        return PermissionMode::Allow;
-    };
-    let Some(scope) = permissions.binding.as_ref() else {
-        return PermissionMode::Allow;
-    };
-    match scope {
-        crate::config::PatternPermissions::Mode(mode) => *mode,
-        crate::config::PatternPermissions::Rules(rules) => {
-            let mut mode = rules.default.unwrap_or(PermissionMode::Deny);
-            for rule in &rules.rules {
-                let operations_match = rule
-                    .operations
-                    .as_ref()
-                    .map(|operations| {
-                        operations
-                            .iter()
-                            .any(|operation| operation == "*" || operation == "invoke")
-                    })
-                    .unwrap_or(true);
-                let patterns_match = rule
-                    .patterns
-                    .as_ref()
-                    .map(|patterns| {
-                        patterns
-                            .iter()
-                            .any(|pattern| permission_pattern_matches(pattern, callback_key))
-                    })
-                    .unwrap_or(true);
-                if operations_match && patterns_match {
-                    mode = rule.mode;
-                }
-            }
-            mode
-        }
-    }
-}
-
-fn permission_pattern_matches(pattern: &str, value: &str) -> bool {
-    if pattern == "*" || pattern == "**" || pattern == value {
-        return true;
-    }
-    let mut pattern_index = 0;
-    let mut value_index = 0;
-    let pattern_bytes = pattern.as_bytes();
-    let value_bytes = value.as_bytes();
-    let mut star_index = None;
-    let mut match_index = 0;
-    while value_index < value_bytes.len() {
-        if pattern_index < pattern_bytes.len()
-            && pattern_bytes[pattern_index] == b'*'
-            && pattern_index + 1 < pattern_bytes.len()
-            && pattern_bytes[pattern_index + 1] == b'*'
-        {
-            star_index = Some(pattern_index);
-            match_index = value_index;
-            pattern_index += 2;
-        } else if pattern_index < pattern_bytes.len() && pattern_bytes[pattern_index] == b'*' {
-            star_index = Some(pattern_index);
-            match_index = value_index;
-            pattern_index += 1;
-        } else if pattern_index < pattern_bytes.len()
-            && pattern_bytes[pattern_index] == value_bytes[value_index]
-        {
-            pattern_index += 1;
-            value_index += 1;
-        } else if let Some(star) = star_index {
-            if pattern_bytes[star] == b'*'
-                && star + 1 < pattern_bytes.len()
-                && pattern_bytes[star + 1] != b'*'
-                && value_bytes.get(match_index) == Some(&b':')
-            {
-                return false;
-            }
-            pattern_index = if star + 1 < pattern_bytes.len() && pattern_bytes[star + 1] == b'*' {
-                star + 2
-            } else {
-                star + 1
-            };
-            match_index += 1;
-            value_index = match_index;
-        } else {
-            return false;
-        }
-    }
-    while pattern_index < pattern_bytes.len() && pattern_bytes[pattern_index] == b'*' {
-        pattern_index += if pattern_index + 1 < pattern_bytes.len()
-            && pattern_bytes[pattern_index + 1] == b'*'
-        {
-            2
-        } else {
-            1
-        };
-    }
-    pattern_index == pattern_bytes.len()
-}
-
 fn bindings_names(bindings: &[Bindings]) -> String {
     bindings
         .iter()
@@ -3603,90 +3391,30 @@ pub(crate) fn serialize_mounts(
         .collect()
 }
 
-pub(crate) fn permissions_policy(config: &AgentOsConfig) -> wire::PermissionsPolicy {
-    let Some(permissions) = config.permissions.as_ref() else {
-        return default_permissions_policy();
-    };
-
-    wire::PermissionsPolicy {
-        fs: Some(
-            permissions
-                .fs
-                .as_ref()
-                .map(serialize_fs_permissions)
-                .unwrap_or(wire::FsPermissionScope::PermissionMode(
-                    wire::PermissionMode::Allow,
-                )),
-        ),
-        network: Some(
-            permissions
-                .network
-                .as_ref()
-                .map(serialize_pattern_permissions)
-                .unwrap_or_else(default_network_egress_scope),
-        ),
-        child_process: Some(
-            permissions
-                .child_process
-                .as_ref()
-                .map(serialize_pattern_permissions)
-                .unwrap_or(wire::PatternPermissionScope::PermissionMode(
-                    wire::PermissionMode::Allow,
-                )),
-        ),
-        process: Some(
-            permissions
-                .process
-                .as_ref()
-                .map(serialize_pattern_permissions)
-                .unwrap_or(wire::PatternPermissionScope::PermissionMode(
-                    wire::PermissionMode::Allow,
-                )),
-        ),
-        env: Some(
-            permissions
-                .env
-                .as_ref()
-                .map(serialize_pattern_permissions)
-                .unwrap_or(wire::PatternPermissionScope::PermissionMode(
-                    wire::PermissionMode::Allow,
-                )),
-        ),
-        binding: Some(
-            permissions
-                .binding
-                .as_ref()
-                .map(serialize_pattern_permissions)
-                .unwrap_or(wire::PatternPermissionScope::PermissionMode(
-                    wire::PermissionMode::Allow,
-                )),
-        ),
-    }
-}
-
-/// Default permission policy (wire form) when the client supplies no
-/// `permissions`: allow-all for fs/childProcess/process/env/binding, with network
-/// egress restricted to the default LLM allowlist
-/// (see [`default_network_egress_scope`]).
-fn default_permissions_policy() -> wire::PermissionsPolicy {
-    wire::PermissionsPolicy {
-        fs: Some(wire::FsPermissionScope::PermissionMode(
-            wire::PermissionMode::Allow,
-        )),
-        network: Some(default_network_egress_scope()),
-        child_process: Some(wire::PatternPermissionScope::PermissionMode(
-            wire::PermissionMode::Allow,
-        )),
-        process: Some(wire::PatternPermissionScope::PermissionMode(
-            wire::PermissionMode::Allow,
-        )),
-        env: Some(wire::PatternPermissionScope::PermissionMode(
-            wire::PermissionMode::Allow,
-        )),
-        binding: Some(wire::PatternPermissionScope::PermissionMode(
-            wire::PermissionMode::Allow,
-        )),
-    }
+/// Wire form of the caller's policy, with only the scopes they set. Omitted
+/// scopes, and an omitted policy, take the sidecar's defaults.
+pub(crate) fn permissions_policy(config: &AgentOsConfig) -> Option<wire::PermissionsPolicy> {
+    let permissions = config.permissions.as_ref()?;
+    Some(wire::PermissionsPolicy {
+        fs: permissions.fs.as_ref().map(serialize_fs_permissions),
+        network: permissions
+            .network
+            .as_ref()
+            .map(serialize_pattern_permissions),
+        child_process: permissions
+            .child_process
+            .as_ref()
+            .map(serialize_pattern_permissions),
+        process: permissions
+            .process
+            .as_ref()
+            .map(serialize_pattern_permissions),
+        env: permissions.env.as_ref().map(serialize_pattern_permissions),
+        binding: permissions
+            .binding
+            .as_ref()
+            .map(serialize_pattern_permissions),
+    })
 }
 
 fn serialize_fs_permissions(permissions: &crate::config::FsPermissions) -> wire::FsPermissionScope {
@@ -3775,9 +3503,8 @@ fn rejected_to_error(rejected: wire::RejectedResponse) -> ClientError {
 #[cfg(test)]
 mod tests {
     use super::{
-        abort_tracked_task, default_permissions_policy, permissions_policy,
-        serialize_create_vm_config_for_sidecar, serialize_root_filesystem_config_for_sidecar,
-        JoinHandle,
+        abort_tracked_task, permissions_policy, serialize_create_vm_config_for_sidecar,
+        serialize_root_filesystem_config_for_sidecar, JoinHandle,
     };
     use crate::config::{
         AgentOsConfig, AgentOsLimits, BindingLimits, FsPermissionRule, FsPermissions, HttpLimits,
@@ -3853,50 +3580,21 @@ mod tests {
     }
 
     #[test]
-    fn permissions_policy_defaults_to_default_policy_when_unset() {
-        assert_eq!(
-            permissions_policy(&AgentOsConfig::default()),
-            default_permissions_policy()
-        );
+    fn permissions_policy_is_omitted_when_unset() {
+        // The sidecar owns the defaults, so an unset policy is not sent.
+        assert_eq!(permissions_policy(&AgentOsConfig::default()), None);
     }
 
     #[test]
-    fn default_network_egress_is_llm_allowlist_not_allow_all() {
-        let policy = permissions_policy(&AgentOsConfig::default());
-
-        // fs/childProcess/process/env stay allow-all (the VM is the boundary).
-        assert_eq!(
-            policy.child_process,
-            Some(PatternPermissionScope::PermissionMode(
-                WirePermissionMode::Allow
-            ))
-        );
-
-        // Network egress is a deny-by-default allowlist of LLM provider hosts,
-        // covering both DNS resolution and the TCP connection for each host.
-        let Some(PatternPermissionScope::PatternPermissionRuleSet(rules)) = policy.network else {
-            panic!("expected default network egress to be a rule set, not allow-all");
-        };
-        assert_eq!(rules.default, Some(WirePermissionMode::Deny));
-        assert_eq!(rules.rules.len(), 1);
-        assert_eq!(rules.rules[0].mode, WirePermissionMode::Allow);
-        let patterns = &rules.rules[0].patterns;
-        assert!(patterns.contains(&"dns://api.anthropic.com".to_string()));
-        assert!(patterns.contains(&"tcp://api.anthropic.com:*".to_string()));
-        assert!(patterns.contains(&"dns://api.openai.com".to_string()));
-        assert!(patterns.contains(&"dns://generativelanguage.googleapis.com".to_string()));
-        assert!(patterns.contains(&"dns://openrouter.ai".to_string()));
-    }
-
-    #[test]
-    fn permissions_policy_preserves_configured_denies_and_allows_omitted_domains() {
+    fn permissions_policy_sends_only_configured_scopes() {
         let policy = permissions_policy(&AgentOsConfig {
             permissions: Some(Permissions {
                 network: Some(PatternPermissions::Mode(PermissionMode::Deny)),
                 ..Default::default()
             }),
             ..Default::default()
-        });
+        })
+        .expect("configured policy");
 
         assert_eq!(
             policy.network,
@@ -3904,12 +3602,9 @@ mod tests {
                 WirePermissionMode::Deny
             ))
         );
-        assert_eq!(
-            policy.child_process,
-            Some(PatternPermissionScope::PermissionMode(
-                WirePermissionMode::Allow
-            ))
-        );
+        assert_eq!(policy.fs, None);
+        assert_eq!(policy.child_process, None);
+        assert_eq!(policy.binding, None);
     }
 
     #[test]
@@ -3927,7 +3622,8 @@ mod tests {
                 ..Default::default()
             }),
             ..Default::default()
-        });
+        })
+        .expect("configured policy");
 
         let Some(FsPermissionScope::FsPermissionRuleSet(rules)) = policy.fs else {
             panic!("expected fs rule set");
@@ -3949,7 +3645,8 @@ mod tests {
                 ..Default::default()
             }),
             ..Default::default()
-        });
+        })
+        .expect("configured policy");
 
         let Some(PatternPermissionScope::PatternPermissionRuleSet(rules)) = policy.network else {
             panic!("expected network rule set");

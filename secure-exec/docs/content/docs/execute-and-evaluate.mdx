@@ -1,6 +1,7 @@
 ---
 title: "Execute & Evaluate"
 description: "Run untrusted JavaScript with evaluate and execute, pass data in with inputs, and read structured results."
+skill: true
 ---
 
 ## Evaluate an expression
@@ -23,6 +24,18 @@ Several statements go in a function:
 It returns captured output instead of a value.
 
 <CodeSnippet file="secure-exec/examples/quickstart/src/index.ts" region="execute" />
+
+## Run a file
+
+`executeFile` runs a JavaScript file that is already in the VM, by its guest
+path. Mount a host directory to run a script in a one-shot call. On a
+[VM](/secure-exec/docs/vms), write the file with `vm.filesystem` first.
+`secure-exec/typescript` has the same function for TypeScript files.
+
+<CodeSnippet file="secure-exec/examples/mounts/src/index.ts" region="execute-file" />
+
+A file resolves its imports from its own directory, the same as in Node.js, so a
+file under `/workspace` finds packages installed there.
 
 ## Pass data in
 
@@ -50,12 +63,16 @@ it at all, such as an invalid option.
 
 ## Options
 
-Execution options: `inputs`, `timeoutMs`, `signal`, `env`, `cwd`, `args`,
-`stdin`, `output`, `onStdout`, `onStderr`, `format`, and `filePath`.
+| Option | Purpose |
+|---|---|
+| `inputs` | JSON values the code reads from `inputs` |
+| `timeoutMs` | Stop the code after this long. Set it for any code you did not write |
+| `signal` | An `AbortSignal` that cancels the call |
+| `output`, `onStdout`, `onStderr` | [Capture or stream output](/secure-exec/docs/output-capture) |
+| `env`, `cwd`, `args`, `stdin` | The process environment the code sees. The working directory defaults to `/workspace` |
+| `filePath` | The path the code reports in stack traces and resolves imports from |
 
-Placement options decide where the code runs:
-
-- Omit `context` to run in a fresh VM. [VM options](/secure-exec/docs/permissions)
-  such as `permissions`, `limits`, and `mounts` go on the same call.
-- Pass `context` to run in a [context](/secure-exec/docs/contexts). VM options
-  belong on `createContext` instead, and combining them is an error.
+The top-level functions also take [VM options](/secure-exec/docs/permissions),
+such as `permissions`, `limits`, and `mounts`, because each call creates its own
+VM. To keep anything between calls, create a [VM](/secure-exec/docs/vms) and
+call the same methods on `vm.javascript`.

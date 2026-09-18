@@ -3,51 +3,195 @@
 		{
 			"title": "General",
 			"pages": [
-				{ "title": "Introduction", "href": "/secure-exec/docs", "icon": "faSquareInfo" },
-				{ "title": "Quickstart", "href": "/secure-exec/docs/quickstart", "icon": "faForwardFast" },
-				{ "title": "Crash Course", "href": "/secure-exec/docs/crash-course", "icon": "faTerminal" }
+				{
+					"title": "Introduction",
+					"href": "/secure-exec/docs",
+					"icon": "faSquareInfo"
+				},
+				{
+					"title": "Quickstart",
+					"href": "/secure-exec/docs/quickstart",
+					"icon": "faForwardFast"
+				},
+				{
+					"title": "Platforms & Install",
+					"href": "/secure-exec/docs/platforms",
+					"icon": "faDownload"
+				}
 			]
 		},
 		{
 			"title": "Use Cases",
 			"pages": [
-				{ "title": "AI Agent Code Exec", "href": "/secure-exec/docs/use-cases/ai-agent-code-exec", "icon": "faRobot" },
-				{ "title": "Plugin Systems", "href": "/secure-exec/docs/use-cases/plugin-systems", "icon": "faWrench" }
+				{
+					"title": "AI Agent Code Exec",
+					"href": "/secure-exec/docs/use-cases/ai-agent-code-exec",
+					"icon": "faRobot"
+				},
+				{
+					"title": "Plugin Systems",
+					"href": "/secure-exec/docs/use-cases/plugin-systems",
+					"icon": "faRoute"
+				},
+				{
+					"title": "Dev Servers",
+					"href": "/secure-exec/docs/use-cases/dev-servers",
+					"icon": "faTowerBroadcast"
+				}
 			]
 		},
 		{
 			"title": "Running Code",
 			"pages": [
-				{ "title": "Execute & Evaluate", "href": "/secure-exec/docs/execute-and-evaluate", "icon": "faNodeJs" },
-				{ "title": "Output Capture", "href": "/secure-exec/docs/output-capture", "icon": "faMessages" },
-				{ "title": "Contexts", "href": "/secure-exec/docs/contexts", "icon": "faLayerGroup" },
-				{ "title": "TypeScript", "href": "/secure-exec/docs/typescript", "icon": "faCheck" },
-				{ "title": "npm Packages", "href": "/secure-exec/docs/npm", "icon": "faDownload" },
-				{ "title": "Warm-up", "href": "/secure-exec/docs/warm-up", "icon": "faBolt" }
+				{
+					"title": "Execute & Evaluate",
+					"href": "/secure-exec/docs/execute-and-evaluate",
+					"icon": "faTerminal"
+				},
+				{
+					"title": "Output Capture",
+					"href": "/secure-exec/docs/output-capture",
+					"icon": "faMessages"
+				},
+				{
+					"title": "VMs",
+					"href": "/secure-exec/docs/vms",
+					"icon": "faHardDrive"
+				},
+				{
+					"title": "Long-Running Code",
+					"href": "/secure-exec/docs/long-running-code",
+					"icon": "faClock"
+				},
+				{
+					"title": "TypeScript",
+					"href": "/secure-exec/docs/typescript",
+					"icon": "faCheck"
+				},
+				{
+					"title": "npm Packages",
+					"href": "/secure-exec/docs/npm",
+					"icon": "faNodeJs"
+				},
+				{
+					"title": "Host Functions",
+					"href": "/secure-exec/docs/host-functions",
+					"icon": "faWrench"
+				}
 			]
 		},
 		{
 			"title": "Isolation",
 			"pages": [
-				{ "title": "Permissions", "href": "/secure-exec/docs/permissions", "icon": "faKey" },
-				{ "title": "Resource Limits", "href": "/secure-exec/docs/resource-limits", "icon": "faGauge" },
-				{ "title": "Filesystem & Mounts", "href": "/secure-exec/docs/filesystem", "icon": "faHardDrive" },
-				{ "title": "Networking", "href": "/secure-exec/docs/networking", "icon": "faGlobe" }
+				{
+					"title": "Security",
+					"href": "/secure-exec/docs/security",
+					"icon": "faCheck"
+				},
+				{
+					"title": "Permissions",
+					"href": "/secure-exec/docs/permissions",
+					"icon": "faKey"
+				},
+				{
+					"title": "Resource Limits",
+					"href": "/secure-exec/docs/resource-limits",
+					"icon": "faGauge"
+				},
+				{
+					"title": "Filesystem & Mounts",
+					"href": "/secure-exec/docs/filesystem",
+					"icon": "faFloppyDisk"
+				},
+				{
+					"title": "Networking",
+					"href": "/secure-exec/docs/networking",
+					"icon": "faGlobe"
+				}
+			]
+		},
+		{
+			"title": "Advanced",
+			"pages": [
+				{
+					"title": "Contexts",
+					"href": "/secure-exec/docs/contexts",
+					"icon": "faLayerGroup"
+				},
+				{
+					"title": "Execution Model",
+					"href": "/secure-exec/docs/execution-model",
+					"icon": "faDiagramNext"
+				},
+				{
+					"title": "Lifecycle",
+					"href": "/secure-exec/docs/lifecycle",
+					"icon": "faBolt"
+				},
+				{
+					"title": "Errors",
+					"href": "/secure-exec/docs/errors",
+					"icon": "faMessages"
+				},
+				{
+					"title": "Limitations",
+					"href": "/secure-exec/docs/limitations",
+					"icon": "faClock"
+				}
 			]
 		},
 		{
 			"title": "Reference",
 			"pages": [
-				{ "title": "Going Further with agentOS", "href": "/secure-exec/docs/agentos", "icon": "faArrowsLeftRight" },
+				{
+					"title": "API Reference",
+					"href": "/secure-exec/docs/api-reference",
+					"icon": "faWindowMaximize"
+				},
+				{
+					"title": "Going Further with agentOS",
+					"href": "/secure-exec/docs/agentos",
+					"icon": "faArrowsLeftRight"
+				},
+				{
+					"title": "Benchmarks",
+					"href": "/secure-exec/docs/benchmarks",
+					"icon": "faGauge"
+				},
+				{
+					"title": "Python",
+					"href": "/agentos/docs/python",
+					"icon": "faPython"
+				},
 				{
 					"title": "Comparison",
 					"collapsible": true,
 					"icon": "faScaleBalanced",
 					"pages": [
-						{ "title": "vs Vercel Run", "href": "/secure-exec/docs/comparison/vercel-run" },
-						{ "title": "vs QuickJS", "href": "/secure-exec/docs/comparison/quickjs" },
-						{ "title": "vs isolated-vm", "href": "/secure-exec/docs/comparison/isolated-vm" },
-						{ "title": "vs Cloudflare Workers", "href": "/secure-exec/docs/comparison/cloudflare-workers" }
+						{
+							"title": "vs Vercel Run",
+							"href": "/secure-exec/docs/comparison/vercel-run"
+						},
+						{
+							"title": "vs QuickJS",
+							"href": "/secure-exec/docs/comparison/quickjs"
+						},
+						{
+							"title": "vs secure-eval-worker",
+							"href": "/secure-exec/docs/comparison/secure-eval-worker"
+						},
+						{
+							"title": "vs isolated-vm",
+							"href": "/secure-exec/docs/comparison/isolated-vm"
+						},
+						{
+							"title": "vs Cloudflare Workers",
+							"href": "/secure-exec/docs/comparison/cloudflare-workers"
+						},
+						{
+							"title": "vs Container Sandboxes",
+							"href": "/secure-exec/docs/comparison/container-sandboxes"
+						}
 					]
 				}
 			]

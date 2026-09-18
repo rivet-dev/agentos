@@ -17,23 +17,16 @@ const toolBindings = bindings({
 	},
 });
 
-const runtime = await AgentOs.create({
-	bindings: [toolBindings],
-	permissions: { binding: "allow" },
-});
+const runtime = await AgentOs.create({ bindings: [toolBindings] });
 // docs:end bindings
 
 // docs:start generated-code
+// Each binding collection is a global inside the VM, and each binding is an
+// async function, so generated code calls your tools like any other API.
 const llmGeneratedExpression = `(async () => {
-  const { execFileSync } = await import("node:child_process");
-  const call = (city) => JSON.parse(
-    execFileSync("agentos-tools", ["weather", "--city", city], {
-      encoding: "utf8",
-    }),
-  );
   const [sf, tokyo] = await Promise.all([
-    Promise.resolve(call("San Francisco")),
-    Promise.resolve(call("Tokyo")),
+    tools.weather({ city: "San Francisco" }),
+    tools.weather({ city: "Tokyo" }),
   ]);
   return {
     sanFrancisco: sf,

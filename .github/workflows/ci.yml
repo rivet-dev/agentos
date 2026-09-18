@@ -234,7 +234,7 @@ jobs:
       - run: pnpm --dir packages/core test:pr
         env:
           AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/ci-artifacts/agentos-sidecar/agentos-sidecar
-      - run: pnpm --dir packages/secure-exec test
+      - run: pnpm --dir secure-exec test
         env:
           AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/ci-artifacts/agentos-sidecar/agentos-sidecar
 

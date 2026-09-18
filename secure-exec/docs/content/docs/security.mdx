@@ -1,0 +1,39 @@
+---
+title: "Security"
+description: "What Secure Exec isolates, what it denies by default, and what remains your responsibility when running untrusted code."
+skill: true
+---
+
+Secure Exec treats all guest code, and every package it loads, as hostile.
+
+## The boundary
+
+Guest code runs in a V8 isolate inside a sidecar process, separate from yours.
+It never reaches a real Node.js builtin, host socket, or host file. Every
+`node:fs`, `node:net`, and `node:child_process` call is implemented against a
+virtual kernel in the sidecar, and checked against the VM's permission policy
+before anything happens.
+
+## Defaults
+
+| | Default |
+|---|---|
+| Filesystem | A virtual filesystem. The host's is reachable only through [mounts](/secure-exec/docs/filesystem) you configure |
+| Network | Denied. Grant it, or specific hosts, with [permissions](/secure-exec/docs/permissions) |
+| Processes and environment | Virtual. Guest code can spawn processes and read its own environment, never yours |
+| Resources | Bounded. See [resource limits](/secure-exec/docs/resource-limits) |
+| State | None. Each one-shot call gets a fresh VM |
+
+## Your responsibilities
+
+- **Set `timeoutMs` on every call** that runs code you did not write.
+- **Give each tenant its own VM.** Everything in one VM shares a filesystem and a
+  network.
+- **Treat [host functions](/secure-exec/docs/host-functions) as your API
+  surface.** They run with your credentials, so validate and authorize inside
+  them.
+- **Mount the minimum, read-only** unless the guest must write.
+- **Grant hosts, not the whole network,** when the code only needs one API.
+
+Read the [agentOS security model](/agentos/docs/security-model) for the full
+trust model, what is guaranteed, and the known [limitations](/secure-exec/docs/limitations).

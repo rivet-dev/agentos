@@ -1,0 +1,34 @@
+---
+title: "Lifecycle"
+description: "Start the Secure Exec sidecar early with init, stop it with shutdown, and dispose the VMs you create."
+skill: true
+---
+
+Secure Exec runs every VM inside one shared sidecar process. You rarely need to
+think about it, except at the start and end of your own process.
+
+## Start it early
+
+The first call starts the sidecar. Call `init()` when your server boots to pay
+that cost ahead of time.
+
+<CodeSnippet file="secure-exec/examples/quickstart/src/lifecycle.ts" region="init" />
+
+`init` takes no options and is safe to call more than once.
+
+## Stop it
+
+<CodeSnippet file="secure-exec/examples/quickstart/src/lifecycle.ts" region="shutdown" />
+
+- A script that only makes one-shot calls exits on its own. The sidecar never
+  keeps your process alive while no VM is running.
+- Test runners such as Vitest wait for open handles, so call `shutdown()` in a
+  teardown hook.
+- `shutdown()` disposes every VM still running, so use it as your last resort
+  cleanup on exit.
+
+## Dispose what you create
+
+One-shot calls dispose their VM for you. A [VM](/secure-exec/docs/vms) from
+`createVm()` holds memory until you call `vm.dispose()`, and a
+[context](/secure-exec/docs/contexts) lives until you dispose it or its VM.

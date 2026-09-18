@@ -1,0 +1,48 @@
+---
+title: "Errors"
+description: "Guest failures are returned as results and host mistakes are thrown as typed errors. How to handle both in Secure Exec."
+skill: true
+---
+
+Secure Exec separates two kinds of failure, so untrusted code can never crash
+your process with an exception.
+
+## Guest failures are returned
+
+Anything the guest code does wrong comes back as a result with an `outcome`.
+
+<CodeSnippet file="secure-exec/examples/quickstart/src/errors.ts" region="returned" />
+
+| `outcome` | `error.code` | Cause |
+|---|---|---|
+| `failed` | `execution_failed` | The code threw, or exited non-zero |
+| `failed` | `evaluation_serialization_failed` | `evaluate` produced a value that is not JSON |
+| `timed_out` | | `timeoutMs` elapsed |
+| `cancelled` | | The `signal` you passed was aborted |
+
+The guest's own message and stack trace arrive on `stderr`. Capture it with
+`output: { capture: "stderr" }` when you want to show it to a user or a model.
+
+## Host mistakes are thrown
+
+A call rejects only when the host asked for something that cannot run.
+
+<CodeSnippet file="secure-exec/examples/quickstart/src/errors.ts" region="thrown" />
+
+| Error | When |
+|---|---|
+| `SidecarRejectedError` | The sidecar refused the request. `error.detail.code` says why |
+| `SidecarProcessExited` | The sidecar process died |
+| `SidecarSilenceTimeout` | The sidecar stopped responding |
+| `KernelError` | A host-side filesystem or process operation failed, with a POSIX-style `code` |
+| `TypeError` / validation error | An option is missing or malformed |
+
+Common `detail.code` values on `SidecarRejectedError`:
+
+| Code | Meaning |
+|---|---|
+| `execution_busy` | The context is already running a call |
+| `context_not_found` | The context was disposed, or its VM was |
+
+Errors that hit a limit name the limit and the option that raises it. See
+[Resource Limits](/secure-exec/docs/resource-limits).

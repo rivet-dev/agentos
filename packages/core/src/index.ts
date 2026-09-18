@@ -8,7 +8,11 @@ export {
 	PastScheduleError,
 	TimerScheduleDriver,
 } from "./cron/index.js";
-export { createHostDirBackend, nodeModulesMount } from "./host-dir-mount.js";
+export {
+	createHostDirBackend,
+	hostDirMount,
+	nodeModulesMount,
+} from "./host-dir-mount.js";
 export {
 	binding,
 	MAX_BINDING_DESCRIPTION_LENGTH,
@@ -40,6 +44,13 @@ export {
 	tryReadAgentosPackageManifest,
 } from "./agentos-package.js";
 export { KernelError } from "./runtime-compat.js";
+export {
+	SidecarProcessError,
+	SidecarProcessExited,
+	SidecarRejectedError,
+	type SidecarRejectionDetail,
+	SidecarSilenceTimeout,
+} from "@rivet-dev/agentos-runtime-core/sidecar-errors";
 export type {
 	ExecOptions,
 	ExecResult,

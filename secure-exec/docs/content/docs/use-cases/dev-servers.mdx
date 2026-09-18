@@ -1,0 +1,32 @@
+---
+title: "Dev Servers"
+description: "Run user-provided HTTP servers and request handlers inside Secure Exec and preview them from the host."
+skill: true
+---
+
+Previews, user-written request handlers, and generated web apps all need code
+that keeps running and answers requests. Secure Exec runs that server inside a
+VM and lets your backend talk to it, without opening a port on the host.
+
+## Start the server
+
+<CodeSnippet file="secure-exec/examples/dev-server/src/index.ts" region="spawn" />
+
+## Proxy requests to it
+
+Forward requests from your own route to the guest, and return what it answers.
+
+<CodeSnippet file="secure-exec/examples/dev-server/src/index.ts" region="request" />
+
+- **No host port.** The server listens on the VM's virtual network. Only your
+  process can reach it, through `vm.network.httpRequest`.
+- **One VM per preview.** Each tenant's server gets its own VM, filesystem,
+  and [limits](/secure-exec/docs/resource-limits).
+- **Bring a project.** Write files with `vm.filesystem`, install
+  dependencies with [npm](/secure-exec/docs/npm), then spawn the entry point.
+
+## Stop it
+
+<CodeSnippet file="secure-exec/examples/dev-server/src/index.ts" region="stop" />
+
+Read more in [Long-Running Code](/secure-exec/docs/long-running-code).

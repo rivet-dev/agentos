@@ -52,7 +52,9 @@ use agentos_native_sidecar_core::ca::{
     CA_CERTIFICATES_BUNDLE, CA_CERTIFICATES_GUEST_PATH, CA_CERTIFICATES_SYMLINK_PATH,
     CA_CERTIFICATES_SYMLINK_TARGET,
 };
-use agentos_native_sidecar_core::permissions::{allow_all_policy, deny_all_policy};
+use agentos_native_sidecar_core::permissions::{
+    allow_all_policy, deny_all_policy, resolve_permissions_policy,
+};
 use agentos_native_sidecar_core::{
     layer_created_response, layer_sealed_response, mounts_listed_response,
     overlay_created_response, package_linked_response, protocol_root_filesystem_mode,
@@ -421,10 +423,7 @@ where
             })?;
         let root_filesystem =
             root_filesystem_protocol_descriptor_from_config(&create_config.root_filesystem);
-        let permissions_policy = create_config
-            .permissions
-            .clone()
-            .unwrap_or_else(deny_all_policy);
+        let permissions_policy = resolve_permissions_policy(create_config.permissions.as_ref());
         validate_permissions_policy(&permissions_policy)?;
         let limits = crate::limits::vm_limits_from_config(
             create_config.limits.as_ref(),
@@ -701,10 +700,7 @@ where
             })?;
         let root_filesystem =
             root_filesystem_protocol_descriptor_from_config(&create_config.root_filesystem);
-        let permissions_policy = create_config
-            .permissions
-            .clone()
-            .unwrap_or_else(deny_all_policy);
+        let permissions_policy = resolve_permissions_policy(create_config.permissions.as_ref());
         validate_permissions_policy(&permissions_policy)?;
 
         let (vm_id, vm_generation) = self.allocate_vm_identity()?;
@@ -2234,11 +2230,14 @@ where
     let original_permissions = vm.try_read("read configure VM permissions", |vm| {
         vm.configuration.permissions.clone()
     })?;
-    let configured_permissions = payload
-        .permissions
-        .clone()
-        .map(crate::wire::permissions_policy_config_from_wire)
-        .unwrap_or_else(|| original_permissions.clone());
+    // A new policy replaces the VM's policy and is resolved over the sidecar
+    // defaults. Omitting it keeps the VM's current policy.
+    let configured_permissions = match payload.permissions.clone() {
+        Some(policy) => resolve_permissions_policy(Some(
+            &crate::wire::permissions_policy_config_from_wire(policy),
+        )),
+        None => original_permissions.clone(),
+    };
     validate_permissions_policy(&configured_permissions)?;
 
     let mut effective_mounts = payload.mounts.clone();

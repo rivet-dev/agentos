@@ -281,6 +281,31 @@ fn resolve_registry_command(
     args: &[String],
     guest_cwd: &str,
 ) -> Result<BindingCommandResolution, SidecarError> {
+    // `agentos <collection> <binding> ...` invokes a binding through the host's
+    // registry command, so it needs the same `binding.invoke` check as the
+    // `agentos-<collection> <binding>` command. Listing and help are not gated.
+    if let [collection_name, binding_name, ..] = args {
+        let registered = vm
+            .bindings
+            .get(collection_name)
+            .is_some_and(|collection| collection.callbacks.contains_key(binding_name));
+        if registered {
+            let callback_key = format!("{collection_name}:{binding_name}");
+            if !matches!(
+                evaluate_permissions_policy(
+                    &vm.configuration.permissions,
+                    "binding",
+                    "binding.invoke",
+                    Some(&callback_key),
+                ),
+                PermissionMode::Allow
+            ) {
+                return Ok(BindingCommandResolution::Failure(format!(
+                    "blocked by binding.invoke policy for {callback_key}"
+                )));
+            }
+        }
+    }
     let timeout_ms =
         command_callback_timeout_ms(vm, &BindingCommand::Registry(command_name.to_owned()));
     Ok(build_command_callback_resolution(

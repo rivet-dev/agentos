@@ -112,24 +112,6 @@ export function resolveNodeRuntimeCommandsDir(explicit?: string): string {
 }
 
 /**
- * Secure-by-default permission policy applied when the caller passes no
- * `permissions`. Outward-facing capabilities are denied: there is **no network
- * access** (and no host callbacks) by default — guest code cannot reach the
- * network until you opt in. The filesystem, child-process, process, and env
- * scopes are allowed because they are fully virtualized (the guest only ever
- * sees the VM's in-memory filesystem and kernel-managed processes, never the
- * real host) and are required for the runtime to execute a guest program at
- * all. Tighten or widen any scope by passing your own `permissions`.
- */
-const DEFAULT_PERMISSIONS: Permissions = {
-	fs: "allow",
-	childProcess: "allow",
-	process: "allow",
-	env: "allow",
-	network: "deny",
-};
-
-/**
  * Options for {@link NodeRuntime.create}.
  *
  * Keep this public interface in sync with
@@ -151,12 +133,11 @@ export interface NodeRuntimeCreateOptions {
 	/** Initial virtual Linux credentials and account record. Defaults to `1000:1000` (`agentos`). */
 	user?: VmUserConfig;
 	/**
-	 * Permission policy for the VM. Merged over a secure default that **denies
-	 * network access** (guest code cannot reach the network until you opt in);
-	 * the virtualized filesystem and processes stay enabled so programs run.
-	 * Because it merges, a partial policy works: `{ network: "allow" }` grants
-	 * the network while keeping the execution essentials. Pass a fuller policy
-	 * (rule sets) to further sandbox individual scopes.
+	 * Permission policy for the VM, merged over the sidecar's default: the
+	 * virtual filesystem, processes, environment, and bindings are allowed, and
+	 * the network is denied apart from the default model-provider hosts. A
+	 * partial policy works: `{ network: "allow" }` grants the network and keeps
+	 * every other scope at its default.
 	 */
 	permissions?: Permissions;
 	/**
@@ -280,9 +261,8 @@ export interface NodeRuntimeCreateOptions {
 	 * `);
 	 * ```
 	 *
-	 * When `bindings` is provided and no `binding` permission scope is set, the
-	 * `binding` scope is granted so the registered bindings are invocable; pass
-	 * your own `permissions.binding` policy to gate individual bindings.
+	 * The `binding` permission scope is allowed by default; pass your own
+	 * `permissions.binding` policy to gate individual bindings.
 	 */
 	bindings?: Record<string, BindingDefinition>;
 	/**
@@ -630,26 +610,12 @@ export class NodeRuntime {
 			readOnly: mount.readOnly ?? true,
 		}));
 
-		// Grant the `binding` scope when the caller registers bindings but does not
-		// set their own binding policy, so the registered bindings are invocable.
-		const bindingDefaults =
-			options.bindings &&
-			Object.keys(options.bindings).length > 0 &&
-			options.permissions?.binding === undefined
-				? { binding: "allow" as const }
-				: {};
-
 		const kernel = createKernel({
 			filesystem,
 			mounts: mounts.length > 0 ? mounts : undefined,
-			// Merge the caller's policy over the secure default so partial
-			// opt-ins work: `{ network: "allow" }` enables the network while the
-			// execution essentials (fs/childProcess/process/env) stay granted.
-			permissions: {
-				...DEFAULT_PERMISSIONS,
-				...bindingDefaults,
-				...options.permissions,
-			},
+			// The sidecar owns the defaults and merges this policy over them, so
+			// only the scopes the caller set are sent.
+			permissions: options.permissions,
 			env: options.env,
 			cwd: options.cwd,
 			user: options.user,
@@ -1118,9 +1084,8 @@ export class NodeRuntime {
 	 * bindings to a live runtime. See `bindings` on {@link NodeRuntime.create} for
 	 * the invocation shape and permission behavior.
 	 *
-	 * When registering bindings this way, make sure the `binding` permission scope
-	 * is granted (for example `permissions: { binding: "allow" }` on
-	 * {@link NodeRuntime.create}) so the bindings are invocable.
+	 * The `binding` permission scope is allowed by default, so these bindings are
+	 * invocable unless the runtime's policy restricts them.
 	 */
 	async registerBindings(
 		bindings: Record<string, BindingDefinition>,

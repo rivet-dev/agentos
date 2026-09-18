@@ -1,32 +1,35 @@
-import { createContext, evaluate } from "secure-exec";
-import { install } from "secure-exec/npm";
+import { createVm } from "secure-exec";
 
-// Packages install into a context's VM, so they need a context. Installing
-// needs the network, which is denied unless you allow it.
-await using context = await createContext({
-	permissions: { network: "allow" },
-});
+// docs:start install
+// Packages install into a VM's filesystem, so they need a VM that outlives the
+// call. Installing needs the network, which is denied unless you allow it.
+const vm = await createVm({ permissions: { network: "allow" } });
 
-const installed = await install(["zod"], {
-	context,
-	output: { capture: "all" },
-});
-if (installed.outcome !== "succeeded") {
-	throw new Error(`npm install failed: ${installed.stderr}`);
+try {
+	const installed = await vm.npm.install(["zod"], {
+		output: { capture: "all" },
+	});
+	if (installed.outcome !== "succeeded") {
+		throw new Error(`npm install failed: ${installed.stderr}`);
+	}
+	// docs:end install
+
+	// docs:start use
+	// Packages install into the working directory, /workspace. A file there
+	// resolves them the same way it would in Node.js.
+	await vm.filesystem.writeFile(
+		"/workspace/main.mjs",
+		`
+		import { z } from "zod";
+		const parsed = z.object({ name: z.string() }).parse({ name: "secure-exec" });
+		console.log(JSON.stringify(parsed));
+		`,
+	);
+	const ran = await vm.javascript.executeFile("/workspace/main.mjs", {
+		output: { capture: "all" },
+	});
+	console.log(ran.stdout?.trim()); // {"name":"secure-exec"}
+	// docs:end use
+} finally {
+	await vm.dispose();
 }
-
-const parsed = await evaluate<{ name: string }>(
-	// `evaluate` takes one expression, so more than one statement goes in a function.
-	`(async () => {
-		const { z } = await import("zod");
-		return z.object({ name: z.string() }).parse(inputs.input);
-	})()`,
-	{
-		context,
-		inputs: { input: { name: "secure-exec" } },
-		// Packages install into the working directory, /workspace. Inline code
-		// resolves imports from `filePath`, so place it next to node_modules.
-		filePath: "/workspace/main.mjs",
-	},
-);
-console.log(parsed.outcome === "succeeded" ? parsed.value : parsed.error);

@@ -70,6 +70,20 @@ On failure (validation or execution error), the binding exits non-zero and write
 Missing required flag: --city
 ```
 
+## Call bindings from JavaScript
+
+Inline JavaScript and TypeScript get each collection as a frozen global, and each
+binding as an async function, so generated code calls your tools like any other
+API. Names become camelCase identifiers: `agentos-order-store list-orders` is
+`orderStore.listOrders(input)`.
+
+<CodeSnippet file="examples/js-code-mode/src/index.ts" region="generated-code" />
+
+The function resolves to the binding's result and rejects on a schema violation,
+a thrown error, or a timeout. A collection whose name is already a global, such
+as `process`, is not defined, and a warning is written to stderr. The `binding`
+permission scope applies exactly as it does to the commands.
+
 ## Bindings and MCP servers
 
 AgentOS supports two ways to give agents access to external functionality: **bindings** and session-scoped **MCP servers**. Both work, but they have different tradeoffs.

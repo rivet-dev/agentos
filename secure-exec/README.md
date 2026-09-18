@@ -60,24 +60,74 @@ await evaluate(
 );
 ```
 
-## Keep state with a context
+## Keep things with a VM
 
-A context is a dedicated VM that keeps variables, imports, files, and installed
-packages between calls. JavaScript and TypeScript share the same state.
+The functions above are one-shot conveniences. When files, installed packages,
+or a running server should outlast one call, create a VM. It is an agentOS VM
+with Secure Exec's defaults.
 
 ```ts
-import { createContext, execute } from "secure-exec";
-import { evaluate } from "secure-exec/typescript";
+import { createVm } from "secure-exec";
 
-await using context = await createContext({ permissions: { network: "allow" } });
+const vm = await createVm({ permissions: { network: "allow" } });
+try {
+  await vm.npm.install(["zod"]);
+  await vm.filesystem.writeFile("/workspace/data.json", JSON.stringify({ n: 40 }));
 
-await execute("globalThis.total = 40", { context });
-const result = await evaluate<number>("(globalThis.total as number) + 2", { context });
+  const result = await vm.javascript.evaluate<number>(
+    `import("node:fs").then((fs) => JSON.parse(fs.readFileSync("/workspace/data.json", "utf8")).n + 2)`,
+  );
 
-await context.reset(); // clear state, keep the VM
+  const server = await vm.javascript.spawn(`/* long-running code */`);
+  await vm.process.kill(server.pid);
+} finally {
+  await vm.dispose();
+}
 ```
 
-Without `await using`, call `context.dispose()` when you are done.
+`vm.javascript`, `vm.typescript`, `vm.npm`, `vm.filesystem`, `vm.network`, and
+`vm.process` behave exactly as they do in agentOS.
+
+## Keep variables with a context
+
+Each call on a VM starts with fresh JavaScript memory. A context keeps it, like a
+REPL, and several contexts run in parallel in one VM.
+
+```ts
+const context = await vm.createContext();
+
+await context.execute("globalThis.total = 40");
+const result = await context.evaluate<number>("total + 2");
+
+await context.reset();   // clear state
+await context.dispose(); // delete the context, keep the VM
+```
+
+## Host functions
+
+Give the code your own functions without giving it your credentials. Each
+collection is a global inside the VM, and each function is async.
+
+```ts
+import { binding, bindings, evaluate } from "secure-exec";
+import { z } from "zod";
+
+const orders = bindings({
+  name: "orders",
+  description: "Look up customer orders.",
+  bindings: {
+    list: binding({
+      description: "List a customer's orders.",
+      inputSchema: z.object({ customer: z.string() }),
+      execute: ({ customer }) => db.orders.findMany({ customer }),
+    }),
+  },
+});
+
+await evaluate(`orders.list({ customer: "c_123" }).then((rows) => rows.length)`, {
+  bindings: [orders],
+});
+```
 
 ## TypeScript
 
@@ -92,40 +142,24 @@ const checked = await check(`const total: number = "nope";`);
 for (const diagnostic of checked.diagnostics) console.log(diagnostic.message);
 ```
 
-## npm
-
-`secure-exec/npm` installs packages into a context's VM.
-
-```ts
-import { createContext, evaluate } from "secure-exec";
-import { install } from "secure-exec/npm";
-
-await using context = await createContext({ permissions: { network: "allow" } });
-await install(["zod"], { context });
-
-// Packages install into /workspace. Inline code resolves imports from
-// `filePath`, so place it next to node_modules.
-await evaluate(`import("zod").then(({ z }) => z.string().parse("ok"))`, {
-  context,
-  filePath: "/workspace/main.mjs",
-});
-```
-
-`runScript` and `runPackage` work like `npm run` and `npx`.
-
-## Warm up
+## Lifecycle
 
 The first call starts a shared sidecar process. Call `init()` at startup to pay
-that cost ahead of time.
+that cost ahead of time, and `shutdown()` to stop it, for example in a test
+teardown hook.
 
 ```ts
-import { init } from "secure-exec";
+import { init, shutdown } from "secure-exec";
 
 await init();
+// ...
+await shutdown();
 ```
 
 ## More
 
-For processes, filesystem access, Python, and agent sessions, use
+Need Python? Use the [agentOS Python execution API](https://rivet.dev/agentos/docs/python), which has the same `execute` and `evaluate` shape.
+
+For processes, filesystem access, and agent sessions, use
 [`@rivet-dev/agentos-core`](https://rivet.dev/agentos) directly. Read the [documentation](https://rivet.dev/secure-exec/docs), or browse the examples in
 [`secure-exec/examples`](https://github.com/rivet-dev/agentos/tree/main/secure-exec/examples).

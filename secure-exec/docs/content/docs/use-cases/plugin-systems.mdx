@@ -1,6 +1,7 @@
 ---
 title: "Plugin Systems"
 description: "Run user-authored plugins in isolation with per-plugin permissions and timeouts using Secure Exec."
+skill: true
 ---
 
 Plugins, user scripts, formulas, and webhooks-as-code all share one problem: the
@@ -26,4 +27,4 @@ decide, and no way to affect the others.
 
 Mount read-only data or a shared `node_modules` with
 [mounts](/secure-exec/docs/filesystem). For plugins that keep state across
-invocations, give each plugin its own [context](/secure-exec/docs/contexts).
+invocations, give each plugin its own [VM](/secure-exec/docs/vms).

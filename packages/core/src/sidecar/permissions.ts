@@ -37,18 +37,15 @@ function serializePatternScope(
 	};
 }
 
+/**
+ * Serialize only the scopes the caller set. The sidecar owns the defaults, so
+ * an omitted scope, or an omitted policy, takes the sidecar's default.
+ */
 export function serializePermissionsForSidecar(
 	permissions?: Permissions,
-): PermissionsPolicy {
+): PermissionsPolicy | undefined {
 	if (!permissions) {
-		return {
-			fs: "deny",
-			network: "deny",
-			childProcess: "deny",
-			process: "deny",
-			env: "deny",
-			binding: "deny",
-		};
+		return undefined;
 	}
 
 	return {

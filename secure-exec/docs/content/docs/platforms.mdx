@@ -1,0 +1,39 @@
+---
+title: "Platforms & Install"
+description: "Supported operating systems, Node.js versions, and how the Secure Exec native sidecar is installed."
+skill: true
+---
+
+```sh
+npm install secure-exec
+```
+
+Secure Exec runs guest code in a native sidecar binary. The right binary for your
+platform installs automatically as an optional dependency, so there is nothing
+to compile.
+
+## Supported platforms
+
+| Platform | Supported |
+|---|---|
+| Linux x64 and arm64, glibc | Yes |
+| macOS x64 and arm64 | Yes |
+| Linux with musl, such as Alpine | No. Use a glibc image such as `node:22-slim` |
+| Windows | No. Use WSL 2 |
+| Browsers and edge runtimes | No |
+
+Secure Exec requires Node.js 22 or newer.
+
+## Docker and CI
+
+- Use a glibc base image. Debian and Ubuntu based Node.js images work as they are.
+- Install with optional dependencies enabled, which is the default. With
+  `--no-optional` or `--omit=optional` the sidecar binary is skipped and the
+  first call fails.
+- The sidecar needs no privileges, no kernel features, and no network access of
+  its own.
+
+## Use a specific binary
+
+Set `AGENTOS_SIDECAR_BIN` to the absolute path of a sidecar binary to use it
+instead of the installed one.

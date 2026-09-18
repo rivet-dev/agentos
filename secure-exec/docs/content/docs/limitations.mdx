@@ -1,0 +1,49 @@
+---
+title: "Limitations"
+description: "Known limitations and rough edges in Secure Exec, with workarounds."
+skill: true
+---
+
+## Platform
+
+- Linux with glibc and macOS only. See [Platforms & Install](/secure-exec/docs/platforms).
+- JavaScript and TypeScript only. For Python, use the
+  [agentOS Python API](/agentos/docs/python).
+- `await using` needs TypeScript 5.2 or newer, or Node.js 24 for plain
+  JavaScript. Otherwise call `dispose()` in a `finally` block.
+
+## Calls and contexts
+
+- **A leftover handle fails the call.** A call finishes when the event loop
+  drains, so a stray interval or open socket turns a finished snippet into
+  `timed_out`, and in a context that clears its state. Clear timers and close
+  what you open. Tracked in [#1991](https://github.com/rivet-dev/agentos/issues/1991).
+- **Contexts do nothing between calls**, and run one call at a time. See the
+  [execution model](/secure-exec/docs/execution-model).
+- **Aborting a call is noisy.** Cancelling through `signal` returns `cancelled`
+  as it should, but the sidecar logs an internal error and the VM is slow to
+  dispose afterwards. Prefer `timeoutMs`. Tracked in
+  [#1988](https://github.com/rivet-dev/agentos/issues/1988).
+
+## Modules
+
+- **Inline code resolves `import()` from `/`.** A package installed in
+  `/workspace` is not found by inline `execute` or `evaluate` code. Run a file
+  with `executeFile`, or pass `filePath: "/workspace/main.mjs"` to the inline
+  call. Tracked in [#1990](https://github.com/rivet-dev/agentos/issues/1990).
+
+## Network
+
+- **Dispose is slow after network use.** A VM that used the network takes
+  several seconds longer to dispose, and much longer if a response body was left
+  unread. Always read or cancel response bodies. Tracked in
+  [#1989](https://github.com/rivet-dev/agentos/issues/1989).
+- **Host patterns need a scheme.** Allowing a host takes both
+  `dns://<host>` and `tcp://<host>:*`. A bare hostname matches nothing. See
+  [permissions](/secure-exec/docs/permissions).
+
+## Host functions
+
+- Each call starts a small helper process inside the VM, which costs a few
+  milliseconds. Batch work into fewer calls when it matters, or run calls in
+  parallel with `Promise.all`.

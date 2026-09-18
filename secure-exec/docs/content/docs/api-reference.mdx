@@ -1,0 +1,93 @@
+---
+title: "API Reference"
+description: "Every function, option, and result type exported by the secure-exec package."
+skill: true
+---
+
+## `secure-exec`
+
+| Export | Signature | Purpose |
+|---|---|---|
+| `evaluate` | `evaluate<T>(expression, options?)` → `CodeEvaluationResult<T>` | Evaluate one expression in a fresh VM |
+| `execute` | `execute(source, options?)` → `CodeExecutionResult` | Run an ES module in a fresh VM |
+| `executeFile` | `executeFile(path, options?)` → `CodeExecutionResult` | Run a mounted file in a fresh VM |
+| `createVm` | `createVm(vmOptions?)` → `Vm` | Create a VM that lives until you dispose it |
+| `init` | `init()` | Start the shared sidecar ahead of time |
+| `shutdown` | `shutdown()` | Stop the sidecar and every VM in it |
+| `binding`, `bindings` | | Define [host functions](/secure-exec/docs/host-functions) |
+| `hostDirMount` | `hostDirMount(path, hostPath, { readOnly? })` | Mount a host directory |
+| `nodeModulesMount` | `nodeModulesMount(hostPath, { readOnly? })` | Mount a host `node_modules` |
+
+## `secure-exec/typescript`
+
+| Export | Signature | Purpose |
+|---|---|---|
+| `evaluate`, `execute`, `executeFile` | As above | Types are stripped, not checked |
+| `check` | `check(source, options?)` → `TypeScriptCheckResult` | Type-check without running |
+
+## `Vm`
+
+| Member | Purpose |
+|---|---|
+| `vm.javascript` | `execute`, `evaluate`, `executeFile`, `spawn`, `spawnFile` |
+| `vm.typescript` | The same, plus `check` and `checkProject` |
+| `vm.npm` | `install`, `runScript`, `runPackage` |
+| `vm.filesystem` | `readFile`, `writeFile`, `readdir`, `stat`, `exists`, `mkdir`, `move`, `remove`, and more |
+| `vm.network` | `httpRequest({ port, path, method?, headers?, body? })` |
+| `vm.process` | `wait`, `kill`, `signal`, `list`, `get`, `readOutput`, `writeStdin`, `closeStdin` |
+| `vm.createContext()` | → `Context` |
+| `vm.dispose()` | Shut the VM down |
+
+Each namespace is the agentOS one. See [Going Further with agentOS](/secure-exec/docs/agentos).
+
+## `Context`
+
+| Member | Purpose |
+|---|---|
+| `context.contextId` | Pass to `vm.typescript` to share state with TypeScript |
+| `context.execute(source, options?)` | Run code against the retained state |
+| `context.evaluate<T>(expression, options?)` | Evaluate against the retained state |
+| `context.reset()` | Clear the state |
+| `context.dispose()` | Delete the context. The VM keeps running |
+
+## Options
+
+Execution options apply to every `execute`, `evaluate`, and `executeFile`.
+
+| Option | Type | Purpose |
+|---|---|---|
+| `inputs` | JSON object | Values the code reads from `inputs` |
+| `timeoutMs` | `number` | Stop the code after this long |
+| `signal` | `AbortSignal` | Cancel the call |
+| `output` | `{ capture?: "none" \| "stderr" \| "all" }` | Retain output on the result |
+| `onStdout`, `onStderr` | `(chunk: Uint8Array) => void` | Stream output |
+| `env`, `cwd`, `args`, `stdin` | | The process environment the code sees |
+| `filePath` | `string` | The path used for stack traces and import resolution |
+| `format` | `"module"` \| `"commonjs"` | How JavaScript source is loaded. Defaults to `"module"` |
+
+VM options apply to `createVm` and to the top-level one-shot functions.
+
+| Option | Purpose |
+|---|---|
+| `permissions` | [Permissions](/secure-exec/docs/permissions). The network is denied by default |
+| `limits` | [Resource limits](/secure-exec/docs/resource-limits) |
+| `mounts` | [Filesystem mounts](/secure-exec/docs/filesystem) |
+| `bindings` | [Host functions](/secure-exec/docs/host-functions) |
+| `onLimitWarning` | Called when a limit is nearly reached |
+
+The remaining agentOS VM options are accepted too. See the
+[agentOS docs](/agentos/docs).
+
+## Results
+
+| Field | On | Purpose |
+|---|---|---|
+| `outcome` | All | `succeeded`, `failed`, `timed_out`, or `cancelled` |
+| `value` | `evaluate`, when it succeeded | The JSON value |
+| `error` | Every outcome except `succeeded` | `{ code, name, message }` |
+| `stdout`, `stderr` | When captured | Output as text |
+| `stdoutTruncated`, `stderrTruncated` | When captured | Output exceeded the limit |
+| `exitCode` | When the code ran | The guest process exit code |
+| `diagnostics`, `hasErrors` | `check` | Type errors, each with `code`, `category`, `message`, and location |
+
+See [Errors](/secure-exec/docs/errors) for what is returned and what is thrown.

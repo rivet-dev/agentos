@@ -3317,22 +3317,6 @@ importers:
 
   packages/runtime-sidecar/npm/linux-x64-gnu: {}
 
-  packages/secure-exec:
-    dependencies:
-      '@rivet-dev/agentos-core':
-        specifier: workspace:*
-        version: link:../core
-    devDependencies:
-      '@types/node':
-        specifier: ^22.19.15
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.3
-        version: 5.9.3
-      vitest:
-        specifier: ^2.1.8
-        version: 2.1.9(@types/node@22.19.15)(lightningcss@1.33.0)
-
   packages/shell:
     dependencies:
       '@agentos-software/codex-cli':
@@ -3495,11 +3479,52 @@ importers:
         specifier: ^5.5.2
         version: 5.9.3
 
+  secure-exec:
+    dependencies:
+      '@rivet-dev/agentos-core':
+        specifier: workspace:*
+        version: link:../packages/core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.15)(lightningcss@1.33.0)
+      zod:
+        specifier: ^4.1.11
+        version: 4.3.6
+
   secure-exec/examples/ai-agent:
     dependencies:
       secure-exec:
         specifier: workspace:*
-        version: link:../../../packages/secure-exec
+        version: link:../..
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/benchmark:
+    dependencies:
+      quickjs-emscripten:
+        specifier: ^0.32.0
+        version: 0.32.0
+      run:
+        specifier: ^2.1.4
+        version: 2.1.4(typescript@5.9.3)
+      secure-exec:
+        specifier: workspace:*
+        version: link:../..
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -3515,7 +3540,42 @@ importers:
     dependencies:
       secure-exec:
         specifier: workspace:*
-        version: link:../../../packages/secure-exec
+        version: link:../..
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/dev-server:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/host-functions:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../..
+      zod:
+        specifier: ^4.1.11
+        version: 4.3.6
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -3531,7 +3591,7 @@ importers:
     dependencies:
       secure-exec:
         specifier: workspace:*
-        version: link:../../../packages/secure-exec
+        version: link:../..
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -3547,7 +3607,7 @@ importers:
     dependencies:
       secure-exec:
         specifier: workspace:*
-        version: link:../../../packages/secure-exec
+        version: link:../..
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -3563,7 +3623,7 @@ importers:
     dependencies:
       secure-exec:
         specifier: workspace:*
-        version: link:../../../packages/secure-exec
+        version: link:../..
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -3579,7 +3639,7 @@ importers:
     dependencies:
       secure-exec:
         specifier: workspace:*
-        version: link:../../../packages/secure-exec
+        version: link:../..
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -3595,7 +3655,7 @@ importers:
     dependencies:
       secure-exec:
         specifier: workspace:*
-        version: link:../../../packages/secure-exec
+        version: link:../..
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -3611,7 +3671,7 @@ importers:
     dependencies:
       secure-exec:
         specifier: workspace:*
-        version: link:../../../packages/secure-exec
+        version: link:../..
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -3627,7 +3687,23 @@ importers:
     dependencies:
       secure-exec:
         specifier: workspace:*
-        version: link:../../../packages/secure-exec
+        version: link:../..
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/vm:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../..
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -11070,6 +11146,15 @@ packages:
 
   run-parallel@1.2.0:
     resolution: {integrity: sha512-5l4VyZR86LZ/lDxZTR6jqL8AFE2S0IFLMP26AbjsLVADxHdhB/c0GUsH+y39UfCi3dzz8OlQuPmnaJOMoDHQBA==}
+
+  run@2.1.4:
+    resolution: {integrity: sha512-Rd8W2wO0LWdwlNbqKJm/o0WpQ/VQ42KRR6MUgnaujjjVOdS0o3bTMZ9dCjWCQAeuIj6jhG58WkqkeGz0cvOIrA==}
+    engines: {node: '>=20.19.0'}
+    peerDependencies:
+      typescript: '>=5.1.6 <7'
+    peerDependenciesMeta:
+      typescript:
+        optional: true
 
   rxjs@7.8.2:
     resolution: {integrity: sha512-dhKf903U/PQZY6boNNtAGdWbG85WAbjT/1xYoZIC7FAY0yWapOBQVsVrDl58W86//e1VpMNBtRV4MaXfdMySFA==}
@@ -19709,6 +19794,10 @@ snapshots:
   run-parallel@1.2.0:
     dependencies:
       queue-microtask: 1.2.3
+
+  run@2.1.4(typescript@5.9.3):
+    optionalDependencies:
+      typescript: 5.9.3
 
   rxjs@7.8.2:
     dependencies:

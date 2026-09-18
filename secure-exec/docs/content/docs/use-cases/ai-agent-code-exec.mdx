@@ -1,6 +1,7 @@
 ---
 title: "AI Agent Code Exec"
 description: "Give an AI agent a code-execution tool that runs model-generated code in an isolated VM and returns structured results."
+skill: true
 ---
 
 Letting a model write code instead of chaining one tool call per step costs
@@ -25,12 +26,18 @@ can act on.
 
 <CodeSnippet file="secure-exec/examples/ai-agent/src/index.ts" region="loop" />
 
+## Give the code your tools
+
+Expose your own functions with [host functions](/secure-exec/docs/host-functions)
+so generated code can call your APIs without ever holding a credential.
+
 ## Multi-step agents
 
 When the agent builds on its earlier steps, create one
-[context](/secure-exec/docs/contexts) per conversation and pass it to every call.
-Variables, files, and [installed packages](/secure-exec/docs/npm) carry over.
-Dispose the context when the conversation ends.
+[VM](/secure-exec/docs/vms) per conversation. Files and
+[installed packages](/secure-exec/docs/npm) carry over between calls. Add a
+[context](/secure-exec/docs/contexts) if variables should carry over too. Dispose
+the VM when the conversation ends.
 
 ## Locking it down
 

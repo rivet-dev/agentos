@@ -1,5 +1,10 @@
 import { fileURLToPath } from "node:url";
-import { createHostDirBackend, execute, nodeModulesMount } from "secure-exec";
+import {
+	execute,
+	executeFile,
+	hostDirMount,
+	nodeModulesMount,
+} from "secure-exec";
 
 // docs:start host-dir
 // Project one host directory into the VM, read-only. The guest sees only the
@@ -12,13 +17,7 @@ const read = await execute(
 	console.log(readFileSync("/mnt/data/greeting.txt", "utf8").trim());
 	`,
 	{
-		mounts: [
-			{
-				path: "/mnt/data",
-				plugin: createHostDirBackend({ hostPath: hostData, readOnly: true }),
-				readOnly: true,
-			},
-		],
+		mounts: [hostDirMount("/mnt/data", hostData)],
 		output: { capture: "all" },
 	},
 );
@@ -43,3 +42,13 @@ const imported = await execute(
 );
 console.log(imported.stdout?.trim()); // hello, secure-exec
 // docs:end node-modules
+
+// docs:start execute-file
+// `executeFile` runs a file that is already in the VM. With a mount, that works
+// in a one-shot call: the script lives on the host and runs inside the VM.
+const report = await executeFile("/mnt/data/report.mjs", {
+	mounts: [hostDirMount("/mnt/data", hostData)],
+	output: { capture: "all" },
+});
+console.log(report.stdout?.trim()); // report: hello from the host
+// docs:end execute-file

@@ -51,6 +51,7 @@ function isIncludedPackageJson(relPath) {
 	return (
 		(relPath.startsWith("packages/") ||
 			relPath.startsWith("examples/") ||
+			relPath.startsWith("secure-exec/") ||
 			relPath === "website/package.json") &&
 		relPath.endsWith("/package.json")
 	);
@@ -142,7 +143,7 @@ function auditFixedVersions(options = {}) {
 		return { root, ok: false, packageCount: 0, failures: [`${root} does not exist`] };
 	}
 
-	for (const relRoot of ["packages", "examples", "website"]) {
+	for (const relRoot of ["packages", "examples", "secure-exec", "website"]) {
 		const scanRoot = join(root, relRoot);
 		if (existsSync(scanRoot)) walkPackageJsons(root, scanRoot, packageJsons);
 	}

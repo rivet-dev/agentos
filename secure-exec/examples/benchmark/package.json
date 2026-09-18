@@ -1,0 +1,19 @@
+{
+	"name": "@rivet-dev/agentos-example-secure-exec-benchmark",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"start": "tsx src/index.ts",
+		"check-types": "tsc --noEmit"
+	},
+	"dependencies": {
+		"secure-exec": "workspace:*",
+		"quickjs-emscripten": "^0.32.0",
+		"run": "^2.1.4"
+	},
+	"devDependencies": {
+		"@types/node": "^22.10.2",
+		"tsx": "^4.19.2",
+		"typescript": "^5.7.2"
+	}
+}

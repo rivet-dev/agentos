@@ -13,11 +13,20 @@ await new Promise(() => {});
 const runtime = await AgentOs.create({ permissions: { network: "allow" } });
 
 try {
+	// `spawn` returns as soon as the process starts, before the server is
+	// listening. Wait for the line it prints once it is ready.
+	const ready = Promise.withResolvers<void>();
+	const decoder = new TextDecoder();
 	const server = await runtime.javascript.spawn(serverSource, {
-		onStdout: (chunk) => process.stdout.write(new TextDecoder().decode(chunk)),
+		onStdout: (chunk) => {
+			const text = decoder.decode(chunk);
+			process.stdout.write(text);
+			if (text.includes("ready")) ready.resolve();
+		},
 	});
+	await ready.promise;
 
-	// The listener stays inside the VM — no host port is exposed.
+	// The listener stays inside the VM. No host port is exposed.
 	const response = await runtime.network.httpRequest({
 		port: 3000,
 		path: "/health",

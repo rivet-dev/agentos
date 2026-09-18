@@ -10,26 +10,19 @@
 	"exports": {
 		".": {
 			"types": "./dist/index.d.ts",
-			"import": "./dist/index.js"
+			"import": "./dist/index.js",
+			"default": "./dist/index.js"
 		},
 		"./typescript": {
 			"types": "./dist/typescript.d.ts",
-			"import": "./dist/typescript.js"
-		},
-		"./npm": {
-			"types": "./dist/npm.d.ts",
-			"import": "./dist/npm.js"
+			"import": "./dist/typescript.js",
+			"default": "./dist/typescript.js"
 		}
 	},
 	"files": [
 		"dist",
 		"README.md"
 	],
-	"repository": {
-		"type": "git",
-		"url": "https://github.com/rivet-dev/agentos.git",
-		"directory": "packages/secure-exec"
-	},
 	"homepage": "https://rivet.dev/secure-exec",
 	"engines": {
 		"node": ">=22.0.0"
@@ -46,8 +39,9 @@
 		"@rivet-dev/agentos-core": "workspace:*"
 	},
 	"devDependencies": {
-		"@types/node": "^22.19.15",
-		"typescript": "^5.7.3",
-		"vitest": "^2.1.8"
+		"@types/node": "^22.10.2",
+		"typescript": "^5.7.2",
+		"vitest": "^2.1.8",
+		"zod": "^4.1.11"
 	}
 }

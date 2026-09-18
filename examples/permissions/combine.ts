@@ -1,11 +1,13 @@
-import { agentOS, setup } from "@rivet-dev/agentos";
 import type { Permissions } from "@rivet-dev/agentos";
+import { agentOS, setup } from "@rivet-dev/agentos";
 
 // Allow the filesystem everywhere, but deny anything under /home/agentos/vault.
 const denyVault = {
 	fs: {
 		default: "allow",
-		rules: [{ mode: "deny", operations: ["*"], paths: ["/home/agentos/vault/**"] }],
+		rules: [
+			{ mode: "deny", operations: ["*"], paths: ["/home/agentos/vault/**"] },
+		],
 	},
 } satisfies Permissions;
 
@@ -13,7 +15,13 @@ const denyVault = {
 const allowOneHost = {
 	network: {
 		default: "deny",
-		rules: [{ mode: "allow", operations: ["*"], patterns: ["api.example.com"] }],
+		rules: [
+			{
+				mode: "allow",
+				operations: ["*"],
+				patterns: ["dns://api.example.com", "tcp://api.example.com:*"],
+			},
+		],
 	},
 } satisfies Permissions;
 

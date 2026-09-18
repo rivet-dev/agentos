@@ -17,7 +17,6 @@ These topics are identical in both, and are documented once in agentOS.
 | Trust boundaries and what the VM guarantees | [Security Model](/agentos/docs/security-model) |
 | How the VM, kernel, and sidecar fit together | [Architecture](/agentos/docs/architecture) |
 | Cold start, memory, and cost measurements | [Performance](/agentos/docs/performance) |
-| Lightweight VM or full sandbox | [agentOS vs Sandbox](/agentos/docs/versus-sandbox) |
 | Known gaps | [Limitations](/agentos/docs/limitations) |
 
 ## When to use agentOS directly
@@ -26,12 +25,9 @@ Reach for `@rivet-dev/agentos-core` when you need more than running snippets.
 
 | You need | agentOS |
 |---|---|
-| Long-running processes, stdin, signals, and web servers | [Processes](/agentos/docs/processes) |
+| Interactive terminals and process trees | [Processes](/agentos/docs/processes) |
 | A shell and real Linux tools | [Bash](/agentos/docs/bash) |
-| Python | [Python](/agentos/docs/python) |
-| Host functions that guest code can call | [Bindings](/agentos/docs/bindings) |
-| Reading and writing guest files from the host | [Filesystem](/agentos/docs/filesystem) |
-| Several contexts sharing one VM and filesystem | [Node.js](/agentos/docs/javascript) |
+| Python execution, with the same `execute` and `evaluate` shape | [Python](/agentos/docs/python) |
 | Coding agents such as Claude Code, Codex, and Pi | [Sessions](/agentos/docs/sessions) |
 
 Both packages can be used in the same process. They share one sidecar.
