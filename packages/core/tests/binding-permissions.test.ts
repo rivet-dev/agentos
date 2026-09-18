@@ -178,13 +178,40 @@ describe("binding collection permissions", () => {
 		});
 	});
 
-	test("denies binding collection invocation by default until binding permissions are granted", async () => {
+	// The binding auto-grant is part of the baseline an explicit policy is
+	// merged over, so passing an unrelated scope must not revoke it.
+	test("keeps the binding auto-grant when an explicit policy sets no binding scope", async () => {
 		vm = await AgentOs.create({
 			software: [common],
 			bindings: [mathBindings],
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
+			},
+		});
+
+		const result = await runCommand(vm, "agentos-math", [
+			"add",
+			"--a",
+			"5",
+			"--b",
+			"7",
+		]);
+		expect(result.exitCode).toBe(0);
+		expect(JSON.parse(result.stdout)).toEqual({
+			ok: true,
+			result: { sum: 12 },
+		});
+	});
+
+	test("denies binding collection invocation when the policy denies binding", async () => {
+		vm = await AgentOs.create({
+			software: [common],
+			bindings: [mathBindings],
+			permissions: {
+				fs: "allow",
+				childProcess: "allow",
+				binding: "deny",
 			},
 		});
 
@@ -242,6 +269,44 @@ describe("binding collection permissions — raw host_callback RPC path", () => 
 	afterEach(async () => {
 		await vm?.dispose();
 		vm = null;
+	});
+
+	// Same auto-grant, over the guest-controlled RPC path.
+	test("host_callback RPC keeps the binding auto-grant when an explicit policy sets no binding scope", async () => {
+		const executed: unknown[] = [];
+		const spyBindings = bindings({
+			name: "math",
+			description: "Math utilities",
+			bindings: {
+				add: binding({
+					description: "Add two numbers",
+					inputSchema: z.object({ a: z.number(), b: z.number() }),
+					execute: ({ a, b }) => {
+						executed.push({ a, b });
+						return { sum: a + b };
+					},
+				}),
+			},
+		});
+
+		const created = await createVmCapturingHandler({
+			bindings: [spyBindings],
+			// Names only fs/childProcess: `binding` keeps its baseline grant.
+			permissions: {
+				fs: "allow",
+				childProcess: "allow",
+			},
+		});
+		vm = created.vm;
+
+		const response = await created.handler(
+			hostCallbackFrame("math:add", { a: 2, b: 3 }),
+		);
+
+		expect(executed).toEqual([{ a: 2, b: 3 }]);
+		expect(response.type).toBe("host_callback_result");
+		expect(response.error).toBeUndefined();
+		expect(response.result).toEqual({ sum: 5 });
 	});
 
 	// N-001 (J.1/J.2): host_callback RPC must honor binding.invoke deny.

@@ -2549,6 +2549,25 @@ function describeBindingPayload(
 	};
 }
 
+/**
+ * Overlay an explicit permission policy on the secure baseline, scope by scope.
+ *
+ * The sidecar denies every scope the wire policy omits, so a partial policy
+ * must not replace the baseline wholesale: `{ network: "allow" }` has to keep
+ * the execution essentials and the `binding` auto-grant that a VM with no
+ * policy gets. This matches the documented merge semantics in
+ * `docs/content/docs/permissions.mdx` and the Rust client, which already fills
+ * each omitted scope from its own baseline (`permissions_policy` in
+ * `crates/client/src/agent_os.rs`).
+ */
+export function resolveHostPermissions(permissions?: Permissions): Permissions {
+	return {
+		...allowAll,
+		binding: "allow",
+		...permissions,
+	};
+}
+
 function bindingPermissionMode(
 	permissions: Permissions,
 	callbackKey: string,
@@ -3273,10 +3292,7 @@ export class AgentOs {
 				client = shared.client;
 				const session = shared.session;
 				nativeSession = session;
-				const hostPermissions = options?.permissions ?? {
-					...allowAll,
-					binding: "allow",
-				};
+				const hostPermissions = resolveHostPermissions(options?.permissions);
 				const sidecarPermissions =
 					serializePermissionsForSidecar(hostPermissions);
 				const createVmConfig: CreateVmConfig = {
