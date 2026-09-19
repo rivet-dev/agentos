@@ -534,7 +534,7 @@ pub(crate) const VM_LISTEN_PORT_MAX_METADATA_KEY: &str = "network.listen.port_ma
 pub(crate) const VM_LISTEN_ALLOW_PRIVILEGED_METADATA_KEY: &str = "network.listen.allow_privileged";
 pub(crate) const DEFAULT_JAVASCRIPT_NET_BACKLOG: u32 = 511;
 pub(crate) const LOOPBACK_EXEMPT_PORTS_ENV: &str = "AGENTOS_LOOPBACK_EXEMPT_PORTS";
-pub(crate) const BINDING_DRIVER_NAME: &str = "agentos-host-callbacks";
+pub(crate) const HOST_FUNCTION_DRIVER_NAME: &str = "agentos-host-callbacks";
 pub(crate) const MAPPED_HOST_FD_START: u32 = 1_000_000_000;
 
 // ---------------------------------------------------------------------------
@@ -1008,7 +1008,7 @@ pub(crate) struct VmState {
     pub(crate) command_guest_paths: BTreeMap<String, String>,
     pub(crate) provided_commands: BTreeMap<String, Vec<String>>,
     pub(crate) command_permissions: BTreeMap<String, WasmPermissionTier>,
-    pub(crate) bindings: BTreeMap<String, RegisterHostCallbacksRequest>,
+    pub(crate) host_functions: BTreeMap<String, RegisterHostCallbacksRequest>,
     pub(crate) active_processes: BTreeMap<String, ActiveProcess>,
     /// Pull-driven host fetches retained between sidecar requests. A stream
     /// owns exactly one kernel socket and capability lease; reads advance it
@@ -3058,11 +3058,11 @@ pub(crate) enum ActiveExecution {
     Javascript(JavascriptExecution),
     Python(PythonExecution),
     Wasm(Box<WasmExecution>),
-    Binding(BindingExecution),
+    HostFunction(HostFunctionExecution),
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct BindingExecution {
+pub(crate) struct HostFunctionExecution {
     pub(crate) cancelled: Arc<AtomicBool>,
     pub(crate) pending_events: Arc<Mutex<VecDeque<ActiveExecutionEvent>>>,
     pub(crate) event_overflow_reason: Arc<Mutex<Option<String>>>,
@@ -3073,7 +3073,7 @@ pub(crate) struct BindingExecution {
     pub(crate) event_notify: Arc<Notify>,
 }
 
-impl Default for BindingExecution {
+impl Default for HostFunctionExecution {
     fn default() -> Self {
         Self::with_event_notify(
             Arc::new(Notify::new()),
@@ -3082,7 +3082,7 @@ impl Default for BindingExecution {
     }
 }
 
-impl BindingExecution {
+impl HostFunctionExecution {
     pub(crate) fn with_event_notify(event_notify: Arc<Notify>, event_capacity: usize) -> Self {
         Self {
             cancelled: Arc::new(AtomicBool::new(false)),
@@ -3201,7 +3201,7 @@ pub(crate) struct ResolvedChildProcessExecution {
     pub(crate) guest_cwd: String,
     pub(crate) host_cwd: PathBuf,
     pub(crate) wasm_permission_tier: Option<WasmPermissionTier>,
-    pub(crate) binding_command: bool,
+    pub(crate) host_function_command: bool,
 }
 
 // ---------------------------------------------------------------------------

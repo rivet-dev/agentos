@@ -11,7 +11,7 @@ import {
 	expect,
 	it,
 } from "vitest";
-import { createSandboxBindings } from "../src/index.js";
+import { createSandboxHostFunctions } from "../src/index.js";
 
 let sandbox: MockSandboxAgentHandle;
 
@@ -20,7 +20,7 @@ const SANDBOX_TEST_PERMISSIONS = {
 	network: "allow",
 	childProcess: "allow",
 	env: "allow",
-	binding: "allow",
+	hostFunction: "allow",
 } as const;
 
 beforeAll(async () => {
@@ -105,11 +105,11 @@ describe("VM integration", () => {
 		expect(new TextDecoder().decode(content)).toBe("deep file");
 	});
 
-	// -- Bindings direct execution (host RPC, not via CLI shim) --
+	// -- HostFunctions direct execution (host RPC, not via CLI shim) --
 
-	it("should execute the run-command binding directly via the binding collection", async () => {
-		const tk = createSandboxBindings({ client: sandbox.client });
-		const result = await tk.bindings["run-command"].execute({
+	it("should execute the run-command hostFunction directly via the hostFunction collection", async () => {
+		const tk = createSandboxHostFunctions({ client: sandbox.client });
+		const result = await tk.hostFunctions["run-command"].execute({
 			command: "echo",
 			args: ["hello", "from", "sandbox"],
 		});
@@ -117,31 +117,31 @@ describe("VM integration", () => {
 		expect(result.stdout).toContain("hello from sandbox");
 	});
 
-	it("should exercise the binding collection directly from a VM context", async () => {
-		// Write a file into the sandbox via the binding collection, then read it via the mount.
-		const tk = createSandboxBindings({ client: sandbox.client });
+	it("should exercise the hostFunction collection directly from a VM context", async () => {
+		// Write a file into the sandbox via the hostFunction collection, then read it via the mount.
+		const tk = createSandboxHostFunctions({ client: sandbox.client });
 
-		// Confirm the sandbox binding collection runs commands successfully.
-		const result = await tk.bindings["run-command"].execute({
+		// Confirm the sandbox hostFunction collection runs commands successfully.
+		const result = await tk.hostFunctions["run-command"].execute({
 			command: "echo",
-			args: ["hello from sandbox binding collection"],
+			args: ["hello from sandbox hostFunction collection"],
 		});
 		expect(result.exitCode).toBe(0);
-		expect(result.stdout).toContain("hello from sandbox binding collection");
+		expect(result.stdout).toContain("hello from sandbox hostFunction collection");
 
 		// Create a process and list it.
-		const proc = await tk.bindings["create-process"].execute({
+		const proc = await tk.hostFunctions["create-process"].execute({
 			command: "sleep",
 			args: ["60"],
 		});
 		expect(proc.status).toBe("running");
 
-		const listed = await tk.bindings["list-processes"].execute({});
+		const listed = await tk.hostFunctions["list-processes"].execute({});
 		const found = listed.processes.find(
 			(p: { id: string }) => p.id === proc.id,
 		);
 		expect(found).toBeDefined();
 
-		await tk.bindings["kill-process"].execute({ id: proc.id });
+		await tk.hostFunctions["kill-process"].execute({ id: proc.id });
 	});
 });

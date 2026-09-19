@@ -313,7 +313,7 @@ where
 mod owned_subprocess_tests {
     use super::*;
     use crate::protocol::{RequestFrame, RequestPayload, ResponsePayload};
-    use crate::state::{BindingExecution, ConnectionState, SessionState};
+    use crate::state::{ConnectionState, HostFunctionExecution, SessionState};
     use crate::stdio::LocalBridge;
     use crate::NativeSidecarConfig;
 
@@ -397,7 +397,7 @@ mod owned_subprocess_tests {
                         vm.limits.clone(),
                         agentos_runtime::DEFAULT_PROTOCOL_MAX_PROCESS_EVENTS,
                         GuestRuntimeKind::JavaScript,
-                        ActiveExecution::Binding(BindingExecution::default()),
+                        ActiveExecution::HostFunction(HostFunctionExecution::default()),
                     );
                     let child_handle = vm
                         .kernel
@@ -423,7 +423,7 @@ mod owned_subprocess_tests {
                             vm.limits.clone(),
                             agentos_runtime::DEFAULT_PROTOCOL_MAX_PROCESS_EVENTS,
                             GuestRuntimeKind::JavaScript,
-                            ActiveExecution::Binding(BindingExecution::default()),
+                            ActiveExecution::HostFunction(HostFunctionExecution::default()),
                         ),
                     );
                     vm.active_processes.insert(process_id.clone(), root);

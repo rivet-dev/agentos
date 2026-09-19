@@ -57,14 +57,14 @@ describe("AgentOsOptions validation", () => {
 		).toThrow(/createOptions/);
 	});
 
-	test("accepts bindings as the public name for host binding collections", () => {
+	test("accepts hostFunctions as the public name for host-function collections", () => {
 		expect(
 			agentOsOptionsSchema.safeParse({
-				bindings: [
+				hostFunctions: [
 					{
 						name: "weather",
-						description: "Weather bindings",
-						bindings: {},
+						description: "Weather functions",
+						functions: {},
 					},
 				],
 			}).success,
@@ -79,15 +79,15 @@ describe("AgentOsOptions validation", () => {
 		).toBe(true);
 	});
 
-	test("uses the sidecar wire name for the per-VM binding limit", () => {
+	test("uses the sidecar wire name for the per-VM host-function limit", () => {
 		expect(
 			agentOsOptionsSchema.safeParse({
-				limits: { bindings: { maxRegisteredBindingsPerVm: 256 } },
+				limits: { hostFunctions: { maxRegisteredFunctionsPerVm: 256 } },
 			}).success,
 		).toBe(true);
 		expect(
 			agentOsOptionsSchema.safeParse({
-				limits: { bindings: { maxRegisteredCollectionsPerVm: 256 } },
+				limits: { hostFunctions: { maxRegisteredCollectionsPerVm: 256 } },
 			}).success,
 		).toBe(false);
 	});
@@ -130,7 +130,7 @@ describe("AgentOsOptions validation", () => {
 		} as never);
 		expect(options).not.toHaveProperty("sandbox");
 		expect(options.mounts?.[0]?.path).toBe("/mnt/sandbox");
-		expect(options.bindings?.[0]?.name).toBe("sandbox");
+		expect(options.hostFunctions?.[0]?.name).toBe("sandbox");
 
 		for (const hook of getSandboxDisposeHooks(options)) {
 			await hook();
@@ -187,11 +187,11 @@ describe("AgentOsOptions validation", () => {
 						},
 					},
 				},
-				bindings: [
+				hostFunctions: [
 					{
 						name: "INVALID",
-						description: "Invalid binding collection",
-						bindings: {},
+						description: "Invalid hostFunction collection",
+						functions: {},
 					},
 				],
 			}),
@@ -200,7 +200,7 @@ describe("AgentOsOptions validation", () => {
 		expect(disposed).toBe(0);
 	});
 
-	test("rejects removed sandbox mount and binding toggles", async () => {
+	test("rejects removed sandbox mount and hostFunction toggles", async () => {
 		const client = { baseUrl: "http://127.0.0.1:1234" } as never;
 		await expect(
 			resolveSandboxOptions({
@@ -215,10 +215,10 @@ describe("AgentOsOptions validation", () => {
 			resolveSandboxOptions({
 				sandbox: {
 					client,
-					bindings: false,
+					hostFunctions: false,
 				} as never,
 			} as never),
-		).rejects.toThrow(/sandbox\.bindings has been removed/);
+		).rejects.toThrow(/sandbox\.hostFunctions has been removed/);
 	});
 
 	test("rejects old sandbox path option names", async () => {

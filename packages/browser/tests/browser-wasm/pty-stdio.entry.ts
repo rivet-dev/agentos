@@ -130,7 +130,7 @@ async function run() {
 			childProcess: "allow",
 			process: "allow",
 			env: "allow",
-			binding: "allow",
+			hostFunction: "allow",
 		},
 	} as never;
 	const factory = createBrowserRuntimeDriverFactory({

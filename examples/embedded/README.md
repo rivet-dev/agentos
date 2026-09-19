@@ -26,8 +26,8 @@ requests and responses are variants of the generic `onSessionEvent` union.
   processes, sessions, networking, cron).
 - `quickstart.ts`: run a coding agent directly from a Node.js application.
 - `advanced.ts`: pin VMs to a dedicated sidecar process.
-- `agent-to-agent.ts`: connect two embedded agents through a binding.
-- `bindings.ts`: expose a host function as a command inside the VM.
+- `agent-to-agent.ts`: connect two embedded agents through a host function.
+- `host-functions.ts`: expose a host function as a command inside the VM.
 - `config-reference.ts`: common `AgentOs.create()` configuration.
 - `hooks.ts`: generic durable session-event observation.
 - `limits.ts`: configure resource limits and receive local warnings.

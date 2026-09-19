@@ -73,7 +73,7 @@ impl crate::generated_protocol::v1::PermissionsPolicy {
             child_process: Some(PatternPermissionScope::PermissionMode(PermissionMode::Deny)),
             process: Some(PatternPermissionScope::PermissionMode(PermissionMode::Deny)),
             env: Some(PatternPermissionScope::PermissionMode(PermissionMode::Deny)),
-            binding: Some(PatternPermissionScope::PermissionMode(PermissionMode::Deny)),
+            host_function: Some(PatternPermissionScope::PermissionMode(PermissionMode::Deny)),
         }
     }
 
@@ -95,7 +95,7 @@ impl crate::generated_protocol::v1::PermissionsPolicy {
             env: Some(PatternPermissionScope::PermissionMode(
                 PermissionMode::Allow,
             )),
-            binding: Some(PatternPermissionScope::PermissionMode(
+            host_function: Some(PatternPermissionScope::PermissionMode(
                 PermissionMode::Allow,
             )),
         }
@@ -247,8 +247,8 @@ pub fn permissions_policy_config_from_wire(
             .process
             .map(legacy_pattern_permission_scope_config),
         env: permissions.env.map(legacy_pattern_permission_scope_config),
-        binding: permissions
-            .binding
+        host_function: permissions
+            .host_function
             .map(legacy_pattern_permission_scope_config),
     }
 }
@@ -447,29 +447,29 @@ fn legacy_limits_config(
     let http = agentos_vm_config::HttpLimitsConfig {
         max_fetch_response_bytes: legacy_u64(metadata, "limits.http.max_fetch_response_bytes"),
     };
-    let bindings = agentos_vm_config::BindingLimitsConfig {
-        default_binding_timeout_ms: legacy_u64(
-            metadata,
-            "limits.bindings.default_binding_timeout_ms",
-        ),
-        max_binding_timeout_ms: legacy_u64(metadata, "limits.bindings.max_binding_timeout_ms"),
+    let host_functions = agentos_vm_config::HostFunctionLimitsConfig {
+        default_timeout_ms: legacy_u64(metadata, "limits.host_functions.default_timeout_ms"),
+        max_timeout_ms: legacy_u64(metadata, "limits.host_functions.max_timeout_ms"),
         max_registered_collections: legacy_u64(
             metadata,
-            "limits.bindings.max_registered_collections",
+            "limits.host_functions.max_registered_collections",
         ),
-        max_registered_bindings_per_vm: legacy_u64(
+        max_registered_functions_per_vm: legacy_u64(
             metadata,
-            "limits.bindings.max_registered_bindings_per_vm",
+            "limits.host_functions.max_registered_functions_per_vm",
         ),
-        max_bindings_per_collection: legacy_u64(
+        max_functions_per_collection: legacy_u64(
             metadata,
-            "limits.bindings.max_bindings_per_collection",
+            "limits.host_functions.max_functions_per_collection",
         ),
-        max_binding_schema_bytes: legacy_u64(metadata, "limits.bindings.max_binding_schema_bytes"),
-        max_examples_per_binding: legacy_u64(metadata, "limits.bindings.max_examples_per_binding"),
-        max_binding_example_input_bytes: legacy_u64(
+        max_schema_bytes: legacy_u64(metadata, "limits.host_functions.max_schema_bytes"),
+        max_examples_per_function: legacy_u64(
             metadata,
-            "limits.bindings.max_binding_example_input_bytes",
+            "limits.host_functions.max_examples_per_function",
+        ),
+        max_example_input_bytes: legacy_u64(
+            metadata,
+            "limits.host_functions.max_example_input_bytes",
         ),
     };
     let plugins = agentos_vm_config::PluginLimitsConfig {
@@ -592,7 +592,7 @@ fn legacy_limits_config(
         udp: None,
         tls: None,
         http2: None,
-        bindings: legacy_has_binding_limits(&bindings).then_some(bindings),
+        host_functions: legacy_has_host_function_limits(&host_functions).then_some(host_functions),
         plugins: legacy_has_plugin_limits(&plugins).then_some(plugins),
         acp: legacy_has_acp_limits(&acp).then_some(acp),
         sqlite: sqlite.max_result_bytes.is_some().then_some(sqlite),
@@ -608,7 +608,7 @@ fn legacy_limits_config(
 
     if config.resources.is_none()
         && config.http.is_none()
-        && config.bindings.is_none()
+        && config.host_functions.is_none()
         && config.plugins.is_none()
         && config.acp.is_none()
         && config.sqlite.is_none()
@@ -655,15 +655,15 @@ fn legacy_has_resource_limits(config: &agentos_vm_config::ResourceLimitsConfig) 
         || config.max_wasm_stack_bytes.is_some()
 }
 
-fn legacy_has_binding_limits(config: &agentos_vm_config::BindingLimitsConfig) -> bool {
-    config.default_binding_timeout_ms.is_some()
-        || config.max_binding_timeout_ms.is_some()
+fn legacy_has_host_function_limits(config: &agentos_vm_config::HostFunctionLimitsConfig) -> bool {
+    config.default_timeout_ms.is_some()
+        || config.max_timeout_ms.is_some()
         || config.max_registered_collections.is_some()
-        || config.max_registered_bindings_per_vm.is_some()
-        || config.max_bindings_per_collection.is_some()
-        || config.max_binding_schema_bytes.is_some()
-        || config.max_examples_per_binding.is_some()
-        || config.max_binding_example_input_bytes.is_some()
+        || config.max_registered_functions_per_vm.is_some()
+        || config.max_functions_per_collection.is_some()
+        || config.max_schema_bytes.is_some()
+        || config.max_examples_per_function.is_some()
+        || config.max_example_input_bytes.is_some()
 }
 
 fn legacy_has_plugin_limits(config: &agentos_vm_config::PluginLimitsConfig) -> bool {
@@ -1360,7 +1360,7 @@ mod tests {
             policy.child_process,
             policy.process,
             policy.env,
-            policy.binding,
+            policy.host_function,
         ] {
             assert!(matches!(
                 scope,
@@ -1382,7 +1382,7 @@ mod tests {
             policy.child_process,
             policy.process,
             policy.env,
-            policy.binding,
+            policy.host_function,
         ] {
             assert!(matches!(
                 scope,

@@ -25,7 +25,7 @@ pub fn deny_all_policy() -> vm_config::PermissionsPolicy {
         env: Some(vm_config::PatternPermissionScope::Mode(
             vm_config::PermissionMode::Deny,
         )),
-        binding: Some(vm_config::PatternPermissionScope::Mode(
+        host_function: Some(vm_config::PatternPermissionScope::Mode(
             vm_config::PermissionMode::Deny,
         )),
     }
@@ -48,16 +48,16 @@ pub fn allow_all_policy() -> vm_config::PermissionsPolicy {
         env: Some(vm_config::PatternPermissionScope::Mode(
             vm_config::PermissionMode::Allow,
         )),
-        binding: Some(vm_config::PatternPermissionScope::Mode(
+        host_function: Some(vm_config::PatternPermissionScope::Mode(
             vm_config::PermissionMode::Allow,
         )),
     }
 }
 
 /// The policy for every scope a client leaves out. The guest behaves like a
-/// sandboxed machine: its virtual filesystem, processes, environment, bindings,
-/// listeners, and loopback networking work. External network access is denied
-/// until the client grants it explicitly.
+/// sandboxed machine: its virtual filesystem, processes, environment, host
+/// functions, listeners, and loopback networking work. External network access
+/// is denied until the client grants it explicitly.
 /// The host filesystem is reachable only through mounts the client configures.
 pub fn default_permissions_policy() -> vm_config::PermissionsPolicy {
     let allow = || {
@@ -94,7 +94,7 @@ pub fn default_permissions_policy() -> vm_config::PermissionsPolicy {
         child_process: allow(),
         process: allow(),
         env: allow(),
-        binding: allow(),
+        host_function: allow(),
     }
 }
 
@@ -114,7 +114,10 @@ pub fn resolve_permissions_policy(
         child_process: requested.child_process.clone().or(defaults.child_process),
         process: requested.process.clone().or(defaults.process),
         env: requested.env.clone().or(defaults.env),
-        binding: requested.binding.clone().or(defaults.binding),
+        host_function: requested
+            .host_function
+            .clone()
+            .or(defaults.host_function),
     }
 }
 
@@ -150,8 +153,8 @@ pub fn evaluate_permissions_policy(
             capability_operation(capability, domain),
             resource,
         ),
-        "binding" => evaluate_pattern_permission_scope(
-            permissions.binding.as_ref(),
+        "hostFunction" => evaluate_pattern_permission_scope(
+            permissions.host_function.as_ref(),
             capability_operation(capability, domain),
             resource,
         ),
@@ -176,7 +179,7 @@ pub fn evaluate_matching_pattern_permission_policy(
         "child_process" => permissions.child_process.as_ref(),
         "process" => permissions.process.as_ref(),
         "env" => permissions.env.as_ref(),
-        "binding" => permissions.binding.as_ref(),
+        "hostFunction" => permissions.host_function.as_ref(),
         _ => return None,
     }?;
     let operation = capability_operation(capability, domain);
@@ -283,8 +286,8 @@ pub fn validate_permissions_policy(
     if let Some(scope) = permissions.env.as_ref() {
         validate_pattern_permission_scope("env", scope)?;
     }
-    if let Some(scope) = permissions.binding.as_ref() {
-        validate_pattern_permission_scope("binding", scope)?;
+    if let Some(scope) = permissions.host_function.as_ref() {
+        validate_pattern_permission_scope("hostFunction", scope)?;
     }
     Ok(())
 }
@@ -499,8 +502,8 @@ mod tests {
         assert!(allowed(&policy, "env", "env.read", "HOME"));
         assert!(allowed(
             &policy,
-            "binding",
-            "binding.invoke",
+            "hostFunction",
+            "hostFunction.invoke",
             "tools:weather"
         ));
         assert!(!allowed(
@@ -547,7 +550,7 @@ mod tests {
             )),
             process: None,
             env: None,
-            binding: None,
+            host_function: None,
         };
         let policy = resolve_permissions_policy(Some(&requested));
 
@@ -575,7 +578,7 @@ mod tests {
             child_process: None,
             process: None,
             env: None,
-            binding: None,
+            host_function: None,
         };
 
         assert_eq!(
@@ -592,7 +595,7 @@ mod tests {
             child_process: None,
             process: None,
             env: None,
-            binding: None,
+            host_function: None,
         };
 
         for (domain, capability, resource) in [
@@ -601,7 +604,7 @@ mod tests {
             ("child_process", "child_process.spawn", "sh"),
             ("process", "process.kill", "123"),
             ("env", "env.read", "TOKEN"),
-            ("binding", "binding.call", "shell"),
+            ("hostFunction", "hostFunction.invoke", "shell"),
         ] {
             assert_eq!(
                 evaluate_permissions_policy(&policy, domain, capability, Some(resource)),
@@ -628,7 +631,7 @@ mod tests {
             child_process: None,
             process: None,
             env: None,
-            binding: None,
+            host_function: None,
         };
 
         assert_eq!(
@@ -681,7 +684,7 @@ mod tests {
             env: Some(vm_config::PatternPermissionScope::Mode(
                 vm_config::PermissionMode::Ask,
             )),
-            binding: Some(vm_config::PatternPermissionScope::Mode(
+            host_function: Some(vm_config::PatternPermissionScope::Mode(
                 vm_config::PermissionMode::Ask,
             )),
         };
@@ -692,7 +695,7 @@ mod tests {
             ("child_process", "child_process.spawn", "sh"),
             ("process", "process.kill", "123"),
             ("env", "env.read", "TOKEN"),
-            ("binding", "binding.call", "shell"),
+            ("hostFunction", "hostFunction.invoke", "shell"),
         ] {
             let mode = evaluate_permissions_policy(&policy, domain, capability, Some(resource));
             assert_eq!(
@@ -729,7 +732,7 @@ mod tests {
             env: Some(vm_config::PatternPermissionScope::Mode(
                 vm_config::PermissionMode::Ask,
             )),
-            binding: None,
+            host_function: None,
         });
 
         assert!(
@@ -786,7 +789,7 @@ mod tests {
             child_process: None,
             process: None,
             env: None,
-            binding: None,
+            host_function: None,
         };
 
         let permissions = permissions_from_policy(policy);
@@ -821,7 +824,7 @@ mod tests {
             child_process: None,
             process: None,
             env: None,
-            binding: None,
+            host_function: None,
         });
         assert!(unrestricted.filesystem_unrestricted);
 
@@ -836,7 +839,7 @@ mod tests {
             child_process: None,
             process: None,
             env: None,
-            binding: None,
+            host_function: None,
         });
         assert!(!rule_based.filesystem_unrestricted);
     }
@@ -865,7 +868,7 @@ mod tests {
             child_process: None,
             process: None,
             env: None,
-            binding: None,
+            host_function: None,
         };
 
         assert_eq!(
@@ -891,7 +894,7 @@ mod tests {
             child_process: None,
             process: None,
             env: None,
-            binding: None,
+            host_function: None,
         };
 
         let error = validate_permissions_policy(&policy).expect_err("policy should be invalid");

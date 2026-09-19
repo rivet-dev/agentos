@@ -296,7 +296,7 @@ An agent (such as [Pi](https://github.com/mariozechner/pi-coding-agent)) is just
 - **Streamed.** The agent's output flows back to your app in real time as `sessionEvent`s.
 - **Durable semantic events.** Completed ACP updates and interactive permission request/response records are sequenced in SQLite; streaming message deltas remain live-only.
 - **Durable files.** Files under `/home/agentos` survive sleep through the sidecar's direct SQLite-over-UDS connection.
-- **Context injected.** agentOS adds a system prompt describing the VM environment and available commands and bindings, layered on top of the agent's own instructions. See [System Prompt](/agentos/docs/system-prompt).
+- **Context injected.** agentOS adds a system prompt describing the VM environment, available commands, and host functions, layered on top of the agent's own instructions. See [System Prompt](/agentos/docs/system-prompt).
 - See [Agent Sessions](/agentos/docs/architecture/agent-sessions) for the internals.
 
 ### Permissions & approvals

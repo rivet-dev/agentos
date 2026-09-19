@@ -1,14 +1,14 @@
 import common from "@agentos-software/common";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { z } from "zod";
-import { AgentOs, binding, bindings } from "../src/index.js";
+import { AgentOs, hostFunction, hostFunctions } from "../src/index.js";
 import { ALLOW_ALL_VM_PERMISSIONS } from "./helpers/permissions.js";
 
-const mathBindings = bindings({
+const mathFunctions = hostFunctions({
 	name: "math",
 	description: "Math utilities",
-	bindings: {
-		add: binding({
+	functions: {
+		add: hostFunction({
 			description: "Add two numbers",
 			inputSchema: z.object({
 				a: z.number(),
@@ -38,13 +38,13 @@ async function runCommand(vm: AgentOs, command: string, args: string[]) {
 	};
 }
 
-describe("native sidecar binding dispatch", () => {
+describe("native sidecar hostFunction dispatch", () => {
 	let vm: AgentOs;
 
 	beforeEach(async () => {
 		vm = await AgentOs.create({
 			software: [common],
-			bindings: [mathBindings],
+			hostFunctions: [mathFunctions],
 			permissions: ALLOW_ALL_VM_PERMISSIONS,
 		});
 	}, 20_000);
@@ -53,24 +53,24 @@ describe("native sidecar binding dispatch", () => {
 		await vm?.dispose();
 	});
 
-	test("agentos list-bindings returns registered binding collections", async () => {
-		const result = await runCommand(vm, "agentos", ["list-bindings"]);
+	test("agentos list-host-functions returns registered host-function collections", async () => {
+		const result = await runCommand(vm, "agentos", ["list-host-functions"]);
 		expect(result.exitCode).toBe(0);
 		expect(JSON.parse(result.stdout)).toEqual({
 			ok: true,
 			result: {
-				bindings: [
+				hostFunctions: [
 					{
 						name: "math",
 						description: "Math utilities",
-						bindings: ["add"],
+						hostFunctions: ["add"],
 					},
 				],
 			},
 		});
 	});
 
-	test("agentos-<binding collection> executes the binding through the sidecar", async () => {
+	test("agentos-<hostFunction collection> executes the hostFunction through the sidecar", async () => {
 		const result = await runCommand(vm, "agentos-math", [
 			"add",
 			"--a",
@@ -87,16 +87,16 @@ describe("native sidecar binding dispatch", () => {
 
 	test("guest shell scripts can invoke agentos-* commands through PATH", async () => {
 		await vm.writeFile(
-			"/tmp/run-binding.sh",
+			"/tmp/run-hostFunction.sh",
 			[
 				"#!/bin/sh",
 				"set -eu",
-				"agentos-math add --a 2 --b 3 > /tmp/binding-output.json",
+				"agentos-math add --a 2 --b 3 > /tmp/hostFunction-output.json",
 			].join("\n"),
 		);
 
 		const result = await vm.exec(
-			"sh /tmp/run-binding.sh && cat /tmp/binding-output.json",
+			"sh /tmp/run-hostFunction.sh && cat /tmp/hostFunction-output.json",
 		);
 		expect(result.exitCode).toBe(0);
 		expect(JSON.parse(result.stdout)).toEqual({
@@ -105,7 +105,7 @@ describe("native sidecar binding dispatch", () => {
 		});
 	});
 
-	test("invalid binding input exits non-zero and writes the error to stderr", async () => {
+	test("invalid hostFunction input exits non-zero and writes the error to stderr", async () => {
 		const result = await runCommand(vm, "agentos-math", ["add", "--a", "5"]);
 		expect(result.exitCode).toBe(1);
 		expect(result.stderr).toContain("Missing required flag");

@@ -7,7 +7,7 @@
  * sandbox example to type-check. Remove once the packages are installed here.
  *
  * Real packages and exports:
- * - `@rivet-dev/agentos-sandbox` -> `createSandboxFs`, `createSandboxBindings`
+ * - `@rivet-dev/agentos-sandbox` -> `createSandboxFs`, `createSandboxHostFunctions`
  * - `sandbox-agent`              -> `SandboxAgent`
  * - `sandbox-agent/docker`       -> `docker`
  */
@@ -26,7 +26,7 @@ declare module "sandbox-agent/docker" {
 declare module "@rivet-dev/agentos-sandbox" {
 	import type {
 		NativeMountPluginDescriptor,
-		Bindings,
+		HostFunctions,
 	} from "@rivet-dev/agentos";
 	import type { SandboxAgent } from "sandbox-agent";
 
@@ -40,7 +40,7 @@ declare module "@rivet-dev/agentos-sandbox" {
 		/** Maximum file size allowed for buffered pread/truncate fallbacks. */
 		maxFullReadBytes?: number;
 	}
-	export interface SandboxBindingsOptions {
+	export interface SandboxHostFunctionsOptions {
 		/** A connected SandboxAgent client instance. */
 		client: SandboxAgent;
 	}
@@ -51,8 +51,8 @@ declare module "@rivet-dev/agentos-sandbox" {
 	export function createSandboxFs(
 		options: SandboxFsOptions,
 	): NativeMountPluginDescriptor;
-	/** Build a binding collection that exposes the sandbox's process management. */
-	export function createSandboxBindings(
-		options: SandboxBindingsOptions,
-	): Bindings;
+	/** Build a host-function collection that exposes the sandbox's process management. */
+	export function createSandboxHostFunctions(
+		options: SandboxHostFunctionsOptions,
+	): HostFunctions;
 }

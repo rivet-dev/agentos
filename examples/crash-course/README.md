@@ -20,7 +20,7 @@ A single `server.ts` stands up an Agent OS registry with the `pi` agent software
 - **Cron** (`cron-client.ts`) — schedule recurring `exec` commands and agent sessions.
 - **Permissions** (`permissions-client.ts`, `permissions-server.ts`) — observe interactive permission requests through the generic session-event stream; use `permissionPolicy: "ask"` when prompting for a decision, or the default `allow_all` for unattended approval.
 - **Multiplayer** (`multiplayer-client.ts`) — two clients observing the same shared agent session.
-- **Agent-to-agent** (`agent-to-agent-*.ts`) — a coder agent calls a `review` binding that drives a separate reviewer agent.
+- **Agent-to-agent** (`agent-to-agent-*.ts`) lets a coder agent call a `review` host function that drives a separate reviewer agent.
 
 ## Run it
 

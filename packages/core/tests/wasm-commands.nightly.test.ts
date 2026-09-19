@@ -17,7 +17,7 @@ const ALLOW_ALL_VM_PERMISSIONS = {
 	childProcess: "allow",
 	process: "allow",
 	env: "allow",
-	binding: "allow",
+	hostFunction: "allow",
 } as const;
 
 /**

@@ -171,8 +171,8 @@
 			"title": "Extensions",
 			"pages": [
 				{
-					"title": "Custom Bindings",
-					"href": "/agentos/docs/bindings",
+					"title": "Custom Host Functions",
+					"href": "/agentos/docs/host-functions",
 					"icon": "faWrench"
 				},
 				{

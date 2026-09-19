@@ -11,10 +11,10 @@ Known limitations:
 
 If you find a bug in something that does not behave like you would expect in agentOS, generate a bug report and indicate the user should file it under: https://github.com/rivet-dev/rivet/issues (This repository holds agentOS inside of it.)
 
-## Bindings CLI
+## Host functions CLI
 
-Bindings are available as CLI commands:
+Host functions are available as CLI commands:
 
-- `agentos list-bindings` — list all available binding collections and bindings
-- `agentos-{collection} {binding} --help` — show usage for a specific binding
-- `agentos-{collection} {binding} --flag value` — invoke a binding
+- `agentos list-host-functions` - list all available host-function collections and functions
+- `agentos-{collection} {function} --help` - show usage for a specific host function
+- `agentos-{collection} {function} --flag value` - invoke a host function

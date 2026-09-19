@@ -6,8 +6,8 @@ import { AgentOs } from "@rivet-dev/agentos-core";
 import { afterAll, describe, expect, test } from "vitest";
 import { z } from "zod";
 import {
-	binding,
-	bindings,
+	hostFunction,
+	hostFunctions,
 	createVm,
 	evaluate,
 	execute,
@@ -160,20 +160,20 @@ describe("one-shot calls", () => {
 	});
 
 	test("call host functions as guest globals", async () => {
-		const math = bindings({
+		const math = hostFunctions({
 			name: "math",
 			description: "Arithmetic on the host.",
-			bindings: {
-				add: binding({
+			functions: {
+				add: hostFunction({
 					description: "Add two numbers.",
 					inputSchema: z.object({ a: z.number(), b: z.number() }),
 					execute: ({ a, b }) => a + b,
 				}),
 			},
 		});
-		// Each collection is a guest global, and each binding an async function.
+		// Each collection is a guest global, and each function an async function.
 		const result = await evaluate<number>("math.add({ a: 40, b: 2 })", {
-			bindings: [math],
+			hostFunctions: [math],
 			...bare,
 		});
 		expect(result).toMatchObject({ outcome: "succeeded", value: 42 });

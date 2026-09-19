@@ -171,7 +171,7 @@ async function start(): Promise<{ masterFd: number; slaveFd: number }> {
 				childProcess: "allow",
 				process: "allow",
 				env: "allow",
-				binding: "allow",
+				hostFunction: "allow",
 			},
 		} as never;
 		const factory = createBrowserRuntimeDriverFactory({

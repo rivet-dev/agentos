@@ -7,10 +7,10 @@ import {
 	type AgentOsSidecarRuntimeConfig,
 	agentOsLimitsSchema,
 	agentOsOptionsSchema,
-	binding,
-	bindingSchema,
-	bindings,
-	bindingsSchema,
+	hostFunction,
+	hostFunctionSchema,
+	hostFunctions,
+	hostFunctionsSchema,
 	type ContextDescriptor,
 	CronManager,
 	createHostDirBackend,
@@ -25,7 +25,7 @@ import {
 	type KernelExecResult,
 	type KernelSpawnOptions,
 	type LanguageSpawnOptions,
-	MAX_BINDING_DESCRIPTION_LENGTH,
+	MAX_HOST_FUNCTION_DESCRIPTION_LENGTH,
 	type MountConfigJsonPrimitive,
 	mountConfigSchema,
 	type NodeModulesMountConfig,
@@ -49,7 +49,7 @@ import {
 	sidecarRuntimeConfigSchema,
 	TimerScheduleDriver,
 	type TimingMitigation,
-	validateBindings,
+	validateHostFunctions,
 } from "../src/index.js";
 
 describe("root public API exports", () => {
@@ -63,10 +63,10 @@ describe("root public API exports", () => {
 		expect(CronManager).toBeTypeOf("function");
 		expect(TimerScheduleDriver).toBeTypeOf("function");
 		expect(createHostDirBackend).toBeTypeOf("function");
-		expect(binding).toBeTypeOf("function");
-		expect(bindings).toBeTypeOf("function");
-		expect(validateBindings).toBeTypeOf("function");
-		expect(MAX_BINDING_DESCRIPTION_LENGTH).toBeGreaterThan(0);
+		expect(hostFunction).toBeTypeOf("function");
+		expect(hostFunctions).toBeTypeOf("function");
+		expect(validateHostFunctions).toBeTypeOf("function");
+		expect(MAX_HOST_FUNCTION_DESCRIPTION_LENGTH).toBeGreaterThan(0);
 		expect(agentOsLimitsSchema.safeParse({}).success).toBe(true);
 		expect(
 			agentOsLimitsSchema.safeParse({
@@ -98,8 +98,8 @@ describe("root public API exports", () => {
 		expect(
 			agentOsOptionsSchema.safeParse({ defaultSoftware: false }).success,
 		).toBe(true);
-		expect(bindingSchema).toBeTypeOf("object");
-		expect(bindingsSchema).toBeTypeOf("object");
+		expect(hostFunctionSchema).toBeTypeOf("object");
+		expect(hostFunctionsSchema).toBeTypeOf("object");
 		expect(mountConfigSchema).toBeTypeOf("object");
 		expect(rootFilesystemConfigSchema).toBeTypeOf("object");
 		expect(parseAgentOsOptions({ defaultSoftware: false })).toEqual({

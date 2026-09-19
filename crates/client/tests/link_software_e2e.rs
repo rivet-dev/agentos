@@ -19,7 +19,7 @@ fn allow_all() -> Permissions {
         child_process: Some(PatternPermissions::Mode(PermissionMode::Allow)),
         process: Some(PatternPermissions::Mode(PermissionMode::Allow)),
         env: Some(PatternPermissions::Mode(PermissionMode::Allow)),
-        binding: Some(PatternPermissions::Mode(PermissionMode::Allow)),
+        host_function: Some(PatternPermissions::Mode(PermissionMode::Allow)),
     }
 }
 

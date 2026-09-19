@@ -1,11 +1,11 @@
-import { AgentOs, type Bindings } from "@rivet-dev/agentos-core";
+import { AgentOs, type HostFunctions } from "@rivet-dev/agentos-core";
 import { z } from "zod";
 
 // The handler runs on the host, so the API key never enters the VM.
-const weather: Bindings = {
+const weather: HostFunctions = {
 	name: "weather",
-	description: "Weather data bindings",
-	bindings: {
+	description: "Weather data functions",
+	functions: {
 		forecast: {
 			description: "Get the weather forecast for a city",
 			inputSchema: z.object({ city: z.string() }),
@@ -20,7 +20,7 @@ const weather: Bindings = {
 };
 
 // The collection is projected into the VM as an `agentos-weather` command.
-const runtime = await AgentOs.create({ bindings: [weather] });
+const runtime = await AgentOs.create({ hostFunctions: [weather] });
 
 try {
 	const result = await runtime.javascript.execute(

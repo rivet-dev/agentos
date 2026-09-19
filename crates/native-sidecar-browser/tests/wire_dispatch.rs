@@ -852,7 +852,7 @@ fn browser_wire_dispatcher_configures_vm_permissions() {
                 packages: Vec::new(),
                 packages_mount_at: String::new(),
                 bootstrap_commands: Vec::new(),
-                binding_shim_commands: Vec::new(),
+                host_function_shim_commands: Vec::new(),
             }),
         },
     );
@@ -1219,7 +1219,7 @@ fn browser_wire_dispatcher_configures_wasm_command_permissions() {
                 packages: Vec::new(),
                 packages_mount_at: String::new(),
                 bootstrap_commands: Vec::new(),
-                binding_shim_commands: Vec::new(),
+                host_function_shim_commands: Vec::new(),
             }),
         },
     );
@@ -1301,16 +1301,16 @@ fn browser_wire_dispatcher_configures_wasm_command_permissions() {
 fn browser_wire_dispatcher_registers_host_callbacks() {
     let codec = WireFrameCodec::default();
     let mut dispatcher = BrowserWireDispatcher::new(RecordingBridge::default());
-    let mut config = KernelVmConfig::new("vm-bindings");
+    let mut config = KernelVmConfig::new("vm-host_functions");
     config.permissions = Permissions::allow_all();
     dispatcher
         .sidecar_mut()
         .create_vm(config)
-        .expect("create bindings vm");
+        .expect("create host_functions vm");
     let ownership = OwnershipScope::VmOwnership(VmOwnership {
         connection_id: String::from("conn"),
         session_id: String::from("session"),
-        vm_id: String::from("vm-bindings"),
+        vm_id: String::from("vm-host_functions"),
     });
 
     let response = dispatch(
@@ -1320,7 +1320,7 @@ fn browser_wire_dispatcher_registers_host_callbacks() {
             schema: protocol_schema(),
             request_id: 1,
             ownership: ownership.clone(),
-            payload: RequestPayload::RegisterHostCallbacksRequest(test_bindings_payload(
+            payload: RequestPayload::RegisterHostCallbacksRequest(test_host_functions_payload(
                 "browser",
                 "agentos-browser",
             )),
@@ -1339,7 +1339,7 @@ fn browser_wire_dispatcher_registers_host_callbacks() {
             schema: protocol_schema(),
             request_id: 2,
             ownership,
-            payload: RequestPayload::RegisterHostCallbacksRequest(test_bindings_payload(
+            payload: RequestPayload::RegisterHostCallbacksRequest(test_host_functions_payload(
                 "browser",
                 "agentos-browser-2",
             )),
@@ -1684,7 +1684,7 @@ fn browser_wire_dispatcher_vm_fetch_enters_kernel_loopback_when_listener_exists(
     );
 }
 
-fn test_bindings_payload(name: &str, alias: &str) -> RegisterHostCallbacksRequest {
+fn test_host_functions_payload(name: &str, alias: &str) -> RegisterHostCallbacksRequest {
     RegisterHostCallbacksRequest {
         name: name.to_string(),
         description: format!("{name} automation"),

@@ -12,7 +12,7 @@ const vm = await AgentOs.create({
 	mounts: [nodeModulesMount("/path/to/project/node_modules")],
 	// Kernel permission policy (see /agentos/docs/permissions) and runtime caps
 	// (see /agentos/docs/resource-limits) take the same values as the actor.
-	// `bindings` does too (see /agentos/docs/bindings).
+	// `hostFunctions` does too (see /agentos/docs/host-functions).
 	permissions: { network: "allow" },
 	limits: { jsRuntime: { v8HeapLimitMb: 128 } },
 	// Software packages to install in the VM (see /agentos/docs/software).

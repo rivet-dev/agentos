@@ -3,23 +3,24 @@ use crate::protocol::{
     RequestFrame, ResponsePayload,
 };
 use crate::service::{kernel_error, normalize_path, DispatchResult};
-use crate::state::{BridgeError, SharedBridge, VmHandle, VmState, BINDING_DRIVER_NAME};
+use crate::state::{BridgeError, SharedBridge, VmHandle, VmState, HOST_FUNCTION_DRIVER_NAME};
 use crate::{NativeSidecar, NativeSidecarBridge, SidecarError};
 use agentos_kernel::command_registry::CommandDriver;
-use agentos_native_sidecar_core::bindings::{
-    ensure_binding_registry_capacity as core_ensure_binding_registry_capacity,
+use agentos_native_sidecar_core::host_functions::{
     ensure_collection_name_available as core_ensure_collection_name_available,
     ensure_command_aliases_available as core_ensure_command_aliases_available,
-    registered_binding_command_names,
-    validate_bindings_registration as core_validate_bindings_registration,
-    BindingRegistrationError, DEFAULT_BINDING_TIMEOUT_MS,
+    ensure_host_function_registry_capacity as core_ensure_host_function_registry_capacity,
+    registered_host_function_command_names,
+    validate_host_functions_registration as core_validate_host_functions_registration,
+    HostFunctionRegistrationError, DEFAULT_HOST_FUNCTION_TIMEOUT_MS,
 };
 #[cfg(test)]
 #[allow(unused_imports)]
-pub(crate) use agentos_native_sidecar_core::bindings::{
-    MAX_BINDINGS_PER_COLLECTION, MAX_BINDING_DESCRIPTION_LENGTH, MAX_BINDING_EXAMPLE_INPUT_BYTES,
-    MAX_BINDING_SCHEMA_BYTES, MAX_BINDING_SCHEMA_DEPTH, MAX_BINDING_TIMEOUT_MS,
-    MAX_EXAMPLES_PER_BINDING, MAX_REGISTERED_BINDINGS_PER_VM, MAX_REGISTERED_BINDING_COLLECTIONS,
+pub(crate) use agentos_native_sidecar_core::host_functions::{
+    MAX_EXAMPLES_PER_HOST_FUNCTION, MAX_HOST_FUNCTIONS_PER_COLLECTION,
+    MAX_HOST_FUNCTION_DESCRIPTION_LENGTH, MAX_HOST_FUNCTION_EXAMPLE_INPUT_BYTES,
+    MAX_HOST_FUNCTION_SCHEMA_BYTES, MAX_HOST_FUNCTION_SCHEMA_DEPTH, MAX_HOST_FUNCTION_TIMEOUT_MS,
+    MAX_REGISTERED_HOST_FUNCTIONS_PER_VM, MAX_REGISTERED_HOST_FUNCTION_COLLECTIONS,
 };
 use agentos_native_sidecar_core::permissions::{
     allow_all_policy, deny_all_policy, evaluate_permissions_policy,
@@ -33,7 +34,7 @@ use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[derive(Debug)]
-pub(crate) enum BindingCommandResolution {
+pub(crate) enum HostFunctionCommandResolution {
     Invoke {
         request: HostCallbackRequest,
         timeout: Duration,
@@ -41,7 +42,7 @@ pub(crate) enum BindingCommandResolution {
     Failure(String),
 }
 
-pub(crate) fn format_binding_failure_output(message: &str) -> Vec<u8> {
+pub(crate) fn format_host_function_failure_output(message: &str) -> Vec<u8> {
     let mut output = message.as_bytes().to_vec();
     if !output.ends_with(b"\n") {
         output.push(b'\n');
@@ -62,26 +63,26 @@ where
     let bridge = sidecar.bridge.clone();
     async move {
         let input = input?;
-        validate_bindings_registration(&payload)?;
+        validate_host_functions_registration(&payload)?;
 
         let registered_name = payload.name.clone();
-        let (original_permissions, original_bindings, original_command_guest_paths) = input
+        let (original_permissions, original_host_functions, original_command_guest_paths) = input
             .vm
             .try_read("snapshot host callback registration", |vm| {
                 (
                     vm.configuration.permissions.clone(),
-                    vm.bindings.clone(),
+                    vm.host_functions.clone(),
                     vm.command_guest_paths.clone(),
                 )
             })?;
         bridge.set_vm_permissions(&input.vm_id, &allow_all_policy())?;
         let registration_result = input.vm.try_command("register host callbacks", |vm| {
-            ensure_collection_name_available(&vm.bindings, &registered_name)?;
-            ensure_command_aliases_available(&vm.bindings, &payload)?;
-            ensure_binding_registry_capacity(&vm.bindings, &payload)?;
-            vm.bindings.insert(registered_name.clone(), payload);
-            refresh_binding_registry(vm)?;
-            Ok(binding_command_names(vm).len() as u32)
+            ensure_collection_name_available(&vm.host_functions, &registered_name)?;
+            ensure_command_aliases_available(&vm.host_functions, &payload)?;
+            ensure_host_function_registry_capacity(&vm.host_functions, &payload)?;
+            vm.host_functions.insert(registered_name.clone(), payload);
+            refresh_host_function_registry(vm)?;
+            Ok(host_function_command_names(vm).len() as u32)
         });
         let command_count = match registration_result {
             Ok(result) => {
@@ -93,7 +94,7 @@ where
                         &bridge,
                         &input.vm_id,
                         &original_permissions,
-                        original_bindings,
+                        original_host_functions,
                         original_command_guest_paths,
                         &restore_error,
                     )?;
@@ -107,7 +108,7 @@ where
                     &bridge,
                     &input.vm_id,
                     &original_permissions,
-                    original_bindings,
+                    original_host_functions,
                     original_command_guest_paths,
                     &error,
                 ) {
@@ -135,7 +136,7 @@ fn rollback_host_callback_registration<B>(
     bridge: &SharedBridge<B>,
     vm_id: &str,
     original_permissions: &agentos_vm_config::PermissionsPolicy,
-    original_bindings: BTreeMap<String, RegisterHostCallbacksRequest>,
+    original_host_functions: BTreeMap<String, RegisterHostCallbacksRequest>,
     original_command_guest_paths: BTreeMap<String, String>,
     operation_error: &SidecarError,
 ) -> Result<(), SidecarError>
@@ -147,46 +148,46 @@ where
     // registry refresh must never skip restoring (or fail-closing) the trusted
     // bridge permission policy.
     let state_rollback = vm.try_command("rollback host callback registration", |vm| {
-        vm.bindings = original_bindings;
+        vm.host_functions = original_host_functions;
         vm.command_guest_paths = original_command_guest_paths;
-        refresh_binding_registry(vm)
+        refresh_host_function_registry(vm)
     });
     let permission_rollback = bridge.restore_vm_permissions_fail_closed(
         vm_id,
         original_permissions,
-        "binding collection registration rollback",
+        "host function collection registration rollback",
         operation_error,
     );
 
     match (state_rollback, permission_rollback) {
         (Ok(()), Ok(())) => Ok(()),
         (Err(state_error), Ok(())) => Err(SidecarError::InvalidState(format!(
-            "binding collection registration state rollback failed after {operation_error}: {state_error}; original permissions were restored"
+            "host function collection registration state rollback failed after {operation_error}: {state_error}; original permissions were restored"
         ))),
         (Ok(()), Err(permission_error)) => {
-            vm.try_command("record fail-closed binding permissions", |vm| {
+            vm.try_command("record fail-closed host function permissions", |vm| {
                 vm.configuration.permissions = deny_all_policy();
                 Ok(())
             })?;
             Err(permission_error)
         }
         (Err(state_error), Err(permission_error)) => {
-            let fail_closed_state = vm.try_command("record fail-closed binding permissions", |vm| {
+            let fail_closed_state = vm.try_command("record fail-closed host function permissions", |vm| {
                 vm.configuration.permissions = deny_all_policy();
                 Ok(())
             });
             Err(SidecarError::InvalidState(format!(
-                "binding collection registration rollback failed after {operation_error}: state rollback: {state_error}; permission rollback: {permission_error}; fail-closed VM state: {fail_closed_state:?}"
+                "host function collection registration rollback failed after {operation_error}: state rollback: {state_error}; permission rollback: {permission_error}; fail-closed VM state: {fail_closed_state:?}"
             )))
         }
     }
 }
 
-fn refresh_binding_registry(vm: &mut VmState) -> Result<(), SidecarError> {
-    let commands = binding_command_names(vm);
+fn refresh_host_function_registry(vm: &mut VmState) -> Result<(), SidecarError> {
+    let commands = host_function_command_names(vm);
     vm.kernel
         .register_driver(CommandDriver::new(
-            BINDING_DRIVER_NAME,
+            HOST_FUNCTION_DRIVER_NAME,
             commands.iter().cloned(),
         ))
         .map_err(kernel_error)?;
@@ -198,50 +199,50 @@ fn refresh_binding_registry(vm: &mut VmState) -> Result<(), SidecarError> {
     Ok(())
 }
 
-pub(crate) fn resolve_binding_command(
+pub(crate) fn resolve_host_function_command(
     vm: &mut VmState,
     command: &str,
     args: &[String],
     cwd: Option<&str>,
-) -> Result<Option<BindingCommandResolution>, SidecarError> {
-    let Some(kind) = identify_binding_command(vm, command) else {
+) -> Result<Option<HostFunctionCommandResolution>, SidecarError> {
+    let Some(kind) = identify_host_function_command(vm, command) else {
         return Ok(None);
     };
     let guest_cwd = cwd
         .map(normalize_path)
         .unwrap_or_else(|| vm.guest_cwd.clone());
     let resolution = match kind {
-        BindingCommand::Registry(command_name) => {
+        HostFunctionCommand::Registry(command_name) => {
             resolve_registry_command(vm, &command_name, args, &guest_cwd)?
         }
-        BindingCommand::Collection { collection_name } => {
-            resolve_binding_collection_command(vm, &collection_name, args, &guest_cwd)?
+        HostFunctionCommand::Collection { collection_name } => {
+            resolve_host_function_collection_command(vm, &collection_name, args, &guest_cwd)?
         }
     };
     Ok(Some(resolution))
 }
 
-pub(crate) fn is_binding_command(vm: &VmState, command: &str) -> bool {
-    identify_binding_command(vm, command).is_some()
+pub(crate) fn is_host_function_command(vm: &VmState, command: &str) -> bool {
+    identify_host_function_command(vm, command).is_some()
 }
 
-pub(crate) fn normalized_binding_command_name(command: &str) -> Option<String> {
-    binding_command_name_from_specifier(command).map(ToOwned::to_owned)
+pub(crate) fn normalized_host_function_command_name(command: &str) -> Option<String> {
+    host_function_command_name_from_specifier(command).map(ToOwned::to_owned)
 }
 
-fn identify_binding_command(vm: &VmState, command: &str) -> Option<BindingCommand> {
-    let command_name = binding_command_name_from_specifier(command).unwrap_or(command);
+fn identify_host_function_command(vm: &VmState, command: &str) -> Option<HostFunctionCommand> {
+    let command_name = host_function_command_name_from_specifier(command).unwrap_or(command);
 
-    if vm.bindings.values().any(|collection| {
+    if vm.host_functions.values().any(|collection| {
         collection
             .registry_command_aliases
             .iter()
             .any(|alias| alias == command_name)
     }) {
-        return Some(BindingCommand::Registry(command_name.to_owned()));
+        return Some(HostFunctionCommand::Registry(command_name.to_owned()));
     }
 
-    vm.bindings
+    vm.host_functions
         .iter()
         .find(|(_collection_name, collection)| {
             collection
@@ -250,13 +251,13 @@ fn identify_binding_command(vm: &VmState, command: &str) -> Option<BindingComman
                 .any(|alias| alias == command_name)
         })
         .map(
-            |(collection_name, _collection)| BindingCommand::Collection {
+            |(collection_name, _collection)| HostFunctionCommand::Collection {
                 collection_name: collection_name.to_owned(),
             },
         )
 }
 
-fn binding_command_name_from_specifier(command: &str) -> Option<&str> {
+fn host_function_command_name_from_specifier(command: &str) -> Option<&str> {
     let file_name = Path::new(command).file_name()?.to_str()?;
     let normalized = normalize_path(command);
     let registered_internal_path = normalized
@@ -280,34 +281,35 @@ fn resolve_registry_command(
     command_name: &str,
     args: &[String],
     guest_cwd: &str,
-) -> Result<BindingCommandResolution, SidecarError> {
-    // `agentos <collection> <binding> ...` invokes a binding through the host's
-    // registry command, so it needs the same `binding.invoke` check as the
-    // `agentos-<collection> <binding>` command. Listing and help are not gated.
-    if let [collection_name, binding_name, ..] = args {
+) -> Result<HostFunctionCommandResolution, SidecarError> {
+    // `agentos <collection> <function> ...` invokes a host function through the
+    // host's registry command, so it needs the same `hostFunction.invoke` check
+    // as the `agentos-<collection> <function>` command. Listing and help are not
+    // gated.
+    if let [collection_name, host_function_name, ..] = args {
         let registered = vm
-            .bindings
+            .host_functions
             .get(collection_name)
-            .is_some_and(|collection| collection.callbacks.contains_key(binding_name));
+            .is_some_and(|collection| collection.callbacks.contains_key(host_function_name));
         if registered {
-            let callback_key = format!("{collection_name}:{binding_name}");
+            let callback_key = format!("{collection_name}:{host_function_name}");
             if !matches!(
                 evaluate_permissions_policy(
                     &vm.configuration.permissions,
-                    "binding",
-                    "binding.invoke",
+                    "hostFunction",
+                    "hostFunction.invoke",
                     Some(&callback_key),
                 ),
                 PermissionMode::Allow
             ) {
-                return Ok(BindingCommandResolution::Failure(format!(
-                    "blocked by binding.invoke policy for {callback_key}"
+                return Ok(HostFunctionCommandResolution::Failure(format!(
+                    "blocked by hostFunction.invoke policy for {callback_key}"
                 )));
             }
         }
     }
     let timeout_ms =
-        command_callback_timeout_ms(vm, &BindingCommand::Registry(command_name.to_owned()));
+        command_callback_timeout_ms(vm, &HostFunctionCommand::Registry(command_name.to_owned()));
     Ok(build_command_callback_resolution(
         command_name,
         build_registry_command_input(command_name, args, guest_cwd),
@@ -315,55 +317,58 @@ fn resolve_registry_command(
     ))
 }
 
-fn resolve_binding_collection_command(
+fn resolve_host_function_collection_command(
     vm: &mut VmState,
     collection_name: &str,
     args: &[String],
     _guest_cwd: &str,
-) -> Result<BindingCommandResolution, SidecarError> {
-    let Some((binding_name, binding_args)) = args.split_first() else {
-        return Ok(BindingCommandResolution::Failure(format!(
-            "collection command {collection_name} requires a binding name"
+) -> Result<HostFunctionCommandResolution, SidecarError> {
+    let Some((host_function_name, host_function_args)) = args.split_first() else {
+        return Ok(HostFunctionCommandResolution::Failure(format!(
+            "collection command {collection_name} requires a host function name"
         )));
     };
-    let callback_key = format!("{collection_name}:{binding_name}");
-    let Some(binding) = vm
-        .bindings
+    let callback_key = format!("{collection_name}:{host_function_name}");
+    let Some(host_function) = vm
+        .host_functions
         .get(collection_name)
-        .and_then(|collection| collection.callbacks.get(binding_name))
+        .and_then(|collection| collection.callbacks.get(host_function_name))
         .cloned()
     else {
-        return Ok(BindingCommandResolution::Failure(format!(
-            "unknown binding callback {callback_key}"
+        return Ok(HostFunctionCommandResolution::Failure(format!(
+            "unknown host function callback {callback_key}"
         )));
     };
     if !matches!(
         evaluate_permissions_policy(
             &vm.configuration.permissions,
-            "binding",
-            "binding.invoke",
+            "hostFunction",
+            "hostFunction.invoke",
             Some(&callback_key),
         ),
         PermissionMode::Allow
     ) {
-        return Ok(BindingCommandResolution::Failure(format!(
-            "blocked by binding.invoke policy for {callback_key}"
+        return Ok(HostFunctionCommandResolution::Failure(format!(
+            "blocked by hostFunction.invoke policy for {callback_key}"
         )));
     }
 
-    let input_schema: Value = serde_json::from_str(&binding.input_schema).map_err(|error| {
-        SidecarError::InvalidState(format!(
-            "binding {callback_key} input schema is not valid JSON: {error}"
-        ))
-    })?;
-    let input = match parse_binding_command_input(vm, &input_schema, binding_args) {
+    let input_schema: Value =
+        serde_json::from_str(&host_function.input_schema).map_err(|error| {
+            SidecarError::InvalidState(format!(
+                "host function {callback_key} input schema is not valid JSON: {error}"
+            ))
+        })?;
+    let input = match parse_host_function_command_input(vm, &input_schema, host_function_args) {
         Ok(input) => input,
-        Err(message) => return Ok(BindingCommandResolution::Failure(message)),
+        Err(message) => return Ok(HostFunctionCommandResolution::Failure(message)),
     };
-    if let Err(message) = validate_binding_input_schema(&input_schema, &input) {
-        return Ok(BindingCommandResolution::Failure(message));
+    if let Err(message) = validate_host_function_input_schema(&input_schema, &input) {
+        return Ok(HostFunctionCommandResolution::Failure(message));
     }
-    let timeout_ms = binding.timeout_ms.unwrap_or(DEFAULT_BINDING_TIMEOUT_MS);
+    let timeout_ms = host_function
+        .timeout_ms
+        .unwrap_or(DEFAULT_HOST_FUNCTION_TIMEOUT_MS);
 
     Ok(build_command_callback_resolution(
         &callback_key,
@@ -376,13 +381,13 @@ fn build_command_callback_resolution(
     command_name: &str,
     input: Value,
     timeout_ms: u64,
-) -> BindingCommandResolution {
+) -> HostFunctionCommandResolution {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
 
-    BindingCommandResolution::Invoke {
+    HostFunctionCommandResolution::Invoke {
         request: HostCallbackRequest {
             invocation_id: format!("{command_name}:{nonce}"),
             callback_key: command_name.to_owned(),
@@ -402,7 +407,7 @@ fn build_registry_command_input(command_name: &str, args: &[String], guest_cwd: 
     })
 }
 
-fn parse_binding_command_input(
+fn parse_host_function_command_input(
     vm: &mut VmState,
     schema: &Value,
     args: &[String],
@@ -410,7 +415,7 @@ fn parse_binding_command_input(
     match args {
         [] => Ok(Value::Object(Map::new())),
         [flag, raw] if flag == "--json" => serde_json::from_str(raw)
-            .map_err(|error| format!("invalid --json binding input: {error}")),
+            .map_err(|error| format!("invalid --json host function input: {error}")),
         [flag, path] if flag == "--json-file" => {
             let bytes = vm
                 .kernel
@@ -421,11 +426,11 @@ fn parse_binding_command_input(
             serde_json::from_str(&raw)
                 .map_err(|error| format!("invalid JSON in --json-file {path}: {error}"))
         }
-        _ => parse_binding_command_flags(schema, args),
+        _ => parse_host_function_command_flags(schema, args),
     }
 }
 
-fn parse_binding_command_flags(schema: &Value, args: &[String]) -> Result<Value, String> {
+fn parse_host_function_command_flags(schema: &Value, args: &[String]) -> Result<Value, String> {
     let Some(schema_object) = schema.as_object() else {
         return Ok(json!({ "args": args }));
     };
@@ -484,7 +489,7 @@ fn parse_binding_command_flags(schema: &Value, args: &[String]) -> Result<Value,
         let Some(value) = args.get(index + 1) else {
             return Err(format!("Flag --{raw_flag} requires a value"));
         };
-        let parsed_value = parse_binding_flag_value(raw_flag, field_schema, value)?;
+        let parsed_value = parse_host_function_flag_value(raw_flag, field_schema, value)?;
         if field_type == Some("array") {
             let entry = input
                 .entry((*field_name).clone())
@@ -511,7 +516,7 @@ fn parse_binding_command_flags(schema: &Value, args: &[String]) -> Result<Value,
     Ok(Value::Object(input))
 }
 
-fn parse_binding_flag_value(
+fn parse_host_function_flag_value(
     raw_flag: &str,
     field_schema: &Value,
     value: &str,
@@ -565,7 +570,7 @@ fn camel_to_kebab(value: &str) -> String {
     output
 }
 
-fn validate_binding_input_schema(schema: &Value, input: &Value) -> Result<(), String> {
+fn validate_host_function_input_schema(schema: &Value, input: &Value) -> Result<(), String> {
     let Some(schema_object) = schema.as_object() else {
         return Ok(());
     };
@@ -574,7 +579,7 @@ fn validate_binding_input_schema(schema: &Value, input: &Value) -> Result<(), St
     }
     let Some(input_object) = input.as_object() else {
         return Err(String::from(
-            "BindingInputSchemaViolation at $: expected object",
+            "HostFunctionInputSchemaViolation at $: expected object",
         ));
     };
 
@@ -582,7 +587,7 @@ fn validate_binding_input_schema(schema: &Value, input: &Value) -> Result<(), St
         for name in required.iter().filter_map(Value::as_str) {
             if !input_object.contains_key(name) {
                 return Err(format!(
-                    "BindingInputSchemaViolation at $.{name}: missing required property"
+                    "HostFunctionInputSchemaViolation at $.{name}: missing required property"
                 ));
             }
         }
@@ -595,7 +600,7 @@ fn validate_binding_input_schema(schema: &Value, input: &Value) -> Result<(), St
         .unwrap_or_default();
     for (name, property_schema) in &properties {
         if let Some(value) = input_object.get(name) {
-            validate_binding_input_value_type(value, property_schema, &format!("$.{name}"))?;
+            validate_host_function_input_value_type(value, property_schema, &format!("$.{name}"))?;
         }
     }
     if schema_object
@@ -606,7 +611,7 @@ fn validate_binding_input_schema(schema: &Value, input: &Value) -> Result<(), St
         for name in input_object.keys() {
             if !properties.contains_key(name) {
                 return Err(format!(
-                    "BindingInputSchemaViolation at $.{name}: unexpected property"
+                    "HostFunctionInputSchemaViolation at $.{name}: unexpected property"
                 ));
             }
         }
@@ -615,7 +620,7 @@ fn validate_binding_input_schema(schema: &Value, input: &Value) -> Result<(), St
     Ok(())
 }
 
-fn validate_binding_input_value_type(
+fn validate_host_function_input_value_type(
     value: &Value,
     schema: &Value,
     path: &str,
@@ -636,15 +641,15 @@ fn validate_binding_input_value_type(
         Ok(())
     } else {
         Err(format!(
-            "BindingInputSchemaViolation at {path}: expected {expected}"
+            "HostFunctionInputSchemaViolation at {path}: expected {expected}"
         ))
     }
 }
 
-fn command_callback_timeout_ms(vm: &VmState, kind: &BindingCommand) -> u64 {
+fn command_callback_timeout_ms(vm: &VmState, kind: &HostFunctionCommand) -> u64 {
     let callbacks = match kind {
-        BindingCommand::Registry(command_name) => vm
-            .bindings
+        HostFunctionCommand::Registry(command_name) => vm
+            .host_functions
             .values()
             .filter(|collection| {
                 collection
@@ -654,10 +659,10 @@ fn command_callback_timeout_ms(vm: &VmState, kind: &BindingCommand) -> u64 {
             })
             .flat_map(|collection| collection.callbacks.values())
             .collect::<Vec<_>>(),
-        BindingCommand::Collection {
+        HostFunctionCommand::Collection {
             collection_name, ..
         } => vm
-            .bindings
+            .host_functions
             .get(collection_name)
             .map(|collection| collection.callbacks.values().collect::<Vec<_>>())
             .unwrap_or_default(),
@@ -667,49 +672,51 @@ fn command_callback_timeout_ms(vm: &VmState, kind: &BindingCommand) -> u64 {
         .into_iter()
         .filter_map(|callback| callback.timeout_ms)
         .max()
-        .unwrap_or(DEFAULT_BINDING_TIMEOUT_MS)
+        .unwrap_or(DEFAULT_HOST_FUNCTION_TIMEOUT_MS)
 }
 
 fn ensure_collection_name_available(
-    bindings: &BTreeMap<String, RegisterHostCallbacksRequest>,
+    host_functions: &BTreeMap<String, RegisterHostCallbacksRequest>,
     collection_name: &str,
 ) -> Result<(), SidecarError> {
-    core_ensure_collection_name_available(bindings, collection_name)
-        .map_err(binding_registration_error)
+    core_ensure_collection_name_available(host_functions, collection_name)
+        .map_err(host_function_registration_error)
 }
 
 fn ensure_command_aliases_available(
-    bindings: &BTreeMap<String, RegisterHostCallbacksRequest>,
+    host_functions: &BTreeMap<String, RegisterHostCallbacksRequest>,
     payload: &RegisterHostCallbacksRequest,
 ) -> Result<(), SidecarError> {
-    core_ensure_command_aliases_available(bindings, payload).map_err(binding_registration_error)
+    core_ensure_command_aliases_available(host_functions, payload)
+        .map_err(host_function_registration_error)
 }
 
-fn ensure_binding_registry_capacity(
-    bindings: &BTreeMap<String, RegisterHostCallbacksRequest>,
+fn ensure_host_function_registry_capacity(
+    host_functions: &BTreeMap<String, RegisterHostCallbacksRequest>,
     payload: &RegisterHostCallbacksRequest,
 ) -> Result<(), SidecarError> {
-    core_ensure_binding_registry_capacity(bindings, payload).map_err(binding_registration_error)
+    core_ensure_host_function_registry_capacity(host_functions, payload)
+        .map_err(host_function_registration_error)
 }
 
-fn binding_command_names(vm: &VmState) -> Vec<String> {
-    registered_binding_command_names(&vm.bindings)
+fn host_function_command_names(vm: &VmState) -> Vec<String> {
+    registered_host_function_command_names(&vm.host_functions)
 }
 
-fn validate_bindings_registration(
+fn validate_host_functions_registration(
     payload: &RegisterHostCallbacksRequest,
 ) -> Result<(), SidecarError> {
-    core_validate_bindings_registration(payload).map_err(binding_registration_error)
+    core_validate_host_functions_registration(payload).map_err(host_function_registration_error)
 }
 
-fn binding_registration_error(error: BindingRegistrationError) -> SidecarError {
+fn host_function_registration_error(error: HostFunctionRegistrationError) -> SidecarError {
     match error {
-        BindingRegistrationError::InvalidState(message) => SidecarError::InvalidState(message),
-        BindingRegistrationError::Conflict(message) => SidecarError::Conflict(message),
+        HostFunctionRegistrationError::InvalidState(message) => SidecarError::InvalidState(message),
+        HostFunctionRegistrationError::Conflict(message) => SidecarError::Conflict(message),
     }
 }
 
-enum BindingCommand {
+enum HostFunctionCommand {
     Registry(String),
     Collection { collection_name: String },
 }
@@ -734,7 +741,7 @@ mod tests {
         })
     }
 
-    fn registered_binding(description: String) -> RegisteredHostCallbackDefinition {
+    fn registered_host_function(description: String) -> RegisteredHostCallbackDefinition {
         RegisteredHostCallbackDefinition {
             description,
             input_schema: screenshot_schema().to_string(),
@@ -743,24 +750,24 @@ mod tests {
         }
     }
 
-    fn bindings_with_descriptions(
+    fn host_functions_with_descriptions(
         collection_description: String,
-        binding_description: String,
+        host_function_description: String,
     ) -> RegisterHostCallbacksRequest {
-        bindings_with_schema(
+        host_functions_with_schema(
             String::from("browser"),
             collection_description,
             String::from("screenshot"),
-            binding_description,
+            host_function_description,
             screenshot_schema(),
         )
     }
 
-    fn bindings_with_schema(
+    fn host_functions_with_schema(
         collection_name: String,
         collection_description: String,
-        binding_name: String,
-        binding_description: String,
+        host_function_name: String,
+        host_function_description: String,
         input_schema: Value,
     ) -> RegisterHostCallbacksRequest {
         RegisterHostCallbacksRequest {
@@ -769,9 +776,9 @@ mod tests {
             command_aliases: vec![format!("agentos-{collection_name}")],
             registry_command_aliases: vec![String::from("agentos")],
             callbacks: std::collections::HashMap::from([(
-                binding_name,
+                host_function_name,
                 RegisteredHostCallbackDefinition {
-                    description: binding_description,
+                    description: host_function_description,
                     input_schema: input_schema.to_string(),
                     timeout_ms: None,
                     examples: Vec::new(),
@@ -781,63 +788,65 @@ mod tests {
     }
 
     #[test]
-    fn accepts_collection_and_binding_descriptions_at_length_limit() {
-        let description = "a".repeat(MAX_BINDING_DESCRIPTION_LENGTH);
-        let payload = bindings_with_descriptions(description.clone(), description);
+    fn accepts_collection_and_host_function_descriptions_at_length_limit() {
+        let description = "a".repeat(MAX_HOST_FUNCTION_DESCRIPTION_LENGTH);
+        let payload = host_functions_with_descriptions(description.clone(), description);
 
-        validate_bindings_registration(&payload).expect("description at limit should pass");
+        validate_host_functions_registration(&payload).expect("description at limit should pass");
     }
 
     #[test]
-    fn rejects_binding_collection_registration_over_shape_limits() {
-        let too_many_bindings = RegisterHostCallbacksRequest {
+    fn rejects_host_function_collection_registration_over_shape_limits() {
+        let too_many_host_functions = RegisterHostCallbacksRequest {
             name: String::from("browser"),
             description: String::from("Browser automation"),
             command_aliases: vec![String::from("agentos-browser")],
             registry_command_aliases: vec![String::from("agentos")],
-            callbacks: (0..=MAX_BINDINGS_PER_COLLECTION)
+            callbacks: (0..=MAX_HOST_FUNCTIONS_PER_COLLECTION)
                 .map(|index| {
                     (
-                        format!("binding-{index}"),
-                        registered_binding(String::from("Run a bounded test binding")),
+                        format!("host_function-{index}"),
+                        registered_host_function(String::from("Run a bounded test host_function")),
                     )
                 })
                 .collect(),
         };
-        assert!(validate_bindings_registration(&too_many_bindings)
-            .expect_err("collection should reject too many bindings")
-            .to_string()
-            .contains("max is 64"));
+        assert!(
+            validate_host_functions_registration(&too_many_host_functions)
+                .expect_err("collection should reject too many host_functions")
+                .to_string()
+                .contains("max is 64")
+        );
 
-        let mut long_timeout = bindings_with_descriptions(
+        let mut long_timeout = host_functions_with_descriptions(
             String::from("Browser automation"),
             String::from("Take a screenshot"),
         );
         long_timeout
             .callbacks
             .get_mut("screenshot")
-            .expect("test binding")
-            .timeout_ms = Some(MAX_BINDING_TIMEOUT_MS + 1);
-        assert!(validate_bindings_registration(&long_timeout)
+            .expect("test host_function")
+            .timeout_ms = Some(MAX_HOST_FUNCTION_TIMEOUT_MS + 1);
+        assert!(validate_host_functions_registration(&long_timeout)
             .expect_err("collection should reject long timeouts")
             .to_string()
             .contains("timeout is"));
 
-        let mut too_many_examples = bindings_with_descriptions(
+        let mut too_many_examples = host_functions_with_descriptions(
             String::from("Browser automation"),
             String::from("Take a screenshot"),
         );
         too_many_examples
             .callbacks
             .get_mut("screenshot")
-            .expect("test binding")
-            .examples = (0..=MAX_EXAMPLES_PER_BINDING)
+            .expect("test host_function")
+            .examples = (0..=MAX_EXAMPLES_PER_HOST_FUNCTION)
             .map(|index| crate::protocol::RegisteredHostCallbackExample {
                 description: format!("example {index}"),
                 input: json!({ "url": "https://example.com" }).to_string(),
             })
             .collect();
-        assert!(validate_bindings_registration(&too_many_examples)
+        assert!(validate_host_functions_registration(&too_many_examples)
             .expect_err("collection should reject too many examples")
             .to_string()
             .contains("examples"));
@@ -845,28 +854,28 @@ mod tests {
 
     #[test]
     fn validates_host_callback_command_aliases() {
-        let mut payload = bindings_with_descriptions(
+        let mut payload = host_functions_with_descriptions(
             String::from("Browser automation"),
             String::from("Take a screenshot"),
         );
         payload.command_aliases = vec![String::from("agentos-browser"), String::from("bad/path")];
-        assert!(validate_bindings_registration(&payload)
+        assert!(validate_host_functions_registration(&payload)
             .expect_err("slashes should be rejected")
             .to_string()
             .contains("invalid host callback command alias"));
 
         payload.command_aliases = vec![String::from("agentos-browser")];
         payload.registry_command_aliases = vec![String::from("agentos-browser")];
-        assert!(validate_bindings_registration(&payload)
+        assert!(validate_host_functions_registration(&payload)
             .expect_err("ambiguous aliases should be rejected")
             .to_string()
             .contains("must not also be a registry command alias"));
 
         payload.registry_command_aliases = vec![String::from("agentos")];
-        validate_bindings_registration(&payload).expect("distinct aliases should pass");
+        validate_host_functions_registration(&payload).expect("distinct aliases should pass");
 
         let existing = BTreeMap::from([(String::from("browser"), payload.clone())]);
-        let mut next = bindings_with_schema(
+        let mut next = host_functions_with_schema(
             String::from("files"),
             String::from("File utilities"),
             String::from("read"),
@@ -885,8 +894,8 @@ mod tests {
     }
 
     #[test]
-    fn parses_binding_collection_command_flags_from_schema() {
-        let input = parse_binding_command_flags(
+    fn parses_host_function_collection_command_flags_from_schema() {
+        let input = parse_host_function_command_flags(
             &screenshot_schema(),
             &[
                 String::from("--url"),
@@ -914,115 +923,122 @@ mod tests {
     }
 
     #[test]
-    fn parse_binding_command_flags_reports_missing_required_flags() {
-        let error = parse_binding_command_flags(&screenshot_schema(), &[])
+    fn parse_host_function_command_flags_reports_missing_required_flags() {
+        let error = parse_host_function_command_flags(&screenshot_schema(), &[])
             .expect_err("missing required flag");
 
         assert_eq!(error, "Missing required flag: --url");
     }
 
     #[test]
-    fn rejects_binding_collection_registration_with_oversized_schema_or_example_input() {
+    fn rejects_host_function_collection_registration_with_oversized_schema_or_example_input() {
         let mut deep_schema = Value::Null;
-        for _ in 0..=MAX_BINDING_SCHEMA_DEPTH {
+        for _ in 0..=MAX_HOST_FUNCTION_SCHEMA_DEPTH {
             deep_schema = json!({ "items": deep_schema });
         }
-        let deep_schema_payload = bindings_with_schema(
+        let deep_schema_payload = host_functions_with_schema(
             String::from("browser"),
             String::from("Browser automation"),
             String::from("screenshot"),
             String::from("Take a screenshot"),
             deep_schema,
         );
-        assert!(validate_bindings_registration(&deep_schema_payload)
+        assert!(validate_host_functions_registration(&deep_schema_payload)
             .expect_err("collection should reject deep schemas")
             .to_string()
             .contains("max JSON depth"));
 
-        let mut oversized_schema_payload = bindings_with_schema(
+        let mut oversized_schema_payload = host_functions_with_schema(
             String::from("browser"),
             String::from("Browser automation"),
             String::from("screenshot"),
             String::from("Take a screenshot"),
-            json!({ "description": "a".repeat(MAX_BINDING_SCHEMA_BYTES) }),
+            json!({ "description": "a".repeat(MAX_HOST_FUNCTION_SCHEMA_BYTES) }),
         );
-        assert!(validate_bindings_registration(&oversized_schema_payload)
-            .expect_err("collection should reject oversized schemas")
-            .to_string()
-            .contains("input schema is"));
+        assert!(
+            validate_host_functions_registration(&oversized_schema_payload)
+                .expect_err("collection should reject oversized schemas")
+                .to_string()
+                .contains("input schema is")
+        );
 
         oversized_schema_payload
             .callbacks
             .get_mut("screenshot")
-            .expect("test binding")
+            .expect("test host_function")
             .input_schema = screenshot_schema().to_string();
         let oversized_example_input = crate::protocol::RegisteredHostCallbackExample {
             description: String::from("large example"),
-            input: json!({ "payload": "a".repeat(MAX_BINDING_EXAMPLE_INPUT_BYTES) }).to_string(),
+            input: json!({ "payload": "a".repeat(MAX_HOST_FUNCTION_EXAMPLE_INPUT_BYTES) })
+                .to_string(),
         };
         oversized_schema_payload
             .callbacks
             .get_mut("screenshot")
-            .expect("test binding")
+            .expect("test host_function")
             .examples = vec![oversized_example_input];
-        assert!(validate_bindings_registration(&oversized_schema_payload)
-            .expect_err("collection should reject oversized example inputs")
-            .to_string()
-            .contains("example 0 input is"));
+        assert!(
+            validate_host_functions_registration(&oversized_schema_payload)
+                .expect_err("collection should reject oversized example inputs")
+                .to_string()
+                .contains("example 0 input is")
+        );
     }
 
     #[test]
     fn rejects_collection_description_longer_than_limit() {
-        let payload = bindings_with_descriptions(
-            "a".repeat(MAX_BINDING_DESCRIPTION_LENGTH + 1),
+        let payload = host_functions_with_descriptions(
+            "a".repeat(MAX_HOST_FUNCTION_DESCRIPTION_LENGTH + 1),
             String::from("Take a screenshot"),
         );
 
-        let error = validate_bindings_registration(&payload).expect_err("long collection rejected");
+        let error =
+            validate_host_functions_registration(&payload).expect_err("long collection rejected");
         assert_eq!(
             error.to_string(),
             format!(
-                "Binding collection \"browser\" description is {} characters, max is {}",
-                MAX_BINDING_DESCRIPTION_LENGTH + 1,
-                MAX_BINDING_DESCRIPTION_LENGTH
+                "Host function collection \"browser\" description is {} characters, max is {}",
+                MAX_HOST_FUNCTION_DESCRIPTION_LENGTH + 1,
+                MAX_HOST_FUNCTION_DESCRIPTION_LENGTH
             )
         );
     }
 
     #[test]
-    fn rejects_binding_description_longer_than_limit() {
-        let payload = bindings_with_descriptions(
+    fn rejects_host_function_description_longer_than_limit() {
+        let payload = host_functions_with_descriptions(
             String::from("Browser automation"),
-            "a".repeat(MAX_BINDING_DESCRIPTION_LENGTH + 1),
+            "a".repeat(MAX_HOST_FUNCTION_DESCRIPTION_LENGTH + 1),
         );
 
-        let error = validate_bindings_registration(&payload).expect_err("long binding rejected");
+        let error = validate_host_functions_registration(&payload)
+            .expect_err("long host_function rejected");
         assert_eq!(
             error.to_string(),
             format!(
-                "Binding \"browser/screenshot\" description is {} characters, max is {}",
-                MAX_BINDING_DESCRIPTION_LENGTH + 1,
-                MAX_BINDING_DESCRIPTION_LENGTH
+                "Host function \"browser/screenshot\" description is {} characters, max is {}",
+                MAX_HOST_FUNCTION_DESCRIPTION_LENGTH + 1,
+                MAX_HOST_FUNCTION_DESCRIPTION_LENGTH
             )
         );
     }
 
     #[test]
-    fn bindings_reject_duplicate_collection_registration() {
-        let bindings = BTreeMap::from([(
+    fn host_functions_reject_duplicate_collection_registration() {
+        let host_functions = BTreeMap::from([(
             String::from("browser"),
-            bindings_with_descriptions(
+            host_functions_with_descriptions(
                 String::from("Browser automation"),
                 String::from("Take a screenshot"),
             ),
         )]);
 
-        let error =
-            ensure_collection_name_available(&bindings, "browser").expect_err("duplicate rejected");
+        let error = ensure_collection_name_available(&host_functions, "browser")
+            .expect_err("duplicate rejected");
         assert_eq!(
             error,
             SidecarError::Conflict(String::from(
-                "binding collection already registered: browser",
+                "host function collection already registered: browser",
             ))
         );
     }

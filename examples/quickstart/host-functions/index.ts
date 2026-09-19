@@ -1,11 +1,11 @@
-import { AgentOs, binding, bindings } from "@rivet-dev/agentos-core";
+import { AgentOs, hostFunction, hostFunctions } from "@rivet-dev/agentos-core";
 import { z } from "zod";
 
-const weatherBindings = bindings({
+const weatherFunctions = hostFunctions({
 	name: "weather",
 	description: "Look up weather information for cities.",
-	bindings: {
-		get: binding({
+	functions: {
+		get: hostFunction({
 			description: "Get the current weather for a city.",
 			inputSchema: z.object({
 				city: z.string().describe("City name (e.g. 'London')."),
@@ -23,11 +23,11 @@ const weatherBindings = bindings({
 	},
 });
 
-const calculatorBindings = bindings({
+const calculatorFunctions = hostFunctions({
 	name: "calc",
 	description: "Simple calculator operations.",
-	bindings: {
-		add: binding({
+	functions: {
+		add: hostFunction({
 			description: "Add two numbers.",
 			inputSchema: z.object({ a: z.number(), b: z.number() }),
 			execute: ({ a, b }) => ({ result: a + b }),
@@ -36,13 +36,13 @@ const calculatorBindings = bindings({
 });
 
 const vm = await AgentOs.create({
-	bindings: [weatherBindings, calculatorBindings],
+	hostFunctions: [weatherFunctions, calculatorFunctions],
 	permissions: {
 		fs: "allow",
 		network: "allow",
 		childProcess: "allow",
 		env: "allow",
-		binding: "allow",
+		hostFunction: "allow",
 	},
 });
 

@@ -158,7 +158,7 @@ type PermissionsPolicy struct {
   childProcess: optional<PatternPermissionScope>
   process: optional<PatternPermissionScope>
   env: optional<PatternPermissionScope>
-  binding: optional<PatternPermissionScope>
+  hostFunction: optional<PatternPermissionScope>
 }
 
 type CreateVmRequest struct {
@@ -272,7 +272,7 @@ type ConfigureVmRequest struct {
   packages: list<PackageDescriptor>
   packagesMountAt: str
   bootstrapCommands: list<str>
-  bindingShimCommands: list<str>
+  hostFunctionShimCommands: list<str>
 }
 
 type RegisteredHostCallbackExample struct {

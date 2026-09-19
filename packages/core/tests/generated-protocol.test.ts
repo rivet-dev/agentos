@@ -110,7 +110,7 @@ describe("generated sidecar protocol", () => {
 						packages: [],
 						packagesMountAt: "",
 						bootstrapCommands: [],
-						bindingShimCommands: [],
+						hostFunctionShimCommands: [],
 					},
 				},
 			},
@@ -149,7 +149,7 @@ describe("generated sidecar protocol", () => {
 				packages: [],
 				packages_mount_at: "",
 				bootstrap_commands: [],
-				binding_shim_commands: [],
+				host_function_shim_commands: [],
 			},
 		};
 
@@ -325,7 +325,7 @@ describe("generated sidecar protocol", () => {
 						packages: [],
 						packagesMountAt: "",
 						bootstrapCommands: [],
-						bindingShimCommands: [],
+						hostFunctionShimCommands: [],
 					},
 				},
 			},

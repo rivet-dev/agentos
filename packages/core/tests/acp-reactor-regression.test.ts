@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { coreutils } from "@agentos-software/common";
 import { afterEach, describe, expect, test } from "vitest";
 import { z } from "zod";
-import { AgentOs, binding, bindings } from "../src/index.js";
+import { AgentOs, hostFunction, hostFunctions } from "../src/index.js";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import { createProjectedAgentPackage } from "./helpers/projected-agent-package.js";
 
@@ -299,11 +299,11 @@ describe("ACP adapter reactor regression", () => {
 	test("routes a delayed host-tool response past 256 ordinary updates and keeps the session reusable", async () => {
 		let hostToolCalls = 0;
 		const hostToolInputs: Array<{ a: number; b: number }> = [];
-		const mathBindings = bindings({
+		const mathFunctions = hostFunctions({
 			name: "math",
 			description: "Math utilities",
-			bindings: {
-				add: binding({
+			functions: {
+				add: hostFunction({
 					description: "Add two numbers",
 					inputSchema: z.object({
 						a: z.number(),
@@ -332,11 +332,11 @@ describe("ACP adapter reactor regression", () => {
 			mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
 			defaultSoftware: false,
 			software: [coreutils, agentPackage.software],
-			bindings: [mathBindings],
+			hostFunctions: [mathFunctions],
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
-				binding: "allow",
+				hostFunction: "allow",
 			},
 			onAgentStderr: (event) => {
 				stderrChunks.push(textDecoder.decode(event.chunk));

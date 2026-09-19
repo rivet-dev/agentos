@@ -2,7 +2,6 @@
 
 //! Backend-agnostic sidecar logic shared by native and browser shells.
 
-pub mod bindings;
 pub mod bridge_bytes;
 pub mod ca;
 pub mod diagnostics;
@@ -10,6 +9,7 @@ pub mod frames;
 pub mod guest_fs;
 pub mod guest_net;
 pub mod guest_pty;
+pub mod host_functions;
 pub mod identity;
 pub mod layers;
 pub mod limits;
@@ -21,15 +21,6 @@ pub mod services;
 pub mod signals;
 pub mod vm_fetch;
 
-pub use bindings::{
-    ensure_binding_registry_capacity, ensure_collection_name_available,
-    ensure_command_aliases_available, registered_binding_command_names,
-    validate_bindings_registration, BindingRegistrationError, DEFAULT_BINDING_TIMEOUT_MS,
-    MAX_BINDINGS_PER_COLLECTION, MAX_BINDING_COLLECTION_NAME_LENGTH,
-    MAX_BINDING_DESCRIPTION_LENGTH, MAX_BINDING_EXAMPLE_INPUT_BYTES, MAX_BINDING_NAME_LENGTH,
-    MAX_BINDING_SCHEMA_BYTES, MAX_BINDING_SCHEMA_DEPTH, MAX_BINDING_TIMEOUT_MS,
-    MAX_EXAMPLES_PER_BINDING, MAX_REGISTERED_BINDINGS_PER_VM, MAX_REGISTERED_BINDING_COLLECTIONS,
-};
 pub use bridge_bytes::{
     bridge_buffer_value, decode_base64, decode_bridge_buffer_value, decode_encoded_bytes_value,
     encoded_bytes_value,
@@ -58,12 +49,23 @@ pub use guest_fs::{
     targeted_guest_filesystem_response,
 };
 pub use guest_net::handle_guest_kernel_call;
+pub use host_functions::{
+    ensure_collection_name_available, ensure_command_aliases_available,
+    ensure_host_function_registry_capacity, registered_host_function_command_names,
+    validate_host_functions_registration, HostFunctionRegistrationError,
+    DEFAULT_HOST_FUNCTION_TIMEOUT_MS, MAX_EXAMPLES_PER_HOST_FUNCTION,
+    MAX_HOST_FUNCTIONS_PER_COLLECTION, MAX_HOST_FUNCTION_COLLECTION_NAME_LENGTH,
+    MAX_HOST_FUNCTION_DESCRIPTION_LENGTH, MAX_HOST_FUNCTION_EXAMPLE_INPUT_BYTES,
+    MAX_HOST_FUNCTION_NAME_LENGTH, MAX_HOST_FUNCTION_SCHEMA_BYTES, MAX_HOST_FUNCTION_SCHEMA_DEPTH,
+    MAX_HOST_FUNCTION_TIMEOUT_MS, MAX_REGISTERED_HOST_FUNCTIONS_PER_VM,
+    MAX_REGISTERED_HOST_FUNCTION_COLLECTIONS,
+};
 pub use identity::{shared_guest_runtime_identity, SharedGuestRuntimeIdentity};
 pub use layers::{VmLayerStore, MAX_VM_LAYERS};
 pub use limits::{
     validate_vm_limits, virtual_os_cpu_count, virtual_os_freemem_bytes, virtual_os_totalmem_bytes,
-    vm_limits_from_config, AcpLimits, BindingLimits, HttpLimits, JsRuntimeLimits, PluginLimits,
-    PythonLimits, VmLimits, WasmLimits,
+    vm_limits_from_config, AcpLimits, HostFunctionLimits, HttpLimits, JsRuntimeLimits,
+    PluginLimits, PythonLimits, VmLimits, WasmLimits,
 };
 pub use net::{
     local_endpoint_value, remote_endpoint_value, socket_addr_family, socket_address_value,

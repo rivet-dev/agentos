@@ -982,7 +982,7 @@ where
                 command_guest_paths,
                 provided_commands: BTreeMap::new(),
                 command_permissions: BTreeMap::new(),
-                bindings: BTreeMap::new(),
+                host_functions: BTreeMap::new(),
                 active_processes: BTreeMap::new(),
                 vm_fetch_streams: BTreeMap::new(),
                 next_vm_fetch_stream_id: 0,
@@ -1810,7 +1810,7 @@ where
                 command_guest_paths,
                 provided_commands: BTreeMap::new(),
                 command_permissions: BTreeMap::new(),
-                bindings: BTreeMap::new(),
+                host_functions: BTreeMap::new(),
                 active_processes: BTreeMap::new(),
                 vm_fetch_streams: BTreeMap::new(),
                 next_vm_fetch_stream_id: 0,
@@ -2292,7 +2292,7 @@ where
         let mut execution_commands =
             vec![String::from(JAVASCRIPT_COMMAND), String::from(WASM_COMMAND)];
         execution_commands.extend(payload.bootstrap_commands.iter().cloned());
-        execution_commands.extend(payload.binding_shim_commands.iter().cloned());
+        execution_commands.extend(payload.host_function_shim_commands.iter().cloned());
         execution_commands.extend(vm.command_guest_paths.keys().cloned());
         vm.kernel
             .register_driver(CommandDriver::new(
@@ -4487,7 +4487,7 @@ mod tests {
             packages: Vec::new(),
             packages_mount_at: String::new(),
             bootstrap_commands: Vec::new(),
-            binding_shim_commands: Vec::new(),
+            host_function_shim_commands: Vec::new(),
         };
         let configure_request = RequestFrame::new(
             2,

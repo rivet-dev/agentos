@@ -1,7 +1,7 @@
 // Sandbox extension: mount a Docker sandbox filesystem and run commands.
 //
 // Requires Docker. Starts a sandbox-agent container, mounts its filesystem
-// at /mnt/sandbox, and registers sandbox bindings for running commands.
+// at /mnt/sandbox, and registers sandbox host functions for running commands.
 
 import { AgentOs } from "@rivet-dev/agentos-core";
 import { docker } from "@rivet-dev/agentos-sandbox";
@@ -11,7 +11,7 @@ const SANDBOX_QUICKSTART_PERMISSIONS = {
 	network: "allow",
 	childProcess: "allow",
 	env: "allow",
-	binding: "allow",
+	hostFunction: "allow",
 } as const;
 const skipDocker = process.env.SKIP_DOCKER === "1";
 const SANDBOX_MOUNT = "/mnt/sandbox";
@@ -21,7 +21,7 @@ if (skipDocker) {
 	process.exit(0);
 }
 
-// Start a Docker-backed sandbox, mount its filesystem, and register its bindings.
+// Start a Docker-backed sandbox, mount its filesystem, and register its host functions.
 const vm = await AgentOs.create({
 	permissions: SANDBOX_QUICKSTART_PERMISSIONS,
 	sandbox: { provider: docker() },

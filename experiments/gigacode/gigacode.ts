@@ -1687,7 +1687,7 @@ class RivetRuntime {
 				childProcess: "allow",
 				process: "allow",
 				env: "allow",
-				binding: "allow",
+				hostFunction: "allow",
 			},
 			mounts: hostCredentialMounts(),
 			...(process.env.GIGACODE_DEBUG

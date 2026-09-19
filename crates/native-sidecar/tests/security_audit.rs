@@ -125,7 +125,7 @@ fn filesystem_permission_denials_emit_security_audit_events() {
                     child_process: None,
                     process: None,
                     env: None,
-                    binding: None,
+                    host_function: None,
                 }),
                 module_access_cwd: None,
                 instructions: Vec::new(),
@@ -135,7 +135,7 @@ fn filesystem_permission_denials_emit_security_audit_events() {
                 packages: Vec::new(),
                 packages_mount_at: String::new(),
                 bootstrap_commands: Vec::new(),
-                binding_shim_commands: Vec::new(),
+                host_function_shim_commands: Vec::new(),
             }),
         ))
         .expect("configure vm permissions");
@@ -295,7 +295,7 @@ fn mount_operations_emit_security_audit_events() {
                 packages: Vec::new(),
                 packages_mount_at: String::new(),
                 bootstrap_commands: Vec::new(),
-                binding_shim_commands: Vec::new(),
+                host_function_shim_commands: Vec::new(),
             }),
         ))
         .expect("mount workspace");
@@ -316,7 +316,7 @@ fn mount_operations_emit_security_audit_events() {
                 packages: Vec::new(),
                 packages_mount_at: String::new(),
                 bootstrap_commands: Vec::new(),
-                binding_shim_commands: Vec::new(),
+                host_function_shim_commands: Vec::new(),
             }),
         ))
         .expect("unmount workspace");

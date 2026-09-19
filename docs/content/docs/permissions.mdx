@@ -6,7 +6,7 @@ skill: true
 
 The sandbox permission policy is the kernel-level enforcement layer. Every guest syscall the agent's sandboxed code makes is checked against a per-scope policy before any host resource is touched.
 
-- **Six scopes**, configured independently: `fs`, `network`, `childProcess`, `process`, `env`, `binding`.
+- **Six scopes**, configured independently: `fs`, `network`, `childProcess`, `process`, `env`, `hostFunction`.
 - **Each scope** is a mode (`"allow"` or `"deny"`), or a rule set.
 - **A denied operation** is rejected with `EACCES` before any host resource is touched.
 - **Merged over a secure default**, so partial policies work.
@@ -23,7 +23,7 @@ The sandbox is deny-by-default for outward-facing capabilities. When you pass no
   childProcess: "allow",
   process: "allow",
   env: "allow",
-  binding: "allow",
+  hostFunction: "allow",
   network: {             // VM-local listeners and loopback only
     default: "deny",
     rules: [
@@ -38,7 +38,7 @@ The sandbox is deny-by-default for outward-facing capabilities. When you pass no
 }
 ```
 
-- `fs`/`childProcess`/`process`/`env` are allowed because they are fully virtualized (the guest sees only the VM, never the host) and are required to run a program at all. `binding` is allowed so the bindings you register can be called.
+- `fs`/`childProcess`/`process`/`env` are allowed because they are fully virtualized (the guest sees only the VM, never the host) and are required to run a program at all. `hostFunction` is allowed so the host functions you register can be called.
 - Guest listeners and loopback connections work because they stay inside the VM. External DNS and network connections are denied until you opt in; model providers have no special exception.
 - The sidecar owns this baseline, so the TypeScript and Rust clients behave identically.
 - Your policy is merged **over** this baseline. Omitted scopes keep their default; they are **not** denied. So `{ network: "allow" }` grants the network while keeping the execution essentials.
@@ -54,9 +54,9 @@ The sandbox is deny-by-default for outward-facing capabilities. When you pass no
 | `childProcess` | Spawning child processes | `allow` |
 | `process` | Process-control operations | `allow` |
 | `env` | Environment variable access | `allow` |
-| `binding` | Invoking bindings registered with the runtime | `deny`* |
+| `hostFunction` | Invoking host functions registered with the runtime | `deny`* |
 
-\* The `binding` scope is auto-granted to `allow` when you register bindings and set no `binding` policy of your own. Pass a `binding` policy to gate individual bindings.
+\* The `hostFunction` scope is auto-granted to `allow` when you register host functions and set no `hostFunction` policy of your own. Pass a `hostFunction` policy to gate individual host functions.
 
 ## Bind a policy to the VM
 
@@ -95,11 +95,11 @@ A bare hostname such as `api.example.com` matches nothing, so the host stays den
 
 <CodeSnippet file="examples/permissions/server.ts" region="allow-one-host" />
 
-## Allow only specific bindings
+## Allow only specific host functions
 
-Bindings registered with the runtime are gated by the `binding` scope, matched by name via `patterns`. Bindings have no sub-operations, so pass `["*"]` for `operations`.
+Host functions registered with the runtime are gated by the `hostFunction` scope and matched by name via `patterns`. Use `["invoke"]` for `operations`.
 
-<CodeSnippet file="examples/permissions/server.ts" region="allow-one-binding" />
+<CodeSnippet file="examples/permissions/server.ts" region="allow-one-host-function" />
 
 The `childProcess`, `process`, and `env` scopes work the same way: `childProcess` patterns match the command (`operations: ["spawn"]`), `env` patterns match the variable name (`operations: ["read", "write"]`), and `process` is matched by pattern with `operations: ["*"]`. Setting `childProcess: "deny"` blocks subprocesses created by guest code; it does not block the trusted runtime from starting the VM's requested root program.
 

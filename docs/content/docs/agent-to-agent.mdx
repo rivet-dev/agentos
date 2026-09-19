@@ -1,44 +1,44 @@
 ---
 title: "Agent-to-Agent Communication"
-description: "Connect agents through agentOS bindings so one coding agent can call another while sessions, permissions, and results remain isolated."
+description: "Connect agents through agentOS host functions so one coding agent can call another while sessions, permissions, and results remain isolated."
 skill: true
 ---
 
-Agents communicate through [bindings](/agentos/docs/bindings). You define a bindings group that lets one agent send work to another, and the agent calls it like any other CLI command.
+Agents communicate through [host functions](/agentos/docs/host-functions). You define a host-function collection that lets one agent send work to another, and the agent calls it like any other CLI command.
 
 ## Example: code writer + reviewer
 
-This example gives the writer agent a `review` binding. The writer sends the file's full contents (the VMs share no filesystem), and the binding writes them into a separate reviewer VM and sends a review prompt back through the reviewer.
+This example gives the writer agent a `review` host function. The writer sends the file's full contents (the VMs share no filesystem), and the host function writes them into a separate reviewer VM and sends a review prompt back through the reviewer.
 
 <CodeGroup>
 <CodeSnippet file="examples/agent-to-agent/server.ts" />
 <CodeSnippet file="examples/agent-to-agent/client.ts" />
 </CodeGroup>
 
-The writer agent sees the review binding as a CLI command. Because the VMs share no filesystem, it sends the full file contents, not a path:
+The writer agent sees the review host function as a CLI command. Because the VMs share no filesystem, it sends the full file contents, not a path:
 
 ```bash
 agentos-review submit --code "$(cat api.ts)"
 ```
 
-The binding writes the contents into the reviewer's VM, prompts the reviewer, and returns the review to the writer as JSON.
+The host function writes the contents into the reviewer's VM, prompts the reviewer, and returns the review to the writer as JSON.
 
-## Why bindings?
+## Why host functions?
 
-Bindings are the natural communication layer between agents because:
+Host functions are the natural communication layer between agents because:
 
-- **The agent doesn't need to know about other agents.** It just calls a binding. You can swap the implementation without changing the agent's behavior.
-- **No credentials in the VM.** The binding executes on the server, so it can access other agents directly without exposing connection details.
-- **Composable.** Chain any number of agents by adding more bindings. Each binding is a self-contained bridge to another agent.
+- **The agent doesn't need to know about other agents.** It just calls a host function. You can swap the implementation without changing the agent's behavior.
+- **No credentials in the VM.** The host function executes on the server, so it can access other agents directly without exposing connection details.
+- **Composable.** Chain any number of agents by adding more host functions. Each host function is a self-contained bridge to another agent.
 
 ## Recommendations
 
-- Each agent has its own isolated VM and filesystem (they share no filesystem). Pass file contents through the binding input, then use `writeFile` in the binding to land them in the other VM.
+- Each agent has its own isolated VM and filesystem (they share no filesystem). Pass file contents through the host-function input, then use `writeFile` in the host function to place them in the other VM.
 - Use [Workflows](/agentos/docs/workflows) to make multi-agent pipelines durable across restarts.
 
 ## Embedded API
 
-Create one `AgentOs` handle per agent and call the reviewer from a host binding.
+Create one `AgentOs` handle per agent and call the reviewer from a host function.
 Your application owns both handles and their lifecycle.
 
 <CodeSnippet file="examples/embedded/agent-to-agent.ts" title="agent-to-agent.ts" />

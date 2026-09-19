@@ -538,12 +538,15 @@ async fn start_protocol_loop_with_vm(
     )
 }
 
-fn protocol_loop_binding_process(
+fn protocol_loop_host_function_process(
     vm: &mut crate::state::VmState,
     label: &str,
     parent_pid: Option<u32>,
     event_notify: Arc<Notify>,
-) -> (crate::state::ActiveProcess, crate::state::BindingExecution) {
+) -> (
+    crate::state::ActiveProcess,
+    crate::state::HostFunctionExecution,
+) {
     let kernel_handle = vm
         .kernel
         .create_virtual_process(
@@ -558,7 +561,7 @@ fn protocol_loop_binding_process(
             },
         )
         .unwrap_or_else(|error| panic!("create {label} kernel process: {error}"));
-    let execution = crate::state::BindingExecution::with_event_notify(
+    let execution = crate::state::HostFunctionExecution::with_event_notify(
         event_notify,
         agentos_runtime::DEFAULT_PROTOCOL_MAX_PROCESS_EVENTS,
     );
@@ -570,16 +573,16 @@ fn protocol_loop_binding_process(
         vm.limits.clone(),
         agentos_runtime::DEFAULT_PROTOCOL_MAX_PROCESS_EVENTS,
         wire::GuestRuntimeKind::JavaScript,
-        crate::state::ActiveExecution::Binding(execution),
+        crate::state::ActiveExecution::HostFunction(execution),
     );
     (process, producer)
 }
 
-fn queue_protocol_loop_binding_event(
-    execution: &crate::state::BindingExecution,
+fn queue_protocol_loop_host_function_event(
+    execution: &crate::state::HostFunctionExecution,
     event: crate::state::ActiveExecutionEvent,
 ) {
-    assert!(crate::execution::send_binding_process_event(
+    assert!(crate::execution::send_host_function_process_event(
         &execution.cancelled,
         &execution.pending_events,
         &execution.event_overflow_reason,
@@ -860,7 +863,7 @@ async fn request_concurrency_real_loop_configure_waits_and_rejects_new_same_vm_w
                         packages: Vec::new(),
                         packages_mount_at: String::new(),
                         bootstrap_commands: Vec::new(),
-                        binding_shim_commands: Vec::new(),
+                        host_function_shim_commands: Vec::new(),
                     }),
                 ),
                 1,
@@ -1294,14 +1297,14 @@ async fn request_concurrency_real_loop_attached_and_detached_children_advance_wh
                     .vms
                     .get_mut(&vm_id)
                     .expect("child-progress VM");
-                let (mut root, _) = protocol_loop_binding_process(
+                let (mut root, _) = protocol_loop_host_function_process(
                     &mut vm,
                     "child-progress root",
                     None,
                     Arc::clone(&process_event_notify),
                 );
                 let root_pid = root.kernel_pid;
-                let (attached, attached_producer) = protocol_loop_binding_process(
+                let (attached, attached_producer) = protocol_loop_host_function_process(
                     &mut vm,
                     "attached child",
                     Some(root_pid),
@@ -1329,7 +1332,7 @@ async fn request_concurrency_real_loop_attached_and_detached_children_advance_wh
                 vm.active_processes
                     .insert(String::from("child-progress-root"), root);
 
-                let (detached, detached_producer) = protocol_loop_binding_process(
+                let (detached, detached_producer) = protocol_loop_host_function_process(
                     &mut vm,
                     "detached child",
                     None,
@@ -1348,15 +1351,15 @@ async fn request_concurrency_real_loop_attached_and_detached_children_advance_wh
             );
             state.gate("child-progress-gate").wait_started().await;
 
-            queue_protocol_loop_binding_event(
+            queue_protocol_loop_host_function_event(
                 &attached_producer,
                 crate::state::ActiveExecutionEvent::Stdout(b"attached-progress".to_vec()),
             );
-            queue_protocol_loop_binding_event(
+            queue_protocol_loop_host_function_event(
                 &attached_producer,
                 crate::state::ActiveExecutionEvent::Exited(0),
             );
-            queue_protocol_loop_binding_event(
+            queue_protocol_loop_host_function_event(
                 &detached_producer,
                 crate::state::ActiveExecutionEvent::Stdout(b"detached-progress".to_vec()),
             );
@@ -1466,7 +1469,7 @@ async fn request_concurrency_real_loop_child_service_saturation_rearms_exactly_o
                     .vms
                     .get_mut(&vm_id)
                     .expect("service-saturation VM");
-                let (process, producer) = protocol_loop_binding_process(
+                let (process, producer) = protocol_loop_host_function_process(
                     &mut vm,
                     "service-saturation root",
                     None,
@@ -1477,7 +1480,7 @@ async fn request_concurrency_real_loop_child_service_saturation_rearms_exactly_o
                 producer
             };
             for request_id in [711, 712] {
-                queue_protocol_loop_binding_event(
+                queue_protocol_loop_host_function_event(
                     &producer,
                     crate::state::ActiveExecutionEvent::JavascriptSyncRpcRequest(
                         agentos_execution::JavascriptSyncRpcRequest {
@@ -1502,7 +1505,7 @@ async fn request_concurrency_real_loop_child_service_saturation_rearms_exactly_o
                     if producer
                         .pending_events
                         .lock()
-                        .expect("binding event queue")
+                        .expect("host_function event queue")
                         .is_empty()
                     {
                         break;
@@ -1524,7 +1527,7 @@ async fn request_concurrency_real_loop_child_service_saturation_rearms_exactly_o
             assert!(producer
                 .pending_events
                 .lock()
-                .expect("binding event queue")
+                .expect("host_function event queue")
                 .is_empty());
 
             finish_cleanly(&harness, engine_task).await;
@@ -1596,8 +1599,12 @@ async fn targeted_public_waiter_cannot_consume_internal_process_pump_wake() {
                     .vms
                     .get_mut(&vm_id)
                     .expect("process-wake-isolation VM");
-                let (process, producer) =
-                    protocol_loop_binding_process(&mut vm, &process_id, None, process_event_notify);
+                let (process, producer) = protocol_loop_host_function_process(
+                    &mut vm,
+                    &process_id,
+                    None,
+                    process_event_notify,
+                );
                 vm.active_processes.insert(process_id.clone(), process);
                 producer
             };
@@ -1633,7 +1640,7 @@ async fn targeted_public_waiter_cannot_consume_internal_process_pump_wake() {
                 tokio::task::yield_now().await;
             }
 
-            queue_protocol_loop_binding_event(
+            queue_protocol_loop_host_function_event(
                 &producer,
                 crate::state::ActiveExecutionEvent::JavascriptSyncRpcRequest(
                     agentos_execution::JavascriptSyncRpcRequest {
@@ -1656,7 +1663,7 @@ async fn targeted_public_waiter_cannot_consume_internal_process_pump_wake() {
                     if producer
                         .pending_events
                         .lock()
-                        .expect("binding event queue")
+                        .expect("host_function event queue")
                         .is_empty()
                     {
                         break;

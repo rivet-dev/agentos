@@ -905,7 +905,7 @@ export type PermissionsPolicy = {
     readonly childProcess: PatternPermissionScope | null
     readonly process: PatternPermissionScope | null
     readonly env: PatternPermissionScope | null
-    readonly binding: PatternPermissionScope | null
+    readonly hostFunction: PatternPermissionScope | null
 }
 
 export function readPermissionsPolicy(bc: bare.ByteCursor): PermissionsPolicy {
@@ -915,7 +915,7 @@ export function readPermissionsPolicy(bc: bare.ByteCursor): PermissionsPolicy {
         childProcess: read11(bc),
         process: read11(bc),
         env: read11(bc),
-        binding: read11(bc),
+        hostFunction: read11(bc),
     }
 }
 
@@ -925,7 +925,7 @@ export function writePermissionsPolicy(bc: bare.ByteCursor, x: PermissionsPolicy
     write11(bc, x.childProcess)
     write11(bc, x.process)
     write11(bc, x.env)
-    write11(bc, x.binding)
+    write11(bc, x.hostFunction)
 }
 
 export type CreateVmRequest = {
@@ -1462,7 +1462,7 @@ export type ConfigureVmRequest = {
     readonly packages: readonly PackageDescriptor[]
     readonly packagesMountAt: string
     readonly bootstrapCommands: readonly string[]
-    readonly bindingShimCommands: readonly string[]
+    readonly hostFunctionShimCommands: readonly string[]
 }
 
 export function readConfigureVmRequest(bc: bare.ByteCursor): ConfigureVmRequest {
@@ -1478,7 +1478,7 @@ export function readConfigureVmRequest(bc: bare.ByteCursor): ConfigureVmRequest 
         packages: read20(bc),
         packagesMountAt: bare.readString(bc),
         bootstrapCommands: read6(bc),
-        bindingShimCommands: read6(bc),
+        hostFunctionShimCommands: read6(bc),
     }
 }
 
@@ -1494,7 +1494,7 @@ export function writeConfigureVmRequest(bc: bare.ByteCursor, x: ConfigureVmReque
     write20(bc, x.packages)
     bare.writeString(bc, x.packagesMountAt)
     write6(bc, x.bootstrapCommands)
-    write6(bc, x.bindingShimCommands)
+    write6(bc, x.hostFunctionShimCommands)
 }
 
 export type RegisteredHostCallbackExample = {

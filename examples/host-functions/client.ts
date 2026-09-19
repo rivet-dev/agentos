@@ -6,7 +6,7 @@ const client = createClient<typeof registry>({
 });
 const agent = client.vm.getOrCreate("my-agent");
 
-// The agent invokes the binding itself as a shell command:
+// The agent invokes the host function itself as a shell command:
 //   agentos-weather forecast --city Paris --days 3
 await agent.sessions.open({
 	agent: "claude",

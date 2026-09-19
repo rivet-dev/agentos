@@ -943,7 +943,7 @@ impl AgentOs {
                     packages: crate::agent_os::build_package_descriptors(config),
                     packages_mount_at: config.packages_mount_at.clone().unwrap_or_default(),
                     bootstrap_commands: Vec::new(),
-                    binding_shim_commands: Vec::new(),
+                    host_function_shim_commands: Vec::new(),
                 }),
             )
             .await?;

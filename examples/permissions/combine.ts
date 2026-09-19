@@ -25,11 +25,11 @@ const allowOneHost = {
 	},
 } satisfies Permissions;
 
-// Deny all bindings by default, allow only the "add" binding by name.
-const allowOneBinding = {
-	binding: {
+// Deny all host functions by default, then allow only "add" by name.
+const allowOneHostFunction = {
+	hostFunction: {
 		default: "deny",
-		rules: [{ mode: "allow", operations: ["*"], patterns: ["add"] }],
+		rules: [{ mode: "allow", operations: ["invoke"], patterns: ["add"] }],
 	},
 } satisfies Permissions;
 
@@ -37,7 +37,7 @@ const vm = agentOS({
 	permissions: {
 		...denyVault,
 		...allowOneHost,
-		...allowOneBinding,
+		...allowOneHostFunction,
 	},
 });
 

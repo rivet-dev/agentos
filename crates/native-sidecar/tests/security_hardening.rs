@@ -266,10 +266,10 @@ const result = {
 };
 
 try {
-  process.binding('fs');
-  result.binding = 'unexpected';
+  process.host_function('fs');
+  result.host_function = 'unexpected';
 } catch (error) {
-  result.binding = { code: error.code ?? null, message: error.message };
+  result.host_function = { code: error.code ?? null, message: error.message };
 }
 
 console.log(JSON.stringify(result));
@@ -331,7 +331,7 @@ console.log(JSON.stringify(result));
     );
     assert_ne!(parsed["home"], Value::String(String::from("/host/home")));
     assert_eq!(
-        parsed["binding"]["code"],
+        parsed["host_function"]["code"],
         Value::String(String::from("ERR_ACCESS_DENIED"))
     );
 }
@@ -512,7 +512,7 @@ fn execute_rejects_host_only_absolute_command_path() {
                 packages: Vec::new(),
                 packages_mount_at: String::new(),
                 bootstrap_commands: Vec::new(),
-                binding_shim_commands: Vec::new(),
+                host_function_shim_commands: Vec::new(),
             }),
         ))
         .expect("configure host-only command permissions");

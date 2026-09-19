@@ -1,12 +1,12 @@
-import { AgentOs, type Bindings } from "@rivet-dev/agentos-core";
+import { AgentOs, type HostFunctions } from "@rivet-dev/agentos-core";
 import { z } from "zod";
 
-// Binding groups are defined exactly as they are for the actor. Pass them to
+// Host-function collections are defined exactly as they are for the actor. Pass them to
 // AgentOs.create() and `execute` runs in this host process.
-const weather: Bindings = {
+const weather: HostFunctions = {
 	name: "weather",
-	description: "Weather data bindings",
-	bindings: {
+	description: "Weather data functions",
+	functions: {
 		forecast: {
 			description: "Get the weather forecast for a city",
 			inputSchema: z.object({ city: z.string().describe("City name") }),
@@ -18,7 +18,7 @@ const weather: Bindings = {
 	},
 };
 
-const vm = await AgentOs.create({ bindings: [weather] });
+const vm = await AgentOs.create({ hostFunctions: [weather] });
 
 // The agent calls it as `agentos-weather forecast --city Paris`.
 const result = await vm.process.exec("agentos-weather forecast --city Paris");

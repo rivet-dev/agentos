@@ -1,18 +1,18 @@
 import common from "@agentos-software/common";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { z } from "zod";
-import { AgentOs, binding, bindings } from "../src/index.js";
+import { AgentOs, hostFunction, hostFunctions } from "../src/index.js";
 
 // Regression coverage for rivet-dev/agentos#1885: the `agentos-<collection>`
-// command stub must dispatch to the host binding when it is executed the way
+// command stub must dispatch to the host function when it is executed the way
 // agents run it, through the shell and a PATH lookup, not only via a direct
 // `spawn`.
 
-const weatherBindings = bindings({
+const weatherFunctions = hostFunctions({
 	name: "weather",
-	description: "Weather data bindings",
-	bindings: {
-		forecast: binding({
+	description: "Weather data functions",
+	functions: {
+		forecast: hostFunction({
 			description: "Get a forecast",
 			inputSchema: z.object({ city: z.string() }).strict(),
 			execute: ({ city }) => ({ city, temperature: 22 }),
@@ -58,7 +58,7 @@ describe.each([
 				childProcess: "allow",
 				process: "allow",
 				env: "allow",
-				binding: "allow",
+				hostFunction: "allow",
 				network: "deny",
 			},
 		},
@@ -67,13 +67,13 @@ describe.each([
 		label: "with the common software package",
 		options: { software: [common] },
 	},
-] as const)("binding command exec ($label)", ({ options }) => {
+] as const)("hostFunction command exec ($label)", ({ options }) => {
 	let vm: AgentOs;
 
 	beforeAll(async () => {
 		vm = await AgentOs.create({
 			...options,
-			bindings: [weatherBindings],
+			hostFunctions: [weatherFunctions],
 		} as Parameters<typeof AgentOs.create>[0]);
 	}, 60_000);
 
@@ -87,7 +87,7 @@ describe.each([
 
 	test.each(
 		COMMANDS,
-	)("`%s` dispatches to the host binding", async (command) => {
+	)("`%s` dispatches to the host function", async (command) => {
 		const result = await execCapture(vm, command);
 		expect(
 			{ exitCode: result.exitCode, stderr: result.stderr },
@@ -96,8 +96,8 @@ describe.each([
 		expect(JSON.parse(result.stdout)).toEqual(EXPECTED_ENVELOPE);
 	});
 
-	test("`agentos list-bindings` runs through the shell", async () => {
-		const result = await execCapture(vm, "agentos list-bindings");
+	test("`agentos list-host-functions` runs through the shell", async () => {
+		const result = await execCapture(vm, "agentos list-host-functions");
 		expect(
 			{ exitCode: result.exitCode, stderr: result.stderr },
 			`stdout: ${result.stdout}`,
@@ -105,14 +105,20 @@ describe.each([
 		expect(JSON.parse(result.stdout)).toEqual({
 			ok: true,
 			result: {
-				bindings: [
+				hostFunctions: [
 					{
 						name: "weather",
-						description: "Weather data bindings",
-						bindings: ["forecast"],
+						description: "Weather data functions",
+						functions: ["forecast"],
 					},
 				],
 			},
 		});
+	});
+
+	test("the legacy list-bindings alias remains available", async () => {
+		const current = await execCapture(vm, "agentos list-host-functions");
+		const legacy = await execCapture(vm, "agentos list-bindings");
+		expect(legacy).toEqual(current);
 	});
 });

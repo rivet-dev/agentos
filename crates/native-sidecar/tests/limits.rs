@@ -2,7 +2,7 @@
 
 use agentos_native_sidecar::limits::{vm_limits_from_config, VmLimits};
 use agentos_vm_config::{
-    BindingLimitsConfig, HttpLimitsConfig, JsRuntimeLimitsConfig, PythonLimitsConfig,
+    HostFunctionLimitsConfig, HttpLimitsConfig, JsRuntimeLimitsConfig, PythonLimitsConfig,
     ResourceLimitsConfig, VmLimitsConfig, WasmLimitsConfig,
 };
 use serde_json::json;
@@ -31,8 +31,8 @@ fn defaults_match_struct_default() {
 #[test]
 fn overrides_only_present_keys() {
     let config = VmLimitsConfig {
-        bindings: Some(BindingLimitsConfig {
-            max_binding_schema_bytes: Some(4096),
+        host_functions: Some(HostFunctionLimitsConfig {
+            max_schema_bytes: Some(4096),
             ..Default::default()
         }),
         wasm: Some(WasmLimitsConfig {
@@ -55,7 +55,7 @@ fn overrides_only_present_keys() {
     };
     let parsed = vm_limits_from_config(Some(&config), SIDECAR_FRAME_CAP).expect("valid overrides");
 
-    assert_eq!(parsed.bindings.max_binding_schema_bytes, 4096);
+    assert_eq!(parsed.host_functions.max_schema_bytes, 4096);
     assert_eq!(parsed.wasm.max_module_file_bytes, 1_048_576);
     assert_eq!(parsed.wasm.runner_cpu_time_limit_ms, 90_000);
     assert_eq!(parsed.js_runtime.v8_heap_limit_mb, Some(256));
@@ -65,8 +65,8 @@ fn overrides_only_present_keys() {
     // Unspecified fields keep defaults.
     let defaults = VmLimits::default();
     assert_eq!(
-        parsed.bindings.max_registered_collections,
-        defaults.bindings.max_registered_collections
+        parsed.host_functions.max_registered_collections,
+        defaults.host_functions.max_registered_collections
     );
     assert_eq!(
         parsed.wasm.sync_read_limit_bytes,
@@ -91,7 +91,7 @@ fn resources_subset_threads_through() {
 #[test]
 fn rejects_unparseable_value() {
     let error = serde_json::from_value::<VmLimitsConfig>(json!({
-        "bindings": { "maxBindingSchemaBytes": "not-a-number" }
+        "host_functions": { "maxSchemaBytes": "not-a-number" }
     }))
     .expect_err("unparseable value rejected");
     assert!(error.to_string().contains("invalid type"));
@@ -113,16 +113,16 @@ fn rejects_fetch_body_exceeding_frame_cap() {
 #[test]
 fn rejects_default_timeout_above_max() {
     let config = VmLimitsConfig {
-        bindings: Some(BindingLimitsConfig {
-            default_binding_timeout_ms: Some(60_000),
-            max_binding_timeout_ms: Some(30_000),
+        host_functions: Some(HostFunctionLimitsConfig {
+            default_timeout_ms: Some(60_000),
+            max_timeout_ms: Some(30_000),
             ..Default::default()
         }),
         ..Default::default()
     };
     let error =
         vm_limits_from_config(Some(&config), SIDECAR_FRAME_CAP).expect_err("default above max");
-    assert!(error.to_string().contains("max_binding_timeout_ms"));
+    assert!(error.to_string().contains("max_timeout_ms"));
 }
 
 #[test]

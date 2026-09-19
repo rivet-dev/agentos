@@ -40,14 +40,14 @@ async function reviewCode(code: string): Promise<string> {
 	);
 }
 
-// The writer agent gets a `review` binding collection. When the writer runs
+// The writer agent gets a `review` host-function collection. When the writer runs
 // `agentos-review submit`, the bridge above executes on the host.
 const writer = agentOS({
-	bindings: [
+	hostFunctions: [
 		{
 			name: "review",
 			description: "Send code to the reviewer agent and get back a review.",
-			bindings: {
+			functions: {
 				submit: {
 					description:
 						"Submit the full contents of a file to the reviewer agent for review. Returns the reviewer's feedback as text.",

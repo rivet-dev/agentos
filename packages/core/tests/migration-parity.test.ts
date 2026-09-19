@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import { afterEach, describe, expect, test } from "vitest";
 import { z } from "zod";
-import { AgentOs, binding, bindings } from "../src/index.js";
+import { AgentOs, hostFunction, hostFunctions } from "../src/index.js";
 import type { SessionStreamEntry } from "../src/session-api.js";
 import { createProjectedAgentPackage } from "./helpers/projected-agent-package.js";
 import { promptResultText } from "./helpers/session-result.js";
@@ -123,11 +123,11 @@ process.stdin.on("data", (chunk) => {
 });
 `.trim();
 
-const mathBindings = bindings({
+const mathFunctions = hostFunctions({
 	name: "math",
 	description: "Math utilities",
-	bindings: {
-		add: binding({
+	functions: {
+		add: hostFunction({
 			description: "Add two numbers",
 			inputSchema: z.object({
 				a: z.number(),
@@ -232,14 +232,14 @@ describe("native sidecar migration parity gate", () => {
 		).toBe("filesystem-ok");
 	}, 60_000);
 
-	test("covers registered bindings through guest command dispatch on the Rust sidecar path", async () => {
+	test("covers registered host functions through guest command dispatch on the Rust sidecar path", async () => {
 		const vm = await AgentOs.create({
 			defaultSoftware: false,
-			bindings: [mathBindings],
+			hostFunctions: [mathFunctions],
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
-				binding: "allow",
+				hostFunction: "allow",
 			},
 		});
 		cleanups.add(async () => {
@@ -247,16 +247,16 @@ describe("native sidecar migration parity gate", () => {
 		});
 		assertNativeSidecar(vm);
 
-		const listed = await runSpawnedProcess(vm, "agentos", ["list-bindings"]);
+		const listed = await runSpawnedProcess(vm, "agentos", ["list-host-functions"]);
 		expect(listed.exitCode).toBe(0);
 		expect(JSON.parse(listed.stdout)).toEqual({
 			ok: true,
 			result: {
-				bindings: [
+				hostFunctions: [
 					{
 						name: "math",
 						description: "Math utilities",
-						bindings: ["add"],
+						hostFunctions: ["add"],
 					},
 				],
 			},

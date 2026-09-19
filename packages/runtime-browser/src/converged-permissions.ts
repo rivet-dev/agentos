@@ -29,7 +29,7 @@ export function convergedPermissionsPolicy(
 		childProcess: "allow",
 		process: "allow",
 		env: "allow",
-		binding: "allow",
+		hostFunction: "allow",
 	};
 
 	if (denials.denyFsRead) {

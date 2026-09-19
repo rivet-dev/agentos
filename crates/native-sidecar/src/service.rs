@@ -1,4 +1,3 @@
-use crate::bindings::register_host_callbacks;
 use crate::bridge::{build_mount_plugin_registry, MountPluginContext};
 pub(crate) use crate::execution::{
     apply_active_process_default_signal, build_javascript_socket_path_context,
@@ -24,6 +23,7 @@ use crate::extension::{
 use crate::filesystem::{
     guest_filesystem_call as filesystem_guest_filesystem_call, guest_filesystem_call_vm,
 };
+use crate::host_functions::register_host_callbacks;
 use crate::limits::DEFAULT_ACP_STDOUT_BUFFER_BYTE_LIMIT;
 use crate::process_event_broker::{
     ProcessEventBroker, ProcessEventBrokerError, ProcessEventIngress, ProcessEventTarget,
@@ -406,7 +406,7 @@ impl CompletedRequest {
 
 #[derive(Debug, Default, Deserialize)]
 struct LegacyJavascriptChildProcessSpawnOptions {
-    // The V8 sync host binding still carries command/argv/options as three
+    // The V8 sync host host_function still carries command/argv/options as three
     // strings. Flatten the canonical options object here so every newly added
     // field crosses that compatibility bridge automatically; keeping a second
     // hand-copied field list previously dropped POSIX spawn attributes and fd
@@ -5771,7 +5771,9 @@ mod prepared_request_tests {
                 limits,
                 agentos_runtime::DEFAULT_PROTOCOL_MAX_PROCESS_EVENTS,
                 crate::protocol::GuestRuntimeKind::JavaScript,
-                crate::state::ActiveExecution::Binding(crate::state::BindingExecution::default()),
+                crate::state::ActiveExecution::HostFunction(
+                    crate::state::HostFunctionExecution::default(),
+                ),
             ),
         );
         let descriptor = crate::protocol::ExecutionDescriptor {
@@ -6644,9 +6646,9 @@ mod prepared_request_tests {
             204,
             ownership.clone(),
             RequestPayload::RegisterHostCallbacks(crate::protocol::RegisterHostCallbacksRequest {
-                name: String::from("prepared-bindings"),
-                description: String::from("prepared route test bindings"),
-                command_aliases: vec![String::from("agentos-prepared-bindings")],
+                name: String::from("prepared-host_functions"),
+                description: String::from("prepared route test host_functions"),
+                command_aliases: vec![String::from("agentos-prepared-host_functions")],
                 registry_command_aliases: vec![String::from("agentos")],
                 callbacks: std::collections::HashMap::from([(
                     String::from("call"),
@@ -6670,8 +6672,8 @@ mod prepared_request_tests {
                 .vms
                 .get(&vm_id)
                 .expect("test VM")
-                .bindings
-                .contains_key("prepared-bindings"),
+                .host_functions
+                .contains_key("prepared-host_functions"),
             "preparing host callback registration must not mutate VM state"
         );
         let completed_registration = prepared_registration.execute().await;
@@ -6680,8 +6682,8 @@ mod prepared_request_tests {
                 .vms
                 .get(&vm_id)
                 .expect("test VM")
-                .bindings
-                .contains_key("prepared-bindings"),
+                .host_functions
+                .contains_key("prepared-host_functions"),
             "owned host callback registration runs only when its prepared future executes"
         );
         sidecar
@@ -6713,11 +6715,11 @@ mod prepared_request_tests {
             .await
             .pop()
             .expect("test VM id");
-        let (original_permissions, original_bindings, original_paths) = {
+        let (original_permissions, original_host_functions, original_paths) = {
             let vm = sidecar.vms.get(&vm_id).expect("test VM");
             (
                 vm.configuration.permissions.clone(),
-                vm.bindings.clone(),
+                vm.host_functions.clone(),
                 vm.command_guest_paths.clone(),
             )
         };
@@ -6736,8 +6738,8 @@ mod prepared_request_tests {
             230,
             cleanup_test_ownership(&vm_id),
             RequestPayload::RegisterHostCallbacks(crate::protocol::RegisterHostCallbacksRequest {
-                name: String::from("rollback-bindings"),
-                description: String::from("rollback binding collection"),
+                name: String::from("rollback-host_functions"),
+                description: String::from("rollback host_function collection"),
                 command_aliases: vec![String::from("rollback-command")],
                 registry_command_aliases: vec![String::from("agentos")],
                 callbacks: std::collections::HashMap::from([(
@@ -6773,7 +6775,7 @@ mod prepared_request_tests {
             .contains("injected owned registration restore failure"));
 
         let vm = sidecar.vms.get(&vm_id).expect("test VM");
-        assert_eq!(vm.bindings, original_bindings);
+        assert_eq!(vm.host_functions, original_host_functions);
         assert_eq!(vm.command_guest_paths, original_paths);
         assert!(!vm.kernel.commands().contains_key("rollback-command"));
         drop(vm);

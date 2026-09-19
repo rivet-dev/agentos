@@ -48,8 +48,8 @@ pub struct AgentOsConfig {
     pub additional_instructions: Option<String>,
     /// Schedule driver used by the cron manager. Default: [`TimerScheduleDriver`].
     pub schedule_driver: Option<Arc<dyn ScheduleDriver>>,
-    /// Binding collections to register.
-    pub bindings: Vec<Bindings>,
+    /// HostFunction collections to register.
+    pub host_functions: Vec<HostFunctions>,
     /// Rust-only sidecar callback handler for `js_bridge`-style plugin requests.
     pub sidecar_js_bridge_callback: Option<SidecarJsBridgeCallback>,
     /// Permission policy. Default: allow-all.
@@ -126,8 +126,8 @@ impl AgentOsConfigBuilder {
         self
     }
 
-    pub fn bindings(mut self, bindings: Vec<Bindings>) -> Self {
-        self.config.bindings = bindings;
+    pub fn host_functions(mut self, host_functions: Vec<HostFunctions>) -> Self {
+        self.config.host_functions = host_functions;
         self
     }
 
@@ -172,8 +172,8 @@ pub enum SoftwareKind {
     WasmCommands,
     /// An agent SDK/adapter package. Not mounted as a command directory.
     Agent,
-    /// A host-binding package. Not mounted as a command directory.
-    Binding,
+    /// A host-function package. Not mounted as a command directory.
+    HostFunction,
 }
 
 /// A flattened software package input.
@@ -198,10 +198,10 @@ pub struct PackageRef {
     pub path: String,
 }
 
-/// A host-side binding execute callback. Receives the validated JSON input, returns a JSON result or an
+/// A host-side host function callback. Receives the validated JSON input, returns a JSON result or an
 /// error string. Stays host-side (never crosses to the guest); the guest invokes it by name via the
 /// sidecar host-callback channel.
-pub type BindingCallback = Arc<
+pub type HostFunctionCallback = Arc<
     dyn Fn(
             serde_json::Value,
         ) -> futures::future::BoxFuture<'static, Result<serde_json::Value, String>>
@@ -232,26 +232,26 @@ pub type SidecarJsBridgeCallback = Arc<
         + Sync,
 >;
 
-/// A single host binding within a [`Bindings`].
+/// A single host function within a [`HostFunctions`].
 #[derive(Clone)]
-pub struct Binding {
+pub struct HostFunction {
     pub name: String,
     pub description: String,
-    /// JSON Schema for the binding input (forwarded to the sidecar `register_host_callbacks` definition).
+    /// JSON Schema for the host function input (forwarded to the sidecar `register_host_callbacks` definition).
     pub input_schema: serde_json::Value,
     pub timeout_ms: Option<u64>,
-    /// Host-side implementation, invoked when the guest calls `<collection>:<binding>`.
-    pub execute: BindingCallback,
+    /// Host-side implementation, invoked when the guest calls `<collection>:<function>`.
+    pub execute: HostFunctionCallback,
 }
 
-/// A registered binding collection (in-process; implementations stay host-side). Bindings are exposed to the
-/// guest as `<collection>:<binding>` and dispatched back to [`Binding::execute`] via the sidecar
+/// A registered host function collection (in-process; implementations stay host-side). Functions are exposed to the
+/// guest as `<collection>:<function>` and dispatched back to [`HostFunction::execute`] via the sidecar
 /// host-callback channel.
 #[derive(Clone)]
-pub struct Bindings {
+pub struct HostFunctions {
     pub name: String,
     pub description: String,
-    pub bindings: Vec<Binding>,
+    pub functions: Vec<HostFunction>,
 }
 
 // ---------------------------------------------------------------------------
@@ -266,8 +266,12 @@ pub struct AgentOsLimits {
     pub resources: Option<ResourceLimits>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub http: Option<HttpLimits>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bindings: Option<BindingLimits>,
+    #[serde(
+        default,
+        rename = "hostFunctions",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub host_functions: Option<HostFunctionLimits>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plugins: Option<PluginLimits>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -407,19 +411,19 @@ pub struct HttpLimits {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BindingLimits {
+pub struct HostFunctionLimits {
     #[serde(
         default,
-        rename = "defaultBindingTimeoutMs",
+        rename = "defaultTimeoutMs",
         skip_serializing_if = "Option::is_none"
     )]
-    pub default_binding_timeout_ms: Option<u64>,
+    pub default_timeout_ms: Option<u64>,
     #[serde(
         default,
-        rename = "maxBindingTimeoutMs",
+        rename = "maxTimeoutMs",
         skip_serializing_if = "Option::is_none"
     )]
-    pub max_binding_timeout_ms: Option<u64>,
+    pub max_timeout_ms: Option<u64>,
     #[serde(
         default,
         rename = "maxRegisteredCollections",
@@ -428,34 +432,34 @@ pub struct BindingLimits {
     pub max_registered_collections: Option<u64>,
     #[serde(
         default,
-        rename = "maxRegisteredBindingsPerVm",
+        rename = "maxRegisteredFunctionsPerVm",
         skip_serializing_if = "Option::is_none"
     )]
-    pub max_registered_bindings_per_vm: Option<u64>,
+    pub max_registered_functions_per_vm: Option<u64>,
     #[serde(
         default,
-        rename = "maxBindingsPerCollection",
+        rename = "maxFunctionsPerCollection",
         skip_serializing_if = "Option::is_none"
     )]
-    pub max_bindings_per_collection: Option<u64>,
+    pub max_functions_per_collection: Option<u64>,
     #[serde(
         default,
-        rename = "maxBindingSchemaBytes",
+        rename = "maxSchemaBytes",
         skip_serializing_if = "Option::is_none"
     )]
-    pub max_binding_schema_bytes: Option<u64>,
+    pub max_schema_bytes: Option<u64>,
     #[serde(
         default,
-        rename = "maxExamplesPerBinding",
+        rename = "maxExamplesPerFunction",
         skip_serializing_if = "Option::is_none"
     )]
-    pub max_examples_per_binding: Option<u64>,
+    pub max_examples_per_function: Option<u64>,
     #[serde(
         default,
-        rename = "maxBindingExampleInputBytes",
+        rename = "maxExampleInputBytes",
         skip_serializing_if = "Option::is_none"
     )]
-    pub max_binding_example_input_bytes: Option<u64>,
+    pub max_example_input_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -777,8 +781,12 @@ pub struct Permissions {
     pub process: Option<PatternPermissions>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env: Option<PatternPermissions>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub binding: Option<PatternPermissions>,
+    #[serde(
+        default,
+        rename = "hostFunction",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub host_function: Option<PatternPermissions>,
 }
 
 /// `"allow"` or `"deny"`.
@@ -797,7 +805,7 @@ pub enum FsPermissions {
     Rules(RulePermissions<FsPermissionRule>),
 }
 
-/// `PermissionMode | RulePermissions<PatternPermissionRule>` (network/childProcess/process/env/binding).
+/// `PermissionMode | RulePermissions<PatternPermissionRule>` (network/childProcess/process/env/hostFunction).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum PatternPermissions {

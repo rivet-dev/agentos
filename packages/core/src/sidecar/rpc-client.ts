@@ -346,11 +346,11 @@ interface NativeSidecarKernelProxyOptions {
 	 * `configure_vm` rebuilds the whole VM configuration from each payload, so
 	 * every runtime mount reconfigure must resend these or a post-boot
 	 * `mountFs()` silently drops the `/opt/agentos` package projections and
-	 * binding shim commands applied at boot.
+	 * host-function shim commands applied at boot.
 	 */
 	packages?: Parameters<SidecarProcess["configureVm"]>[2]["packages"];
 	packagesMountAt?: string;
-	bindingShimCommands?: string[];
+	hostFunctionShimCommands?: string[];
 	commandGuestPaths: ReadonlyMap<string, string>;
 	onWasmCommandResolved?: (command: string) => void;
 	onDispose?: () => Promise<void>;
@@ -390,7 +390,7 @@ export class NativeSidecarKernelProxy {
 		Parameters<SidecarProcess["configureVm"]>[2]["packages"]
 	>;
 	private readonly packagesMountAt: string | undefined;
-	private readonly bindingShimCommands: string[] | undefined;
+	private readonly hostFunctionShimCommands: string[] | undefined;
 	private readonly commandDrivers: Map<string, string>;
 	private readonly onWasmCommandResolved:
 		| ((command: string) => void)
@@ -442,7 +442,7 @@ export class NativeSidecarKernelProxy {
 		this.loopbackExemptPorts = options.loopbackExemptPorts;
 		this.packages = options.packages ? [...options.packages] : [];
 		this.packagesMountAt = options.packagesMountAt;
-		this.bindingShimCommands = options.bindingShimCommands;
+		this.hostFunctionShimCommands = options.hostFunctionShimCommands;
 		this.commandDrivers = buildCommandMap(options.commandGuestPaths);
 		this.onWasmCommandResolved = options.onWasmCommandResolved;
 		this.onDispose = options.onDispose;
@@ -1636,8 +1636,8 @@ export class NativeSidecarKernelProxy {
 				return;
 			}
 			// Rust `configure_vm` rebuilds the whole VM configuration from this
-			// payload, so resend the boot packages / binding shim commands too —
-			// omitting them here strips the `/opt/agentos` projections and binding
+			// payload, so resend the boot packages and host-function shim commands too.
+			// Omitting them here strips the `/opt/agentos` projections and host-function
 			// shims from the VM as a side effect of a runtime mount change.
 			await this.client.configureVm(this.session, this.vm, {
 				mounts: this.desiredSidecarMounts(),
@@ -1646,7 +1646,7 @@ export class NativeSidecarKernelProxy {
 				loopbackExemptPorts: this.loopbackExemptPorts,
 				packages: this.packages,
 				packagesMountAt: this.packagesMountAt,
-				bindingShimCommands: this.bindingShimCommands,
+				hostFunctionShimCommands: this.hostFunctionShimCommands,
 			});
 		};
 		const previous = this.mountReconfigurePromise ?? Promise.resolve();
@@ -1835,7 +1835,7 @@ export class NativeSidecarKernelProxy {
 		this.updateTrackedProcessSnapshot(entry);
 		void this.refreshProcessSnapshot().catch(() => {});
 		// Signal metadata is advisory and must not hold process startup behind a
-		// second sidecar RPC. Very short binding commands can finish while the
+		// second sidecar RPC. Very short hostFunction commands can finish while the
 		// original execute response is still in flight; synchronously refreshing
 		// here creates a circular wait with their output/exit delivery.
 		this.scheduleSignalStateRefresh(entry);

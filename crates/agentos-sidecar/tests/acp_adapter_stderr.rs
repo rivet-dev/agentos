@@ -365,7 +365,7 @@ fn configure_mock_agent_package(
                 }],
                 packages_mount_at: String::from("/opt/agentos"),
                 bootstrap_commands: Vec::new(),
-                binding_shim_commands: Vec::new(),
+                host_function_shim_commands: Vec::new(),
             }),
         })
         .expect("configure crashing ACP package");
@@ -392,7 +392,7 @@ fn allow_all_permissions() -> vm_config::PermissionsPolicy {
         env: Some(vm_config::PatternPermissionScope::Mode(
             vm_config::PermissionMode::Allow,
         )),
-        binding: Some(vm_config::PatternPermissionScope::Mode(
+        host_function: Some(vm_config::PatternPermissionScope::Mode(
             vm_config::PermissionMode::Allow,
         )),
     }

@@ -1,7 +1,7 @@
 import common from "@agentos-software/common";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { z } from "zod";
-import { AgentOs, binding, bindings } from "../src/index.js";
+import { AgentOs, hostFunction, hostFunctions } from "../src/index.js";
 import { NativeSidecarProcessClient } from "../src/sidecar/rpc-client.js";
 
 // ---------------------------------------------------------------------------
@@ -9,11 +9,11 @@ import { NativeSidecarProcessClient } from "../src/sidecar/rpc-client.js";
 //
 // THREAT MODEL: untrusted guest / agent code can emit a raw `host_callback`
 // sidecar-request frame whose `callback_key` and `input` it fully controls.
-// The CLI command path (`agentos-<collection> <binding>`) is gated by `bindingPermissionMode`
-// via `invokeBinding`, but the raw `host_callback` RPC path is handled by
+// The CLI command path (`agentos-<collection> <hostFunction>`) is gated by `hostFunctionPermissionMode`
+// via `invokeHostFunction`, but the raw `host_callback` RPC path is handled by
 // `handleHostCallback` in agent-os.ts. These tests play the guest and assert
 // the system DENIES the call (execute must never run) when policy denies or the
-// binding is out of the granted pattern scope.
+// hostFunction is out of the granted pattern scope.
 //
 // We capture the real `SidecarRequestHandler` that `AgentOs.create()` installs
 // on the native sidecar client (via a prototype spy), then feed it forged
@@ -69,9 +69,9 @@ function hostCallbackFrame(callbackKey: string, input: unknown) {
 
 // A forged *command-shaped* host_callback. `handleHostCallback` dispatches any
 // input that parses as `{type:'command',command,args,cwd}` through the SECOND
-// branch (`handleHostCommandCallback` -> `handleAgentOsBindingCommand` ->
-// `invokeBinding`), bypassing the `callback_key`/Zod path entirely. We forge a
-// CLI-style command frame to confirm THAT branch also enforces binding.invoke.
+// branch (`handleHostCommandCallback` -> `handleAgentOsHostFunctionCommand` ->
+// `invokeHostFunction`), bypassing the `callback_key`/Zod path entirely. We forge a
+// CLI-style command frame to confirm THAT branch also enforces hostFunction.invoke.
 function commandHostCallbackFrame(command: string, args: string[]) {
 	return {
 		frame_type: "sidecar_request" as const,
@@ -79,7 +79,7 @@ function commandHostCallbackFrame(command: string, args: string[]) {
 		payload: {
 			type: "host_callback" as const,
 			invocation_id: "guest-forged-cmd-1",
-			// callback_key is irrelevant on the command branch; set it to a binding
+			// callback_key is irrelevant on the command branch; set it to a hostFunction
 			// that DOES exist to prove the command branch is what runs.
 			callback_key: "math:add",
 			input: {
@@ -93,11 +93,11 @@ function commandHostCallbackFrame(command: string, args: string[]) {
 	};
 }
 
-const mathBindings = bindings({
+const mathFunctions = hostFunctions({
 	name: "math",
 	description: "Math utilities",
-	bindings: {
-		add: binding({
+	functions: {
+		add: hostFunction({
 			description: "Add two numbers",
 			inputSchema: z.object({
 				a: z.number(),
@@ -108,11 +108,11 @@ const mathBindings = bindings({
 	},
 });
 
-const duplicateMathBindings = bindings({
+const duplicateMathFunctions = hostFunctions({
 	name: "math",
 	description: "Duplicate math utilities",
-	bindings: {
-		multiply: binding({
+	functions: {
+		multiply: hostFunction({
 			description: "Multiply two numbers",
 			inputSchema: z.object({
 				a: z.number(),
@@ -142,7 +142,7 @@ async function runCommand(vm: AgentOs, command: string, args: string[]) {
 	};
 }
 
-describe("binding collection permissions", () => {
+describe("hostFunction collection permissions", () => {
 	let vm: AgentOs | null = null;
 
 	afterEach(async () => {
@@ -150,18 +150,18 @@ describe("binding collection permissions", () => {
 		vm = null;
 	});
 
-	test("rejects duplicate binding collection registration with a conflict", async () => {
+	test("rejects duplicate hostFunction collection registration with a conflict", async () => {
 		await expect(
 			AgentOs.create({
-				bindings: [mathBindings, duplicateMathBindings],
+				hostFunctions: [mathFunctions, duplicateMathFunctions],
 			}),
-		).rejects.toThrow(/conflict: binding collection already registered: math/);
+		).rejects.toThrow(/conflict: hostFunction collection already registered: math/);
 	});
 
-	test("allows binding collection invocation with default permissions", async () => {
+	test("allows hostFunction collection invocation with default permissions", async () => {
 		vm = await AgentOs.create({
 			software: [common],
-			bindings: [mathBindings],
+			hostFunctions: [mathFunctions],
 		});
 
 		const result = await runCommand(vm, "agentos-math", [
@@ -178,10 +178,10 @@ describe("binding collection permissions", () => {
 		});
 	});
 
-	test("denies binding collection invocation by default until binding permissions are granted", async () => {
+	test("denies hostFunction collection invocation by default until hostFunction permissions are granted", async () => {
 		vm = await AgentOs.create({
 			software: [common],
-			bindings: [mathBindings],
+			hostFunctions: [mathFunctions],
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
@@ -197,18 +197,18 @@ describe("binding collection permissions", () => {
 		]);
 		expect(result.exitCode).toBe(1);
 		expect(result.stdout).toBe("");
-		expect(result.stderr).toContain("binding.invoke");
+		expect(result.stderr).toContain("hostFunction.invoke");
 		expect(result.stderr).toContain("math:add");
 	});
 
-	test("allows binding collection invocation when a matching binding permission is granted", async () => {
+	test("allows hostFunction collection invocation when a matching hostFunction permission is granted", async () => {
 		vm = await AgentOs.create({
 			software: [common],
-			bindings: [mathBindings],
+			hostFunctions: [mathFunctions],
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
-				binding: {
+				hostFunction: {
 					default: "deny",
 					rules: [
 						{
@@ -236,7 +236,7 @@ describe("binding collection permissions", () => {
 	});
 });
 
-describe("binding collection permissions — raw host_callback RPC path", () => {
+describe("host-function collection permissions: raw host_callback RPC path", () => {
 	let vm: AgentOs | null = null;
 
 	afterEach(async () => {
@@ -244,14 +244,14 @@ describe("binding collection permissions — raw host_callback RPC path", () => 
 		vm = null;
 	});
 
-	// N-001 (J.1/J.2): host_callback RPC must honor binding.invoke deny.
-	test("denies host_callback RPC binding invocation when binding.invoke policy is deny (not just the CLI path)", async () => {
+	// N-001 (J.1/J.2): host_callback RPC must honor hostFunction.invoke deny.
+	test("denies host_callback RPC hostFunction invocation when hostFunction.invoke policy is deny (not just the CLI path)", async () => {
 		const executed: unknown[] = [];
-		const spyBindings = bindings({
+		const spyFunctions = hostFunctions({
 			name: "math",
 			description: "Math utilities",
-			bindings: {
-				add: binding({
+			functions: {
+				add: hostFunction({
 					description: "Add two numbers",
 					inputSchema: z.object({ a: z.number(), b: z.number() }),
 					execute: ({ a, b }) => {
@@ -266,12 +266,12 @@ describe("binding collection permissions — raw host_callback RPC path", () => 
 			// No `software` needed: this exercises the raw host_callback RPC
 			// handler directly (the guest-controlled path), which does not spawn
 			// any in-VM CLI. Keeping the VM minimal makes the safeguard fast.
-			bindings: [spyBindings],
+			hostFunctions: [spyFunctions],
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
-				// Deny-by-default: no binding.invoke grant for math:add.
-				binding: { default: "deny", rules: [] },
+				// Deny-by-default: no hostFunction.invoke grant for math:add.
+				hostFunction: { default: "deny", rules: [] },
 			},
 		});
 		vm = created.vm;
@@ -286,17 +286,17 @@ describe("binding collection permissions — raw host_callback RPC path", () => 
 		expect(response.type).toBe("host_callback_result");
 		expect(response.result).toBeUndefined();
 		expect(typeof response.error).toBe("string");
-		expect(response.error).toMatch(/binding\.invoke|EACCES|denied|permission/i);
+		expect(response.error).toMatch(/hostFunction\.invoke|EACCES|denied|permission/i);
 	});
 
-	// N-002 (J.2): host_callback RPC must respect binding.invoke pattern scope.
-	test("host_callback RPC respects binding.invoke pattern scope and denies a non-matching binding", async () => {
+	// N-002 (J.2): host_callback RPC must respect hostFunction.invoke pattern scope.
+	test("host_callback RPC respects hostFunction.invoke pattern scope and denies a non-matching hostFunction", async () => {
 		const executed: string[] = [];
-		const dangerBindings = bindings({
+		const dangerFunctions = hostFunctions({
 			name: "math",
-			description: "Math utilities with a dangerous binding",
-			bindings: {
-				safe: binding({
+			description: "Math utilities with a dangerous hostFunction",
+			functions: {
+				safe: hostFunction({
 					description: "Safe op",
 					inputSchema: z.object({ x: z.number() }),
 					execute: ({ x }) => {
@@ -304,7 +304,7 @@ describe("binding collection permissions — raw host_callback RPC path", () => 
 						return { x };
 					},
 				}),
-				danger: binding({
+				danger: hostFunction({
 					description: "Dangerous op",
 					inputSchema: z.object({ x: z.number() }),
 					execute: ({ x }) => {
@@ -316,12 +316,12 @@ describe("binding collection permissions — raw host_callback RPC path", () => 
 		});
 
 		const created = await createVmCapturingHandler({
-			bindings: [dangerBindings],
+			hostFunctions: [dangerFunctions],
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
 				// Only math:safe is allowed; math:danger is out of scope -> deny.
-				binding: {
+				hostFunction: {
 					default: "deny",
 					rules: [
 						{ mode: "allow", operations: ["invoke"], patterns: ["math:safe"] },
@@ -339,24 +339,24 @@ describe("binding collection permissions — raw host_callback RPC path", () => 
 		expect(response.type).toBe("host_callback_result");
 		expect(response.result).toBeUndefined();
 		expect(typeof response.error).toBe("string");
-		expect(response.error).toMatch(/binding\.invoke|EACCES|denied|permission/i);
+		expect(response.error).toMatch(/hostFunction\.invoke|EACCES|denied|permission/i);
 	});
 
 	// AOSFS-1 (P1, J.1/J.2): the raw host_callback RPC path is fully
 	// guest-controlled, including the `input` object. The guest can stuff extra
 	// keys, a `__proto__` payload, and a `constructor` key into `input` to try to
 	// (a) leak raw unvalidated fields into the host-side `execute`, or (b) pollute
-	// Object.prototype on the host. The handler runs `binding.inputSchema.safeParse`
+	// Object.prototype on the host. The handler runs `hostFunction.inputSchema.safeParse`
 	// and passes ONLY `parsed.data` to execute; a strict/stripping Zod object must
 	// hand `execute` exactly the declared keys and nothing else, and no prototype
 	// pollution may occur. Asserts the system strips the hostile/extra keys.
 	test("host_callback strips hostile/extra input keys; execute receives only validated Zod data and no prototype pollution", async () => {
 		const seen: unknown[] = [];
-		const collection = bindings({
+		const collection = hostFunctions({
 			name: "math",
 			description: "Math utilities",
-			bindings: {
-				add: binding({
+			functions: {
+				add: hostFunction({
 					description: "Add two numbers",
 					inputSchema: z.object({ a: z.number(), b: z.number() }),
 					execute: (input) => {
@@ -370,11 +370,11 @@ describe("binding collection permissions — raw host_callback RPC path", () => 
 		});
 
 		const created = await createVmCapturingHandler({
-			bindings: [collection],
+			hostFunctions: [collection],
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
-				binding: {
+				hostFunction: {
 					default: "deny",
 					rules: [
 						{ mode: "allow", operations: ["invoke"], patterns: ["math:add"] },
@@ -395,7 +395,7 @@ describe("binding collection permissions — raw host_callback RPC path", () => 
 			hostCallbackFrame("math:add", hostileInput),
 		);
 
-		// The binding ran (policy allows math:add) and produced the correct result.
+		// The hostFunction ran (policy allows math:add) and produced the correct result.
 		expect(response.type).toBe("host_callback_result");
 		expect(response.error).toBeUndefined();
 		expect(response.result).toEqual({ sum: 5 });
@@ -418,16 +418,16 @@ describe("binding collection permissions — raw host_callback RPC path", () => 
 	});
 
 	// AOSFS-2 (P2): a guest can send schema-failing input on the raw host_callback
-	// RPC path (which does NOT go through the CLI argv parser / sidecar-binding
-	// dispatch validation at sidecar-binding-dispatch:108). The handler must
+	// RPC path (which does NOT go through the CLI argv parser / sidecar-hostFunction
+	// dispatch validation at sidecar-host-function-dispatch:108). The handler must
 	// safeParse and return a validation error WITHOUT invoking execute.
 	test("host_callback rejects schema-failing input without invoking execute", async () => {
 		const executed: unknown[] = [];
-		const collection = bindings({
+		const collection = hostFunctions({
 			name: "math",
 			description: "Math utilities",
-			bindings: {
-				add: binding({
+			functions: {
+				add: hostFunction({
 					description: "Add two numbers",
 					inputSchema: z.object({ a: z.number(), b: z.number() }),
 					execute: ({ a, b }) => {
@@ -439,11 +439,11 @@ describe("binding collection permissions — raw host_callback RPC path", () => 
 		});
 
 		const created = await createVmCapturingHandler({
-			bindings: [collection],
+			hostFunctions: [collection],
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
-				binding: {
+				hostFunction: {
 					default: "deny",
 					rules: [
 						{ mode: "allow", operations: ["invoke"], patterns: ["math:add"] },
@@ -467,17 +467,17 @@ describe("binding collection permissions — raw host_callback RPC path", () => 
 	});
 
 	// AOS-SESS-4 (N-014, P2, J.1/J.2): the *command-shaped* host_callback dispatch
-	// branch (handleHostCommandCallback -> invokeBinding) must ALSO honor
-	// binding.invoke deny — defense-in-depth on the second dispatch path that the
+	// branch (handleHostCommandCallback -> invokeHostFunction) must ALSO honor
+	// hostFunction.invoke deny is defense-in-depth on the second dispatch path that the
 	// callback_key/Zod branch does not cover. (Hold-as-regression; not a
 	// re-discovery — assert the gate holds on this branch.)
-	test("forged {type:'command'} host_callback is denied by binding.invoke on the command dispatch branch", async () => {
+	test("forged {type:'command'} host_callback is denied by hostFunction.invoke on the command dispatch branch", async () => {
 		const executed: unknown[] = [];
-		const spyBindings = bindings({
+		const spyFunctions = hostFunctions({
 			name: "math",
 			description: "Math utilities",
-			bindings: {
-				add: binding({
+			functions: {
+				add: hostFunction({
 					description: "Add two numbers",
 					inputSchema: z.object({ a: z.number(), b: z.number() }),
 					execute: ({ a, b }) => {
@@ -489,12 +489,12 @@ describe("binding collection permissions — raw host_callback RPC path", () => 
 		});
 
 		const created = await createVmCapturingHandler({
-			bindings: [spyBindings],
+			hostFunctions: [spyFunctions],
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
-				// Deny-by-default: no binding.invoke grant for math:add.
-				binding: { default: "deny", rules: [] },
+				// Deny-by-default: no hostFunction.invoke grant for math:add.
+				hostFunction: { default: "deny", rules: [] },
 			},
 		});
 		vm = created.vm;
@@ -510,6 +510,6 @@ describe("binding collection permissions — raw host_callback RPC path", () => 
 		expect(response.type).toBe("host_callback_result");
 		expect(response.result).toBeUndefined();
 		expect(typeof response.error).toBe("string");
-		expect(response.error).toMatch(/binding\.invoke|EACCES|denied|permission/i);
+		expect(response.error).toMatch(/hostFunction\.invoke|EACCES|denied|permission/i);
 	});
 });

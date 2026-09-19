@@ -203,7 +203,7 @@ export type ProcessPermissions =
 export type EnvPermissions =
 	| PermissionMode
 	| RulePermissions<PatternPermissionRule>;
-export type BindingPermissions =
+export type HostFunctionPermissions =
 	| PermissionMode
 	| RulePermissions<PatternPermissionRule>;
 
@@ -302,7 +302,7 @@ export interface Permissions {
 	childProcess?: ChildProcessPermissions;
 	process?: ProcessPermissions;
 	env?: EnvPermissions;
-	binding?: BindingPermissions;
+	hostFunction?: HostFunctionPermissions;
 }
 
 export interface ResourceBudgets {
@@ -478,11 +478,11 @@ export interface Kernel extends KernelInterface {
 	readonly zombieTimerCount: number;
 }
 
-export interface BindingTree {
-	[key: string]: BindingFunction | BindingTree;
+export interface HostFunctionTree {
+	[key: string]: HostFunctionHandler | HostFunctionTree;
 }
 
-export type BindingFunction = (...args: unknown[]) => unknown;
+export type HostFunctionHandler = (...args: unknown[]) => unknown;
 
 export interface NodeDriverOptions {
 	filesystem?: VirtualFileSystem;
@@ -503,7 +503,7 @@ export interface NodeRuntimeOptions {
 	runtimeDriverFactory?: NodeRuntimeDriverFactory;
 	permissions?: Partial<Permissions>;
 	memoryLimit?: number;
-	bindings?: BindingTree;
+	hostFunctions?: HostFunctionTree;
 	loopbackExemptPorts?: number[];
 }
 

@@ -6,7 +6,7 @@ import type {
 	LimitWarningHandler,
 	NativeMountConfig,
 } from "./agent-os.js";
-import type { Binding, Bindings } from "./bindings.js";
+import type { HostFunction, HostFunctions } from "./host-functions.js";
 
 const stringArray = z.array(z.string());
 const nonNegativeInteger = z.number().int().nonnegative();
@@ -104,7 +104,7 @@ export const permissionsSchema = z
 		childProcess: patternPermissionsSchema.optional(),
 		process: patternPermissionsSchema.optional(),
 		env: patternPermissionsSchema.optional(),
-		binding: patternPermissionsSchema.optional(),
+		hostFunction: patternPermissionsSchema.optional(),
 	})
 	.strict();
 
@@ -143,16 +143,16 @@ export const agentOsLimitsSchema = z
 			.object({ maxBufferedBytes: positiveInteger.optional() })
 			.strict()
 			.optional(),
-		bindings: z
+		hostFunctions: z
 			.object({
-				defaultBindingTimeoutMs: nonNegativeInteger.optional(),
-				maxBindingTimeoutMs: nonNegativeInteger.optional(),
+				defaultTimeoutMs: nonNegativeInteger.optional(),
+				maxTimeoutMs: nonNegativeInteger.optional(),
 				maxRegisteredCollections: positiveInteger.optional(),
-				maxRegisteredBindingsPerVm: positiveInteger.optional(),
-				maxBindingsPerCollection: positiveInteger.optional(),
-				maxBindingSchemaBytes: positiveInteger.optional(),
-				maxExamplesPerBinding: nonNegativeInteger.optional(),
-				maxBindingExampleInputBytes: positiveInteger.optional(),
+				maxRegisteredFunctionsPerVm: positiveInteger.optional(),
+				maxFunctionsPerCollection: positiveInteger.optional(),
+				maxSchemaBytes: positiveInteger.optional(),
+				maxExamplesPerFunction: nonNegativeInteger.optional(),
+				maxExampleInputBytes: positiveInteger.optional(),
 			})
 			.strict()
 			.optional(),
@@ -354,14 +354,14 @@ export const sidecarConfigSchema = z.union([
 	explicitSidecarSchema,
 ]);
 
-const bindingExampleSchema = z
+const hostFunctionExampleSchema = z
 	.object({
 		description: z.string(),
 		input: z.unknown(),
 	})
 	.strict();
 
-export const bindingSchema = z
+export const hostFunctionSchema = z
 	.object({
 		description: z.string(),
 		inputSchema: z.custom(
@@ -371,18 +371,18 @@ export const bindingSchema = z
 			},
 		),
 		execute: functionSchema,
-		examples: z.array(bindingExampleSchema).optional(),
+		examples: z.array(hostFunctionExampleSchema).optional(),
 		timeout: nonNegativeInteger.optional(),
 	})
-	.strict() as z.ZodType<Binding>;
+	.strict() as z.ZodType<HostFunction>;
 
-export const bindingsSchema = z
+export const hostFunctionsSchema = z
 	.object({
 		name: z.string(),
 		description: z.string(),
-		bindings: z.record(z.string(), bindingSchema),
+		functions: z.record(z.string(), hostFunctionSchema),
 	})
-	.strict() as z.ZodType<Bindings>;
+	.strict() as z.ZodType<HostFunctions>;
 
 /**
  * Shared AgentOsOptions field schemas.
@@ -428,7 +428,7 @@ export const agentOsOptionFieldSchemas = {
 			message: "Expected schedule driver object",
 		})
 		.optional(),
-	bindings: z.array(bindingsSchema).optional(),
+	hostFunctions: z.array(hostFunctionsSchema).optional(),
 	permissions: permissionsSchema.optional(),
 	sidecar: sidecarConfigSchema.optional(),
 	limits: agentOsLimitsSchema.optional(),

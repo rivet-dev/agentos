@@ -9,12 +9,12 @@ import type {
 import { type OneShot, run } from "./runtime.js";
 
 export type {
-	Binding,
-	Bindings,
 	CodeEvaluationResult,
 	CodeExecutionResult,
 	ExecutionErrorData,
 	ExecutionOutputOptions,
+	HostFunction,
+	HostFunctions,
 	HttpRequest,
 	HttpResponse,
 	JsonValue,
@@ -27,8 +27,8 @@ export type {
 	SidecarRejectionDetail,
 } from "@rivet-dev/agentos-core";
 export {
-	binding,
-	bindings,
+	hostFunction,
+	hostFunctions,
 	createHostDirBackend,
 	hostDirMount,
 	KernelError,

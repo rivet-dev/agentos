@@ -140,13 +140,13 @@ impl OwnedPythonSocketCompletionService {
     }
 }
 
-pub(super) struct BindingProcessEventRequest {
+pub(super) struct HostFunctionProcessEventRequest {
     pub(super) runtime_context: agentos_runtime::RuntimeContext,
     pub(super) sidecar_requests: SharedSidecarRequestClient,
     pub(super) connection_id: String,
     pub(super) session_id: String,
     pub(super) vm_id: String,
-    pub(super) binding_resolution: BindingCommandResolution,
+    pub(super) host_function_resolution: HostFunctionCommandResolution,
     pub(super) cancelled: Arc<AtomicBool>,
     pub(super) pending_events: Arc<Mutex<VecDeque<ActiveExecutionEvent>>>,
     pub(super) event_overflow_reason: Arc<Mutex<Option<String>>>,
@@ -160,7 +160,7 @@ pub(super) struct BindingProcessEventRequest {
 // The producer owns these independent atomics/queues; keeping them explicit
 // avoids introducing another partially initialized shared-state wrapper.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn send_binding_process_event(
+pub(crate) fn send_host_function_process_event(
     cancelled: &AtomicBool,
     pending_events: &Arc<Mutex<VecDeque<ActiveExecutionEvent>>>,
     event_overflow_reason: &Mutex<Option<String>>,
@@ -223,7 +223,7 @@ pub(crate) fn send_binding_process_event(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn send_binding_process_event_and_notify(
+fn send_host_function_process_event_and_notify(
     cancelled: &AtomicBool,
     pending_events: &Arc<Mutex<VecDeque<ActiveExecutionEvent>>>,
     event_overflow_reason: &Mutex<Option<String>>,
@@ -234,7 +234,7 @@ fn send_binding_process_event_and_notify(
     event_notify: &tokio::sync::Notify,
     event: ActiveExecutionEvent,
 ) -> bool {
-    let sent = send_binding_process_event(
+    let sent = send_host_function_process_event(
         cancelled,
         pending_events,
         event_overflow_reason,
@@ -250,14 +250,14 @@ fn send_binding_process_event_and_notify(
     sent
 }
 
-pub(super) fn spawn_binding_process_events(request: BindingProcessEventRequest) {
-    let BindingProcessEventRequest {
+pub(super) fn spawn_host_function_process_events(request: HostFunctionProcessEventRequest) {
+    let HostFunctionProcessEventRequest {
         runtime_context,
         sidecar_requests,
         connection_id,
         session_id,
         vm_id,
-        binding_resolution,
+        host_function_resolution,
         cancelled,
         pending_events,
         event_overflow_reason,
@@ -278,9 +278,9 @@ pub(super) fn spawn_binding_process_events(request: BindingProcessEventRequest) 
     let submit_result =
         runtime_context
             .blocking()
-            .submit(BINDING_HOST_CALL_BLOCKING_JOB_BYTES, move || {
+            .submit(HOST_FUNCTION_CALL_BLOCKING_JOB_BYTES, move || {
                 let enqueue = |event| {
-                    send_binding_process_event_and_notify(
+                    send_host_function_process_event_and_notify(
                         &cancelled,
                         &pending_events,
                         &event_overflow_reason,
@@ -292,15 +292,15 @@ pub(super) fn spawn_binding_process_events(request: BindingProcessEventRequest) 
                         event,
                     )
                 };
-                match binding_resolution {
-                    BindingCommandResolution::Failure(message) => {
-                        if enqueue(ActiveExecutionEvent::Stderr(format_binding_failure_output(
-                            &message,
-                        ))) {
+                match host_function_resolution {
+                    HostFunctionCommandResolution::Failure(message) => {
+                        if enqueue(ActiveExecutionEvent::Stderr(
+                            format_host_function_failure_output(&message),
+                        )) {
                             let _ = enqueue(ActiveExecutionEvent::Exited(1));
                         }
                     }
-                    BindingCommandResolution::Invoke { request, timeout } => {
+                    HostFunctionCommandResolution::Invoke { request, timeout } => {
                         let response = sidecar_requests.invoke(
                             OwnershipScope::vm(connection_id, session_id, vm_id),
                             SidecarRequestPayload::HostCallback(request),
@@ -321,28 +321,30 @@ pub(super) fn spawn_binding_process_events(request: BindingProcessEventRequest) 
                                         "result": value,
                                     }))
                                     .unwrap_or_else(|error| {
-                                        format_binding_failure_output(&format!(
-                                            "failed to serialize binding result: {error}"
+                                        format_host_function_failure_output(&format!(
+                                            "failed to serialize host function result: {error}"
                                         ))
                                     });
                                     (output, 0, true)
                                 } else {
                                     let message = result.error.unwrap_or_else(|| {
-                                        String::from("binding invocation returned no result")
+                                        String::from("host function invocation returned no result")
                                     });
-                                    (format_binding_failure_output(&message), 1, false)
+                                    (format_host_function_failure_output(&message), 1, false)
                                 }
                             }
                             Ok(_) => (
-                                format_binding_failure_output(
-                                    "unexpected sidecar binding response",
+                                format_host_function_failure_output(
+                                    "unexpected sidecar host function response",
                                 ),
                                 1,
                                 false,
                             ),
-                            Err(error) => {
-                                (format_binding_failure_output(&error.to_string()), 1, false)
-                            }
+                            Err(error) => (
+                                format_host_function_failure_output(&error.to_string()),
+                                1,
+                                false,
+                            ),
                         };
                         let output_event = if stdout {
                             ActiveExecutionEvent::Stdout(output)
@@ -357,7 +359,7 @@ pub(super) fn spawn_binding_process_events(request: BindingProcessEventRequest) 
             });
     if let Err(error) = submit_result {
         let enqueue_failure = |event| {
-            send_binding_process_event_and_notify(
+            send_host_function_process_event_and_notify(
                 &failure_cancelled,
                 &failure_events,
                 &failure_overflow_reason,
@@ -369,9 +371,9 @@ pub(super) fn spawn_binding_process_events(request: BindingProcessEventRequest) 
                 event,
             )
         };
-        if enqueue_failure(ActiveExecutionEvent::Stderr(format_binding_failure_output(
-            &error.to_string(),
-        ))) {
+        if enqueue_failure(ActiveExecutionEvent::Stderr(
+            format_host_function_failure_output(&error.to_string()),
+        )) {
             let _ = enqueue_failure(ActiveExecutionEvent::Exited(1));
         }
     }

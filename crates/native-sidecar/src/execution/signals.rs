@@ -642,7 +642,7 @@ where
         }
 
         enum KillBehavior {
-            Binding,
+            HostFunction,
             SharedV8StateOnly,
             SharedV8Pause,
             SharedV8Continue,
@@ -653,7 +653,7 @@ where
         }
 
         let behavior = match &process.execution {
-            ActiveExecution::Binding(_) => KillBehavior::Binding,
+            ActiveExecution::HostFunction(_) => KillBehavior::HostFunction,
             _ if process.execution.uses_shared_v8_runtime() && signal == 0 => {
                 KillBehavior::SharedV8StateOnly
             }
@@ -708,8 +708,8 @@ where
         };
 
         match behavior {
-            KillBehavior::Binding => {
-                let ActiveExecution::Binding(execution) = &process.execution else {
+            KillBehavior::HostFunction => {
+                let ActiveExecution::HostFunction(execution) = &process.execution else {
                     unreachable!("kill behavior must match tool execution");
                 };
                 if signal != 0 {

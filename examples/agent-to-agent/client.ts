@@ -11,7 +11,7 @@ await writerAgent.sessions.open({
 	env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 });
 
-// The writer calls the `review` binding collection, which bridges to the reviewer VM.
+// The writer calls the `review` host-function collection, which bridges to the reviewer VM.
 await writerAgent.sessions.prompt({
 	content: [
 		{

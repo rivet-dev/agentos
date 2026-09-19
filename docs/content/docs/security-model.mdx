@@ -123,7 +123,7 @@ Every guest syscall is mediated by the kernel and checked against the runtime's 
 - **Processes.** `node:child_process` spawns kernel-managed guest processes, never real host processes. Children can only run the commands the VM mounts (WASM-backed `sh` and coreutils, V8-backed `node`). See [Processes](/agentos/docs/processes).
 - **Network.** Guest `fetch()`, `node:http`, and raw sockets all flow through the kernel socket table. Guest `fetch()` runs through undici inside the isolate and then through the kernel socket table; it never opens a real host socket. See [Networking](/agentos/docs/networking).
 - **DNS, pipes, and PTYs** are likewise kernel-owned: no guest path reaches the host directly.
-- **Bindings.** Registered [bindings](/agentos/docs/bindings) are the only sanctioned way to hand the guest a named host capability. The guest invokes a binding by name with JSON input, the call round-trips to the host handler, and only the handler's return value comes back. The guest never receives the underlying host access.
+- **Host functions.** Registered [host functions](/agentos/docs/host-functions) are the only sanctioned way to hand the guest a named host capability. The guest invokes a function by name with JSON input, the call round-trips to the host handler, and only the handler's return value comes back. The guest never receives the underlying host access.
 
 ## What enters the VM
 

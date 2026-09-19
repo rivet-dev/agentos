@@ -126,7 +126,7 @@ async function execConvergedGuest(
 			childProcess: "allow",
 			process: "allow",
 			env: "allow",
-			binding: "allow",
+			hostFunction: "allow",
 		},
 	} as never;
 

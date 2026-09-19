@@ -1,6 +1,6 @@
 ---
 title: "Sandbox"
-description: "Mount a Docker sandbox filesystem and run commands through sandbox bindings."
+description: "Mount a Docker sandbox filesystem and run commands through sandbox host functions."
 category: "Quickstart"
 order: 11
 ---
@@ -9,7 +9,7 @@ Back a VM with a Docker-backed sandbox so guest reads, writes, and commands run 
 
 ## How it works
 
-The `docker()` provider starts one Docker container for the VM. AgentOS mounts its filesystem at `/mnt/sandbox`, registers a `sandbox` binding collection for running commands, and destroys the container when the VM is disposed. Set `SKIP_DOCKER=1` to no-op the example where Docker is unavailable.
+The `docker()` provider starts one Docker container for the VM. agentOS mounts its filesystem at `/mnt/sandbox`, registers a `sandbox` host-function collection for running commands, and destroys the container when the VM is disposed. Set `SKIP_DOCKER=1` to skip the example when Docker is unavailable.
 
 ## Run it
 
@@ -18,7 +18,7 @@ npm install
 npx tsx index.ts
 ```
 
-You should see a file read back from the sandbox mount, the bindings RPC port, and the output of an `echo` command plus a process listing from inside the Docker sandbox.
+You should see a file read back from the sandbox mount, the host-function RPC port, and the output of an `echo` command plus a process listing from inside the Docker sandbox.
 
 ## Source
 

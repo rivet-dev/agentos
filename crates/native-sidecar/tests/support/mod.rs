@@ -152,7 +152,7 @@ pub fn wire_permissions_allow_all() -> agentos_native_sidecar::wire::Permissions
                 agentos_native_sidecar::wire::PermissionMode::Allow,
             ),
         ),
-        binding: Some(
+        host_function: Some(
             agentos_native_sidecar::wire::PatternPermissionScope::PermissionMode(
                 agentos_native_sidecar::wire::PermissionMode::Allow,
             ),

@@ -6,7 +6,7 @@ skill: true
 
 Pair agentOS with a full sandbox on demand for heavy workloads. The sandbox
 filesystem mounts into the VM as a native directory, and its process management
-is exposed as [bindings](/agentos/docs/bindings) — provider-agnostic through
+is exposed as [host functions](/agentos/docs/host-functions), provider-agnostic through
 [Sandbox Agent](https://sandboxagent.dev).
 
 - agentOS covers most use cases; a sandbox adds a full Linux environment for
@@ -34,8 +34,8 @@ Ships as `@rivet-dev/agentos-sandbox`, working through two mechanisms:
 
 - **Filesystem mount** — projects the sandbox into the VM as a native
   directory. Read/write files through the mount.
-- **Bindings** — exposes sandbox process management as
-  [bindings](/agentos/docs/bindings). Run commands on the sandbox from the VM.
+- **Host functions** expose sandbox process management as
+  [host functions](/agentos/docs/host-functions). Run commands on the sandbox from the VM.
 
 Both powered by [Sandbox Agent](https://sandboxagent.dev); swap providers
 without changing agent code.
@@ -44,10 +44,10 @@ without changing agent code.
 npm install @rivet-dev/agentos-sandbox sandbox-agent
 ```
 
-- `createSandboxFs`, `createSandboxBindings` — from `@rivet-dev/agentos-sandbox`.
-- `SandboxAgent` + provider helpers (e.g. `docker`) — from `sandbox-agent`.
+- `createSandboxFs`, `createSandboxHostFunctions` from `@rivet-dev/agentos-sandbox`.
+- `SandboxAgent` and provider helpers (for example, `docker`) from `sandbox-agent`.
 - Pass a provider as `sandbox: { provider: docker() }`. agentOS starts the
-  client, mounts it at `/mnt/sandbox`, registers process bindings, and disposes
+  client, mounts it at `/mnt/sandbox`, registers process host functions, and disposes
   it with the VM.
 - In RivetKit actors, pass the provider to `agentOS(...)` — a fresh client per
   actor VM.
@@ -74,14 +74,14 @@ The server example above changes `mountPath` to
 to `sandboxRoot`, so a VM file such as `/home/agentos/sandbox/app/index.ts` maps
 to `/app/index.ts` when `sandboxRoot` is `/`.
 
-## Calling the mounted bindings
+## Calling the mounted host functions
 
-Write code through the filesystem, run it inside the sandbox. Bindings are a CLI
-command, called through the same `exec`/`spawn` surface as any command.
+Write code through the filesystem, then run it inside the sandbox. Host functions are CLI
+commands called through the same `exec`/`spawn` surface as any other command.
 
 <CodeSnippet file="examples/sandbox/client.ts" />
 
-## Bindings reference
+## Host-function reference
 
 ```bash
 # Run a command synchronously

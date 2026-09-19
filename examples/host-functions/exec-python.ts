@@ -1,11 +1,11 @@
-import { AgentOs, type Bindings } from "@rivet-dev/agentos-core";
+import { AgentOs, type HostFunctions } from "@rivet-dev/agentos-core";
 import { z } from "zod";
 
 // The handler runs on the host, so the API key never enters the VM.
-const weather: Bindings = {
+const weather: HostFunctions = {
 	name: "weather",
-	description: "Weather data bindings",
-	bindings: {
+	description: "Weather data functions",
+	functions: {
 		forecast: {
 			description: "Get the weather forecast for a city",
 			inputSchema: z.object({ city: z.string() }),
@@ -19,13 +19,23 @@ const weather: Bindings = {
 	},
 };
 
-// The collection is projected into the VM as an `agentos-weather` command, so
-// it composes with pipes and redirects like any other program.
-const runtime = await AgentOs.create({ bindings: [weather] });
+// The collection is projected into the VM as an `agentos-weather` command.
+const runtime = await AgentOs.create({ hostFunctions: [weather] });
 
 try {
-	const result = await runtime.process.exec(
-		"agentos-weather forecast --city Paris > /workspace/forecast.json && wc -c < /workspace/forecast.json",
+	const result = await runtime.python.execute(
+		`
+import json
+import subprocess
+
+completed = subprocess.run(
+    ["agentos-weather", "forecast", "--city", "Paris"],
+    check=True,
+    capture_output=True,
+    text=True,
+)
+print(json.loads(completed.stdout)["result"])
+		`,
 		{ output: { capture: "all" } },
 	);
 	console.log(result.outcome === "succeeded" ? result.stdout : result.error);

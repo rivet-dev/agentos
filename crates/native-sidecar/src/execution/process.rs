@@ -61,20 +61,22 @@ impl ActiveProcess {
             process_event_capacity.min(limits.process.pending_event_count);
         let pending_stdin_bytes_limit = limits.process.pending_stdin_bytes;
         let pending_event_bytes_limit = limits.process.pending_event_bytes;
-        if let ActiveExecution::Binding(binding) = &execution {
-            binding
+        if let ActiveExecution::HostFunction(host_function) = &execution {
+            host_function
                 .pending_event_count_limit
                 .store(pending_event_count_limit, Ordering::Release);
-            binding
+            host_function
                 .pending_event_bytes_limit
                 .store(pending_event_bytes_limit, Ordering::Release);
         }
-        // Binding producers lease retained-byte reservations from their own
+        // HostFunction producers lease retained-byte reservations from their own
         // queue before an event can be moved into the ActiveProcess queue.
         // Both queues must therefore start with the same budget identity; a
         // signal-state drain may temporarily lease stdout/exit and requeue it.
         let vm_pending_event_bytes_budget = match &execution {
-            ActiveExecution::Binding(binding) => Arc::clone(&binding.vm_pending_event_bytes_budget),
+            ActiveExecution::HostFunction(host_function) => {
+                Arc::clone(&host_function.vm_pending_event_bytes_budget)
+            }
             _ => VmPendingByteBudget::new(
                 pending_event_bytes_limit,
                 queue_tracker::TrackedLimit::PendingExecutionEventBytes,
@@ -382,8 +384,8 @@ impl ActiveProcess {
         &mut self,
         timeout: Duration,
     ) -> Result<Option<PolledExecutionEvent>, SidecarError> {
-        if let ActiveExecution::Binding(execution) = &mut self.execution {
-            return poll_binding_process_event_leased(execution);
+        if let ActiveExecution::HostFunction(execution) = &mut self.execution {
+            return poll_host_function_process_event_leased(execution);
         }
         self.execution
             .poll_event(timeout)
@@ -394,8 +396,8 @@ impl ActiveProcess {
     pub(super) fn try_poll_execution_event(
         &mut self,
     ) -> Result<Option<PolledExecutionEvent>, SidecarError> {
-        if let ActiveExecution::Binding(execution) = &mut self.execution {
-            return poll_binding_process_event_leased(execution);
+        if let ActiveExecution::HostFunction(execution) = &mut self.execution {
+            return poll_host_function_process_event_leased(execution);
         }
         self.execution
             .try_poll_event()
@@ -409,7 +411,7 @@ impl ActiveProcess {
         self.pending_execution_event_count_limit =
             self.process_event_capacity.min(limits.pending_event_count);
         self.pending_execution_event_bytes_limit = limits.pending_event_bytes;
-        if let ActiveExecution::Binding(execution) = &self.execution {
+        if let ActiveExecution::HostFunction(execution) = &self.execution {
             execution
                 .pending_event_count_limit
                 .store(self.pending_execution_event_count_limit, Ordering::Release);
@@ -441,7 +443,7 @@ impl ActiveProcess {
         debug_assert_eq!(self.pending_execution_event_bytes, 0);
         self.vm_pending_stdin_bytes_budget = stdin;
         self.vm_pending_event_bytes_budget = Arc::clone(&events);
-        if let ActiveExecution::Binding(execution) = &mut self.execution {
+        if let ActiveExecution::HostFunction(execution) = &mut self.execution {
             if !Arc::ptr_eq(&execution.vm_pending_event_bytes_budget, &events) {
                 debug_assert_eq!(execution.pending_event_bytes.load(Ordering::Acquire), 0);
                 execution.vm_pending_event_bytes_budget = events;
@@ -856,7 +858,7 @@ mod pending_event_reservation_tests {
             crate::limits::VmLimits::default(),
             agentos_runtime::DEFAULT_PROTOCOL_MAX_PROCESS_EVENTS,
             GuestRuntimeKind::WebAssembly,
-            ActiveExecution::Binding(BindingExecution::default()),
+            ActiveExecution::HostFunction(HostFunctionExecution::default()),
         )
         .with_vm_pending_byte_budgets(
             VmPendingByteBudget::new(
@@ -928,21 +930,21 @@ mod pending_event_reservation_tests {
     }
 
     #[test]
-    fn root_binding_signal_state_drain_preserves_output_and_exit_events() {
+    fn root_host_function_signal_state_drain_preserves_output_and_exit_events() {
         let event_budget = VmPendingByteBudget::new(
             1024,
             queue_tracker::TrackedLimit::PendingExecutionEventBytes,
         );
-        let binding = BindingExecution::default()
+        let host_function = HostFunctionExecution::default()
             .with_vm_pending_event_bytes_budget(Arc::clone(&event_budget));
-        let cancelled = Arc::clone(&binding.cancelled);
-        let pending_events = Arc::clone(&binding.pending_events);
-        let overflow_reason = Arc::clone(&binding.event_overflow_reason);
-        let pending_bytes = Arc::clone(&binding.pending_event_bytes);
-        let count_limit = Arc::clone(&binding.pending_event_count_limit);
-        let bytes_limit = Arc::clone(&binding.pending_event_bytes_limit);
+        let cancelled = Arc::clone(&host_function.cancelled);
+        let pending_events = Arc::clone(&host_function.pending_events);
+        let overflow_reason = Arc::clone(&host_function.event_overflow_reason);
+        let pending_bytes = Arc::clone(&host_function.pending_event_bytes);
+        let count_limit = Arc::clone(&host_function.pending_event_count_limit);
+        let bytes_limit = Arc::clone(&host_function.pending_event_bytes_limit);
 
-        let mut config = KernelVmConfig::new("root-binding-signal-state-drain");
+        let mut config = KernelVmConfig::new("root-host_function-signal-state-drain");
         config.permissions = Permissions::allow_all();
         let mut kernel = SidecarKernel::new(MountTable::new(MemoryFileSystem::new()), config);
         kernel
@@ -957,7 +959,7 @@ mod pending_event_reservation_tests {
                     ..SpawnOptions::default()
                 },
             )
-            .expect("spawn binding process");
+            .expect("spawn host_function process");
         let mut process = ActiveProcess::new(
             handle.pid(),
             handle,
@@ -965,22 +967,22 @@ mod pending_event_reservation_tests {
             crate::limits::VmLimits::default(),
             agentos_runtime::DEFAULT_PROTOCOL_MAX_PROCESS_EVENTS,
             GuestRuntimeKind::JavaScript,
-            ActiveExecution::Binding(binding),
+            ActiveExecution::HostFunction(host_function),
         );
 
-        let ActiveExecution::Binding(binding) = &process.execution else {
-            unreachable!("test process must retain binding execution");
+        let ActiveExecution::HostFunction(host_function) = &process.execution else {
+            unreachable!("test process must retain host_function execution");
         };
         assert!(Arc::ptr_eq(
-            &binding.vm_pending_event_bytes_budget,
+            &host_function.vm_pending_event_bytes_budget,
             &process.vm_pending_event_bytes_budget,
         ));
 
         for event in [
-            ActiveExecutionEvent::Stdout(b"binding-output".to_vec()),
+            ActiveExecutionEvent::Stdout(b"host_function-output".to_vec()),
             ActiveExecutionEvent::Exited(0),
         ] {
-            assert!(send_binding_process_event(
+            assert!(send_host_function_process_event(
                 &cancelled,
                 &pending_events,
                 &overflow_reason,
@@ -997,19 +999,19 @@ mod pending_event_reservation_tests {
         let mut deferred = VecDeque::new();
         while let Some(event) = process
             .try_poll_execution_event()
-            .expect("lease binding event")
+            .expect("lease host_function event")
         {
             deferred.push_back(event);
         }
         for event in deferred.into_iter().rev() {
             process
                 .requeue_pending_execution_event(event)
-                .expect("signal-state drain must preserve leased binding event");
+                .expect("signal-state drain must preserve leased host_function event");
         }
 
         assert!(matches!(
             process.pop_pending_execution_event(),
-            Some(ActiveExecutionEvent::Stdout(bytes)) if bytes == b"binding-output"
+            Some(ActiveExecutionEvent::Stdout(bytes)) if bytes == b"host_function-output"
         ));
         assert!(matches!(
             process.pop_pending_execution_event(),
@@ -1084,7 +1086,7 @@ mod pending_event_reservation_tests {
             crate::limits::VmLimits::default(),
             agentos_runtime::DEFAULT_PROTOCOL_MAX_PROCESS_EVENTS,
             GuestRuntimeKind::WebAssembly,
-            ActiveExecution::Binding(BindingExecution::default()),
+            ActiveExecution::HostFunction(HostFunctionExecution::default()),
         );
         let key = NativeCapabilityKey::UdpSocket(String::from("same-key"));
         process
@@ -1173,7 +1175,7 @@ mod pending_event_reservation_tests {
     }
 }
 
-impl BindingExecution {
+impl HostFunctionExecution {
     pub(crate) fn with_vm_pending_event_bytes_budget(
         mut self,
         budget: Arc<VmPendingByteBudget>,
@@ -1189,7 +1191,7 @@ impl BindingExecution {
     }
 }
 
-impl Drop for BindingExecution {
+impl Drop for HostFunctionExecution {
     fn drop(&mut self) {
         // Stop a background callback producer before reclaiming the queue. The
         // producer checks this flag while holding the same queue lock, so it
@@ -1366,15 +1368,15 @@ impl ProcessEventEnvelope {
     }
 }
 
-fn poll_binding_process_event(
-    execution: &BindingExecution,
+fn poll_host_function_process_event(
+    execution: &HostFunctionExecution,
 ) -> Result<Option<ActiveExecutionEvent>, SidecarError> {
-    poll_binding_process_event_leased(execution)
+    poll_host_function_process_event_leased(execution)
         .map(|event| event.map(PolledExecutionEvent::into_event))
 }
 
-fn poll_binding_process_event_leased(
-    execution: &BindingExecution,
+fn poll_host_function_process_event_leased(
+    execution: &HostFunctionExecution,
 ) -> Result<Option<PolledExecutionEvent>, SidecarError> {
     let event = execution
         .pending_events
@@ -1441,7 +1443,7 @@ impl ActiveExecution {
             Self::Javascript(execution) => execution.is_prepared_for_start(),
             Self::Python(execution) => execution.is_prepared_for_start(),
             Self::Wasm(execution) => execution.is_prepared_for_start(),
-            Self::Binding(_) => false,
+            Self::HostFunction(_) => false,
         }
     }
 
@@ -1456,8 +1458,8 @@ impl ActiveExecution {
             Self::Wasm(execution) => execution
                 .start_prepared()
                 .map_err(|error| SidecarError::Execution(error.to_string())),
-            Self::Binding(_) => Err(SidecarError::InvalidState(String::from(
-                "binding execution cannot be a prepared execve image",
+            Self::HostFunction(_) => Err(SidecarError::InvalidState(String::from(
+                "host function execution cannot be a prepared execve image",
             ))),
         }
     }
@@ -1485,8 +1487,8 @@ impl ActiveExecution {
             Self::Wasm(execution) => execution
                 .claim_sync_rpc_response(id)
                 .map_err(|error| SidecarError::Execution(error.to_string())),
-            Self::Binding(_) => Err(SidecarError::InvalidState(String::from(
-                "binding executions cannot claim JavaScript sync RPC responses",
+            Self::HostFunction(_) => Err(SidecarError::InvalidState(String::from(
+                "host function executions cannot claim JavaScript sync RPC responses",
             ))),
         }
     }
@@ -1506,8 +1508,8 @@ impl ActiveExecution {
             Self::Wasm(execution) => execution
                 .respond_claimed_sync_rpc_success(id, result)
                 .map_err(|error| SidecarError::Execution(error.to_string())),
-            Self::Binding(_) => Err(SidecarError::InvalidState(String::from(
-                "binding executions cannot service claimed JavaScript sync RPC responses",
+            Self::HostFunction(_) => Err(SidecarError::InvalidState(String::from(
+                "host function executions cannot service claimed JavaScript sync RPC responses",
             ))),
         }
     }
@@ -1530,8 +1532,8 @@ impl ActiveExecution {
             Self::Wasm(execution) => execution
                 .respond_claimed_sync_rpc_error(id, code, message)
                 .map_err(|error| SidecarError::Execution(error.to_string())),
-            Self::Binding(_) => Err(SidecarError::InvalidState(String::from(
-                "binding executions cannot service claimed JavaScript sync RPC errors",
+            Self::HostFunction(_) => Err(SidecarError::InvalidState(String::from(
+                "host function executions cannot service claimed JavaScript sync RPC errors",
             ))),
         }
     }
@@ -1541,7 +1543,7 @@ impl ActiveExecution {
             Self::Javascript(execution) => execution.uses_shared_v8_runtime(),
             Self::Python(execution) => execution.uses_shared_v8_runtime(),
             Self::Wasm(execution) => execution.uses_shared_v8_runtime(),
-            Self::Binding(_) => false,
+            Self::HostFunction(_) => false,
         }
     }
 
@@ -1554,7 +1556,7 @@ impl ActiveExecution {
             Self::Javascript(execution) => execution.has_pending_events(),
             Self::Python(execution) => execution.has_pending_events(),
             Self::Wasm(execution) => execution.has_pending_events(),
-            Self::Binding(execution) => {
+            Self::HostFunction(execution) => {
                 !execution
                     .pending_events
                     .lock()
@@ -1594,7 +1596,7 @@ impl ActiveExecution {
             Self::Javascript(execution) => execution.child_pid(),
             Self::Python(execution) => execution.child_pid(),
             Self::Wasm(execution) => execution.child_pid(),
-            Self::Binding(_) => 0,
+            Self::HostFunction(_) => 0,
         }
     }
 
@@ -1607,7 +1609,7 @@ impl ActiveExecution {
             // Their in-process stdin bridges are bypassed in this mode, so
             // duplicating input into those bridges only fills an unread buffer.
             Self::Python(_) | Self::Wasm(_) => Ok(()),
-            Self::Binding(_) => Ok(()),
+            Self::HostFunction(_) => Ok(()),
         }
     }
 
@@ -1622,7 +1624,7 @@ impl ActiveExecution {
             Self::Wasm(execution) => execution
                 .close_stdin()
                 .map_err(|error| SidecarError::Execution(error.to_string())),
-            Self::Binding(_) => Ok(()),
+            Self::HostFunction(_) => Ok(()),
         }
     }
 
@@ -1694,7 +1696,7 @@ impl ActiveExecution {
             Self::Wasm(execution) => execution
                 .terminate()
                 .map_err(|error| SidecarError::Execution(error.to_string())),
-            Self::Binding(_) => Ok(()),
+            Self::HostFunction(_) => Ok(()),
         }
     }
 
@@ -1709,7 +1711,7 @@ impl ActiveExecution {
             Self::Wasm(execution) => execution
                 .pause()
                 .map_err(|error| SidecarError::Execution(error.to_string())),
-            Self::Binding(_) => Ok(()),
+            Self::HostFunction(_) => Ok(()),
         }
     }
 
@@ -1724,7 +1726,7 @@ impl ActiveExecution {
             Self::Wasm(execution) => execution
                 .resume()
                 .map_err(|error| SidecarError::Execution(error.to_string())),
-            Self::Binding(_) => Ok(()),
+            Self::HostFunction(_) => Ok(()),
         }
     }
 
@@ -1893,9 +1895,9 @@ impl ActiveExecution {
                     })
                 })
                 .map_err(|error| SidecarError::Execution(error.to_string())),
-            Self::Binding(execution) => {
+            Self::HostFunction(execution) => {
                 let _ = timeout;
-                poll_binding_process_event(execution)
+                poll_host_function_process_event(execution)
             }
         }
     }
@@ -1966,7 +1968,7 @@ impl ActiveExecution {
                     })
                 })
                 .map_err(|error| SidecarError::Execution(error.to_string())),
-            Self::Binding(execution) => poll_binding_process_event(execution),
+            Self::HostFunction(execution) => poll_host_function_process_event(execution),
         }
     }
 }

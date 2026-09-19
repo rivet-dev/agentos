@@ -18,7 +18,7 @@ const VM_OPTION_KEYS = Object.keys({
 	mounts: true,
 	sandbox: true,
 	scheduleDriver: true,
-	bindings: true,
+	hostFunctions: true,
 	permissions: true,
 	sidecar: true,
 	limits: true,

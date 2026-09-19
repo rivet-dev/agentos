@@ -1,13 +1,13 @@
 import { agentOS, setup } from "@rivet-dev/agentos";
 import { z } from "zod";
 
-// Define a group of bindings (host functions). Each binding has a Zod input
+// Define a collection of host functions. Each function has a Zod input
 // schema and an `execute` handler that runs on the host. The group is exposed to
 // the agent as a CLI command at /bin/agentos-{name} inside the VM.
-const weatherBindings = {
+const weatherFunctions = {
 	name: "weather",
-	description: "Weather data bindings",
-	bindings: {
+	description: "Weather data functions",
+	functions: {
 		forecast: {
 			description: "Get the weather forecast for a city",
 			inputSchema: z.object({
@@ -31,7 +31,7 @@ const weatherBindings = {
 };
 
 const vm = agentOS({
-	bindings: [weatherBindings],
+	hostFunctions: [weatherFunctions],
 });
 
 export const registry = setup({ use: { vm } });

@@ -14,17 +14,17 @@ export {
 	nodeModulesMount,
 } from "./host-dir-mount.js";
 export {
-	binding,
-	MAX_BINDING_DESCRIPTION_LENGTH,
-	bindings,
-	validateBindings,
-} from "./bindings.js";
-export type { Binding, BindingExample, Bindings } from "./bindings.js";
+	hostFunction,
+	MAX_HOST_FUNCTION_DESCRIPTION_LENGTH,
+	hostFunctions,
+	validateHostFunctions,
+} from "./host-functions.js";
+export type { HostFunction, HostFunctionExample, HostFunctions } from "./host-functions.js";
 export {
 	agentOsLimitsSchema,
 	agentOsOptionFieldSchemas,
 	agentOsOptionsSchema,
-	bindingSchema,
+	hostFunctionSchema,
 	mountConfigSchema,
 	nativeMountConfigSchema,
 	parseAgentOsOptions,
@@ -32,7 +32,7 @@ export {
 	rootFilesystemConfigSchema,
 	sharedSidecarConfigSchema,
 	sidecarConfigSchema,
-	bindingsSchema,
+	hostFunctionsSchema,
 	sidecarRuntimeConfigSchema,
 } from "./options-schema.js";
 export { createSnapshotExport } from "./layers.js";
@@ -61,7 +61,7 @@ export type {
 	VirtualStat,
 } from "./runtime.js";
 export {
-	createSandboxBindings,
+	createSandboxHostFunctions,
 	createSandboxFs,
 	getSandboxDisposeHooks,
 	resolveSandboxOptions,

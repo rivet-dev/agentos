@@ -13,8 +13,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use agentos_client::config::{
-    node_modules_mount, AgentOsConfig, AgentOsSidecarConfig, Binding, Bindings, FsPermissions,
-    PackageRef, PatternPermissions, PermissionMode, Permissions,
+    node_modules_mount, AgentOsConfig, AgentOsSidecarConfig, FsPermissions, HostFunction,
+    HostFunctions, PackageRef, PatternPermissions, PermissionMode, Permissions,
 };
 use agentos_client::{AgentOs, OpenSessionInput};
 use agentos_vm_config::VmSqliteDescriptor;
@@ -71,7 +71,7 @@ fn allow_all_permissions() -> Permissions {
         child_process: Some(PatternPermissions::Mode(PermissionMode::Allow)),
         process: Some(PatternPermissions::Mode(PermissionMode::Allow)),
         env: Some(PatternPermissions::Mode(PermissionMode::Allow)),
-        binding: Some(PatternPermissions::Mode(PermissionMode::Allow)),
+        host_function: Some(PatternPermissions::Mode(PermissionMode::Allow)),
     }
 }
 
@@ -108,13 +108,13 @@ async fn launch_pi_session_and_read_prompt(options: OpenSessionInput) -> String 
 
 async fn launch_pi_session_with_tools_and_read_prompt(
     options: OpenSessionInput,
-    bindings: Vec<Bindings>,
+    host_functions: Vec<HostFunctions>,
 ) -> String {
     let module_access_dir =
         std::env::temp_dir().join(format!("agentos-client-os-instructions-{}", Uuid::new_v4()));
     let package_dir = write_mock_pi_adapter(&module_access_dir);
 
-    let prompt = run_session(&module_access_dir, &package_dir, options, bindings).await;
+    let prompt = run_session(&module_access_dir, &package_dir, options, host_functions).await;
 
     std::fs::remove_dir_all(&module_access_dir).ok();
     prompt
@@ -124,7 +124,7 @@ async fn run_session(
     module_access_dir: &Path,
     package_dir: &Path,
     options: OpenSessionInput,
-    bindings: Vec<Bindings>,
+    host_functions: Vec<HostFunctions>,
 ) -> String {
     let os = AgentOs::create(AgentOsConfig {
         database: Some(VmSqliteDescriptor::SqliteFile {
@@ -145,7 +145,7 @@ async fn run_session(
         sidecar: Some(AgentOsSidecarConfig::Shared {
             pool: Some(format!("os-instructions-{}", Uuid::new_v4())),
         }),
-        bindings,
+        host_functions,
         permissions: Some(allow_all_permissions()),
         ..Default::default()
     })
@@ -200,10 +200,10 @@ async fn create_session_injects_assembled_system_prompt() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn create_session_injects_binding_reference_from_client_config() {
+async fn create_session_injects_host_function_reference_from_client_config() {
     if !common::sidecar_available() {
         panic!(
-            "create_session_injects_binding_reference_from_client_config: sidecar binary is not built; build it with `cargo build -p agentos-sidecar`"
+            "create_session_injects_host_function_reference_from_client_config: sidecar binary is not built; build it with `cargo build -p agentos-sidecar`"
         );
     }
     common::ensure_sidecar_env();
@@ -220,10 +220,10 @@ async fn create_session_injects_binding_reference_from_client_config() {
             skip_os_instructions: None,
             additional_instructions: None,
         },
-        vec![Bindings {
+        vec![HostFunctions {
             name: "weather".to_string(),
             description: "Weather lookup tools.".to_string(),
-            bindings: vec![Binding {
+            functions: vec![HostFunction {
                 name: "forecast".to_string(),
                 description: "Get a forecast.".to_string(),
                 input_schema: json!({
@@ -241,7 +241,7 @@ async fn create_session_injects_binding_reference_from_client_config() {
     .await;
 
     assert!(
-        prompt.contains("## Available Host Bindings"),
+        prompt.contains("## Available Host Functions"),
         "client-generated tool reference is injected: {prompt:?}"
     );
     assert!(

@@ -25,7 +25,7 @@ use self::process::*;
 mod process_events;
 #[cfg(test)]
 #[allow(unused_imports)]
-pub(crate) use self::process_events::send_binding_process_event;
+pub(crate) use self::process_events::send_host_function_process_event;
 use self::process_events::*;
 pub(crate) use self::process_events::{
     mark_execute_exit_event_queued, record_execute_exit_event_queue_wait, record_execute_phase,
@@ -93,15 +93,16 @@ pub(crate) use self::python::{
 
 use agentos_vm_config as vm_config;
 
-use crate::bindings::{
-    format_binding_failure_output, is_binding_command, normalized_binding_command_name,
-    resolve_binding_command, BindingCommandResolution,
-};
 use crate::filesystem::{
     handle_python_vfs_rpc_request as filesystem_handle_python_vfs_rpc_request,
     service_javascript_fs_read_sync_rpc, service_javascript_fs_readdir_raw_sync_rpc,
     service_javascript_fs_sync_rpc, service_javascript_module_sync_rpc,
     service_owned_python_filesystem_rpc_request,
+};
+use crate::host_functions::{
+    format_host_function_failure_output, is_host_function_command,
+    normalized_host_function_command_name, resolve_host_function_command,
+    HostFunctionCommandResolution,
 };
 use crate::protocol::{
     CloseStdinRequest, EventFrame, EventPayload, ExecuteRequest, FindBoundUdpRequest,
@@ -131,11 +132,12 @@ use crate::state::{
     ActiveHttp2Session, ActiveHttp2Stream, ActiveMappedHostFd, ActiveProcess,
     ActiveRealIntervalTimer, ActiveSqliteDatabase, ActiveSqliteStatement, ActiveTcpListener,
     ActiveTcpSocket, ActiveTlsState, ActiveUdpSocket, ActiveUnixListener, ActiveUnixSocket,
-    AsyncCompletionSender, BindingExecution, BridgeError, ExitedProcessSnapshot, GuestUnixAddress,
+    AsyncCompletionSender, BridgeError, ExitedProcessSnapshot, GuestUnixAddress,
     GuestUnixAddressRegistry, GuestUnixAddressRegistryEntry, GuestUnixConnectionState,
-    GuestUnixListenerRoute, HostNetTransferDescription, HostNetTransferDescriptionRegistry,
-    Http2BridgeEvent, Http2ResponseSender, Http2RuntimeSnapshot, Http2SessionCommand,
-    Http2SessionSnapshot, Http2SocketSnapshot, JavascriptHttp2LoopbackTarget,
+    GuestUnixListenerRoute, HostFunctionExecution, HostNetTransferDescription,
+    HostNetTransferDescriptionRegistry, Http2BridgeEvent, Http2ResponseSender,
+    Http2RuntimeSnapshot, Http2SessionCommand, Http2SessionSnapshot, Http2SocketSnapshot,
+    JavascriptHttp2LoopbackTarget,
     JavascriptHttpLoopbackTarget, JavascriptSocketFamily, JavascriptSocketPathContext,
     JavascriptTcpListenerEvent, JavascriptTcpSocketEvent, JavascriptTlsBridgeOptions,
     JavascriptTlsClientHello, JavascriptTlsDataValue, JavascriptTlsMaterial, JavascriptUdpFamily,
@@ -152,8 +154,8 @@ use crate::state::{
     ShadowSyncInventoryEntry, SharedBridge, SharedSidecarRequestClient, SidecarKernel,
     SocketDescriptionLease, SocketQueryKind, SocketReadinessRegistration,
     SocketReadinessSubscribers, TlsWritePayload, VmDnsConfig, VmFetchBodyMode, VmFetchStreamState,
-    VmHandle, VmListenPolicy, VmPendingByteBudget, VmState, BINDING_DRIVER_NAME,
-    DEFAULT_JAVASCRIPT_NET_BACKLOG, EXECUTION_DRIVER_NAME, EXECUTION_SANDBOX_ROOT_ENV,
+    VmHandle, VmListenPolicy, VmPendingByteBudget, VmState, DEFAULT_JAVASCRIPT_NET_BACKLOG,
+    EXECUTION_DRIVER_NAME, EXECUTION_SANDBOX_ROOT_ENV, HOST_FUNCTION_DRIVER_NAME,
     JAVASCRIPT_COMMAND, LOOPBACK_EXEMPT_PORTS_ENV, MAPPED_HOST_FD_START, PYTHON_COMMAND,
     VM_LISTEN_ALLOW_PRIVILEGED_METADATA_KEY, WASM_COMMAND, WASM_EXEC_COMMIT_RPC_ENV,
     WASM_STDIO_SYNC_RPC_ENV,
@@ -319,7 +321,7 @@ fn listener_accept_capacity(backlog: Option<u32>, limits: ReactorIoLimits) -> us
         .min(socket_completion_capacity(limits))
 }
 
-const BINDING_HOST_CALL_BLOCKING_JOB_BYTES: usize = 64 * 1024;
+const HOST_FUNCTION_CALL_BLOCKING_JOB_BYTES: usize = 64 * 1024;
 
 pub(crate) const MAX_PER_PROCESS_STATE_HANDLES: usize = 1024;
 const HTTP_LOOPBACK_REQUEST_TIMEOUT_MS_ENV: &str = "AGENTOS_TEST_HTTP_LOOPBACK_REQUEST_TIMEOUT_MS";

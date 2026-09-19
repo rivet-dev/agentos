@@ -2114,7 +2114,7 @@ const agentOsOptionKeys = [
 	"mounts",
 	"sandbox",
 	"scheduleDriver",
-	"bindings",
+	"hostFunctions",
 	"permissions",
 	"sidecar",
 	"limits",

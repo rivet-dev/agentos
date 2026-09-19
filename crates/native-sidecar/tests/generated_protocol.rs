@@ -98,7 +98,7 @@ fn live_bare_codec_matches_generated_request_bytes() {
                 child_process: None,
                 process: None,
                 env: None,
-                binding: None,
+                host_function: None,
             }),
             module_access_cwd: Some("/workspace".to_string()),
             instructions: vec!["keep it generic".to_string()],
@@ -114,7 +114,7 @@ fn live_bare_codec_matches_generated_request_bytes() {
             packages: Vec::new(),
             packages_mount_at: String::new(),
             bootstrap_commands: Vec::new(),
-            binding_shim_commands: Vec::new(),
+            host_function_shim_commands: Vec::new(),
         }),
     ));
     let live_configure_payload =
@@ -274,7 +274,7 @@ fn generated_configure_frame() -> ProtocolFrame {
                 child_process: None,
                 process: None,
                 env: None,
-                binding: None,
+                host_function: None,
             }),
             module_access_cwd: Some("/workspace".to_string()),
             instructions: vec!["keep it generic".to_string()],
@@ -287,7 +287,7 @@ fn generated_configure_frame() -> ProtocolFrame {
             packages: Vec::new(),
             packages_mount_at: String::new(),
             bootstrap_commands: Vec::new(),
-            binding_shim_commands: Vec::new(),
+            host_function_shim_commands: Vec::new(),
         }),
     })
 }

@@ -9,7 +9,7 @@ const vm = client.vm.getOrCreate("my-agent");
 // Write code via the filesystem. The /home/agentos/sandbox mount maps to the sandbox root.
 await vm.filesystem.writeFile("/home/agentos/sandbox/app/index.ts", 'console.log("hello")');
 
-// Run it inside the sandbox through the generated binding command.
+// Run it inside the sandbox through the generated host-function command.
 // The VM path above maps to /app/index.ts at the sandbox root.
 const result = await vm.process.exec(
 	"agentos-sandbox run-command --command node --args /app/index.ts",

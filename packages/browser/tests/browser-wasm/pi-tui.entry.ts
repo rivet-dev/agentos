@@ -469,7 +469,7 @@ async function start(): Promise<PiTuiResult> {
 				childProcess: "allow",
 				process: "allow",
 				env: "allow",
-				binding: "allow",
+				hostFunction: "allow",
 			},
 		} as never;
 		const factory = createBrowserRuntimeDriverFactory({

@@ -1,12 +1,12 @@
-// docs:start bindings
-import { AgentOs, binding, bindings } from "@rivet-dev/agentos-core";
+// docs:start hostFunctions
+import { AgentOs, hostFunction, hostFunctions } from "@rivet-dev/agentos-core";
 import { z } from "zod";
 
-const toolBindings = bindings({
+const toolFunctions = hostFunctions({
 	name: "tools",
 	description: "Curated host capabilities for generated code.",
-	bindings: {
-		weather: binding({
+	functions: {
+		weather: hostFunction({
 			description: "Look up a city's temperature.",
 			inputSchema: z.object({ city: z.string() }),
 			execute: ({ city }) => ({
@@ -17,8 +17,8 @@ const toolBindings = bindings({
 	},
 });
 
-const runtime = await AgentOs.create({ bindings: [toolBindings] });
-// docs:end bindings
+const runtime = await AgentOs.create({ hostFunctions: [toolFunctions] });
+// docs:end hostFunctions
 
 // docs:start generated-code
 // Each binding collection is a global inside the VM, and each binding is an

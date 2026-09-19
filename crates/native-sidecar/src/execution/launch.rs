@@ -98,7 +98,7 @@ fn resolve_execute_request(
         guest_cwd,
         host_cwd,
         wasm_permission_tier: payload.wasm_permission_tier,
-        binding_command: false,
+        host_function_command: false,
     })
 }
 
@@ -115,9 +115,9 @@ fn resolve_command_execution(
     env.extend(extra_env.clone());
     let args = apply_shell_cwd_prefix(command, args.to_vec(), &guest_cwd);
 
-    if is_binding_command(vm, command) {
+    if is_host_function_command(vm, command) {
         let command =
-            normalized_binding_command_name(command).unwrap_or_else(|| command.to_owned());
+            normalized_host_function_command_name(command).unwrap_or_else(|| command.to_owned());
         return Ok(ResolvedChildProcessExecution {
             command: command.clone(),
             process_args: std::iter::once(command.clone())
@@ -130,7 +130,7 @@ fn resolve_command_execution(
             guest_cwd,
             host_cwd,
             wasm_permission_tier: None,
-            binding_command: true,
+            host_function_command: true,
         });
     }
 
@@ -167,7 +167,7 @@ fn resolve_command_execution(
                 guest_cwd,
                 host_cwd,
                 wasm_permission_tier: None,
-                binding_command: false,
+                host_function_command: false,
             });
         }
 
@@ -185,7 +185,7 @@ fn resolve_command_execution(
                 guest_cwd,
                 host_cwd,
                 wasm_permission_tier: None,
-                binding_command: false,
+                host_function_command: false,
             });
         }
 
@@ -206,7 +206,7 @@ fn resolve_command_execution(
                 guest_cwd,
                 host_cwd,
                 wasm_permission_tier: None,
-                binding_command: false,
+                host_function_command: false,
             });
         }
 
@@ -267,7 +267,7 @@ fn resolve_command_execution(
             guest_cwd,
             host_cwd,
             wasm_permission_tier: None,
-            binding_command: false,
+            host_function_command: false,
         });
     }
 
@@ -314,7 +314,7 @@ fn resolve_command_execution(
             guest_cwd,
             host_cwd,
             wasm_permission_tier: None,
-            binding_command: false,
+            host_function_command: false,
         });
     }
 
@@ -362,7 +362,7 @@ fn resolve_command_execution(
             guest_cwd,
             host_cwd,
             wasm_permission_tier: None,
-            binding_command: false,
+            host_function_command: false,
         });
     }
     prepare_guest_runtime_env(
@@ -385,7 +385,7 @@ fn resolve_command_execution(
         guest_cwd,
         host_cwd,
         wasm_permission_tier,
-        binding_command: false,
+        host_function_command: false,
     })
 }
 
@@ -1690,7 +1690,7 @@ pub(super) fn resolve_python_command_execution(
         guest_cwd,
         host_cwd,
         wasm_permission_tier: None,
-        binding_command: false,
+        host_function_command: false,
     })
 }
 
@@ -3523,7 +3523,7 @@ mod kernel_poll_sync_rpc_tests {
     use super::{
         parse_kernel_poll_args, parse_kernel_stdin_read_args,
         service_javascript_kernel_poll_sync_rpc, ActiveExecution, ActiveExecutionEvent,
-        ActiveProcess, BindingExecution, JavascriptSyncRpcRequest, KernelPollFdResponse,
+        ActiveProcess, HostFunctionExecution, JavascriptSyncRpcRequest, KernelPollFdResponse,
         SidecarKernel, EXECUTION_DRIVER_NAME, JAVASCRIPT_COMMAND,
     };
     use agentos_kernel::command_registry::CommandDriver;
@@ -3609,7 +3609,7 @@ mod kernel_poll_sync_rpc_tests {
             crate::limits::VmLimits::default(),
             agentos_runtime::DEFAULT_PROTOCOL_MAX_PROCESS_EVENTS,
             super::GuestRuntimeKind::JavaScript,
-            ActiveExecution::Binding(BindingExecution::default()),
+            ActiveExecution::HostFunction(HostFunctionExecution::default()),
         );
 
         kernel
@@ -3690,7 +3690,7 @@ mod kernel_poll_sync_rpc_tests {
             crate::limits::VmLimits::default(),
             agentos_runtime::DEFAULT_PROTOCOL_MAX_PROCESS_EVENTS,
             super::GuestRuntimeKind::JavaScript,
-            ActiveExecution::Binding(BindingExecution::default()),
+            ActiveExecution::HostFunction(HostFunctionExecution::default()),
         )
         .with_event_notify(Arc::clone(&event_notify));
 
@@ -3789,7 +3789,7 @@ pub(super) fn stage_agentos_package_command(
     resolved: &mut ResolvedChildProcessExecution,
 ) -> Result<(), SidecarError> {
     const WASM_MAGIC: &[u8] = b"\0asm";
-    if resolved.binding_command
+    if resolved.host_function_command
         || !matches!(
             resolved.runtime,
             GuestRuntimeKind::JavaScript | GuestRuntimeKind::WebAssembly
@@ -3846,7 +3846,7 @@ pub(super) fn enforce_resolved_wasm_execute_dac(
     parent_kernel_pid: u32,
     resolved: &ResolvedChildProcessExecution,
 ) -> Result<(), SidecarError> {
-    if resolved.binding_command || resolved.runtime != GuestRuntimeKind::WebAssembly {
+    if resolved.host_function_command || resolved.runtime != GuestRuntimeKind::WebAssembly {
         return Ok(());
     }
     let Some(guest_entrypoint) = resolved.env.get("AGENTOS_GUEST_ENTRYPOINT") else {
@@ -4829,8 +4829,8 @@ where
     let vm_pending_event_bytes_budget = Arc::clone(&vm.pending_event_bytes_budget);
 
     if let Some(command) = payload.command.as_deref() {
-        if let Some(binding_resolution) =
-            resolve_binding_command(&mut vm, command, &payload.args, payload.cwd.as_deref())?
+        if let Some(host_function_resolution) =
+            resolve_host_function_command(&mut vm, command, &payload.args, payload.cwd.as_deref())?
         {
             let guest_cwd = payload
                 .cwd
@@ -4842,7 +4842,7 @@ where
                 .kernel
                 .create_trusted_root_virtual_process(
                     EXECUTION_DRIVER_NAME,
-                    BINDING_DRIVER_NAME,
+                    HOST_FUNCTION_DRIVER_NAME,
                     command,
                     std::iter::once(command.to_owned())
                         .chain(payload.args.iter().cloned())
@@ -4855,20 +4855,23 @@ where
                 )
                 .map_err(kernel_error)?;
             let kernel_pid = kernel_handle.pid();
-            let binding_execution = BindingExecution::with_event_notify(
+            let host_function_execution = HostFunctionExecution::with_event_notify(
                 Arc::clone(&process_event_notify),
                 process_event_capacity,
             )
             .with_vm_pending_event_bytes_budget(Arc::clone(&vm_pending_event_bytes_budget));
-            let cancelled = binding_execution.cancelled.clone();
-            let pending_events = binding_execution.pending_events.clone();
-            let event_overflow_reason = binding_execution.event_overflow_reason.clone();
-            let pending_event_bytes = binding_execution.pending_event_bytes.clone();
-            let pending_event_count_limit = binding_execution.pending_event_count_limit.clone();
-            let pending_event_bytes_limit = binding_execution.pending_event_bytes_limit.clone();
-            let binding_vm_pending_event_bytes_budget =
-                binding_execution.vm_pending_event_bytes_budget.clone();
-            let event_notify = binding_execution.event_notify.clone();
+            let cancelled = host_function_execution.cancelled.clone();
+            let pending_events = host_function_execution.pending_events.clone();
+            let event_overflow_reason = host_function_execution.event_overflow_reason.clone();
+            let pending_event_bytes = host_function_execution.pending_event_bytes.clone();
+            let pending_event_count_limit =
+                host_function_execution.pending_event_count_limit.clone();
+            let pending_event_bytes_limit =
+                host_function_execution.pending_event_bytes_limit.clone();
+            let host_function_vm_pending_event_bytes_budget = host_function_execution
+                .vm_pending_event_bytes_budget
+                .clone();
+            let event_notify = host_function_execution.event_notify.clone();
             let runtime_context = vm.runtime_context.clone();
             let limits = vm.limits.clone();
             let shadow_root = normalize_host_path(&vm.cwd);
@@ -4882,7 +4885,7 @@ where
                     limits,
                     process_event_capacity,
                     GuestRuntimeKind::JavaScript,
-                    ActiveExecution::Binding(binding_execution),
+                    ActiveExecution::HostFunction(host_function_execution),
                 )
                 .with_event_notify(Arc::clone(&process_event_notify))
                 .with_vm_pending_byte_budgets(
@@ -4894,20 +4897,20 @@ where
                 .with_host_cwd(host_cwd),
             );
             bridge.emit_lifecycle(&vm_id, LifecycleState::Busy)?;
-            spawn_binding_process_events(BindingProcessEventRequest {
+            spawn_host_function_process_events(HostFunctionProcessEventRequest {
                 runtime_context,
                 sidecar_requests: sidecar_requests.clone(),
                 connection_id: connection_id.clone(),
                 session_id: session_id.clone(),
                 vm_id: vm_id.clone(),
-                binding_resolution,
+                host_function_resolution,
                 cancelled,
                 pending_events,
                 event_overflow_reason,
                 pending_event_bytes,
                 pending_event_count_limit,
                 pending_event_bytes_limit,
-                vm_pending_event_bytes_budget: binding_vm_pending_event_bytes_budget,
+                vm_pending_event_bytes_budget: host_function_vm_pending_event_bytes_budget,
                 event_notify,
             });
             return Ok(DispatchResult {

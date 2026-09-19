@@ -5,12 +5,12 @@
 pub(crate) mod bootstrap;
 pub(crate) mod bridge;
 // Pure-Rust AES cipher primitives (RustCrypto) replacing the OpenSSL `Crypter`.
-pub(crate) mod bindings;
 pub(crate) mod crypto_cipher;
 pub(crate) mod execution;
 pub mod extension;
 pub(crate) mod extension_services;
 pub(crate) mod filesystem;
+pub(crate) mod host_functions;
 #[allow(dead_code)]
 pub(crate) mod json_rpc;
 pub(crate) mod language_execution;

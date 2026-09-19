@@ -10,7 +10,7 @@ await coderAgent.sessions.open({
 	env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 });
 
-// The coder implements the feature, then calls the `review` binding itself so the
+// The coder implements the feature, then calls the `review` host function itself so the
 // reviewer agent reviews the code. This is true agent-to-agent: the coder drives it.
 await coderAgent.sessions.prompt({
 	content: [

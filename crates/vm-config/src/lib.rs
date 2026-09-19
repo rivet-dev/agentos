@@ -745,7 +745,7 @@ pub struct PermissionsPolicy {
     pub env: Option<PatternPermissionScope>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub binding: Option<PatternPermissionScope>,
+    pub host_function: Option<PatternPermissionScope>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -772,7 +772,7 @@ pub struct VmLimitsConfig {
     pub http2: Option<Http2LimitsConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub bindings: Option<BindingLimitsConfig>,
+    pub host_functions: Option<HostFunctionLimitsConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub plugins: Option<PluginLimitsConfig>,
@@ -1042,14 +1042,14 @@ impl VmLimitsConfig {
                 udp.max_buffered_datagrams,
             )?;
         }
-        if let Some(bindings) = &self.bindings {
+        if let Some(host_functions) = &self.host_functions {
             if let (Some(default), Some(max)) = (
-                bindings.default_binding_timeout_ms,
-                bindings.max_binding_timeout_ms,
+                host_functions.default_timeout_ms,
+                host_functions.max_timeout_ms,
             ) {
                 if default > max {
                     return Err(VmConfigError::new(
-                        "limits.bindings.defaultBindingTimeoutMs must be <= limits.bindings.maxBindingTimeoutMs",
+                        "limits.hostFunctions.defaultTimeoutMs must be <= limits.hostFunctions.maxTimeoutMs",
                     ));
                 }
             }
@@ -1214,15 +1214,15 @@ limits_struct!(Http2LimitsConfig {
     max_pending_event_bytes,
 });
 
-limits_struct!(BindingLimitsConfig {
-    default_binding_timeout_ms,
-    max_binding_timeout_ms,
+limits_struct!(HostFunctionLimitsConfig {
+    default_timeout_ms,
+    max_timeout_ms,
     max_registered_collections,
-    max_registered_bindings_per_vm,
-    max_bindings_per_collection,
-    max_binding_schema_bytes,
-    max_examples_per_binding,
-    max_binding_example_input_bytes,
+    max_registered_functions_per_vm,
+    max_functions_per_collection,
+    max_schema_bytes,
+    max_examples_per_function,
+    max_example_input_bytes,
 });
 
 limits_struct!(PluginLimitsConfig {

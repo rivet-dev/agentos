@@ -871,11 +871,11 @@
 		"wired": "VmLimits.tls.max_buffered_bytes"
 	},
 	{
-		"name": "DEFAULT_BINDING_TIMEOUT_MS",
+		"name": "DEFAULT_HOST_FUNCTION_TIMEOUT_MS",
 		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
-		"rationale": "Default binding invocation timeout.",
-		"wired": "VmLimits.bindings.default_binding_timeout_ms"
+		"rationale": "Default hostFunction invocation timeout.",
+		"wired": "VmLimits.host_functions.default_timeout_ms"
 	},
 	{
 		"name": "DEFAULT_UDP_MAX_BUFFERED_BYTES",
@@ -975,133 +975,133 @@
 		"wired": "VmLimits.plugins.max_persisted_manifest_file_bytes"
 	},
 	{
-		"name": "MAX_REGISTERED_BINDING_COLLECTIONS",
+		"name": "MAX_REGISTERED_HOST_FUNCTION_COLLECTIONS",
 		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
 		"rationale": "BindingCollection registration capacity.",
-		"wired": "VmLimits.bindings.max_registered_collections"
+		"wired": "VmLimits.host_functions.max_registered_collections"
 	},
 	{
-		"name": "MAX_REGISTERED_BINDINGS_PER_VM",
+		"name": "MAX_REGISTERED_HOST_FUNCTIONS_PER_VM",
 		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
-		"rationale": "Binding registration capacity.",
-		"wired": "VmLimits.bindings.max_registered_bindings_per_vm"
+		"rationale": "Host function registration capacity.",
+		"wired": "VmLimits.host_functions.max_registered_functions_per_vm"
 	},
 	{
-		"name": "MAX_BINDING_EXAMPLE_INPUT_BYTES",
+		"name": "MAX_HOST_FUNCTION_EXAMPLE_INPUT_BYTES",
 		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
-		"rationale": "Binding example input size.",
-		"wired": "VmLimits.bindings.max_binding_example_input_bytes"
+		"rationale": "Host function example input size.",
+		"wired": "VmLimits.host_functions.max_example_input_bytes"
 	},
 	{
-		"name": "MAX_EXAMPLES_PER_BINDING",
+		"name": "MAX_EXAMPLES_PER_HOST_FUNCTION",
 		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
-		"rationale": "Binding example count.",
-		"wired": "VmLimits.bindings.max_examples_per_binding"
+		"rationale": "Host function example count.",
+		"wired": "VmLimits.host_functions.max_examples_per_function"
 	},
 	{
-		"name": "MAX_BINDING_SCHEMA_BYTES",
+		"name": "MAX_HOST_FUNCTION_SCHEMA_BYTES",
 		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
-		"rationale": "Binding schema payload size.",
-		"wired": "VmLimits.bindings.max_binding_schema_bytes"
+		"rationale": "Host function schema payload size.",
+		"wired": "VmLimits.host_functions.max_schema_bytes"
 	},
 	{
-		"name": "MAX_BINDING_TIMEOUT_MS",
+		"name": "MAX_HOST_FUNCTION_TIMEOUT_MS",
 		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
-		"rationale": "Max binding invocation timeout.",
-		"wired": "VmLimits.bindings.max_binding_timeout_ms"
+		"rationale": "Max hostFunction invocation timeout.",
+		"wired": "VmLimits.host_functions.max_timeout_ms"
 	},
 	{
-		"name": "MAX_BINDINGS_PER_COLLECTION",
+		"name": "MAX_HOST_FUNCTIONS_PER_COLLECTION",
 		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
-		"rationale": "Bindings-per-binding collection capacity.",
-		"wired": "VmLimits.bindings.max_bindings_per_collection"
+		"rationale": "Host-functions-per-collection capacity.",
+		"wired": "VmLimits.host_functions.max_functions_per_collection"
 	},
 	{
-		"name": "DEFAULT_BINDING_TIMEOUT_MS",
-		"path": "crates/native-sidecar-core/src/bindings.rs",
+		"name": "DEFAULT_HOST_FUNCTION_TIMEOUT_MS",
+		"path": "crates/native-sidecar-core/src/host_functions.rs",
 		"class": "policy",
-		"rationale": "Binding invocation timeout policy.",
-		"wired": "VmLimits.bindings.default_binding_timeout_ms"
+		"rationale": "Host function invocation timeout policy.",
+		"wired": "VmLimits.host_functions.default_timeout_ms"
 	},
 	{
-		"name": "MAX_REGISTERED_BINDING_COLLECTIONS",
-		"path": "crates/native-sidecar-core/src/bindings.rs",
+		"name": "MAX_REGISTERED_HOST_FUNCTION_COLLECTIONS",
+		"path": "crates/native-sidecar-core/src/host_functions.rs",
 		"class": "policy",
-		"rationale": "Binding registration capacity policy.",
-		"wired": "VmLimits.bindings.max_registered_collections"
+		"rationale": "Host function registration capacity policy.",
+		"wired": "VmLimits.host_functions.max_registered_collections"
 	},
 	{
-		"name": "MAX_REGISTERED_BINDINGS_PER_VM",
-		"path": "crates/native-sidecar-core/src/bindings.rs",
+		"name": "MAX_REGISTERED_HOST_FUNCTIONS_PER_VM",
+		"path": "crates/native-sidecar-core/src/host_functions.rs",
 		"class": "policy",
-		"rationale": "Binding registration capacity policy.",
-		"wired": "VmLimits.bindings.max_registered_bindings_per_vm"
+		"rationale": "Host function registration capacity policy.",
+		"wired": "VmLimits.host_functions.max_registered_functions_per_vm"
 	},
 	{
-		"name": "MAX_BINDING_DESCRIPTION_LENGTH",
-		"path": "crates/native-sidecar-core/src/bindings.rs",
+		"name": "MAX_HOST_FUNCTION_DESCRIPTION_LENGTH",
+		"path": "crates/native-sidecar-core/src/host_functions.rs",
 		"class": "policy-deferred",
-		"rationale": "Cross-boundary contract with packages/core/src/bindings.ts; both sides must change together."
+		"rationale": "Cross-boundary contract with packages/core/src/host-functions.ts; both sides must change together."
 	},
 	{
-		"name": "MAX_BINDING_EXAMPLE_INPUT_BYTES",
-		"path": "crates/native-sidecar-core/src/bindings.rs",
+		"name": "MAX_HOST_FUNCTION_EXAMPLE_INPUT_BYTES",
+		"path": "crates/native-sidecar-core/src/host_functions.rs",
 		"class": "policy",
 		"rationale": "Example input size policy.",
-		"wired": "VmLimits.bindings.max_binding_example_input_bytes"
+		"wired": "VmLimits.host_functions.max_example_input_bytes"
 	},
 	{
-		"name": "MAX_EXAMPLES_PER_BINDING",
-		"path": "crates/native-sidecar-core/src/bindings.rs",
+		"name": "MAX_EXAMPLES_PER_HOST_FUNCTION",
+		"path": "crates/native-sidecar-core/src/host_functions.rs",
 		"class": "policy",
 		"rationale": "Example count policy.",
-		"wired": "VmLimits.bindings.max_examples_per_binding"
+		"wired": "VmLimits.host_functions.max_examples_per_function"
 	},
 	{
-		"name": "MAX_BINDING_NAME_LENGTH",
-		"path": "crates/native-sidecar-core/src/bindings.rs",
+		"name": "MAX_HOST_FUNCTION_NAME_LENGTH",
+		"path": "crates/native-sidecar-core/src/host_functions.rs",
 		"class": "policy-deferred",
-		"rationale": "Cross-boundary contract with packages/core/src/bindings.ts; both sides must change together."
+		"rationale": "Cross-boundary contract with packages/core/src/host-functions.ts; both sides must change together."
 	},
 	{
-		"name": "MAX_BINDING_SCHEMA_BYTES",
-		"path": "crates/native-sidecar-core/src/bindings.rs",
+		"name": "MAX_HOST_FUNCTION_SCHEMA_BYTES",
+		"path": "crates/native-sidecar-core/src/host_functions.rs",
 		"class": "policy",
 		"rationale": "Schema payload size policy.",
-		"wired": "VmLimits.bindings.max_binding_schema_bytes"
+		"wired": "VmLimits.host_functions.max_schema_bytes"
 	},
 	{
-		"name": "MAX_BINDING_SCHEMA_DEPTH",
-		"path": "crates/native-sidecar-core/src/bindings.rs",
+		"name": "MAX_HOST_FUNCTION_SCHEMA_DEPTH",
+		"path": "crates/native-sidecar-core/src/host_functions.rs",
 		"class": "invariant",
 		"rationale": "JSON recursion guard for schema validation; parser-safety."
 	},
 	{
-		"name": "MAX_BINDING_TIMEOUT_MS",
-		"path": "crates/native-sidecar-core/src/bindings.rs",
+		"name": "MAX_HOST_FUNCTION_TIMEOUT_MS",
+		"path": "crates/native-sidecar-core/src/host_functions.rs",
 		"class": "policy",
-		"rationale": "Binding invocation timeout policy.",
-		"wired": "VmLimits.bindings.max_binding_timeout_ms"
+		"rationale": "Host function invocation timeout policy.",
+		"wired": "VmLimits.host_functions.max_timeout_ms"
 	},
 	{
-		"name": "MAX_BINDING_COLLECTION_NAME_LENGTH",
-		"path": "crates/native-sidecar-core/src/bindings.rs",
+		"name": "MAX_HOST_FUNCTION_COLLECTION_NAME_LENGTH",
+		"path": "crates/native-sidecar-core/src/host_functions.rs",
 		"class": "policy-deferred",
-		"rationale": "Cross-boundary contract with packages/core/src/bindings.ts; both sides must change together."
+		"rationale": "Cross-boundary contract with packages/core/src/host-functions.ts; both sides must change together."
 	},
 	{
-		"name": "MAX_BINDINGS_PER_COLLECTION",
-		"path": "crates/native-sidecar-core/src/bindings.rs",
+		"name": "MAX_HOST_FUNCTIONS_PER_COLLECTION",
+		"path": "crates/native-sidecar-core/src/host_functions.rs",
 		"class": "policy",
-		"rationale": "Binding registration capacity policy.",
-		"wired": "VmLimits.bindings.max_bindings_per_collection"
+		"rationale": "Host function registration capacity policy.",
+		"wired": "VmLimits.host_functions.max_functions_per_collection"
 	},
 	{
 		"name": "VM_FETCH_BUFFER_LIMIT_BYTES",
@@ -2109,9 +2109,9 @@
 		"rationale": "Internal socket bridge flush granularity preserving configured backpressure."
 	},
 	{
-		"name": "MAX_BINDING_DESCRIPTION_LENGTH",
-		"path": "packages/core/src/bindings.ts",
+		"name": "MAX_HOST_FUNCTION_DESCRIPTION_LENGTH",
+		"path": "packages/core/src/host-functions.ts",
 		"class": "policy-deferred",
-		"rationale": "Cross-boundary contract with native-sidecar-core bindings validation; both sides must change together."
+		"rationale": "Cross-boundary contract with native-sidecar-core host-function validation; both sides must change together."
 	}
 ]

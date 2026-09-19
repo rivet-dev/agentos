@@ -241,7 +241,7 @@ export async function bootstrapVm(relay: KernelWorkerRelay) {
 					lowers: [],
 					bootstrapEntries: agentPackageEntries,
 				},
-				permissions: { fs: "allow", network: "allow", childProcess: "allow", process: "allow", env: "allow", binding: "allow" },
+				permissions: { fs: "allow", network: "allow", childProcess: "allow", process: "allow", env: "allow", hostFunction: "allow" },
 			},
 		},
 	);

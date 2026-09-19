@@ -1,6 +1,6 @@
 ---
 title: "Agent to Agent"
-description: "Bridge two isolated agent VMs: a writer agent calls a reviewer agent through a binding."
+description: "Bridge two isolated agent VMs: a writer agent calls a reviewer agent through a host function."
 category: "Agents"
 order: 5
 ---
@@ -9,7 +9,7 @@ Run two agents in separate isolated VMs and let one delegate to the other. The w
 
 ## How it works
 
-Both agents are independent `agentOS` VMs registered under one `setup`. The writer is given a host-side `review` binding it can invoke by name. When the writer runs `agentos-review submit --path ...`, the binding's `execute` runs on the host, where it reads the file out of the writer's VM, copies it into the reviewer's VM, opens a reviewer session, and prompts the reviewer to review the code. The review text is returned to the writer as the binding's result. The two VMs never touch directly — the host bridge is the only path between them.
+Both agents are independent `agentOS` VMs registered under one `setup`. The writer receives a host-side `review` function it can invoke by name. When the writer runs `agentos-review submit --path ...`, the function's `execute` runs on the host, where it reads the file out of the writer's VM, copies it into the reviewer's VM, opens a reviewer session, and prompts the reviewer to review the code. The review text is returned to the writer as the function's result. The two VMs never touch directly; the host bridge is the only path between them.
 
 ## Run it
 
@@ -19,7 +19,7 @@ ANTHROPIC_API_KEY=sk-... npx tsx server.ts   # start both agent VMs
 ANTHROPIC_API_KEY=sk-... npx tsx client.ts    # drive the writer, which calls the reviewer
 ```
 
-The writer writes an API, submits it through the binding, and the reviewer's feedback comes back inline.
+The writer writes an API, submits it through the host function, and receives the reviewer's feedback inline.
 
 ## Source
 

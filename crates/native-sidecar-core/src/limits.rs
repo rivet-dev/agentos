@@ -19,14 +19,14 @@ use crate::SidecarCoreError;
 /// cap; decoupled here but still validated to stay within the negotiated frame budget.
 pub const DEFAULT_MAX_FETCH_RESPONSE_BYTES: usize = 1024 * 1024;
 
-pub const DEFAULT_BINDING_TIMEOUT_MS: u64 = 30_000;
-pub const MAX_BINDING_TIMEOUT_MS: u64 = 300_000;
-pub const MAX_REGISTERED_BINDING_COLLECTIONS: usize = 64;
-pub const MAX_REGISTERED_BINDINGS_PER_VM: usize = 256;
-pub const MAX_BINDINGS_PER_COLLECTION: usize = 64;
-pub const MAX_BINDING_SCHEMA_BYTES: usize = 16 * 1024;
-pub const MAX_EXAMPLES_PER_BINDING: usize = 16;
-pub const MAX_BINDING_EXAMPLE_INPUT_BYTES: usize = 4 * 1024;
+pub const DEFAULT_HOST_FUNCTION_TIMEOUT_MS: u64 = 30_000;
+pub const MAX_HOST_FUNCTION_TIMEOUT_MS: u64 = 300_000;
+pub const MAX_REGISTERED_HOST_FUNCTION_COLLECTIONS: usize = 64;
+pub const MAX_REGISTERED_HOST_FUNCTIONS_PER_VM: usize = 256;
+pub const MAX_HOST_FUNCTIONS_PER_COLLECTION: usize = 64;
+pub const MAX_HOST_FUNCTION_SCHEMA_BYTES: usize = 16 * 1024;
+pub const MAX_EXAMPLES_PER_HOST_FUNCTION: usize = 16;
+pub const MAX_HOST_FUNCTION_EXAMPLE_INPUT_BYTES: usize = 4 * 1024;
 
 pub const MAX_PERSISTED_MANIFEST_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_PERSISTED_MANIFEST_FILE_BYTES: u64 = 1024 * 1024 * 1024;
@@ -130,7 +130,7 @@ pub struct VmLimits {
     pub udp: UdpLimits,
     pub tls: TlsLimits,
     pub http2: Http2Limits,
-    pub bindings: BindingLimits,
+    pub host_functions: HostFunctionLimits,
     pub plugins: PluginLimits,
     pub acp: AcpLimits,
     pub sqlite: SqliteLimits,
@@ -259,15 +259,15 @@ pub struct Http2Limits {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BindingLimits {
-    pub default_binding_timeout_ms: u64,
-    pub max_binding_timeout_ms: u64,
+pub struct HostFunctionLimits {
+    pub default_timeout_ms: u64,
+    pub max_timeout_ms: u64,
     pub max_registered_collections: usize,
-    pub max_registered_bindings_per_vm: usize,
-    pub max_bindings_per_collection: usize,
-    pub max_binding_schema_bytes: usize,
-    pub max_examples_per_binding: usize,
-    pub max_binding_example_input_bytes: usize,
+    pub max_registered_functions_per_vm: usize,
+    pub max_functions_per_collection: usize,
+    pub max_schema_bytes: usize,
+    pub max_examples_per_function: usize,
+    pub max_example_input_bytes: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -426,17 +426,17 @@ impl Default for Http2Limits {
     }
 }
 
-impl Default for BindingLimits {
+impl Default for HostFunctionLimits {
     fn default() -> Self {
         Self {
-            default_binding_timeout_ms: DEFAULT_BINDING_TIMEOUT_MS,
-            max_binding_timeout_ms: MAX_BINDING_TIMEOUT_MS,
-            max_registered_collections: MAX_REGISTERED_BINDING_COLLECTIONS,
-            max_registered_bindings_per_vm: MAX_REGISTERED_BINDINGS_PER_VM,
-            max_bindings_per_collection: MAX_BINDINGS_PER_COLLECTION,
-            max_binding_schema_bytes: MAX_BINDING_SCHEMA_BYTES,
-            max_examples_per_binding: MAX_EXAMPLES_PER_BINDING,
-            max_binding_example_input_bytes: MAX_BINDING_EXAMPLE_INPUT_BYTES,
+            default_timeout_ms: DEFAULT_HOST_FUNCTION_TIMEOUT_MS,
+            max_timeout_ms: MAX_HOST_FUNCTION_TIMEOUT_MS,
+            max_registered_collections: MAX_REGISTERED_HOST_FUNCTION_COLLECTIONS,
+            max_registered_functions_per_vm: MAX_REGISTERED_HOST_FUNCTIONS_PER_VM,
+            max_functions_per_collection: MAX_HOST_FUNCTIONS_PER_COLLECTION,
+            max_schema_bytes: MAX_HOST_FUNCTION_SCHEMA_BYTES,
+            max_examples_per_function: MAX_EXAMPLES_PER_HOST_FUNCTION,
+            max_example_input_bytes: MAX_HOST_FUNCTION_EXAMPLE_INPUT_BYTES,
         }
     }
 }
@@ -571,46 +571,46 @@ pub fn vm_limits_from_config(
     if let Some(http2) = config.http2.as_ref() {
         apply_http2_limits_config(&mut limits.http2, http2)?;
     }
-    if let Some(bindings) = config.bindings.as_ref() {
+    if let Some(host_functions) = config.host_functions.as_ref() {
         set_u64(
-            &mut limits.bindings.default_binding_timeout_ms,
-            bindings.default_binding_timeout_ms,
-            "limits.bindings.defaultBindingTimeoutMs",
+            &mut limits.host_functions.default_timeout_ms,
+            host_functions.default_timeout_ms,
+            "limits.hostFunctions.defaultTimeoutMs",
         )?;
         set_u64(
-            &mut limits.bindings.max_binding_timeout_ms,
-            bindings.max_binding_timeout_ms,
-            "limits.bindings.maxBindingTimeoutMs",
+            &mut limits.host_functions.max_timeout_ms,
+            host_functions.max_timeout_ms,
+            "limits.hostFunctions.maxTimeoutMs",
         )?;
         set_usize(
-            &mut limits.bindings.max_registered_collections,
-            bindings.max_registered_collections,
-            "limits.bindings.maxRegisteredCollections",
+            &mut limits.host_functions.max_registered_collections,
+            host_functions.max_registered_collections,
+            "limits.hostFunctions.maxRegisteredCollections",
         )?;
         set_usize(
-            &mut limits.bindings.max_registered_bindings_per_vm,
-            bindings.max_registered_bindings_per_vm,
-            "limits.bindings.maxRegisteredBindingsPerVm",
+            &mut limits.host_functions.max_registered_functions_per_vm,
+            host_functions.max_registered_functions_per_vm,
+            "limits.hostFunctions.maxRegisteredFunctionsPerVm",
         )?;
         set_usize(
-            &mut limits.bindings.max_bindings_per_collection,
-            bindings.max_bindings_per_collection,
-            "limits.bindings.maxBindingsPerCollection",
+            &mut limits.host_functions.max_functions_per_collection,
+            host_functions.max_functions_per_collection,
+            "limits.hostFunctions.maxFunctionsPerCollection",
         )?;
         set_usize(
-            &mut limits.bindings.max_binding_schema_bytes,
-            bindings.max_binding_schema_bytes,
-            "limits.bindings.maxBindingSchemaBytes",
+            &mut limits.host_functions.max_schema_bytes,
+            host_functions.max_schema_bytes,
+            "limits.hostFunctions.maxSchemaBytes",
         )?;
         set_usize(
-            &mut limits.bindings.max_examples_per_binding,
-            bindings.max_examples_per_binding,
-            "limits.bindings.maxExamplesPerBinding",
+            &mut limits.host_functions.max_examples_per_function,
+            host_functions.max_examples_per_function,
+            "limits.hostFunctions.maxExamplesPerFunction",
         )?;
         set_usize(
-            &mut limits.bindings.max_binding_example_input_bytes,
-            bindings.max_binding_example_input_bytes,
-            "limits.bindings.maxBindingExampleInputBytes",
+            &mut limits.host_functions.max_example_input_bytes,
+            host_functions.max_example_input_bytes,
+            "limits.hostFunctions.maxExampleInputBytes",
         )?;
     }
     if let Some(plugins) = config.plugins.as_ref() {
@@ -1591,33 +1591,33 @@ pub fn validate_vm_limits(
         limits.acp.max_permission_outcomes_per_vm,
     )?;
 
-    if limits.bindings.default_binding_timeout_ms > limits.bindings.max_binding_timeout_ms {
+    if limits.host_functions.default_timeout_ms > limits.host_functions.max_timeout_ms {
         return Err(SidecarCoreError::new(format!(
-            "limits.bindings.default_binding_timeout_ms ({}) must be <= limits.bindings.max_binding_timeout_ms ({})",
-            limits.bindings.default_binding_timeout_ms, limits.bindings.max_binding_timeout_ms
+            "limits.hostFunctions.defaultTimeoutMs ({}) must be <= limits.hostFunctions.maxTimeoutMs ({})",
+            limits.host_functions.default_timeout_ms, limits.host_functions.max_timeout_ms
         )));
     }
 
     let nonzero_usize: [(&str, usize); 36] = [
         (
-            "limits.bindings.max_registered_collections",
-            limits.bindings.max_registered_collections,
+            "limits.hostFunctions.maxRegisteredCollections",
+            limits.host_functions.max_registered_collections,
         ),
         (
-            "limits.bindings.max_registered_bindings_per_vm",
-            limits.bindings.max_registered_bindings_per_vm,
+            "limits.hostFunctions.maxRegisteredFunctionsPerVm",
+            limits.host_functions.max_registered_functions_per_vm,
         ),
         (
-            "limits.bindings.max_bindings_per_collection",
-            limits.bindings.max_bindings_per_collection,
+            "limits.hostFunctions.maxFunctionsPerCollection",
+            limits.host_functions.max_functions_per_collection,
         ),
         (
-            "limits.bindings.max_binding_schema_bytes",
-            limits.bindings.max_binding_schema_bytes,
+            "limits.hostFunctions.maxSchemaBytes",
+            limits.host_functions.max_schema_bytes,
         ),
         (
-            "limits.bindings.max_binding_example_input_bytes",
-            limits.bindings.max_binding_example_input_bytes,
+            "limits.hostFunctions.maxExampleInputBytes",
+            limits.host_functions.max_example_input_bytes,
         ),
         (
             "limits.plugins.max_persisted_manifest_bytes",

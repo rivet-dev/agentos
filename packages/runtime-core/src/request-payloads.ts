@@ -83,7 +83,7 @@ export type LiveRequestPayload =
 			packages?: LivePackageDescriptor[];
 			packages_mount_at?: string;
 			bootstrap_commands?: string[];
-			binding_shim_commands?: string[];
+			host_function_shim_commands?: string[];
 	  }
 	| {
 			type: "link_package";
@@ -386,7 +386,7 @@ export function toGeneratedRequestPayload(
 					packages: (payload.packages ?? []).map(toGeneratedPackageDescriptor),
 					packagesMountAt: payload.packages_mount_at ?? "",
 					bootstrapCommands: payload.bootstrap_commands ?? [],
-					bindingShimCommands: payload.binding_shim_commands ?? [],
+					hostFunctionShimCommands: payload.host_function_shim_commands ?? [],
 				},
 			};
 		case "link_package":

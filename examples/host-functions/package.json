@@ -1,5 +1,5 @@
 {
-  "name": "@rivet-dev/agentos-example-bindings",
+  "name": "@rivet-dev/agentos-example-host-functions",
   "version": "0.0.1",
   "private": true,
   "type": "module",

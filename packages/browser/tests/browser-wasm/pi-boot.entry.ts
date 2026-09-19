@@ -50,7 +50,7 @@ async function run(bundleUrl: string = PI_BUNDLE_URL): Promise<{ stdout: string;
 	(system as { runtime?: unknown }).runtime = { process: {}, os: {} };
 	const config = {
 		rootFilesystem: { mode: "ephemeral", disableDefaultBaseLayer: false, lowers: [], bootstrapEntries: [] },
-		permissions: { fs: "allow", network: "allow", childProcess: "allow", process: "allow", env: "allow", binding: "allow" },
+		permissions: { fs: "allow", network: "allow", childProcess: "allow", process: "allow", env: "allow", hostFunction: "allow" },
 	} as never;
 
 	const factory = createBrowserRuntimeDriverFactory({

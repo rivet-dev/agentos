@@ -13,7 +13,7 @@
 		"processes": "node --import tsx src/processes.ts",
 		"network": "node --import tsx src/network.ts",
 		"cron": "node --import tsx src/cron.ts",
-		"bindings": "node --import tsx bindings/index.ts",
+		"host-functions": "node --import tsx host-functions/index.ts",
 		"agent-session": "node --import tsx src/agent-session.ts",
 		"sandbox": "node --import tsx src/sandbox.ts",
 		"nodejs": "node --import tsx src/nodejs.ts",

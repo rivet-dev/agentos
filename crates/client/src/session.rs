@@ -37,7 +37,7 @@ use agentos_protocol::ACP_EXTENSION_NAMESPACE;
 use agentos_sidecar_client::wire;
 
 use crate::agent_os::AgentOs;
-use crate::config::Bindings;
+use crate::config::HostFunctions;
 use crate::error::ClientError;
 use crate::stream::Subscription;
 pub type DurableSessionEventStream = Pin<
@@ -562,14 +562,14 @@ fn unexpected_acp_response(operation: &str, response: AcpResponse) -> ClientErro
     ClientError::Sidecar(format!("unexpected response to {operation}: {response:?}"))
 }
 
-fn combine_instructions(additional: Option<&str>, binding_reference: &str) -> Option<String> {
+fn combine_instructions(additional: Option<&str>, host_function_reference: &str) -> Option<String> {
     let mut parts = Vec::new();
     if let Some(additional) = additional.map(str::trim).filter(|value| !value.is_empty()) {
         parts.push(additional.to_string());
     }
-    let binding_reference = binding_reference.trim();
-    if !binding_reference.is_empty() {
-        parts.push(binding_reference.to_string());
+    let host_function_reference = host_function_reference.trim();
+    if !host_function_reference.is_empty() {
+        parts.push(host_function_reference.to_string());
     }
     if parts.is_empty() {
         None
@@ -578,38 +578,38 @@ fn combine_instructions(additional: Option<&str>, binding_reference: &str) -> Op
     }
 }
 
-fn build_binding_reference(bindings: &[Bindings]) -> String {
-    if bindings.is_empty() {
+fn build_host_function_reference(host_functions: &[HostFunctions]) -> String {
+    if host_functions.is_empty() {
         return String::new();
     }
 
     let mut lines = vec![
-        String::from("## Available Host Bindings"),
+        String::from("## Available Host Functions"),
         String::new(),
-        String::from("Run `agentos list-bindings` to see all available bindings."),
+        String::from("Run `agentos list-host-functions` to see all available host functions."),
         String::new(),
     ];
 
-    for collection in bindings {
+    for collection in host_functions {
         lines.push(format!("### {}", collection.name));
         lines.push(String::new());
         lines.push(collection.description.clone());
         lines.push(String::new());
-        for binding in &collection.bindings {
-            let signature = build_binding_flag_signature(&binding.input_schema);
+        for host_function in &collection.functions {
+            let signature = build_host_function_flag_signature(&host_function.input_schema);
             let suffix = if signature.is_empty() {
                 String::new()
             } else {
                 format!(" {signature}")
             };
             lines.push(format!(
-                "- `agentos-{} {}{}` — {}",
-                collection.name, binding.name, suffix, binding.description
+                "- `agentos-{} {}{}` - {}",
+                collection.name, host_function.name, suffix, host_function.description
             ));
         }
         lines.push(String::new());
         lines.push(format!(
-            "Run `agentos-{} <binding> --help` for details.",
+            "Run `agentos-{} <function> --help` for details.",
             collection.name
         ));
         lines.push(String::new());
@@ -618,8 +618,8 @@ fn build_binding_reference(bindings: &[Bindings]) -> String {
     lines.join("\n")
 }
 
-fn build_binding_flag_signature(schema: &Value) -> String {
-    describe_binding_flags(schema)
+fn build_host_function_flag_signature(schema: &Value) -> String {
+    describe_host_function_flags(schema)
         .into_iter()
         .map(|flag| {
             if flag.required {
@@ -632,13 +632,13 @@ fn build_binding_flag_signature(schema: &Value) -> String {
         .join(" ")
 }
 
-struct BindingFlagDescription {
+struct HostFunctionFlagDescription {
     name: String,
     value_type: String,
     required: bool,
 }
 
-fn describe_binding_flags(schema: &Value) -> Vec<BindingFlagDescription> {
+fn describe_host_function_flags(schema: &Value) -> Vec<HostFunctionFlagDescription> {
     let properties = schema
         .get("properties")
         .and_then(Value::as_object)
@@ -658,15 +658,15 @@ fn describe_binding_flags(schema: &Value) -> Vec<BindingFlagDescription> {
 
     properties
         .into_iter()
-        .map(|(field_name, field_schema)| BindingFlagDescription {
+        .map(|(field_name, field_schema)| HostFunctionFlagDescription {
             name: format!("--{}", camel_to_kebab(&field_name)),
-            value_type: describe_binding_flag_type(&field_schema),
+            value_type: describe_host_function_flag_type(&field_schema),
             required: required.contains(&field_name),
         })
         .collect()
 }
 
-fn describe_binding_flag_type(schema: &Value) -> String {
+fn describe_host_function_flag_type(schema: &Value) -> String {
     match json_schema_type(schema) {
         Some("array") => {
             let item_type = schema
@@ -803,10 +803,10 @@ impl AgentOs {
         .filter(|value| !value.is_empty())
         .collect::<Vec<_>>()
         .join("\n\n");
-        let binding_reference = build_binding_reference(&self.config().bindings);
+        let host_function_reference = build_host_function_reference(&self.config().host_functions);
         let additional_instructions = combine_instructions(
             (!caller_instructions.is_empty()).then_some(caller_instructions.as_str()),
-            &binding_reference,
+            &host_function_reference,
         );
         let response = self
             .send_acp_request(AcpRequest::AcpOpenSessionRequest(AcpOpenSessionRequest {

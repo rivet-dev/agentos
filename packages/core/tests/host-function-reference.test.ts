@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { z } from "zod";
-import { AgentOs, binding, bindings } from "../src/index.js";
+import { AgentOs, hostFunction, hostFunctions } from "../src/index.js";
 import {
 	createProjectedAgentPackage,
 	type ProjectedAgentPackage,
@@ -46,11 +46,11 @@ process.stdin.on('data', (chunk) => {
 });
 `;
 
-const mathBindings = bindings({
+const mathFunctions = hostFunctions({
 	name: "math",
 	description: "Math utilities",
-	bindings: {
-		add: binding({
+	functions: {
+		add: hostFunction({
 			description: "Add two numbers",
 			inputSchema: z.object({
 				a: z.number(),
@@ -67,7 +67,7 @@ const mathBindings = bindings({
 	},
 });
 
-describe("binding reference registration", () => {
+describe("hostFunction reference registration", () => {
 	let vm: AgentOs;
 	let agentPackage: ProjectedAgentPackage;
 
@@ -79,7 +79,7 @@ describe("binding reference registration", () => {
 		vm = await AgentOs.create({
 			defaultSoftware: false,
 			software: [agentPackage.software],
-			bindings: [mathBindings],
+			hostFunctions: [mathFunctions],
 		});
 	});
 
@@ -88,13 +88,13 @@ describe("binding reference registration", () => {
 		agentPackage.cleanup();
 	});
 
-	test("stores generated binding reference markdown on the VM", () => {
+	test("stores generated hostFunction reference markdown on the VM", () => {
 		const bindingReference = (vm as unknown as { _bindingReference: string })
 			._bindingReference;
 
-		expect(bindingReference).toContain("## Available Host Bindings");
+		expect(bindingReference).toContain("## Available Host Functions");
 		expect(bindingReference).toContain(
-			"Run `agentos list-bindings` to see all available bindings.",
+			"Run `agentos list-host-functions` to see all available host functions.",
 		);
 		expect(bindingReference).toContain("### math");
 		expect(bindingReference).toContain("Math utilities");
@@ -104,14 +104,14 @@ describe("binding reference registration", () => {
 		expect(bindingReference).toContain("Add 1 and 2");
 	});
 
-	test("openSession injects the registered binding reference into the system prompt", async () => {
-		const sessionId = "binding-reference";
+	test("openSession injects the registered hostFunction reference into the system prompt", async () => {
+		const sessionId = "host-function-reference";
 		await vm.openSession({ sessionId, agent: "pi" });
 		const agentInfo = (await vm.getSessionAgentInfo({ sessionId })) as {
 			systemPrompt?: string;
 		};
 		const prompt = agentInfo.systemPrompt ?? "";
-		expect(prompt).toContain("## Available Host Bindings");
+		expect(prompt).toContain("## Available Host Functions");
 		expect(prompt).toContain("`agentos-math add --a <number> --b <number>`");
 		expect(prompt).toContain("### math");
 

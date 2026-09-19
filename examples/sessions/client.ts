@@ -58,7 +58,7 @@ async function withSystemPrompt() {
 		env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 		// Extra instructions appended to the agent system prompt
 		additionalInstructions: "Always write tests before implementation.",
-		// Suppress the base OS prompt (binding docs are still injected)
+		// Suppress the base OS prompt (host-function docs are still injected).
 		skipOsInstructions: true,
 	});
 	// docs:end system-prompt

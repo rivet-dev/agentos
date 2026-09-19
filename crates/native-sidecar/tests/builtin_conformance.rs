@@ -930,7 +930,7 @@ console.log(JSON.stringify(result));
             child_process: allow_all.child_process,
             process: allow_all.process,
             env: allow_all.env,
-            binding: allow_all.binding,
+            host_function: allow_all.host_function,
         },
         &["http"],
     );

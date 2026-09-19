@@ -18,8 +18,8 @@ import type {
 	CreateVmConfig,
 	VmUserConfig,
 } from "@rivet-dev/agentos-runtime-core/vm-config";
-import { type Binding, type Bindings, validateBindings } from "./bindings.js";
-import { zodToJsonSchema } from "./bindings-zod.js";
+import { type HostFunction, type HostFunctions, validateHostFunctions } from "./host-functions.js";
+import { zodToJsonSchema } from "./host-functions-zod.js";
 import type {
 	JsonRpcNotification,
 	JsonRpcRequest,
@@ -541,8 +541,8 @@ interface AgentOsVmAdmin extends InProcessSidecarVmAdmin {
 	sidecarSession: AuthenticatedSession;
 	sidecarVm: CreatedVm;
 	snapshotRootFilesystem?: (maxBytes: number) => Promise<RootSnapshotExport>;
-	bindings: Bindings[];
-	bindingReference: string;
+	hostFunctions: HostFunctions[];
+	hostFunctionReference: string;
 }
 
 interface AcpTerminalEntry {
@@ -672,16 +672,16 @@ export interface AgentOsLimits {
 	tls?: {
 		maxBufferedBytes?: number;
 	};
-	/** Host binding registration and invocation limits. */
-	bindings?: {
-		defaultBindingTimeoutMs?: number;
-		maxBindingTimeoutMs?: number;
+	/** Host function registration and invocation limits. */
+	hostFunctions?: {
+		defaultTimeoutMs?: number;
+		maxTimeoutMs?: number;
 		maxRegisteredCollections?: number;
-		maxRegisteredBindingsPerVm?: number;
-		maxBindingsPerCollection?: number;
-		maxBindingSchemaBytes?: number;
-		maxExamplesPerBinding?: number;
-		maxBindingExampleInputBytes?: number;
+		maxRegisteredFunctionsPerVm?: number;
+		maxFunctionsPerCollection?: number;
+		maxSchemaBytes?: number;
+		maxExamplesPerFunction?: number;
+		maxExampleInputBytes?: number;
 	};
 	/** Mount plugin manifest size limits. */
 	plugins?: {
@@ -858,12 +858,12 @@ export interface AgentOsOptions {
 	rootFilesystem?: RootFilesystemConfig;
 	/** Filesystems to mount at boot time. */
 	mounts?: MountConfig[];
-	/** External sandbox mounted into this VM with process bindings. */
+	/** External sandbox mounted into this VM with process hostFunctions. */
 	sandbox?: AgentOsSandboxInput;
 	/** Custom schedule driver for cron jobs. Defaults to TimerScheduleDriver. */
 	scheduleDriver?: ScheduleDriver;
-	/** Host-side bindings available to agents inside the VM. */
-	bindings?: Bindings[];
+	/** Host functions available to agents inside the VM. */
+	hostFunctions?: HostFunctions[];
 	/**
 	 * Permission policy for the kernel. By default the guest behaves like a
 	 * sandboxed machine: its virtual filesystem, processes, environment, listeners,
@@ -1703,14 +1703,14 @@ function collectSidecarMountPlan(options: { mounts?: MountConfig[] }): {
 	return { sidecarMounts, hostMounts, hostPathMappings };
 }
 
-function collectBindingBootstrapCommands(bindings: Bindings[]): string[] {
-	if (bindings.length === 0) {
+function collectHostFunctionBootstrapCommands(hostFunctions: HostFunctions[]): string[] {
+	if (hostFunctions.length === 0) {
 		return [];
 	}
 
 	return [
 		"agentos",
-		...bindings.map((bindingCollection) => `agentos-${bindingCollection.name}`),
+		...hostFunctions.map((hostFunctionCollection) => `agentos-${hostFunctionCollection.name}`),
 	];
 }
 
@@ -1736,8 +1736,8 @@ function validationMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
-function bindingToSidecarDefinition(
-	definition: Binding,
+function hostFunctionToSidecarDefinition(
+	definition: HostFunction,
 ): SidecarRegisteredHostCallbackDefinition {
 	return {
 		description: definition.description,
@@ -1758,9 +1758,9 @@ function bindingToSidecarDefinition(
 
 function combineInstructions(
 	additionalInstructions: string | undefined,
-	bindingReference: string,
+	hostFunctionReference: string,
 ): string | null {
-	const parts = [additionalInstructions, bindingReference]
+	const parts = [additionalInstructions, hostFunctionReference]
 		.map((part) => part?.trim())
 		.filter((part): part is string => Boolean(part));
 	if (parts.length === 0) {
@@ -1769,49 +1769,49 @@ function combineInstructions(
 	return parts.join("\n\n");
 }
 
-function buildBindingReference(bindings: Bindings[]): string {
-	if (bindings.length === 0) {
+function buildHostFunctionReference(hostFunctions: HostFunctions[]): string {
+	if (hostFunctions.length === 0) {
 		return "";
 	}
 
 	const lines = [
-		"## Available Host Bindings",
+		"## Available Host Functions",
 		"",
-		"Run `agentos list-bindings` to see all available bindings.",
+		"Run `agentos list-host-functions` to see all available host functions.",
 		"",
 	];
 
-	for (const bindingCollection of bindings) {
-		lines.push(`### ${bindingCollection.name}`);
+	for (const hostFunctionCollection of hostFunctions) {
+		lines.push(`### ${hostFunctionCollection.name}`);
 		lines.push("");
-		lines.push(bindingCollection.description);
+		lines.push(hostFunctionCollection.description);
 		lines.push("");
-		for (const [bindingName, definition] of Object.entries(
-			bindingCollection.bindings,
+		for (const [functionName, definition] of Object.entries(
+			hostFunctionCollection.functions,
 		)) {
-			const sidecarBinding = bindingToSidecarDefinition(definition);
-			const signature = buildBindingFlagSignature(sidecarBinding.inputSchema);
+			const sidecarHostFunction = hostFunctionToSidecarDefinition(definition);
+			const signature = buildHostFunctionFlagSignature(sidecarHostFunction.inputSchema);
 			const suffix = signature.length > 0 ? ` ${signature}` : "";
 			lines.push(
-				`- \`agentos-${bindingCollection.name} ${bindingName}${suffix}\` — ${definition.description}`,
+				`- \`agentos-${hostFunctionCollection.name} ${functionName}${suffix}\` - ${definition.description}`,
 			);
 		}
 		lines.push("");
 
-		const bindingsWithExamples = Object.entries(
-			bindingCollection.bindings,
+		const functionsWithExamples = Object.entries(
+			hostFunctionCollection.functions,
 		).filter(
 			([, definition]) => definition.examples && definition.examples.length > 0,
 		);
-		if (bindingsWithExamples.length > 0) {
+		if (functionsWithExamples.length > 0) {
 			lines.push("**Examples:**");
 			lines.push("");
-			for (const [bindingName, definition] of bindingsWithExamples) {
+			for (const [functionName, definition] of functionsWithExamples) {
 				for (const example of definition.examples ?? []) {
-					const args = inputToBindingFlags(example.input);
+					const args = inputToHostFunctionFlags(example.input);
 					const suffix = args.length > 0 ? ` ${args}` : "";
 					lines.push(
-						`- ${example.description}: \`agentos-${bindingCollection.name} ${bindingName}${suffix}\``,
+						`- ${example.description}: \`agentos-${hostFunctionCollection.name} ${functionName}${suffix}\``,
 					);
 				}
 			}
@@ -1819,7 +1819,7 @@ function buildBindingReference(bindings: Bindings[]): string {
 		}
 
 		lines.push(
-			`Run \`agentos-${bindingCollection.name} <binding> --help\` for details.`,
+			`Run \`agentos-${hostFunctionCollection.name} <function> --help\` for details.`,
 		);
 		lines.push("");
 	}
@@ -1827,8 +1827,8 @@ function buildBindingReference(bindings: Bindings[]): string {
 	return lines.join("\n");
 }
 
-function buildBindingFlagSignature(schema: unknown): string {
-	return describeBindingFlags(schema)
+function buildHostFunctionFlagSignature(schema: unknown): string {
+	return describeHostFunctionFlags(schema)
 		.map((flag) => {
 			if (flag.required) {
 				return `${flag.name} <${flag.type}>`;
@@ -1838,7 +1838,7 @@ function buildBindingFlagSignature(schema: unknown): string {
 		.join(" ");
 }
 
-function describeBindingFlags(
+function describeHostFunctionFlags(
 	schema: unknown,
 ): Array<{ name: string; type: string; required: boolean }> {
 	const schemaObject = asRecord(schema);
@@ -1853,12 +1853,12 @@ function describeBindingFlags(
 
 	return Object.entries(properties).map(([fieldName, fieldSchema]) => ({
 		name: `--${camelToKebab(fieldName)}`,
-		type: describeBindingFlagType(fieldSchema),
+		type: describeHostFunctionFlagType(fieldSchema),
 		required: required.has(fieldName),
 	}));
 }
 
-function describeBindingFlagType(schema: unknown): string {
+function describeHostFunctionFlagType(schema: unknown): string {
 	const schemaObject = asRecord(schema);
 	const type =
 		typeof schemaObject.type === "string" ? schemaObject.type : undefined;
@@ -1882,7 +1882,7 @@ function describeJsonSchemaScalarType(schema: unknown): string {
 	return typeof schemaObject.type === "string" ? schemaObject.type : "string";
 }
 
-function inputToBindingFlags(input: unknown): string {
+function inputToHostFunctionFlags(input: unknown): string {
 	const inputObject = asRecord(input);
 	return Object.entries(inputObject)
 		.flatMap(([key, value]) => {
@@ -1894,14 +1894,14 @@ function inputToBindingFlags(input: unknown): string {
 				return [`--no-${camelToKebab(key)}`];
 			}
 			if (Array.isArray(value)) {
-				return value.map((item) => `${flag} ${bindingCliString(item)}`);
+				return value.map((item) => `${flag} ${hostFunctionCliString(item)}`);
 			}
-			return [`${flag} ${bindingCliString(value)}`];
+			return [`${flag} ${hostFunctionCliString(value)}`];
 		})
 		.join(" ");
 }
 
-function bindingCliString(value: unknown): string {
+function hostFunctionCliString(value: unknown): string {
 	return typeof value === "string" ? value : (JSON.stringify(value) ?? "null");
 }
 
@@ -1949,17 +1949,17 @@ async function handleHostCallback(
 		}
 	}
 
-	const definition = context.bindingMap.get(payload.callback_key);
+	const definition = context.hostFunctionMap.get(payload.callback_key);
 	if (!definition) {
 		return {
 			type: "host_callback_result",
 			invocation_id: payload.invocation_id,
-			error: `Unknown binding "${payload.callback_key}"`,
+			error: `Unknown host function "${payload.callback_key}"`,
 		};
 	}
 
-	// The sidecar checks the `binding` permission scope before it forwards a
-	// binding call, so a call that reaches the host is already permitted.
+	// The sidecar checks the `hostFunction` permission scope before it forwards a
+	// host function call, so a call that reaches the host is already permitted.
 
 	const parsed = definition.inputSchema.safeParse(payload.input);
 	if (!parsed.success) {
@@ -1974,7 +1974,7 @@ async function handleHostCallback(
 		return {
 			type: "host_callback_result",
 			invocation_id: payload.invocation_id,
-			result: await executeBinding(
+			result: await executeHostFunction(
 				definition,
 				payload.callback_key,
 				parsed.data,
@@ -1989,16 +1989,16 @@ async function handleHostCallback(
 	}
 }
 
-function buildBindingMap(bindings: Bindings[]): Map<string, Binding> {
-	const bindingMap = new Map<string, Binding>();
-	for (const bindingCollection of bindings) {
-		for (const [bindingName, definition] of Object.entries(
-			bindingCollection.bindings,
+function buildHostFunctionMap(hostFunctions: HostFunctions[]): Map<string, HostFunction> {
+	const hostFunctionMap = new Map<string, HostFunction>();
+	for (const hostFunctionCollection of hostFunctions) {
+		for (const [functionName, definition] of Object.entries(
+			hostFunctionCollection.functions,
 		)) {
-			bindingMap.set(`${bindingCollection.name}:${bindingName}`, definition);
+			hostFunctionMap.set(`${hostFunctionCollection.name}:${functionName}`, definition);
 		}
 	}
-	return bindingMap;
+	return hostFunctionMap;
 }
 
 interface HostCommandCallbackInput {
@@ -2009,8 +2009,8 @@ interface HostCommandCallbackInput {
 }
 
 interface HostCallbackContext {
-	bindings: Bindings[];
-	bindingMap: ReadonlyMap<string, Binding>;
+	hostFunctions: HostFunctions[];
+	hostFunctionMap: ReadonlyMap<string, HostFunction>;
 	readFile(path: string): Promise<Uint8Array>;
 }
 
@@ -2215,15 +2215,15 @@ async function handleHostCommandCallback(
 	command: HostCommandCallbackInput,
 	context: HostCallbackContext,
 ): Promise<unknown> {
-	const directBindings = context.bindings.find(
-		(bindingCollection) =>
-			`agentos-${bindingCollection.name}` === command.command,
+	const directHostFunctions = context.hostFunctions.find(
+		(hostFunctionCollection) =>
+			`agentos-${hostFunctionCollection.name}` === command.command,
 	);
 	if (command.command === "agentos") {
 		return handleAgentOsRegistryCommand(command, context);
 	}
-	if (directBindings) {
-		return handleAgentOsBindingCommand(command, context, directBindings);
+	if (directHostFunctions) {
+		return handleAgentOsHostFunctionCommand(command, context, directHostFunctions);
 	}
 	throw new Error(`Unknown host callback command "${command.command}"`);
 }
@@ -2232,37 +2232,37 @@ async function handleAgentOsRegistryCommand(
 	command: HostCommandCallbackInput,
 	context: HostCallbackContext,
 ): Promise<unknown> {
-	const [subcommand, collectionName, bindingName, ...bindingArgs] =
+	const [subcommand, collectionName, functionName, ...functionArgs] =
 		command.args;
 	if (!subcommand || isHelpFlag(subcommand)) {
 		return {
 			usage:
-				"agentos <command>: list-bindings [collection], <collection> --help, or <collection> <binding> ...",
+				"agentos <command>: list-host-functions [collection], <collection> --help, or <collection> <function> ...",
 		};
 	}
-	if (subcommand === "list-bindings") {
+	if (subcommand === "list-host-functions" || subcommand === "list-bindings") {
 		return collectionName
-			? describeBindingsPayload(context.bindings, collectionName)
-			: listBindingsPayload(context.bindings);
+			? describeHostFunctionsPayload(context.hostFunctions, collectionName)
+			: listHostFunctionsPayload(context.hostFunctions);
 	}
-	const bindingCollection = context.bindings.find(
+	const hostFunctionCollection = context.hostFunctions.find(
 		(collection) => collection.name === subcommand,
 	);
-	if (!bindingCollection) {
+	if (!hostFunctionCollection) {
 		throw new Error(
-			`No binding collection "${subcommand}". Available: ${bindingsNames(context.bindings)}`,
+			`No host function collection "${subcommand}". Available: ${hostFunctionsNames(context.hostFunctions)}`,
 		);
 	}
 	if (!collectionName || isHelpFlag(collectionName)) {
-		return describeBindingsPayload(context.bindings, subcommand);
+		return describeHostFunctionsPayload(context.hostFunctions, subcommand);
 	}
-	if (bindingName && isHelpFlag(bindingName)) {
-		return describeBindingPayload(bindingCollection, collectionName);
+	if (functionName && isHelpFlag(functionName)) {
+		return describeHostFunctionPayload(hostFunctionCollection, collectionName);
 	}
-	return invokeBinding({
-		bindingCollection,
-		bindingName: collectionName,
-		args: [bindingName, ...bindingArgs].filter(
+	return invokeHostFunction({
+		hostFunctionCollection,
+		functionName: collectionName,
+		args: [functionName, ...functionArgs].filter(
 			(value): value is string => typeof value === "string",
 		),
 		cwd: command.cwd,
@@ -2270,21 +2270,21 @@ async function handleAgentOsRegistryCommand(
 	});
 }
 
-async function handleAgentOsBindingCommand(
+async function handleAgentOsHostFunctionCommand(
 	command: HostCommandCallbackInput,
 	context: HostCallbackContext,
-	bindingCollection: Bindings,
+	hostFunctionCollection: HostFunctions,
 ): Promise<unknown> {
-	const [bindingName, helpOrFirstArg, ...rest] = command.args;
-	if (!bindingName || isHelpFlag(bindingName)) {
-		return describeBindingsPayload(context.bindings, bindingCollection.name);
+	const [functionName, helpOrFirstArg, ...rest] = command.args;
+	if (!functionName || isHelpFlag(functionName)) {
+		return describeHostFunctionsPayload(context.hostFunctions, hostFunctionCollection.name);
 	}
 	if (helpOrFirstArg && isHelpFlag(helpOrFirstArg)) {
-		return describeBindingPayload(bindingCollection, bindingName);
+		return describeHostFunctionPayload(hostFunctionCollection, functionName);
 	}
-	return invokeBinding({
-		bindingCollection,
-		bindingName,
+	return invokeHostFunction({
+		hostFunctionCollection,
+		functionName,
 		args: [helpOrFirstArg, ...rest].filter(
 			(value): value is string => typeof value === "string",
 		),
@@ -2293,39 +2293,39 @@ async function handleAgentOsBindingCommand(
 	});
 }
 
-async function invokeBinding({
-	bindingCollection,
-	bindingName,
+async function invokeHostFunction({
+	hostFunctionCollection,
+	functionName,
 	args,
 	cwd,
 	context,
 }: {
-	bindingCollection: Bindings;
-	bindingName: string;
+	hostFunctionCollection: HostFunctions;
+	functionName: string;
 	args: string[];
 	cwd: string;
 	context: HostCallbackContext;
 }): Promise<unknown> {
-	const definition = bindingCollection.bindings[bindingName];
+	const definition = hostFunctionCollection.functions[functionName];
 	if (!definition) {
 		throw new Error(
-			`No binding "${bindingName}" in collection "${bindingCollection.name}". Available: ${bindingNames(bindingCollection)}`,
+			`No host function "${functionName}" in collection "${hostFunctionCollection.name}". Available: ${hostFunctionNames(hostFunctionCollection)}`,
 		);
 	}
-	// The sidecar checks the `binding` permission scope for registry commands
+	// The sidecar checks the `hostFunction` permission scope for registry commands
 	// before forwarding them, the same as for collection commands.
-	const callbackKey = `${bindingCollection.name}:${bindingName}`;
-	const input = await parseBindingInput(
+	const callbackKey = `${hostFunctionCollection.name}:${functionName}`;
+	const input = await parseHostFunctionInput(
 		definition,
 		args,
 		cwd,
 		context.readFile,
 	);
-	return executeBinding(definition, callbackKey, input);
+	return executeHostFunction(definition, callbackKey, input);
 }
 
-async function executeBinding(
-	definition: Binding,
+async function executeHostFunction(
+	definition: HostFunction,
 	callbackKey: string,
 	input: unknown,
 ): Promise<unknown> {
@@ -2344,7 +2344,7 @@ async function executeBinding(
 				() =>
 					reject(
 						new Error(
-							`Binding "${callbackKey}" timed out after ${definition.timeout}ms`,
+							`Host function "${callbackKey}" timed out after ${definition.timeout}ms`,
 						),
 					),
 				definition.timeout,
@@ -2353,8 +2353,8 @@ async function executeBinding(
 	]);
 }
 
-async function parseBindingInput(
-	definition: Binding,
+async function parseHostFunctionInput(
+	definition: HostFunction,
 	args: string[],
 	cwd: string,
 	readFile: (path: string) => Promise<Uint8Array>,
@@ -2377,13 +2377,13 @@ async function parseBindingInput(
 		const text = new TextDecoder().decode(await readFile(guestPath));
 		return JSON.parse(text);
 	}
-	return parseBindingArgv(
-		bindingToSidecarDefinition(definition).inputSchema,
+	return parseHostFunctionArgv(
+		hostFunctionToSidecarDefinition(definition).inputSchema,
 		args,
 	);
 }
 
-function parseBindingArgv(
+function parseHostFunctionArgv(
 	schema: unknown,
 	argv: string[],
 ): Record<string, unknown> {
@@ -2467,39 +2467,39 @@ function parseBindingArgv(
 	return input;
 }
 
-function listBindingsPayload(bindings: Bindings[]): unknown {
+function listHostFunctionsPayload(hostFunctions: HostFunctions[]): unknown {
 	return {
-		bindings: bindings.map((bindingCollection) => ({
-			name: bindingCollection.name,
-			description: bindingCollection.description,
-			bindings: Object.keys(bindingCollection.bindings),
+		hostFunctions: hostFunctions.map((hostFunctionCollection) => ({
+			name: hostFunctionCollection.name,
+			description: hostFunctionCollection.description,
+			functions: Object.keys(hostFunctionCollection.functions),
 		})),
 	};
 }
 
-function describeBindingsPayload(
-	bindings: Bindings[],
+function describeHostFunctionsPayload(
+	hostFunctions: HostFunctions[],
 	collectionName: string,
 ): unknown {
-	const bindingCollection = bindings.find(
+	const hostFunctionCollection = hostFunctions.find(
 		(collection) => collection.name === collectionName,
 	);
-	if (!bindingCollection) {
+	if (!hostFunctionCollection) {
 		throw new Error(
-			`No binding collection "${collectionName}". Available: ${bindingsNames(bindings)}`,
+			`No host function collection "${collectionName}". Available: ${hostFunctionsNames(hostFunctions)}`,
 		);
 	}
 	return {
-		name: bindingCollection.name,
-		description: bindingCollection.description,
-		bindings: Object.fromEntries(
-			Object.entries(bindingCollection.bindings).map(
-				([bindingName, definition]) => [
-					bindingName,
+		name: hostFunctionCollection.name,
+		description: hostFunctionCollection.description,
+		functions: Object.fromEntries(
+			Object.entries(hostFunctionCollection.functions).map(
+				([functionName, definition]) => [
+					functionName,
 					{
 						description: definition.description,
-						flags: describeBindingFlags(
-							bindingToSidecarDefinition(definition).inputSchema,
+						flags: describeHostFunctionFlags(
+							hostFunctionToSidecarDefinition(definition).inputSchema,
 						),
 					},
 				],
@@ -2508,22 +2508,22 @@ function describeBindingsPayload(
 	};
 }
 
-function describeBindingPayload(
-	bindingCollection: Bindings,
-	bindingName: string,
+function describeHostFunctionPayload(
+	hostFunctionCollection: HostFunctions,
+	functionName: string,
 ): unknown {
-	const definition = bindingCollection.bindings[bindingName];
+	const definition = hostFunctionCollection.functions[functionName];
 	if (!definition) {
 		throw new Error(
-			`No binding "${bindingName}" in collection "${bindingCollection.name}". Available: ${bindingNames(bindingCollection)}`,
+			`No host function "${functionName}" in collection "${hostFunctionCollection.name}". Available: ${hostFunctionNames(hostFunctionCollection)}`,
 		);
 	}
 	return {
-		collection: bindingCollection.name,
-		binding: bindingName,
+		collection: hostFunctionCollection.name,
+		function: functionName,
 		description: definition.description,
-		flags: describeBindingFlags(
-			bindingToSidecarDefinition(definition).inputSchema,
+		flags: describeHostFunctionFlags(
+			hostFunctionToSidecarDefinition(definition).inputSchema,
 		),
 		examples:
 			definition.examples?.map((example) => ({
@@ -2533,12 +2533,14 @@ function describeBindingPayload(
 	};
 }
 
-function bindingsNames(bindings: Bindings[]): string {
-	return bindings.map((bindingCollection) => bindingCollection.name).join(", ");
+function hostFunctionsNames(hostFunctions: HostFunctions[]): string {
+	return hostFunctions
+		.map((hostFunctionCollection) => hostFunctionCollection.name)
+		.join(", ");
 }
 
-function bindingNames(bindingCollection: Bindings): string {
-	return Object.keys(bindingCollection.bindings).join(", ");
+function hostFunctionNames(hostFunctionCollection: HostFunctions): string {
+	return Object.keys(hostFunctionCollection.functions).join(", ");
 }
 
 function isHelpFlag(value: string): boolean {
@@ -2550,34 +2552,34 @@ function jsonSchemaType(schema: unknown): string | undefined {
 	return typeof schemaObject.type === "string" ? schemaObject.type : undefined;
 }
 
-async function registerBindingsOnSidecar(
+async function registerHostFunctionsOnSidecar(
 	client: SidecarProcess,
 	session: AuthenticatedSession,
 	vm: CreatedVm,
-	bindings: Bindings[],
+	hostFunctions: HostFunctions[],
 ): Promise<string> {
-	if (bindings.length === 0) {
+	if (hostFunctions.length === 0) {
 		return "";
 	}
 
-	for (const bindingCollection of bindings) {
+	for (const hostFunctionCollection of hostFunctions) {
 		await client.registerHostCallbacks(session, vm, {
-			name: bindingCollection.name,
-			description: bindingCollection.description,
-			commandAliases: [`agentos-${bindingCollection.name}`],
+			name: hostFunctionCollection.name,
+			description: hostFunctionCollection.description,
+			commandAliases: [`agentos-${hostFunctionCollection.name}`],
 			registryCommandAliases: ["agentos"],
 			callbacks: Object.fromEntries(
-				Object.entries(bindingCollection.bindings).map(
-					([bindingName, definition]) => [
-						bindingName,
-						bindingToSidecarDefinition(definition),
+				Object.entries(hostFunctionCollection.functions).map(
+					([functionName, definition]) => [
+						functionName,
+						hostFunctionToSidecarDefinition(definition),
 					],
 				),
 			),
 		});
 	}
 
-	return buildBindingReference(bindings);
+	return buildHostFunctionReference(hostFunctions);
 }
 
 function executionIdentity(options: {
@@ -2930,8 +2932,8 @@ export class AgentOs {
 	private _acpTerminalCounter = 0;
 	private _softwareRoots: SoftwareRoot[];
 	private _cronManager!: CronManager;
-	private _bindings: Bindings[] = [];
-	private _bindingReference = "";
+	private _hostFunctions: HostFunctions[] = [];
+	private _hostFunctionReference = "";
 	private _hostMounts: HostMountInfo[];
 	private _env: Record<string, string>;
 	private _rootFilesystem: VirtualFileSystem;
@@ -3157,8 +3159,8 @@ export class AgentOs {
 		// sidecar owns agent resolution, agent enumeration, and agent snapshot
 		// bundle loading from the projected package dirs.
 		const localMounts = await resolveCompatLocalMounts(options?.mounts);
-		if (options?.bindings && options.bindings.length > 0) {
-			validateBindings(options.bindings);
+		if (options?.hostFunctions && options.hostFunctions.length > 0) {
+			validateHostFunctions(options.hostFunctions);
 		}
 
 		// Resolve the sidecar handle before starting an external sandbox so option
@@ -3166,24 +3168,24 @@ export class AgentOs {
 		const sidecar = resolveAgentOsSidecar(options?.sidecar);
 		options = await resolveSandboxOptions(options);
 		const sandboxDisposeHooks = getSandboxDisposeHooks(options);
-		const bindings = options.bindings;
+		const hostFunctions = options.hostFunctions;
 
 		const createVmAdmin = async (): Promise<AgentOsVmAdmin> => {
 			// The `/opt/agentos` projection is built by the sidecar from the
 			// forwarded `packages` (it owns the staging dir + read-only mount, and
 			// runtime `linkSoftware` appends to that live dir). The client no longer
 			// stages packages host-side.
-			const bindingBootstrapCommands = collectBindingBootstrapCommands(
-				bindings ?? [],
+			const hostFunctionBootstrapCommands = collectHostFunctionBootstrapCommands(
+				hostFunctions ?? [],
 			);
 			const bootstrapCommands = [
 				...RUNTIME_BOOTSTRAP_COMMANDS,
-				...bindingBootstrapCommands,
+				...hostFunctionBootstrapCommands,
 			];
 			const bootstrapLower = createKernelBootstrapLower(
 				options?.rootFilesystem,
 			);
-			let bindingReference = "";
+			let hostFunctionReference = "";
 			let rootBridge: NativeSidecarKernelProxy | null = null;
 			let kernel: Kernel | null = null;
 			let client: SidecarProcess | null = null;
@@ -3202,7 +3204,7 @@ export class AgentOs {
 				const env: Record<string, string> = getBaseEnvironment();
 				// Guest command paths. The sidecar owns the `/opt/agentos` projection and
 				// reports the exact projected package commands after `configureVm`.
-				// Binding-shim commands are added below.
+				// HostFunction-shim commands are added below.
 				const commandGuestPaths = new Map<string, string>();
 				const { sidecarMounts, hostMounts, hostPathMappings } =
 					collectSidecarMountPlan({
@@ -3284,23 +3286,23 @@ export class AgentOs {
 					loopbackExemptPorts: options?.loopbackExemptPorts,
 					packages: sidecarPackages,
 					packagesMountAt: OPT_AGENTOS_ROOT,
-					bindingShimCommands: bindingBootstrapCommands,
+					hostFunctionShimCommands: hostFunctionBootstrapCommands,
 				});
 				for (const command of configuredVm.projectedCommands) {
 					commandGuestPaths.set(command.name, command.guestPath);
 				}
-				if (bindings && bindings.length > 0) {
-					bindingReference = await registerBindingsOnSidecar(
+				if (hostFunctions && hostFunctions.length > 0) {
+					hostFunctionReference = await registerHostFunctionsOnSidecar(
 						client,
 						session,
 						nativeVm,
-						bindings,
+						hostFunctions,
 					);
 					commandGuestPaths.set("agentos", "/bin/agentos");
-					for (const bindingCollection of bindings) {
+					for (const hostFunctionCollection of hostFunctions) {
 						commandGuestPaths.set(
-							`agentos-${bindingCollection.name}`,
-							`/bin/agentos-${bindingCollection.name}`,
+							`agentos-${hostFunctionCollection.name}`,
+							`/bin/agentos-${hostFunctionCollection.name}`,
 						);
 					}
 				}
@@ -3318,10 +3320,10 @@ export class AgentOs {
 					loopbackExemptPorts: options?.loopbackExemptPorts,
 					// Retained for runtime mount reconfigures: `configure_vm` is
 					// replace-on-write for the whole payload, so post-boot mountFs
-					// must resend the boot packages and binding shims.
+					// must resend the boot packages and host-function shims.
 					packages: sidecarPackages,
 					packagesMountAt: OPT_AGENTOS_ROOT,
-					bindingShimCommands: bindingBootstrapCommands,
+					hostFunctionShimCommands: hostFunctionBootstrapCommands,
 					commandGuestPaths,
 					onDispose: cleanup,
 					// The native process is owned by the AgentOsSidecar handle and
@@ -3362,8 +3364,8 @@ export class AgentOs {
 								),
 							),
 						),
-					bindings: bindings ?? [],
-					bindingReference,
+					hostFunctions: hostFunctions ?? [],
+					hostFunctionReference,
 					async dispose() {
 						if (kernel) {
 							const currentKernel = kernel;
@@ -3422,8 +3424,8 @@ export class AgentOs {
 				options?.onLimitWarning,
 			);
 			vm._sidecarLease = sidecarLease;
-			vm._bindings = vmAdmin.bindings;
-			vm._bindingReference = vmAdmin.bindingReference;
+			vm._hostFunctions = vmAdmin.hostFunctions;
+			vm._hostFunctionReference = vmAdmin.hostFunctionReference;
 			vm._disposeHooks.push(...sandboxDisposeHooks);
 			vm._installSidecarRequestHandler();
 			vm._cronManager = new CronManager(
@@ -5505,7 +5507,7 @@ export class AgentOs {
 				additionalInstructions:
 					combineInstructions(
 						input.additionalInstructions,
-						this._bindingReference,
+						this._hostFunctionReference,
 					) ?? null,
 			},
 		});
@@ -6138,8 +6140,8 @@ export class AgentOs {
 
 	private _installSidecarRequestHandler(): void {
 		const context: HostCallbackContext = {
-			bindings: this._bindings,
-			bindingMap: buildBindingMap(this._bindings),
+			hostFunctions: this._hostFunctions,
+			hostFunctionMap: buildHostFunctionMap(this._hostFunctions),
 			readFile: (path) => this.readFile(path),
 		};
 		this._sidecarClient.setSidecarRequestHandler((request) => {

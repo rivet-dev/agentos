@@ -2358,8 +2358,8 @@ pub(super) fn rollback_unregistered_spawn_child(
     context: &str,
 ) {
     if let Some(execution) = execution {
-        if let ActiveExecution::Binding(binding) = execution {
-            binding.cancelled.store(true, Ordering::Relaxed);
+        if let ActiveExecution::HostFunction(host_function) = execution {
+            host_function.cancelled.store(true, Ordering::Relaxed);
         } else if let Err(error) = execution.terminate() {
             eprintln!(
                 "[agentos] failed to terminate rejected {context} runtime for PID {}: {error}",
@@ -3985,14 +3985,14 @@ where
         let process_args = apply_shell_cwd_prefix(&command, process_args, &guest_cwd);
         // A POSIX spawn (for example from the guest shell) has already resolved
         // PATH to the exact `/bin/agentos-*` stub, so an exact path must still
-        // dispatch to the binding when it names the registered binding command.
-        let resolves_to_registered_binding_command = exact_exec_path
+        // dispatch to the host_function when it names the registered host_function command.
+        let resolves_to_registered_host_function_command = exact_exec_path
             && registered_command_name_for_path(vm, &command)
-                .is_some_and(|name| is_binding_command(vm, &name));
-        if (!exact_exec_path || resolves_to_registered_binding_command)
-            && is_binding_command(vm, &command)
+                .is_some_and(|name| is_host_function_command(vm, &name));
+        if (!exact_exec_path || resolves_to_registered_host_function_command)
+            && is_host_function_command(vm, &command)
         {
-            let command = normalized_binding_command_name(&command).unwrap_or(command);
+            let command = normalized_host_function_command_name(&command).unwrap_or(command);
             return Ok(ResolvedChildProcessExecution {
                 command: command.clone(),
                 process_args: std::iter::once(command.clone())
@@ -4005,7 +4005,7 @@ where
                 guest_cwd,
                 host_cwd,
                 wasm_permission_tier: None,
-                binding_command: true,
+                host_function_command: true,
             });
         }
 
@@ -4056,7 +4056,7 @@ where
                 guest_cwd,
                 host_cwd,
                 wasm_permission_tier: None,
-                binding_command: false,
+                host_function_command: false,
             });
         }
 
@@ -4094,7 +4094,7 @@ where
                     guest_cwd,
                     host_cwd,
                     wasm_permission_tier: None,
-                    binding_command: false,
+                    host_function_command: false,
                 });
             }
 
@@ -4112,7 +4112,7 @@ where
                     guest_cwd,
                     host_cwd,
                     wasm_permission_tier: None,
-                    binding_command: false,
+                    host_function_command: false,
                 });
             }
 
@@ -4133,7 +4133,7 @@ where
                     guest_cwd,
                     host_cwd,
                     wasm_permission_tier: None,
-                    binding_command: false,
+                    host_function_command: false,
                 });
             }
 
@@ -4205,7 +4205,7 @@ where
                 guest_cwd,
                 host_cwd,
                 wasm_permission_tier: None,
-                binding_command: false,
+                host_function_command: false,
             });
         }
 
@@ -4268,7 +4268,7 @@ where
                 guest_cwd,
                 host_cwd,
                 wasm_permission_tier: None,
-                binding_command: false,
+                host_function_command: false,
             });
         }
         prepare_guest_runtime_env(
@@ -4291,7 +4291,7 @@ where
             guest_cwd,
             host_cwd,
             wasm_permission_tier,
-            binding_command: false,
+            host_function_command: false,
         })
     }
 
@@ -4522,7 +4522,7 @@ where
         );
         let resolved = resolved;
         if prepared_host_net_fds.inherited_fd_count() != 0
-            && (resolved.runtime != GuestRuntimeKind::WebAssembly || resolved.binding_command)
+            && (resolved.runtime != GuestRuntimeKind::WebAssembly || resolved.host_function_command)
         {
             return Err(SidecarError::InvalidState(String::from(
                 "ENOTSUP: inherited host-network fds require a WebAssembly child runtime",
@@ -4557,8 +4557,8 @@ where
             kernel_stdin_writer_fd,
             kernel_stdin_reader_fd,
             direct_posix_stdin,
-        ) = if resolved.binding_command {
-            let binding_resolution = resolve_binding_command(
+        ) = if resolved.host_function_command {
+            let host_function_resolution = resolve_host_function_command(
                 &mut vm,
                 &resolved.command,
                 &resolved.execution_args,
@@ -4566,7 +4566,7 @@ where
             )?
             .ok_or_else(|| {
                 SidecarError::InvalidState(format!(
-                    "binding command no longer resolves: {}",
+                    "host function command no longer resolves: {}",
                     resolved.command
                 ))
             })?;
@@ -4574,7 +4574,7 @@ where
                 .kernel
                 .create_virtual_process_with_process_group(
                     EXECUTION_DRIVER_NAME,
-                    BINDING_DRIVER_NAME,
+                    HOST_FUNCTION_DRIVER_NAME,
                     &resolved.command,
                     resolved.process_args.clone(),
                     VirtualProcessOptions {
@@ -4606,40 +4606,43 @@ where
                 &kernel_handle,
                 spawn_attributes.new_session || request.options.detached,
             )?;
-            let binding_execution = BindingExecution::with_event_notify(
+            let host_function_execution = HostFunctionExecution::with_event_notify(
                 Arc::clone(&self.process_event_notify),
                 process_event_capacity,
             )
             .with_vm_pending_event_bytes_budget(Arc::clone(&vm_pending_event_bytes_budget));
-            let cancelled = binding_execution.cancelled.clone();
-            let pending_events = binding_execution.pending_events.clone();
-            let event_overflow_reason = binding_execution.event_overflow_reason.clone();
-            let pending_event_bytes = binding_execution.pending_event_bytes.clone();
-            let pending_event_count_limit = binding_execution.pending_event_count_limit.clone();
-            let pending_event_bytes_limit = binding_execution.pending_event_bytes_limit.clone();
-            let binding_vm_pending_event_bytes_budget =
-                binding_execution.vm_pending_event_bytes_budget.clone();
-            let event_notify = binding_execution.event_notify.clone();
-            spawn_binding_process_events(BindingProcessEventRequest {
+            let cancelled = host_function_execution.cancelled.clone();
+            let pending_events = host_function_execution.pending_events.clone();
+            let event_overflow_reason = host_function_execution.event_overflow_reason.clone();
+            let pending_event_bytes = host_function_execution.pending_event_bytes.clone();
+            let pending_event_count_limit =
+                host_function_execution.pending_event_count_limit.clone();
+            let pending_event_bytes_limit =
+                host_function_execution.pending_event_bytes_limit.clone();
+            let host_function_vm_pending_event_bytes_budget = host_function_execution
+                .vm_pending_event_bytes_budget
+                .clone();
+            let event_notify = host_function_execution.event_notify.clone();
+            spawn_host_function_process_events(HostFunctionProcessEventRequest {
                 runtime_context: vm.runtime_context.clone(),
                 sidecar_requests: sidecar_requests.clone(),
                 connection_id: vm.connection_id.clone(),
                 session_id: vm.session_id.clone(),
                 vm_id: vm_id.to_owned(),
-                binding_resolution,
+                host_function_resolution,
                 cancelled,
                 pending_events,
                 event_overflow_reason,
                 pending_event_bytes,
                 pending_event_count_limit,
                 pending_event_bytes_limit,
-                vm_pending_event_bytes_budget: binding_vm_pending_event_bytes_budget,
+                vm_pending_event_bytes_budget: host_function_vm_pending_event_bytes_budget,
                 event_notify,
             });
             (
                 kernel_pid,
                 kernel_handle,
-                ActiveExecution::Binding(binding_execution),
+                ActiveExecution::HostFunction(host_function_execution),
                 None,
                 0,
                 false,
@@ -5324,7 +5327,7 @@ where
             )?
         };
         apply_child_process_argv0(&mut resolved, request.options.argv0.as_deref());
-        if resolved.binding_command {
+        if resolved.host_function_command {
             return Err(SidecarError::InvalidState(format!(
                 "ENOEXEC: exec format error: {}",
                 request.command
@@ -6124,7 +6127,8 @@ where
             );
             let resolved = resolved;
             if prepared_host_net_fds.inherited_fd_count() != 0
-                && (resolved.runtime != GuestRuntimeKind::WebAssembly || resolved.binding_command)
+                && (resolved.runtime != GuestRuntimeKind::WebAssembly
+                    || resolved.host_function_command)
             {
                 return Err(SidecarError::InvalidState(String::from(
                     "ENOTSUP: inherited host-network fds require a WebAssembly child runtime",
@@ -6154,8 +6158,8 @@ where
             let mut child_path = current_process_path.to_vec();
             child_path.push(child_process_id.as_str());
             let mut pending_kernel_handle: Option<KernelProcessHandle>;
-            let spawned = if resolved.binding_command {
-                let binding_resolution = resolve_binding_command(
+            let spawned = if resolved.host_function_command {
+                let host_function_resolution = resolve_host_function_command(
                     &mut vm,
                     &resolved.command,
                     &resolved.execution_args,
@@ -6163,7 +6167,7 @@ where
                 )?
                 .ok_or_else(|| {
                     SidecarError::InvalidState(format!(
-                        "binding command no longer resolves: {}",
+                        "host function command no longer resolves: {}",
                         resolved.command
                     ))
                 })?;
@@ -6171,7 +6175,7 @@ where
                     .kernel
                     .create_virtual_process_with_process_group(
                         EXECUTION_DRIVER_NAME,
-                        BINDING_DRIVER_NAME,
+                        HOST_FUNCTION_DRIVER_NAME,
                         &resolved.command,
                         resolved.process_args.clone(),
                         VirtualProcessOptions {
@@ -6204,41 +6208,45 @@ where
                     spawn_attributes.new_session || request.options.detached,
                 )?;
                 pending_kernel_handle = Some(kernel_handle.clone());
-                let binding_execution = BindingExecution::with_event_notify(
+                let host_function_execution = HostFunctionExecution::with_event_notify(
                     Arc::clone(&process_event_notify),
                     process_event_capacity,
                 )
                 .with_vm_pending_event_bytes_budget(Arc::clone(&vm_pending_event_bytes_budget));
-                let cancelled = binding_execution.cancelled.clone();
-                let pending_events = binding_execution.pending_events.clone();
-                let event_overflow_reason = binding_execution.event_overflow_reason.clone();
-                let pending_event_bytes = binding_execution.pending_event_bytes.clone();
-                let pending_event_count_limit = binding_execution.pending_event_count_limit.clone();
-                let pending_event_bytes_limit = binding_execution.pending_event_bytes_limit.clone();
-                let binding_vm_pending_event_bytes_budget =
-                    binding_execution.vm_pending_event_bytes_budget.clone();
-                let event_notify = binding_execution.event_notify.clone();
-                spawn_binding_process_events(BindingProcessEventRequest {
+                let cancelled = host_function_execution.cancelled.clone();
+                let pending_events = host_function_execution.pending_events.clone();
+                let event_overflow_reason = host_function_execution.event_overflow_reason.clone();
+                let pending_event_bytes = host_function_execution.pending_event_bytes.clone();
+                let pending_event_count_limit =
+                    host_function_execution.pending_event_count_limit.clone();
+                let pending_event_bytes_limit =
+                    host_function_execution.pending_event_bytes_limit.clone();
+                let host_function_vm_pending_event_bytes_budget = host_function_execution
+                    .vm_pending_event_bytes_budget
+                    .clone();
+                let event_notify = host_function_execution.event_notify.clone();
+                spawn_host_function_process_events(HostFunctionProcessEventRequest {
                     runtime_context: vm.runtime_context.clone(),
                     sidecar_requests: sidecar_requests.clone(),
                     connection_id: vm.connection_id.clone(),
                     session_id: vm.session_id.clone(),
                     vm_id: vm_id.to_owned(),
-                    binding_resolution,
+                    host_function_resolution,
                     cancelled,
                     pending_events,
                     event_overflow_reason,
                     pending_event_bytes,
                     pending_event_count_limit,
                     pending_event_bytes_limit,
-                    vm_pending_event_bytes_budget: binding_vm_pending_event_bytes_budget,
+                    vm_pending_event_bytes_budget: host_function_vm_pending_event_bytes_budget,
                     event_notify,
                 });
                 (
                     kernel_pid,
                     kernel_handle,
-                    Box::pin(async move { Ok(ActiveExecution::Binding(binding_execution)) })
-                        as OwnedChildExecutionStart,
+                    Box::pin(
+                        async move { Ok(ActiveExecution::HostFunction(host_function_execution)) },
+                    ) as OwnedChildExecutionStart,
                     None,
                     0,
                     false,
@@ -10284,7 +10292,11 @@ mod child_event_claim_tests {
         .with_event_notify(event_notify)
     }
 
-    fn binding_process(vm: &mut VmState, label: &str, parent_pid: Option<u32>) -> ActiveProcess {
+    fn host_function_process(
+        vm: &mut VmState,
+        label: &str,
+        parent_pid: Option<u32>,
+    ) -> ActiveProcess {
         let kernel_handle = vm
             .kernel
             .create_virtual_process(
@@ -10306,7 +10318,7 @@ mod child_event_claim_tests {
             vm.limits.clone(),
             agentos_runtime::DEFAULT_PROTOCOL_MAX_PROCESS_EVENTS,
             GuestRuntimeKind::JavaScript,
-            ActiveExecution::Binding(BindingExecution::default()),
+            ActiveExecution::HostFunction(HostFunctionExecution::default()),
         )
     }
 
@@ -10441,10 +10453,13 @@ mod child_event_claim_tests {
         {
             let mut vm = sidecar.vms.get_mut(&vm_id).expect("owned connect VM");
             vm.create_loopback_exempt_ports.insert(port);
-            let mut root = binding_process(&mut vm, "owned connect root", None);
+            let mut root = host_function_process(&mut vm, "owned connect root", None);
             if let Some(child_id) = child_path.first() {
-                let child =
-                    binding_process(&mut vm, "owned connect descendant", Some(root.kernel_pid));
+                let child = host_function_process(
+                    &mut vm,
+                    "owned connect descendant",
+                    Some(root.kernel_pid),
+                );
                 root.child_processes.insert(child_id.clone(), child);
             }
             vm.active_processes.insert(process_id.clone(), root);
@@ -10467,7 +10482,7 @@ mod child_event_claim_tests {
             request,
         )
         .await
-        .expect_err("binding fixture cannot accept a JavaScript RPC response");
+        .expect_err("host_function fixture cannot accept a JavaScript RPC response");
         assert!(error.to_string().contains("JavaScript sync RPC"));
 
         vm.try_read("verify owned deferred connect settlement", |state| {
@@ -10535,7 +10550,7 @@ mod child_event_claim_tests {
                 let process_id = String::from("owned-udp-root");
                 {
                     let mut vm = sidecar.vms.get_mut(&vm_id).expect("owned UDP VM");
-                    let root = binding_process(&mut vm, "owned UDP root", None);
+                    let root = host_function_process(&mut vm, "owned UDP root", None);
                     vm.active_processes.insert(process_id.clone(), root);
                 }
                 let (receiver_id, sender_id, receiver_addr, notify) =
@@ -10595,9 +10610,9 @@ mod child_event_claim_tests {
                         .map_err(kernel_error)
                 })
                 .expect("send kernel UDP test datagram");
-                let error = poll
-                    .await
-                    .expect_err("binding test execution cannot accept JavaScript RPC replies");
+                let error = poll.await.expect_err(
+                    "host_function test execution cannot accept JavaScript RPC replies",
+                );
                 assert!(error.to_string().contains("JavaScript sync RPC"));
                 assert!(vm
                     .try_read("verify restored UDP socket", |vm| vm
@@ -10621,7 +10636,7 @@ mod child_event_claim_tests {
                 let process_id = String::from("owned-udp-cancel-root");
                 {
                     let mut vm = sidecar.vms.get_mut(&vm_id).expect("owned UDP cancel VM");
-                    let root = binding_process(&mut vm, "owned UDP cancel root", None);
+                    let root = host_function_process(&mut vm, "owned UDP cancel root", None);
                     vm.active_processes.insert(process_id.clone(), root);
                 }
                 let (receiver_id, _sender_id, _receiver_addr, notify) =
@@ -10677,9 +10692,12 @@ mod child_event_claim_tests {
                 let child_id = String::from("owned-special-child");
                 {
                     let mut vm = sidecar.vms.get_mut(&vm_id).expect("owned special VM");
-                    let mut root = binding_process(&mut vm, "owned special root", None);
-                    let child =
-                        binding_process(&mut vm, "owned special child", Some(root.kernel_pid));
+                    let mut root = host_function_process(&mut vm, "owned special root", None);
+                    let child = host_function_process(
+                        &mut vm,
+                        "owned special child",
+                        Some(root.kernel_pid),
+                    );
                     root.child_processes.insert(child_id.clone(), child);
                     vm.active_processes.insert(root_id.clone(), root);
                 }
@@ -10727,8 +10745,8 @@ mod child_event_claim_tests {
         let child_id = String::from("unknown-fd-child");
         {
             let mut vm = sidecar.vms.get_mut(&vm_id).expect("unknown fd VM");
-            let mut root = binding_process(&mut vm, "unknown fd root", None);
-            let child = binding_process(&mut vm, "unknown fd child", Some(root.kernel_pid));
+            let mut root = host_function_process(&mut vm, "unknown fd root", None);
+            let child = host_function_process(&mut vm, "unknown fd child", Some(root.kernel_pid));
             root.child_processes.insert(child_id.clone(), child);
             vm.active_processes.insert(root_id.clone(), root);
         }
@@ -10782,17 +10800,17 @@ mod child_event_claim_tests {
                 let descendant_target_child = String::from("descendant-target-child");
                 let (root_target_pid, descendant_target_pid) = {
                     let mut vm = sidecar.vms.get_mut(&vm_id).expect("special cancel VM");
-                    let mut root = binding_process(&mut vm, "special cancel root", None);
+                    let mut root = host_function_process(&mut vm, "special cancel root", None);
                     let root_pid = root.kernel_pid;
                     let root_child =
-                        binding_process(&mut vm, "root target child", Some(root.kernel_pid));
-                    let mut descendant = binding_process(
+                        host_function_process(&mut vm, "root target child", Some(root.kernel_pid));
+                    let mut descendant = host_function_process(
                         &mut vm,
                         "special cancel descendant",
                         Some(root.kernel_pid),
                     );
                     let descendant_pid = descendant.kernel_pid;
-                    let descendant_child = binding_process(
+                    let descendant_child = host_function_process(
                         &mut vm,
                         "descendant target child",
                         Some(descendant.kernel_pid),
@@ -10939,9 +10957,9 @@ mod child_event_claim_tests {
                 let child_id = String::from("owned-poll-child");
                 {
                     let mut vm = sidecar.vms.get_mut(&vm_id).expect("owned poll VM");
-                    let mut root = binding_process(&mut vm, "owned poll root", None);
+                    let mut root = host_function_process(&mut vm, "owned poll root", None);
                     let mut child =
-                        binding_process(&mut vm, "owned poll child", Some(root.kernel_pid));
+                        host_function_process(&mut vm, "owned poll child", Some(root.kernel_pid));
                     child
                         .queue_pending_execution_event(
                             ActiveExecutionEvent::JavascriptSyncRpcRequest(signal_state_rpc(
@@ -11002,13 +11020,13 @@ mod child_event_claim_tests {
                 );
                 {
                     let mut vm = sidecar.vms.get_mut(&vm_id).expect("child claim VM");
-                    let mut root = binding_process(&mut vm, "root", None);
-                    let mut child = binding_process(&mut vm, "child", Some(root.kernel_pid));
+                    let mut root = host_function_process(&mut vm, "root", None);
+                    let mut child = host_function_process(&mut vm, "child", Some(root.kernel_pid));
                     child
                         .queue_pending_execution_event(rpc(1))
                         .expect("queue child RPC");
                     root.child_processes.insert(child_id.clone(), child);
-                    let mut detached = binding_process(&mut vm, "detached", None);
+                    let mut detached = host_function_process(&mut vm, "detached", None);
                     detached
                         .queue_pending_execution_event(rpc(3))
                         .expect("queue detached RPC");
@@ -11115,7 +11133,7 @@ mod child_event_claim_tests {
                 let process_event_notify = Arc::clone(&sidecar.process_event_notify);
                 {
                     let mut vm = sidecar.vms.get_mut(&vm_id).expect("exact-quantum VM");
-                    let mut root = binding_process(&mut vm, "exact-quantum root", None)
+                    let mut root = host_function_process(&mut vm, "exact-quantum root", None)
                         .with_event_notify(Arc::clone(&process_event_notify));
                     root.pending_execution_event_count_limit = EVENT_COUNT;
                     for index in 0..UPDATE_COUNT {
@@ -11219,7 +11237,7 @@ mod child_event_claim_tests {
                 let root_id = String::from("root-capacity");
                 {
                     let mut vm = sidecar.vms.get_mut(&vm_id).expect("child claim VM");
-                    let mut root = binding_process(&mut vm, "root capacity", None);
+                    let mut root = host_function_process(&mut vm, "root capacity", None);
                     for request_id in 1..=3 {
                         root.queue_pending_execution_event(rpc(request_id))
                             .expect("queue root RPC");
@@ -11403,8 +11421,9 @@ console.log("executor-source-two");
                 let child_id = String::from("child-relay-order");
                 let relay_in_flight = {
                     let mut vm = sidecar.vms.get_mut(&vm_id).expect("child relay VM");
-                    let mut root = binding_process(&mut vm, "relay parent", None);
-                    let mut child = binding_process(&mut vm, "relay child", Some(root.kernel_pid));
+                    let mut root = host_function_process(&mut vm, "relay parent", None);
+                    let mut child =
+                        host_function_process(&mut vm, "relay child", Some(root.kernel_pid));
                     child
                         .queue_pending_execution_event(ActiveExecutionEvent::Exited(0))
                         .expect("queue exit behind saturated stdout relay");
@@ -11492,7 +11511,7 @@ console.log("executor-source-two");
                         &mut child_bridge,
                         256,
                     )
-                    .expect_err("binding parent cannot accept the released V8 exit event");
+                    .expect_err("host_function parent cannot accept the released V8 exit event");
                 assert!(
                     error.to_string().contains(
                         "only embedded V8 executions can receive JavaScript stream events"
@@ -11595,7 +11614,7 @@ console.log("relay-ready");
                         .expect("production relay parent")
                         .kernel_pid;
                     let child =
-                        binding_process(&mut vm, "production relay child", Some(parent_pid))
+                        host_function_process(&mut vm, "production relay child", Some(parent_pid))
                             .with_event_notify(Arc::clone(&process_event_notify));
                     let child_pid = child.kernel_pid;
                     let root = vm
@@ -11783,8 +11802,9 @@ console.log("relay-ready");
                 let (sync_tx, sync_rx) = tokio::sync::oneshot::channel();
                 {
                     let mut vm = sidecar.vms.get_mut(&vm_id).expect("child claim VM");
-                    let mut root = binding_process(&mut vm, "root output", None);
-                    let mut child = binding_process(&mut vm, "child output", Some(root.kernel_pid));
+                    let mut root = host_function_process(&mut vm, "root output", None);
+                    let mut child =
+                        host_function_process(&mut vm, "child output", Some(root.kernel_pid));
                     let child_pid = child.kernel_pid;
                     child
                         .queue_pending_execution_event(ActiveExecutionEvent::Stdout(
@@ -11853,7 +11873,7 @@ console.log("relay-ready");
                 {
                     let mut vm = sidecar.vms.get_mut(&vm_id).expect("child claim VM");
                     let mut detached =
-                        binding_process(&mut vm, "detached output", None).with_detached(true);
+                        host_function_process(&mut vm, "detached output", None).with_detached(true);
                     detached
                         .queue_pending_execution_event(ActiveExecutionEvent::Stdout(
                             b"detached-output".to_vec(),
@@ -11898,9 +11918,9 @@ console.log("relay-ready");
                 let failure_child_id = String::from("child-bridge-failure");
                 {
                     let mut vm = sidecar.vms.get_mut(&vm_id).expect("child claim VM");
-                    let mut root = binding_process(&mut vm, "failure root", None);
+                    let mut root = host_function_process(&mut vm, "failure root", None);
                     let mut child =
-                        binding_process(&mut vm, "failure child", Some(root.kernel_pid));
+                        host_function_process(&mut vm, "failure child", Some(root.kernel_pid));
                     child
                         .queue_pending_execution_event(ActiveExecutionEvent::Stdout(vec![1]))
                         .expect("queue failing child bridge event");
@@ -11937,9 +11957,9 @@ console.log("relay-ready");
                 let detached_id = format!("{root_id}/{child_id}");
                 {
                     let mut vm = sidecar.vms.get_mut(&vm_id).expect("child claim VM");
-                    let mut root = binding_process(&mut vm, "root", None);
+                    let mut root = host_function_process(&mut vm, "root", None);
                     let mut child =
-                        binding_process(&mut vm, "detached child", Some(root.kernel_pid))
+                        host_function_process(&mut vm, "detached child", Some(root.kernel_pid))
                             .with_detached(true);
                     child
                         .queue_pending_execution_event(ActiveExecutionEvent::Stdout(

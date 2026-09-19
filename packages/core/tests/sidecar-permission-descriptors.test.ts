@@ -14,7 +14,7 @@ describe("serializePermissionsForSidecar", () => {
 			childProcess: undefined,
 			process: undefined,
 			env: undefined,
-			binding: undefined,
+			hostFunction: undefined,
 		});
 	});
 
@@ -51,7 +51,7 @@ describe("serializePermissionsForSidecar", () => {
 					},
 				],
 			},
-			binding: {
+			hostFunction: {
 				default: "deny",
 				rules: [
 					{
@@ -96,7 +96,7 @@ describe("serializePermissionsForSidecar", () => {
 				],
 			},
 			env: undefined,
-			binding: {
+			hostFunction: {
 				default: "deny",
 				rules: [
 					{
@@ -136,7 +136,7 @@ describe("serializePermissionsForSidecar", () => {
 					},
 				],
 			},
-			binding: undefined,
+			hostFunction: undefined,
 		});
 	});
 
@@ -186,7 +186,7 @@ describe("serializePermissionsForSidecar", () => {
 			childProcess: undefined,
 			process: undefined,
 			env: undefined,
-			binding: undefined,
+			hostFunction: undefined,
 		});
 	});
 });

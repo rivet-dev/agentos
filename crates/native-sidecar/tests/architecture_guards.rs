@@ -1019,21 +1019,22 @@ fn generic_request_preparation_defers_business_handlers() {
         "connection/session requests must stage bounded central membership mutations"
     );
 
-    let bindings = std::fs::read_to_string(root.join("crates/native-sidecar/src/bindings.rs"))
-        .expect("read host callback registration source");
-    let start = bindings
+    let host_functions =
+        std::fs::read_to_string(root.join("crates/native-sidecar/src/host_functions.rs"))
+            .expect("read host callback registration source");
+    let start = host_functions
         .find("pub(crate) fn register_host_callbacks")
         .expect("host callback preparation function");
-    let tail = &bindings[start..];
+    let tail = &host_functions[start..];
     let future_boundary = tail
         .find("async move {")
         .expect("owned host callback future boundary");
     let inline_preparation = &tail[..future_boundary];
     for forbidden in [
-        "validate_bindings_registration(",
+        "validate_host_functions_registration(",
         "set_vm_permissions(",
         "try_command(",
-        "refresh_binding_registry(",
+        "refresh_host_function_registry(",
     ] {
         assert!(
             !inline_preparation.contains(forbidden),

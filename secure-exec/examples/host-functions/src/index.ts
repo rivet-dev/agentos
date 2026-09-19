@@ -1,14 +1,14 @@
-import { binding, bindings, evaluate } from "secure-exec";
+import { evaluate, hostFunction, hostFunctions } from "secure-exec";
 import { z } from "zod";
 
 // docs:start define
 // Host functions run in your process, with your credentials. The guest only
 // sees their inputs and outputs.
-const orders = bindings({
+const orders = hostFunctions({
 	name: "orders",
 	description: "Look up customer orders.",
-	bindings: {
-		list: binding({
+	functions: {
+		list: hostFunction({
 			description: "List a customer's orders.",
 			inputSchema: z.object({ customer: z.string() }),
 			execute: ({ customer }) => [
@@ -29,7 +29,7 @@ const generated = `(async () => {
 })()`;
 
 const total = await evaluate<number>(generated, {
-	bindings: [orders],
+	hostFunctions: [orders],
 	inputs: { customer: "customer_123" },
 	timeoutMs: 5_000,
 	output: { capture: "stderr" },

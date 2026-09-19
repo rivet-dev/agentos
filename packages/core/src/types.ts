@@ -85,7 +85,7 @@ export type {
 	PackageRef,
 	SoftwarePackageRef,
 } from "./agentos-package.js";
-export type { Binding, BindingExample, Bindings } from "./bindings.js";
+export type { HostFunction, HostFunctionExample, HostFunctions } from "./host-functions.js";
 export type {
 	CronAction,
 	CronActionInfo,

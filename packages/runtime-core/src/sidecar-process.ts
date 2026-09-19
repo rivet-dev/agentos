@@ -292,7 +292,7 @@ export interface SidecarPermissionsPolicy {
 	childProcess?: SidecarPermissionScope<SidecarPatternPermissionRule>;
 	process?: SidecarPermissionScope<SidecarPatternPermissionRule>;
 	env?: SidecarPermissionScope<SidecarPatternPermissionRule>;
-	binding?: SidecarPermissionScope<SidecarPatternPermissionRule>;
+	hostFunction?: SidecarPermissionScope<SidecarPatternPermissionRule>;
 }
 
 type WirePermissionsPolicy = LivePermissionsPolicy;
@@ -506,7 +506,7 @@ export class SidecarProcess {
 			packages?: SidecarPackageDescriptor[];
 			packagesMountAt?: string;
 			bootstrapCommands?: string[];
-			bindingShimCommands?: string[];
+			hostFunctionShimCommands?: string[];
 		},
 	): Promise<SidecarVmConfiguredResponse> {
 		const response = await this.sendRequest({
@@ -535,7 +535,7 @@ export class SidecarProcess {
 					? { packages_mount_at: options.packagesMountAt }
 					: {}),
 				bootstrap_commands: options.bootstrapCommands ?? [],
-				binding_shim_commands: options.bindingShimCommands ?? [],
+				host_function_shim_commands: options.hostFunctionShimCommands ?? [],
 			},
 		});
 		if (response.payload.type !== "vm_configured") {
@@ -1913,7 +1913,7 @@ function toWirePermissionsPolicy(
 		child_process: policy.childProcess,
 		process: policy.process,
 		env: policy.env,
-		binding: policy.binding,
+		host_function: policy.hostFunction,
 	};
 }
 

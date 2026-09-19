@@ -217,7 +217,7 @@ packages: both pass in the catalog.
 | Python/VFS sharing | `open` | `/workspace/new.txt` is absent after Python writes it. | Repair Python shadow-to-kernel write synchronization. |
 | JS bridge reads | `open` | Missing stat payload becomes `EIO`; bounded reads expect `EINVAL`. | Return typed stat/read errors and payloads from the bridge. |
 | Limits inventory | `open` | 19 constants are unclassified. | Add typed configuration or documented invariant/deferred inventory entries. |
-| Binding registry bound | `open` | Capacity rejection uses untyped `invalid_state`. | Return a structured resource-limit error naming the limit and override path. |
+| Host-function registry bound | `open` | Capacity rejection uses untyped `invalid_state`. | Return a structured resource-limit error naming the limit and override path. |
 | Native stdio termination | `open` | Closing a required response/control ingress stream does not fail the sidecar. | Enforce the three-lane terminal contract. |
 | Node server close | `open` | Listener teardown enters close drain gate in the wrong order. | Complete listener teardown asynchronously before drain completion. |
 | ObjectS3 tests | `deferred` | Three active tests expect unsupported xattrs, special inodes, and atime behavior. | Either implement the dormant backend or consistently ignore it with the existing dormant-ObjectS3 reason. |

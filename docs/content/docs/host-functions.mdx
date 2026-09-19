@@ -1,0 +1,114 @@
+---
+title: "Custom Host Functions"
+description: "Expose trusted host functions to agentOS coding agents as typed CLI commands, with scoped input, output, and execution behavior."
+skill: true
+---
+
+Expose your host JavaScript functions (defined with Zod input schemas) to agents as auto-generated CLI commands installed at `/bin/agentos-{name}` inside the VM, injected into the agent's [system prompt](/agentos/docs/system-prompt) and callable inside scripts for code-mode token savings.
+
+## Getting started
+
+Define a host-function collection with Zod input schemas and pass it to `agentOS({ hostFunctions })`. Each function becomes a CLI subcommand inside the VM.
+
+<CodeGroup>
+<CodeSnippet file="examples/host-functions/server.ts" />
+
+<CodeSnippet file="examples/host-functions/client.ts" />
+</CodeGroup>
+
+Each host function can override its `timeout` in milliseconds. The default is 30 seconds and can be changed with `limits.hostFunctions.defaultTimeoutMs`.
+
+### Zod to CLI mapping
+
+Zod schema fields are converted to CLI flags automatically. Field names are converted from camelCase to kebab-case.
+
+| Zod type | CLI syntax | Example |
+|---|---|---|
+| `z.string()` | `--name value` | `--path /tmp/out.png` |
+| `z.number()` | `--name 42` | `--limit 5` |
+| `z.boolean()` | `--flag` / `--no-flag` | `--full-page` |
+| `z.enum(["a","b"])` | `--name a` | `--format json` |
+| `z.array(z.string())` | `--name a --name b` | `--tags foo --tags bar` |
+
+Optional fields (via `.optional()`) become optional flags. Required fields are enforced at validation time. Use `.describe()` on Zod fields to generate useful `--help` output.
+
+### What the agent sees
+
+When host functions are registered, CLI shims are installed at `/bin/agentos-{name}` inside the VM and the function list is injected into the agent's [system prompt](/agentos/docs/system-prompt), so keep descriptions concise to save tokens.
+
+The agent interacts with host functions as shell commands:
+
+```bash
+# List all available host-function collections
+agentos list-host-functions
+
+# List the host functions in a specific collection
+agentos list-host-functions weather
+
+# Get help for a host function
+agentos-weather forecast --help
+
+# Call a host function with flags
+agentos-weather forecast --city Paris --days 3
+
+# Call a host function with inline JSON
+agentos-weather forecast --json '{"city":"Paris","days":3}'
+
+# Call a host function with JSON from a file
+agentos-weather forecast --json-file /tmp/input.json
+```
+
+On success, the host function exits `0` and writes a JSON envelope to stdout:
+
+```json
+{"ok":true,"result":{"temperature":22,"condition":"sunny"}}
+```
+
+On failure (validation or execution error), the host function exits non-zero and writes the error message to stderr:
+
+```text
+Missing required flag: --city
+```
+
+## Call host functions from JavaScript
+
+Inline JavaScript and TypeScript get each collection as a frozen global, and each
+host function as an async function, so generated code calls your tools like any
+other API. Names become camelCase identifiers: `agentos-order-store list-orders`
+is `orderStore.listOrders(input)`.
+
+<CodeSnippet file="examples/js-code-mode/src/index.ts" region="generated-code" />
+
+The function resolves to the host function's result and rejects on a schema
+violation, a thrown error, or a timeout. A collection whose name is already a
+global, such as `process`, is not defined, and a warning is written to stderr.
+The `hostFunction` permission scope applies exactly as it does to the commands.
+
+## Host functions and MCP servers
+
+agentOS supports two ways to give agents access to external functionality: **host functions** and session-scoped **MCP servers**. Both work, but they have different tradeoffs.
+
+|  | Host functions | MCP servers |
+|---|---|---|
+| **How it works** | Call JavaScript functions on the host directly | Connect to a standard MCP server |
+| **Authentication** | None required. Calls go directly to the host process. | Requires custom auth configuration per server |
+| **Code mode** | Built in. Host functions are exposed as CLI commands, so agents can call them inside scripts for up to 80% token reduction. | Requires extra work to make code mode work out of the box |
+| **Latency** | Near-zero. Bound directly to the host process. | Extra network hop to reach the MCP server |
+| **Setup** | Define host functions in your actor code with Zod schemas | Configure any standard MCP server |
+
+Use host functions when you want to expose your own JavaScript functions to agents. Use MCP servers when you want to connect to existing third-party services. See [Sessions](/agentos/docs/sessions#open-a-session) for MCP server configuration.
+
+## Security
+
+Host-function calls from the agent invoke your `execute()` functions on the host. Your functions run with full access to the host environment, so you can call databases, APIs, and services directly without proxying credentials into the VM. The agent never sees the credentials, only the function's input/output contract.
+
+Host functions run on the host with full access to the host environment, so do not expose functions that could compromise the host without appropriate safeguards.
+
+## Embedded API
+
+Pass the same host-function collections to `AgentOs.create()`. The function contract and
+generated VM commands are unchanged.
+
+<CodeSnippet file="examples/embedded/host-functions.ts" title="hostFunctions.ts" />
+
+Read more in the [embedded API quickstart](/agentos/docs/quickstart-embedded).

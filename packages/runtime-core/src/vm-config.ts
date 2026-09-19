@@ -28,7 +28,7 @@ export type { RootFilesystemEntryEncoding } from "./generated/RootFilesystemEntr
 export type { RootFilesystemEntryKind } from "./generated/RootFilesystemEntryKind.js";
 export type { RootFilesystemLowerDescriptor } from "./generated/RootFilesystemLowerDescriptor.js";
 export type { RootFilesystemMode } from "./generated/RootFilesystemMode.js";
-export type { BindingLimitsConfig } from "./generated/BindingLimitsConfig.js";
+export type { HostFunctionLimitsConfig } from "./generated/HostFunctionLimitsConfig.js";
 export type { VmDnsConfig } from "./generated/VmDnsConfig.js";
 export type { VmLimitsConfig } from "./generated/VmLimitsConfig.js";
 export type { VmListenPolicyConfig } from "./generated/VmListenPolicyConfig.js";

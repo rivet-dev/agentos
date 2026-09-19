@@ -2,4 +2,4 @@
 import type { FsPermissionScope } from "./FsPermissionScope.js";
 import type { PatternPermissionScope } from "./PatternPermissionScope.js";
 
-export type PermissionsPolicy = { fs?: FsPermissionScope, network?: PatternPermissionScope, childProcess?: PatternPermissionScope, process?: PatternPermissionScope, env?: PatternPermissionScope, binding?: PatternPermissionScope, };
+export type PermissionsPolicy = { fs?: FsPermissionScope, network?: PatternPermissionScope, childProcess?: PatternPermissionScope, process?: PatternPermissionScope, env?: PatternPermissionScope, hostFunction?: PatternPermissionScope, };

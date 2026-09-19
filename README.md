@@ -14,14 +14,14 @@
 ## Why agentOS
 
 - **Runs inside your process**: No microVMs to boot, no containers to pull, no nested virtualization. Warm VM creation takes single-digit milliseconds and each VM costs tens of megabytes.
-- **Embeds in your backend**: Agents call your functions directly via [bindings](https://rivet.dev/agentos/docs/bindings) — ordinary JavaScript calls, not another network service. Credentials stay on the host; agents see only inputs and outputs.
+- **Embeds in your backend**: Agents call your functions directly via [host functions](https://rivet.dev/agentos/docs/host-functions), using ordinary JavaScript calls instead of another network service. Credentials stay on the host; agents see only inputs and outputs.
 - **Granular security**: [Permissions](https://rivet.dev/agentos/docs/permissions) gate filesystem, network, process, and environment access, with outward-facing capabilities like network egress denied by default. Guest JavaScript runs in V8 isolates and compiled tools run as WebAssembly, all inside one compact runtime.
 - **Deploy anywhere**: Just an npm package. Run locally with `npx rivetkit dev`, then deploy to [Rivet Cloud](https://rivet.dev/agentos/docs/deployment) for managed infrastructure or self-host on your own.
 - **Open source**: Apache 2.0 licensed.
 
 ### agentOS vs Sandbox
 
-agentOS is a lightweight VM that runs inside your process. Sandboxes are full Linux environments. agentOS integrates agents into your backend with [bindings](https://rivet.dev/agentos/docs/bindings) and granular permissions. Sandboxes give you a full OS for browsers, native binaries, and dev servers.
+agentOS is a lightweight VM that runs inside your process. Sandboxes are full Linux environments. agentOS integrates agents into your backend with [host functions](https://rivet.dev/agentos/docs/host-functions) and granular permissions. Sandboxes give you a full OS for browsers, native binaries, and dev servers.
 
 You don't have to choose: agentOS works with sandboxes through [sandbox mounting](https://rivet.dev/agentos/docs/sandbox), spinning up a full sandbox on demand and mounting the sandbox's file system when the workload needs it.
 
@@ -167,14 +167,14 @@ Simple shell command:
 ### Infrastructure
 - **[Execution](https://rivet.dev/agentos/docs/processes)**: Run Bash, Node.js, Python, and registry software inside the VM with real processes, subprocesses, shells, and in-VM servers
 - **[Mount external storage as a filesystem](https://rivet.dev/agentos/docs/filesystem)**: S3-compatible storage, Google Drive, host directories, or in-memory mounts, attached at boot or dynamically at runtime
-- **[Bindings](https://rivet.dev/agentos/docs/bindings)**: Define JavaScript functions that agents call as CLI commands inside the VM
+- **[Host functions](https://rivet.dev/agentos/docs/host-functions)**: Define JavaScript functions that agents call as CLI commands inside the VM
 - **[Cron](https://rivet.dev/agentos/docs/cron) and [webhooks](https://rivet.dev/agentos/docs/webhooks)**: Schedule tasks with built-in cron jobs, and trigger agents from external webhooks with your own HTTP server
 - **[Browser](https://rivet.dev/agentos/docs/browser)** (beta): Give agents a cloud browser via Browserbase
 - **[Sandbox mounting](https://rivet.dev/agentos/docs/sandbox)** (beta): Pair with full sandboxes (E2B, Daytona, etc.) for heavy workloads like browsers or native compilation
 
 ### Orchestration
 - **[Multiplayer](https://rivet.dev/agentos/docs/multiplayer)**: Multiple clients observe and collaborate with the same agent in real time
-- **[Agent-to-agent](https://rivet.dev/agentos/docs/agent-to-agent)**: Agents delegate work to other agents through host-defined bindings
+- **[Agent-to-agent](https://rivet.dev/agentos/docs/agent-to-agent)**: Agents delegate work to other agents through host functions
 - **[Workflows](https://rivet.dev/agentos/docs/workflows)**: Chain agent tasks into durable workflows with retries, branching, and resumable execution
 - **[Authentication](https://rivet.dev/agentos/docs/authentication)**: Integrate with your existing auth model (API keys, OAuth, JWTs)
 
