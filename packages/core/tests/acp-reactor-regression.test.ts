@@ -299,27 +299,24 @@ describe("ACP adapter reactor regression", () => {
 	test("routes a delayed host-tool response past 256 ordinary updates and keeps the session reusable", async () => {
 		let hostToolCalls = 0;
 		const hostToolInputs: Array<{ a: number; b: number }> = [];
-		const mathFunctions = hostFunctions({
-			name: "math",
-			description: "Math utilities",
-			functions: {
-				add: hostFunction({
-					description: "Add two numbers",
-					inputSchema: z.object({
+		const mathFunctions = {
+			add: {
+				inputSchema: z
+					.object({
 						a: z.number(),
 						b: z.number(),
-					}),
-					execute: async ({ a, b }) => {
-						hostToolCalls += 1;
-						hostToolInputs.push({ a, b });
-						await new Promise<void>((resolveDelay) =>
-							setTimeout(resolveDelay, 50),
-						);
-						return { sum: a + b };
-					},
-				}),
+					})
+					.describe("Add two numbers"),
+				execute: async ({ a, b }) => {
+					hostToolCalls += 1;
+					hostToolInputs.push({ a, b });
+					await new Promise<void>((resolveDelay) =>
+						setTimeout(resolveDelay, 50),
+					);
+					return { sum: a + b };
+				},
 			},
-		});
+		};
 		const agentPackage = createProjectedAgentPackage({
 			name: "acp-reactor-regression",
 			adapterScript: ACP_REACTOR_ADAPTER,
@@ -332,7 +329,7 @@ describe("ACP adapter reactor regression", () => {
 			mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
 			defaultSoftware: false,
 			software: [coreutils, agentPackage.software],
-			hostFunctions: [mathFunctions],
+			hostFunctions: { math: mathFunctions },
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",

@@ -74,7 +74,10 @@ const patternRulePermissionsSchema = z
 	})
 	.strict();
 
-const fsPermissionsSchema = z.union([permissionModeSchema, fsRulePermissionsSchema]);
+const fsPermissionsSchema = z.union([
+	permissionModeSchema,
+	fsRulePermissionsSchema,
+]);
 const patternPermissionsSchema = z.union([
 	permissionModeSchema,
 	patternRulePermissionsSchema,
@@ -129,15 +132,13 @@ const hostFunctionExampleSchema = z
 
 const hostFunctionDefinitionSchema = z
 	.object({
-		description: z.string(),
 		inputSchema: z.custom<object>(
 			(value: unknown) => typeof value === "object" && value !== null,
-			{ message: "Expected JSON Schema object" },
+			{ message: "Expected Zod schema object" },
 		),
-		timeoutMs: z.number().int().nonnegative().optional(),
+		timeout: z.number().int().nonnegative().optional(),
 		examples: z.array(hostFunctionExampleSchema).optional(),
-		commandAliases: stringArray.optional(),
-		handler: z.custom<(input: unknown) => unknown | Promise<unknown>>(
+		execute: z.custom<(input: unknown) => unknown | Promise<unknown>>(
 			(value: unknown) => typeof value === "function",
 			{ message: "Expected function" },
 		),
@@ -181,10 +182,10 @@ export const nodeRuntimeCreateOptionsSchema = z
 			.optional(),
 		mounts: z.array(hostDirectoryMountSchema).optional(),
 		nodeModules: z.union([z.string(), nodeModulesMountSchema]).optional(),
-		hostFunctions: z.record(z.string(), hostFunctionDefinitionSchema).optional(),
-		loopbackExemptPorts: z
-			.array(z.number().int().min(0).max(65535))
+		hostFunctions: z
+			.record(z.string(), hostFunctionDefinitionSchema)
 			.optional(),
+		loopbackExemptPorts: z.array(z.number().int().min(0).max(65535)).optional(),
 		jsRuntime: jsRuntimeSchema.optional(),
 	})
 	.strict() as z.ZodType<NodeRuntimeCreateOptions>;

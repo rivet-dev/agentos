@@ -1,128 +1,102 @@
-import { describe, expect, test } from "vitest";
-import { z } from "zod";
 import {
 	HostFunctionSchemaConversionError,
 	zodToJsonSchema,
-} from "../src/host-functions-zod.js";
+} from "@rivet-dev/agentos-runtime-core/host-functions-zod";
+import { describe, expect, test } from "vitest";
+import { z } from "zod";
 import {
-	MAX_HOST_FUNCTION_DESCRIPTION_LENGTH,
-	hostFunction,
-	hostFunctions,
-	validateHostFunctions,
+	hostFunctionCommandName,
+	hostFunctionDescription,
+	resolveHostFunctions,
 } from "../src/index.js";
 
-describe("host-function description limits", () => {
-	test("accepts collection and function descriptions at the exported limit", () => {
-		const description = "a".repeat(MAX_HOST_FUNCTION_DESCRIPTION_LENGTH);
+const screenshot = {
+	inputSchema: z.object({ url: z.string() }).describe("Take a screenshot"),
+	execute: () => ({ ok: true }),
+};
 
-		expect(() =>
-			validateHostFunctions([
-				hostFunctions({
-					name: "browser",
-					description,
-					functions: {
-						screenshot: hostFunction({
-							description,
-							inputSchema: z.object({ url: z.string() }),
-							execute: () => ({ ok: true }),
-						}),
-					},
-				}),
-			]),
-		).not.toThrow();
+describe("host-function names", () => {
+	test("converts camelCase keys to kebab-case command names", () => {
+		expect(hostFunctionCommandName("orderStore")).toBe("order-store");
+		expect(hostFunctionCommandName("listOpenOrders")).toBe("list-open-orders");
+		expect(hostFunctionCommandName("order-store")).toBe("order-store");
+		expect(hostFunctionCommandName("orders")).toBe("orders");
 	});
 
-	test("rejects collection descriptions longer than the exported limit", () => {
+	test("resolves both key spellings to the same command names", () => {
+		expect(
+			resolveHostFunctions({ orderStore: { listOrders: screenshot } }),
+		).toEqual([
+			{ name: "order-store", functions: { "list-orders": screenshot } },
+		]);
+	});
+
+	test("rejects collection keys that cannot become command names", () => {
 		expect(() =>
-			validateHostFunctions([
-				hostFunctions({
-					name: "browser",
-					description: "a".repeat(MAX_HOST_FUNCTION_DESCRIPTION_LENGTH + 1),
-					functions: {
-						screenshot: hostFunction({
-							description: "Take a screenshot",
-							inputSchema: z.object({ url: z.string() }),
-							execute: () => ({ ok: true }),
-						}),
-					},
-				}),
-			]),
+			resolveHostFunctions({ Browser_Host_Functions: { screenshot } }),
 		).toThrow(
-			`Host function collection "browser" description is ${MAX_HOST_FUNCTION_DESCRIPTION_LENGTH + 1} characters, max is ${MAX_HOST_FUNCTION_DESCRIPTION_LENGTH}`,
+			'Host function collection name "Browser_Host_Functions" must be alphanumeric, written in camelCase or with single hyphen separators',
 		);
 	});
 
-	test("rejects function descriptions longer than the exported limit", () => {
+	test("rejects function keys that cannot become subcommands", () => {
 		expect(() =>
-			validateHostFunctions([
-				hostFunctions({
-					name: "browser",
-					description: "Browser automation",
-					functions: {
-						screenshot: hostFunction({
-							description: "a".repeat(MAX_HOST_FUNCTION_DESCRIPTION_LENGTH + 1),
-							inputSchema: z.object({ url: z.string() }),
-							execute: () => ({ ok: true }),
-						}),
-					},
-				}),
-			]),
+			resolveHostFunctions({ browser: { screenshot_now: screenshot } }),
 		).toThrow(
-			`Host function "browser/screenshot" description is ${MAX_HOST_FUNCTION_DESCRIPTION_LENGTH + 1} characters, max is ${MAX_HOST_FUNCTION_DESCRIPTION_LENGTH}`,
+			'Host function name "screenshot_now" must be alphanumeric, written in camelCase or with single hyphen separators',
 		);
 	});
 
-	test("rejects collection names that cannot become stable command names", () => {
+	test("rejects two collection keys that resolve to the same command name", () => {
 		expect(() =>
-			validateHostFunctions([
-				hostFunctions({
-					name: "Browser_Host_Functions",
-					description: "Browser automation",
-					functions: {
-						screenshot: hostFunction({
-							description: "Take a screenshot",
-							inputSchema: z.object({ url: z.string() }),
-							execute: () => ({ ok: true }),
-						}),
-					},
-				}),
-			]),
-		).toThrow(
-			'Host function collection name "Browser_Host_Functions" must be lowercase alphanumeric with optional single hyphen separators',
-		);
-	});
-
-	test("rejects function names that cannot become stable subcommands", () => {
-		expect(() =>
-			validateHostFunctions([
-				hostFunctions({
-					name: "browser-host-functions",
-					description: "Browser automation",
-					functions: {
-						screenshot_now: hostFunction({
-							description: "Take a screenshot",
-							inputSchema: z.object({ url: z.string() }),
-							execute: () => ({ ok: true }),
-						}),
-					},
-				}),
-			]),
-		).toThrow(
-			'Host function name "screenshot_now" must be lowercase alphanumeric with optional single hyphen separators',
-		);
-	});
-
-	test("fails loudly when a host-function input schema uses an unsupported discriminated union", () => {
-		const definition = hostFunction({
-			description: "Inspect a variant payload",
-			inputSchema: z.object({
-				payload: z.discriminatedUnion("kind", [
-					z.object({ kind: z.literal("text"), value: z.string() }),
-					z.object({ kind: z.literal("code"), status: z.number() }),
-				]),
+			resolveHostFunctions({
+				orderStore: { screenshot },
+				"order-store": { screenshot },
 			}),
+		).toThrow(
+			'Host function collections "orderStore" and "order-store" both resolve to the command name "order-store"',
+		);
+	});
+
+	test("rejects two function keys that resolve to the same command name", () => {
+		expect(() =>
+			resolveHostFunctions({
+				browser: { screenshotNow: screenshot, "screenshot-now": screenshot },
+			}),
+		).toThrow(
+			'Host functions "screenshotNow" and "screenshot-now" in collection "browser" both resolve to the command name "screenshot-now"',
+		);
+	});
+});
+
+describe("host-function descriptions", () => {
+	test("reads the description from the input schema", () => {
+		expect(hostFunctionDescription(screenshot)).toBe("Take a screenshot");
+	});
+
+	test("is empty when the schema carries no description", () => {
+		expect(
+			hostFunctionDescription({
+				inputSchema: z.object({ url: z.string() }),
+				execute: () => ({ ok: true }),
+			}),
+		).toBe("");
+	});
+});
+
+describe("host-function schemas", () => {
+	test("fails loudly when a host-function input schema uses an unsupported discriminated union", () => {
+		const definition = {
+			inputSchema: z
+				.object({
+					payload: z.discriminatedUnion("kind", [
+						z.object({ kind: z.literal("text"), value: z.string() }),
+						z.object({ kind: z.literal("code"), status: z.number() }),
+					]),
+				})
+				.describe("Inspect a variant payload"),
 			execute: () => ({ ok: true }),
-		});
+		};
 
 		try {
 			zodToJsonSchema(definition.inputSchema);

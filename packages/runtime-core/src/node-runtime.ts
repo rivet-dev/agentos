@@ -21,28 +21,30 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { JsRuntimeConfig } from "./generated/JsRuntimeConfig.js";
+import type { VmUserConfig } from "./generated/VmUserConfig.js";
+import type {
+	HostFunctionCollections,
+	HostFunctionSchemas,
+} from "./host-functions.js";
+import { parseNodeRuntimeCreateOptions } from "./node-runtime-options-schema.js";
+import type { SidecarProcess } from "./sidecar-process.js";
 import type {
 	ExecResult,
-	HostFunctionDefinition,
 	Kernel,
 	KernelBootTiming,
 	Permissions,
 	VirtualDirEntry,
 	VirtualFileSystem,
 } from "./test-runtime.js";
-import type { JsRuntimeConfig } from "./generated/JsRuntimeConfig.js";
-import type { VmUserConfig } from "./generated/VmUserConfig.js";
-import type { SidecarProcess } from "./sidecar-process.js";
 import {
 	createKernel,
 	createNodeRuntime,
 	createWasmVmRuntime,
 	NodeFileSystem,
 } from "./test-runtime.js";
-import { parseNodeRuntimeCreateOptions } from "./node-runtime-options-schema.js";
 
 export type {
-	HostFunctionDefinition,
 	HostFunctionExample,
 	VirtualDirEntry,
 } from "./test-runtime.js";
@@ -119,7 +121,9 @@ export function resolveNodeRuntimeCommandsDir(explicit?: string): string {
  * Options that translate into sidecar VM JSON must also stay aligned with
  * `crates/vm-config/src/lib.rs::CreateVmConfig`.
  */
-export interface NodeRuntimeCreateOptions {
+export interface NodeRuntimeCreateOptions<
+	HOST_FUNCTIONS extends HostFunctionSchemas = HostFunctionSchemas,
+> {
 	/**
 	 * Caller-owned filesystem used only by this low-level compatibility runtime.
 	 * AgentOS clients do not create a TypeScript filesystem implicitly; normal
@@ -231,32 +235,35 @@ export interface NodeRuntimeCreateOptions {
 	 */
 	nodeModules?: string | NodeModulesMount;
 	/**
-	 * Host-side hostFunctions the guest can invoke as shell commands. Each entry is
-	 * registered as a named guest command; when the guest runs it, the
-	 * invocation round-trips back to the host and runs the hostFunction's `handler`,
-	 * whose return value is delivered back to the guest. This is how you give
-	 * sandboxed guest code controlled, named host capabilities (the kind an AI
-	 * agent calls as tools) without granting it the underlying access directly.
+	 * Host-side functions the guest can invoke as shell commands, as a record of
+	 * collections. The keys name everything: the collection key becomes the guest
+	 * command `agentos-{name}` and each function key becomes one of its
+	 * subcommands. When the guest runs it the invocation round-trips back to the
+	 * host, runs the function's `execute`, and its return value is delivered back
+	 * to the guest. This is how you give sandboxed guest code controlled, named
+	 * host capabilities (the kind an AI agent calls as tools) without granting it
+	 * the underlying access directly.
 	 *
-	 * The guest invokes a hostFunction by name with JSON input:
+	 * This is the same shape `AgentOs.create()` takes. A function needs only a
+	 * Zod `inputSchema` and an `execute` handler; `.describe()` on the schema is
+	 * what the agent reads.
 	 *
 	 * ```ts
 	 * const rt = await NodeRuntime.create({
 	 *   hostFunctions: {
-	 *     add: {
-	 *       description: "Add two numbers",
-	 *       inputSchema: {
-	 *         type: "object",
-	 *         properties: { a: { type: "number" }, b: { type: "number" } },
-	 *         required: ["a", "b"],
+	 *     math: {
+	 *       add: {
+	 *         inputSchema: z
+	 *           .object({ a: z.number(), b: z.number() })
+	 *           .describe("Add two numbers"),
+	 *         execute: ({ a, b }) => ({ sum: a + b }),
 	 *       },
-	 *       handler: ({ a, b }: { a: number; b: number }) => ({ sum: a + b }),
 	 *     },
 	 *   },
 	 * });
 	 * await rt.exec(`
 	 *   import { execFileSync } from "node:child_process";
-	 *   const out = execFileSync("add", ["add", "--json", JSON.stringify({ a: 2, b: 3 })]);
+	 *   const out = execFileSync("agentos-math", ["add", "--json", JSON.stringify({ a: 2, b: 3 })]);
 	 *   console.log(out.toString());
 	 * `);
 	 * ```
@@ -264,7 +271,7 @@ export interface NodeRuntimeCreateOptions {
 	 * The `hostFunction` permission scope is allowed by default; pass your own
 	 * `permissions.hostFunction` policy to gate individual host functions.
 	 */
-	hostFunctions?: Record<string, HostFunctionDefinition>;
+	hostFunctions?: HostFunctionCollections<HOST_FUNCTIONS>;
 	/**
 	 * Guest-bound ports that may accept non-loopback connections. By default a
 	 * guest server is reachable only over loopback inside the VM; listing a port
@@ -567,10 +574,14 @@ export class NodeRuntime {
 	 * session, creates the VM with a bootstrapped root filesystem, mounts the
 	 * shell and Node runtimes, and waits for the VM to report ready.
 	 */
-	static async create(
-		options: NodeRuntimeCreateOptions,
+	static async create<HOST_FUNCTIONS extends HostFunctionSchemas>(
+		callerOptions: NodeRuntimeCreateOptions<HOST_FUNCTIONS>,
 	): Promise<NodeRuntime> {
-		options = parseNodeRuntimeCreateOptions(options);
+		// The generic exists only so each `execute` infers its input from its own
+		// `inputSchema`; past this point the concrete schemas carry no meaning.
+		const options: NodeRuntimeCreateOptions = parseNodeRuntimeCreateOptions(
+			callerOptions as NodeRuntimeCreateOptions,
+		);
 		const commandsDir = resolveNodeRuntimeCommandsDir(options.commandsDir);
 
 		// Seed caller-provided files into the VM's in-memory filesystem before
@@ -1088,7 +1099,7 @@ export class NodeRuntime {
 	 * functions are invocable unless the runtime's policy restricts them.
 	 */
 	async registerHostFunctions(
-		hostFunctions: Record<string, HostFunctionDefinition>,
+		hostFunctions: HostFunctionCollections,
 	): Promise<void> {
 		await this.kernel.registerHostFunctions(hostFunctions);
 	}

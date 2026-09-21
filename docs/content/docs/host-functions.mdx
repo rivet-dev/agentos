@@ -8,7 +8,7 @@ Expose your host JavaScript functions (defined with Zod input schemas) to agents
 
 ## Getting started
 
-Define a host-function collection with Zod input schemas and pass it to `agentOS({ hostFunctions })`. Each function becomes a CLI subcommand inside the VM.
+Pass `agentOS({ hostFunctions })` a record of collections. The keys name everything: the collection key becomes the CLI binary `agentos-{name}` and a guest global, and each function key becomes a subcommand. A function needs only an `inputSchema` and an `execute` handler. `.describe()` on the schema is what the agent reads.
 
 <CodeGroup>
 <CodeSnippet file="examples/host-functions/server.ts" />
@@ -30,11 +30,11 @@ Zod schema fields are converted to CLI flags automatically. Field names are conv
 | `z.enum(["a","b"])` | `--name a` | `--format json` |
 | `z.array(z.string())` | `--name a --name b` | `--tags foo --tags bar` |
 
-Optional fields (via `.optional()`) become optional flags. Required fields are enforced at validation time. Use `.describe()` on Zod fields to generate useful `--help` output.
+Optional fields (via `.optional()`) become optional flags. Required fields are enforced at validation time. Use `.describe()` on Zod fields to generate useful `--help` output, and `.describe()` on the whole schema to describe the function itself.
 
 ### What the agent sees
 
-When host functions are registered, CLI shims are installed at `/bin/agentos-{name}` inside the VM and the function list is injected into the agent's [system prompt](/agentos/docs/system-prompt), so keep descriptions concise to save tokens.
+When host functions are registered, CLI shims are installed at `/bin/agentos-{name}` inside the VM and the function list is injected into the agent's [system prompt](/agentos/docs/system-prompt), so keep each schema's `.describe()` concise to save tokens.
 
 The agent interacts with host functions as shell commands:
 
@@ -74,8 +74,9 @@ Missing required flag: --city
 
 Inline JavaScript and TypeScript get each collection as a frozen global, and each
 host function as an async function, so generated code calls your tools like any
-other API. Names become camelCase identifiers: `agentos-order-store list-orders`
-is `orderStore.listOrders(input)`.
+other API. Keys written in camelCase become kebab-case commands and camelCase guest
+identifiers, so `orderStore.listOrders` is `agentos-order-store list-orders` on
+the CLI and `orderStore.listOrders(input)` in guest JavaScript.
 
 <CodeSnippet file="examples/js-code-mode/src/index.ts" region="generated-code" />
 

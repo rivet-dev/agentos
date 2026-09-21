@@ -1,8 +1,19 @@
-import { AgentOs, type AgentOsOptions } from "@rivet-dev/agentos-core";
+import {
+	AgentOs,
+	type AgentOsOptions,
+	type HostFunctionSchemas,
+} from "@rivet-dev/agentos-core";
 import { type Context, createContext } from "./context.js";
 
-/** Options for the VM that runs the code: permissions, limits, mounts, and so on. */
-export type VmOptions = AgentOsOptions;
+/**
+ * Options for the VM that runs the code: permissions, limits, mounts, and so on.
+ *
+ * The type parameter exists only so each host function's `execute` infers its
+ * input from its own `inputSchema`; callers never write it.
+ */
+export type VmOptions<
+	HOST_FUNCTIONS extends HostFunctionSchemas = HostFunctionSchemas,
+> = AgentOsOptions<HOST_FUNCTIONS>;
 
 // Keep in sync with `AgentOsOptions`. The record type makes a missing or
 // unknown key a compile error.
@@ -45,7 +56,9 @@ export interface Vm extends AsyncDisposable {
 	dispose(): Promise<void>;
 }
 
-export async function createVm(options: VmOptions = {}): Promise<Vm> {
+export async function createVm<HOST_FUNCTIONS extends HostFunctionSchemas>(
+	options: VmOptions<HOST_FUNCTIONS> = {},
+): Promise<Vm> {
 	const vm = await AgentOs.create(options);
 	const { npm, ...javascript } = vm.javascript;
 	const dispose = () => vm.dispose();
@@ -63,7 +76,10 @@ export async function createVm(options: VmOptions = {}): Promise<Vm> {
 }
 
 /** Options for a one-shot call: the operation's own options plus VM options. */
-export type OneShot<O> = Omit<O, "contextId"> & VmOptions;
+export type OneShot<
+	O,
+	HOST_FUNCTIONS extends HostFunctionSchemas = HostFunctionSchemas,
+> = Omit<O, "contextId"> & VmOptions<HOST_FUNCTIONS>;
 
 /** Start the shared sidecar process now so the first operation does not pay for it. */
 export async function init(): Promise<void> {
@@ -83,8 +99,12 @@ export async function shutdown(): Promise<void> {
 }
 
 /** Run `operation` in a fresh VM built from the VM options, then dispose it. */
-export async function run<O extends object, R>(
-	options: (O & VmOptions) | undefined,
+export async function run<
+	O extends object,
+	R,
+	HOST_FUNCTIONS extends HostFunctionSchemas = HostFunctionSchemas,
+>(
+	options: (O & VmOptions<HOST_FUNCTIONS>) | undefined,
 	operation: (vm: Vm, options: O) => Promise<R>,
 ): Promise<R> {
 	const vmOptions: Record<string, unknown> = {};

@@ -89,6 +89,11 @@ pub enum ClientError {
     #[error("ACP operation [{code}]: {message}")]
     AcpOperation { code: String, message: String },
 
+    /// A caller-supplied config value was rejected before the VM was created,
+    /// for example a host function key that cannot become a command name.
+    #[error("invalid config: {0}")]
+    InvalidConfig(String),
+
     /// A cron schedule string could not be parsed/validated.
     #[error("invalid schedule: {0}")]
     InvalidSchedule(String),
@@ -176,6 +181,7 @@ impl ClientError {
             ClientError::PathNotAbsolute(_)
             | ClientError::PathNotNormalized(_)
             | ClientError::PathReadOnly(_)
+            | ClientError::InvalidConfig(_)
             | ClientError::ProcessNotFound(_)
             | ClientError::ShellNotFound(_)
             | ClientError::SessionNotFound(_)

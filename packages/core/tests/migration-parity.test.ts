@@ -1,10 +1,10 @@
 import { createServer, type IncomingMessage } from "node:http";
 import { resolve } from "node:path";
-import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import { afterEach, describe, expect, test } from "vitest";
 import { z } from "zod";
 import { AgentOs, hostFunction, hostFunctions } from "../src/index.js";
 import type { SessionStreamEntry } from "../src/session-api.js";
+import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import { createProjectedAgentPackage } from "./helpers/projected-agent-package.js";
 import { promptResultText } from "./helpers/session-result.js";
 
@@ -123,29 +123,24 @@ process.stdin.on("data", (chunk) => {
 });
 `.trim();
 
-const mathFunctions = hostFunctions({
-	name: "math",
-	description: "Math utilities",
-	functions: {
-		add: hostFunction({
-			description: "Add two numbers",
-			inputSchema: z.object({
+const mathFunctions = {
+	add: {
+		inputSchema: z
+			.object({
 				a: z.number(),
 				b: z.number(),
-			}),
-			execute: ({ a, b }) => ({ sum: a + b }),
-		}),
+			})
+			.describe("Add two numbers"),
+		execute: ({ a, b }) => ({ sum: a + b }),
 	},
-});
+};
 
 function assertNativeSidecar(vm: AgentOs): void {
 	expect(vm.sidecar.describe()).toMatchObject({
 		state: "ready",
 	});
 	expect("kernel" in (vm as unknown as Record<string, unknown>)).toBe(false);
-	expect(
-		(vm as unknown as Record<string, unknown>).kernel,
-	).toBeUndefined();
+	expect((vm as unknown as Record<string, unknown>).kernel).toBeUndefined();
 }
 
 async function runSpawnedProcess(
@@ -235,7 +230,7 @@ describe("native sidecar migration parity gate", () => {
 	test("covers registered host functions through guest command dispatch on the Rust sidecar path", async () => {
 		const vm = await AgentOs.create({
 			defaultSoftware: false,
-			hostFunctions: [mathFunctions],
+			hostFunctions: { math: mathFunctions },
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
@@ -247,7 +242,9 @@ describe("native sidecar migration parity gate", () => {
 		});
 		assertNativeSidecar(vm);
 
-		const listed = await runSpawnedProcess(vm, "agentos", ["list-host-functions"]);
+		const listed = await runSpawnedProcess(vm, "agentos", [
+			"list-host-functions",
+		]);
 		expect(listed.exitCode).toBe(0);
 		expect(JSON.parse(listed.stdout)).toEqual({
 			ok: true,
@@ -255,8 +252,7 @@ describe("native sidecar migration parity gate", () => {
 				hostFunctions: [
 					{
 						name: "math",
-						description: "Math utilities",
-						hostFunctions: ["add"],
+						functions: ["add"],
 					},
 				],
 			},

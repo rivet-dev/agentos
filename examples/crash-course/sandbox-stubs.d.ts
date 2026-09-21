@@ -25,8 +25,8 @@ declare module "sandbox-agent/docker" {
 
 declare module "@rivet-dev/agentos-sandbox" {
 	import type {
+		HostFunctionCollection,
 		NativeMountPluginDescriptor,
-		HostFunctions,
 	} from "@rivet-dev/agentos";
 	import type { SandboxAgent } from "sandbox-agent";
 
@@ -54,5 +54,5 @@ declare module "@rivet-dev/agentos-sandbox" {
 	/** Build a host-function collection that exposes the sandbox's process management. */
 	export function createSandboxHostFunctions(
 		options: SandboxHostFunctionsOptions,
-	): HostFunctions;
+	): HostFunctionCollection;
 }

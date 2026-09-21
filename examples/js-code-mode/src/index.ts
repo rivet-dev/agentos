@@ -1,27 +1,26 @@
 // docs:start hostFunctions
-import { AgentOs, hostFunction, hostFunctions } from "@rivet-dev/agentos-core";
+import { AgentOs } from "@rivet-dev/agentos-core";
 import { z } from "zod";
 
-const toolFunctions = hostFunctions({
-	name: "tools",
-	description: "Curated host capabilities for generated code.",
-	functions: {
-		weather: hostFunction({
-			description: "Look up a city's temperature.",
-			inputSchema: z.object({ city: z.string() }),
-			execute: ({ city }) => ({
-				city,
-				tempF: city === "San Francisco" ? 61 : 75,
-			}),
-		}),
+const runtime = await AgentOs.create({
+	hostFunctions: {
+		tools: {
+			weather: {
+				inputSchema: z
+					.object({ city: z.string() })
+					.describe("Look up a city's temperature."),
+				execute: ({ city }) => ({
+					city,
+					tempF: city === "San Francisco" ? 61 : 75,
+				}),
+			},
+		},
 	},
 });
-
-const runtime = await AgentOs.create({ hostFunctions: [toolFunctions] });
 // docs:end hostFunctions
 
 // docs:start generated-code
-// Each binding collection is a global inside the VM, and each binding is an
+// Each collection is a global inside the VM, and each host function is an
 // async function, so generated code calls your tools like any other API.
 const llmGeneratedExpression = `(async () => {
   const [sf, tokyo] = await Promise.all([

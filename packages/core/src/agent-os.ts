@@ -18,8 +18,15 @@ import type {
 	CreateVmConfig,
 	VmUserConfig,
 } from "@rivet-dev/agentos-runtime-core/vm-config";
-import { type HostFunction, type HostFunctions, validateHostFunctions } from "./host-functions.js";
-import { zodToJsonSchema } from "./host-functions-zod.js";
+import {
+	type HostFunction,
+	type HostFunctionCollections,
+	type HostFunctionSchemas,
+	hostFunctionDescription,
+	type ResolvedHostFunctions,
+	resolveHostFunctions,
+} from "@rivet-dev/agentos-runtime-core/host-functions";
+import { zodToJsonSchema } from "@rivet-dev/agentos-runtime-core/host-functions-zod";
 import type {
 	JsonRpcNotification,
 	JsonRpcRequest,
@@ -541,7 +548,7 @@ interface AgentOsVmAdmin extends InProcessSidecarVmAdmin {
 	sidecarSession: AuthenticatedSession;
 	sidecarVm: CreatedVm;
 	snapshotRootFilesystem?: (maxBytes: number) => Promise<RootSnapshotExport>;
-	hostFunctions: HostFunctions[];
+	hostFunctions: ResolvedHostFunctions[];
 	hostFunctionReference: string;
 }
 
@@ -821,7 +828,9 @@ export type LimitWarningHandler = (warning: LimitWarning) => void;
  * `packages/core/src/options-schema.ts::agentOsOptionsSchema`. The TypeScript
  * Rivet actor accepts this surface directly alongside ordinary actor options.
  */
-export interface AgentOsOptions {
+export interface AgentOsOptions<
+	HOST_FUNCTIONS extends HostFunctionSchemas = HostFunctionSchemas,
+> {
 	/** Initial virtual Linux credentials and account record. Defaults to `1000:1000` (`agentos`). */
 	user?: VmUserConfig;
 	/**
@@ -863,7 +872,7 @@ export interface AgentOsOptions {
 	/** Custom schedule driver for cron jobs. Defaults to TimerScheduleDriver. */
 	scheduleDriver?: ScheduleDriver;
 	/** Host functions available to agents inside the VM. */
-	hostFunctions?: HostFunctions[];
+	hostFunctions?: HostFunctionCollections<HOST_FUNCTIONS>;
 	/**
 	 * Permission policy for the kernel. By default the guest behaves like a
 	 * sandboxed machine: its virtual filesystem, processes, environment, listeners,
@@ -1703,14 +1712,18 @@ function collectSidecarMountPlan(options: { mounts?: MountConfig[] }): {
 	return { sidecarMounts, hostMounts, hostPathMappings };
 }
 
-function collectHostFunctionBootstrapCommands(hostFunctions: HostFunctions[]): string[] {
+function collectHostFunctionBootstrapCommands(
+	hostFunctions: ResolvedHostFunctions[],
+): string[] {
 	if (hostFunctions.length === 0) {
 		return [];
 	}
 
 	return [
 		"agentos",
-		...hostFunctions.map((hostFunctionCollection) => `agentos-${hostFunctionCollection.name}`),
+		...hostFunctions.map(
+			(hostFunctionCollection) => `agentos-${hostFunctionCollection.name}`,
+		),
 	];
 }
 
@@ -1740,7 +1753,7 @@ function hostFunctionToSidecarDefinition(
 	definition: HostFunction,
 ): SidecarRegisteredHostCallbackDefinition {
 	return {
-		description: definition.description,
+		description: hostFunctionDescription(definition),
 		inputSchema: zodToJsonSchema(definition.inputSchema),
 		...(definition.timeout !== undefined
 			? { timeoutMs: definition.timeout }
@@ -1769,7 +1782,9 @@ function combineInstructions(
 	return parts.join("\n\n");
 }
 
-function buildHostFunctionReference(hostFunctions: HostFunctions[]): string {
+function buildHostFunctionReference(
+	hostFunctions: ResolvedHostFunctions[],
+): string {
 	if (hostFunctions.length === 0) {
 		return "";
 	}
@@ -1784,16 +1799,19 @@ function buildHostFunctionReference(hostFunctions: HostFunctions[]): string {
 	for (const hostFunctionCollection of hostFunctions) {
 		lines.push(`### ${hostFunctionCollection.name}`);
 		lines.push("");
-		lines.push(hostFunctionCollection.description);
-		lines.push("");
 		for (const [functionName, definition] of Object.entries(
 			hostFunctionCollection.functions,
 		)) {
 			const sidecarHostFunction = hostFunctionToSidecarDefinition(definition);
-			const signature = buildHostFunctionFlagSignature(sidecarHostFunction.inputSchema);
+			const signature = buildHostFunctionFlagSignature(
+				sidecarHostFunction.inputSchema,
+			);
 			const suffix = signature.length > 0 ? ` ${signature}` : "";
+			const description = hostFunctionDescription(definition);
 			lines.push(
-				`- \`agentos-${hostFunctionCollection.name} ${functionName}${suffix}\` - ${definition.description}`,
+				description.length > 0
+					? `- \`agentos-${hostFunctionCollection.name} ${functionName}${suffix}\` - ${description}`
+					: `- \`agentos-${hostFunctionCollection.name} ${functionName}${suffix}\``,
 			);
 		}
 		lines.push("");
@@ -1989,13 +2007,18 @@ async function handleHostCallback(
 	}
 }
 
-function buildHostFunctionMap(hostFunctions: HostFunctions[]): Map<string, HostFunction> {
+function buildHostFunctionMap(
+	hostFunctions: ResolvedHostFunctions[],
+): Map<string, HostFunction> {
 	const hostFunctionMap = new Map<string, HostFunction>();
 	for (const hostFunctionCollection of hostFunctions) {
 		for (const [functionName, definition] of Object.entries(
 			hostFunctionCollection.functions,
 		)) {
-			hostFunctionMap.set(`${hostFunctionCollection.name}:${functionName}`, definition);
+			hostFunctionMap.set(
+				`${hostFunctionCollection.name}:${functionName}`,
+				definition,
+			);
 		}
 	}
 	return hostFunctionMap;
@@ -2009,7 +2032,7 @@ interface HostCommandCallbackInput {
 }
 
 interface HostCallbackContext {
-	hostFunctions: HostFunctions[];
+	hostFunctions: ResolvedHostFunctions[];
 	hostFunctionMap: ReadonlyMap<string, HostFunction>;
 	readFile(path: string): Promise<Uint8Array>;
 }
@@ -2223,7 +2246,11 @@ async function handleHostCommandCallback(
 		return handleAgentOsRegistryCommand(command, context);
 	}
 	if (directHostFunctions) {
-		return handleAgentOsHostFunctionCommand(command, context, directHostFunctions);
+		return handleAgentOsHostFunctionCommand(
+			command,
+			context,
+			directHostFunctions,
+		);
 	}
 	throw new Error(`Unknown host callback command "${command.command}"`);
 }
@@ -2273,11 +2300,14 @@ async function handleAgentOsRegistryCommand(
 async function handleAgentOsHostFunctionCommand(
 	command: HostCommandCallbackInput,
 	context: HostCallbackContext,
-	hostFunctionCollection: HostFunctions,
+	hostFunctionCollection: ResolvedHostFunctions,
 ): Promise<unknown> {
 	const [functionName, helpOrFirstArg, ...rest] = command.args;
 	if (!functionName || isHelpFlag(functionName)) {
-		return describeHostFunctionsPayload(context.hostFunctions, hostFunctionCollection.name);
+		return describeHostFunctionsPayload(
+			context.hostFunctions,
+			hostFunctionCollection.name,
+		);
 	}
 	if (helpOrFirstArg && isHelpFlag(helpOrFirstArg)) {
 		return describeHostFunctionPayload(hostFunctionCollection, functionName);
@@ -2300,7 +2330,7 @@ async function invokeHostFunction({
 	cwd,
 	context,
 }: {
-	hostFunctionCollection: HostFunctions;
+	hostFunctionCollection: ResolvedHostFunctions;
 	functionName: string;
 	args: string[];
 	cwd: string;
@@ -2467,18 +2497,19 @@ function parseHostFunctionArgv(
 	return input;
 }
 
-function listHostFunctionsPayload(hostFunctions: HostFunctions[]): unknown {
+function listHostFunctionsPayload(
+	hostFunctions: ResolvedHostFunctions[],
+): unknown {
 	return {
 		hostFunctions: hostFunctions.map((hostFunctionCollection) => ({
 			name: hostFunctionCollection.name,
-			description: hostFunctionCollection.description,
 			functions: Object.keys(hostFunctionCollection.functions),
 		})),
 	};
 }
 
 function describeHostFunctionsPayload(
-	hostFunctions: HostFunctions[],
+	hostFunctions: ResolvedHostFunctions[],
 	collectionName: string,
 ): unknown {
 	const hostFunctionCollection = hostFunctions.find(
@@ -2491,13 +2522,12 @@ function describeHostFunctionsPayload(
 	}
 	return {
 		name: hostFunctionCollection.name,
-		description: hostFunctionCollection.description,
 		functions: Object.fromEntries(
 			Object.entries(hostFunctionCollection.functions).map(
 				([functionName, definition]) => [
 					functionName,
 					{
-						description: definition.description,
+						description: hostFunctionDescription(definition),
 						flags: describeHostFunctionFlags(
 							hostFunctionToSidecarDefinition(definition).inputSchema,
 						),
@@ -2509,7 +2539,7 @@ function describeHostFunctionsPayload(
 }
 
 function describeHostFunctionPayload(
-	hostFunctionCollection: HostFunctions,
+	hostFunctionCollection: ResolvedHostFunctions,
 	functionName: string,
 ): unknown {
 	const definition = hostFunctionCollection.functions[functionName];
@@ -2521,7 +2551,7 @@ function describeHostFunctionPayload(
 	return {
 		collection: hostFunctionCollection.name,
 		function: functionName,
-		description: definition.description,
+		description: hostFunctionDescription(definition),
 		flags: describeHostFunctionFlags(
 			hostFunctionToSidecarDefinition(definition).inputSchema,
 		),
@@ -2533,13 +2563,15 @@ function describeHostFunctionPayload(
 	};
 }
 
-function hostFunctionsNames(hostFunctions: HostFunctions[]): string {
+function hostFunctionsNames(hostFunctions: ResolvedHostFunctions[]): string {
 	return hostFunctions
 		.map((hostFunctionCollection) => hostFunctionCollection.name)
 		.join(", ");
 }
 
-function hostFunctionNames(hostFunctionCollection: HostFunctions): string {
+function hostFunctionNames(
+	hostFunctionCollection: ResolvedHostFunctions,
+): string {
 	return Object.keys(hostFunctionCollection.functions).join(", ");
 }
 
@@ -2556,7 +2588,7 @@ async function registerHostFunctionsOnSidecar(
 	client: SidecarProcess,
 	session: AuthenticatedSession,
 	vm: CreatedVm,
-	hostFunctions: HostFunctions[],
+	hostFunctions: ResolvedHostFunctions[],
 ): Promise<string> {
 	if (hostFunctions.length === 0) {
 		return "";
@@ -2565,7 +2597,7 @@ async function registerHostFunctionsOnSidecar(
 	for (const hostFunctionCollection of hostFunctions) {
 		await client.registerHostCallbacks(session, vm, {
 			name: hostFunctionCollection.name,
-			description: hostFunctionCollection.description,
+			description: "",
 			commandAliases: [`agentos-${hostFunctionCollection.name}`],
 			registryCommandAliases: ["agentos"],
 			callbacks: Object.fromEntries(
@@ -2932,7 +2964,7 @@ export class AgentOs {
 	private _acpTerminalCounter = 0;
 	private _softwareRoots: SoftwareRoot[];
 	private _cronManager!: CronManager;
-	private _hostFunctions: HostFunctions[] = [];
+	private _hostFunctions: ResolvedHostFunctions[] = [];
 	private _hostFunctionReference = "";
 	private _hostMounts: HostMountInfo[];
 	private _env: Record<string, string>;
@@ -3121,8 +3153,15 @@ export class AgentOs {
 		return getSharedAgentOsSidecarInternal(options);
 	}
 
-	static async create(options?: AgentOsOptions): Promise<AgentOs> {
-		options = parseAgentOsOptions(options);
+	static async create<HOST_FUNCTIONS extends HostFunctionSchemas>(
+		callerOptions?: AgentOsOptions<HOST_FUNCTIONS>,
+	): Promise<AgentOs> {
+		// The generic exists only so each `execute` infers its input from its own
+		// `inputSchema`. Past this point the concrete schemas carry no meaning, so
+		// the rest of `create()` works with the plain option type.
+		let options: AgentOsOptions | undefined = parseAgentOsOptions(
+			callerOptions as AgentOsOptions | undefined,
+		);
 		// Default software is FULLY DYNAMIC: this package's own NON-agent
 		// @agentos-software/* dependencies (e.g. common), each default-exporting
 		// its registry-built descriptor. Agent packages are NOT projected here —
@@ -3159,25 +3198,26 @@ export class AgentOs {
 		// sidecar owns agent resolution, agent enumeration, and agent snapshot
 		// bundle loading from the projected package dirs.
 		const localMounts = await resolveCompatLocalMounts(options?.mounts);
-		if (options?.hostFunctions && options.hostFunctions.length > 0) {
-			validateHostFunctions(options.hostFunctions);
-		}
+		// Keys become command names, so resolve and check them before anything
+		// else in `create()` allocates a sidecar or a sandbox.
+		const resolvedHostFunctions = options?.hostFunctions
+			? resolveHostFunctions(options.hostFunctions)
+			: [];
 
 		// Resolve the sidecar handle before starting an external sandbox so option
 		// validation failures cannot leak provider resources.
 		const sidecar = resolveAgentOsSidecar(options?.sidecar);
 		options = await resolveSandboxOptions(options);
 		const sandboxDisposeHooks = getSandboxDisposeHooks(options);
-		const hostFunctions = options.hostFunctions;
+		const hostFunctions = resolvedHostFunctions;
 
 		const createVmAdmin = async (): Promise<AgentOsVmAdmin> => {
 			// The `/opt/agentos` projection is built by the sidecar from the
 			// forwarded `packages` (it owns the staging dir + read-only mount, and
 			// runtime `linkSoftware` appends to that live dir). The client no longer
 			// stages packages host-side.
-			const hostFunctionBootstrapCommands = collectHostFunctionBootstrapCommands(
-				hostFunctions ?? [],
-			);
+			const hostFunctionBootstrapCommands =
+				collectHostFunctionBootstrapCommands(hostFunctions);
 			const bootstrapCommands = [
 				...RUNTIME_BOOTSTRAP_COMMANDS,
 				...hostFunctionBootstrapCommands,
@@ -3291,7 +3331,7 @@ export class AgentOs {
 				for (const command of configuredVm.projectedCommands) {
 					commandGuestPaths.set(command.name, command.guestPath);
 				}
-				if (hostFunctions && hostFunctions.length > 0) {
+				if (hostFunctions.length > 0) {
 					hostFunctionReference = await registerHostFunctionsOnSidecar(
 						client,
 						session,
@@ -3364,7 +3404,7 @@ export class AgentOs {
 								),
 							),
 						),
-					hostFunctions: hostFunctions ?? [],
+					hostFunctions,
 					hostFunctionReference,
 					async dispose() {
 						if (kernel) {

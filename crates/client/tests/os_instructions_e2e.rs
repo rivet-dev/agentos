@@ -13,8 +13,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use agentos_client::config::{
-    node_modules_mount, AgentOsConfig, AgentOsSidecarConfig, FsPermissions, HostFunction,
-    HostFunctions, PackageRef, PatternPermissions, PermissionMode, Permissions,
+    node_modules_mount, AgentOsConfig, AgentOsSidecarConfig, FsPermissions, HostFunction, HostFunctionCollection,
+    HostFunctionCollections, PackageRef, PatternPermissions, PermissionMode, Permissions,
 };
 use agentos_client::{AgentOs, OpenSessionInput};
 use agentos_vm_config::VmSqliteDescriptor;
@@ -103,12 +103,12 @@ fn write_mock_pi_adapter(module_root: &std::path::Path) -> std::path::PathBuf {
 }
 
 async fn launch_pi_session_and_read_prompt(options: OpenSessionInput) -> String {
-    launch_pi_session_with_tools_and_read_prompt(options, Vec::new()).await
+    launch_pi_session_with_tools_and_read_prompt(options, HostFunctionCollections::new()).await
 }
 
 async fn launch_pi_session_with_tools_and_read_prompt(
     options: OpenSessionInput,
-    host_functions: Vec<HostFunctions>,
+    host_functions: HostFunctionCollections,
 ) -> String {
     let module_access_dir =
         std::env::temp_dir().join(format!("agentos-client-os-instructions-{}", Uuid::new_v4()));
@@ -124,7 +124,7 @@ async fn run_session(
     module_access_dir: &Path,
     package_dir: &Path,
     options: OpenSessionInput,
-    host_functions: Vec<HostFunctions>,
+    host_functions: HostFunctionCollections,
 ) -> String {
     let os = AgentOs::create(AgentOsConfig {
         database: Some(VmSqliteDescriptor::SqliteFile {
@@ -220,23 +220,24 @@ async fn create_session_injects_host_function_reference_from_client_config() {
             skip_os_instructions: None,
             additional_instructions: None,
         },
-        vec![HostFunctions {
-            name: "weather".to_string(),
-            description: "Weather lookup tools.".to_string(),
-            functions: vec![HostFunction {
-                name: "forecast".to_string(),
-                description: "Get a forecast.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "zipCode": { "type": "string" },
-                    },
-                    "required": ["zipCode"],
-                }),
-                timeout_ms: None,
-                execute: Arc::new(|_input| Box::pin(async { Ok(json!({ "ok": true })) })),
-            }],
-        }],
+        HostFunctionCollections::from([(
+            "weather".to_string(),
+            HostFunctionCollection::from([(
+                "forecast".to_string(),
+                HostFunction {
+                    input_schema: json!({
+                        "type": "object",
+                        "description": "Get a forecast.",
+                        "properties": {
+                            "zipCode": { "type": "string" },
+                        },
+                        "required": ["zipCode"],
+                    }),
+                    timeout_ms: None,
+                    execute: Arc::new(|_input| Box::pin(async { Ok(json!({ "ok": true })) })),
+                },
+            )]),
+        )]),
     )
     .await;
 

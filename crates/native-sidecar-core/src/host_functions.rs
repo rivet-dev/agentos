@@ -37,12 +37,8 @@ pub fn validate_host_functions_registration(
     payload: &RegisterHostCallbacksRequest,
 ) -> Result<(), HostFunctionRegistrationError> {
     validate_collection_name(&payload.name)?;
-    if payload.description.is_empty() {
-        return Err(HostFunctionRegistrationError::InvalidState(format!(
-            "collection {} is missing a description",
-            payload.name
-        )));
-    }
+    // Descriptions are optional: a collection has none of its own, and a
+    // function's comes from its input schema, which need not carry one.
     validate_description_length(
         &format!("Host function collection \"{}\"", payload.name),
         &payload.description,
@@ -71,12 +67,6 @@ pub fn validate_host_functions_registration(
     }
     for (host_function_name, host_function) in &payload.callbacks {
         validate_host_function_name(host_function_name)?;
-        if host_function.description.is_empty() {
-            return Err(HostFunctionRegistrationError::InvalidState(format!(
-                "host function {} in collection {} is missing a description",
-                host_function_name, payload.name
-            )));
-        }
         validate_description_length(
             &format!("Host function \"{}/{}\"", payload.name, host_function_name),
             &host_function.description,

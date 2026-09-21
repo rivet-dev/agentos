@@ -1,42 +1,35 @@
-import { AgentOs, hostFunction, hostFunctions } from "@rivet-dev/agentos-core";
+import { AgentOs } from "@rivet-dev/agentos-core";
 import { z } from "zod";
 
-const weatherFunctions = hostFunctions({
-	name: "weather",
-	description: "Look up weather information for cities.",
-	functions: {
-		get: hostFunction({
-			description: "Get the current weather for a city.",
-			inputSchema: z.object({
-				city: z.string().describe("City name (e.g. 'London')."),
-			}),
-			execute: async ({ city }) => ({
-				city,
-				temperature: 18,
-				conditions: "partly cloudy",
-				humidity: 65,
-			}),
-			examples: [
-				{ description: "Get London weather", input: { city: "London" } },
-			],
-		}),
-	},
-});
-
-const calculatorFunctions = hostFunctions({
-	name: "calc",
-	description: "Simple calculator operations.",
-	functions: {
-		add: hostFunction({
-			description: "Add two numbers.",
-			inputSchema: z.object({ a: z.number(), b: z.number() }),
-			execute: ({ a, b }) => ({ result: a + b }),
-		}),
-	},
-});
-
 const vm = await AgentOs.create({
-	hostFunctions: [weatherFunctions, calculatorFunctions],
+	hostFunctions: {
+		weather: {
+			get: {
+				inputSchema: z
+					.object({
+						city: z.string().describe("City name (e.g. 'London')."),
+					})
+					.describe("Get the current weather for a city."),
+				execute: async ({ city }) => ({
+					city,
+					temperature: 18,
+					conditions: "partly cloudy",
+					humidity: 65,
+				}),
+				examples: [
+					{ description: "Get London weather", input: { city: "London" } },
+				],
+			},
+		},
+		calc: {
+			add: {
+				inputSchema: z
+					.object({ a: z.number(), b: z.number() })
+					.describe("Add two numbers."),
+				execute: ({ a, b }) => ({ result: a + b }),
+			},
+		},
+	},
 	permissions: {
 		fs: "allow",
 		network: "allow",

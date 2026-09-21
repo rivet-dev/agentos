@@ -93,35 +93,29 @@ function commandHostCallbackFrame(command: string, args: string[]) {
 	};
 }
 
-const mathFunctions = hostFunctions({
-	name: "math",
-	description: "Math utilities",
-	functions: {
-		add: hostFunction({
-			description: "Add two numbers",
-			inputSchema: z.object({
+const mathFunctions = {
+	add: {
+		inputSchema: z
+			.object({
 				a: z.number(),
 				b: z.number(),
-			}),
-			execute: ({ a, b }) => ({ sum: a + b }),
-		}),
+			})
+			.describe("Add two numbers"),
+		execute: ({ a, b }) => ({ sum: a + b }),
 	},
-});
+};
 
-const duplicateMathFunctions = hostFunctions({
-	name: "math",
-	description: "Duplicate math utilities",
-	functions: {
-		multiply: hostFunction({
-			description: "Multiply two numbers",
-			inputSchema: z.object({
+const duplicateMathFunctions = {
+	multiply: {
+		inputSchema: z
+			.object({
 				a: z.number(),
 				b: z.number(),
-			}),
-			execute: ({ a, b }) => ({ product: a * b }),
-		}),
+			})
+			.describe("Multiply two numbers"),
+		execute: ({ a, b }) => ({ product: a * b }),
 	},
-});
+};
 
 async function runCommand(vm: AgentOs, command: string, args: string[]) {
 	const stdoutChunks: string[] = [];
@@ -150,18 +144,18 @@ describe("hostFunction collection permissions", () => {
 		vm = null;
 	});
 
-	test("rejects duplicate hostFunction collection registration with a conflict", async () => {
+	test("rejects two collection keys that resolve to the same command name", async () => {
 		await expect(
 			AgentOs.create({
-				hostFunctions: [mathFunctions, duplicateMathFunctions],
+				hostFunctions: { math: mathFunctions, Math: duplicateMathFunctions },
 			}),
-		).rejects.toThrow(/conflict: hostFunction collection already registered: math/);
+		).rejects.toThrow(/both resolve to the command name "math"/);
 	});
 
 	test("allows hostFunction collection invocation with default permissions", async () => {
 		vm = await AgentOs.create({
 			software: [common],
-			hostFunctions: [mathFunctions],
+			hostFunctions: { math: mathFunctions },
 		});
 
 		const result = await runCommand(vm, "agentos-math", [
@@ -181,7 +175,7 @@ describe("hostFunction collection permissions", () => {
 	test("denies hostFunction collection invocation by default until hostFunction permissions are granted", async () => {
 		vm = await AgentOs.create({
 			software: [common],
-			hostFunctions: [mathFunctions],
+			hostFunctions: { math: mathFunctions },
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
@@ -204,7 +198,7 @@ describe("hostFunction collection permissions", () => {
 	test("allows hostFunction collection invocation when a matching hostFunction permission is granted", async () => {
 		vm = await AgentOs.create({
 			software: [common],
-			hostFunctions: [mathFunctions],
+			hostFunctions: { math: mathFunctions },
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
@@ -247,26 +241,23 @@ describe("host-function collection permissions: raw host_callback RPC path", () 
 	// N-001 (J.1/J.2): host_callback RPC must honor hostFunction.invoke deny.
 	test("denies host_callback RPC hostFunction invocation when hostFunction.invoke policy is deny (not just the CLI path)", async () => {
 		const executed: unknown[] = [];
-		const spyFunctions = hostFunctions({
-			name: "math",
-			description: "Math utilities",
-			functions: {
-				add: hostFunction({
-					description: "Add two numbers",
-					inputSchema: z.object({ a: z.number(), b: z.number() }),
-					execute: ({ a, b }) => {
-						executed.push({ a, b });
-						return { sum: a + b };
-					},
-				}),
+		const spyFunctions = {
+			add: {
+				inputSchema: z
+					.object({ a: z.number(), b: z.number() })
+					.describe("Add two numbers"),
+				execute: ({ a, b }) => {
+					executed.push({ a, b });
+					return { sum: a + b };
+				},
 			},
-		});
+		};
 
 		const created = await createVmCapturingHandler({
 			// No `software` needed: this exercises the raw host_callback RPC
 			// handler directly (the guest-controlled path), which does not spawn
 			// any in-VM CLI. Keeping the VM minimal makes the safeguard fast.
-			hostFunctions: [spyFunctions],
+			hostFunctions: { math: spyFunctions },
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
@@ -286,37 +277,33 @@ describe("host-function collection permissions: raw host_callback RPC path", () 
 		expect(response.type).toBe("host_callback_result");
 		expect(response.result).toBeUndefined();
 		expect(typeof response.error).toBe("string");
-		expect(response.error).toMatch(/hostFunction\.invoke|EACCES|denied|permission/i);
+		expect(response.error).toMatch(
+			/hostFunction\.invoke|EACCES|denied|permission/i,
+		);
 	});
 
 	// N-002 (J.2): host_callback RPC must respect hostFunction.invoke pattern scope.
 	test("host_callback RPC respects hostFunction.invoke pattern scope and denies a non-matching hostFunction", async () => {
 		const executed: string[] = [];
-		const dangerFunctions = hostFunctions({
-			name: "math",
-			description: "Math utilities with a dangerous hostFunction",
-			functions: {
-				safe: hostFunction({
-					description: "Safe op",
-					inputSchema: z.object({ x: z.number() }),
-					execute: ({ x }) => {
-						executed.push("safe");
-						return { x };
-					},
-				}),
-				danger: hostFunction({
-					description: "Dangerous op",
-					inputSchema: z.object({ x: z.number() }),
-					execute: ({ x }) => {
-						executed.push("danger");
-						return { x };
-					},
-				}),
+		const dangerFunctions = {
+			safe: {
+				inputSchema: z.object({ x: z.number() }).describe("Safe op"),
+				execute: ({ x }) => {
+					executed.push("safe");
+					return { x };
+				},
 			},
-		});
+			danger: {
+				inputSchema: z.object({ x: z.number() }).describe("Dangerous op"),
+				execute: ({ x }) => {
+					executed.push("danger");
+					return { x };
+				},
+			},
+		};
 
 		const created = await createVmCapturingHandler({
-			hostFunctions: [dangerFunctions],
+			hostFunctions: { math: dangerFunctions },
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
@@ -339,7 +326,9 @@ describe("host-function collection permissions: raw host_callback RPC path", () 
 		expect(response.type).toBe("host_callback_result");
 		expect(response.result).toBeUndefined();
 		expect(typeof response.error).toBe("string");
-		expect(response.error).toMatch(/hostFunction\.invoke|EACCES|denied|permission/i);
+		expect(response.error).toMatch(
+			/hostFunction\.invoke|EACCES|denied|permission/i,
+		);
 	});
 
 	// AOSFS-1 (P1, J.1/J.2): the raw host_callback RPC path is fully
@@ -352,25 +341,22 @@ describe("host-function collection permissions: raw host_callback RPC path", () 
 	// pollution may occur. Asserts the system strips the hostile/extra keys.
 	test("host_callback strips hostile/extra input keys; execute receives only validated Zod data and no prototype pollution", async () => {
 		const seen: unknown[] = [];
-		const collection = hostFunctions({
-			name: "math",
-			description: "Math utilities",
-			functions: {
-				add: hostFunction({
-					description: "Add two numbers",
-					inputSchema: z.object({ a: z.number(), b: z.number() }),
-					execute: (input) => {
-						// Capture exactly what execute is handed.
-						seen.push(input);
-						const { a, b } = input;
-						return { sum: a + b };
-					},
-				}),
+		const collection = {
+			add: {
+				inputSchema: z
+					.object({ a: z.number(), b: z.number() })
+					.describe("Add two numbers"),
+				execute: (input) => {
+					// Capture exactly what execute is handed.
+					seen.push(input);
+					const { a, b } = input;
+					return { sum: a + b };
+				},
 			},
-		});
+		};
 
 		const created = await createVmCapturingHandler({
-			hostFunctions: [collection],
+			hostFunctions: { math: collection },
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
@@ -412,9 +398,7 @@ describe("host-function collection permissions: raw host_callback RPC path", () 
 		// No prototype pollution of Object.prototype on the host.
 		expect(({} as Record<string, unknown>).polluted).toBeUndefined();
 		expect(({} as Record<string, unknown>).polluted2).toBeUndefined();
-		expect(
-			Object.prototype.hasOwnProperty.call(Object.prototype, "polluted"),
-		).toBe(false);
+		expect(Object.hasOwn(Object.prototype, "polluted")).toBe(false);
 	});
 
 	// AOSFS-2 (P2): a guest can send schema-failing input on the raw host_callback
@@ -423,23 +407,20 @@ describe("host-function collection permissions: raw host_callback RPC path", () 
 	// safeParse and return a validation error WITHOUT invoking execute.
 	test("host_callback rejects schema-failing input without invoking execute", async () => {
 		const executed: unknown[] = [];
-		const collection = hostFunctions({
-			name: "math",
-			description: "Math utilities",
-			functions: {
-				add: hostFunction({
-					description: "Add two numbers",
-					inputSchema: z.object({ a: z.number(), b: z.number() }),
-					execute: ({ a, b }) => {
-						executed.push({ a, b });
-						return { sum: a + b };
-					},
-				}),
+		const collection = {
+			add: {
+				inputSchema: z
+					.object({ a: z.number(), b: z.number() })
+					.describe("Add two numbers"),
+				execute: ({ a, b }) => {
+					executed.push({ a, b });
+					return { sum: a + b };
+				},
 			},
-		});
+		};
 
 		const created = await createVmCapturingHandler({
-			hostFunctions: [collection],
+			hostFunctions: { math: collection },
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
@@ -473,23 +454,20 @@ describe("host-function collection permissions: raw host_callback RPC path", () 
 	// re-discovery — assert the gate holds on this branch.)
 	test("forged {type:'command'} host_callback is denied by hostFunction.invoke on the command dispatch branch", async () => {
 		const executed: unknown[] = [];
-		const spyFunctions = hostFunctions({
-			name: "math",
-			description: "Math utilities",
-			functions: {
-				add: hostFunction({
-					description: "Add two numbers",
-					inputSchema: z.object({ a: z.number(), b: z.number() }),
-					execute: ({ a, b }) => {
-						executed.push({ a, b });
-						return { sum: a + b };
-					},
-				}),
+		const spyFunctions = {
+			add: {
+				inputSchema: z
+					.object({ a: z.number(), b: z.number() })
+					.describe("Add two numbers"),
+				execute: ({ a, b }) => {
+					executed.push({ a, b });
+					return { sum: a + b };
+				},
 			},
-		});
+		};
 
 		const created = await createVmCapturingHandler({
-			hostFunctions: [spyFunctions],
+			hostFunctions: { math: spyFunctions },
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
@@ -510,6 +488,8 @@ describe("host-function collection permissions: raw host_callback RPC path", () 
 		expect(response.type).toBe("host_callback_result");
 		expect(response.result).toBeUndefined();
 		expect(typeof response.error).toBe("string");
-		expect(response.error).toMatch(/hostFunction\.invoke|EACCES|denied|permission/i);
+		expect(response.error).toMatch(
+			/hostFunction\.invoke|EACCES|denied|permission/i,
+		);
 	});
 });

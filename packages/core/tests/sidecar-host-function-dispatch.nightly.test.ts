@@ -4,20 +4,17 @@ import { z } from "zod";
 import { AgentOs, hostFunction, hostFunctions } from "../src/index.js";
 import { ALLOW_ALL_VM_PERMISSIONS } from "./helpers/permissions.js";
 
-const mathFunctions = hostFunctions({
-	name: "math",
-	description: "Math utilities",
-	functions: {
-		add: hostFunction({
-			description: "Add two numbers",
-			inputSchema: z.object({
+const mathFunctions = {
+	add: {
+		inputSchema: z
+			.object({
 				a: z.number(),
 				b: z.number(),
-			}),
-			execute: ({ a, b }) => ({ sum: a + b }),
-		}),
+			})
+			.describe("Add two numbers"),
+		execute: ({ a, b }) => ({ sum: a + b }),
 	},
-});
+};
 
 async function runCommand(vm: AgentOs, command: string, args: string[]) {
 	const stdoutChunks: string[] = [];
@@ -44,7 +41,7 @@ describe("native sidecar hostFunction dispatch", () => {
 	beforeEach(async () => {
 		vm = await AgentOs.create({
 			software: [common],
-			hostFunctions: [mathFunctions],
+			hostFunctions: { math: mathFunctions },
 			permissions: ALLOW_ALL_VM_PERMISSIONS,
 		});
 	}, 20_000);
@@ -62,8 +59,7 @@ describe("native sidecar hostFunction dispatch", () => {
 				hostFunctions: [
 					{
 						name: "math",
-						description: "Math utilities",
-						hostFunctions: ["add"],
+						functions: ["add"],
 					},
 				],
 			},

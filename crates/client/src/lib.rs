@@ -67,7 +67,7 @@ pub use stream::{ByteStream, Subscription};
 pub use config::{
     node_modules_mount, AcpLimits, AgentOsConfig, AgentOsConfigBuilder, AgentOsLimits,
     AgentOsSidecarConfig, FsPermissionRule, FsPermissions, HostFunction, HostFunctionCallback,
-    HostFunctionLimits, HostFunctions, HttpLimits, JsRuntimeLimits, MountConfig, MountPlugin,
+    HostFunctionCollection, HostFunctionCollections, HostFunctionLimits, HttpLimits, JsRuntimeLimits, MountConfig, MountPlugin,
     OverlayMountConfig, PackageRef, PatternPermissionRule, PatternPermissions, PermissionMode,
     Permissions, PluginLimits, PythonLimits, ResourceLimits, RootFilesystemConfig,
     RootFilesystemKind, RootFilesystemMode, RootLowerInput, RulePermissions, ScheduleCallback,

@@ -109,7 +109,7 @@ describe("VM integration", () => {
 
 	it("should execute the run-command hostFunction directly via the hostFunction collection", async () => {
 		const tk = createSandboxHostFunctions({ client: sandbox.client });
-		const result = await tk.hostFunctions["run-command"].execute({
+		const result = await tk.runCommand.execute({
 			command: "echo",
 			args: ["hello", "from", "sandbox"],
 		});
@@ -122,26 +122,28 @@ describe("VM integration", () => {
 		const tk = createSandboxHostFunctions({ client: sandbox.client });
 
 		// Confirm the sandbox hostFunction collection runs commands successfully.
-		const result = await tk.hostFunctions["run-command"].execute({
+		const result = await tk.runCommand.execute({
 			command: "echo",
 			args: ["hello from sandbox hostFunction collection"],
 		});
 		expect(result.exitCode).toBe(0);
-		expect(result.stdout).toContain("hello from sandbox hostFunction collection");
+		expect(result.stdout).toContain(
+			"hello from sandbox hostFunction collection",
+		);
 
 		// Create a process and list it.
-		const proc = await tk.hostFunctions["create-process"].execute({
+		const proc = await tk.createProcess.execute({
 			command: "sleep",
 			args: ["60"],
 		});
 		expect(proc.status).toBe("running");
 
-		const listed = await tk.hostFunctions["list-processes"].execute({});
+		const listed = await tk.listProcesses.execute({});
 		const found = listed.processes.find(
 			(p: { id: string }) => p.id === proc.id,
 		);
 		expect(found).toBeDefined();
 
-		await tk.hostFunctions["kill-process"].execute({ id: proc.id });
+		await tk.killProcess.execute({ id: proc.id });
 	});
 });

@@ -7,10 +7,6 @@ import {
 	type AgentOsSidecarRuntimeConfig,
 	agentOsLimitsSchema,
 	agentOsOptionsSchema,
-	hostFunction,
-	hostFunctionSchema,
-	hostFunctions,
-	hostFunctionsSchema,
 	type ContextDescriptor,
 	CronManager,
 	createHostDirBackend,
@@ -18,6 +14,10 @@ import {
 	defineSoftware,
 	type ExecOptions,
 	type HostDirMountPluginConfig,
+	hostFunctionCommandName,
+	hostFunctionDescription,
+	hostFunctionSchema,
+	hostFunctionsSchema,
 	InvalidScheduleError,
 	isPackageDescriptor,
 	KernelError,
@@ -25,7 +25,6 @@ import {
 	type KernelExecResult,
 	type KernelSpawnOptions,
 	type LanguageSpawnOptions,
-	MAX_HOST_FUNCTION_DESCRIPTION_LENGTH,
 	type MountConfigJsonPrimitive,
 	mountConfigSchema,
 	type NodeModulesMountConfig,
@@ -40,6 +39,7 @@ import {
 	type ProcessExit,
 	type PromptResult,
 	parseAgentOsOptions,
+	resolveHostFunctions,
 	rootFilesystemConfigSchema,
 	type SessionCapabilities,
 	type SessionInfo,
@@ -49,7 +49,6 @@ import {
 	sidecarRuntimeConfigSchema,
 	TimerScheduleDriver,
 	type TimingMitigation,
-	validateHostFunctions,
 } from "../src/index.js";
 
 describe("root public API exports", () => {
@@ -63,10 +62,9 @@ describe("root public API exports", () => {
 		expect(CronManager).toBeTypeOf("function");
 		expect(TimerScheduleDriver).toBeTypeOf("function");
 		expect(createHostDirBackend).toBeTypeOf("function");
-		expect(hostFunction).toBeTypeOf("function");
-		expect(hostFunctions).toBeTypeOf("function");
-		expect(validateHostFunctions).toBeTypeOf("function");
-		expect(MAX_HOST_FUNCTION_DESCRIPTION_LENGTH).toBeGreaterThan(0);
+		expect(hostFunctionCommandName).toBeTypeOf("function");
+		expect(hostFunctionDescription).toBeTypeOf("function");
+		expect(resolveHostFunctions).toBeTypeOf("function");
 		expect(agentOsLimitsSchema.safeParse({}).success).toBe(true);
 		expect(
 			agentOsLimitsSchema.safeParse({

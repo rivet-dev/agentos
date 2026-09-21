@@ -1,9 +1,9 @@
 import common from "@agentos-software/common";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import {
 	createSandboxFs,
 	createSandboxHostFunctions,
 } from "../../agentos-sandbox/src/index.js";
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/index.js";
 import type { MockSandboxAgentHandle } from "../src/test/sandbox-agent.js";
 import { startMockSandboxAgent } from "../src/test/sandbox-agent.js";
@@ -60,7 +60,9 @@ describe("sandbox quickstart truth test", () => {
 					plugin: createSandboxFs({ client: sandbox.client }),
 				},
 			],
-			hostFunctions: [createSandboxHostFunctions({ client: sandbox.client })],
+			hostFunctions: {
+				sandbox: createSandboxHostFunctions({ client: sandbox.client }),
+			},
 		});
 
 		await sandbox.client.writeFsFile(
@@ -70,8 +72,12 @@ describe("sandbox quickstart truth test", () => {
 		const content = await vm.readFile(SANDBOX_FILE_PATH);
 		expect(new TextDecoder().decode(content)).toBe(SANDBOX_FILE_CONTENT);
 
-		const hostFunctions = createSandboxHostFunctions({ client: sandbox.client });
-		const runCommandResponse = (await hostFunctions.hostFunctions["run-command"].execute({
+		const hostFunctions = createSandboxHostFunctions({
+			client: sandbox.client,
+		});
+		const runCommandResponse = (await hostFunctions.hostFunctions[
+			"run-command"
+		].execute({
 			command: "echo",
 			args: ["hello from sandbox"],
 		})) as {
@@ -83,7 +89,9 @@ describe("sandbox quickstart truth test", () => {
 		expect(runCommandResponse.stderr).toBe("");
 		expect(runCommandResponse.stdout.trim()).toBe("hello from sandbox");
 
-		const createdProcess = (await hostFunctions.hostFunctions["create-process"].execute({
+		const createdProcess = (await hostFunctions.hostFunctions[
+			"create-process"
+		].execute({
 			command: "sleep",
 			args: ["60"],
 		})) as {
@@ -110,6 +118,8 @@ describe("sandbox quickstart truth test", () => {
 			),
 		).toBe(true);
 
-		await hostFunctions.hostFunctions["kill-process"].execute({ id: createdProcess.id });
+		await hostFunctions.hostFunctions["kill-process"].execute({
+			id: createdProcess.id,
+		});
 	}, 150_000);
 });

@@ -60,13 +60,7 @@ describe("AgentOsOptions validation", () => {
 	test("accepts hostFunctions as the public name for host-function collections", () => {
 		expect(
 			agentOsOptionsSchema.safeParse({
-				hostFunctions: [
-					{
-						name: "weather",
-						description: "Weather functions",
-						functions: {},
-					},
-				],
+				hostFunctions: { weather: {} },
 			}).success,
 		).toBe(true);
 	});
@@ -130,7 +124,7 @@ describe("AgentOsOptions validation", () => {
 		} as never);
 		expect(options).not.toHaveProperty("sandbox");
 		expect(options.mounts?.[0]?.path).toBe("/mnt/sandbox");
-		expect(options.hostFunctions?.[0]?.name).toBe("sandbox");
+		expect(Object.keys(options.hostFunctions ?? {})).toContain("sandbox");
 
 		for (const hook of getSandboxDisposeHooks(options)) {
 			await hook();
@@ -187,15 +181,9 @@ describe("AgentOsOptions validation", () => {
 						},
 					},
 				},
-				hostFunctions: [
-					{
-						name: "INVALID",
-						description: "Invalid hostFunction collection",
-						functions: {},
-					},
-				],
+				hostFunctions: { INVALID_NAME: {} },
 			}),
-		).rejects.toThrow(/must be lowercase alphanumeric/);
+		).rejects.toThrow(/must be alphanumeric, written in camelCase/);
 		expect(started).toBe(0);
 		expect(disposed).toBe(0);
 	});

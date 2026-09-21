@@ -85,7 +85,6 @@ export type {
 	PackageRef,
 	SoftwarePackageRef,
 } from "./agentos-package.js";
-export type { HostFunction, HostFunctionExample, HostFunctions } from "./host-functions.js";
 export type {
 	CronAction,
 	CronActionInfo,
@@ -103,6 +102,14 @@ export type {
 	HostDirMountPluginConfig,
 	NodeModulesMountConfig,
 } from "./host-dir-mount.js";
+export type {
+	HostFunction,
+	HostFunctionCollection,
+	HostFunctionCollections,
+	HostFunctionExample,
+	HostFunctionSchemas,
+	ResolvedHostFunctions,
+} from "@rivet-dev/agentos-runtime-core/host-functions";
 export type {
 	FilesystemSnapshotExport,
 	LayerHandle,

@@ -94,6 +94,11 @@ function displayTypeName(typeName: string): string {
 	}
 }
 
+/** The `.describe()` text on a schema, if it has one. */
+export function schemaDescription(schema: ZodType): string | undefined {
+	return getDescription(schema);
+}
+
 function getDescription(schema: ZodType): string | undefined {
 	const def = getSchemaDef(schema);
 	if (typeof def.description === "string") {
@@ -155,11 +160,17 @@ function validateSchema(schema: ZodType, path: string) {
 	}
 
 	if (UNSUPPORTED_TYPES.has(typeName)) {
-		throw new HostFunctionSchemaConversionError(path, displayTypeName(typeName));
+		throw new HostFunctionSchemaConversionError(
+			path,
+			displayTypeName(typeName),
+		);
 	}
 
 	if (typeName === "discriminatedunion") {
-		throw new HostFunctionSchemaConversionError(path, displayTypeName(typeName));
+		throw new HostFunctionSchemaConversionError(
+			path,
+			displayTypeName(typeName),
+		);
 	}
 
 	if (TRANSPARENT_WRAPPER_TYPES.has(typeName)) {

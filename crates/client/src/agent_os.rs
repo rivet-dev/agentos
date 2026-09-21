@@ -25,7 +25,8 @@ use agentos_sidecar_client::wire;
 use agentos_vm_config as vm_config;
 
 use crate::config::{
-    AgentOsConfig, AgentOsLimits, HostFunction, HostFunctions, MountConfig, RootFilesystemConfig,
+    resolve_host_functions, AgentOsConfig, AgentOsLimits, MountConfig, ResolvedHostFunction,
+    ResolvedHostFunctions, RootFilesystemConfig,
     RootFilesystemKind, RootFilesystemMode as ConfigRootFilesystemMode, RootLowerInput,
     SidecarJsBridgeCall, SidecarJsBridgeCallback, TimerScheduleDriver,
 };
@@ -211,6 +212,8 @@ pub(crate) struct AgentOsInner {
 
     // Config / lifecycle.
     pub(crate) config: Arc<AgentOsConfig>,
+    /// `config.host_functions` resolved to command names once, at create.
+    pub(crate) host_functions: Vec<ResolvedHostFunctions>,
     pub(crate) sidecar: Arc<AgentOsSidecar>,
     pub(crate) sidecar_lease: parking_lot::Mutex<Option<AgentOsSidecarVmLease>>,
     pub(crate) dynamic_mounts: parking_lot::Mutex<Vec<wire::MountDescriptor>>,
@@ -487,9 +490,11 @@ impl AgentOs {
         // 6b. Register host-function collections (if any): forward each definition via `register_host_callbacks`,
         //     record the host execute callbacks in the per-VM registry, and install the shared
         //     host-callback that routes guest host_function calls back to the host by VM.
-        if !config.host_functions.is_empty() {
-            let mut host_function_map: HashMap<String, HostFunction> = HashMap::new();
-            for collection in &config.host_functions {
+        let resolved_host_functions =
+            resolve_host_functions(&config.host_functions).map_err(ClientError::InvalidConfig)?;
+        if !resolved_host_functions.is_empty() {
+            let mut host_function_map: HashMap<String, ResolvedHostFunction> = HashMap::new();
+            for collection in &resolved_host_functions {
                 let mut host_functions = HashMap::new();
                 for host_function in &collection.functions {
                     host_functions.insert(
@@ -515,7 +520,7 @@ impl AgentOs {
                         wire::RequestPayload::RegisterHostCallbacksRequest(
                             wire::RegisterHostCallbacksRequest {
                                 name: collection.name.clone(),
-                                description: collection.description.clone(),
+                                description: String::new(),
                                 command_aliases: vec![format!("agentos-{}", collection.name)],
                                 registry_command_aliases: vec![String::from("agentos")],
                                 callbacks: host_functions,
@@ -580,7 +585,7 @@ impl AgentOs {
             let _ = vm_host_functions().insert(
                 vm_id.clone(),
                 Arc::new(VmHostFunctionRegistry {
-                    host_functions: config.host_functions.clone(),
+                    host_functions: resolved_host_functions.clone(),
                     host_function_map,
                 }),
             );
@@ -626,6 +631,7 @@ impl AgentOs {
             durable_agent_exit_tx: broadcast::channel(64).0,
             cron,
             config,
+            host_functions: resolved_host_functions,
             sidecar,
             sidecar_lease: parking_lot::Mutex::new(Some(lease)),
             dynamic_mounts: parking_lot::Mutex::new(configured_mounts),
@@ -872,6 +878,10 @@ impl AgentOs {
 
     pub(crate) fn config(&self) -> &Arc<AgentOsConfig> {
         &self.inner.config
+    }
+
+    pub(crate) fn host_functions(&self) -> &[ResolvedHostFunctions] {
+        &self.inner.host_functions
     }
 
     pub(crate) fn cron(&self) -> &Arc<CronManager> {
@@ -1371,8 +1381,8 @@ static VM_HOST_FUNCTIONS: OnceCell<SccHashMap<String, Arc<VmHostFunctionRegistry
 
 #[derive(Clone)]
 struct VmHostFunctionRegistry {
-    host_functions: Vec<HostFunctions>,
-    host_function_map: HashMap<String, HostFunction>,
+    host_functions: Vec<ResolvedHostFunctions>,
+    host_function_map: HashMap<String, ResolvedHostFunction>,
 }
 
 fn vm_host_functions() -> &'static SccHashMap<String, Arc<VmHostFunctionRegistry>> {
@@ -2493,7 +2503,7 @@ async fn handle_agentos_host_function_command(
     ownership: &wire::OwnershipScope,
     registry: &VmHostFunctionRegistry,
     command: &HostCommandCallbackInput,
-    collection: &HostFunctions,
+    collection: &ResolvedHostFunctions,
 ) -> Result<Value, String> {
     let Some(host_function_name) = command.args.first() else {
         return describe_host_functions_payload(&registry.host_functions, &collection.name);
@@ -2518,7 +2528,7 @@ async fn handle_agentos_host_function_command(
 async fn invoke_host_function(
     ownership: &wire::OwnershipScope,
     registry: &VmHostFunctionRegistry,
-    collection: &HostFunctions,
+    collection: &ResolvedHostFunctions,
     host_function_name: &str,
     args: &[String],
     cwd: &str,
@@ -2552,7 +2562,7 @@ async fn invoke_host_function(
 
 async fn parse_host_function_input(
     ownership: &wire::OwnershipScope,
-    host_function: &HostFunction,
+    host_function: &ResolvedHostFunction,
     args: &[String],
     cwd: &str,
 ) -> Result<Value, String> {
@@ -3128,7 +3138,7 @@ fn compact_json(value: &Value) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| String::from("<invalid json>"))
 }
 
-fn list_host_functions_payload(host_functions: &[HostFunctions]) -> Value {
+fn list_host_functions_payload(host_functions: &[ResolvedHostFunctions]) -> Value {
     Value::Object(Map::from_iter([(
         String::from("hostFunctions"),
         Value::Array(
@@ -3137,7 +3147,6 @@ fn list_host_functions_payload(host_functions: &[HostFunctions]) -> Value {
                 .map(|collection| {
                     json_object([
                         ("name", Value::String(collection.name.clone())),
-                        ("description", Value::String(collection.description.clone())),
                         (
                             "functions",
                             Value::Array(
@@ -3156,7 +3165,7 @@ fn list_host_functions_payload(host_functions: &[HostFunctions]) -> Value {
 }
 
 fn describe_host_functions_payload(
-    host_functions: &[HostFunctions],
+    host_functions: &[ResolvedHostFunctions],
     collection_name: &str,
 ) -> Result<Value, String> {
     let Some(collection) = host_functions
@@ -3170,7 +3179,6 @@ fn describe_host_functions_payload(
     };
     Ok(json_object([
         ("name", Value::String(collection.name.clone())),
-        ("description", Value::String(collection.description.clone())),
         (
             "functions",
             Value::Object(Map::from_iter(collection.functions.iter().map(
@@ -3197,7 +3205,7 @@ fn describe_host_functions_payload(
 }
 
 fn describe_host_function_payload(
-    collection: &HostFunctions,
+    collection: &ResolvedHostFunctions,
     host_function_name: &str,
 ) -> Result<Value, String> {
     let Some(host_function) = collection
@@ -3282,7 +3290,7 @@ fn describe_host_function_flag_type(schema: &Value) -> String {
     }
 }
 
-fn host_functions_names(host_functions: &[HostFunctions]) -> String {
+fn host_functions_names(host_functions: &[ResolvedHostFunctions]) -> String {
     host_functions
         .iter()
         .map(|collection| collection.name.clone())
@@ -3290,7 +3298,7 @@ fn host_functions_names(host_functions: &[HostFunctions]) -> String {
         .join(", ")
 }
 
-fn host_function_names(collection: &HostFunctions) -> String {
+fn host_function_names(collection: &ResolvedHostFunctions) -> String {
     collection
         .functions
         .iter()

@@ -322,14 +322,6 @@ export interface Permissions {
 	hostFunction?: HostFunctionPermissions;
 }
 
-/** A worked example shown alongside a registered host function. */
-export interface HostFunctionExample {
-	/** What this example demonstrates. */
-	description: string;
-	/** Example input matching the host function's input schema. */
-	input: unknown;
-}
-
 /**
  * A host-side function that guest code can invoke as a shell command. The guest
  * runs the host function by name and the invocation round-trips back to the host JS
@@ -338,26 +330,19 @@ export interface HostFunctionExample {
  * sandboxed guest code controlled, named capabilities (the kind AI agents call
  * as tools).
  */
-export interface HostFunctionDefinition {
-	/** Human-readable description of what the host function does. */
-	description: string;
-	/** JSON Schema describing the host function's input. */
-	inputSchema: object;
-	/** Abort the invocation after this many milliseconds. */
-	timeoutMs?: number;
-	/** Worked examples shown alongside the hostFunction. */
-	examples?: HostFunctionExample[];
-	/**
-	 * Extra command names the guest can use to invoke this hostFunction, in addition
-	 * to the key it is registered under.
-	 */
-	commandAliases?: string[];
-	/**
-	 * Host handler invoked when guest code runs the hostFunction. Receives the parsed
-	 * input and returns a JSON-serializable result delivered back to the guest.
-	 */
-	handler: (input: unknown) => unknown | Promise<unknown>;
-}
+import {
+	type HostFunctionCollections,
+	hostFunctionDescription,
+	resolveHostFunctions,
+} from "./host-functions.js";
+import { zodToJsonSchema } from "./host-functions-zod.js";
+
+export type {
+	HostFunction,
+	HostFunctionCollection,
+	HostFunctionCollections,
+	HostFunctionExample,
+} from "./host-functions.js";
 
 export interface ResourceBudgets {
 	maxOutputBytes?: number;
@@ -513,7 +498,7 @@ export interface Kernel extends KernelInterface {
 		streamId?: string;
 		maxBytes?: number;
 	}): Promise<string>;
-	registerHostFunctions(hostFunctions: Record<string, HostFunctionDefinition>): Promise<void>;
+	registerHostFunctions(hostFunctions: HostFunctionCollections): Promise<void>;
 	getResourceSnapshot(): Promise<{
 		runningProcesses: number;
 		exitedProcesses: number;
@@ -560,6 +545,12 @@ export interface HostFunctionTree {
 }
 
 export type HostFunctionHandler = (...args: unknown[]) => unknown;
+
+/** The description the agent sees, taken from the input schema. */
+function jsonSchemaDescription(inputSchema: object): string {
+	const description = (inputSchema as { description?: unknown }).description;
+	return typeof description === "string" ? description : "";
+}
 
 export interface ModuleAccessOptions {
 	cwd?: string;
@@ -3085,7 +3076,7 @@ class NativeKernel implements Kernel {
 	}
 
 	async registerHostFunctions(
-		hostFunctions: Record<string, HostFunctionDefinition>,
+		hostFunctions: HostFunctionCollections,
 	): Promise<void> {
 		await this.ensureReady();
 		if (!this.client || !this.session || !this.vm) {
@@ -3102,38 +3093,44 @@ class NativeKernel implements Kernel {
 			this.hostFunctionRequestHandlerInstalled = true;
 		}
 
-		for (const [name, hostFunction] of Object.entries(hostFunctions)) {
-			this.hostFunctionHandlers.set(name, hostFunction.handler);
-			const definition: SidecarRegisteredHostCallbackDefinition = {
-				description: hostFunction.description,
-				inputSchema: hostFunction.inputSchema,
-				...(hostFunction.timeoutMs !== undefined
-					? { timeoutMs: hostFunction.timeoutMs }
-					: {}),
-				...(hostFunction.examples && hostFunction.examples.length > 0
-					? {
-							examples: hostFunction.examples.map((example) => ({
-								description: example.description,
-								input: example.input,
-							})),
-						}
-					: {}),
-			};
-			// Register each host function as its own single-callback host-function collection so the guest
-			// can invoke it directly by name (or by any caller-provided alias). The
-			// sidecar exposes the host-function collection name as a guest command; the single
-			// callback carries the host function's schema and gates the `hostFunction`
-			// permission.
-			await this.client.registerHostCallbacks(this.session, this.vm, {
-				name,
-				description: hostFunction.description,
-				commandAliases: [name, ...(hostFunction.commandAliases ?? [])],
-				callbacks: { [name]: definition },
-			});
-			this.commands.set(name, "wasmvm");
-			for (const alias of hostFunction.commandAliases ?? []) {
-				this.commands.set(alias, "wasmvm");
+		for (const collection of resolveHostFunctions(hostFunctions)) {
+			const callbacks: Record<string, SidecarRegisteredHostCallbackDefinition> =
+				{};
+			for (const [functionName, definition] of Object.entries(
+				collection.functions,
+			)) {
+				this.hostFunctionHandlers.set(
+					`${collection.name}:${functionName}`,
+					definition.execute,
+				);
+				callbacks[functionName] = {
+					description: hostFunctionDescription(definition),
+					inputSchema: zodToJsonSchema(definition.inputSchema) as object,
+					...(definition.timeout !== undefined
+						? { timeoutMs: definition.timeout }
+						: {}),
+					...(definition.examples && definition.examples.length > 0
+						? {
+								examples: definition.examples.map((example) => ({
+									description: example.description,
+									input: example.input,
+								})),
+							}
+						: {}),
+				};
 			}
+			// One registration per collection, exposed to the guest as the command
+			// `agentos-<collection>` with each function as a subcommand. This is the
+			// same shape `AgentOs.create()` registers.
+			const command = `agentos-${collection.name}`;
+			await this.client.registerHostCallbacks(this.session, this.vm, {
+				name: collection.name,
+				description: "",
+				commandAliases: [command],
+				registryCommandAliases: ["agentos"],
+				callbacks,
+			});
+			this.commands.set(command, "wasmvm");
 		}
 	}
 
@@ -3146,17 +3143,10 @@ class NativeKernel implements Kernel {
 				`unsupported sidecar request for host functions: ${payload.type}`,
 			);
 		}
-		// Callback keys arrive as `<collection>:<function>` for collection invocations
-		// and as the bare command name otherwise. The collection and hostFunction name are
-		// the same here, so the registered hostFunction name is the segment after the last
-		// colon (or the whole key when no colon is present).
+		// Callback keys arrive as `<collection>:<function>`, the key each handler
+		// was registered under.
 		const callbackKey = payload.callback_key;
-		const hostFunctionName = callbackKey.includes(":")
-			? callbackKey.slice(callbackKey.lastIndexOf(":") + 1)
-			: callbackKey;
-		const handler =
-			this.hostFunctionHandlers.get(hostFunctionName) ??
-			this.hostFunctionHandlers.get(callbackKey);
+		const handler = this.hostFunctionHandlers.get(callbackKey);
 		if (!handler) {
 			return {
 				type: "host_callback_result",

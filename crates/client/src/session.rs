@@ -37,7 +37,7 @@ use agentos_protocol::ACP_EXTENSION_NAMESPACE;
 use agentos_sidecar_client::wire;
 
 use crate::agent_os::AgentOs;
-use crate::config::HostFunctions;
+use crate::config::ResolvedHostFunctions;
 use crate::error::ClientError;
 use crate::stream::Subscription;
 pub type DurableSessionEventStream = Pin<
@@ -578,7 +578,7 @@ fn combine_instructions(additional: Option<&str>, host_function_reference: &str)
     }
 }
 
-fn build_host_function_reference(host_functions: &[HostFunctions]) -> String {
+fn build_host_function_reference(host_functions: &[ResolvedHostFunctions]) -> String {
     if host_functions.is_empty() {
         return String::new();
     }
@@ -593,8 +593,6 @@ fn build_host_function_reference(host_functions: &[HostFunctions]) -> String {
     for collection in host_functions {
         lines.push(format!("### {}", collection.name));
         lines.push(String::new());
-        lines.push(collection.description.clone());
-        lines.push(String::new());
         for host_function in &collection.functions {
             let signature = build_host_function_flag_signature(&host_function.input_schema);
             let suffix = if signature.is_empty() {
@@ -602,10 +600,17 @@ fn build_host_function_reference(host_functions: &[HostFunctions]) -> String {
             } else {
                 format!(" {signature}")
             };
-            lines.push(format!(
-                "- `agentos-{} {}{}` - {}",
-                collection.name, host_function.name, suffix, host_function.description
-            ));
+            lines.push(if host_function.description.is_empty() {
+                format!(
+                    "- `agentos-{} {}{}`",
+                    collection.name, host_function.name, suffix
+                )
+            } else {
+                format!(
+                    "- `agentos-{} {}{}` - {}",
+                    collection.name, host_function.name, suffix, host_function.description
+                )
+            });
         }
         lines.push(String::new());
         lines.push(format!(
@@ -803,7 +808,7 @@ impl AgentOs {
         .filter(|value| !value.is_empty())
         .collect::<Vec<_>>()
         .join("\n\n");
-        let host_function_reference = build_host_function_reference(&self.config().host_functions);
+        let host_function_reference = build_host_function_reference(self.host_functions());
         let additional_instructions = combine_instructions(
             (!caller_instructions.is_empty()).then_some(caller_instructions.as_str()),
             &host_function_reference,

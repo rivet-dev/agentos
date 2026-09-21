@@ -6,7 +6,11 @@ import type {
 	LimitWarningHandler,
 	NativeMountConfig,
 } from "./agent-os.js";
-import type { HostFunction, HostFunctions } from "./host-functions.js";
+import type {
+	HostFunction,
+	HostFunctionCollection,
+	HostFunctionCollections,
+} from "@rivet-dev/agentos-runtime-core/host-functions";
 
 const stringArray = z.array(z.string());
 const nonNegativeInteger = z.number().int().nonnegative();
@@ -363,7 +367,6 @@ const hostFunctionExampleSchema = z
 
 export const hostFunctionSchema = z
 	.object({
-		description: z.string(),
 		inputSchema: z.custom(
 			(value) => typeof value === "object" && value !== null,
 			{
@@ -376,13 +379,15 @@ export const hostFunctionSchema = z
 	})
 	.strict() as z.ZodType<HostFunction>;
 
-export const hostFunctionsSchema = z
-	.object({
-		name: z.string(),
-		description: z.string(),
-		functions: z.record(z.string(), hostFunctionSchema),
-	})
-	.strict() as z.ZodType<HostFunctions>;
+export const hostFunctionCollectionSchema = z.record(
+	z.string(),
+	hostFunctionSchema,
+) as z.ZodType<HostFunctionCollection>;
+
+export const hostFunctionsSchema = z.record(
+	z.string(),
+	hostFunctionCollectionSchema,
+) as z.ZodType<HostFunctionCollections>;
 
 /**
  * Shared AgentOsOptions field schemas.
@@ -428,7 +433,7 @@ export const agentOsOptionFieldSchemas = {
 			message: "Expected schedule driver object",
 		})
 		.optional(),
-	hostFunctions: z.array(hostFunctionsSchema).optional(),
+	hostFunctions: hostFunctionsSchema.optional(),
 	permissions: permissionsSchema.optional(),
 	sidecar: sidecarConfigSchema.optional(),
 	limits: agentOsLimitsSchema.optional(),

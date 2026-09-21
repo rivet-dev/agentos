@@ -1,7 +1,19 @@
 // @rivet-dev/agentos
 
+export {
+	SidecarProcessError,
+	SidecarProcessExited,
+	SidecarRejectedError,
+	type SidecarRejectionDetail,
+	SidecarSilenceTimeout,
+} from "@rivet-dev/agentos-runtime-core/sidecar-errors";
 export { AgentOs, AgentOsSidecar } from "./agent-os.js";
-export type * from "./language-execution.js";
+export {
+	isPackageDescriptor,
+	OPT_AGENTOS_BIN,
+	OPT_AGENTOS_ROOT,
+	tryReadAgentosPackageManifest,
+} from "./agentos-package.js";
 export {
 	CronManager,
 	InvalidScheduleError,
@@ -13,18 +25,28 @@ export {
 	hostDirMount,
 	nodeModulesMount,
 } from "./host-dir-mount.js";
+export type {
+	HostFunction,
+	HostFunctionCollection,
+	HostFunctionCollections,
+	HostFunctionExample,
+	HostFunctionSchemas,
+	ResolvedHostFunctions,
+} from "@rivet-dev/agentos-runtime-core/host-functions";
 export {
-	hostFunction,
-	MAX_HOST_FUNCTION_DESCRIPTION_LENGTH,
-	hostFunctions,
-	validateHostFunctions,
-} from "./host-functions.js";
-export type { HostFunction, HostFunctionExample, HostFunctions } from "./host-functions.js";
+	hostFunctionCommandName,
+	hostFunctionDescription,
+	resolveHostFunctions,
+} from "@rivet-dev/agentos-runtime-core/host-functions";
+export type * from "./language-execution.js";
+export { createSnapshotExport } from "./layers.js";
 export {
 	agentOsLimitsSchema,
 	agentOsOptionFieldSchemas,
 	agentOsOptionsSchema,
+	hostFunctionCollectionSchema,
 	hostFunctionSchema,
+	hostFunctionsSchema,
 	mountConfigSchema,
 	nativeMountConfigSchema,
 	parseAgentOsOptions,
@@ -32,25 +54,9 @@ export {
 	rootFilesystemConfigSchema,
 	sharedSidecarConfigSchema,
 	sidecarConfigSchema,
-	hostFunctionsSchema,
 	sidecarRuntimeConfigSchema,
 } from "./options-schema.js";
-export { createSnapshotExport } from "./layers.js";
 export { defineSoftware } from "./packages.js";
-export {
-	isPackageDescriptor,
-	OPT_AGENTOS_BIN,
-	OPT_AGENTOS_ROOT,
-	tryReadAgentosPackageManifest,
-} from "./agentos-package.js";
-export { KernelError } from "./runtime-compat.js";
-export {
-	SidecarProcessError,
-	SidecarProcessExited,
-	SidecarRejectedError,
-	type SidecarRejectionDetail,
-	SidecarSilenceTimeout,
-} from "@rivet-dev/agentos-runtime-core/sidecar-errors";
 export type {
 	ExecOptions,
 	ExecResult,
@@ -60,9 +66,10 @@ export type {
 	VirtualDirEntry,
 	VirtualStat,
 } from "./runtime.js";
+export { KernelError } from "./runtime-compat.js";
 export {
-	createSandboxHostFunctions,
 	createSandboxFs,
+	createSandboxHostFunctions,
 	getSandboxDisposeHooks,
 	resolveSandboxOptions,
 } from "./sandbox.js";

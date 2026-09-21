@@ -8,6 +8,7 @@ import {
 	type CodeExecutionResult,
 	type CronEvent,
 	type DynamicMountDescriptor,
+	type HostFunctionSchemas,
 	type OpenSessionInput,
 	type PackageDescriptor,
 	type ProcessDescriptor,
@@ -2020,7 +2021,9 @@ export type AgentOsActorDefinition<TConnParams = undefined> = ActorDefinition<
 	AgentOsActions
 >;
 
-export interface AgentOsActorExtras extends AgentOsOptions {
+export interface AgentOsActorExtras<
+	THostFunctions extends HostFunctionSchemas = HostFunctionSchemas,
+> extends AgentOsOptions<THostFunctions> {
 	/**
 	 * Resolve trusted VM options from actor state immediately before the VM's
 	 * first boot. Evaluated once per wake. The actor-owned root filesystem and
@@ -2075,6 +2078,7 @@ export type AgentOsActorConfigInput<
 		TEvents,
 		TQueues
 	> = Record<never, never>,
+	THostFunctions extends HostFunctionSchemas = HostFunctionSchemas,
 > = DistributiveOmit<
 	ActorConfigInput<
 		TState,
@@ -2089,7 +2093,7 @@ export type AgentOsActorConfigInput<
 	>,
 	"db"
 > &
-	AgentOsActorExtras &
+	AgentOsActorExtras<THostFunctions> &
 	AgentOsEventHooks<
 		ActorContext<
 			TState,
@@ -2252,6 +2256,7 @@ export function createAgentOS<
 		TEvents,
 		TQueues
 	> = Record<never, never>,
+	THostFunctions extends HostFunctionSchemas = HostFunctionSchemas,
 >(
 	config: AgentOsActorConfigInput<
 		TState,
@@ -2261,7 +2266,8 @@ export function createAgentOS<
 		TInput,
 		TEvents,
 		TQueues,
-		TUserActions
+		TUserActions,
+		THostFunctions
 	> = {} as AgentOsActorConfigInput<
 		TState,
 		TConnParams,
@@ -2270,7 +2276,8 @@ export function createAgentOS<
 		TInput,
 		TEvents,
 		TQueues,
-		TUserActions
+		TUserActions,
+		THostFunctions
 	>,
 ): ActorDefinition<
 	TState,

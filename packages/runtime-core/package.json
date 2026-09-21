@@ -21,6 +21,16 @@
 			"import": "./dist/generated-protocol.js",
 			"default": "./dist/generated-protocol.js"
 		},
+		"./host-functions": {
+			"types": "./dist/host-functions.d.ts",
+			"import": "./dist/host-functions.js",
+			"default": "./dist/host-functions.js"
+		},
+		"./host-functions-zod": {
+			"types": "./dist/host-functions-zod.d.ts",
+			"import": "./dist/host-functions-zod.js",
+			"default": "./dist/host-functions-zod.js"
+		},
 		"./vm-config": {
 			"types": "./dist/vm-config.d.ts",
 			"import": "./dist/vm-config.js",
@@ -199,7 +209,8 @@
 	"dependencies": {
 		"@rivet-dev/agentos-runtime-sidecar": "workspace:*",
 		"@rivetkit/bare-ts": "^0.6.2",
-		"zod": "^4.1.11"
+		"zod": "^4.1.11",
+		"zod-to-json-schema": "^3.25.2"
 	},
 	"devDependencies": {
 		"@types/node": "^22.10.2",

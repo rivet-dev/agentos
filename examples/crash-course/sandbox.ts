@@ -10,7 +10,7 @@ const sandbox = await SandboxAgent.start({ sandbox: docker() });
 
 const vm = agentOS({
 	// Host functions let the agent control the sandbox.
-	hostFunctions: [createSandboxHostFunctions({ client: sandbox })],
+	hostFunctions: { sandbox: createSandboxHostFunctions({ client: sandbox }) },
 	// Mounts let the agent read the sandbox filesystem (optional)
 	mounts: [
 		{

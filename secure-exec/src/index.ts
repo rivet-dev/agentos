@@ -1,6 +1,7 @@
 import type {
 	CodeEvaluationResult,
 	CodeExecutionResult,
+	HostFunctionSchemas,
 	JavaScriptEvaluationOptions,
 	JavaScriptExecutionOptions,
 	JsonValue,
@@ -14,7 +15,8 @@ export type {
 	ExecutionErrorData,
 	ExecutionOutputOptions,
 	HostFunction,
-	HostFunctions,
+	HostFunctionCollection,
+	HostFunctionCollections,
 	HttpRequest,
 	HttpResponse,
 	JsonValue,
@@ -27,8 +29,6 @@ export type {
 	SidecarRejectionDetail,
 } from "@rivet-dev/agentos-core";
 export {
-	hostFunction,
-	hostFunctions,
 	createHostDirBackend,
 	hostDirMount,
 	KernelError,
@@ -51,14 +51,22 @@ export {
 // that is disposed when the call finishes. For anything that should persist,
 // create a VM with `createVm()` and call the same methods on it.
 
-export type ExecuteOptions = OneShot<JavaScriptExecutionOptions>;
-export type EvaluateOptions = OneShot<JavaScriptEvaluationOptions>;
-export type ExecuteFileOptions = OneShot<LanguageExecutionOptions>;
+export type ExecuteOptions<
+	HOST_FUNCTIONS extends HostFunctionSchemas = HostFunctionSchemas,
+> = OneShot<JavaScriptExecutionOptions, HOST_FUNCTIONS>;
+export type EvaluateOptions<
+	HOST_FUNCTIONS extends HostFunctionSchemas = HostFunctionSchemas,
+> = OneShot<JavaScriptEvaluationOptions, HOST_FUNCTIONS>;
+export type ExecuteFileOptions<
+	HOST_FUNCTIONS extends HostFunctionSchemas = HostFunctionSchemas,
+> = OneShot<LanguageExecutionOptions, HOST_FUNCTIONS>;
 
 /** Run JavaScript for its side effects and captured output. */
-export function execute(
+export function execute<
+	HOST_FUNCTIONS extends HostFunctionSchemas = HostFunctionSchemas,
+>(
 	source: string,
-	options?: ExecuteOptions,
+	options?: ExecuteOptions<HOST_FUNCTIONS>,
 ): Promise<CodeExecutionResult> {
 	return run(options, (vm, operationOptions) =>
 		vm.javascript.execute(source, operationOptions),
@@ -66,9 +74,12 @@ export function execute(
 }
 
 /** Evaluate one JavaScript expression and return its JSON value. */
-export function evaluate<T = JsonValue>(
+export function evaluate<
+	T = JsonValue,
+	HOST_FUNCTIONS extends HostFunctionSchemas = HostFunctionSchemas,
+>(
 	source: string,
-	options?: EvaluateOptions,
+	options?: EvaluateOptions<HOST_FUNCTIONS>,
 ): Promise<CodeEvaluationResult<T>> {
 	return run(options, (vm, operationOptions) =>
 		vm.javascript.evaluate<T>(source, operationOptions),
@@ -76,9 +87,11 @@ export function evaluate<T = JsonValue>(
 }
 
 /** Run a JavaScript file from a mount, by its path inside the VM. */
-export function executeFile(
+export function executeFile<
+	HOST_FUNCTIONS extends HostFunctionSchemas = HostFunctionSchemas,
+>(
 	path: string,
-	options?: ExecuteFileOptions,
+	options?: ExecuteFileOptions<HOST_FUNCTIONS>,
 ): Promise<CodeExecutionResult> {
 	return run(options, (vm, operationOptions) =>
 		vm.javascript.executeFile(path, operationOptions),

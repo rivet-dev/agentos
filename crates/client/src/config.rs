@@ -8,6 +8,7 @@
 //! only and become `Arc<dyn ...>` trait objects; they cannot cross the wire and are gated exactly as
 //! the actor layer gates them.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -48,8 +49,8 @@ pub struct AgentOsConfig {
     pub additional_instructions: Option<String>,
     /// Schedule driver used by the cron manager. Default: [`TimerScheduleDriver`].
     pub schedule_driver: Option<Arc<dyn ScheduleDriver>>,
-    /// HostFunction collections to register.
-    pub host_functions: Vec<HostFunctions>,
+    /// Host function collections to register, keyed by collection name.
+    pub host_functions: HostFunctionCollections,
     /// Rust-only sidecar callback handler for `js_bridge`-style plugin requests.
     pub sidecar_js_bridge_callback: Option<SidecarJsBridgeCallback>,
     /// Permission policy. Default: allow-all.
@@ -126,7 +127,7 @@ impl AgentOsConfigBuilder {
         self
     }
 
-    pub fn host_functions(mut self, host_functions: Vec<HostFunctions>) -> Self {
+    pub fn host_functions(mut self, host_functions: HostFunctionCollections) -> Self {
         self.config.host_functions = host_functions;
         self
     }
@@ -232,11 +233,10 @@ pub type SidecarJsBridgeCallback = Arc<
         + Sync,
 >;
 
-/// A single host function within a [`HostFunctions`].
+/// A single host function. The key it is registered under names it, and the
+/// input schema's `description` documents it for the agent.
 #[derive(Clone)]
 pub struct HostFunction {
-    pub name: String,
-    pub description: String,
     /// JSON Schema for the host function input (forwarded to the sidecar `register_host_callbacks` definition).
     pub input_schema: serde_json::Value,
     pub timeout_ms: Option<u64>,
@@ -244,14 +244,135 @@ pub struct HostFunction {
     pub execute: HostFunctionCallback,
 }
 
-/// A registered host function collection (in-process; implementations stay host-side). Functions are exposed to the
-/// guest as `<collection>:<function>` and dispatched back to [`HostFunction::execute`] via the sidecar
-/// host-callback channel.
+/// One collection of host functions, keyed by function name. Each key becomes a
+/// subcommand of the collection's CLI binary and a method on its guest global.
+pub type HostFunctionCollection = BTreeMap<String, HostFunction>;
+
+/// Host function collections, keyed by collection name (in-process;
+/// implementations stay host-side). Each key becomes the CLI binary
+/// `agentos-{name}` and a frozen guest global; functions are exposed to the
+/// guest as `<collection>:<function>` and dispatched back to
+/// [`HostFunction::execute`] via the sidecar host-callback channel.
+pub type HostFunctionCollections = BTreeMap<String, HostFunctionCollection>;
+
+/// A host function resolved to the names the VM uses.
 #[derive(Clone)]
-pub struct HostFunctions {
+pub struct ResolvedHostFunction {
+    /// Kebab-case command name. Becomes the CLI subcommand.
     pub name: String,
+    /// Taken from the input schema's `description`.
     pub description: String,
-    pub functions: Vec<HostFunction>,
+    pub input_schema: serde_json::Value,
+    pub timeout_ms: Option<u64>,
+    pub execute: HostFunctionCallback,
+}
+
+/// A collection resolved to the names the VM uses. Keys arrive as identifiers
+/// and are converted once here, so the rest of the client and the sidecar only
+/// ever see kebab-case command names.
+#[derive(Clone)]
+pub struct ResolvedHostFunctions {
+    /// Kebab-case collection name. Becomes the CLI suffix: `agentos-{name}`.
+    pub name: String,
+    pub functions: Vec<ResolvedHostFunction>,
+}
+
+/// Convert a registration key to its command name. `listOrders` and
+/// `list-orders` both become `list-orders`, so the guest sees one spelling
+/// whichever the caller wrote. Mirrors `hostFunctionCommandName` in the
+/// TypeScript client.
+pub fn host_function_command_name(key: &str) -> String {
+    let mut out = String::with_capacity(key.len() + 4);
+    let chars: Vec<char> = key.chars().collect();
+    for (index, character) in chars.iter().enumerate() {
+        if character.is_ascii_uppercase() && index > 0 {
+            let previous = chars[index - 1];
+            let next_is_lower = chars
+                .get(index + 1)
+                .is_some_and(|next| next.is_ascii_lowercase());
+            if previous.is_ascii_lowercase()
+                || previous.is_ascii_digit()
+                || (previous.is_ascii_uppercase() && next_is_lower)
+            {
+                out.push('-');
+            }
+        }
+        out.extend(character.to_lowercase());
+    }
+    out
+}
+
+fn is_command_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with('-')
+        && !name.ends_with('-')
+        && !name.contains("--")
+        && name
+            .chars()
+            .all(|character| character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-')
+}
+
+fn to_command_name(kind: &str, key: &str) -> Result<String, String> {
+    let name = host_function_command_name(key);
+    if is_command_name(&name) {
+        Ok(name)
+    } else {
+        Err(format!(
+            "{kind} name \"{key}\" must be alphanumeric, written in camelCase or with single hyphen separators"
+        ))
+    }
+}
+
+/// The description the agent sees, taken from the input schema's `description`.
+fn schema_description(input_schema: &serde_json::Value) -> String {
+    input_schema
+        .get("description")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// Resolve the caller's collections into the shape the client and sidecar use.
+/// Fails on a key that cannot become a command name, and on two keys that
+/// collide once converted.
+pub fn resolve_host_functions(
+    collections: &HostFunctionCollections,
+) -> Result<Vec<ResolvedHostFunctions>, String> {
+    let mut resolved = Vec::with_capacity(collections.len());
+    let mut seen_collections: BTreeMap<String, String> = BTreeMap::new();
+
+    for (collection_key, collection) in collections {
+        let name = to_command_name("Host function collection", collection_key)?;
+        if let Some(collided) = seen_collections.get(&name) {
+            return Err(format!(
+                "Host function collections \"{collided}\" and \"{collection_key}\" both resolve to the command name \"{name}\""
+            ));
+        }
+        seen_collections.insert(name.clone(), collection_key.clone());
+
+        let mut functions = Vec::with_capacity(collection.len());
+        let mut seen_functions: BTreeMap<String, String> = BTreeMap::new();
+        for (function_key, definition) in collection {
+            let function_name = to_command_name("Host function", function_key)?;
+            if let Some(collided) = seen_functions.get(&function_name) {
+                return Err(format!(
+                    "Host functions \"{collided}\" and \"{function_key}\" in collection \"{collection_key}\" both resolve to the command name \"{function_name}\""
+                ));
+            }
+            seen_functions.insert(function_name.clone(), function_key.clone());
+            functions.push(ResolvedHostFunction {
+                name: function_name,
+                description: schema_description(&definition.input_schema),
+                input_schema: definition.input_schema.clone(),
+                timeout_ms: definition.timeout_ms,
+                execute: definition.execute.clone(),
+            });
+        }
+
+        resolved.push(ResolvedHostFunctions { name, functions });
+    }
+
+    Ok(resolved)
 }
 
 // ---------------------------------------------------------------------------
