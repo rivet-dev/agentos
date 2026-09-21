@@ -2772,15 +2772,18 @@ var fs = {
   appendFileSync(path, data, options) {
     validateEncodingOption(options);
     const rawPath = normalizePathLike(path);
-    let existing = "";
+    const encoding = typeof options === "string" ? options : options?.encoding;
+    const content = toUint8ArrayChunk(data, encoding);
+    let existing = import_buffer.Buffer.alloc(0);
     try {
-      existing = fs.existsSync(path) ? fs.readFileSync(path, "utf8") : "";
+      if (fs.existsSync(path)) {
+        existing = fs.readFileSync(path);
+      }
     } catch (err) {
       throwNormalizedFsBridgeError(err, "open", rawPath);
     }
-    const content = typeof data === "string" ? data : String(data);
     try {
-      fs.writeFileSync(path, existing + content, options);
+      fs.writeFileSync(path, import_buffer.Buffer.concat([existing, content]), options);
     } catch (err) {
       if (!err?.code) {
         throw createFsError("EACCES", `EACCES: permission denied, write '${rawPath}'`, "write", rawPath);
@@ -3872,9 +3875,10 @@ var fs = {
       if (path instanceof FileHandle) {
         return path.appendFile(data, options);
       }
-      const existing = await fsReadFileAsync(path, "utf8").catch((err) => err?.code === "ENOENT" ? "" : Promise.reject(err));
-      const content = typeof data === "string" ? data : String(data);
-      await fsWriteFileAsync(path, existing + content, options);
+      const encoding = typeof options === "string" ? options : options?.encoding;
+      const content = toUint8ArrayChunk(data, encoding);
+      const existing = await fsReadFileAsync(path).catch((err) => err?.code === "ENOENT" ? import_buffer.Buffer.alloc(0) : Promise.reject(err));
+      await fsWriteFileAsync(path, import_buffer.Buffer.concat([existing, content]), options);
     },
     async readdir(path, options) {
       return fsReaddirAsync(path, options);
