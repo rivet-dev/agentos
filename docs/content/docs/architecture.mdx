@@ -340,7 +340,7 @@ The `agentOS()` actor (from `@rivet-dev/agentos`) wraps the raw VM in a [Rivet A
 
 ### Workflows
 
-- **Durable multi-step tasks.** A workflow is the actor's `run` handler wrapped in `workflow()`, where each `ctx.step()` is recorded, retried, and resumed independently.
+- **Durable multi-step tasks.** A workflow is an actor defined with `workflow({ ... })` from [`@rivet-dev/workflows`](/workflows/docs/), where each `ctx.step()` is recorded, retried, and resumed independently.
 - **Crash-proof.** If the process dies mid-run, replay skips completed steps and continues where it left off.
 - **Composable.** The output of one step feeds the next: clone a repo, let an agent fix a bug, run the tests. See [Workflows & Graphs](/agentos/docs/workflows).
 

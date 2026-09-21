@@ -4,11 +4,15 @@ description: "Orchestrate multi-step coding-agent tasks with durable agentOS wor
 skill: true
 ---
 
-Orchestrate multi-step agent tasks with durable workflows that survive crashes and restarts. Build them with RivetKit's `workflow()` run handler, where each `ctx.step()` is recorded, retried, and resumed independently, and the output of one step can feed into the next.
+Orchestrate multi-step agent tasks with durable workflows that survive crashes and restarts. Define them with [`@rivet-dev/workflows`](/workflows/docs/): each `ctx.step()` is recorded, retried, and resumed independently, and the output of one step can feed into the next.
+
+```bash
+npm install @rivet-dev/agentos @rivet-dev/workflows
+```
 
 ## Basic workflow
 
-A workflow is the durable `run` handler of an actor. Wrap it in `workflow()` and drive a multi-step agent task as an ordered series of steps: clone the repo, let an agent fix the bug, then run the tests. Each actor instance is one workflow run initialized with creation input, so no application queue is required.
+A workflow is an actor defined with `workflow({ ... })` from `@rivet-dev/workflows`. Its `run` function drives a multi-step agent task as an ordered series of steps: clone the repo, let an agent fix the bug, then run the tests. Each actor instance is one workflow run initialized with creation input, so no application queue is required.
 
 Session creation and prompting happen within the step that uses them, so a session never has to outlive the work it backs (sessions are ephemeral and would not survive a replay). Steps reach the agentOS VM, a separate actor, through `ctx.client()`.
 
@@ -28,7 +32,7 @@ Output of one agent session feeds into the next. Each session is created and com
 
 ## Recommendations
 
-- Build the actor's `run` handler with `workflow()` so each `ctx.step()` is durable: recorded, retried, and resumed independently across crashes and restarts.
+- Define the actor with `workflow({ ... })` so each `ctx.step()` in `run` is durable: recorded, retried, and resumed independently across crashes and restarts.
 - Keep step names stable across code changes. Renaming a step breaks replay for in-progress workflows.
 - Create and close sessions within the step that uses them. Sessions are ephemeral, so keep their lifetime scoped to one unit of work.
 - Pass data between steps via the filesystem or step return values, not session state.

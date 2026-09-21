@@ -6,8 +6,8 @@ Apps router, and deploys generated files from a separate script. The app runs at
 
 The uploaded fixture serves an HTML page at `/` and a JSON endpoint at
 `/api/hello`. It does not use RivetKit because it has no durable or coordinated
-state; the SQLite, workflows, and multiplayer examples add RivetKit while still
-serving ordinary HTTP requests.
+state; the SQLite and multiplayer examples add RivetKit while still serving
+ordinary HTTP requests.
 
 Run the checked workspace example with Node.js 22 or newer:
 
