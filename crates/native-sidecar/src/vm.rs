@@ -732,7 +732,7 @@ where
                 let database = crate::vm_sqlite::resolve_vm_sqlite(
                     descriptor,
                     vm_runtime_context.clone(),
-                    limits.sqlite.max_result_bytes,
+                    limits.sqlite.clone(),
                 )
                 .await
                 .map_err(|error| {
@@ -1571,9 +1571,9 @@ where
             let database = match create_config.database.as_ref() {
                 Some(descriptor) => {
                     let database = crate::vm_sqlite::resolve_vm_sqlite(
-                        descriptor,
-                        vm_runtime_context.clone(),
-                        limits.sqlite.max_result_bytes,
+                    descriptor,
+                    vm_runtime_context.clone(),
+                    limits.sqlite.clone(),
                     )
                     .await
                     .map_err(|error| {
