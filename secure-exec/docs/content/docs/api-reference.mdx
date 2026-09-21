@@ -14,7 +14,7 @@ skill: true
 | `createVm` | `createVm(vmOptions?)` → `Vm` | Create a VM that lives until you dispose it |
 | `init` | `init()` | Start the shared sidecar ahead of time |
 | `shutdown` | `shutdown()` | Stop the sidecar and every VM in it |
-| `binding`, `bindings` | | Define [host functions](/secure-exec/docs/host-functions) |
+| `hostFunction`, `hostFunctions` | | Define [host functions](/secure-exec/docs/host-functions) |
 | `hostDirMount` | `hostDirMount(path, hostPath, { readOnly? })` | Mount a host directory |
 | `nodeModulesMount` | `nodeModulesMount(hostPath, { readOnly? })` | Mount a host `node_modules` |
 
@@ -72,7 +72,7 @@ VM options apply to `createVm` and to the top-level one-shot functions.
 | `permissions` | [Permissions](/secure-exec/docs/permissions). External network access is denied by default |
 | `limits` | [Resource limits](/secure-exec/docs/resource-limits) |
 | `mounts` | [Filesystem mounts](/secure-exec/docs/filesystem) |
-| `bindings` | [Host functions](/secure-exec/docs/host-functions) |
+| `hostFunctions` | [Host functions](/secure-exec/docs/host-functions) |
 | `onLimitWarning` | Called when a limit is nearly reached |
 
 The remaining agentOS VM options are accepted too. See the

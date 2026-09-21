@@ -12,7 +12,8 @@ writes one program that chains your tools.
 
 ## Define host functions
 
-Host functions are grouped into named collections with `bindings`. Each function
+Host functions are grouped into named collections with `hostFunctions`. Each
+function
 has a Zod input schema, so arguments from the guest are validated before your
 code runs.
 
@@ -20,7 +21,8 @@ code runs.
 
 ## Call them from guest code
 
-`bindings` is a VM option. Pass it on a call, or on `createVm`. Inside the VM,
+`hostFunctions` is a VM option. Pass it on a call, or on `createVm`. Inside the
+VM,
 each collection is a global object and each function is async.
 
 <CodeSnippet file="secure-exec/examples/host-functions/src/index.ts" region="call" />
@@ -31,9 +33,10 @@ each collection is a global object and each function is async.
   returned. A schema violation, a thrown error, or a timeout rejects the promise.
 - The globals are frozen. A collection whose name is already a global, such as
   `process`, is not defined, and a warning is written to stderr.
-- The `binding` permission scope gates which functions a guest may call. See
+- The `hostFunction` permission scope gates which functions a guest may call. See
   [permissions](/secure-exec/docs/permissions).
 
 The same functions are also available to shell scripts and other languages as
-commands. Read the [agentOS bindings reference](/agentos/docs/bindings) for that,
+commands. Read the [agentOS host functions
+reference](/agentos/docs/host-functions) for that,
 and for schemas, timeouts, and examples.

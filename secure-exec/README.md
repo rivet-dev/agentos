@@ -109,14 +109,14 @@ Give the code your own functions without giving it your credentials. Each
 collection is a global inside the VM, and each function is async.
 
 ```ts
-import { binding, bindings, evaluate } from "secure-exec";
+import { evaluate, hostFunction, hostFunctions } from "secure-exec";
 import { z } from "zod";
 
-const orders = bindings({
+const orders = hostFunctions({
   name: "orders",
   description: "Look up customer orders.",
-  bindings: {
-    list: binding({
+  functions: {
+    list: hostFunction({
       description: "List a customer's orders.",
       inputSchema: z.object({ customer: z.string() }),
       execute: ({ customer }) => db.orders.findMany({ customer }),
@@ -125,7 +125,7 @@ const orders = bindings({
 });
 
 await evaluate(`orders.list({ customer: "c_123" }).then((rows) => rows.length)`, {
-  bindings: [orders],
+  hostFunctions: [orders],
 });
 ```
 
