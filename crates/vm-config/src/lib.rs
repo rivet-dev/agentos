@@ -22,7 +22,7 @@ pub enum StandaloneWasmBackend {
 /// product profile instead of copying its environment and permission policy.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+#[ts(export, export_to = "../../../packages/core/src/generated/")]
 pub enum VmDefaultsProfile {
     #[default]
     Secure,
@@ -1168,6 +1168,50 @@ pub struct VmLimitsConfig {
 
 impl VmLimitsConfig {
     fn validate(&self, max_frame_bytes: usize) -> Result<(), VmConfigError> {
+        if let Some(process) = &self.process {
+            validate_nonzero_options([
+                (
+                    "limits.process.maxSpawnFileActions",
+                    process.max_spawn_file_actions,
+                ),
+                (
+                    "limits.process.maxSpawnFileActionBytes",
+                    process.max_spawn_file_action_bytes,
+                ),
+                (
+                    "limits.process.pendingStdinBytes",
+                    process.pending_stdin_bytes,
+                ),
+                (
+                    "limits.process.pendingEventCount",
+                    process.pending_event_count,
+                ),
+                (
+                    "limits.process.pendingEventBytes",
+                    process.pending_event_bytes,
+                ),
+                (
+                    "limits.process.outputReplayEvents",
+                    process.output_replay_events,
+                ),
+                (
+                    "limits.process.outputReplayBytes",
+                    process.output_replay_bytes,
+                ),
+                (
+                    "limits.process.outputReplayPageEvents",
+                    process.output_replay_page_events,
+                ),
+                (
+                    "limits.process.outputReplayPageBytes",
+                    process.output_replay_page_bytes,
+                ),
+                (
+                    "limits.process.maxOutputReplays",
+                    process.max_output_replays,
+                ),
+            ])?;
+        }
         if let Some(packages) = &self.agentos_packages {
             validate_nonzero_options([("limits.agentosPackages.maxMounts", packages.max_mounts)])?;
         }
@@ -1643,6 +1687,11 @@ limits_struct!(ExecutionLimitsConfig {
 });
 
 limits_struct!(ProcessLimitsConfig {
+    output_replay_events,
+    output_replay_bytes,
+    output_replay_page_events,
+    output_replay_page_bytes,
+    max_output_replays,
     max_spawn_file_actions,
     max_spawn_file_action_bytes,
     pending_stdin_bytes,

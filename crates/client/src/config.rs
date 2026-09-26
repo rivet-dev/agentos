@@ -34,6 +34,8 @@ pub type SidecarSqliteCallback = Arc<
 /// and `packages/core/src/options-schema.ts::agentOsOptionsSchema`.
 #[derive(Default)]
 pub struct AgentOsConfig {
+    /// Selects sidecar-owned VM defaults. Omitted selects the agentOS profile.
+    pub defaults_profile: Option<agentos_vm_config::VmDefaultsProfile>,
     /// Default engine for standalone WebAssembly processes.
     pub wasm_backend: Option<crate::process::StandaloneWasmBackend>,
     /// VM-scoped SQLite backend shared by VFS metadata/storage and agentOS
@@ -98,6 +100,11 @@ pub struct AgentOsConfigBuilder {
 impl AgentOsConfigBuilder {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn defaults_profile(mut self, profile: agentos_vm_config::VmDefaultsProfile) -> Self {
+        self.config.defaults_profile = Some(profile);
+        self
     }
 
     pub fn database(mut self, database: agentos_vm_config::VmSqliteDescriptor) -> Self {

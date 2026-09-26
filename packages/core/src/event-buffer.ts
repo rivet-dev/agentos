@@ -9,6 +9,7 @@ import {
 	fromGeneratedStreamChannel,
 	fromGeneratedVmLifecycleState,
 } from "./protocol-maps.js";
+import { bigIntToSafeNumber } from "./numbers.js";
 
 export const ANY_BUFFERED_EVENT_KEY = "*";
 
@@ -24,6 +25,8 @@ export type LiveSidecarEventPayload =
 			process_id: string;
 			channel: "stdout" | "stderr";
 			chunk: Uint8Array;
+			sequence?: number;
+			timestamp_ms?: number;
 	  }
 	| {
 			type: "process_exited";
@@ -397,6 +400,22 @@ export function fromGeneratedEventPayload(
 				process_id: payload.val.processId,
 				channel: fromGeneratedStreamChannel(payload.val.channel),
 				chunk: Buffer.from(payload.val.chunk),
+				...(payload.val.sequence === null
+					? {}
+					: {
+							sequence: bigIntToSafeNumber(
+								payload.val.sequence,
+								"process output sequence",
+							),
+						}),
+				...(payload.val.timestampMs === null
+					? {}
+					: {
+							timestamp_ms: bigIntToSafeNumber(
+								payload.val.timestampMs,
+								"process output timestamp",
+							),
+						}),
 			};
 		case "ProcessExitedEvent":
 			return {

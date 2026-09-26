@@ -17,40 +17,71 @@ mod software;
 mod store;
 
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use rivetkit::prelude::*;
 use rivetkit::{action, Actor, ActorConfig, Registry, Request, Response};
 use rivetkit_core::inspector::InspectorTabEntry;
-use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 
-pub use actions::{ConfigGet, ConfigPatch, ConfigSet, VmRestart, VmStatus};
-pub use config::{
+pub use agentos_actor_contract::config::{
     AgentOsActorConfig, AgentOsActorConfigInput, HostedFilesystemBackend,
     HostedFilesystemBackendInput, HostedFilesystemConfig, HostedFilesystemConfigInput,
     HostedFilesystemMount, HostedFilesystemMountInput, HostedRootFilesystem,
     HostedRootFilesystemInput, PreviewPolicy, PreviewPolicyInput, RemotePackageSource,
     RemotePackageSourceInput,
 };
-pub use cron::*;
-pub use events::{
+pub use agentos_actor_contract::cron::{
+    ActorCronJob, CronCancel, CronLaunchError, CronList, CronSchedule,
+};
+pub use agentos_actor_contract::events::{
     CronFiredEvent, ProcessExitEvent, ProcessOutputEvent, TerminalExitEvent, TerminalOutputEvent,
     VmBooted, VmLimitWarning, VmShutdown,
 };
-pub use filesystem::{
-    FileBytes, FileContentInput, FilesystemDirectoryEntry, FilesystemExists, FilesystemExport,
-    FilesystemListMounts, FilesystemMkdir, FilesystemMove, FilesystemReadFile, FilesystemReadFiles,
-    FilesystemReadResult, FilesystemReaddir, FilesystemReaddirEntries, FilesystemReaddirRecursive,
-    FilesystemRemove, FilesystemStat, FilesystemWriteEntry, FilesystemWriteFile,
-    FilesystemWriteFiles, FilesystemWriteResult,
+pub use agentos_actor_contract::filesystem::{
+    ActorDirectoryEntry, ActorFileStat, FileBytes, FileContentInput, FilesystemDirectoryEntry,
+    FilesystemExists, FilesystemExport, FilesystemListMounts, FilesystemMkdir, FilesystemMove,
+    FilesystemReadFile, FilesystemReadFiles, FilesystemReadResult, FilesystemReaddir,
+    FilesystemReaddirEntries, FilesystemReaddirRecursive, FilesystemRemove, FilesystemStat,
+    FilesystemWriteEntry, FilesystemWriteFile, FilesystemWriteFiles, FilesystemWriteResult,
 };
-pub use language::*;
-pub use network::*;
+pub use agentos_actor_contract::language::{
+    ActorCodeEvaluationResult, ActorCodeExecutionResult, ActorContextDescriptor, ActorContextId,
+    ActorExecutionDescriptor, ActorExecutionError, ActorExecutionOutcome,
+    ActorExecutionOutputOptions, ActorExecutionPtyOptions, ActorInlineExecutionOptions,
+    ActorJavaScriptExecutionOptions, ActorJavaScriptModuleFormat, ActorLanguageExecutionOptions,
+    ActorLanguageSpawnOptions, ActorNpmInstallOptions, ActorOutputCapture,
+    ActorPythonInstallOptions, ActorTypeScriptCheckOptions, ActorTypeScriptCheckResult,
+    ActorTypeScriptDiagnostic, ActorTypeScriptExecutionOptions, ContextsCreate, ContextsDelete,
+    ContextsGet, ContextsList, ContextsReset, JavaScriptEvaluate, JavaScriptExecute,
+    JavaScriptExecuteFile, JavaScriptNpmInstall, JavaScriptNpmRunPackage, JavaScriptNpmRunScript,
+    JavaScriptSpawn, JavaScriptSpawnFile, PythonEvaluate, PythonExecute, PythonExecuteFile,
+    PythonExecuteModule, PythonInstall, PythonSpawn, PythonSpawnFile, PythonSpawnModule,
+    TypeScriptCheck, TypeScriptCheckProject, TypeScriptEvaluate, TypeScriptExecute,
+    TypeScriptExecuteFile, TypeScriptSpawn, TypeScriptSpawnFile,
+};
+pub use agentos_actor_contract::lifecycle::*;
+pub use agentos_actor_contract::network::{
+    ActorFetchStreamChunk, ActorFetchStreamHead, ActorFetchStreamId, ActorHttpRequest,
+    ActorHttpResponse, ActorPreview, NetworkFetch, NetworkFetchStreamCancel,
+    NetworkFetchStreamRead, NetworkFetchStreamStart, NetworkPreviewCreate, NetworkPreviewExpire,
+};
+pub use agentos_actor_contract::process::{
+    ActorExecOptions, ActorExecResult, ActorExitStatus, ActorOutputEvent, ActorOutputReplay,
+    ActorProcessExit, ActorProcessId, ActorProcessInfo, ActorProcessTree, ActorProcessTreeNode,
+    ActorSignal, ActorSpawnOptions, ActorTerminalExit, ActorTerminalId, ActorTerminalInfo,
+    ActorTerminalOptions, ProcessGet, ProcessList, ProcessOutputRead, ProcessPtyResize, ProcessRun,
+    ProcessSignal, ProcessSpawn, ProcessStdinClose, ProcessStdinWrite, ProcessTree, ProcessWait,
+    TerminalClose, TerminalList, TerminalOpen, TerminalOutputRead, TerminalPtyResize,
+    TerminalStdinWrite, TerminalWait,
+};
+pub use agentos_actor_contract::software::{
+    ActorInstalledSoftware, SoftwareInstall, SoftwareList, SoftwareMutationResult,
+    SoftwareUninstall,
+};
 pub use preload::{
     configure_process_preload, shutdown_process_preload, PreloadArtifact, PreloadBaselineReplaced,
     PreloadCoordinatorActor, PreloadCoordinatorConfig, PreloadCoordinatorConfigInput,
@@ -59,11 +90,6 @@ pub use preload::{
     PreloadUsageAccepted, PreloadUsageObservation, ProcessPreloadReport,
     PRELOAD_COORDINATOR_ACTOR_KEY, PRELOAD_COORDINATOR_ACTOR_NAME, PRELOAD_PROTOCOL_VERSION,
 };
-pub use process::*;
-pub use runtime::{
-    CoreSidecarStatus, PackageStartupStatus, VmIssue, VmLifecycleState, VmStatusSnapshot,
-};
-pub use software::{SoftwareInstall, SoftwareList, SoftwareMutationResult, SoftwareUninstall};
 
 use action_set::AgentOsActionSet;
 use runtime::RuntimeController;
@@ -71,70 +97,6 @@ use runtime::RuntimeController;
 pub const ACTOR_NAME: &str = "agentOS";
 const ACTION_CONCURRENCY_LIMIT: usize = 64;
 const ACTOR_MESSAGE_SIZE_LIMIT: u32 = 1024 * 1024;
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct AgentOsActorCreateInput {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub config: Option<AgentOsActorConfigInput>,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ConfigApplyState {
-    Applying,
-    Ready,
-    RestartRequired,
-    Failed,
-}
-
-impl ConfigApplyState {
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Applying => "applying",
-            Self::Ready => "ready",
-            Self::RestartRequired => "restart_required",
-            Self::Failed => "failed",
-        }
-    }
-}
-
-impl FromStr for ConfigApplyState {
-    type Err = anyhow::Error;
-
-    fn from_str(value: &str) -> Result<Self> {
-        match value {
-            "applying" => Ok(Self::Applying),
-            "ready" => Ok(Self::Ready),
-            "restart_required" => Ok(Self::RestartRequired),
-            "failed" => Ok(Self::Failed),
-            _ => bail!("invalid actor config apply state {value:?}"),
-        }
-    }
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConfigSnapshot {
-    pub revision: u64,
-    pub desired: AgentOsActorConfig,
-    pub applied_revision: Option<u64>,
-    #[serde(rename = "state")]
-    pub status: ConfigApplyState,
-    pub issues: Vec<VmIssue>,
-    pub created_at_ms: i64,
-    pub updated_at_ms: i64,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentOsActorState {
-    pub config: ConfigSnapshot,
-}
 
 pub struct AgentOsActor {
     config: Mutex<ConfigSnapshot>,

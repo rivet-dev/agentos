@@ -376,20 +376,6 @@ fn transpile_typescript(
 }
 
 #[cfg(feature = "javascript-tooling")]
-fn transform_retained_javascript_module(source: &str, file_path: &str) -> Result<String, VmError> {
-    let source = rewrite_static_imports(source, file_path, false)?;
-    transform_source(&source, file_path, false, true)
-}
-
-#[cfg(not(feature = "javascript-tooling"))]
-fn transform_retained_javascript_module(
-    _source: &str,
-    _file_path: &str,
-) -> Result<String, VmError> {
-    Err(javascript_tooling_disabled())
-}
-
-#[cfg(feature = "javascript-tooling")]
 fn transform_retained_typescript_module(source: &str, file_path: &str) -> Result<String, VmError> {
     let source = rewrite_static_imports(source, file_path, true)?;
     transform_source(&source, file_path, true, true)
@@ -1761,6 +1747,8 @@ where
                 .insert(String::from(RETAIN_LANGUAGE_CONTEXT_ENV), String::from("1"));
         }
         let execute_payload = ExecuteRequest {
+            retain_output: false,
+
             process_id: process_id.clone(),
             command: Some(operation.command),
             runtime: None,

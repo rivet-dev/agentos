@@ -30,6 +30,7 @@ use crate::protocol::{
     SidecarRequestFrame, SidecarRequestPayload, SidecarResponseFrame, SidecarResponsePayload,
     SignalHandlerRegistration, SoftwareDescriptor, WasmPermissionTier,
 };
+use crate::protocol::{ProcessOutputReplayEvent, StreamChannel};
 use crate::wire::DEFAULT_MAX_FRAME_BYTES;
 use agentos_driver_tokio::accounting::{
     LimitError, Reservation, ResourceClass, ResourceLedger, SharedReservation,
@@ -1510,6 +1511,8 @@ pub(crate) struct VmState {
     pub(crate) command_permissions: BTreeMap<String, WasmPermissionTier>,
     pub(crate) host_functions: BTreeMap<String, RegisterHostCallbacksRequest>,
     pub(crate) active_processes: BTreeMap<String, ActiveProcess>,
+    pub(crate) process_output_replays: BTreeMap<String, ProcessOutputReplay>,
+    pub(crate) process_output_replay_order: VecDeque<String>,
     /// Pull-driven host fetches retained between sidecar requests. A stream
     /// owns exactly one kernel socket and capability lease; reads advance it
     /// only when the trusted client asks for another bounded chunk.
@@ -1895,7 +1898,7 @@ pub(crate) struct SocketPathContext {
     pub(crate) loopback_exempt_ports: BTreeSet<u16>,
     pub(crate) tcp_loopback_guest_to_host_ports: BTreeMap<(SocketFamily, u16), u16>,
     pub(crate) http_loopback_targets: BTreeMap<(SocketFamily, u16), HttpLoopbackTarget>,
-    pub(crate) http2_loopback_targets: BTreeMap<(SocketFamily, u16), JavascriptHttp2LoopbackTarget>,
+    pub(crate) http2_loopback_targets: BTreeMap<(SocketFamily, u16), Http2LoopbackTarget>,
     pub(crate) udp_loopback_guest_to_host_ports: BTreeMap<(SocketFamily, u16), u16>,
     pub(crate) udp_loopback_host_to_guest_ports: BTreeMap<(SocketFamily, u16), u16>,
     pub(crate) used_tcp_guest_ports: BTreeMap<SocketFamily, BTreeSet<u16>>,
@@ -1903,16 +1906,16 @@ pub(crate) struct SocketPathContext {
 }
 
 #[derive(Clone)]
-pub(crate) struct JavascriptHttp2LoopbackTarget {
+pub(crate) struct Http2LoopbackTarget {
     pub(crate) shared: Arc<Mutex<Http2SharedState>>,
     pub(crate) server_id: u64,
     pub(crate) runtime_context: agentos_driver_tokio::DriverHandle,
 }
 
-impl fmt::Debug for JavascriptHttp2LoopbackTarget {
+impl fmt::Debug for Http2LoopbackTarget {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("JavascriptHttp2LoopbackTarget")
+            .debug_struct("Http2LoopbackTarget")
             .field("server_id", &self.server_id)
             .finish_non_exhaustive()
     }
@@ -2352,6 +2355,9 @@ pub(crate) struct ActiveHttpServer {
 
 #[derive(Debug)]
 pub(crate) enum PendingHttpRequest {
+    // Integration fixtures inspect callback serialization without a live waiter.
+    #[cfg(test)]
+    #[allow(dead_code)]
     Buffered(Option<String>),
     Deferred(tokio::sync::oneshot::Sender<Result<Value, DeferredRpcError>>),
 }
@@ -3363,6 +3369,9 @@ pub(crate) struct ActiveTcpListener {
 
 #[derive(Debug)]
 pub(crate) enum UnixListenerEvent {
+    // Injected by queue-accounting tests; production VM-local listeners only
+    // enqueue accepted connections.
+    #[allow(dead_code)]
     Error {
         code: Option<String>,
         message: String,
@@ -4558,5 +4567,310 @@ mod execution_startup_admission_tests {
         };
         drop(replacement);
         assert_eq!(engines.inner.pending_startups.get(), 0);
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ProcessOutputReplay {
+    events: VecDeque<ProcessOutputReplayEvent>,
+    retained_bytes: usize,
+    next_sequence: u64,
+    truncated_before: Option<u64>,
+    pub(crate) exit_code: Option<i32>,
+}
+
+#[derive(Debug)]
+pub(crate) struct ProcessOutputReplayPage {
+    pub(crate) events: Vec<ProcessOutputReplayEvent>,
+    pub(crate) next_cursor: Option<u64>,
+    pub(crate) has_more: bool,
+    pub(crate) truncated: bool,
+    pub(crate) next_event_bytes: Option<usize>,
+    pub(crate) exit_code: Option<i32>,
+}
+
+impl ProcessOutputReplay {
+    pub(crate) fn new() -> Self {
+        Self {
+            events: VecDeque::new(),
+            retained_bytes: 0,
+            next_sequence: 0,
+            truncated_before: None,
+            exit_code: None,
+        }
+    }
+
+    pub(crate) fn push(
+        &mut self,
+        channel: StreamChannel,
+        chunk: &[u8],
+        event_limit: usize,
+        byte_limit: usize,
+        page_byte_limit: usize,
+    ) -> (u64, u64) {
+        let sequence = self.next_sequence;
+        self.next_sequence = self.next_sequence.saturating_add(1);
+        let timestamp_ms = epoch_ms_now_u64();
+        if chunk.len() > page_byte_limit {
+            self.truncated_before = Some(sequence);
+            return (sequence, timestamp_ms);
+        }
+        let event = ProcessOutputReplayEvent {
+            sequence,
+            channel,
+            chunk: chunk.to_vec(),
+            timestamp_ms,
+        };
+        self.retained_bytes = self.retained_bytes.saturating_add(chunk.len());
+        self.events.push_back(event);
+        while self.events.len() > event_limit || self.retained_bytes > byte_limit {
+            let Some(expired) = self.events.pop_front() else {
+                break;
+            };
+            self.retained_bytes = self.retained_bytes.saturating_sub(expired.chunk.len());
+            self.truncated_before = Some(
+                self.truncated_before
+                    .map_or(expired.sequence, |current| current.max(expired.sequence)),
+            );
+        }
+        (sequence, timestamp_ms)
+    }
+
+    pub(crate) fn read(
+        &self,
+        after: Option<u64>,
+        max_events: usize,
+        max_bytes: usize,
+    ) -> ProcessOutputReplayPage {
+        let cursor = after;
+        let include_all = after.is_none();
+        let after = after.unwrap_or(0);
+        let mut bytes = 0usize;
+        let mut events = Vec::new();
+        let mut has_more = false;
+        let mut next_event_bytes = None;
+        for event in &self.events {
+            if !include_all && event.sequence <= after {
+                continue;
+            }
+            if events.len() == max_events || bytes.saturating_add(event.chunk.len()) > max_bytes {
+                has_more = true;
+                next_event_bytes = Some(event.chunk.len());
+                break;
+            }
+            bytes = bytes.saturating_add(event.chunk.len());
+            events.push(event.clone());
+        }
+        let requested_next = if include_all {
+            0
+        } else {
+            after.saturating_add(1)
+        };
+        ProcessOutputReplayPage {
+            next_cursor: if has_more {
+                events.last().map(|event| event.sequence).or(cursor)
+            } else {
+                events
+                    .last()
+                    .map(|event| event.sequence)
+                    .or(cursor)
+                    .max(self.truncated_before)
+            },
+            events,
+            has_more,
+            truncated: self
+                .truncated_before
+                .is_some_and(|sequence| sequence >= requested_next),
+            next_event_bytes,
+            exit_code: self.exit_code,
+        }
+    }
+}
+
+fn epoch_ms_now_u64() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64)
+        .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod process_output_replay_tests {
+    use super::*;
+
+    #[test]
+    fn replay_pages_preserve_order_cursors_and_exit_status() {
+        let mut replay = ProcessOutputReplay::new();
+        replay.push(StreamChannel::Stdout, b"one", 8, 1024, 1024);
+        replay.push(StreamChannel::Stderr, b"two", 8, 1024, 1024);
+        replay.exit_code = Some(7);
+
+        let first = replay.read(None, 1, 1024);
+        assert_eq!(first.events.len(), 1);
+        assert_eq!(first.events[0].sequence, 0);
+        assert_eq!(first.next_cursor, Some(0));
+        assert!(first.has_more);
+        assert!(!first.truncated);
+        assert_eq!(first.exit_code, Some(7));
+
+        let second = replay.read(first.next_cursor, 8, 1024);
+        assert_eq!(second.events.len(), 1);
+        assert_eq!(second.events[0].sequence, 1);
+        assert_eq!(second.next_cursor, Some(1));
+        assert!(!second.has_more);
+    }
+
+    #[test]
+    fn replay_reports_eviction_and_oversized_chunk_gaps_without_stalling() {
+        let mut replay = ProcessOutputReplay::new();
+        replay.push(StreamChannel::Stdout, b"zero", 2, 1024, 4);
+        replay.push(StreamChannel::Stdout, b"one", 2, 1024, 4);
+        replay.push(StreamChannel::Stdout, b"two", 2, 1024, 4);
+        replay.push(StreamChannel::Stdout, b"large", 2, 1024, 4);
+        replay.push(StreamChannel::Stdout, b"end", 2, 1024, 4);
+
+        let page = replay.read(None, 8, 1024);
+        assert_eq!(
+            page.events
+                .iter()
+                .map(|event| event.sequence)
+                .collect::<Vec<_>>(),
+            vec![2, 4]
+        );
+        assert!(page.truncated);
+        assert_eq!(page.next_cursor, Some(4));
+        assert!(!page.has_more);
+    }
+
+    #[test]
+    fn replay_reports_required_bytes_when_page_cannot_advance() {
+        let mut replay = ProcessOutputReplay::new();
+        replay.push(StreamChannel::Stdout, b"hello", 8, 1024, 1024);
+
+        let page = replay.read(None, 8, 2);
+        assert!(page.events.is_empty());
+        assert!(page.has_more);
+        assert_eq!(page.next_event_bytes, Some(5));
+    }
+}
+
+impl VmState {
+    pub(crate) fn prepare_process_output_replay_admission(
+        &mut self,
+        process_id: &str,
+    ) -> Result<(), VmError> {
+        if self.process_output_replays.contains_key(process_id)
+            || self.active_processes.contains_key(process_id)
+        {
+            return Err(VmError::Conflict(format!(
+                "process output replay already exists for {process_id}"
+            )));
+        }
+        let limit = self.limits.process.max_output_replays;
+        while self.process_output_replays.len() >= limit {
+            let evict_index = self
+                .process_output_replay_order
+                .iter()
+                .position(|candidate| {
+                    self.process_output_replays
+                        .get(candidate)
+                        .is_some_and(|replay| replay.exit_code.is_some())
+                });
+            let Some(evict_index) = evict_index else {
+                return Err(VmError::RequestAdmission {
+                    code: "ERR_AGENTOS_RESOURCE_LIMIT",
+                    message: format!(
+                        "process output replay limit {limit} reached; wait for a retained process to exit or raise limits.process.maxOutputReplays"
+                    ),
+                    configuration_path: Some("limits.process.maxOutputReplays"),
+                    retryable: true,
+                    errno: "ENOSPC",
+                });
+            };
+            if let Some(expired) = self.process_output_replay_order.remove(evict_index) {
+                self.process_output_replays.remove(&expired);
+            }
+        }
+        let admitted = self.process_output_replays.len().saturating_add(1);
+        if admitted >= limit.saturating_mul(4) / 5 {
+            eprintln!(
+                "agentos VM process output replay count reached {admitted} of {limit}; raise limits.process.maxOutputReplays for more retained processes"
+            );
+        }
+        // Reserve before execution startup can yield. Pending launches count
+        // against the same cap as active and completed retained processes.
+        self.process_output_replay_order
+            .push_back(process_id.to_owned());
+        self.process_output_replays
+            .insert(process_id.to_owned(), ProcessOutputReplay::new());
+        Ok(())
+    }
+
+    pub(crate) fn record_process_output(
+        &mut self,
+        process_id: &str,
+        channel: StreamChannel,
+        chunk: &[u8],
+    ) -> Option<(u64, u64)> {
+        let limits = &self.limits.process;
+        self.process_output_replays
+            .get_mut(process_id)
+            .map(|replay| {
+                replay.push(
+                    channel,
+                    chunk,
+                    limits.output_replay_events,
+                    limits.output_replay_bytes,
+                    limits.output_replay_page_bytes,
+                )
+            })
+    }
+
+    pub(crate) fn record_process_exit(&mut self, process_id: &str, exit_code: i32) {
+        if let Some(replay) = self.process_output_replays.get_mut(process_id) {
+            replay.exit_code = Some(exit_code);
+        }
+    }
+}
+
+/// Holds a replay reservation across asynchronous startup. Failure or canceled
+/// startup releases it; registration of an active process transfers ownership
+/// to the VM's normal replay/exit lifecycle.
+pub(crate) struct ProcessOutputReplayAdmission {
+    vm: VmHandle,
+    process_id: String,
+}
+
+impl Drop for ProcessOutputReplayAdmission {
+    fn drop(&mut self) {
+        if let Err(error) = self.vm.try_command("release pending process replay", |vm| {
+            if !vm.active_processes.contains_key(&self.process_id) {
+                vm.process_output_replays.remove(&self.process_id);
+                vm.process_output_replay_order
+                    .retain(|id| id != &self.process_id);
+            }
+            Ok(())
+        }) {
+            eprintln!(
+                "agentos failed to release pending process replay {}: {error}",
+                self.process_id
+            );
+        }
+    }
+}
+
+impl VmHandle {
+    pub(crate) fn reserve_process_output_replay(
+        &self,
+        process_id: &str,
+    ) -> Result<ProcessOutputReplayAdmission, VmError> {
+        self.try_command("reserve process output replay", |vm| {
+            vm.prepare_process_output_replay_admission(process_id)
+        })?;
+        Ok(ProcessOutputReplayAdmission {
+            vm: self.clone(),
+            process_id: process_id.to_owned(),
+        })
     }
 }

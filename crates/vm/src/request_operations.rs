@@ -124,6 +124,12 @@ pub struct OperationCancellation {
     inner: Arc<CancellationState>,
 }
 
+impl Default for OperationCancellation {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OperationCancellation {
     pub fn new() -> Self {
         Self {
@@ -513,7 +519,7 @@ impl OperationTable {
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(test)]
     pub(crate) fn close_connection(
         &self,
         connection_id: &str,
@@ -1161,7 +1167,7 @@ impl ProgressOperationView {
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(test)]
     pub(crate) fn close_connection(
         &self,
         connection_id: &str,

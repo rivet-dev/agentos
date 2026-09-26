@@ -1,4 +1,5 @@
 use crate::core::frames::{reject, DispatchResult};
+use crate::protocol::ReadProcessOutputRequest;
 use agentos_sidecar_protocol::protocol::{
     AcquirePackageRequest, AuthenticateRequest, BootstrapRootFilesystemRequest, CloseStdinRequest,
     CompareVmConfigRequest, ConfigureVmRequest, CreateLayerRequest, CreateOverlayRequest,
@@ -50,6 +51,7 @@ pub enum RequestRoute {
     CloseStdin(CloseStdinRequest),
     KillProcess(KillProcessRequest),
     GetProcessSnapshot(GetProcessSnapshotRequest),
+    ReadProcessOutput(ReadProcessOutputRequest),
     GetResourceSnapshot(GetResourceSnapshotRequest),
     FindListener(FindListenerRequest),
     FindBoundUdp(FindBoundUdpRequest),
@@ -99,6 +101,7 @@ pub fn route_request_payload(request: &RequestFrame) -> RequestRoute {
         RequestPayload::CloseStdin(payload) => RequestRoute::CloseStdin(payload),
         RequestPayload::KillProcess(payload) => RequestRoute::KillProcess(payload),
         RequestPayload::GetProcessSnapshot(payload) => RequestRoute::GetProcessSnapshot(payload),
+        RequestPayload::ReadProcessOutput(payload) => RequestRoute::ReadProcessOutput(payload),
         RequestPayload::GetResourceSnapshot(payload) => RequestRoute::GetResourceSnapshot(payload),
         RequestPayload::FindListener(payload) => RequestRoute::FindListener(payload),
         RequestPayload::FindBoundUdp(payload) => RequestRoute::FindBoundUdp(payload),
@@ -175,6 +178,7 @@ pub fn request_dispatch_mode(request: &RequestFrame) -> RequestDispatchMode {
         | RequestPayload::ResizePty(_)
         | RequestPayload::CloseStdin(_)
         | RequestPayload::KillProcess(_)
+        | RequestPayload::ReadProcessOutput(_)
         | RequestPayload::GetProcessSnapshot(_)
         | RequestPayload::GetResourceSnapshot(_)
         | RequestPayload::FindListener(_)

@@ -14,7 +14,7 @@ The generated actor client exposes file operations under `filesystem`.
 The actor's filesystem configuration is a closed registry. By default, each VM
 uses an ephemeral in-memory overlay over the bundled base image. Its writes
 survive for that VM's lifetime but are discarded when the VM is replaced. Use
-an `actor-sqlite` root or mount when files must survive VM replacement. Unknown
+an `durable` root or mount when files must survive VM replacement. Unknown
 backends, JavaScript VFS objects, callbacks, and host paths are rejected.
 
 <CodeSnippet file="examples/filesystem/client.ts" />

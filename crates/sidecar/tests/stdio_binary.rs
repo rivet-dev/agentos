@@ -787,6 +787,8 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
             14,
             wire_vm(&connection_id, &session_id, &vm_id),
             RequestPayload::ExecuteRequest(ExecuteRequest {
+                retain_output: false,
+
                 process_id: String::from("proc-1"),
                 command: None,
                 runtime: Some(GuestRuntimeKind::JavaScript),

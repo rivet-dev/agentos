@@ -2146,48 +2146,6 @@ ykAheWCsAteSEWVc0w==\n\
             (javascript, wasm, wasm_javascript, python, python_javascript)
         }
 
-        fn create_javascript_context_for_vm_test(
-            sidecar: &VmManager<RecordingBridge>,
-            vm_id: &str,
-        ) -> agentos_executor_node_v8::JavascriptContext {
-            let engines = sidecar
-                .vms
-                .get(vm_id)
-                .expect("JavaScript test VM")
-                .execution_engines
-                .clone();
-            let context = engines
-                .javascript("create test JavaScript context")
-                .expect("borrow VM JavaScript engine")
-                .create_context(CreateJavascriptContextRequest {
-                    vm_id: vm_id.to_owned(),
-                    bootstrap_module: None,
-                    compile_cache_root: None,
-                });
-            context
-        }
-
-        fn start_javascript_execution_for_vm_test(
-            sidecar: &VmManager<RecordingBridge>,
-            vm_id: &str,
-            request: StartJavascriptExecutionRequest,
-        ) -> Result<
-            agentos_executor_node_v8::JavascriptExecution,
-            agentos_executor_node_v8::JavascriptExecutionError,
-        > {
-            let engines = sidecar
-                .vms
-                .get(vm_id)
-                .expect("JavaScript test VM")
-                .execution_engines
-                .clone();
-            let result = engines
-                .javascript("start test JavaScript execution")
-                .expect("borrow VM JavaScript engine")
-                .start_execution(request);
-            result
-        }
-
         fn create_python_context_for_vm_test(
             sidecar: &VmManager<RecordingBridge>,
             vm_id: &str,
@@ -2853,6 +2811,8 @@ ykAheWCsAteSEWVc0w==\n\
                     request_id,
                     OwnershipScope::vm(connection_id, session_id, vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
+                        retain_output: false,
+
                         process_id: process_id.to_owned(),
                         command: Some(command.to_owned()),
                         runtime: None,
@@ -9300,6 +9260,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
             fs::remove_dir_all(host_dir).expect("remove temp dir");
         }
 
+        #[test]
         fn disposing_dirty_process_does_not_reconcile_live_host_mount_into_itself() {
             let host_dir = temp_dir("agentos-native-sidecar-live-host-dir-dispose");
             let generated_dir = host_dir.join("generated");
@@ -11114,6 +11075,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         request_id,
                         OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                         RequestPayload::Execute(crate::protocol::ExecuteRequest {
+                            retain_output: false,
+
                             process_id: process_id.to_owned(),
                             command: None,
                             runtime: Some(GuestRuntimeKind::WebAssembly),
@@ -12181,6 +12144,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
+                        retain_output: false,
+
                         process_id: String::from("proc-lifecycle-failure"),
                         command: None,
                         runtime: Some(GuestRuntimeKind::WebAssembly),
@@ -12257,6 +12222,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
+                        retain_output: false,
+
                         process_id: String::from("proc-python"),
                         command: None,
                         runtime: Some(GuestRuntimeKind::Python),
@@ -12298,8 +12265,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
             let cwd = temp_dir("agentos-vm-concurrent-wasm-starts");
             write_fixture(
                 &cwd.join("guest.wasm"),
-                wat::parse_str(r#"(module (memory (export "memory") 1) (func (export "_start")))"#)
-                    .expect("compile immediate-exit WASM fixture"),
+                wasm_stdout_module("retained concurrent output"),
             );
             let mut sidecar = create_test_sidecar();
             let (connection_id, session_id) =
@@ -12320,6 +12286,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
             let mut starts = (0..10)
                 .map(|index| {
                     let payload = ExecuteRequest {
+                        retain_output: true,
+
                         process_id: format!("concurrent-wasm-{index}"),
                         command: None,
                         runtime: Some(GuestRuntimeKind::WebAssembly),
@@ -12375,6 +12343,33 @@ console.log(JSON.stringify({ status: "ok", summary }));
                 let (stdout, stderr, exit_code) =
                     drain_process_output(&mut sidecar, &vm_id, &format!("concurrent-wasm-{index}"));
                 assert_eq!(exit_code, Some(0), "stdout: {stdout} stderr: {stderr}");
+                let replay_request = request(
+                    200 + index,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    RequestPayload::ReadProcessOutput(crate::protocol::ReadProcessOutputRequest {
+                        process_id: format!("concurrent-wasm-{index}"),
+                        after: None,
+                        max_events: 0,
+                        max_bytes: 0,
+                    }),
+                );
+                let RequestPayload::ReadProcessOutput(payload) = replay_request.payload.clone()
+                else {
+                    unreachable!()
+                };
+                let replay = block_on_sidecar!(
+                    sidecar,
+                    sidecar.read_process_output(&replay_request, payload)
+                )
+                .expect("replay exited process");
+                let ResponsePayload::ProcessOutputPage(page) = replay.response.payload else {
+                    panic!("expected replay page")
+                };
+                assert_eq!(page.exit_code, Some(0));
+                assert_eq!(page.events.len(), 1);
+                assert_eq!(page.events[0].sequence, 0);
+                assert_eq!(page.events[0].chunk, b"retained concurrent output\n");
+                assert!(!page.has_more);
             }
             assert_eq!(
                 sidecar
@@ -12415,6 +12410,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
                 .wasm("force startup engine conflict")
                 .expect("hold engine before launch");
             let payload = ExecuteRequest {
+                retain_output: false,
+
                 process_id: String::from("wasm-engine-conflict"),
                 command: None,
                 runtime: Some(GuestRuntimeKind::WebAssembly),
@@ -12529,6 +12526,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     5,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
+                        retain_output: false,
+
                         process_id: String::from("proc-command-wasm"),
                         command: Some(String::from("hello")),
                         runtime: None,
@@ -12634,6 +12633,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     5,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
+                        retain_output: false,
+
                         process_id: String::from("proc-command-wasm-timeout"),
                         command: Some(String::from("spin")),
                         runtime: None,
@@ -12697,6 +12698,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         request_id,
                         OwnershipScope::vm(&connection_id, &session_id, vm_id),
                         RequestPayload::Execute(crate::protocol::ExecuteRequest {
+                            retain_output: false,
+
                             process_id: String::from(process_id),
                             command: None,
                             runtime: Some(GuestRuntimeKind::WebAssembly),
@@ -12771,6 +12774,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     6,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
+                        retain_output: false,
+
                         process_id: String::from("proc-managed-wasm-kernel-pipe"),
                         command: None,
                         runtime: Some(GuestRuntimeKind::WebAssembly),
@@ -13080,6 +13085,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     6,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
+                        retain_output: false,
+
                         process_id: String::from("proc-wasm-fs-permission"),
                         command: None,
                         runtime: Some(GuestRuntimeKind::WebAssembly),
@@ -13136,6 +13143,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     6,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
+                        retain_output: false,
+
                         process_id: String::from("proc-wasm-fs-write-permission"),
                         command: None,
                         runtime: Some(GuestRuntimeKind::WebAssembly),
@@ -13421,7 +13430,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
             ] {
                 let resolved = VmManager::<RecordingBridge>::
                     resolve_javascript_child_process_execution_with_mode(
-                        &mut *vm,
+                        &mut vm,
                         &parent_env,
                         &parent_guest_cwd,
                         &parent_host_cwd,
@@ -13448,7 +13457,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
 
             let missing =
                 VmManager::<RecordingBridge>::resolve_javascript_child_process_execution_with_mode(
-                    &mut *vm,
+                    &mut vm,
                     &parent_env,
                     &parent_guest_cwd,
                     &parent_host_cwd,
@@ -13473,7 +13482,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
             // exist even though an `echo` command is installed on PATH.
             let exact_missing =
                 VmManager::<RecordingBridge>::resolve_javascript_child_process_execution_with_mode(
-                    &mut *vm,
+                    &mut vm,
                     &BTreeMap::new(),
                     &parent_guest_cwd,
                     &parent_host_cwd,
@@ -14927,7 +14936,7 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
             };
             let error =
                 VmManager::<RecordingBridge>::resolve_javascript_child_process_execution_with_mode(
-                    &mut *vm,
+                    &mut vm,
                     &parent_env,
                     &parent_guest_cwd,
                     &parent_host_cwd,
@@ -15033,7 +15042,7 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
             for exact_exec_path in [false, true] {
                 let resolved = VmManager::<RecordingBridge>::
                     resolve_javascript_child_process_execution_with_mode(
-                        &mut *vm,
+                        &mut vm,
                         &parent_env,
                         &parent_guest_cwd,
                         &parent_host_cwd,
@@ -15157,7 +15166,7 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
             let parent_host_cwd = vm.host_cwd.clone();
             let resolved =
                 VmManager::<RecordingBridge>::resolve_javascript_child_process_execution_with_mode(
-                    &mut *vm,
+                    &mut vm,
                     &parent_env,
                     &parent_guest_cwd,
                     &parent_host_cwd,
@@ -15489,6 +15498,7 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                 "unexpected denied stderr: {stderr:?}"
             );
         }
+        #[test]
         fn host_functions_registry_command_denies_host_callback_without_permission() {
             let mut sidecar = create_test_sidecar();
             let (connection_id, session_id) =
@@ -15942,6 +15952,8 @@ process.stdout.write(`${JSON.stringify({
                     5,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
+                        retain_output: false,
+
                         process_id: String::from("proc-command-js"),
                         command: Some(String::from("./entry.js")),
                         runtime: None,
@@ -16179,6 +16191,8 @@ if (child.status !== 0) {
                     5,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
+                        retain_output: false,
+
                         process_id: String::from("proc-agentos-package-launch"),
                         command: Some(String::from("/opt/agentos/bin/x")),
                         runtime: None,
@@ -16248,6 +16262,8 @@ if (child.status !== 0) {
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
+    retain_output: false,
+
                         process_id: String::from("proc-command-node-eval"),
                         command: Some(String::from("node")),
                         runtime: None,
@@ -16297,6 +16313,8 @@ if (child.status !== 0) {
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
+                        retain_output: false,
+
                         process_id: String::from("proc-command-missing"),
                         command: Some(String::from("definitely-not-a-command")),
                         runtime: None,
@@ -16323,7 +16341,9 @@ if (child.status !== 0) {
                 other => panic!("unexpected execute response: {other:?}"),
             }
         }
-        fn common_host_filesystem_operations_use_the_vm_kernel_source_of_truth() {
+        fn with_python_host_operation_process(
+            test: impl FnOnce(&mut VmManager<RecordingBridge>, &str),
+        ) {
             assert_node_available();
 
             let mut sidecar = create_test_sidecar();
@@ -16409,11 +16429,15 @@ export async function loadPyodide() {
 
             {
                 let mut vm = sidecar.vms.get_mut(&vm_id).expect("python vm");
+                let runtime_context = vm.runtime_context.clone();
+                let limits = vm.limits.clone();
                 vm.active_processes.insert(
                     String::from("proc-python-vfs"),
-                    active_process_for_tests(
+                    active_process_for_vm_tests(
                         kernel_handle.pid(),
                         kernel_handle,
+                        runtime_context,
+                        limits,
                         GuestRuntimeKind::Python,
                         ActiveExecution::Python(execution),
                     ),
@@ -16443,87 +16467,7 @@ export async function loadPyodide() {
                 .expect("handle python bootstrap event");
             }
 
-            dispatch_test_host_operation(
-                &mut sidecar,
-                &vm_id,
-                "proc-python-vfs",
-                1,
-                agentos_vm::executor::host::HostOperation::Filesystem(
-                    agentos_vm::executor::host::FilesystemOperation::CreateDirectoryAt {
-                        dir_fd: u32::MAX,
-                        path: bounded_test_host_path("/workspace"),
-                        mode: 0o777,
-                    },
-                ),
-            )
-            .expect("dispatch common mkdir operation");
-            dispatch_test_host_operation(
-                &mut sidecar,
-                &vm_id,
-                "proc-python-vfs",
-                2,
-                agentos_vm::executor::host::HostOperation::Filesystem(
-                    agentos_vm::executor::host::FilesystemOperation::WriteFileAt {
-                        dir_fd: u32::MAX,
-                        path: bounded_test_host_path("/workspace/note.txt"),
-                        bytes: agentos_vm::executor::host::BoundedBytes::try_new(
-                            b"hello from shared host operation".to_vec(),
-                            &agentos_vm::executor::backend::PayloadLimit::new(
-                                "test.maxWriteBytes",
-                                1024,
-                            )
-                            .expect("test write limit"),
-                        )
-                        .expect("bounded test write"),
-                        mode: None,
-                    },
-                ),
-            )
-            .expect("dispatch common write operation");
-
-            let content = {
-                let mut vm = sidecar.vms.get_mut(&vm_id).expect("python vm");
-                String::from_utf8(
-                    vm.kernel
-                        .read_file("/workspace/note.txt")
-                        .expect("read bridged file from kernel"),
-                )
-                .expect("utf8 file contents")
-            };
-            assert_eq!(content, "hello from shared host operation");
-
-            dispatch_test_host_operation(
-                &mut sidecar,
-                &vm_id,
-                "proc-python-vfs",
-                3,
-                agentos_vm::executor::host::HostOperation::Network(
-                    agentos_vm::executor::host::NetworkOperation::ManagedUdpCreate {
-                        family: agentos_vm::executor::host::ManagedUdpFamily::Inet4,
-                    },
-                ),
-            )
-            .expect("dispatch Python UDP create through common host operation");
-
-            {
-                let vm = sidecar.vms.get(&vm_id).expect("python vm");
-                let process = vm
-                    .active_processes
-                    .get("proc-python-vfs")
-                    .expect("python process should be tracked");
-                let (_, udp) = process
-                    .udp_sockets
-                    .iter()
-                    .next()
-                    .expect("Python UDP capability");
-                assert!(
-                    udp.kernel_socket_id.is_some(),
-                    "Python UDP creation must allocate only a VM kernel socket"
-                );
-                assert!(udp.guest_local_addr.is_none());
-                assert!(udp.native_local_addr.is_none());
-                assert!(udp.native_commands.is_none());
-            }
+            test(&mut sidecar, &vm_id);
 
             let process = {
                 let mut vm = sidecar.vms.get_mut(&vm_id).expect("python vm");
@@ -16532,6 +16476,207 @@ export async function loadPyodide() {
                     .expect("remove fake python process")
             };
             cleanup_fake_runtime_process(process);
+        }
+        fn common_host_filesystem_operations_use_the_vm_kernel_source_of_truth() {
+            with_python_host_operation_process(|sidecar, vm_id| {
+                dispatch_test_host_operation(
+                    sidecar,
+                    vm_id,
+                    "proc-python-vfs",
+                    1,
+                    agentos_vm::executor::host::HostOperation::Filesystem(
+                        agentos_vm::executor::host::FilesystemOperation::CreateDirectoryAt {
+                            dir_fd: u32::MAX,
+                            path: bounded_test_host_path("/workspace"),
+                            mode: 0o777,
+                        },
+                    ),
+                )
+                .expect("dispatch common mkdir operation");
+                dispatch_test_host_operation(
+                    sidecar,
+                    vm_id,
+                    "proc-python-vfs",
+                    2,
+                    agentos_vm::executor::host::HostOperation::Filesystem(
+                        agentos_vm::executor::host::FilesystemOperation::WriteFileAt {
+                            dir_fd: u32::MAX,
+                            path: bounded_test_host_path("/workspace/note.txt"),
+                            bytes: agentos_vm::executor::host::BoundedBytes::try_new(
+                                b"hello from shared host operation".to_vec(),
+                                &agentos_vm::executor::backend::PayloadLimit::new(
+                                    "test.maxWriteBytes",
+                                    1024,
+                                )
+                                .expect("test write limit"),
+                            )
+                            .expect("bounded test write"),
+                            mode: None,
+                        },
+                    ),
+                )
+                .expect("dispatch common write operation");
+
+                let content = {
+                    let mut vm = sidecar.vms.get_mut(vm_id).expect("python vm");
+                    String::from_utf8(
+                        vm.kernel
+                            .read_file("/workspace/note.txt")
+                            .expect("read bridged file from kernel"),
+                    )
+                    .expect("utf8 file contents")
+                };
+                assert_eq!(content, "hello from shared host operation");
+            });
+        }
+
+        fn python_udp_creation_and_loopback_stay_vm_local() {
+            use agentos_vm::executor::backend::{ExecutionEvent, PayloadLimit};
+            use agentos_vm::executor::host::{
+                BoundedBytes, HostOperation, ManagedUdpFamily, NetworkOperation,
+            };
+
+            with_python_host_operation_process(|sidecar, vm_id| {
+                let host_socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+                host_socket.set_nonblocking(true).unwrap();
+                let port = host_socket.local_addr().unwrap().port();
+                let ownership = {
+                    let vm = sidecar.vms.get(vm_id).unwrap();
+                    OwnershipScope::vm(&vm.connection_id, &vm.session_id, vm_id)
+                };
+                let mut call_id = 0;
+                let mut call = |sidecar: &mut VmManager<RecordingBridge>, operation| {
+                    call_id += 1;
+                    let target = Arc::new(RecordingDirectReplyTarget::default());
+                    let identity = {
+                        let vm = sidecar.vms.get(vm_id).unwrap();
+                        let process = &vm.active_processes["proc-python-vfs"];
+                        assert_eq!(process.runtime, GuestRuntimeKind::Python);
+                        HostCallIdentity {
+                            generation: vm.generation,
+                            pid: process.kernel_pid,
+                            call_id,
+                        }
+                    };
+                    let reply = DirectHostReplyHandle::new(identity, target.clone(), 4096).unwrap();
+                    block_on_sidecar!(
+                        sidecar,
+                        sidecar.handle_execution_event(
+                            vm_id,
+                            "proc-python-vfs",
+                            ActiveExecutionEvent::Common(ExecutionEvent::HostCall {
+                                operation: HostOperation::Network(operation),
+                                reply
+                            })
+                        )
+                    )
+                    .expect("dispatch Python managed UDP operation");
+                    let deadline = Instant::now() + Duration::from_secs(2);
+                    while target.replies.lock().unwrap().is_empty() {
+                        assert!(
+                            Instant::now() < deadline,
+                            "UDP call {call_id} did not settle"
+                        );
+                        block_on_sidecar!(sidecar, sidecar.pump_process_events(&ownership))
+                            .expect("pump deferred Python UDP completion");
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                    let mut replies = target.replies.lock().unwrap();
+                    assert_eq!(replies.len(), 1, "operation must settle once");
+                    let HostCallReply::Json(value) =
+                        replies.pop().unwrap().expect("UDP operation succeeds")
+                    else {
+                        panic!("UDP operation must return JSON");
+                    };
+                    value
+                };
+                let receiver = call(
+                    sidecar,
+                    NetworkOperation::ManagedUdpCreate {
+                        family: ManagedUdpFamily::Inet4,
+                    },
+                );
+                let sender = call(
+                    sidecar,
+                    NetworkOperation::ManagedUdpCreate {
+                        family: ManagedUdpFamily::Inet4,
+                    },
+                );
+                let receiver_id = receiver["socketId"].as_str().expect("receiver socket id");
+                let sender_id = sender["socketId"].as_str().expect("sender socket id");
+                call(
+                    sidecar,
+                    NetworkOperation::ManagedUdpBind {
+                        socket_id: bounded_test_host_path(receiver_id),
+                        host: Some(bounded_test_host_path("127.0.0.1")),
+                        port,
+                    },
+                );
+                {
+                    let vm = sidecar.vms.get(vm_id).unwrap();
+                    let udp = &vm.active_processes["proc-python-vfs"].udp_sockets[receiver_id];
+                    assert!(
+                        udp.kernel_socket_id.is_some(),
+                        "Python UDP must be kernel-owned"
+                    );
+                    assert_eq!(
+                        udp.guest_local_addr.unwrap().port(),
+                        port,
+                        "guest can use a host-occupied port"
+                    );
+                    assert!(
+                        udp.native_local_addr.is_none(),
+                        "guest bind must not create a host socket address"
+                    );
+                    assert!(
+                        udp.native_commands.is_none(),
+                        "guest bind must not create a native socket owner"
+                    );
+                }
+                call(
+                    sidecar,
+                    NetworkOperation::ManagedUdpSend {
+                        socket_id: bounded_test_host_path(sender_id),
+                        bytes: BoundedBytes::try_new(
+                            b"vm-local".to_vec(),
+                            &PayloadLimit::new("test.datagramBytes", 64).unwrap(),
+                        )
+                        .unwrap(),
+                        host: Some(bounded_test_host_path("127.0.0.1")),
+                        port: Some(port),
+                    },
+                );
+                let received = call(
+                    sidecar,
+                    NetworkOperation::ManagedUdpPoll {
+                        socket_id: bounded_test_host_path(receiver_id),
+                        wait_ms: 0,
+                        peek: false,
+                        max_bytes: None,
+                    },
+                );
+                assert_eq!(received["type"], "message");
+                assert_eq!(received["data"]["base64"], "dm0tbG9jYWw=");
+                let mut buffer = [0; 64];
+                assert_eq!(
+                    host_socket.recv_from(&mut buffer).unwrap_err().kind(),
+                    std::io::ErrorKind::WouldBlock,
+                    "guest loopback datagram must not reach the host listener"
+                );
+                for socket_id in [receiver_id, sender_id] {
+                    call(
+                        sidecar,
+                        NetworkOperation::ManagedUdpClose {
+                            socket_id: bounded_test_host_path(socket_id),
+                        },
+                    );
+                }
+                assert!(
+                    sidecar.vms.get(vm_id).unwrap().active_processes["proc-python-vfs"]
+                        .udp_sockets
+                        .is_empty()
+                );
+            });
         }
         fn javascript_sync_rpc_requests_proxy_into_the_vm_kernel_filesystem() {
             assert_node_available();
@@ -18090,6 +18235,8 @@ console.log(seen.join("\n"));
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
+                        retain_output: false,
+
                         process_id: String::from("proc-js-import-fresh"),
                         command: Some(String::from("node")),
                         runtime: None,
@@ -21438,52 +21585,121 @@ process.exit(0);
                     ))],
                 },
             )
-            .expect("listen via http bridge");
-
-            let payload: Value =
-                serde_json::from_str(listen.as_str().expect("listen payload string"))
-                    .expect("parse listen payload");
-            assert_eq!(
-                payload["address"]["family"],
-                Value::String(String::from("IPv4"))
-            );
+            .expect_err("legacy host-backed HTTP listen must be rejected");
+            assert!(listen.to_string().contains("ENOTSUP"), "{listen:?}");
             assert!(
-                payload["address"]["port"]
-                    .as_u64()
-                    .is_some_and(|port| port > 0),
-                "payload: {payload}"
-            );
-            assert!(
-                sidecar.vms.get(&vm_id).is_some_and(|vm| {
-                    vm.active_processes
-                        .get("proc-js-http-listen")
-                        .is_some_and(|process| process.http_servers.contains_key(&7))
-                }),
-                "HTTP server was not registered",
-            );
-
-            let close = call_javascript_sync_rpc(
-                &mut sidecar,
-                &vm_id,
-                "proc-js-http-listen",
-                HostRpcRequest {
-                    raw_bytes_args: std::collections::HashMap::new(),
-                    id: 2,
-                    method: String::from("net.http_close"),
-                    args: vec![json!(7)],
-                },
-            )
-            .expect("close http bridge server");
-            assert_eq!(close, Value::Null);
-            assert!(
-                sidecar.vms.get(&vm_id).is_some_and(|vm| {
-                    vm.active_processes
-                        .get("proc-js-http-listen")
-                        .is_some_and(|process| process.http_servers.is_empty())
-                }),
-                "legacy HTTP bridge registered a server",
+                sidecar.vms.get(&vm_id).unwrap().active_processes["proc-js-http-listen"]
+                    .http_servers
+                    .is_empty()
             );
         }
+
+        #[test]
+        fn trusted_host_function_root_ignores_guest_spawn_denial() {
+            let mut sidecar = create_test_sidecar();
+            let (connection_id, session_id) = authenticate_and_open_session(&mut sidecar).unwrap();
+            let mut policy = PermissionsPolicy::allow_all();
+            policy.child_process =
+                Some(PatternPermissionScope::PermissionMode(PermissionMode::Deny));
+            let vm_id = create_vm(&mut sidecar, &connection_id, &session_id, policy).unwrap();
+            sidecar
+                .dispatch_blocking(request(
+                    10,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    RequestPayload::RegisterHostCallbacks(test_host_function_collection_payload(
+                        "math", "Math", "add",
+                    )),
+                ))
+                .unwrap();
+            let response = sidecar
+                .dispatch_blocking(request(
+                    11,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    RequestPayload::Execute(crate::protocol::ExecuteRequest {
+                        retain_output: false,
+                        process_id: "trusted-host-function".into(),
+                        command: Some("agentos-math".into()),
+                        runtime: None,
+                        entrypoint: None,
+                        args: vec!["add".into()],
+                        env: Default::default(),
+                        cwd: None,
+                        wasm_permission_tier: None,
+                        wasm_backend: None,
+                    }),
+                ))
+                .unwrap();
+            assert!(
+                matches!(
+                    response.response.payload,
+                    ResponsePayload::ProcessStarted(_)
+                ),
+                "{:?}",
+                response.response.payload
+            );
+        }
+
+        #[test]
+        fn unknown_fd_deferral_leaves_errno_to_normal_rpc_handler() {
+            let mut sidecar = create_test_sidecar();
+            let (connection_id, session_id) = authenticate_and_open_session(&mut sidecar).unwrap();
+            let vm_id = create_vm(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                PermissionsPolicy::allow_all(),
+            )
+            .unwrap();
+            let cwd = temp_dir("unknown-fd-deferral");
+            write_fixture(&cwd.join("entry.mjs"), "");
+            start_fake_javascript_process(&mut sidecar, &vm_id, &cwd, "unknown-fd");
+            let rpc = HostRpcRequest {
+                id: 1,
+                method: "fs.writeSync".into(),
+                args: vec![json!(987654), json!("x")],
+                raw_bytes_args: Default::default(),
+            };
+            {
+                let vm = sidecar.vms.get(&vm_id).unwrap();
+                let deferred = crate::execution::deferred_kernel_wait_request_for_process(
+                    &rpc,
+                    &vm.kernel,
+                    &vm.active_processes["unknown-fd"],
+                )
+                .expect(
+                    "unknown fd must reach the normal handler instead of escaping the precheck",
+                );
+                assert!(deferred.is_none());
+            }
+            let target = Arc::new(RecordingDirectReplyTarget::default());
+            let identity = {
+                let vm = sidecar.vms.get(&vm_id).unwrap();
+                HostCallIdentity {
+                    generation: vm.generation,
+                    pid: vm.active_processes["unknown-fd"].kernel_pid,
+                    call_id: rpc.id,
+                }
+            };
+            let reply = DirectHostReplyHandle::new(identity, target.clone(), 1024).unwrap();
+            block_on_sidecar!(
+                sidecar,
+                sidecar.handle_javascript_sync_rpc_request(
+                    &vm_id,
+                    "unknown-fd",
+                    ExecutionHostCall {
+                        request: rpc,
+                        reply
+                    }
+                )
+            )
+            .expect(
+                "RPC service must settle the guest reply instead of returning the precheck error",
+            );
+            let replies = target.replies.lock().unwrap();
+            assert_eq!(replies.len(), 1, "exactly one guest reply");
+            assert_eq!(replies[0].as_ref().unwrap_err().code, "EBADF");
+        }
+
         fn javascript_http_respond_records_pending_response() {
             let mut sidecar = create_test_sidecar();
             let (connection_id, session_id) =
@@ -28364,7 +28580,7 @@ try {
                     javascript_net_rpc_listens_and_connects_over_unix_domain_sockets();
                 }
                 "python-udp-vm-local" => {
-                    common_host_filesystem_operations_use_the_vm_kernel_source_of_truth();
+                    python_udp_creation_and_loopback_stay_vm_local();
                 }
                 "http2-request-handler-twice" => {
                     javascript_http2_request_handler_round_trip_runs_twice_in_one_vm();

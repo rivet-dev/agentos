@@ -67,7 +67,7 @@ const WASI_SDK = resolve(REPO_ROOT, "toolchain/c/vendor/wasi-sdk");
 const SIDECAR_BINARY = resolve(
 	REPO_ROOT,
 	process.env.CARGO_TARGET_DIR ?? "target",
-	"debug/agentos-sidecar",
+	"debug/agentos-native-sidecar",
 );
 
 const SETTLE_MS = 80;
@@ -155,13 +155,13 @@ function ensureSidecarBuilt(): void {
 		return;
 	}
 	if (!existsSync(SIDECAR_BINARY)) {
-		const build = spawnSync("cargo", ["build", "-q", "-p", "agentos-sidecar"], {
+		const build = spawnSync("cargo", ["build", "-q", "-p", "agentos-native-sidecar"], {
 			cwd: REPO_ROOT,
 			encoding: "utf8",
 		});
 		if (build.status !== 0) {
 			throw new Error(
-				["failed to build agentos-sidecar", build.stdout, build.stderr]
+				["failed to build agentos-native-sidecar", build.stdout, build.stderr]
 					.filter(Boolean)
 					.join("\n"),
 			);

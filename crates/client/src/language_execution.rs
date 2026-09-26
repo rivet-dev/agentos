@@ -1,7 +1,6 @@
 //! First-class JavaScript, TypeScript, Python, and shared execution lifecycle.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use agentos_sidecar_client::wire;
 use tokio::sync::{broadcast, watch};
@@ -9,8 +8,7 @@ use tokio::sync::{broadcast, watch};
 use crate::agent_os::AgentOs;
 use crate::agent_os::ProcessEntry;
 use crate::error::{ClientError, ClientResult};
-use crate::output_replay::OutputReplayBuffer;
-use crate::process::{ProcessOutput, ProcessStream};
+use crate::process::{ProcessOutput, ProcessRegistryReservation, ProcessStream};
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ContextDescriptor {
@@ -86,12 +84,8 @@ pub struct InlineExecutionOptions {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum JavaScriptModuleFormat {
-    /// Evaluate each call as an independent root ES module. A retained context
-    /// preserves `globalThis`, not the module's lexical scope.
     #[default]
     Module,
-    /// Use script/CommonJS semantics, including REPL-style top-level bindings
-    /// that remain visible to later calls in a retained context.
     CommonJs,
 }
 
@@ -162,7 +156,6 @@ pub struct TypeScriptCheckResult {
     pub diagnostics: Vec<TypeScriptDiagnostic>,
 }
 
-#[allow(clippy::large_enum_variant)] // This private enum avoids an allocation on the synchronous completion path.
 #[derive(Debug, Clone)]
 enum ExecutionSubmission {
     Completed(Box<CodeExecutionResult>),
@@ -506,8 +499,10 @@ impl AgentOs {
     ) -> ClientResult<ProcessDescriptor> {
         let retain_events = options.retain_events;
         let operation_id = format!("process-{}", uuid::Uuid::new_v4());
+        let reservation = self.reserve_process_registry_slot()?;
         background_submission(
             self,
+            self.transport().subscribe_wire_events(),
             self.submit_execution(
                 wire::RequestPayload::JavaScriptExecutionRequest(
                     wire::JavaScriptExecutionRequest {
@@ -523,6 +518,7 @@ impl AgentOs {
             .await?,
             "javascript",
             retain_events,
+            reservation,
         )
     }
 
@@ -533,8 +529,10 @@ impl AgentOs {
     ) -> ClientResult<ProcessDescriptor> {
         let retain_events = options.retain_events;
         let operation_id = format!("process-{}", uuid::Uuid::new_v4());
+        let reservation = self.reserve_process_registry_slot()?;
         background_submission(
             self,
+            self.transport().subscribe_wire_events(),
             self.submit_execution(
                 wire::RequestPayload::JavaScriptFileExecutionRequest(
                     wire::JavaScriptFileExecutionRequest {
@@ -547,6 +545,7 @@ impl AgentOs {
             .await?,
             "javascript",
             retain_events,
+            reservation,
         )
     }
 
@@ -641,8 +640,10 @@ impl AgentOs {
     ) -> ClientResult<ProcessDescriptor> {
         let retain_events = options.retain_events;
         let operation_id = format!("process-{}", uuid::Uuid::new_v4());
+        let reservation = self.reserve_process_registry_slot()?;
         background_submission(
             self,
+            self.transport().subscribe_wire_events(),
             self.submit_execution(
                 wire::RequestPayload::TypeScriptExecutionRequest(
                     wire::TypeScriptExecutionRequest {
@@ -659,6 +660,7 @@ impl AgentOs {
             .await?,
             "javascript",
             retain_events,
+            reservation,
         )
     }
 
@@ -669,8 +671,10 @@ impl AgentOs {
     ) -> ClientResult<ProcessDescriptor> {
         let retain_events = options.retain_events;
         let operation_id = format!("process-{}", uuid::Uuid::new_v4());
+        let reservation = self.reserve_process_registry_slot()?;
         background_submission(
             self,
+            self.transport().subscribe_wire_events(),
             self.submit_execution(
                 wire::RequestPayload::TypeScriptFileExecutionRequest(
                     wire::TypeScriptFileExecutionRequest {
@@ -685,6 +689,7 @@ impl AgentOs {
             .await?,
             "javascript",
             retain_events,
+            reservation,
         )
     }
 
@@ -912,8 +917,10 @@ impl AgentOs {
     ) -> ClientResult<ProcessDescriptor> {
         let retain_events = options.retain_events;
         let operation_id = format!("process-{}", uuid::Uuid::new_v4());
+        let reservation = self.reserve_process_registry_slot()?;
         background_submission(
             self,
+            self.transport().subscribe_wire_events(),
             self.submit_execution(
                 wire::RequestPayload::PythonExecutionRequest(wire::PythonExecutionRequest {
                     process: background_process(&options, operation_id),
@@ -925,6 +932,7 @@ impl AgentOs {
             .await?,
             "python",
             retain_events,
+            reservation,
         )
     }
 
@@ -935,8 +943,10 @@ impl AgentOs {
     ) -> ClientResult<ProcessDescriptor> {
         let retain_events = options.retain_events;
         let operation_id = format!("process-{}", uuid::Uuid::new_v4());
+        let reservation = self.reserve_process_registry_slot()?;
         background_submission(
             self,
+            self.transport().subscribe_wire_events(),
             self.submit_execution(
                 wire::RequestPayload::PythonFileExecutionRequest(
                     wire::PythonFileExecutionRequest {
@@ -949,6 +959,7 @@ impl AgentOs {
             .await?,
             "python",
             retain_events,
+            reservation,
         )
     }
 
@@ -959,8 +970,10 @@ impl AgentOs {
     ) -> ClientResult<ProcessDescriptor> {
         let retain_events = options.retain_events;
         let operation_id = format!("process-{}", uuid::Uuid::new_v4());
+        let reservation = self.reserve_process_registry_slot()?;
         background_submission(
             self,
+            self.transport().subscribe_wire_events(),
             self.submit_execution(
                 wire::RequestPayload::PythonModuleExecutionRequest(
                     wire::PythonModuleExecutionRequest {
@@ -973,6 +986,7 @@ impl AgentOs {
             .await?,
             "python",
             retain_events,
+            reservation,
         )
     }
 
@@ -1193,7 +1207,6 @@ fn evaluation_result(submission: ExecutionSubmission) -> ClientResult<CodeEvalua
             "evaluation unexpectedly returned a background process",
         )));
     };
-    let result = *result;
     let value = result
         .evaluation_value
         .as_deref()
@@ -1202,7 +1215,10 @@ fn evaluation_result(submission: ExecutionSubmission) -> ClientResult<CodeEvalua
         .map_err(|error| {
             ClientError::Sidecar(format!("failed to decode evaluation result: {error}"))
         })?;
-    Ok(CodeEvaluationResult { result, value })
+    Ok(CodeEvaluationResult {
+        result: *result,
+        value,
+    })
 }
 
 fn typescript_check_result(result: CodeExecutionResult) -> ClientResult<TypeScriptCheckResult> {
@@ -1313,11 +1329,16 @@ fn completed_submission(submission: ExecutionSubmission) -> ClientResult<CodeExe
     }
 }
 
+// Callers create the receiver before awaiting submission. Output and completion
+// can arrive before the admission response, including for an immediately exiting
+// script; subscribing here would permanently lose those events.
 fn background_submission(
     client: &AgentOs,
+    mut events: broadcast::Receiver<(wire::OwnershipScope, wire::EventPayload)>,
     submission: ExecutionSubmission,
     language: &str,
     retain_events: bool,
+    reservation: ProcessRegistryReservation,
 ) -> ClientResult<ProcessDescriptor> {
     match submission {
         ExecutionSubmission::Background(descriptor) => {
@@ -1336,8 +1357,7 @@ fn background_submission(
             let (output_tx, _) = broadcast::channel::<ProcessOutput>(1024);
             let (exit_tx, _) = watch::channel(crate::process::ProcessOutcome::Pending);
             let (kernel_pid_tx, _) = watch::channel(Some(pid));
-            let replay =
-                retain_events.then(|| Arc::new(parking_lot::Mutex::new(OutputReplayBuffer::new())));
+            let operation_id = descriptor.execution_id.clone();
             let entry = ProcessEntry {
                 command: format!("{language} source"),
                 args: Vec::new(),
@@ -1348,13 +1368,13 @@ fn background_submission(
                 process_id: process_id.clone(),
                 kernel_pid: kernel_pid_tx,
                 output_tasks: Vec::new(),
-                replay: replay.clone(),
+                retain_output: retain_events,
+                execution_id: Some(operation_id.clone()),
+                execution_generation: Some(descriptor.generation),
                 started_at: descriptor.created_at_ms as i64,
             };
-            let _ = client.inner().processes.insert(pid, entry);
-            let mut events = client.transport().subscribe_wire_events();
+            reservation.commit(pid, entry)?;
             let ownership = client.vm_scope();
-            let operation_id = descriptor.execution_id.clone();
             tokio::spawn(async move {
                 loop {
                     let event = match events.recv().await {
@@ -1390,16 +1410,13 @@ fn background_submission(
                                     (ProcessStream::Stderr, &stderr_tx)
                                 }
                             };
-                            let replay_event = replay
-                                .as_ref()
-                                .map(|replay| replay.lock().push(stream.clone(), &output.chunk));
                             let _ = tx.send(output.chunk.clone());
                             let _ = output_tx.send(ProcessOutput {
                                 pid,
                                 stream,
                                 data: output.chunk,
-                                sequence: replay_event.as_ref().map(|event| event.sequence),
-                                timestamp_ms: replay_event.as_ref().map(|event| event.timestamp_ms),
+                                sequence: Some(output.sequence),
+                                timestamp_ms: Some(output.timestamp_ms.min(i64::MAX as u64) as i64),
                             });
                         }
                         wire::EventPayload::ExecutionCompletedEvent(completed)

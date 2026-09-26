@@ -8,10 +8,12 @@ description = "Generated-contract transport support for the static agentOS actor
 
 [features]
 default = []
-contract = ["dep:ts-rs"]
+contract = ["agentos-client/contract", "dep:ts-rs"]
 
 [dependencies]
 agentos-client = { workspace = true }
+agentos-sidecar-client = { workspace = true }
+agentos-vm-config = { workspace = true }
 anyhow = "1"
 base64 = "0.22"
 ciborium = "0.2"
@@ -19,6 +21,7 @@ hex = "0.4"
 rivet-error = "=2.3.12-rc.3"
 rivetkit = "=2.3.12-rc.3"
 serde = { version = "1", features = ["derive"] }
+serde_bytes = "0.11"
 serde_json = "1"
 sha2 = "0.10"
 tracing = "0.1"

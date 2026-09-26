@@ -329,6 +329,10 @@ export type LiveResponsePayload =
 			response: protocol.ExecutionOutputPageResponse;
 	  }
 	| {
+			type: "process_output_page";
+			response: protocol.ProcessOutputPageResponse;
+	  }
+	| {
 			type: "ext_result";
 			envelope: LiveExtEnvelope;
 	  };
@@ -800,6 +804,8 @@ export function fromGeneratedResponsePayload(
 			return { type: "execution_deleted", response: payload.val };
 		case "ExecutionIoResponse":
 			return { type: "execution_io", response: payload.val };
+		case "ProcessOutputPageResponse":
+			return { type: "process_output_page", response: payload.val };
 		case "ExecutionOutputPageResponse":
 			return { type: "execution_output_page", response: payload.val };
 	}

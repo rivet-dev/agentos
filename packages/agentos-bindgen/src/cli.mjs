@@ -25,7 +25,7 @@ export function readRustContract() {
 
 export function validateContract(contract) {
 	assert.equal(contract.schemaVersion, 1, "unsupported contract schema version");
-	assert.match(contract.apiVersion, /^agentos-sdk\.dev\/v\d+(alpha\d+)?$/);
+	assert.match(contract.apiVersion, /^https:\/\/rivet\.dev\/agentos\/v\d+(alpha\d+)?$/);
 	assert.ok(Number.isInteger(contract.contractMajor) && contract.contractMajor > 0);
 	assert.match(contract.contractHash, /^sha256:[0-9a-f]{64}$/);
 	assert.ok(Array.isArray(contract.capabilities));

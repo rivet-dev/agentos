@@ -1525,6 +1525,8 @@ process.stdin.once("data", (canonical) => {
             4,
             wire_vm(&connection_id, &session_id, &vm_id),
             RequestPayload::ExecuteRequest(ExecuteRequest {
+                retain_output: false,
+
                 process_id: process_id.to_owned(),
                 command: None,
                 runtime: Some(GuestRuntimeKind::JavaScript),

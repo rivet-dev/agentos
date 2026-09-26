@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SidecarRejectedError } from "../src/sidecar-errors.js";
 import type { SidecarProcessSnapshotEntry } from "../src/sidecar/process-client.js";
+import { AgentOs } from "../src/agent-os.js";
 import {
 	type LocalCompatMount,
 	SidecarKernelProxy,
@@ -117,6 +118,81 @@ function createProxy(client: unknown, localMounts: LocalCompatMount[] = []) {
 		options as ConstructorParameters<typeof SidecarKernelProxy>[0],
 	);
 }
+
+it("ordinary Core output callbacks preserve sidecar replay identity without duplication", async () => {
+	const stub = createStubClient();
+	const proxy = createProxy(stub.client);
+	const core = Reflect.construct(AgentOs, [
+		proxy, {}, [], [], {}, {},
+		{ onEvent: () => () => {} }, session, vm,
+	]) as AgentOs;
+	const output = vi.fn();
+	const stdout = vi.fn();
+	try {
+		const process = await core.process.spawn("node", [], {
+			output: { retainEvents: true }, onStdout: stdout,
+		});
+		core.onProcessOutput(process.pid, output);
+		for (const [sequence, channel] of [[0, "stdout"], [1, "stderr"]] as const) {
+			stub.pushEvent({
+				ownership: { scope: "vm", vm_id: vm.vmId },
+				payload: {
+					type: "process_output", process_id: `proc-${process.pid}`,
+					channel, chunk: Uint8Array.of(65 + sequence), sequence,
+					timestamp_ms: sequence,
+				},
+			});
+		}
+		await vi.waitFor(() => expect(output).toHaveBeenCalledTimes(2));
+		expect(output.mock.calls.map(([event]) => event)).toEqual([
+			{ pid: process.pid, stream: "stdout", data: Uint8Array.of(65), sequence: 0, timestampMs: 0 },
+			{ pid: process.pid, stream: "stderr", data: Uint8Array.of(66), sequence: 1, timestampMs: 1 },
+		]);
+		expect(stdout).toHaveBeenCalledOnce();
+		expect(stdout).toHaveBeenCalledWith(Uint8Array.of(65));
+		stub.pushEvent({
+			ownership: { scope: "vm", vm_id: vm.vmId },
+			payload: { type: "process_exited", process_id: `proc-${process.pid}`, exit_code: 0 },
+		});
+		await core.process.wait(process.pid);
+	} finally {
+		await proxy.dispose();
+	}
+});
+
+it.each([false, true])("replay reconciles a missed exit after observation failure=%s", async (failed) => {
+	vi.spyOn(console, "error").mockImplementation(() => {});
+	const stub = createStubClient();
+	if (failed) stub.client.writeStdin = async () => { throw new Error("lost observation"); };
+	const proxy = createProxy(stub.client);
+	const core = Reflect.construct(AgentOs, [
+		proxy, {}, [], [], {}, {}, {
+			onEvent: () => () => {},
+			sendVmRequest: async () => ({ type: "process_output_page", response: {
+				events: [], nextCursor: null, hasMore: false, truncated: false, exitCode: 23,
+			} }),
+		}, session, vm,
+	]) as AgentOs;
+	try {
+		const process = await core.process.spawn("node", [], {
+			stdin: failed ? "input" : undefined, output: { retainEvents: true },
+		});
+		const exited = vi.fn();
+		core.onProcessExit(process.pid, exited);
+		const waiting = core.process.wait(process.pid);
+		if (failed) await expect(waiting).rejects.toThrow("termination_failed");
+		const replay = await core.process.readOutput(process.pid);
+		expect(replay.exitCode).toBe(23);
+		if (!failed) expect((await waiting).exitCode).toBe(23);
+		expect((await core.process.wait(process.pid)).exitCode).toBe(23);
+		expect((await core.process.get(process.pid)).state).toBe("exited");
+		expect((await core.process.list())[0].state).toBe("exited");
+		await core.process.readOutput(process.pid);
+		expect(exited).toHaveBeenCalledOnce();
+	} finally {
+		await proxy.dispose();
+	}
+});
 
 it("VM disposal preserves typed rejection after secondary cleanup and remains idempotent", async () => {
 	vi.spyOn(console, "error").mockImplementation(() => {});

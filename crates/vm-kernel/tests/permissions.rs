@@ -884,7 +884,7 @@ fn kernel_write_file_does_not_require_read_permission() {
     let denied_for_permission = Arc::clone(&denied);
     let mut config = KernelVmConfig::new("vm-write-without-read");
     config.permissions = Permissions {
-        filesystem: Some(Arc::new(move |request: &FsAccessRequest| {
+        filesystem: PermissionEvaluator::dynamic(move |request: &FsAccessRequest| {
             if request.op == agentos_vm_kernel::permissions::FsOperation::Read
                 && request.path == "/blocked.txt"
             {
@@ -896,7 +896,7 @@ fn kernel_write_file_does_not_require_read_permission() {
             } else {
                 PermissionDecision::allow()
             }
-        })),
+        }),
         ..Permissions::default()
     };
 
@@ -928,4 +928,64 @@ fn kernel_write_file_does_not_require_read_permission() {
             .expect("read raw storage"),
         b"overwritten".to_vec()
     );
+}
+
+#[test]
+fn trusted_initial_process_starts_without_granting_guest_subprocesses() {
+    let mut config = KernelVmConfig::new("vm-initial-process");
+    config.permissions = Permissions {
+        child_process: PermissionEvaluator::dynamic(|_: &CommandAccessRequest| {
+            PermissionDecision::deny("guest subprocesses denied")
+        }),
+        ..Permissions::allow_all()
+    };
+    let mut kernel = KernelVm::new(MemoryFileSystem::new(), config);
+    kernel
+        .register_driver(CommandDriver::new("alpha", ["node"]))
+        .unwrap();
+    let parent = kernel
+        .spawn_initial_process("node", Vec::new(), SpawnOptions::default())
+        .expect("trusted caller must be able to start the initial program");
+    let baseline = kernel.resource_snapshot();
+    let error = kernel
+        .spawn_process(
+            "node",
+            Vec::new(),
+            SpawnOptions {
+                requester_driver: Some("alpha".into()),
+                parent_pid: Some(parent.pid()),
+                ..SpawnOptions::default()
+            },
+        )
+        .expect_err("guest child must remain denied");
+    assert_eq!(error.code(), "EACCES");
+    assert_eq!(
+        kernel
+            .spawn_initial_process(
+                "node",
+                Vec::new(),
+                SpawnOptions {
+                    parent_pid: Some(parent.pid()),
+                    ..SpawnOptions::default()
+                }
+            )
+            .expect_err("trusted initial API cannot create guest children")
+            .code(),
+        "EINVAL"
+    );
+    assert_eq!(
+        kernel
+            .exec_process(
+                "alpha",
+                parent.pid(),
+                "node",
+                Vec::new(),
+                BTreeMap::new(),
+                "/".into()
+            )
+            .expect_err("initial process must not gain permission to exec")
+            .code(),
+        "EACCES"
+    );
+    assert_eq!(kernel.resource_snapshot(), baseline);
 }

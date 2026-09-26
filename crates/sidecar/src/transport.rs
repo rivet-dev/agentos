@@ -1699,7 +1699,10 @@ async fn run_async(
                 loop {
                     let frame = match read_frame(&reader_codec, &mut stdin) {
                         Ok(Some(frame)) => frame,
-                        Ok(None) => break,
+                        Ok(None) => {
+                            signal_stdin_eof(&stdin_tx);
+                            break;
+                        }
                         Err(error) => {
                             if let Err(send_error) = read_error_tx.try_send(error.to_string()) {
                                 eprintln!(
@@ -1773,7 +1776,10 @@ async fn run_async(
                 loop {
                     let frame = match read_frame(&reader_codec, &mut stdin) {
                         Ok(Some(frame)) => frame,
-                        Ok(None) => break,
+                        Ok(None) => {
+                            signal_stdin_eof(&stdin_tx);
+                            break;
+                        }
                         Err(error) => {
                             let _ = read_error_tx.try_send(error.to_string());
                             break;
@@ -4700,6 +4706,17 @@ fn frame_kind(frame: &ProtocolFrame) -> &'static str {
 enum StdinReaderFlow {
     Continue,
     Stop,
+}
+
+fn signal_stdin_eof(sender: &Sender<Result<Option<AccountedProtocolFrame>, String>>) {
+    // A clean EOF must follow every queued request. Dropping the sender alone
+    // looks like an unexpected ingress failure to the protocol router.
+    if sender.is_closed() {
+        return;
+    }
+    if let Err(error) = sender.blocking_send(Ok(None)) {
+        eprintln!("ERR_AGENTOS_STDIN_EOF_HANDOFF: could not queue clean EOF: {error}");
+    }
 }
 
 fn route_decoded_stdin_frame(

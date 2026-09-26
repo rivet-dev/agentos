@@ -97,6 +97,24 @@ macro_rules! register_action {
     };
 }
 
+/// Bind an action type owned by the contract crate to this actor's generated
+/// dispatch inventory. The action name and output stay defined with the DTO.
+#[macro_export]
+macro_rules! register_contract_action {
+    ($action:ty) => {
+        inventory::submit! {
+            $crate::action_set::RegisteredAction {
+                name: <$action as rivetkit::Action>::NAME,
+                dispatch: $crate::action_set::dispatch_typed::<$action>,
+                #[cfg(feature = "contract")]
+                contract: $crate::action_set::contract_for::<$action>,
+                #[cfg(feature = "contract")]
+                collect_types: $crate::action_set::collect_types_for::<$action>,
+            }
+        }
+    };
+}
+
 #[cfg(test)]
 fn decode_action_input<A: serde::de::DeserializeOwned>(args: &[u8]) -> Result<A> {
     decode_contract_input(args, crate::ACTOR_MESSAGE_SIZE_LIMIT as usize)
@@ -104,6 +122,48 @@ fn decode_action_input<A: serde::de::DeserializeOwned>(args: &[u8]) -> Result<A>
 
 pub(crate) fn encode_action_output(output: &impl serde::Serialize) -> Result<Vec<u8>> {
     agentos_actor_contract::encode_action_output(output, crate::ACTOR_MESSAGE_SIZE_LIMIT as usize)
+}
+
+#[cfg(feature = "contract")]
+pub(crate) fn contract() -> Vec<agentos_actor_contract::schema::ActionContract> {
+    let mut actions = inventory::iter::<RegisteredAction>
+        .into_iter()
+        .map(|action| (action.contract)())
+        .collect::<Vec<_>>();
+    actions.sort_by_key(|action| action.name);
+    actions
+}
+
+#[cfg(feature = "contract")]
+pub(crate) fn collect_contract_types(types: &mut agentos_actor_contract::schema::TypeCollector) {
+    for action in inventory::iter::<RegisteredAction> {
+        (action.collect_types)(types);
+    }
+}
+
+impl ActionSet<AgentOsActor> for AgentOsActionSet {
+    fn entries() -> Vec<ActionEntry<AgentOsActor>> {
+        let mut actions = inventory::iter::<RegisteredAction>
+            .into_iter()
+            .collect::<Vec<_>>();
+        actions.sort_by_key(|action| action.name);
+        actions
+            .into_iter()
+            .map(|action| ActionEntry::new(action.name))
+            .collect()
+    }
+
+    fn dispatch(
+        actor: Arc<AgentOsActor>,
+        ctx: Ctx<AgentOsActor>,
+        name: &str,
+        args: &[u8],
+    ) -> Option<DispatchFuture> {
+        inventory::iter::<RegisteredAction>
+            .into_iter()
+            .find(|action| action.name == name)
+            .map(|action| (action.dispatch)(actor, ctx, args))
+    }
 }
 
 #[cfg(test)]
@@ -485,47 +545,5 @@ mod tests {
                 .downcast_ref::<agentos_client::ClientError>()
                 .is_some());
         }
-    }
-}
-
-#[cfg(feature = "contract")]
-pub(crate) fn contract() -> Vec<agentos_actor_contract::schema::ActionContract> {
-    let mut actions = inventory::iter::<RegisteredAction>
-        .into_iter()
-        .map(|action| (action.contract)())
-        .collect::<Vec<_>>();
-    actions.sort_by_key(|action| action.name);
-    actions
-}
-
-#[cfg(feature = "contract")]
-pub(crate) fn collect_contract_types(types: &mut agentos_actor_contract::schema::TypeCollector) {
-    for action in inventory::iter::<RegisteredAction> {
-        (action.collect_types)(types);
-    }
-}
-
-impl ActionSet<AgentOsActor> for AgentOsActionSet {
-    fn entries() -> Vec<ActionEntry<AgentOsActor>> {
-        let mut actions = inventory::iter::<RegisteredAction>
-            .into_iter()
-            .collect::<Vec<_>>();
-        actions.sort_by_key(|action| action.name);
-        actions
-            .into_iter()
-            .map(|action| ActionEntry::new(action.name))
-            .collect()
-    }
-
-    fn dispatch(
-        actor: Arc<AgentOsActor>,
-        ctx: Ctx<AgentOsActor>,
-        name: &str,
-        args: &[u8],
-    ) -> Option<DispatchFuture> {
-        inventory::iter::<RegisteredAction>
-            .into_iter()
-            .find(|action| action.name == name)
-            .map(|action| (action.dispatch)(actor, ctx, args))
     }
 }

@@ -1,491 +1,34 @@
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agentos_client::{
-    ExecOptions, OpenShellOptions, ProcessStatus, ProcessTreeNode, SpawnOptions, SpawnStdio,
-    StdinInput,
-};
+pub(crate) use agentos_actor_contract::process::*;
+#[cfg(test)]
+use agentos_client::{ProcessStatus, ProcessTreeNode};
 use anyhow::{bail, Result};
 use rivetkit::{Ctx, Handles};
-use serde::{Deserialize, Serialize};
 
 use crate::actions::BoxFuture;
 use crate::events::{ProcessExitEvent, ProcessOutputEvent, TerminalExitEvent, TerminalOutputEvent};
-use crate::{AgentOsActor, FileBytes, FileContentInput};
+use crate::{AgentOsActor, FileBytes};
 
-const MAX_COMMAND_BYTES: usize = 16 * 1024;
-const MAX_ARGUMENTS: usize = 1_024;
-const MAX_ARGUMENT_BYTES: usize = 16 * 1024;
-const MAX_ENVIRONMENT_ENTRIES: usize = 1_024;
-const MAX_ENVIRONMENT_BYTES: usize = 256 * 1024;
-const MAX_STDIN_BYTES: usize = 256 * 1024;
-const MAX_EXEC_OUTPUT_BYTES: usize = 768 * 1024;
-const MAX_PROCESS_LIST_ENTRIES: usize = 4_096;
-const MAX_WAIT_MS: u64 = 5 * 60 * 1_000;
-const DEFAULT_WAIT_MS: u64 = 30 * 1_000;
-const MAX_TERMINAL_DIMENSION: u16 = 4_096;
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ActorProcessId {
-    pub generation: u64,
-    pub pid: u32,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ActorTerminalId {
-    pub generation: u64,
-    pub shell_id: String,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ActorExecOptions {
-    #[cfg_attr(feature = "contract", ts(optional, as = "Option<_>"))]
-    #[serde(default)]
-    pub env: BTreeMap<String, String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cwd: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stdin: Option<FileContentInput>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timeout_ms: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub capture_stdio: Option<bool>,
-}
-
-impl ActorExecOptions {
-    fn validate(&self) -> Result<()> {
-        validate_environment(&self.env)?;
-        if let Some(cwd) = &self.cwd {
-            validate_string("process cwd", cwd, MAX_ARGUMENT_BYTES)?;
-        }
-        if let Some(stdin) = &self.stdin {
-            validate_bytes("process stdin", stdin.byte_len(), MAX_STDIN_BYTES)?;
-        }
-        if self.timeout_ms == Some(0) {
-            bail!("invalid_input: process timeoutMs must be greater than zero");
-        }
-        if self.timeout_ms.is_some_and(|timeout| timeout > MAX_WAIT_MS) {
-            bail!("limit_exceeded: process timeout exceeds {MAX_WAIT_MS}ms; lower timeoutMs");
-        }
-        Ok(())
-    }
-
-    fn into_core(self) -> ExecOptions {
-        ExecOptions {
-            env: self.env,
-            cwd: self.cwd,
-            stdin: self.stdin.map(file_content_to_stdin),
-            timeout: Some(self.timeout_ms.unwrap_or(MAX_WAIT_MS) as f64),
-            capture_stdio: self.capture_stdio,
-            ..ExecOptions::default()
-        }
-    }
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ActorExecResult {
-    pub status: ActorExitStatus,
-    pub stdout: String,
-    pub stderr: String,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ProcessRun {
-    pub command: String,
-    #[cfg_attr(feature = "contract", ts(optional, as = "Option<_>"))]
-    #[serde(default)]
-    pub args: Vec<String>,
-    #[cfg_attr(feature = "contract", ts(optional, as = "Option<_>"))]
-    #[serde(default)]
-    pub options: ActorExecOptions,
-}
-
-crate::register_action!(ProcessRun => ActorExecResult, "process.run");
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ActorSpawnOptions {
-    #[cfg_attr(feature = "contract", ts(optional, as = "Option<_>"))]
-    #[serde(default)]
-    pub env: BTreeMap<String, String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cwd: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stdio: Option<SpawnStdio>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stdin_fd: Option<i32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stdout_fd: Option<i32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stderr_fd: Option<i32>,
-}
-
-impl ActorSpawnOptions {
-    pub(crate) fn validate(&self) -> Result<()> {
-        validate_environment(&self.env)?;
-        if let Some(cwd) = &self.cwd {
-            validate_string("process cwd", cwd, MAX_ARGUMENT_BYTES)?;
-        }
-        Ok(())
-    }
-
-    fn into_core(self) -> SpawnOptions {
-        SpawnOptions {
-            wasm_backend: None,
-            env: self.env,
-            cwd: self.cwd,
-            stdio: self.stdio,
-            stdin_fd: self.stdin_fd,
-            stdout_fd: self.stdout_fd,
-            stderr_fd: self.stderr_fd,
-            stream_stdin: Some(true),
-            retain_output: true,
-        }
-    }
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ProcessSpawn {
-    pub command: String,
-    #[cfg_attr(feature = "contract", ts(optional, as = "Option<_>"))]
-    #[serde(default)]
-    pub args: Vec<String>,
-    #[cfg_attr(feature = "contract", ts(optional, as = "Option<_>"))]
-    #[serde(default)]
-    pub options: ActorSpawnOptions,
-}
-
-crate::register_action!(ProcessSpawn => ActorProcessId, "process.spawn");
-
-macro_rules! process_id_action {
-    ($name:ident, $output:ty, $wire_name:literal) => {
-        #[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-        #[serde(rename_all = "camelCase", deny_unknown_fields)]
-        pub struct $name {
-            pub process: ActorProcessId,
-        }
-
-        crate::register_action!($name => $output, $wire_name);
-    };
-}
-
-process_id_action!(ProcessGet, ActorProcessInfo, "process.get");
-process_id_action!(ProcessWait, ActorProcessExit, "process.wait");
-process_id_action!(ProcessStdinClose, (), "process.stdin.close");
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ActorProcessInfo {
-    pub process: ActorProcessId,
-    pub command: String,
-    pub args: Vec<String>,
-    pub running: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub exit: Option<ActorExitStatus>,
-    pub started_at_ms: i64,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ActorProcessExit {
-    pub process: ActorProcessId,
-    pub status: ActorExitStatus,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProcessList {}
-
-crate::register_action!(ProcessList => Vec<ActorProcessInfo>, "process.list");
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProcessTree {}
-
-crate::register_action!(ProcessTree => ActorProcessTree, "process.tree");
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ActorProcessTree {
-    pub generation: u64,
-    pub roots: Vec<ActorProcessTreeNode>,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ActorProcessTreeNode {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub process: Option<ActorProcessId>,
-    pub pid: u32,
-    pub ppid: u32,
-    pub pgid: u32,
-    pub sid: u32,
-    pub driver: String,
-    pub command: String,
-    pub args: Vec<String>,
-    pub cwd: String,
-    pub status: ProcessStatus,
-    pub exit: Option<ActorExitStatus>,
-    pub start_time_ms: f64,
-    pub exit_time_ms: Option<f64>,
-    pub children: Vec<ActorProcessTreeNode>,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ActorSignal {
-    #[serde(rename = "SIGTERM")]
-    Term,
-    #[serde(rename = "SIGINT")]
-    Interrupt,
-    #[serde(rename = "SIGKILL")]
-    Kill,
-}
-
-impl ActorSignal {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Term => "SIGTERM",
-            Self::Interrupt => "SIGINT",
-            Self::Kill => "SIGKILL",
-        }
-    }
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ActorExitStatus {
-    pub exit_code: i32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub signal: Option<ActorSignal>,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ProcessSignal {
-    pub process: ActorProcessId,
-    pub signal: ActorSignal,
-}
-
-crate::register_action!(ProcessSignal => (), "process.signal");
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ProcessStdinWrite {
-    pub process: ActorProcessId,
-    pub data: FileContentInput,
-}
-
-crate::register_action!(ProcessStdinWrite => (), "process.stdin.write");
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ProcessPtyResize {
-    pub process: ActorProcessId,
-    pub cols: u16,
-    pub rows: u16,
-}
-
-crate::register_action!(ProcessPtyResize => (), "process.pty.resize");
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ProcessOutputRead {
-    pub process: ActorProcessId,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub after: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_events: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_bytes: Option<usize>,
-}
-
-crate::register_action!(ProcessOutputRead => ActorOutputReplay, "process.output.read");
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ActorOutputReplay {
-    pub generation: u64,
-    pub events: Vec<ActorOutputEvent>,
-    pub next_cursor: Option<u64>,
-    pub has_more: bool,
-    pub truncated: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub end: Option<ActorExitStatus>,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ActorOutputEvent {
-    pub sequence: u64,
-    pub stream: agentos_client::ProcessStream,
-    pub data: FileBytes,
-    pub timestamp_ms: i64,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ActorTerminalOptions {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub command: Option<String>,
-    #[cfg_attr(feature = "contract", ts(optional, as = "Option<_>"))]
-    #[serde(default)]
-    pub args: Vec<String>,
-    #[cfg_attr(feature = "contract", ts(optional, as = "Option<_>"))]
-    #[serde(default)]
-    pub env: BTreeMap<String, String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cwd: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cols: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rows: Option<u16>,
-}
-
-impl ActorTerminalOptions {
-    fn validate(&self) -> Result<()> {
-        if let Some(command) = &self.command {
-            validate_command(command)?;
-        }
-        validate_arguments(&self.args)?;
-        validate_environment(&self.env)?;
-        if let Some(cwd) = &self.cwd {
-            validate_string("terminal cwd", cwd, MAX_ARGUMENT_BYTES)?;
-        }
-        validate_dimensions(self.cols, self.rows)?;
-        Ok(())
-    }
-
-    fn into_core(self) -> OpenShellOptions {
-        OpenShellOptions {
-            wasm_backend: None,
-            command: self.command,
-            args: self.args,
-            env: self.env,
-            cwd: self.cwd,
-            cols: self.cols,
-            rows: self.rows,
-        }
-    }
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct TerminalOpen {
-    #[cfg_attr(feature = "contract", ts(optional, as = "Option<_>"))]
-    #[serde(default)]
-    pub options: ActorTerminalOptions,
-}
-
-crate::register_action!(TerminalOpen => ActorTerminalId, "terminal.open");
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TerminalList {}
-
-crate::register_action!(TerminalList => Vec<ActorTerminalInfo>, "terminal.list");
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ActorTerminalInfo {
-    pub terminal: ActorTerminalId,
-    pub pid: u32,
-    pub running: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub exit: Option<ActorExitStatus>,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct TerminalOutputRead {
-    pub terminal: ActorTerminalId,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub after: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_bytes: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_events: Option<usize>,
-}
-
-crate::register_action!(TerminalOutputRead => ActorOutputReplay, "terminal.output.read");
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct TerminalStdinWrite {
-    pub terminal: ActorTerminalId,
-    pub data: FileContentInput,
-}
-
-crate::register_action!(TerminalStdinWrite => (), "terminal.stdin.write");
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct TerminalPtyResize {
-    pub terminal: ActorTerminalId,
-    pub cols: u16,
-    pub rows: u16,
-}
-
-crate::register_action!(TerminalPtyResize => (), "terminal.pty.resize");
-
-macro_rules! terminal_id_action {
-    ($name:ident, $output:ty, $wire_name:literal) => {
-        #[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-        #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-        #[serde(rename_all = "camelCase", deny_unknown_fields)]
-        pub struct $name {
-            pub terminal: ActorTerminalId,
-        }
-
-        crate::register_action!($name => $output, $wire_name);
-    };
-}
-
-terminal_id_action!(TerminalWait, ActorTerminalExit, "terminal.wait");
-terminal_id_action!(TerminalClose, (), "terminal.close");
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ActorTerminalExit {
-    pub terminal: ActorTerminalId,
-    pub status: ActorExitStatus,
-}
+crate::register_contract_action!(ProcessRun);
+crate::register_contract_action!(ProcessSpawn);
+crate::register_contract_action!(ProcessGet);
+crate::register_contract_action!(ProcessList);
+crate::register_contract_action!(ProcessTree);
+crate::register_contract_action!(ProcessWait);
+crate::register_contract_action!(ProcessSignal);
+crate::register_contract_action!(ProcessStdinWrite);
+crate::register_contract_action!(ProcessStdinClose);
+crate::register_contract_action!(ProcessPtyResize);
+crate::register_contract_action!(ProcessOutputRead);
+crate::register_contract_action!(TerminalOpen);
+crate::register_contract_action!(TerminalList);
+crate::register_contract_action!(TerminalOutputRead);
+crate::register_contract_action!(TerminalStdinWrite);
+crate::register_contract_action!(TerminalPtyResize);
+crate::register_contract_action!(TerminalWait);
+crate::register_contract_action!(TerminalClose);
 
 impl Handles<ProcessRun> for AgentOsActor {
     type Future = BoxFuture<ActorExecResult>;
@@ -494,7 +37,7 @@ impl Handles<ProcessRun> for AgentOsActor {
             let _permit = self.admit_action()?;
             validate_command(&action.command)?;
             validate_arguments(&action.args)?;
-            action.options.validate()?;
+            validate_exec_options(&action.options)?;
             // Acquiring the ready VM handle is part of the caller's run budget. Reserve the Core
             // cleanup window below the actor's six-minute action deadline.
             let deadline = tokio::time::Instant::now()
@@ -510,7 +53,7 @@ impl Handles<ProcessRun> for AgentOsActor {
             if remaining.is_zero() {
                 bail!("timeout: process.run exceeded its deadline before execution started");
             }
-            let mut options = action.options.into_core();
+            let mut options = exec_options_into_core(action.options);
             options.timeout = Some(remaining.as_secs_f64() * 1_000.0);
             let result = vm
                 .exec_argv_process(&action.command, &action.args, options)
@@ -527,11 +70,14 @@ impl Handles<ProcessSpawn> for AgentOsActor {
             let _permit = self.admit_action()?;
             validate_command(&action.command)?;
             validate_arguments(&action.args)?;
-            action.options.validate()?;
+            validate_spawn_options(&action.options)?;
             let status = self.runtime.status().await;
             let vm = self.runtime.vm_at_generation(status.generation).await?;
-            let handle =
-                vm.spawn_process(&action.command, action.args, action.options.into_core())?;
+            let handle = vm.spawn(
+                &action.command,
+                action.args,
+                spawn_options_into_core(action.options),
+            )?;
             let process = ActorProcessId {
                 generation: status.generation,
                 pid: handle.pid,
@@ -659,7 +205,7 @@ impl Handles<ProcessStdinWrite> for AgentOsActor {
             self.runtime
                 .vm_at_generation(action.process.generation)
                 .await?
-                .write_process_stdin_awaited(action.process.pid, file_content_to_stdin(action.data))
+                .write_process_stdin(action.process.pid, file_content_to_stdin(action.data))
                 .await?;
             Ok(())
         })
@@ -674,7 +220,7 @@ impl Handles<ProcessStdinClose> for AgentOsActor {
             self.runtime
                 .vm_at_generation(action.process.generation)
                 .await?
-                .close_process_stdin_awaited(action.process.pid)
+                .close_process_stdin(action.process.pid)
                 .await?;
             Ok(())
         })
@@ -706,13 +252,14 @@ impl Handles<ProcessOutputRead> for AgentOsActor {
                 .runtime
                 .vm_at_generation(action.process.generation)
                 .await?;
-            let replay = vm.read_process_output(
-                action.process.pid,
-                action.after,
-                action.max_events,
-                action.max_bytes,
-            )?;
-            let info = vm.get_process(action.process.pid)?;
+            let replay = vm
+                .read_process_output(
+                    action.process.pid,
+                    action.after,
+                    action.max_events,
+                    action.max_bytes,
+                )
+                .await?;
             Ok(ActorOutputReplay {
                 generation: action.process.generation,
                 events: replay
@@ -728,7 +275,7 @@ impl Handles<ProcessOutputRead> for AgentOsActor {
                 next_cursor: replay.next_cursor,
                 has_more: replay.has_more,
                 truncated: replay.truncated,
-                end: exit_status(info.exit_code),
+                end: exit_status(replay.exit_code),
             })
         })
     }
@@ -739,10 +286,10 @@ impl Handles<TerminalOpen> for AgentOsActor {
     fn handle(self: Arc<Self>, ctx: Ctx<Self>, action: TerminalOpen) -> Self::Future {
         Box::pin(async move {
             let _permit = self.admit_action()?;
-            action.options.validate()?;
+            validate_terminal_options(&action.options)?;
             let status = self.runtime.status().await;
             let vm = self.runtime.vm_at_generation(status.generation).await?;
-            let handle = vm.open_shell(action.options.into_core())?;
+            let handle = vm.open_shell(terminal_options_into_core(action.options))?;
             let terminal = ActorTerminalId {
                 generation: status.generation,
                 shell_id: handle.shell_id,
@@ -821,17 +368,15 @@ impl Handles<TerminalOutputRead> for AgentOsActor {
                 .runtime
                 .vm_at_generation(action.terminal.generation)
                 .await?;
-            let snapshot = vm.snapshot_shell_page(
-                &action.terminal.shell_id,
-                action.after,
-                action.max_events,
-                action.max_bytes,
-            )?;
-            let end = vm
-                .list_shells()
-                .into_iter()
-                .find(|info| info.shell_id == action.terminal.shell_id)
-                .and_then(|info| exit_status(info.exit_code));
+            let snapshot = vm
+                .snapshot_shell_page(
+                    &action.terminal.shell_id,
+                    action.after,
+                    action.max_events,
+                    action.max_bytes,
+                )
+                .await?;
+            let end = exit_status(snapshot.exit_code);
             Ok(ActorOutputReplay {
                 generation: action.terminal.generation,
                 events: snapshot
@@ -933,72 +478,6 @@ impl Handles<TerminalClose> for AgentOsActor {
     }
 }
 
-fn actor_exec_result(result: agentos_client::ExecResult) -> Result<ActorExecResult> {
-    validate_bytes(
-        "process exec output",
-        result.stdout.len().saturating_add(result.stderr.len()),
-        MAX_EXEC_OUTPUT_BYTES,
-    )?;
-    Ok(ActorExecResult {
-        status: ActorExitStatus {
-            exit_code: result.exit_code,
-            signal: None,
-        },
-        stdout: result.stdout,
-        stderr: result.stderr,
-    })
-}
-
-fn actor_process_info(
-    generation: u64,
-    info: agentos_client::SpawnedProcessInfo,
-) -> ActorProcessInfo {
-    ActorProcessInfo {
-        process: ActorProcessId {
-            generation,
-            pid: info.pid,
-        },
-        command: info.command,
-        args: info.args,
-        running: info.running,
-        exit: exit_status(info.exit_code),
-        started_at_ms: info.started_at,
-    }
-}
-
-fn actor_process_tree_node(node: ProcessTreeNode, generation: u64) -> ActorProcessTreeNode {
-    let info = node.info;
-    ActorProcessTreeNode {
-        process: info
-            .tracked_pid
-            .map(|pid| ActorProcessId { generation, pid }),
-        pid: info.pid,
-        ppid: info.ppid,
-        pgid: info.pgid,
-        sid: info.sid,
-        driver: info.driver,
-        command: info.command,
-        args: info.args,
-        cwd: info.cwd,
-        status: info.status,
-        exit: exit_status(info.exit_code),
-        start_time_ms: info.start_time,
-        exit_time_ms: info.exit_time,
-        children: node
-            .children
-            .into_iter()
-            .map(|child| actor_process_tree_node(child, generation))
-            .collect(),
-    }
-}
-
-fn exit_status(exit_code: Option<i32>) -> Option<ActorExitStatus> {
-    exit_code.map(|exit_code| ActorExitStatus {
-        exit_code,
-        signal: None,
-    })
-}
-
 pub(crate) fn attach_process_events(
     vm: &agentos_client::AgentOs,
     ctx: Ctx<AgentOsActor>,
@@ -1037,88 +516,6 @@ pub(crate) fn attach_process_events(
         }
     })?
     .detach();
-    Ok(())
-}
-
-fn file_content_to_stdin(content: FileContentInput) -> StdinInput {
-    match content {
-        FileContentInput::Text(value) => StdinInput::Text(value),
-        FileContentInput::Bytes(value) => StdinInput::Bytes(value),
-    }
-}
-
-pub(crate) fn validate_command(command: &str) -> Result<()> {
-    validate_string("process command", command, MAX_COMMAND_BYTES)
-}
-
-pub(crate) fn validate_arguments(args: &[String]) -> Result<()> {
-    validate_count("process argument count", args.len(), MAX_ARGUMENTS)?;
-    for arg in args {
-        // An empty argv element is meaningful to the guest; only the command
-        // and cwd require a nonempty string.
-        validate_bytes("process argument", arg.len(), MAX_ARGUMENT_BYTES)?;
-    }
-    Ok(())
-}
-
-fn validate_environment(env: &BTreeMap<String, String>) -> Result<()> {
-    validate_count(
-        "process environment entries",
-        env.len(),
-        MAX_ENVIRONMENT_ENTRIES,
-    )?;
-    let bytes = env.iter().try_fold(0usize, |total, (key, value)| {
-        total
-            .checked_add(key.len())
-            .and_then(|sum| sum.checked_add(value.len()))
-            .ok_or_else(|| anyhow::anyhow!("limit_exceeded: environment byte count overflow"))
-    })?;
-    validate_bytes("process environment", bytes, MAX_ENVIRONMENT_BYTES)
-}
-
-fn validate_dimensions(cols: Option<u16>, rows: Option<u16>) -> Result<()> {
-    for (name, value) in [("cols", cols), ("rows", rows)] {
-        if value.is_some_and(|value| value == 0 || value > MAX_TERMINAL_DIMENSION) {
-            bail!("limit_exceeded: terminal {name} must be between 1 and {MAX_TERMINAL_DIMENSION}");
-        }
-    }
-    Ok(())
-}
-
-fn count_process_tree_nodes(roots: &[ProcessTreeNode]) -> usize {
-    let mut count = 0usize;
-    let mut pending = roots.iter().collect::<Vec<_>>();
-    while let Some(node) = pending.pop() {
-        count = count.saturating_add(1);
-        pending.extend(node.children.iter());
-    }
-    count
-}
-
-fn validate_string(label: &str, value: &str, limit: usize) -> Result<()> {
-    if value.is_empty() {
-        bail!("invalid_input: {label} must not be empty");
-    }
-    if value.len() > limit {
-        bail!(
-            "limit_exceeded: {label} is {} bytes, limit is {limit}",
-            value.len()
-        );
-    }
-    Ok(())
-}
-
-fn validate_count(label: &str, actual: usize, limit: usize) -> Result<()> {
-    if actual > limit {
-        bail!("limit_exceeded: {label} is {actual}, limit is {limit}");
-    }
-    Ok(())
-}
-
-fn validate_bytes(label: &str, actual: usize, limit: usize) -> Result<()> {
-    if actual > limit {
-        bail!("limit_exceeded: {label} is {actual} bytes, limit is {limit}");
-    }
     Ok(())
 }
 
@@ -1174,11 +571,11 @@ mod tests {
         let terminal: ActorTerminalOptions = serde_json::from_value(input).unwrap();
         validate_arguments(&run.args).unwrap();
         validate_arguments(&spawn.args).unwrap();
-        terminal.validate().unwrap();
+        validate_terminal_options(&terminal).unwrap();
         assert_eq!(serde_json::to_value(&run).unwrap()["args"], args);
         assert_eq!(serde_json::to_value(&spawn).unwrap()["args"], args);
         assert_eq!(
-            serde_json::to_value(terminal.into_core().args).unwrap(),
+            serde_json::to_value(terminal_options_into_core(terminal).args).unwrap(),
             args
         );
     }
@@ -1190,21 +587,18 @@ mod tests {
             ("x".repeat(MAX_ARGUMENT_BYTES + 1), "limit_exceeded"),
         ] {
             for result in [
-                ActorExecOptions {
+                validate_exec_options(&ActorExecOptions {
                     cwd: Some(cwd.clone()),
                     ..Default::default()
-                }
-                .validate(),
-                ActorSpawnOptions {
+                }),
+                validate_spawn_options(&ActorSpawnOptions {
                     cwd: Some(cwd.clone()),
                     ..Default::default()
-                }
-                .validate(),
-                ActorTerminalOptions {
+                }),
+                validate_terminal_options(&ActorTerminalOptions {
                     cwd: Some(cwd.clone()),
                     ..Default::default()
-                }
-                .validate(),
+                }),
             ] {
                 let error =
                     crate::action_set::classify_public_error(result.expect_err("invalid cwd"));
@@ -1218,11 +612,10 @@ mod tests {
                 assert!(error.to_string().contains("cwd"));
             }
         }
-        ActorTerminalOptions {
+        validate_terminal_options(&ActorTerminalOptions {
             cwd: Some("/".into()),
             ..Default::default()
-        }
-        .validate()
+        })
         .expect("nonempty terminal cwd is valid");
     }
 
@@ -1324,13 +717,15 @@ mod tests {
     #[test]
     fn captured_run_forwards_a_bounded_core_timeout_by_default() {
         let default = ActorExecOptions::default();
-        default.validate().expect("default options are valid");
-        assert_eq!(default.into_core().timeout, Some(MAX_WAIT_MS as f64));
-        assert!(ActorExecOptions {
+        validate_exec_options(&default).expect("default options are valid");
+        assert_eq!(
+            exec_options_into_core(default).timeout,
+            Some(MAX_WAIT_MS as f64)
+        );
+        assert!(validate_exec_options(&ActorExecOptions {
             timeout_ms: Some(0),
             ..Default::default()
-        }
-        .validate()
+        })
         .is_err());
     }
 }

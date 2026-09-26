@@ -215,6 +215,7 @@ pub(crate) const DEFAULT_GUEST_PATH_ENV: &str =
 #[cfg(test)]
 const KERNEL_COMMAND_STUB: &[u8] = b"#!/bin/sh\n# kernel command stub\n";
 
+#[cfg(test)]
 fn projected_command_guest_path(command: &str) -> String {
     format!("{}/{command}", crate::package_projection::OPT_AGENTOS_BIN)
 }
@@ -237,6 +238,7 @@ fn projected_commands_from_guest_paths(
         .collect()
 }
 
+#[cfg(test)]
 fn projected_commands_from_provided_commands(
     provided_commands: &BTreeMap<String, Vec<String>>,
     kernel_commands: &KernelCommandInventory,
@@ -758,7 +760,13 @@ where
         let after = serde_json::from_str(&payload.after).map_err(|error| {
             VmError::InvalidState(format!("invalid after VM config JSON: {error}"))
         })?;
-        let equivalent = equivalent_vm_creation_config(before, after, self.config.max_frame_bytes)?;
+        let mut before_mounts = payload.before_mounts;
+        let mut after_mounts = payload.after_mounts;
+        canonicalize_comparison_mounts(&self.mount_plugins, &mut before_mounts)?;
+        canonicalize_comparison_mounts(&self.mount_plugins, &mut after_mounts)?;
+        let equivalent = equivalent_vm_creation_config(before, after, self.config.max_frame_bytes)?
+            && before_mounts == after_mounts
+            && payload.before_restart_identity == payload.after_restart_identity;
         Ok(DispatchResult {
             response: self.respond(
                 request,
@@ -1082,6 +1090,8 @@ where
                 command_permissions: BTreeMap::new(),
                 host_functions: BTreeMap::new(),
                 active_processes: BTreeMap::new(),
+                process_output_replays: BTreeMap::new(),
+                process_output_replay_order: VecDeque::new(),
                 vm_fetch_streams: BTreeMap::new(),
                 next_vm_fetch_stream_id: 0,
                 executions: BTreeMap::new(),
@@ -1991,6 +2001,8 @@ where
                 command_permissions: BTreeMap::new(),
                 host_functions: BTreeMap::new(),
                 active_processes: BTreeMap::new(),
+                process_output_replays: BTreeMap::new(),
+                process_output_replay_order: VecDeque::new(),
                 vm_fetch_streams: BTreeMap::new(),
                 next_vm_fetch_stream_id: 0,
                 executions: BTreeMap::new(),
@@ -2218,6 +2230,7 @@ where
     B: VmManagerHost + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
+    vm.record_process_exit(process_id, exit_code);
     let payload = VmManager::<B>::complete_public_execution_in_vm(vm, vm_id, process_id, exit_code)
         .unwrap_or_else(|| {
             EventPayload::ProcessExited(ProcessExitedEvent {
@@ -4955,6 +4968,29 @@ fn prune_kernel_command_stub(
         kernel.remove_file(path).map_err(kernel_error)?;
     }
 
+    Ok(())
+}
+
+fn canonicalize_comparison_mounts<B>(
+    mount_plugins: &agentos_vm_kernel::mount_plugin::FileSystemPluginRegistry<
+        MountPluginContext<B>,
+    >,
+    mounts: &mut [crate::protocol::MountDescriptor],
+) -> Result<(), VmError>
+where
+    B: VmManagerHost + Send + 'static,
+    BridgeError<B>: fmt::Debug + Send + Sync + 'static,
+{
+    prepare_mount_descriptors(mount_plugins, mounts)?;
+    for mount in mounts.iter_mut() {
+        // Creation resolves paths and parses plugin JSON before applying a
+        // mount. Compare that same identity, not spelling/serialization details.
+        mount.guest_path = normalize_path(&mount.guest_path);
+        let config: serde_json::Value = serde_json::from_str(&mount.plugin.config)
+            .map_err(|error| VmError::InvalidState(error.to_string()))?;
+        mount.plugin.config = config.to_string();
+    }
+    mounts.sort_by(|left, right| left.guest_path.cmp(&right.guest_path));
     Ok(())
 }
 

@@ -13,12 +13,6 @@ import type {
 	NativeMountPluginDescriptor,
 } from "./descriptors.js";
 import * as executionProtocol from "./generated-protocol.js";
-import type { LivePackageAcquisitionSource } from "./request-payloads.js";
-import { SidecarRejectedError } from "./sidecar-errors.js";
-import type {
-	CreateVmConfig,
-	VmUserConfig,
-} from "./vm-config.js";
 import {
 	type HostFunction,
 	type HostFunctionCollections,
@@ -28,6 +22,7 @@ import {
 	resolveHostFunctions,
 } from "./host-functions.js";
 import { zodToJsonSchema } from "./host-functions-zod.js";
+import { handleJsBridgeCall } from "./js-bridge-handler.js";
 import type {
 	CodeEvaluationResult,
 	CodeExecutionResult,
@@ -55,7 +50,14 @@ import type {
 	TypeScriptFileExecutionOptions,
 } from "./language-execution.js";
 import { parseAgentOsOptions } from "./options-schema.js";
+import {
+	type ReplayReadOptions,
+	replayPage,
+	replayPageLimits,
+	replayWirePageLimits,
+} from "./output-replay.js";
 import { buildProcessForest } from "./process-forest.js";
+import type { LivePackageAcquisitionSource } from "./request-payloads.js";
 import type {
 	ConnectTerminalOptions,
 	Kernel,
@@ -77,6 +79,8 @@ import {
 } from "./sandbox.js";
 import { resolvePublishedSidecarBinary } from "./sidecar/binary.js";
 import { findCargoBinary, resolveCargoBinary } from "./sidecar/cargo.js";
+import { SidecarRejectedError } from "./sidecar-errors.js";
+import type { CreateVmConfig, VmUserConfig } from "./vm-config.js";
 
 export type {
 	MountConfigJsonObject,
@@ -87,7 +91,8 @@ export type {
 export type { ConnectTerminalOptions } from "./runtime-compat.js";
 
 const SHELL_DISPOSE_TIMEOUT_MS = 5_000;
-const PROCESS_OUTPUT_EVENT_LIMIT = 1_024;
+const PROCESS_REGISTRY_LIMIT = 1024;
+const TERMINAL_LIMIT = 1024;
 
 async function waitForTrackedExitPromises(
 	promises: Promise<unknown>[],
@@ -151,6 +156,8 @@ function headersToRecord(headers: Headers): Record<string, string> {
 }
 
 export interface ProcessOutput {
+	sequence?: number;
+	timestampMs?: number;
 	pid: number;
 	stream: "stdout" | "stderr";
 	data: Uint8Array;
@@ -280,8 +287,8 @@ import {
 	type AuthenticatedSession,
 	type CreatedVm,
 	createAgentOsSidecarClient,
-	SidecarKernelProxy,
 	type RootFilesystemEntry,
+	SidecarKernelProxy,
 	type SidecarMountDescriptor,
 	type SidecarPermissionsPolicy,
 	SidecarProcess,
@@ -608,6 +615,8 @@ export interface AgentOsOptions<
 	allowedNodeBuiltins?: string[];
 	/** VM-wide default for standalone WASM commands. JavaScript remains on V8. */
 	wasmBackend?: "v8" | "wasmtime" | "wasmtime-threads";
+	/** Sidecar-owned permission defaults. The agentOS profile is used when omitted. */
+	defaultsProfile?: "agent_os" | "secure";
 	/**
 	 * Opt in to a high-resolution monotonic guest clock (microsecond class)
 	 * for guest Node processes. Default `false` keeps the security-oriented
@@ -629,10 +638,10 @@ export interface AgentOsOptions<
 	/** Trusted host functions available to programs inside the VM. */
 	hostFunctions?: HostFunctionCollections<HOST_FUNCTIONS>;
 	/**
-	 * Permission policy for the kernel. By default the guest behaves like a
-	 * sandboxed machine: its virtual filesystem, processes, environment, listeners,
-	 * and loopback networking work, while external network access is denied. Your
-	 * policy is merged over that default, so an omitted scope keeps it.
+	 * Permission overrides for the sidecar-owned defaults profile. Omitted scopes
+	 * keep that profile's policy. Both profiles allow VM-local networking and
+	 * require an explicit grant for external networking and DNS, including
+	 * model-provider endpoints.
 	 */
 	permissions?: Permissions;
 	/**
@@ -1239,14 +1248,10 @@ function ensureSidecarBinary(): string {
 	if (sidecarBinaryNeedsBuild()) {
 		const cargoBinary = findCargoBinary();
 		if (cargoBinary) {
-			execFileSync(
-				cargoBinary,
-				["build", "-q", "-p", "agentos-sidecar"],
-				{
-					cwd: REPO_ROOT,
-					stdio: "pipe",
-				},
-			);
+			execFileSync(cargoBinary, ["build", "-q", "-p", "agentos-sidecar"], {
+				cwd: REPO_ROOT,
+				stdio: "pipe",
+			});
 		} else if (!existsSync(SIDECAR_BINARY)) {
 			execFileSync(
 				resolveCargoBinary(),
@@ -1720,182 +1725,6 @@ interface HostCallbackContext {
 	hostFunctions: ResolvedHostFunctions[];
 	hostFunctionMap: ReadonlyMap<string, HostFunction>;
 	readFile(path: string): Promise<Uint8Array>;
-}
-
-interface JsBridgeContext {
-	filesystem: VirtualFileSystem;
-}
-
-function bridgeErrorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
-}
-
-function toBridgeArgs(value: unknown): Record<string, unknown> {
-	if (!value || typeof value !== "object" || Array.isArray(value)) {
-		throw new Error("js_bridge args must be an object");
-	}
-	return value as Record<string, unknown>;
-}
-
-function bridgePath(mountId: string, value: unknown): string {
-	if (!mountId.startsWith("/")) {
-		throw new Error(`Unsupported js_bridge mount id: ${mountId}`);
-	}
-	if (typeof value !== "string") {
-		throw new Error("js_bridge path argument must be a string");
-	}
-	return posixPath.normalize(posixPath.join(mountId, value));
-}
-
-function requireBridgeNumber(value: unknown, field: string): number {
-	if (typeof value !== "number" || !Number.isFinite(value)) {
-		throw new Error(`js_bridge args.${field} must be a number`);
-	}
-	return value;
-}
-
-function decodeBridgeBytes(value: unknown, field: string): Uint8Array {
-	if (typeof value === "string") {
-		return new Uint8Array(Buffer.from(value, "base64"));
-	}
-	if (
-		Array.isArray(value) &&
-		value.every(
-			(entry) => Number.isInteger(entry) && entry >= 0 && entry <= 255,
-		)
-	) {
-		return new Uint8Array(value);
-	}
-	throw new Error(`js_bridge args.${field} must be base64 bytes`);
-}
-
-async function handleJsBridgeCall(
-	request: Extract<SidecarRequestFrame["payload"], { type: "js_bridge_call" }>,
-	context: JsBridgeContext,
-): Promise<SidecarResponsePayload> {
-	try {
-		const args = toBridgeArgs(request.args);
-		const fs = context.filesystem;
-		const path = () => bridgePath(request.mount_id, args.path);
-		let result: unknown;
-
-		switch (request.operation) {
-			case "readFile":
-				result = Buffer.from(await fs.readFile(path())).toString("base64");
-				break;
-			case "readDir":
-				result = await fs.readDir(path());
-				break;
-			case "readDirWithTypes":
-				result = await fs.readDirWithTypes(path());
-				break;
-			case "writeFile":
-				await fs.writeFile(path(), decodeBridgeBytes(args.content, "content"));
-				break;
-			case "createDir":
-				await fs.createDir(path());
-				break;
-			case "mkdir":
-				await fs.mkdir(path(), { recursive: args.recursive !== false });
-				break;
-			case "exists":
-				result = await fs.exists(path());
-				break;
-			case "stat":
-				result = await fs.stat(path());
-				break;
-			case "removeFile":
-				await fs.removeFile(path());
-				break;
-			case "removeDir":
-				await fs.removeDir(path());
-				break;
-			case "rename":
-				await fs.rename(
-					bridgePath(request.mount_id, args.oldPath),
-					bridgePath(request.mount_id, args.newPath),
-				);
-				break;
-			case "realpath":
-				result = await fs.realpath(path());
-				break;
-			case "symlink": {
-				if (typeof args.target !== "string") {
-					throw new Error("js_bridge args.target must be a string");
-				}
-				await fs.symlink(
-					args.target,
-					bridgePath(request.mount_id, args.linkPath),
-				);
-				break;
-			}
-			case "readlink":
-				result = await fs.readlink(path());
-				break;
-			case "lstat":
-				result = await fs.lstat(path());
-				break;
-			case "link":
-				await fs.link(
-					bridgePath(request.mount_id, args.oldPath),
-					bridgePath(request.mount_id, args.newPath),
-				);
-				break;
-			case "chmod":
-				await fs.chmod(path(), requireBridgeNumber(args.mode, "mode"));
-				break;
-			case "chown":
-				await fs.chown(
-					path(),
-					requireBridgeNumber(args.uid, "uid"),
-					requireBridgeNumber(args.gid, "gid"),
-					{ followSymlinks: args.followSymlinks !== false },
-				);
-				break;
-			case "utimes":
-				await fs.utimes(
-					path(),
-					requireBridgeNumber(args.atimeMs, "atimeMs"),
-					requireBridgeNumber(args.mtimeMs, "mtimeMs"),
-				);
-				break;
-			case "truncate":
-				await fs.truncate(path(), requireBridgeNumber(args.length, "length"));
-				break;
-			case "pread":
-				result = Buffer.from(
-					await fs.pread(
-						path(),
-						requireBridgeNumber(args.offset, "offset"),
-						requireBridgeNumber(args.length, "length"),
-					),
-				).toString("base64");
-				break;
-			case "pwrite":
-				await fs.pwrite(
-					path(),
-					requireBridgeNumber(args.offset, "offset"),
-					decodeBridgeBytes(args.content, "content"),
-				);
-				break;
-			default:
-				throw new Error(
-					`Unsupported js_bridge operation: ${request.operation}`,
-				);
-		}
-
-		return {
-			type: "js_bridge_result",
-			call_id: request.call_id,
-			...(result === undefined ? {} : { result }),
-		};
-	} catch (error) {
-		return {
-			type: "js_bridge_result",
-			call_id: request.call_id,
-			error: bridgeErrorMessage(error),
-		};
-	}
 }
 
 function parseHostCommandCallbackInput(
@@ -2604,8 +2433,7 @@ export class AgentOs {
 			args: string[];
 			startedAtMs: number;
 			retainEvents: boolean;
-			events: ProcessOutputEvent[];
-			nextSequence: number;
+			processId?: string;
 			signal?: ExecutionSignal;
 			exit?: ProcessExit;
 			outputHandlers: Set<(event: ProcessOutput) => void>;
@@ -2623,6 +2451,7 @@ export class AgentOs {
 			exitHandlers: Set<(event: ProcessExit) => void>;
 		}
 	>();
+	private _pendingProcessRegistrations = 0;
 	private _languageProcessIds = new Map<string, number>();
 	private _executionOutputHandlers = new Map<
 		string,
@@ -2636,6 +2465,9 @@ export class AgentOs {
 	// Value is the recorded exit code (undefined until/unless the exit
 	// resolves) so waitShell can still report it after the entry is dropped.
 	private _closedShellIds = new BoundedSet<string, number>(
+		CLOSED_SHELL_ID_RETENTION_LIMIT,
+	);
+	private _closedShellErrors = new BoundedSet<string, unknown>(
 		CLOSED_SHELL_ID_RETENTION_LIMIT,
 	);
 	private _pendingShellExitPromises = new Set<Promise<number>>();
@@ -2867,9 +2699,8 @@ export class AgentOs {
 			// forwarded `packages` (it owns the staging dir + read-only mount, and
 			// runtime `linkSoftware` appends to that live dir). The client no longer
 			// stages packages host-side.
-			const hostFunctionBootstrapCommands = collectHostFunctionBootstrapCommands(
-				hostFunctions,
-			);
+			const hostFunctionBootstrapCommands =
+				collectHostFunctionBootstrapCommands(hostFunctions);
 			const bootstrapLower = createKernelBootstrapLower(
 				options?.rootFilesystem,
 			);
@@ -2911,7 +2742,7 @@ export class AgentOs {
 					options?.permissions,
 				);
 				const createVmConfig: CreateVmConfig = {
-					defaultsProfile: "agent_os",
+					defaultsProfile: options?.defaultsProfile ?? "agent_os",
 					wasmBackend: options?.wasmBackend,
 					...(options?.environment !== undefined
 						? { env: { ...options.environment } }
@@ -3302,52 +3133,60 @@ export class AgentOs {
 				"contextId is not supported for spawned processes; contexts are for attached operations",
 			);
 		}
+		const releaseRegistrySlot = this._reserveProcessRegistrySlot();
 		const executionId = `process-${randomUUID()}`;
 		const internalOptions: LanguageExecutionOptions = {
 			...options,
 			output: options.output,
 		};
-		const admitted = (await this._executionOperation(
-			buildPayload(internalOptions, executionId),
-			internalOptions,
-			true,
-		)) as InternalBackgroundExecution;
-		const descriptor: ProcessDescriptor = {
-			pid: admitted.pid,
-			state: "running",
-			language,
-			startedAtMs: admitted.createdAtMs,
-		};
-		this._languageProcesses.set(admitted.pid, {
-			executionId: admitted.executionId,
-			descriptor,
-			outputHandlers: new Set(),
-			exitHandlers: new Set(),
-		});
-		this._languageProcessIds.set(admitted.executionId, admitted.pid);
-		const reconcileCompletion = async () => {
-			if (!this._languageProcesses.get(admitted.pid)?.exit) {
-				await this._waitProcess(admitted.pid);
-			}
-		};
-		if (admitted.completed) await reconcileCompletion();
-		else {
-			void admitted.completion
-				.then(reconcileCompletion)
-				.catch((error) =>
-					console.error(
-						"[agentos] failed to reconcile spawned process completion",
-						error,
-					),
-				);
-		}
-		if (options.signal) {
-			const abort = () => {
-				void this._killProcess(admitted.pid);
+		try {
+			const admitted = (await this._executionOperation(
+				buildPayload(internalOptions, executionId),
+				internalOptions,
+				true,
+			)) as InternalBackgroundExecution;
+			const descriptor: ProcessDescriptor = {
+				pid: admitted.pid,
+				state: "running",
+				language,
+				startedAtMs: admitted.createdAtMs,
 			};
-			options.signal.addEventListener("abort", abort, { once: true });
+			this._languageProcesses.set(admitted.pid, {
+				executionId: admitted.executionId,
+				descriptor,
+				outputHandlers: new Set(),
+				exitHandlers: new Set(),
+			});
+			this._languageProcessIds.set(admitted.executionId, admitted.pid);
+			releaseRegistrySlot();
+			const reconcileCompletion = async () => {
+				if (!this._languageProcesses.get(admitted.pid)?.exit) {
+					await this._waitProcess(admitted.pid);
+				}
+			};
+			if (admitted.completed) await reconcileCompletion();
+			else {
+				void admitted.completion
+					.then(reconcileCompletion)
+					.catch((error) =>
+						console.error(
+							"[agentos] failed to reconcile spawned process completion",
+							error,
+						),
+					);
+			}
+			if (options.signal) {
+				const abort = () => {
+					void this._killProcess(admitted.pid);
+				};
+				options.signal.addEventListener("abort", abort, { once: true });
+			}
+			return (
+				this._languageProcesses.get(admitted.pid)?.descriptor ?? descriptor
+			);
+		} finally {
+			releaseRegistrySlot();
 		}
-		return this._languageProcesses.get(admitted.pid)?.descriptor ?? descriptor;
 	}
 
 	private async _exec(
@@ -4182,8 +4021,7 @@ export class AgentOs {
 			args,
 			startedAtMs: Date.now(),
 			retainEvents,
-			events: [] as ProcessOutputEvent[],
-			nextSequence: 0,
+			processId: proc.processId,
 			signal: undefined as ExecutionSignal | undefined,
 			exit: undefined as ProcessExit | undefined,
 			outputHandlers,
@@ -4199,14 +4037,7 @@ export class AgentOs {
 		void proc
 			.wait()
 			.then((code) => {
-				const exit: ProcessExit = {
-					pid: proc.pid,
-					outcome: entry.signal ? "signalled" : "exited",
-					exitCode: code,
-					...(entry.signal ? { signal: entry.signal } : {}),
-				};
-				entry.exit = exit;
-				for (const h of exitHandlers) h(exit);
+				this._recordProcessExit(proc.pid, code);
 			})
 			.catch((error) => {
 				// A failed wait is not an exit event. Explicit process.wait calls retain
@@ -4225,61 +4056,143 @@ export class AgentOs {
 		};
 	}
 
+	private _recordProcessExit(pid: number, exitCode: number): void {
+		const entry = this._processes.get(pid);
+		if (!entry || entry.exit) return;
+		const exit: ProcessExit = {
+			pid,
+			exitCode,
+			outcome: entry.signal ? "signalled" : "exited",
+			...(entry.signal ? { signal: entry.signal } : {}),
+		};
+		entry.exit = exit;
+		for (const handler of entry.exitHandlers) {
+			try {
+				handler(exit);
+			} catch (error) {
+				console.error("[agentOS] process exit handler failed", error);
+			}
+		}
+	}
+
+	private _reserveProcessRegistrySlot(): () => void {
+		this._pruneExitedProcesses(this._pendingProcessRegistrations + 1);
+		const retained = this._processes.size + this._languageProcesses.size;
+		const admitted = retained + this._pendingProcessRegistrations + 1;
+		if (admitted > PROCESS_REGISTRY_LIMIT) {
+			throw Object.assign(
+				new Error(
+					`process registry limit ${PROCESS_REGISTRY_LIMIT} reached; wait for an exited process to be evicted or raise PROCESS_REGISTRY_LIMIT`,
+				),
+				{
+					code: "ERR_AGENTOS_RESOURCE_LIMIT",
+					limitName: "process_registry_entries",
+					configuredLimit: PROCESS_REGISTRY_LIMIT,
+					requested: admitted,
+					configurationPath: "PROCESS_REGISTRY_LIMIT",
+					unit: "processes",
+					scope: "vm",
+					operation: "process.spawn",
+					retryable: true,
+				},
+			);
+		}
+		this._pendingProcessRegistrations += 1;
+		if (admitted >= PROCESS_REGISTRY_LIMIT * 0.8) {
+			console.warn(
+				"[agentos] process registry admission approaches PROCESS_REGISTRY_LIMIT",
+				{ admitted, limit: PROCESS_REGISTRY_LIMIT },
+			);
+		}
+		let active = true;
+		return () => {
+			if (!active) return;
+			active = false;
+			this._pendingProcessRegistrations -= 1;
+		};
+	}
+
+	private _pruneExitedProcesses(reserveSlots: number): void {
+		const retained = this._processes.size + this._languageProcesses.size;
+		const target = Math.max(0, PROCESS_REGISTRY_LIMIT - reserveSlots);
+		let removeCount = retained - target;
+		if (removeCount <= 0) return;
+
+		const exited = [
+			...[...this._processes.entries()]
+				.filter(([, entry]) => entry.exit !== undefined)
+				.map(([pid, entry]) => ({
+					kind: "process" as const,
+					pid,
+					startedAtMs: entry.startedAtMs,
+				})),
+			...[...this._languageProcesses.entries()]
+				.filter(([, entry]) => entry.exit !== undefined)
+				.map(([pid, entry]) => ({
+					kind: "language" as const,
+					pid,
+					startedAtMs: entry.descriptor.startedAtMs,
+				})),
+		].sort(
+			(left, right) =>
+				left.startedAtMs - right.startedAtMs || left.pid - right.pid,
+		);
+
+		for (const entry of exited) {
+			if (removeCount <= 0) break;
+			if (entry.kind === "process") {
+				this._processes.delete(entry.pid);
+			} else {
+				const language = this._languageProcesses.get(entry.pid);
+				if (language) this._languageProcessIds.delete(language.executionId);
+				this._languageProcesses.delete(entry.pid);
+			}
+			removeCount -= 1;
+		}
+	}
+
 	private _spawnProcess(
 		command: string,
 		args: string[] = [],
 		options: SpawnOptions = {},
 	): ProcessDescriptor {
+		const releaseRegistrySlot = this._reserveProcessRegistrySlot();
 		const outputHandlers = new Set<(event: ProcessOutput) => void>();
 		const exitHandlers = new Set<(event: ProcessExit) => void>();
-		const recordOutput = (
-			channel: "stdout" | "stderr",
-			data: Uint8Array,
-		): void => {
-			const entry = this._processes.get(proc.pid);
-			if (!entry?.retainEvents) return;
-			if (entry.events.length >= PROCESS_OUTPUT_EVENT_LIMIT) {
-				entry.events.shift();
-			}
-			entry.events.push({
-				pid: proc.pid,
-				sequence: entry.nextSequence++,
-				channel,
-				chunk: data,
-				timestampMs: Date.now(),
+		let proc: ManagedProcess;
+		try {
+			proc = this.#kernel.spawn(command, args, {
+				cwd: options.cwd,
+				env: options.env,
+				stdin: options.stdin,
+				timeout: options.timeoutMs,
+				streamStdin: true,
+				retainOutput: options.output?.retainEvents ?? false,
+				onStdout: (data, metadata) => {
+					options?.onStdout?.(data);
+					for (const h of outputHandlers) {
+						h({ pid: proc.pid, stream: "stdout", data, ...metadata });
+					}
+				},
+				onStderr: (data, metadata) => {
+					options?.onStderr?.(data);
+					for (const h of outputHandlers) {
+						h({ pid: proc.pid, stream: "stderr", data, ...metadata });
+					}
+				},
 			});
-		};
 
-		const proc = this.#kernel.spawn(command, args, {
-			cwd: options.cwd,
-			env: options.env,
-			stdin: options.stdin,
-			timeout: options.timeoutMs,
-			streamStdin: true,
-			onStdout: (data) => {
-				recordOutput("stdout", data);
-				options?.onStdout?.(data);
-				for (const h of outputHandlers) {
-					h({ pid: proc.pid, stream: "stdout", data });
-				}
-			},
-			onStderr: (data) => {
-				recordOutput("stderr", data);
-				options?.onStderr?.(data);
-				for (const h of outputHandlers) {
-					h({ pid: proc.pid, stream: "stderr", data });
-				}
-			},
-		});
-
-		return this._trackProcess(
-			proc,
-			command,
-			args,
-			options.output?.retainEvents ?? false,
-			outputHandlers,
-			exitHandlers,
-		);
+			return this._trackProcess(
+				proc,
+				command,
+				args,
+				options.output?.retainEvents ?? false,
+				outputHandlers,
+				exitHandlers,
+			);
+		} finally {
+			releaseRegistrySlot();
+		}
 	}
 
 	spawn(
@@ -4852,6 +4765,33 @@ export class AgentOs {
 	}
 
 	private _openTerminal(options?: ShellOptions): { shellId: string } {
+		// Include closed-but-not-yet-exited terminals: close is not proof of exit.
+		if (this._pendingShellExitPromises.size >= TERMINAL_LIMIT) {
+			throw Object.assign(
+				new Error(
+					`terminal limit ${TERMINAL_LIMIT} reached; wait for existing terminals to exit or raise TERMINAL_LIMIT`,
+				),
+				{
+					code: "ERR_AGENTOS_RESOURCE_LIMIT",
+					limitName: "active_terminals",
+					configuredLimit: TERMINAL_LIMIT,
+					requested: TERMINAL_LIMIT + 1,
+					configurationPath: "TERMINAL_LIMIT",
+					unit: "terminals",
+					scope: "vm",
+					retryable: true,
+				},
+			);
+		}
+		if (this._pendingShellExitPromises.size + 1 >= TERMINAL_LIMIT * 0.8) {
+			console.warn(
+				"[agentos] terminal admission approaches TERMINAL_LIMIT; close unused terminals",
+				{
+					active: this._pendingShellExitPromises.size + 1,
+					limit: TERMINAL_LIMIT,
+				},
+			);
+		}
 		const shellId = `shell-${++this._shellCounter}`;
 		this._closedShellIds.delete(shellId);
 		const dataHandlers = new Set<(event: ShellData) => void>();
@@ -4892,10 +4832,18 @@ export class AgentOs {
 				return exitCode;
 			},
 			(error) => {
+				this._closedShellErrors.add(shellId, error);
 				finalize();
 				throw error;
 			},
 		);
+		// Preserve rejection for wait() without leaving an unobserved promise.
+		void entry.exitPromise.catch((error: unknown) => {
+			console.error("[agentos] terminal ended without a confirmed exit", {
+				shellId,
+				error,
+			});
+		});
 		this._pendingShellExitPromises.add(entry.exitPromise);
 		this._shells.set(shellId, entry);
 		return { shellId };
@@ -4976,6 +4924,9 @@ export class AgentOs {
 	private _waitTerminal(shellId: string): Promise<number> {
 		const entry = this._shells.get(shellId);
 		if (!entry) {
+			if (this._closedShellErrors.has(shellId)) {
+				return Promise.reject(this._closedShellErrors.get(shellId));
+			}
 			const exitCode = this._closedShellIds.get(shellId);
 			if (exitCode !== undefined) return Promise.resolve(exitCode);
 			throw new Error(`Shell not found: ${shellId}`);
@@ -5043,10 +4994,10 @@ export class AgentOs {
 	private async _listProcesses(): Promise<ProcessDescriptor[]> {
 		return [
 			...[...this._processes.values()].map(
-				({ proc, command, startedAtMs }): ProcessDescriptor => ({
+				({ proc, command, startedAtMs, exit }): ProcessDescriptor => ({
 					pid: proc.pid,
 					command,
-					state: proc.exitCode === null ? "running" : "exited",
+					state: exit || proc.exitCode !== null ? "exited" : "running",
 					startedAtMs,
 				}),
 			),
@@ -5108,7 +5059,7 @@ export class AgentOs {
 		return {
 			pid: entry.proc.pid,
 			command: entry.command,
-			state: entry.proc.exitCode === null ? "running" : "exited",
+			state: entry.exit || entry.proc.exitCode !== null ? "exited" : "running",
 			startedAtMs: entry.startedAtMs,
 		};
 	}
@@ -5151,27 +5102,30 @@ export class AgentOs {
 
 	private async _readProcessOutput(
 		pid: number,
-		options: { after?: number } = {},
+		options: ReplayReadOptions = {},
 	): Promise<OutputReplay> {
+		const { maxEvents } = replayPageLimits(options);
 		const language = this._languageProcesses.get(pid);
 		if (language) {
 			const page = await this._readExecutionOutput(language.executionId, {
+				limit: maxEvents,
 				cursor:
 					options.after === undefined ? undefined : `1:${options.after + 1}`,
 			});
-			return {
+			const replay = replayPage(
 				pid,
-				events: page.events.map((event) => ({
+				page.events.map((event) => ({
 					pid,
 					sequence: event.sequence,
 					channel: event.channel,
 					chunk: event.chunk,
 					timestampMs: event.timestampMs,
 				})),
-				nextCursor: page.nextCursor,
-				hasMore: page.hasMore,
-				truncated: page.truncated,
-			};
+				options,
+				page.truncated ? (options.after ?? -1) + 1 : undefined,
+				page.hasMore,
+			);
+			return { ...replay, exitCode: language.exit?.exitCode ?? null };
 		}
 		const entry = this._processes.get(pid);
 		if (!entry) throw new Error(`Process not found: ${pid}`);
@@ -5180,16 +5134,57 @@ export class AgentOs {
 				`Process ${pid} was not spawned with output.retainEvents enabled`,
 			);
 		}
-		const after = options.after ?? -1;
-		const events = entry.events.filter((event) => event.sequence > after);
+		if (!entry.processId) {
+			throw new Error(
+				`Process ${pid} does not expose a sidecar replay identity`,
+			);
+		}
+		const wireLimits = replayWirePageLimits(options);
+		const response = await this._sidecarClient.sendVmRequest(
+			this._sidecarSession,
+			this._sidecarVm,
+			{
+				type: "read_process_output",
+				process_id: entry.processId,
+				...(options.after === undefined ? {} : { after: options.after }),
+				max_events: wireLimits.maxEvents,
+				max_bytes: wireLimits.maxBytes,
+			},
+		);
+		if (response.type !== "process_output_page") {
+			throw new Error(
+				`unexpected readProcessOutput response: ${response.type}`,
+			);
+		}
+		const exitCode = response.response.exitCode;
+		if (exitCode !== null && this._processes.get(pid) === entry) {
+			if (this.#kernel instanceof SidecarKernelProxy) {
+				this.#kernel.reconcileReplayExit(entry.processId, exitCode);
+			}
+			this._recordProcessExit(pid, exitCode);
+		}
 		return {
 			pid,
-			events,
-			nextCursor: String(events.at(-1)?.sequence ?? after),
-			hasMore: false,
-			truncated:
-				entry.events.length === PROCESS_OUTPUT_EVENT_LIMIT &&
-				after < (entry.events[0]?.sequence ?? 0) - 1,
+			exitCode,
+			events: response.response.events.map((event) => ({
+				pid,
+				sequence: safeProtocolNumber(event.sequence, "process output sequence"),
+				channel: event.channel.toLowerCase() as "stdout" | "stderr",
+				chunk: new Uint8Array(event.chunk),
+				timestampMs: safeProtocolNumber(
+					event.timestampMs,
+					"process output timestamp",
+				),
+			})),
+			nextCursor:
+				response.response.nextCursor === null
+					? null
+					: safeProtocolNumber(
+							response.response.nextCursor,
+							"process output cursor",
+						),
+			hasMore: response.response.hasMore,
+			truncated: response.response.truncated,
 		};
 	}
 
@@ -5316,6 +5311,13 @@ export class AgentOs {
 			? T
 			: never,
 	): void {
+		if (
+			event.ownership.scope === "vm" &&
+			(event.ownership.connection_id !== this._sidecarSession.connectionId ||
+				event.ownership.session_id !== this._sidecarSession.sessionId ||
+				event.ownership.vm_id !== this._sidecarVm.vmId)
+		)
+			return;
 		if (event.payload.type === "execution_output") {
 			const output = mapExecutionOutputEvent(event.payload.event);
 			const pid = this._languageProcessIds.get(output.executionId);
@@ -5326,6 +5328,8 @@ export class AgentOs {
 						pid,
 						stream: output.channel === "stderr" ? "stderr" : "stdout",
 						data: output.chunk,
+						sequence: output.sequence,
+						timestampMs: output.timestampMs,
 					};
 					for (const handler of process.outputHandlers) {
 						try {

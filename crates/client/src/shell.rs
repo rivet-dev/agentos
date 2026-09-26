@@ -15,18 +15,17 @@
 //! channel-specific diagnostic tap (`on_shell_stderr` + [`OpenShellOptions::on_stderr`]); terminal
 //! renderers consume only `data` so prompts and control sequences are neither reordered nor doubled.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
 
 use anyhow::Result;
+use tokio::sync::{broadcast, watch};
 use uuid::Uuid;
 
 use agentos_sidecar_client::wire::{self, EventPayload, StreamChannel};
 
-use crate::agent_os::{AgentOs, ShellEntry, TerminalEntry};
+use crate::agent_os::{AgentOs, ClosedShellEntry, ShellEntry, TerminalEntry};
 use crate::error::ClientError;
-use crate::output_replay::{page_limits, require_page_progress, OutputReplayBuffer};
 use crate::process::{
     install_output_callback, OutputCallback, ProcessStatus, ProcessStream, StdinInput,
 };
@@ -34,12 +33,82 @@ use crate::process::{
 /// Channel capacity for a shell's ordered terminal-data and diagnostic-stderr broadcasts.
 const SHELL_DATA_CHANNEL_CAPACITY: usize = 1024;
 
-/// Maximum active or spawning terminals created by `connect_terminal` per VM.
+/// Maximum active or spawning shells and terminals per VM.
 const TERMINAL_LIMIT: usize = 1024;
 
 /// Default shell command used when [`OpenShellOptions::command`] is omitted (matches the kernel's
 /// PTY-backed `sh`).
 const DEFAULT_SHELL_COMMAND: &str = "sh";
+
+type ShellOutcome = Option<std::result::Result<i32, ClientError>>;
+type ShellSpawnReceiver = watch::Receiver<Option<std::result::Result<(), ClientError>>>;
+
+fn publish_shell_outcome(
+    sender: &watch::Sender<ShellOutcome>,
+    result: std::result::Result<i32, ClientError>,
+) {
+    sender.send_if_modified(|outcome| {
+        // Neither a late observation failure nor repeated replay may replace a
+        // confirmed exit or emit another completion notification.
+        if matches!(outcome, Some(Ok(_))) {
+            return false;
+        }
+        *outcome = Some(result);
+        true
+    });
+}
+
+fn retain_shell_result(retained: &mut VecDeque<ClosedShellEntry>, entry: ClosedShellEntry) {
+    if let Some(existing) = retained.iter_mut().find(|existing| {
+        existing.shell_id == entry.shell_id && existing.process_id == entry.process_id
+    }) {
+        if existing.result.is_err() {
+            *existing = entry;
+        }
+        return;
+    }
+    retained.push_back(entry);
+    while retained.len() > crate::CLOSED_SHELL_EXIT_CODE_RETENTION_LIMIT {
+        retained.pop_front();
+    }
+}
+
+async fn next_shell_event(
+    events: &mut broadcast::Receiver<(wire::OwnershipScope, EventPayload)>,
+    ownership: &wire::OwnershipScope,
+    outcome: &watch::Sender<ShellOutcome>,
+) -> Option<std::result::Result<EventPayload, broadcast::error::RecvError>> {
+    let mut replay_outcome = outcome.subscribe();
+    loop {
+        if matches!(*replay_outcome.borrow(), Some(Ok(_))) {
+            return None;
+        }
+        tokio::select! {
+            event = events.recv() => match event {
+                Ok((scope, payload)) if scope == *ownership => return Some(Ok(payload)),
+                Ok(_) => continue,
+                Err(error) => return Some(Err(error)),
+            },
+            changed = replay_outcome.changed() => {
+                if let Err(error) = changed {
+                    tracing::error!(%error, "terminal outcome channel closed during observation");
+                    return None;
+                }
+            }
+        }
+    }
+}
+
+async fn observe_shell_exit(mut receiver: watch::Receiver<ShellOutcome>) -> ShellOutcome {
+    loop {
+        if let Some(result) = receiver.borrow_and_update().clone() {
+            return Some(result);
+        }
+        if receiver.changed().await.is_err() {
+            return None;
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Supporting types
@@ -48,14 +117,13 @@ const DEFAULT_SHELL_COMMAND: &str = "sh";
 /// Callback-free options for portable `open_shell`.
 #[derive(Default)]
 pub struct OpenShellOptions {
+    pub wasm_backend: Option<crate::process::StandaloneWasmBackend>,
     pub command: Option<String>,
     pub args: Vec<String>,
     pub env: BTreeMap<String, String>,
     pub cwd: Option<String>,
     pub cols: Option<u16>,
     pub rows: Option<u16>,
-    /// Engine affinity inherited by standalone WASM commands launched by the shell.
-    pub wasm_backend: Option<crate::process::StandaloneWasmBackend>,
 }
 
 /// Options for `connect_terminal` (extends [`OpenShellOptions`]).
@@ -115,6 +183,7 @@ pub struct TerminalSnapshot {
     pub next_cursor: Option<u64>,
     pub has_more: bool,
     pub truncated: bool,
+    pub exit_code: Option<i32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -123,9 +192,27 @@ pub struct TerminalSnapshot {
 
 /// Map a [`RejectedResponse`] into a [`ClientError::Kernel`] so the errno `code` survives.
 fn rejected_to_error(rejected: wire::RejectedResponse) -> ClientError {
-    ClientError::Kernel {
-        code: rejected.code,
-        message: rejected.message,
+    ClientError::from_rejection(rejected)
+}
+
+fn shell_started(response: wire::ResponsePayload) -> std::result::Result<u32, ClientError> {
+    match response {
+        wire::ResponsePayload::ProcessStartedResponse(wire::ProcessStartedResponse {
+            pid: Some(pid),
+            ..
+        }) => Ok(pid),
+        wire::ResponsePayload::RejectedResponse(rejected) => Err(rejected_to_error(rejected)),
+        other => Err(ClientError::Sidecar(format!(
+            "open_shell: expected a started process with a PID, received {other:?}"
+        ))),
+    }
+}
+
+struct ShellReservation(AgentOs);
+
+impl Drop for ShellReservation {
+    fn drop(&mut self) {
+        release_counter(&self.0.inner().terminal_count);
     }
 }
 
@@ -161,9 +248,28 @@ struct TerminalReservation<'a> {
 impl<'a> TerminalReservation<'a> {
     fn new(agent: &'a AgentOs) -> std::result::Result<Self, ClientError> {
         if !try_reserve_counter(&agent.inner().terminal_count, TERMINAL_LIMIT) {
-            return Err(ClientError::Sidecar(format!(
-                "terminal limit exceeded: at most {TERMINAL_LIMIT} terminals can be active per VM"
-            )));
+            return Err(ClientError::ResourceLimit {
+                code: "ERR_AGENTOS_RESOURCE_LIMIT".into(),
+                message: format!("terminal limit {TERMINAL_LIMIT} reached; wait for existing terminals to exit or raise TERMINAL_LIMIT"),
+                details: Box::new(crate::ResourceLimitDetails {
+                    limit_name: Some("active_terminals".into()),
+                    configured_limit: Some(TERMINAL_LIMIT as u64),
+                    requested: Some(TERMINAL_LIMIT as u64 + 1),
+                    configuration_path: Some("TERMINAL_LIMIT".into()),
+                    unit: Some("terminals".into()),
+                    scope: Some("vm".into()),
+                    retryable: Some(true),
+                    ..Default::default()
+                }),
+            });
+        }
+        let active = agent.inner().terminal_count.load(Ordering::SeqCst);
+        if active >= TERMINAL_LIMIT * 4 / 5 {
+            tracing::warn!(
+                active,
+                limit = TERMINAL_LIMIT,
+                "terminal admission approaches TERMINAL_LIMIT; close unused terminals"
+            );
         }
         Ok(Self {
             agent,
@@ -274,6 +380,13 @@ impl AgentOs {
     /// [`OpenShellOptions::on_stderr`] callback); terminal renderers should consume only `data`.
     pub fn open_shell(&self, mut options: OpenShellOptions) -> Result<ShellHandle> {
         let inner = self.inner();
+        if inner.disposed.load(Ordering::SeqCst) {
+            return Err(ClientError::Sidecar(
+                "cannot open terminal after VM shutdown has started".into(),
+            )
+            .into());
+        }
+        let mut reservation = TerminalReservation::new(self)?;
         let counter = inner.shell_counter.fetch_add(1, Ordering::SeqCst) + 1;
         let shell_id = format!("shell-{counter}");
         // The wire-side process id used by write_shell/close_shell and event routing.
@@ -283,11 +396,9 @@ impl AgentOs {
         let (stderr_tx, _) = tokio::sync::broadcast::channel(SHELL_DATA_CHANNEL_CAPACITY);
         let (event_tx, _) = tokio::sync::broadcast::channel(SHELL_DATA_CHANNEL_CAPACITY);
         // Spawn-readiness gate: write/close await this before issuing their wire request.
-        let (spawned_tx, _) = tokio::sync::watch::channel(false);
+        let (spawned_tx, _) = tokio::sync::watch::channel(None);
         // Exit-code channel backing `wait_shell`.
-        let (exit_tx, _) = tokio::sync::watch::channel(None::<i32>);
-        let replay = Arc::new(parking_lot::Mutex::new(OutputReplayBuffer::new()));
-
+        let (exit_tx, _) = tokio::sync::watch::channel(None);
         // Register the entry up front so write/resize/close can address it immediately, exactly like
         // the TS map insert before the handle's async work settles.
         let entry = ShellEntry {
@@ -298,7 +409,6 @@ impl AgentOs {
             process_id: process_id.clone(),
             spawned_tx: spawned_tx.clone(),
             exit_tx: exit_tx.clone(),
-            replay: replay.clone(),
         };
         // `insert` fails only if the key already exists; the monotonic counter guarantees it cannot.
         let _ = inner.shells.insert(shell_id.clone(), entry);
@@ -328,6 +438,7 @@ impl AgentOs {
             env: options.env.clone().into_iter().collect(),
             cwd: options.cwd.clone(),
             wasm_permission_tier: None,
+            retain_output: true,
             wasm_backend: options.wasm_backend.map(Into::into),
         };
 
@@ -339,7 +450,14 @@ impl AgentOs {
         let route_process_id = process_id.clone();
         let exit_shell_id = shell_id.clone();
         let exit_key = counter;
+        let (start_tx, start_rx) = tokio::sync::oneshot::channel();
+        let task_reservation = ShellReservation(self.clone());
+        reservation.disarm();
         let handle = tokio::spawn(async move {
+            let _reservation = task_reservation;
+            if start_rx.await.is_err() {
+                return;
+            }
             let mut events = agent.transport().subscribe_wire_events();
 
             let response = match agent
@@ -350,10 +468,21 @@ impl AgentOs {
                 )
                 .await
             {
-                Ok(response) => response,
+                Ok(response) => shell_started(response),
+                Err(error) => Err(error.into()),
+            };
+            let kernel_pid = match response {
+                Ok(pid) => pid,
                 Err(error) => {
                     tracing::warn!(?error, shell_id = %exit_shell_id, "open_shell spawn failed");
-                    // Drop the dead entry so later shell calls report ShellNotFound rather than hang.
+                    agent.retain_shell_outcome(
+                        &exit_shell_id,
+                        &route_process_id,
+                        0,
+                        Err(error.clone()),
+                    );
+                    spawned_tx.send_replace(Some(Err(error.clone())));
+                    publish_shell_outcome(&exit_tx, Err(error));
                     agent.inner().shells.remove(&exit_shell_id);
                     agent.inner().pending_shell_exits.remove(&exit_key);
                     return;
@@ -362,28 +491,39 @@ impl AgentOs {
 
             // Record the real kernel pid on the entry (TS `ShellHandle.pid`) and release the write
             // gate so any queued `write_shell`/`close_shell` proceed against the live spawn.
-            if let wire::ResponsePayload::ProcessStartedResponse(wire::ProcessStartedResponse {
-                pid: Some(pid),
-                ..
-            }) = response
-            {
-                agent
-                    .inner()
-                    .shells
-                    .update(&exit_shell_id, |_, existing| existing.pid = pid);
-            }
+            agent
+                .inner()
+                .shells
+                .update(&exit_shell_id, |_, existing| existing.pid = kernel_pid);
             // send_replace, not send: `watch::Sender::send` REFUSES to store the
             // value while no receiver exists (and the initial receiver is dropped
             // at channel creation), which left the spawn gate permanently false
             // for any write/resize issued after this point — they hung forever in
             // wait_for_spawn. send_replace stores unconditionally.
-            let _ = spawned_tx.send_replace(true);
+            spawned_tx.send_replace(Some(Ok(())));
 
-            loop {
-                let (_scope, payload) = match events.recv().await {
+            while let Some(event) = next_shell_event(&mut events, &ownership, &exit_tx).await {
+                let payload = match event {
                     Ok(value) => value,
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                        tracing::warn!(skipped, shell_id = %exit_shell_id, "terminal live events lost; recover output with terminal.output.read");
+                        continue;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        let error = ClientError::TerminationFailed {
+                            process_id: route_process_id.clone(),
+                            reason: "terminal event stream closed before a confirmed exit".into(),
+                        };
+                        tracing::warn!(?error, "terminal exit unconfirmed");
+                        agent.retain_shell_outcome(
+                            &exit_shell_id,
+                            &route_process_id,
+                            kernel_pid,
+                            Err(error.clone()),
+                        );
+                        publish_shell_outcome(&exit_tx, Err(error));
+                        break;
+                    }
                 };
                 match payload {
                     EventPayload::ProcessOutputEvent(output) => {
@@ -394,12 +534,20 @@ impl AgentOs {
                             StreamChannel::Stdout => ProcessStream::Stdout,
                             StreamChannel::Stderr => ProcessStream::Stderr,
                         };
-                        let replay_event = replay.lock().push(stream, &output.chunk);
+                        let (Some(sequence), Some(timestamp_ms)) =
+                            (output.sequence, output.timestamp_ms)
+                        else {
+                            tracing::error!(
+                                shell_id = %exit_shell_id,
+                                "retained terminal output event is missing its replay identity"
+                            );
+                            continue;
+                        };
                         let _ = event_tx.send(TerminalOutputEvent {
-                            sequence: replay_event.sequence,
-                            stream: replay_event.stream,
-                            data: replay_event.data,
-                            timestamp_ms: replay_event.timestamp_ms,
+                            sequence,
+                            stream,
+                            data: output.chunk.clone(),
+                            timestamp_ms: timestamp_ms.min(i64::MAX as u64) as i64,
                         });
                         // Publish every PTY chunk from this single wire-event consumer so terminal
                         // control sequences retain their original stdout/stderr order.
@@ -414,15 +562,13 @@ impl AgentOs {
                             // Record the exit code for `wait_shell`: live waiters observe the watch
                             // update; late waiters (after the entry is dropped below) find it in the
                             // bounded retention map, mirroring the TS closed-shell retention.
-                            {
-                                let mut retained = agent.inner().closed_shell_exit_codes.lock();
-                                retained.push_back((exit_shell_id.clone(), exited.exit_code));
-                                while retained.len() > crate::CLOSED_SHELL_EXIT_CODE_RETENTION_LIMIT
-                                {
-                                    retained.pop_front();
-                                }
-                            }
-                            let _ = exit_tx.send_replace(Some(exited.exit_code));
+                            agent.retain_shell_outcome(
+                                &exit_shell_id,
+                                &route_process_id,
+                                kernel_pid,
+                                Ok(exited.exit_code),
+                            );
+                            publish_shell_outcome(&exit_tx, Ok(exited.exit_code));
                             break;
                         }
                     }
@@ -444,8 +590,46 @@ impl AgentOs {
         });
 
         let _ = inner.pending_shell_exits.insert(counter, handle);
+        if start_tx.send(()).is_err() {
+            tracing::warn!(%shell_id, "terminal task closed before launch");
+        }
 
         Ok(ShellHandle { shell_id })
+    }
+
+    fn retain_shell_outcome(
+        &self,
+        shell_id: &str,
+        process_id: &str,
+        pid: u32,
+        result: std::result::Result<i32, ClientError>,
+    ) {
+        let mut retained = self.inner().closed_shells.lock();
+        retain_shell_result(
+            &mut retained,
+            ClosedShellEntry {
+                shell_id: shell_id.to_owned(),
+                process_id: process_id.to_owned(),
+                pid,
+                result,
+            },
+        );
+    }
+
+    fn retained_shell_entry(&self, shell_id: &str) -> Option<ClosedShellEntry> {
+        self.inner()
+            .closed_shells
+            .lock()
+            .iter()
+            .rev()
+            .find(|entry| entry.shell_id == shell_id)
+            .cloned()
+    }
+
+    fn retained_shell_outcome(&self, shell_id: &str) -> std::result::Result<i32, ClientError> {
+        self.retained_shell_entry(shell_id)
+            .map(|entry| entry.result)
+            .unwrap_or_else(|| Err(ClientError::ShellNotFound(shell_id.to_owned())))
     }
 
     /// Connect a terminal bound to host stdio. Returns a PID. NOT tracked in the shells map; cannot
@@ -490,6 +674,7 @@ impl AgentOs {
             env: base.env.clone().into_iter().collect(),
             cwd: base.cwd.clone(),
             wasm_permission_tier: None,
+            retain_output: true,
             wasm_backend: base.wasm_backend.map(Into::into),
         };
 
@@ -608,7 +793,10 @@ impl AgentOs {
         let agent = self.clone();
         let ownership = self.vm_ownership();
         tokio::spawn(async move {
-            wait_for_spawn(spawned_rx).await;
+            if let Err(error) = wait_for_spawn(spawned_rx).await {
+                tracing::warn!(?error, "write_shell launch failed");
+                return;
+            }
             let payload = wire::RequestPayload::WriteStdinRequest(wire::WriteStdinRequest {
                 process_id,
                 chunk,
@@ -625,11 +813,15 @@ impl AgentOs {
     pub fn list_shells(&self) -> Vec<TerminalInfo> {
         let mut shells = Vec::new();
         self.inner().shells.scan(|shell_id, entry| {
-            let exit_code = *entry.exit_tx.borrow();
+            let outcome = entry.exit_tx.borrow();
+            let exit_code = outcome
+                .as_ref()
+                .and_then(|result| result.as_ref().ok())
+                .copied();
             shells.push(TerminalInfo {
                 shell_id: shell_id.clone(),
                 pid: entry.pid,
-                running: exit_code.is_none(),
+                running: outcome.is_none(),
                 exit_code,
             });
         });
@@ -638,36 +830,88 @@ impl AgentOs {
     }
 
     /// Read a bounded raw-byte terminal replay. Screen rendering is a client concern.
-    pub fn snapshot_shell(
+    pub async fn snapshot_shell(
         &self,
         shell_id: &str,
         after: Option<u64>,
         max_bytes: Option<usize>,
     ) -> std::result::Result<TerminalSnapshot, ClientError> {
         self.snapshot_shell_page(shell_id, after, None, max_bytes)
+            .await
     }
 
     /// Read a terminal replay page with the same event and byte bounds as
     /// process output replay.
-    pub fn snapshot_shell_page(
+    pub async fn snapshot_shell_page(
         &self,
         shell_id: &str,
         after: Option<u64>,
         max_events: Option<usize>,
         max_bytes: Option<usize>,
     ) -> std::result::Result<TerminalSnapshot, ClientError> {
-        let (max_events, max_bytes) = page_limits(max_events, max_bytes, "terminal.output.read")?;
-        let (pid, page) = self
-            .inner()
-            .shells
-            .read(shell_id, |_, entry| {
-                (
-                    entry.pid,
-                    entry.replay.lock().read(after, max_events, max_bytes),
-                )
-            })
-            .ok_or_else(|| ClientError::ShellNotFound(shell_id.to_owned()))?;
-        require_page_progress(&page, "terminal.output.read", max_bytes)?;
+        let (max_events, max_bytes) =
+            crate::output_replay::wire_page_limits(max_events, max_bytes, "terminal.output.read")?;
+        let live = self.inner().shells.read(shell_id, |_, entry| {
+            (
+                entry.pid,
+                entry.process_id.clone(),
+                entry.exit_tx.borrow().clone(),
+            )
+        });
+        let (pid, process_id, retained_exit) = match live {
+            Some((pid, process_id, exit)) => (pid, process_id, exit),
+            None => {
+                let retained = self
+                    .retained_shell_entry(shell_id)
+                    .ok_or_else(|| ClientError::ShellNotFound(shell_id.to_owned()))?;
+                (retained.pid, retained.process_id, Some(retained.result))
+            }
+        };
+        let response = self
+            .transport()
+            .request_wire(
+                self.vm_ownership(),
+                wire::RequestPayload::ReadProcessOutputRequest(wire::ReadProcessOutputRequest {
+                    process_id: process_id.clone(),
+                    after,
+                    max_events: u32::try_from(max_events).map_err(|_| {
+                        ClientError::Sidecar(String::from(
+                            "terminal.output.read maxEvents exceeds the wire u32 range",
+                        ))
+                    })?,
+                    max_bytes: u32::try_from(max_bytes).map_err(|_| {
+                        ClientError::Sidecar(String::from(
+                            "terminal.output.read maxBytes exceeds the wire u32 range",
+                        ))
+                    })?,
+                }),
+            )
+            .await?;
+        let page = match response {
+            wire::ResponsePayload::ProcessOutputPageResponse(page) => page,
+            wire::ResponsePayload::RejectedResponse(rejected) => {
+                return Err(rejected_to_error(rejected));
+            }
+            other => {
+                return Err(ClientError::Sidecar(format!(
+                    "terminal.output.read: unexpected response {other:?}"
+                )));
+            }
+        };
+        let exit_code = match page.exit_code {
+            Some(exit_code) => {
+                // Persist before waking live waiters so removal of the live
+                // entry cannot create a gap for a late wait_shell caller.
+                self.retain_shell_outcome(shell_id, &process_id, pid, Ok(exit_code));
+                self.inner().shells.read(shell_id, |_, entry| {
+                    if entry.process_id == process_id {
+                        publish_shell_outcome(&entry.exit_tx, Ok(exit_code));
+                    }
+                });
+                Some(exit_code)
+            }
+            None => retained_exit.transpose()?,
+        };
         Ok(TerminalSnapshot {
             shell_id: shell_id.to_owned(),
             pid,
@@ -676,14 +920,18 @@ impl AgentOs {
                 .into_iter()
                 .map(|event| TerminalOutputEvent {
                     sequence: event.sequence,
-                    stream: event.stream,
-                    data: event.data,
-                    timestamp_ms: event.timestamp_ms,
+                    stream: match event.channel {
+                        StreamChannel::Stdout => ProcessStream::Stdout,
+                        StreamChannel::Stderr => ProcessStream::Stderr,
+                    },
+                    data: event.chunk,
+                    timestamp_ms: event.timestamp_ms.min(i64::MAX as u64) as i64,
                 })
                 .collect(),
             next_cursor: page.next_cursor,
             has_more: page.has_more,
             truncated: page.truncated,
+            exit_code,
         })
     }
 
@@ -698,7 +946,7 @@ impl AgentOs {
         let (process_id, spawned_rx) = self.shell_wire_handle(shell_id)?;
         let chunk = stdin_chunk(data);
         tracing::debug!(shell_id, "write_shell_awaited: waiting for spawn gate");
-        wait_for_spawn(spawned_rx).await;
+        wait_for_spawn(spawned_rx).await?;
         tracing::debug!(shell_id, "write_shell_awaited: issuing wire write");
         let payload =
             wire::RequestPayload::WriteStdinRequest(wire::WriteStdinRequest { process_id, chunk });
@@ -749,11 +997,16 @@ impl AgentOs {
         shell_id: &str,
         mut handler: impl FnMut(TerminalOutputEvent) + Send + 'static,
     ) -> std::result::Result<crate::stream::Subscription, ClientError> {
-        let mut rx = self
+        let rx = self
             .inner()
             .shells
-            .read(shell_id, |_, entry| entry.event_tx.subscribe())
-            .ok_or_else(|| ClientError::ShellNotFound(shell_id.to_owned()))?;
+            .read(shell_id, |_, entry| entry.event_tx.subscribe());
+        let Some(mut rx) = rx else {
+            // A fast exit can race actor event registration. The final output
+            // is available through replay; no future hints will be emitted.
+            self.retained_shell_outcome(shell_id)?;
+            return Ok(crate::stream::Subscription::noop());
+        };
         let task = tokio::spawn(async move {
             loop {
                 match rx.recv().await {
@@ -806,12 +1059,19 @@ impl AgentOs {
         shell_id: &str,
         handler: impl FnOnce(ShellExit) + Send + 'static,
     ) -> std::result::Result<crate::stream::Subscription, ClientError> {
-        let mut rx = self
+        let rx = self
             .inner()
             .shells
-            .read(shell_id, |_, entry| entry.exit_tx.subscribe())
-            .ok_or_else(|| ClientError::ShellNotFound(shell_id.to_string()))?;
-        if let Some(exit_code) = *rx.borrow() {
+            .read(shell_id, |_, entry| entry.exit_tx.subscribe());
+        let Some(mut rx) = rx else {
+            handler(ShellExit {
+                shell_id: shell_id.to_owned(),
+                exit_code: self.retained_shell_outcome(shell_id)?,
+            });
+            return Ok(crate::stream::Subscription::noop());
+        };
+        if let Some(result) = rx.borrow().clone() {
+            let exit_code = result?;
             handler(ShellExit {
                 shell_id: shell_id.to_string(),
                 exit_code,
@@ -821,11 +1081,16 @@ impl AgentOs {
         let shell_id = shell_id.to_string();
         let task = tokio::spawn(async move {
             while rx.changed().await.is_ok() {
-                if let Some(exit_code) = *rx.borrow() {
-                    handler(ShellExit {
-                        shell_id,
-                        exit_code,
-                    });
+                if let Some(result) = rx.borrow().clone() {
+                    match result {
+                        Ok(exit_code) => handler(ShellExit {
+                            shell_id,
+                            exit_code,
+                        }),
+                        Err(error) => {
+                            tracing::warn!(?error, %shell_id, "terminal subscription failed before confirmed exit")
+                        }
+                    }
                     return;
                 }
             }
@@ -848,7 +1113,10 @@ impl AgentOs {
         let agent = self.clone();
         let ownership = self.vm_ownership();
         tokio::spawn(async move {
-            wait_for_spawn(spawned_rx).await;
+            if let Err(error) = wait_for_spawn(spawned_rx).await {
+                tracing::warn!(?error, "resize_shell launch failed");
+                return;
+            }
             let payload = wire::RequestPayload::ResizePtyRequest(wire::ResizePtyRequest {
                 process_id,
                 cols,
@@ -870,7 +1138,7 @@ impl AgentOs {
         rows: u16,
     ) -> std::result::Result<(), ClientError> {
         let (process_id, spawned_rx) = self.shell_wire_handle(shell_id)?;
-        wait_for_spawn(spawned_rx).await;
+        wait_for_spawn(spawned_rx).await?;
         let response = self
             .transport()
             .request_wire(
@@ -899,32 +1167,14 @@ impl AgentOs {
             .inner()
             .shells
             .read(shell_id, |_, entry| entry.exit_tx.subscribe());
-        let Some(mut exit_rx) = exit_rx else {
+        let Some(exit_rx) = exit_rx else {
             // Entry already dropped: fall back to the recorded exit code (TS retention behavior).
-            let retained = self.inner().closed_shell_exit_codes.lock();
-            return retained
-                .iter()
-                .rev()
-                .find(|(id, _)| id == shell_id)
-                .map(|(_, code)| *code)
-                .ok_or_else(|| ClientError::ShellNotFound(shell_id.to_string()));
+            return self.retained_shell_outcome(shell_id);
         };
-        loop {
-            if let Some(code) = *exit_rx.borrow_and_update() {
-                return Ok(code);
-            }
-            if exit_rx.changed().await.is_err() {
-                // Sender dropped without publishing a code (spawn failure / teardown): check the
-                // retention map once more before reporting the shell unknown.
-                let retained = self.inner().closed_shell_exit_codes.lock();
-                return retained
-                    .iter()
-                    .rev()
-                    .find(|(id, _)| id == shell_id)
-                    .map(|(_, code)| *code)
-                    .ok_or_else(|| ClientError::ShellNotFound(shell_id.to_string()));
-            }
-        }
+        // Sender teardown without an outcome falls back to bounded retention.
+        observe_shell_exit(exit_rx)
+            .await
+            .unwrap_or_else(|| self.retained_shell_outcome(shell_id))
     }
 
     /// Close a shell. SYNC. `kill()` + immediate map delete; the exit task is still drained by
@@ -940,7 +1190,10 @@ impl AgentOs {
         let agent = self.clone();
         let ownership = self.vm_ownership();
         tokio::spawn(async move {
-            wait_for_spawn(spawned_rx).await;
+            if let Err(error) = wait_for_spawn(spawned_rx).await {
+                tracing::warn!(?error, "close_shell launch failed");
+                return;
+            }
             let payload = wire::RequestPayload::KillProcessRequest(wire::KillProcessRequest {
                 process_id,
                 signal: String::from("SIGTERM"),
@@ -959,8 +1212,7 @@ impl AgentOs {
         shell_id: &str,
     ) -> std::result::Result<(), ClientError> {
         let (process_id, spawned_rx) = self.shell_wire_handle(shell_id)?;
-        self.inner().shells.remove(shell_id);
-        wait_for_spawn(spawned_rx).await;
+        wait_for_spawn(spawned_rx).await?;
         let response = self
             .transport()
             .request_wire(
@@ -972,7 +1224,10 @@ impl AgentOs {
             )
             .await?;
         match response {
-            wire::ResponsePayload::ProcessKilledResponse(_) => Ok(()),
+            wire::ResponsePayload::ProcessKilledResponse(_) => {
+                self.inner().shells.remove(shell_id);
+                Ok(())
+            }
             wire::ResponsePayload::RejectedResponse(rejected) => Err(rejected_to_error(rejected)),
             other => Err(ClientError::Sidecar(format!(
                 "close shell: unexpected response {other:?}"
@@ -985,26 +1240,32 @@ impl AgentOs {
     fn shell_wire_handle(
         &self,
         shell_id: &str,
-    ) -> std::result::Result<(String, tokio::sync::watch::Receiver<bool>), ClientError> {
+    ) -> std::result::Result<(String, ShellSpawnReceiver), ClientError> {
         self.inner()
             .shells
             .read(shell_id, |_, entry| {
                 (entry.process_id.clone(), entry.spawned_tx.subscribe())
             })
-            .ok_or_else(|| ClientError::ShellNotFound(shell_id.to_string()))
+            .ok_or_else(|| {
+                self.retained_shell_outcome(shell_id)
+                    .err()
+                    .unwrap_or_else(|| ClientError::ShellNotFound(shell_id.to_owned()))
+            })
     }
 }
 
 /// Wait until the shell's background `Execute` request has been acked (the readiness gate flips to
-/// `true`). Returns immediately if it is already ready or the sender has dropped.
-async fn wait_for_spawn(mut spawned_rx: tokio::sync::watch::Receiver<bool>) {
-    if *spawned_rx.borrow() {
-        return;
-    }
-    while spawned_rx.changed().await.is_ok() {
-        if *spawned_rx.borrow() {
-            return;
+/// ready). A failed launch must not issue follow-up I/O against a nonexistent process.
+async fn wait_for_spawn(
+    mut spawned_rx: tokio::sync::watch::Receiver<Option<std::result::Result<(), ClientError>>>,
+) -> std::result::Result<(), ClientError> {
+    loop {
+        if let Some(result) = spawned_rx.borrow_and_update().clone() {
+            return result;
         }
+        spawned_rx.changed().await.map_err(|_| {
+            ClientError::Sidecar("terminal launch ended before readiness was confirmed".into())
+        })?;
     }
 }
 
@@ -1023,6 +1284,105 @@ async fn terminal_process_finished(agent: &AgentOs, pid: u32) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn terminal_replayed_exit_recovers_waiters_and_retention_without_live_exit() {
+        for failed in [false, true] {
+            let failure = ClientError::TerminationFailed {
+                process_id: "terminal-p".into(),
+                reason: "terminal event stream lost its exit".into(),
+            };
+            let (outcome, _) = watch::channel(failed.then(|| Err(failure.clone())));
+            let (_event_sender, mut events) = broadcast::channel(1);
+            let ownership = wire::OwnershipScope::vm("connection", "session", "vm");
+            let observer = next_shell_event(&mut events, &ownership, &outcome);
+            tokio::pin!(observer);
+            tokio::select! {
+                _ = &mut observer => panic!("there is no confirmed terminal exit"),
+                _ = tokio::task::yield_now() => {}
+            }
+            let mut retained = VecDeque::new();
+            let entry = |result| ClosedShellEntry {
+                shell_id: "shell-1".into(),
+                process_id: "terminal-p".into(),
+                pid: 42,
+                result,
+            };
+            if failed {
+                retain_shell_result(&mut retained, entry(Err(failure.clone())));
+            }
+            let waiter = observe_shell_exit(outcome.subscribe());
+            tokio::pin!(waiter);
+            if !failed {
+                tokio::select! {
+                    _ = &mut waiter => panic!("wait_shell must wait for a confirmed exit"),
+                    _ = tokio::task::yield_now() => {}
+                }
+            }
+            retain_shell_result(&mut retained, entry(Ok(17)));
+            publish_shell_outcome(&outcome, Ok(17));
+            assert_eq!(
+                tokio::time::timeout(std::time::Duration::from_secs(1), &mut waiter)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap(),
+                17
+            );
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_secs(1), observer)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            let late_waiter = outcome.subscribe();
+            publish_shell_outcome(&outcome, Ok(17));
+            publish_shell_outcome(&outcome, Err(failure.clone()));
+            retain_shell_result(&mut retained, entry(Ok(17)));
+            retain_shell_result(&mut retained, entry(Err(failure)));
+            assert!(!late_waiter.has_changed().unwrap());
+            assert_eq!(observe_shell_exit(late_waiter).await.unwrap().unwrap(), 17);
+            assert_eq!(
+                retained.len(),
+                1,
+                "repeat replay must not consume retention"
+            );
+            assert_eq!(*retained[0].result.as_ref().unwrap(), 17);
+        }
+    }
+
+    #[tokio::test]
+    async fn terminal_launch_rejection_is_typed_and_does_not_open_the_io_gate() {
+        let error = shell_started(wire::ResponsePayload::RejectedResponse(
+            wire::RejectedResponse {
+                code: "EACCES".into(),
+                message: "execution denied".into(),
+                limit_name: None,
+                configured_limit: None,
+                current_usage: None,
+                requested: None,
+                unit: None,
+                scope: None,
+                vm_id: None,
+                session_generation: None,
+                capability_id: None,
+                operation: None,
+                configuration_path: None,
+                retryable: None,
+                errno: None,
+            },
+        ))
+        .unwrap_err();
+        assert!(matches!(&error, ClientError::Kernel { code, .. } if code == "EACCES"));
+        let (sender, receiver) = tokio::sync::watch::channel(None);
+        sender.send_replace(Some(Err(error)));
+        assert!(
+            matches!(wait_for_spawn(receiver).await, Err(ClientError::Kernel { code, .. }) if code == "EACCES")
+        );
+        let (sender, receiver) = tokio::sync::watch::channel(None);
+        drop(sender);
+        assert!(wait_for_spawn(receiver).await.is_err());
+    }
+
     use super::*;
 
     #[test]

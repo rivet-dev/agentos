@@ -56,11 +56,21 @@ export async function drainProcessReplay(
 		}
 		const nextCursor = page.nextCursor ?? undefined;
 		if (
+			(nextCursor !== undefined &&
+				(nextCursor < 0 ||
+					(typeof nextCursor === "number" &&
+						!Number.isSafeInteger(nextCursor)))) ||
 			(page.hasMore && page.events.length === 0) ||
 			(page.events.length > 0 && nextCursor === undefined) ||
 			(nextCursor !== undefined &&
-				(lastSequence === undefined ||
-					BigInt(nextCursor) !== BigInt(lastSequence)))
+				BigInt(nextCursor) !== BigInt(lastSequence ?? -1) &&
+				// A final truncated page may advance past omitted trailing chunks,
+				// including a page with no retained events at all.
+				!(
+					page.truncated &&
+					!page.hasMore &&
+					BigInt(nextCursor) > BigInt(lastSequence ?? -1)
+				))
 		) {
 			throw new Error("Process replay did not advance its cursor");
 		}

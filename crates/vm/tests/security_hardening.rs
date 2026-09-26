@@ -144,8 +144,6 @@ fn collect_process_output_bounded(
                 | EventPayload::ExecutionCompletedEvent(_)
                 | EventPayload::VmLifecycleEvent(_)
                 | EventPayload::StructuredEvent(_)
-                | EventPayload::ExecutionOutputEvent(_)
-                | EventPayload::ExecutionCompletedEvent(_)
                 | EventPayload::ExtEnvelope(_) => {}
             }
         }
@@ -377,6 +375,8 @@ fn vm_resource_limits_cap_active_processes_without_poisoning_followup_execs() {
             5,
             wire_vm(&connection_id, &session_id, &vm_id),
             RequestPayload::ExecuteRequest(ExecuteRequest {
+                retain_output: false,
+
                 process_id: String::from("proc-fast"),
                 command: None,
                 runtime: Some(GuestRuntimeKind::JavaScript),
@@ -451,6 +451,8 @@ fn execute_rejects_cwd_outside_vm_sandbox_root() {
             4,
             wire_vm(&connection_id, &session_id, &vm_id),
             RequestPayload::ExecuteRequest(ExecuteRequest {
+                retain_output: false,
+
                 process_id: String::from("proc-1"),
                 command: None,
                 runtime: Some(GuestRuntimeKind::JavaScript),
@@ -525,6 +527,8 @@ fn execute_rejects_host_only_absolute_command_path() {
             5,
             wire_vm(&connection_id, &session_id, &vm_id),
             RequestPayload::ExecuteRequest(ExecuteRequest {
+                retain_output: false,
+
                 process_id: String::from("proc-host-only"),
                 command: Some(host_only_command.to_string_lossy().into_owned()),
                 runtime: None,
@@ -595,6 +599,8 @@ fn execute_ignores_host_node_binary_override_for_javascript_runtime() {
             4,
             wire_vm(&connection_id, &session_id, &vm_id),
             RequestPayload::ExecuteRequest(ExecuteRequest {
+                retain_output: false,
+
                 process_id: String::from("proc-1"),
                 command: None,
                 runtime: Some(GuestRuntimeKind::JavaScript),

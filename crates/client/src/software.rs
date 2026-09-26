@@ -455,7 +455,7 @@ fn recover_package_cache(
             metadata.len(),
         ));
     }
-    candidates.sort_by(|left, right| right.0.cmp(&left.0));
+    candidates.sort_by_key(|candidate| std::cmp::Reverse(candidate.0));
 
     let mut recovered = BTreeMap::new();
     let mut recovered_bytes = 0u64;
@@ -1061,6 +1061,7 @@ async fn stage_cached_package(
 }
 
 #[cfg_attr(feature = "contract", derive(ts_rs::TS))]
+#[cfg_attr(feature = "contract", ts(rename = "ActorInstalledSoftware"))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstalledSoftware {
@@ -2133,6 +2134,9 @@ mod tests {
 
     #[tokio::test]
     async fn package_http_timeouts_preserve_limit_details_before_and_after_headers() {
+        // Leave time for the local HTTP handshake under the parallel unit-test
+        // runner; 25ms could expire before any request reached the fixture.
+        const DOWNLOAD_TIMEOUT_MS: u64 = 500;
         for send_headers in [false, true] {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let address = listener.local_addr().unwrap();
@@ -2154,7 +2158,7 @@ mod tests {
             let acquisition = async {
                 let resolver = PackageResolver::new(PackageResolverOptions {
                     allow_insecure_local_http: true,
-                    download_timeout_ms: 25,
+                    download_timeout_ms: DOWNLOAD_TIMEOUT_MS,
                     ..Default::default()
                 })
                 .unwrap();
@@ -2167,7 +2171,7 @@ mod tests {
             let (result, ()) = tokio::join!(acquisition, server);
             assert!(
                 matches!(result, Err(ClientError::OperationTimedOut { details, .. })
-                if details.configured_limit == Some(25)
+                if details.configured_limit == Some(DOWNLOAD_TIMEOUT_MS)
                     && details.configuration_path.as_deref() == Some("PackageResolverOptions.download_timeout_ms")
                     && details.errno.as_deref() == Some("ETIMEDOUT"))
             );

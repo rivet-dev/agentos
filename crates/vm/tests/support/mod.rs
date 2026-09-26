@@ -393,6 +393,8 @@ pub fn execute_wire(
             request_id,
             wire_vm(connection_id, session_id, vm_id),
             agentos_vm::wire::RequestPayload::ExecuteRequest(agentos_vm::wire::ExecuteRequest {
+                retain_output: false,
+
                 process_id: process_id.to_owned(),
                 command: None,
                 runtime: Some(runtime),

@@ -1,12 +1,14 @@
 use std::sync::Arc;
 
+use agentos_actor_contract::cron::*;
 use anyhow::{anyhow, bail, Context, Result};
 use rivetkit::{CronSetOptions, Ctx, Handles};
-use serde::{Deserialize, Serialize};
 
 use crate::actions::BoxFuture;
 use crate::events::CronFiredEvent;
-use crate::process::{validate_arguments, validate_command, ActorSpawnOptions};
+#[cfg(test)]
+use crate::process::ActorSpawnOptions;
+use crate::process::{validate_arguments, validate_command, validate_spawn_options};
 use crate::{AgentOsActor, ProcessSpawn};
 
 const PRIVATE_CRON_ACTION: &str = "__agentos.cron.invoke";
@@ -19,86 +21,10 @@ const DEFAULT_CRON_HISTORY: i64 = 32;
 const MAX_CRON_HISTORY: i64 = 256;
 const MAX_CRON_ERROR_BYTES: usize = 16 * 1024;
 
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CronSchedule {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    pub expression: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timezone: Option<String>,
-    pub command: String,
-    #[cfg_attr(feature = "contract", ts(optional, as = "Option<_>"))]
-    #[serde(default)]
-    pub args: Vec<String>,
-    #[cfg_attr(feature = "contract", ts(optional, as = "Option<_>"))]
-    #[serde(default)]
-    pub options: ActorSpawnOptions,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_history: Option<i64>,
-}
-
-crate::register_action!(CronSchedule => ActorCronJob, "cron.schedule");
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CronList {}
-
-crate::register_action!(CronList => Vec<ActorCronJob>, "cron.list");
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CronCancel {
-    pub name: String,
-}
-
-crate::register_action!(CronCancel => bool, "cron.cancel");
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ActorCronJob {
-    pub name: String,
-    pub expression: String,
-    pub timezone: Option<String>,
-    pub command: String,
-    pub args: Vec<String>,
-    pub options: ActorSpawnOptions,
-    pub config_revision: u64,
-    pub next_run_at_ms: i64,
-    pub last_run_at_ms: Option<i64>,
-    pub max_history: i64,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CronLaunchError {
-    /// Uses the same stable error codes as public actor actions.
-    pub code: String,
-    pub message: String,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct CronInvoke {
-    pub schedule_name: String,
-    /// Kept only in RivetKit's durable schedule payload, never in public job
-    /// metadata. A raw actor action call cannot forge a scheduled invocation.
-    pub invoke_token: String,
-    pub command: String,
-    #[serde(default)]
-    pub args: Vec<String>,
-    #[serde(default)]
-    pub options: ActorSpawnOptions,
-    pub config_revision: u64,
-}
-
-crate::register_action!(CronInvoke => (), "__agentos.cron.invoke");
+crate::register_contract_action!(CronSchedule);
+crate::register_contract_action!(CronList);
+crate::register_contract_action!(CronCancel);
+crate::register_contract_action!(CronInvoke);
 
 impl Handles<CronSchedule> for AgentOsActor {
     type Future = BoxFuture<ActorCronJob>;
@@ -136,7 +62,7 @@ impl Handles<CronSchedule> for AgentOsActor {
             }
             validate_command(&action.command)?;
             validate_arguments(&action.args)?;
-            action.options.validate()?;
+            validate_spawn_options(&action.options)?;
             let max_history = action.max_history.unwrap_or(DEFAULT_CRON_HISTORY);
             if !(0..=MAX_CRON_HISTORY).contains(&max_history) {
                 bail!("limit_exceeded: cron maxHistory must be between 0 and {MAX_CRON_HISTORY}");
@@ -225,7 +151,7 @@ impl Handles<CronInvoke> for AgentOsActor {
             )?;
             validate_command(&action.command)?;
             validate_arguments(&action.args)?;
-            action.options.validate()?;
+            validate_spawn_options(&action.options)?;
             let _mutation = self.config_mutation.lock().await;
             let scheduled = ctx.cron().get(&action.schedule_name).await?;
             if let Err(error) = validate_durable_invocation(&action, scheduled.as_ref()) {

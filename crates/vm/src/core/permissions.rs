@@ -119,46 +119,10 @@ pub fn resolve_permissions_policy(
 }
 
 /// Canonical agentOS VM policy used whenever an embedded or hosted client
-/// omits permission fields. All local VM capabilities are enabled, while
-/// outbound networking starts with the hosted LLM endpoint allowlist.
+/// omits permission fields. VM-local networking is enabled; external networking
+/// and DNS require an explicit grant, including model-provider endpoints.
 pub fn agentos_default_permissions_policy() -> vm_config::PermissionsPolicy {
-    const EGRESS_HOSTS: &[&str] = &[
-        "api.anthropic.com",
-        "api.openai.com",
-        "generativelanguage.googleapis.com",
-        "openrouter.ai",
-    ];
-    let patterns = EGRESS_HOSTS
-        .iter()
-        .flat_map(|host| [format!("dns://{host}"), format!("tcp://{host}:*")])
-        .collect();
-    vm_config::PermissionsPolicy {
-        fs: Some(vm_config::FsPermissionScope::Mode(
-            vm_config::PermissionMode::Allow,
-        )),
-        network: Some(vm_config::PatternPermissionScope::Rules(
-            vm_config::PatternPermissionRuleSet {
-                default: Some(vm_config::PermissionMode::Deny),
-                rules: vec![vm_config::PatternPermissionRule {
-                    mode: vm_config::PermissionMode::Allow,
-                    operations: vec![String::from("*")],
-                    patterns,
-                }],
-            },
-        )),
-        child_process: Some(vm_config::PatternPermissionScope::Mode(
-            vm_config::PermissionMode::Allow,
-        )),
-        process: Some(vm_config::PatternPermissionScope::Mode(
-            vm_config::PermissionMode::Allow,
-        )),
-        env: Some(vm_config::PatternPermissionScope::Mode(
-            vm_config::PermissionMode::Allow,
-        )),
-        host_function: Some(vm_config::PatternPermissionScope::Mode(
-            vm_config::PermissionMode::Allow,
-        )),
-    }
+    default_permissions_policy()
 }
 
 /// Applies an optional field-by-field policy over the selected profile. This
@@ -617,6 +581,87 @@ mod tests {
     }
 
     #[test]
+    fn every_profile_requires_explicit_provider_egress_grants() {
+        for profile in [
+            vm_config::VmDefaultsProfile::Secure,
+            vm_config::VmDefaultsProfile::AgentOs,
+        ] {
+            for overrides in [
+                None,
+                Some(vm_config::PermissionsPolicy {
+                    fs: Some(vm_config::FsPermissionScope::Mode(
+                        vm_config::PermissionMode::Allow,
+                    )),
+                    network: None,
+                    child_process: None,
+                    process: None,
+                    env: None,
+                    host_function: None,
+                }),
+            ] {
+                let policy = resolve_profile_permissions_policy(profile, overrides);
+                for host in [
+                    "api.anthropic.com",
+                    "api.openai.com",
+                    "generativelanguage.googleapis.com",
+                    "openrouter.ai",
+                ] {
+                    assert!(
+                        !allowed(&policy, "network", "network.dns", &format!("dns://{host}")),
+                        "{profile:?} implicitly grants DNS to {host}"
+                    );
+                    assert!(
+                        !allowed(
+                            &policy,
+                            "network",
+                            "network.http",
+                            &format!("tcp://{host}:443")
+                        ),
+                        "{profile:?} implicitly grants TCP to {host}"
+                    );
+                }
+                assert!(allowed(
+                    &policy,
+                    "network",
+                    "network.listen",
+                    "tcp://127.0.0.1:0"
+                ));
+                assert!(allowed(
+                    &policy,
+                    "network",
+                    "network.http",
+                    "tcp://127.0.0.1:3000"
+                ));
+            }
+            let explicit = resolve_profile_permissions_policy(
+                profile,
+                Some(vm_config::PermissionsPolicy {
+                    network: Some(vm_config::PatternPermissionScope::Mode(
+                        vm_config::PermissionMode::Allow,
+                    )),
+                    fs: None,
+                    child_process: None,
+                    process: None,
+                    env: None,
+                    host_function: None,
+                }),
+            );
+            assert!(allowed(
+                &explicit,
+                "network",
+                "network.dns",
+                "dns://api.anthropic.com"
+            ));
+            assert!(allowed(
+                &explicit,
+                "network",
+                "network.http",
+                "tcp://api.anthropic.com:443"
+            ));
+        }
+    }
+
+    #[test]
     fn requested_scopes_replace_defaults_and_omitted_scopes_keep_them() {
         let requested = vm_config::PermissionsPolicy {
             fs: None,
@@ -662,19 +707,24 @@ mod tests {
             panic!("agentOS network default must be an allowlist");
         };
         assert_eq!(network.default, Some(vm_config::PermissionMode::Deny));
-        assert_eq!(network.rules.len(), 1);
-        for expected in [
-            "dns://api.anthropic.com",
-            "tcp://api.anthropic.com:*",
-            "dns://api.openai.com",
-            "dns://generativelanguage.googleapis.com",
-            "dns://openrouter.ai",
-        ] {
-            assert!(network.rules[0]
-                .patterns
-                .iter()
-                .any(|value| value == expected));
-        }
+        assert!(allowed(
+            &defaults,
+            "network",
+            "network.listen",
+            "tcp://127.0.0.1:0"
+        ));
+        assert!(allowed(
+            &defaults,
+            "network",
+            "network.http",
+            "tcp://127.0.0.1:3000"
+        ));
+        assert!(!allowed(
+            &defaults,
+            "network",
+            "network.http",
+            "tcp://example.com:443"
+        ));
 
         let overridden = resolve_profile_permissions_policy(
             vm_config::VmDefaultsProfile::AgentOs,

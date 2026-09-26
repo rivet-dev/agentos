@@ -644,6 +644,8 @@ mod kernel_authority {
                 request_id,
                 wire_vm(connection_id, session_id, vm_id),
                 RequestPayload::ExecuteRequest(ExecuteRequest {
+                    retain_output: false,
+
                     process_id: String::from(process_id),
                     command: Some(String::from(command)),
                     runtime: None,
@@ -681,6 +683,8 @@ mod kernel_authority {
                 request_id,
                 wire_vm(connection_id, session_id, vm_id),
                 RequestPayload::ExecuteRequest(ExecuteRequest {
+                    retain_output: false,
+
                     process_id: String::from(process_id),
                     command: None,
                     runtime: Some(GuestRuntimeKind::JavaScript),
@@ -1105,6 +1109,21 @@ try {
         dispose_vm_and_close_session(&mut sidecar, &connection_id, &session_id, &vm_id);
         fs::remove_dir_all(host_dir).expect("remove temp dir");
     }
+    fn guest_read_text(
+        sidecar: &mut agentos_vm::VmManager<RecordingBridge>,
+        connection_id: &str,
+        session_id: &str,
+        vm_id: &str,
+        request_id: i64,
+        path: &str,
+    ) -> String {
+        let mut read = base_guest_filesystem_request(GuestFilesystemOperation::ReadFile, path);
+        read.encoding = Some(RootFilesystemEntryEncoding::Utf8);
+        guest_filesystem_call(sidecar, connection_id, session_id, vm_id, request_id, read)
+            .content
+            .expect("readFile must return UTF-8 content")
+    }
+
     fn host_write_text(
         sidecar: &mut agentos_vm::VmManager<RecordingBridge>,
         connection_id: &str,

@@ -33,6 +33,9 @@ use crate::state::VmError;
 use crate::vm_sqlite::SharedVmSqliteDatabase;
 use agentos_vm_host_interface::LocalVmHost as LocalBridge;
 
+type DeferredServicePreparation =
+    Box<dyn FnOnce(&mut VmManager<LocalBridge>) -> ExtensionServiceCommandFuture>;
+
 type Reply<T> = oneshot::Sender<Result<T, VmError>>;
 
 type ExtensionServiceCompletionMutation = Box<
@@ -51,8 +54,7 @@ pub struct PreparedExtensionServiceCommand {
     future: ExtensionServiceCommandFuture,
     panic_reply: Box<dyn FnOnce(VmError) + 'static>,
     admission: Option<ExtensionServiceAdmission>,
-    deferred_prepare:
-        Option<Box<dyn FnOnce(&mut VmManager<LocalBridge>) -> ExtensionServiceCommandFuture>>,
+    deferred_prepare: Option<DeferredServicePreparation>,
 }
 
 pub struct CompletedExtensionServiceCommand {
@@ -688,7 +690,7 @@ pub enum ExtensionServiceCommand {
     },
     HandleProcessEvent {
         target: ProcessEventTarget,
-        lease: ProcessEventLease,
+        lease: Box<ProcessEventLease>,
         completion_store: CompletedProcessEventStore,
         completion_reservation: OwnedSemaphorePermit,
         reply: Reply<Option<EventFrame>>,
@@ -746,7 +748,7 @@ pub struct RoutedExtensionServices {
 }
 
 #[derive(Clone)]
-pub(crate) struct CompletedProcessEventStore {
+pub struct CompletedProcessEventStore {
     inner: Arc<StdMutex<BTreeMap<ProcessEventTarget, VecDeque<CompletedProcessEvent>>>>,
     budget: Arc<Semaphore>,
     notify: Arc<Notify>,
@@ -1093,7 +1095,7 @@ impl ExtensionServices for RoutedExtensionServices {
                 let event = services
                     .call(move |reply| ExtensionServiceCommand::HandleProcessEvent {
                         target: command_target,
-                        lease,
+                        lease: Box::new(lease),
                         completion_store,
                         completion_reservation,
                         reply,

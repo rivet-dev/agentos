@@ -47,7 +47,7 @@ impl ProcessEventBrokerLimits {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct ProcessEventTarget {
+pub struct ProcessEventTarget {
     pub(crate) connection_id: String,
     pub(crate) session_id: String,
     pub(crate) vm_id: String,
@@ -328,7 +328,7 @@ pub(crate) struct ProcessEventWaiter {
 /// front of its target queue, which makes cancellation between wake and
 /// coordinator admission lossless.
 #[derive(Debug)]
-pub(crate) struct ProcessEventLease {
+pub struct ProcessEventLease {
     broker: Weak<ProcessEventBrokerInner>,
     target: ProcessEventTarget,
     retained: Option<RetainedProcessEvent>,

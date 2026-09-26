@@ -1098,6 +1098,12 @@ impl ExecutionBackend for WasmV8Execution {
         ExecutionBackendKind::WebAssembly
     }
 
+    fn synchronous_fd_read_policy(
+        &self,
+    ) -> agentos_executor_contract::backend::SynchronousFdReadPolicy {
+        agentos_executor_contract::backend::SynchronousFdReadPolicy::NonblockingRetry
+    }
+
     fn synchronous_fd_write_policy(&self) -> SynchronousFdWritePolicy {
         SynchronousFdWritePolicy::NonblockingRetry
     }

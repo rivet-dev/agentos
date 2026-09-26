@@ -131,6 +131,8 @@ fn run_command_with_files_and_metadata(
             100,
             wire_vm(&connection_id, &session_id, &vm_id),
             RequestPayload::ExecuteRequest(ExecuteRequest {
+                retain_output: false,
+
                 process_id: process_id.clone(),
                 command: None,
                 runtime: Some(GuestRuntimeKind::WebAssembly),

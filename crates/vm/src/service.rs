@@ -26,8 +26,8 @@ pub(crate) use crate::execution::{
     parse_signal, record_execute_exit_event_queue_wait, record_execute_phase,
     sanitize_javascript_child_process_internal_bootstrap_env,
     service_javascript_kernel_fd_write_sync_rpc, service_javascript_sync_rpc,
-    settle_execution_host_call, terminate_child_process_tree, HickoryDnsResolver,
-    JavascriptSyncRpcServiceRequest, LoopbackHttpDispatchRequest,
+    settle_execution_host_call, HickoryDnsResolver, JavascriptSyncRpcServiceRequest,
+    LoopbackHttpDispatchRequest,
 };
 use crate::executor::backend::ExecutionBackendKind;
 use crate::executor::host::{ProcessLaunchOptions, ProcessLaunchRequest};
@@ -293,6 +293,8 @@ fn package_acquisition_rejection(error: &ClientError) -> RejectedResponse {
 // Bound the waiter, including joins to existing flights. The resolver separately
 // caps each producer. Dropping this future drops its cache waiter; it does not
 // assert that already-admitted blocking file validation has synchronously stopped.
+// Preserve the full typed wire rejection, including resource-limit metadata.
+#[allow(clippy::result_large_err)]
 async fn await_package_acquisition<T>(
     timeout_ms: Option<u64>,
     operator_cap_ms: u64,
@@ -396,6 +398,8 @@ fn package_acquired_response(
     }
 }
 
+// Preserve the full typed wire rejection, including resource-limit metadata.
+#[allow(clippy::result_large_err)]
 async fn resolve_package_owned(
     payload: crate::protocol::AcquirePackageRequest,
 ) -> Result<VerifiedPackage, RejectedResponse> {
@@ -594,6 +598,7 @@ impl RequestCompletionEffects {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn record_exited_process(&self, process_id: &str) -> Result<(), VmError> {
         self.record_process_exit(process_id, Vec::new())
     }
@@ -903,6 +908,8 @@ where
     }
 
     #[cfg(test)]
+    // Called by the integration suite that includes this module as source.
+    #[allow(dead_code)]
     pub(crate) fn queue_emit_lifecycle_result(
         &self,
         result: Result<(), VmError>,
@@ -1249,7 +1256,15 @@ where
         domain: &str,
         resource: Option<&str>,
     ) -> Option<PermissionDecision> {
-        let stored = self.permissions.lock().ok()?;
+        let stored = match self.permissions.lock() {
+            Ok(stored) => stored,
+            Err(error) => {
+                tracing::error!(%error, vm_id, "native sidecar permission policy lock poisoned");
+                return Some(PermissionDecision::deny(
+                    "native sidecar permission policy lock poisoned",
+                ));
+            }
+        };
         let permissions = stored.get(vm_id)?;
         let mode = evaluate_permissions_policy(permissions, domain, capability, resource);
         Some(permission_mode_to_kernel_decision(mode, capability))
@@ -1763,55 +1778,6 @@ where
         });
     }
 
-    fn terminate_extension_process_tree(
-        &mut self,
-        vm_id: &str,
-        process_id: &str,
-        signal: &str,
-    ) -> Result<(), VmError> {
-        let mut vm_guard = self
-            .vms
-            .get_mut(vm_id)
-            .ok_or_else(|| VmError::InvalidState(format!("unknown sidecar VM {vm_id}")))?;
-        let vm = &mut *vm_guard;
-        let process = vm.active_processes.get_mut(process_id).ok_or_else(|| {
-            VmError::InvalidState(format!("VM {vm_id} has no active process {process_id}"))
-        })?;
-        let kernel_readiness = Arc::clone(&vm.kernel_socket_readiness);
-        let unix_address_registry = Arc::clone(&vm.unix_address_registry);
-        terminate_child_process_tree(
-            &mut vm.kernel,
-            process,
-            &kernel_readiness,
-            &unix_address_registry,
-        );
-        drop(vm_guard);
-        self.kill_process_internal(vm_id, process_id, signal)
-    }
-
-    async fn wait_for_extension_processes_to_exit(
-        &mut self,
-        ownership: &OwnershipScope,
-        vm_id: &str,
-        process_ids: &BTreeSet<String>,
-        timeout: Duration,
-        events: &mut Vec<EventFrame>,
-    ) -> Result<(), VmError> {
-        let deadline = Instant::now() + timeout;
-        while self.vms.get(vm_id).is_some_and(|vm| {
-            process_ids
-                .iter()
-                .any(|process_id| vm.active_processes.contains_key(process_id))
-        }) && Instant::now() < deadline
-        {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if let Some(event) = self.poll_event(ownership, remaining).await? {
-                events.push(event);
-            }
-        }
-        Ok(())
-    }
-
     pub fn instance_id(&self) -> &str {
         &self.config.instance_id
     }
@@ -1887,13 +1853,6 @@ where
             runtime_context,
             ExecutorRegistry::empty(),
         )
-    }
-
-    pub(crate) fn prune_extension_process_resource(&mut self, process_id: &str) {
-        self.extension_sessions.retain(|_, resources| {
-            resources.process_ids.remove(process_id);
-            !resources.process_ids.is_empty() || !resources.vm_ids.is_empty()
-        });
     }
 
     pub(crate) fn prune_extension_vm_resource(&mut self, vm_id: &str) {
@@ -2554,17 +2513,27 @@ where
             vm_bytes = vm_bytes.saturating_add(pending.retained_bytes());
         }
         if vm_count >= limits.pending_event_count {
-            return Err(VmError::InvalidState(format!(
-                "VM {} process event queue exceeded {} events (limits.process.pendingEventCount)",
-                envelope.vm_id, limits.pending_event_count
-            )));
+            return Err(VmError::host_resource_limit(
+                "limits.process.pendingEventCount",
+                limits.pending_event_count,
+                vm_count.saturating_add(1),
+                format!(
+                    "VM {} process event queue exceeded {} events; raise limits.process.pendingEventCount",
+                    envelope.vm_id, limits.pending_event_count
+                ),
+            ));
         }
         let next_bytes = vm_bytes.saturating_add(envelope.retained_bytes());
         if next_bytes > limits.pending_event_bytes {
-            return Err(VmError::InvalidState(format!(
-                "VM {} process event queue exceeded {} retained bytes (limits.process.pendingEventBytes)",
-                envelope.vm_id, limits.pending_event_bytes
-            )));
+            return Err(VmError::host_resource_limit(
+                "limits.process.pendingEventBytes",
+                limits.pending_event_bytes,
+                next_bytes,
+                format!(
+                    "VM {} process event queue exceeded {} retained bytes; raise limits.process.pendingEventBytes",
+                    envelope.vm_id, limits.pending_event_bytes
+                ),
+            ));
         }
         Ok(())
     }
@@ -3017,6 +2986,9 @@ where
             RequestRoute::ResizePty(payload) => self.resize_pty(&request, payload).await,
             RequestRoute::CloseStdin(payload) => self.close_stdin(&request, payload).await,
             RequestRoute::KillProcess(payload) => self.kill_process(&request, payload).await,
+            RequestRoute::ReadProcessOutput(payload) => {
+                self.read_process_output(&request, payload).await
+            }
             RequestRoute::GetProcessSnapshot(payload) => {
                 self.get_process_snapshot(&request, payload).await
             }
@@ -3118,6 +3090,7 @@ where
             RequestRoute::Authenticate(_)
                 | RequestRoute::OpenSession(_)
                 | RequestRoute::RegisterHostCallbacks(_)
+                | RequestRoute::ReadProcessOutput(_)
                 | RequestRoute::GetProcessSnapshot(_)
                 | RequestRoute::GetResourceSnapshot(_)
                 | RequestRoute::GetZombieTimerCount(_)
@@ -3293,6 +3266,10 @@ where
                 let future = register_host_callbacks(self, &request, payload);
                 Ok(Some(PreparedRequest::from_vm_command(request, future)))
             }
+            RequestRoute::ReadProcessOutput(payload) => {
+                let future = self.read_process_output(&request, payload);
+                Ok(Some(PreparedRequest::from_vm_command(request, future)))
+            }
             RequestRoute::GetProcessSnapshot(payload) => {
                 let future = self.get_process_snapshot(&request, payload);
                 Ok(Some(PreparedRequest::from_vm_command(request, future)))
@@ -3351,11 +3328,11 @@ where
             }
             RequestRoute::InstallPackage(payload) => {
                 let future = self.install_package(&request, payload);
-                return Ok(Some(PreparedRequest::from_vm_command(request, future)));
+                Ok(Some(PreparedRequest::from_vm_command(request, future)))
             }
             RequestRoute::UnlinkPackage(payload) => {
                 let future = self.unlink_package(&request, payload);
-                return Ok(Some(PreparedRequest::from_vm_command(request, future)));
+                Ok(Some(PreparedRequest::from_vm_command(request, future)))
             }
             RequestRoute::AcquirePackage(payload) => {
                 let ownership = self.session_scope_for(&request.ownership).and_then(
@@ -3367,7 +3344,7 @@ where
                     return Ok(Some(PreparedRequest::failed(request, error)));
                 }
                 let operation = acquire_package_owned(request.clone(), payload);
-                return Ok(Some(PreparedRequest::from_future(request, operation)));
+                Ok(Some(PreparedRequest::from_future(request, operation)))
             }
             RequestRoute::GetPackageCacheStats(_) => {
                 let ownership = self.session_scope_for(&request.ownership).and_then(
@@ -3379,7 +3356,7 @@ where
                     return Ok(Some(PreparedRequest::failed(request, error)));
                 }
                 let operation = package_cache_stats_owned(request.clone());
-                return Ok(Some(PreparedRequest::from_future(request, operation)));
+                Ok(Some(PreparedRequest::from_future(request, operation)))
             }
             RequestRoute::Execute(payload) => {
                 let future = self.execute(&request, payload);
@@ -3771,45 +3748,9 @@ where
                 continue;
             }
 
-            let queued_envelopes = {
-                let pending_capacity = self.pending_process_event_capacity();
-                let receiver = self.process_event_receiver.as_mut().ok_or_else(|| {
-                    VmError::InvalidState(String::from("process event receiver unavailable"))
-                })?;
-                let mut queued = Vec::new();
-                loop {
-                    if queued.len() >= pending_capacity {
-                        if receiver.is_empty() {
-                            break;
-                        }
-                        return Err(process_event_queue_overflow_error(
-                            self.config.runtime.protocol.max_process_events,
-                        ));
-                    }
-                    match receiver.try_recv() {
-                        Ok(envelope) => queued.push(envelope),
-                        Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
-                        Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
-                    }
-                }
-                queued
-            };
-
-            let mut matching_envelope = None;
-            for envelope in queued_envelopes {
-                if matching_envelope.is_none()
-                    && public_process_event_matches_ownership(self, ownership, &envelope)
-                {
-                    matching_envelope = Some(envelope);
-                } else {
-                    self.queue_pending_process_event(envelope)?;
-                }
-            }
-
-            if let Some(envelope) = matching_envelope {
-                if let Some(frame) = self.handle_process_event_envelope(envelope).await? {
-                    return Ok(Some(frame));
-                }
+            // Runtime producers share this channel with public output. Always
+            // classify internal work before publishing any envelope.
+            if self.drain_runtime_process_event_channel_nowait()? {
                 continue;
             }
 
@@ -3831,6 +3772,7 @@ where
         &mut self,
         ownership: &OwnershipScope,
     ) -> Result<Option<EventFrame>, VmError> {
+        let mut drained_channel = false;
         loop {
             if let Some(index) = self
                 .pending_process_events
@@ -3848,44 +3790,12 @@ where
                 continue;
             }
 
-            let queued_envelopes = {
-                let pending_capacity = self.pending_process_event_capacity();
-                let receiver = self.process_event_receiver.as_mut().ok_or_else(|| {
-                    VmError::InvalidState(String::from("process event receiver unavailable"))
-                })?;
-                let mut queued = Vec::new();
-                loop {
-                    if queued.len() >= pending_capacity {
-                        if receiver.is_empty() {
-                            break;
-                        }
-                        return Err(process_event_queue_overflow_error(
-                            self.config.runtime.protocol.max_process_events,
-                        ));
-                    }
-                    match receiver.try_recv() {
-                        Ok(envelope) => queued.push(envelope),
-                        Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
-                        Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
-                    }
-                }
-                queued
-            };
-            let mut matching = None;
-            for envelope in queued_envelopes {
-                if matching.is_none()
-                    && public_process_event_matches_ownership(self, ownership, &envelope)
-                {
-                    matching = Some(envelope);
-                } else {
-                    self.queue_pending_process_event(envelope)?;
-                }
-            }
-            let Some(envelope) = matching else {
+            if drained_channel {
                 return Ok(None);
-            };
-            if let Some(frame) = self.handle_public_process_event_envelope_nowait(envelope)? {
-                return Ok(Some(frame));
+            }
+            drained_channel = true;
+            if !self.drain_runtime_process_event_channel_nowait()? {
+                return Ok(None);
             }
         }
     }
@@ -4976,7 +4886,7 @@ where
             "process.signal_state" => {
                 let (signal, registration) =
                     parse_process_signal_state_request(&request.args).map_err(VmError::from)?;
-                let Some(mut vm) = self.vms.get_mut(vm_id) else {
+                let Some(vm) = self.vms.get_mut(vm_id) else {
                     log_stale_process_event(
                         &self.bridge,
                         vm_id,
@@ -5034,7 +4944,7 @@ where
                     return Ok(());
                 };
                 let vm = &mut *vm;
-                let socket_paths = build_socket_path_context(&vm)?;
+                let socket_paths = build_socket_path_context(vm)?;
                 let target_is_current =
                     [SocketFamily::Ipv4, SocketFamily::Ipv6]
                         .iter()
@@ -5105,7 +5015,7 @@ where
                     return Ok(());
                 };
                 let vm = &mut *vm;
-                let socket_paths = build_socket_path_context(&vm)?;
+                let socket_paths = build_socket_path_context(vm)?;
                 let kernel_readiness = Arc::clone(&vm.kernel_socket_readiness);
                 let capabilities = vm.capabilities.clone();
                 let managed_descriptions = Arc::clone(&vm.managed_host_net_descriptions);
@@ -5231,7 +5141,7 @@ where
             }
         }
 
-        let Some(mut vm) = self.vms.get_mut(vm_id) else {
+        let Some(vm) = self.vms.get_mut(vm_id) else {
             log_stale_process_event(
                 &self.bridge,
                 vm_id,
@@ -5407,53 +5317,37 @@ where
         vm_id: &str,
         process_id: &str,
     ) -> Result<Option<ProcessEventEnvelope>, VmError> {
-        if let Some(index) = self
-            .pending_process_events
-            .iter()
-            .position(|event| event.vm_id == vm_id && event.process_id == process_id)
-        {
-            let envelope = self.pending_process_events.remove(index);
-            self.observe_pending_process_event_depth();
-            self.rearm_deferred_process_event_after_capacity_release();
-            return Ok(envelope);
-        }
-
-        let mut matching_envelope = None;
-        let mut deferred = Vec::new();
-        {
-            let pending_capacity = self.pending_process_event_capacity();
-            let receiver = self.process_event_receiver.as_mut().ok_or_else(|| {
-                VmError::InvalidState(String::from("process event receiver unavailable"))
-            })?;
-            loop {
-                if deferred.len() >= pending_capacity {
-                    if receiver.is_empty() {
-                        break;
-                    }
+        // Preserve queued-public priority, then classify one bounded channel
+        // batch and probe again. Internal events belong to the owned supervisor.
+        for probe in 0..2 {
+            if let Some(index) = self
+                .pending_process_events
+                .iter()
+                .position(|event| event.vm_id == vm_id && event.process_id == process_id)
+            {
+                let envelope = self.pending_process_events.remove(index);
+                self.observe_pending_process_event_depth();
+                self.rearm_deferred_process_event_after_capacity_release();
+                return Ok(envelope);
+            }
+            if probe == 0 {
+                // Targeted polling historically reports admission failure to
+                // its caller. Check before draining so the queued event remains
+                // available for retry; the background pump uses backpressure.
+                if self.pending_process_event_capacity() == 0
+                    && self
+                        .process_event_receiver
+                        .as_ref()
+                        .is_some_and(|receiver| !receiver.is_empty())
+                {
                     return Err(process_event_queue_overflow_error(
                         self.config.runtime.protocol.max_process_events,
                     ));
                 }
-                let envelope = match receiver.try_recv() {
-                    Ok(envelope) => envelope,
-                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
-                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
-                };
-                if matching_envelope.is_none()
-                    && envelope.vm_id == vm_id
-                    && envelope.process_id == process_id
-                {
-                    matching_envelope = Some(envelope);
-                    break;
-                }
-                deferred.push(envelope);
+                self.drain_runtime_process_event_channel_nowait()?;
             }
         }
-        for envelope in deferred {
-            self.queue_pending_process_event(envelope)?;
-        }
-
-        Ok(matching_envelope)
+        Ok(None)
     }
 
     fn allocate_sidecar_request_id(&mut self) -> RequestId {
@@ -6196,27 +6090,6 @@ fn unexpected_extension_host_response(operation: &str, payload: ResponsePayload)
     }
 }
 
-fn shadow_host_path_for_process(
-    shadow_root: &Path,
-    process_guest_cwd: &str,
-    guest_path: &str,
-) -> PathBuf {
-    let normalized_guest_path = if guest_path.starts_with('/') {
-        normalize_path(guest_path)
-    } else {
-        normalize_path(&format!(
-            "{}/{}",
-            process_guest_cwd.trim_end_matches('/'),
-            guest_path
-        ))
-    };
-    if normalized_guest_path == "/" {
-        shadow_root.to_path_buf()
-    } else {
-        shadow_root.join(normalized_guest_path.trim_start_matches('/'))
-    }
-}
-
 fn sidecar_response_tracker_error(error: SidecarResponseTrackerError) -> VmError {
     VmError::InvalidState(format!(
         "invalid sidecar response correlation state: {error}"
@@ -6620,6 +6493,76 @@ mod prepared_request_tests {
     }
 
     #[test]
+    fn poisoned_static_permissions_fail_closed() {
+        let bridge = SharedBridge::new(LocalBridge::default());
+        let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = bridge.permissions.lock().unwrap();
+            panic!("poison permission policy for regression test");
+        }));
+        assert!(poisoned.is_err());
+        let decision = bridge
+            .static_permission_decision("vm", "read", "fs", Some("/secret"))
+            .expect("poisoned policy must not fall through to the host permission callback");
+        assert!(!decision.allow);
+        assert!(decision
+            .reason
+            .unwrap()
+            .contains("permission policy lock poisoned"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pending_process_event_limits_preserve_typed_details() {
+        let mut manager = test_sidecar();
+        let vm_id = create_test_vms(&mut manager, 1).await.remove(0);
+        let envelope = || ProcessEventEnvelope {
+            connection_id: "vm-handle-test-connection".into(),
+            session_id: "vm-handle-test-session".into(),
+            vm_id: vm_id.clone(),
+            process_id: "limit-fixture".into(),
+            child_path: Vec::new(),
+            event: ActiveExecutionEvent::Stdout("payload".into()),
+        };
+        for (name, limit, observed) in [
+            ("limits.process.pendingEventCount", 1, 2),
+            (
+                "limits.process.pendingEventBytes",
+                envelope().retained_bytes(),
+                envelope().retained_bytes() * 2,
+            ),
+        ] {
+            manager.pending_process_events.clear();
+            {
+                let mut vm = manager.vms.get_mut(&vm_id).unwrap();
+                vm.limits.process.pending_event_count =
+                    if name.ends_with("Count") { limit } else { 8 };
+                vm.limits.process.pending_event_bytes = if name.ends_with("Bytes") {
+                    limit
+                } else {
+                    usize::MAX
+                };
+            }
+            manager
+                .check_pending_process_event_capacity(&envelope())
+                .expect("first event fits");
+            manager.pending_process_events.push_back(envelope());
+            let error = manager
+                .check_pending_process_event_capacity(&envelope())
+                .unwrap_err();
+            assert_eq!(error.code(), Some("ERR_AGENTOS_RESOURCE_LIMIT"));
+            assert!(error.to_string().contains(&format!("raise {name}")));
+            let VmError::Host(error) = error else {
+                panic!("expected typed host error")
+            };
+            assert_eq!(
+                error.details,
+                Some(serde_json::json!({
+                    "limitName": name, "configPath": name, "limit": limit, "observed": observed,
+                }))
+            );
+        }
+    }
+
+    #[test]
     fn in_process_continuations_rearm_at_quantum_and_park_without_spinning() {
         use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
         let mut manager = test_sidecar();
@@ -6953,6 +6896,240 @@ mod prepared_request_tests {
 
     fn cleanup_test_ownership(vm_id: &str) -> OwnershipScope {
         OwnershipScope::vm("vm-handle-test-connection", "vm-handle-test-session", vm_id)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn public_poll_routes_racing_internal_wakes_to_owned_service() {
+        for reader in ["nowait", "async", "process"] {
+            let mut manager = test_sidecar();
+            let vm_id = create_test_vms(&mut manager, 1).await.remove(0);
+            let process_id = "racing-wake";
+            let (connection_id, session_id) = {
+                let mut vm = manager.vms.get_mut(&vm_id).unwrap();
+                let handle = vm
+                    .kernel
+                    .create_virtual_process(
+                        EXECUTION_DRIVER_NAME,
+                        EXECUTION_DRIVER_NAME,
+                        crate::state::JAVASCRIPT_COMMAND,
+                        Vec::new(),
+                        Default::default(),
+                    )
+                    .unwrap();
+                let process = crate::state::ActiveProcess::new(
+                    handle.pid(),
+                    handle,
+                    vm.runtime_context.clone(),
+                    vm.limits.clone(),
+                    8,
+                    crate::protocol::GuestRuntimeKind::JavaScript,
+                    crate::state::ActiveExecution::HostFunction(
+                        crate::state::HostFunctionExecution::default(),
+                    ),
+                );
+                vm.active_processes.insert(process_id.into(), process);
+                (vm.connection_id.clone(), vm.session_id.clone())
+            };
+            let ownership = OwnershipScope::vm(&connection_id, &session_id, &vm_id);
+            let envelope = |event| ProcessEventEnvelope {
+                connection_id: connection_id.clone(),
+                session_id: session_id.clone(),
+                vm_id: vm_id.clone(),
+                process_id: process_id.into(),
+                child_path: Vec::new(),
+                event,
+            };
+            // A runtime timer can publish after the supervisor turn but before
+            // the public consumer probes the shared ingress channel.
+            manager
+                .process_event_sender
+                .try_send(envelope(ActiveExecutionEvent::DeferredPosixPollWake))
+                .unwrap();
+            match reader {
+                "nowait" => assert!(manager
+                    .poll_event_nowait(&ownership)
+                    .expect("internal wake is not public output")
+                    .is_none()),
+                "async" => assert!(manager
+                    .poll_event(&ownership, Duration::ZERO)
+                    .await
+                    .expect("zero-timeout poll classifies ingress")
+                    .is_none()),
+                _ => assert!(manager
+                    .take_matching_process_event_envelope(&vm_id, process_id)
+                    .expect("targeted reader classifies ingress")
+                    .is_none()),
+            }
+            assert!(
+                manager.pending_process_events.is_empty(),
+                "{reader}: no internal event enters the public broker"
+            );
+            {
+                let vm = manager.vms.get(&vm_id).unwrap();
+                let pending = &vm.active_processes[process_id].pending_execution_events;
+                assert_eq!(pending.len(), 1, "{reader}: wake remains durable");
+            }
+            let turn = manager.pump_process_events_nowait(&ownership, 1).unwrap();
+            assert_eq!(
+                turn.host_services.len(),
+                1,
+                "{reader}: supervisor claims the wake"
+            );
+            for service in turn.host_services {
+                manager
+                    .prepare_owned_host_event_service(service)
+                    .await
+                    .unwrap();
+            }
+            manager
+                .process_event_sender
+                .try_send(envelope(ActiveExecutionEvent::Stdout(
+                    b"after-wake".to_vec(),
+                )))
+                .unwrap();
+            let output = manager
+                .poll_event_nowait(&ownership)
+                .unwrap()
+                .expect("public output still flows");
+            assert!(
+                matches!(output.payload, EventPayload::ProcessOutput(output) if output.chunk == b"after-wake")
+            );
+            manager
+                .process_event_sender
+                .try_send(envelope(ActiveExecutionEvent::Exited(0)))
+                .unwrap();
+            let exit = manager
+                .poll_event_nowait(&ownership)
+                .unwrap()
+                .expect("process still retires");
+            assert!(
+                matches!(exit.payload, EventPayload::ProcessExited(exit) if exit.exit_code == 0)
+            );
+            assert!(!manager
+                .vms
+                .get(&vm_id)
+                .unwrap()
+                .active_processes
+                .contains_key(process_id));
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pending_process_replay_reservations_are_bounded_and_cancel_safe() {
+        let mut sidecar = test_sidecar();
+        let vm_id = create_test_vms(&mut sidecar, 1).await.remove(0);
+        let vm = sidecar.vms.handle(&vm_id).unwrap();
+        vm.borrow_mut().limits.process.max_output_replays = 1;
+        let launch_vm = vm.clone();
+        let mut pending_launch = Box::pin(async move {
+            let _reservation = launch_vm.reserve_process_output_replay("pending")?;
+            std::future::pending::<()>().await;
+            Ok::<(), VmError>(())
+        });
+        std::future::poll_fn(|cx| {
+            assert!(std::future::Future::poll(pending_launch.as_mut(), cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        assert_eq!(vm.borrow().process_output_replays.len(), 1);
+        assert!(matches!(
+            vm.reserve_process_output_replay("concurrent"),
+            Err(VmError::RequestAdmission {
+                configuration_path: Some("limits.process.maxOutputReplays"),
+                ..
+            })
+        ));
+        drop(pending_launch);
+        assert!(vm.borrow().process_output_replays.is_empty());
+        assert!(vm.borrow().process_output_replay_order.is_empty());
+        let retry = vm.reserve_process_output_replay("retry").unwrap();
+        drop(retry);
+        assert!(vm.borrow().process_output_replays.is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn process_replay_omitted_bounds_use_vm_defaults_and_explicit_excess_rejects() {
+        let mut sidecar = test_sidecar();
+        let vm_id = create_test_vms(&mut sidecar, 1).await.remove(0);
+        {
+            let mut vm = sidecar.vms.get_mut(&vm_id).unwrap();
+            vm.limits.process.output_replay_page_events = 1;
+            vm.limits.process.output_replay_page_bytes = 3;
+            vm.prepare_process_output_replay_admission("retained")
+                .unwrap();
+            vm.record_process_output("retained", crate::protocol::StreamChannel::Stdout, b"one");
+            vm.record_process_output("retained", crate::protocol::StreamChannel::Stdout, b"two");
+        }
+        let request = RequestFrame::new(
+            1,
+            cleanup_test_ownership(&vm_id),
+            RequestPayload::ReadProcessOutput(crate::protocol::ReadProcessOutputRequest {
+                process_id: "retained".into(),
+                after: None,
+                max_events: 0,
+                max_bytes: 0,
+            }),
+        );
+        let RequestPayload::ReadProcessOutput(payload) = request.payload.clone() else {
+            unreachable!()
+        };
+        let result = sidecar
+            .read_process_output(&request, payload.clone())
+            .await
+            .unwrap();
+        let ResponsePayload::ProcessOutputPage(page) = result.response.payload else {
+            panic!("replay response")
+        };
+        assert_eq!(page.events.len(), 1);
+        assert_eq!(page.events[0].sequence, 0);
+        assert_eq!(page.next_cursor, Some(0));
+        assert!(page.has_more);
+        for (max_events, max_bytes, path, unit, limit, requested) in [
+            (
+                2,
+                0,
+                "limits.process.outputReplayPageEvents",
+                "events",
+                1,
+                2,
+            ),
+            (0, 4, "limits.process.outputReplayPageBytes", "bytes", 3, 4),
+            (0, 1, "maxBytes", "bytes", 1, 3),
+        ] {
+            let result = sidecar
+                .read_process_output(
+                    &request,
+                    crate::protocol::ReadProcessOutputRequest {
+                        max_events,
+                        max_bytes,
+                        ..payload.clone()
+                    },
+                )
+                .await
+                .unwrap();
+            let ResponsePayload::Rejected(rejected) = result.response.payload else {
+                panic!("expected typed replay limit")
+            };
+            assert_eq!(rejected.code, "ERR_AGENTOS_RESOURCE_LIMIT");
+            assert_eq!(rejected.configuration_path.as_deref(), Some(path));
+            assert_eq!(rejected.unit.as_deref(), Some(unit));
+            assert_eq!(rejected.configured_limit, Some(limit));
+            assert_eq!(rejected.requested, Some(requested));
+            assert_eq!(rejected.operation.as_deref(), Some("process.output.read"));
+        }
+        let missing = sidecar
+            .read_process_output(
+                &request,
+                crate::protocol::ReadProcessOutputRequest {
+                    process_id: "expired".into(),
+                    ..payload
+                },
+            )
+            .await
+            .unwrap();
+        assert!(
+            matches!(missing.response.payload, ResponsePayload::Rejected(rejected) if rejected.code == "ESRCH")
+        );
     }
 
     fn extension_tracks_process(
@@ -7628,6 +7805,8 @@ mod prepared_request_tests {
             111,
             ownership.clone(),
             RequestPayload::Execute(ExecuteRequest {
+                retain_output: false,
+
                 process_id: String::from("prepared-execute"),
                 wasm_backend: None,
                 command: Some(String::from("node")),
@@ -9875,6 +10054,11 @@ mod dispose_lifecycle_tests {
             ownership,
             payload: crate::wire::RequestPayload::CompareVmConfigRequest(
                 crate::wire::CompareVmConfigRequest {
+                    before_mounts: Vec::new(),
+                    after_mounts: Vec::new(),
+                    before_restart_identity: Vec::new(),
+                    after_restart_identity: Vec::new(),
+
                     before: r#"{"defaultsProfile":"agent_os"}"#.into(),
                     after: after.into(),
                 },
@@ -9897,6 +10081,71 @@ mod dispose_lifecycle_tests {
             ));
             assert!(result.events.is_empty());
         }
+        let mut mount_request = request(
+            9,
+            ownership("conn-a", "session-a"),
+            r#"{"defaultsProfile":"agent_os"}"#,
+        );
+        let crate::wire::RequestPayload::CompareVmConfigRequest(comparison) =
+            &mut mount_request.payload
+        else {
+            unreachable!("comparison request");
+        };
+        comparison.after_mounts.push(crate::wire::MountDescriptor {
+            guest_path: String::from("/workspace"),
+            guest_source: String::from("agentos-packages"),
+            guest_fstype: String::from("agentos-packages"),
+            read_only: true,
+            plugin: crate::wire::MountPluginDescriptor {
+                id: String::from("agentos_packages"),
+                config: String::from("{}"),
+            },
+        });
+        let result = block_on(sidecar.dispatch_wire(mount_request.clone()))
+            .expect("compare configured mounts through wire dispatch");
+        assert!(matches!(
+            result.response.payload,
+            crate::wire::ResponsePayload::VmConfigComparedResponse(compared)
+                if !compared.equivalent
+        ));
+
+        let crate::wire::RequestPayload::CompareVmConfigRequest(comparison) =
+            &mut mount_request.payload
+        else {
+            unreachable!("comparison request");
+        };
+        comparison.before_mounts = comparison.after_mounts.clone();
+        comparison.before_mounts[0].guest_path = String::from("/workspace/./nested/..");
+        comparison.before_mounts[0].plugin.config = String::from(r#"{ "b": 2, "a": 1 }"#);
+        comparison.after_mounts[0].plugin.config = String::from(r#"{"a":1,"b":2}"#);
+        let result = block_on(sidecar.dispatch_wire(mount_request))
+            .expect("compare normalized mount paths and parsed plugin configuration");
+        assert!(matches!(
+            result.response.payload,
+            crate::wire::ResponsePayload::VmConfigComparedResponse(compared)
+                if compared.equivalent
+        ));
+
+        let mut identity_request = request(
+            10,
+            ownership("conn-a", "session-a"),
+            r#"{"defaultsProfile":"agent_os"}"#,
+        );
+        let crate::wire::RequestPayload::CompareVmConfigRequest(comparison) =
+            &mut identity_request.payload
+        else {
+            unreachable!("comparison request");
+        };
+        comparison
+            .after_restart_identity
+            .push(String::from("sha256:changed"));
+        let result = block_on(sidecar.dispatch_wire(identity_request))
+            .expect("compare actor runtime identity through wire dispatch");
+        assert!(matches!(
+            result.response.payload,
+            crate::wire::ResponsePayload::VmConfigComparedResponse(compared)
+                if !compared.equivalent
+        ));
         for (request_id, owner, after) in [
             (3, ownership("conn-b", "session-a"), "{}"),
             (4, ownership("unknown", "session-a"), "{}"),

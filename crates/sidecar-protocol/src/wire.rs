@@ -553,6 +553,12 @@ fn legacy_limits_config(
         pending_stdin_bytes: legacy_u64(metadata, "limits.process.pending_stdin_bytes"),
         pending_event_count: legacy_u64(metadata, "limits.process.pending_event_count"),
         pending_event_bytes: legacy_u64(metadata, "limits.process.pending_event_bytes"),
+        output_replay_events: legacy_u64(metadata, "limits.process.output_replay_events"),
+        output_replay_bytes: legacy_u64(metadata, "limits.process.output_replay_bytes"),
+        output_replay_page_events: legacy_u64(metadata, "limits.process.output_replay_page_events"),
+        output_replay_page_bytes: legacy_u64(metadata, "limits.process.output_replay_page_bytes"),
+        max_output_replays: legacy_u64(metadata, "limits.process.max_output_replays"),
+
         max_pending_child_sync_count: legacy_u64(
             metadata,
             "limits.process.max_pending_child_sync_count",
@@ -688,6 +694,11 @@ fn legacy_has_process_limits(config: &agentos_vm_config::ProcessLimitsConfig) ->
         || config.pending_event_bytes.is_some()
         || config.max_pending_child_sync_count.is_some()
         || config.max_pending_child_sync_bytes.is_some()
+        || config.output_replay_events.is_some()
+        || config.output_replay_bytes.is_some()
+        || config.output_replay_page_events.is_some()
+        || config.output_replay_page_bytes.is_some()
+        || config.max_output_replays.is_some()
 }
 
 // Ownership-scope constructor ergonomics. The generated BARE union exposes only the
@@ -723,7 +734,7 @@ impl crate::generated_protocol::v1::OwnershipScope {
 }
 
 pub const PROTOCOL_NAME: &str = "agentos-sidecar";
-pub const PROTOCOL_VERSION: u16 = 10;
+pub const PROTOCOL_VERSION: u16 = 11;
 // 16 MiB: large enough to carry a trusted-client CreateVm config that inlines an
 // entire base-filesystem snapshot, while still bounding a single frame.
 pub const DEFAULT_MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;

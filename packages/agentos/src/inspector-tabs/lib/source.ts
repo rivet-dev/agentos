@@ -343,11 +343,19 @@ export const agentOsSource = {
 			}
 			const nextCursor = replay.nextCursor ?? undefined;
 			if (
+				(nextCursor !== undefined &&
+					(nextCursor < 0 ||
+						(typeof nextCursor === "number" &&
+							!Number.isSafeInteger(nextCursor)))) ||
 				(replay.hasMore && replay.events.length === 0) ||
 				(replay.events.length > 0 && nextCursor === undefined) ||
 				(nextCursor !== undefined &&
-					(lastSequence === undefined ||
-						BigInt(nextCursor) !== BigInt(lastSequence)))
+					BigInt(nextCursor) !== BigInt(lastSequence ?? -1) &&
+					!(
+						replay.truncated &&
+						!replay.hasMore &&
+						BigInt(nextCursor) > BigInt(lastSequence ?? -1)
+					))
 			) {
 				throw new Error("Terminal replay did not advance its cursor");
 			}

@@ -10,6 +10,53 @@
 
 mod common;
 
+#[tokio::test]
+async fn language_spawn_retains_output_and_completion_from_fast_scripts() {
+    if !common::require_sidecar("language_spawn_retains_output_and_completion_from_fast_scripts") {
+        return;
+    }
+    let vm = common::new_vm().await;
+    let result = async {
+        for index in 0..3 {
+            let marker = format!("fast-language-{index}");
+            let process = vm
+                .spawn_javascript(
+                    format!("console.log('{marker}')"),
+                    agentos_client::LanguageSpawnOptions {
+                        retain_events: true,
+                        ..Default::default()
+                    },
+                )
+                .await?;
+            anyhow::ensure!(
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(10),
+                    vm.wait_process(process.pid)
+                )
+                .await??
+                    == 0,
+                "fast language process must report a confirmed successful exit"
+            );
+            let replay = vm
+                .read_process_output(process.pid, None, None, None)
+                .await?;
+            let output = replay
+                .events
+                .into_iter()
+                .flat_map(|event| event.data)
+                .collect::<Vec<_>>();
+            anyhow::ensure!(
+                String::from_utf8_lossy(&output).contains(&marker),
+                "fast language replay lost its output"
+            );
+        }
+        Ok::<(), anyhow::Error>(())
+    }
+    .await;
+    vm.shutdown().await.expect("shutdown fast language test VM");
+    result.unwrap();
+}
+
 use std::sync::{Arc, Mutex};
 
 use agentos_client::{ClientError, ExecOptions, SpawnOptions, StdinInput};
@@ -21,7 +68,7 @@ async fn spawn_rejection_and_fast_exit_remain_distinct_for_late_waiters() {
     }
     let os = common::new_vm().await;
     let result = tokio::time::timeout(std::time::Duration::from_secs(20), async {
-        let rejected = os.spawn_process(
+        let rejected = os.spawn(
             "agentos-nonexistent-review-command",
             Vec::new(),
             SpawnOptions::default(),
@@ -45,7 +92,7 @@ async fn spawn_rejection_and_fast_exit_remain_distinct_for_late_waiters() {
             "late waiters must retain the typed rejection"
         );
 
-        let fast = os.spawn_process(
+        let fast = os.spawn(
             "node",
             vec!["-e".into(), "process.exit(23)".into()],
             SpawnOptions::default(),

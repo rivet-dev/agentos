@@ -166,10 +166,6 @@ type CreateVmRequest struct {
   config: JsonUtf8
 }
 
-type CompareVmConfigRequest struct {
-  before: JsonUtf8
-  after: JsonUtf8
-}
 
 type DisposeReason enum {
   REQUESTED
@@ -196,6 +192,15 @@ type MountDescriptor struct {
   guestFstype: str
   readOnly: bool
   plugin: MountPluginDescriptor
+}
+
+type CompareVmConfigRequest struct {
+  before: JsonUtf8
+  after: JsonUtf8
+  beforeMounts: list<MountDescriptor>
+  afterMounts: list<MountDescriptor>
+  beforeRestartIdentity: list<str>
+  afterRestartIdentity: list<str>
 }
 
 type MountInfo struct {
@@ -466,6 +471,7 @@ type ExecuteRequest struct {
   cwd: optional<str>
   wasmPermissionTier: optional<WasmPermissionTier>
   wasmBackend: optional<StandaloneWasmBackend>
+  retainOutput: bool
 }
 
 # First-class execution lifecycle. The legacy process request above remains an
@@ -751,6 +757,14 @@ type KillProcessRequest struct {
 
 type GetProcessSnapshotRequest void
 
+type ReadProcessOutputRequest struct {
+  processId: str
+  after: optional<u64>
+  # Zero requests the VM-configured default; nonzero is an explicit bound.
+  maxEvents: u32
+  maxBytes: u32
+}
+
 type GetResourceSnapshotRequest void
 
 type FindListenerRequest struct {
@@ -877,7 +891,8 @@ type RequestPayload union {
   CompareVmConfigRequest |
   AcquirePackageRequest |
   InstallPackageRequest |
-  GetPackageCacheStatsRequest
+  GetPackageCacheStatsRequest |
+  ReadProcessOutputRequest
 }
 
 type RequestFrame struct {
@@ -1041,6 +1056,27 @@ type ProcessSnapshotEntry struct {
 
 type ProcessSnapshotResponse struct {
   processes: list<ProcessSnapshotEntry>
+}
+
+type StreamChannel enum {
+  STDOUT
+  STDERR
+}
+
+type ProcessOutputReplayEvent struct {
+  sequence: u64
+  channel: StreamChannel
+  chunk: data
+  timestampMs: u64
+}
+
+type ProcessOutputPageResponse struct {
+  processId: str
+  events: list<ProcessOutputReplayEvent>
+  nextCursor: optional<u64>
+  hasMore: bool
+  truncated: bool
+  exitCode: optional<i32>
 }
 
 type QueueSnapshotEntry struct {
@@ -1307,7 +1343,8 @@ type ResponsePayload union {
   VmConfigComparedResponse |
   PackageAcquiredResponse |
   PackageInstalledResponse |
-  PackageCacheStatsResponse
+  PackageCacheStatsResponse |
+  ProcessOutputPageResponse
 }
 
 type ResponseFrame struct {
@@ -1329,15 +1366,13 @@ type VmLifecycleEvent struct {
   state: VmLifecycleState
 }
 
-type StreamChannel enum {
-  STDOUT
-  STDERR
-}
 
 type ProcessOutputEvent struct {
   processId: str
   channel: StreamChannel
   chunk: data
+  sequence: optional<u64>
+  timestampMs: optional<u64>
 }
 
 type ProcessExitedEvent struct {
@@ -1447,3 +1482,6 @@ type ProtocolFrame union {
   SidecarResponseFrame |
   ControlFrame
 }
+
+
+

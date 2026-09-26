@@ -11,7 +11,7 @@ pub use event::{BoundedHostServiceError, ExecutionEvent, ExecutionExit, OutputSt
 pub use lifecycle::{
     DescendantOutputOwnership, DescendantWaitOwnership, ExecutionBackend, ExecutionBackendKind,
     PublishedSignalCheckpoint, ShutdownOutcome, ShutdownReason, SignalCheckpointOutcome,
-    SynchronousFdWritePolicy,
+    SynchronousFdReadPolicy, SynchronousFdWritePolicy,
 };
 pub use payload::{NearLimitWarning, NearLimitWarningHook, PayloadLimit};
 pub use reply::{

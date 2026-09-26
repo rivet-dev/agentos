@@ -381,6 +381,9 @@ pub fn process_output_event(
     event(
         ownership,
         EventPayload::ProcessOutput(ProcessOutputEvent {
+            sequence: None,
+            timestamp_ms: None,
+
             process_id: process_id.to_owned(),
             channel,
             chunk,

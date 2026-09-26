@@ -125,7 +125,7 @@ Memory figures must be kept separate:
 The current raw release result is
 [`packages/benchmarks/results/wasm-backend-comparison.json`](../../packages/benchmarks/results/wasm-backend-comparison.json),
 recorded September 26, 2026 from source snapshot
-`bef626a57054af31af505ecefdc834c90dc31b67` with Wasmtime 48.0.3. It uses
+`d6591c0f41fdd19243b570edc66af1182d7a2a0c` with Wasmtime 48.0.3. It uses
 identical hashed source modules and host-service paths on one x86-64 machine,
 five fresh processes per backend, and five samples per workload. Cold and
 warm samples are reported separately. V8 adds its memory-maximum rewrite
@@ -140,17 +140,17 @@ filesystem work. Separate checks cover repeated/diverse concurrency at
 | Gate | Result | Evidence |
 | --- | --- | --- |
 | Correctness and safety | Pass | Workload validation and denial, cancellation, and CPU-limit checks passed. |
-| Geometric-mean p50 | Pass | Wasmtime/V8 ratio `0.217923`. |
-| Individual p95 | **Fail** | Cold shell p95: Wasmtime 2,673 ms versus V8 334 ms. |
+| Geometric-mean p50 | Pass | Wasmtime/V8 ratio `0.236617`. |
+| Individual p95 | **Fail** | Cold shell p95: Wasmtime 2,657 ms versus V8 327 ms. |
 | Throughput/admission | **Fail** | Wasmtime admitted 20/50 and 20/100 requested executions; V8 admitted 50/50 and 100/100. |
-| Retained RSS | Pass | V8 `515,252,224` bytes; Wasmtime `520,683,520` bytes. |
-| Retained PSS | Pass | V8 `512,814,080` bytes; Wasmtime `518,329,344` bytes. |
+| Retained RSS | Pass | V8 `526,983,168` bytes; Wasmtime `523,018,240` bytes. |
+| Retained PSS | Pass | V8 `524,635,136` bytes; Wasmtime `520,773,632` bytes. |
 
 At concurrency 1 and 10, both engines admitted all requested work and Wasmtime
-throughput was 2.4–12.4× V8's across repeated/diverse rows. Rows with different
+throughput was 2.5–16.0× V8's across repeated/diverse rows. Rows with different
 admission counts cannot establish an equal-load throughput win. Warm shell
-p50 was 47.3 ms versus 317.8 ms; warm host-call-heavy filesystem p50 was
-36.8 ms versus 178.3 ms. The latter measures a complete workload, not isolated
+p50 was 48.0 ms versus 306.8 ms; warm host-call-heavy filesystem p50 was
+39.0 ms versus 172.2 ms. The latter measures a complete workload, not isolated
 host-call binding latency.
 
 Retained RSS/PSS are medians of absolute process-tree memory after VM disposal,

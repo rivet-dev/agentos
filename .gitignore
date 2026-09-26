@@ -20,6 +20,7 @@ dist/
 *.aospkg
 packages/agentos/src/generated/*
 !packages/agentos/src/generated/actor-actions.generated.ts
+!packages/agentos/src/generated/contract.ts
 
 # IDE
 .vscode/

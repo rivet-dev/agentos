@@ -27,7 +27,7 @@ const vm = client.agentOS.getOrCreate(["workspaces", "demo"], {
   createWithInput: {
     config: {
       filesystem: {
-        root: { type: "actor-sqlite", namespace: "root" },
+        root: { type: "durable", namespace: "root" },
       },
     },
   },

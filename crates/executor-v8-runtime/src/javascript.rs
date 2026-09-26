@@ -1036,7 +1036,10 @@ impl TimerWheel {
             return Ok(wheel);
         }
 
-        let wheel = Self::start(runtime.clone())?;
+        // The wheel lives for the process lifetime. Its first caller may be a
+        // VM, whose task and resource leases must be released on disposal.
+        let process_runtime = runtime.process_scope();
+        let wheel = Self::start(process_runtime)?;
         JAVASCRIPT_TIMER_WHEEL.set(wheel).map_err(|_| {
             javascript_timer_error(
                 "ERR_AGENTOS_JAVASCRIPT_TIMER_WHEEL_INIT",
@@ -9510,11 +9513,7 @@ mod tests {
     fn process_timer_worker_does_not_hold_vm_scope_open() {
         use agentos_driver_tokio::accounting::{ResourceClass, ResourceLedger, ResourceLimit};
 
-        let process = agentos_driver_tokio::SidecarRuntime::process(
-            &agentos_driver_tokio::DriverConfig::default(),
-        )
-        .expect("initialize process runtime");
-        let runtime = process.context();
+        let runtime = crate::test_runtime_context();
         let resources = Arc::new(ResourceLedger::child(
             "vm=timer-worker-scope-regression",
             [(
@@ -9531,7 +9530,7 @@ mod tests {
         bridge.runtime = Some(vm.clone());
         bridge.timer_resources = Some(Arc::clone(&resources));
 
-        let wheel = TimerWheel::get().expect("initialize process-owned timer wheel");
+        let wheel = TimerWheel::get(&vm).expect("initialize process-owned timer wheel from guest");
         assert!(
             runtime
                 .tasks()
@@ -9552,7 +9551,7 @@ mod tests {
         vm.close_admission();
         drop(bridge);
         assert_eq!(resources.usage(ResourceClass::Timers).used, 0);
-        process.block_on(async {
+        runtime.tokio_handle().block_on(async {
             tokio::time::timeout(Duration::from_secs(1), vm.tasks().wait_empty())
                 .await
                 .expect(
@@ -9560,7 +9559,7 @@ mod tests {
                 );
         });
         assert!(
-            Arc::ptr_eq(wheel, TimerWheel::get().unwrap()),
+            Arc::ptr_eq(wheel, TimerWheel::get(&runtime).unwrap()),
             "VM teardown must preserve the process wheel"
         );
         assert!(

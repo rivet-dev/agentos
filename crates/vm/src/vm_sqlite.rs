@@ -21,6 +21,8 @@ const LOCAL_SQLITE_JOB_BYTES: usize = 64 * 1024;
 const HOST_CALLBACK_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, PartialEq)]
+// Variant names match the public SQL value wire representation.
+#[allow(clippy::enum_variant_names)]
 pub enum SqlValue {
     SqlNull,
     SqlInteger(i64),

@@ -40,6 +40,15 @@ pub enum DescendantOutputOwnership {
 }
 
 /// How a synchronous compatibility transport submits a potentially blocking
+/// descriptor read to the kernel. Transports that cannot suspend their shared
+/// dispatcher must probe nonblocking and let the guest retry after readiness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SynchronousFdReadPolicy {
+    Blocking,
+    NonblockingRetry,
+}
+
+/// How a synchronous compatibility transport submits a potentially blocking
 /// descriptor write to the kernel.
 ///
 /// This is an adapter capability, not an engine identity. A transport that
@@ -90,6 +99,11 @@ pub struct PublishedSignalCheckpoint {
 /// generation-bound control, wake, and reply capabilities cross threads.
 pub trait ExecutionBackend {
     fn kind(&self) -> ExecutionBackendKind;
+
+    /// Whether synchronous reads must yield through guest readiness retries.
+    fn synchronous_fd_read_policy(&self) -> SynchronousFdReadPolicy {
+        SynchronousFdReadPolicy::Blocking
+    }
 
     fn synchronous_fd_write_policy(&self) -> SynchronousFdWritePolicy {
         SynchronousFdWritePolicy::Blocking

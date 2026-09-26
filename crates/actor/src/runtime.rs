@@ -1,9 +1,9 @@
 use std::collections::VecDeque;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use agentos_actor_contract::lifecycle::*;
 use agentos_client::{AgentOs, InstalledSoftware, SidecarState};
 use anyhow::{anyhow, Context, Result};
-use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use crate::config::{AgentOsActorConfig, RemotePackageSource};
@@ -12,67 +12,6 @@ use crate::preload::ProcessPreloadReport;
 const INITIALIZATION_TIMEOUT: Duration = Duration::from_secs(30);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_RUNTIME_ISSUES: usize = 32;
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum VmLifecycleState {
-    Initializing,
-    Preloading,
-    Booting,
-    Ready,
-    Degraded,
-    Stopping,
-    Failed,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct VmIssue {
-    pub code: String,
-    pub message: String,
-    pub at_ms: i64,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PackageStartupStatus {
-    pub required_total: u32,
-    pub required_ready: u32,
-    pub optional_preload_total: u32,
-    pub optional_preload_ready: u32,
-    pub optional_preload_failed: u32,
-    pub optional_preload_skipped: u32,
-    pub optional_preload_warmed_bytes: u64,
-    pub optional_preload_deadline_hit: bool,
-    pub optional_preload_coordinator_available: bool,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CoreSidecarStatus {
-    pub state: String,
-    pub active_vm_count: u32,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct VmStatusSnapshot {
-    pub lifecycle: VmLifecycleState,
-    pub config_state: crate::ConfigApplyState,
-    pub desired_config_revision: u64,
-    pub applied_config_revision: Option<u64>,
-    pub generation: u64,
-    pub last_boot_at_ms: Option<i64>,
-    pub last_shutdown_at_ms: Option<i64>,
-    pub packages: PackageStartupStatus,
-    pub issues: Vec<VmIssue>,
-    pub core: Option<CoreSidecarStatus>,
-}
 
 pub(crate) struct RuntimeController {
     operation: Mutex<()>,

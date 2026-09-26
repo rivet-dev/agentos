@@ -1672,32 +1672,6 @@ pub(in crate::execution) fn defer_native_tcp_connect(
 }
 
 impl ActiveTcpListener {
-    pub(in crate::execution) fn bind(
-        bind_host: &str,
-        guest_host: &str,
-        guest_port: u16,
-        backlog: Option<u32>,
-    ) -> Result<Self, VmError> {
-        let bind_addr = resolve_tcp_bind_addr(bind_host, 0)?;
-        let guest_addr = resolve_tcp_bind_addr(guest_host, guest_port)?;
-        let listener = TcpListener::bind(bind_addr).map_err(sidecar_net_error)?;
-        listener.set_nonblocking(true).map_err(sidecar_net_error)?;
-        let local_addr = listener.local_addr().map_err(sidecar_net_error)?;
-        Ok(Self {
-            listener: Some(listener),
-            kernel_socket_id: None,
-            local_addr: Some(local_addr),
-            guest_local_addr: guest_addr,
-            backlog: usize::try_from(backlog.unwrap_or(DEFAULT_NET_BACKLOG))
-                .expect("default backlog fits within usize"),
-            active_connection_ids: Arc::new(Mutex::new(BTreeSet::new())),
-            description_handles: Arc::new(()),
-            description_lease: Arc::new(SocketDescriptionLease::default()),
-            kernel_transfer_guard: None,
-            pending_event: Arc::new(Mutex::new(None)),
-        })
-    }
-
     pub(in crate::execution) fn bind_kernel(
         kernel: &mut SidecarKernel,
         kernel_pid: u32,

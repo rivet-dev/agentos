@@ -113,6 +113,17 @@ describe("AgentOsOptions validation", () => {
 		).toBe(false);
 	});
 
+	test("accepts only sidecar-owned VM defaults profiles", () => {
+		for (const defaultsProfile of ["agent_os", "secure"] as const) {
+			expect(agentOsOptionsSchema.safeParse({ defaultsProfile }).success).toBe(
+				true,
+			);
+		}
+		expect(
+			agentOsOptionsSchema.safeParse({ defaultsProfile: "custom" }).success,
+		).toBe(false);
+	});
+
 	test("bounds and materializes Linux account records", () => {
 		const exactPasswdRecord = {
 			uid: 0,

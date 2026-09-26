@@ -813,6 +813,8 @@ fn pty_resize_delivers_sigwinch_to_nested_foreground_runtime() {
             4,
             ownership.clone(),
             RequestPayload::ExecuteRequest(agentos_vm::wire::ExecuteRequest {
+                retain_output: false,
+
                 process_id: String::from("pty-winch-parent"),
                 command: None,
                 runtime: Some(GuestRuntimeKind::JavaScript),

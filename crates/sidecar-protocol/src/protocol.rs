@@ -613,6 +613,9 @@ fn to_generated_request_payload(
         RequestPayload::ReadExecutionOutput(inner) => {
             generated_protocol::RequestPayload::ReadExecutionOutputRequest(inner.clone())
         }
+        RequestPayload::ReadProcessOutput(inner) => {
+            generated_protocol::RequestPayload::ReadProcessOutputRequest(inner.clone())
+        }
     })
 }
 
@@ -832,6 +835,9 @@ fn from_generated_request_payload(
         generated_protocol::RequestPayload::ReadExecutionOutputRequest(inner) => {
             RequestPayload::ReadExecutionOutput(inner)
         }
+        generated_protocol::RequestPayload::ReadProcessOutputRequest(inner) => {
+            RequestPayload::ReadProcessOutput(inner)
+        }
     })
 }
 
@@ -1031,6 +1037,9 @@ fn to_generated_response_payload(
         ResponsePayload::ExecutionOutputPage(inner) => {
             generated_protocol::ResponsePayload::ExecutionOutputPageResponse(inner.clone())
         }
+        ResponsePayload::ProcessOutputPage(inner) => {
+            generated_protocol::ResponsePayload::ProcessOutputPageResponse(inner.clone())
+        }
     })
 }
 
@@ -1217,6 +1226,9 @@ fn from_generated_response_payload(
         generated_protocol::ResponsePayload::ExecutionOutputPageResponse(inner) => {
             ResponsePayload::ExecutionOutputPage(inner)
         }
+        generated_protocol::ResponsePayload::ProcessOutputPageResponse(inner) => {
+            ResponsePayload::ProcessOutputPage(inner)
+        }
     })
 }
 
@@ -1232,6 +1244,8 @@ fn to_generated_event_payload(payload: &EventPayload) -> generated_protocol::Eve
                 process_id: inner.process_id.clone(),
                 channel: to_generated_stream_channel(&inner.channel),
                 chunk: inner.chunk.clone(),
+                sequence: inner.sequence,
+                timestamp_ms: inner.timestamp_ms,
             },
         ),
         EventPayload::ProcessExited(inner) => {
@@ -1264,6 +1278,8 @@ fn from_generated_event_payload(payload: generated_protocol::EventPayload) -> Ev
                 process_id: inner.process_id,
                 channel: from_generated_stream_channel(inner.channel),
                 chunk: inner.chunk,
+                sequence: inner.sequence,
+                timestamp_ms: inner.timestamp_ms,
             })
         }
         generated_protocol::EventPayload::ProcessExitedEvent(inner) => {
@@ -1638,6 +1654,7 @@ pub enum RequestPayload {
     CloseExecutionStdin(CloseExecutionStdinRequest),
     ResizeExecutionPty(ResizeExecutionPtyRequest),
     ReadExecutionOutput(ReadExecutionOutputRequest),
+    ReadProcessOutput(ReadProcessOutputRequest),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1692,6 +1709,7 @@ pub enum ResponsePayload {
     ExecutionDeleted(ExecutionDeletedResponse),
     ExecutionIo(ExecutionIoResponse),
     ExecutionOutputPage(ExecutionOutputPageResponse),
+    ProcessOutputPage(ProcessOutputPageResponse),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1841,6 +1859,7 @@ pub type WasmPermissionTier = crate::wire::WasmPermissionTier;
 pub type StandaloneWasmBackend = crate::wire::StandaloneWasmBackend;
 
 pub type ExecuteRequest = crate::wire::ExecuteRequest;
+pub type ReadProcessOutputRequest = crate::wire::ReadProcessOutputRequest;
 
 pub type ExecutionState = crate::wire::ExecutionState;
 pub type ExecutionOutcome = crate::wire::ExecutionOutcome;
@@ -1972,6 +1991,8 @@ pub type ProcessSnapshotStatus = crate::wire::ProcessSnapshotStatus;
 pub type ProcessSnapshotEntry = crate::wire::ProcessSnapshotEntry;
 
 pub type ProcessSnapshotResponse = crate::wire::ProcessSnapshotResponse;
+pub type ProcessOutputReplayEvent = crate::wire::ProcessOutputReplayEvent;
+pub type ProcessOutputPageResponse = crate::wire::ProcessOutputPageResponse;
 
 pub type QueueSnapshotEntry = crate::wire::QueueSnapshotEntry;
 
@@ -2118,6 +2139,7 @@ impl_bare_newtype_union_enum!(
         AcquirePackage(AcquirePackageRequest) = 67,
         InstallPackage(InstallPackageRequest) = 68,
         GetPackageCacheStats(GetPackageCacheStatsRequest) = 69,
+        ReadProcessOutput(ReadProcessOutputRequest) = 70,
     }
 );
 
@@ -2176,6 +2198,7 @@ impl_bare_newtype_union_enum!(
         PackageAcquired(PackageAcquiredResponse) = 47,
         PackageInstalled(PackageInstalledResponse) = 48,
         PackageCacheStats(PackageCacheStatsResponse) = 49,
+        ProcessOutputPage(ProcessOutputPageResponse) = 50,
     }
 );
 
@@ -2774,6 +2797,7 @@ enum ExpectedResponseKind {
     ExecutionDeleted,
     ExecutionIo,
     ExecutionOutputPage,
+    ProcessOutputPage,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2835,6 +2859,7 @@ impl ExpectedResponseKind {
             Self::ExecutionDeleted => "execution_deleted",
             Self::ExecutionIo => "execution_io",
             Self::ExecutionOutputPage => "execution_output_page",
+            Self::ProcessOutputPage => "process_output_page",
         }
     }
 
@@ -2935,6 +2960,7 @@ impl RequestPayload {
             | Self::CloseExecutionStdin(_)
             | Self::ResizeExecutionPty(_)
             | Self::ReadExecutionOutput(_)
+            | Self::ReadProcessOutput(_)
             | Self::HostFilesystemCall(_) => OwnershipRequirement::Vm,
             Self::Ext(_) => OwnershipRequirement::Any,
         }
@@ -3013,6 +3039,7 @@ impl RequestPayload {
             | Self::CloseExecutionStdin(_)
             | Self::ResizeExecutionPty(_) => ExpectedResponseKind::ExecutionIo,
             Self::ReadExecutionOutput(_) => ExpectedResponseKind::ExecutionOutputPage,
+            Self::ReadProcessOutput(_) => ExpectedResponseKind::ProcessOutputPage,
         }
     }
 }
@@ -3081,7 +3108,8 @@ impl ResponsePayload {
             | Self::ExecutionList(_)
             | Self::ExecutionDeleted(_)
             | Self::ExecutionIo(_)
-            | Self::ExecutionOutputPage(_) => OwnershipRequirement::Vm,
+            | Self::ExecutionOutputPage(_)
+            | Self::ProcessOutputPage(_) => OwnershipRequirement::Vm,
             Self::ExtResult(_) => OwnershipRequirement::Any,
         }
     }
@@ -3138,6 +3166,7 @@ impl ResponsePayload {
             Self::ExecutionDeleted(_) => "execution_deleted",
             Self::ExecutionIo(_) => "execution_io",
             Self::ExecutionOutputPage(_) => "execution_output_page",
+            Self::ProcessOutputPage(_) => "process_output_page",
         }
     }
 }
@@ -3352,8 +3381,7 @@ pub struct JavascriptPosixSpawnFileAction {
 #[serde(rename_all = "camelCase")]
 pub struct JavascriptSpawnHostNetFd {
     pub guest_fd: u32,
-    /// Decimal kernel open-file-description identity. Present for managed
-    /// execution; absent only for the standalone Node compatibility path.
+    /// Decimal kernel open-file-description identity for managed execution.
     #[serde(default)]
     pub description_id: Option<String>,
     #[serde(default)]

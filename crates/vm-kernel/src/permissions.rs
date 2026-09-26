@@ -14,7 +14,9 @@ const IMMUTABLE_XATTR: &str = "user.agentos.immutable";
 ///
 /// `Dynamic` is intentionally retained for caller-supplied policy evaluators;
 /// those are an open extension point rather than a closed implementation set.
+#[derive(Default)]
 pub enum PermissionEvaluator<Request> {
+    #[default]
     Deny,
     Allow,
     Dynamic(Arc<dyn Fn(&Request) -> PermissionDecision + Send + Sync>),
@@ -27,12 +29,6 @@ impl<Request> Clone for PermissionEvaluator<Request> {
             Self::Allow => Self::Allow,
             Self::Dynamic(check) => Self::Dynamic(Arc::clone(check)),
         }
-    }
-}
-
-impl<Request> Default for PermissionEvaluator<Request> {
-    fn default() -> Self {
-        Self::Deny
     }
 }
 

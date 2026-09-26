@@ -43,7 +43,8 @@ pub(crate) fn unwritten_sector_ranges(
         ));
     }
     let mut prior_end = None;
-    for chunk in encoded.chunks_exact(16) {
+    let (chunks, _) = encoded.as_chunks::<16>();
+    for chunk in chunks {
         let (start, end) = decode_unwritten_extent(chunk);
         if start >= end || prior_end.is_some_and(|prior_end| prior_end >= start) {
             return Err(VfsError::new(
@@ -53,7 +54,7 @@ pub(crate) fn unwritten_sector_ranges(
         }
         prior_end = Some(end);
     }
-    Ok(encoded.chunks_exact(16).map(decode_unwritten_extent))
+    Ok(chunks.iter().map(|chunk| decode_unwritten_extent(chunk)))
 }
 
 fn decode_unwritten_extent(chunk: &[u8]) -> (u64, u64) {

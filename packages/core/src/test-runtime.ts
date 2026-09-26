@@ -248,6 +248,7 @@ export interface ProcessInfo {
 }
 
 export interface ManagedProcess {
+	readonly processId?: string;
 	pid: number;
 	writeStdin(data: Uint8Array | string): void;
 	closeStdin(): void;
@@ -310,6 +311,16 @@ export interface RunResult<T = unknown> {
 }
 
 export interface KernelSpawnOptions extends ExecOptions {
+	retainOutput?: boolean;
+	/** Internal sidecar replay identity; absent for local/synthetic output. */
+	onStdout?: (
+		data: Uint8Array,
+		metadata?: { sequence?: number; timestampMs?: number },
+	) => void;
+	onStderr?: (
+		data: Uint8Array,
+		metadata?: { sequence?: number; timestampMs?: number },
+	) => void;
 	stdio?: "pipe" | "inherit";
 	stdinFd?: number;
 	stdoutFd?: number;

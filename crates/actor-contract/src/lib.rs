@@ -16,8 +16,18 @@ use base64::Engine;
 use rivet_error::{RivetError, RivetErrorKind};
 use rivetkit::{Action, Actor, Ctx, Handles};
 
+pub mod config;
+pub mod cron;
+pub mod events;
+pub mod filesystem;
+pub mod language;
+pub mod lifecycle;
+pub mod merge_patch;
+pub mod network;
+pub mod process;
 #[cfg(feature = "contract")]
 pub mod schema;
+pub mod software;
 
 pub type DispatchFuture = Pin<Box<dyn Future<Output = Result<Vec<u8>>> + Send>>;
 

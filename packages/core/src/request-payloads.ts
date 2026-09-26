@@ -81,6 +81,10 @@ export type LiveRequestPayload =
 			type: "compare_vm_config";
 			before: CreateVmConfig;
 			after: CreateVmConfig;
+			before_mounts: LiveMountDescriptor[];
+			after_mounts: LiveMountDescriptor[];
+			before_restart_identity: string[];
+			after_restart_identity: string[];
 	  }
 	| {
 			type: "acquire_package";
@@ -207,6 +211,7 @@ export type LiveRequestPayload =
 			cwd?: string;
 			wasm_permission_tier?: LiveWasmPermissionTier;
 			wasm_backend?: LiveStandaloneWasmBackend;
+			retain_output?: boolean;
 	  }
 	| {
 			type: "write_stdin";
@@ -230,6 +235,13 @@ export type LiveRequestPayload =
 	  }
 	| {
 			type: "get_process_snapshot";
+	  }
+	| {
+			type: "read_process_output";
+			process_id: string;
+			after?: number;
+			max_events: number;
+			max_bytes: number;
 	  }
 	| {
 			type: "get_resource_snapshot";
@@ -429,6 +441,10 @@ export function toGeneratedRequestPayload(
 				val: {
 					before: stringifyJsonUtf8(payload.before, "before VM config"),
 					after: stringifyJsonUtf8(payload.after, "after VM config"),
+					beforeMounts: payload.before_mounts.map(toGeneratedMountDescriptor),
+					afterMounts: payload.after_mounts.map(toGeneratedMountDescriptor),
+					beforeRestartIdentity: payload.before_restart_identity,
+					afterRestartIdentity: payload.after_restart_identity,
 				},
 			};
 		case "acquire_package":
@@ -613,6 +629,7 @@ export function toGeneratedRequestPayload(
 						payload.wasm_permission_tier === undefined
 							? null
 							: toGeneratedWasmPermissionTier(payload.wasm_permission_tier),
+					retainOutput: payload.retain_output ?? false,
 					wasmBackend:
 						payload.wasm_backend === undefined
 							? null
@@ -648,6 +665,16 @@ export function toGeneratedRequestPayload(
 			};
 		case "get_process_snapshot":
 			return { tag: "GetProcessSnapshotRequest", val: null };
+		case "read_process_output":
+			return {
+				tag: "ReadProcessOutputRequest",
+				val: {
+					processId: payload.process_id,
+					after: payload.after === undefined ? null : BigInt(payload.after),
+					maxEvents: payload.max_events,
+					maxBytes: payload.max_bytes,
+				},
+			};
 		case "get_resource_snapshot":
 			return { tag: "GetResourceSnapshotRequest", val: null };
 		case "find_listener":

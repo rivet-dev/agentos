@@ -131,13 +131,14 @@ struct ActorProcessOptions {
 fn parse_actor_options(
     mut args: impl Iterator<Item = String>,
 ) -> Result<ActorProcessOptions, String> {
-    let mut package_cache = agentos_client::ProcessPackageCacheOptions::default();
     // The default is an isolated process-lifetime cache. A shared fixed path
     // would make a second worker on the same host fail the exclusive cache
     // lock during startup. Operators opt into recovery with a distinct stable
     // directory for each concurrently running actor worker.
-    package_cache.root =
-        std::env::var_os("AGENTOS_PACKAGE_CACHE_DIR").map(std::path::PathBuf::from);
+    let mut package_cache = agentos_client::ProcessPackageCacheOptions {
+        root: std::env::var_os("AGENTOS_PACKAGE_CACHE_DIR").map(std::path::PathBuf::from),
+        ..Default::default()
+    };
     let mut preload = agentos_actor::PreloadProcessOptions::default();
     let mut inspector_tabs_dir =
         std::env::var_os("AGENTOS_INSPECTOR_TABS_DIR").map(std::path::PathBuf::from);

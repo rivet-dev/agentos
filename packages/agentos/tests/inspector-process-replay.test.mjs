@@ -57,6 +57,20 @@ test("process replay caps continuous output at eight pages per poll", async () =
 	assert.equal(replay.nextCursor, 7);
 });
 
+test("process replay accepts final cursors covering dropped trailing output", async () => {
+	for (const sequences of [[], [0]]) {
+		const replay = await drainProcessReplay(async () => ({
+			...page(sequences), nextCursor: 2n, truncated: true,
+		}), 1);
+		assert.equal(replay.nextCursor, 2n);
+		assert.equal(replay.truncated, true);
+		assert.equal(replay.events.length, sequences.length);
+	}
+	await assert.rejects(drainProcessReplay(async () => ({
+		...page([0], true), nextCursor: 2n, truncated: true,
+	}), 1), /cursor/);
+});
+
 test("process replay rejects a stale generation and non-progressing cursor", async () => {
 	await assert.rejects(
 		drainProcessReplay(async () => page([0], false, 2), 1),

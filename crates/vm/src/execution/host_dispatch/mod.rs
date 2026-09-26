@@ -5,6 +5,8 @@
 //! by capability family and invokes the existing kernel semantic operation;
 //! no Linux state is mirrored here.
 
+type OwnedContextOperation = Pin<Box<dyn Future<Output = Result<(), VmError>> + 'static>>;
+
 mod clock;
 mod entropy;
 mod filesystem;
@@ -2138,7 +2140,9 @@ fn decode_hostnet_socket_address(
             }
             let decoded = bytes
                 .as_bytes()
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|pair| {
                     let pair = std::str::from_utf8(pair)
                         .map_err(|_| VmError::host("EINVAL", format!("{label} hex is invalid")))?;
@@ -3274,128 +3278,146 @@ where
     B: VmManagerHost + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
-    let prepared = (|| -> Result<Option<Pin<Box<dyn Future<Output = Result<(), VmError>> + 'static>>>, VmError> {
-    if !validate_context_host_call(sidecar, vm_id, process_id, &reply)? {
-        return Ok(None);
-    }
+    let prepared = (|| -> Result<Option<OwnedContextOperation>, VmError> {
+        if !validate_context_host_call(sidecar, vm_id, process_id, &reply)? {
+            return Ok(None);
+        }
 
-    match operation {
-        ProcessOperation::Spawn(request) => {
-            let mut request = request.into_request();
-            if let Err(error) = merge_process_internal_bootstrap_env(sidecar, vm_id, &mut request)
-                .and_then(|()| validate_process_launch_request(&request, false))
-            {
-                settle_context_process_reply(&reply, Err(error))?;
-                return Ok(None);
-            }
-            if !reply.claim().map_err(VmError::from)? {
-                return Ok(None);
-            }
-            let future = sidecar.spawn_child_process(vm_id, process_id, request);
-            return Ok(Some(Box::pin(async move {
-                let result = future.await;
-                settle_context_process_reply(&reply, result.map(HostCallReply::Json))
-            })));
-        }
-        ProcessOperation::RunCaptured {
-            request,
-            max_buffer,
-        } => {
-            let mut request = request.into_request();
-            if let Err(error) = merge_process_internal_bootstrap_env(sidecar, vm_id, &mut request)
-                .and_then(|()| validate_process_launch_request(&request, false))
-            {
-                settle_context_process_reply(&reply, Err(error))?;
-                return Ok(None);
-            }
-            if !reply.claim().map_err(VmError::from)? {
-                return Ok(None);
-            }
-            let completion = PendingChildProcessSyncCompletion::Direct(reply.clone());
-            let future = sidecar.begin_javascript_child_process_sync(vm_id, process_id, request, Some(max_buffer.get()), completion);
-            return Ok(Some(Box::pin(async move {
-                if let Err(error) = future.await {
-                    reply.fail(host_service_error(&error)).map_err(VmError::from)?;
+        match operation {
+            ProcessOperation::Spawn(request) => {
+                let mut request = request.into_request();
+                if let Err(error) =
+                    merge_process_internal_bootstrap_env(sidecar, vm_id, &mut request)
+                        .and_then(|()| validate_process_launch_request(&request, false))
+                {
+                    settle_context_process_reply(&reply, Err(error))?;
+                    return Ok(None);
                 }
-                Ok(())
-            })));
+                if !reply.claim().map_err(VmError::from)? {
+                    return Ok(None);
+                }
+                let future = sidecar.spawn_child_process(vm_id, process_id, request);
+                return Ok(Some(Box::pin(async move {
+                    let result = future.await;
+                    settle_context_process_reply(&reply, result.map(HostCallReply::Json))
+                })));
+            }
+            ProcessOperation::RunCaptured {
+                request,
+                max_buffer,
+            } => {
+                let mut request = request.into_request();
+                if let Err(error) =
+                    merge_process_internal_bootstrap_env(sidecar, vm_id, &mut request)
+                        .and_then(|()| validate_process_launch_request(&request, false))
+                {
+                    settle_context_process_reply(&reply, Err(error))?;
+                    return Ok(None);
+                }
+                if !reply.claim().map_err(VmError::from)? {
+                    return Ok(None);
+                }
+                let completion = PendingChildProcessSyncCompletion::Direct(reply.clone());
+                let future = sidecar.begin_javascript_child_process_sync(
+                    vm_id,
+                    process_id,
+                    request,
+                    Some(max_buffer.get()),
+                    completion,
+                );
+                return Ok(Some(Box::pin(async move {
+                    if let Err(error) = future.await {
+                        reply
+                            .fail(host_service_error(&error))
+                            .map_err(VmError::from)?;
+                    }
+                    Ok(())
+                })));
+            }
+            ProcessOperation::PollChild {
+                child_id,
+                wait_ms: _,
+            } => {
+                if let Err(error) =
+                    sidecar.validate_child_poll_target(vm_id, process_id, &[], child_id.as_str())
+                {
+                    settle_context_process_reply(&reply, Err(error))?;
+                    return Ok(None);
+                }
+                if !reply.claim().map_err(VmError::from)? {
+                    return Ok(None);
+                }
+                // Polling is deliberately nonblocking in the sidecar. Settle the
+                // claimed reply in this event turn so the guest can re-poll after
+                // a concurrent child HostCall without depending on another edge
+                // from the shared process broker.
+                let result = sidecar
+                    .poll_child_process_nowait(vm_id, process_id, child_id.as_str())
+                    .map(HostCallReply::Json);
+                settle_context_process_reply(&reply, result)?;
+            }
+            ProcessOperation::WriteChildStdin { child_id, chunk } => {
+                if !reply.claim().map_err(VmError::from)? {
+                    return Ok(None);
+                }
+                let result = sidecar
+                    .write_child_process_stdin(
+                        vm_id,
+                        process_id,
+                        child_id.as_str(),
+                        chunk.as_slice(),
+                    )
+                    .map(|()| HostCallReply::Json(Value::Null));
+                settle_context_process_reply(&reply, result)?;
+            }
+            ProcessOperation::CloseChildStdin { child_id } => {
+                if !reply.claim().map_err(VmError::from)? {
+                    return Ok(None);
+                }
+                let result = sidecar
+                    .close_child_process_stdin(vm_id, process_id, child_id.as_str())
+                    .map(|()| HostCallReply::Json(Value::Null));
+                settle_context_process_reply(&reply, result)?;
+            }
+            ProcessOperation::Exec(request) => {
+                let mut request = request.into_request();
+                let fd_image_commit = request.options.executable_fd.is_some();
+                let preflight = if fd_image_commit {
+                    validate_wasm_fd_image_commit_request(&request)
+                } else {
+                    merge_process_internal_bootstrap_env(sidecar, vm_id, &mut request)
+                        .and_then(|()| validate_process_launch_request(&request, true))
+                };
+                if let Err(error) = preflight {
+                    settle_context_process_reply(&reply, Err(error))?;
+                    return Ok(None);
+                }
+                if !reply.claim().map_err(VmError::from)? {
+                    return Ok(None);
+                }
+                let local_replacement = request.options.local_replacement;
+                let result = if fd_image_commit {
+                    sidecar.commit_wasm_fd_process_image(vm_id, process_id, &[], request)
+                } else {
+                    sidecar.exec_process_image(vm_id, process_id, &[], request)
+                };
+                match result {
+                    Ok(()) if local_replacement => reply
+                        .succeed_json(json!({ "committed": true }))
+                        .map_err(VmError::from)?,
+                    Ok(()) => reply.dismiss_claimed().map_err(VmError::from)?,
+                    Err(error) => reply
+                        .fail(host_service_error(&error))
+                        .map_err(VmError::from)?,
+                }
+            }
+            other => {
+                reply
+                    .fail(unsupported("process context", other))
+                    .map_err(VmError::from)?;
+            }
         }
-        ProcessOperation::PollChild { child_id, wait_ms: _ } => {
-            if let Err(error) =
-                sidecar.validate_child_poll_target(vm_id, process_id, &[], child_id.as_str())
-            {
-                settle_context_process_reply(&reply, Err(error))?;
-                return Ok(None);
-            }
-            if !reply.claim().map_err(VmError::from)? {
-                return Ok(None);
-            }
-            // Polling is deliberately nonblocking in the sidecar. Settle the
-            // claimed reply in this event turn so the guest can re-poll after
-            // a concurrent child HostCall without depending on another edge
-            // from the shared process broker.
-            let result = sidecar
-                .poll_child_process_nowait(vm_id, process_id, child_id.as_str())
-                .map(HostCallReply::Json);
-            settle_context_process_reply(&reply, result)?;
-        }
-        ProcessOperation::WriteChildStdin { child_id, chunk } => {
-            if !reply.claim().map_err(VmError::from)? {
-                return Ok(None);
-            }
-            let result = sidecar
-                .write_child_process_stdin(vm_id, process_id, child_id.as_str(), chunk.as_slice())
-                .map(|()| HostCallReply::Json(Value::Null));
-            settle_context_process_reply(&reply, result)?;
-        }
-        ProcessOperation::CloseChildStdin { child_id } => {
-            if !reply.claim().map_err(VmError::from)? {
-                return Ok(None);
-            }
-            let result = sidecar
-                .close_child_process_stdin(vm_id, process_id, child_id.as_str())
-                .map(|()| HostCallReply::Json(Value::Null));
-            settle_context_process_reply(&reply, result)?;
-        }
-        ProcessOperation::Exec(request) => {
-            let mut request = request.into_request();
-            let fd_image_commit = request.options.executable_fd.is_some();
-            let preflight = if fd_image_commit {
-                validate_wasm_fd_image_commit_request(&request)
-            } else {
-                merge_process_internal_bootstrap_env(sidecar, vm_id, &mut request)
-                    .and_then(|()| validate_process_launch_request(&request, true))
-            };
-            if let Err(error) = preflight {
-                settle_context_process_reply(&reply, Err(error))?;
-                return Ok(None);
-            }
-            if !reply.claim().map_err(VmError::from)? {
-                return Ok(None);
-            }
-            let local_replacement = request.options.local_replacement;
-            let result = if fd_image_commit {
-                sidecar.commit_wasm_fd_process_image(vm_id, process_id, &[], request)
-            } else {
-                sidecar.exec_process_image(vm_id, process_id, &[], request)
-            };
-            match result {
-                Ok(()) if local_replacement => reply
-                    .succeed_json(json!({ "committed": true }))
-                    .map_err(VmError::from)?,
-                Ok(()) => reply.dismiss_claimed().map_err(VmError::from)?,
-                Err(error) => reply
-                    .fail(host_service_error(&error))
-                    .map_err(VmError::from)?,
-            }
-        }
-        other => {
-            reply
-                .fail(unsupported("process context", other))
-                .map_err(VmError::from)?;
-        }
-    }
-    Ok(None)
+        Ok(None)
     })();
     match prepared {
         Ok(Some(future)) => future,

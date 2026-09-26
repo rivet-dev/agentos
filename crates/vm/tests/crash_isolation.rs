@@ -134,8 +134,6 @@ fn guest_failure_in_one_vm_does_not_break_peer_vm_execution() {
             | EventPayload::ExecutionCompletedEvent(_)
             | EventPayload::VmLifecycleEvent(_)
             | EventPayload::StructuredEvent(_)
-            | EventPayload::ExecutionOutputEvent(_)
-            | EventPayload::ExecutionCompletedEvent(_)
             | EventPayload::ExtEnvelope(_) => {}
         }
     }
@@ -225,8 +223,6 @@ fn collect_crash_process_output(
                 | EventPayload::ExecutionCompletedEvent(_)
                 | EventPayload::VmLifecycleEvent(_)
                 | EventPayload::StructuredEvent(_)
-                | EventPayload::ExecutionOutputEvent(_)
-                | EventPayload::ExecutionCompletedEvent(_)
                 | EventPayload::ExtEnvelope(_) => {}
             }
         }

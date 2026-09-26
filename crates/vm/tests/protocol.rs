@@ -102,6 +102,9 @@ fn ext_envelope_event_encoding_microbench() {
     let codec = NativeFrameCodec::with_payload_codec(1024 * 1024, NativePayloadCodec::Bare);
     let ownership = OwnershipScope::vm("conn-1", "session-1", "vm-1");
     let process_output = ProcessOutputEvent {
+        sequence: None,
+        timestamp_ms: None,
+
         process_id: String::from("proc-1"),
         channel: StreamChannel::Stdout,
         chunk: vec![b'x'; 256],

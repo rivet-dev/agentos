@@ -15,7 +15,7 @@ enum Http2ClientTransport {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
-struct JavascriptHttp2ServerListenRequest {
+struct Http2ServerListenRequest {
     server_id: u64,
     secure: bool,
     port: Option<u16>,
@@ -28,7 +28,7 @@ struct JavascriptHttp2ServerListenRequest {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
-struct JavascriptHttp2SessionConnectRequest {
+struct Http2SessionConnectRequest {
     authority: Option<String>,
     protocol: Option<String>,
     host: Option<String>,
@@ -39,18 +39,18 @@ struct JavascriptHttp2SessionConnectRequest {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
-struct JavascriptHttp2RequestOptions {
+struct Http2RequestOptions {
     end_stream: bool,
 }
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
-struct JavascriptHttp2FileResponseOptions {
+struct Http2FileResponseOptions {
     offset: Option<u64>,
     length: Option<i64>,
 }
 
-pub(in crate::execution) struct JavascriptHttp2SyncRpcServiceRequest<'a, B> {
+pub(in crate::execution) struct Http2SyncRpcServiceRequest<'a, B> {
     pub(in crate::execution) bridge: &'a SharedBridge<B>,
     pub(in crate::execution) kernel: &'a mut SidecarKernel,
     pub(in crate::execution) vm_id: &'a str,
@@ -2142,7 +2142,7 @@ fn spawn_http2_client_session(
                                         continue;
                                     }
                                 };
-                                let options: JavascriptHttp2RequestOptions =
+                                let options: Http2RequestOptions =
                                     serde_json::from_str(&options_json).unwrap_or_default();
                                 let stream_id = match admit_http2_stream(
                                     &shared,
@@ -2837,7 +2837,7 @@ fn spawn_http2_server_session(
                                 respond_to.settle(Ok(Value::Null));
                             }
                             Http2SessionCommand::StreamRespondWithFile { stream_id, body, headers_json, options_json, respond_to } => {
-                                let options: JavascriptHttp2FileResponseOptions =
+                                let options: Http2FileResponseOptions =
                                     serde_json::from_str(&options_json).unwrap_or_default();
                                 let response = match build_http2_response(&headers_json) {
                                     Ok(response) => response,
@@ -2918,7 +2918,7 @@ fn spawn_http2_server_session(
 }
 
 fn spawn_vm_local_http2_server_connection(
-    target: &JavascriptHttp2LoopbackTarget,
+    target: &Http2LoopbackTarget,
     io: tokio::io::DuplexStream,
     remote_addr: SocketAddr,
     capabilities: &CapabilityRegistry,
@@ -3041,7 +3041,7 @@ fn send_http2_command(
 
 fn parse_http2_server_listen_payload(
     request: &HostRpcRequest,
-) -> Result<JavascriptHttp2ServerListenRequest, VmError> {
+) -> Result<Http2ServerListenRequest, VmError> {
     let payload_json =
         javascript_sync_rpc_arg_str(&request.args, 0, "net.http2_server_listen payload")?;
     serde_json::from_str(payload_json).map_err(|error| {
@@ -3053,7 +3053,7 @@ fn parse_http2_server_listen_payload(
 
 fn parse_http2_connect_payload(
     request: &HostRpcRequest,
-) -> Result<JavascriptHttp2SessionConnectRequest, VmError> {
+) -> Result<Http2SessionConnectRequest, VmError> {
     let payload_json =
         javascript_sync_rpc_arg_str(&request.args, 0, "net.http2_session_connect payload")?;
     serde_json::from_str(payload_json).map_err(|error| {
@@ -3096,13 +3096,13 @@ fn http2_stream_for_id(
 }
 
 pub(in crate::execution) fn service_javascript_http2_sync_rpc<B>(
-    request: JavascriptHttp2SyncRpcServiceRequest<'_, B>,
+    request: Http2SyncRpcServiceRequest<'_, B>,
 ) -> Result<HostServiceResponse, VmError>
 where
     B: VmManagerHost + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
-    let JavascriptHttp2SyncRpcServiceRequest {
+    let Http2SyncRpcServiceRequest {
         bridge,
         kernel,
         vm_id,

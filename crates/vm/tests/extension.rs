@@ -94,6 +94,8 @@ impl Extension for EchoExtension {
 
             let started = ctx
                 .spawn_process_wire(ExecuteRequest {
+                    retain_output: false,
+
                     process_id: process_id.to_string(),
                     command: None,
                     runtime: Some(GuestRuntimeKind::JavaScript),
@@ -118,6 +120,8 @@ impl Extension for EchoExtension {
             let lifecycle_process_id = "extension-lifecycle-process";
             let lifecycle_started = ctx
                 .spawn_process_wire(ExecuteRequest {
+                    retain_output: false,
+
                     process_id: lifecycle_process_id.to_string(),
                     command: None,
                     runtime: Some(GuestRuntimeKind::JavaScript),
@@ -174,8 +178,6 @@ impl Extension for EchoExtension {
                     | EventPayload::ExecutionCompletedEvent(_)
                     | EventPayload::VmLifecycleEvent(_)
                     | EventPayload::StructuredEvent(_)
-                    | EventPayload::ExecutionOutputEvent(_)
-                    | EventPayload::ExecutionCompletedEvent(_)
                     | EventPayload::ExtEnvelope(_) => {}
                 }
             }

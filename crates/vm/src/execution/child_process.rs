@@ -1,3 +1,5 @@
+type OwnedDescendantOperation = Pin<Box<dyn Future<Output = Result<(), VmError>> + 'static>>;
+
 use super::*;
 use crate::state::VmHandle;
 // Every executor reports the same public event contract. Normalize it before
@@ -72,16 +74,6 @@ impl PendingOwnedProcessStart {
         let mut pending = Self::new(vm, kernel_handle);
         pending.context = "owned top-level execution startup";
         pending
-    }
-
-    fn set_execution(&mut self, execution: ActiveExecution) {
-        self.execution = Some(execution);
-    }
-
-    fn take_execution(&mut self) -> ActiveExecution {
-        self.execution
-            .take()
-            .expect("owned child startup completed before registration")
     }
 
     pub(super) fn disarm(&mut self) {
@@ -4387,168 +4379,6 @@ where
     B: VmManagerHost + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
-    fn child_process_ids_at_path(
-        &self,
-        vm_id: &str,
-        root_process_id: &str,
-        parent_path: &[&str],
-    ) -> Result<BTreeSet<String>, VmError> {
-        let vm = self.vms.get(vm_id).ok_or_else(|| missing_vm_error(vm_id))?;
-        let root = vm
-            .active_processes
-            .get(root_process_id)
-            .ok_or_else(|| missing_process_error(vm_id, root_process_id))?;
-        let parent = Self::active_process_by_path(root, parent_path).ok_or_else(|| {
-            VmError::InvalidState(format!(
-                "unknown child process path during spawnSync admission: {}",
-                parent_path.join("/")
-            ))
-        })?;
-        Ok(parent.child_processes.keys().cloned().collect())
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn rollback_registered_child_process_sync(
-        &mut self,
-        vm_id: &str,
-        root_process_id: &str,
-        parent_path: &[&str],
-        prior_child_ids: &BTreeSet<String>,
-        hinted_child_id: Option<&str>,
-        hinted_pid: Option<u32>,
-        context: &str,
-    ) {
-        let bridge = self.bridge.clone();
-        let Some(mut vm) = self.vms.get_mut(vm_id) else {
-            eprintln!(
-                "ERR_AGENTOS_CHILD_SYNC_ROLLBACK: {context}: VM {vm_id} disappeared before rollback"
-            );
-            return;
-        };
-        let identity = {
-            let Some(root) = vm.active_processes.get(root_process_id) else {
-                eprintln!(
-                    "ERR_AGENTOS_CHILD_SYNC_ROLLBACK: {context}: root process {root_process_id} disappeared before rollback"
-                );
-                return;
-            };
-            let Some(parent) = Self::active_process_by_path(root, parent_path) else {
-                eprintln!(
-                    "ERR_AGENTOS_CHILD_SYNC_ROLLBACK: {context}: parent path {} disappeared before rollback",
-                    parent_path.join("/")
-                );
-                return;
-            };
-            let new_children = parent
-                .child_processes
-                .iter()
-                .filter(|(child_id, _)| !prior_child_ids.contains(*child_id))
-                .collect::<Vec<_>>();
-            let selected = if new_children.len() == 1 {
-                new_children.first().copied()
-            } else {
-                let matching = new_children
-                    .iter()
-                    .copied()
-                    .filter(|(child_id, child)| {
-                        hinted_child_id.is_none_or(|hint| hint == child_id.as_str())
-                            && hinted_pid.is_none_or(|hint| hint == child.kernel_pid)
-                    })
-                    .collect::<Vec<_>>();
-                (matching.len() == 1).then(|| matching[0])
-            };
-            let Some((child_process_id, child)) = selected else {
-                eprintln!(
-                    "ERR_AGENTOS_CHILD_SYNC_ROLLBACK: {context}: could not identify exactly one newly registered child under {root_process_id}/{} (childId={hinted_child_id:?}, pid={hinted_pid:?}, candidates={})",
-                    parent_path.join("/"),
-                    new_children.len()
-                );
-                return;
-            };
-            SpawnedChildIdentity {
-                child_process_id: child_process_id.clone(),
-                pid: child.kernel_pid,
-            }
-        };
-
-        #[cfg(test)]
-        record_child_sync_rollback_for_test(vm_id, root_process_id, parent_path, &identity);
-
-        let terminating_kernel_pids = {
-            let Some(root) = vm.active_processes.get(root_process_id) else {
-                return;
-            };
-            let Some(parent) = Self::active_process_by_path(root, parent_path) else {
-                return;
-            };
-            let Some(child) = parent.child_processes.get(&identity.child_process_id) else {
-                return;
-            };
-            Self::terminating_process_tree_kernel_pids(child)
-        };
-        for kernel_pid in terminating_kernel_pids {
-            if let Err(error) = retire_managed_process_routes(&bridge, vm_id, &mut vm, kernel_pid) {
-                eprintln!(
-                    "ERR_AGENTOS_CHILD_SYNC_ROLLBACK_ROUTE: {context}: failed to retire managed routes for PID {kernel_pid}: {error}"
-                );
-            }
-        }
-
-        let mut child = {
-            let Some(root) = vm.active_processes.get_mut(root_process_id) else {
-                return;
-            };
-            let Some(parent) = Self::active_process_by_path_mut(root, parent_path) else {
-                return;
-            };
-            if parent
-                .pending_child_process_sync
-                .get(&identity.child_process_id)
-                .is_some_and(|pending| pending.pid == identity.pid)
-            {
-                parent
-                    .pending_child_process_sync
-                    .remove(&identity.child_process_id);
-            }
-            let Some(child) = parent.child_processes.remove(&identity.child_process_id) else {
-                eprintln!(
-                    "ERR_AGENTOS_CHILD_SYNC_ROLLBACK: {context}: child {} disappeared during rollback",
-                    identity.child_process_id
-                );
-                return;
-            };
-            child
-        };
-
-        if let Err(error) = release_inherited_child_raw_mode(&mut vm.kernel, &child) {
-            eprintln!(
-                "ERR_AGENTOS_CHILD_SYNC_ROLLBACK_TTY: {context}: failed to release child {} raw mode: {error}",
-                identity.child_process_id
-            );
-        }
-        let kernel_readiness = Arc::clone(&vm.kernel_socket_readiness);
-        let unix_address_registry = Arc::clone(&vm.unix_address_registry);
-        terminate_child_process_tree(
-            &mut vm.kernel,
-            &mut child,
-            &kernel_readiness,
-            &unix_address_registry,
-        );
-        if let Err(error) = child.execution.terminate() {
-            eprintln!(
-                "ERR_AGENTOS_CHILD_SYNC_ROLLBACK_EXECUTOR: {context}: failed to terminate child {} runtime: {error}",
-                identity.child_process_id
-            );
-        }
-        child.kernel_handle.finish(127);
-        if let Err(error) = vm.kernel.wait_and_reap(child.kernel_pid) {
-            eprintln!(
-                "ERR_AGENTOS_CHILD_SYNC_ROLLBACK_REAP: {context}: failed to reap child {} PID {}: {error}",
-                identity.child_process_id, child.kernel_pid
-            );
-        }
-    }
-
     #[cfg(test)]
     #[allow(dead_code)]
     pub(crate) fn arm_child_sync_timer_admission_failure_for_test(
@@ -4845,6 +4675,8 @@ where
         Ok(())
     }
 
+    // Explicit locator and admission fields keep the bounded event handoff auditable.
+    #[allow(clippy::too_many_arguments)]
     fn route_child_process_bridge_event(
         &mut self,
         vm_id: &str,
@@ -5679,25 +5511,6 @@ where
         Ok(())
     }
 
-    pub(crate) fn resolve_javascript_child_process_execution(
-        &self,
-        vm: &mut VmState,
-        parent_env: &BTreeMap<String, String>,
-        parent_guest_cwd: &str,
-        parent_host_cwd: &Path,
-        request: &ProcessLaunchRequest,
-    ) -> Result<ResolvedChildProcessExecution, VmError> {
-        Self::resolve_javascript_child_process_execution_with_mode(
-            vm,
-            parent_env,
-            parent_guest_cwd,
-            parent_host_cwd,
-            request,
-            false,
-            None,
-        )
-    }
-
     // Resolution keeps host/guest cwd and PATH policy explicit because they
     // are distinct security inputs, not interchangeable options.
     #[allow(clippy::too_many_arguments)]
@@ -6183,69 +5996,11 @@ where
         Ok(resolved)
     }
 
-    fn resolve_javascript_child_process_with_shebang(
-        &mut self,
-        vm_id: &str,
-        parent_env: &BTreeMap<String, String>,
-        parent_guest_cwd: &str,
-        parent_host_cwd: &Path,
-        request: &mut ProcessLaunchRequest,
-    ) -> Result<ResolvedChildProcessExecution, VmError> {
-        const MAX_SHEBANG_REDIRECTS: usize = 4;
-
-        let mut resolved = {
-            let mut vm = self
-                .vms
-                .get_mut(vm_id)
-                .ok_or_else(|| missing_vm_error(vm_id))?;
-            Self::resolve_javascript_child_process_execution_with_mode(
-                &mut vm,
-                parent_env,
-                parent_guest_cwd,
-                parent_host_cwd,
-                request,
-                false,
-                None,
-            )?
-        };
-
-        for redirects in 0..=MAX_SHEBANG_REDIRECTS {
-            let redirected = {
-                let mut vm = self
-                    .vms
-                    .get_mut(vm_id)
-                    .ok_or_else(|| missing_vm_error(vm_id))?;
-                rewrite_javascript_shebang_request(&mut vm, &resolved, request)?
-            };
-            if !redirected {
-                return Ok(resolved);
-            }
-            if redirects == MAX_SHEBANG_REDIRECTS {
-                return Err(VmError::host(
-                    "ELOOP",
-                    format!("exceeded {MAX_SHEBANG_REDIRECTS} shebang redirects"),
-                ));
-            }
-            resolved = {
-                let mut vm = self
-                    .vms
-                    .get_mut(vm_id)
-                    .ok_or_else(|| missing_vm_error(vm_id))?;
-                Self::resolve_javascript_child_process_execution_with_mode(
-                    &mut vm,
-                    parent_env,
-                    parent_guest_cwd,
-                    parent_host_cwd,
-                    request,
-                    false,
-                    None,
-                )?
-            };
-        }
-
-        Ok(resolved)
-    }
-
+    // The FIFO VM startup permit serializes engine access. Engine APIs borrow
+    // their RefMut through bounded async preparation; VM state is explicitly
+    // dropped before every suspending start and reacquired afterward. The
+    // cancellation guard rolls back the kernel process if preparation stops.
+    #[allow(clippy::await_holding_refcell_ref)]
     pub(crate) fn spawn_child_process(
         &mut self,
         vm_id: &str,
@@ -6301,7 +6056,7 @@ where
             };
             let prepared_spawn_actions = if !prepared_host_net_fds.kernel_actions.is_empty() {
                 let (parent_pid, parent_cwd) = {
-                    let mut vm = vms.get_mut(vm_id).ok_or_else(|| missing_vm_error(vm_id))?;
+                    let vm = vms.get_mut(vm_id).ok_or_else(|| missing_vm_error(vm_id))?;
                     let parent = vm
                         .active_processes
                         .get(process_id)
@@ -6357,7 +6112,7 @@ where
                 parent_kernel_pid,
                 standalone_wasm_backend,
             ) = {
-                let mut vm = vms.get_mut(vm_id).ok_or_else(|| missing_vm_error(vm_id))?;
+                let vm = vms.get_mut(vm_id).ok_or_else(|| missing_vm_error(vm_id))?;
                 let parent = vm
                     .active_processes
                     .get(process_id)
@@ -8194,6 +7949,11 @@ where
         Ok(())
     }
 
+    // The FIFO VM startup permit serializes engine access. Engine APIs borrow
+    // their RefMut through bounded async preparation; VM state is explicitly
+    // dropped before every suspending start and reacquired afterward. The
+    // cancellation guard rolls back the kernel process if preparation stops.
+    #[allow(clippy::await_holding_refcell_ref)]
     fn spawn_descendant_process(
         &mut self,
         vm_id: &str,
@@ -9327,6 +9087,7 @@ where
         })
     }
 
+    #[cfg(test)]
     async fn defer_descendant_javascript_child_process_sync(
         &mut self,
         vm_id: &str,
@@ -9996,7 +9757,7 @@ where
         caller_process_path: &[&str],
         operation: HostOperation,
         reply: DirectHostReplyHandle,
-    ) -> Result<Pin<Box<dyn Future<Output = Result<(), VmError>> + 'static>>, VmError> {
+    ) -> Result<OwnedDescendantOperation, VmError> {
         let (generation, caller_pid) = {
             let Some(vm) = self.vms.get(vm_id) else {
                 reply
@@ -10117,7 +9878,10 @@ where
                     Ok(())
                 }));
             }
-            ProcessOperation::PollChild { child_id, wait_ms } => {
+            ProcessOperation::PollChild {
+                child_id,
+                wait_ms: _,
+            } => {
                 if let Err(error) = self.validate_child_poll_target(
                     vm_id,
                     root_process_id,
@@ -10223,115 +9987,6 @@ where
             }
             .map_err(VmError::from)
         }))
-    }
-
-    async fn handle_descendant_javascript_child_process_rpc(
-        &mut self,
-        vm_id: &str,
-        process_id: &str,
-        current_process_path: &[&str],
-        request: &ExecutionHostCall,
-    ) -> Result<HostServiceResponse, VmError> {
-        match request.method.as_str() {
-            "child_process.spawn" => {
-                let Some(vm) = self.vms.get(vm_id) else {
-                    return Ok(Value::Null.into());
-                };
-                let (payload, _) =
-                    parse_javascript_child_process_spawn_request(&vm, &request.args)?;
-                drop(vm);
-                self.spawn_descendant_process(vm_id, process_id, current_process_path, payload)
-                    .await
-                    .map(Into::into)
-            }
-            "child_process.spawn_sync" => {
-                let Some(vm) = self.vms.get(vm_id) else {
-                    return Ok(Value::Null.into());
-                };
-                let (payload, max_buffer) =
-                    parse_javascript_child_process_spawn_request(&vm, &request.args)?;
-                drop(vm);
-                self.defer_descendant_javascript_child_process_sync(
-                    vm_id,
-                    process_id,
-                    current_process_path,
-                    payload,
-                    max_buffer,
-                )
-                .await
-            }
-            "child_process.poll" => {
-                let child_process_id =
-                    javascript_sync_rpc_arg_str(&request.args, 0, "child_process.poll child id")?;
-                let wait_ms = javascript_sync_rpc_arg_u64_optional(
-                    &request.args,
-                    1,
-                    "child_process.poll wait ms",
-                )?
-                .unwrap_or_default();
-                Box::pin(self.poll_descendant_process(
-                    vm_id,
-                    process_id,
-                    current_process_path,
-                    child_process_id,
-                    wait_ms,
-                ))
-                .await
-                .map(Into::into)
-            }
-            "child_process.write_stdin" => {
-                let child_process_id = javascript_sync_rpc_arg_str(
-                    &request.args,
-                    0,
-                    "child_process.write_stdin child id",
-                )?;
-                let chunk = javascript_sync_rpc_bytes_arg(
-                    &request.args,
-                    1,
-                    "child_process.write_stdin chunk",
-                )?;
-                self.write_descendant_process_stdin(
-                    vm_id,
-                    process_id,
-                    current_process_path,
-                    child_process_id,
-                    &chunk,
-                )
-                .map(|()| Value::Null.into())
-            }
-            "child_process.close_stdin" => {
-                let child_process_id = javascript_sync_rpc_arg_str(
-                    &request.args,
-                    0,
-                    "child_process.close_stdin child id",
-                )?;
-                self.close_descendant_process_stdin(
-                    vm_id,
-                    process_id,
-                    current_process_path,
-                    child_process_id,
-                )
-                .map(|()| Value::Null.into())
-            }
-            "child_process.kill" => {
-                let child_process_id =
-                    javascript_sync_rpc_arg_str(&request.args, 0, "child_process.kill child id")?;
-                let signal =
-                    javascript_sync_rpc_arg_str(&request.args, 1, "child_process.kill signal")?;
-                self.kill_descendant_javascript_child_process(
-                    vm_id,
-                    process_id,
-                    current_process_path,
-                    child_process_id,
-                    signal,
-                )
-                .map(|()| Value::Null.into())
-            }
-            _ => Err(VmError::InvalidState(format!(
-                "unsupported nested child process RPC method {}",
-                request.method
-            ))),
-        }
     }
 
     /// Deferred servicing for a child's blocking kernel read, poll, or stdio
@@ -10504,9 +10159,11 @@ where
         }
         if request.method == "process.fd_read" {
             let fd = javascript_sync_rpc_arg_u32(&request.args, 0, "fd_read fd")?;
-            let stat = kernel
-                .fd_stat(EXECUTION_DRIVER_NAME, child.kernel_pid, fd)
-                .map_err(kernel_error)?;
+            // Let the normal handler return descriptor errors to the guest;
+            // this precheck only decides whether the RPC needs parking.
+            let Ok(stat) = kernel.fd_stat(EXECUTION_DRIVER_NAME, child.kernel_pid, fd) else {
+                return Ok(false);
+            };
             if matches!(
                 stat.filetype,
                 agentos_vm_kernel::fd_table::FILETYPE_REGULAR_FILE
@@ -11773,7 +11430,7 @@ where
             if let Some(owner) = inherited_tty_owner {
                 self.drain_shared_tty_owner_output(vm_id, owner)?;
             }
-            return Ok(None);
+            Ok(None)
         })();
         match prepared {
             Ok(Some(future)) => future,
@@ -11853,6 +11510,8 @@ where
         }
     }
 
+    // Explicit locator and admission fields keep the bounded event handoff auditable.
+    #[allow(clippy::too_many_arguments)]
     async fn poll_descendant_process_inner(
         &mut self,
         vm_id: &str,
@@ -12654,203 +12313,6 @@ where
         );
         self.process_event_notify.notify_one();
         Ok(())
-    }
-
-    fn handle_descendant_process_kill_rpc(
-        &mut self,
-        vm_id: &str,
-        process_id: &str,
-        current_process_path: &[&str],
-        child_process_id: &str,
-        request: &HostRpcRequest,
-    ) -> Result<Value, VmError> {
-        let target_pid = javascript_sync_rpc_arg_i32(&request.args, 0, "process.kill target pid")?;
-        let signal_name = javascript_sync_rpc_arg_str(&request.args, 1, "process.kill signal")?;
-        let signal = parse_signal(signal_name)?;
-
-        let mut source_path = current_process_path.to_vec();
-        source_path.push(child_process_id);
-
-        if signal != 0 && target_pid < 0 {
-            let pgid = target_pid.unsigned_abs();
-            let caller_kernel_pid = {
-                let Some(vm) = self.vms.get(vm_id) else {
-                    return Err(VmError::host(
-                        "ESRCH",
-                        String::from("unknown VM during process.kill"),
-                    ));
-                };
-                let Some(root) = vm.active_processes.get(process_id) else {
-                    return Err(VmError::host(
-                        "ESRCH",
-                        format!("unknown process {process_id} during process.kill",),
-                    ));
-                };
-                let Some(source) = Self::active_process_by_path(root, &source_path) else {
-                    return Err(VmError::host(
-                        "ESRCH",
-                        format!("unknown child process {child_process_id} during process.kill",),
-                    ));
-                };
-                source.kernel_pid
-            };
-            let caller_is_member =
-                self.signal_vm_process_group(vm_id, caller_kernel_pid, pgid, signal_name)?;
-            if !caller_is_member {
-                return Ok(Value::Null);
-            }
-            let Some(mut vm_guard) = self.vms.get_mut(vm_id) else {
-                return Ok(Value::Null);
-            };
-            let vm = &mut *vm_guard;
-            let Some(root) = vm.active_processes.get_mut(process_id) else {
-                return Ok(Value::Null);
-            };
-            let Some(source) = Self::active_process_by_path_mut(root, &source_path) else {
-                return Ok(Value::Null);
-            };
-            let action = protocol_signal_registration(
-                source
-                    .kernel_handle
-                    .signal_action(signal, None)
-                    .map_err(kernel_error)?,
-            )
-            .action;
-            terminate_tracked_child_process_for_signal(&mut vm.kernel, source, signal, None)?;
-            return Ok(json!({
-                "self": true,
-                "action": match action {
-                    SignalDispositionAction::Default => "default",
-                    SignalDispositionAction::Ignore => "ignore",
-                    SignalDispositionAction::User => "user",
-                },
-            }));
-        }
-
-        let Some(mut vm_guard) = self.vms.get_mut(vm_id) else {
-            return Err(VmError::host(
-                "ESRCH",
-                String::from("unknown VM during process.kill"),
-            ));
-        };
-        let vm = &mut *vm_guard;
-
-        if signal == 0 {
-            vm.kernel
-                .signal_process(EXECUTION_DRIVER_NAME, target_pid, signal)
-                .map_err(kernel_error)?;
-            return Ok(Value::Null);
-        }
-
-        let target_kernel_pid = u32::try_from(target_pid)
-            .map_err(|_| VmError::host("EINVAL", format!("invalid process pid {target_pid}")))?;
-        let (source_pid, located_target_path) = {
-            let Some(root) = vm.active_processes.get(process_id) else {
-                return Err(VmError::host(
-                    "ESRCH",
-                    format!("unknown process {process_id} during process.kill",),
-                ));
-            };
-            let Some(source) = Self::active_process_by_path(root, &source_path) else {
-                return Err(VmError::host(
-                    "ESRCH",
-                    format!("unknown child process {child_process_id} during process.kill",),
-                ));
-            };
-            vm.kernel
-                .signal_process(EXECUTION_DRIVER_NAME, target_pid, 0)
-                .map_err(kernel_error)?;
-            (
-                source.kernel_pid,
-                Self::active_process_path_by_kernel_pid(root, target_kernel_pid),
-            )
-        };
-        drop(vm_guard);
-        let Some(target_path) = located_target_path else {
-            // The target is alive but not part of this root's process tree.
-            // Resolve it VM-wide so cross-tree pids and untracked kernel
-            // processes still receive the signal.
-            self.signal_vm_kernel_pid(vm_id, target_kernel_pid, signal_name)?;
-            return Ok(Value::Null);
-        };
-        let Some(mut vm_guard) = self.vms.get_mut(vm_id) else {
-            return Err(VmError::host(
-                "ESRCH",
-                String::from("unknown VM during process.kill"),
-            ));
-        };
-        let vm = &mut *vm_guard;
-
-        let self_signal = source_pid == target_kernel_pid;
-        let action = {
-            let Some(root) = vm.active_processes.get(process_id) else {
-                return Ok(Value::Null);
-            };
-            let target_path_refs = target_path.iter().map(String::as_str).collect::<Vec<_>>();
-            let Some(target) = Self::active_process_by_path(root, &target_path_refs) else {
-                return Err(VmError::host(
-                    "ESRCH",
-                    format!("unknown process pid {target_pid}"),
-                ));
-            };
-            if signal == 0 {
-                SignalDispositionAction::Default
-            } else {
-                protocol_signal_registration(
-                    target
-                        .kernel_handle
-                        .signal_action(signal, None)
-                        .map_err(kernel_error)?,
-                )
-                .action
-            }
-        };
-
-        let Some(root) = vm.active_processes.get_mut(process_id) else {
-            return Ok(Value::Null);
-        };
-        let Some(target) = Self::active_process_by_owned_path_mut(root, &target_path) else {
-            return Err(VmError::host(
-                "ESRCH",
-                format!("unknown process pid {target_pid}"),
-            ));
-        };
-        terminate_tracked_child_process_for_signal(&mut vm.kernel, target, signal, None)?;
-
-        let action = match action {
-            SignalDispositionAction::Default => "default",
-            SignalDispositionAction::Ignore => "ignore",
-            SignalDispositionAction::User => "user",
-        };
-
-        let target_path_label = Self::child_process_path_label(
-            process_id,
-            &target_path.iter().map(String::as_str).collect::<Vec<_>>(),
-        );
-        emit_security_audit_event(
-            &self.bridge,
-            vm_id,
-            "security.process.kill",
-            audit_fields([
-                (String::from("source"), String::from("guest_process")),
-                (String::from("source_pid"), source_pid.to_string()),
-                (String::from("target_pid"), target_pid.to_string()),
-                (String::from("process_id"), process_id.to_owned()),
-                (
-                    String::from("target_process_path"),
-                    target_path_label.clone(),
-                ),
-                (String::from("signal"), signal_name.to_owned()),
-            ]),
-        );
-
-        Ok(json!({
-            "self": self_signal,
-            "action": action,
-            "signal": signal_name,
-            "number": signal,
-            "targetProcessPath": target_path_label,
-        }))
     }
 
     /// Poll output without servicing another guest's host call on the caller's stack.

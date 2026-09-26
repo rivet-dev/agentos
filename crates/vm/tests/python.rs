@@ -156,8 +156,6 @@ fn collect_process_output_with_timeout(
                 | EventPayload::ExecutionCompletedEvent(_)
                 | EventPayload::VmLifecycleEvent(_)
                 | EventPayload::StructuredEvent(_)
-                | EventPayload::ExecutionOutputEvent(_)
-                | EventPayload::ExecutionCompletedEvent(_)
                 | EventPayload::ExtEnvelope(_) => {}
             }
         }
@@ -410,6 +408,8 @@ fn execute_python_entrypoint_with_env(
             request_id,
             wire_vm(connection_id, session_id, vm_id),
             RequestPayload::ExecuteRequest(ExecuteRequest {
+                retain_output: false,
+
                 process_id: process_id.to_owned(),
                 command: None,
                 runtime: Some(GuestRuntimeKind::Python),
@@ -448,6 +448,8 @@ fn execute_javascript_with_env(
             request_id,
             wire_vm(connection_id, session_id, vm_id),
             RequestPayload::ExecuteRequest(ExecuteRequest {
+                retain_output: false,
+
                 process_id: process_id.to_owned(),
                 command: None,
                 runtime: Some(GuestRuntimeKind::JavaScript),
@@ -977,8 +979,6 @@ fn wait_for_stdout_chunk(
             | EventPayload::ExecutionCompletedEvent(_)
             | EventPayload::VmLifecycleEvent(_)
             | EventPayload::StructuredEvent(_)
-            | EventPayload::ExecutionOutputEvent(_)
-            | EventPayload::ExecutionCompletedEvent(_)
             | EventPayload::ExtEnvelope(_) => {}
         }
     }
@@ -1313,8 +1313,6 @@ fn concurrent_python_processes_stay_isolated_across_vms() {
             | EventPayload::ExecutionCompletedEvent(_)
             | EventPayload::VmLifecycleEvent(_)
             | EventPayload::StructuredEvent(_)
-            | EventPayload::ExecutionOutputEvent(_)
-            | EventPayload::ExecutionCompletedEvent(_)
             | EventPayload::ExtEnvelope(_) => {}
         }
     }
@@ -3335,6 +3333,8 @@ fn execute_python_cli(
             request_id,
             wire_vm(connection_id, session_id, vm_id),
             RequestPayload::ExecuteRequest(ExecuteRequest {
+                retain_output: false,
+
                 process_id: process_id.to_owned(),
                 command: Some(command.to_owned()),
                 runtime: None,
@@ -3373,6 +3373,8 @@ fn execute_python_cli_with_env(
             request_id,
             wire_vm(connection_id, session_id, vm_id),
             RequestPayload::ExecuteRequest(ExecuteRequest {
+                retain_output: false,
+
                 process_id: process_id.to_owned(),
                 command: Some(command.to_owned()),
                 runtime: None,

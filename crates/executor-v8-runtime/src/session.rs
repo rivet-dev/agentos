@@ -4063,7 +4063,7 @@ mod tests {
         let router: CallIdRouter = Arc::new(BridgeCallRegistry::with_default_limit());
         let snap_cache = Arc::new(SnapshotCache::new(4));
         let runtime = crate::test_runtime_context();
-        let manager = SessionManager::new(max, tx, router, snap_cache, runtime);
+        let manager = SessionManager::new(Some(max), tx, router, snap_cache, runtime);
         (manager, _rx)
     }
 
@@ -4120,14 +4120,14 @@ mod tests {
         let (event_tx, _event_rx) = crossbeam_channel::unbounded();
         let router: CallIdRouter = Arc::new(BridgeCallRegistry::with_default_limit());
         let mut manager = SessionManager::new(
-            runtime.max_active_vm_executors(),
+            None,
             event_tx.clone(),
             Arc::clone(&router),
             Arc::new(SnapshotCache::new(1)),
             runtime.clone(),
         );
         let mut second_manager = SessionManager::new(
-            runtime.max_active_vm_executors(),
+            None,
             event_tx,
             router,
             Arc::new(SnapshotCache::new(1)),

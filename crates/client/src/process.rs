@@ -9,7 +9,6 @@
 
 use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use scc::HashMap as SccHashMap;
@@ -22,8 +21,9 @@ use agentos_sidecar_client::wire::{self, EventPayload, ProcessSnapshotStatus, St
 use crate::agent_os::{AgentOs, ProcessEntry};
 use crate::command_line::resolve_exec_command;
 use crate::error::ClientError;
-use crate::output_replay::{page_limits, require_page_progress, OutputReplayBuffer};
+use crate::output_replay::page_limits;
 use crate::stream::Subscription;
+use crate::ResourceLimitDetails;
 
 /// Client-local observation state; only a matching sidecar event supplies an exit code.
 #[derive(Debug, Clone)]
@@ -111,8 +111,22 @@ async fn next_spawn_event(
     process_id: &str,
     outcome: &watch::Sender<ProcessOutcome>,
 ) -> Option<EventPayload> {
+    let mut replay_outcome = outcome.subscribe();
     loop {
-        match events.recv().await {
+        if matches!(*replay_outcome.borrow(), ProcessOutcome::Exited(_)) {
+            return None;
+        }
+        let event = tokio::select! {
+            event = events.recv() => event,
+            changed = replay_outcome.changed() => {
+                if let Err(error) = changed {
+                    tracing::error!(%process_id, %error, "process outcome channel closed during observation");
+                    return None;
+                }
+                continue;
+            }
+        };
+        match event {
             Ok((scope, payload)) if scope == *ownership => {
                 if matches!(&payload, EventPayload::VmLifecycleEvent(event)
                     if matches!(event.state, wire::VmLifecycleState::Disposed | wire::VmLifecycleState::Failed))
@@ -167,6 +181,18 @@ async fn next_spawn_event(
                 // Keep observing after a lost event; a later real exit may still arrive.
             }
         }
+    }
+}
+
+fn reconcile_replayed_exit(outcome: &watch::Sender<ProcessOutcome>, exit_code: Option<i32>) {
+    if let Some(exit_code) = exit_code {
+        outcome.send_if_modified(|state| {
+            if matches!(state, ProcessOutcome::Exited(_)) {
+                return false;
+            }
+            *state = ProcessOutcome::Exited(exit_code);
+            true
+        });
     }
 }
 
@@ -369,7 +395,7 @@ pub struct SpawnOptions {
     pub stdout_fd: Option<i32>,
     pub stderr_fd: Option<i32>,
     pub stream_stdin: Option<bool>,
-    /// Retain a bounded sequenced output replay in Core.
+    /// Retain a bounded sequenced output replay in the sidecar.
     pub retain_output: bool,
 }
 
@@ -413,6 +439,9 @@ pub struct ProcessOutputReplay {
     #[serde(rename = "hasMore")]
     pub has_more: bool,
     pub truncated: bool,
+    /// Confirmed guest exit, including when the live exit event was missed.
+    #[serde(rename = "exitCode")]
+    pub exit_code: Option<i32>,
 }
 
 #[cfg_attr(feature = "contract", derive(ts_rs::TS))]
@@ -560,6 +589,7 @@ impl AgentOs {
                     resolved_args,
                     env,
                     cwd,
+                    false,
                     options.wasm_backend,
                 )
                 .await
@@ -777,20 +807,13 @@ impl AgentOs {
     /// Spawn a process. SYNC; returns `{ pid }` only. Installs stdout/stderr fan-out over broadcast
     /// channels and wires exit via a background event-pump task. The user-facing `pid` is the
     /// SDK-allocated map key (the wire `process_id` is held inside the [`ProcessEntry`]).
-    pub fn spawn_process(
+    pub fn spawn(
         &self,
         command: &str,
         args: Vec<String>,
         options: SpawnOptions,
     ) -> Result<SpawnHandle> {
-        let registry_guard = self.inner().process_registry_lock.lock();
-        self.prune_exited_processes_locked(1);
-        if self.process_registry_len_locked() >= PROCESS_REGISTRY_LIMIT {
-            return Err(ClientError::Sidecar(format!(
-                "process registry limit exceeded: at most {PROCESS_REGISTRY_LIMIT} processes can be tracked per VM"
-            ))
-            .into());
-        }
+        let reservation = self.reserve_process_registry_slot()?;
 
         // Draw the public pid from the dedicated synthetic-pid space (TS `nextSyntheticPid`), seeded
         // at `SYNTHETIC_PID_BASE`. `exec` uses a separate counter so it never perturbs this sequence.
@@ -807,10 +830,6 @@ impl AgentOs {
         // Seeded `None`; filled with the kernel pid once the `Execute` response lands so
         // `all_processes`/`process_tree` can remap the kernel snapshot back to this display pid.
         let (kernel_pid_tx, _) = watch::channel::<Option<u32>>(None);
-        let replay = options
-            .retain_output
-            .then(|| Arc::new(parking_lot::Mutex::new(OutputReplayBuffer::new())));
-
         let entry = ProcessEntry {
             command: command.to_owned(),
             args: args.clone(),
@@ -821,13 +840,14 @@ impl AgentOs {
             process_id: process_id.clone(),
             kernel_pid: kernel_pid_tx.clone(),
             output_tasks: Vec::new(),
-            replay: replay.clone(),
+            retain_output: options.retain_output,
+            execution_id: None,
+            execution_generation: None,
             started_at: epoch_ms_now() as i64,
         };
         // `spawn` is documented as overwriting any prior entry for a freshly allocated pid; the pid
         // is monotonic so a collision is not expected.
-        let _ = self.inner().processes.insert(pid, entry);
-        drop(registry_guard);
+        reservation.commit(pid, entry)?;
 
         // Subscribe to events before issuing the request so the pump sees everything.
         let events = self.transport().subscribe_wire_events();
@@ -847,7 +867,6 @@ impl AgentOs {
                 output_tx,
                 exit_tx,
                 kernel_pid_tx,
-                replay,
             )
             .await;
         });
@@ -855,25 +874,8 @@ impl AgentOs {
         Ok(SpawnHandle { pid })
     }
 
-    /// Write to a spawned process's stdin. SYNC. Errors with `ProcessNotFound`.
-    pub fn write_process_stdin(
-        &self,
-        pid: u32,
-        data: StdinInput,
-    ) -> std::result::Result<(), ClientError> {
-        let process_id = self.lookup_process_id(pid)?;
-        let chunk: Vec<u8> = stdin_to_bytes(data);
-        let this = self.clone();
-        tokio::spawn(async move {
-            if let Err(error) = this.write_wire_stdin(&process_id, chunk).await {
-                tracing::warn!(?error, pid, "write_process_stdin failed");
-            }
-        });
-        Ok(())
-    }
-
     /// Write stdin and wait for the sidecar acknowledgement.
-    pub async fn write_process_stdin_awaited(
+    pub async fn write_process_stdin(
         &self,
         pid: u32,
         data: StdinInput,
@@ -883,23 +885,8 @@ impl AgentOs {
             .await
     }
 
-    /// Close a spawned process's stdin. SYNC. Errors with `ProcessNotFound`.
-    pub fn close_process_stdin(&self, pid: u32) -> std::result::Result<(), ClientError> {
-        let process_id = self.lookup_process_id(pid)?;
-        let this = self.clone();
-        tokio::spawn(async move {
-            if let Err(error) = this.close_wire_stdin(&process_id).await {
-                tracing::warn!(?error, pid, "close_process_stdin failed");
-            }
-        });
-        Ok(())
-    }
-
     /// Close stdin and wait for the sidecar acknowledgement.
-    pub async fn close_process_stdin_awaited(
-        &self,
-        pid: u32,
-    ) -> std::result::Result<(), ClientError> {
+    pub async fn close_process_stdin(&self, pid: u32) -> std::result::Result<(), ClientError> {
         let process_id = self.lookup_process_id(pid)?;
         self.close_wire_stdin(&process_id).await
     }
@@ -998,30 +985,159 @@ impl AgentOs {
     }
 
     /// Read bounded sequenced output retained for a spawned process.
-    pub fn read_process_output(
+    pub async fn read_process_output(
         &self,
         pid: u32,
         after: Option<u64>,
         max_events: Option<usize>,
         max_bytes: Option<usize>,
     ) -> std::result::Result<ProcessOutputReplay, ClientError> {
-        let (max_events, max_bytes) = page_limits(max_events, max_bytes, "process.output.read")?;
-        let page = self
+        let (process_id, retain_output, execution_id, execution_generation) = self
             .inner()
             .processes
             .read(&pid, |_, entry| {
-                entry
-                    .replay
-                    .as_ref()
-                    .map(|replay| replay.lock().read(after, max_events, max_bytes))
+                (
+                    entry.process_id.clone(),
+                    entry.retain_output,
+                    entry.execution_id.clone(),
+                    entry.execution_generation,
+                )
             })
-            .ok_or(ClientError::ProcessNotFound(pid))?
-            .ok_or_else(|| {
+            .ok_or(ClientError::ProcessNotFound(pid))?;
+        if !retain_output {
+            return Err(ClientError::Sidecar(format!(
+                "process {pid} was not spawned with output retention enabled"
+            )));
+        }
+        if let Some(execution_id) = execution_id {
+            let (max_events, max_bytes) =
+                page_limits(max_events, max_bytes, "process.output.read")?;
+            let generation = execution_generation.ok_or_else(|| {
                 ClientError::Sidecar(format!(
-                    "process {pid} was not spawned with output retention enabled"
+                    "language process {pid} is missing its execution generation"
                 ))
             })?;
-        require_page_progress(&page, "process.output.read", max_bytes)?;
+            let response = self
+                .transport()
+                .request_wire(
+                    self.vm_scope(),
+                    wire::RequestPayload::ReadExecutionOutputRequest(
+                        wire::ReadExecutionOutputRequest {
+                            execution_id,
+                            cursor: after
+                                .map(|cursor| format!("{generation}:{}", cursor.saturating_add(1))),
+                            limit: Some(u32::try_from(max_events).map_err(|_| {
+                                ClientError::Sidecar(String::from(
+                                    "process.output.read maxEvents exceeds the wire u32 range",
+                                ))
+                            })?),
+                        },
+                    ),
+                )
+                .await?;
+            let page = match response {
+                wire::ResponsePayload::ExecutionOutputPageResponse(page) => page,
+                wire::ResponsePayload::RejectedResponse(rejected) => {
+                    return Err(ClientError::from_rejection(rejected));
+                }
+                other => {
+                    return Err(ClientError::Sidecar(format!(
+                        "ReadExecutionOutput: unexpected response {other:?}"
+                    )));
+                }
+            };
+            let mut bytes = 0usize;
+            let mut events = Vec::new();
+            let mut has_more = page.has_more;
+            for event in page.events {
+                if bytes.saturating_add(event.chunk.len()) > max_bytes {
+                    if events.is_empty() {
+                        return Err(ClientError::ResourceLimit {
+                            code: String::from("ERR_AGENTOS_RESOURCE_LIMIT"),
+                            message: format!(
+                                "process.output.read next retained event requires {} bytes, exceeding maxBytes={max_bytes}",
+                                event.chunk.len()
+                            ),
+                            details: Box::new(ResourceLimitDetails {
+                                limit_name: Some(String::from("output_replay_page_bytes")),
+                                configured_limit: Some(max_bytes as u64),
+                                requested: Some(event.chunk.len() as u64),
+                                unit: Some(String::from("bytes")),
+                                scope: Some(String::from("vm")),
+                                operation: Some(String::from("process.output.read")),
+                                configuration_path: Some(String::from("maxBytes")),
+                                retryable: Some(true),
+                                ..ResourceLimitDetails::default()
+                            }),
+                        });
+                    }
+                    has_more = true;
+                    break;
+                }
+                bytes = bytes.saturating_add(event.chunk.len());
+                events.push(ProcessOutputEvent {
+                    pid,
+                    sequence: event.sequence,
+                    stream: match event.channel {
+                        wire::ExecutionStreamChannel::Stdout => ProcessStream::Stdout,
+                        wire::ExecutionStreamChannel::Stderr
+                        | wire::ExecutionStreamChannel::Pty => ProcessStream::Stderr,
+                    },
+                    data: event.chunk,
+                    timestamp_ms: event.timestamp_ms.min(i64::MAX as u64) as i64,
+                });
+            }
+            let next_cursor = events.last().map(|event| event.sequence).or(after);
+            return Ok(ProcessOutputReplay {
+                pid,
+                events,
+                next_cursor,
+                has_more,
+                truncated: page.truncated,
+                exit_code: self.get_process(pid)?.exit_code,
+            });
+        }
+        let (max_events, max_bytes) =
+            crate::output_replay::wire_page_limits(max_events, max_bytes, "process.output.read")?;
+        let response = self
+            .transport()
+            .request_wire(
+                self.vm_scope(),
+                wire::RequestPayload::ReadProcessOutputRequest(wire::ReadProcessOutputRequest {
+                    process_id: process_id.clone(),
+                    after,
+                    max_events: u32::try_from(max_events).map_err(|_| {
+                        ClientError::Sidecar(String::from(
+                            "process.output.read maxEvents exceeds the wire u32 range",
+                        ))
+                    })?,
+                    max_bytes: u32::try_from(max_bytes).map_err(|_| {
+                        ClientError::Sidecar(String::from(
+                            "process.output.read maxBytes exceeds the wire u32 range",
+                        ))
+                    })?,
+                }),
+            )
+            .await?;
+        let page = match response {
+            wire::ResponsePayload::ProcessOutputPageResponse(page) => page,
+            wire::ResponsePayload::RejectedResponse(rejected) => {
+                return Err(ClientError::from_rejection(rejected));
+            }
+            other => {
+                return Err(ClientError::Sidecar(format!(
+                    "ReadProcessOutput: unexpected response {other:?}"
+                )));
+            }
+        };
+        // A retained sidecar exit is stronger evidence than a missed live
+        // event. Reconcile wait/get/list and wake the observation task, while
+        // avoiding a concurrently reused registry entry.
+        self.inner().processes.read(&pid, |_, entry| {
+            if entry.process_id == process_id {
+                reconcile_replayed_exit(&entry.exit_tx, page.exit_code);
+            }
+        });
         Ok(ProcessOutputReplay {
             pid,
             events: page
@@ -1030,14 +1146,18 @@ impl AgentOs {
                 .map(|event| ProcessOutputEvent {
                     pid,
                     sequence: event.sequence,
-                    stream: event.stream,
-                    data: event.data,
-                    timestamp_ms: event.timestamp_ms,
+                    stream: match event.channel {
+                        wire::StreamChannel::Stdout => ProcessStream::Stdout,
+                        wire::StreamChannel::Stderr => ProcessStream::Stderr,
+                    },
+                    data: event.chunk,
+                    timestamp_ms: event.timestamp_ms.min(i64::MAX as u64) as i64,
                 })
                 .collect(),
             next_cursor: page.next_cursor,
             has_more: page.has_more,
             truncated: page.truncated,
+            exit_code: page.exit_code,
         })
     }
 
@@ -1413,6 +1533,7 @@ impl AgentOs {
     }
 
     /// Send the `Execute` wire request, mapping a rejection into [`ClientError::Kernel`].
+    #[allow(clippy::too_many_arguments)] // Keep the explicit wire fields together at this transport boundary.
     async fn send_execute(
         &self,
         process_id: &str,
@@ -1420,6 +1541,7 @@ impl AgentOs {
         args: Vec<String>,
         env: BTreeMap<String, String>,
         cwd: Option<String>,
+        retain_output: bool,
         wasm_backend: Option<StandaloneWasmBackend>,
     ) -> std::result::Result<wire::ProcessStartedResponse, ClientError> {
         let ownership = self.vm_scope();
@@ -1436,6 +1558,7 @@ impl AgentOs {
                     env: env.into_iter().collect(),
                     cwd,
                     wasm_permission_tier: None,
+                    retain_output,
                     wasm_backend: wasm_backend.map(Into::into),
                 }),
             )
@@ -1558,10 +1681,46 @@ impl AgentOs {
         count
     }
 
+    /// Reserve one slot before an asynchronous spawn can reach the sidecar.
+    /// Ordinary and language spawns share this admission path so concurrent
+    /// submissions cannot all observe the same free registry capacity.
+    pub(crate) fn reserve_process_registry_slot(
+        &self,
+    ) -> std::result::Result<ProcessRegistryReservation, ClientError> {
+        let _guard = self.inner().process_registry_lock.lock();
+        let pending = self
+            .inner()
+            .pending_process_registrations
+            .load(Ordering::SeqCst);
+        self.prune_exited_processes_locked(pending.saturating_add(1));
+        let retained = self.process_registry_len_locked();
+        if retained.saturating_add(pending) >= PROCESS_REGISTRY_LIMIT {
+            return Err(process_registry_limit_error(
+                retained.saturating_add(pending).saturating_add(1),
+            ));
+        }
+        self.inner()
+            .pending_process_registrations
+            .fetch_add(1, Ordering::SeqCst);
+        let admitted = retained.saturating_add(pending).saturating_add(1);
+        if admitted >= PROCESS_REGISTRY_LIMIT * 4 / 5 {
+            tracing::warn!(
+                admitted,
+                limit = PROCESS_REGISTRY_LIMIT,
+                configuration_path = "PROCESS_REGISTRY_LIMIT",
+                "process registry admission approaches its configured limit"
+            );
+        }
+        Ok(ProcessRegistryReservation {
+            client: self.clone(),
+            active: true,
+        })
+    }
+
     fn prune_exited_processes_locked(&self, reserve_slots: usize) {
         let mut entries = Vec::new();
         self.inner().processes.scan(|pid, entry| {
-            entries.push((*pid, entry.exit_tx.borrow().reclaimable()));
+            entries.push((*pid, entry.exit_tx.borrow().reclaimable(), entry.started_at));
         });
         let target_len = PROCESS_REGISTRY_LIMIT.saturating_sub(reserve_slots);
         if entries.len() <= target_len {
@@ -1610,7 +1769,6 @@ impl AgentOs {
         output_tx: broadcast::Sender<ProcessOutput>,
         exit_tx: watch::Sender<ProcessOutcome>,
         kernel_pid_tx: watch::Sender<Option<u32>>,
-        replay: Option<Arc<parking_lot::Mutex<OutputReplayBuffer>>>,
     ) {
         match self
             .send_execute(
@@ -1619,6 +1777,7 @@ impl AgentOs {
                 args,
                 options.env.clone(),
                 options.cwd.clone(),
+                options.retain_output,
                 options.wasm_backend,
             )
             .await
@@ -1634,16 +1793,13 @@ impl AgentOs {
                 // Launch rejection/transport failure is not a guest exit.
                 let message = format!("{error}\n");
                 let bytes = message.into_bytes();
-                let replay_event = replay
-                    .as_ref()
-                    .map(|replay| replay.lock().push(ProcessStream::Stderr, &bytes));
                 let _ = stderr_tx.send(bytes.clone());
                 let _ = output_tx.send(ProcessOutput {
                     pid,
                     stream: ProcessStream::Stderr,
                     data: bytes,
-                    sequence: replay_event.as_ref().map(|event| event.sequence),
-                    timestamp_ms: replay_event.as_ref().map(|event| event.timestamp_ms),
+                    sequence: None,
+                    timestamp_ms: None,
                 });
                 tracing::error!(?error, pid, %process_id, "spawn: Execute request failed");
                 let failure = ProcessOutcome::launch_failure(&process_id, error);
@@ -1670,15 +1826,14 @@ impl AgentOs {
                         StreamChannel::Stdout => ProcessStream::Stdout,
                         StreamChannel::Stderr => ProcessStream::Stderr,
                     };
-                    let replay_event = replay
-                        .as_ref()
-                        .map(|replay| replay.lock().push(stream.clone(), &bytes));
                     let _ = output_tx.send(ProcessOutput {
                         pid,
                         stream,
                         data: bytes.clone(),
-                        sequence: replay_event.as_ref().map(|event| event.sequence),
-                        timestamp_ms: replay_event.as_ref().map(|event| event.timestamp_ms),
+                        sequence: output.sequence,
+                        timestamp_ms: output
+                            .timestamp_ms
+                            .map(|value| value.min(i64::MAX as u64) as i64),
                     });
                     match output.channel {
                         StreamChannel::Stdout => {
@@ -1703,6 +1858,69 @@ impl AgentOs {
         }
         let _guard = self.inner().process_registry_lock.lock();
         self.prune_exited_processes_locked(0);
+    }
+}
+
+pub(crate) struct ProcessRegistryReservation {
+    client: AgentOs,
+    active: bool,
+}
+
+impl ProcessRegistryReservation {
+    pub(crate) fn commit(
+        mut self,
+        pid: u32,
+        entry: ProcessEntry,
+    ) -> std::result::Result<(), ClientError> {
+        let client = self.client.clone();
+        let _guard = client.inner().process_registry_lock.lock();
+        client.inner().processes.insert(pid, entry).map_err(|_| {
+            ClientError::Sidecar(format!(
+                "process registry already contains public pid {pid}; retry the spawn"
+            ))
+        })?;
+        client
+            .inner()
+            .pending_process_registrations
+            .fetch_sub(1, Ordering::SeqCst);
+        self.active = false;
+        Ok(())
+    }
+
+    fn release(&mut self) {
+        if self.active {
+            self.client
+                .inner()
+                .pending_process_registrations
+                .fetch_sub(1, Ordering::SeqCst);
+            self.active = false;
+        }
+    }
+}
+
+impl Drop for ProcessRegistryReservation {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
+fn process_registry_limit_error(requested: usize) -> ClientError {
+    ClientError::ResourceLimit {
+        code: String::from("ERR_AGENTOS_RESOURCE_LIMIT"),
+        message: format!(
+            "process registry limit {PROCESS_REGISTRY_LIMIT} reached; wait for an exited process to be evicted or raise PROCESS_REGISTRY_LIMIT"
+        ),
+        details: Box::new(crate::ResourceLimitDetails {
+            limit_name: Some(String::from("process_registry_entries")),
+            configured_limit: Some(PROCESS_REGISTRY_LIMIT as u64),
+            requested: Some(requested as u64),
+            unit: Some(String::from("processes")),
+            scope: Some(String::from("vm")),
+            operation: Some(String::from("process.spawn")),
+            configuration_path: Some(String::from("PROCESS_REGISTRY_LIMIT")),
+            retryable: Some(true),
+            ..Default::default()
+        }),
     }
 }
 
@@ -1839,14 +2057,14 @@ fn exec_output_limit_error(channel: &str, size: usize) -> ClientError {
     ))
 }
 
-fn exited_pids_to_prune(mut entries: Vec<(u32, bool)>, target_len: usize) -> Vec<u32> {
+fn exited_pids_to_prune(mut entries: Vec<(u32, bool, i64)>, target_len: usize) -> Vec<u32> {
     if entries.len() <= target_len {
         return Vec::new();
     }
     let mut remove_count = entries.len() - target_len;
-    entries.sort_by_key(|(pid, _)| *pid);
+    entries.sort_by_key(|(pid, _, started_at)| (*started_at, *pid));
     let mut out = Vec::new();
-    for (pid, exited) in entries {
+    for (pid, exited, _) in entries {
         if remove_count == 0 {
             break;
         }
@@ -1938,8 +2156,8 @@ fn epoch_ms_now() -> f64 {
 mod tests {
     use super::{
         append_exec_output, drain_process_output_tasks, exited_pids_to_prune,
-        install_output_callback, prune_string_f64_map, ExecOptions, OutputCallback,
-        DEFAULT_EXEC_CWD, EXEC_OUTPUT_CAPTURE_LIMIT_BYTES,
+        install_output_callback, process_registry_limit_error, prune_string_f64_map, ExecOptions,
+        OutputCallback, DEFAULT_EXEC_CWD, EXEC_OUTPUT_CAPTURE_LIMIT_BYTES, PROCESS_REGISTRY_LIMIT,
     };
     use super::{confirm_exec_exit, wire, ClientError, EventPayload};
     use crate::agent_os::ProcessEntry;
@@ -2004,6 +2222,48 @@ mod tests {
             137
         );
         assert!(outcome.borrow().reclaimable());
+    }
+
+    #[tokio::test]
+    async fn replayed_exit_recovers_a_missed_event_and_releases_the_observer() {
+        for failed in [false, true] {
+            let initial = if failed {
+                super::ProcessOutcome::launch_failure(
+                    "p",
+                    ClientError::Sidecar("lost exit observation".into()),
+                )
+            } else {
+                super::ProcessOutcome::Pending
+            };
+            let (outcome, _) = watch::channel(initial);
+            let (_sender, mut events) = broadcast::channel(1);
+            let (ownership, _) = exec_exit_frame("vm", "p");
+            let observation = super::next_spawn_event(&mut events, &ownership, "p", &outcome);
+            tokio::pin!(observation);
+            tokio::select! {
+                _ = &mut observation => panic!("no exit has been observed"),
+                _ = tokio::task::yield_now() => {}
+            }
+            super::reconcile_replayed_exit(&outcome, None);
+            assert_eq!(outcome.borrow().exit_code(), None);
+            super::reconcile_replayed_exit(&outcome, Some(7));
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_secs(1), observation)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            assert_eq!(
+                super::wait_for_process_outcome(outcome.subscribe(), "p")
+                    .await
+                    .unwrap(),
+                7
+            );
+            // Repeated replay does not synthesize another completion notification.
+            let receiver = outcome.subscribe();
+            super::reconcile_replayed_exit(&outcome, Some(7));
+            assert!(!receiver.has_changed().unwrap());
+        }
     }
 
     #[tokio::test]
@@ -2256,7 +2516,9 @@ mod tests {
             process_id: "proc-test".to_string(),
             kernel_pid: kernel_pid_tx,
             output_tasks: vec![task],
-            replay: None,
+            retain_output: false,
+            execution_id: None,
+            execution_generation: None,
             started_at: 0,
         };
         let _ = processes.insert(1, entry);
@@ -2320,7 +2582,9 @@ mod tests {
             process_id: "proc-test".to_string(),
             kernel_pid: kernel_pid_tx,
             output_tasks,
-            replay: None,
+            retain_output: false,
+            execution_id: None,
+            execution_generation: None,
             started_at: 0,
         };
 
@@ -2382,8 +2646,40 @@ mod tests {
 
     #[test]
     fn exited_pid_pruning_keeps_live_entries_and_removes_oldest_exited() {
-        let pids = exited_pids_to_prune(vec![(3, true), (1, false), (2, true), (4, true)], 2);
-        assert_eq!(pids, vec![2, 3]);
+        let pids = exited_pids_to_prune(
+            vec![(3, true, 30), (1, false, 10), (2, true, 40), (4, true, 20)],
+            2,
+        );
+        assert_eq!(pids, vec![4, 3]);
+    }
+
+    #[test]
+    fn process_registry_limit_error_is_typed_and_actionable() {
+        let error = process_registry_limit_error(PROCESS_REGISTRY_LIMIT + 1);
+        let ClientError::ResourceLimit {
+            code,
+            details,
+            message,
+        } = error
+        else {
+            panic!("expected typed resource limit");
+        };
+        assert_eq!(code, "ERR_AGENTOS_RESOURCE_LIMIT");
+        assert_eq!(
+            details.limit_name.as_deref(),
+            Some("process_registry_entries")
+        );
+        assert_eq!(
+            details.configured_limit,
+            Some(PROCESS_REGISTRY_LIMIT as u64)
+        );
+        assert_eq!(details.requested, Some((PROCESS_REGISTRY_LIMIT + 1) as u64));
+        assert_eq!(details.operation.as_deref(), Some("process.spawn"));
+        assert_eq!(
+            details.configuration_path.as_deref(),
+            Some("PROCESS_REGISTRY_LIMIT")
+        );
+        assert!(message.contains("raise PROCESS_REGISTRY_LIMIT"));
     }
 
     #[test]
