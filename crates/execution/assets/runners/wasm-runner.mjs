@@ -10650,11 +10650,17 @@ wasiImport.fd_read = (fd, iovs, iovsLen, nreadPtr) => {
       let bytes;
       const stat = callSyncRpc('process.fd_stat', [kernelFd]);
       const nonblocking = (Number(stat?.flags) & KERNEL_O_NONBLOCK) !== 0;
-      const deadline = nonblocking
-        ? Date.now()
-        : maxBlockingReadMs == null
-          ? null
-          : Date.now() + maxBlockingReadMs;
+      // A blocking read must wait for data or EOF. The kernel returns an empty
+      // read (EOF) as soon as writers == 0, so every EAGAIN below means the
+      // writer is still alive; a slow-but-alive writer must not be turned into a
+      // read failure. maxBlockingReadMs therefore no longer fails a blocking read
+      // (reads are nonblocking, so the reactor is never parked, and vm.exec's own
+      // timeout still bounds a genuinely stuck pipeline) — it only fails
+      // O_NONBLOCK fds and emits a one-shot "still waiting" warning otherwise.
+      const warnAt = nonblocking || maxBlockingReadMs == null
+        ? null
+        : Date.now() + maxBlockingReadMs;
+      let warnedSlowRead = false;
       while (bytes == null) {
         try {
           // A process with local descendants must return to its own event pump
@@ -10662,12 +10668,9 @@ wasiImport.fd_read = (fd, iovs, iovsLen, nreadPtr) => {
           // bounded wait: the sidecar parks descendant reads by reply token,
           // freeing the parent/sibling dispatcher until data or EOF arrives.
           const pumpsLocalChildren = hasActiveSpawnedChildren();
-          const remainingMs = deadline == null
-            ? KERNEL_WAIT_SLICE_MS
-            : Math.max(0, deadline - Date.now());
           const waitMs = nonblocking || pumpsLocalChildren
             ? 0
-            : Math.min(KERNEL_WAIT_SLICE_MS, remainingMs);
+            : KERNEL_WAIT_SLICE_MS;
           bytes = Buffer.from(callSyncRpc('process.fd_read', [
             kernelFd,
             requestedLength,
@@ -10680,12 +10683,11 @@ wasiImport.fd_read = (fd, iovs, iovsLen, nreadPtr) => {
           if (nonblocking) {
             throw error;
           }
-          if (deadline != null && Date.now() >= deadline) {
-            const timeout = new Error(
-              'blocking file descriptor read timed out; raise limits.resources.maxBlockingReadMs',
+          if (!warnedSlowRead && warnAt != null && Date.now() >= warnAt) {
+            warnedSlowRead = true;
+            process.stderr.write(
+              `[agentos] blocking read is taking longer than limits.resources.maxBlockingReadMs (${maxBlockingReadMs} ms); still waiting for the writer to produce data or close\n`,
             );
-            timeout.code = 'EAGAIN';
-            throw timeout;
           }
           const progressed = pumpSpawnedChildren(SPAWNED_CHILD_WAIT_SLICE_MS);
           dispatchPendingWasmSignals();

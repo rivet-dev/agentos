@@ -21,7 +21,7 @@ const NODE_IMPORT_CACHE_SCHEMA_VERSION: &str = "1";
 const NODE_IMPORT_CACHE_LOADER_VERSION: &str = "8";
 // Upstream reached 104 while the reactor branch independently changed bundled
 // assets; use a new generation so no stale materialization survives the merge.
-const NODE_IMPORT_CACHE_ASSET_VERSION: &str = "106";
+const NODE_IMPORT_CACHE_ASSET_VERSION: &str = "107";
 const NODE_IMPORT_CACHE_DIR_PREFIX: &str = "agentos-node-import-cache";
 const DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT: Duration = Duration::from_secs(30);
 const NODE_IMPORT_CACHE_BLOCKING_JOB_RESERVATION_BYTES: usize = 64 * 1024;
