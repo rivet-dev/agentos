@@ -4,6 +4,7 @@
 //! place that lowers them to the process transport used by the execution
 //! engines; clients never construct runtime or package-manager commands.
 
+use crate::execution::resolve_execution_cwds;
 use crate::protocol::*;
 use crate::service::{
     normalize_path, DispatchResult, NativeSidecar, RequestCompletionEffects, SidecarError,
@@ -557,6 +558,15 @@ fn lowered_install(
     }
 }
 
+fn resolve_inline_guest_file_path(file_path: &str, guest_cwd: &str) -> String {
+    if file_path.starts_with('/') {
+        normalize_path(file_path)
+    } else {
+        let base = guest_cwd.trim_end_matches('/');
+        normalize_path(&format!("{base}/{file_path}"))
+    }
+}
+
 fn lower_operation(payload: RequestPayload) -> Result<LoweredOperation, SidecarError> {
     let lowered = match payload {
         RequestPayload::ShellExecution(payload) => lowered_process(
@@ -570,7 +580,7 @@ fn lower_operation(payload: RequestPayload) -> Result<LoweredOperation, SidecarE
         RequestPayload::JavaScriptExecution(payload) => {
             let file_path = payload
                 .file_path
-                .unwrap_or_else(|| String::from("/[agentos-inline.js]"));
+                .unwrap_or_else(|| String::from("[agentos-inline.js]"));
             let module = payload.format == Some(JavaScriptModuleFormat::Module);
             let mut source = inline_inputs_prefix(payload.inputs, false);
             source.push_str(&payload.source);
@@ -595,7 +605,7 @@ fn lower_operation(payload: RequestPayload) -> Result<LoweredOperation, SidecarE
         RequestPayload::JavaScriptEvaluation(payload) => {
             let file_path = payload
                 .file_path
-                .unwrap_or_else(|| String::from("/[agentos-evaluation.js]"));
+                .unwrap_or_else(|| String::from("[agentos-evaluation.js]"));
             let module = payload.format == Some(JavaScriptModuleFormat::Module);
             let result_path = semantic_result_path();
             let mut source = inline_inputs_prefix(payload.inputs, false);
@@ -1363,11 +1373,15 @@ where
                 .vms
                 .get_mut(&vm_id)
                 .ok_or_else(|| SidecarError::InvalidState(format!("unknown sidecar VM {vm_id}")))?;
+            let (guest_cwd, _, _) = resolve_execution_cwds(&vm, operation.cwd.as_deref());
             let guest_path = if requested_path.starts_with('/') {
                 normalize_path(&requested_path)
             } else {
-                let cwd = operation.cwd.as_deref().unwrap_or(&vm.guest_cwd);
-                normalize_path(&format!("{}/{requested_path}", cwd.trim_end_matches('/')))
+                normalize_path(&format!(
+                    "{}/{}",
+                    guest_cwd.trim_end_matches('/'),
+                    requested_path
+                ))
             };
             let source = vm.kernel.read_file(&guest_path).map_err(|error| {
                 SidecarError::InvalidState(format!(
@@ -1391,6 +1405,26 @@ where
             operation
                 .env
                 .insert(String::from(INLINE_FILE_PATH_ENV), guest_path);
+        }
+
+        if operation.env.contains_key(INLINE_FILE_PATH_ENV) {
+            let vm = self
+                .vms
+                .get(&vm_id)
+                .ok_or_else(|| SidecarError::InvalidState(format!("unknown sidecar VM {vm_id}")))?;
+            let (guest_cwd, _, _) = resolve_execution_cwds(&vm, operation.cwd.as_deref());
+            let inline_path = operation
+                .env
+                .get(INLINE_FILE_PATH_ENV)
+                .expect("inline file path env checked above")
+                .clone();
+            let resolved = resolve_inline_guest_file_path(&inline_path, &guest_cwd);
+            operation
+                .env
+                .insert(String::from(INLINE_FILE_PATH_ENV), resolved.clone());
+            if operation.retained_file_path.is_some() {
+                operation.retained_file_path = Some(resolved);
+            }
         }
 
         if operation

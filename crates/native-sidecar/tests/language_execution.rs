@@ -2,9 +2,10 @@ mod support;
 
 use agentos_native_sidecar::wire;
 use std::collections::HashMap;
+use std::fs;
 use std::time::{Duration, Instant};
 use support::{
-    authenticate_wire, create_vm_wire, create_vm_wire_with_metadata,
+    assert_node_available, authenticate_wire, create_vm_wire, create_vm_wire_with_metadata,
     dispose_vm_and_close_session_wire, new_sidecar, open_session_wire, temp_dir, wire_request,
     wire_session, wire_vm,
 };
@@ -1423,6 +1424,257 @@ fn background_lifecycle_replays_cancels_resets_and_deletes() {
         }
         other => panic!("expected execution deletion, got {other:?}"),
     }
+
+    dispose_vm_and_close_session_wire(&mut sidecar, &connection_id, &session_id, &vm_id);
+}
+
+fn write_guest_utf8_file(
+    sidecar: &mut agentos_native_sidecar::NativeSidecar<support::RecordingBridge>,
+    request_id: i64,
+    connection_id: &str,
+    session_id: &str,
+    vm_id: &str,
+    path: &str,
+    content: &str,
+) {
+    let response = sidecar
+        .dispatch_wire_blocking(wire_request(
+            request_id,
+            wire_vm(connection_id, session_id, vm_id),
+            wire::RequestPayload::GuestFilesystemCallRequest(wire::GuestFilesystemCallRequest {
+                operation: wire::GuestFilesystemOperation::WriteFile,
+                path: path.to_owned(),
+                destination_path: None,
+                target: None,
+                content: Some(content.to_owned()),
+                encoding: Some(wire::RootFilesystemEntryEncoding::Utf8),
+                recursive: true,
+                max_depth: None,
+                mode: None,
+                uid: None,
+                gid: None,
+                atime_ms: None,
+                mtime_ms: None,
+                len: None,
+                offset: None,
+            }),
+        ))
+        .expect("write guest file");
+    match response.response.payload {
+        wire::ResponsePayload::GuestFilesystemResultResponse(_) => {}
+        other => panic!("unexpected guest filesystem write response: {other:?}"),
+    }
+}
+
+/// Omitted inline `filePath` must resolve ESM `import()`
+/// from the guest working directory, not from `/`.
+#[test]
+fn javascript_inline_and_file_module_import_resolve_cwd_node_modules() {
+    assert_node_available();
+
+    const GUEST_CWD: &str = "/workspace";
+    const FIXTURE_PKG: &str = "fixture-pkg";
+    const FIXTURE_MARKER: &str = "inline-import-ok";
+
+    let mut sidecar = new_sidecar("language-execution-cwd-import");
+    let connection_id = authenticate_wire(&mut sidecar, "cwd-import-connection");
+    let session_id = open_session_wire(&mut sidecar, 2, &connection_id);
+    let host_cwd = temp_dir("language-execution-cwd-import-host");
+    let host_workspace = host_cwd.join("workspace");
+    fs::create_dir_all(&host_workspace).expect("create host workspace directory");
+    let (vm_id, _) = create_vm_wire(
+        &mut sidecar,
+        3,
+        &connection_id,
+        &session_id,
+        wire::GuestRuntimeKind::JavaScript,
+        &host_cwd,
+    );
+
+    write_guest_utf8_file(
+        &mut sidecar,
+        4,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        &format!("{GUEST_CWD}/node_modules/{FIXTURE_PKG}/package.json"),
+        &format!(
+            r#"{{"name":"{FIXTURE_PKG}","version":"1.0.0","type":"module","main":"index.js"}}"#
+        ),
+    );
+    write_guest_utf8_file(
+        &mut sidecar,
+        5,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        &format!("{GUEST_CWD}/node_modules/{FIXTURE_PKG}/index.js"),
+        &format!(r#"export default "{FIXTURE_MARKER}";"#),
+    );
+
+    // Create an ephemeral process in guest cwd.
+    let mut process = process_options(None);
+    process.identity = wire::ExecutionIdentityOptions { context_id: None };
+    process.operation_id = None;
+    process.background = Some(false);
+    process.cwd = Some(GUEST_CWD.to_owned());
+    process.output = wire::ExecutionOutputOptions {
+        capture: Some(wire::ExecutionOutputCapture::All),
+        retain_events: None,
+    };
+
+    let evaluation = sidecar
+        .dispatch_wire_blocking(wire_request(
+            6,
+            wire_vm(&connection_id, &session_id, &vm_id),
+            wire::RequestPayload::JavaScriptEvaluationRequest(wire::JavaScriptEvaluationRequest {
+                process: process.clone(),
+                expression: format!(r#"(await import("{FIXTURE_PKG}")).default"#),
+                format: Some(wire::JavaScriptModuleFormat::Module),
+                file_path: None,
+                inputs: None,
+            }),
+        ))
+        .expect("start inline module evaluation");
+    let evaluation_id = accepted_execution_id(evaluation);
+    let evaluation_result = wait_for_execution(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        &evaluation_id,
+    );
+    assert_eq!(evaluation_result.outcome, wire::ExecutionOutcome::Succeeded);
+    assert_eq!(
+        evaluation_result.evaluation_value.as_deref(),
+        Some(r#""inline-import-ok""#)
+    );
+
+    let execution = sidecar
+        .dispatch_wire_blocking(wire_request(
+            7,
+            wire_vm(&connection_id, &session_id, &vm_id),
+            wire::RequestPayload::JavaScriptExecutionRequest(wire::JavaScriptExecutionRequest {
+                process: process.clone(),
+                source: format!(
+                    r#"const mod = await import("{FIXTURE_PKG}");
+if (mod.default !== "{FIXTURE_MARKER}") throw new Error("unexpected inline execution import");"#
+                ),
+                format: Some(wire::JavaScriptModuleFormat::Module),
+                file_path: None,
+                inputs: None,
+            }),
+        ))
+        .expect("start inline module execution");
+    let execution_id = accepted_execution_id(execution);
+    let execution_result = wait_for_execution(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        &execution_id,
+    );
+    assert_eq!(execution_result.outcome, wire::ExecutionOutcome::Succeeded);
+
+    // Same checks when the client passes a host path beneath vm.host_cwd.
+    let mut host_process = process.clone();
+    host_process.cwd = Some(host_workspace.to_string_lossy().into_owned());
+    let host_evaluation = sidecar
+        .dispatch_wire_blocking(wire_request(
+            10,
+            wire_vm(&connection_id, &session_id, &vm_id),
+            wire::RequestPayload::JavaScriptEvaluationRequest(wire::JavaScriptEvaluationRequest {
+                process: host_process.clone(),
+                expression: format!(r#"(await import("{FIXTURE_PKG}")).default"#),
+                format: Some(wire::JavaScriptModuleFormat::Module),
+                file_path: None,
+                inputs: None,
+            }),
+        ))
+        .expect("start inline module evaluation with host cwd");
+    let host_evaluation_id = accepted_execution_id(host_evaluation);
+    let host_evaluation_result = wait_for_execution(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        &host_evaluation_id,
+    );
+    assert_eq!(
+        host_evaluation_result.outcome,
+        wire::ExecutionOutcome::Succeeded
+    );
+    assert_eq!(
+        host_evaluation_result.evaluation_value.as_deref(),
+        Some(r#""inline-import-ok""#)
+    );
+
+    let host_execution = sidecar
+        .dispatch_wire_blocking(wire_request(
+            11,
+            wire_vm(&connection_id, &session_id, &vm_id),
+            wire::RequestPayload::JavaScriptExecutionRequest(wire::JavaScriptExecutionRequest {
+                process: host_process,
+                source: format!(
+                    r#"const mod = await import("{FIXTURE_PKG}");
+if (mod.default !== "{FIXTURE_MARKER}") throw new Error("unexpected host cwd inline execution import");"#
+                ),
+                format: Some(wire::JavaScriptModuleFormat::Module),
+                file_path: None,
+                inputs: None,
+            }),
+        ))
+        .expect("start inline module execution with host cwd");
+    let host_execution_id = accepted_execution_id(host_execution);
+    let host_execution_result = wait_for_execution(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        &host_execution_id,
+    );
+    assert_eq!(
+        host_execution_result.outcome,
+        wire::ExecutionOutcome::Succeeded
+    );
+
+    write_guest_utf8_file(
+        &mut sidecar,
+        8,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        &format!("{GUEST_CWD}/main.mjs"),
+        &format!(
+            r#"const mod = await import("{FIXTURE_PKG}");
+if (mod.default !== "{FIXTURE_MARKER}") throw new Error("unexpected file execution import");"#
+        ),
+    );
+
+    let file_execution = sidecar
+        .dispatch_wire_blocking(wire_request(
+            9,
+            wire_vm(&connection_id, &session_id, &vm_id),
+            wire::RequestPayload::JavaScriptFileExecutionRequest(
+                wire::JavaScriptFileExecutionRequest {
+                    process,
+                    path: format!("{GUEST_CWD}/main.mjs"),
+                },
+            ),
+        ))
+        .expect("start file module execution");
+    let file_execution_id = accepted_execution_id(file_execution);
+    let file_execution_result = wait_for_execution(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        &file_execution_id,
+    );
+    assert_eq!(
+        file_execution_result.outcome,
+        wire::ExecutionOutcome::Succeeded
+    );
 
     dispose_vm_and_close_session_wire(&mut sidecar, &connection_id, &session_id, &vm_id);
 }

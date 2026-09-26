@@ -597,7 +597,7 @@ fn resolve_guest_execution_cwd(vm: &VmState, value: Option<&str>) -> String {
         .unwrap_or_else(|| vm.guest_cwd.clone())
 }
 
-fn resolve_execution_cwds(vm: &VmState, value: Option<&str>) -> (String, PathBuf, bool) {
+pub(crate) fn resolve_execution_cwds(vm: &VmState, value: Option<&str>) -> (String, PathBuf, bool) {
     if let Some(raw_cwd) = value {
         let normalized_vm_host_cwd = normalize_host_path(&vm.host_cwd);
         let requested_host_cwd = normalize_host_path(Path::new(raw_cwd));
