@@ -2188,19 +2188,12 @@ where
                     })
                     .map_err(|error| SidecarError::Execution(error.to_string()))?;
                 let mut vm = self.vms.get_mut(&vm_id).expect("execution VM exists");
-                vm.executions
+                let execution = vm
+                    .executions
                     .get_mut(&payload.execution_id)
-                    .expect("execution checked above")
-                    .deadline_task = Some(task);
-                let descriptor = self
-                    .vms
-                    .get(&vm_id)
-                    .and_then(|vm| {
-                        vm.executions
-                            .get(&payload.execution_id)
-                            .map(|execution| execution.descriptor.clone())
-                    })
                     .expect("execution checked above");
+                execution.deadline_task = Some(task);
+                let descriptor = execution.descriptor.clone();
                 ResponsePayload::ExecutionDescriptor(ExecutionDescriptorResponse {
                     execution: descriptor,
                 })
