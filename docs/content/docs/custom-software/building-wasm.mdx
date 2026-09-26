@@ -1,0 +1,26 @@
+---
+title: "Building Software"
+description: "Compile Linux-compatible commands and pack them for agentOS."
+---
+
+agentOS builds real upstream command implementations for its Linux-in-WASM
+runtime. Missing libc or POSIX behavior belongs in the owned sysroot and host
+imports, not in command wrappers.
+
+From the repository root:
+
+```bash
+pnpm install --frozen-lockfile
+just tools-rebuild
+```
+
+For one command:
+
+```bash
+just toolchain-cmd <command>
+just software-build
+```
+
+The toolchain stages generated commands into each package and writes
+`software/<name>/dist/package.aospkg`. Generated binaries, sysroots, and
+package artifacts are not committed.

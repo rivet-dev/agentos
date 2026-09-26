@@ -1,6 +1,7 @@
 packages:
+  - packages/agentos-bindgen
+  - secure-exec
   - packages/agentos-sandbox
-  - packages/agentos-apps
   - packages/agentos
   - packages/agentos-toolchain
   - packages/eve
@@ -16,20 +17,11 @@ packages:
   - packages/sidecar/npm/*
   - software/*
   - examples/*
-  - benchmarks/agentos-apps
-  - tests/e2e/agentos-apps
   # Nested example packages (e.g. examples/quickstart/hello-world) so every
   # embeddable example is a workspace member that `turbo check-types` covers.
   - examples/*/*
-  - experiments/gigacode
+  - secure-exec/examples/*
   - scripts/publish
-  # LOCAL WORKAROUND (do not commit): `website` needs @rivet-dev/docs-theme
-  # symlinked into website/vendor/theme, which isn't set up here and blocks
-  # `pnpm install` workspace-wide. Excluded to build/run the demo locally.
-  - website
-  - website/vendor/theme
-  - website/vendor/theme/vendor/components
-  - website/vendor/theme/vendor/icons
 
 ignoredBuiltDependencies:
   - '@clerk/shared'
@@ -51,9 +43,9 @@ onlyBuiltDependencies:
 # pinned once here and referenced everywhere via `catalog:rivetkit`.
 catalogs:
   rivetkit:
-    rivetkit: 2.3.9
-    '@rivetkit/react': 2.3.9
+    rivetkit: 2.3.10
+    '@rivetkit/react': 2.3.10
 
 overrides:
-  '@rivetkit/rivetkit-wasm': 2.3.9
+  '@rivetkit/rivetkit-wasm': 2.3.10
   web-streams-polyfill: 3.3.3

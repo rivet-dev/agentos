@@ -14,7 +14,6 @@
 		"test": "pnpm build && vitest run --fileParallelism=false"
 	},
 	"dependencies": {
-		"@agentos-software/codex-cli": "workspace:*",
 		"@agentos-software/coreutils": "workspace:*",
 		"@agentos-software/curl": "workspace:*",
 		"@agentos-software/diffutils": "workspace:*",
@@ -39,8 +38,7 @@
 		"@agentos-software/zip": "workspace:*",
 		"@rivet-dev/agentos": "workspace:*",
 		"@rivet-dev/agentos-core": "workspace:*",
-		"commander": "^14.0.2",
-		"rivetkit": "catalog:rivetkit"
+		"commander": "^14.0.2"
 	},
 	"devDependencies": {
 		"@types/node": "^22.19.3",

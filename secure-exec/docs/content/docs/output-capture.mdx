@@ -1,0 +1,26 @@
+---
+title: "Output Capture"
+description: "Capture or stream stdout and stderr from code running in Secure Exec."
+skill: true
+---
+
+## Capture
+
+Output is not retained unless you ask for it.
+
+<CodeSnippet file="secure-exec/examples/quickstart/src/output.ts" region="capture" />
+
+| `output.capture` | Result fields |
+|---|---|
+| `"none"` (default) | Neither stream is retained. |
+| `"stderr"` | `stderr`. Enough for stack traces. |
+| `"all"` | `stdout` and `stderr`. |
+
+Captured output is bounded. When a stream exceeds the limit, the result sets
+`stdoutTruncated` or `stderrTruncated`.
+
+## Stream
+
+<CodeSnippet file="secure-exec/examples/quickstart/src/output.ts" region="stream" />
+
+Chunks are raw bytes, so decode them before treating them as text.

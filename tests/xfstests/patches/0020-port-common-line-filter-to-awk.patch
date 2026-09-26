@@ -1,0 +1,71 @@
+From: agentOS xfstests port
+Subject: [PATCH] fstests: implement common line filters with awk
+
+The agentOS guest ships awk but not a Perl runtime. Preserve the filters'
+deduplication and user-command normalization semantics with POSIX awk so output
+remains checked against the upstream golden files instead of being skipped.
+
+diff --git a/common/filter b/common/filter
+index 9cd9b31..891c148 100644
+--- a/common/filter
++++ b/common/filter
+@@ -156,14 +156,24 @@ _filter_dd()
+ 
+ common_line_filter()
+ {
+-    perl -ne 'if (/.*:(.*)/) {
+-        if ( "$last_line" ne "$1" ) { print "$_"; $first_match=1; }
+-        elsif ( $first_match==1 ) { print "*\n"; $first_match=0; }
+-        $last_line="$1";
+-    }
+-    else {
+-        print $_; $last_line=$_;
+-    }'
++    $AWK_PROG '
++    {
++        separator = index($0, ":")
++        if (separator != 0) {
++            suffix = substr($0, separator + 1)
++            if (last_line != suffix) {
++                print
++                first_match = 1
++            } else if (first_match == 1) {
++                print "*"
++                first_match = 0
++            }
++            last_line = suffix
++        } else {
++            print
++            last_line = $0
++        }
++    }'
+ }
+ 
+ _filter_xfs_io()
+diff --git a/common/rc b/common/rc
+index 79189e7e..401611fc 100644
+--- a/common/rc
++++ b/common/rc
+@@ -2931,12 +2931,16 @@ _require_group()
+ 
+ _filter_user_do()
+ {
+-        perl -ne "
+-s,.*Permission\sdenied.*,Permission denied,;
+-s,.*no\saccess\sto\stty.*,,;
+-s,.*no\sjob\scontrol\sin\sthis\sshell.*,,;
+-s,^\s*$,,;
+-        print;"
++	$AWK_PROG '
++	/Permission[[:space:]]+denied/ {
++		print "Permission denied"
++		next
++	}
++	/no[[:space:]]+access[[:space:]]+to[[:space:]]+tty/ { next }
++	/no[[:space:]]+job[[:space:]]+control[[:space:]]+in[[:space:]]+this[[:space:]]+shell/ { next }
++	/^[[:space:]]*$/ { next }
++	{ print }
++	'
+ }
+ 
+ _user_do()

@@ -5,7 +5,7 @@
 # Cargo caches can be persisted with BuildKit/GHA like the Darwin build.
 FROM ubuntu:24.04
 
-ARG RUST_TOOLCHAIN=1.94.0
+ARG RUST_TOOLCHAIN=1.95.0
 ARG TARGET=x86_64-unknown-linux-gnu
 ARG BUILD_PROFILE=debug
 ARG CACHE_PLATFORM=linux-x64-gnu

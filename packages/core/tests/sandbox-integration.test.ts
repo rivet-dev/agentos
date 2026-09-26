@@ -1,9 +1,9 @@
 import common from "@agentos-software/common";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import {
 	createSandboxFs,
-	createSandboxBindings,
+	createSandboxHostFunctions,
 } from "../../agentos-sandbox/src/index.js";
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/index.js";
 import type { MockSandboxAgentHandle } from "../src/test/sandbox-agent.js";
 import { startMockSandboxAgent } from "../src/test/sandbox-agent.js";
@@ -13,7 +13,7 @@ const SANDBOX_QUICKSTART_PERMISSIONS = {
 	network: "allow",
 	childProcess: "allow",
 	env: "allow",
-	binding: "allow",
+	hostFunction: "allow",
 } as const;
 
 const SANDBOX_MOUNT_PATH = "/mnt/sandbox";
@@ -46,12 +46,13 @@ describe("sandbox quickstart truth test", () => {
 		}
 	});
 
-	test("mounts createSandboxFs and exercises run-command plus list-processes from createSandboxBindings", async () => {
+	test("mounts createSandboxFs and exercises run-command plus list-processes from createSandboxHostFunctions", async () => {
 		if (!sandbox) {
 			throw new Error("Sandbox test harness did not start.");
 		}
 
 		vm = await AgentOs.create({
+			defaultSoftware: false,
 			permissions: SANDBOX_QUICKSTART_PERMISSIONS,
 			software: [common],
 			mounts: [
@@ -60,7 +61,9 @@ describe("sandbox quickstart truth test", () => {
 					plugin: createSandboxFs({ client: sandbox.client }),
 				},
 			],
-			bindings: [createSandboxBindings({ client: sandbox.client })],
+			hostFunctions: {
+				sandbox: createSandboxHostFunctions({ client: sandbox.client }),
+			},
 		});
 
 		await sandbox.client.writeFsFile(
@@ -70,8 +73,12 @@ describe("sandbox quickstart truth test", () => {
 		const content = await vm.readFile(SANDBOX_FILE_PATH);
 		expect(new TextDecoder().decode(content)).toBe(SANDBOX_FILE_CONTENT);
 
-		const bindings = createSandboxBindings({ client: sandbox.client });
-		const runCommandResponse = (await bindings.bindings["run-command"].execute({
+		const hostFunctions = createSandboxHostFunctions({
+			client: sandbox.client,
+		});
+		const runCommandResponse = (await hostFunctions.hostFunctions[
+			"run-command"
+		].execute({
 			command: "echo",
 			args: ["hello from sandbox"],
 		})) as {
@@ -83,7 +90,9 @@ describe("sandbox quickstart truth test", () => {
 		expect(runCommandResponse.stderr).toBe("");
 		expect(runCommandResponse.stdout.trim()).toBe("hello from sandbox");
 
-		const createdProcess = (await bindings.bindings["create-process"].execute({
+		const createdProcess = (await hostFunctions.hostFunctions[
+			"create-process"
+		].execute({
 			command: "sleep",
 			args: ["60"],
 		})) as {
@@ -92,7 +101,7 @@ describe("sandbox quickstart truth test", () => {
 		};
 		expect(createdProcess.status).toBe("running");
 
-		const listProcessesResponse = (await bindings.bindings[
+		const listProcessesResponse = (await hostFunctions.hostFunctions[
 			"list-processes"
 		].execute({})) as {
 			processes: Array<{
@@ -110,6 +119,8 @@ describe("sandbox quickstart truth test", () => {
 			),
 		).toBe(true);
 
-		await bindings.bindings["kill-process"].execute({ id: createdProcess.id });
+		await hostFunctions.hostFunctions["kill-process"].execute({
+			id: createdProcess.id,
+		});
 	}, 150_000);
 });

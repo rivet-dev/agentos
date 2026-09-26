@@ -1,0 +1,17 @@
+---
+title: "Rivet Actors"
+description: "Use the fixed Rust agentOS actor through vanilla RivetKit lookup."
+---
+
+agentOS registers one prebuilt actor named `agentOS`. Applications do not
+provide an actor definition or lifecycle hooks.
+
+<CodeSnippet file="examples/processes/client.ts" />
+
+The generated `@rivet-dev/agentos` contract supplies the nested actions,
+creation input, connection events, and typed results. Actor creation config is
+used only on first creation. Later changes use complete `config.set`
+replacement.
+
+Product-specific state and hooks belong in the product's own actor, which may
+call the agentOS actor as a separate service.

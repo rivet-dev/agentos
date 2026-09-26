@@ -174,20 +174,6 @@ describe.skip("pack (offline, local fixture, needs npm)", () => {
 		expect(() => verifyPackageDir(extractDir)).not.toThrow();
 	});
 
-	test("--agent validates the entrypoint against the package commands", () => {
-		const src = makeFixture("agentpkg", "0.1.0");
-		const out = join(mkTmp("agentos-out-"), "agentpkg.tar");
-		pack({ source: src, out, agent: "hello" });
-		const extractDir = mkTmp("agentos-extract-");
-		execFileSync("tar", ["-xf", out, "-C", extractDir]);
-		const manifest = JSON.parse(readFileSync(join(extractDir, "agentos-package.json"), "utf8"));
-		expect(manifest.agent.acpEntrypoint).toBe("hello");
-		expect(lstatSync(join(extractDir, "bin", "hello")).isSymbolicLink()).toBe(true);
-		// An entrypoint that is not a command is rejected.
-		expect(() => pack({ source: src, out: join(mkTmp("agentos-out-"), "bad.tar"), agent: "nope" })).toThrow(
-			/--agent "nope" is not one of/,
-		);
-	});
 });
 
 describe("pack optional dependency policy", () => {

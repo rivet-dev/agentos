@@ -69,7 +69,7 @@ fn parse_algorithm(name: &str) -> Result<(AesBits, AesMode)> {
         other => {
             return Err(CipherError::new(format!(
                 "unsupported crypto cipher algorithm {other}"
-            )))
+            )));
         }
     };
     Ok((bits, mode))

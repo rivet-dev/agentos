@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://agentos-sdk.dev/schemas/agentos-package.schema.json",
+  "$id": "https://rivet.dev/agentos/schemas/agentos-package.schema.json",
   "title": "agentos-package.json",
   "type": "object",
   "additionalProperties": false,
@@ -9,32 +9,6 @@
     "name": {
       "type": "string",
       "minLength": 1
-    },
-    "agent": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["acpEntrypoint"],
-      "properties": {
-        "acpEntrypoint": {
-          "type": "string",
-          "minLength": 1
-        },
-        "env": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
-        },
-        "launchArgs": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "snapshot": {
-          "type": "boolean"
-        }
-      }
     },
     "provides": {
       "type": "object",

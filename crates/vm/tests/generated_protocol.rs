@@ -98,7 +98,7 @@ fn live_bare_codec_matches_generated_request_bytes() {
                 child_process: None,
                 process: None,
                 env: None,
-                binding: None,
+                host_function: None,
             }),
             module_access_cwd: Some("/workspace".to_string()),
             instructions: vec!["keep it generic".to_string()],
@@ -114,7 +114,7 @@ fn live_bare_codec_matches_generated_request_bytes() {
             packages: Vec::new(),
             packages_mount_at: String::new(),
             bootstrap_commands: Vec::new(),
-            binding_shim_commands: Vec::new(),
+            host_function_shim_commands: Vec::new(),
         }),
     ));
     let live_configure_payload =
@@ -151,7 +151,6 @@ fn live_bare_codec_decodes_generated_response_bytes() {
             applied_mounts: 2,
             applied_software: 0,
             projected_commands: Vec::new(),
-            agents: Vec::new(),
         }),
     });
     let payload = serde_bare::to_vec(&generated).expect("encode generated response");
@@ -168,7 +167,6 @@ fn live_bare_codec_decodes_generated_response_bytes() {
                 applied_mounts: 2,
                 applied_software: 0,
                 projected_commands: Vec::new(),
-                agents: Vec::new(),
             }),
         )),
     );
@@ -228,7 +226,9 @@ fn hex_encode(bytes: &[u8]) -> String {
 fn hex_decode(hex: &str) -> Vec<u8> {
     assert_eq!(hex.len() % 2, 0, "hex length must be even");
     hex.as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| (hex_nibble(pair[0]) << 4) | hex_nibble(pair[1]))
         .collect()
 }
@@ -272,7 +272,7 @@ fn generated_configure_frame() -> ProtocolFrame {
                 child_process: None,
                 process: None,
                 env: None,
-                binding: None,
+                host_function: None,
             }),
             module_access_cwd: Some("/workspace".to_string()),
             instructions: vec!["keep it generic".to_string()],
@@ -285,7 +285,7 @@ fn generated_configure_frame() -> ProtocolFrame {
             packages: Vec::new(),
             packages_mount_at: String::new(),
             bootstrap_commands: Vec::new(),
-            binding_shim_commands: Vec::new(),
+            host_function_shim_commands: Vec::new(),
         }),
     })
 }

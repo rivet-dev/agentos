@@ -1,6 +1,6 @@
 // Run a Node.js script inside the VM that does filesystem operations.
 
-import { AgentOs } from "@rivet-dev/agentos";
+import { AgentOs } from "@rivet-dev/agentos-core";
 
 const vm = await AgentOs.create();
 
@@ -27,7 +27,9 @@ console.log("README size:", stat.size, "bytes");
 `,
 );
 
-const result = await vm.process.exec("node /tmp/demo.mjs");
+const result = await vm.process.exec("node /tmp/demo.mjs", {
+	output: { capture: "all" },
+});
 console.log(result.stdout);
 console.log("Exit code:", result.exitCode);
 

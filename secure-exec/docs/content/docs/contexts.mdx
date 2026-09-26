@@ -1,0 +1,48 @@
+---
+title: "Contexts"
+description: "Keep JavaScript variables and imports between calls with a context, and run several contexts in parallel in one VM."
+skill: true
+---
+
+Every call on a [VM](/secure-exec/docs/vms) starts with fresh JavaScript memory.
+A **context** keeps it: variables and imports from one call are still there in
+the next. Use one for a REPL, a notebook, or an agent that builds on its earlier
+steps.
+
+Files, packages, and processes belong to the VM, not to a context, so you do not
+need a context for those.
+
+## Keep state between calls
+
+<CodeSnippet file="secure-exec/examples/contexts/src/index.ts" region="retain" />
+
+Each call is its own ES module, so top-level `const` and `let` stay scoped to
+that call. Put values on `globalThis` to share them. A context holds memory and
+does nothing between calls.
+
+## TypeScript
+
+<CodeSnippet file="secure-exec/examples/contexts/src/index.ts" region="typescript" />
+
+## Isolation
+
+<CodeSnippet file="secure-exec/examples/contexts/src/index.ts" region="isolated" />
+
+## Run in parallel
+
+A context runs **one call at a time**. A second call while one is running fails
+with `execution_busy` instead of queueing. For parallel work, create several
+contexts in the same VM. Each has its own memory, and they share the VM's files
+and packages.
+
+<CodeSnippet file="secure-exec/examples/contexts/src/parallel.ts" region="parallel" />
+
+When parallel contexts need shared mutable state, keep it in a file, or in a
+[background process](/secure-exec/docs/long-running-code) that they all call.
+
+## Reset and dispose
+
+<CodeSnippet file="secure-exec/examples/contexts/src/index.ts" region="reset" />
+
+`context.dispose()` deletes the context and leaves the VM running. Disposing the
+VM removes every context in it.

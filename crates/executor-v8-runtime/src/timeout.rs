@@ -6,7 +6,7 @@
 //     INCLUDING idle/await, so it can cap a guest that blocks or awaits
 //     indefinitely. It is an INDEPENDENT, opt-in backstop armed only when the
 //     operator sets `limits.jsRuntime.wallClockLimitMs` (off by default so
-//     long-lived ACP adapters are never killed by a default).
+//     long-lived guest services are never killed by a default).
 //
 //   * `CpuBudgetGuard` — a TRUE CPU-TIME budget. It samples the EXECUTION
 //     thread's per-thread CPU clock (`pthread_getcpuclockid` +

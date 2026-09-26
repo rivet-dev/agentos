@@ -1,0 +1,46 @@
+---
+title: "Agent Code Tool"
+description: "Give an AI agent a code-execution tool that runs model-generated code in an isolated VM and returns structured results."
+skill: true
+---
+
+Letting a model write code instead of chaining one tool call per step costs
+fewer tokens and handles real data processing. The catch is that you must run
+code nobody reviewed. Secure Exec makes that a function call.
+
+## A run_code tool
+
+The tool handler type-checks the model's code, then evaluates it in a fresh VM
+with no network and a hard timeout. Either way, the model gets back something it
+can act on.
+
+<CodeSnippet file="secure-exec/examples/ai-agent/src/index.ts" region="tool" />
+
+- **Type-check first.** Diagnostics come back in milliseconds and never run the
+  code. Most generated-code bugs stop here.
+- **Pass data with `inputs`.** Never interpolate values into source.
+- **Return failures as feedback.** Guest errors are results, not exceptions, so
+  the handler stays a straight line.
+
+## The retry loop
+
+<CodeSnippet file="secure-exec/examples/ai-agent/src/index.ts" region="loop" />
+
+## Give the code your tools
+
+Expose your own functions with [host functions](/secure-exec/docs/host-functions)
+so generated code can call your APIs without ever holding a credential.
+
+## Multi-step agents
+
+When the agent builds on its earlier steps, create one
+[VM](/secure-exec/docs/vms) per conversation. Files and
+[installed packages](/secure-exec/docs/npm) carry over between calls. Add a
+[context](/secure-exec/docs/contexts) if variables should carry over too. Dispose
+the VM when the conversation ends.
+
+## Locking it down
+
+The defaults are already safe for generated code: no network, a virtual
+filesystem, and bounded resources. Add a `timeoutMs` to every call, and grant
+only what a task needs with [permissions](/secure-exec/docs/permissions).

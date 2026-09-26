@@ -15,7 +15,7 @@ Migration status: **resource limits** (typed `*ExecutionLimits` on the execution
 ## Local Patterns
 
 - `RequestPayload::Ext`, `ResponsePayload::ExtResult`, `EventPayload::Ext`, and sidecar callback `Ext` payloads are opaque to core sidecar code; dispatch only by namespace and leave inner payload decoding to the registered extension.
-- `ExtensionContext` primitives should delegate to existing `VmManager` ownership, process, event, and callback paths instead of giving extensions direct access to internal maps such as VM tables or ACP session state.
+- `ExtensionContext` primitives should delegate to existing `VmManager` ownership, process, event, and callback paths instead of giving extensions direct access to internal maps such as VM tables or connection state.
 - Extension callbacks and events must stay transport-agnostic: do not expose stdio, socket, or browser `postMessage` details through the `Extension` trait or `ExtensionContext`.
 - Stdio blocking-request interruption must stay extension-owned. Core stdio may call generic `Extension` hooks, but production agentos-vm code must not decode ACP payloads or depend on `agentos-acp-protocol`.
 - Sidecar-to-host callback protocol must stay agent-agnostic: use `HostCallback{callback_key}` for generic host callbacks, and keep binding collection-specific naming and schemas out of the core callback frame.

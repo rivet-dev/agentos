@@ -1,6 +1,6 @@
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createTypeScriptTools } from "@rivet-dev/agentos-core/internal/typescript-tools";
+import { createTypeScriptTools } from "../src/internal/typescript-tools.js";
 import { nodeModulesMount } from "@rivet-dev/agentos-core";
 import {
 	allowAllFs,
@@ -9,8 +9,8 @@ import {
 	createNodeRuntime,
 	createNodeRuntimeDriverFactory,
 	type NodeRuntimeDriverFactory,
-} from "@rivet-dev/agentos-core/internal/runtime-compat";
-import { createInMemoryFileSystem } from "@rivet-dev/agentos-core/test/runtime";
+} from "../src/runtime-compat.js";
+import { createInMemoryFileSystem } from "../src/test/runtime.js";
 import { describe, expect, it } from "vitest";
 
 const workspaceRoot = resolve(

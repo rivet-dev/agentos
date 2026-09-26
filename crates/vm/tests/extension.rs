@@ -29,7 +29,7 @@ impl Extension for EchoExtension {
 
     fn handle_request<'a>(
         &'a self,
-        mut ctx: ExtensionContext<'a>,
+        mut ctx: ExtensionContext,
         payload: Vec<u8>,
     ) -> ExtensionFuture<'a, ExtensionResponse> {
         Box::pin(async move {
@@ -174,6 +174,8 @@ impl Extension for EchoExtension {
                     | EventPayload::ExecutionCompletedEvent(_)
                     | EventPayload::VmLifecycleEvent(_)
                     | EventPayload::StructuredEvent(_)
+                    | EventPayload::ExecutionOutputEvent(_)
+                    | EventPayload::ExecutionCompletedEvent(_)
                     | EventPayload::ExtEnvelope(_) => {}
                 }
             }
@@ -205,7 +207,7 @@ impl Extension for VmLifetimeExtension {
 
     fn handle_request<'a>(
         &'a self,
-        mut ctx: ExtensionContext<'a>,
+        mut ctx: ExtensionContext,
         _payload: Vec<u8>,
     ) -> ExtensionFuture<'a, ExtensionResponse> {
         Box::pin(async move {

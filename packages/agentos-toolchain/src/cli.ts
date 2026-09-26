@@ -4,16 +4,14 @@ import { basename, resolve } from "node:path";
 import { build } from "./build.js";
 import { packAospkgFromTar } from "./aospkg.js";
 import { pack } from "./pack.js";
-import { publish } from "./publish.js";
 import { stage } from "./stage.js";
 
-const USAGE = `agentos-toolchain — build, stage, and publish agentOS packages
+const USAGE = `agentos-toolchain — build, stage, and pack agentOS packages
 
 Usage:
   agentos-toolchain pack <npm-pkg | ./local-dir> [options]
       Pack an npm package or local script dir into a self-contained agentOS
-      package tar (JS agents / node closures).
-        --agent <command>   mark a bin command as the package's ACP entrypoint
+      package tar (JavaScript package closures).
         --out <tar>         output tar (default: ./<input-name>-package.tar)
         --prune-native      delete unreachable native .node addons
         --omit-optional     omit optional npm dependencies from the closure
@@ -26,10 +24,6 @@ Usage:
   agentos-toolchain build [<packageDir>]
       Assemble the clean runtime tar dist/package.tar (bin/ + share/ +
       agentos-package.json) from <packageDir> (default: cwd).
-
-  agentos-toolchain publish [<packageDir>] [--tag <t> | --latest] [--dry-run] [--set-version <v>]
-      Publish the built package to npm. Default dist-tag is "dev"; the latest
-      pointer only moves with an explicit --latest.
 
   -h, --help          show this help
 `;
@@ -51,14 +45,7 @@ interface ParsedArgs {
 }
 
 /** Flags in this set take a value; all others are booleans. */
-const VALUE_FLAGS = new Set([
-	"--agent",
-	"--out",
-	"--commands-dir",
-	"--if-missing",
-	"--tag",
-	"--set-version",
-]);
+const VALUE_FLAGS = new Set(["--out", "--commands-dir", "--if-missing"]);
 
 function parseArgs(argv: string[]): ParsedArgs {
 	const positional: string[] = [];
@@ -105,7 +92,9 @@ function main(): void {
 			const sourceTar = args.positional[0];
 			const dest = args.positional[1];
 			if (!sourceTar || !dest) {
-				throw new Error("pack-aospkg requires <source-tar> <dest-aospkg> arguments");
+				throw new Error(
+					"pack-aospkg requires <source-tar> <dest-aospkg> arguments",
+				);
 			}
 			const summary = packAospkgFromTar(resolve(sourceTar), resolve(dest));
 			process.stdout.write(
@@ -114,12 +103,7 @@ function main(): void {
 			return;
 		}
 		case "pack": {
-			requireKnownFlags(args, [
-				"--agent",
-				"--out",
-				"--prune-native",
-				"--omit-optional",
-			]);
+			requireKnownFlags(args, ["--out", "--prune-native", "--omit-optional"]);
 			const source = args.positional[0];
 			if (!source) {
 				throw new Error("pack requires a <npm-pkg | ./local-dir> argument");
@@ -130,7 +114,6 @@ function main(): void {
 					(args.flags.get("--out") as string | undefined) ??
 						defaultOutName(source),
 				),
-				agent: args.flags.get("--agent") as string | undefined,
 				pruneNative: args.flags.get("--prune-native") === true,
 				omitOptional: args.flags.get("--omit-optional") === true,
 			});
@@ -164,28 +147,9 @@ function main(): void {
 			build(args.positional[0]);
 			return;
 		}
-		case "publish": {
-			requireKnownFlags(args, [
-				"--tag",
-				"--latest",
-				"--dry-run",
-				"--set-version",
-			]);
-			const result = publish({
-				packageDir: args.positional[0] ?? process.cwd(),
-				tag: args.flags.get("--tag") as string | undefined,
-				latest: args.flags.get("--latest") === true,
-				dryRun: args.flags.get("--dry-run") === true,
-				setVersion: args.flags.get("--set-version") as string | undefined,
-			});
-			process.stdout.write(
-				`published ${result.name}@${result.version} (dist-tag: ${result.tag})\n`,
-			);
-			return;
-		}
 		default:
 			throw new Error(
-				`unknown command "${cmd}" (expected pack, stage, build, or publish)`,
+				`unknown command "${cmd}" (expected pack, pack-aospkg, stage, or build)`,
 			);
 	}
 }

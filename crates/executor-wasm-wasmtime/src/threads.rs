@@ -6,7 +6,7 @@
 
 use super::engine::{WasmtimeEngineHandle, WasmtimeEngineProfile};
 use super::linker;
-use super::store::{self, WasmtimeHostClient};
+use super::store::{self, PendingExecReplacement, WasmtimeHostClient};
 use crate::backend::HostServiceError;
 use agentos_driver_tokio::DriverHandle;
 use agentos_executor_wasm_abi::StartWasmExecutionRequest;
@@ -20,9 +20,17 @@ const MAX_WASI_THREAD_ID: i32 = 0x1fff_ffff;
 struct ThreadGroupState {
     next_tid: i32,
     active: usize,
+    reserved_native_threads: usize,
     shutting_down: bool,
     first_failure: Option<HostServiceError>,
+    process_exit_code: Option<i32>,
+    exec_replacement: Option<Option<PendingExecReplacement>>,
     handles: Vec<std::thread::JoinHandle<()>>,
+}
+
+pub enum ThreadGroupCompletion {
+    Exit(i32),
+    Exec(Option<PendingExecReplacement>),
 }
 
 pub struct ThreadGroup {
@@ -40,6 +48,8 @@ pub struct ThreadGroup {
     debug: bool,
     state: Mutex<ThreadGroupState>,
     failure_notify: Notify,
+    shutdown_notify: Notify,
+    completion_notify: Notify,
 }
 
 impl std::fmt::Debug for ThreadGroup {
@@ -142,11 +152,16 @@ impl ThreadGroup {
             state: Mutex::new(ThreadGroupState {
                 next_tid: 1,
                 active: 1,
+                reserved_native_threads: 0,
                 shutting_down: false,
                 first_failure: None,
+                process_exit_code: None,
+                exec_replacement: None,
                 handles: Vec::new(),
             }),
             failure_notify: Notify::new(),
+            shutdown_notify: Notify::new(),
+            completion_notify: Notify::new(),
         }))
     }
 
@@ -167,7 +182,32 @@ impl ThreadGroup {
                     return -1;
                 }
             };
-            if state.shutting_down || state.active >= self.maximum_threads {
+            // Reap completed native workers before admitting another one.
+            // Keep reservations until the handle is reaped: completion can race
+            // handle insertion, so active Store count alone cannot bound this Vec.
+            let mut index = 0;
+            while index < state.handles.len() {
+                if state.handles[index].is_finished() {
+                    let handle = state.handles.swap_remove(index);
+                    state.reserved_native_threads = state.reserved_native_threads.saturating_sub(1);
+                    if handle.join().is_err() {
+                        let error = HostServiceError::new(
+                            "ERR_AGENTOS_WASM_THREAD_PANIC",
+                            "a threaded WebAssembly native worker panicked",
+                        );
+                        eprintln!("{}: {}", error.code, error.message);
+                        state.first_failure.get_or_insert(error);
+                        self.failure_notify.notify_one();
+                        return -1;
+                    }
+                } else {
+                    index += 1;
+                }
+            }
+            if state.shutting_down
+                || state.active >= self.maximum_threads
+                || state.reserved_native_threads >= self.maximum_threads.saturating_sub(1)
+            {
                 return -1;
             }
             let tid = state.next_tid;
@@ -176,6 +216,7 @@ impl ThreadGroup {
             }
             state.next_tid = tid.saturating_add(1);
             state.active += 1;
+            state.reserved_native_threads += 1;
             tid
         };
 
@@ -187,17 +228,29 @@ impl ThreadGroup {
         let handle = match std::thread::Builder::new()
             .name(format!("agentos-wasm-pthread-{tid}"))
             .spawn(move || {
-                let result = group
-                    .runtime
-                    .tokio_handle()
-                    .block_on(group.run_secondary(tid, start_arg));
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    group
+                        .runtime
+                        .tokio_handle()
+                        .block_on(group.run_secondary(tid, start_arg))
+                }))
+                .unwrap_or_else(|_| {
+                    Err(HostServiceError::new(
+                        "ERR_AGENTOS_WASM_THREAD_PANIC",
+                        "a threaded WebAssembly native worker panicked",
+                    ))
+                });
                 group.finish_secondary(result);
             }) {
             Ok(handle) => handle,
             Err(error) => {
                 eprintln!("ERR_AGENTOS_WASM_THREAD_SPAWN: native worker spawn failed: {error}");
                 match self.state.lock() {
-                    Ok(mut state) => state.active = state.active.saturating_sub(1),
+                    Ok(mut state) => {
+                        state.active = state.active.saturating_sub(1);
+                        state.reserved_native_threads =
+                            state.reserved_native_threads.saturating_sub(1);
+                    }
                     Err(_) => eprintln!(
                         "ERR_AGENTOS_WASM_THREAD_GROUP_POISONED: native spawn rollback failed"
                     ),
@@ -240,7 +293,11 @@ impl ThreadGroup {
                 std::mem::size_of::<u32>() * 2,
             )
             .await?;
-        let result = self.run_registered_secondary(tid, start_arg).await;
+        let result = tokio::select! {
+            biased;
+            () = self.wait_for_shutdown() => Ok(()),
+            result = self.run_registered_secondary(tid, start_arg) => result,
+        };
         let unregister = self
             .host
             .submit(
@@ -250,6 +307,14 @@ impl ThreadGroup {
                 std::mem::size_of::<u32>(),
             )
             .await;
+        // Exec has already removed the old image's signal-thread records.
+        // Unregistering an already removed thread is completed cleanup.
+        let unregister = match unregister {
+            Err(error) if error.code == "ESRCH" => {
+                Ok(crate::backend::HostCallReply::Json(serde_json::Value::Null))
+            }
+            other => other,
+        };
         match (result, unregister) {
             (Err(error), Err(unregister)) => {
                 eprintln!(
@@ -325,7 +390,7 @@ impl ThreadGroup {
             })?;
         match start.call_async(&mut store, (tid, start_arg)).await {
             Ok(()) => Ok(()),
-            Err(_) if store.data().exit_code.is_some() => Ok(()),
+            Err(_) if store.data().exit_code.is_some() || store.data().exec_replaced => Ok(()),
             Err(error) => Err(super::error::normalize(
                 "ERR_AGENTOS_WASM_THREAD_TRAP",
                 &error,
@@ -356,27 +421,115 @@ impl ThreadGroup {
             self.failure_notify.notify_one();
         }
         drop(state);
+        self.completion_notify.notify_one();
         if let Some(error) = failure {
             self.host.report_thread_group_failure(error);
         }
     }
 
-    /// Resolve as soon as any secondary Store traps. The worker's main Store
-    /// races this against `_start`, so one bad pthread terminates the complete
-    /// process group instead of leaving another pthread parked indefinitely.
-    pub async fn wait_for_failure(&self) -> HostServiceError {
+    /// Return the process-wide exit requested by any Store.
+    pub fn process_exit_code(&self) -> Result<Option<i32>, HostServiceError> {
+        Ok(self
+            .state
+            .lock()
+            .map_err(|_| group_poisoned())?
+            .process_exit_code)
+    }
+
+    pub fn request_process_exit(&self, code: i32) -> Result<(), HostServiceError> {
+        let mut state = self.state.lock().map_err(|_| group_poisoned())?;
+        if state.process_exit_code.is_none() {
+            self.host.report_thread_group_exit(code)?;
+            state.process_exit_code = Some(code);
+        }
+        self.failure_notify.notify_one();
+        Ok(())
+    }
+
+    /// Wake the main Store when a secondary exits, replaces the image, or traps.
+    pub async fn wait_for_completion(&self) -> Result<ThreadGroupCompletion, HostServiceError> {
         loop {
             let notified = self.failure_notify.notified();
             match self.state.lock() {
-                Ok(state) => {
+                Ok(mut state) => {
+                    if let Some(code) = state.process_exit_code {
+                        return Ok(ThreadGroupCompletion::Exit(code));
+                    }
+                    if let Some(replacement) = state.exec_replacement.take() {
+                        return Ok(ThreadGroupCompletion::Exec(replacement));
+                    }
                     if let Some(error) = state.first_failure.as_ref() {
-                        return error.clone();
+                        return Err(error.clone());
                     }
                 }
-                Err(_) => return group_poisoned(),
+                Err(_) => return Err(group_poisoned()),
             }
             notified.await;
         }
+    }
+
+    pub fn request_exec(
+        &self,
+        replacement: Option<PendingExecReplacement>,
+    ) -> Result<(), HostServiceError> {
+        self.state
+            .lock()
+            .map_err(|_| group_poisoned())?
+            .exec_replacement = Some(replacement);
+        self.failure_notify.notify_one();
+        Ok(())
+    }
+
+    pub fn take_exec(&self) -> Result<Option<Option<PendingExecReplacement>>, HostServiceError> {
+        Ok(self
+            .state
+            .lock()
+            .map_err(|_| group_poisoned())?
+            .exec_replacement
+            .take())
+    }
+
+    pub fn is_shutting_down(&self) -> bool {
+        match self.state.lock() {
+            Ok(state) => state.shutting_down,
+            Err(_) => {
+                eprintln!("ERR_AGENTOS_WASM_THREAD_GROUP_POISONED: stopping guest execution");
+                true
+            }
+        }
+    }
+
+    async fn wait_for_shutdown(&self) {
+        loop {
+            let notified = self.shutdown_notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.is_shutting_down() {
+                return;
+            }
+            notified.await;
+        }
+    }
+
+    /// Exec reuses the worker process, so every old Store must stop before a
+    /// replacement can run. Wake host-call waiters and interrupt CPU work via
+    /// the epoch callback, then wait for signal-thread cleanup to finish.
+    pub async fn retire_image(&self) -> Result<(), HostServiceError> {
+        self.state
+            .lock()
+            .map_err(|_| group_poisoned())?
+            .shutting_down = true;
+        self.shutdown_notify.notify_waiters();
+        loop {
+            let notified = self.completion_notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.state.lock().map_err(|_| group_poisoned())?.active <= 1 {
+                break;
+            }
+            notified.await;
+        }
+        self.settle_main()
     }
 
     /// Mark the group closed when the process main Store exits. Linux process
@@ -407,4 +560,118 @@ fn group_poisoned() -> HostServiceError {
         "ERR_AGENTOS_WASM_THREAD_GROUP_POISONED",
         "threaded WebAssembly group state is poisoned",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::{bounded_execution_event_channel, ExecutionEvent, PayloadLimit};
+    use crate::host::{HostOperation, HostProcessContext, ProcessHostCapabilitySet};
+    use agentos_driver_tokio::{DriverConfig, TokioDriver};
+    use agentos_executor_contract::GuestRuntimeConfig;
+    use agentos_executor_wasm_abi::{WasmExecutionLimits, WasmPermissionTier};
+    use std::collections::BTreeMap;
+    use std::sync::atomic::AtomicBool;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn sequential_thread_churn_does_not_retain_historical_native_handles() {
+        let runtime = TokioDriver::process(&DriverConfig::default())
+            .unwrap()
+            .handle();
+        let profile = WasmtimeEngineProfile::new_threaded(None).unwrap();
+        let engine = super::super::engine::WasmtimeEngineRegistry::process()
+            .get_or_create(profile)
+            .unwrap();
+        let module = Arc::new(
+            Module::new(
+                engine.engine(),
+                wat::parse_str(
+                    r#"(module
+            (import "env" "memory" (memory 1 1 shared))
+            (func (export "wasi_thread_start") (param i32 i32)))"#,
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+        );
+        let (submission, events) = bounded_execution_event_channel(
+            HostProcessContext {
+                generation: 1,
+                pid: 42,
+            },
+            8,
+            PayloadLimit::new("limits.process.pendingEventBytes", 65536).unwrap(),
+            Arc::new(|| {}),
+        )
+        .unwrap();
+        let (event_sender, _event_receiver) = flume::bounded(8);
+        let host = WasmtimeHostClient::new(
+            ProcessHostCapabilitySet::from_event_submission(submission),
+            65536,
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(Notify::new()),
+            Arc::new(AtomicBool::new(false)),
+            Arc::clone(runtime.resources()),
+            event_sender,
+            None,
+        );
+        let request = StartWasmExecutionRequest {
+            vm_id: "thread-churn".into(),
+            context_id: "thread-churn".into(),
+            managed_kernel_host: true,
+            argv: vec!["/threads.wasm".into()],
+            env: BTreeMap::new(),
+            cwd: "/".into(),
+            permission_tier: WasmPermissionTier::Full,
+            limits: WasmExecutionLimits {
+                max_threads: Some(2),
+                max_memory_bytes: Some(65536),
+                ..Default::default()
+            },
+            guest_runtime: GuestRuntimeConfig::default(),
+        };
+        let group = ThreadGroup::new(
+            engine,
+            module,
+            runtime,
+            host,
+            request,
+            profile,
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(Notify::new()),
+            false,
+        )
+        .unwrap();
+        for _ in 0..8 {
+            assert!(group.spawn(0) > 0);
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                while let Some(event) = events.try_recv().unwrap() {
+                    let ExecutionEvent::HostCall { operation, reply } = event else {
+                        panic!("unexpected event");
+                    };
+                    assert!(matches!(operation, HostOperation::Signal(_)));
+                    reply
+                        .succeed_json(serde_json::json!({"signals":[]}))
+                        .unwrap();
+                }
+                let complete = {
+                    let state = group.state.lock().unwrap();
+                    assert!(state.first_failure.is_none(), "{:?}", state.first_failure);
+                    state.active == 1 && state.handles.iter().all(|handle| handle.is_finished())
+                };
+                if complete {
+                    break;
+                }
+                assert!(Instant::now() < deadline, "secondary did not finish");
+                std::thread::yield_now();
+            }
+            assert!(
+                group.state.lock().unwrap().handles.len() <= 1,
+                "maxThreads=2 must not retain historical secondary thread handles"
+            );
+        }
+        group.settle_main().unwrap();
+    }
 }

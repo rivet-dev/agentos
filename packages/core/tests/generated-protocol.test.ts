@@ -10,15 +10,15 @@ import {
 	StreamChannel,
 	WasmPermissionTier,
 	writeGuestFilesystemCallRequest,
-} from "@rivet-dev/agentos-core/protocol";
+} from "../src/generated-protocol.js";
 import {
 	decodeBareProtocolFrame,
 	encodeBareProtocolFrame,
-} from "@rivet-dev/agentos-core/protocol-frames";
+} from "../src/protocol-frames.js";
 
 const GENERATED_AUTH_FRAME_HEX =
-	"000f6167656e746f732d73696465636172080007000000000000000006636f6e6e2d31000e67656e6572617465642d7465737405746f6b656e080001000000";
-const PROTOCOL_VERSION = 8;
+	"000f6167656e746f732d736964656361720a0007000000000000000006636f6e6e2d31000e67656e6572617465642d7465737405746f6b656e0a0001000000";
+const PROTOCOL_VERSION = 10;
 
 describe("generated sidecar protocol", () => {
 	test("round-trips request frames", () => {
@@ -110,7 +110,7 @@ describe("generated sidecar protocol", () => {
 						packages: [],
 						packagesMountAt: "",
 						bootstrapCommands: [],
-						bindingShimCommands: [],
+						hostFunctionShimCommands: [],
 					},
 				},
 			},
@@ -149,7 +149,7 @@ describe("generated sidecar protocol", () => {
 				packages: [],
 				packages_mount_at: "",
 				bootstrap_commands: [],
-				binding_shim_commands: [],
+				host_function_shim_commands: [],
 			},
 		};
 
@@ -218,7 +218,6 @@ describe("generated sidecar protocol", () => {
 						appliedMounts: 2,
 						appliedSoftware: 0,
 						projectedCommands: [],
-						agents: [],
 					},
 				},
 			},
@@ -241,7 +240,6 @@ describe("generated sidecar protocol", () => {
 				applied_mounts: 2,
 				applied_software: 0,
 				projected_commands: [],
-				agents: [],
 			},
 		});
 	});
@@ -325,7 +323,7 @@ describe("generated sidecar protocol", () => {
 						packages: [],
 						packagesMountAt: "",
 						bootstrapCommands: [],
-						bindingShimCommands: [],
+						hostFunctionShimCommands: [],
 					},
 				},
 			},

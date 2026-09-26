@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
 	EXCLUDED,
-	LOCKSTEP_SOFTWARE_PACKAGES,
 	assertDiscoverySanity,
 	buildMetaPlatformMap,
 	discoverPackages,
@@ -79,18 +78,15 @@ test("sanity check passes for the agent-os workspace", () => {
 
 	assert.doesNotThrow(() => assertDiscoverySanity(packages));
 	assert(names.has("@rivet-dev/agentos"));
+	assert(names.has("secure-exec"));
 });
 
-test("publishes only new AgentOS Apps software packages in lockstep", () => {
+test("keeps registry software out of the agentOS npm release", () => {
 	const names = discoverPackages(repoRoot).map((pkg) => pkg.name);
 
-	assert(LOCKSTEP_SOFTWARE_PACKAGES.has("@agentos-software/apps-builder"));
-	assert(LOCKSTEP_SOFTWARE_PACKAGES.has("@agentos-software/sh"));
-	assert(!LOCKSTEP_SOFTWARE_PACKAGES.has("@agentos-software/tar"));
-	assert(names.includes("@rivet-dev/agentos-apps"));
-	assert(names.includes("@agentos-software/apps-builder"));
-	assert(names.includes("@agentos-software/sh"));
-	assert(!names.includes("@agentos-software/tar"));
+	assert(names.includes("@rivet-dev/agentos-core"));
+	assert(names.includes("secure-exec"));
+	assert(!names.some((name) => name.startsWith("@agentos-software/")));
 });
 
 test("archived browser packages are outside publication discovery", () => {

@@ -1,6 +1,6 @@
-/** Cold and warm execution latency through the public AgentOS language execution API. */
+/** Cold and warm execution latency through the embedded agentOS Core API. */
 
-import { AgentOs, type AgentOsSidecar } from "@rivet-dev/agentos";
+import { AgentOs, type AgentOsSidecar } from "@rivet-dev/agentos-core";
 import {
 	EXEC_TIMEOUT_MS,
 	getHardware,

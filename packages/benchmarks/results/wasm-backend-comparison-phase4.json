@@ -1,7 +1,7 @@
 {
   "metadata": {
     "startedAt": "2026-07-21T09:07:02.379Z",
-    "hostname": "nathan-dev",
+    "hostname": "benchmark-host",
     "platform": "linux",
     "arch": "x64",
     "cpuModel": "12th Gen Intel(R) Core(TM) i7-12700KF",
@@ -10,13 +10,13 @@
     "kernel": "Linux 6.1.0-41-amd64 #1 SMP PREEMPT_DYNAMIC Debian 6.1.158-1 (2025-11-09) x86_64",
     "node": "v24.17.0",
     "sidecar": {
-      "path": "/home/nathan/.cache/agentos-wasmtime-rust194-phase4/release/agentos-vm",
+      "path": "<local>/agentos-vm",
       "profile": "release",
       "mtimeMs": 1784624816343.0898,
       "mtimeIso": "2026-07-21T02:06:56.343-07:00",
       "sizeBytes": 143480280
     },
-    "commandsDir": "/home/nathan/.herdr/workspaces/agent-os/wasmtime-executor/packages/core/commands",
+    "commandsDir": "<local>/commands",
     "freshProcesses": 5,
     "samplesPerProcess": 5,
     "concurrencyLevels": [
@@ -36,97 +36,97 @@
   "modules": [
     {
       "command": "basename",
-      "path": "/home/nathan/.herdr/workspaces/agent-os/wasmtime-executor/packages/core/commands/basename",
+      "path": "<local>/basename",
       "bytes": 517345,
       "sha256": "4925e6fd365a649a8ae2defb56efb793b37046ad9e4df093f74a3f189cfc428e"
     },
     {
       "command": "curl",
-      "path": "/home/nathan/.herdr/workspaces/agent-os/wasmtime-executor/packages/core/commands/curl",
+      "path": "<local>/curl",
       "bytes": 1561500,
       "sha256": "5d44e7e68808294b7a155a6ae3c030b02adbf8969657b0ac41802d43b2ea6444"
     },
     {
       "command": "date",
-      "path": "/home/nathan/.herdr/workspaces/agent-os/wasmtime-executor/packages/core/commands/date",
+      "path": "<local>/date",
       "bytes": 2618604,
       "sha256": "f49cbb0b6b9aedd645900c41b121485582d72944291a90db385618cbd9f27f76"
     },
     {
       "command": "dirname",
-      "path": "/home/nathan/.herdr/workspaces/agent-os/wasmtime-executor/packages/core/commands/dirname",
+      "path": "<local>/dirname",
       "bytes": 498912,
       "sha256": "773449f7d0723bac7355b6d4ff4149707b877b98f2fdfab9fc6af160ff20a701"
     },
     {
       "command": "find",
-      "path": "/home/nathan/.herdr/workspaces/agent-os/wasmtime-executor/packages/core/commands/find",
+      "path": "<local>/find",
       "bytes": 1509578,
       "sha256": "79174d7fa9bbf2a72747a71cc3b1e113a0a1768e95d456c7813e39a7559a1e25"
     },
     {
       "command": "git",
-      "path": "/home/nathan/.herdr/workspaces/agent-os/wasmtime-executor/packages/core/commands/git",
+      "path": "<local>/git",
       "bytes": 3397393,
       "sha256": "0491fbbbfcf192e28872c1fe37819861fd54c4f8cb18f28e5ddf8a5297081d2e"
     },
     {
       "command": "id",
-      "path": "/home/nathan/.herdr/workspaces/agent-os/wasmtime-executor/packages/core/commands/id",
+      "path": "<local>/id",
       "bytes": 57250,
       "sha256": "1d56d6c9b893f89919b17acc491579ee5f216e3b706ed009308eac594b80ac26"
     },
     {
       "command": "ls",
-      "path": "/home/nathan/.herdr/workspaces/agent-os/wasmtime-executor/packages/core/commands/ls",
+      "path": "<local>/ls",
       "bytes": 1208565,
       "sha256": "86da1fbf155760c33aa2519e058b6ea95266c9239def7f72faa136b1dcbc9b4f"
     },
     {
       "command": "printf",
-      "path": "/home/nathan/.herdr/workspaces/agent-os/wasmtime-executor/packages/core/commands/printf",
+      "path": "<local>/printf",
       "bytes": 652796,
       "sha256": "e8a170ba2b94f8f906c2a69b355d13a45f3ef9006143ed63f6994b6f22a8c01a"
     },
     {
       "command": "pwd",
-      "path": "/home/nathan/.herdr/workspaces/agent-os/wasmtime-executor/packages/core/commands/pwd",
+      "path": "<local>/pwd",
       "bytes": 501598,
       "sha256": "40bf2b78bd7c081b6fbafb26c6641404f6062f8fd065e85dcf217b98e269ee86"
     },
     {
       "command": "sh",
-      "path": "/home/nathan/.herdr/workspaces/agent-os/wasmtime-executor/packages/core/commands/sh",
+      "path": "<local>/sh",
       "bytes": 3082692,
       "sha256": "25042baa43977d9b31e302d6a008e172d722f8d9df83b6cab9d84db71618713a"
     },
     {
       "command": "sha256sum",
-      "path": "/home/nathan/.herdr/workspaces/agent-os/wasmtime-executor/packages/core/commands/sha256sum",
+      "path": "<local>/sha256sum",
       "bytes": 1349812,
       "sha256": "7e9fca50d94a69d0854f3092c33565ff0f82af80320f732889623b091e4a73fd"
     },
     {
       "command": "sqlite3",
-      "path": "/home/nathan/.herdr/workspaces/agent-os/wasmtime-executor/packages/core/commands/sqlite3",
+      "path": "<local>/sqlite3",
       "bytes": 878882,
       "sha256": "3f87de5e79cf6cc55eac3e3eeb643f2522b838c1829d7644ab13afd7d917d881"
     },
     {
       "command": "true",
-      "path": "/home/nathan/.herdr/workspaces/agent-os/wasmtime-executor/packages/core/commands/true",
+      "path": "<local>/true",
       "bytes": 28203,
       "sha256": "d8cee1b90b65bd7571197ac6fde57f46d538bea6c1b09a1ac404b5368631b2bc"
     },
     {
       "command": "uname",
-      "path": "/home/nathan/.herdr/workspaces/agent-os/wasmtime-executor/packages/core/commands/uname",
+      "path": "<local>/uname",
       "bytes": 502129,
       "sha256": "70bf67158f10102c5af11b7e6cf7ba5d937b0a9a49ddad4e05bf3fc80726606e"
     },
     {
       "command": "vim",
-      "path": "/home/nathan/.herdr/workspaces/agent-os/wasmtime-executor/packages/core/commands/vim",
+      "path": "<local>/vim",
       "bytes": 2854951,
       "sha256": "d1db095826460b79b4970bebe4d3bb1d4b754ba82a93a36a207f37e4dc053121"
     }
@@ -200,7 +200,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/true",
+                "modulePath": "<temporary>/true",
                 "sourceModuleBytes": 28203,
                 "moduleBytes": 28205,
                 "phases": [
@@ -307,7 +307,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/true",
+                "modulePath": "<temporary>/true",
                 "sourceModuleBytes": 28203,
                 "moduleBytes": 28205,
                 "phases": [
@@ -414,7 +414,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/true",
+                "modulePath": "<temporary>/true",
                 "sourceModuleBytes": 28203,
                 "moduleBytes": 28205,
                 "phases": [
@@ -521,7 +521,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/true",
+                "modulePath": "<temporary>/true",
                 "sourceModuleBytes": 28203,
                 "moduleBytes": 28205,
                 "phases": [
@@ -628,7 +628,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/true",
+                "modulePath": "<temporary>/true",
                 "sourceModuleBytes": 28203,
                 "moduleBytes": 28205,
                 "phases": [
@@ -741,7 +741,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/ls",
+                "modulePath": "<temporary>/ls",
                 "sourceModuleBytes": 1208565,
                 "moduleBytes": 1208567,
                 "phases": [
@@ -848,7 +848,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/ls",
+                "modulePath": "<temporary>/ls",
                 "sourceModuleBytes": 1208565,
                 "moduleBytes": 1208567,
                 "phases": [
@@ -955,7 +955,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/ls",
+                "modulePath": "<temporary>/ls",
                 "sourceModuleBytes": 1208565,
                 "moduleBytes": 1208567,
                 "phases": [
@@ -1062,7 +1062,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/ls",
+                "modulePath": "<temporary>/ls",
                 "sourceModuleBytes": 1208565,
                 "moduleBytes": 1208567,
                 "phases": [
@@ -1169,7 +1169,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/ls",
+                "modulePath": "<temporary>/ls",
                 "sourceModuleBytes": 1208565,
                 "moduleBytes": 1208567,
                 "phases": [
@@ -1282,7 +1282,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/sh",
+                "modulePath": "<temporary>/sh",
                 "sourceModuleBytes": 3082692,
                 "moduleBytes": 3082694,
                 "phases": [
@@ -1389,7 +1389,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/sh",
+                "modulePath": "<temporary>/sh",
                 "sourceModuleBytes": 3082692,
                 "moduleBytes": 3082694,
                 "phases": [
@@ -1496,7 +1496,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/sh",
+                "modulePath": "<temporary>/sh",
                 "sourceModuleBytes": 3082692,
                 "moduleBytes": 3082694,
                 "phases": [
@@ -1603,7 +1603,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/sh",
+                "modulePath": "<temporary>/sh",
                 "sourceModuleBytes": 3082692,
                 "moduleBytes": 3082694,
                 "phases": [
@@ -1710,7 +1710,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/sh",
+                "modulePath": "<temporary>/sh",
                 "sourceModuleBytes": 3082692,
                 "moduleBytes": 3082694,
                 "phases": [
@@ -1823,7 +1823,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/curl",
+                "modulePath": "<temporary>/curl",
                 "sourceModuleBytes": 1561500,
                 "moduleBytes": 1561502,
                 "phases": [
@@ -1930,7 +1930,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/curl",
+                "modulePath": "<temporary>/curl",
                 "sourceModuleBytes": 1561500,
                 "moduleBytes": 1561502,
                 "phases": [
@@ -2037,7 +2037,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/curl",
+                "modulePath": "<temporary>/curl",
                 "sourceModuleBytes": 1561500,
                 "moduleBytes": 1561502,
                 "phases": [
@@ -2144,7 +2144,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/curl",
+                "modulePath": "<temporary>/curl",
                 "sourceModuleBytes": 1561500,
                 "moduleBytes": 1561502,
                 "phases": [
@@ -2251,7 +2251,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/curl",
+                "modulePath": "<temporary>/curl",
                 "sourceModuleBytes": 1561500,
                 "moduleBytes": 1561502,
                 "phases": [
@@ -2364,7 +2364,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/sqlite3",
+                "modulePath": "<temporary>/sqlite3",
                 "sourceModuleBytes": 878882,
                 "moduleBytes": 878884,
                 "phases": [
@@ -2471,7 +2471,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/sqlite3",
+                "modulePath": "<temporary>/sqlite3",
                 "sourceModuleBytes": 878882,
                 "moduleBytes": 878884,
                 "phases": [
@@ -2578,7 +2578,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/sqlite3",
+                "modulePath": "<temporary>/sqlite3",
                 "sourceModuleBytes": 878882,
                 "moduleBytes": 878884,
                 "phases": [
@@ -2685,7 +2685,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/sqlite3",
+                "modulePath": "<temporary>/sqlite3",
                 "sourceModuleBytes": 878882,
                 "moduleBytes": 878884,
                 "phases": [
@@ -2792,7 +2792,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/sqlite3",
+                "modulePath": "<temporary>/sqlite3",
                 "sourceModuleBytes": 878882,
                 "moduleBytes": 878884,
                 "phases": [
@@ -2905,7 +2905,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/vim",
+                "modulePath": "<temporary>/vim",
                 "sourceModuleBytes": 2854951,
                 "moduleBytes": 2854953,
                 "phases": [
@@ -3012,7 +3012,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/vim",
+                "modulePath": "<temporary>/vim",
                 "sourceModuleBytes": 2854951,
                 "moduleBytes": 2854953,
                 "phases": [
@@ -3119,7 +3119,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/vim",
+                "modulePath": "<temporary>/vim",
                 "sourceModuleBytes": 2854951,
                 "moduleBytes": 2854953,
                 "phases": [
@@ -3226,7 +3226,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/vim",
+                "modulePath": "<temporary>/vim",
                 "sourceModuleBytes": 2854951,
                 "moduleBytes": 2854953,
                 "phases": [
@@ -3333,7 +3333,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/vim",
+                "modulePath": "<temporary>/vim",
                 "sourceModuleBytes": 2854951,
                 "moduleBytes": 2854953,
                 "phases": [
@@ -3446,7 +3446,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/git",
+                "modulePath": "<temporary>/git",
                 "sourceModuleBytes": 3397393,
                 "moduleBytes": 3397395,
                 "phases": [
@@ -3553,7 +3553,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/git",
+                "modulePath": "<temporary>/git",
                 "sourceModuleBytes": 3397393,
                 "moduleBytes": 3397395,
                 "phases": [
@@ -3660,7 +3660,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/git",
+                "modulePath": "<temporary>/git",
                 "sourceModuleBytes": 3397393,
                 "moduleBytes": 3397395,
                 "phases": [
@@ -3767,7 +3767,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/git",
+                "modulePath": "<temporary>/git",
                 "sourceModuleBytes": 3397393,
                 "moduleBytes": 3397395,
                 "phases": [
@@ -3874,7 +3874,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/git",
+                "modulePath": "<temporary>/git",
                 "sourceModuleBytes": 3397393,
                 "moduleBytes": 3397395,
                 "phases": [
@@ -3987,7 +3987,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/sha256sum",
+                "modulePath": "<temporary>/sha256sum",
                 "sourceModuleBytes": 1349812,
                 "moduleBytes": 1349814,
                 "phases": [
@@ -4094,7 +4094,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/sha256sum",
+                "modulePath": "<temporary>/sha256sum",
                 "sourceModuleBytes": 1349812,
                 "moduleBytes": 1349814,
                 "phases": [
@@ -4201,7 +4201,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/sha256sum",
+                "modulePath": "<temporary>/sha256sum",
                 "sourceModuleBytes": 1349812,
                 "moduleBytes": 1349814,
                 "phases": [
@@ -4308,7 +4308,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/sha256sum",
+                "modulePath": "<temporary>/sha256sum",
                 "sourceModuleBytes": 1349812,
                 "moduleBytes": 1349814,
                 "phases": [
@@ -4415,7 +4415,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/sha256sum",
+                "modulePath": "<temporary>/sha256sum",
                 "sourceModuleBytes": 1349812,
                 "moduleBytes": 1349814,
                 "phases": [
@@ -4528,7 +4528,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/find",
+                "modulePath": "<temporary>/find",
                 "sourceModuleBytes": 1509578,
                 "moduleBytes": 1509580,
                 "phases": [
@@ -4635,7 +4635,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/find",
+                "modulePath": "<temporary>/find",
                 "sourceModuleBytes": 1509578,
                 "moduleBytes": 1509580,
                 "phases": [
@@ -4742,7 +4742,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/find",
+                "modulePath": "<temporary>/find",
                 "sourceModuleBytes": 1509578,
                 "moduleBytes": 1509580,
                 "phases": [
@@ -4849,7 +4849,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/find",
+                "modulePath": "<temporary>/find",
                 "sourceModuleBytes": 1509578,
                 "moduleBytes": 1509580,
                 "phases": [
@@ -4956,7 +4956,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624822457415921/__secure_exec/commands/0/find",
+                "modulePath": "<temporary>/find",
                 "sourceModuleBytes": 1509578,
                 "moduleBytes": 1509580,
                 "phases": [
@@ -12163,7 +12163,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/true",
+                "modulePath": "<temporary>/true",
                 "sourceModuleBytes": 28203,
                 "moduleBytes": 28205,
                 "phases": [
@@ -12270,7 +12270,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/true",
+                "modulePath": "<temporary>/true",
                 "sourceModuleBytes": 28203,
                 "moduleBytes": 28205,
                 "phases": [
@@ -12377,7 +12377,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/true",
+                "modulePath": "<temporary>/true",
                 "sourceModuleBytes": 28203,
                 "moduleBytes": 28205,
                 "phases": [
@@ -12484,7 +12484,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/true",
+                "modulePath": "<temporary>/true",
                 "sourceModuleBytes": 28203,
                 "moduleBytes": 28205,
                 "phases": [
@@ -12591,7 +12591,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/true",
+                "modulePath": "<temporary>/true",
                 "sourceModuleBytes": 28203,
                 "moduleBytes": 28205,
                 "phases": [
@@ -12704,7 +12704,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/ls",
+                "modulePath": "<temporary>/ls",
                 "sourceModuleBytes": 1208565,
                 "moduleBytes": 1208567,
                 "phases": [
@@ -12811,7 +12811,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/ls",
+                "modulePath": "<temporary>/ls",
                 "sourceModuleBytes": 1208565,
                 "moduleBytes": 1208567,
                 "phases": [
@@ -12918,7 +12918,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/ls",
+                "modulePath": "<temporary>/ls",
                 "sourceModuleBytes": 1208565,
                 "moduleBytes": 1208567,
                 "phases": [
@@ -13025,7 +13025,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/ls",
+                "modulePath": "<temporary>/ls",
                 "sourceModuleBytes": 1208565,
                 "moduleBytes": 1208567,
                 "phases": [
@@ -13132,7 +13132,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/ls",
+                "modulePath": "<temporary>/ls",
                 "sourceModuleBytes": 1208565,
                 "moduleBytes": 1208567,
                 "phases": [
@@ -13245,7 +13245,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/sh",
+                "modulePath": "<temporary>/sh",
                 "sourceModuleBytes": 3082692,
                 "moduleBytes": 3082694,
                 "phases": [
@@ -13352,7 +13352,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/sh",
+                "modulePath": "<temporary>/sh",
                 "sourceModuleBytes": 3082692,
                 "moduleBytes": 3082694,
                 "phases": [
@@ -13459,7 +13459,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/sh",
+                "modulePath": "<temporary>/sh",
                 "sourceModuleBytes": 3082692,
                 "moduleBytes": 3082694,
                 "phases": [
@@ -13566,7 +13566,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/sh",
+                "modulePath": "<temporary>/sh",
                 "sourceModuleBytes": 3082692,
                 "moduleBytes": 3082694,
                 "phases": [
@@ -13673,7 +13673,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/sh",
+                "modulePath": "<temporary>/sh",
                 "sourceModuleBytes": 3082692,
                 "moduleBytes": 3082694,
                 "phases": [
@@ -13786,7 +13786,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/curl",
+                "modulePath": "<temporary>/curl",
                 "sourceModuleBytes": 1561500,
                 "moduleBytes": 1561502,
                 "phases": [
@@ -13893,7 +13893,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/curl",
+                "modulePath": "<temporary>/curl",
                 "sourceModuleBytes": 1561500,
                 "moduleBytes": 1561502,
                 "phases": [
@@ -14000,7 +14000,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/curl",
+                "modulePath": "<temporary>/curl",
                 "sourceModuleBytes": 1561500,
                 "moduleBytes": 1561502,
                 "phases": [
@@ -14107,7 +14107,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/curl",
+                "modulePath": "<temporary>/curl",
                 "sourceModuleBytes": 1561500,
                 "moduleBytes": 1561502,
                 "phases": [
@@ -14214,7 +14214,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/curl",
+                "modulePath": "<temporary>/curl",
                 "sourceModuleBytes": 1561500,
                 "moduleBytes": 1561502,
                 "phases": [
@@ -14327,7 +14327,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/sqlite3",
+                "modulePath": "<temporary>/sqlite3",
                 "sourceModuleBytes": 878882,
                 "moduleBytes": 878884,
                 "phases": [
@@ -14434,7 +14434,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/sqlite3",
+                "modulePath": "<temporary>/sqlite3",
                 "sourceModuleBytes": 878882,
                 "moduleBytes": 878884,
                 "phases": [
@@ -14541,7 +14541,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/sqlite3",
+                "modulePath": "<temporary>/sqlite3",
                 "sourceModuleBytes": 878882,
                 "moduleBytes": 878884,
                 "phases": [
@@ -14648,7 +14648,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/sqlite3",
+                "modulePath": "<temporary>/sqlite3",
                 "sourceModuleBytes": 878882,
                 "moduleBytes": 878884,
                 "phases": [
@@ -14755,7 +14755,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/sqlite3",
+                "modulePath": "<temporary>/sqlite3",
                 "sourceModuleBytes": 878882,
                 "moduleBytes": 878884,
                 "phases": [
@@ -14868,7 +14868,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/vim",
+                "modulePath": "<temporary>/vim",
                 "sourceModuleBytes": 2854951,
                 "moduleBytes": 2854953,
                 "phases": [
@@ -14975,7 +14975,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/vim",
+                "modulePath": "<temporary>/vim",
                 "sourceModuleBytes": 2854951,
                 "moduleBytes": 2854953,
                 "phases": [
@@ -15082,7 +15082,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/vim",
+                "modulePath": "<temporary>/vim",
                 "sourceModuleBytes": 2854951,
                 "moduleBytes": 2854953,
                 "phases": [
@@ -15189,7 +15189,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/vim",
+                "modulePath": "<temporary>/vim",
                 "sourceModuleBytes": 2854951,
                 "moduleBytes": 2854953,
                 "phases": [
@@ -15296,7 +15296,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/vim",
+                "modulePath": "<temporary>/vim",
                 "sourceModuleBytes": 2854951,
                 "moduleBytes": 2854953,
                 "phases": [
@@ -15409,7 +15409,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/git",
+                "modulePath": "<temporary>/git",
                 "sourceModuleBytes": 3397393,
                 "moduleBytes": 3397395,
                 "phases": [
@@ -15516,7 +15516,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/git",
+                "modulePath": "<temporary>/git",
                 "sourceModuleBytes": 3397393,
                 "moduleBytes": 3397395,
                 "phases": [
@@ -15623,7 +15623,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/git",
+                "modulePath": "<temporary>/git",
                 "sourceModuleBytes": 3397393,
                 "moduleBytes": 3397395,
                 "phases": [
@@ -15730,7 +15730,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/git",
+                "modulePath": "<temporary>/git",
                 "sourceModuleBytes": 3397393,
                 "moduleBytes": 3397395,
                 "phases": [
@@ -15837,7 +15837,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/git",
+                "modulePath": "<temporary>/git",
                 "sourceModuleBytes": 3397393,
                 "moduleBytes": 3397395,
                 "phases": [
@@ -15950,7 +15950,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/sha256sum",
+                "modulePath": "<temporary>/sha256sum",
                 "sourceModuleBytes": 1349812,
                 "moduleBytes": 1349814,
                 "phases": [
@@ -16057,7 +16057,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/sha256sum",
+                "modulePath": "<temporary>/sha256sum",
                 "sourceModuleBytes": 1349812,
                 "moduleBytes": 1349814,
                 "phases": [
@@ -16164,7 +16164,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/sha256sum",
+                "modulePath": "<temporary>/sha256sum",
                 "sourceModuleBytes": 1349812,
                 "moduleBytes": 1349814,
                 "phases": [
@@ -16271,7 +16271,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/sha256sum",
+                "modulePath": "<temporary>/sha256sum",
                 "sourceModuleBytes": 1349812,
                 "moduleBytes": 1349814,
                 "phases": [
@@ -16378,7 +16378,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/sha256sum",
+                "modulePath": "<temporary>/sha256sum",
                 "sourceModuleBytes": 1349812,
                 "moduleBytes": 1349814,
                 "phases": [
@@ -16491,7 +16491,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/find",
+                "modulePath": "<temporary>/find",
                 "sourceModuleBytes": 1509578,
                 "moduleBytes": 1509580,
                 "phases": [
@@ -16598,7 +16598,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/find",
+                "modulePath": "<temporary>/find",
                 "sourceModuleBytes": 1509578,
                 "moduleBytes": 1509580,
                 "phases": [
@@ -16705,7 +16705,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/find",
+                "modulePath": "<temporary>/find",
                 "sourceModuleBytes": 1509578,
                 "moduleBytes": 1509580,
                 "phases": [
@@ -16812,7 +16812,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/find",
+                "modulePath": "<temporary>/find",
                 "sourceModuleBytes": 1509578,
                 "moduleBytes": 1509580,
                 "phases": [
@@ -16919,7 +16919,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624860708586110/__secure_exec/commands/0/find",
+                "modulePath": "<temporary>/find",
                 "sourceModuleBytes": 1509578,
                 "moduleBytes": 1509580,
                 "phases": [
@@ -24126,7 +24126,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/true",
+                "modulePath": "<temporary>/true",
                 "sourceModuleBytes": 28203,
                 "moduleBytes": 28205,
                 "phases": [
@@ -24233,7 +24233,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/true",
+                "modulePath": "<temporary>/true",
                 "sourceModuleBytes": 28203,
                 "moduleBytes": 28205,
                 "phases": [
@@ -24340,7 +24340,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/true",
+                "modulePath": "<temporary>/true",
                 "sourceModuleBytes": 28203,
                 "moduleBytes": 28205,
                 "phases": [
@@ -24447,7 +24447,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/true",
+                "modulePath": "<temporary>/true",
                 "sourceModuleBytes": 28203,
                 "moduleBytes": 28205,
                 "phases": [
@@ -24554,7 +24554,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/true",
+                "modulePath": "<temporary>/true",
                 "sourceModuleBytes": 28203,
                 "moduleBytes": 28205,
                 "phases": [
@@ -24667,7 +24667,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/ls",
+                "modulePath": "<temporary>/ls",
                 "sourceModuleBytes": 1208565,
                 "moduleBytes": 1208567,
                 "phases": [
@@ -24774,7 +24774,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/ls",
+                "modulePath": "<temporary>/ls",
                 "sourceModuleBytes": 1208565,
                 "moduleBytes": 1208567,
                 "phases": [
@@ -24881,7 +24881,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/ls",
+                "modulePath": "<temporary>/ls",
                 "sourceModuleBytes": 1208565,
                 "moduleBytes": 1208567,
                 "phases": [
@@ -24988,7 +24988,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/ls",
+                "modulePath": "<temporary>/ls",
                 "sourceModuleBytes": 1208565,
                 "moduleBytes": 1208567,
                 "phases": [
@@ -25095,7 +25095,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/ls",
+                "modulePath": "<temporary>/ls",
                 "sourceModuleBytes": 1208565,
                 "moduleBytes": 1208567,
                 "phases": [
@@ -25208,7 +25208,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/sh",
+                "modulePath": "<temporary>/sh",
                 "sourceModuleBytes": 3082692,
                 "moduleBytes": 3082694,
                 "phases": [
@@ -25315,7 +25315,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/sh",
+                "modulePath": "<temporary>/sh",
                 "sourceModuleBytes": 3082692,
                 "moduleBytes": 3082694,
                 "phases": [
@@ -25422,7 +25422,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/sh",
+                "modulePath": "<temporary>/sh",
                 "sourceModuleBytes": 3082692,
                 "moduleBytes": 3082694,
                 "phases": [
@@ -25529,7 +25529,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/sh",
+                "modulePath": "<temporary>/sh",
                 "sourceModuleBytes": 3082692,
                 "moduleBytes": 3082694,
                 "phases": [
@@ -25636,7 +25636,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/sh",
+                "modulePath": "<temporary>/sh",
                 "sourceModuleBytes": 3082692,
                 "moduleBytes": 3082694,
                 "phases": [
@@ -25749,7 +25749,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/curl",
+                "modulePath": "<temporary>/curl",
                 "sourceModuleBytes": 1561500,
                 "moduleBytes": 1561502,
                 "phases": [
@@ -25856,7 +25856,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/curl",
+                "modulePath": "<temporary>/curl",
                 "sourceModuleBytes": 1561500,
                 "moduleBytes": 1561502,
                 "phases": [
@@ -25963,7 +25963,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/curl",
+                "modulePath": "<temporary>/curl",
                 "sourceModuleBytes": 1561500,
                 "moduleBytes": 1561502,
                 "phases": [
@@ -26070,7 +26070,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/curl",
+                "modulePath": "<temporary>/curl",
                 "sourceModuleBytes": 1561500,
                 "moduleBytes": 1561502,
                 "phases": [
@@ -26177,7 +26177,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/curl",
+                "modulePath": "<temporary>/curl",
                 "sourceModuleBytes": 1561500,
                 "moduleBytes": 1561502,
                 "phases": [
@@ -26290,7 +26290,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/sqlite3",
+                "modulePath": "<temporary>/sqlite3",
                 "sourceModuleBytes": 878882,
                 "moduleBytes": 878884,
                 "phases": [
@@ -26397,7 +26397,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/sqlite3",
+                "modulePath": "<temporary>/sqlite3",
                 "sourceModuleBytes": 878882,
                 "moduleBytes": 878884,
                 "phases": [
@@ -26504,7 +26504,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/sqlite3",
+                "modulePath": "<temporary>/sqlite3",
                 "sourceModuleBytes": 878882,
                 "moduleBytes": 878884,
                 "phases": [
@@ -26611,7 +26611,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/sqlite3",
+                "modulePath": "<temporary>/sqlite3",
                 "sourceModuleBytes": 878882,
                 "moduleBytes": 878884,
                 "phases": [
@@ -26718,7 +26718,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/sqlite3",
+                "modulePath": "<temporary>/sqlite3",
                 "sourceModuleBytes": 878882,
                 "moduleBytes": 878884,
                 "phases": [
@@ -26831,7 +26831,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/vim",
+                "modulePath": "<temporary>/vim",
                 "sourceModuleBytes": 2854951,
                 "moduleBytes": 2854953,
                 "phases": [
@@ -26938,7 +26938,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/vim",
+                "modulePath": "<temporary>/vim",
                 "sourceModuleBytes": 2854951,
                 "moduleBytes": 2854953,
                 "phases": [
@@ -27045,7 +27045,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/vim",
+                "modulePath": "<temporary>/vim",
                 "sourceModuleBytes": 2854951,
                 "moduleBytes": 2854953,
                 "phases": [
@@ -27152,7 +27152,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/vim",
+                "modulePath": "<temporary>/vim",
                 "sourceModuleBytes": 2854951,
                 "moduleBytes": 2854953,
                 "phases": [
@@ -27259,7 +27259,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/vim",
+                "modulePath": "<temporary>/vim",
                 "sourceModuleBytes": 2854951,
                 "moduleBytes": 2854953,
                 "phases": [
@@ -27372,7 +27372,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/git",
+                "modulePath": "<temporary>/git",
                 "sourceModuleBytes": 3397393,
                 "moduleBytes": 3397395,
                 "phases": [
@@ -27479,7 +27479,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/git",
+                "modulePath": "<temporary>/git",
                 "sourceModuleBytes": 3397393,
                 "moduleBytes": 3397395,
                 "phases": [
@@ -27586,7 +27586,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/git",
+                "modulePath": "<temporary>/git",
                 "sourceModuleBytes": 3397393,
                 "moduleBytes": 3397395,
                 "phases": [
@@ -27693,7 +27693,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/git",
+                "modulePath": "<temporary>/git",
                 "sourceModuleBytes": 3397393,
                 "moduleBytes": 3397395,
                 "phases": [
@@ -27800,7 +27800,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/git",
+                "modulePath": "<temporary>/git",
                 "sourceModuleBytes": 3397393,
                 "moduleBytes": 3397395,
                 "phases": [
@@ -27913,7 +27913,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/sha256sum",
+                "modulePath": "<temporary>/sha256sum",
                 "sourceModuleBytes": 1349812,
                 "moduleBytes": 1349814,
                 "phases": [
@@ -28020,7 +28020,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/sha256sum",
+                "modulePath": "<temporary>/sha256sum",
                 "sourceModuleBytes": 1349812,
                 "moduleBytes": 1349814,
                 "phases": [
@@ -28127,7 +28127,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/sha256sum",
+                "modulePath": "<temporary>/sha256sum",
                 "sourceModuleBytes": 1349812,
                 "moduleBytes": 1349814,
                 "phases": [
@@ -28234,7 +28234,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/sha256sum",
+                "modulePath": "<temporary>/sha256sum",
                 "sourceModuleBytes": 1349812,
                 "moduleBytes": 1349814,
                 "phases": [
@@ -28341,7 +28341,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/sha256sum",
+                "modulePath": "<temporary>/sha256sum",
                 "sourceModuleBytes": 1349812,
                 "moduleBytes": 1349814,
                 "phases": [
@@ -28454,7 +28454,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/find",
+                "modulePath": "<temporary>/find",
                 "sourceModuleBytes": 1509578,
                 "moduleBytes": 1509580,
                 "phases": [
@@ -28561,7 +28561,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/find",
+                "modulePath": "<temporary>/find",
                 "sourceModuleBytes": 1509578,
                 "moduleBytes": 1509580,
                 "phases": [
@@ -28668,7 +28668,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/find",
+                "modulePath": "<temporary>/find",
                 "sourceModuleBytes": 1509578,
                 "moduleBytes": 1509580,
                 "phases": [
@@ -28775,7 +28775,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/find",
+                "modulePath": "<temporary>/find",
                 "sourceModuleBytes": 1509578,
                 "moduleBytes": 1509580,
                 "phases": [
@@ -28882,7 +28882,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624895243199074/__secure_exec/commands/0/find",
+                "modulePath": "<temporary>/find",
                 "sourceModuleBytes": 1509578,
                 "moduleBytes": 1509580,
                 "phases": [
@@ -36089,7 +36089,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/true",
+                "modulePath": "<temporary>/true",
                 "sourceModuleBytes": 28203,
                 "moduleBytes": 28205,
                 "phases": [
@@ -36196,7 +36196,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/true",
+                "modulePath": "<temporary>/true",
                 "sourceModuleBytes": 28203,
                 "moduleBytes": 28205,
                 "phases": [
@@ -36303,7 +36303,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/true",
+                "modulePath": "<temporary>/true",
                 "sourceModuleBytes": 28203,
                 "moduleBytes": 28205,
                 "phases": [
@@ -36410,7 +36410,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/true",
+                "modulePath": "<temporary>/true",
                 "sourceModuleBytes": 28203,
                 "moduleBytes": 28205,
                 "phases": [
@@ -36517,7 +36517,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/true",
+                "modulePath": "<temporary>/true",
                 "sourceModuleBytes": 28203,
                 "moduleBytes": 28205,
                 "phases": [
@@ -36630,7 +36630,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/ls",
+                "modulePath": "<temporary>/ls",
                 "sourceModuleBytes": 1208565,
                 "moduleBytes": 1208567,
                 "phases": [
@@ -36737,7 +36737,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/ls",
+                "modulePath": "<temporary>/ls",
                 "sourceModuleBytes": 1208565,
                 "moduleBytes": 1208567,
                 "phases": [
@@ -36844,7 +36844,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/ls",
+                "modulePath": "<temporary>/ls",
                 "sourceModuleBytes": 1208565,
                 "moduleBytes": 1208567,
                 "phases": [
@@ -36951,7 +36951,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/ls",
+                "modulePath": "<temporary>/ls",
                 "sourceModuleBytes": 1208565,
                 "moduleBytes": 1208567,
                 "phases": [
@@ -37058,7 +37058,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/ls",
+                "modulePath": "<temporary>/ls",
                 "sourceModuleBytes": 1208565,
                 "moduleBytes": 1208567,
                 "phases": [
@@ -37171,7 +37171,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/sh",
+                "modulePath": "<temporary>/sh",
                 "sourceModuleBytes": 3082692,
                 "moduleBytes": 3082694,
                 "phases": [
@@ -37278,7 +37278,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/sh",
+                "modulePath": "<temporary>/sh",
                 "sourceModuleBytes": 3082692,
                 "moduleBytes": 3082694,
                 "phases": [
@@ -37385,7 +37385,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/sh",
+                "modulePath": "<temporary>/sh",
                 "sourceModuleBytes": 3082692,
                 "moduleBytes": 3082694,
                 "phases": [
@@ -37492,7 +37492,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/sh",
+                "modulePath": "<temporary>/sh",
                 "sourceModuleBytes": 3082692,
                 "moduleBytes": 3082694,
                 "phases": [
@@ -37599,7 +37599,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/sh",
+                "modulePath": "<temporary>/sh",
                 "sourceModuleBytes": 3082692,
                 "moduleBytes": 3082694,
                 "phases": [
@@ -37712,7 +37712,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/curl",
+                "modulePath": "<temporary>/curl",
                 "sourceModuleBytes": 1561500,
                 "moduleBytes": 1561502,
                 "phases": [
@@ -37819,7 +37819,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/curl",
+                "modulePath": "<temporary>/curl",
                 "sourceModuleBytes": 1561500,
                 "moduleBytes": 1561502,
                 "phases": [
@@ -37926,7 +37926,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/curl",
+                "modulePath": "<temporary>/curl",
                 "sourceModuleBytes": 1561500,
                 "moduleBytes": 1561502,
                 "phases": [
@@ -38033,7 +38033,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/curl",
+                "modulePath": "<temporary>/curl",
                 "sourceModuleBytes": 1561500,
                 "moduleBytes": 1561502,
                 "phases": [
@@ -38140,7 +38140,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/curl",
+                "modulePath": "<temporary>/curl",
                 "sourceModuleBytes": 1561500,
                 "moduleBytes": 1561502,
                 "phases": [
@@ -38253,7 +38253,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/sqlite3",
+                "modulePath": "<temporary>/sqlite3",
                 "sourceModuleBytes": 878882,
                 "moduleBytes": 878884,
                 "phases": [
@@ -38360,7 +38360,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/sqlite3",
+                "modulePath": "<temporary>/sqlite3",
                 "sourceModuleBytes": 878882,
                 "moduleBytes": 878884,
                 "phases": [
@@ -38467,7 +38467,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/sqlite3",
+                "modulePath": "<temporary>/sqlite3",
                 "sourceModuleBytes": 878882,
                 "moduleBytes": 878884,
                 "phases": [
@@ -38574,7 +38574,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/sqlite3",
+                "modulePath": "<temporary>/sqlite3",
                 "sourceModuleBytes": 878882,
                 "moduleBytes": 878884,
                 "phases": [
@@ -38681,7 +38681,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/sqlite3",
+                "modulePath": "<temporary>/sqlite3",
                 "sourceModuleBytes": 878882,
                 "moduleBytes": 878884,
                 "phases": [
@@ -38794,7 +38794,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/vim",
+                "modulePath": "<temporary>/vim",
                 "sourceModuleBytes": 2854951,
                 "moduleBytes": 2854953,
                 "phases": [
@@ -38901,7 +38901,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/vim",
+                "modulePath": "<temporary>/vim",
                 "sourceModuleBytes": 2854951,
                 "moduleBytes": 2854953,
                 "phases": [
@@ -39008,7 +39008,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/vim",
+                "modulePath": "<temporary>/vim",
                 "sourceModuleBytes": 2854951,
                 "moduleBytes": 2854953,
                 "phases": [
@@ -39115,7 +39115,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/vim",
+                "modulePath": "<temporary>/vim",
                 "sourceModuleBytes": 2854951,
                 "moduleBytes": 2854953,
                 "phases": [
@@ -39222,7 +39222,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/vim",
+                "modulePath": "<temporary>/vim",
                 "sourceModuleBytes": 2854951,
                 "moduleBytes": 2854953,
                 "phases": [
@@ -39335,7 +39335,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/git",
+                "modulePath": "<temporary>/git",
                 "sourceModuleBytes": 3397393,
                 "moduleBytes": 3397395,
                 "phases": [
@@ -39442,7 +39442,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/git",
+                "modulePath": "<temporary>/git",
                 "sourceModuleBytes": 3397393,
                 "moduleBytes": 3397395,
                 "phases": [
@@ -39549,7 +39549,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/git",
+                "modulePath": "<temporary>/git",
                 "sourceModuleBytes": 3397393,
                 "moduleBytes": 3397395,
                 "phases": [
@@ -39656,7 +39656,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/git",
+                "modulePath": "<temporary>/git",
                 "sourceModuleBytes": 3397393,
                 "moduleBytes": 3397395,
                 "phases": [
@@ -39763,7 +39763,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/git",
+                "modulePath": "<temporary>/git",
                 "sourceModuleBytes": 3397393,
                 "moduleBytes": 3397395,
                 "phases": [
@@ -39876,7 +39876,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/sha256sum",
+                "modulePath": "<temporary>/sha256sum",
                 "sourceModuleBytes": 1349812,
                 "moduleBytes": 1349814,
                 "phases": [
@@ -39983,7 +39983,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/sha256sum",
+                "modulePath": "<temporary>/sha256sum",
                 "sourceModuleBytes": 1349812,
                 "moduleBytes": 1349814,
                 "phases": [
@@ -40090,7 +40090,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/sha256sum",
+                "modulePath": "<temporary>/sha256sum",
                 "sourceModuleBytes": 1349812,
                 "moduleBytes": 1349814,
                 "phases": [
@@ -40197,7 +40197,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/sha256sum",
+                "modulePath": "<temporary>/sha256sum",
                 "sourceModuleBytes": 1349812,
                 "moduleBytes": 1349814,
                 "phases": [
@@ -40304,7 +40304,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/sha256sum",
+                "modulePath": "<temporary>/sha256sum",
                 "sourceModuleBytes": 1349812,
                 "moduleBytes": 1349814,
                 "phases": [
@@ -40417,7 +40417,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/find",
+                "modulePath": "<temporary>/find",
                 "sourceModuleBytes": 1509578,
                 "moduleBytes": 1509580,
                 "phases": [
@@ -40524,7 +40524,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/find",
+                "modulePath": "<temporary>/find",
                 "sourceModuleBytes": 1509578,
                 "moduleBytes": 1509580,
                 "phases": [
@@ -40631,7 +40631,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/find",
+                "modulePath": "<temporary>/find",
                 "sourceModuleBytes": 1509578,
                 "moduleBytes": 1509580,
                 "phases": [
@@ -40738,7 +40738,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/find",
+                "modulePath": "<temporary>/find",
                 "sourceModuleBytes": 1509578,
                 "moduleBytes": 1509580,
                 "phases": [
@@ -40845,7 +40845,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624928552967860/__secure_exec/commands/0/find",
+                "modulePath": "<temporary>/find",
                 "sourceModuleBytes": 1509578,
                 "moduleBytes": 1509580,
                 "phases": [
@@ -48052,7 +48052,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/true",
+                "modulePath": "<temporary>/true",
                 "sourceModuleBytes": 28203,
                 "moduleBytes": 28205,
                 "phases": [
@@ -48159,7 +48159,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/true",
+                "modulePath": "<temporary>/true",
                 "sourceModuleBytes": 28203,
                 "moduleBytes": 28205,
                 "phases": [
@@ -48266,7 +48266,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/true",
+                "modulePath": "<temporary>/true",
                 "sourceModuleBytes": 28203,
                 "moduleBytes": 28205,
                 "phases": [
@@ -48373,7 +48373,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/true",
+                "modulePath": "<temporary>/true",
                 "sourceModuleBytes": 28203,
                 "moduleBytes": 28205,
                 "phases": [
@@ -48480,7 +48480,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/true",
+                "modulePath": "<temporary>/true",
                 "sourceModuleBytes": 28203,
                 "moduleBytes": 28205,
                 "phases": [
@@ -48593,7 +48593,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/ls",
+                "modulePath": "<temporary>/ls",
                 "sourceModuleBytes": 1208565,
                 "moduleBytes": 1208567,
                 "phases": [
@@ -48700,7 +48700,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/ls",
+                "modulePath": "<temporary>/ls",
                 "sourceModuleBytes": 1208565,
                 "moduleBytes": 1208567,
                 "phases": [
@@ -48807,7 +48807,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/ls",
+                "modulePath": "<temporary>/ls",
                 "sourceModuleBytes": 1208565,
                 "moduleBytes": 1208567,
                 "phases": [
@@ -48914,7 +48914,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/ls",
+                "modulePath": "<temporary>/ls",
                 "sourceModuleBytes": 1208565,
                 "moduleBytes": 1208567,
                 "phases": [
@@ -49021,7 +49021,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/ls",
+                "modulePath": "<temporary>/ls",
                 "sourceModuleBytes": 1208565,
                 "moduleBytes": 1208567,
                 "phases": [
@@ -49134,7 +49134,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/sh",
+                "modulePath": "<temporary>/sh",
                 "sourceModuleBytes": 3082692,
                 "moduleBytes": 3082694,
                 "phases": [
@@ -49241,7 +49241,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/sh",
+                "modulePath": "<temporary>/sh",
                 "sourceModuleBytes": 3082692,
                 "moduleBytes": 3082694,
                 "phases": [
@@ -49348,7 +49348,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/sh",
+                "modulePath": "<temporary>/sh",
                 "sourceModuleBytes": 3082692,
                 "moduleBytes": 3082694,
                 "phases": [
@@ -49455,7 +49455,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/sh",
+                "modulePath": "<temporary>/sh",
                 "sourceModuleBytes": 3082692,
                 "moduleBytes": 3082694,
                 "phases": [
@@ -49562,7 +49562,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/sh",
+                "modulePath": "<temporary>/sh",
                 "sourceModuleBytes": 3082692,
                 "moduleBytes": 3082694,
                 "phases": [
@@ -49675,7 +49675,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/curl",
+                "modulePath": "<temporary>/curl",
                 "sourceModuleBytes": 1561500,
                 "moduleBytes": 1561502,
                 "phases": [
@@ -49782,7 +49782,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/curl",
+                "modulePath": "<temporary>/curl",
                 "sourceModuleBytes": 1561500,
                 "moduleBytes": 1561502,
                 "phases": [
@@ -49889,7 +49889,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/curl",
+                "modulePath": "<temporary>/curl",
                 "sourceModuleBytes": 1561500,
                 "moduleBytes": 1561502,
                 "phases": [
@@ -49996,7 +49996,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/curl",
+                "modulePath": "<temporary>/curl",
                 "sourceModuleBytes": 1561500,
                 "moduleBytes": 1561502,
                 "phases": [
@@ -50103,7 +50103,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/curl",
+                "modulePath": "<temporary>/curl",
                 "sourceModuleBytes": 1561500,
                 "moduleBytes": 1561502,
                 "phases": [
@@ -50216,7 +50216,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/sqlite3",
+                "modulePath": "<temporary>/sqlite3",
                 "sourceModuleBytes": 878882,
                 "moduleBytes": 878884,
                 "phases": [
@@ -50323,7 +50323,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/sqlite3",
+                "modulePath": "<temporary>/sqlite3",
                 "sourceModuleBytes": 878882,
                 "moduleBytes": 878884,
                 "phases": [
@@ -50430,7 +50430,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/sqlite3",
+                "modulePath": "<temporary>/sqlite3",
                 "sourceModuleBytes": 878882,
                 "moduleBytes": 878884,
                 "phases": [
@@ -50537,7 +50537,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/sqlite3",
+                "modulePath": "<temporary>/sqlite3",
                 "sourceModuleBytes": 878882,
                 "moduleBytes": 878884,
                 "phases": [
@@ -50644,7 +50644,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/sqlite3",
+                "modulePath": "<temporary>/sqlite3",
                 "sourceModuleBytes": 878882,
                 "moduleBytes": 878884,
                 "phases": [
@@ -50757,7 +50757,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/vim",
+                "modulePath": "<temporary>/vim",
                 "sourceModuleBytes": 2854951,
                 "moduleBytes": 2854953,
                 "phases": [
@@ -50864,7 +50864,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/vim",
+                "modulePath": "<temporary>/vim",
                 "sourceModuleBytes": 2854951,
                 "moduleBytes": 2854953,
                 "phases": [
@@ -50971,7 +50971,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/vim",
+                "modulePath": "<temporary>/vim",
                 "sourceModuleBytes": 2854951,
                 "moduleBytes": 2854953,
                 "phases": [
@@ -51078,7 +51078,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/vim",
+                "modulePath": "<temporary>/vim",
                 "sourceModuleBytes": 2854951,
                 "moduleBytes": 2854953,
                 "phases": [
@@ -51185,7 +51185,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/vim",
+                "modulePath": "<temporary>/vim",
                 "sourceModuleBytes": 2854951,
                 "moduleBytes": 2854953,
                 "phases": [
@@ -51298,7 +51298,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/git",
+                "modulePath": "<temporary>/git",
                 "sourceModuleBytes": 3397393,
                 "moduleBytes": 3397395,
                 "phases": [
@@ -51405,7 +51405,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/git",
+                "modulePath": "<temporary>/git",
                 "sourceModuleBytes": 3397393,
                 "moduleBytes": 3397395,
                 "phases": [
@@ -51512,7 +51512,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/git",
+                "modulePath": "<temporary>/git",
                 "sourceModuleBytes": 3397393,
                 "moduleBytes": 3397395,
                 "phases": [
@@ -51619,7 +51619,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/git",
+                "modulePath": "<temporary>/git",
                 "sourceModuleBytes": 3397393,
                 "moduleBytes": 3397395,
                 "phases": [
@@ -51726,7 +51726,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/git",
+                "modulePath": "<temporary>/git",
                 "sourceModuleBytes": 3397393,
                 "moduleBytes": 3397395,
                 "phases": [
@@ -51839,7 +51839,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/sha256sum",
+                "modulePath": "<temporary>/sha256sum",
                 "sourceModuleBytes": 1349812,
                 "moduleBytes": 1349814,
                 "phases": [
@@ -51946,7 +51946,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/sha256sum",
+                "modulePath": "<temporary>/sha256sum",
                 "sourceModuleBytes": 1349812,
                 "moduleBytes": 1349814,
                 "phases": [
@@ -52053,7 +52053,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/sha256sum",
+                "modulePath": "<temporary>/sha256sum",
                 "sourceModuleBytes": 1349812,
                 "moduleBytes": 1349814,
                 "phases": [
@@ -52160,7 +52160,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/sha256sum",
+                "modulePath": "<temporary>/sha256sum",
                 "sourceModuleBytes": 1349812,
                 "moduleBytes": 1349814,
                 "phases": [
@@ -52267,7 +52267,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/sha256sum",
+                "modulePath": "<temporary>/sha256sum",
                 "sourceModuleBytes": 1349812,
                 "moduleBytes": 1349814,
                 "phases": [
@@ -52380,7 +52380,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/find",
+                "modulePath": "<temporary>/find",
                 "sourceModuleBytes": 1509578,
                 "moduleBytes": 1509580,
                 "phases": [
@@ -52487,7 +52487,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/find",
+                "modulePath": "<temporary>/find",
                 "sourceModuleBytes": 1509578,
                 "moduleBytes": 1509580,
                 "phases": [
@@ -52594,7 +52594,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/find",
+                "modulePath": "<temporary>/find",
                 "sourceModuleBytes": 1509578,
                 "moduleBytes": 1509580,
                 "phases": [
@@ -52701,7 +52701,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/find",
+                "modulePath": "<temporary>/find",
                 "sourceModuleBytes": 1509578,
                 "moduleBytes": 1509580,
                 "phases": [
@@ -52808,7 +52808,7 @@
               "stderrBytes": 0,
               "phase": {
                 "reason": "complete",
-                "modulePath": "/tmp/agentos-vm-runtime-vm-1-1784624964951556389/__secure_exec/commands/0/find",
+                "modulePath": "<temporary>/find",
                 "sourceModuleBytes": 1509578,
                 "moduleBytes": 1509580,
                 "phases": [

@@ -1,0 +1,98 @@
+---
+title: "Secure Exec vs QuickJS"
+description: "How Secure Exec and quickjs-emscripten differ in isolation, performance, resource limits, and what guest code can do."
+---
+
+QuickJS is a small JavaScript engine written in C. Node.js developers almost
+always use it through
+[quickjs-emscripten](https://github.com/justjake/quickjs-emscripten), which is
+QuickJS compiled to WebAssembly, so that is what this page compares. It gives you
+an interpreter and nothing else: you build the sandbox around it. Secure Exec is
+a complete virtualized runtime on V8, with a kernel, a virtual filesystem, and a
+permission policy.
+
+## At a glance
+
+| | Secure Exec | quickjs-emscripten |
+|---|---|---|
+| **Engine** | V8 with JIT | Interpreter compiled to WebAssembly |
+| **Where guest code runs** | A separate sidecar process | Your thread, unless you add workers |
+| **Guest capabilities** | Node.js builtins, virtual filesystem, processes, npm | ECMAScript only. No `console`, timers, or `fetch` |
+| **Host and guest data** | JSON in and out, [host functions](/secure-exec/docs/host-functions) | Handles you create and dispose by hand |
+| **Resource limits** | Timeouts, heap, processes, sockets, filesystem bytes | A memory limit and an interrupt handler, both with known gaps |
+| **`Intl`, `Temporal`, `WebAssembly`** | Available | Not available |
+| **TypeScript** | Runs, and type-checks with the real compiler | Not handled |
+| **Runs in** | Node.js on Linux and macOS | Browsers, Node.js, Deno, Bun, edge runtimes |
+
+## Where quickjs-emscripten falls short
+
+- **Nothing is provided.** The README says: "By default, no host functionality is
+  exposed." There is no `console`, `setTimeout`, `fetch`, `require`, `process`,
+  `Buffer`, `URL`, or `crypto` until you write and inject them. There is no npm
+  resolution and no filesystem.
+- **You manage memory by hand.** Every value is a handle, and "you must manually
+  manage their memory by calling a `.dispose()` method". A leaked handle makes
+  disposing the runtime fail an assertion. The README's own testing section
+  begins: "This library is complicated to use".
+- **It blocks your event loop.** Guest code runs synchronously on your thread, and
+  guest promises only make progress when you call `executePendingJobs()`. A busy
+  guest stops your server from doing anything else unless you move it to a worker
+  yourself.
+- **Async host calls cost speed and size.** The asyncify build that makes them
+  possible has "substantial size (2x the size of sync) and speed penalties (40%
+  the speed of sync)", and a module "can only suspend to wait for a single
+  asynchronous call at a time".
+- **The memory limit does not bound memory.** Open issues
+  [#271](https://github.com/justjake/quickjs-emscripten/issues/271) and #255
+  report allocations that ignore `setMemoryLimit`. We reproduced it: under an
+  8 MB limit, guest code allocated 500 MB of strings and the host's memory stayed
+  there after every runtime was disposed.
+- **The interrupt handler has gaps.** Open issue #219 reports that it is not
+  consulted inside long built-in operations. With a 50 ms deadline,
+  `new Array(5e7) + ""` ran for 882 ms.
+- **Parts of the platform are missing.** There is no `Intl`, `Temporal`,
+  `Atomics`, or `WebAssembly`.
+- **It has not been audited.** The README says it "has not been audited. Please
+  use with care in production settings", that the author works on it "in my free
+  time", and to "expect occasional breaking API changes". Releases 0.31 and 0.32
+  were 17 months apart.
+
+## Performance
+
+QuickJS is an interpreter with no JIT, and quickjs-emscripten runs it inside
+WebAssembly. In our [benchmarks](/secure-exec/docs/benchmarks) it took 3.1 to
+10.1 times longer than Secure Exec to do the same computation, and asyncify
+builds are slower again. It starts much faster: well under a millisecond per
+context, against 14 to 40 ms for a Secure Exec call. For a three-line snippet
+that is what you will notice. For code that parses, transforms, or validates
+data, the interpreter is what you will notice, and all of that time blocks your
+event loop.
+
+## What quickjs-emscripten does well
+
+It has no native binary, so it runs in browsers, Deno, Bun, and edge runtimes,
+where Secure Exec cannot. It is small and starts almost instantly. The
+WebAssembly layer confines memory-safety bugs in the engine, which keep being
+found, so an engine bug cannot inject code into your host. Its core language
+conformance is excellent.
+
+## Only choose quickjs-emscripten when
+
+All of these hold:
+
+1. The code must run where no native process can, such as a browser or an edge
+   worker.
+2. Guest code is short, pure ECMAScript that needs no Node.js APIs, npm,
+   filesystem, network, `Intl`, or TypeScript, and you accept writing and
+   disposing every bridge by hand.
+3. **You do not care about performance.** Code that runs several times slower,
+   all of it blocking your event loop, is acceptable.
+4. You will supply your own hard limits, such as a worker thread with a kill
+   timer, because the built-in memory limit and interrupt handler have open,
+   reproducible gaps.
+
+## Choose Secure Exec when
+
+You run Node.js on a server and need npm and Node.js compatibility, JIT speed,
+limits that hold, and an isolation boundary you do not have to build and audit
+yourself.

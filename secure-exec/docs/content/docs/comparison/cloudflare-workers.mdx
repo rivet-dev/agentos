@@ -1,0 +1,93 @@
+---
+title: "Secure Exec vs Cloudflare Workers"
+description: "How Secure Exec and Cloudflare Workers differ for running generated or user-written code: form factor, limits, Node.js compatibility, and cost."
+---
+
+Both run untrusted JavaScript on V8, but they solve different problems. Workers
+is a managed edge platform: you send code to Cloudflare and Cloudflare runs it.
+That includes [Dynamic Workers](https://developers.cloudflare.com/dynamic-workers/),
+its API for loading generated code at runtime. Secure Exec is a library you embed
+in your own backend, so the code and its data never leave your infrastructure.
+
+Cloudflare's Sandbox SDK is a separate, container-based product. See
+[Secure Exec vs Container Sandboxes](/secure-exec/docs/comparison/container-sandboxes).
+
+## At a glance
+
+| | Secure Exec | Cloudflare Workers |
+|---|---|---|
+| **Form factor** | A library. Runs where your app runs | A managed platform. Code and data go to Cloudflare |
+| **Cost to start** | None | Dynamic Workers need the Workers Paid plan |
+| **Memory per guest** | Configurable | 128 MB |
+| **Node.js APIs** | `node:fs`, `node:net`, `node:child_process` against a virtual kernel | A subset. Many modules are non-functional stubs |
+| **Filesystem** | Virtual filesystem, persistent in a [VM](/secure-exec/docs/vms) | An in-memory `/tmp`, unique to each request |
+| **Subprocesses and servers** | Yes | No |
+| **npm at runtime** | Install or mount packages | Bundle before you load the code |
+| **TypeScript** | Runs, and type-checks with the real compiler | Compile it yourself first |
+| **Outbound network** | Denied by default | Allowed by default |
+| **State between calls** | VMs and [contexts](/secure-exec/docs/contexts) | None without Durable Objects |
+
+## Where Workers falls short
+
+- **It is someone else's computer.** Generated code and the data it touches leave
+  your infrastructure, and every call needs a Cloudflare account. You cannot run
+  it safely on your own machines either: the open source runtime's README warns
+  that "`workerd` is not a hardened sandbox… you must run it inside an
+  appropriate secure sandbox, such as a virtual machine."
+- **Dynamic Workers cost money from the first call.** They "are currently only
+  available on the Workers Paid plan", which has a "minimum charge of $5 USD per
+  month", and are billed at "$0.002 per Dynamic Worker per day". Without an ID,
+  each invocation counts as a new Dynamic Worker.
+- **The network is open unless you close it.** "If `globalOutbound` is not
+  specified, the default is to inherit the parent's network access, which usually
+  means the dynamic Worker will have full access to the public Internet." An
+  allowlist means writing your own gateway.
+- **Node.js support is a subset.** The docs list `node:child_process`,
+  `worker_threads`, `vm`, `cluster`, `dgram`, `http2`, `readline`, `tty`, and
+  others as "non-functional stub modules". `node:net` cannot listen: "`net.Server`
+  class is not supported".
+- **The filesystem does not persist.** The "contents of `/tmp` are not persistent
+  and are unique to each request", file permissions "are not supported", and
+  files count against the 128 MB memory limit.
+- **There is no build step and no type-checking.** "Languages like TypeScript
+  must be compiled to JavaScript before being passed to `load()`", and
+  dependencies "must be transpiled and bundled" first. `eval()` and
+  `new Function` are not allowed.
+- **Limits are fixed by the platform.** Memory is 128 MB per isolate, including
+  WebAssembly. Per-call limits cover CPU time and subrequests only. A Worker
+  request can have in-flight requests to at most four distinct Dynamic Workers.
+- **The clock does not move during computation.** "`performance.now()` and
+  `Date.now()`, only advance or increment after I/O occurs", so guest code cannot
+  time its own work.
+- **Logs disappear by default.** Dynamic Worker logs "are discarded after the
+  Dynamic Worker finishes" unless you build log capture with a Tail Worker.
+- **State does not survive.** "It is never guaranteed that two requests will go
+  to the same isolate."
+
+## What Workers does well
+
+Isolates start in a few milliseconds and run in hundreds of locations, with
+nothing for you to operate. Cloudflare's multi-tenant isolation is proven at
+enormous scale and layered with process-level sandboxing and fast V8 patching.
+Its capability bindings are well designed: they are plain JavaScript objects that
+cannot be forged.
+
+## Only choose Cloudflare Workers when
+
+All of these hold:
+
+1. You already build on Cloudflare, and sending generated code and its data to a
+   third-party platform is acceptable.
+2. The code is short, stateless JavaScript that only calls capabilities you hand
+   it. It needs no subprocesses, servers, persistent files, or runtime installs,
+   and fits in 128 MB.
+3. You will do the bundling, type-checking, egress allowlisting, and log capture
+   yourself.
+4. Edge latency and zero operations matter more to you than Node.js fidelity or
+   keeping execution inside your own infrastructure.
+
+## Choose Secure Exec when
+
+You need to run someone else's code from inside your own backend, with real
+Node.js semantics, per-call permissions that deny the network by default, and no
+vendor in the path.

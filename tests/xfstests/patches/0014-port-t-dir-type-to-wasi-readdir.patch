@@ -1,0 +1,80 @@
+--- a/src/t_dir_type.c
++++ b/src/t_dir_type.c
+@@ -20,7 +20,12 @@
+ #include <stdlib.h>
+ #include <dirent.h>
+ #include <sys/stat.h>
++#ifndef __wasi__
+ #include <sys/syscall.h>
++#endif
++#ifndef DT_WHT
++#define DT_WHT 14
++#endif
+ 
+ struct linux_dirent64 {
+ 	uint64_t	d_ino;
+@@ -30,6 +35,24 @@
+ 	char		d_name[0];
+ };
+ 
++#ifdef __wasi__
++#define DT_MAX 21
++static unsigned char dir_type_char(unsigned char type)
++{
++	switch (type) {
++	case DT_DIR: return 'd';
++	case DT_REG: return 'f';
++	case DT_LNK: return 'l';
++	case DT_CHR: return 'c';
++	case DT_BLK: return 'b';
++	case DT_FIFO: return 'p';
++	case DT_SOCK: return 's';
++	case DT_WHT: return 'w';
++	default: return 'u';
++	}
++}
++#define DT_CHAR(t) dir_type_char(t)
++#else
+ #define DT_MASK 15
+ #define DT_MAX 15
+ unsigned char type_to_char[DT_MAX] = {
+@@ -45,6 +68,7 @@
+ };
+ 
+ #define DT_CHAR(t) type_to_char[(t)&DT_MASK]
++#endif
+ 
+ #define BUF_SIZE 4096
+ 
+@@ -76,6 +100,24 @@
+ 			ino = strtoul(argv[2], NULL, 10);
+ 	}
+ 
++#ifdef __wasi__
++	DIR *dir = fdopendir(fd);
++	struct dirent *entry;
++
++	if (!dir) {
++		perror("fdopendir");
++		exit(EXIT_FAILURE);
++	}
++	while ((entry = readdir(dir)) != NULL) {
++		if ((type < 0 || type == (int)entry->d_type) &&
++		    (!ino || ino == entry->d_ino)) {
++			ret = 0;
++			printf("%s %c\n", entry->d_name, DT_CHAR(entry->d_type));
++		}
++	}
++	closedir(dir);
++	return ret;
++#else
+ 	for ( ; ; ) {
+ 		nread = syscall(SYS_getdents64, fd, buf, BUF_SIZE);
+ 		if (nread == -1) {
+@@ -97,5 +139,6 @@
+ 		}
+ 	}
+ 
++#endif
+ 	return ret;
+ }

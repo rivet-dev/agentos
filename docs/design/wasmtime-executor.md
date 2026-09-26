@@ -183,7 +183,7 @@ compiled code, linear memory, and kernel buffers.
 ## 5. Target architecture
 
 This design extends the guest-adapter contract in
-[`unified-sidecar-runtime.md`](./unified-sidecar-runtime.md): one sidecar
+[`runtime-neutral-executors.md`](./runtime-neutral-executors.md): one sidecar
 capability registry, one process-wide Tokio runtime, and no executor-owned
 descriptor, poller, resource policy, or permission decision.
 
@@ -1013,13 +1013,17 @@ canonical workspace, 2026-07-21 Pacific):
   architecture guards passed. Strict all-target native Clippy, Rust formatting, the native
   workspace check, fixed-version/package/protocol inventory checks, and the
   complete JavaScript build and type-check graphs passed.
-- The post-threading canonical single-thread performance matrix completed with
+- The historical phase-4 post-threading single-thread performance matrix completed with
   zero correctness failures. Geometric-mean p50 (`0.2741` Wasmtime/V8) and
   throughput passed; individual cold p95, retained RSS (`161,894,400` V8 versus
   `256,995,328` Wasmtime), and retained PSS (`162,531,328` versus `257,593,344`)
   failed. V8 therefore remains the omission/default and rollback backend. Raw
   evidence is committed in
   `packages/benchmarks/results/wasm-backend-comparison-phase4.json`.
+  The September 26 integrated-tree rerun with Wasmtime 48.0.3 supersedes this
+  rollout evidence: correctness, geometric-mean p50, and absolute process-tree
+  retained-memory gates pass; cold p95 and throughput/admission gates fail.
+  See [the current comparison](../wasmvm/executors.md#canonical-benchmark-and-rollback-criteria).
 - Browser entrypoints remain dormant and excluded. AOT/serialized artifacts,
   Wizer, components, pooling, and live process snapshots/fork remain disabled.
   The repository-wide package-layout and fixed-version checks pass.

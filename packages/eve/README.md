@@ -1,7 +1,8 @@
 # `@rivet-dev/agentos-eve`
 
-Use agentOS as the sandbox for Vercel Eve. Choose a Rivet-backed agentOS actor
-or a standalone agentOS Core VM without coupling either hosting model to Eve.
+Use agentOS as the VM backend for Vercel Eve. Choose the deployed Rust agentOS
+actor or a standalone agentOS Core VM without coupling either hosting model to
+Eve.
 
 Requires Node.js 24 or newer.
 
@@ -11,38 +12,27 @@ Requires Node.js 24 or newer.
 pnpm add eve @rivet-dev/agentos @rivet-dev/agentos-eve
 ```
 
-Register the VM as a normal agentOS actor. Its configuration owns software,
-permissions, limits, sandbox mounting, and persistence:
-
-```ts
-// actors.ts
-import { agentOS, setup } from "@rivet-dev/agentos";
-
-const vm = agentOS({
-	// Configure software, permissions, limits, and mounts here.
-});
-
-export const registry = setup({
-	use: { vm },
-});
-```
-
-Select the actor by its registry key:
+Connect to the fixed `agentOS` actor and optionally provide its creation config:
 
 ```ts
 // agent/sandbox.ts
 import { agentOSBackend } from "@rivet-dev/agentos-eve";
 import { defineSandbox } from "eve/sandbox";
-import { registry } from "../actors";
 
 export default defineSandbox({
-	backend: agentOSBackend({ actor: "vm", registry }),
+	backend: agentOSBackend({
+		createInput: {
+			config: {
+				environment: { NODE_ENV: "production" },
+			},
+		},
+	}),
 });
 ```
 
 Relative paths and command working directories resolve from `/workspace`.
-Configure its persistence on the actor—for example with actor durable storage
-or a mounted filesystem. The adapter never copies or interprets workspace data.
+Configure persistence in the actor's filesystem config. Hosted configuration
+cannot mount host paths. The adapter never copies or interprets workspace data.
 
 Each Eve session maps to a stable actor key. `shutdown()` stops processes opened
 through Eve and disconnects the client, but does not destroy the actor, so the
@@ -89,5 +79,5 @@ export default defineSandbox({
 Standalone Core has no Rivet orchestration or automatic durable storage.
 `shutdown()` stops Eve processes and disposes the caller-created VM.
 
-Network permissions belong to `agentOS(...)` or the Core `create()` factory;
-Eve's runtime `setNetworkPolicy()` operation is unsupported.
+Network permissions belong to the actor creation config or the Core `create()`
+factory; Eve's runtime `setNetworkPolicy()` operation is unsupported.

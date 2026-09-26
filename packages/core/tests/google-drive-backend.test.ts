@@ -1,4 +1,4 @@
-import type { NativeMountPluginDescriptor } from "@rivet-dev/agentos-core/descriptors";
+import type { NativeMountPluginDescriptor } from "../src/descriptors.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { AgentOs } from "../src/index.js";
 
@@ -33,7 +33,7 @@ const ALLOW_ALL_VM_PERMISSIONS = {
 	childProcess: "allow",
 	process: "allow",
 	env: "allow",
-	binding: "allow",
+	hostFunction: "allow",
 } as const;
 
 function itIf(condition: boolean, ...args: Parameters<typeof it>): void {

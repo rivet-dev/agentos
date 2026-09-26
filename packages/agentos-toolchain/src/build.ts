@@ -37,7 +37,7 @@ export interface BuildResult {
  * holds ONLY what the package ships at runtime:
  *
  *   dist/package/
- *     agentos-package.json   pack-time manifest input (name, version, agent,
+ *     agentos-package.json   pack-time manifest input (name, version,
  *                            provides) — consumed by the `.aospkg` packer and
  *                            STRIPPED from the packed mount tar; the vbare
  *                            chunk1 manifest is the single runtime manifest
@@ -52,10 +52,10 @@ export interface BuildResult {
  * with NO (or an empty) `bin/` ships a valid, empty placeholder — it picks up
  * its commands automatically once `stage` can populate `bin/`.
  *
- * This handles the COMMON case (compiled command packages). JS agent packages
- * whose `dist/package` is a self-contained node runtime closure use `pack`
- * instead; meta packages that default-export an ARRAY of descriptors have no
- * `dir`/`bin` and never run this.
+ * This handles the common case (compiled command packages). JavaScript
+ * packages whose `dist/package` is a self-contained node runtime closure use
+ * `pack` instead; meta packages that default-export an array of descriptors
+ * have no `dir`/`bin` and never run this.
  *
  * Idempotent: `dist/package/` is removed and rebuilt on every run.
  */
@@ -92,7 +92,6 @@ export function build(packageDirInput?: string): BuildResult {
 				? srcManifest.name
 				: unscopedName(name),
 		version,
-		...(srcManifest?.agent !== undefined ? { agent: srcManifest.agent } : {}),
 		...(srcManifest?.provides !== undefined
 			? { provides: srcManifest.provides }
 			: {}),

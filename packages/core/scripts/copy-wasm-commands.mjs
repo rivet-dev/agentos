@@ -29,11 +29,6 @@ const SOURCE_DIR = path.join(
 const DEST_DIR = path.join(PACKAGE_ROOT, "commands");
 const SOFTWARE_ROOT = path.join(REPO_ROOT, "software");
 
-// Codex is built from its separately pinned upstream checkout and remains an
-// explicit opt-in artifact. DuckDB and Vim are heavy explicit builds too, but
-// CI and publish build them and `--require` must reject their absence.
-const OPTIONAL_COMMAND_PACKAGES = new Set(["codex-cli"]);
-
 function commandNames(manifest, manifestPath) {
 	const names = [
 		...(manifest.commands ?? []),
@@ -54,7 +49,7 @@ function commandNames(manifest, manifestPath) {
 export function requiredSoftwareCommandNames(softwareRoot = SOFTWARE_ROOT) {
 	const required = new Set();
 	for (const entry of readdirSync(softwareRoot, { withFileTypes: true })) {
-		if (!entry.isDirectory() || OPTIONAL_COMMAND_PACKAGES.has(entry.name)) {
+		if (!entry.isDirectory()) {
 			continue;
 		}
 		const manifestPath = path.join(

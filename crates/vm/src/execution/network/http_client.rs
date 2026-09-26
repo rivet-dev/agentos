@@ -154,7 +154,7 @@ pub(in crate::execution) fn issue_bounded_http_request(
     let response = match response {
         Ok(response) | Err(ureq::Error::Status(_, response)) => response,
         Err(ureq::Error::Transport(error)) => {
-            return Err(VmError::host("ERR_HTTP_REQUEST_FAILED", error.to_string()))
+            return Err(VmError::host("ERR_HTTP_REQUEST_FAILED", error.to_string()));
         }
     };
 

@@ -74,7 +74,7 @@ impl crate::generated_protocol::v1::PermissionsPolicy {
             child_process: Some(PatternPermissionScope::PermissionMode(PermissionMode::Deny)),
             process: Some(PatternPermissionScope::PermissionMode(PermissionMode::Deny)),
             env: Some(PatternPermissionScope::PermissionMode(PermissionMode::Deny)),
-            binding: Some(PatternPermissionScope::PermissionMode(PermissionMode::Deny)),
+            host_function: Some(PatternPermissionScope::PermissionMode(PermissionMode::Deny)),
         }
     }
 
@@ -96,7 +96,7 @@ impl crate::generated_protocol::v1::PermissionsPolicy {
             env: Some(PatternPermissionScope::PermissionMode(
                 PermissionMode::Allow,
             )),
-            binding: Some(PatternPermissionScope::PermissionMode(
+            host_function: Some(PatternPermissionScope::PermissionMode(
                 PermissionMode::Allow,
             )),
         }
@@ -129,7 +129,7 @@ impl crate::generated_protocol::v1::CreateVmRequest {
         let metadata: std::collections::BTreeMap<_, _> = metadata.into_iter().collect();
         let mut config = agentos_vm_config::CreateVmConfig {
             cwd: metadata.get("cwd").cloned(),
-            env: legacy_env_config(&metadata),
+            env: Some(legacy_env_config(&metadata)),
             root_filesystem: legacy_root_filesystem_config(root_filesystem),
             permissions: permissions.map(permissions_policy_config_from_wire),
             limits: legacy_limits_config(&metadata),
@@ -138,7 +138,8 @@ impl crate::generated_protocol::v1::CreateVmRequest {
             listen: legacy_listen_config(&metadata),
             ..Default::default()
         };
-        config.loopback_exempt_ports = legacy_loopback_exempt_ports(&config.env);
+        config.loopback_exempt_ports =
+            legacy_loopback_exempt_ports(config.env.as_ref().expect("legacy env is present"));
         Self::json_config(runtime, config)
     }
 }
@@ -248,8 +249,8 @@ pub fn permissions_policy_config_from_wire(
             .process
             .map(legacy_pattern_permission_scope_config),
         env: permissions.env.map(legacy_pattern_permission_scope_config),
-        binding: permissions
-            .binding
+        host_function: permissions
+            .host_function
             .map(legacy_pattern_permission_scope_config),
     }
 }
@@ -447,29 +448,29 @@ fn legacy_limits_config(
     let http = agentos_vm_config::HttpLimitsConfig {
         max_fetch_response_bytes: legacy_u64(metadata, "limits.http.max_fetch_response_bytes"),
     };
-    let bindings = agentos_vm_config::BindingLimitsConfig {
-        default_binding_timeout_ms: legacy_u64(
-            metadata,
-            "limits.bindings.default_binding_timeout_ms",
-        ),
-        max_binding_timeout_ms: legacy_u64(metadata, "limits.bindings.max_binding_timeout_ms"),
+    let host_functions = agentos_vm_config::HostFunctionLimitsConfig {
+        default_timeout_ms: legacy_u64(metadata, "limits.host_functions.default_timeout_ms"),
+        max_timeout_ms: legacy_u64(metadata, "limits.host_functions.max_timeout_ms"),
         max_registered_collections: legacy_u64(
             metadata,
-            "limits.bindings.max_registered_collections",
+            "limits.host_functions.max_registered_collections",
         ),
-        max_registered_bindings_per_vm: legacy_u64(
+        max_registered_functions_per_vm: legacy_u64(
             metadata,
-            "limits.bindings.max_registered_bindings_per_vm",
+            "limits.host_functions.max_registered_functions_per_vm",
         ),
-        max_bindings_per_collection: legacy_u64(
+        max_functions_per_collection: legacy_u64(
             metadata,
-            "limits.bindings.max_bindings_per_collection",
+            "limits.host_functions.max_functions_per_collection",
         ),
-        max_binding_schema_bytes: legacy_u64(metadata, "limits.bindings.max_binding_schema_bytes"),
-        max_examples_per_binding: legacy_u64(metadata, "limits.bindings.max_examples_per_binding"),
-        max_binding_example_input_bytes: legacy_u64(
+        max_schema_bytes: legacy_u64(metadata, "limits.host_functions.max_schema_bytes"),
+        max_examples_per_function: legacy_u64(
             metadata,
-            "limits.bindings.max_binding_example_input_bytes",
+            "limits.host_functions.max_examples_per_function",
+        ),
+        max_example_input_bytes: legacy_u64(
+            metadata,
+            "limits.host_functions.max_example_input_bytes",
         ),
     };
     let plugins = agentos_vm_config::PluginLimitsConfig {
@@ -480,41 +481,6 @@ fn legacy_limits_config(
         max_persisted_manifest_file_bytes: legacy_u64(
             metadata,
             "limits.plugins.max_persisted_manifest_file_bytes",
-        ),
-    };
-    let acp = agentos_vm_config::AcpLimitsConfig {
-        max_read_line_bytes: legacy_u64(metadata, "limits.acp.max_read_line_bytes"),
-        stdout_buffer_byte_limit: legacy_u64(metadata, "limits.acp.stdout_buffer_byte_limit"),
-        max_completed_message_bytes: legacy_u64(metadata, "limits.acp.max_completed_message_bytes"),
-        max_turn_output_bytes: legacy_u64(metadata, "limits.acp.max_turn_output_bytes"),
-        max_prompt_bytes: legacy_u64(metadata, "limits.acp.max_prompt_bytes"),
-        max_prompt_blocks: legacy_u64(metadata, "limits.acp.max_prompt_blocks"),
-        max_fallback_continuation_bytes: legacy_u64(
-            metadata,
-            "limits.acp.max_fallback_continuation_bytes",
-        ),
-        max_session_history_bytes: legacy_u64(metadata, "limits.acp.max_session_history_bytes"),
-        max_session_history_events: legacy_u64(metadata, "limits.acp.max_session_history_events"),
-        max_history_page_entries: legacy_u64(metadata, "limits.acp.max_history_page_entries"),
-        max_session_list_entries: legacy_u64(metadata, "limits.acp.max_session_list_entries"),
-        max_sessions_per_vm: legacy_u64(metadata, "limits.acp.max_sessions_per_vm"),
-        max_prompts_per_session: legacy_u64(metadata, "limits.acp.max_prompts_per_session"),
-        max_prompts_per_vm: legacy_u64(metadata, "limits.acp.max_prompts_per_vm"),
-        max_pending_permissions_per_session: legacy_u64(
-            metadata,
-            "limits.acp.max_pending_permissions_per_session",
-        ),
-        max_pending_permissions_per_vm: legacy_u64(
-            metadata,
-            "limits.acp.max_pending_permissions_per_vm",
-        ),
-        max_permission_outcomes_per_session: legacy_u64(
-            metadata,
-            "limits.acp.max_permission_outcomes_per_session",
-        ),
-        max_permission_outcomes_per_vm: legacy_u64(
-            metadata,
-            "limits.acp.max_permission_outcomes_per_vm",
         ),
     };
     let sqlite = agentos_vm_config::SqliteLimitsConfig {
@@ -604,9 +570,8 @@ fn legacy_limits_config(
         udp: None,
         tls: None,
         http2: None,
-        bindings: legacy_has_binding_limits(&bindings).then_some(bindings),
+        host_functions: legacy_has_host_function_limits(&host_functions).then_some(host_functions),
         plugins: legacy_has_plugin_limits(&plugins).then_some(plugins),
-        acp: legacy_has_acp_limits(&acp).then_some(acp),
         sqlite: sqlite.max_result_bytes.is_some().then_some(sqlite),
         js_runtime: legacy_has_js_runtime_limits(&js_runtime).then_some(js_runtime),
         python: legacy_has_python_limits(&python).then_some(python),
@@ -616,13 +581,13 @@ fn legacy_limits_config(
             || execution.live_execution_warning_threshold.is_some())
         .then_some(execution),
         process: legacy_has_process_limits(&process).then_some(process),
+        agentos_packages: None,
     };
 
     if config.resources.is_none()
         && config.http.is_none()
-        && config.bindings.is_none()
+        && config.host_functions.is_none()
         && config.plugins.is_none()
-        && config.acp.is_none()
         && config.sqlite.is_none()
         && config.js_runtime.is_none()
         && config.python.is_none()
@@ -666,41 +631,20 @@ fn legacy_has_resource_limits(config: &agentos_vm_config::ResourceLimitsConfig) 
         || config.max_wasm_stack_bytes.is_some()
 }
 
-fn legacy_has_binding_limits(config: &agentos_vm_config::BindingLimitsConfig) -> bool {
-    config.default_binding_timeout_ms.is_some()
-        || config.max_binding_timeout_ms.is_some()
+fn legacy_has_host_function_limits(config: &agentos_vm_config::HostFunctionLimitsConfig) -> bool {
+    config.default_timeout_ms.is_some()
+        || config.max_timeout_ms.is_some()
         || config.max_registered_collections.is_some()
-        || config.max_registered_bindings_per_vm.is_some()
-        || config.max_bindings_per_collection.is_some()
-        || config.max_binding_schema_bytes.is_some()
-        || config.max_examples_per_binding.is_some()
-        || config.max_binding_example_input_bytes.is_some()
+        || config.max_registered_functions_per_vm.is_some()
+        || config.max_functions_per_collection.is_some()
+        || config.max_schema_bytes.is_some()
+        || config.max_examples_per_function.is_some()
+        || config.max_example_input_bytes.is_some()
 }
 
 fn legacy_has_plugin_limits(config: &agentos_vm_config::PluginLimitsConfig) -> bool {
     config.max_persisted_manifest_bytes.is_some()
         || config.max_persisted_manifest_file_bytes.is_some()
-}
-
-fn legacy_has_acp_limits(config: &agentos_vm_config::AcpLimitsConfig) -> bool {
-    config.max_read_line_bytes.is_some()
-        || config.stdout_buffer_byte_limit.is_some()
-        || config.max_completed_message_bytes.is_some()
-        || config.max_turn_output_bytes.is_some()
-        || config.max_prompt_bytes.is_some()
-        || config.max_prompt_blocks.is_some()
-        || config.max_fallback_continuation_bytes.is_some()
-        || config.max_session_history_bytes.is_some()
-        || config.max_session_history_events.is_some()
-        || config.max_history_page_entries.is_some()
-        || config.max_session_list_entries.is_some()
-        || config.max_sessions_per_vm.is_some()
-        || config.max_prompts_per_session.is_some()
-        || config.max_prompts_per_vm.is_some()
-        || config.max_pending_permissions_per_session.is_some()
-        || config.max_pending_permissions_per_vm.is_some()
-        || config.max_permission_outcomes_per_session.is_some()
-        || config.max_permission_outcomes_per_vm.is_some()
 }
 
 fn legacy_has_js_runtime_limits(config: &agentos_vm_config::JsRuntimeLimitsConfig) -> bool {
@@ -779,7 +723,7 @@ impl crate::generated_protocol::v1::OwnershipScope {
 }
 
 pub const PROTOCOL_NAME: &str = "agentos-sidecar";
-pub const PROTOCOL_VERSION: u16 = 8;
+pub const PROTOCOL_VERSION: u16 = 10;
 // 16 MiB: large enough to carry a trusted-client CreateVm config that inlines an
 // entire base-filesystem snapshot, while still bounding a single frame.
 pub const DEFAULT_MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
@@ -1389,7 +1333,7 @@ mod tests {
             policy.child_process,
             policy.process,
             policy.env,
-            policy.binding,
+            policy.host_function,
         ] {
             assert!(matches!(
                 scope,
@@ -1411,7 +1355,7 @@ mod tests {
             policy.child_process,
             policy.process,
             policy.env,
-            policy.binding,
+            policy.host_function,
         ] {
             assert!(matches!(
                 scope,
@@ -1419,6 +1363,137 @@ mod tests {
                     PermissionMode::Allow
                 ))
             ));
+        }
+    }
+
+    #[test]
+    fn package_unlink_frames_round_trip() {
+        let codec = WireFrameCodec::default();
+        let ownership = OwnershipScope::VmOwnership(VmOwnership {
+            connection_id: String::from("connection"),
+            session_id: String::from("session"),
+            vm_id: String::from("vm"),
+        });
+        let request = ProtocolFrame::RequestFrame(RequestFrame {
+            schema: protocol_schema(),
+            request_id: 1,
+            ownership: ownership.clone(),
+            payload: RequestPayload::UnlinkPackageRequest(UnlinkPackageRequest {
+                package_id: String::from("sha256:package"),
+            }),
+        });
+        let response = ProtocolFrame::ResponseFrame(ResponseFrame {
+            schema: protocol_schema(),
+            request_id: 1,
+            ownership,
+            payload: ResponsePayload::PackageUnlinkedResponse(PackageUnlinkedResponse {
+                removed_commands: vec![String::from("tool")],
+            }),
+        });
+
+        for frame in [request, response] {
+            let encoded = codec.encode(&frame).expect("encode frame");
+            assert_eq!(codec.decode(&encoded).expect("decode frame"), frame);
+        }
+    }
+
+    #[test]
+    fn session_package_acquisition_frames_round_trip_without_host_path() {
+        let codec = WireFrameCodec::default();
+        let ownership = OwnershipScope::SessionOwnership(SessionOwnership {
+            connection_id: String::from("connection"),
+            session_id: String::from("session"),
+        });
+        let request = ProtocolFrame::RequestFrame(RequestFrame {
+            schema: protocol_schema(),
+            request_id: 2,
+            ownership: ownership.clone(),
+            payload: RequestPayload::AcquirePackageRequest(AcquirePackageRequest {
+                source: PackageAcquisitionSource::PackageUrlSource(PackageUrlSource {
+                    url: String::from("https://packages.example/tool.aospkg"),
+                    expected_digest: Some(String::from("sha256:abc")),
+                }),
+                advisory: true,
+                timeout_ms: Some(250),
+                max_package_bytes: None,
+                download_timeout_ms: None,
+                connect_timeout_ms: None,
+                max_redirects: None,
+                allow_insecure_local_http: false,
+            }),
+        });
+        let response = ProtocolFrame::ResponseFrame(ResponseFrame {
+            schema: protocol_schema(),
+            request_id: 2,
+            ownership,
+            payload: ResponsePayload::PackageAcquiredResponse(PackageAcquiredResponse {
+                package_id: String::from("sha256:abc"),
+                digest: String::from("sha256:abc"),
+                size: 123,
+                package_name: String::from("tool"),
+                version: String::from("1"),
+                commands: vec![String::from("tool")],
+            }),
+        });
+        for frame in [request, response] {
+            let encoded = codec.encode(&frame).expect("encode frame");
+            assert_eq!(codec.decode(&encoded).expect("decode frame"), frame);
+        }
+    }
+
+    #[test]
+    fn vm_package_install_frames_round_trip_without_host_path_in_response() {
+        let codec = WireFrameCodec::default();
+        let ownership = OwnershipScope::VmOwnership(VmOwnership {
+            connection_id: "connection".into(),
+            session_id: "session".into(),
+            vm_id: "vm".into(),
+        });
+        let package = PackageAcquiredResponse {
+            package_id: "sha256:abc".into(),
+            digest: "sha256:abc".into(),
+            size: 123,
+            package_name: "tool".into(),
+            version: "1".into(),
+            commands: vec!["tool".into()],
+        };
+        let frames = [
+            ProtocolFrame::RequestFrame(RequestFrame {
+                schema: protocol_schema(),
+                request_id: 3,
+                ownership: ownership.clone(),
+                payload: RequestPayload::InstallPackageRequest(InstallPackageRequest {
+                    acquisition: AcquirePackageRequest {
+                        source: PackageAcquisitionSource::PackageUrlSource(PackageUrlSource {
+                            url: "https://packages.example/tool.aospkg".into(),
+                            expected_digest: Some("sha256:abc".into()),
+                        }),
+                        advisory: false,
+                        timeout_ms: Some(250),
+                        max_package_bytes: None,
+                        download_timeout_ms: None,
+                        connect_timeout_ms: None,
+                        max_redirects: None,
+                        allow_insecure_local_http: false,
+                    },
+                }),
+            }),
+            ProtocolFrame::ResponseFrame(ResponseFrame {
+                schema: protocol_schema(),
+                request_id: 3,
+                ownership,
+                payload: ResponsePayload::PackageInstalledResponse(PackageInstalledResponse {
+                    package,
+                    projected_commands: vec![ProjectedCommand {
+                        name: "tool".into(),
+                        guest_path: "/opt/agentos/bin/tool".into(),
+                    }],
+                }),
+            }),
+        ];
+        for frame in frames {
+            let encoded = codec.encode(&frame).expect("encode frame");
+            assert_eq!(codec.decode(&encoded).expect("decode frame"), frame);
         }
     }
 }

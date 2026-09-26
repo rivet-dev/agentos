@@ -17,15 +17,6 @@ import type {
 
 function describeAction(action: CronAction): CronActionInfo {
 	switch (action.type) {
-		case "session":
-			return {
-				type: "session",
-				agentType: action.agentType,
-				prompt: action.prompt,
-				...(action.options === undefined
-					? {}
-					: { options: structuredClone(action.options) }),
-			};
 		case "exec":
 			return {
 				type: "exec",
@@ -201,23 +192,6 @@ export class CronManager {
 
 	private async runAction(action: CronAction): Promise<void> {
 		switch (action.type) {
-			case "session": {
-				const sessionId = `cron-${randomUUID()}`;
-				await this.vm.openSession({
-					...action.options,
-					sessionId,
-					agent: action.agentType,
-				});
-				try {
-					await this.vm.prompt({
-						sessionId,
-						content: [{ type: "text", text: action.prompt }],
-					});
-				} finally {
-					await this.vm.deleteSession({ sessionId });
-				}
-				break;
-			}
 			case "exec": {
 				await this.vm.execArgv(action.command, action.args ?? []);
 				break;

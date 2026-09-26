@@ -21,6 +21,7 @@
 	"scripts": {
 		"build": "node scripts/build.mjs",
 		"build:release": "node scripts/build.mjs --release",
-		"check-types": "exit 0"
+		"check-types": "exit 0",
+		"test": "node --test tests/*.test.cjs"
 	}
 }

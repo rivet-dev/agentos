@@ -7,8 +7,11 @@ repository.workspace = true
 description = "agentOS VM orchestration, kernel composition, and execution coordination"
 
 [features]
+# Opaque fixtures used by cross-crate transport regression tests.
+test-support = ["runtime"]
 default = []
 runtime = [
+    "dep:agentos-client",
     "crypto",
     "filesystem-persistence",
     "networking",
@@ -125,6 +128,7 @@ all-executors = [
 name = "agentos_vm"
 
 [dependencies]
+agentos-client = { workspace = true, optional = true, features = ["sidecar-internals"] }
 agentos-rivetkit-ars-client = { workspace = true, optional = true }
 agentos-vm-host-interface = { workspace = true, optional = true }
 agentos-executor-contract = { workspace = true, optional = true }

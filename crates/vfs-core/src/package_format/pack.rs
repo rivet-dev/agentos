@@ -15,15 +15,13 @@ use std::collections::BTreeMap;
 use std::io::{Cursor, Read, Write};
 use std::path::Path;
 
-use super::generated::v1;
+use super::generated::v2;
 use super::versioned::{encode_mount_index, encode_package_manifest};
 use super::{encode_aospkg_header, AOSPKG_HEADER_LEN};
 use crate::posix::vfs::{VfsError, VfsResult};
 
 /// The toolchain-input manifest name. Pack-time input only; never shipped.
 pub const MANIFEST_JSON_NAME: &str = "agentos-package.json";
-/// Canonical in-package snapshot bundle path for snapshot-enabled agents.
-pub const SNAPSHOT_BUNDLE_PATH: &str = "/dist/sdk-snapshot.js";
 /// Pack-time mirror of the load-side index cap in `posix::tar_fs`
 /// (`MAX_TAR_INDEX_ENTRIES`): fail at pack time, where the limit can be fixed,
 /// instead of at every consumer's VM configure.
@@ -47,21 +45,7 @@ struct SourceManifestJson {
     #[serde(default)]
     version: String,
     #[serde(default)]
-    agent: Option<SourceAgentJson>,
-    #[serde(default)]
     provides: Option<SourceProvidesJson>,
-}
-
-#[derive(serde::Deserialize)]
-struct SourceAgentJson {
-    #[serde(rename = "acpEntrypoint")]
-    acp_entrypoint: String,
-    #[serde(default)]
-    snapshot: bool,
-    #[serde(default)]
-    env: std::collections::HashMap<String, String>,
-    #[serde(default, rename = "launchArgs")]
-    launch_args: Vec<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -82,12 +66,11 @@ struct SourceProvidesFileJson {
 /// `PackageManifest`, with commands/man-pages/snapshot path supplied by the
 /// caller (packed: derived from the mount index; transition dir: from a dir
 /// scan). One JSON schema definition serves both pipelines.
-pub fn manifest_json_to_v1(
+pub fn manifest_json_to_v2(
     manifest_json: &[u8],
-    commands: Vec<v1::CommandTarget>,
-    man_pages: Vec<v1::ManPage>,
-    snapshot_bundle_path: Option<String>,
-) -> VfsResult<v1::PackageManifest> {
+    commands: Vec<v2::CommandTarget>,
+    man_pages: Vec<v2::ManPage>,
+) -> VfsResult<v2::PackageManifest> {
     let source: SourceManifestJson = serde_json::from_slice(manifest_json)
         .map_err(|e| VfsError::new("EINVAL", format!("invalid {MANIFEST_JSON_NAME}: {e}")))?;
     if source.name.is_empty() {
@@ -102,21 +85,15 @@ pub fn manifest_json_to_v1(
             format!("{MANIFEST_JSON_NAME} is missing a valid \"version\""),
         ));
     }
-    Ok(v1::PackageManifest {
+    Ok(v2::PackageManifest {
         name: source.name,
         version: source.version,
-        agent: source.agent.map(|agent| v1::AgentBlock {
-            acp_entrypoint: agent.acp_entrypoint,
-            snapshot: agent.snapshot,
-            env: agent.env,
-            launch_args: agent.launch_args,
-        }),
-        provides: source.provides.map(|provides| v1::ProvidesBlock {
+        provides: source.provides.map(|provides| v2::ProvidesBlock {
             env: provides.env,
             files: provides
                 .files
                 .into_iter()
-                .map(|file| v1::ProvidesFile {
+                .map(|file| v2::ProvidesFile {
                     source: file.source,
                     target: file.target,
                 })
@@ -124,13 +101,12 @@ pub fn manifest_json_to_v1(
         }),
         commands,
         man_pages,
-        snapshot_bundle_path,
     })
 }
 
 #[derive(Clone)]
 struct IndexedEntry {
-    kind: v1::TarEntryKind,
+    kind: v2::TarEntryKind,
     offset: u64,
     size: u64,
     mode: u32,
@@ -248,32 +224,19 @@ pub fn pack_aospkg_from_tar_bytes(source_tar: &[u8]) -> VfsResult<(Vec<u8>, Pack
             format!("source tar must contain /{MANIFEST_JSON_NAME}"),
         )
     })?;
-    // Peek at the agent block for the snapshot decision; the authoritative
-    // JSON-to-v1 conversion is shared with transition-directory projection.
-    let source: SourceManifestJson = serde_json::from_slice(&manifest_json)
-        .map_err(|e| VfsError::new("EINVAL", format!("invalid {MANIFEST_JSON_NAME}: {e}")))?;
     let commands = command_targets(&entries, package_json.as_deref());
     let man_pages = man_pages_from_index(&entries);
-    let snapshot_bundle_path = source
-        .agent
-        .as_ref()
-        .filter(|agent| agent.snapshot)
-        .and_then(|_| {
-            entries
-                .contains_key(SNAPSHOT_BUNDLE_PATH)
-                .then(|| SNAPSHOT_BUNDLE_PATH.to_owned())
-        });
 
     let command_names = commands
         .iter()
         .map(|target| target.command.clone())
         .collect::<Vec<_>>();
-    let manifest = manifest_json_to_v1(&manifest_json, commands, man_pages, snapshot_bundle_path)?;
+    let manifest = manifest_json_to_v2(&manifest_json, commands, man_pages)?;
     let (name, version) = (manifest.name.clone(), manifest.version.clone());
 
     let tar_entries = entries
         .into_iter()
-        .map(|(path, entry)| v1::TarEntry {
+        .map(|(path, entry)| v2::TarEntry {
             path,
             kind: entry.kind,
             offset: entry.offset,
@@ -288,7 +251,7 @@ pub fn pack_aospkg_from_tar_bytes(source_tar: &[u8]) -> VfsResult<(Vec<u8>, Pack
 
     let manifest_bytes = encode_package_manifest(manifest)
         .map_err(|e| VfsError::new("EINVAL", format!("encode package manifest: {e}")))?;
-    let index_bytes = encode_mount_index(v1::MountIndex { tar_entries })
+    let index_bytes = encode_mount_index(v2::MountIndex { tar_entries })
         .map_err(|e| VfsError::new("EINVAL", format!("encode mount index: {e}")))?;
     let header = encode_aospkg_header(manifest_bytes.len(), index_bytes.len())?;
 
@@ -331,7 +294,7 @@ fn scan_tar_index(mount_tar: &[u8]) -> VfsResult<BTreeMap<String, IndexedEntry>>
         let size = header.size().unwrap_or(0);
         let indexed = if entry_type.is_dir() {
             Some(IndexedEntry {
-                kind: v1::TarEntryKind::Directory,
+                kind: v2::TarEntryKind::Directory,
                 offset: 0,
                 size: 0,
                 mode: S_IFDIR | mode,
@@ -348,7 +311,7 @@ fn scan_tar_index(mount_tar: &[u8]) -> VfsResult<BTreeMap<String, IndexedEntry>>
                 .to_string_lossy()
                 .into_owned();
             Some(IndexedEntry {
-                kind: v1::TarEntryKind::Symlink,
+                kind: v2::TarEntryKind::Symlink,
                 offset: 0,
                 size: 0,
                 mode: S_IFLNK | mode.max(0o777),
@@ -359,7 +322,7 @@ fn scan_tar_index(mount_tar: &[u8]) -> VfsResult<BTreeMap<String, IndexedEntry>>
             })
         } else if entry_type.is_file() || entry_type == tar::EntryType::Continuous {
             Some(IndexedEntry {
-                kind: v1::TarEntryKind::File,
+                kind: v2::TarEntryKind::File,
                 offset: entry.raw_file_position(),
                 size,
                 mode: S_IFREG | mode,
@@ -377,7 +340,7 @@ fn scan_tar_index(mount_tar: &[u8]) -> VfsResult<BTreeMap<String, IndexedEntry>>
         }
     }
     entries.entry(String::from("/")).or_insert(IndexedEntry {
-        kind: v1::TarEntryKind::Directory,
+        kind: v2::TarEntryKind::Directory,
         offset: 0,
         size: 0,
         mode: S_IFDIR | 0o755,
@@ -427,7 +390,7 @@ fn synthesize_parent_dirs(path: &str, entries: &mut BTreeMap<String, IndexedEntr
             format!("{current}/{component}")
         };
         entries.entry(current.clone()).or_insert(IndexedEntry {
-            kind: v1::TarEntryKind::Directory,
+            kind: v2::TarEntryKind::Directory,
             offset: 0,
             size: 0,
             mode: S_IFDIR | 0o755,
@@ -442,7 +405,7 @@ fn synthesize_parent_dirs(path: &str, entries: &mut BTreeMap<String, IndexedEntr
 fn command_targets(
     entries: &BTreeMap<String, IndexedEntry>,
     package_json: Option<&[u8]>,
-) -> Vec<v1::CommandTarget> {
+) -> Vec<v2::CommandTarget> {
     if let Some(bytes) = package_json {
         if let Ok(value) = serde_json::from_slice::<serde_json::Value>(bytes) {
             if let Some(targets) = command_targets_from_package_json(&value) {
@@ -454,7 +417,7 @@ fn command_targets(
         .keys()
         .filter_map(|path| {
             let name = path.strip_prefix("/bin/")?;
-            (!name.contains('/') && is_projectable_command_name(name)).then(|| v1::CommandTarget {
+            (!name.contains('/') && is_projectable_command_name(name)).then(|| v2::CommandTarget {
                 command: name.to_owned(),
                 entry: format!("bin/{name}"),
             })
@@ -469,14 +432,14 @@ fn command_targets(
 /// derive identical command sets.
 pub fn command_targets_from_package_json(
     value: &serde_json::Value,
-) -> Option<Vec<v1::CommandTarget>> {
+) -> Option<Vec<v2::CommandTarget>> {
     match value.get("bin") {
         Some(serde_json::Value::String(path)) => {
             let name = value.get("name").and_then(|v| v.as_str())?;
             let unscoped = name.rsplit('/').next().unwrap_or(name).to_owned();
             Some(
                 is_projectable_command_name(&unscoped)
-                    .then(|| v1::CommandTarget {
+                    .then(|| v2::CommandTarget {
                         command: unscoped,
                         entry: normalize_rel(path),
                     })
@@ -491,7 +454,7 @@ pub fn command_targets_from_package_json(
                     is_projectable_command_name(name)
                         .then(|| path.as_str())
                         .flatten()
-                        .map(|path| v1::CommandTarget {
+                        .map(|path| v2::CommandTarget {
                             command: name.clone(),
                             entry: normalize_rel(path),
                         })
@@ -504,13 +467,13 @@ pub fn command_targets_from_package_json(
     }
 }
 
-fn man_pages_from_index(entries: &BTreeMap<String, IndexedEntry>) -> Vec<v1::ManPage> {
+fn man_pages_from_index(entries: &BTreeMap<String, IndexedEntry>) -> Vec<v2::ManPage> {
     let mut pages = entries
         .keys()
         .filter_map(|path| {
             let suffix = path.strip_prefix("/share/man/")?;
             let (section, page) = suffix.split_once('/')?;
-            (!page.contains('/')).then(|| v1::ManPage {
+            (!page.contains('/')).then(|| v2::ManPage {
                 section: section.to_owned(),
                 page: page.to_owned(),
             })

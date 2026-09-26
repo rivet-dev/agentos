@@ -688,7 +688,7 @@ struct LocalBridgeState {
     /// RPCs (`_resolveModule` / `_loadFile` / `_moduleFormat` /
     /// `_batchResolveModules`) inline against this reader, concurrently with the
     /// service loop — so a large cold-start module graph does not serialize
-    /// behind / starve the ACP bootstrap on the single service-loop thread.
+    /// behind / starve guest bootstrap on the single service-loop thread.
     /// `None` means "route module resolution to the service loop" (the kernel-VFS
     /// fallback for callers that supply no reader).
     module_reader: Option<Box<dyn ModuleFsReader + Send>>,
@@ -2162,6 +2162,13 @@ impl JavascriptExecution {
 
     pub fn has_exited(&self) -> bool {
         self.exited.load(Ordering::Acquire)
+    }
+
+    /// Whether the runtime event bridge has already made another event
+    /// durable for this execution. This is a non-consuming readiness probe;
+    /// callers still own bounded draining and ordering.
+    pub fn has_pending_events(&self) -> bool {
+        !self.events.is_empty()
     }
 
     /// Run another sidecar-managed operation in this execution's retained V8
@@ -4597,9 +4604,8 @@ fn spawn_v8_event_bridge(
                         // sidecar supplied a read-only VFS module reader, resolve
                         // these inline on this bridge thread (off the service loop) so
                         // a large cold-start module graph runs concurrently with — and
-                        // never serializes behind / starves — the ACP bootstrap that
-                        // is itself awaiting the adapter's `session/new` response on
-                        // the single service-loop thread. Without a reader (no mount),
+                        // never serializes behind or starves guest bootstrap on the
+                        // single service-loop thread. Without a reader (no mount),
                         // they flow to the service loop as SyncRpcRequests (mapped to
                         // `__resolve_module` / `__load_file` / `__module_format` /
                         // `__batch_resolve_modules`) and resolve against `vm.kernel`.
@@ -5509,13 +5515,13 @@ impl LocalBridgeState {
         let generation = 0;
         let timers = self.timers.clone();
 
-        let Some(runtime) = self.runtime.as_ref() else {
+        if self.runtime.is_none() {
             self.clear_kernel_timer(timer_id);
-            let error = "ERR_AGENTOS_RUNTIME_NOT_INJECTED: JavaScript timers require a process DriverHandle";
+            let error = "ERR_AGENTOS_RUNTIME_NOT_INJECTED: JavaScript timers require an injected DriverHandle";
             settle_timer_bridge_response(&session, call_id, 1, error.as_bytes().to_vec());
             return;
-        };
-        let wheel = match TimerWheel::get(runtime) {
+        }
+        let wheel = match TimerWheel::get(self.runtime.as_ref().expect("runtime checked above")) {
             Ok(wheel) => wheel,
             Err(error) => {
                 self.clear_kernel_timer(timer_id);
@@ -7971,7 +7977,20 @@ fn builtin_named_exports(module_name: &str) -> &'static [&'static str] {
             "validateHeaderName",
             "validateHeaderValue",
         ],
-        "http2" => &["connect", "createServer", "createSecureServer"],
+        "http2" => &[
+            "Http2ServerRequest",
+            "Http2ServerResponse",
+            "Http2Session",
+            "Http2Stream",
+            "connect",
+            "constants",
+            "createServer",
+            "createSecureServer",
+            "getDefaultSettings",
+            "getPackedSettings",
+            "getUnpackedSettings",
+            "sensitiveHeaders",
+        ],
         "https" => &[
             "Agent",
             "ClientRequest",
@@ -8676,6 +8695,14 @@ mod tests {
                 .is_none(),
             "a local default-CommonJS guess must not hide live VFS package metadata"
         );
+    }
+
+    #[test]
+    fn http2_builtin_exposes_node_compatibility_classes() {
+        let exports = builtin_named_exports("http2");
+        assert!(exports.contains(&"Http2ServerRequest"));
+        assert!(exports.contains(&"Http2ServerResponse"));
+        assert!(exports.contains(&"constants"));
     }
 
     #[test]
@@ -9477,6 +9504,69 @@ mod tests {
         state
             .register_timer(10, false)
             .expect("released admission is reusable");
+    }
+
+    #[test]
+    fn process_timer_worker_does_not_hold_vm_scope_open() {
+        use agentos_driver_tokio::accounting::{ResourceClass, ResourceLedger, ResourceLimit};
+
+        let process = agentos_driver_tokio::SidecarRuntime::process(
+            &agentos_driver_tokio::DriverConfig::default(),
+        )
+        .expect("initialize process runtime");
+        let runtime = process.context();
+        let resources = Arc::new(ResourceLedger::child(
+            "vm=timer-worker-scope-regression",
+            [(
+                ResourceClass::Timers,
+                ResourceLimit::new(1, "limits.jsRuntime.maxTimers"),
+            )],
+            Arc::clone(runtime.resources()),
+        ));
+        let vm = runtime.scoped_for_vm(
+            Arc::clone(&resources),
+            runtime.allocate_vm_generation().unwrap(),
+        );
+        let mut bridge = LocalBridgeState::default();
+        bridge.runtime = Some(vm.clone());
+        bridge.timer_resources = Some(Arc::clone(&resources));
+
+        let wheel = TimerWheel::get().expect("initialize process-owned timer wheel");
+        assert!(
+            runtime
+                .tasks()
+                .snapshot(agentos_driver_tokio::TaskClass::Timer)
+                .active
+                >= 1
+        );
+        assert_eq!(
+            vm.tasks().active_scoped(),
+            0,
+            "permanent timer work must not be VM-owned"
+        );
+        bridge
+            .register_oneshot_timer(MAX_TIMER_DELAY_MS)
+            .expect("reserve a VM timer");
+        assert_eq!(resources.usage(ResourceClass::Timers).used, 1);
+
+        vm.close_admission();
+        drop(bridge);
+        assert_eq!(resources.usage(ResourceClass::Timers).used, 0);
+        process.block_on(async {
+            tokio::time::timeout(Duration::from_secs(1), vm.tasks().wait_empty())
+                .await
+                .expect(
+                    "VM task scope must reconcile without waiting for the process timer worker",
+                );
+        });
+        assert!(
+            Arc::ptr_eq(wheel, TimerWheel::get().unwrap()),
+            "VM teardown must preserve the process wheel"
+        );
+        assert!(
+            runtime.admission_is_open(),
+            "VM teardown must not close process admission"
+        );
     }
 
     #[test]

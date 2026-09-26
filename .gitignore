@@ -57,6 +57,7 @@ toolchain/c/sysroot-threads/
 toolchain/c/.cache/
 toolchain/std-patches/wasi-libc-overrides/*.o
 software/*/bin/
+software/vim/share/
 
 # Legacy registry build paths retained for old worktrees.
 registry/native/target/

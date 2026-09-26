@@ -54,9 +54,9 @@ export {
 	SidecarProcessExited,
 	SidecarSilenceTimeout,
 } from "./sidecar-errors.js";
-// `Sidecar` is the public name for the sidecar process client. The class
+// `Sidecar` is the public name for the native sidecar process client. The class
 // is `SidecarProcess` internally; consumers import it as `Sidecar` via the
-// `@rivet-dev/agentos-core/sidecar-client` subpath and the package root.
+// `./sidecar-client` subpath and the package root.
 export { SidecarProcess as Sidecar };
 
 const BRIDGE_CONTRACT_VERSION = 1;
@@ -305,7 +305,7 @@ export interface SidecarPermissionsPolicy {
 	childProcess?: SidecarPermissionScope<SidecarPatternPermissionRule>;
 	process?: SidecarPermissionScope<SidecarPatternPermissionRule>;
 	env?: SidecarPermissionScope<SidecarPatternPermissionRule>;
-	binding?: SidecarPermissionScope<SidecarPatternPermissionRule>;
+	hostFunction?: SidecarPermissionScope<SidecarPatternPermissionRule>;
 }
 
 type WirePermissionsPolicy = LivePermissionsPolicy;
@@ -319,15 +319,8 @@ export interface SidecarPackageDescriptor {
 	path: string;
 }
 
-export interface SidecarProjectedAgent {
-	id: string;
-	acpEntrypoint: string;
-	adapterEntrypoint: string;
-}
-
 export interface SidecarLinkPackageResult {
 	projectedCommands: SidecarProjectedCommand[];
-	agents: SidecarProjectedAgent[];
 }
 
 export interface SidecarProjectedCommand {
@@ -344,7 +337,6 @@ export interface SidecarVmConfiguredResponse {
 	appliedMounts: number;
 	appliedSoftware: number;
 	projectedCommands: SidecarProjectedCommand[];
-	agents: SidecarProjectedAgent[];
 }
 
 export interface SidecarFilesystemResult {
@@ -376,7 +368,7 @@ export class SidecarProcess {
 	static spawn(options: SidecarSpawnOptions = {}): SidecarProcess {
 		if (!sidecarProcessSpawnFactory) {
 			throw new Error(
-				"sidecar spawn is not registered; import @rivet-dev/agentos-core/stdio-client before calling SidecarProcess.spawn, or use SidecarProcess.fromClient",
+				"sidecar spawn is not registered; import ./stdio-client before calling SidecarProcess.spawn, or use SidecarProcess.fromClient.js",
 			);
 		}
 		const protocolClient = sidecarProcessSpawnFactory({
@@ -451,6 +443,84 @@ export class SidecarProcess {
 		};
 	}
 
+	/**
+	 * Read-only VM-config comparison using this sidecar's defaults; no VM is allocated.
+	 * Does not compare the runtime kind or fields supplied separately to configureVm.
+	 */
+	async compareVmConfig(
+		session: AuthenticatedSession,
+		before: CreateVmConfig,
+		after: CreateVmConfig,
+	): Promise<boolean> {
+		const response = await this.sendRequest({
+			ownership: {
+				scope: "session",
+				connection_id: session.connectionId,
+				session_id: session.sessionId,
+			},
+			payload: { type: "compare_vm_config", before, after },
+		});
+		if (response.payload.type !== "vm_config_compared") {
+			throw new Error(
+				`unexpected compare_vm_config response: ${response.payload.type}`,
+			);
+		}
+		return response.payload.equivalent;
+	}
+
+	/**
+	 * Acquire verified metadata/warm cache without a VM. Does not pin an artifact
+	 * for later installation. The sidecar clamps timeout_ms to its operator cap;
+	 * dropping the client waiter does not immediately cancel server acquisition.
+	 */
+	async acquirePackage(
+		session: AuthenticatedSession,
+		options: Omit<
+			Extract<LiveRequestPayload, { type: "acquire_package" }>,
+			"type"
+		>,
+	): Promise<
+		Omit<Extract<LiveResponsePayload, { type: "package_acquired" }>, "type">
+	> {
+		const response = await this.sendRequest({
+			ownership: {
+				scope: "session",
+				connection_id: session.connectionId,
+				session_id: session.sessionId,
+			},
+			payload: { ...options, type: "acquire_package" },
+		});
+		if (response.payload.type !== "package_acquired") {
+			throw new Error(
+				`unexpected acquire_package response: ${response.payload.type}`,
+			);
+		}
+		const { type: _type, ...metadata } = response.payload;
+		return metadata;
+	}
+
+	async getPackageCacheStats(
+		session: AuthenticatedSession,
+	): Promise<
+		Omit<Extract<LiveResponsePayload, { type: "package_cache_stats" }>, "type">
+	> {
+		const response = await this.sendRequest({
+			ownership: {
+				scope: "session",
+				connection_id: session.connectionId,
+				session_id: session.sessionId,
+			},
+			payload: { type: "get_package_cache_stats" },
+		});
+		if (response.payload.type !== "package_cache_stats") {
+			throw new Error(
+				`unexpected get_package_cache_stats response: ${response.payload.type}`,
+			);
+		}
+		const { type: _type, ...stats } = response.payload;
+		return stats;
+	}
+
 	async createVm(
 		session: AuthenticatedSession,
 		options: {
@@ -519,7 +589,7 @@ export class SidecarProcess {
 			packages?: SidecarPackageDescriptor[];
 			packagesMountAt?: string;
 			bootstrapCommands?: string[];
-			bindingShimCommands?: string[];
+			hostFunctionShimCommands?: string[];
 		},
 	): Promise<SidecarVmConfiguredResponse> {
 		const response = await this.sendRequest({
@@ -548,7 +618,7 @@ export class SidecarProcess {
 					? { packages_mount_at: options.packagesMountAt }
 					: {}),
 				bootstrap_commands: options.bootstrapCommands ?? [],
-				binding_shim_commands: options.bindingShimCommands ?? [],
+				host_function_shim_commands: options.hostFunctionShimCommands ?? [],
 			},
 		});
 		if (response.payload.type !== "vm_configured") {
@@ -563,18 +633,18 @@ export class SidecarProcess {
 				name: command.name,
 				guestPath: command.guest_path,
 			})),
-			agents: response.payload.agents.map(fromWireProjectedAgent),
 		};
 	}
 
 	/**
 	 * Runtime dynamic `linkSoftware`: project one package into the live
-	 * `/opt/agentos` tree. Returns projected command entrypoints and agents.
+	 * `/opt/agentos` tree. Returns projected command entrypoints.
 	 */
 	async linkPackage(
 		session: AuthenticatedSession,
 		vm: CreatedVm,
 		descriptor: SidecarPackageDescriptor,
+		packageId = `path:${descriptor.path}`,
 	): Promise<SidecarLinkPackageResult> {
 		const response = await this.sendRequest({
 			ownership: {
@@ -586,6 +656,7 @@ export class SidecarProcess {
 			payload: {
 				type: "link_package",
 				package: toWirePackageDescriptor(descriptor),
+				package_id: packageId,
 			},
 		});
 		if (response.payload.type !== "package_linked") {
@@ -598,8 +669,58 @@ export class SidecarProcess {
 				name: command.name,
 				guestPath: command.guest_path,
 			})),
-			agents: response.payload.agents.map(fromWireProjectedAgent),
 		};
+	}
+
+	/** Resolve, verify, and pin one artifact in the sidecar before projection. */
+	async installPackage(
+		session: AuthenticatedSession,
+		vm: CreatedVm,
+		acquisition: Extract<
+			LiveRequestPayload,
+			{ type: "install_package" }
+		>["acquisition"],
+	): Promise<
+		Omit<Extract<LiveResponsePayload, { type: "package_installed" }>, "type">
+	> {
+		const response = await this.sendRequest({
+			ownership: {
+				scope: "vm",
+				connection_id: session.connectionId,
+				session_id: session.sessionId,
+				vm_id: vm.vmId,
+			},
+			payload: { type: "install_package", acquisition },
+		});
+		if (response.payload.type !== "package_installed") {
+			throw new Error(
+				`unexpected install_package response: ${response.payload.type}`,
+			);
+		}
+		const { type: _type, ...installed } = response.payload;
+		return installed;
+	}
+
+	async unlinkPackage(
+		session: AuthenticatedSession,
+		vm: CreatedVm,
+		packageId: string,
+	): Promise<string[]> {
+		const response = await this.sendRequest({
+			ownership: {
+				scope: "vm",
+				connection_id: session.connectionId,
+				session_id: session.sessionId,
+				vm_id: vm.vmId,
+			},
+			payload: { type: "unlink_package", package_id: packageId },
+		});
+		if (response.payload.type !== "package_unlinked") {
+			throw new Error(
+				`unexpected unlink_package response: ${response.payload.type}`,
+			);
+		}
+		return response.payload.removed_commands;
 	}
 
 	async providedCommands(
@@ -1947,7 +2068,7 @@ function toWirePermissionsPolicy(
 		child_process: policy.childProcess,
 		process: policy.process,
 		env: policy.env,
-		binding: policy.binding,
+		host_function: policy.hostFunction,
 	};
 }
 
@@ -1968,17 +2089,5 @@ function toWirePackageDescriptor(descriptor: SidecarPackageDescriptor): {
 } {
 	return {
 		path: descriptor.path,
-	};
-}
-
-function fromWireProjectedAgent(agent: {
-	id: string;
-	acp_entrypoint: string;
-	adapter_entrypoint: string;
-}): SidecarProjectedAgent {
-	return {
-		id: agent.id,
-		acpEntrypoint: agent.acp_entrypoint,
-		adapterEntrypoint: agent.adapter_entrypoint,
 	};
 }

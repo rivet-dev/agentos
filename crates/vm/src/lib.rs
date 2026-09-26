@@ -4,8 +4,6 @@
 //! Embeddable agentOS VM orchestration and kernel composition.
 
 #[cfg(feature = "runtime")]
-pub(crate) mod bindings;
-#[cfg(feature = "runtime")]
 pub(crate) mod bootstrap;
 #[cfg(feature = "runtime")]
 pub(crate) mod bridge;
@@ -31,6 +29,8 @@ pub mod extension;
 #[cfg(feature = "runtime")]
 pub(crate) mod filesystem;
 #[cfg(feature = "runtime")]
+pub(crate) mod host_functions;
+#[cfg(feature = "runtime")]
 #[allow(dead_code)]
 pub(crate) mod json_rpc;
 #[cfg(feature = "runtime")]
@@ -48,7 +48,8 @@ pub mod service;
 #[cfg(feature = "runtime")]
 pub(crate) mod state;
 #[cfg(feature = "runtime")]
-pub(crate) mod vm;
+#[doc(hidden)]
+pub mod vm;
 #[cfg(feature = "runtime")]
 pub mod vm_sqlite;
 #[cfg(all(feature = "runtime", not(feature = "wasm-api")))]
@@ -71,8 +72,7 @@ pub use embedded_minimal::{
 pub use executor_registry::{ExecutorKind, ExecutorRegistry};
 #[cfg(feature = "runtime")]
 pub use extension::{
-    Extension, ExtensionContext, ExtensionFuture, ExtensionInterruptRequest,
-    ExtensionInterruptResponse, ExtensionResponse,
+    Extension, ExtensionContext, ExtensionFuture, ExtensionRequestClass, ExtensionResponse,
 };
 #[cfg(feature = "runtime")]
 pub use service::{DispatchResult, VmError, VmManager, VmManagerConfig};
@@ -114,3 +114,20 @@ pub fn scaffold() -> VmScaffold {
         max_frame_bytes: DEFAULT_MAX_FRAME_BYTES,
     }
 }
+
+#[cfg(feature = "runtime")]
+#[doc(hidden)]
+pub mod extension_services;
+#[cfg(feature = "runtime")]
+#[doc(hidden)]
+pub mod ownership_coordinator;
+#[cfg(feature = "runtime")]
+#[doc(hidden)]
+pub mod process_event_broker;
+#[cfg(feature = "runtime")]
+#[doc(hidden)]
+pub mod request_operations;
+
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub mod test_support;

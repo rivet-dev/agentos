@@ -48,14 +48,14 @@ impl SidecarHostCapability<ProcessOperation> for ProcessCapability {
                     } else {
                         normalize_path(&format!("{}/{}", process.guest_cwd, path.as_str()))
                     };
-                    let binding_image = registered_command_name_for_path(kernel, &path)
+                    let host_function_image = registered_command_name_for_path(kernel, &path)
                         .and_then(|command| kernel.commands().get(&command).cloned())
-                        .is_some_and(|driver| driver == BINDING_DRIVER_NAME);
-                    if binding_image {
+                        .is_some_and(|driver| driver == HOST_FUNCTION_DRIVER_NAME);
+                    if host_function_image {
                         return Err(HostServiceError::new(
                             "ENOEXEC",
                             format!(
-                                "registered binding command {path} requires sidecar executable resolution"
+                                "registered host_function command {path} requires sidecar executable resolution"
                             ),
                         ));
                     }

@@ -1,0 +1,38 @@
+---
+title: "Permissions"
+description: "Control what untrusted code can reach in Secure Exec: external network access is denied by default and everything else is virtualized."
+skill: true
+---
+
+Permissions are a VM option. Pass `permissions` on a call, or on
+`createVm`.
+
+## The default
+
+The guest's filesystem, processes, environment, and network stack are fully
+virtualized. Guest code can bind listeners and communicate over loopback inside
+the VM. External DNS and network connections cross the VM boundary, so they are
+denied.
+
+<CodeSnippet file="secure-exec/examples/permissions/src/index.ts" region="default" />
+
+## Grant the network
+
+Your policy is merged over the default. Granting the network leaves every other
+scope as it was.
+
+<CodeSnippet file="secure-exec/examples/permissions/src/index.ts" region="allow" />
+
+## Allow specific hosts
+
+A rule set denies by default and allows matching patterns. A host needs both a
+`dns://` pattern to resolve it and a `tcp://` pattern to connect to it.
+
+<CodeSnippet file="secure-exec/examples/permissions/src/index.ts" region="scoped" />
+
+## The full policy model
+
+Secure Exec uses the agentOS permission model unchanged: the `fs`, `network`,
+`childProcess`, `process`, `env`, and `hostFunction` scopes, rule sets, and
+operations. Read the [agentOS permissions reference](/agentos/docs/permissions)
+for all of it.

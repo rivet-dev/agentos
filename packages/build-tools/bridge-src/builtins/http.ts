@@ -4738,154 +4738,144 @@ async function dispatchSocketBackedServerRequest(
 }
 
 function attachHttpServerSocket(server, socket) {
-	let buffer = Buffer.alloc(0);
-	let dispatchRunning = false;
-	let dispatchPending = false;
-	let ended = false;
-	let detached = false;
-	let resolveConnectionClosed;
-	const connectionClosed = new Promise((resolve) => {
-		resolveConnectionClosed = resolve;
-	});
-	const markConnectionClosed = () => {
-		resolveConnectionClosed?.();
-		resolveConnectionClosed = null;
-	};
-	const cleanup = () => {
-		if (detached) {
+  let buffer = Buffer.alloc(0);
+  let dispatchRunning = false;
+  let dispatchPending = false;
+  let ended = false;
+  let detached = false;
+  let resolveConnectionClosed;
+  const connectionClosed = new Promise((resolve) => {
+    resolveConnectionClosed = resolve;
+  });
+  const cleanup = () => {
+    if (detached) {
+      return;
+    }
+    detached = true;
+    resolveConnectionClosed();
+    socket.off?.("data", onData);
+    socket.removeListener?.("data", onData);
+    socket.off?.("end", onEnd);
+    socket.removeListener?.("end", onEnd);
+    socket.off?.("close", onClose);
+    socket.removeListener?.("close", onClose);
+    socket.off?.("error", onError);
+    socket.removeListener?.("error", onError);
+  };
+  const scheduleDispatch = () => {
+    if (dispatchRunning) {
+      dispatchPending = true;
+      return;
+    }
+    dispatchRunning = true;
+    void processRequests().finally(() => {
+      dispatchRunning = false;
+      if (dispatchPending && !detached) {
+        dispatchPending = false;
+        scheduleDispatch();
+      } else {
+        dispatchPending = false;
+      }
+    });
+  };
+  const finishSocket = () => {
+    cleanup();
+    if (!socket.destroyed && !socket._writableEnded) {
+      socket.end();
+    }
+  };
+  const onData = (chunk) => {
+    const payload = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    buffer = buffer.length === 0 ? payload : Buffer.concat([buffer, payload]);
+    scheduleDispatch();
+  };
+  const onEnd = () => {
+    ended = true;
+    if (buffer.length === 0) {
+      finishSocket();
+      return;
+    }
+    scheduleDispatch();
+  };
+  const onClose = () => {
+    cleanup();
+  };
+  const onError = () => {
+    cleanup();
+  };
+  async function processRequests() {
+    let closeAfterDrain = false;
+    while (!detached && !socket.destroyed) {
+      const parsed = parseLoopbackRequestBuffer(buffer, server);
+      if (parsed.kind === "incomplete") {
+        if (ended && buffer.length > 0) {
+          socket.write(createBadRequestResponseBuffer());
+          finishSocket();
+        }
+        return;
+      }
+      if (parsed.kind === "bad-request") {
+        socket.write(createBadRequestResponseBuffer());
+        finishSocket();
+        buffer = Buffer.alloc(0);
+        return;
+      }
+      buffer = buffer.subarray(parsed.bytesConsumed);
+		if (parsed.upgradeHead) {
+			cleanup();
+			const incoming = new ServerIncomingMessage(parsed.request);
+			incoming.socket = socket;
+			incoming.connection = socket;
+			try {
+				server._emit("upgrade", incoming, socket, parsed.upgradeHead);
+			} catch (error) {
+				// EventEmitter listener failures are uncaught in Node. Do not turn an
+				// upgrade-handler exception into a silent socket close or a dangling
+				// handshake merely because request dispatch runs in an async pump.
+				queueMicrotask(() => {
+					throw error;
+				});
+			}
 			return;
 		}
-		detached = true;
-		socket.off?.("data", onData);
-		socket.removeListener?.("data", onData);
-		socket.off?.("end", onEnd);
-		socket.removeListener?.("end", onEnd);
-		socket.off?.("close", onClose);
-		socket.removeListener?.("close", onClose);
-		socket.off?.("error", onError);
-		socket.removeListener?.("error", onError);
-	};
-	const scheduleDispatch = () => {
-		if (dispatchRunning) {
-			dispatchPending = true;
-			return;
-		}
-		dispatchRunning = true;
-		void processRequests().finally(() => {
-			dispatchRunning = false;
-			if (dispatchPending && !detached) {
-				dispatchPending = false;
-				scheduleDispatch();
-			} else {
-				dispatchPending = false;
-			}
-		});
-	};
-	const finishSocket = () => {
-		cleanup();
-		if (!socket.destroyed && !socket._writableEnded) {
-			socket.end();
-		}
-	};
-	const onData = (chunk) => {
-		const payload = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-		buffer = buffer.length === 0 ? payload : Buffer.concat([buffer, payload]);
-		scheduleDispatch();
-	};
-	const onEnd = () => {
-		ended = true;
-		markConnectionClosed();
-		if (buffer.length === 0) {
-			finishSocket();
-			return;
-		}
-		scheduleDispatch();
-	};
-	const onClose = () => {
-		markConnectionClosed();
-		cleanup();
-	};
-	const onError = () => {
-		markConnectionClosed();
-		cleanup();
-	};
-	async function processRequests() {
-		let closeAfterDrain = false;
-		while (!detached && !socket.destroyed) {
-			const parsed = parseLoopbackRequestBuffer(buffer, server);
-			if (parsed.kind === "incomplete") {
-				if (ended && buffer.length > 0) {
-					socket.write(createBadRequestResponseBuffer());
-					finishSocket();
-				}
-				return;
-			}
-			if (parsed.kind === "bad-request") {
-				socket.write(createBadRequestResponseBuffer());
-				finishSocket();
-				buffer = Buffer.alloc(0);
-				return;
-			}
-			buffer = buffer.subarray(parsed.bytesConsumed);
-			if (parsed.upgradeHead) {
-				cleanup();
-				const incoming = new ServerIncomingMessage(parsed.request);
-				incoming.socket = socket;
-				incoming.connection = socket;
-				try {
-					server._emit("upgrade", incoming, socket, parsed.upgradeHead);
-				} catch (error) {
-					// EventEmitter listener failures are uncaught in Node. Do not turn an
-					// upgrade-handler exception into a silent socket close or a dangling
-					// handshake merely because request dispatch runs in an async pump.
-					queueMicrotask(() => {
-						throw error;
-					});
-				}
-				return;
-			}
-			const result = await dispatchSocketBackedServerRequest(
-				server,
-				parsed.request,
-				socket,
-				connectionClosed,
-			);
-			if (detached || socket.destroyed) {
-				return;
-			}
-			// Keep-alive for socket-backed HTTP servers is intentionally deferred:
-			// pipelined bytes already in `buffer` drain, then this connection closes.
-			// Revisit when the bridge owns full Node-compatible request lifecycle
-			// timers and per-socket request limits.
-			let mustClose;
-			if (result.streamedDirectly) {
-				// Response was already streamed straight to the socket by res.end().
-				mustClose = result.closeConnection;
-			} else {
-				const response = JSON.parse(result.responseJson);
-				const serialized = serializeLoopbackResponse(
-					response,
-					parsed.request,
-					true,
-				);
-				if (!closeAfterDrain && serialized.payload.length > 0) {
-					socket.write(serialized.payload);
-				}
-				mustClose = serialized.closeConnection;
-			}
-			if (mustClose) {
-				closeAfterDrain = true;
-				if (buffer.length === 0) {
-					finishSocket();
-					return;
-				}
-			}
-		}
-	}
-	socket.on("data", onData);
-	socket.once("end", onEnd);
-	socket.once("close", onClose);
-	socket.once("error", onError);
+      const result = await dispatchSocketBackedServerRequest(
+        server,
+        parsed.request,
+        socket,
+        connectionClosed,
+      );
+      if (detached || socket.destroyed) {
+        return;
+      }
+      // Keep-alive for socket-backed HTTP servers is intentionally deferred:
+      // pipelined bytes already in `buffer` drain, then this connection closes.
+      // Revisit when the bridge owns full Node-compatible request lifecycle
+      // timers and per-socket request limits.
+      let mustClose;
+      if (result.streamedDirectly) {
+        // Response was already streamed straight to the socket by res.end().
+        mustClose = result.closeConnection;
+      } else {
+        const response = JSON.parse(result.responseJson);
+        const serialized = serializeLoopbackResponse(response, parsed.request, true);
+        if (!closeAfterDrain && serialized.payload.length > 0) {
+          socket.write(serialized.payload);
+        }
+        mustClose = serialized.closeConnection;
+      }
+      if (mustClose) {
+        closeAfterDrain = true;
+        if (buffer.length === 0) {
+          finishSocket();
+          return;
+        }
+      }
+    }
+  }
+  socket.on("data", onData);
+  socket.once("end", onEnd);
+  socket.once("close", onClose);
+  socket.once("error", onError);
 }
 
 function dispatchSocketRequest(

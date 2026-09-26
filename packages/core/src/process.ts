@@ -8,6 +8,15 @@ export {
 
 import { SidecarProcessError, SidecarProcessExited } from "./sidecar-errors.js";
 
+/**
+ * Bounds on the sidecar stderr excerpt retained for SidecarProcessExited and
+ * SidecarProcessError. Live stderr is always forwarded to host stderr, so these
+ * bound only the postmortem copy. Sidecar diagnostics can be guest-triggered,
+ * so the retained copy must never grow without limit.
+ */
+const STDERR_HEAD_MAX_BYTES = 16 * 1024;
+const STDERR_TAIL_MAX_BYTES = 48 * 1024;
+
 export interface StdioSidecarProcessSpawnOptions {
 	command: string;
 	args?: string[];
@@ -19,7 +28,13 @@ export class StdioSidecarProcess {
 	readonly child: ChildProcessWithoutNullStreams;
 	readonly control: Duplex | null;
 	readonly combinedStdio: boolean;
-	private readonly stderrChunks: Buffer[] = [];
+	/** First bytes of sidecar stderr; the root cause usually appears here. */
+	private readonly stderrHead: Buffer[] = [];
+	private stderrHeadBytes = 0;
+	/** Most recent bytes of sidecar stderr; the fatal error appears here. */
+	private readonly stderrTail: Buffer[] = [];
+	private stderrTailBytes = 0;
+	private stderrDroppedBytes = 0;
 	private readonly exitListeners = new Set<
 		(error: SidecarProcessExited) => void
 	>();
@@ -34,10 +49,15 @@ export class StdioSidecarProcess {
 		this.child = child;
 		this.control = control;
 		this.combinedStdio = control === null;
+		// Forward live sidecar stderr so warnings from a sidecar that survives a
+		// guest-triggered failure stay host-visible. This matches the Rust
+		// client, which spawns the sidecar with inherited stderr. Only a bounded
+		// excerpt is retained for exit/error reports.
 		this.child.stderr.on("data", (chunk: Buffer | string) => {
-			this.stderrChunks.push(
-				typeof chunk === "string" ? Buffer.from(chunk) : Buffer.from(chunk),
-			);
+			const buffer =
+				typeof chunk === "string" ? Buffer.from(chunk) : Buffer.from(chunk);
+			process.stderr.write(buffer);
+			this.retainStderr(buffer);
 		});
 		this.child.on("exit", (code, signal) => {
 			const error = new SidecarProcessExited({
@@ -108,8 +128,50 @@ export class StdioSidecarProcess {
 		};
 	}
 
+	/**
+	 * Retain the first STDERR_HEAD_MAX_BYTES and the most recent
+	 * STDERR_TAIL_MAX_BYTES of sidecar stderr, counting everything in between
+	 * as dropped.
+	 */
+	private retainStderr(buffer: Buffer): void {
+		let rest = buffer;
+		const headRoom = STDERR_HEAD_MAX_BYTES - this.stderrHeadBytes;
+		if (headRoom > 0) {
+			const take = rest.subarray(0, headRoom);
+			this.stderrHead.push(take);
+			this.stderrHeadBytes += take.length;
+			rest = rest.subarray(take.length);
+		}
+		if (rest.length === 0) return;
+		this.stderrTail.push(rest);
+		this.stderrTailBytes += rest.length;
+		while (this.stderrTailBytes > STDERR_TAIL_MAX_BYTES) {
+			const oldest = this.stderrTail[0];
+			const excess = this.stderrTailBytes - STDERR_TAIL_MAX_BYTES;
+			if (oldest.length <= excess) {
+				this.stderrTail.shift();
+				this.stderrTailBytes -= oldest.length;
+				this.stderrDroppedBytes += oldest.length;
+			} else {
+				// Trim within the chunk so the bound holds for any chunking.
+				this.stderrTail[0] = oldest.subarray(excess);
+				this.stderrTailBytes -= excess;
+				this.stderrDroppedBytes += excess;
+			}
+		}
+	}
+
 	stderrText(): string {
-		return Buffer.concat(this.stderrChunks).toString("utf8").trim();
+		const head = Buffer.concat(this.stderrHead).toString("utf8");
+		const tail = Buffer.concat(this.stderrTail).toString("utf8");
+		const gap =
+			this.stderrDroppedBytes > 0
+				? `\n... [${this.stderrDroppedBytes} bytes of sidecar stderr dropped; ` +
+					`retained the first ${STDERR_HEAD_MAX_BYTES} and last ` +
+					`${STDERR_TAIL_MAX_BYTES} bytes; the full output was forwarded ` +
+					`to host stderr] ...\n`
+				: "";
+		return `${head}${gap}${tail}`.trim();
 	}
 
 	currentExitError(): SidecarProcessExited | null {

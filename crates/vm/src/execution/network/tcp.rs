@@ -1301,9 +1301,13 @@ impl ActiveTcpSocket {
                 }) {
                     Ok(()) => {}
                     Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-                        return Err(VmError::host("ERR_AGENTOS_TLS_COMMAND_LIMIT", format!("TLS command queue exceeded {}; raise limits.reactor.maxHandleCommands",
-                            self.reactor_limits.max_handle_commands,
-                        )));
+                        return Err(VmError::host(
+                            "ERR_AGENTOS_TLS_COMMAND_LIMIT",
+                            format!(
+                                "TLS command queue exceeded {}; raise limits.reactor.maxHandleCommands",
+                                self.reactor_limits.max_handle_commands,
+                            ),
+                        ));
                     }
                     Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {}
                 }
@@ -1546,8 +1550,8 @@ pub(in crate::execution) fn release_unix_socket_handle(
         if let Err(error) = socket.cache_remote_peer_metadata(unix_bound_addresses) {
             eprintln!("ERR_AGENTOS_UNIX_SOCKET_METADATA: {error}");
         }
-        if let Some(binding_id) = socket.local_registry_binding_id.as_deref() {
-            if let Err(error) = release_guest_unix_binding(unix_bound_addresses, binding_id) {
+        if let Some(host_function_id) = socket.local_registry_binding_id.as_deref() {
+            if let Err(error) = release_guest_unix_binding(unix_bound_addresses, host_function_id) {
                 eprintln!("ERR_AGENTOS_UNIX_SOCKET_METADATA: {error}");
             }
         }
@@ -1763,10 +1767,6 @@ impl ActiveTcpListener {
 
     pub(in crate::execution) fn is_final_description_handle(&self) -> bool {
         Arc::strong_count(&self.description_handles) == 1
-    }
-
-    pub(crate) fn local_addr(&self) -> SocketAddr {
-        self.local_addr.unwrap_or(self.guest_local_addr)
     }
 
     pub(in crate::execution) fn guest_local_addr(&self) -> SocketAddr {
@@ -1990,6 +1990,7 @@ pub(crate) fn build_socket_path_context(vm: &VmState) -> Result<SocketPathContex
     loopback_exempt_ports.extend(vm.configuration.loopback_exempt_ports.iter().copied());
     let mut tcp_loopback_guest_to_host_ports = BTreeMap::new();
     let mut http_loopback_targets = BTreeMap::new();
+    let mut http2_loopback_targets = BTreeMap::new();
     let mut udp_loopback_guest_to_host_ports = BTreeMap::new();
     let mut udp_loopback_host_to_guest_ports = BTreeMap::new();
     let mut used_tcp_guest_ports = BTreeMap::new();
@@ -2001,6 +2002,7 @@ pub(crate) fn build_socket_path_context(vm: &VmState) -> Result<SocketPathContex
             process,
             &mut tcp_loopback_guest_to_host_ports,
             &mut http_loopback_targets,
+            &mut http2_loopback_targets,
             &mut udp_loopback_guest_to_host_ports,
             &mut udp_loopback_host_to_guest_ports,
             &mut used_tcp_guest_ports,
@@ -2018,6 +2020,7 @@ pub(crate) fn build_socket_path_context(vm: &VmState) -> Result<SocketPathContex
         loopback_exempt_ports,
         tcp_loopback_guest_to_host_ports,
         http_loopback_targets,
+        http2_loopback_targets,
         udp_loopback_guest_to_host_ports,
         udp_loopback_host_to_guest_ports,
         used_tcp_guest_ports,
@@ -2107,11 +2110,8 @@ pub(crate) fn finalize_net_connect(
             remote_path,
             remote_abstract_path_hex,
         } => {
-            if let Some((listener_id, mut listener)) = bound_unix_listener {
+            if let Some((listener_id, _listener)) = bound_unix_listener {
                 process.release_capability(&NativeCapabilityKey::UnixListener(listener_id))?;
-                // Ownership of the private host pathname moves to the connected
-                // socket. Do not unlink it when the consumed listener drops.
-                listener.private_host_path.take();
             }
             let capability_key = NativeCapabilityKey::UnixSocket(socket_id.clone());
             let local_path = socket.local_path.clone();
@@ -2585,17 +2585,19 @@ pub(in crate::execution) async fn run_plain_socket_transport(
                     "TCP socket shutdown",
                     limits.operation_deadline,
                     async {
-                    run_plain_socket_fair_step(
-                        &runtime,
-                        limits,
-                        &fairness_identity,
-                        &fairness_identity_committed,
-                        || stream.try_shutdown_write(),
-                    )
-                    .await
-                    .map_err(std::io::Error::other)?
-                })
-                .await {
+                        run_plain_socket_fair_step(
+                            &runtime,
+                            limits,
+                            &fairness_identity,
+                            &fairness_identity_committed,
+                            || stream.try_shutdown_write(),
+                        )
+                        .await
+                        .map_err(std::io::Error::other)?
+                    },
+                )
+                .await
+                {
                     Ok(Ok(())) => Ok(Value::Null),
                     Ok(Err(error)) => Err(deferred_rpc_error(
                         "ERR_AGENTOS_SOCKET_SHUTDOWN",
@@ -2697,14 +2699,22 @@ pub(in crate::execution) fn send_oneshot_or_log<T>(
 }
 
 fn blocked_dns_resolution_error(resource: &str, ip: IpAddr, cidr: &str, label: &str) -> VmError {
-    VmError::host("EACCES", format!("blocked outbound network access to {resource}: {ip} is within restricted {label} range {cidr}"
-    ))
+    VmError::host(
+        "EACCES",
+        format!(
+            "blocked outbound network access to {resource}: {ip} is within restricted {label} range {cidr}"
+        ),
+    )
 }
 
 fn blocked_loopback_connect_error(resource: &str, ip: IpAddr, port: u16) -> VmError {
-    VmError::host("EACCES", format!("blocked outbound network access to {resource}: {ip} is loopback ({}) and port {port} is not owned by this VM and is not listed in {LOOPBACK_EXEMPT_PORTS_ENV}",
-        loopback_cidr(ip)
-    ))
+    VmError::host(
+        "EACCES",
+        format!(
+            "blocked outbound network access to {resource}: {ip} is loopback ({}) and port {port} is not owned by this VM and is not listed in {LOOPBACK_EXEMPT_PORTS_ENV}",
+            loopback_cidr(ip)
+        ),
+    )
 }
 
 pub(in crate::execution) fn filter_dns_safe_ip_addrs(
@@ -3843,6 +3853,7 @@ mod ssrf_egress_classifier_tests {
             loopback_exempt_ports: BTreeSet::new(),
             tcp_loopback_guest_to_host_ports: BTreeMap::new(),
             http_loopback_targets: BTreeMap::new(),
+            http2_loopback_targets: BTreeMap::new(),
             udp_loopback_guest_to_host_ports: BTreeMap::new(),
             udp_loopback_host_to_guest_ports: BTreeMap::new(),
             used_tcp_guest_ports: BTreeMap::new(),

@@ -448,6 +448,10 @@ impl WasmEventQueue {
         Ok(())
     }
 
+    fn is_empty(&self) -> bool {
+        self.events.is_empty()
+    }
+
     fn pop_front(&mut self) -> Option<WasmExecutionEvent> {
         self.events
             .pop_front()
@@ -657,6 +661,12 @@ impl WasmV8Execution {
                 None => return Ok(None),
             }
         }
+    }
+
+    pub fn has_pending_events(&self) -> bool {
+        !self.pending_events.is_empty()
+            || !self.internal_sync_rpc.pending_events.is_empty()
+            || self.inner.has_pending_events()
     }
 
     pub fn try_poll_event(&mut self) -> Result<Option<WasmExecutionEvent>, WasmExecutionError> {

@@ -4,6 +4,9 @@
 // color names mapped to the CSS variables in src/inspector-tabs/styles.css.
 // JIT scans only the tab sources, so the generated CSS stays tiny.
 module.exports = {
+	// The dashboard passes its theme in the iframe URL; main.tsx sets the
+	// class. Dark is the default when the param is absent.
+	darkMode: "class",
 	content: ["./src/inspector-tabs/**/*.{ts,tsx,html}"],
 	theme: {
 		extend: {

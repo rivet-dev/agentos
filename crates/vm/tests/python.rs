@@ -156,6 +156,8 @@ fn collect_process_output_with_timeout(
                 | EventPayload::ExecutionCompletedEvent(_)
                 | EventPayload::VmLifecycleEvent(_)
                 | EventPayload::StructuredEvent(_)
+                | EventPayload::ExecutionOutputEvent(_)
+                | EventPayload::ExecutionCompletedEvent(_)
                 | EventPayload::ExtEnvelope(_) => {}
             }
         }
@@ -975,6 +977,8 @@ fn wait_for_stdout_chunk(
             | EventPayload::ExecutionCompletedEvent(_)
             | EventPayload::VmLifecycleEvent(_)
             | EventPayload::StructuredEvent(_)
+            | EventPayload::ExecutionOutputEvent(_)
+            | EventPayload::ExecutionCompletedEvent(_)
             | EventPayload::ExtEnvelope(_) => {}
         }
     }
@@ -1309,6 +1313,8 @@ fn concurrent_python_processes_stay_isolated_across_vms() {
             | EventPayload::ExecutionCompletedEvent(_)
             | EventPayload::VmLifecycleEvent(_)
             | EventPayload::StructuredEvent(_)
+            | EventPayload::ExecutionOutputEvent(_)
+            | EventPayload::ExecutionCompletedEvent(_)
             | EventPayload::ExtEnvelope(_) => {}
         }
     }
@@ -1860,7 +1866,7 @@ if (mode === 'write') {
                 packages: Vec::new(),
                 packages_mount_at: String::new(),
                 bootstrap_commands: Vec::new(),
-                binding_shim_commands: Vec::new(),
+                host_function_shim_commands: Vec::new(),
             }),
         ))
         .expect("configure host_dir workspace mount through wire");
@@ -2882,7 +2888,7 @@ fn python_runtime_micropip_install_respects_network_permissions() {
             child_process: wire_permissions_allow_all().child_process,
             process: wire_permissions_allow_all().process,
             env: wire_permissions_allow_all().env,
-            binding: wire_permissions_allow_all().binding,
+            host_function: wire_permissions_allow_all().host_function,
         },
     );
 
@@ -3112,7 +3118,7 @@ fn python_runtime_surfaces_network_permission_errors() {
             child_process: wire_permissions_allow_all().child_process,
             process: wire_permissions_allow_all().process,
             env: wire_permissions_allow_all().env,
-            binding: wire_permissions_allow_all().binding,
+            host_function: wire_permissions_allow_all().host_function,
         },
     );
 
@@ -3265,7 +3271,7 @@ fn python_runtime_surfaces_subprocess_permission_errors() {
             )),
             process: wire_permissions_allow_all().process,
             env: wire_permissions_allow_all().env,
-            binding: wire_permissions_allow_all().binding,
+            host_function: wire_permissions_allow_all().host_function,
         },
     );
 
@@ -3749,7 +3755,7 @@ process.stdout.write('status=' + result.status + ';out=' + (result.stdout || '')
                 packages: Vec::new(),
                 packages_mount_at: String::new(),
                 bootstrap_commands: Vec::new(),
-                binding_shim_commands: Vec::new(),
+                host_function_shim_commands: Vec::new(),
             }),
         ))
         .expect("configure host_dir workspace mount through wire");

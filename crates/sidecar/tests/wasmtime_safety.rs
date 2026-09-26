@@ -845,13 +845,18 @@ fn vm_teardown_reaps_a_complete_atomic_wait_thread_group() {
         disposed.response.payload,
         ResponsePayload::VmDisposedResponse(_)
     ));
-    assert!(disposed.events.iter().any(|event| {
-        matches!(
-            &event.payload,
-            EventPayload::ProcessExitedEvent(exited)
-                if exited.process_id == "process-thread-dispose"
-        )
-    }));
+    assert_eq!(
+        disposed
+            .events
+            .iter()
+            .filter(|event| {
+                matches!(&event.payload, EventPayload::ProcessExitedEvent(exited)
+            if exited.process_id == "process-thread-dispose")
+            })
+            .count(),
+        1,
+        "disposal must publish exactly one terminal process event"
+    );
     assert!(
         started.elapsed() < Duration::from_secs(2),
         "VM teardown exceeded the fixed threaded-worker reaping deadline"
@@ -1256,4 +1261,138 @@ fn threaded_atomic_wait_is_killed_and_reaped_before_the_fixed_deadline() {
         started.elapsed() < Duration::from_secs(2),
         "atomic-wait worker exceeded the fixed reaping deadline"
     );
+}
+
+#[test]
+fn secondary_exec_preserves_its_signal_mask_in_the_kernel() {
+    use base64::Engine as _;
+    let _guard = worker_path_guard();
+    std::env::set_var(
+        "AGENTOS_WASMTIME_WORKER_PATH",
+        env!("CARGO_BIN_EXE_agentos-sidecar"),
+    );
+    let initial = wat::parse_str(r#"(module
+        (import "env" "memory" (memory 1 2 shared))
+        (import "wasi" "thread-spawn" (func $spawn (param i32) (result i32)))
+        (import "host_process" "proc_getpid" (func $pid (param i32) (result i32)))
+        (import "host_process" "proc_signal_mask_v2" (func $mask (param i32 i32 i32 i32 i32) (result i32)))
+        (import "host_process" "proc_exec" (func $exec (param i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
+        (import "wasi_snapshot_preview1" "proc_exit" (func $exit (param i32)))
+        (export "memory" (memory 0))
+        (data (i32.const 0) "/replacement.wasm\00")
+        (func (export "wasi_thread_start") (param i32 i32)
+            (if (call $mask (i32.const 0) (i32.const 512) (i32.const 0) (i32.const 100) (i32.const 104)) (then unreachable))
+            (call $exit (i32.add (i32.const 100) (call $exec (i32.const 0) (i32.const 17) (i32.const 0) (i32.const 18)
+                (i32.const 64) (i32.const 0) (i32.const 64) (i32.const 0))))
+            unreachable)
+        (func (export "_start")
+            (if (i32.lt_s (call $spawn (i32.const 0)) (i32.const 1)) (then unreachable))
+            (loop $wait (drop (call $pid (i32.const 256))) (br $wait))))"#).unwrap();
+    let replacement = wat::parse_str(r#"(module
+        (import "host_process" "proc_signal_mask_v2" (func $mask (param i32 i32 i32 i32 i32) (result i32)))
+        (memory (export "memory") 1 2)
+        (func (export "__agentos_set_initial_sigmask") (param $lo i32) (param $hi i32) (result i32)
+            (i32.or (i32.ne (local.get $lo) (i32.const 512)) (local.get $hi)))
+        (func (export "_start")
+            (if (call $mask (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 100) (i32.const 104)) (then unreachable))
+            (if (i32.ne (i32.load (i32.const 100)) (i32.const 512)) (then unreachable))))"#).unwrap();
+    let mut sidecar = new_sidecar("secondary-exec-signal-mask");
+    let cwd = temp_dir("secondary-exec-signal-mask");
+    let entrypoint = cwd.join("initial.wasm");
+    write_fixture(&entrypoint, initial);
+    let connection = authenticate_wire(&mut sidecar, "conn-secondary-exec");
+    let session = open_session_wire(&mut sidecar, 2, &connection);
+    let (vm, _) = support::create_vm_wire_with_metadata(
+        &mut sidecar,
+        3,
+        &connection,
+        &session,
+        GuestRuntimeKind::WebAssembly,
+        &cwd,
+        HashMap::from([("limits.wasm.max_threads".into(), "2".into())]),
+    );
+    let written = sidecar
+        .dispatch_wire_blocking(wire_request(
+            40,
+            wire_vm(&connection, &session, &vm),
+            RequestPayload::GuestFilesystemCallRequest(
+                agentos_vm::wire::GuestFilesystemCallRequest {
+                    operation: agentos_vm::wire::GuestFilesystemOperation::WriteFile,
+                    path: "/replacement.wasm".into(),
+                    destination_path: None,
+                    target: None,
+                    content: Some(base64::engine::general_purpose::STANDARD.encode(replacement)),
+                    encoding: Some(agentos_vm::wire::RootFilesystemEntryEncoding::Base64),
+                    recursive: false,
+                    max_depth: None,
+                    mode: Some(0o755),
+                    uid: None,
+                    gid: None,
+                    atime_ms: None,
+                    mtime_ms: None,
+                    len: None,
+                    offset: None,
+                },
+            ),
+        ))
+        .unwrap();
+    assert!(
+        matches!(
+            written.response.payload,
+            ResponsePayload::GuestFilesystemResultResponse(_)
+        ),
+        "{:?}",
+        written.response.payload
+    );
+    let chmod = sidecar
+        .dispatch_wire_blocking(wire_request(
+            41,
+            wire_vm(&connection, &session, &vm),
+            RequestPayload::GuestFilesystemCallRequest(
+                agentos_vm::wire::GuestFilesystemCallRequest {
+                    operation: agentos_vm::wire::GuestFilesystemOperation::Chmod,
+                    path: "/replacement.wasm".into(),
+                    destination_path: None,
+                    target: None,
+                    content: None,
+                    encoding: None,
+                    recursive: false,
+                    max_depth: None,
+                    mode: Some(0o755),
+                    uid: None,
+                    gid: None,
+                    atime_ms: None,
+                    mtime_ms: None,
+                    len: None,
+                    offset: None,
+                },
+            ),
+        ))
+        .unwrap();
+    assert!(
+        matches!(
+            chmod.response.payload,
+            ResponsePayload::GuestFilesystemResultResponse(_)
+        ),
+        "{:?}",
+        chmod.response.payload
+    );
+    start_threaded_process(
+        &mut sidecar,
+        4,
+        &connection,
+        &session,
+        &vm,
+        "exec-mask",
+        &entrypoint,
+    );
+    let (stdout, stderr, code) = collect_process_output_wire_with_timeout(
+        &mut sidecar,
+        &connection,
+        &session,
+        &vm,
+        "exec-mask",
+        Duration::from_secs(10),
+    );
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
 }

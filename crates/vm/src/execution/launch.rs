@@ -103,7 +103,7 @@ fn resolve_execute_request(
         guest_cwd,
         host_cwd,
         wasm_permission_tier: payload.wasm_permission_tier,
-        binding_command: false,
+        host_function_command: false,
         adapter_policy,
     })
 }
@@ -121,9 +121,9 @@ fn resolve_command_execution(
     env.extend(extra_env.clone());
     let args = apply_shell_cwd_prefix(command, args.to_vec(), &guest_cwd);
 
-    if is_binding_command(vm, command) {
+    if is_host_function_command(vm, command) {
         let command =
-            normalized_binding_command_name(command).unwrap_or_else(|| command.to_owned());
+            normalized_host_function_command_name(command).unwrap_or_else(|| command.to_owned());
         return Ok(ResolvedChildProcessExecution {
             command: command.clone(),
             process_args: std::iter::once(command.clone())
@@ -136,8 +136,8 @@ fn resolve_command_execution(
             guest_cwd,
             host_cwd,
             wasm_permission_tier: None,
-            binding_command: true,
-            adapter_policy: ExecutionAdapterPolicy::BINDING,
+            host_function_command: true,
+            adapter_policy: ExecutionAdapterPolicy::HOST_FUNCTION,
         });
     }
 
@@ -174,7 +174,7 @@ fn resolve_command_execution(
                 guest_cwd,
                 host_cwd,
                 wasm_permission_tier: None,
-                binding_command: false,
+                host_function_command: false,
                 adapter_policy: ExecutionAdapterPolicy::DIRECT_RUNTIME,
             });
         }
@@ -193,7 +193,7 @@ fn resolve_command_execution(
                 guest_cwd,
                 host_cwd,
                 wasm_permission_tier: None,
-                binding_command: false,
+                host_function_command: false,
                 adapter_policy: ExecutionAdapterPolicy::DIRECT_RUNTIME,
             });
         }
@@ -215,7 +215,7 @@ fn resolve_command_execution(
                 guest_cwd,
                 host_cwd,
                 wasm_permission_tier: None,
-                binding_command: false,
+                host_function_command: false,
                 adapter_policy: ExecutionAdapterPolicy::DIRECT_RUNTIME,
             });
         }
@@ -277,7 +277,7 @@ fn resolve_command_execution(
             guest_cwd,
             host_cwd,
             wasm_permission_tier: None,
-            binding_command: false,
+            host_function_command: false,
             adapter_policy: ExecutionAdapterPolicy::DIRECT_RUNTIME,
         });
     }
@@ -325,7 +325,7 @@ fn resolve_command_execution(
             guest_cwd,
             host_cwd,
             wasm_permission_tier: None,
-            binding_command: false,
+            host_function_command: false,
             adapter_policy: ExecutionAdapterPolicy::DIRECT_RUNTIME,
         });
     }
@@ -375,7 +375,7 @@ fn resolve_command_execution(
             guest_cwd,
             host_cwd,
             wasm_permission_tier: None,
-            binding_command: false,
+            host_function_command: false,
             adapter_policy: ExecutionAdapterPolicy::DIRECT_RUNTIME,
         });
     }
@@ -399,7 +399,7 @@ fn resolve_command_execution(
         guest_cwd,
         host_cwd,
         wasm_permission_tier,
-        binding_command: false,
+        host_function_command: false,
         adapter_policy: ExecutionAdapterPolicy::KERNEL_HOST_CALL_POSIX,
     })
 }
@@ -919,7 +919,7 @@ pub(super) fn resolve_python_command_execution(
         guest_cwd,
         host_cwd,
         wasm_permission_tier: None,
-        binding_command: false,
+        host_function_command: false,
         adapter_policy: ExecutionAdapterPolicy::DIRECT_PYTHON_RUNTIME,
     })
 }
@@ -928,9 +928,22 @@ pub(super) fn resolve_special_node_cli_invocation(
     args: &[String],
     env: &mut BTreeMap<String, String>,
 ) -> Option<(String, Vec<String>)> {
+    // Node options precede the eval switch; they are not script filenames or
+    // guest argv. Both root and child launches share this parser.
+    let (args, module_mode) = match args {
+        [option, rest @ ..] if option == "--input-type=module" => (rest, true),
+        [option, value, rest @ ..] if option == "--input-type" && value == "module" => (rest, true),
+        _ => (args, false),
+    };
     let first = args.first()?;
     match first.as_str() {
         "-e" | "--eval" => {
+            if module_mode {
+                env.insert(
+                    String::from("AGENTOS_GUEST_ENTRYPOINT_MODULE_MODE"),
+                    String::from("1"),
+                );
+            }
             env.insert(
                 String::from("AGENTOS_NODE_EVAL"),
                 args.get(1).cloned().unwrap_or_default(),
@@ -1098,6 +1111,40 @@ pub(super) fn resolve_host_node_cli_entrypoint(
     }
 
     None
+}
+
+#[cfg(test)]
+mod node_eval_options_tests {
+    use super::resolve_special_node_cli_invocation;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn module_eval_options_preserve_source_and_guest_arguments() {
+        for options in [vec!["--input-type=module"], vec!["--input-type", "module"]] {
+            for eval in ["-e", "--eval"] {
+                let args = options
+                    .iter()
+                    .copied()
+                    .chain([eval, "await Promise.resolve()", "--guest-option"])
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>();
+                let mut env = BTreeMap::new();
+                let (entrypoint, guest_args) = resolve_special_node_cli_invocation(&args, &mut env)
+                    .expect("module eval invocation");
+                assert_eq!(
+                    env.get("AGENTOS_GUEST_ENTRYPOINT_MODULE_MODE")
+                        .map(String::as_str),
+                    Some("1")
+                );
+                assert_eq!(entrypoint, eval);
+                assert_eq!(guest_args, ["--guest-option"]);
+                assert_eq!(
+                    env.get("AGENTOS_NODE_EVAL").map(String::as_str),
+                    Some("await Promise.resolve()")
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -2340,7 +2387,7 @@ pub(super) fn guest_runtime_identity(
             .is_some_and(|cfg| cfg.high_resolution_time.unwrap_or(false)),
         // Userland bundle to bake into the per-sidecar snapshot. The sidecar
         // derives this from configured agent packages with `agent.snapshot`.
-        snapshot_userland_code: vm.configuration.snapshot_userland_code.clone(),
+        snapshot_userland_code: None,
     }
 }
 
@@ -2716,8 +2763,9 @@ mod kernel_poll_sync_rpc_tests {
     use super::{
         install_kernel_stdin_pipe, parse_kernel_poll_args, parse_kernel_stdin_read_args,
         rollback_failed_top_level_process_start, service_javascript_kernel_poll_sync_rpc,
-        ActiveExecution, ActiveExecutionEvent, ActiveProcess, BindingExecution, HostRpcRequest,
-        KernelPollFdResponse, SidecarKernel, EXECUTION_DRIVER_NAME, JAVASCRIPT_COMMAND,
+        ActiveExecution, ActiveExecutionEvent, ActiveProcess, HostFunctionExecution,
+        HostRpcRequest, KernelPollFdResponse, SidecarKernel, EXECUTION_DRIVER_NAME,
+        JAVASCRIPT_COMMAND,
     };
     use agentos_vm_kernel::command_registry::CommandDriver;
     use agentos_vm_kernel::kernel::{KernelVmConfig, SpawnOptions};
@@ -2803,7 +2851,7 @@ mod kernel_poll_sync_rpc_tests {
             crate::limits::VmLimits::default(),
             agentos_sidecar_protocol::config::DEFAULT_MAX_PROCESS_EVENTS,
             super::GuestRuntimeKind::JavaScript,
-            ActiveExecution::Binding(BindingExecution::default()),
+            ActiveExecution::HostFunction(HostFunctionExecution::default()),
         );
 
         kernel
@@ -2884,7 +2932,7 @@ mod kernel_poll_sync_rpc_tests {
             crate::limits::VmLimits::default(),
             agentos_sidecar_protocol::config::DEFAULT_MAX_PROCESS_EVENTS,
             super::GuestRuntimeKind::JavaScript,
-            ActiveExecution::Binding(BindingExecution::default()),
+            ActiveExecution::HostFunction(HostFunctionExecution::default()),
         )
         .with_event_notify(Arc::clone(&event_notify));
 
@@ -2980,9 +3028,9 @@ mod kernel_poll_sync_rpc_tests {
             ActiveProcess::attach_runtime_control_before_start(&kernel_handle, notify)
                 .expect("attach startup endpoint");
         install_kernel_stdin_pipe(&mut kernel, pid).expect("install startup stdin pipe");
-        let binding = BindingExecution::default();
-        let cancelled = Arc::clone(&binding.cancelled);
-        let mut execution = ActiveExecution::Binding(binding);
+        let host_function = HostFunctionExecution::default();
+        let cancelled = Arc::clone(&host_function.cancelled);
+        let mut execution = ActiveExecution::HostFunction(host_function);
         assert_ne!(kernel.resource_snapshot(), baseline);
 
         rollback_failed_top_level_process_start(
@@ -3070,7 +3118,7 @@ pub(super) fn stage_agentos_package_command(
     authority: WasmLaunchAuthority,
 ) -> Result<(), VmError> {
     const WASM_MAGIC: &[u8] = b"\0asm";
-    if resolved.binding_command
+    if resolved.host_function_command
         || !matches!(
             resolved.runtime,
             GuestRuntimeKind::JavaScript | GuestRuntimeKind::WebAssembly
@@ -3148,7 +3196,7 @@ pub(super) fn stage_kernel_wasm_launch_asset(
     resolved: &mut ResolvedChildProcessExecution,
     authority: WasmLaunchAuthority,
 ) -> Result<(), VmError> {
-    if resolved.binding_command || resolved.runtime != GuestRuntimeKind::WebAssembly {
+    if resolved.host_function_command || resolved.runtime != GuestRuntimeKind::WebAssembly {
         return Ok(());
     }
     let Some(guest_entrypoint) = resolved
@@ -3208,10 +3256,10 @@ pub(super) fn stage_kernel_wasm_launch_asset(
 }
 
 async fn admit_trusted_initial_wasm_source_if_missing(
-    vm: &mut VmState,
+    handle: &crate::state::VmHandle,
     resolved: &ResolvedChildProcessExecution,
 ) -> Result<(), VmError> {
-    if resolved.binding_command || resolved.runtime != GuestRuntimeKind::WebAssembly {
+    if resolved.host_function_command || resolved.runtime != GuestRuntimeKind::WebAssembly {
         return Ok(());
     }
     let Some(guest_entrypoint) = resolved
@@ -3222,15 +3270,17 @@ async fn admit_trusted_initial_wasm_source_if_missing(
     else {
         return Ok(());
     };
+    let mut vm = handle.try_borrow_mut("prepare trusted initial image admission")?;
+    let maximum_bytes = vm.limits.wasm.max_module_file_bytes;
     match vm
         .kernel
-        .load_trusted_initial_runtime_image(&guest_entrypoint, vm.limits.wasm.max_module_file_bytes)
+        .load_trusted_initial_runtime_image(&guest_entrypoint, maximum_bytes)
     {
         Ok(_) => return Ok(()),
         Err(error)
             if error.code() == "ENOENT"
                 && !resolved_entrypoint_uses_kernel_launch_asset(
-                    vm,
+                    &vm,
                     resolved,
                     &guest_entrypoint,
                 ) => {}
@@ -3250,18 +3300,17 @@ async fn admit_trusted_initial_wasm_source_if_missing(
             resolved.host_cwd.join(candidate)
         }
     };
-    let source = read_bounded_host_launch_source_async(
-        vm,
-        host_entrypoint,
-        vm.limits.wasm.max_module_file_bytes,
-    )
-    .await?;
+    let runtime = vm.runtime_context.clone();
+    drop(vm);
+    let source =
+        read_bounded_host_launch_source_async(runtime, host_entrypoint, maximum_bytes).await?;
+    let mut vm = handle.try_borrow_mut("admit trusted initial image")?;
     vm.kernel
         .admit_trusted_initial_runtime_image(
             &guest_entrypoint,
             source.bytes,
             source.mode,
-            vm.limits.wasm.max_module_file_bytes,
+            maximum_bytes,
         )
         .map_err(kernel_error)
 }
@@ -3787,11 +3836,11 @@ fn read_open_host_launch_source(
 }
 
 async fn read_bounded_host_launch_source_async(
-    vm: &VmState,
+    runtime: agentos_driver_tokio::DriverHandle,
     path: PathBuf,
     maximum_bytes: u64,
 ) -> Result<HostLaunchSource, VmError> {
-    let blocking = vm.runtime_context.blocking().clone();
+    let blocking = runtime.blocking().clone();
     let path_reservation = path.to_string_lossy().len().saturating_add(1);
     let opened = blocking
         .run(path_reservation, move || {
@@ -4630,692 +4679,782 @@ where
     B: VmManagerHost + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
-    pub(crate) async fn execute(
+    pub(crate) fn execute(
         &mut self,
         request: &RequestFrame,
         payload: ExecuteRequest,
-    ) -> Result<DispatchResult, VmError> {
-        let execute_total_start = Instant::now();
-        let process_event_capacity = self.config.protocol.max_process_events;
+    ) -> OwnedVmRouteFuture {
+        let input = self.prepare_owned_vm_route(request);
         let executors = self.executors.clone();
-        let (connection_id, session_id, vm_id) = self.vm_scope_for(&request.ownership)?;
-        self.require_owned_vm(&connection_id, &session_id, &vm_id)?;
-
-        let vm = self
-            .vms
-            .get_mut(&vm_id)
-            .ok_or_else(|| missing_vm_error(&vm_id))?;
-        if vm.active_processes.contains_key(&payload.process_id) {
-            return Err(VmError::InvalidState(format!(
-                "VM {vm_id} already has an active process with id {}",
-                payload.process_id
-            )));
-        }
-        // ConfigureVm normally closes the trusted bootstrap window after
-        // projecting package command stubs. Legacy/create-only callers can
-        // execute without ConfigureVm, so seal here as a final boundary before
-        // any untrusted guest code can observe a writable read-only root.
-        vm.kernel
-            .finish_root_filesystem_bootstrap()
-            .map_err(kernel_error)?;
-        let vm_pending_stdin_bytes_budget = Arc::clone(&vm.pending_stdin_bytes_budget);
-        let vm_pending_event_bytes_budget = Arc::clone(&vm.pending_event_bytes_budget);
-        let standalone_wasm_backend = match payload.wasm_backend {
-            Some(StandaloneWasmBackend::V8) => ExecutionStandaloneWasmBackend::V8,
-            Some(StandaloneWasmBackend::Wasmtime) => ExecutionStandaloneWasmBackend::Wasmtime,
-            Some(StandaloneWasmBackend::WasmtimeThreads) => {
-                ExecutionStandaloneWasmBackend::WasmtimeThreads
-            }
-            None => vm.standalone_wasm_backend,
-        };
-
-        if let Some(command) = payload.command.as_deref() {
-            if let Some(binding_resolution) =
-                resolve_binding_command(vm, command, &payload.args, payload.cwd.as_deref())?
-            {
-                let guest_cwd = payload
-                    .cwd
-                    .as_deref()
-                    .map(normalize_path)
-                    .unwrap_or_else(|| vm.guest_cwd.clone());
-                let kernel_handle = vm
-                    .kernel
-                    .create_virtual_process(
-                        EXECUTION_DRIVER_NAME,
-                        BINDING_DRIVER_NAME,
-                        command,
-                        std::iter::once(command.to_owned())
-                            .chain(payload.args.iter().cloned())
-                            .collect(),
-                        VirtualProcessOptions {
-                            env: vm.guest_env.clone(),
-                            cwd: Some(guest_cwd.clone()),
-                            ..VirtualProcessOptions::default()
-                        },
-                    )
-                    .map_err(kernel_error)?;
-                let kernel_pid = kernel_handle.pid();
-                let runtime_control = match ActiveProcess::attach_runtime_control_before_start(
-                    &kernel_handle,
-                    Arc::clone(&self.process_event_notify),
-                ) {
-                    Ok(runtime_control) => runtime_control,
-                    Err(error) => {
-                        rollback_failed_top_level_process_start(
-                            &mut vm.kernel,
-                            &kernel_handle,
-                            None,
-                            "top-level binding runtime-control attachment",
-                        );
-                        return Err(error);
-                    }
-                };
-                let binding_execution = BindingExecution::with_event_notify(
-                    Arc::clone(&self.process_event_notify),
-                    process_event_capacity,
-                )
-                .with_vm_pending_event_bytes_budget(Arc::clone(&vm_pending_event_bytes_budget));
-                let cancelled = binding_execution.cancelled.clone();
-                let paused = Arc::clone(&binding_execution.paused);
-                let pause_notify = Arc::clone(&binding_execution.pause_notify);
-                let pending_events = binding_execution.pending_events.clone();
-                let event_overflow_reason = binding_execution.event_overflow_reason.clone();
-                let pending_event_bytes = binding_execution.pending_event_bytes.clone();
-                let pending_event_count_limit = binding_execution.pending_event_count_limit.clone();
-                let pending_event_bytes_limit = binding_execution.pending_event_bytes_limit.clone();
-                let binding_vm_pending_event_bytes_budget =
-                    binding_execution.vm_pending_event_bytes_budget.clone();
-                let event_notify = binding_execution.event_notify.clone();
-                let host_cwd = runtime_launch_path_for_guest(vm, &guest_cwd);
-                let mut process = ActiveProcess::new_with_attached_runtime_control(
-                    kernel_pid,
-                    kernel_handle,
-                    vm.runtime_context.clone(),
-                    vm.limits.clone(),
-                    process_event_capacity,
-                    GuestRuntimeKind::JavaScript,
-                    ActiveExecution::Binding(binding_execution),
-                    runtime_control,
-                    Arc::clone(&self.process_event_notify),
-                )
-                .with_adapter_policy(ExecutionAdapterPolicy::BINDING)
-                .with_standalone_wasm_backend(standalone_wasm_backend)
-                .with_vm_pending_byte_budgets(
-                    Arc::clone(&vm_pending_stdin_bytes_budget),
-                    Arc::clone(&vm_pending_event_bytes_budget),
-                )
-                .with_guest_cwd(guest_cwd.clone())
-                .with_host_cwd(host_cwd);
-                if let Err(error) = process.apply_runtime_controls() {
-                    let rollback_handle = process.kernel_handle.clone();
-                    rollback_failed_top_level_process_start(
-                        &mut vm.kernel,
-                        &rollback_handle,
-                        Some(&mut process.execution),
-                        "top-level binding pending runtime control",
-                    );
-                    return Err(error);
-                }
-                vm.active_processes
-                    .insert(payload.process_id.clone(), process);
-                // Registration is the publication boundary for an execution
-                // that may already have queued work. Never rely solely on a
-                // pre-publication executor wake.
-                self.process_event_notify.notify_one();
-                if let Err(error) = self.bridge.emit_lifecycle(&vm_id, LifecycleState::Busy) {
-                    rollback_published_top_level_process_start(
-                        vm,
-                        &payload.process_id,
-                        "top-level binding lifecycle publication",
-                    );
-                    return Err(error);
-                }
-                spawn_binding_process_events(BindingProcessEventRequest {
-                    runtime_context: vm.runtime_context.clone(),
-                    sidecar_requests: self.sidecar_requests.clone(),
-                    connection_id: connection_id.clone(),
-                    session_id: session_id.clone(),
-                    vm_id: vm_id.clone(),
-                    binding_resolution,
-                    cancelled,
-                    paused,
-                    pause_notify,
-                    pending_events,
-                    event_overflow_reason,
-                    pending_event_bytes,
-                    pending_event_count_limit,
-                    pending_event_bytes_limit,
-                    vm_pending_event_bytes_budget: binding_vm_pending_event_bytes_budget,
-                    event_notify,
-                });
-                return Ok(DispatchResult {
-                    response: process_started_response(
-                        request,
-                        payload.process_id,
-                        Some(kernel_pid),
-                    ),
-                    events: Vec::new(),
-                });
-            }
-        }
-
-        let requested_tty = payload
-            .env
-            .get(EXECUTION_REQUEST_TTY_ENV)
-            .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
-        let phase_start = Instant::now();
-        let mut resolved = resolve_execute_request(vm, &payload)?;
-        stage_agentos_package_command(vm, &mut resolved, WasmLaunchAuthority::TrustedInitialImage)?;
-        admit_trusted_initial_wasm_source_if_missing(vm, &resolved).await?;
-        stage_kernel_wasm_launch_asset(
-            vm,
-            &mut resolved,
-            WasmLaunchAuthority::TrustedInitialImage,
-        )?;
-        let resolved = resolved;
-        executors
-            .require(resolved.runtime.clone(), standalone_wasm_backend)
-            .map_err(VmError::Host)?;
-        record_execute_phase("resolve_execute_request", phase_start.elapsed());
-        let phase_start = Instant::now();
-        let mut env = resolved.env.clone();
-        env.remove(EXECUTION_REQUEST_TTY_ENV);
-        env.insert(
-            String::from(EXECUTION_SANDBOX_ROOT_ENV),
-            normalize_host_path(&vm.runtime_scratch_root)
-                .to_string_lossy()
-                .into_owned(),
-        );
-        if resolved.adapter_policy.forwards_kernel_stdin_rpc {
-            env.insert(String::from("AGENTOS_KEEP_STDIN_OPEN"), String::from("1"));
-            // Managed V8 reads fd 0 through the sidecar's kernel bridge. The
-            // execution crate keeps its local bridge only for standalone use.
-            env.insert(
-                String::from("AGENTOS_FORWARD_KERNEL_STDIN_RPC"),
-                String::from("1"),
-            );
-        } else if resolved.adapter_policy.encodes_inherited_fd_bootstrap {
-            env.insert(String::from(WASM_STDIO_SYNC_RPC_ENV), String::from("1"));
-        }
-        if resolved.adapter_policy.supports_prepared_in_place_exec {
-            env.insert(String::from(WASM_EXEC_COMMIT_RPC_ENV), String::from("1"));
-        }
-        let provisional_launch_entrypoint = if resolved
-            .adapter_policy
-            .uses_javascript_entrypoint_projection
-        {
-            env.get("AGENTOS_GUEST_ENTRYPOINT")
-                .filter(|path| path.starts_with('/'))
-                .map(|path| normalize_path(path))
-                .unwrap_or_else(|| resolved.entrypoint.clone())
-        } else {
-            resolved.entrypoint.clone()
-        };
-        let argv = std::iter::once(provisional_launch_entrypoint)
-            .chain(resolved.execution_args.iter().cloned())
-            .collect::<Vec<_>>();
-        let requested_permission_tier = resolved
-            .wasm_permission_tier
-            .map(kernel_process_permission_tier)
-            .unwrap_or(ProcessPermissionTier::Full);
-        record_execute_phase("env_argv_setup", phase_start.elapsed());
-        let phase_start = Instant::now();
-        let kernel_handle = vm
-            .kernel
-            .spawn_process(
-                &resolved.command,
-                argv,
-                SpawnOptions {
-                    requester_driver: Some(String::from(EXECUTION_DRIVER_NAME)),
-                    cwd: Some(resolved.guest_cwd.clone()),
-                    permission_tier: Some(requested_permission_tier),
-                    ..SpawnOptions::default()
-                },
+        let bridge = self.bridge.clone();
+        let sidecar_requests = self.sidecar_requests.clone();
+        let process_event_notify = Arc::clone(&self.process_event_notify);
+        let cache_root = self.cache_root.clone();
+        let process_event_capacity = self.config.runtime.protocol.max_process_events;
+        Box::pin(async move {
+            execute_owned(
+                input?,
+                payload,
+                bridge,
+                sidecar_requests,
+                process_event_notify,
+                cache_root,
+                process_event_capacity,
+                executors,
             )
-            .map_err(kernel_error)?;
-        let kernel_pid = kernel_handle.pid();
-        record_execute_phase("kernel_spawn_process", phase_start.elapsed());
-
-        macro_rules! top_level_start_step {
-            ($result:expr, $context:expr) => {
-                match $result {
-                    Ok(value) => value,
-                    Err(error) => {
-                        rollback_failed_top_level_process_start(
-                            &mut vm.kernel,
-                            &kernel_handle,
-                            None,
-                            $context,
-                        );
-                        return Err(error);
-                    }
-                }
-            };
-        }
-
-        macro_rules! dispose_started_context {
-            ($context:expr) => {
-                match $context {
-                    #[cfg(feature = "node-v8")]
-                    StartedTopLevelAdapterContext::Javascript(context_id) => {
-                        self.javascript_engine.dispose_context(context_id);
-                    }
-                    #[cfg(feature = "python-v8-pyodide")]
-                    StartedTopLevelAdapterContext::Python(context_id) => {
-                        self.python_engine.dispose_context(context_id);
-                    }
-                    StartedTopLevelAdapterContext::WebAssembly(context_id) => {
-                        self.wasm_engine.dispose_context(context_id);
-                    }
-                }
-            };
-        }
-
-        let launch_entrypoint = if resolved
-            .adapter_policy
-            .uses_javascript_entrypoint_projection
-        {
-            top_level_start_step!(
-                resolve_agentos_package_javascript_launch_entrypoint(vm, kernel_pid, &mut env,),
-                "top-level JavaScript package entrypoint resolution"
-            )
-            .unwrap_or_else(|| resolved.entrypoint.clone())
-        } else {
-            resolved.entrypoint.clone()
-        };
-
-        // Attach before PTY setup, asset preparation, or engine start. Kernel
-        // signals arriving during any of those steps remain durable in this
-        // receiver; every failure below funnels through process reaping.
-        let runtime_control = top_level_start_step!(
-            ActiveProcess::attach_runtime_control_before_start(
-                &kernel_handle,
-                Arc::clone(&self.process_event_notify),
-            ),
-            "top-level runtime-control attachment"
-        );
-        if resolved.runtime == GuestRuntimeKind::WebAssembly {
-            top_level_start_step!(
-                vm.kernel
-                    .initialize_canonical_wasi_preopens(EXECUTION_DRIVER_NAME, kernel_pid)
-                    .map_err(kernel_error),
-                "top-level WASI capability-root initialization"
-            );
-        }
-        let tty_master_fd = if requested_tty {
-            let (master_fd, slave_fd, _) = top_level_start_step!(
-                vm.kernel
-                    .open_pty(EXECUTION_DRIVER_NAME, kernel_pid)
-                    .map_err(kernel_error),
-                "top-level PTY allocation"
-            );
-            top_level_start_step!(
-                vm.kernel
-                    .fd_dup2(EXECUTION_DRIVER_NAME, kernel_pid, slave_fd, 0)
-                    .map_err(kernel_error),
-                "top-level PTY stdin installation"
-            );
-            top_level_start_step!(
-                vm.kernel
-                    .fd_dup2(EXECUTION_DRIVER_NAME, kernel_pid, slave_fd, 1)
-                    .map_err(kernel_error),
-                "top-level PTY stdout installation"
-            );
-            top_level_start_step!(
-                vm.kernel
-                    .fd_dup2(EXECUTION_DRIVER_NAME, kernel_pid, slave_fd, 2)
-                    .map_err(kernel_error),
-                "top-level PTY stderr installation"
-            );
-            top_level_start_step!(
-                vm.kernel
-                    .pty_set_foreground_pgid(
-                        EXECUTION_DRIVER_NAME,
-                        kernel_pid,
-                        master_fd,
-                        kernel_pid,
-                    )
-                    .map_err(kernel_error),
-                "top-level PTY foreground-group setup"
-            );
-            if let Some((cols, rows)) = requested_pty_window_size(&env) {
-                top_level_start_step!(
-                    vm.kernel
-                        .pty_resize(EXECUTION_DRIVER_NAME, kernel_pid, master_fd, cols, rows)
-                        .map_err(kernel_error),
-                    "top-level PTY resize"
-                );
-            }
-            Some(master_fd)
-        } else {
-            None
-        };
-        let kernel_stdin_writer_fd = if let Some(master_fd) = tty_master_fd {
-            master_fd
-        } else {
-            top_level_start_step!(
-                install_kernel_stdin_pipe(&mut vm.kernel, kernel_pid),
-                "top-level stdin pipe installation"
-            )
-        };
-
-        let (execution, process_env, started_context) = match resolved.runtime {
-            #[cfg(feature = "node-v8")]
-            GuestRuntimeKind::JavaScript => {
-                let phase_start = Instant::now();
-                top_level_start_step!(
-                    prepare_javascript_launch_assets(
-                        vm,
-                        &resolved,
-                        &env,
-                        WasmLaunchAuthority::TrustedInitialImage,
-                        None,
-                    ),
-                    "top-level JavaScript asset preparation"
-                );
-                record_execute_phase("js_prepare_launch_assets", phase_start.elapsed());
-                let phase_start = Instant::now();
-                // A trusted initial request may name a host source that has not
-                // been admitted to the kernel VFS yet. Asset preparation above
-                // performs that one bounded admission. Load the executable
-                // source only after admission so the kernel remains the source
-                // of truth and the V8 import cache never falls back to the
-                // caller's ambient host pathname.
-                let inline_code = top_level_start_step!(
-                    load_javascript_entrypoint_source(
-                        vm,
-                        kernel_pid,
-                        &resolved.guest_cwd,
-                        &launch_entrypoint,
-                        &env,
-                    ),
-                    "top-level JavaScript entrypoint load"
-                );
-                record_execute_phase("js_load_entrypoint_source", phase_start.elapsed());
-
-                let phase_start = Instant::now();
-                let context =
-                    self.javascript_engine
-                        .create_context(CreateJavascriptContextRequest {
-                            vm_id: vm_id.clone(),
-                            bootstrap_module: None,
-                            compile_cache_root: Some(self.cache_root.join("node-compile-cache")),
-                        });
-                record_execute_phase("js_create_context", phase_start.elapsed());
-                let phase_start = Instant::now();
-                let context_id = context.context_id;
-                let execution = match self
-                    .javascript_engine
-                    .start_execution_with_module_reader_and_runtime(
-                        StartJavascriptExecutionRequest {
-                            guest_runtime: guest_runtime_identity(vm, None, None),
-                            vm_id: vm_id.clone(),
-                            context_id: context_id.clone(),
-                            argv: std::iter::once(launch_entrypoint.clone())
-                                .chain(resolved.execution_args.iter().cloned())
-                                .collect(),
-                            argv0: None,
-                            env: env.clone(),
-                            cwd: resolved.host_cwd.clone(),
-                            limits: javascript_execution_limits(vm),
-                            inline_code,
-                            wasm_module_bytes: None,
-                        },
-                        None,
-                        None,
-                        vm.runtime_context.clone(),
-                    )
-                    .map_err(javascript_error)
-                {
-                    Ok(execution) => execution,
-                    Err(error) => {
-                        self.javascript_engine.dispose_context(&context_id);
-                        rollback_failed_top_level_process_start(
-                            &mut vm.kernel,
-                            &kernel_handle,
-                            None,
-                            "top-level JavaScript engine start",
-                        );
-                        return Err(error);
-                    }
-                };
-                record_execute_phase("js_start_execution", phase_start.elapsed());
-                (
-                    ActiveExecution::Javascript(execution),
-                    env.clone(),
-                    StartedTopLevelAdapterContext::Javascript(context_id),
-                )
-            }
-            #[cfg(not(feature = "node-v8"))]
-            GuestRuntimeKind::JavaScript => {
-                return Err(executor_feature_disabled("Node.js/V8", "node-v8"));
-            }
-            #[cfg(feature = "python-v8-pyodide")]
-            GuestRuntimeKind::Python => {
-                // The `python` command path (marked by AGENTOS_PYTHON_ARGV) is
-                // explicit about file mode via AGENTOS_PYTHON_FILE, so a `-c` code
-                // string that happens to end in `.py` is never mistaken for a path.
-                // The low-level execute API keeps the `.py`-suffix heuristic.
-                let python_file_path = if resolved.env.contains_key("AGENTOS_PYTHON_ARGV") {
-                    resolved.env.get("AGENTOS_PYTHON_FILE").map(PathBuf::from)
-                } else {
-                    python_file_entrypoint(&resolved.entrypoint)
-                };
-                let pyodide_dist_path = top_level_start_step!(
-                    self.python_engine
-                        .bundled_pyodide_dist_path_for_vm_async(&vm_id, &vm.runtime_context)
-                        .await
-                        .map_err(python_error),
-                    "top-level Python asset preparation"
-                );
-                let pyodide_cache_path = pyodide_dist_path
-                    .parent()
-                    .and_then(Path::parent)
-                    .unwrap_or(pyodide_dist_path.as_path())
-                    .join("pyodide-package-cache");
-                add_runtime_guest_path_mapping(
-                    &mut env,
-                    PYTHON_PYODIDE_GUEST_ROOT,
-                    &pyodide_dist_path,
-                );
-                add_runtime_guest_path_mapping(
-                    &mut env,
-                    PYTHON_PYODIDE_CACHE_GUEST_ROOT,
-                    &pyodide_cache_path,
-                );
-                add_runtime_host_access_path(
-                    &mut env,
-                    "AGENTOS_EXTRA_FS_READ_PATHS",
-                    &pyodide_dist_path,
-                    true,
-                );
-                add_runtime_host_access_path(
-                    &mut env,
-                    "AGENTOS_EXTRA_FS_READ_PATHS",
-                    &pyodide_cache_path,
-                    true,
-                );
-                add_runtime_host_access_path(
-                    &mut env,
-                    "AGENTOS_EXTRA_FS_WRITE_PATHS",
-                    &pyodide_cache_path,
-                    false,
-                );
-                let context = self
-                    .python_engine
-                    .create_context(CreatePythonContextRequest {
-                        vm_id: vm_id.clone(),
-                        pyodide_dist_path,
-                    });
-                let context_id = context.context_id;
-                let execution = match self
-                    .python_engine
-                    .start_execution_with_runtime_async(
-                        StartPythonExecutionRequest {
-                            vm_id: vm_id.clone(),
-                            context_id: context_id.clone(),
-                            code: resolved.entrypoint.clone(),
-                            file_path: python_file_path,
-                            env: env.clone(),
-                            cwd: resolved.host_cwd.clone(),
-                            limits: python_execution_limits_with_env(vm, &env),
-                            guest_runtime: guest_runtime_identity(vm, None, None),
-                        },
-                        vm.runtime_context.clone(),
-                    )
-                    .await
-                    .map_err(python_error)
-                {
-                    Ok(execution) => execution,
-                    Err(error) => {
-                        self.python_engine.dispose_context(&context_id);
-                        rollback_failed_top_level_process_start(
-                            &mut vm.kernel,
-                            &kernel_handle,
-                            None,
-                            "top-level Python engine start",
-                        );
-                        return Err(error);
-                    }
-                };
-                (
-                    ActiveExecution::Python(execution),
-                    env.clone(),
-                    StartedTopLevelAdapterContext::Python(context_id),
-                )
-            }
-            #[cfg(not(feature = "python-v8-pyodide"))]
-            GuestRuntimeKind::Python => {
-                return Err(executor_feature_disabled(
-                    "Python/V8/Pyodide",
-                    "python-v8-pyodide",
-                ));
-            }
-            GuestRuntimeKind::WebAssembly => {
-                let wasm_limits = wasm_execution_limits(vm);
-                let wasm_guest_runtime =
-                    guest_runtime_identity(vm, Some(u64::from(kernel_pid)), Some(0));
-                let wasm_permission_tier = top_level_start_step!(
-                    vm.kernel
-                        .process_permission_tier(EXECUTION_DRIVER_NAME, kernel_pid)
-                        .map_err(kernel_error),
-                    "top-level compatibility-WASM permission lookup"
-                );
-                let module_path = match payload.wasm_backend {
-                    _ if matches!(
-                        standalone_wasm_backend,
-                        ExecutionStandaloneWasmBackend::Wasmtime
-                            | ExecutionStandaloneWasmBackend::WasmtimeThreads
-                    ) =>
-                    {
-                        env.get("AGENTOS_GUEST_ENTRYPOINT")
-                            .map(|path| format!("{TRUSTED_INITIAL_MODULE_PREFIX}{path}"))
-                            .unwrap_or_else(|| resolved.entrypoint.clone())
-                    }
-                    _ => resolved.entrypoint.clone(),
-                };
-                let context = self.wasm_engine.create_context(CreateWasmContextRequest {
-                    vm_id: vm_id.clone(),
-                    module_path: Some(module_path),
-                });
-                let context_id = context.context_id;
-                let execution = match self
-                    .wasm_engine
-                    .start_execution_with_runtime_async_for_backend(
-                        StartWasmExecutionRequest {
-                            vm_id: vm_id.clone(),
-                            context_id: context_id.clone(),
-                            managed_kernel_host: true,
-                            argv: resolved.process_args.clone(),
-                            env: env.clone(),
-                            cwd: resolved.host_cwd.clone(),
-                            permission_tier: execution_wasm_permission_tier(wasm_permission_tier),
-                            limits: wasm_limits,
-                            guest_runtime: wasm_guest_runtime,
-                        },
-                        vm.runtime_context.clone(),
-                        standalone_wasm_backend,
-                    )
-                    .await
-                    .map_err(wasm_error)
-                {
-                    Ok(execution) => execution,
-                    Err(error) => {
-                        self.wasm_engine.dispose_context(&context_id);
-                        rollback_failed_top_level_process_start(
-                            &mut vm.kernel,
-                            &kernel_handle,
-                            None,
-                            "top-level compatibility-WASM engine start",
-                        );
-                        return Err(error);
-                    }
-                };
-                (
-                    ActiveExecution::Wasm(Box::new(execution)),
-                    env,
-                    StartedTopLevelAdapterContext::WebAssembly(context_id),
-                )
-            }
-        };
-        let reported_process_id = execution.native_process_id().unwrap_or(kernel_pid);
-        let phase_start = Instant::now();
-        let mut process = ActiveProcess::new_with_attached_runtime_control(
-            kernel_pid,
-            kernel_handle,
-            vm.runtime_context.clone(),
-            vm.limits.clone(),
-            process_event_capacity,
-            resolved.runtime,
-            execution,
-            runtime_control,
-            Arc::clone(&self.process_event_notify),
-        )
-        .with_adapter_policy(resolved.adapter_policy)
-        .with_standalone_wasm_backend(standalone_wasm_backend)
-        .with_vm_pending_byte_budgets(vm_pending_stdin_bytes_budget, vm_pending_event_bytes_budget)
-        .with_kernel_stdin_writer_fd(kernel_stdin_writer_fd)
-        .with_tty_master_fd(tty_master_fd)
-        .with_guest_cwd(resolved.guest_cwd.clone())
-        .with_env(process_env)
-        .with_host_cwd(resolved.host_cwd.clone());
-        if let Err(error) = process.apply_runtime_controls() {
-            let rollback_handle = process.kernel_handle.clone();
-            rollback_failed_top_level_process_start(
-                &mut vm.kernel,
-                &rollback_handle,
-                Some(&mut process.execution),
-                "top-level pending runtime control",
-            );
-            dispose_started_context!(&started_context);
-            return Err(error);
-        }
-        vm.active_processes
-            .insert(payload.process_id.clone(), process);
-        // A fast executor can publish its first event before this process is
-        // visible to the pump. Rearm after the authoritative registration
-        // commit so that event cannot remain stranded.
-        self.process_event_notify.notify_one();
-        if let Err(error) = self.bridge.emit_lifecycle(&vm_id, LifecycleState::Busy) {
-            rollback_published_top_level_process_start(
-                vm,
-                &payload.process_id,
-                "top-level engine lifecycle publication",
-            );
-            dispose_started_context!(&started_context);
-            return Err(error);
-        }
-        mark_execute_response_ready(&vm_id, &payload.process_id);
-        record_execute_phase("process_register_and_lifecycle", phase_start.elapsed());
-        record_execute_phase("execute_total", execute_total_start.elapsed());
-
-        Ok(DispatchResult {
-            response: process_started_response(
-                request,
-                payload.process_id,
-                Some(reported_process_id),
-            ),
-            events: Vec::new(),
+            .await
         })
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+// TODO(clippy-1.98): release the VM/engine RefCell borrow before awaiting; holding it can panic with "already borrowed".
+#[allow(clippy::await_holding_refcell_ref)]
+pub(crate) async fn execute_owned<B>(
+    input: OwnedVmRouteInput,
+    payload: ExecuteRequest,
+    bridge: SharedBridge<B>,
+    sidecar_requests: SharedSidecarRequestClient,
+    process_event_notify: Arc<tokio::sync::Notify>,
+    cache_root: PathBuf,
+    process_event_capacity: usize,
+    executors: crate::ExecutorRegistry,
+) -> Result<DispatchResult, VmError>
+where
+    B: VmManagerHost + Send + 'static,
+    BridgeError<B>: fmt::Debug + Send + Sync + 'static,
+{
+    let execute_total_start = Instant::now();
+    let request = &input.request;
+    let (connection_id, session_id, vm_id) = match &request.ownership {
+        OwnershipScope::VmOwnership(ownership) => (
+            ownership.connection_id.clone(),
+            ownership.session_id.clone(),
+            input.vm_id.clone(),
+        ),
+        _ => {
+            return Err(VmError::InvalidState(String::from(
+                "execute requires VM ownership",
+            )));
+        }
+    };
+    let execution_engines = input.vm.try_read("clone VM execution services", |vm| {
+        vm.execution_engines.clone()
+    })?;
+    let max_processes = input.vm.try_read("read startup admission limit", |vm| {
+        vm.kernel.resource_limits().max_processes
+    })?;
+    let _startup_permit = execution_engines.admit_startup(max_processes).await?;
+    let mut vm = input.vm.try_borrow_mut("prepare and start execution")?;
+    if vm.active_processes.contains_key(&payload.process_id) {
+        return Err(VmError::InvalidState(format!(
+            "VM {vm_id} already has an active process with id {}",
+            payload.process_id
+        )));
+    }
+    // ConfigureVm normally closes the trusted bootstrap window after
+    // projecting package command stubs. Legacy/create-only callers can
+    // execute without ConfigureVm, so seal here as a final boundary before
+    // any untrusted guest code can observe a writable read-only root.
+    vm.kernel
+        .finish_root_filesystem_bootstrap()
+        .map_err(kernel_error)?;
+    let vm_pending_stdin_bytes_budget = Arc::clone(&vm.pending_stdin_bytes_budget);
+    let vm_pending_event_bytes_budget = Arc::clone(&vm.pending_event_bytes_budget);
+    let standalone_wasm_backend = match payload.wasm_backend {
+        Some(StandaloneWasmBackend::V8) => ExecutionStandaloneWasmBackend::V8,
+        Some(StandaloneWasmBackend::Wasmtime) => ExecutionStandaloneWasmBackend::Wasmtime,
+        Some(StandaloneWasmBackend::WasmtimeThreads) => {
+            ExecutionStandaloneWasmBackend::WasmtimeThreads
+        }
+        None => vm.standalone_wasm_backend,
+    };
+
+    if let Some(command) = payload.command.as_deref() {
+        if let Some(host_function_resolution) =
+            resolve_host_function_command(&mut vm, command, &payload.args, payload.cwd.as_deref())?
+        {
+            let guest_cwd = payload
+                .cwd
+                .as_deref()
+                .map(normalize_path)
+                .unwrap_or_else(|| vm.guest_cwd.clone());
+            let guest_env = vm.guest_env.clone();
+            let kernel_handle = vm
+                .kernel
+                .create_virtual_process(
+                    EXECUTION_DRIVER_NAME,
+                    HOST_FUNCTION_DRIVER_NAME,
+                    command,
+                    std::iter::once(command.to_owned())
+                        .chain(payload.args.iter().cloned())
+                        .collect(),
+                    VirtualProcessOptions {
+                        env: guest_env,
+                        cwd: Some(guest_cwd.clone()),
+                        ..VirtualProcessOptions::default()
+                    },
+                )
+                .map_err(kernel_error)?;
+            let kernel_pid = kernel_handle.pid();
+            let runtime_control = match ActiveProcess::attach_runtime_control_before_start(
+                &kernel_handle,
+                Arc::clone(&process_event_notify),
+            ) {
+                Ok(runtime_control) => runtime_control,
+                Err(error) => {
+                    rollback_failed_top_level_process_start(
+                        &mut vm.kernel,
+                        &kernel_handle,
+                        None,
+                        "top-level host_function runtime-control attachment",
+                    );
+                    return Err(error);
+                }
+            };
+            let host_function_execution = HostFunctionExecution::with_event_notify(
+                Arc::clone(&process_event_notify),
+                process_event_capacity,
+            )
+            .with_vm_pending_event_bytes_budget(Arc::clone(&vm_pending_event_bytes_budget));
+            let cancelled = host_function_execution.cancelled.clone();
+            let paused = Arc::clone(&host_function_execution.paused);
+            let pause_notify = Arc::clone(&host_function_execution.pause_notify);
+            let pending_events = host_function_execution.pending_events.clone();
+            let event_overflow_reason = host_function_execution.event_overflow_reason.clone();
+            let pending_event_bytes = host_function_execution.pending_event_bytes.clone();
+            let pending_event_count_limit =
+                host_function_execution.pending_event_count_limit.clone();
+            let pending_event_bytes_limit =
+                host_function_execution.pending_event_bytes_limit.clone();
+            let host_function_vm_pending_event_bytes_budget = host_function_execution
+                .vm_pending_event_bytes_budget
+                .clone();
+            let event_notify = host_function_execution.event_notify.clone();
+            let host_cwd = runtime_launch_path_for_guest(&mut vm, &guest_cwd);
+            let mut process = ActiveProcess::new_with_attached_runtime_control(
+                kernel_pid,
+                kernel_handle,
+                vm.runtime_context.clone(),
+                vm.limits.clone(),
+                process_event_capacity,
+                GuestRuntimeKind::JavaScript,
+                ActiveExecution::HostFunction(host_function_execution),
+                runtime_control,
+                Arc::clone(&process_event_notify),
+            )
+            .with_adapter_policy(ExecutionAdapterPolicy::HOST_FUNCTION)
+            .with_standalone_wasm_backend(standalone_wasm_backend)
+            .with_vm_pending_byte_budgets(
+                Arc::clone(&vm_pending_stdin_bytes_budget),
+                Arc::clone(&vm_pending_event_bytes_budget),
+            )
+            .with_guest_cwd(guest_cwd.clone())
+            .with_host_cwd(host_cwd);
+            if let Err(error) = process.apply_runtime_controls() {
+                let rollback_handle = process.kernel_handle.clone();
+                rollback_failed_top_level_process_start(
+                    &mut vm.kernel,
+                    &rollback_handle,
+                    Some(&mut process.execution),
+                    "top-level host_function pending runtime control",
+                );
+                return Err(error);
+            }
+            vm.active_processes
+                .insert(payload.process_id.clone(), process);
+            // Registration is the publication boundary for an execution
+            // that may already have queued work. Never rely solely on a
+            // pre-publication executor wake.
+            process_event_notify.notify_one();
+            if let Err(error) = bridge.emit_lifecycle(&vm_id, LifecycleState::Busy) {
+                rollback_published_top_level_process_start(
+                    &mut vm,
+                    &payload.process_id,
+                    "top-level host_function lifecycle publication",
+                );
+                return Err(error);
+            }
+            spawn_host_function_process_events(HostFunctionProcessEventRequest {
+                runtime_context: vm.runtime_context.clone(),
+                sidecar_requests: sidecar_requests.clone(),
+                connection_id: connection_id.clone(),
+                session_id: session_id.clone(),
+                vm_id: vm_id.clone(),
+                host_function_resolution,
+                cancelled,
+                paused,
+                pause_notify,
+                pending_events,
+                event_overflow_reason,
+                pending_event_bytes,
+                pending_event_count_limit,
+                pending_event_bytes_limit,
+                vm_pending_event_bytes_budget: host_function_vm_pending_event_bytes_budget,
+                event_notify,
+            });
+            return Ok(DispatchResult {
+                response: process_started_response(request, payload.process_id, Some(kernel_pid)),
+                events: Vec::new(),
+            });
+        }
+    }
+
+    let requested_tty = payload
+        .env
+        .get(EXECUTION_REQUEST_TTY_ENV)
+        .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
+    let phase_start = Instant::now();
+    let mut resolved = resolve_execute_request(&mut vm, &payload)?;
+    stage_agentos_package_command(
+        &mut vm,
+        &mut resolved,
+        WasmLaunchAuthority::TrustedInitialImage,
+    )?;
+    drop(vm);
+    admit_trusted_initial_wasm_source_if_missing(&input.vm, &resolved).await?;
+    vm = input
+        .vm
+        .try_borrow_mut("finish trusted initial image admission")?;
+    stage_kernel_wasm_launch_asset(
+        &mut vm,
+        &mut resolved,
+        WasmLaunchAuthority::TrustedInitialImage,
+    )?;
+    let resolved = resolved;
+    executors
+        .require(resolved.runtime.clone(), standalone_wasm_backend)
+        .map_err(VmError::Host)?;
+    record_execute_phase("resolve_execute_request", phase_start.elapsed());
+    let phase_start = Instant::now();
+    let mut env = resolved.env.clone();
+    env.remove(EXECUTION_REQUEST_TTY_ENV);
+    env.insert(
+        String::from(EXECUTION_SANDBOX_ROOT_ENV),
+        normalize_host_path(&vm.runtime_scratch_root)
+            .to_string_lossy()
+            .into_owned(),
+    );
+    if resolved.adapter_policy.forwards_kernel_stdin_rpc {
+        env.insert(String::from("AGENTOS_KEEP_STDIN_OPEN"), String::from("1"));
+        // Managed V8 reads fd 0 through the sidecar's kernel bridge. The
+        // execution crate keeps its local bridge only for standalone use.
+        env.insert(
+            String::from("AGENTOS_FORWARD_KERNEL_STDIN_RPC"),
+            String::from("1"),
+        );
+    } else if resolved.adapter_policy.encodes_inherited_fd_bootstrap {
+        env.insert(String::from(WASM_STDIO_SYNC_RPC_ENV), String::from("1"));
+    }
+    if resolved.adapter_policy.supports_prepared_in_place_exec {
+        env.insert(String::from(WASM_EXEC_COMMIT_RPC_ENV), String::from("1"));
+    }
+    let provisional_launch_entrypoint = if resolved
+        .adapter_policy
+        .uses_javascript_entrypoint_projection
+    {
+        env.get("AGENTOS_GUEST_ENTRYPOINT")
+            .filter(|path| path.starts_with('/'))
+            .map(|path| normalize_path(path))
+            .unwrap_or_else(|| resolved.entrypoint.clone())
+    } else {
+        resolved.entrypoint.clone()
+    };
+    let argv = std::iter::once(provisional_launch_entrypoint)
+        .chain(resolved.execution_args.iter().cloned())
+        .collect::<Vec<_>>();
+    let requested_permission_tier = resolved
+        .wasm_permission_tier
+        .map(kernel_process_permission_tier)
+        .unwrap_or(ProcessPermissionTier::Full);
+    record_execute_phase("env_argv_setup", phase_start.elapsed());
+    let phase_start = Instant::now();
+    let kernel_handle = vm
+        .kernel
+        .spawn_process(
+            &resolved.command,
+            argv,
+            SpawnOptions {
+                requester_driver: Some(String::from(EXECUTION_DRIVER_NAME)),
+                cwd: Some(resolved.guest_cwd.clone()),
+                permission_tier: Some(requested_permission_tier),
+                ..SpawnOptions::default()
+            },
+        )
+        .map_err(kernel_error)?;
+    let kernel_pid = kernel_handle.pid();
+    record_execute_phase("kernel_spawn_process", phase_start.elapsed());
+
+    macro_rules! top_level_start_step {
+        ($result:expr, $context:expr) => {
+            match $result {
+                Ok(value) => value,
+                Err(error) => {
+                    rollback_failed_top_level_process_start(
+                        &mut vm.kernel,
+                        &kernel_handle,
+                        None,
+                        $context,
+                    );
+                    return Err(error);
+                }
+            }
+        };
+    }
+
+    macro_rules! dispose_started_context {
+        ($context:expr) => {
+            match $context {
+                #[cfg(feature = "node-v8")]
+                StartedTopLevelAdapterContext::Javascript(context_id) => {
+                    execution_engines
+                        .javascript("dispose failed execution")?
+                        .dispose_context(context_id);
+                }
+                #[cfg(feature = "python-v8-pyodide")]
+                StartedTopLevelAdapterContext::Python(context_id) => {
+                    execution_engines
+                        .python("dispose failed execution")?
+                        .dispose_context(context_id);
+                }
+                StartedTopLevelAdapterContext::WebAssembly(context_id) => {
+                    execution_engines
+                        .wasm("dispose failed execution")?
+                        .dispose_context(context_id);
+                }
+            }
+        };
+    }
+
+    let launch_entrypoint = if resolved
+        .adapter_policy
+        .uses_javascript_entrypoint_projection
+    {
+        top_level_start_step!(
+            resolve_agentos_package_javascript_launch_entrypoint(&mut vm, kernel_pid, &mut env,),
+            "top-level JavaScript package entrypoint resolution"
+        )
+        .unwrap_or_else(|| resolved.entrypoint.clone())
+    } else {
+        resolved.entrypoint.clone()
+    };
+
+    // Attach before PTY setup, asset preparation, or engine start. Kernel
+    // signals arriving during any of those steps remain durable in this
+    // receiver; every failure below funnels through process reaping.
+    let runtime_control = top_level_start_step!(
+        ActiveProcess::attach_runtime_control_before_start(
+            &kernel_handle,
+            Arc::clone(&process_event_notify),
+        ),
+        "top-level runtime-control attachment"
+    );
+    if resolved.runtime == GuestRuntimeKind::WebAssembly {
+        top_level_start_step!(
+            vm.kernel
+                .initialize_canonical_wasi_preopens(EXECUTION_DRIVER_NAME, kernel_pid)
+                .map_err(kernel_error),
+            "top-level WASI capability-root initialization"
+        );
+    }
+    let tty_master_fd = if requested_tty {
+        let (master_fd, slave_fd, _) = top_level_start_step!(
+            vm.kernel
+                .open_pty(EXECUTION_DRIVER_NAME, kernel_pid)
+                .map_err(kernel_error),
+            "top-level PTY allocation"
+        );
+        top_level_start_step!(
+            vm.kernel
+                .fd_dup2(EXECUTION_DRIVER_NAME, kernel_pid, slave_fd, 0)
+                .map_err(kernel_error),
+            "top-level PTY stdin installation"
+        );
+        top_level_start_step!(
+            vm.kernel
+                .fd_dup2(EXECUTION_DRIVER_NAME, kernel_pid, slave_fd, 1)
+                .map_err(kernel_error),
+            "top-level PTY stdout installation"
+        );
+        top_level_start_step!(
+            vm.kernel
+                .fd_dup2(EXECUTION_DRIVER_NAME, kernel_pid, slave_fd, 2)
+                .map_err(kernel_error),
+            "top-level PTY stderr installation"
+        );
+        top_level_start_step!(
+            vm.kernel
+                .pty_set_foreground_pgid(EXECUTION_DRIVER_NAME, kernel_pid, master_fd, kernel_pid,)
+                .map_err(kernel_error),
+            "top-level PTY foreground-group setup"
+        );
+        if let Some((cols, rows)) = requested_pty_window_size(&env) {
+            top_level_start_step!(
+                vm.kernel
+                    .pty_resize(EXECUTION_DRIVER_NAME, kernel_pid, master_fd, cols, rows)
+                    .map_err(kernel_error),
+                "top-level PTY resize"
+            );
+        }
+        Some(master_fd)
+    } else {
+        None
+    };
+    let kernel_stdin_writer_fd = if let Some(master_fd) = tty_master_fd {
+        master_fd
+    } else {
+        top_level_start_step!(
+            install_kernel_stdin_pipe(&mut vm.kernel, kernel_pid),
+            "top-level stdin pipe installation"
+        )
+    };
+
+    let (execution, process_env, started_context) = match resolved.runtime {
+        #[cfg(feature = "node-v8")]
+        GuestRuntimeKind::JavaScript => {
+            let mut javascript_engine = top_level_start_step!(
+                execution_engines.javascript("start javascript execution"),
+                "top-level javascript engine admission"
+            );
+            let phase_start = Instant::now();
+            top_level_start_step!(
+                prepare_javascript_launch_assets(
+                    &mut vm,
+                    &resolved,
+                    &env,
+                    WasmLaunchAuthority::TrustedInitialImage,
+                    None,
+                ),
+                "top-level JavaScript asset preparation"
+            );
+            record_execute_phase("js_prepare_launch_assets", phase_start.elapsed());
+            let phase_start = Instant::now();
+            // A trusted initial request may name a host source that has not
+            // been admitted to the kernel VFS yet. Asset preparation above
+            // performs that one bounded admission. Load the executable
+            // source only after admission so the kernel remains the source
+            // of truth and the V8 import cache never falls back to the
+            // caller's ambient host pathname.
+            let inline_code = top_level_start_step!(
+                load_javascript_entrypoint_source(
+                    &mut vm,
+                    kernel_pid,
+                    &resolved.guest_cwd,
+                    &launch_entrypoint,
+                    &env,
+                ),
+                "top-level JavaScript entrypoint load"
+            );
+            record_execute_phase("js_load_entrypoint_source", phase_start.elapsed());
+
+            let phase_start = Instant::now();
+            let context = javascript_engine.create_context(CreateJavascriptContextRequest {
+                vm_id: vm_id.clone(),
+                bootstrap_module: None,
+                compile_cache_root: Some(cache_root.join("node-compile-cache")),
+            });
+            record_execute_phase("js_create_context", phase_start.elapsed());
+            let phase_start = Instant::now();
+            let context_id = context.context_id;
+            let execution = match javascript_engine
+                .start_execution_with_module_reader_and_runtime(
+                    StartJavascriptExecutionRequest {
+                        guest_runtime: guest_runtime_identity(&mut vm, None, None),
+                        vm_id: vm_id.clone(),
+                        context_id: context_id.clone(),
+                        argv: std::iter::once(launch_entrypoint.clone())
+                            .chain(resolved.execution_args.iter().cloned())
+                            .collect(),
+                        argv0: None,
+                        env: env.clone(),
+                        cwd: resolved.host_cwd.clone(),
+                        limits: javascript_execution_limits(&mut vm),
+                        inline_code,
+                        wasm_module_bytes: None,
+                    },
+                    None,
+                    None,
+                    vm.runtime_context.clone(),
+                )
+                .map_err(javascript_error)
+            {
+                Ok(execution) => execution,
+                Err(error) => {
+                    javascript_engine.dispose_context(&context_id);
+                    rollback_failed_top_level_process_start(
+                        &mut vm.kernel,
+                        &kernel_handle,
+                        None,
+                        "top-level JavaScript engine start",
+                    );
+                    return Err(error);
+                }
+            };
+            record_execute_phase("js_start_execution", phase_start.elapsed());
+            (
+                ActiveExecution::Javascript(execution),
+                env.clone(),
+                StartedTopLevelAdapterContext::Javascript(context_id),
+            )
+        }
+        #[cfg(not(feature = "node-v8"))]
+        GuestRuntimeKind::JavaScript => {
+            rollback_failed_top_level_process_start(
+                &mut vm.kernel,
+                &kernel_handle,
+                None,
+                "disabled JavaScript executor",
+            );
+            return Err(executor_feature_disabled("Node.js/V8", "node-v8"));
+        }
+        #[cfg(feature = "python-v8-pyodide")]
+        GuestRuntimeKind::Python => {
+            let mut python_engine = top_level_start_step!(
+                execution_engines.python("start python execution"),
+                "top-level python engine admission"
+            );
+            // The `python` command path (marked by AGENTOS_PYTHON_ARGV) is
+            // explicit about file mode via AGENTOS_PYTHON_FILE, so a `-c` code
+            // string that happens to end in `.py` is never mistaken for a path.
+            // The low-level execute API keeps the `.py`-suffix heuristic.
+            let python_file_path = if resolved.env.contains_key("AGENTOS_PYTHON_ARGV") {
+                resolved.env.get("AGENTOS_PYTHON_FILE").map(PathBuf::from)
+            } else {
+                python_file_entrypoint(&resolved.entrypoint)
+            };
+            let runtime = vm.runtime_context.clone();
+            let mut pending_start = super::child_process::PendingOwnedProcessStart::top_level(
+                input.vm.clone(),
+                kernel_handle.clone(),
+            );
+            drop(vm);
+            let pyodide_assets = python_engine
+                .bundled_pyodide_dist_path_for_vm_async(&vm_id, &runtime)
+                .await
+                .map_err(python_error);
+            vm = input
+                .vm
+                .try_borrow_mut("complete Python asset preparation")?;
+            pending_start.disarm();
+            let pyodide_dist_path =
+                top_level_start_step!(pyodide_assets, "top-level Python asset preparation");
+            let pyodide_cache_path = pyodide_dist_path
+                .parent()
+                .and_then(Path::parent)
+                .unwrap_or(pyodide_dist_path.as_path())
+                .join("pyodide-package-cache");
+            add_runtime_guest_path_mapping(&mut env, PYTHON_PYODIDE_GUEST_ROOT, &pyodide_dist_path);
+            add_runtime_guest_path_mapping(
+                &mut env,
+                PYTHON_PYODIDE_CACHE_GUEST_ROOT,
+                &pyodide_cache_path,
+            );
+            add_runtime_host_access_path(
+                &mut env,
+                "AGENTOS_EXTRA_FS_READ_PATHS",
+                &pyodide_dist_path,
+                true,
+            );
+            add_runtime_host_access_path(
+                &mut env,
+                "AGENTOS_EXTRA_FS_READ_PATHS",
+                &pyodide_cache_path,
+                true,
+            );
+            add_runtime_host_access_path(
+                &mut env,
+                "AGENTOS_EXTRA_FS_WRITE_PATHS",
+                &pyodide_cache_path,
+                false,
+            );
+            let context = python_engine.create_context(CreatePythonContextRequest {
+                vm_id: vm_id.clone(),
+                pyodide_dist_path,
+            });
+            let context_id = context.context_id;
+            let pending_execution = python_engine.start_execution_with_runtime_async(
+                StartPythonExecutionRequest {
+                    vm_id: vm_id.clone(),
+                    context_id: context_id.clone(),
+                    code: resolved.entrypoint.clone(),
+                    file_path: python_file_path,
+                    env: env.clone(),
+                    cwd: resolved.host_cwd.clone(),
+                    limits: python_execution_limits_with_env(&mut vm, &env),
+                    guest_runtime: guest_runtime_identity(&mut vm, None, None),
+                },
+                vm.runtime_context.clone(),
+            );
+            let mut pending_start = super::child_process::PendingOwnedProcessStart::top_level(
+                input.vm.clone(),
+                kernel_handle.clone(),
+            );
+            drop(vm);
+            let started = pending_execution.await.map_err(python_error);
+            vm = input
+                .vm
+                .try_borrow_mut("register started python execution")?;
+            pending_start.disarm();
+            let execution = match started {
+                Ok(execution) => execution,
+                Err(error) => {
+                    python_engine.dispose_context(&context_id);
+                    rollback_failed_top_level_process_start(
+                        &mut vm.kernel,
+                        &kernel_handle,
+                        None,
+                        "top-level Python engine start",
+                    );
+                    return Err(error);
+                }
+            };
+            (
+                ActiveExecution::Python(execution),
+                env.clone(),
+                StartedTopLevelAdapterContext::Python(context_id),
+            )
+        }
+        #[cfg(not(feature = "python-v8-pyodide"))]
+        GuestRuntimeKind::Python => {
+            rollback_failed_top_level_process_start(
+                &mut vm.kernel,
+                &kernel_handle,
+                None,
+                "disabled Python executor",
+            );
+            return Err(executor_feature_disabled(
+                "Python/V8/Pyodide",
+                "python-v8-pyodide",
+            ));
+        }
+        GuestRuntimeKind::WebAssembly => {
+            let mut wasm_engine = top_level_start_step!(
+                execution_engines.wasm("start wasm execution"),
+                "top-level wasm engine admission"
+            );
+            let wasm_limits = wasm_execution_limits(&mut vm);
+            let wasm_guest_runtime =
+                guest_runtime_identity(&mut vm, Some(u64::from(kernel_pid)), Some(0));
+            let wasm_permission_tier = top_level_start_step!(
+                vm.kernel
+                    .process_permission_tier(EXECUTION_DRIVER_NAME, kernel_pid)
+                    .map_err(kernel_error),
+                "top-level compatibility-WASM permission lookup"
+            );
+            let module_path = match payload.wasm_backend {
+                _ if matches!(
+                    standalone_wasm_backend,
+                    ExecutionStandaloneWasmBackend::Wasmtime
+                        | ExecutionStandaloneWasmBackend::WasmtimeThreads
+                ) =>
+                {
+                    env.get("AGENTOS_GUEST_ENTRYPOINT")
+                        .map(|path| format!("{TRUSTED_INITIAL_MODULE_PREFIX}{path}"))
+                        .unwrap_or_else(|| resolved.entrypoint.clone())
+                }
+                _ => resolved.entrypoint.clone(),
+            };
+            let context = wasm_engine.create_context(CreateWasmContextRequest {
+                vm_id: vm_id.clone(),
+                module_path: Some(module_path),
+            });
+            let context_id = context.context_id;
+            let pending_execution = wasm_engine.start_execution_with_runtime_async_for_backend(
+                StartWasmExecutionRequest {
+                    vm_id: vm_id.clone(),
+                    context_id: context_id.clone(),
+                    managed_kernel_host: true,
+                    argv: resolved.process_args.clone(),
+                    env: env.clone(),
+                    cwd: resolved.host_cwd.clone(),
+                    permission_tier: execution_wasm_permission_tier(wasm_permission_tier),
+                    limits: wasm_limits,
+                    guest_runtime: wasm_guest_runtime,
+                },
+                vm.runtime_context.clone(),
+                standalone_wasm_backend,
+            );
+            let mut pending_start = super::child_process::PendingOwnedProcessStart::top_level(
+                input.vm.clone(),
+                kernel_handle.clone(),
+            );
+            drop(vm);
+            let started = pending_execution.await.map_err(wasm_error);
+            vm = input.vm.try_borrow_mut("register started wasm execution")?;
+            pending_start.disarm();
+            let execution = match started {
+                Ok(execution) => execution,
+                Err(error) => {
+                    wasm_engine.dispose_context(&context_id);
+                    rollback_failed_top_level_process_start(
+                        &mut vm.kernel,
+                        &kernel_handle,
+                        None,
+                        "top-level compatibility-WASM engine start",
+                    );
+                    return Err(error);
+                }
+            };
+            (
+                ActiveExecution::Wasm(Box::new(execution)),
+                env,
+                StartedTopLevelAdapterContext::WebAssembly(context_id),
+            )
+        }
+    };
+    let reported_process_id = execution.native_process_id().unwrap_or(kernel_pid);
+    let phase_start = Instant::now();
+    let mut process = ActiveProcess::new_with_attached_runtime_control(
+        kernel_pid,
+        kernel_handle,
+        vm.runtime_context.clone(),
+        vm.limits.clone(),
+        process_event_capacity,
+        resolved.runtime,
+        execution,
+        runtime_control,
+        Arc::clone(&process_event_notify),
+    )
+    .with_adapter_policy(resolved.adapter_policy)
+    .with_standalone_wasm_backend(standalone_wasm_backend)
+    .with_vm_pending_byte_budgets(vm_pending_stdin_bytes_budget, vm_pending_event_bytes_budget)
+    .with_kernel_stdin_writer_fd(kernel_stdin_writer_fd)
+    .with_tty_master_fd(tty_master_fd)
+    .with_guest_cwd(resolved.guest_cwd.clone())
+    .with_env(process_env)
+    .with_host_cwd(resolved.host_cwd.clone());
+    if let Err(error) = process.apply_runtime_controls() {
+        let rollback_handle = process.kernel_handle.clone();
+        rollback_failed_top_level_process_start(
+            &mut vm.kernel,
+            &rollback_handle,
+            Some(&mut process.execution),
+            "top-level pending runtime control",
+        );
+        dispose_started_context!(&started_context);
+        return Err(error);
+    }
+    vm.active_processes
+        .insert(payload.process_id.clone(), process);
+    // A fast executor can publish its first event before this process is
+    // visible to the pump. Rearm after the authoritative registration
+    // commit so that event cannot remain stranded.
+    process_event_notify.notify_one();
+    if let Err(error) = bridge.emit_lifecycle(&vm_id, LifecycleState::Busy) {
+        rollback_published_top_level_process_start(
+            &mut vm,
+            &payload.process_id,
+            "top-level engine lifecycle publication",
+        );
+        dispose_started_context!(&started_context);
+        return Err(error);
+    }
+    mark_execute_response_ready(&vm_id, &payload.process_id);
+    record_execute_phase("process_register_and_lifecycle", phase_start.elapsed());
+    record_execute_phase("execute_total", execute_total_start.elapsed());
+
+    Ok(DispatchResult {
+        response: process_started_response(request, payload.process_id, Some(reported_process_id)),
+        events: Vec::new(),
+    })
 }

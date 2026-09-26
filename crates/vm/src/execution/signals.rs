@@ -293,24 +293,126 @@ pub(crate) fn signal_runtime_process(child_pid: u32, signal: i32) -> Result<(), 
     }
 }
 
+pub(crate) async fn kill_process_owned<B>(
+    bridge: SharedBridge<B>,
+    input: OwnedVmRouteInput,
+    payload: KillProcessRequest,
+) -> Result<DispatchResult, VmError>
+where
+    B: VmManagerHost + Send + 'static,
+    BridgeError<B>: fmt::Debug + Send + Sync + 'static,
+{
+    input.vm.try_command("kill process", |vm| {
+        VmManager::<B>::kill_process_in_vm(
+            &bridge,
+            vm,
+            &input.vm_id,
+            &payload.process_id,
+            &payload.signal,
+        )
+    })?;
+    Ok(DispatchResult {
+        response: process_killed_response(&input.request, payload.process_id),
+        events: Vec::new(),
+    })
+}
+
+pub(crate) fn signal_vm_kernel_pid_owned<B>(
+    bridge: &SharedBridge<B>,
+    vm: &crate::state::VmHandle,
+    vm_id: &str,
+    target_kernel_pid: u32,
+    signal_name: &str,
+) -> Result<(), VmError>
+where
+    B: VmManagerHost + Send + 'static,
+    BridgeError<B>: fmt::Debug + Send + Sync + 'static,
+{
+    let signal = parse_signal(signal_name)?;
+    vm.try_command("signal kernel process", |vm| {
+        let path = vm.active_processes.iter().find_map(|(id, root)| {
+            VmManager::<B>::active_process_path_by_kernel_pid(root, target_kernel_pid)
+                .map(|path| (id.clone(), path))
+        });
+        vm.kernel
+            .kill_process(EXECUTION_DRIVER_NAME, target_kernel_pid, signal)
+            .map_err(kernel_error)?;
+        if let Some((id, path)) = path {
+            if let Some(root) = vm.active_processes.get_mut(&id) {
+                if let Some(process) = VmManager::<B>::active_process_by_owned_path_mut(root, &path)
+                {
+                    if !matches!(signal, 0 | libc::SIGCONT) {
+                        flush_parked_kernel_wait_rpc(process);
+                    }
+                    process.apply_runtime_controls()?;
+                }
+            }
+        }
+        emit_security_audit_event(
+            bridge,
+            vm_id,
+            "security.process.kill",
+            audit_fields([
+                ("source".to_owned(), "control_plane".to_owned()),
+                ("target_pid".to_owned(), target_kernel_pid.to_string()),
+                ("signal".to_owned(), signal_name.to_owned()),
+            ]),
+        );
+        Ok(())
+    })
+}
+
+pub(crate) fn deliver_kernel_process_group_signal_to_tracked_runtimes_owned<B>(
+    bridge: &SharedBridge<B>,
+    vm: &crate::state::VmHandle,
+    vm_id: &str,
+    pgid: u32,
+    signal_name: &str,
+) -> Result<(), VmError>
+where
+    B: VmManagerHost + Send + 'static,
+    BridgeError<B>: fmt::Debug + Send + Sync + 'static,
+{
+    parse_signal(signal_name)?;
+    let tracked_members = vm.try_read("list tracked process-group members", |vm| {
+        vm.kernel
+            .list_processes()
+            .into_iter()
+            .filter(|(_, info)| info.pgid == pgid && info.status != ProcessStatus::Exited)
+            .filter_map(|(kernel_pid, _)| {
+                vm.active_processes
+                    .values()
+                    .any(|root| {
+                        VmManager::<B>::active_process_path_by_kernel_pid(root, kernel_pid)
+                            .is_some()
+                    })
+                    .then_some(kernel_pid)
+            })
+            .collect::<Vec<_>>()
+    })?;
+    for kernel_pid in tracked_members {
+        match signal_vm_kernel_pid_owned(bridge, vm, vm_id, kernel_pid, signal_name) {
+            Ok(()) => {}
+            Err(error) if sidecar_error_is_esrch(&error) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
 impl<B> VmManager<B>
 where
     B: VmManagerHost + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
-    pub(crate) async fn kill_process(
+    pub(crate) fn kill_process(
         &mut self,
         request: &RequestFrame,
         payload: KillProcessRequest,
-    ) -> Result<DispatchResult, VmError> {
-        let (connection_id, session_id, vm_id) = self.vm_scope_for(&request.ownership)?;
-        self.require_owned_vm(&connection_id, &session_id, &vm_id)?;
-        self.kill_process_internal(&vm_id, &payload.process_id, &payload.signal)?;
-
-        Ok(DispatchResult {
-            response: process_killed_response(request, payload.process_id),
-            events: Vec::new(),
-        })
+    ) -> OwnedVmRouteFuture {
+        let input = self.prepare_owned_vm_route(request);
+        let bridge = self.bridge.clone();
+        Box::pin(async move { kill_process_owned(bridge, input?, payload).await })
     }
 
     pub(crate) fn kill_process_internal(
@@ -319,12 +421,24 @@ where
         process_id: &str,
         signal: &str,
     ) -> Result<(), VmError> {
-        let signal_name = signal.to_owned();
-        let signal = parse_signal(signal)?;
         let vm = self
             .vms
-            .get_mut(vm_id)
-            .ok_or_else(|| VmError::InvalidState(format!("unknown sidecar VM {vm_id}")))?;
+            .handle(vm_id)
+            .ok_or_else(|| missing_vm_error(vm_id))?;
+        vm.try_command("signal process", |vm| {
+            Self::kill_process_in_vm(&self.bridge, vm, vm_id, process_id, signal)
+        })
+    }
+
+    pub(crate) fn kill_process_in_vm(
+        bridge: &SharedBridge<B>,
+        vm: &mut VmState,
+        vm_id: &str,
+        process_id: &str,
+        signal: &str,
+    ) -> Result<(), VmError> {
+        let signal_name = signal.to_owned();
+        let signal = parse_signal(signal)?;
         let process = vm.active_processes.get_mut(process_id).ok_or_else(|| {
             VmError::InvalidState(format!("VM {vm_id} has no active process {process_id}"))
         })?;
@@ -341,7 +455,7 @@ where
         process.apply_runtime_controls()?;
 
         emit_security_audit_event(
-            &self.bridge,
+            bridge,
             vm_id,
             "security.process.kill",
             audit_fields([
@@ -404,9 +518,10 @@ where
                 self.kill_process_internal(vm_id, &process_id, signal_name)
             }
             Some((process_id, path)) => {
-                let Some(vm) = self.vms.get_mut(vm_id) else {
+                let Some(mut vm) = self.vms.get_mut(vm_id) else {
                     return Ok(());
                 };
+                let vm = &mut *vm;
                 let Some(root) = vm.active_processes.get_mut(&process_id) else {
                     return Ok(());
                 };
@@ -510,6 +625,8 @@ where
     /// process records, so this path deliberately excludes untracked members:
     /// signaling those through `signal_vm_kernel_pid` would deliver the same
     /// signal to the kernel twice.
+    // TODO(clippy-1.98): unused; wire up or remove.
+    #[allow(dead_code)]
     pub(crate) fn deliver_kernel_process_group_signal_to_tracked_runtimes(
         &mut self,
         vm_id: &str,
@@ -564,7 +681,7 @@ where
         signal_name: &str,
     ) -> Result<(), VmError> {
         let signal = parse_signal(signal_name)?;
-        let vm = self
+        let mut vm = self
             .vms
             .get_mut(vm_id)
             .ok_or_else(|| VmError::host("ESRCH", format!("unknown VM {vm_id}")))?;

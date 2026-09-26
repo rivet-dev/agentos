@@ -570,7 +570,7 @@ fn managed_accept(
         };
     }
 
-    let target_binding_id = context
+    let target_host_function_id = context
         .process
         .unix_listeners
         .get(listener_id)
@@ -608,7 +608,7 @@ fn managed_accept(
                 reactor_io_limits(&context.process.limits),
             )?;
             socket.connection_state = pending.connection_guard.state.take();
-            socket.remote_registry_binding_id = Some(target_binding_id);
+            socket.remote_registry_binding_id = Some(target_host_function_id);
             let socket_id = context.process.allocate_unix_socket_id();
             let capability_key = NativeCapabilityKey::UnixSocket(socket_id.clone());
             let identity = commit_process_capability(

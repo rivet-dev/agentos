@@ -2,6 +2,10 @@
 resolver = "2"
 exclude = ["software"]
 members = [
+    "packages/agentos-bindgen/rust",
+    "crates/actor",
+    "crates/actor-contract",
+    "crates/preload",
     "crates/rivetkit-ars-client",
     "crates/acp-protocol",
     "crates/sidecar",
@@ -37,6 +41,12 @@ repository = "https://github.com/rivet-dev/agent-os"
 # AgentOS crates are published as a lock-step chain and are self-contained in
 # this workspace.
 [workspace.dependencies]
+vfs = { package = "agentos-vfs-core", path = "crates/vfs-core", version = "0.0.1", features = ["package-filesystem"] }
+agentos-client = { path = "crates/client", version = "0.0.1" }
+agentos-actor = { path = "crates/actor", version = "0.0.1" }
+agentos-actor-contract = { path = "crates/actor-contract", version = "0.0.1" }
+agentos-preload = { path = "crates/preload", version = "0.0.1" }
+
 agent-client-protocol-schema = "1.4.0"
 agentos-rivetkit-ars-client = { path = "crates/rivetkit-ars-client", version = "0.0.1" }
 agentos-vm-host-interface = { path = "crates/vm-host-interface", version = "0.0.1" }
@@ -64,7 +74,7 @@ vbare-compiler = { package = "rivet-vbare-compiler", version = "0.0.5" }
 
 # Keep parallel-compilation disabled: Wasmtime implements it with Rayon's
 # host-sized global pool, outside AgentOS's fixed reviewed thread census.
-wasmtime = { version = "=46.0.0", default-features = false, features = [
+wasmtime = { version = "=48.0.3", default-features = false, features = [
     "async",
     "cranelift",
     "gc",

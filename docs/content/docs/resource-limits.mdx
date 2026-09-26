@@ -1,0 +1,45 @@
+---
+title: "Resource Limits"
+description: "Configure bounded VM, process, JavaScript, Python, and WASM resources."
+---
+
+Limits are part of the durable actor config and are applied by the sidecar
+during VM creation.
+
+<CodeSnippet file="examples/resource-limits/server.ts" />
+
+Use `limits.tls.maxBufferedBytes` to bound TLS plaintext buffering.
+`limits.execution.completedTtlMs` and `limits.execution.maxCompletedExecutions`
+bound retained completed language executions. `limits.execution.liveExecutionWarningThreshold`
+sets the live execution count that triggers a warning, not a rejection.
+These fields are optional in both Rust and TypeScript Core; omission keeps the
+sidecar default.
+
+Every queue, buffer, timeout, and resource collection has a bounded default.
+Near-capacity conditions emit `vm.limitWarning`; exhausted limits fail
+with a typed error naming the limit and the field used to raise it.
+
+`limits.reactor.shutdownDeadlineMs` bounds the SQLite close wait and subsequent
+resource drain together. Process termination and filesystem flushing happen
+before this budget. If close exceeds the deadline,
+VM shutdown reports a typed `timeout` with the limit name instead of reporting
+a clean stop. Close completion can no longer be confirmed, so the generation
+stays quarantined—even if local resource counts reach zero—until the sidecar
+worker restarts. Quarantined generations count toward VM admission capacity.
+The hosted actor also has a fixed ten-second shutdown wait; raising the sidecar
+deadline does not extend it. The runtime test API has a separate one-second
+disposal wait. Exceeding either client wait reports a timeout, not confirmed
+shutdown; the remote operation may still be running.
+
+The hosted action envelope, filesystem transfer, process replay, network, and
+software-cache ceilings are listed in
+[Hosted Actor Limits](/agentos/docs/actor-limits).
+
+Replacing limits normally requires a runtime generation replacement. Graceful
+process draining during replacement is a separately tracked follow-up.
+
+## Embedded API
+
+Embedded Core uses the same sidecar and VM resource policies without the actor
+message envelope. Read more in the
+[embedded API quickstart](/agentos/docs/quickstart-embedded).

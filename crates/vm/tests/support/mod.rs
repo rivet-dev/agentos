@@ -222,7 +222,7 @@ pub fn wire_permissions_allow_all() -> agentos_vm::wire::PermissionsPolicy {
         env: Some(agentos_vm::wire::PatternPermissionScope::PermissionMode(
             agentos_vm::wire::PermissionMode::Allow,
         )),
-        binding: Some(agentos_vm::wire::PatternPermissionScope::PermissionMode(
+        host_function: Some(agentos_vm::wire::PatternPermissionScope::PermissionMode(
             agentos_vm::wire::PermissionMode::Allow,
         )),
     }

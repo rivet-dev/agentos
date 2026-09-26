@@ -352,6 +352,54 @@ mod host_dir {
             fs::remove_dir_all(host_dir).expect("remove temp dir");
         }
 
+        // Regression for https://github.com/rivet-dev/agentos/issues/1872: listing
+        // the root of a host_dir mount updates its atime through `utimes("/")`,
+        // which used to fail with EINVAL ("path does not reference an entry"),
+        // so guest `ls /mnt` and `tar -C /mnt` failed on every host_dir mount.
+        #[test]
+        fn mount_root_readdir_updates_atime_and_root_utimes_succeeds() {
+            let host_dir = temp_dir("agentos-host-dir-plugin-root-atime");
+            fs::write(host_dir.join("hello.txt"), "hello from host").expect("seed host file");
+            let old_time = UNIX_EPOCH + std::time::Duration::from_secs(1_000);
+            fs::File::open(&host_dir)
+                .expect("open host root")
+                .set_times(
+                    fs::FileTimes::new()
+                        .set_accessed(old_time)
+                        .set_modified(old_time),
+                )
+                .expect("backdate host root times");
+
+            let mounted = HostDirFilesystem::new(&host_dir).expect("create host dir fs");
+            let mut table = MountTable::new(agentos_vm_kernel::vfs::MemoryFileSystem::new());
+            table
+                .mount(
+                    "/mnt",
+                    mounted,
+                    MountOptions::new("host_dir")
+                        .access_time(agentos_vm_kernel::mount_table::AccessTimePolicy::StrictAtime),
+                )
+                .expect("mount host directory");
+            let entries = table
+                .read_dir_with_types("/mnt")
+                .expect("listing the mount root must succeed");
+            assert!(entries.iter().any(|entry| entry.name == "hello.txt"));
+            assert!(
+                fs::metadata(&host_dir).expect("stat host root").atime() > 1_000,
+                "listing the mount root should update its atime"
+            );
+
+            let mut filesystem = HostDirFilesystem::new(&host_dir).expect("create host dir fs");
+            filesystem
+                .utimes("/", 1_000_000, 2_000_000)
+                .expect("utimes on the mount root must succeed");
+            let metadata = fs::metadata(&host_dir).expect("stat host root");
+            assert_eq!(metadata.atime(), 1_000);
+            assert_eq!(metadata.mtime(), 2_000);
+
+            fs::remove_dir_all(host_dir).expect("remove temp dir");
+        }
+
         #[test]
         fn plugin_config_can_enforce_read_only_mounts() {
             let host_dir = temp_dir("agentos-host-dir-plugin-readonly");

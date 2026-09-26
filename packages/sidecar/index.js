@@ -1,36 +1,68 @@
 "use strict";
 
-// Platform-specific resolver for the prebuilt `agentos-sidecar` binary. The
-// binary itself ships inside one of the `@rivet-dev/agentos-sidecar-<platform>`
-// packages, declared as optionalDependencies so npm only installs the one
-// matching the current `os`/`cpu`/`libc` at install time.
+// Platform-specific resolver for the prebuilt `agentos-sidecar` binary.
+// The binary itself ships inside one of the `@rivet-dev/agentos-sidecar-<platform>`
+// packages, declared as optionalDependencies at publish time so npm only
+// installs the package matching the current `os`/`cpu`/`libc`.
 //
 // Resolution priority:
-//   1. `AGENTOS_SIDECAR_BIN` env var (absolute path override).
-//   2. A `agentos-sidecar` binary placed next to this package (dev builds).
-//   3. A cargo build output under the repo `target/{release,debug}/` (dev).
-//   4. The platform-specific `@rivet-dev/agentos-sidecar-<platform>` package.
+//   1. `AGENTOS_SIDECAR_BIN` env var.
+//   2. A `agentos-sidecar` binary placed next to this package.
+//   3. The platform-specific `@rivet-dev/agentos-sidecar-<platform>` package.
 
 const { existsSync } = require("node:fs");
 const { join, dirname } = require("node:path");
+const { version: RESOLVER_VERSION } = require("./package.json");
 
-const BINARY_NAME = "agentos-sidecar";
+const BINARY_BASENAME = "agentos-sidecar";
 
-// No runtime chmod: the platform packages are published with `npm publish`,
-// which preserves the binary's 0755 executable bit (pnpm publish would strip
-// it to 0644). This mirrors how @rivetkit/engine-cli ships rivet-engine. See
-// the "Native Binary Distribution" section in CLAUDE.md.
+// The on-disk binary name carries the `.exe` suffix on Windows; every other
+// platform ships an extension-less ELF/Mach-O binary.
+const BINARY_NAME =
+	process.platform === "win32" ? `${BINARY_BASENAME}.exe` : BINARY_BASENAME;
+
+// No runtime chmod. Platform packages are published with `npm publish`, which
+// preserves the binary's 0755 executable bit.
+
+// Detect whether the current Linux process links glibc or musl. Mirrors the
+// npm `libc` field used to gate the platform packages: glibc reports a glibc
+// version via `process.report`, musl does not.
+function detectLinuxLibc() {
+	try {
+		const report = process.report?.getReport?.();
+		const glibc = report?.header?.glibcVersionRuntime;
+		if (glibc) return "glibc";
+	} catch {
+		// fall through to filesystem probe
+	}
+	// Fallback: presence of the musl loader implies a musl userland.
+	if (existsSync("/lib/ld-musl-x86_64.so.1") || existsSync("/lib/ld-musl-aarch64.so.1")) {
+		return "musl";
+	}
+	return "glibc";
+}
 
 function getPlatformPackageName() {
 	const { platform, arch } = process;
 	switch (platform) {
-		case "linux":
-			if (arch === "x64") return "@rivet-dev/agentos-sidecar-linux-x64-gnu";
-			if (arch === "arm64") return "@rivet-dev/agentos-sidecar-linux-arm64-gnu";
+		case "linux": {
+			const libc = detectLinuxLibc();
+			if (arch === "x64")
+				return libc === "musl"
+					? "@rivet-dev/agentos-sidecar-linux-x64-musl"
+					: "@rivet-dev/agentos-sidecar-linux-x64-gnu";
+			if (arch === "arm64")
+				return libc === "musl"
+					? "@rivet-dev/agentos-sidecar-linux-arm64-musl"
+					: "@rivet-dev/agentos-sidecar-linux-arm64-gnu";
 			break;
+		}
 		case "darwin":
 			if (arch === "x64") return "@rivet-dev/agentos-sidecar-darwin-x64";
 			if (arch === "arm64") return "@rivet-dev/agentos-sidecar-darwin-arm64";
+			break;
+		case "win32":
+			if (arch === "x64") return "@rivet-dev/agentos-sidecar-windows-x64";
 			break;
 		default:
 			break;
@@ -54,18 +86,12 @@ function getSidecarPath() {
 		return localBinary;
 	}
 
-	for (const profile of ["release", "debug"]) {
-		const candidate = join(__dirname, "..", "..", "target", profile, BINARY_NAME);
-		if (existsSync(candidate)) {
-			return candidate;
-		}
-	}
-
 	const platformPkg = getPlatformPackageName();
 	if (!platformPkg) {
 		throw new Error(
 			`@rivet-dev/agentos-sidecar: unsupported platform ${process.platform}/${process.arch}. ` +
-				"The Agent OS sidecar currently supports linux and darwin on x64 and arm64. " +
+				"The agentOS sidecar supports linux (x64/arm64, glibc/musl), " +
+				"macOS (x64/arm64), and Windows (x64). " +
 				"Set AGENTOS_SIDECAR_BIN to a local agentos-sidecar binary to override.",
 		);
 	}
@@ -77,12 +103,26 @@ function getSidecarPath() {
 		throw new Error(
 			`@rivet-dev/agentos-sidecar: platform package ${platformPkg} is not installed.\n` +
 				"This usually means the platform is unsupported or optionalDependencies were\n" +
-				`skipped during install. Try: npm install --include=optional ${platformPkg}\n` +
+				`skipped during install. Try: npm install --include=optional ${platformPkg}@${RESOLVER_VERSION}\n` +
 				"Or set AGENTOS_SIDECAR_BIN to a local agentos-sidecar binary.",
 		);
 	}
 
-	return join(dirname(pkgJsonPath), BINARY_NAME);
+	const platformVersion = require(pkgJsonPath).version;
+	if (platformVersion !== RESOLVER_VERSION) {
+		throw new Error(
+			`@rivet-dev/agentos-sidecar: platform package ${platformPkg} has version ${platformVersion}; expected ${RESOLVER_VERSION}. ` +
+				"Reinstall agentOS so the resolver and native binary use the same version.",
+		);
+	}
+	const binaryPath = join(dirname(pkgJsonPath), BINARY_NAME);
+	if (!existsSync(binaryPath)) {
+		throw new Error(
+			`@rivet-dev/agentos-sidecar: platform package ${platformPkg} is missing ${BINARY_NAME}. ` +
+				"Reinstall the platform package or set AGENTOS_SIDECAR_BIN to a local binary.",
+		);
+	}
+	return binaryPath;
 }
 
 module.exports = { getSidecarPath };

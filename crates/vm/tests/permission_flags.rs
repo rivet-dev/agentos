@@ -124,7 +124,7 @@ fn permission_flags_reject_empty_operations_and_accept_explicit_wildcards() {
                     child_process: None,
                     process: None,
                     env: None,
-                    binding: None,
+                    host_function: None,
                 }),
             )),
         ))
@@ -163,7 +163,7 @@ fn permission_flags_reject_empty_operations_and_accept_explicit_wildcards() {
                     child_process: None,
                     process: None,
                     env: None,
-                    binding: None,
+                    host_function: None,
                 }),
             )),
         ))
@@ -212,7 +212,7 @@ fn permission_flags_reject_empty_paths_and_patterns_on_configure() {
                     child_process: None,
                     process: None,
                     env: None,
-                    binding: None,
+                    host_function: None,
                 }),
                 module_access_cwd: None,
                 instructions: Vec::new(),
@@ -222,7 +222,7 @@ fn permission_flags_reject_empty_paths_and_patterns_on_configure() {
                 packages: Vec::new(),
                 packages_mount_at: String::new(),
                 bootstrap_commands: Vec::new(),
-                binding_shim_commands: Vec::new(),
+                host_function_shim_commands: Vec::new(),
             }),
         ))
         .expect("dispatch configure vm with empty fs paths");
@@ -254,7 +254,7 @@ fn permission_flags_reject_empty_paths_and_patterns_on_configure() {
                     child_process: None,
                     process: None,
                     env: None,
-                    binding: None,
+                    host_function: None,
                 }),
                 module_access_cwd: None,
                 instructions: Vec::new(),
@@ -264,7 +264,7 @@ fn permission_flags_reject_empty_paths_and_patterns_on_configure() {
                 packages: Vec::new(),
                 packages_mount_at: String::new(),
                 bootstrap_commands: Vec::new(),
-                binding_shim_commands: Vec::new(),
+                host_function_shim_commands: Vec::new(),
             }),
         ))
         .expect("dispatch configure vm with empty network patterns");
@@ -296,7 +296,7 @@ fn permission_flags_reject_empty_paths_and_patterns_on_configure() {
                     child_process: None,
                     process: None,
                     env: None,
-                    binding: None,
+                    host_function: None,
                 }),
                 module_access_cwd: None,
                 instructions: Vec::new(),
@@ -306,7 +306,7 @@ fn permission_flags_reject_empty_paths_and_patterns_on_configure() {
                 packages: Vec::new(),
                 packages_mount_at: String::new(),
                 bootstrap_commands: Vec::new(),
-                binding_shim_commands: Vec::new(),
+                host_function_shim_commands: Vec::new(),
             }),
         ))
         .expect("dispatch configure vm with empty network operations");
@@ -352,7 +352,7 @@ fn permission_flags_single_star_paths_do_not_cross_path_separators() {
             child_process: None,
             process: None,
             env: None,
-            binding: None,
+            host_function: None,
         },
     );
 
@@ -422,7 +422,7 @@ fn permission_flags_double_star_paths_allow_nested_descendants() {
             child_process: None,
             process: None,
             env: None,
-            binding: None,
+            host_function: None,
         },
     );
 

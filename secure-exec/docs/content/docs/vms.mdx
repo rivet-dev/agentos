@@ -1,0 +1,56 @@
+---
+title: "VMs"
+description: "Create a Secure Exec VM to keep files, installed packages, and background processes across calls."
+skill: true
+---
+
+`evaluate` and `execute` at the top level are conveniences: each call creates
+a VM, runs your code, and disposes it. When something should outlast one call,
+create the VM yourself.
+
+<CodeSnippet file="secure-exec/examples/vm/src/index.ts" region="create" />
+
+`createVm` takes the same VM options as a one-shot call: `permissions`,
+`limits`, `mounts`, `hostFunctions`, and the rest.
+
+## What a VM gives you
+
+| On the VM | Purpose |
+|---|---|
+| `vm.javascript` | `execute`, `evaluate`, `executeFile`, `spawn`, `spawnFile` |
+| `vm.typescript` | The same, plus `check` and `checkProject` |
+| `vm.npm` | `install`, `runScript`, `runPackage` |
+| `vm.filesystem` | Read and write guest files from the host |
+| `vm.network` | Send requests to a server running in the VM |
+| `vm.process` | Manage background processes |
+| `vm.createContext()` | JavaScript state that survives between calls |
+| `vm.dispose()` | Shut the VM down |
+
+A Secure Exec VM **is** an [agentOS](https://rivet.dev/agentos) VM with Secure
+Exec's defaults, so each namespace behaves exactly as the agentOS docs describe.
+
+## Files across calls
+
+Every call on a VM gets fresh JavaScript memory and the same filesystem.
+
+<CodeSnippet file="secure-exec/examples/vm/src/index.ts" region="files" />
+
+## Run files
+
+<CodeSnippet file="secure-exec/examples/vm/src/index.ts" region="run-file" />
+
+A file resolves its imports from its own directory, the same as in Node.js, so a
+file under `/workspace` finds packages installed there.
+
+## Dispose
+
+A VM holds memory until you dispose it. Use `try` and `finally`, or
+`await using` with TypeScript 5.2 or newer.
+
+<CodeSnippet file="secure-exec/examples/vm/src/index.ts" region="dispose" />
+
+## What you usually do not need
+
+Most stateful work needs a VM and nothing else. Files, packages, and servers all
+live in the VM. Reach for a [context](/secure-exec/docs/contexts) only when
+JavaScript variables must survive between calls, as in a REPL or a notebook.

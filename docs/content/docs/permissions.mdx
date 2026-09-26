@@ -1,0 +1,15 @@
+---
+title: "Permissions"
+description: "Constrain untrusted guest filesystem, process, and network access."
+---
+
+Pass a serializable permission tree in creation config or a later complete
+`config.set` replacement. The trusted sidecar enforces it for every guest
+operation.
+
+<CodeSnippet file="examples/permissions/server.ts" region="grant-network" />
+
+<CodeSnippet file="examples/permissions/server.ts" region="allow-one-host" />
+
+Host functions have a separate policy surface in embedded Core. The hosted actor
+does not expose host functions.

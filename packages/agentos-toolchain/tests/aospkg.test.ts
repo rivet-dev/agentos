@@ -19,13 +19,7 @@ function sourceTar(): Buffer {
 	chmodSync(join(dir, "bin", "agent"), 0o755);
 	writeFileSync(
 		join(dir, "agentos-package.json"),
-		JSON.stringify({
-			name: "runtime-fixture",
-			version: "1.0.0",
-			agent: {
-				acpEntrypoint: "agent",
-			},
-		}),
+		JSON.stringify({ name: "runtime-fixture", version: "1.0.0" }),
 	);
 	const tar = join(dir, "source.tar");
 	execFileSync("tar", ["-cf", tar, "-C", dir, "agentos-package.json", "bin"]);
@@ -33,10 +27,13 @@ function sourceTar(): Buffer {
 }
 
 describe("package manifest", () => {
-	test("packs and decodes v1 agent metadata", () => {
+	test("packs and decodes v2 software metadata", () => {
 		const { bytes } = packAospkgFromTarBytes(sourceTar());
 		const manifest = decodeAospkgManifest(bytes);
-		expect(bytes.readUInt16LE(16)).toBe(1);
-		expect(manifest.agent?.acpEntrypoint).toBe("agent");
+		expect(bytes.readUInt16LE(16)).toBe(2);
+		expect(manifest.name).toBe("runtime-fixture");
+		expect(manifest.commands.map((command) => command.command)).toEqual([
+			"agent",
+		]);
 	});
 });

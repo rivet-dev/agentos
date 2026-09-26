@@ -1,0 +1,86 @@
+diff --git a/check b/check
+index 5df89e29..444b9d3f 100755
+--- a/check
++++ b/check
+@@ -936,7 +936,7 @@ function run_section()
+ 		mkdir -p $RESULT_DIR
+ 		rm -f ${RESULT_DIR}/require_scratch*
+ 		rm -f ${RESULT_DIR}/require_test*
+-		rm -f $seqres.out.bad $seqres.hints
++		rm -f $seqres.out.bad $seqres.hints $seqres.expected
+ 
+ 		# check if we really should run it
+ 		if _expunge_test $seqnum; then
+@@ -1067,7 +1067,11 @@ function run_section()
+ 		$timestamp && _timestamp
+ 		stop=`_wallclock`
+ 
+-		if [ ! -f $seq.out ]; then
++		expected_out=$seq.out
++		if [ "$FSTYP" = "agentos" -a -f "$seqres.expected" ]; then
++			expected_out=$seqres.expected
++		fi
++		if [ ! -f $expected_out ]; then
+ 			_dump_err "no qualified output"
+ 			tc_status="fail"
+ 			rm -f "$seqres.mountfail?"
+@@ -1079,6 +1083,6 @@ function run_section()
+ 		# version.
+ 		sed -i "s/\`/\'/g" $tmp.out
+-		if diff $seq.out $tmp.out >/dev/null 2>&1 ; then
++		if diff $expected_out $tmp.out >/dev/null 2>&1 ; then
+ 			if [ "$tc_status" != "fail" ]; then
+ 				echo "$seqnum `expr $stop - $start`" >>$tmp.time
+ 				echo -n " `expr $stop - $start`s"
+@@ -1088,13 +1092,13 @@ function run_section()
+ 		else
+ 			_dump_err "- output mismatch (see $seqres.out.bad)"
+ 			mv $tmp.out $seqres.out.bad
+-			$diff $seq.out $seqres.out.bad | {
++			$diff $expected_out $seqres.out.bad | {
+ 			if test "$DIFF_LENGTH" -le 0; then
+ 				cat
+ 			else
+ 				head -n "$DIFF_LENGTH"
+ 				echo "..."
+-				echo "(Run '$diff $here/$seq.out $seqres.out.bad'" \
++				echo "(Run '$diff $expected_out $seqres.out.bad'" \
+ 					" to see the entire diff)"
+ 			fi; } | sed -e 's/^\(.\)/    \1/'
+ 			tc_status="fail"
+diff --git a/common/rc b/common/rc
+index c88c0552..d6a7e8fc 100644
+--- a/common/rc
++++ b/common/rc
+@@ -3890,7 +3890,31 @@ _link_out_file_named()
+ {
+ 	test -n "$seqfull" || _fail "need to set seqfull"
+ 	test -r "$seqfull.cfg" || _fail "need $seqfull.cfg"
+ 
++	if [ "$FSTYP" = "agentos" ]; then
++		local suffix=default opts candidate opt found
++		while IFS=: read -r opts candidate; do
++			opts=${opts// /}
++			candidate=${candidate// /}
++			found=true
++			IFS=, read -ra required <<< "$opts"
++			for opt in "${required[@]}"; do
++				case ",$2," in
++				*,"$opt",*) ;;
++				*) found=false; break ;;
++				esac
++			done
++			if $found; then
++				suffix=$candidate
++				break
++			fi
++		done < "$seqfull.cfg"
++		local selected="$(dirname "$1")/$(basename "$1").$suffix"
++		test -r "$selected" || _fail "$(basename $1).$suffix: output file for feature set \"$2\" not found"
++		cat "$selected" > "$seqres.expected" || _fail "$(basename $1).$suffix: could not stage output file"
++		return
++	fi
++
+ 	local features=$2
+ 	local suffix=$(FEATURES="$features" perl -e '
+ 		my %feathash;

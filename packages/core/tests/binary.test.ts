@@ -1,4 +1,5 @@
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -14,7 +15,7 @@ afterEach(() => {
 	}
 });
 
-describe("agentOS sidecar binary resolution", () => {
+describe("agentOS runtime sidecar binary resolution", () => {
 	test("honors AGENTOS_SIDECAR_BIN when the file exists", () => {
 		const root = mkdtempSync(join(tmpdir(), "agentos-vm-bin-"));
 		try {
@@ -45,14 +46,20 @@ describe("agentOS sidecar binary resolution", () => {
 		);
 	});
 
-	test("delegates to the AgentOS resolver package when no override is set", () => {
+	test("delegates to the agentOS resolver package when no override is set", () => {
 		delete process.env.AGENTOS_SIDECAR_BIN;
+		const resolver = createRequire(import.meta.url)(
+			"@rivet-dev/agentos-sidecar",
+		) as { getSidecarPath(): string };
+		let resolved: string;
 		try {
-			expect(resolvePublishedSidecarBinary()).toMatch(/agentos-sidecar/);
+			resolved = resolver.getSidecarPath();
 		} catch (error) {
-			expect((error as Error).message).toMatch(
-				/@rivet-dev\/agentos-sidecar: platform package .* is not installed/,
+			expect(() => resolvePublishedSidecarBinary()).toThrow(
+				(error as Error).message,
 			);
+			return;
 		}
+		expect(resolvePublishedSidecarBinary()).toBe(resolved);
 	});
 });

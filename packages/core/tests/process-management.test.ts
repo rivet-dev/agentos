@@ -12,105 +12,101 @@ describe("process management", () => {
 		await vm.dispose();
 	});
 
-	test("listProcesses() returns empty when no processes spawned", () => {
-		expect(vm.listProcesses()).toEqual([]);
+	test("process.list() returns empty when no processes spawned", async () => {
+		expect(await vm.process.list()).toEqual([]);
 	});
 
-	test("listProcesses() includes processes started via spawn()", async () => {
+	test("process.list() includes processes started via spawn()", async () => {
 		// Write a script that stays alive for a few seconds
 		await vm.writeFile("/tmp/long-running.mjs", "setTimeout(() => {}, 30000);");
-		const { pid } = vm.spawn("node", ["/tmp/long-running.mjs"], {
+		const { pid } = await vm.process.spawn("node", ["/tmp/long-running.mjs"], {
 			env: { HOME: "/home/agentos" },
 		});
 
-		const list = vm.listProcesses();
+		const list = await vm.process.list();
 		expect(list.length).toBe(1);
 		expect(list[0].pid).toBe(pid);
 		expect(list[0].command).toBe("node");
-		expect(list[0].args).toEqual(["/tmp/long-running.mjs"]);
-		expect(list[0].running).toBe(true);
-		expect(list[0].exitCode).toBeNull();
+		expect(list[0].state).toBe("running");
 
-		vm.killProcess(pid);
+		await vm.process.kill(pid);
 	}, 30_000);
 
-	test("getProcess(pid) returns correct ProcessInfo for a running process", async () => {
+	test("process.get(pid) returns correct ProcessInfo for a running process", async () => {
 		await vm.writeFile("/tmp/alive.mjs", "setTimeout(() => {}, 30000);");
-		const { pid } = vm.spawn("node", ["/tmp/alive.mjs"], {
+		const { pid } = await vm.process.spawn("node", ["/tmp/alive.mjs"], {
 			env: { HOME: "/home/agentos" },
 		});
 
-		const info = vm.getProcess(pid);
+		const info = await vm.process.get(pid);
 		expect(info.pid).toBe(pid);
 		expect(info.command).toBe("node");
-		expect(info.args).toEqual(["/tmp/alive.mjs"]);
-		expect(info.running).toBe(true);
-		expect(info.exitCode).toBeNull();
+		expect(info.state).toBe("running");
 
-		vm.killProcess(pid);
+		await vm.process.kill(pid);
 	}, 30_000);
 
-	test("getProcess with invalid pid throws", () => {
-		expect(() => vm.getProcess(99999)).toThrow("Process not found");
+	test("process.get with invalid pid throws", async () => {
+		await expect(vm.process.get(99999)).rejects.toThrow("Process not found");
 	});
 
-	test("stopProcess(pid) terminates the process gracefully", async () => {
+	test("process.signal(pid, SIGTERM) terminates the process gracefully", async () => {
 		await vm.writeFile("/tmp/stop-me.mjs", "setTimeout(() => {}, 30000);");
-		const { pid } = vm.spawn("node", ["/tmp/stop-me.mjs"], {
+		const { pid } = await vm.process.spawn("node", ["/tmp/stop-me.mjs"], {
 			env: { HOME: "/home/agentos" },
 		});
 
-		expect(vm.getProcess(pid).running).toBe(true);
+		expect((await vm.process.get(pid)).state).toBe("running");
 
-		vm.stopProcess(pid);
+		await vm.process.signal(pid, "SIGTERM");
 
 		// Wait for process to exit
-		await vm.waitProcess(pid);
-		expect(vm.getProcess(pid).running).toBe(false);
-		expect(vm.getProcess(pid).exitCode).not.toBeNull();
+		const exit = await vm.process.wait(pid);
+		expect((await vm.process.get(pid)).state).toBe("exited");
+		expect(exit.exitCode).toBeDefined();
 	}, 30_000);
 
-	test("killProcess(pid) force-kills the process", async () => {
+	test("process.kill(pid) force-kills the process", async () => {
 		await vm.writeFile("/tmp/kill-me.mjs", "setTimeout(() => {}, 30000);");
-		const { pid } = vm.spawn("node", ["/tmp/kill-me.mjs"], {
+		const { pid } = await vm.process.spawn("node", ["/tmp/kill-me.mjs"], {
 			env: { HOME: "/home/agentos" },
 		});
 
-		expect(vm.getProcess(pid).running).toBe(true);
+		expect((await vm.process.get(pid)).state).toBe("running");
 
-		vm.killProcess(pid);
+		await vm.process.kill(pid);
 
 		// Wait for process to exit
-		await vm.waitProcess(pid);
-		expect(vm.getProcess(pid).running).toBe(false);
+		await vm.process.wait(pid);
+		expect((await vm.process.get(pid)).state).toBe("exited");
 	}, 30_000);
 
-	test("listProcesses() reflects process exit (running: false, exitCode set)", async () => {
+	test("process.list() reflects process exit state", async () => {
 		// Write a script that exits immediately with code 0
 		await vm.writeFile("/tmp/quick-exit.mjs", "process.exit(0);");
-		const { pid } = vm.spawn("node", ["/tmp/quick-exit.mjs"], {
+		const { pid } = await vm.process.spawn("node", ["/tmp/quick-exit.mjs"], {
 			env: { HOME: "/home/agentos" },
 		});
 
 		// Wait for it to exit
-		await vm.waitProcess(pid);
+		const exit = await vm.process.wait(pid);
 
-		const list = vm.listProcesses();
+		const list = await vm.process.list();
 		expect(list.length).toBe(1);
-		expect(list[0].running).toBe(false);
-		expect(list[0].exitCode).toBe(0);
+		expect(list[0].state).toBe("exited");
+		expect(exit.exitCode).toBe(0);
 	}, 30_000);
 
-	test("stopProcess on already-exited process is a no-op", async () => {
+	test("process.signal on an already-exited process is a no-op", async () => {
 		await vm.writeFile("/tmp/already-done.mjs", "process.exit(0);");
-		const { pid } = vm.spawn("node", ["/tmp/already-done.mjs"], {
+		const { pid } = await vm.process.spawn("node", ["/tmp/already-done.mjs"], {
 			env: { HOME: "/home/agentos" },
 		});
 
-		await vm.waitProcess(pid);
+		await vm.process.wait(pid);
 
 		// Should not throw — just a no-op
-		expect(() => vm.stopProcess(pid)).not.toThrow();
+		await expect(vm.process.signal(pid, "SIGTERM")).resolves.toBeUndefined();
 	}, 30_000);
 
 	test("nested child_process.spawn executes the requested child entrypoint", async () => {
@@ -149,7 +145,7 @@ describe("process management", () => {
 
 		let stdout = "";
 		let stderr = "";
-		const { pid } = vm.spawn("node", ["/tmp/parent.mjs"], {
+		const { pid } = await vm.process.spawn("node", ["/tmp/parent.mjs"], {
 			env: { HOME: "/home/agentos" },
 			onStdout: (chunk) => {
 				stdout += Buffer.from(chunk).toString("utf8");
@@ -159,8 +155,8 @@ describe("process management", () => {
 			},
 		});
 
-		const exitCode = await vm.waitProcess(pid);
-		expect(exitCode).toBe(0);
+		const exit = await vm.process.wait(pid);
+		expect(exit.exitCode).toBe(0);
 		expect(stderr).toBe("");
 
 		const parentResult = JSON.parse(stdout) as {
@@ -259,7 +255,7 @@ describe("process management", () => {
 
 		let stdout = "";
 		let stderr = "";
-		const { pid } = vm.spawn("node", ["/tmp/shell-stream-parent.mjs"], {
+		const { pid } = await vm.process.spawn("node", ["/tmp/shell-stream-parent.mjs"], {
 			env: { HOME: "/home/agentos" },
 			onStdout: (chunk) => {
 				stdout += Buffer.from(chunk).toString("utf8");
@@ -269,7 +265,7 @@ describe("process management", () => {
 			},
 		});
 
-		expect(await vm.waitProcess(pid)).toBe(0);
+		expect((await vm.process.wait(pid)).exitCode).toBe(0);
 		expect(stderr).toBe("");
 		expect(JSON.parse(stdout)).toEqual({
 			stdout: "SHELL_STREAM_OK",
@@ -310,7 +306,7 @@ describe("process management", () => {
 
 		let stdout = "";
 		let stderr = "";
-		const { pid } = vm.spawn("node", ["/tmp/shell-node-parent.mjs"], {
+		const { pid } = await vm.process.spawn("node", ["/tmp/shell-node-parent.mjs"], {
 			onStdout: (chunk) => {
 				stdout += Buffer.from(chunk).toString("utf8");
 			},
@@ -319,7 +315,7 @@ describe("process management", () => {
 			},
 		});
 
-		expect(await vm.waitProcess(pid)).toBe(0);
+		expect((await vm.process.wait(pid)).exitCode).toBe(0);
 		expect(stderr).toBe("");
 		expect(JSON.parse(stdout)).toEqual({
 			stdout: expect.stringContaining("ok 1 - shell node test runner"),
@@ -358,7 +354,7 @@ describe("process management", () => {
 
 		let stdout = "";
 		let stderr = "";
-		const { pid } = vm.spawn("node", ["/tmp/shell-node-failure-parent.mjs"], {
+		const { pid } = await vm.process.spawn("node", ["/tmp/shell-node-failure-parent.mjs"], {
 			onStdout: (chunk) => {
 				stdout += Buffer.from(chunk).toString("utf8");
 			},
@@ -367,7 +363,7 @@ describe("process management", () => {
 			},
 		});
 
-		expect(await vm.waitProcess(pid)).toBe(0);
+		expect((await vm.process.wait(pid)).exitCode).toBe(0);
 		expect(stderr).toBe("");
 		expect(JSON.parse(stdout)).toEqual({
 			stdout: expect.stringContaining("not ok 1 - expected failure"),
@@ -391,19 +387,21 @@ describe("process management", () => {
 			"/workspace/npm-test/test/smoke.test.mjs",
 			[
 				'import assert from "node:assert/strict";',
+				'import { writeFileSync } from "node:fs";',
 				'import test from "node:test";',
-				'test("smoke", () => assert.equal(2 + 2, 4));',
+				'test("smoke", () => { assert.equal(2 + 2, 4); writeFileSync("/workspace/npm-test/smoke-ran", "yes"); });',
 				'test("strict equality distinguishes signed zero", () => {',
-				"  assert.throws(() => assert.equal(-0, 0), assert.AssertionError);",
-				"  assert.throws(() => assert.strictEqual(-0, 0), assert.AssertionError);",
-				"});",
+				'  assert.throws(() => assert.equal(-0, 0), assert.AssertionError);',
+				'  assert.throws(() => assert.strictEqual(-0, 0), assert.AssertionError);',
+				'  writeFileSync("/workspace/npm-test/strict-ran", "yes");',
+				'});',
 				"",
 			].join("\n"),
 		);
 
 		let stdout = "";
 		let stderr = "";
-		const { pid } = vm.spawn(
+		const { pid } = await vm.process.spawn(
 			"/bin/bash",
 			["-c", "npm test && pwd && printf shell-finished"],
 			{
@@ -417,10 +415,12 @@ describe("process management", () => {
 			},
 		);
 
-		expect(await vm.waitProcess(pid), stderr).toBe(0);
-		expect(stdout).toContain("ok 1 - smoke");
-		expect(stdout).toContain(
-			"ok 2 - strict equality distinguishes signed zero",
+		expect((await vm.process.wait(pid)).exitCode, stderr).toBe(0);
+		expect(await vm.readFile("/workspace/npm-test/smoke-ran")).toEqual(
+			new TextEncoder().encode("yes"),
+		);
+		expect(await vm.readFile("/workspace/npm-test/strict-ran")).toEqual(
+			new TextEncoder().encode("yes"),
 		);
 		expect(stdout).toContain("/workspace/npm-test");
 		expect(stdout).toContain("shell-finished");
@@ -441,12 +441,14 @@ describe("process management", () => {
 			"/workspace/deep-npm-test/test/smoke.test.mjs",
 			[
 				'import assert from "node:assert/strict";',
+				'import { writeFileSync } from "node:fs";',
 				'import test from "node:test";',
-				'test("smoke", () => assert.equal(2 + 2, 4));',
+				'test("smoke", () => { assert.equal(2 + 2, 4); writeFileSync("/workspace/deep-npm-test/smoke-ran", "yes"); });',
 				'test("strict equality distinguishes signed zero", () => {',
-				"  assert.throws(() => assert.equal(-0, 0), assert.AssertionError);",
-				"  assert.throws(() => assert.strictEqual(-0, 0), assert.AssertionError);",
-				"});",
+				'  assert.throws(() => assert.equal(-0, 0), assert.AssertionError);',
+				'  assert.throws(() => assert.strictEqual(-0, 0), assert.AssertionError);',
+				'  writeFileSync("/workspace/deep-npm-test/strict-ran", "yes");',
+				'});',
 				"",
 			].join("\n"),
 		);
@@ -481,7 +483,7 @@ describe("process management", () => {
 
 		let stdout = "";
 		let stderr = "";
-		const { pid } = vm.spawn(
+		const { pid } = await vm.process.spawn(
 			"node",
 			["/workspace/deep-npm-test/grandparent.mjs"],
 			{
@@ -499,10 +501,12 @@ describe("process management", () => {
 			},
 		);
 
-		expect(await vm.waitProcess(pid), stderr).toBe(0);
-		expect(stdout).toContain("ok 1 - smoke");
-		expect(stdout).toContain(
-			"ok 2 - strict equality distinguishes signed zero",
+		expect((await vm.process.wait(pid)).exitCode, stderr).toBe(0);
+		expect(await vm.readFile("/workspace/deep-npm-test/smoke-ran")).toEqual(
+			new TextEncoder().encode("yes"),
+		);
+		expect(await vm.readFile("/workspace/deep-npm-test/strict-ran")).toEqual(
+			new TextEncoder().encode("yes"),
 		);
 		expect(stdout).toContain("deep-finished");
 	}, 30_000);
@@ -543,7 +547,7 @@ describe("process management", () => {
 
 		let stdout = "";
 		let stderr = "";
-		const { pid } = vm.spawn("node", ["/tmp/cwd-parent.mjs"], {
+		const { pid } = await vm.process.spawn("node", ["/tmp/cwd-parent.mjs"], {
 			cwd: "/workspace",
 			onStdout: (chunk) => {
 				stdout += Buffer.from(chunk).toString("utf8");
@@ -553,7 +557,7 @@ describe("process management", () => {
 			},
 		});
 
-		expect(await vm.waitProcess(pid), stderr).toBe(0);
+		expect((await vm.process.wait(pid)).exitCode, stderr).toBe(0);
 		expect(JSON.parse(stdout)).toEqual({
 			code: 0,
 			child: { code: 0, cwd: "/workspace", realCwd: "/workspace" },
@@ -623,7 +627,7 @@ describe("process management", () => {
 
 		let stdout = "";
 		let stderr = "";
-		const { pid } = vm.spawn("node", ["/tmp/late-child-stream-parent.mjs"], {
+		const { pid } = await vm.process.spawn("node", ["/tmp/late-child-stream-parent.mjs"], {
 			onStdout: (chunk) => {
 				stdout += Buffer.from(chunk).toString("utf8");
 			},
@@ -632,7 +636,7 @@ describe("process management", () => {
 			},
 		});
 
-		expect(await vm.waitProcess(pid), stderr).toBe(0);
+		expect((await vm.process.wait(pid)).exitCode).toBe(0);
 		expect(stderr).toBe("");
 		expect(JSON.parse(stdout)).toEqual(
 			Array.from({ length: 128 }, (_, index) => ({
@@ -656,7 +660,7 @@ describe("process management", () => {
 		);
 		let stdout = "";
 		let stderr = "";
-		const { pid } = vm.spawn("node", ["/tmp/create-hash.mjs"], {
+		const { pid } = await vm.process.spawn("node", ["/tmp/create-hash.mjs"], {
 			onStdout: (chunk) => {
 				stdout += Buffer.from(chunk).toString("utf8");
 			},
@@ -665,7 +669,7 @@ describe("process management", () => {
 			},
 		});
 
-		expect(await vm.waitProcess(pid), stderr).toBe(0);
+		expect((await vm.process.wait(pid)).exitCode, stderr).toBe(0);
 		expect(stderr).toBe("");
 		expect(stdout).toBe("72a204ddd2a99dd32152140a87b81f4087d86077");
 	}, 30_000);
@@ -698,7 +702,7 @@ describe("process management", () => {
 
 		let stdout = "";
 		let stderr = "";
-		const { pid } = vm.spawn("node", ["/tmp/inherited-fd-parent.mjs"], {
+		const { pid } = await vm.process.spawn("node", ["/tmp/inherited-fd-parent.mjs"], {
 			onStdout: (chunk) => {
 				stdout += Buffer.from(chunk).toString("utf8");
 			},
@@ -707,7 +711,7 @@ describe("process management", () => {
 			},
 		});
 
-		expect(await vm.waitProcess(pid), stderr).toBe(0);
+		expect((await vm.process.wait(pid)).exitCode, stderr).toBe(0);
 		expect(stderr).toBe("");
 		expect(JSON.parse(stdout)).toEqual({ code: 0, output: "inherited-output" });
 	}, 30_000);

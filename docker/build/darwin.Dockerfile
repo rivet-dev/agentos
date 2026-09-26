@@ -11,7 +11,7 @@ ARG TARGET=aarch64-apple-darwin
 ARG CLANG=aarch64-apple-darwin20.4
 ARG BUILD_PROFILE=debug
 ARG CACHE_PLATFORM=darwin-arm64
-ARG RUST_TOOLCHAIN=1.94.0
+ARG RUST_TOOLCHAIN=1.95.0
 
 ENV SDK=/root/osxcross/target/SDK/MacOSX11.3.sdk \
     RUSTC_WRAPPER=sccache \
@@ -28,7 +28,7 @@ RUN rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal && \
 RUN --mount=type=cache,id=pnpm-store-agentos-darwin,target=/root/.local/share/pnpm/store,sharing=locked \
     corepack enable && \
     pnpm config set store-dir /root/.local/share/pnpm/store && \
-    pnpm install --no-frozen-lockfile --filter='!@rivet-dev/agentos-website'
+    pnpm install --frozen-lockfile
 
 RUN --mount=type=cache,id=cargo-registry-agentos-darwin,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=cargo-git-agentos-darwin,target=/usr/local/cargo/git,sharing=locked \

@@ -52,8 +52,8 @@ pub async fn dispatch(
         HostProcessProcWaitpidV2 => wait(caller, params, WaitVersion::V2).await,
         HostProcessProcWaitpidV3 => wait(caller, params, WaitVersion::V3).await,
         HostProcessProcKill => kill(caller, params).await,
-        HostProcessProcGetpid => local_pid(caller, params, false),
-        HostProcessProcGetppid => local_pid(caller, params, true),
+        HostProcessProcGetpid => local_pid(caller, params),
+        HostProcessProcGetppid => parent_pid(caller, params).await,
         HostProcessProcGetrlimit => getrlimit(caller, params).await,
         HostProcessProcSetrlimit => setrlimit(caller, params).await,
         HostProcessProcUmask => umask(caller, params, true).await,
@@ -653,19 +653,74 @@ async fn exec(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val], by_fd
         }
         Err(error) => return errno(&error),
     };
-    let prepared_replacement = {
-        let (bytes, resolved_argv) =
-            match lifecycle::read_open_executable_image(&host, open, maximum).await {
-                Ok(image) => image,
-                Err(error) => return errno(&error),
-            };
-        let Some(resolved_argv) = resolved_argv else {
-            return ERRNO_IO;
-        };
-        argv = resolved_argv;
-        let compiled = match module::compile_module(&engine, &bytes) {
-            Ok(compiled) => compiled.module,
-            Err(error) if error.code == "ERR_AGENTOS_WASM_INVALID_MODULE" && !by_fd => {
+    let retained_open = if host.worker_client().is_some() {
+        match &open {
+            HostCallReply::Json(value) => Some(value.clone()),
+            _ => return ERRNO_IO,
+        }
+    } else {
+        None
+    };
+    let (bytes, resolved_argv) = match lifecycle::read_open_executable_image_for_exec(
+        &host,
+        open,
+        maximum,
+        retained_open.is_some(),
+    )
+    .await
+    {
+        Ok(image) => image,
+        Err(error) => return errno(&error),
+    };
+    let prepared_replacement = (|| {
+        let resolved_argv = resolved_argv.ok_or_else(|| {
+            crate::backend::HostServiceError::new("EIO", "exec image omitted argv")
+        })?;
+        let compiled = module::compile_module(&engine, &bytes)?.module;
+        let threaded = matches!(
+            engine.profile().feature_profile,
+            crate::WasmtimeFeatureProfile::AgentOsOwnedWasiV1Threads
+        );
+        super::validate_module_imports(
+            &compiled,
+            agentos_executor_wasm_abi::WasmPermissionTier::Full,
+            threaded,
+        )
+        .map_err(|_| {
+            crate::backend::HostServiceError::new("ENOEXEC", "replacement has unsupported imports")
+        })?;
+        if !matches!(compiled.get_export("_start"), Some(wasmtime::ExternType::Func(ty))
+            if ty.params().next().is_none() && ty.results().next().is_none())
+        {
+            return Err(crate::backend::HostServiceError::new(
+                "ENOEXEC",
+                "replacement has no valid _start",
+            ));
+        }
+        Ok((compiled, resolved_argv))
+    })();
+    let (prepared_replacement, resolved_argv) = match prepared_replacement {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            if let Some(open) = retained_open.as_ref() {
+                let handle = open["handle"]
+                    .as_str()
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or(0);
+                if let Err(close) = host
+                    .submit(
+                        HostOperation::Process(
+                            crate::host::ProcessOperation::CloseExecutableImage { handle },
+                        ),
+                        8,
+                    )
+                    .await
+                {
+                    eprintln!("ERR_AGENTOS_WASMTIME_IMAGE_CLOSE: exec preflight failed ({error}); close failed: {close}");
+                    return errno(&close);
+                }
+            }
+            if error.code == "ERR_AGENTOS_WASM_INVALID_MODULE" && !by_fd {
                 return commit_cross_runtime_exec(
                     caller,
                     &command,
@@ -675,13 +730,13 @@ async fn exec(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val], by_fd
                 )
                 .await;
             }
-            Err(error) if error.code == "ERR_AGENTOS_WASM_INVALID_MODULE" => {
+            if error.code == "ERR_AGENTOS_WASM_INVALID_MODULE" {
                 return ERRNO_NOEXEC;
             }
-            Err(error) => return errno(&error),
-        };
-        Some(compiled)
+            return errno(&error);
+        }
     };
+    argv = resolved_argv;
     let request = json!({
         "command": command,
         "args": argv.iter().skip(1).cloned().collect::<Vec<_>>(),
@@ -690,6 +745,7 @@ async fn exec(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val], by_fd
             "env": env,
             "shell": false,
             "cloexecFds": close_fds,
+            "execSignalThreadId": caller.data().thread_id,
             "localReplacement": true,
             "executableFd": executable_fd,
             "internalBootstrapEnv": {},
@@ -700,18 +756,35 @@ async fn exec(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val], by_fd
     } else {
         "process.exec"
     };
-    match call(caller, method, vec![request], HashMap::new()).await {
+    let result = if let (Some(worker), Some(open)) = (host.worker_client(), retained_open) {
+        let remaining_cpu_ms = caller.data().remaining_active_cpu_ms();
+        let remaining_fuel = caller.get_fuel().ok();
+        worker
+            .commit_exec(
+                open,
+                method.to_owned(),
+                request,
+                remaining_cpu_ms,
+                remaining_fuel,
+            )
+            .await
+    } else {
+        call(caller, method, vec![request], HashMap::new()).await
+    };
+    match result {
         Ok(_) => {
-            caller.data_mut().pending_exec_replacement = Some(PendingExecReplacement {
-                module: prepared_replacement.expect("exec replacement was precompiled"),
-                argv,
-                env,
-            });
-            caller.data_mut().exec_replaced = true;
+            record_exec_replacement(
+                caller,
+                Some(PendingExecReplacement {
+                    module: prepared_replacement,
+                    argv,
+                    env,
+                }),
+            );
             ERRNO_IO
         }
         Err(error) if error.code == "ERR_AGENTOS_EXEC_REPLACED" => {
-            caller.data_mut().exec_replaced = true;
+            record_exec_replacement(caller, None);
             ERRNO_IO
         }
         Err(error) => {
@@ -722,6 +795,22 @@ async fn exec(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val], by_fd
             errno(&error)
         }
     }
+}
+
+fn record_exec_replacement(
+    caller: &mut Caller<'_, WasmtimeStoreState>,
+    replacement: Option<PendingExecReplacement>,
+) {
+    caller.data_mut().exec_replaced = true;
+    if caller.data().thread_id != 0 {
+        if let Some(group) = caller.data().thread_group.as_ref() {
+            if let Err(error) = group.request_exec(replacement) {
+                eprintln!("ERR_AGENTOS_WASM_THREAD_EXEC: committed image handoff failed: {error}");
+            }
+            return;
+        }
+    }
+    caller.data_mut().pending_exec_replacement = replacement;
 }
 
 async fn commit_cross_runtime_exec(
@@ -739,17 +828,18 @@ async fn commit_cross_runtime_exec(
             "env": env,
             "shell": false,
             "cloexecFds": close_fds,
+            "execSignalThreadId": caller.data().thread_id,
             "localReplacement": false,
             "internalBootstrapEnv": {},
         }
     });
     match call(caller, "process.exec", vec![request], HashMap::new()).await {
         Ok(_) => {
-            caller.data_mut().exec_replaced = true;
+            record_exec_replacement(caller, None);
             ERRNO_IO
         }
         Err(error) if error.code == "ERR_AGENTOS_EXEC_REPLACED" => {
-            caller.data_mut().exec_replaced = true;
+            record_exec_replacement(caller, None);
             ERRNO_IO
         }
         Err(error) => errno(&error),
@@ -899,16 +989,34 @@ async fn kill(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i3
     simple_call(caller, "process.kill", vec![json!(pid as i32), json!(name)]).await
 }
 
-fn local_pid(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val], parent: bool) -> i32 {
+fn local_pid(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
     let Ok(output) = i32_arg(params, 0) else {
         return ERRNO_FAULT;
     };
-    let value = if parent {
-        caller.data().virtual_ppid
-    } else {
-        caller.data().virtual_pid
-    };
+    let value = caller.data().virtual_pid;
     commit(caller, output, &value.to_le_bytes())
+}
+
+async fn parent_pid(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+    let Ok(output) = i32_arg(params, 0) else {
+        return ERRNO_FAULT;
+    };
+    if memory::validate_range(caller, output, 4).is_err() {
+        return ERRNO_FAULT;
+    }
+    // A parent can exit after this Store starts. The kernel owns reparenting.
+    match call(caller, "process.getppid", vec![], HashMap::new()).await {
+        Ok(reply) => {
+            let Ok(value) = json_reply(reply) else {
+                return ERRNO_IO;
+            };
+            let Some(pid) = value_u64(&value).and_then(|value| u32::try_from(value).ok()) else {
+                return ERRNO_IO;
+            };
+            commit(caller, output, &pid.to_le_bytes())
+        }
+        Err(error) => errno(&error),
+    }
 }
 
 async fn getrlimit(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {

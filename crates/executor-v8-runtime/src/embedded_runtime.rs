@@ -66,7 +66,7 @@ impl EmbeddedV8Runtime {
         let configured_max_concurrency = runtime.max_active_vm_executors();
         let executor_teardown_timeout = runtime.vm_executor_teardown_timeout();
         let session_mgr = Arc::new(Mutex::new(SessionManager::new(
-            max_concurrency.unwrap_or(configured_max_concurrency),
+            max_concurrency.or(Some(configured_max_concurrency)),
             crate::session::RuntimeEventSender::closed(),
             call_id_router,
             Arc::clone(&snapshot_cache),
@@ -722,7 +722,7 @@ pub fn spawn_embedded_runtime_ipc(
     let shutdown_stream = host_stream.try_clone()?;
     let alive = Arc::new(AtomicBool::new(true));
     let alive_for_thread = Arc::clone(&alive);
-    let max_concurrency = max_concurrency.unwrap_or_else(|| runtime.max_active_vm_executors());
+    let max_concurrency = max_concurrency.or_else(|| Some(runtime.max_active_vm_executors()));
 
     // AGENTOS_THREAD_SITE: embedded-v8-dispatch
     let join_handle = thread::Builder::new()
@@ -746,7 +746,7 @@ pub fn spawn_embedded_runtime_ipc(
 
 fn run_embedded_runtime(
     stream: UnixStream,
-    max_concurrency: usize,
+    max_concurrency: Option<usize>,
     runtime: agentos_driver_tokio::DriverHandle,
 ) {
     // Keep bridge-only, agent-SDK, and wasm-runner userland variants warm
@@ -1244,7 +1244,7 @@ mod tests {
                 .lock()
                 .expect("session manager")
                 .max_concurrency(),
-            2
+            Some(2)
         );
         assert_eq!(runtime.executor_teardown_timeout, Duration::from_millis(31));
         let (_receiver, registration) = runtime
@@ -1440,7 +1440,7 @@ mod tests {
         let call_id_router: CallIdRouter = Arc::new(BridgeCallRegistry::with_default_limit());
         let runtime = test_runtime_context();
         let session_mgr = Arc::new(Mutex::new(SessionManager::new(
-            1,
+            Some(1),
             event_tx,
             Arc::clone(&call_id_router),
             Arc::clone(&snapshot_cache),
@@ -1900,7 +1900,7 @@ mod tests {
     fn test_session_manager() -> Arc<Mutex<SessionManager>> {
         let (event_tx, _event_rx) = crossbeam_channel::bounded::<RuntimeEventEnvelope>(1);
         Arc::new(Mutex::new(SessionManager::new(
-            1,
+            Some(1),
             event_tx,
             Arc::new(BridgeCallRegistry::with_default_limit()),
             Arc::new(SnapshotCache::new(1)),

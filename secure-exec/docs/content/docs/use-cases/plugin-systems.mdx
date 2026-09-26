@@ -1,0 +1,30 @@
+---
+title: "Plugin Systems"
+description: "Run user-authored plugins in isolation with per-plugin permissions and timeouts using Secure Exec."
+skill: true
+---
+
+Plugins, user scripts, formulas, and webhooks-as-code all share one problem: the
+author is not you. Secure Exec lets each one run with exactly the access you
+decide, and no way to affect the others.
+
+## Declare what a plugin gets
+
+<CodeSnippet file="secure-exec/examples/plugins/src/index.ts" region="plugins" />
+
+## Run each plugin in its own VM
+
+<CodeSnippet file="secure-exec/examples/plugins/src/index.ts" region="run" />
+
+- **No shared state.** Each call is a fresh VM, so one plugin cannot read or
+  corrupt another's data.
+- **Failures stay contained.** A plugin that hangs returns `timed_out`. A plugin
+  that throws returns `failed`. Your process keeps running.
+- **Per-plugin policy.** `permissions`, `limits`, and `mounts` are set per call,
+  so a trusted plugin can have the network while the rest cannot.
+
+## Giving plugins files and packages
+
+Mount read-only data or a shared `node_modules` with
+[mounts](/secure-exec/docs/filesystem). For plugins that keep state across
+invocations, give each plugin its own [VM](/secure-exec/docs/vms).

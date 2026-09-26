@@ -1,16 +1,12 @@
-import { agentOS, setup } from "@rivet-dev/agentos";
-import pi from "@agentos-software/pi";
+import { AgentOs } from "@rivet-dev/agentos-core";
 
-const vm = agentOS({
-  software: [pi],
-  mounts: [
-    {
-      path: "/mnt/code",
-      plugin: { id: "host_dir", config: { hostPath: "/path/to/repo" } },
-      readOnly: true,
-    },
-  ],
+// Host paths can be mounted only by trusted embedded Core callers.
+export const vm = await AgentOs.create({
+	mounts: [
+		{
+			path: "/mnt/code",
+			plugin: { id: "host_dir", config: { hostPath: "/path/to/repo" } },
+			readOnly: true,
+		},
+	],
 });
-
-export const registry = setup({ use: { vm } });
-registry.start();

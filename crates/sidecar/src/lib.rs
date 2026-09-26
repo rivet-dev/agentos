@@ -2,14 +2,10 @@
 
 //! agentOS sidecar composition root.
 
-mod acp;
-mod session_store;
 pub mod transport;
 
-pub use acp::AcpExtension;
-
 pub fn extensions() -> Vec<Box<dyn agentos_vm::Extension>> {
-    vec![Box::new(AcpExtension::new())]
+    Vec::new()
 }
 
 pub fn executor_registry() -> agentos_vm::ExecutorRegistry {
@@ -30,15 +26,6 @@ pub fn executor_registry() -> agentos_vm::ExecutorRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentos_acp_protocol::ACP_EXTENSION_NAMESPACE;
-
-    #[test]
-    fn extensions_register_acp_namespace() {
-        let extensions = extensions();
-
-        assert_eq!(extensions.len(), 1);
-        assert_eq!(extensions[0].namespace(), ACP_EXTENSION_NAMESPACE);
-    }
 
     #[test]
     fn executor_registry_matches_enabled_sidecar_features() {

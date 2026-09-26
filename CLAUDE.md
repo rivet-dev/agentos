@@ -4,7 +4,7 @@ Always spell the product name `agentOS`, never `AgentOS`; do not alter type
 identifiers such as `AgentOSActorConfig`.
 
 agentOS owns the runtime, kernel, VFS, language execution, registry packages,
-ACP/session layer, agentOS client APIs, docs, and publish machinery. agentOS
+agentOS client APIs, docs, and publish machinery. agentOS
 Exec is the JavaScript, TypeScript, and Python execution surface of agentOS.
 
 ## Boundaries
@@ -54,7 +54,7 @@ Exec is the JavaScript, TypeScript, and Python execution surface of agentOS.
   `node scripts/check-embedded-vm-dependencies.mjs` and keep the checked
   `agentos-example-embedded-vm` binary under the configured size ceiling.
 - Browser implementation remains out of scope. See
-  [Package Architecture](website/src/content/docs/docs/architecture/package-structure.mdx)
+  [Package Architecture](docs/content/docs/architecture/package-structure.mdx)
   for the package graph, responsibilities, and rationale.
 
 ## Security Model
@@ -71,6 +71,19 @@ The security boundary is sidecar/runtime to executor. Client-provided config is
 trusted input; a guest bypassing an applied policy is in scope, while a client
 choosing dangerous credentials, endpoints, mounts, or allowlists is not a
 runtime escape.
+
+The default security posture must behave like a Docker container with no host
+mounts and no published ports: software inside the VM can use its virtual
+filesystem, inspect its virtual process environment, spawn guest subprocesses,
+bind and listen on guest sockets, and communicate over guest loopback. None of
+those operations may expose a host resource by themselves. Host files enter
+only through explicit mounts or copied files; host environment values enter
+only through explicit configuration; guest listeners are not bound or
+published on the host; and external network/DNS access requires an explicit
+grant. A default network denial must block traffic that crosses the VM boundary,
+not local bind, listen, or loopback traffic inside the VM. Trusted runtime
+bootstrap, including launching the guest's Node interpreter, must not be
+mistaken for a guest subprocess and blocked by guest `childProcess` policy.
 
 Every limit, timeout, queue, buffer, and per-entity collection must be bounded
 by default, warn near threshold, and fail with a typed error that names the
@@ -96,7 +109,7 @@ migrate, or delete another owner's schema:
 - Sidecar/core durable state owns `agentos_core_*`, including
   `agentos_core_schema_version`. This namespace is intentionally generic; do
   not name it after sessions, ACP, or another current consumer.
-- The agentOS TypeScript actor layer owns `agentos_actor_*`, including
+- The static agentOS Rust actor owns `agentos_actor_*`, including
   `agentos_actor_schema_version`.
 
 Do not use a shared schema-version table, a `component` discriminator, or a
@@ -119,39 +132,32 @@ add compatibility views, aliases, legacy adoption paths, or dual writes.
   Python). Do NOT reason about guest capabilities from plain-WASI limits (e.g.
   "no shell", "no subprocess spawning", "no process model") — those hold for raw
   WASI Preview 1, not for agentOS. See
-  `website/public/docs/docs/architecture/processes.md` and
-  `posix-syscalls.md`, and `crates/vm-kernel/CLAUDE.md`.
+  `docs/content/docs/architecture/processes.mdx` and
+  `docs/content/docs/architecture/posix-syscalls.mdx`, and `crates/vm-kernel/CLAUDE.md`.
 - The projected `/opt/agentos` filesystem is the source of truth for software
-  and agent resolution. Read it live; do not cache package lists captured at VM
+  and command resolution. Read it live; do not cache package lists captured at VM
   configuration time.
-- Packages are packed `.aospkg` files (`crates/vfs-core/package-format/v1.bare`:
+- Packages are packed `.aospkg` files (`crates/vfs-core/package-format/v2.bare`:
   header + vbare manifest + mount index + mount tar) projected under
   `/opt/agentos/pkgs/<name>/<version>`; commands are linked under
   `/opt/agentos/bin/`. The vbare chunk1 manifest is the only runtime manifest —
   `agentos-package.json` is toolchain input, stripped at pack time and never
   shipped or materialized into the guest.
-- Agent resolution and enumeration are sidecar-owned. Clients send agent names
-  and forward a single package `path` (the `.aospkg`, or a transition dir);
-  they do not scan `node_modules` or parse adapter manifests for discovery.
+- Software resolution and enumeration are sidecar-owned. Clients forward a
+  closed package source (`url` for hosted actors; trusted local path for embedded
+  Core); they do not scan `node_modules` or parse manifests for discovery.
 - TypeScript and Rust clients must stay behaviorally identical. Any public
   method or wire behavior change in one client must be mirrored in the other.
 - Clients are thin transport adapters, not runtime policy owners. They may
   validate and serialize explicit caller input, forward requests, route host
   callbacks/events, and retain host-only state that the sidecar cannot access.
   VM defaults, base environment, filesystem/bootstrap policy, default software,
-  permission policy, agent/session orchestration, prompt assembly, and other
+  permission policy, package projection, and other
   behavior shared across clients belong in the sidecar/runtime.
 - Behavioral parity must come from one sidecar-owned implementation, not copied
   TypeScript/Rust/actor constants or parallel state machines. Prefer omitted
   wire fields meaning "use the sidecar default"; clients should send overrides
   only when the caller explicitly supplied them.
-- Agent adapters must use real upstream SDKs. Do not replace SDK adapters with
-  direct API-call stubs.
-- `rivet-dev/pi-acp` is an agentOS-maintained fork. When Pi ACP behavior needs
-  to change, fix and test the fork directly, push the fork commit, then update
-  the pinned commit and verified source-archive checksum in
-  `software/pi/scripts/build-pi-acp.mjs`; do not work around fork bugs in the
-  agentOS package wrapper or resolve `pi-acp` from npm.
 - WASM command binaries and every toolchain build output are generated
   artifacts. Never commit `packages/core/commands/`, `software/*/bin/`,
   `toolchain/vendor/`, `toolchain/c/{build,vendor,libs,sysroot,.cache}/`, or
@@ -242,34 +248,53 @@ custom host-syscall imports. Treat that target as **native POSIX**;
   dormant reference code; browser entrypoints and support remain disabled until
   a separate design is approved.
 - The architecture and migration contract are specified in
-  `docs/design/unified-sidecar-runtime.md`.
+  `docs/content/docs/architecture/javascript-executor.mdx`.
 
 ## Publishing
 
 - `scripts/publish` is the source of truth for npm/crates discovery, version
   rewriting, npm publish, crates publish, release assets, and R2 upload.
+- Until explicitly changed, release the current version line with patch bumps
+  only; do not advance the minor version.
 - Publishable npm packages and Rust crates are agentOS-owned. agentOS language
   execution is exposed through `@rivet-dev/agentos`; do not publish separate
-  language packages, compatibility artifacts, or language subpaths.
+  language packages, compatibility artifacts, or language subpaths. The one
+  exception is `secure-exec`, a small function-style facade over
+  `@rivet-dev/agentos-core` that exposes `secure-exec/typescript`. Its
+  top-level functions are one-shot conveniences, and `createVm()` returns the
+  agentOS VM's own namespaces; keep it a thin forwarding layer.
 - The release workflow must build and stage the single `agentos-sidecar`
   binary family, registry WASM commands, and pyodide assets before publish.
+- For an urgent release, use `just release-fast --patch` (or pass
+  `--profile debug` to `just release`). This still rebuilds every release
+  artifact, but publishes larger, unoptimized debug native binaries.
 - `scripts/verify-fixed-versions.mjs` must pass in the committed tree.
 
 ## Docs
 
-- The agentOS website lives in `website/`. Its canonical public domain is
-  `agentos-sdk.dev`. This is the only accepted AgentOS domain for URLs, schema
-  IDs, email addresses, package metadata, and documentation.
+- Docs are authored here and published on rivet.dev by the `rivet-dev/website`
+  repo. This repo ships two bundles, each `sidebar.json` plus
+  `content/docs/**.mdx`: `docs/` (agentOS, with snippets from `examples/`) and
+  `secure-exec/docs/` (Secure Exec, with snippets from `secure-exec/examples/`).
+  The `secure-exec` npm package itself lives in the same directory
+  (`secure-exec/src`, `secure-exec/tests`), not under `packages/`.
+  `.github/workflows/docs-sync.yml` syncs both on merge to `main`. Follow
+  `docs/CLAUDE.md` for page, sidebar, snippet, and writing rules; they apply to
+  both bundles.
+- Secure Exec docs cover only the `secure-exec` API. Anything the runtime
+  already documents (permissions, limits, filesystem, networking, security,
+  compatibility, performance) stays a short page that links to the agentOS docs.
+- `https://rivet.dev/agentos` is the canonical agentOS site. Use it for URLs,
+  schema IDs, and package metadata; never `agentos-sdk.dev`. Secure Exec lives
+  at `https://rivet.dev/secure-exec`.
 - Keep docs current in the same change as user-facing behavior: public APIs,
   runtime options, env knobs, limits, architecture, and package names.
-- Runnable docs code must come from real checked example files via the docs
-  theme `<CodeSnippet>` mechanism. Inline code is fine only for shell commands,
-  config fragments, or non-runnable examples.
-- Validate docs changes with `pnpm --dir website build` when the site changes.
-- Run `just docs-check-links` when changing documentation paths, routes,
-  redirects, headings used as link anchors, or shared navigation links. It
-  builds and crawls the rendered Astro site. Pass `true` to include external
-  URLs (`just docs-check-links true`).
+- Runnable docs code must come from real checked example files via
+  `<CodeSnippet>`. Inline code is fine only for shell commands, config
+  fragments, or non-runnable examples.
+- Docs render in the website repo, not here. Validate a change by type-checking
+  the examples it embeds and previewing with a sibling website checkout as
+  described in `docs/CLAUDE.md`.
 
 ## Tests
 
@@ -296,29 +321,6 @@ custom host-syscall imports. Treat that target as **native POSIX**;
   limits, or watchdog timeouts must be ignored/skipped by default with a clear
   reason. Fast tests where the configured safeguard fires should stay in the
   default suite.
-
-## Gigacode Performance Investigations
-
-- For cold-start latency, run `gigacode` directly and use the plain
-  `[gigacode]` phase lines and durations mirrored from `daemon.log` while the
-  client waits for provider bootstrap. These startup lines are intentionally
-  human-readable and separate from Pino session logs.
-- Investigate Gigacode latency from its per-session Pino JSONL logs, not by
-  inferring timing from the OpenCode screen or the aggregate `daemon.log`.
-- Logs live at
-  `~/.local/state/gigacode/session-logs/<open-code-session-id>.jsonl` by default,
-  or under `$GIGACODE_STATE_DIR/session-logs/` when that override is set.
-- Reproduce one turn in a fresh session, identify the newest log with
-  `ls -lt ~/.local/state/gigacode/session-logs`, then inspect its ordered
-  `event` and `durationMs` fields with `jq`.
-- Compare `rivet.actor.resolved`, `agentos.session.created`,
-  `agentos.prompt.completed`, `prompt.completed`, `session.idle`, and
-  `agentos.connection.disposed` before optimizing. The actor event measures
-  resolution of the shared per-cwd workspace actor; the ACP event measures the
-  distinct harness session created inside it.
-- Preserve the raw JSONL file when reporting a regression. Use
-  `GIGACODE_LOG_LEVEL` to change the Pino level; performance phase records are
-  emitted at `info`.
 
 ## Version Control
 

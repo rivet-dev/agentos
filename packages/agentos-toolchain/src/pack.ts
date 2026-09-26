@@ -32,8 +32,6 @@ export interface PackOptions {
 	 * projection's job (name/version from `agentos-package.json`).
 	 */
 	out: string;
-	/** Mark a bin command as the package's ACP entrypoint (validated against bin/). */
-	agent?: string;
 	/**
 	 * Delete native `.node` addons from the flat closure instead of failing.
 	 * Use when a package's dependency tree contains optional/platform native
@@ -308,7 +306,7 @@ function resolveBinTarget(
 }
 
 export function pack(options: PackOptions): PackResult {
-	const { source, out, agent, pruneNative } = options;
+	const { source, out, pruneNative } = options;
 	const tmp = mkdtempSync(join(tmpdir(), "agentos-pack-"));
 	try {
 		npmInstallFlat(resolveInstallSpec(source, tmp), tmp, options.omitOptional ?? false);
@@ -318,10 +316,8 @@ export function pack(options: PackOptions): PackResult {
 		// Read the source `agentos-package.json` from the INSTALLED package dir, not
 		// the source spec: for npm specs (`@scope/name`) the spec is not a directory,
 		// so reading it yields nothing and the packed name falls back to the unscoped
-		// npm name — which is only coincidentally correct (e.g. `@agentos-software/pi`
-		// -> `pi`) and wrong when they differ (`@agentos-software/claude-code` ->
-		// `claude-code`, but the agent id is `claude`). The installed manifest carries
-		// the canonical unscoped agent `name` the sidecar projects/resolves on.
+		// npm name. The installed manifest carries the canonical unscoped package
+		// name the sidecar projects.
 		const sourceManifest = readAgentosPackageManifest(installedDir);
 		const pkg = JSON.parse(readFileSync(join(installedDir, "package.json"), "utf8"));
 		const version: string = pkg.version;
@@ -330,12 +326,6 @@ export function pack(options: PackOptions): PackResult {
 		if (commands.length === 0) {
 			throw new Error(`package "${name}" declares no bin commands`);
 		}
-		if (agent && !commands.includes(agent)) {
-			throw new Error(
-				`--agent "${agent}" is not one of the package's commands: ${commands.join(", ")}`,
-			);
-		}
-
 		// Flat temporary package dir. The emitted artifact is a tar; the versioned
 		// `/opt/agentos/<name>/<version>` + `current` layout is the sidecar
 		// projection's job.
@@ -393,11 +383,6 @@ export function pack(options: PackOptions): PackResult {
 				sourceManifest.name.length > 0
 					? sourceManifest.name
 					: unscopedName(name),
-			...(sourceManifest?.agent !== undefined
-				? { agent: sourceManifest.agent }
-				: agent
-					? { agent: { acpEntrypoint: agent } }
-					: {}),
 			version,
 			...(sourceManifest?.provides !== undefined
 				? { provides: sourceManifest.provides }

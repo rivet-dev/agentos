@@ -19,8 +19,8 @@ US-083 and US-084 should replace only the payload codec first. They should not r
 
 The migration keeps the current semantic invariants unchanged across codecs:
 
-- `ProtocolSchema.name` is `agentos-sidecar`
-- `ProtocolSchema.version` is `8`
+- `ProtocolSchema.name` is `agentos-native-sidecar`
+- `ProtocolSchema.version` is `10`
 - host-originated `request_id` values stay positive
 - sidecar-originated `request_id` values stay negative
 - ownership scope rules and response-correlation rules stay exactly the same
@@ -34,7 +34,7 @@ The current protocol still has several fields modeled as `serde_json::Value` on 
 - canonicalized by the codec before hashing/comparison in tests
 - intentionally temporary until later protocol work replaces them with BARE-native typed payloads
 
-This applies to fields such as session config blobs, ACP notifications, mount plugin configs, binding schemas/inputs, JS bridge arguments, and binding results.
+This applies to fields such as runtime config blobs, mount plugin configs, host-function schemas/inputs, JS bridge arguments, and host-function results.
 
 ## Rollout Plan
 

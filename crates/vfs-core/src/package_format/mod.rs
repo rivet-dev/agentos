@@ -8,7 +8,7 @@ use std::ops::Range;
 use crate::posix::vfs::{VfsError, VfsResult};
 
 pub const AOSPKG_MAGIC: [u8; 4] = [0x89, b'A', b'O', b'S'];
-pub const AOSPKG_FORMAT_VERSION: u16 = 1;
+pub const AOSPKG_FORMAT_VERSION: u16 = 2;
 pub const AOSPKG_HEADER_LEN: usize = 16;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -135,7 +135,7 @@ pub fn encode_aospkg_header(manifest_len: usize, index_len: usize) -> VfsResult<
 #[cfg(not(target_arch = "wasm32"))]
 pub fn read_manifest_chunk_from_file(
     path: &std::path::Path,
-) -> VfsResult<generated::v1::PackageManifest> {
+) -> VfsResult<generated::v2::PackageManifest> {
     use std::io::{Read, Seek, SeekFrom};
     let mut file = std::fs::File::open(path)
         .map_err(|e| VfsError::new("EIO", format!("open {}: {e}", path.display())))?;

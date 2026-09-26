@@ -166,10 +166,7 @@ pub(in crate::execution) fn http_request_target(url: &Url) -> String {
     )
 }
 
-pub(in crate::execution) fn find_kernel_http_listener_process(
-    vm: &VmState,
-    port: u16,
-) -> Option<String> {
+pub(crate) fn find_kernel_http_listener_process(vm: &VmState, port: u16) -> Option<String> {
     vm.active_processes
         .iter()
         .find_map(|(process_id, process)| {
@@ -187,6 +184,20 @@ pub(in crate::execution) fn find_kernel_http_listener_process(
                 }
             })
         })
+}
+
+pub(crate) fn find_vm_fetch_target_process(vm: &VmState, port: u16) -> Option<String> {
+    find_kernel_http_listener_process(vm, port).or_else(|| {
+        vm.active_processes
+            .iter()
+            .find_map(|(process_id, process)| {
+                process
+                    .http_servers
+                    .values()
+                    .any(|server| server.guest_local_addr.port() == port)
+                    .then(|| process_id.clone())
+            })
+    })
 }
 
 fn is_vm_local_http_listener_addr(ip: IpAddr) -> bool {
@@ -589,7 +600,7 @@ pub(in crate::execution) fn poll_kernel_http_fetch(
     if Instant::now() >= fetch.deadline {
         let preview = String::from_utf8_lossy(&fetch.response_buffer);
         return Err(VmError::Execution(format!(
-            "vm.fetch timed out waiting for kernel TCP HTTP response ({} buffered bytes: {:?})",
+            "ERR_AGENTOS_VM_FETCH_TIMEOUT: vm.fetch timed out waiting for kernel TCP HTTP response ({} buffered bytes: {:?}); raise AGENTOS_HTTP_LOOPBACK_REQUEST_TIMEOUT_MS",
             fetch.response_buffer.len(),
             preview.chars().take(200).collect::<String>()
         )));
@@ -1289,4 +1300,903 @@ mod tests {
             String::from_utf8_lossy(&request[..header_end])
         );
     }
+}
+
+struct OwnedKernelFetchSocket {
+    vm: crate::state::VmHandle,
+    kernel_readiness: KernelSocketReadinessRegistry,
+    readiness_notify: Arc<tokio::sync::Notify>,
+    kernel_pid: u32,
+    socket_id: SocketId,
+    capability: Option<agentos_driver_tokio::capability::CapabilityLease>,
+    armed: bool,
+}
+
+impl OwnedKernelFetchSocket {
+    fn identity(&self) -> Option<(u64, u64)> {
+        self.capability
+            .as_ref()
+            .map(|capability| (capability.id(), capability.generation()))
+    }
+
+    fn unregister_readiness(&self) {
+        if let Some(identity) = self.identity() {
+            self.kernel_readiness.unregister(self.socket_id, identity);
+        }
+    }
+
+    fn close(&mut self) -> Result<(), VmError> {
+        if !self.armed {
+            return Ok(());
+        }
+        self.unregister_readiness();
+        self.vm.try_command("close owned VM fetch socket", |vm| {
+            close_kernel_socket_idempotent(&mut vm.kernel, self.kernel_pid, self.socket_id)
+        })?;
+        self.capability.take();
+        self.armed = false;
+        Ok(())
+    }
+
+    fn into_stream_state(
+        mut self,
+        target_process_id: String,
+        raw_buffer: Vec<u8>,
+        body_mode: VmFetchBodyMode,
+        peer_closed: bool,
+        max_response_bytes: usize,
+    ) -> VmFetchStreamState {
+        self.unregister_readiness();
+        self.armed = false;
+        VmFetchStreamState {
+            target_process_id,
+            kernel_pid: self.kernel_pid,
+            socket_id: self.socket_id,
+            _capability: self
+                .capability
+                .take()
+                .expect("armed VM fetch socket must retain its capability"),
+            raw_buffer,
+            decoded_buffer: VecDeque::new(),
+            body_mode,
+            peer_closed,
+            response_bytes: 0,
+            max_response_bytes,
+            last_progress_at: Instant::now(),
+        }
+    }
+}
+
+impl Drop for OwnedKernelFetchSocket {
+    fn drop(&mut self) {
+        if self.armed {
+            if let Err(error) = self.close() {
+                eprintln!(
+                    "ERR_AGENTOS_VM_FETCH_SOCKET_CLEANUP: failed to close cancelled VM fetch socket: {error}"
+                );
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn open_owned_kernel_fetch_socket(
+    vm: &crate::state::VmHandle,
+    target_process_id: &str,
+    port: u16,
+    path: &str,
+    options: &JavascriptHttpRequestOptions,
+    headers: &HttpHeaderCollection,
+    body_bytes: Option<&[u8]>,
+    enforce_stream_limit: bool,
+) -> Result<OwnedKernelFetchSocket, VmError> {
+    let handle = vm.clone();
+    let readiness_notify = Arc::new(tokio::sync::Notify::new());
+    let notify = Arc::clone(&readiness_notify);
+    vm.try_command("open owned VM fetch socket", move |vm| {
+        if enforce_stream_limit && vm.vm_fetch_streams.len() >= VM_FETCH_STREAM_COUNT_LIMIT {
+            return Err(VmError::Execution(format!(
+                "ERR_AGENTOS_VM_FETCH_STREAM_LIMIT: VM has {} open fetch streams; close or cancel a stream before opening another (limit {})",
+                vm.vm_fetch_streams.len(),
+                VM_FETCH_STREAM_COUNT_LIMIT
+            )));
+        }
+        // Reject malformed methods and headers before connecting. Closing a
+        // client socket cannot undo a peer socket already accepted by the VM.
+        let request_bytes =
+            serialize_kernel_http_fetch_request(port, path, options, headers, body_bytes)?;
+        let pending_capability =
+            reserve_capability(&vm.capabilities, CapabilityKind::TcpSocket)?;
+        let kernel_pid = vm
+            .active_processes
+            .get(target_process_id)
+            .ok_or_else(|| {
+                VmError::InvalidState(format!(
+                    "vm.fetch target process disappeared: {target_process_id}"
+                ))
+            })?
+            .kernel_pid;
+        let socket_id = vm
+            .kernel
+            .socket_create(EXECUTION_DRIVER_NAME, kernel_pid, SocketSpec::tcp())
+            .map_err(kernel_error)?;
+        let capability = match pending_capability.commit(CapabilityBackend::Kernel { socket_id }) {
+            Ok(capability) => capability,
+            Err(error) => {
+                if let Err(cleanup) = close_kernel_socket_idempotent(&mut vm.kernel, kernel_pid, socket_id) {
+                    eprintln!("ERR_AGENTOS_VM_FETCH_SOCKET_CLEANUP: capability rollback failed: {cleanup}");
+                }
+                return Err(VmError::Execution(error.to_string()));
+            }
+        };
+        let setup = (|| {
+            vm.kernel
+                .socket_bind_inet(
+                    EXECUTION_DRIVER_NAME,
+                    kernel_pid,
+                    socket_id,
+                    InetSocketAddress::new("127.0.0.1", 0),
+                )
+                .map_err(kernel_error)?;
+            vm.kernel
+                .socket_connect_inet_loopback(
+                    EXECUTION_DRIVER_NAME,
+                    kernel_pid,
+                    socket_id,
+                    InetSocketAddress::new("127.0.0.1", port),
+                )
+                .map_err(kernel_error)?;
+            vm.kernel
+                .socket_write(EXECUTION_DRIVER_NAME, kernel_pid, socket_id, &request_bytes)
+                .map_err(kernel_error)
+        })();
+        if let Err(error) = setup {
+            let close_result =
+                close_kernel_socket_idempotent(&mut vm.kernel, kernel_pid, socket_id);
+            if let Err(close_error) = close_result {
+                eprintln!(
+                    "ERR_AGENTOS_VM_FETCH_SOCKET_CLEANUP: setup rollback failed: {close_error}"
+                );
+            }
+            return Err(error);
+        }
+
+        let kernel_readiness = Arc::clone(&vm.kernel_socket_readiness);
+        let target = KernelSocketReadinessTarget {
+            session: None,
+            notify: Some(Arc::clone(&notify)),
+            capability_id: capability.id(),
+            capability_generation: capability.generation(),
+            target_id: format!("vm-fetch:{target_process_id}:{socket_id}"),
+            event: KernelSocketReadinessEvent::Data,
+            live: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        };
+        if let Err(error) = kernel_readiness.register(socket_id, target) {
+            let close_result =
+                close_kernel_socket_idempotent(&mut vm.kernel, kernel_pid, socket_id);
+            if let Err(close_error) = close_result {
+                eprintln!(
+                    "ERR_AGENTOS_VM_FETCH_SOCKET_CLEANUP: readiness rollback failed: {close_error}"
+                );
+            }
+            return Err(error);
+        }
+        // Registration is level-triggered. Force an initial zero-time probe so
+        // readiness that preceded registration cannot be lost.
+        notify.notify_one();
+        Ok(OwnedKernelFetchSocket {
+            vm: handle,
+            kernel_readiness,
+            readiness_notify: notify,
+            kernel_pid,
+            socket_id,
+            capability: Some(capability),
+            armed: true,
+        })
+    })
+}
+
+fn poll_owned_kernel_fetch_socket(
+    socket: &OwnedKernelFetchSocket,
+    response_buffer: &mut Vec<u8>,
+    peer_closed: &mut bool,
+    label: &str,
+) -> Result<bool, VmError> {
+    socket.vm.try_command("poll owned VM fetch socket", |vm| {
+        let poll = vm
+            .kernel
+            .poll_targets(
+                EXECUTION_DRIVER_NAME,
+                socket.kernel_pid,
+                vec![PollTargetEntry::socket(
+                    socket.socket_id,
+                    POLLIN | POLLHUP | POLLERR,
+                )],
+                0,
+            )
+            .map_err(kernel_error)?;
+        let revents = poll
+            .targets
+            .first()
+            .map(|entry| entry.revents)
+            .unwrap_or_else(PollEvents::empty);
+        if revents.intersects(POLLERR) {
+            return Err(VmError::Execution(String::from(
+                "ERR_AGENTOS_VM_FETCH_SOCKET: kernel TCP socket reported POLLERR",
+            )));
+        }
+        let before = response_buffer.len();
+        if revents.intersects(POLLIN) {
+            loop {
+                match vm.kernel.socket_read(
+                    EXECUTION_DRIVER_NAME,
+                    socket.kernel_pid,
+                    socket.socket_id,
+                    VM_FETCH_STREAM_CHUNK_MAX_BYTES,
+                ) {
+                    Ok(Some(bytes)) if !bytes.is_empty() => {
+                        response_buffer.extend(bytes);
+                        ensure_vm_fetch_raw_response_buffer_within_limit(
+                            response_buffer.len(),
+                            label,
+                        )
+                        .map_err(sidecar_core_execution_error)?;
+                    }
+                    Ok(Some(_)) => break,
+                    Ok(None) => {
+                        *peer_closed = true;
+                        break;
+                    }
+                    Err(error) if error.code() == "EAGAIN" => break,
+                    Err(error) => return Err(kernel_error(error)),
+                }
+            }
+        }
+        if revents.intersects(POLLHUP) {
+            *peer_closed = true;
+        }
+        Ok(response_buffer.len() != before || *peer_closed)
+    })
+}
+
+fn owned_fetch_process_notify(
+    vm: &crate::state::VmHandle,
+    process_id: &str,
+) -> Result<Arc<tokio::sync::Notify>, VmError> {
+    vm.try_read("clone VM fetch process notification", |vm| {
+        vm.active_processes
+            .get(process_id)
+            .map(|process| Arc::clone(&process.process_event_notify))
+            .ok_or_else(|| {
+                VmError::InvalidState(format!("vm.fetch target process disappeared: {process_id}"))
+            })
+    })?
+}
+
+async fn wait_for_owned_fetch_progress(
+    readiness_notify: &Arc<tokio::sync::Notify>,
+    process_notify: &Arc<tokio::sync::Notify>,
+    deadline: Instant,
+) -> Result<(), VmError> {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return Err(VmError::Execution(String::from(
+            "ERR_AGENTOS_VM_FETCH_TIMEOUT: VM fetch progress deadline elapsed",
+        )));
+    }
+    tokio::time::timeout(remaining, async {
+        tokio::select! {
+            _ = readiness_notify.notified() => {},
+            _ = tokio::time::sleep(Duration::from_millis(1)) => {
+                // The ordinary dispatcher exclusively owns guest execution
+                // events. Wake it so runnable microtask or WASM work advances;
+                // this fetch path only owns the kernel response socket.
+                process_notify.notify_one();
+                tokio::task::yield_now().await;
+            },
+        }
+    })
+    .await
+    .map_err(|_| {
+        VmError::Execution(format!(
+            "ERR_AGENTOS_VM_FETCH_TIMEOUT: timed out after {} ms waiting for VM fetch progress",
+            http_loopback_request_timeout().as_millis()
+        ))
+    })?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_owned_kernel_http_fetch(
+    vm: &crate::state::VmHandle,
+    target_process_id: &str,
+    port: u16,
+    path: &str,
+    options: &JavascriptHttpRequestOptions,
+    headers: &HttpHeaderCollection,
+    body_bytes: Option<&[u8]>,
+    max_fetch_response_bytes: usize,
+) -> Result<String, VmError> {
+    let mut socket = open_owned_kernel_fetch_socket(
+        vm,
+        target_process_id,
+        port,
+        path,
+        options,
+        headers,
+        body_bytes,
+        false,
+    )?;
+    let mut response_buffer = Vec::new();
+    let mut peer_closed = false;
+    let url = format!("http://127.0.0.1:{port}{path}");
+    let deadline = Instant::now() + http_loopback_request_timeout();
+    let process_notify = owned_fetch_process_notify(vm, target_process_id)?;
+    loop {
+        if let Some(response) =
+            parse_kernel_http_fetch_response(&response_buffer, peer_closed, &url)
+                .map_err(sidecar_core_execution_error)?
+        {
+            ensure_vm_fetch_response_within_limit(&response, "vm.fetch", max_fetch_response_bytes)
+                .map_err(sidecar_core_execution_error)?;
+            socket.close()?;
+            return Ok(response);
+        }
+        if Instant::now() >= deadline {
+            let preview = String::from_utf8_lossy(&response_buffer);
+            return Err(VmError::Execution(format!(
+                "ERR_AGENTOS_VM_FETCH_TIMEOUT: vm.fetch timed out waiting for kernel TCP HTTP response ({} buffered bytes: {:?}); raise AGENTOS_HTTP_LOOPBACK_REQUEST_TIMEOUT_MS",
+                response_buffer.len(),
+                preview.chars().take(200).collect::<String>()
+            )));
+        }
+        let progressed = poll_owned_kernel_fetch_socket(
+            &socket,
+            &mut response_buffer,
+            &mut peer_closed,
+            "vm.fetch",
+        )?;
+        if !progressed {
+            wait_for_owned_fetch_progress(&socket.readiness_notify, &process_notify, deadline)
+                .await?;
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn start_owned_kernel_http_fetch_stream(
+    vm: &crate::state::VmHandle,
+    target_process_id: &str,
+    port: u16,
+    path: &str,
+    options: &JavascriptHttpRequestOptions,
+    headers: &HttpHeaderCollection,
+    body_bytes: Option<&[u8]>,
+    max_response_bytes: usize,
+) -> Result<String, VmError> {
+    let socket = open_owned_kernel_fetch_socket(
+        vm,
+        target_process_id,
+        port,
+        path,
+        options,
+        headers,
+        body_bytes,
+        true,
+    )?;
+    let mut response_buffer = Vec::new();
+    let mut peer_closed = false;
+    let deadline = Instant::now() + http_loopback_request_timeout();
+    let request_method = options.method.as_deref().unwrap_or("GET");
+    let process_notify = owned_fetch_process_notify(vm, target_process_id)?;
+    let (status, status_text, response_headers, body_mode) = loop {
+        if let Some(header_end) = find_http_header_end(&response_buffer) {
+            let parsed = parse_stream_response_head(
+                &response_buffer[..header_end],
+                request_method,
+                max_response_bytes,
+            )?;
+            if (100..200).contains(&parsed.0) && parsed.0 != 101 {
+                response_buffer.drain(..header_end + 4);
+                continue;
+            }
+            response_buffer.drain(..header_end + 4);
+            break parsed;
+        }
+        if peer_closed {
+            return Err(VmError::Execution(String::from(
+                "ERR_AGENTOS_VM_FETCH_TRUNCATED: peer closed before response headers completed",
+            )));
+        }
+        if Instant::now() >= deadline {
+            return Err(VmError::Execution(format!(
+                "ERR_AGENTOS_VM_FETCH_TIMEOUT: timed out waiting for response headers after {} ms; raise AGENTOS_HTTP_LOOPBACK_REQUEST_TIMEOUT_MS",
+                http_loopback_request_timeout().as_millis()
+            )));
+        }
+        let progressed = poll_owned_kernel_fetch_socket(
+            &socket,
+            &mut response_buffer,
+            &mut peer_closed,
+            "vm.fetchStream",
+        )?;
+        if !progressed {
+            wait_for_owned_fetch_progress(&socket.readiness_notify, &process_notify, deadline)
+                .await?;
+        }
+    };
+
+    let mut state = socket.into_stream_state(
+        target_process_id.to_owned(),
+        response_buffer,
+        body_mode,
+        peer_closed,
+        max_response_bytes,
+    );
+    decode_stream_body(&mut state)?;
+    let stream_id = vm.try_command("register owned VM fetch stream", |vm| {
+        vm.next_vm_fetch_stream_id = vm.next_vm_fetch_stream_id.wrapping_add(1);
+        let stream_id = format!("{}:{}", vm.generation, vm.next_vm_fetch_stream_id);
+        vm.vm_fetch_streams.insert(stream_id.clone(), state);
+        Ok(stream_id)
+    })?;
+    serde_json::to_string(&json!({
+        "streamId": stream_id,
+        "status": status,
+        "statusText": status_text,
+        "headers": response_headers,
+    }))
+    .map_err(|error| {
+        VmError::Execution(format!(
+            "ERR_AGENTOS_VM_FETCH_SERIALIZE: failed to serialize response head: {error}"
+        ))
+    })
+}
+
+struct OwnedFetchStreamLease {
+    vm: crate::state::VmHandle,
+    stream_id: String,
+    kernel_readiness: KernelSocketReadinessRegistry,
+    readiness_notify: Arc<tokio::sync::Notify>,
+    state: Option<VmFetchStreamState>,
+}
+
+impl OwnedFetchStreamLease {
+    fn state(&self) -> &VmFetchStreamState {
+        self.state
+            .as_ref()
+            .expect("owned VM fetch stream state must be present")
+    }
+
+    fn state_mut(&mut self) -> &mut VmFetchStreamState {
+        self.state
+            .as_mut()
+            .expect("owned VM fetch stream state must be present")
+    }
+
+    fn identity(&self) -> (u64, u64) {
+        let capability = &self.state()._capability;
+        (capability.id(), capability.generation())
+    }
+
+    fn unregister_readiness(&self) {
+        self.kernel_readiness
+            .unregister(self.state().socket_id, self.identity());
+    }
+
+    fn reinsert(mut self) -> Result<(), VmError> {
+        self.unregister_readiness();
+        let state = self
+            .state
+            .take()
+            .expect("owned VM fetch stream state must be present");
+        self.vm.try_command("restore owned VM fetch stream", |vm| {
+            vm.vm_fetch_streams.insert(self.stream_id.clone(), state);
+            Ok(())
+        })
+    }
+
+    fn close(mut self) -> Result<(), VmError> {
+        self.unregister_readiness();
+        let state = self
+            .state
+            .take()
+            .expect("owned VM fetch stream state must be present");
+        self.vm.try_command("close owned VM fetch stream", |vm| {
+            close_kernel_socket_idempotent(&mut vm.kernel, state.kernel_pid, state.socket_id)
+        })?;
+        drop(state);
+        Ok(())
+    }
+}
+
+impl Drop for OwnedFetchStreamLease {
+    fn drop(&mut self) {
+        let Some(state) = self.state.take() else {
+            return;
+        };
+        self.kernel_readiness.unregister(
+            state.socket_id,
+            (state._capability.id(), state._capability.generation()),
+        );
+        let result = self.vm.try_command("cancel owned VM fetch stream", |vm| {
+            close_kernel_socket_idempotent(&mut vm.kernel, state.kernel_pid, state.socket_id)
+        });
+        if let Err(error) = result {
+            eprintln!(
+                "ERR_AGENTOS_VM_FETCH_STREAM_CLEANUP: failed to close cancelled stream {}: {error}",
+                self.stream_id
+            );
+        }
+        drop(state);
+    }
+}
+
+fn lease_owned_fetch_stream(
+    vm: &crate::state::VmHandle,
+    stream_id: &str,
+) -> Result<OwnedFetchStreamLease, VmError> {
+    let readiness_notify = Arc::new(tokio::sync::Notify::new());
+    let notify = Arc::clone(&readiness_notify);
+    let handle = vm.clone();
+    vm.try_command("lease owned VM fetch stream", |vm| {
+        let state = vm.vm_fetch_streams.remove(stream_id).ok_or_else(|| {
+            VmError::InvalidState(format!(
+                "ERR_AGENTOS_VM_FETCH_STREAM_NOT_FOUND: stream {stream_id:?} is closed or unknown"
+            ))
+        })?;
+        let kernel_readiness = Arc::clone(&vm.kernel_socket_readiness);
+        let target = KernelSocketReadinessTarget {
+            session: None,
+            notify: Some(Arc::clone(&notify)),
+            capability_id: state._capability.id(),
+            capability_generation: state._capability.generation(),
+            target_id: format!("vm-fetch-stream:{stream_id}"),
+            event: KernelSocketReadinessEvent::Data,
+            live: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        };
+        if let Err(error) = kernel_readiness.register(state.socket_id, target) {
+            vm.vm_fetch_streams.insert(stream_id.to_owned(), state);
+            return Err(error);
+        }
+        notify.notify_one();
+        Ok(OwnedFetchStreamLease {
+            vm: handle,
+            stream_id: stream_id.to_owned(),
+            kernel_readiness,
+            readiness_notify: notify,
+            state: Some(state),
+        })
+    })
+}
+
+async fn read_owned_kernel_http_fetch_stream(
+    vm: &crate::state::VmHandle,
+    stream_id: &str,
+    requested_max_bytes: usize,
+) -> Result<String, VmError> {
+    let max_bytes = requested_max_bytes.clamp(1, VM_FETCH_STREAM_CHUNK_MAX_BYTES);
+    let mut lease = lease_owned_fetch_stream(vm, stream_id)?;
+    let target_process_id = lease.state().target_process_id.clone();
+    let process_notify = owned_fetch_process_notify(vm, &target_process_id)?;
+    loop {
+        decode_stream_body(lease.state_mut())?;
+        if !lease.state().decoded_buffer.is_empty()
+            || matches!(lease.state().body_mode, VmFetchBodyMode::Empty)
+        {
+            break;
+        }
+        let deadline = lease.state().last_progress_at + http_loopback_request_timeout();
+        if Instant::now() >= deadline {
+            return Err(VmError::Execution(format!(
+                "ERR_AGENTOS_VM_FETCH_TIMEOUT: stream produced no data for {} ms; raise AGENTOS_HTTP_LOOPBACK_REQUEST_TIMEOUT_MS",
+                http_loopback_request_timeout().as_millis()
+            )));
+        }
+        let (kernel_pid, socket_id) = (lease.state().kernel_pid, lease.state().socket_id);
+        let mut raw_buffer = std::mem::take(&mut lease.state_mut().raw_buffer);
+        let mut peer_closed = lease.state().peer_closed;
+        let progressed = lease.vm.try_command("poll owned VM fetch stream", |vm| {
+            let poll = vm
+                .kernel
+                .poll_targets(
+                    EXECUTION_DRIVER_NAME,
+                    kernel_pid,
+                    vec![PollTargetEntry::socket(
+                        socket_id,
+                        POLLIN | POLLHUP | POLLERR,
+                    )],
+                    0,
+                )
+                .map_err(kernel_error)?;
+            let revents = poll
+                .targets
+                .first()
+                .map(|entry| entry.revents)
+                .unwrap_or_else(PollEvents::empty);
+            if revents.intersects(POLLERR) {
+                return Err(VmError::Execution(String::from(
+                    "ERR_AGENTOS_VM_FETCH_SOCKET: kernel TCP stream reported POLLERR",
+                )));
+            }
+            let before = raw_buffer.len();
+            if revents.intersects(POLLIN) {
+                loop {
+                    match vm.kernel.socket_read(
+                        EXECUTION_DRIVER_NAME,
+                        kernel_pid,
+                        socket_id,
+                        VM_FETCH_STREAM_CHUNK_MAX_BYTES,
+                    ) {
+                        Ok(Some(bytes)) if !bytes.is_empty() => {
+                            raw_buffer.extend(bytes);
+                            ensure_vm_fetch_raw_response_buffer_within_limit(
+                                raw_buffer.len(),
+                                "vm.fetchStream",
+                            )
+                            .map_err(sidecar_core_execution_error)?;
+                        }
+                        Ok(Some(_)) => break,
+                        Ok(None) => {
+                            peer_closed = true;
+                            break;
+                        }
+                        Err(error) if error.code() == "EAGAIN" => break,
+                        Err(error) => return Err(kernel_error(error)),
+                    }
+                }
+            }
+            if revents.intersects(POLLHUP) {
+                peer_closed = true;
+            }
+            Ok(raw_buffer.len() != before || peer_closed)
+        })?;
+        lease.state_mut().raw_buffer = raw_buffer;
+        lease.state_mut().peer_closed = peer_closed;
+        if progressed {
+            lease.state_mut().last_progress_at = Instant::now();
+        } else {
+            wait_for_owned_fetch_progress(&lease.readiness_notify, &process_notify, deadline)
+                .await?;
+        }
+    }
+
+    let state = lease.state_mut();
+    let take = max_bytes.min(state.decoded_buffer.len());
+    let body: Vec<u8> = state.decoded_buffer.drain(..take).collect();
+    let done = state.decoded_buffer.is_empty() && matches!(state.body_mode, VmFetchBodyMode::Empty);
+    let response = serde_json::to_string(&json!({
+        "body": base64::engine::general_purpose::STANDARD.encode(body),
+        "done": done,
+    }))
+    .map_err(|error| {
+        VmError::Execution(format!(
+            "ERR_AGENTOS_VM_FETCH_SERIALIZE: failed to serialize stream chunk: {error}"
+        ))
+    })?;
+    if done {
+        lease.close()?;
+    } else {
+        lease.reinsert()?;
+    }
+    Ok(response)
+}
+
+fn cancel_owned_kernel_http_fetch_stream(
+    vm: &crate::state::VmHandle,
+    stream_id: &str,
+) -> Result<String, VmError> {
+    let lease = lease_owned_fetch_stream(vm, stream_id)?;
+    lease.close()?;
+    Ok(String::from("{\"cancelled\":true}"))
+}
+
+struct OwnedLoopbackHttpRequest {
+    vm: crate::state::VmHandle,
+    process_id: String,
+    request_key: (u64, u64),
+    armed: bool,
+}
+
+impl OwnedLoopbackHttpRequest {
+    fn complete(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for OwnedLoopbackHttpRequest {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let result = self
+            .vm
+            .try_command("cancel owned loopback HTTP request", |vm| {
+                if let Some(process) = vm.active_processes.get_mut(&self.process_id) {
+                    process.pending_http_requests.remove(&self.request_key);
+                }
+                Ok(())
+            });
+        if let Err(error) = result {
+            eprintln!(
+                "ERR_AGENTOS_VM_FETCH_LOOPBACK_CLEANUP: failed to cancel pending request: {error}"
+            );
+        }
+    }
+}
+
+async fn dispatch_owned_loopback_http_request(
+    vm: &crate::state::VmHandle,
+    process_id: &str,
+    server_id: u64,
+    request_json: &str,
+) -> Result<String, VmError> {
+    let (request_key, receiver) = vm.try_command("start owned loopback HTTP request", |vm| {
+        let process = vm.active_processes.get_mut(process_id).ok_or_else(|| {
+            VmError::InvalidState(format!("vm.fetch target process disappeared: {process_id}"))
+        })?;
+        let (respond_to, receiver) = tokio::sync::oneshot::channel();
+        let request_key = begin_loopback_http_request(process, server_id, request_json, || {
+            PendingHttpRequest::Deferred(respond_to)
+        })?;
+        Ok((request_key, receiver))
+    })?;
+    let mut guard = OwnedLoopbackHttpRequest {
+        vm: vm.clone(),
+        process_id: process_id.to_owned(),
+        request_key,
+        armed: true,
+    };
+    let response = tokio::time::timeout(http_loopback_request_timeout(), receiver)
+        .await
+        .map_err(|_| {
+            VmError::Execution(String::from(
+                "HTTP loopback request timed out waiting for net.http_respond",
+            ))
+        })?
+        .map_err(|_| {
+            VmError::InvalidState(String::from(
+                "HTTP loopback response waiter closed before net.http_respond",
+            ))
+        })?
+        .map_err(|error| VmError::Execution(format!("{}: {}", error.code, error.message)))?;
+    guard.complete();
+    response.as_str().map(str::to_owned).ok_or_else(|| {
+        VmError::InvalidState(String::from(
+            "HTTP loopback response completed with a non-string value",
+        ))
+    })
+}
+
+/// Run `vm.fetch` without holding either the process coordinator or a VM state
+/// borrow over readiness and adapter-response waits.
+pub(in crate::execution) async fn dispatch_owned_vm_fetch(
+    vm_id: &str,
+    vm: crate::state::VmHandle,
+    payload: VmFetchRequest,
+) -> Result<String, VmError> {
+    let stream_operation = payload.stream_operation.as_deref();
+    if matches!(stream_operation, Some("read" | "cancel")) {
+        let stream_id = payload.stream_id.as_deref().ok_or_else(|| {
+            VmError::InvalidState(String::from(
+                "vm.fetch stream read/cancel requires stream_id",
+            ))
+        })?;
+        return if stream_operation == Some("read") {
+            read_owned_kernel_http_fetch_stream(
+                &vm,
+                stream_id,
+                payload.max_bytes.unwrap_or(64 * 1024) as usize,
+            )
+            .await
+        } else {
+            cancel_owned_kernel_http_fetch_stream(&vm, stream_id)
+        };
+    }
+    if let Some(operation) = stream_operation {
+        if operation != "start" {
+            return Err(VmError::InvalidState(format!(
+                "unknown vm.fetch stream operation {operation:?}; expected start, read, or cancel"
+            )));
+        }
+    }
+
+    let target_path = format!("/{}", payload.path.trim_start_matches('/'));
+    let request_url = Url::parse(&format!("http://127.0.0.1:{}{target_path}", payload.port))
+        .map_err(|error| {
+            VmError::InvalidState(format!("invalid vm.fetch target {target_path:?}: {error}"))
+        })?;
+    let header_values: BTreeMap<String, Value> = serde_json::from_str(&payload.headers_json)
+        .map_err(|error| {
+            VmError::InvalidState(format!("vm.fetch headers_json must be valid JSON: {error}"))
+        })?;
+    if payload.body.is_some() && payload.body_base64.is_some() {
+        return Err(VmError::InvalidState(String::from(
+            "vm.fetch accepts either body or body_base64, not both",
+        )));
+    }
+    let body_bytes = payload
+        .body_base64
+        .as_deref()
+        .map(|body| {
+            base64::engine::general_purpose::STANDARD
+                .decode(body)
+                .map_err(|error| {
+                    VmError::InvalidState(format!(
+                        "vm.fetch body_base64 must be valid base64: {error}"
+                    ))
+                })
+        })
+        .transpose()?;
+    let options = JavascriptHttpRequestOptions {
+        method: Some(payload.method),
+        headers: header_values,
+        body: payload.body,
+        reject_unauthorized: None,
+    };
+    let headers = parse_http_header_collection(&options.headers, "vm.fetch headers")?;
+    let (kernel_target, max_fetch_response_bytes) =
+        vm.try_read("resolve VM fetch target", |vm| {
+            (
+                find_kernel_http_listener_process(vm, payload.port),
+                vm.limits.http.max_fetch_response_bytes,
+            )
+        })?;
+    if let Some(target_process_id) = kernel_target {
+        return if stream_operation == Some("start") {
+            start_owned_kernel_http_fetch_stream(
+                &vm,
+                &target_process_id,
+                payload.port,
+                &target_path,
+                &options,
+                &headers,
+                body_bytes.as_deref(),
+                max_fetch_response_bytes,
+            )
+            .await
+        } else {
+            dispatch_owned_kernel_http_fetch(
+                &vm,
+                &target_process_id,
+                payload.port,
+                &target_path,
+                &options,
+                &headers,
+                body_bytes.as_deref(),
+                max_fetch_response_bytes,
+            )
+            .await
+        };
+    }
+
+    let target = vm.try_read("resolve loopback VM fetch target", |vm| {
+        vm.active_processes
+            .iter()
+            .find_map(|(process_id, process)| {
+                process
+                    .http_servers
+                    .iter()
+                    .find(|(_, server)| server.guest_local_addr.port() == payload.port)
+                    .map(|(server_id, _)| (process_id.clone(), *server_id))
+            })
+    })?;
+    let Some((target_process_id, server_id)) = target else {
+        return Err(VmError::Execution(format!(
+            "vm.fetch could not find a guest HTTP listener on port {} in VM {vm_id}",
+            payload.port
+        )));
+    };
+    if stream_operation == Some("start") {
+        return Err(VmError::InvalidState(String::from(
+            "vm.fetch streaming requires a kernel-backed HTTP listener",
+        )));
+    }
+    if body_bytes.is_some() {
+        return Err(VmError::InvalidState(String::from(
+            "binary vm.fetch bodies require a kernel-backed HTTP listener",
+        )));
+    }
+    let request_json = serialize_http_loopback_request(&request_url, &options, &headers)?;
+    dispatch_owned_loopback_http_request(&vm, &target_process_id, server_id, &request_json).await
 }

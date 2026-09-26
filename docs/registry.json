@@ -1,0 +1,370 @@
+{
+	"entries": [
+		{
+			"slug": "browserbase",
+			"title": "Browserbase",
+			"description": "The Browserbase `browse` CLI for controlling a cloud browser from guest programs.",
+			"types": [
+				"browser"
+			],
+			"category": "browser",
+			"priority": 0,
+			"artifactName": "browserbase",
+			"status": "available",
+			"beta": true,
+			"image": "/images/registry/browserbase.svg"
+		},
+		{
+			"slug": "git",
+			"title": "git",
+			"description": "Upstream Git version control for agentOS VMs.",
+			"types": [
+				"software"
+			],
+			"category": "developer-tools",
+			"priority": 90,
+			"artifactName": "git",
+			"status": "available",
+			"image": "/images/registry/git.svg"
+		},
+		{
+			"slug": "ripgrep",
+			"title": "ripgrep",
+			"description": "Fast recursive search (rg).",
+			"types": [
+				"software"
+			],
+			"category": "developer-tools",
+			"priority": 85,
+			"artifactName": "ripgrep",
+			"status": "available"
+		},
+		{
+			"slug": "jq",
+			"title": "jq",
+			"description": "Lightweight JSON processor.",
+			"types": [
+				"software"
+			],
+			"category": "data",
+			"priority": 80,
+			"artifactName": "jq",
+			"status": "available",
+			"image": "/images/registry/jq.svg"
+		},
+		{
+			"slug": "sqlite3",
+			"title": "SQLite3",
+			"description": "SQLite database command-line interface.",
+			"types": [
+				"software"
+			],
+			"category": "data",
+			"priority": 75,
+			"artifactName": "sqlite3",
+			"status": "available",
+			"image": "/images/registry/sqlite3.svg"
+		},
+		{
+			"slug": "duckdb",
+			"title": "DuckDB",
+			"description": "In-process analytics database CLI.",
+			"types": [
+				"software"
+			],
+			"category": "data",
+			"priority": 70,
+			"artifactName": "duckdb",
+			"status": "available",
+			"image": "/images/registry/duckdb.svg"
+		},
+		{
+			"slug": "vim",
+			"title": "vim",
+			"description": "Vim text editor with bundled runtime.",
+			"types": [
+				"software"
+			],
+			"category": "editors",
+			"priority": 65,
+			"artifactName": "vim",
+			"status": "available",
+			"image": "/images/registry/vim.svg"
+		},
+		{
+			"slug": "tar",
+			"title": "tar",
+			"description": "GNU tar archiver.",
+			"types": [
+				"software"
+			],
+			"category": "core",
+			"priority": 60,
+			"artifactName": "tar",
+			"status": "available",
+			"image": "/images/registry/tar.svg"
+		},
+		{
+			"slug": "ssh",
+			"title": "ssh",
+			"description": "OpenSSH client for remote commands and git-over-ssh, with enforced known_hosts verification and RSA, ECDSA, Ed25519, DH, ECDH, ChaCha20, and AES crypto.",
+			"types": [
+				"software"
+			],
+			"category": "networking",
+			"priority": 55,
+			"artifactName": "ssh",
+			"status": "available",
+			"image": "/images/registry/ssh.svg"
+		},
+		{
+			"slug": "wget",
+			"title": "wget",
+			"description": "GNU Wget file downloader.",
+			"types": [
+				"software"
+			],
+			"category": "networking",
+			"priority": 55,
+			"artifactName": "wget",
+			"status": "available",
+			"image": "/images/registry/wget.svg"
+		},
+		{
+			"slug": "curl",
+			"title": "curl",
+			"description": "HTTP(S) client for fetching URLs and APIs.",
+			"types": [
+				"software"
+			],
+			"category": "networking",
+			"priority": 50,
+			"artifactName": "curl",
+			"status": "available",
+			"image": "/images/registry/curl.svg"
+		},
+		{
+			"slug": "coreutils",
+			"title": "Coreutils",
+			"description": "sh, cat, ls, cp, mv, rm, sort, and 80+ essential POSIX commands.",
+			"types": [
+				"software"
+			],
+			"category": "core",
+			"priority": 45,
+			"artifactName": "coreutils",
+			"status": "available",
+			"image": "/images/registry/coreutils.svg"
+		},
+		{
+			"slug": "sh",
+			"title": "Shell",
+			"description": "POSIX-compatible shell for running command scripts.",
+			"types": [
+				"software"
+			],
+			"category": "core",
+			"priority": 45,
+			"artifactName": "sh",
+			"status": "available"
+		},
+		{
+			"slug": "xfsprogs",
+			"title": "xfs_io",
+			"description": "Scriptable low-level filesystem I/O commands used by xfstests.",
+			"types": [
+				"software"
+			],
+			"category": "core",
+			"priority": 43,
+			"artifactName": "xfsprogs",
+			"status": "available"
+		},
+		{
+			"slug": "acl",
+			"title": "POSIX ACL tools",
+			"description": "Inspect and modify POSIX access and default ACLs.",
+			"types": [
+				"software"
+			],
+			"category": "core",
+			"priority": 42,
+			"artifactName": "acl",
+			"status": "available"
+		},
+		{
+			"slug": "attr",
+			"title": "attr",
+			"description": "Inspect and modify filesystem extended attributes.",
+			"types": [
+				"software"
+			],
+			"category": "core",
+			"priority": 41,
+			"artifactName": "attr",
+			"status": "available"
+		},
+		{
+			"slug": "grep",
+			"title": "grep",
+			"description": "GNU grep pattern matching (grep, egrep, fgrep).",
+			"types": [
+				"software"
+			],
+			"category": "core",
+			"priority": 40,
+			"artifactName": "grep",
+			"status": "available",
+			"image": "/images/registry/grep.svg"
+		},
+		{
+			"slug": "sed",
+			"title": "sed",
+			"description": "GNU stream editor for text transformation.",
+			"types": [
+				"software"
+			],
+			"category": "core",
+			"priority": 35,
+			"artifactName": "sed",
+			"status": "available",
+			"image": "/images/registry/sed.svg"
+		},
+		{
+			"slug": "fd",
+			"title": "fd",
+			"description": "Fast file finder.",
+			"types": [
+				"software"
+			],
+			"category": "developer-tools",
+			"priority": 30,
+			"artifactName": "fd",
+			"status": "available"
+		},
+		{
+			"slug": "tree",
+			"title": "tree",
+			"description": "Display directory structure as a tree.",
+			"types": [
+				"software"
+			],
+			"category": "core",
+			"priority": 25,
+			"artifactName": "tree",
+			"status": "available"
+		},
+		{
+			"slug": "gawk",
+			"title": "gawk",
+			"description": "GNU awk text processing and data extraction.",
+			"types": [
+				"software"
+			],
+			"category": "core",
+			"priority": 20,
+			"artifactName": "gawk",
+			"status": "available",
+			"image": "/images/registry/gawk.svg"
+		},
+		{
+			"slug": "findutils",
+			"title": "findutils",
+			"description": "GNU find and xargs for file searching and batch execution.",
+			"types": [
+				"software"
+			],
+			"category": "core",
+			"priority": 15,
+			"artifactName": "findutils",
+			"status": "available",
+			"image": "/images/registry/findutils.svg"
+		},
+		{
+			"slug": "zip",
+			"title": "zip",
+			"description": "Create zip archives.",
+			"types": [
+				"software"
+			],
+			"category": "core",
+			"priority": 12,
+			"artifactName": "zip",
+			"status": "available"
+		},
+		{
+			"slug": "envsubst",
+			"title": "envsubst",
+			"description": "Substitute environment variables in text streams.",
+			"types": [
+				"software"
+			],
+			"category": "core",
+			"priority": 10,
+			"artifactName": "envsubst",
+			"status": "available"
+		},
+		{
+			"slug": "unzip",
+			"title": "unzip",
+			"description": "Extract zip archives.",
+			"types": [
+				"software"
+			],
+			"category": "core",
+			"priority": 10,
+			"artifactName": "unzip",
+			"status": "available"
+		},
+		{
+			"slug": "gzip",
+			"title": "gzip",
+			"description": "GNU gzip compression (gzip, gunzip, zcat).",
+			"types": [
+				"software"
+			],
+			"category": "core",
+			"priority": 8,
+			"artifactName": "gzip",
+			"status": "available",
+			"image": "/images/registry/gzip.svg"
+		},
+		{
+			"slug": "diffutils",
+			"title": "diffutils",
+			"description": "GNU diff for comparing files.",
+			"types": [
+				"software"
+			],
+			"category": "core",
+			"priority": 6,
+			"artifactName": "diffutils",
+			"status": "available",
+			"image": "/images/registry/diffutils.svg"
+		},
+		{
+			"slug": "yq",
+			"title": "yq",
+			"description": "YAML/JSON processor.",
+			"types": [
+				"software"
+			],
+			"category": "data",
+			"priority": 4,
+			"artifactName": "yq",
+			"status": "available"
+		},
+		{
+			"slug": "file",
+			"title": "file",
+			"description": "Detect file types.",
+			"types": [
+				"software"
+			],
+			"category": "core",
+			"priority": 2,
+			"artifactName": "file",
+			"status": "available"
+		}
+	]
+}

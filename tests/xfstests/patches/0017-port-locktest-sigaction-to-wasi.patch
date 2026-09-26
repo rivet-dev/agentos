@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AgentOS Tests <tests@agentos.invalid>
+Date: Fri, 10 Jul 2026 20:12:00 -0700
+Subject: [PATCH] fstests: adapt locktest sigaction callback for WASI
+
+---
+ src/locktest.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/src/locktest.c b/src/locktest.c
+index 0c8db1c4..80760bdf 100644
+--- a/src/locktest.c
++++ b/src/locktest.c
+@@ -1085,7 +1085,11 @@ void lease_break(int sig, siginfo_t *info, void *p)
+ }
+ 
+ struct sigaction lease_break_action = {
++#ifdef __wasi__
++	.sa_sigaction = (void (*)(int, void *, void *))lease_break,
++#else
+ 	.sa_sigaction = lease_break,
++#endif
+ 	.sa_flags = SA_SIGINFO,
+ };
+ 
+-- 
+2.43.0

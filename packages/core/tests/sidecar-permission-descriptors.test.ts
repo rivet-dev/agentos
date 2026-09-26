@@ -3,14 +3,18 @@ import type { Permissions } from "../src/runtime-compat.js";
 import { serializePermissionsForSidecar } from "../src/sidecar/permissions.js";
 
 describe("serializePermissionsForSidecar", () => {
-	test("uses deny-all policy when permissions are omitted", () => {
-		expect(serializePermissionsForSidecar()).toEqual({
-			fs: "deny",
-			network: "deny",
-			childProcess: "deny",
-			process: "deny",
-			env: "deny",
-			binding: "deny",
+	test("omits the policy when permissions are omitted, so the sidecar default applies", () => {
+		expect(serializePermissionsForSidecar()).toBeUndefined();
+	});
+
+	test("sends only the scopes the caller set", () => {
+		expect(serializePermissionsForSidecar({ network: "allow" })).toEqual({
+			fs: undefined,
+			network: "allow",
+			childProcess: undefined,
+			process: undefined,
+			env: undefined,
+			hostFunction: undefined,
 		});
 	});
 
@@ -47,7 +51,7 @@ describe("serializePermissionsForSidecar", () => {
 					},
 				],
 			},
-			binding: {
+			hostFunction: {
 				default: "deny",
 				rules: [
 					{
@@ -92,7 +96,7 @@ describe("serializePermissionsForSidecar", () => {
 				],
 			},
 			env: undefined,
-			binding: {
+			hostFunction: {
 				default: "deny",
 				rules: [
 					{
@@ -132,7 +136,7 @@ describe("serializePermissionsForSidecar", () => {
 					},
 				],
 			},
-			binding: undefined,
+			hostFunction: undefined,
 		});
 	});
 
@@ -182,7 +186,7 @@ describe("serializePermissionsForSidecar", () => {
 			childProcess: undefined,
 			process: undefined,
 			env: undefined,
-			binding: undefined,
+			hostFunction: undefined,
 		});
 	});
 });

@@ -24,13 +24,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-wasip1
-      - name: Materialize the pinned docs theme
-        run: |
-          rm -rf /tmp/docs-theme
-          git clone https://github.com/rivet-dev/docs-theme.git /tmp/docs-theme
-          git -C /tmp/docs-theme checkout 450c498555135098c6a927adfdf13458be9be22a
-          rm -rf website/vendor/theme && mkdir -p website/vendor
-          cp -r /tmp/docs-theme/packages/theme website/vendor/theme
       - run: pnpm install --frozen-lockfile
       - name: Run the pinned filesystem conformance corpus
         run: make -C tests/xfstests run
@@ -69,13 +62,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-wasip1
-      - name: Materialize the pinned docs theme
-        run: |
-          rm -rf /tmp/docs-theme
-          git clone https://github.com/rivet-dev/docs-theme.git /tmp/docs-theme
-          git -C /tmp/docs-theme checkout 450c498555135098c6a927adfdf13458be9be22a
-          rm -rf website/vendor/theme && mkdir -p website/vendor
-          cp -r /tmp/docs-theme/packages/theme website/vendor/theme
       - run: pnpm install --frozen-lockfile
       - name: Stage the pinned corpus and helper binaries
         run: env -u CARGO_TARGET_DIR make -C tests/xfstests helpers
@@ -164,13 +150,6 @@ jobs:
             sudo apt-get update
             sudo apt-get install --yes cmake
           fi
-      - name: Materialize the pinned docs theme
-        run: |
-          rm -rf /tmp/docs-theme
-          git clone https://github.com/rivet-dev/docs-theme.git /tmp/docs-theme
-          git -C /tmp/docs-theme checkout 450c498555135098c6a927adfdf13458be9be22a
-          rm -rf website/vendor/theme && mkdir -p website/vendor
-          cp -r /tmp/docs-theme/packages/theme website/vendor/theme
       - run: pnpm install --frozen-lockfile
       - run: make -C toolchain commands
       - run: make -C toolchain cmd/duckdb cmd/vim
@@ -188,8 +167,8 @@ jobs:
           pnpm exec turbo build \
             --only \
             --concurrency=4 \
-            --filter='!@rivet-dev/agentos-website' \
-            --filter='!@agentos-software/codex'
+            --filter='!@agentos-software/codex-cli'
+      - run: node scripts/verify-check-types.mjs
       - run: pnpm check-types
       - name: Build sidecars once for all TypeScript runtime suites
         run: cargo build -p agentos-sidecar
@@ -200,18 +179,6 @@ jobs:
       - run: pnpm test:nightly
         env:
           AGENTOS_E2E_NETWORK: '1'
-          AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/target/debug/agentos-sidecar
-      # These opt-in gates cold-install pinned ecosystem fixtures and exercise
-      # package-manager workflows inside the VM, so keep them off the cheap PR path.
-      - run: pnpm --dir packages/core test:ecosystem
-        env:
-          AGENTOS_ECOSYSTEM_E2E: '1'
-          AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/target/debug/agentos-sidecar
-      - run: pnpm --dir packages/core test:ecosystem:full
-        env:
-          AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/target/debug/agentos-sidecar
-      - run: pnpm --dir packages/core test:npm-workflows
-        env:
           AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/target/debug/agentos-sidecar
       - run: cargo test --workspace -- --test-threads=1
       - name: Explicit ignored runtime churn gate

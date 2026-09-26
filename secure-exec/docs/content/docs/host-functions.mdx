@@ -1,0 +1,43 @@
+---
+title: "Host Functions"
+description: "Give untrusted code a narrow set of host-backed functions it calls as plain JavaScript. Credentials stay in your process."
+skill: true
+---
+
+Untrusted code should never hold your database password or API key. A host
+function runs in your process with your credentials, and the guest only sees its
+inputs and outputs. This is what makes
+[Code Mode](/secure-exec/docs/use-cases/code-mode) useful: the model
+writes one program that chains your tools.
+
+## Define host functions
+
+Host functions are a record of collections, keyed by name. Each function needs
+only a Zod `inputSchema` and an `execute` handler; the keys name the collection
+and the function, and `.describe()` on the schema documents it for the model.
+Arguments from the guest are validated before your code runs.
+
+`hostFunctions` is a VM option. Pass it on a call, or on `createVm`.
+
+<CodeSnippet file="secure-exec/examples/host-functions/src/index.ts" region="define" />
+
+## Call them from guest code
+
+Inside the VM each collection is a global object and each function is async.
+
+<CodeSnippet file="secure-exec/examples/host-functions/src/index.ts" region="call" />
+
+- Keys round-trip: `orderStore.listOrders` in your options is
+  `orderStore.listOrders(input)` in the guest and `agentos-order-store
+  list-orders` on the CLI.
+- Each function takes one input object and resolves to what your `execute`
+  returned. A schema violation, a thrown error, or a timeout rejects the promise.
+- The globals are frozen. A collection whose name is already a global, such as
+  `process`, is not defined, and a warning is written to stderr.
+- The `hostFunction` permission scope gates which functions a guest may call. See
+  [permissions](/secure-exec/docs/permissions).
+
+The same functions are also available to shell scripts and other languages as
+commands. Read the [agentOS host functions
+reference](/agentos/docs/host-functions) for that, and for schemas, timeouts,
+and examples.

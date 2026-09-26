@@ -1,14 +1,11 @@
-import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
-
-const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
-const handle = client.vm.getOrCreate("my-agent");
+import { vm } from "./client.js";
 
 // List all cron jobs
-const jobs = await handle.cron.list();
+const jobs = await vm.cron.list({});
 for (const job of jobs) {
-  console.log(job.id, job.schedule);
+	console.log(job.name, job.expression);
 }
 
 // Cancel a specific job
-await handle.cron.cancel(jobs[0].id);
+const first = jobs[0];
+if (first) await vm.cron.cancel({ name: first.name });

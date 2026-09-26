@@ -26,6 +26,7 @@ else
 fi
 
 run_step pnpm install --frozen-lockfile
+run_step just tools-rebuild
 run_step pnpm build
 run_step pnpm --dir scripts/publish run check-types
 run_step pnpm --dir scripts/publish test
@@ -33,24 +34,17 @@ run_step node --test scripts/check-rust-package-metadata.test.mjs
 run_step node scripts/check-rust-package-metadata.mjs
 run_step node --test scripts/check-agentos-client-protocol-compat.test.mjs
 run_step node scripts/check-agentos-client-protocol-compat.mjs
-run_step pnpm check-layout
-run_step node --test scripts/generate-agentos-mirror.test.mjs
-if [[ -f scripts/check-registry-test-runtime-boundary.test.mjs ]]; then
-	run_step node --test scripts/check-registry-test-runtime-boundary.test.mjs
-	run_step node scripts/check-registry-test-runtime-boundary.mjs
-fi
-if [[ -f scripts/check-registry-software-split.test.mjs ]]; then
-	run_step node --test scripts/check-registry-software-split.test.mjs
-	run_step node scripts/check-registry-software-split.mjs
-fi
+run_step node --test scripts/check-layout.test.mjs
+run_step node scripts/check-layout.mjs
 # Browser Rust references are outside the workspace, so format every active crate.
 run_step node scripts/check-rustfmt.mjs
 run_step cargo clippy --workspace --all-targets -- -D warnings
 run_step cargo test -p agentos-acp-protocol -- --test-threads=1
 run_step cargo test -p agentos-sidecar -- --test-threads=1
 run_step cargo test -p agentos-client -- --test-threads=1
+run_step node scripts/verify-check-types.mjs
 run_step pnpm check-types
-run_step pnpm lint
+run_step pnpm exec biome check .
 
 echo
 if [[ ${#NETWORK_ENV[@]} -gt 0 ]]; then

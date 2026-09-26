@@ -438,6 +438,17 @@ impl WasmExecution {
         }
     }
 
+    pub fn has_pending_events(&self) -> bool {
+        match self {
+            #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
+            Self::Disabled(never) => match *never {},
+            #[cfg(feature = "wasm-v8")]
+            Self::V8(execution) => execution.has_pending_events(),
+            #[cfg(feature = "wasm-wasmtime")]
+            Self::Wasmtime(execution) => execution.has_pending_events(),
+        }
+    }
+
     pub fn try_poll_event(&mut self) -> Result<Option<WasmExecutionEvent>, WasmExecutionError> {
         match self {
             #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]

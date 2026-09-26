@@ -1,0 +1,79 @@
+---
+title: "Packages & Command Resolution"
+seoTitle: "agentOS Package and Command Resolution"
+description: "How immutable .aospkg files become commands inside an agentOS VM."
+skill: true
+---
+
+agentOS software is distributed as immutable version 2 `.aospkg` files. npm is
+not a runtime registry and the sidecar never scans `node_modules` to discover
+software.
+
+## Package container
+
+Each artifact contains four sections:
+
+1. the fixed package header;
+2. one vbare runtime manifest;
+3. one vbare mount index;
+4. the mount tar payload.
+
+`agentos-package.json` is toolchain input. The packer converts its runtime
+fields into the vbare manifest and does not ship or materialize the JSON file
+inside the VM.
+
+Release tooling computes a SHA-256 digest for every artifact and uploads it at
+a digest-addressed object path. A release manifest maps the logical package
+name to its immutable relative URL, digest, and byte size.
+
+## Projection
+
+The VFS memory-maps the package and projects it without unpacking a mutable
+host directory:
+
+```text
+/opt/agentos/
+├── pkgs/<name>/<version>/   # package payload
+└── bin/<command>            # links to commands exported by manifests
+```
+
+`/opt/agentos` is the live source of truth. Listing installed software and
+resolving commands read the projection rather than a package list captured
+during VM creation.
+
+Changing a filesystem mount does not uninstall software linked after VM
+creation. The sidecar retains those package identities and projections until
+an explicit unlink; clients do not need to mirror the live package list when
+they reconfigure mounts.
+
+## Source policy
+
+The shared Core package-source model is closed:
+
+- `Url { url, expected_digest? }` downloads a remote artifact under strict
+  size, time, and redirect limits;
+- `Path { path, expected_digest? }` reads a trusted local artifact and is
+  available only to embedded Core callers.
+
+The hosted actor accepts only `Url`. It cannot construct a host path, mount a
+package from the host filesystem, or receive a custom resolver callback.
+
+Both variants verify the bytes before publishing them into the same
+process-local content-addressed cache. Cache identity is the content digest,
+not the URL. Installed packages are pinned while a VM generation uses them and
+otherwise participate in bounded LRU eviction.
+
+## Command execution
+
+The shell resolves a command with the normal `$PATH` walk. The kernel then
+dispatches the resolved file by its bytes: a shebang selects an interpreter and
+the WebAssembly magic header selects the WASM executor. Names and filename
+extensions do not select a runtime.
+
+If multiple packages export the same command, configuration validation rejects
+the collision unless the package projection policy explicitly resolves it.
+Removing a package removes only its managed projection and command links.
+
+See [Software](/agentos/docs/software) for the public installation API and
+[Software Package Definition](/agentos/docs/custom-software/definition) for
+building artifacts.

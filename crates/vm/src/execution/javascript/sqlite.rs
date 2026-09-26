@@ -736,7 +736,7 @@ fn sqlite_sync_database(
             return Err(VmError::Io(format!(
                 "failed to inspect sqlite temp database {}: {error}",
                 host_path.display()
-            )))
+            )));
         }
     }
     // The main file alone is not a consistent snapshot when the guest selected

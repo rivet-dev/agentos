@@ -1,0 +1,37 @@
+---
+title: "Quickstart"
+description: "Connect to the fixed agentOS actor and execute a command."
+skill: true
+---
+
+## Install
+
+```bash
+npm install @rivet-dev/agentos rivetkit
+```
+
+Deploy the prebuilt Rust binary with the `actor` entry point in your RivetKit
+runtime. Its registered actor name is always `agentOS`.
+
+## Connect
+
+The generated client uses vanilla RivetKit actor lookup and nested action names.
+
+<CodeSnippet file="examples/processes/client.ts" title="client.ts" />
+
+Creation input is used only for the actor's first creation:
+
+<CodeSnippet file="examples/filesystem/client.ts" title="client-with-config.ts" />
+
+## Run a command
+
+<CodeSnippet file="examples/processes/exec.ts" title="exec.ts" />
+
+Use `config.get()` to read the complete normalized durable config.
+`config.set({ config })` replaces it; omitted fields reset to defaults.
+
+<Note>
+The hosted actor accepts whitelisted serializable filesystem descriptors and
+HTTPS software URLs. Host functions, host mounts, local package paths, and custom
+actor hooks are embedded-Core-only capabilities.
+</Note>

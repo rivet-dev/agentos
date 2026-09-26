@@ -1,10 +1,14 @@
+import type { ZodType } from "zod";
 import { z } from "zod";
 import type {
 	MountConfig,
 	MountConfigJsonObject,
 	NativeMountPluginDescriptor,
 } from "./agent-os.js";
-import type { Binding, Bindings } from "./bindings.js";
+import type {
+	HostFunction,
+	HostFunctionCollections,
+} from "./host-functions.js";
 
 export interface AgentOsSandboxProcessResult {
 	stdout?: string;
@@ -106,7 +110,7 @@ type SandboxDisposeHook = () => void | Promise<void>;
 
 export type AgentOsSandboxExpandedOptions = {
 	mounts?: MountConfig[];
-	bindings?: Bindings[];
+	hostFunctions?: HostFunctionCollections;
 	[sandboxDisposeHooks]?: SandboxDisposeHook[];
 };
 
@@ -129,12 +133,6 @@ interface SerializableSandboxClient {
 	defaultHeaders?: RequestInit["headers"];
 }
 
-function binding<INPUT, OUTPUT>(
-	def: Binding<INPUT, OUTPUT>,
-): Binding<INPUT, OUTPUT> {
-	return def;
-}
-
 function normalizeHeaders(
 	headers: RequestInit["headers"] | undefined,
 ): Record<string, string> | undefined {
@@ -143,7 +141,11 @@ function normalizeHeaders(
 	}
 
 	if (headers instanceof Headers) {
-		return Object.fromEntries(headers.entries());
+		const normalized: Record<string, string> = {};
+		headers.forEach((value, name) => {
+			normalized[name] = value;
+		});
+		return normalized;
 	}
 
 	if (Array.isArray(headers)) {
@@ -192,21 +194,28 @@ export function createSandboxFs(
 	};
 }
 
-export function createSandboxBindings(
+/**
+ * Identity helper so each `execute` below infers its input from its own
+ * `inputSchema`. Callers writing an object literal get that from
+ * `AgentOs.create()`; code that builds a collection programmatically has no
+ * contextual type to infer from, so it needs this.
+ */
+function hostFunction<SCHEMA extends ZodType, OUTPUT>(
+	definition: HostFunction<SCHEMA, OUTPUT>,
+): HostFunction<SCHEMA, OUTPUT> {
+	return definition;
+}
+
+export function createSandboxHostFunctions(
 	input: ResolvedSandboxOptions | AgentOsSandboxClientOptions,
-): Bindings {
+) {
 	const options = input;
 	const { client } = options;
 
 	return {
-		name: "sandbox",
-		description:
-			"Execute commands and manage processes in a remote sandbox environment.",
-		bindings: {
-			"run-command": binding({
-				description:
-					"Run a command synchronously in the sandbox and return its stdout, stderr, and exit code.",
-				inputSchema: z.object({
+		runCommand: hostFunction({
+			inputSchema: z
+				.object({
 					command: z
 						.string()
 						.describe("The command to execute (e.g. 'ls', 'python3')."),
@@ -214,129 +223,139 @@ export function createSandboxBindings(
 					cwd: z.string().optional(),
 					env: z.record(z.string(), z.string()).optional(),
 					timeoutMs: z.number().optional(),
-				}),
-				timeout: 120_000,
-				execute: async (input) => {
-					const result = await client.runProcess(input);
-					return {
-						stdout: result.stdout,
-						stderr: result.stderr,
-						exitCode: result.exitCode,
-						timedOut: result.timedOut,
-						durationMs: result.durationMs,
-					};
-				},
-			}),
+				})
+				.describe(
+					"Run a command synchronously in the sandbox and return its stdout, stderr, and exit code.",
+				),
+			timeout: 120_000,
+			execute: async (input) => {
+				const result = await client.runProcess(input);
+				return {
+					stdout: result.stdout,
+					stderr: result.stderr,
+					exitCode: result.exitCode,
+					timedOut: result.timedOut,
+					durationMs: result.durationMs,
+				};
+			},
+		}),
 
-			"create-process": binding({
-				description:
-					"Start a long-running background process in the sandbox. Returns a process ID for later management.",
-				inputSchema: z.object({
+		createProcess: hostFunction({
+			inputSchema: z
+				.object({
 					command: z.string(),
 					args: z.array(z.string()).optional(),
 					cwd: z.string().optional(),
 					env: z.record(z.string(), z.string()).optional(),
-				}),
-				execute: async (input) => {
-					const proc = await client.createProcess(input);
-					return {
-						id: proc.id,
-						command: proc.command,
-						args: proc.args,
-						status: proc.status,
-						pid: proc.pid,
-					};
-				},
-			}),
+				})
+				.describe(
+					"Start a long-running background process in the sandbox. Returns a process ID for later management.",
+				),
+			execute: async (input) => {
+				const proc = await client.createProcess(input);
+				return {
+					id: proc.id,
+					command: proc.command,
+					args: proc.args,
+					status: proc.status,
+					pid: proc.pid,
+				};
+			},
+		}),
 
-			"list-processes": binding({
-				description: "List all processes running in the sandbox.",
-				inputSchema: z.object({}),
-				execute: async () => {
-					const result = await client.listProcesses();
-					return {
-						processes: result.processes.map((p) => ({
-							id: p.id,
-							command: p.command,
-							args: p.args,
-							status: p.status,
-							exitCode: p.exitCode,
-							pid: p.pid,
-						})),
-					};
-				},
-			}),
+		listProcesses: hostFunction({
+			inputSchema: z
+				.object({})
+				.describe("List all processes running in the sandbox."),
+			execute: async () => {
+				const result = await client.listProcesses();
+				return {
+					processes: result.processes.map((p) => ({
+						id: p.id,
+						command: p.command,
+						args: p.args,
+						status: p.status,
+						exitCode: p.exitCode,
+						pid: p.pid,
+					})),
+				};
+			},
+		}),
 
-			"stop-process": binding({
-				description: "Gracefully stop a running process in the sandbox.",
-				inputSchema: z.object({ id: z.string() }),
-				execute: async (input) => {
-					const proc = await client.stopProcess(input.id);
-					return {
-						id: proc.id,
-						status: proc.status,
-						exitCode: proc.exitCode,
-					};
-				},
-			}),
+		stopProcess: hostFunction({
+			inputSchema: z
+				.object({ id: z.string() })
+				.describe("Gracefully stop a running process in the sandbox."),
+			execute: async (input) => {
+				const proc = await client.stopProcess(input.id);
+				return {
+					id: proc.id,
+					status: proc.status,
+					exitCode: proc.exitCode,
+				};
+			},
+		}),
 
-			"kill-process": binding({
-				description: "Forcefully kill a running process in the sandbox.",
-				inputSchema: z.object({ id: z.string() }),
-				execute: async (input) => {
-					const proc = await client.killProcess(input.id);
-					return {
-						id: proc.id,
-						status: proc.status,
-						exitCode: proc.exitCode,
-					};
-				},
-			}),
+		killProcess: hostFunction({
+			inputSchema: z
+				.object({ id: z.string() })
+				.describe("Forcefully kill a running process in the sandbox."),
+			execute: async (input) => {
+				const proc = await client.killProcess(input.id);
+				return {
+					id: proc.id,
+					status: proc.status,
+					exitCode: proc.exitCode,
+				};
+			},
+		}),
 
-			"get-process-logs": binding({
-				description: "Get stdout/stderr logs from a sandbox process.",
-				inputSchema: z.object({
+		getProcessLogs: hostFunction({
+			inputSchema: z
+				.object({
 					id: z.string(),
 					stream: z.enum(["stdout", "stderr", "combined"]).optional(),
 					tail: z.number().optional(),
-				}),
-				execute: async (input) => {
-					const result = await client.getProcessLogs(input.id, {
-						stream: input.stream,
-						tail: input.tail,
-					});
-					return {
-						logs: result.entries.map((e) => {
-							const data =
-								e.encoding === "base64"
-									? Buffer.from(e.data, "base64").toString("utf-8")
-									: e.data;
-							return {
-								data,
-								stream: e.stream,
-								timestampMs: e.timestampMs,
-							};
-						}),
-					};
-				},
-			}),
+				})
+				.describe("Get stdout/stderr logs from a sandbox process."),
+			execute: async (input) => {
+				const result = await client.getProcessLogs(input.id, {
+					stream: input.stream,
+					tail: input.tail,
+				});
+				return {
+					logs: result.entries.map((e) => {
+						const data =
+							e.encoding === "base64"
+								? Buffer.from(e.data, "base64").toString("utf-8")
+								: e.data;
+						return {
+							data,
+							stream: e.stream,
+							timestampMs: e.timestampMs,
+						};
+					}),
+				};
+			},
+		}),
 
-			"send-input": binding({
-				description:
-					"Send text input to an interactive sandbox process via stdin.",
-				inputSchema: z.object({
+		sendInput: hostFunction({
+			inputSchema: z
+				.object({
 					id: z.string(),
 					data: z.string(),
-				}),
-				execute: async (input) => {
-					await client.sendProcessInput(input.id, {
-						data: Buffer.from(input.data, "utf-8").toString("base64"),
-						encoding: "base64",
-					});
-					return { sent: true };
-				},
-			}),
-		},
+				})
+				.describe(
+					"Send text input to an interactive sandbox process via stdin.",
+				),
+			execute: async (input) => {
+				await client.sendProcessInput(input.id, {
+					data: Buffer.from(input.data, "utf-8").toString("base64"),
+					encoding: "base64",
+				});
+				return { sent: true };
+			},
+		}),
 	};
 }
 
@@ -353,7 +372,7 @@ function isClientOptions(
 }
 
 function assertNoLegacySandboxOptions(input: AgentOsSandboxInput): void {
-	const legacyKeys = ["mount", "bindings", "path", "basePath"] as const;
+	const legacyKeys = ["mount", "hostFunctions", "path", "basePath"] as const;
 	for (const key of legacyKeys) {
 		if (key in input) {
 			const replacement =
@@ -361,7 +380,7 @@ function assertNoLegacySandboxOptions(input: AgentOsSandboxInput): void {
 			throw new Error(
 				replacement
 					? `sandbox.${key} has been removed; use sandbox.${replacement} instead.`
-					: `sandbox.${key} has been removed; sandbox mounts and bindings are always enabled.`,
+					: `sandbox.${key} has been removed; sandbox mounts and host functions are always enabled.`,
 			);
 		}
 	}
@@ -430,7 +449,7 @@ export async function resolveSandboxOptions<
 ): Promise<
 	Omit<T, "sandbox"> & {
 		mounts?: MountConfig[];
-		bindings?: Bindings[];
+		hostFunctions?: HostFunctionCollections;
 	}
 > {
 	const { sandbox, ...rest } = options;
@@ -443,7 +462,7 @@ export async function resolveSandboxOptions<
 		const sandboxOptions = normalizedSandbox.options;
 		const expanded = rest as Omit<T, "sandbox"> & {
 			mounts?: MountConfig[];
-			bindings?: Bindings[];
+			hostFunctions?: HostFunctionCollections;
 		};
 		const mountPath = sandboxOptions.mountPath ?? "/mnt/sandbox";
 		const mounts = [
@@ -454,16 +473,16 @@ export async function resolveSandboxOptions<
 				readOnly: sandboxOptions.readOnly,
 			},
 		];
-		const bindings = [
-			...(expanded.bindings ?? []),
-			createSandboxBindings(sandboxOptions),
-		];
+		const hostFunctions = {
+			...expanded.hostFunctions,
+			sandbox: createSandboxHostFunctions(sandboxOptions),
+		};
 
 		return attachSandboxDisposeHooks(
 			{
 				...expanded,
 				mounts,
-				bindings,
+				hostFunctions,
 			},
 			normalizedSandbox.dispose ? [normalizedSandbox.dispose] : [],
 		);

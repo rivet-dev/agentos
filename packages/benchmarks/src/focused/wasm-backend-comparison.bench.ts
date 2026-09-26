@@ -8,7 +8,7 @@ import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import {
 	type ProcessMemorySnapshot,
-	readProcessMemorySnapshot,
+	readProcessTreeMemorySnapshot,
 } from "../lib/memory.js";
 import {
 	type BenchVm,
@@ -18,6 +18,8 @@ import {
 	resolveBenchCommandsDir,
 	resolveBenchSidecarProvenance,
 } from "../lib/vm.js";
+
+import { summarizeBackendComparison } from "../lib/backend-summary.js";
 
 type Backend = "v8" | "wasmtime";
 
@@ -219,6 +221,10 @@ async function main(): Promise<void> {
 				freshProcesses,
 				samplesPerProcess,
 				concurrencyLevels,
+				memoryScope: "sidecar-process-tree",
+				retainedMetric: "absolute-post-vm-disposal",
+				retainedGrowthBaseline: "configured-vm-before-fixtures",
+				retainedSettleMs,
 				memoryAllocation: "on-demand",
 				memoryInitCow: true,
 				pooling: false,
@@ -255,7 +261,7 @@ async function main(): Promise<void> {
 			);
 			writeCheckpoint(result);
 		}
-		result.summary = summarize(result);
+		result.summary = summarizeBackendComparison(result);
 		result.completedAt = new Date().toISOString();
 		result.status = "complete";
 		writeCheckpoint(result);
@@ -282,11 +288,11 @@ async function runFreshProcess(
 		vm = await createBenchVm({ sidecar, loopbackExemptPorts: [port] });
 		const activeVm = vm;
 		const vmSetupMs = performance.now() - vmStarted;
+		const pid = requiredSidecarPid(activeVm);
+		const baseline = readProcessTreeMemorySnapshot(pid);
 		const fixtureStarted = performance.now();
 		await prepareFixtures(activeVm);
 		const fixtureSetupMs = performance.now() - fixtureStarted;
-		const pid = requiredSidecarPid(activeVm);
-		const baseline = readProcessMemorySnapshot(pid);
 		const workloadResults = [];
 		for (const workload of workloads) {
 			console.error(`  ${backend} ${workload.name}`);
@@ -345,7 +351,7 @@ async function runFreshProcess(
 		await activeVm.dispose();
 		vm = undefined;
 		await delay(retainedSettleMs);
-		const retained = readProcessMemorySnapshot(pid);
+		const retained = readProcessTreeMemorySnapshot(pid);
 		return {
 			backend,
 			processIndex,
@@ -543,11 +549,11 @@ async function prepareFixtures(vm: BenchVm): Promise<void> {
 }
 
 async function measureCommandMemory<T>(pid: number, run: () => Promise<T>) {
-	const start = readProcessMemorySnapshot(pid);
-	let peak = start;
+	const start = readProcessTreeMemorySnapshot(pid);
+	let peak: ProcessMemorySnapshot = start;
 	const sample = () => {
 		try {
-			peak = maxMemory(peak, readProcessMemorySnapshot(pid));
+			peak = maxMemory(peak, readProcessTreeMemorySnapshot(pid));
 		} catch {
 			// The sidecar exiting is reported by the command itself.
 		}
@@ -557,7 +563,7 @@ async function measureCommandMemory<T>(pid: number, run: () => Promise<T>) {
 	try {
 		const value = await run();
 		sample();
-		const end = readProcessMemorySnapshot(pid);
+		const end = readProcessTreeMemorySnapshot(pid);
 		return {
 			value,
 			durationMs: performance.now() - started,
@@ -592,176 +598,6 @@ async function waitForRuntimeDrain(vm: BenchVm): Promise<number> {
 	}
 }
 
-function summarize(result: Record<string, unknown>) {
-	const fresh = result.fresh as Array<{
-		backend: Backend;
-		retainedDelta: ProcessMemorySnapshot;
-		workloads: Array<{
-			name: string;
-			samples: Array<{
-				durationMs: number;
-				cacheState: "fresh" | "warm";
-				passed: boolean;
-			}>;
-		}>;
-	}>;
-	const workloadRows = workloads.map((workload) => {
-		const samples = (backend: Backend, cacheState?: "fresh" | "warm") =>
-			fresh
-				.filter((entry) => entry.backend === backend)
-				.flatMap(
-					(entry) =>
-						entry.workloads.find(
-							(candidate) => candidate.name === workload.name,
-						)?.samples ?? [],
-				)
-				.filter(
-					(sample) =>
-						cacheState === undefined || sample.cacheState === cacheState,
-				)
-				.map((sample) => sample.durationMs);
-		const v8 = samples("v8");
-		const wasmtime = samples("wasmtime");
-		const v8Cold = samples("v8", "fresh");
-		const wasmtimeCold = samples("wasmtime", "fresh");
-		const v8Warm = samples("v8", "warm");
-		const wasmtimeWarm = samples("wasmtime", "warm");
-		return {
-			name: workload.name,
-			correctness: {
-				v8Failures: fresh
-					.filter((entry) => entry.backend === "v8")
-					.flatMap(
-						(entry) =>
-							entry.workloads.find(
-								(candidate) => candidate.name === workload.name,
-							)?.samples ?? [],
-					)
-					.filter((sample) => !sample.passed).length,
-				wasmtimeFailures: fresh
-					.filter((entry) => entry.backend === "wasmtime")
-					.flatMap(
-						(entry) =>
-							entry.workloads.find(
-								(candidate) => candidate.name === workload.name,
-							)?.samples ?? [],
-					)
-					.filter((sample) => !sample.passed).length,
-			},
-			v8: stats(v8),
-			wasmtime: stats(wasmtime),
-			cold: {
-				v8: stats(v8Cold),
-				wasmtime: stats(wasmtimeCold),
-				p50Ratio: ratio(quantile(wasmtimeCold, 0.5), quantile(v8Cold, 0.5)),
-			},
-			warm: {
-				v8: stats(v8Warm),
-				wasmtime: stats(wasmtimeWarm),
-				p50Ratio: ratio(quantile(wasmtimeWarm, 0.5), quantile(v8Warm, 0.5)),
-			},
-			p50Ratio: quantile(wasmtime, 0.5) / quantile(v8, 0.5),
-			p95Ratio: quantile(wasmtime, 0.95) / quantile(v8, 0.95),
-		};
-	});
-	const geometricMeanP50Ratio = Math.exp(
-		workloadRows.reduce((sum, row) => sum + Math.log(row.p50Ratio), 0) /
-			workloadRows.length,
-	);
-	const concurrency = result.concurrency as Array<{
-		backend: Backend;
-		levels: Array<{
-			level: number;
-			mode: string;
-			throughputPerSecond: number;
-			failedExitCodes: number;
-			rejectedCount: number;
-		}>;
-	}>;
-	const throughputRows =
-		concurrency
-			.find((entry) => entry.backend === "v8")
-			?.levels.map((v8) => {
-				const wasmtime = concurrency
-					.find((entry) => entry.backend === "wasmtime")
-					?.levels.find(
-						(candidate) =>
-							candidate.level === v8.level && candidate.mode === v8.mode,
-					);
-				return {
-					level: v8.level,
-					mode: v8.mode,
-					v8: v8.throughputPerSecond,
-					wasmtime: wasmtime?.throughputPerSecond ?? 0,
-					ratio: (wasmtime?.throughputPerSecond ?? 0) / v8.throughputPerSecond,
-				};
-			}) ?? [];
-	const retainedMedian = (backend: Backend, key: "rssBytes" | "pssBytes") =>
-		quantile(
-			fresh
-				.filter((entry) => entry.backend === backend)
-				.map((entry) => entry.retainedDelta[key]),
-			0.5,
-		);
-	const retained = {
-		v8RssBytes: retainedMedian("v8", "rssBytes"),
-		wasmtimeRssBytes: retainedMedian("wasmtime", "rssBytes"),
-		v8PssBytes: retainedMedian("v8", "pssBytes"),
-		wasmtimePssBytes: retainedMedian("wasmtime", "pssBytes"),
-	};
-	const retainedAllowance = (baseline: number) =>
-		Math.max(baseline * 0.1, 4 * 1024 * 1024);
-	const paths = result.paths as Array<{
-		denial: { passed: boolean };
-		cancellation: { passed: boolean };
-		resourceLimit: { passed: boolean };
-	}>;
-	const gates = {
-		correctness:
-			workloadRows.every(
-				(row) =>
-					row.correctness.v8Failures === 0 &&
-					row.correctness.wasmtimeFailures === 0,
-			) &&
-			paths.every(
-				(entry) =>
-					entry.denial.passed &&
-					entry.cancellation.passed &&
-					entry.resourceLimit.passed,
-			) &&
-			concurrency.every((entry) =>
-				entry.levels
-					.filter((level) => level.level <= 10)
-					.every(
-						(level) => level.failedExitCodes === 0 && level.rejectedCount === 0,
-					),
-			),
-		geometricMeanP50: geometricMeanP50Ratio <= 1.1,
-		individualP95: workloadRows.every((row) => row.p95Ratio <= 1.2),
-		throughput: throughputRows.every((row) =>
-			row.v8 === 0 ? row.wasmtime >= row.v8 : row.ratio >= 0.9,
-		),
-		retainedRss:
-			retained.wasmtimeRssBytes <=
-			retained.v8RssBytes + retainedAllowance(retained.v8RssBytes),
-		retainedPss:
-			retained.wasmtimePssBytes <=
-			retained.v8PssBytes + retainedAllowance(retained.v8PssBytes),
-	};
-	const preferredBackend = Object.values(gates).every(Boolean)
-		? "wasmtime"
-		: "v8";
-	return {
-		workloads: workloadRows,
-		geometricMeanP50Ratio,
-		throughput: throughputRows,
-		retained,
-		gates,
-		preferredBackend,
-		omissionBehavior: preferredBackend,
-		rollbackBackend: "v8",
-	};
-}
 
 function moduleInventory() {
 	return [
@@ -871,31 +707,6 @@ function memoryDelta(
 	};
 }
 
-function stats(values: number[]) {
-	if (values.length === 0) {
-		return { count: 0, min: null, p50: null, p95: null, max: null };
-	}
-	return {
-		count: values.length,
-		min: Math.min(...values),
-		p50: quantile(values, 0.5),
-		p95: quantile(values, 0.95),
-		max: Math.max(...values),
-	};
-}
-
-function quantile(values: number[], q: number): number {
-	if (values.length === 0) return 0;
-	const sorted = [...values].sort((a, b) => a - b);
-	const index = (sorted.length - 1) * q;
-	const lower = Math.floor(index);
-	const fraction = index - lower;
-	return sorted[lower] + (sorted[lower + 1] - sorted[lower] || 0) * fraction;
-}
-
-function ratio(numerator: number, denominator: number): number | null {
-	return denominator === 0 ? null : numerator / denominator;
-}
 
 function requiredSidecarPid(vm: BenchVm): number {
 	const pid = vm.sidecarPid();

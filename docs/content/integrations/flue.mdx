@@ -1,0 +1,14 @@
+---
+title: "Flue"
+description: "Use the fixed agentOS actor as a Flue execution environment."
+---
+
+`@rivet-dev/agentos-flue` maps each Flue context to a stable key on the fixed
+`agentOS` actor and adapts the nested filesystem and process actions to Flue's
+sandbox interface.
+
+<CodeSnippet file="examples/flue/agents/assistant.ts" />
+
+Pass `createInput` to `agentOSSandbox` for first-creation configuration.
+Use the embedded Core adapter when the application requires host mounts or host
+host functions.

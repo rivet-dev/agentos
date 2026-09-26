@@ -2,8 +2,8 @@
  * Regression guard: a supported hook must exist to inject custom VFS mounts on VM creation.
  *
  * Original bug: there was no supported hook to inject a custom VFS mount at VM
- * creation, forcing callers to monkeypatch `ensureVm`/`createVm` to add a
- * host-synced session VFS (e.g. `/home/agentos/.pi/agent/sessions`).
+ * creation, forcing embedded callers to monkeypatch `ensureVm`/`createVm` to
+ * add a host-synced application directory.
  *
  * Fix: `AgentOs.create({ mounts: [...] })` is a documented public option that
  * accepts `MountConfig[]`. A host-synced directory is injected via the public
@@ -11,8 +11,8 @@
  * patching of any internal VM-creation method required.
  *
  * This test reproduces the exact original use case end-to-end:
- *   1. A host directory with a pre-existing marker file is mounted at the
- *      Pi session path through the public `mounts` option.
+ *   1. A host directory with a pre-existing marker file is mounted at an
+ *      application path through the public `mounts` option.
  *   2. The host content is visible from inside the VM (proves injection worked).
  *   3. Writes round-trip back to the host directory when `readOnly: false`.
  *   4. Writes are rejected (EROFS) when the mount is read-only.
@@ -26,7 +26,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AgentOs, createHostDirBackend } from "../src/index.js";
 
-const SESSION_MOUNT_PATH = "/home/agentos/.pi/agent/sessions";
+const APPLICATION_MOUNT_PATH = "/home/agentos/app-data";
 
 describe("custom VFS mount injection hook on VM creation", () => {
 	let vm: AgentOs | undefined;
@@ -34,8 +34,7 @@ describe("custom VFS mount injection hook on VM creation", () => {
 
 	beforeEach(() => {
 		hostDir = fs.mkdtempSync(path.join(os.tmpdir(), "custom-vfs-mount-"));
-		// Pre-seed a marker file on the host, mimicking an existing
-		// host-synced Pi sessions directory.
+		// Pre-seed a marker file in an existing host-synced application directory.
 		fs.writeFileSync(
 			path.join(hostDir, "marker.json"),
 			JSON.stringify({ origin: "host", id: "custom-vfs-mount" }),
@@ -64,13 +63,13 @@ describe("custom VFS mount injection hook on VM creation", () => {
 		vm = await AgentOs.create({
 			mounts: [
 				{
-					path: SESSION_MOUNT_PATH,
+					path: APPLICATION_MOUNT_PATH,
 					plugin: createHostDirBackend({ hostPath: hostDir }),
 				},
 			],
 		});
 
-		const raw = await vm.readFile(`${SESSION_MOUNT_PATH}/marker.json`);
+		const raw = await vm.readFile(`${APPLICATION_MOUNT_PATH}/marker.json`);
 		const decoded = JSON.parse(new TextDecoder().decode(raw));
 		expect(decoded).toEqual({ origin: "host", id: "custom-vfs-mount" });
 	});
@@ -79,7 +78,7 @@ describe("custom VFS mount injection hook on VM creation", () => {
 		vm = await AgentOs.create({
 			mounts: [
 				{
-					path: SESSION_MOUNT_PATH,
+					path: APPLICATION_MOUNT_PATH,
 					plugin: createHostDirBackend({
 						hostPath: hostDir,
 						readOnly: false,
@@ -89,13 +88,13 @@ describe("custom VFS mount injection hook on VM creation", () => {
 		});
 
 		await vm.writeFile(
-			`${SESSION_MOUNT_PATH}/session-123.json`,
+			`${APPLICATION_MOUNT_PATH}/result-123.json`,
 			JSON.stringify({ from: "vm" }),
 		);
 
 		// Host-sync write-through: the file must appear on the real host path.
 		const onHost = fs.readFileSync(
-			path.join(hostDir, "session-123.json"),
+			path.join(hostDir, "result-123.json"),
 			"utf-8",
 		);
 		expect(JSON.parse(onHost)).toEqual({ from: "vm" });
@@ -105,7 +104,7 @@ describe("custom VFS mount injection hook on VM creation", () => {
 		vm = await AgentOs.create({
 			mounts: [
 				{
-					path: SESSION_MOUNT_PATH,
+					path: APPLICATION_MOUNT_PATH,
 					plugin: createHostDirBackend({
 						hostPath: hostDir,
 						readOnly: true,
@@ -115,7 +114,7 @@ describe("custom VFS mount injection hook on VM creation", () => {
 		});
 
 		await expect(
-			vm.writeFile(`${SESSION_MOUNT_PATH}/should-fail.json`, "{}"),
+			vm.writeFile(`${APPLICATION_MOUNT_PATH}/should-fail.json`, "{}"),
 		).rejects.toThrow("EROFS");
 	});
 });

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
 
-describe("processTree()", () => {
+describe("process.tree()", () => {
 	let vm: AgentOs;
 
 	beforeEach(async () => {
@@ -14,23 +14,23 @@ describe("processTree()", () => {
 		}
 	}, 30_000);
 
-	test("returns empty array on fresh VM", () => {
-		expect(vm.processTree()).toEqual([]);
+	test("returns empty array on fresh VM", async () => {
+		expect(await vm.process.tree()).toEqual([]);
 	});
 
 	test("spawned process appears as a root in the tree", async () => {
 		await vm.writeFile("/tmp/stay.mjs", "setTimeout(() => {}, 30000);");
-		const { pid } = vm.spawn("node", ["/tmp/stay.mjs"], {
+		const { pid } = await vm.process.spawn("node", ["/tmp/stay.mjs"], {
 			env: { HOME: "/home/agentos" },
 		});
 
-		const tree = vm.processTree();
+		const tree = await vm.process.tree();
 		// The node process should be a root (ppid 0 or orphan)
 		const root = tree.find((n) => n.pid === pid);
 		expect(root).toBeDefined();
 		expect(root?.children).toEqual([]);
 
-		vm.killProcess(pid);
+		await vm.process.kill(pid);
 	}, 30_000);
 
 	test("guest child_process.spawn children appear under the tracked parent", async () => {
@@ -48,7 +48,7 @@ setTimeout(() => {}, 30000);
 		);
 		await vm.writeFile("/tmp/child.mjs", "setTimeout(() => {}, 30000);");
 
-		const { pid } = vm.spawn("node", ["/tmp/parent.mjs"], {
+		const { pid } = await vm.process.spawn("node", ["/tmp/parent.mjs"], {
 			env: { HOME: "/home/agentos" },
 			onStdout: (data) => {
 				const text = new TextDecoder().decode(data);
@@ -63,9 +63,9 @@ setTimeout(() => {}, 30000);
 			await new Promise((r) => setTimeout(r, 100));
 		}
 
-		let parentNode = vm.processTree().find((node) => node.pid === pid);
+		let parentNode = (await vm.process.tree()).find((node) => node.pid === pid);
 		for (let attempt = 0; attempt < 20; attempt++) {
-			parentNode = vm.processTree().find((node) => node.pid === pid);
+			parentNode = (await vm.process.tree()).find((node) => node.pid === pid);
 			if (
 				parentNode?.children.some((child) => child.pid === Number(childPid))
 			) {
@@ -80,6 +80,6 @@ setTimeout(() => {}, 30000);
 			Number(childPid),
 		);
 
-		vm.killProcess(pid);
+		await vm.process.kill(pid);
 	}, 30_000);
 });

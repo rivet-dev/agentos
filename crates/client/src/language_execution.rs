@@ -1,6 +1,7 @@
 //! First-class JavaScript, TypeScript, Python, and shared execution lifecycle.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use agentos_sidecar_client::wire;
 use tokio::sync::{broadcast, watch};
@@ -8,6 +9,7 @@ use tokio::sync::{broadcast, watch};
 use crate::agent_os::AgentOs;
 use crate::agent_os::ProcessEntry;
 use crate::error::{ClientError, ClientResult};
+use crate::output_replay::OutputReplayBuffer;
 use crate::process::{ProcessOutput, ProcessStream};
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -84,8 +86,12 @@ pub struct InlineExecutionOptions {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum JavaScriptModuleFormat {
+    /// Evaluate each call as an independent root ES module. A retained context
+    /// preserves `globalThis`, not the module's lexical scope.
     #[default]
     Module,
+    /// Use script/CommonJS semantics, including REPL-style top-level bindings
+    /// that remain visible to later calls in a retained context.
     CommonJs,
 }
 
@@ -149,20 +155,21 @@ pub struct PythonInstallOptions {
     pub output: ExecutionOutputOptions,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TypeScriptCheckResult {
     pub result: CodeExecutionResult,
     pub has_errors: Option<bool>,
     pub diagnostics: Vec<TypeScriptDiagnostic>,
 }
 
+#[allow(clippy::large_enum_variant)] // This private enum avoids an allocation on the synchronous completion path.
 #[derive(Debug, Clone)]
 enum ExecutionSubmission {
     Completed(Box<CodeExecutionResult>),
     Background(wire::ExecutionDescriptor),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CodeEvaluationResult {
     pub result: CodeExecutionResult,
     pub value: Option<serde_json::Value>,
@@ -497,6 +504,7 @@ impl AgentOs {
         source: impl Into<String>,
         options: LanguageSpawnOptions,
     ) -> ClientResult<ProcessDescriptor> {
+        let retain_events = options.retain_events;
         let operation_id = format!("process-{}", uuid::Uuid::new_v4());
         background_submission(
             self,
@@ -514,6 +522,7 @@ impl AgentOs {
             )
             .await?,
             "javascript",
+            retain_events,
         )
     }
 
@@ -522,6 +531,7 @@ impl AgentOs {
         path: impl Into<String>,
         options: LanguageSpawnOptions,
     ) -> ClientResult<ProcessDescriptor> {
+        let retain_events = options.retain_events;
         let operation_id = format!("process-{}", uuid::Uuid::new_v4());
         background_submission(
             self,
@@ -536,6 +546,7 @@ impl AgentOs {
             )
             .await?,
             "javascript",
+            retain_events,
         )
     }
 
@@ -628,6 +639,7 @@ impl AgentOs {
         source: impl Into<String>,
         options: LanguageSpawnOptions,
     ) -> ClientResult<ProcessDescriptor> {
+        let retain_events = options.retain_events;
         let operation_id = format!("process-{}", uuid::Uuid::new_v4());
         background_submission(
             self,
@@ -646,6 +658,7 @@ impl AgentOs {
             )
             .await?,
             "javascript",
+            retain_events,
         )
     }
 
@@ -654,6 +667,7 @@ impl AgentOs {
         path: impl Into<String>,
         options: LanguageSpawnOptions,
     ) -> ClientResult<ProcessDescriptor> {
+        let retain_events = options.retain_events;
         let operation_id = format!("process-{}", uuid::Uuid::new_v4());
         background_submission(
             self,
@@ -670,6 +684,7 @@ impl AgentOs {
             )
             .await?,
             "javascript",
+            retain_events,
         )
     }
 
@@ -895,6 +910,7 @@ impl AgentOs {
         source: impl Into<String>,
         options: LanguageSpawnOptions,
     ) -> ClientResult<ProcessDescriptor> {
+        let retain_events = options.retain_events;
         let operation_id = format!("process-{}", uuid::Uuid::new_v4());
         background_submission(
             self,
@@ -908,6 +924,7 @@ impl AgentOs {
             )
             .await?,
             "python",
+            retain_events,
         )
     }
 
@@ -916,6 +933,7 @@ impl AgentOs {
         path: impl Into<String>,
         options: LanguageSpawnOptions,
     ) -> ClientResult<ProcessDescriptor> {
+        let retain_events = options.retain_events;
         let operation_id = format!("process-{}", uuid::Uuid::new_v4());
         background_submission(
             self,
@@ -930,6 +948,7 @@ impl AgentOs {
             )
             .await?,
             "python",
+            retain_events,
         )
     }
 
@@ -938,6 +957,7 @@ impl AgentOs {
         module: impl Into<String>,
         options: LanguageSpawnOptions,
     ) -> ClientResult<ProcessDescriptor> {
+        let retain_events = options.retain_events;
         let operation_id = format!("process-{}", uuid::Uuid::new_v4());
         background_submission(
             self,
@@ -952,6 +972,7 @@ impl AgentOs {
             )
             .await?,
             "python",
+            retain_events,
         )
     }
 
@@ -987,7 +1008,7 @@ impl AgentOs {
         )
     }
 
-    pub async fn create_context(&self, context_id: &str) -> ClientResult<()> {
+    pub async fn create_context(&self, context_id: &str) -> ClientResult<ContextDescriptor> {
         match self
             .transport()
             .request_wire(
@@ -998,7 +1019,9 @@ impl AgentOs {
             )
             .await?
         {
-            wire::ResponsePayload::ExecutionDescriptorResponse(_) => Ok(()),
+            wire::ResponsePayload::ExecutionDescriptorResponse(response) => {
+                Ok(context_descriptor(response.execution))
+            }
             wire::ResponsePayload::RejectedResponse(rejected) => {
                 Err(ClientError::from_rejection(rejected))
             }
@@ -1294,6 +1317,7 @@ fn background_submission(
     client: &AgentOs,
     submission: ExecutionSubmission,
     language: &str,
+    retain_events: bool,
 ) -> ClientResult<ProcessDescriptor> {
     match submission {
         ExecutionSubmission::Background(descriptor) => {
@@ -1310,8 +1334,10 @@ fn background_submission(
             let (stdout_tx, _) = broadcast::channel::<Vec<u8>>(1024);
             let (stderr_tx, _) = broadcast::channel::<Vec<u8>>(1024);
             let (output_tx, _) = broadcast::channel::<ProcessOutput>(1024);
-            let (exit_tx, _) = watch::channel::<Option<i32>>(None);
+            let (exit_tx, _) = watch::channel(crate::process::ProcessOutcome::Pending);
             let (kernel_pid_tx, _) = watch::channel(Some(pid));
+            let replay =
+                retain_events.then(|| Arc::new(parking_lot::Mutex::new(OutputReplayBuffer::new())));
             let entry = ProcessEntry {
                 command: format!("{language} source"),
                 args: Vec::new(),
@@ -1322,15 +1348,34 @@ fn background_submission(
                 process_id: process_id.clone(),
                 kernel_pid: kernel_pid_tx,
                 output_tasks: Vec::new(),
+                replay: replay.clone(),
                 started_at: descriptor.created_at_ms as i64,
             };
             let _ = client.inner().processes.insert(pid, entry);
             let mut events = client.transport().subscribe_wire_events();
+            let ownership = client.vm_scope();
             let operation_id = descriptor.execution_id.clone();
             tokio::spawn(async move {
                 loop {
-                    let Ok((_, event)) = events.recv().await else {
-                        break;
+                    let event = match events.recv().await {
+                        Ok((scope, event)) if scope == ownership => event,
+                        Ok(_) => continue,
+                        Err(error) => {
+                            let reason =
+                                format!("background execution event stream failed: {error}");
+                            tracing::error!(%operation_id, %reason, "background exit observation failed");
+                            exit_tx.send_replace(crate::process::ProcessOutcome::Failed {
+                                error: ClientError::TerminationFailed {
+                                    process_id: process_id.clone(),
+                                    reason,
+                                },
+                                rejected: false,
+                            });
+                            if matches!(error, broadcast::error::RecvError::Closed) {
+                                break;
+                            }
+                            continue;
+                        }
                     };
                     match event {
                         wire::EventPayload::ExecutionOutputEvent(output)
@@ -1345,17 +1390,28 @@ fn background_submission(
                                     (ProcessStream::Stderr, &stderr_tx)
                                 }
                             };
+                            let replay_event = replay
+                                .as_ref()
+                                .map(|replay| replay.lock().push(stream.clone(), &output.chunk));
                             let _ = tx.send(output.chunk.clone());
                             let _ = output_tx.send(ProcessOutput {
                                 pid,
                                 stream,
                                 data: output.chunk,
+                                sequence: replay_event.as_ref().map(|event| event.sequence),
+                                timestamp_ms: replay_event.as_ref().map(|event| event.timestamp_ms),
                             });
                         }
                         wire::EventPayload::ExecutionCompletedEvent(completed)
                             if completed.execution_id == operation_id =>
                         {
-                            let _ = exit_tx.send(Some(completed.exit_code.unwrap_or(1)));
+                            if completed.exit_code.is_none() {
+                                tracing::error!(%operation_id, "background completion has no exit status");
+                            }
+                            exit_tx.send_replace(crate::process::ProcessOutcome::completion(
+                                &process_id,
+                                completed.exit_code,
+                            ));
                             break;
                         }
                         _ => {}

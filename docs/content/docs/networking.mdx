@@ -1,0 +1,24 @@
+---
+title: "Networking & Previews"
+description: "Proxy HTTP requests into VM ports and create expiring preview routes."
+---
+
+`network.fetch` proxies one bounded HTTP request to a VM loopback port.
+`network.fetchStream.start/read/cancel` provides bounded chunked response
+delivery.
+
+<CodeSnippet file="examples/networking/client-fetch.ts" />
+
+Preview paths are TTL-bound records in actor SQLite:
+
+<CodeSnippet file="examples/networking/client-preview.ts" />
+
+Use `network.preview.expire` to revoke a token before its deadline. Preview
+requests are served through the actor request handler and never expose arbitrary
+host routes.
+
+## Embedded API
+
+Embedded Core provides direct HTTP request methods without the RivetKit action
+envelope or hosted preview leases. Read more in the
+[embedded API quickstart](/agentos/docs/quickstart-embedded).

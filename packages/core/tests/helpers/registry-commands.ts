@@ -31,7 +31,6 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import codex from "@agentos-software/codex-cli";
 import coreutils from "@agentos-software/coreutils";
 import curl from "@agentos-software/curl";
 import diffutils from "@agentos-software/diffutils";
@@ -58,7 +57,7 @@ const BUILD_INSTRUCTIONS =
 	"  just software-build    # stage bin/ + pack every dist/package.aospkg\n" +
 	"See software/README.md.";
 
-/** `.aospkg` container magic (crates/vfs-core/package-format/v1.bare). */
+/** `.aospkg` container magic (crates/vfs-core/package-format/v2.bare). */
 const AOSPKG_MAGIC = Buffer.from([0x89, 0x41, 0x4f, 0x53]);
 
 /** True when the path is a plausible packed `.aospkg` (magic + header size). */
@@ -85,9 +84,7 @@ function isPackedAospkg(path: string): boolean {
  */
 function manifestDir(pkg: RegistryPackageRef): string | null {
 	const path = pkg.packagePath;
-	const dir = path.endsWith(".aospkg")
-		? join(dirname(path), "package")
-		: path;
+	const dir = path.endsWith(".aospkg") ? join(dirname(path), "package") : path;
 	return existsSync(dir) ? dir : null;
 }
 
@@ -241,7 +238,6 @@ export const REGISTRY_SOFTWARE = (
 		[tree, "tree"],
 		[file, "file"],
 		[yq, "yq"],
-		[codex, "codex-cli"],
 		[curl, "curl"],
 	] as Array<[RegistryPackageRef, string]>
 ).map(([pkg, name]) => requireBuilt(pkg, name));

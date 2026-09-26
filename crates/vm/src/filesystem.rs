@@ -1,6 +1,8 @@
 //! Guest filesystem and VFS dispatch extracted from service.rs.
 
-use crate::protocol::{GuestFilesystemCallRequest, RequestFrame, ResponsePayload};
+use crate::protocol::{
+    GuestFilesystemCallRequest, GuestFilesystemResultResponse, RequestFrame, ResponsePayload,
+};
 use crate::service::{
     host_bytes_value, javascript_sync_rpc_arg_str, javascript_sync_rpc_arg_u32,
     javascript_sync_rpc_arg_u32_optional, javascript_sync_rpc_arg_u64,
@@ -9,7 +11,7 @@ use crate::service::{
     kernel_error, normalize_path,
 };
 use crate::state::{
-    ActiveExecutionEvent, ActiveProcess, BridgeError, SidecarKernel, EXECUTION_DRIVER_NAME,
+    ActiveExecutionEvent, ActiveProcess, BridgeError, SidecarKernel, VmState, EXECUTION_DRIVER_NAME,
 };
 use crate::{DispatchResult, VmError, VmManager, VmManagerHost};
 
@@ -189,26 +191,31 @@ where
     let (connection_id, session_id, vm_id) = sidecar.vm_scope_for(&request.ownership)?;
     sidecar.require_owned_vm(&connection_id, &session_id, &vm_id)?;
 
-    let response = {
-        let vm = match sidecar.vms.get_mut(&vm_id) {
-            Some(vm) => vm,
-            None => {
-                return Err(stale_filesystem_request_error(
-                    sidecar,
-                    &vm_id,
-                    None,
-                    "guest filesystem dispatch",
-                ));
-            }
-        };
-        core_guest_filesystem_call(&mut vm.kernel, payload)
-            .map_err(native_guest_filesystem_core_error)?
+    let response = match sidecar.vms.get_mut(&vm_id) {
+        Some(mut vm) => guest_filesystem_call_vm(&mut vm, &payload)?,
+        None => {
+            return Err(stale_filesystem_request_error(
+                sidecar,
+                &vm_id,
+                None,
+                "guest filesystem dispatch",
+            ));
+        }
     };
 
     Ok(DispatchResult {
         response: sidecar.respond(request, ResponsePayload::GuestFilesystemResult(response)),
         events: Vec::new(),
     })
+}
+
+/// Execute a validated filesystem request in one short VM critical section.
+pub(crate) fn guest_filesystem_call_vm(
+    vm: &mut VmState,
+    payload: &GuestFilesystemCallRequest,
+) -> Result<GuestFilesystemResultResponse, VmError> {
+    core_guest_filesystem_call(&mut vm.kernel, payload.clone())
+        .map_err(native_guest_filesystem_core_error)
 }
 
 fn native_guest_filesystem_core_error(error: crate::core::SidecarCoreError) -> VmError {

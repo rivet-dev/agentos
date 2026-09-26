@@ -24,11 +24,17 @@ fn structured_events(
         .expect("inspect structured events")
 }
 
-fn find_event<'a>(events: &'a [StructuredEventRecord], name: &str) -> &'a StructuredEventRecord {
+fn find_event<'a>(
+    events: &'a [StructuredEventRecord],
+    description: &str,
+    predicate: impl Fn(&StructuredEventRecord) -> bool,
+) -> &'a StructuredEventRecord {
     events
         .iter()
-        .find(|event| event.name == name)
-        .unwrap_or_else(|| panic!("missing structured event: {name}"))
+        .find(|event| predicate(event))
+        .unwrap_or_else(|| {
+            panic!("missing structured event: {description}\nobserved events:\n{events:#?}")
+        })
 }
 
 fn assert_timestamp(event: &StructuredEventRecord) {
@@ -69,7 +75,9 @@ fn auth_failures_emit_security_audit_events() {
     }
 
     let events = structured_events(&sidecar);
-    let event = find_event(&events, "security.auth.failed");
+    let event = find_event(&events, "security.auth.failed", |event| {
+        event.name == "security.auth.failed"
+    });
     assert_eq!(event.vm_id, "sidecar-security-audit-auth");
     assert_eq!(event.fields["source"], "sidecar-tests");
     assert_eq!(event.fields["connection_id"], "conn-hint");
@@ -117,7 +125,7 @@ fn filesystem_permission_denials_emit_security_audit_events() {
                     child_process: None,
                     process: None,
                     env: None,
-                    binding: None,
+                    host_function: None,
                 }),
                 module_access_cwd: None,
                 instructions: Vec::new(),
@@ -127,7 +135,7 @@ fn filesystem_permission_denials_emit_security_audit_events() {
                 packages: Vec::new(),
                 packages_mount_at: String::new(),
                 bootstrap_commands: Vec::new(),
-                binding_shim_commands: Vec::new(),
+                host_function_shim_commands: Vec::new(),
             }),
         ))
         .expect("configure vm permissions");
@@ -159,6 +167,19 @@ fn filesystem_permission_denials_emit_security_audit_events() {
         ResponsePayload::GuestFilesystemResultResponse(_) => {}
         other => panic!("unexpected write response: {other:?}"),
     }
+    // Writing does not need read permission (as on Linux), so the write must
+    // not emit a read denial.
+    let is_blocked_read_denial = |event: &StructuredEventRecord| {
+        event.name == "security.permission.denied"
+            && event.vm_id == denied_vm_id
+            && event.fields.get("path").map(String::as_str) == Some("/blocked.txt")
+            && event.fields.get("operation").map(String::as_str) == Some("read")
+    };
+    let events_after_write = structured_events(sidecar);
+    assert!(
+        !events_after_write.iter().any(is_blocked_read_denial),
+        "write emitted a read denial: {events_after_write:#?}"
+    );
 
     let read = sidecar
         .dispatch_wire_blocking(wire_request(
@@ -192,7 +213,11 @@ fn filesystem_permission_denials_emit_security_audit_events() {
     }
 
     let events = structured_events(sidecar);
-    let event = find_event(&events, "security.permission.denied");
+    let event = find_event(
+        &events,
+        "security.permission.denied read /blocked.txt",
+        is_blocked_read_denial,
+    );
     assert_eq!(event.vm_id, denied_vm_id);
     assert_eq!(event.fields["operation"], "read");
     assert_eq!(event.fields["path"], "/blocked.txt");
@@ -263,7 +288,7 @@ fn mount_operations_emit_security_audit_events() {
                 packages: Vec::new(),
                 packages_mount_at: String::new(),
                 bootstrap_commands: Vec::new(),
-                binding_shim_commands: Vec::new(),
+                host_function_shim_commands: Vec::new(),
             }),
         ))
         .expect("mount workspace");
@@ -284,7 +309,7 @@ fn mount_operations_emit_security_audit_events() {
                 packages: Vec::new(),
                 packages_mount_at: String::new(),
                 bootstrap_commands: Vec::new(),
-                binding_shim_commands: Vec::new(),
+                host_function_shim_commands: Vec::new(),
             }),
         ))
         .expect("unmount workspace");
@@ -379,7 +404,9 @@ fn kill_requests_emit_security_audit_events() {
     assert_eq!(exit_code, 143);
 
     let events = structured_events(&sidecar);
-    let event = find_event(&events, "security.process.kill");
+    let event = find_event(&events, "security.process.kill", |event| {
+        event.name == "security.process.kill"
+    });
     assert_eq!(event.vm_id, vm_id);
     assert_eq!(event.fields["source"], "control_plane");
     assert_eq!(event.fields["source_pid"], "0");

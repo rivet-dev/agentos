@@ -33,6 +33,7 @@ struct WorkerStartup {
     process: HostProcessContext,
     module_bytes: usize,
     max_frame_bytes: usize,
+    environment_is_guest_visible: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -41,6 +42,13 @@ enum WorkerCall {
         method: String,
         args: Vec<Value>,
         raw: Vec<RawArgument>,
+    },
+    CommitExec {
+        open: Value,
+        method: String,
+        request: Value,
+        remaining_cpu_ms: Option<u32>,
+        remaining_fuel: Option<u64>,
     },
     OpenExecutableImage {
         descriptor: u32,
@@ -76,6 +84,9 @@ enum WorkerFrame {
     Finished {
         result: Result<i32, HostServiceError>,
     },
+    GroupExited {
+        code: i32,
+    },
     GroupFailed {
         error: HostServiceError,
     },
@@ -99,12 +110,34 @@ struct OutboundFrame {
 type PendingCall = tokio::sync::oneshot::Sender<Result<HostCallReply, HostServiceError>>;
 type PendingCallMap = Mutex<HashMap<u64, PendingCall>>;
 
+struct PendingWorkerCall {
+    pending: Arc<PendingCallMap>,
+    id: u64,
+}
+
+impl Drop for PendingWorkerCall {
+    fn drop(&mut self) {
+        match self.pending.lock() {
+            Ok(mut pending) => {
+                pending.remove(&self.id);
+            }
+            Err(poisoned) => {
+                eprintln!(
+                    "ERR_AGENTOS_WASMTIME_WORKER_PENDING_POISONED: recovering canceled call state"
+                );
+                poisoned.into_inner().remove(&self.id);
+            }
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct WorkerIpcClient {
     process: HostProcessContext,
     next_call_id: Arc<AtomicU64>,
     sender: std::sync::mpsc::SyncSender<OutboundFrame>,
     pending: Arc<PendingCallMap>,
+    maximum_pending: usize,
     signal_pending: Arc<AtomicUsize>,
     finish_ack: Arc<Mutex<Option<std::sync::mpsc::SyncSender<()>>>>,
     failed: Arc<AtomicBool>,
@@ -262,6 +295,7 @@ impl WorkerIpcClient {
             next_call_id: Arc::new(AtomicU64::new(1)),
             sender,
             pending,
+            maximum_pending,
             signal_pending,
             finish_ack,
             failed,
@@ -274,6 +308,41 @@ impl WorkerIpcClient {
 
     pub(super) fn signal_pending(&self) -> bool {
         self.signal_pending.load(Ordering::Acquire) > 0
+    }
+
+    pub(super) async fn commit_exec(
+        &self,
+        open: Value,
+        method: String,
+        request: Value,
+        remaining_cpu_ms: Option<u32>,
+        remaining_fuel: Option<u64>,
+    ) -> Result<HostCallReply, HostServiceError> {
+        let handle = open
+            .get("handle")
+            .and_then(Value::as_str)
+            .and_then(|value| value.parse::<u64>().ok());
+        let result = self
+            .call(WorkerCall::CommitExec {
+                open,
+                method,
+                request,
+                remaining_cpu_ms,
+                remaining_fuel,
+            })
+            .await;
+        if let Err(error) = &result {
+            // Admission/cancellation may fail before the parent consumes the
+            // retained image. Close is allowed to observe already-consumed state.
+            if let Some(handle) = handle {
+                if let Err(close) = self.call(WorkerCall::CloseExecutableImage { handle }).await {
+                    if close.code != "EBADF" && close.code != "ESTALE" {
+                        eprintln!("ERR_AGENTOS_WASMTIME_IMAGE_CLOSE: exec failed ({error}); cleanup failed: {close}");
+                    }
+                }
+            }
+        }
+        result
     }
 
     pub(super) async fn submit_adapter_call(
@@ -347,6 +416,10 @@ impl WorkerIpcClient {
         self.send(WorkerFrame::Stderr { bytes }, false)
     }
 
+    pub(super) fn report_group_exit(&self, code: i32) -> Result<(), HostServiceError> {
+        self.send(WorkerFrame::GroupExited { code }, false)
+    }
+
     pub(super) fn report_group_failure(
         &self,
         error: HostServiceError,
@@ -374,28 +447,37 @@ impl WorkerIpcClient {
                     )
                 })?;
             let (sender, receiver) = tokio::sync::oneshot::channel();
-            self.pending
-                .lock()
-                .map_err(|_| worker_pipe_closed())?
-                .insert(id, sender);
-            if let Err(error) = self.send(WorkerFrame::Call { id, call }, false) {
-                match self.pending.lock() {
-                    Ok(mut pending) => {
-                        pending.remove(&id);
-                    }
-                    Err(poisoned) => {
-                        eprintln!(
-                            "ERR_AGENTOS_WASMTIME_WORKER_PENDING_POISONED: recovering failed call state"
-                        );
-                        poisoned.into_inner().remove(&id);
-                    }
+            {
+                let mut pending = self.pending.lock().map_err(|_| worker_pipe_closed())?;
+                let observed = pending.len().saturating_add(1);
+                if observed > self.maximum_pending {
+                    return Err(HostServiceError::limit(
+                        "ERR_AGENTOS_WASMTIME_WORKER_PENDING_LIMIT",
+                        "limits.process.pendingEventCount",
+                        self.maximum_pending as u64,
+                        observed as u64,
+                    ));
                 }
-                return Err(error);
+                if observed
+                    == self
+                        .maximum_pending
+                        .saturating_sub(self.maximum_pending / 5)
+                {
+                    eprintln!("WARN_AGENTOS_WASMTIME_WORKER_PENDING_NEAR_LIMIT: used={observed} limit={} config=limits.process.pendingEventCount", self.maximum_pending);
+                }
+                pending.insert(id, sender);
             }
-            Ok((id, receiver))
+            // Cancellation of a Store/host-call future must retire its waiter
+            // even when the parent has not sent the reply yet (notably exec).
+            let registration = PendingWorkerCall {
+                pending: Arc::clone(&self.pending),
+                id,
+            };
+            self.send(WorkerFrame::Call { id, call }, false)?;
+            Ok((id, receiver, registration))
         })();
         async move {
-            let (id, receiver) = result?;
+            let (id, receiver, _registration) = result?;
             receiver.await.map_err(|_| {
                 HostServiceError::new(
                     "EPIPE",
@@ -526,16 +608,66 @@ pub fn run_worker_entry() -> Result<(), HostServiceError> {
         module,
         context,
         client_for_run,
+        startup.environment_is_guest_visible,
     ));
     client.finish(result)
 }
 
+struct WorkerReplacement {
+    module: Vec<u8>,
+    argv: Vec<String>,
+    env: std::collections::BTreeMap<String, String>,
+    remaining_cpu_ms: Option<u32>,
+    remaining_fuel: Option<u64>,
+}
+
+enum WorkerOutcome {
+    Finished(i32),
+    Replaced(WorkerReplacement),
+}
+
 pub(super) async fn run_worker_process(
+    mut module: Vec<u8>,
+    mut request: StartWasmExecutionRequest,
+    host: super::store::WasmtimeHostClient,
+    control: Arc<Control>,
+) -> Result<i32, HostServiceError> {
+    let wall_limit = request.limits.wall_clock_limit_ms;
+    let started = std::time::Instant::now();
+    let mut environment_is_guest_visible = false;
+    loop {
+        request.limits.wall_clock_limit_ms = wall_limit.map(|limit| {
+            limit.saturating_sub(started.elapsed().as_millis().min(u64::MAX as u128) as u64)
+        });
+        match run_worker_image(
+            module,
+            request.clone(),
+            host.clone(),
+            Arc::clone(&control),
+            environment_is_guest_visible,
+        )
+        .await?
+        {
+            WorkerOutcome::Finished(code) => return Ok(code),
+            WorkerOutcome::Replaced(replacement) => {
+                module = replacement.module;
+                request.argv = replacement.argv;
+                request.env = replacement.env;
+                request.limits.active_cpu_time_limit_ms = replacement.remaining_cpu_ms;
+                request.limits.deterministic_fuel = replacement.remaining_fuel;
+                environment_is_guest_visible = true;
+            }
+        }
+    }
+}
+
+async fn run_worker_image(
     module: Vec<u8>,
     request: StartWasmExecutionRequest,
     host: super::store::WasmtimeHostClient,
     control: Arc<Control>,
-) -> Result<i32, HostServiceError> {
+    environment_is_guest_visible: bool,
+) -> Result<WorkerOutcome, HostServiceError> {
     let executable = worker_executable()?;
     let max_frame_bytes = request
         .limits
@@ -548,6 +680,7 @@ pub(super) async fn run_worker_process(
         module_bytes: module.len(),
         max_frame_bytes,
         request: request.clone(),
+        environment_is_guest_visible,
     };
     let mut child = tokio::process::Command::new(&executable)
         .arg(WORKER_MODE_ARGUMENT)
@@ -586,6 +719,9 @@ pub(super) async fn run_worker_process(
         terminate_and_reap(&mut child, control.teardown_timeout).await?;
         return Err(error);
     }
+    // The child now owns the initial bytes; do not retain another full image
+    // in the parent for the lifetime of this worker.
+    drop(module);
     control.worker_pid.store(pid, Ordering::Release);
     let (control_sender, mut control_receiver) = tokio::sync::mpsc::channel(16);
     if let Err(error) = control.set_worker_input(control_sender) {
@@ -603,10 +739,21 @@ pub(super) async fn run_worker_process(
         }
     };
     tokio::pin!(wall_clock);
+    let mut replacement = None;
+    let mut force_reap = false;
     let result = loop {
+        let canceled = control.cancel_notify.notified();
+        tokio::pin!(canceled);
+        canceled.as_mut().enable();
+        if control.cancelled.load(Ordering::Acquire) {
+            break Err(HostServiceError::new(
+                "ECANCELED",
+                "threaded WebAssembly worker was canceled",
+            ));
+        }
         tokio::select! {
             biased;
-            () = control.cancel_notify.notified() => {
+            () = canceled => {
                 break Err(HostServiceError::new(
                     "ECANCELED",
                     "threaded WebAssembly worker was canceled",
@@ -630,6 +777,33 @@ pub(super) async fn run_worker_process(
             }
             frame = read_frame_async::<_, WorkerFrame>(&mut output, max_frame_bytes) => {
                 match frame {
+                    Ok(WorkerFrame::Call { id, call: WorkerCall::CommitExec { open, method, request: exec_request, remaining_cpu_ms, remaining_fuel } }) => {
+                        // Read the exact stable image the worker validated, before
+                        // changing kernel state. The old worker can contain native
+                        // atomic waits that cannot be unwound by epoch interruption.
+                        let maximum = request.limits.max_module_file_bytes.and_then(|value| usize::try_from(value).ok()).unwrap_or(256 * 1024 * 1024);
+                        let prepared = super::lifecycle::read_open_executable_image(&host, HostCallReply::Json(open), maximum).await;
+                        let outcome = match prepared {
+                            Ok((module, Some(argv))) => {
+                                match serde_json::from_value::<std::collections::BTreeMap<String, String>>(exec_request["options"]["env"].clone()) {
+                                    Ok(env) => host.submit_adapter_call(method, vec![exec_request], HashMap::new()).await.map(|_| WorkerReplacement { module, argv, env, remaining_cpu_ms, remaining_fuel }),
+                                    Err(error) => Err(HostServiceError::new("EINVAL", format!("invalid exec environment: {error}"))),
+                                }
+                            }
+                            Ok(_) => Err(HostServiceError::new("EIO", "exec image omitted argv")),
+                            Err(error) => Err(error),
+                        };
+                        match outcome {
+                            Ok(image) => {
+                                replacement = Some(image);
+                                force_reap = true;
+                                break Ok(0);
+                            }
+                            Err(error) => {
+                                if let Err(error) = write_frame_async(&mut input, &ParentFrame::Reply { id, result: Err(error) }, max_frame_bytes).await { break Err(error); }
+                            }
+                        }
+                    }
                     Ok(WorkerFrame::Call { id, call }) => {
                         let reply = dispatch_worker_call(&host, call).await;
                         if let Err(error) = write_frame_async(
@@ -655,6 +829,12 @@ pub(super) async fn run_worker_process(
                         }
                         break result;
                     }
+                    Ok(WorkerFrame::GroupExited { code }) => {
+                        // A sibling can request process exit while the main Store
+                        // is blocked in native atomic.wait, beyond epoch interrupts.
+                        force_reap = true;
+                        break Ok(code);
+                    }
                     Ok(WorkerFrame::GroupFailed { error }) => break Err(error),
                     Err(error) => break Err(error),
                 }
@@ -662,10 +842,18 @@ pub(super) async fn run_worker_process(
         }
     };
     control.clear_worker_input();
-    let cleanup = reap_after_result(&mut child, control.teardown_timeout, result.is_err()).await;
+    let cleanup = reap_after_result(
+        &mut child,
+        control.teardown_timeout,
+        force_reap || result.is_err(),
+    )
+    .await;
     control.worker_pid.store(0, Ordering::Release);
     cleanup?;
-    result
+    match replacement {
+        Some(image) => Ok(WorkerOutcome::Replaced(image)),
+        None => result.map(WorkerOutcome::Finished),
+    }
 }
 
 async fn reap_after_result(
@@ -761,6 +949,10 @@ async fn dispatch_worker_call(
     call: WorkerCall,
 ) -> Result<HostCallReply, HostServiceError> {
     match call {
+        WorkerCall::CommitExec { .. } => Err(HostServiceError::new(
+            "EINVAL",
+            "exec requires worker lifecycle dispatch",
+        )),
         WorkerCall::Adapter { method, args, raw } => {
             host.submit_adapter_call(
                 method,
@@ -984,6 +1176,65 @@ fn worker_wait_error(error: std::io::Error) -> HostServiceError {
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    fn test_client(
+        maximum_pending: usize,
+    ) -> (WorkerIpcClient, std::sync::mpsc::Receiver<OutboundFrame>) {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(maximum_pending);
+        (
+            WorkerIpcClient {
+                process: HostProcessContext {
+                    generation: 1,
+                    pid: 42,
+                },
+                next_call_id: Arc::new(AtomicU64::new(1)),
+                sender,
+                pending: Arc::new(Mutex::new(HashMap::new())),
+                maximum_pending,
+                signal_pending: Arc::new(AtomicUsize::new(0)),
+                finish_ack: Arc::new(Mutex::new(None)),
+                failed: Arc::new(AtomicBool::new(false)),
+            },
+            receiver,
+        )
+    }
+
+    fn test_call() -> WorkerCall {
+        WorkerCall::Adapter {
+            method: "process.getppid".into(),
+            args: Vec::new(),
+            raw: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn cancelled_worker_call_releases_its_pending_waiter() {
+        let (client, receiver) = test_client(2);
+        let pending = client.call(test_call());
+        receiver.try_recv().unwrap();
+        assert_eq!(client.pending.lock().unwrap().len(), 1);
+        drop(pending);
+        assert_eq!(client.pending.lock().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn worker_pending_waiters_remain_bounded_after_outbound_queue_drains() {
+        use std::future::Future;
+        let (client, receiver) = test_client(2);
+        let first = client.call(test_call());
+        receiver.try_recv().unwrap();
+        let second = client.call(test_call());
+        receiver.try_recv().unwrap();
+        let mut third = Box::pin(client.call(test_call()));
+        let result = third
+            .as_mut()
+            .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()));
+        assert!(
+            matches!(result, std::task::Poll::Ready(Err(ref error)) if error.code == "ERR_AGENTOS_WASMTIME_WORKER_PENDING_LIMIT")
+        );
+        assert_eq!(client.pending.lock().unwrap().len(), 2);
+        drop((first, second));
+    }
 
     #[test]
     fn worker_ipc_rejects_oversized_declared_frames_before_payload_allocation() {

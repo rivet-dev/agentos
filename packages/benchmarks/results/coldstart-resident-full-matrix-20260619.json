@@ -1,7 +1,3 @@
-
-> @rivet-dev/agentos-benchmarks@ bench:coldstart /home/nathan/agentos-perf-restore/packages/benchmarks
-> tsx coldstart.bench.ts
-
 {
   "hardware": {
     "cpu": "12th Gen Intel(R) Core(TM) i7-12700KF",

@@ -1,0 +1,37 @@
+---
+title: "Code Mode"
+description: "Give an agent one execution tool over curated host functions instead of exposing every tool directly."
+skill: true
+---
+
+Code Mode gives a model **one** tool instead of one tool per capability. The
+program it writes can branch, loop, transform data, and call several narrow host
+functions in a single isolated VM. A task that would have been six round trips
+becomes one.
+
+## Register host capabilities
+
+<CodeSnippet file="secure-exec/examples/code-mode/src/index.ts" region="host-functions" />
+
+The handlers run on the host, but only their validated inputs and JSON results
+cross into the VM. The guest never receives the credentials or the direct
+resource access a handler uses.
+
+## Generate one program
+
+<CodeSnippet file="secure-exec/examples/code-mode/src/index.ts" region="generated-code" />
+
+## Evaluate it
+
+<CodeSnippet file="secure-exec/examples/code-mode/src/index.ts" region="run" />
+
+Expose `evaluate` as the agent's single code-execution tool.
+[Permissions](/secure-exec/docs/permissions),
+[resource limits](/secure-exec/docs/resource-limits), and `timeoutMs` apply to
+every program the model writes.
+
+## Next steps
+
+- [Host Functions](/secure-exec/docs/host-functions) covers schemas and errors.
+- [Agent Code Tool](/secure-exec/docs/use-cases/agent-code-tool) type-checks
+  generated code before running it.

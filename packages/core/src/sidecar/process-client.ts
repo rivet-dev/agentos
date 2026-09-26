@@ -27,7 +27,6 @@ export type {
 	SidecarPermissionScope,
 	SidecarPermissionsPolicy,
 	SidecarProcessSnapshotEntry,
-	SidecarProjectedAgent,
 	SidecarProjectedModuleDescriptor,
 	SidecarRegisteredHostCallbackDefinition,
 	SidecarRegisteredHostCallbackExample,

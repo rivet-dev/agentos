@@ -1,0 +1,17 @@
+{
+	"name": "@rivet-dev/agentos-bindgen",
+	"version": "0.0.1",
+	"private": true,
+	"description": "Prototype Rust-to-TypeScript contract generator for the hosted agentOS actor.",
+	"license": "Apache-2.0",
+	"type": "module",
+	"scripts": {
+		"generate": "node src/cli.mjs generate",
+		"check": "node src/cli.mjs check",
+		"check-types": "node --check src/cli.mjs",
+		"test": "node --test tests/*.test.mjs"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.3"
+	}
+}

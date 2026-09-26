@@ -875,3 +875,57 @@ fn kernel_sensitive_unmounts_require_explicit_sensitive_permission() {
         .as_slice()
     );
 }
+
+#[test]
+fn kernel_write_file_does_not_require_read_permission() {
+    // Linux opens a file write-only without read permission. The kernel's
+    // internal read-only write guard must not probe fs.read on the target.
+    let denied = Arc::new(Mutex::new(Vec::new()));
+    let denied_for_permission = Arc::clone(&denied);
+    let mut config = KernelVmConfig::new("vm-write-without-read");
+    config.permissions = Permissions {
+        filesystem: Some(Arc::new(move |request: &FsAccessRequest| {
+            if request.op == agentos_vm_kernel::permissions::FsOperation::Read
+                && request.path == "/blocked.txt"
+            {
+                denied_for_permission
+                    .lock()
+                    .expect("denied paths lock poisoned")
+                    .push((request.op, request.path.clone()));
+                PermissionDecision::deny("reads of /blocked.txt disabled")
+            } else {
+                PermissionDecision::allow()
+            }
+        })),
+        ..Permissions::default()
+    };
+
+    let mut kernel = KernelVm::new(MountTable::new(MemoryFileSystem::new()), config);
+    kernel
+        .write_file("/blocked.txt", b"blocked".to_vec())
+        .expect("write-only access should not require fs.read");
+    kernel
+        .write_file("/blocked.txt", b"overwritten".to_vec())
+        .expect("overwriting an existing read-denied file should succeed");
+    assert!(
+        denied
+            .lock()
+            .expect("denied paths lock poisoned")
+            .is_empty(),
+        "write_file must not emit read denials"
+    );
+
+    let error = kernel
+        .read_file("/blocked.txt")
+        .expect_err("read should still be denied");
+    assert_eq!(error.code(), "EACCES");
+    assert_eq!(
+        kernel
+            .filesystem_mut()
+            .inner_mut()
+            .inner_mut()
+            .read_file("/blocked.txt")
+            .expect("read raw storage"),
+        b"overwritten".to_vec()
+    );
+}

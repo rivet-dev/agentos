@@ -1349,113 +1349,134 @@ class NodeGlobalWebSocket {
 }
 
 function setupGlobals() {
-	const g = globalThis;
-	g.process = process2;
-	g.setTimeout = setTimeout2;
-	g.clearTimeout = clearTimeout2;
-	g.setInterval = setInterval;
-	g.clearInterval = clearInterval;
-	g.setImmediate = setImmediate;
-	g.clearImmediate = clearImmediate;
-	const nativeQueueMicrotask =
-		typeof g.queueMicrotask === "function"
-			? g.queueMicrotask.bind(g)
-			: _queueMicrotask;
-	g.queueMicrotask = (callback) => {
-		const asyncLocalStorageSnapshot = snapshotAsyncLocalStorageStores();
-		return nativeQueueMicrotask(() =>
-			runWithAsyncLocalStorageSnapshot(
-				asyncLocalStorageSnapshot,
-				callback,
-				g,
-				[],
-			),
-		);
-	};
-	installWhatwgUrlGlobals(g);
-	g.TextEncoder = TextEncoder2;
-	g.TextDecoder = TextDecoder;
-	g.Event = Event;
-	g.CustomEvent = CustomEvent;
-	g.EventTarget = EventTarget;
-	if (typeof g.Buffer === "undefined") {
-		g.Buffer = Buffer3;
-	}
-	const globalBuffer = g.Buffer;
-	if (typeof globalBuffer.kMaxLength !== "number") {
-		globalBuffer.kMaxLength = BUFFER_MAX_LENGTH;
-	}
-	if (typeof globalBuffer.kStringMaxLength !== "number") {
-		globalBuffer.kStringMaxLength = BUFFER_MAX_STRING_LENGTH;
-	}
-	if (
-		typeof globalBuffer.constants !== "object" ||
-		globalBuffer.constants === null
-	) {
-		globalBuffer.constants = BUFFER_CONSTANTS;
-	}
-	const builtinUtilModule = globalThis.__agentOsBuiltinUtilModule;
-	if (builtinUtilModule?.types) {
-		builtinUtilModule.types.isProxy = () => false;
-	}
-	installBuiltinUtilFormatWithOptions(builtinUtilModule);
-	if (typeof g.atob === "undefined" || typeof g.btoa === "undefined") {
-		const base64 = require_base64_js();
-		if (typeof g.atob === "undefined") {
-			g.atob = (value) => {
-				const bytes = base64.toByteArray(String(value));
-				let decoded = "";
-				for (const byte of bytes) {
-					decoded += String.fromCharCode(byte);
-				}
-				return decoded;
-			};
-		}
-		if (typeof g.btoa === "undefined") {
-			g.btoa = (value) => {
-				const input = String(value);
-				const bytes = new Uint8Array(input.length);
-				for (let index = 0; index < input.length; index += 1) {
-					const code = input.charCodeAt(index);
-					if (code > 255) {
-						throw new TypeError("Invalid character");
-					}
-					bytes[index] = code;
-				}
-				return base64.fromByteArray(bytes);
-			};
-		}
-	}
-	if (typeof g.Crypto === "undefined") {
-		g.Crypto = SandboxCrypto;
-	}
-	if (typeof g.SubtleCrypto === "undefined") {
-		g.SubtleCrypto = SandboxSubtleCrypto;
-	}
-	if (typeof g.CryptoKey === "undefined") {
-		g.CryptoKey = SandboxCryptoKey;
-	}
-	if (typeof g.DOMException === "undefined") {
-		g.DOMException = SandboxDOMException;
-	}
-	if (typeof g.crypto === "undefined") {
-		g.crypto = builtinCryptoModule;
-	} else {
-		const cryptoObj = g.crypto;
-		for (const [name, value] of Object.entries(builtinCryptoModule)) {
-			if (typeof cryptoObj[name] === "undefined") {
-				cryptoObj[name] = value;
-			}
-		}
-	}
-	g.fetch = fetch;
-	g.Headers = UndiciHeaders;
-	g.Request = UndiciRequest;
-	g.Response = UndiciResponse;
-	if (typeof g.WebSocket === "undefined") {
-		g.WebSocket = NodeGlobalWebSocket;
-	}
-	installSafeIntlFormatters(g);
+  const g = globalThis;
+  g.process = process2;
+  g.setTimeout = setTimeout2;
+  g.clearTimeout = clearTimeout2;
+  g.setInterval = setInterval;
+  g.clearInterval = clearInterval;
+  g.setImmediate = setImmediate;
+  g.clearImmediate = clearImmediate;
+  const nativeQueueMicrotask = typeof g.queueMicrotask === "function" ? g.queueMicrotask.bind(g) : _queueMicrotask;
+  g.queueMicrotask = (callback) => {
+    const asyncLocalStorageSnapshot = snapshotAsyncLocalStorageStores();
+    return nativeQueueMicrotask(() =>
+      runWithAsyncLocalStorageSnapshot(
+        asyncLocalStorageSnapshot,
+        callback,
+        g,
+        []
+      )
+    );
+  };
+  installWhatwgUrlGlobals(g);
+  g.TextEncoder = TextEncoder2;
+  g.TextDecoder = TextDecoder;
+  g.Event = Event;
+  g.CustomEvent = CustomEvent;
+  g.EventTarget = EventTarget;
+  if (typeof g.DOMException === "undefined") {
+    g.DOMException = SandboxDOMException;
+  }
+  if (typeof g.Buffer === "undefined") {
+    g.Buffer = Buffer3;
+  }
+  const globalBuffer = g.Buffer;
+  if (typeof globalBuffer.kMaxLength !== "number") {
+    globalBuffer.kMaxLength = BUFFER_MAX_LENGTH;
+  }
+  if (typeof globalBuffer.kStringMaxLength !== "number") {
+    globalBuffer.kStringMaxLength = BUFFER_MAX_STRING_LENGTH;
+  }
+  if (typeof globalBuffer.constants !== "object" || globalBuffer.constants === null) {
+    globalBuffer.constants = BUFFER_CONSTANTS;
+  }
+  const builtinUtilModule = globalThis.__agentOsBuiltinUtilModule;
+  if (builtinUtilModule?.types) {
+    builtinUtilModule.types.isProxy = () => false;
+  }
+  installBuiltinUtilFormatWithOptions(builtinUtilModule);
+  if (typeof g.atob === "undefined" || typeof g.btoa === "undefined") {
+    const base64 = require_base64_js();
+    const createInvalidCharacterError = (message = "Invalid character") => {
+      const error = new g.DOMException(message, "InvalidCharacterError");
+      if (error.code === 0) error.code = 5;
+      return error;
+    };
+    if (typeof g.atob === "undefined") {
+      g.atob = (value) => {
+        // WHATWG forgiving-base64 decode accepts ASCII whitespace and
+        // unpadded input, but rejects the base64url alphabet. base64-js
+        // implements RFC 4648 section 4 instead, so normalize the input and
+        // reject URL-safe characters before handing it over.
+        const input = String(value).replace(/[\t\n\f\r ]+/g, "");
+        const hasPadding = input.includes("=");
+        if (/[^A-Za-z0-9+/=]/.test(input) || /={3,}/.test(input) || /=[^=]/.test(input)) {
+          throw createInvalidCharacterError();
+        }
+        const remainder = input.length % 4;
+        if (remainder === 1) {
+          throw createInvalidCharacterError("The string to be decoded is not correctly encoded.");
+        }
+        if (hasPadding && remainder !== 0) {
+          throw createInvalidCharacterError();
+        }
+        const normalizedInput = !hasPadding && remainder === 2 ? `${input}==` : !hasPadding && remainder === 3 ? `${input}=` : input;
+        let bytes = new Uint8Array(0);
+        try {
+          bytes = base64.toByteArray(normalizedInput);
+        } catch {
+          throw createInvalidCharacterError();
+        }
+        let decoded = "";
+        for (const byte of bytes) {
+          decoded += String.fromCharCode(byte);
+        }
+        return decoded;
+      };
+    }
+    if (typeof g.btoa === "undefined") {
+      g.btoa = (value) => {
+        const input = String(value);
+        const bytes = new Uint8Array(input.length);
+        for (let index = 0; index < input.length; index += 1) {
+          const code = input.charCodeAt(index);
+          if (code > 255) {
+            throw createInvalidCharacterError();
+          }
+          bytes[index] = code;
+        }
+        return base64.fromByteArray(bytes);
+      };
+    }
+  }
+  if (typeof g.Crypto === "undefined") {
+    g.Crypto = SandboxCrypto;
+  }
+  if (typeof g.SubtleCrypto === "undefined") {
+    g.SubtleCrypto = SandboxSubtleCrypto;
+  }
+  if (typeof g.CryptoKey === "undefined") {
+    g.CryptoKey = SandboxCryptoKey;
+  }
+  if (typeof g.crypto === "undefined") {
+    g.crypto = builtinCryptoModule;
+  } else {
+    const cryptoObj = g.crypto;
+    for (const [name, value] of Object.entries(builtinCryptoModule)) {
+      if (typeof cryptoObj[name] === "undefined") {
+        cryptoObj[name] = value;
+      }
+    }
+  }
+  g.fetch = fetch;
+  g.Headers = UndiciHeaders;
+  g.Request = UndiciRequest;
+  g.Response = UndiciResponse;
+  if (typeof g.WebSocket === "undefined") {
+    g.WebSocket = NodeGlobalWebSocket;
+  }
+  installSafeIntlFormatters(g);
 }
 export {
 	_addListener,

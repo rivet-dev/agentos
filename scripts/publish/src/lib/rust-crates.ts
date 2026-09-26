@@ -24,6 +24,9 @@ export const RUST_CRATE_ORDER = [
 	"agentos-vm",
 	"agentos-acp-protocol",
 	"agentos-client",
+	"agentos-actor-contract",
+	"agentos-preload",
+	"agentos-actor",
 	"agentos-sidecar",
 ] as const;
 

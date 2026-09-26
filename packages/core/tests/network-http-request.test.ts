@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import { afterEach, describe, expect, test } from "vitest";
+import { WebSocketServer } from "ws";
 import { AgentOs } from "../src/index.js";
 
 const textDecoder = new TextDecoder();
@@ -11,7 +12,7 @@ async function runSpawnedProcess(
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
 	const stdoutChunks: string[] = [];
 	const stderrChunks: string[] = [];
-	const { pid } = vm.spawn(command, args, {
+	const { pid } = await vm.spawn(command, args, {
 		onStdout: (chunk) => {
 			stdoutChunks.push(textDecoder.decode(chunk));
 		},
@@ -21,8 +22,9 @@ async function runSpawnedProcess(
 		},
 	});
 
+	const exit = await vm.process.wait(pid);
 	return {
-		exitCode: await vm.waitProcess(pid),
+		exitCode: exit.exitCode ?? -1,
 		stdout: stdoutChunks.join(""),
 		stderr: stderrChunks.join(""),
 	};
@@ -287,6 +289,121 @@ describe("guest http.request transport", () => {
 				"control:/control-0,control:/control-1,control:/control-2,control:/control-3,control:/control-4\n",
 			stderr: "",
 		});
+	});
+
+	test("reclaims cancelled guest response streams while an outbound websocket stays open", async () => {
+		const upstream = createServer();
+		const upstreamWebSocket = new WebSocketServer({ server: upstream });
+		upstreamWebSocket.on("connection", (socket) => {
+			socket.once("message", () => {
+				socket.send(Uint8Array.from([1, 2, 3]), { binary: true });
+			});
+		});
+		await new Promise<void>((resolve) =>
+			upstream.listen(0, "127.0.0.1", resolve),
+		);
+		const upstreamAddress = upstream.address();
+		if (!upstreamAddress || typeof upstreamAddress === "string") {
+			throw new Error("missing upstream TCP address");
+		}
+
+		try {
+			vm = await AgentOs.create({
+				sidecar: { kind: "shared", pool: "reentrant-websocket-test" },
+				loopbackExemptPorts: [upstreamAddress.port],
+				permissions: {
+					fs: "allow",
+					network: "allow",
+					childProcess: "allow",
+				},
+			});
+
+			let resolveReady = () => {};
+			let stderr = "";
+			const ready = new Promise<void>((resolve) => {
+				resolveReady = resolve;
+			});
+			const script = [
+				'const http = require("node:http");',
+				"void (async () => {",
+				`  const socket = new WebSocket("ws://127.0.0.1:${upstreamAddress.port}/", ["rivet", "rivet_token.token"]);`,
+				'  socket.binaryType = "arraybuffer";',
+				"  const binaryLength = await new Promise((resolve, reject) => {",
+				"    socket.onopen = () => queueMicrotask(() => socket.send(new Uint8Array([4, 5, 6])));",
+				"    socket.onmessage = (event) => resolve(event.data.byteLength);",
+				"    socket.onerror = reject;",
+				"  });",
+				"  const server = http.createServer((_request, response) => {",
+				'    response.writeHead(200, { "Content-Type": "text/event-stream" });',
+				"    response.flushHeaders();",
+				"    response.write(`data: websocket-${binaryLength}\\n\\n`);",
+				"  });",
+				'  server.listen(3000, "0.0.0.0", () => console.log("READY"));',
+				"})().catch((error) => { console.error(error); process.exitCode = 1; });",
+			].join("\n");
+			const child = await vm.spawn("node", ["-e", script], {
+				onStdout: (chunk) => {
+					if (textDecoder.decode(chunk).includes("READY")) resolveReady();
+				},
+				onStderr: (chunk) => {
+					stderr += textDecoder.decode(chunk);
+				},
+			});
+			await Promise.race([
+				ready,
+				vm.process.wait(child.pid).then((result) => {
+					throw new Error(
+						`guest server exited with ${result.exitCode}: ${stderr}`,
+					);
+				}),
+				new Promise<never>((_, reject) =>
+					setTimeout(
+						() => reject(new Error("guest server readiness timed out")),
+						5_000,
+					),
+				),
+			]);
+
+			const requestCount = Number.parseInt(
+				process.env.AGENTOS_VM_FETCH_STREAM_REQUESTS ?? "300",
+				10,
+			);
+			for (let requestIndex = 0; requestIndex < requestCount; requestIndex++) {
+				const head = await Promise.race([
+					vm.fetchStreamStart(
+						3000,
+						new Request(`http://guest/events-${requestIndex}`),
+					),
+					new Promise<never>((_, reject) =>
+						setTimeout(
+							() =>
+								reject(
+									new Error(
+										`stream response head timed out at request ${requestIndex + 1}/${requestCount}`,
+									),
+								),
+							5_000,
+						),
+					),
+				]);
+				const chunk = await vm.fetchStreamRead(head.streamId);
+
+				expect(head.status, stderr).toBe(200);
+				expect(textDecoder.decode(chunk.body)).toBe("data: websocket-3\n\n");
+				await vm.fetchStreamCancel(head.streamId);
+			}
+			await vm.process.kill(child.pid, "SIGKILL");
+		} finally {
+			upstreamWebSocket.clients.forEach((socket) => {
+				socket.terminate();
+			});
+			await new Promise<void>((resolve, reject) => {
+				upstreamWebSocket.close((error) => (error ? reject(error) : resolve()));
+			});
+			await new Promise<void>((resolve, reject) => {
+				upstream.close((error) => (error ? reject(error) : resolve()));
+			});
+		}
 	});
 
 	test("supports writeFileSync on an fd from a nested guest child", async () => {

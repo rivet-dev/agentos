@@ -1,0 +1,30 @@
+---
+title: "Persistence & Sleep"
+description: "Understand durable actor configuration and filesystem state."
+---
+
+The hosted actor stores desired configuration and preview metadata in RivetKit
+SQLite, in `agentos_actor_*` tables. Core durable state uses `agentos_core_*`;
+filesystem storage uses `agentos_fs_*`. Each owner has an independent schema
+version and migration transaction.
+
+This durable metadata does not make the default VM filesystem persistent. The
+default root is an ephemeral in-memory overlay and is discarded when the VM is
+replaced. Configure an `actor-sqlite` root or mount only for paths that need to
+survive VM replacement.
+
+Configured actor-SQLite filesystems, desired software sources, cron schedules,
+and normalized configuration survive actor sleep. Running processes, terminals,
+open streams, and live subscriptions do not.
+
+<CodeSnippet file="examples/persistence/lifecycle-client.ts" />
+
+After wake, the runtime reconciles the complete desired config before actions
+report ready. `vm.status` reports the current generation, config revision,
+package readiness, and any typed issue.
+
+## Embedded API
+
+Embedded Core can use the same durable filesystem and Core schemas without the
+Rivet Actor lifecycle. Read more in the
+[embedded API quickstart](/agentos/docs/quickstart-embedded).

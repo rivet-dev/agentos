@@ -31,31 +31,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - run: |
-          rm -rf /tmp/docs-theme
-          git clone https://github.com/rivet-dev/docs-theme.git /tmp/docs-theme
-          git -C /tmp/docs-theme checkout 450c498555135098c6a927adfdf13458be9be22a
-          rm -rf website/vendor/theme && mkdir -p website/vendor
-          cp -r /tmp/docs-theme/packages/theme website/vendor/theme
       - run: pnpm install --frozen-lockfile
       - run: |
-          # Sidecars are built by the parallel Rust job, never by this graph.
-          if grep -qE '^[[:space:]]*-[[:space:]]*website[[:space:]]*$' pnpm-workspace.yaml; then
-            npx turbo build \
-              --only \
-              --concurrency=4 \
-              --filter='!@rivet-dev/agentos-website' \
-              --filter='!@agentos-software/codex'
-          else
-            npx turbo build \
-              --only \
-              --concurrency=4 \
-              --filter='!@agentos-software/codex'
-          fi
-      # The Codex adapter is ordinary TypeScript, while its executable is a
-      # reproducibly built 56 MB WASI artifact. Keep the cheap PR lane source-only;
-      # nightly and publish workflows build the pinned executable explicitly.
-      - run: pnpm --dir software/codex check-types
+          npx turbo build \
+            --only \
+            --concurrency=4 \
+            --filter='!@agentos-software/codex-cli'
+      # The pinned Codex WASI artifact is built by the full corpus lanes.
+      - run: pnpm --dir software/codex-cli check-types
       - run: pnpm --dir scripts/publish run check-types
       - run: pnpm --dir scripts/publish test
       - run: node --test scripts/check-rust-package-metadata.test.mjs
@@ -65,10 +48,9 @@ jobs:
       - run: node --test scripts/verify-fixed-versions.test.mjs
       - run: node scripts/verify-fixed-versions.mjs
       - run: node --test scripts/check-layout.test.mjs
-      - run: pnpm check-layout
-      - run: node --test website/scripts/gen-registry.test.mjs
-      - run: node --test scripts/check-rustfmt.test.mjs
+      - run: node scripts/check-layout.mjs
       - run: node scripts/check-rustfmt.mjs
+      - run: node scripts/verify-check-types.mjs
       - run: pnpm check-types
       - name: Run fast package unit tests
         run: |
@@ -78,7 +60,7 @@ jobs:
             --filter '@rivet-dev/agentos-toolchain' \
             --filter '@rivet-dev/agentos-sidecar' \
             test
-      - run: pnpm lint
+      - run: pnpm exec biome check .
         continue-on-error: true
       - name: Pack JavaScript build outputs
         run: |
@@ -87,7 +69,8 @@ jobs:
             --exclude='software/*/dist/package.tar' \
             --exclude='software/*/dist/package.aospkg' \
             -czf /tmp/agentos-js-dist.tar.gz \
-            packages/*/dist software/*/dist
+            packages/*/dist software/*/dist \
+            packages/agentos/assets/inspector-tabs-app
       - uses: actions/upload-artifact@v4
         with:
           name: js-dist
@@ -239,7 +222,6 @@ jobs:
           cargo test -p agentos-client \
             --lib \
             --test scaffold \
-            --test session_event_types \
             --test e2e_smoke \
             --test fs_e2e \
             --test lifecycle_e2e \
@@ -274,7 +256,7 @@ jobs:
           node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos-core...'
+      - run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos-core...' --filter 'secure-exec...'
       - uses: actions/download-artifact@v4
         with:
           name: js-dist
@@ -288,6 +270,9 @@ jobs:
           tar -xzf ci-artifacts/js/agentos-js-dist.tar.gz
           chmod +x ci-artifacts/agentos-sidecar/agentos-sidecar
       - run: pnpm --dir packages/core test:pr
+        env:
+          AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/ci-artifacts/agentos-sidecar/agentos-sidecar
+      - run: pnpm --dir secure-exec test
         env:
           AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/ci-artifacts/agentos-sidecar/agentos-sidecar
 
@@ -361,8 +346,7 @@ jobs:
           tar -xzf ci-artifacts/js/agentos-js-dist.tar.gz
           chmod +x ci-artifacts/agentos-sidecar/agentos-sidecar
           node packages/core/scripts/copy-wasm-commands.mjs --require-coreutils
-          pnpm --filter @agentos-software/coreutils build:runtime
-      - run: pnpm --dir packages/agentos test:pr
+      - run: pnpm --dir packages/agentos test
         env:
           AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/ci-artifacts/agentos-sidecar/agentos-sidecar
 
@@ -429,13 +413,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: wasm-backend-${{ matrix.backend }}
-      - name: Materialize the pinned docs theme
-        run: |
-          rm -rf /tmp/docs-theme
-          git clone https://github.com/rivet-dev/docs-theme.git /tmp/docs-theme
-          git -C /tmp/docs-theme checkout 450c498555135098c6a927adfdf13458be9be22a
-          rm -rf website/vendor/theme && mkdir -p website/vendor
-          cp -r /tmp/docs-theme/packages/theme website/vendor/theme
       - run: pnpm install --frozen-lockfile
       - uses: actions/download-artifact@v4
         with:

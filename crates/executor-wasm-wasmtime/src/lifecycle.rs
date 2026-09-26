@@ -83,7 +83,7 @@ struct HostLatch {
 
 #[derive(Debug)]
 pub(super) struct Control {
-    cancelled: Arc<AtomicBool>,
+    pub(super) cancelled: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
     pause_notify: Arc<Notify>,
     pub(super) cancel_notify: Arc<Notify>,
@@ -528,6 +528,10 @@ impl WasmtimeExecution {
         }
     }
 
+    pub fn has_pending_events(&self) -> bool {
+        !self.events.is_empty()
+    }
+
     pub fn try_poll_event(&self) -> Result<Option<WasmExecutionEvent>, WasmExecutionError> {
         match self.events.try_recv() {
             Ok(event) => event.into_event().map(Some),
@@ -746,6 +750,7 @@ async fn run_loaded_module(
         paused,
         pause_notify,
         diagnostics,
+        false,
     )
     .await
 }
@@ -762,6 +767,7 @@ async fn run_loaded_module_bytes(
     paused: Arc<AtomicBool>,
     pause_notify: Arc<Notify>,
     diagnostics: Arc<ExecutionDiagnostics>,
+    environment_is_guest_visible: bool,
 ) -> Result<i32, HostServiceError> {
     let compiled = super::module::compile_module(&engine, &bytes)?;
     diagnostics.phase("profileValidation", compiled.profile_validation);
@@ -774,7 +780,7 @@ async fn run_loaded_module_bytes(
     // environment was constructed by guest libc and is already guest-visible;
     // filtering it again would incorrectly delete ordinary variables whose
     // names happen to use that prefix.
-    let mut environment_is_guest_visible = false;
+    let mut environment_is_guest_visible = environment_is_guest_visible;
     let import_validation_started = Instant::now();
     let threaded = matches!(
         profile.feature_profile,
@@ -877,18 +883,41 @@ async fn run_loaded_module_bytes(
             reserved_store_bytes,
         );
         let call_started = Instant::now();
-        let call_result = if let Some(group) = thread_group.as_ref() {
+        let mut call_result = if let Some(group) = thread_group.as_ref() {
             tokio::select! {
                 result = start.call_async(&mut store, ()) => result,
-                failure = group.wait_for_failure() => return Err(failure),
+                outcome = group.wait_for_completion() => {
+                    match outcome? {
+                        super::threads::ThreadGroupCompletion::Exit(code) => {
+                            group.settle_main()?;
+                            return Ok(code);
+                        }
+                        super::threads::ThreadGroupCompletion::Exec(replacement) => {
+                            store.data_mut().exec_replaced = true;
+                            store.data_mut().pending_exec_replacement = replacement;
+                            Err(wasmtime::format_err!("agentos:exec-replaced"))
+                        }
+                    }
+                },
             }
         } else {
             start.call_async(&mut store, ()).await
         };
-        thread_group
-            .as_ref()
-            .map(|group| group.settle_main())
-            .transpose()?;
+        if let Some(group) = thread_group.as_ref() {
+            if let Some(replacement) = group.take_exec()? {
+                store.data_mut().exec_replaced = true;
+                store.data_mut().pending_exec_replacement = replacement;
+                call_result = Err(wasmtime::format_err!("agentos:exec-replaced"));
+            }
+            if store.data().exec_replaced {
+                group.retire_image().await?;
+            } else {
+                group.settle_main()?;
+            }
+            if let Some(code) = group.process_exit_code()? {
+                return Ok(code);
+            }
+        }
         diagnostics.phase("wasi.start", call_started.elapsed());
         diagnostics.store_memory(
             guest_linear_memory_bytes(&instance, &mut store),
@@ -967,6 +996,7 @@ pub(super) async fn run_worker_loaded_module(
     bytes: Vec<u8>,
     runtime: DriverHandle,
     worker: super::worker::WorkerIpcClient,
+    environment_is_guest_visible: bool,
 ) -> Result<i32, HostServiceError> {
     let cancelled = Arc::new(AtomicBool::new(false));
     let cancel_notify = Arc::new(Notify::new());
@@ -997,6 +1027,7 @@ pub(super) async fn run_worker_loaded_module(
         Arc::new(AtomicBool::new(false)),
         Arc::new(Notify::new()),
         Arc::new(ExecutionDiagnostics::new(false)),
+        environment_is_guest_visible,
     )
     .await
 }
@@ -1111,8 +1142,20 @@ pub(super) async fn read_open_executable_image(
     open: HostCallReply,
     maximum: usize,
 ) -> Result<(Vec<u8>, Option<Vec<String>>), HostServiceError> {
+    read_open_executable_image_for_exec(host, open, maximum, false).await
+}
+
+pub(super) async fn read_open_executable_image_for_exec(
+    host: &WasmtimeHostClient,
+    open: HostCallReply,
+    maximum: usize,
+    retain: bool,
+) -> Result<(Vec<u8>, Option<Vec<String>>), HostServiceError> {
     let (handle, size, argv) = decode_open_image(open)?;
     let result = read_module_image(host, handle, size, maximum).await;
+    if retain && result.is_ok() {
+        return result.map(|bytes| (bytes, argv));
+    }
     let close = host
         .submit(
             HostOperation::Process(ProcessOperation::CloseExecutableImage { handle }),

@@ -1,0 +1,31 @@
+---
+title: "npm Packages"
+description: "Install npm packages into a Secure Exec VM, or mount packages you already have."
+skill: true
+---
+
+## Install into a VM
+
+Packages install into a VM's filesystem, so they need a [VM](/secure-exec/docs/vms)
+that outlives the call.
+
+<CodeSnippet file="secure-exec/examples/npm/src/index.ts" region="install" />
+
+<CodeSnippet file="secure-exec/examples/npm/src/index.ts" region="use" />
+
+- Installing needs the network, which is denied until you allow it.
+- Packages install into the working directory, `/workspace`. Run your code from a
+  file there so it finds them, or set `filePath` to a path inside `/workspace`
+  when inline code imports an installed package.
+- `vm.npm.install()` with no package list installs the dependencies of the
+  `package.json` in the working directory.
+- `vm.npm.runScript` and `vm.npm.runPackage` work like `npm run` and `npx`.
+
+## Mount packages you already have
+
+If the packages are already on the host, mount them instead. There is no
+network access and no install step, so it also works in a one-shot call.
+
+<CodeSnippet file="secure-exec/examples/mounts/src/index.ts" region="node-modules" />
+
+Read more in [Filesystem & Mounts](/secure-exec/docs/filesystem).

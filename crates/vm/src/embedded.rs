@@ -43,7 +43,7 @@ impl VmConfig {
             child_process: Some(PatternPermissionScope::Mode(PermissionMode::Allow)),
             process: Some(PatternPermissionScope::Mode(PermissionMode::Allow)),
             env: Some(PatternPermissionScope::Mode(PermissionMode::Allow)),
-            binding: Some(PatternPermissionScope::Mode(PermissionMode::Allow)),
+            host_function: Some(PatternPermissionScope::Mode(PermissionMode::Allow)),
         });
         self
     }
@@ -193,13 +193,13 @@ impl VmHandle<'_> {
     }
 
     /// Returns the authoritative virtual kernel for direct OS operations.
-    pub fn kernel(&self) -> Result<&VmKernel, VmError> {
-        Ok(&self.vm()?.kernel)
+    pub fn kernel(&self) -> Result<std::cell::Ref<'_, VmKernel>, VmError> {
+        Ok(std::cell::Ref::map(self.vm()?, |vm| &vm.kernel))
     }
 
     /// Returns the authoritative virtual kernel for mutating OS operations.
-    pub fn kernel_mut(&mut self) -> Result<&mut VmKernel, VmError> {
-        Ok(&mut self.vm_mut()?.kernel)
+    pub fn kernel_mut(&mut self) -> Result<std::cell::RefMut<'_, VmKernel>, VmError> {
+        Ok(std::cell::RefMut::map(self.vm_mut()?, |vm| &mut vm.kernel))
     }
 
     /// Disposes this VM and releases all of its kernel, storage, and resource
@@ -225,7 +225,7 @@ impl VmHandle<'_> {
         result
     }
 
-    fn vm(&self) -> Result<&crate::state::VmState, VmError> {
+    fn vm(&self) -> Result<std::cell::Ref<'_, crate::state::VmState>, VmError> {
         let vm = self
             .manager
             .vms
@@ -240,7 +240,7 @@ impl VmHandle<'_> {
         Ok(vm)
     }
 
-    fn vm_mut(&mut self) -> Result<&mut crate::state::VmState, VmError> {
+    fn vm_mut(&mut self) -> Result<std::cell::RefMut<'_, crate::state::VmState>, VmError> {
         let vm = self
             .manager
             .vms

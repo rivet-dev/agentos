@@ -1,0 +1,28 @@
+---
+title: "Filesystem & Mounts"
+description: "Guest code in Secure Exec sees a virtual filesystem. Mount host directories or node_modules to share files with it."
+skill: true
+---
+
+Guest code sees a virtual Linux filesystem, never the host's. `node:fs` works as
+usual, and whatever the code writes is discarded with the VM. A one-shot call
+discards it when the call ends. On a [VM](/secure-exec/docs/vms) you created,
+files last until you dispose it.
+
+To exchange individual files with a VM, use
+[`vm.filesystem`](/secure-exec/docs/vms). To share a whole directory with the
+guest, mount it. `mounts` is a VM option.
+
+## Mount a host directory
+
+<CodeSnippet file="secure-exec/examples/mounts/src/index.ts" region="host-dir" />
+
+## Mount node_modules
+
+<CodeSnippet file="secure-exec/examples/mounts/src/index.ts" region="node-modules" />
+
+## More filesystems
+
+Secure Exec accepts agentOS `mounts` and `rootFilesystem` unchanged, including
+in-memory, S3, and custom backends. Read the
+[agentOS filesystem docs](/agentos/docs/filesystem) for the details.

@@ -89,7 +89,7 @@ fn reads_version_from_agentos_package_json_and_errors_when_missing() {
 }
 
 #[test]
-fn reads_name_agent_and_provides_from_agentos_package_json() {
+fn reads_name_and_provides_from_agentos_package_json() {
     let pkg = unique_dir("manifest");
     write_package(&pkg, "package-json-name", "1.0.0", &["agent-cmd"]);
     fs::create_dir_all(pkg.join("share/config")).unwrap();
@@ -98,7 +98,6 @@ fn reads_name_agent_and_provides_from_agentos_package_json() {
         r#"{
           "name": "manifest-name",
           "version": "1.0.0",
-          "agent": { "acpEntrypoint": "agent-cmd" },
           "provides": {
             "env": { "FROM_MANIFEST": "yes" },
             "files": [{ "source": "share/config", "target": "/etc/manifest" }]
@@ -111,7 +110,6 @@ fn reads_name_agent_and_provides_from_agentos_package_json() {
     let descriptor = read_package_manifest(pkg.to_str().unwrap()).unwrap();
     assert_eq!(descriptor.name, "manifest-name");
     assert_eq!(descriptor.version, "1.0.0");
-    assert_eq!(descriptor.acp_entrypoint.as_deref(), Some("agent-cmd"));
     let provides = descriptor.provides.as_ref().expect("provides");
     assert_eq!(
         provides.env.get("FROM_MANIFEST").map(String::as_str),
@@ -241,19 +239,31 @@ fn duplicate_commands_are_rejected_before_mounting() {
 }
 
 #[test]
-fn invalid_agent_entrypoint_is_rejected() {
-    let pkg = unique_dir("bad-agent");
-    write_package(&pkg, "agent", "1.0.0", &["real"]);
-    fs::write(
-        pkg.join("agentos-package.json"),
-        r#"{"name":"agent","version":"1.0.0","agent":{"acpEntrypoint":"missing"}}"#,
+fn package_leaf_builder_honors_adjustable_limit() {
+    let pkg = tempfile::tempdir().unwrap();
+    write_package(pkg.path(), "limited", "1.0.0", &["limited"]);
+    let descriptor = read_package_manifest_from_path(pkg.path().to_str().unwrap()).unwrap();
+    let error = agentos_vm::package_projection::build_package_leaf_mounts_with_limit(
+        std::slice::from_ref(&descriptor),
+        "/opt/agentos",
+        2,
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        agentos_vm::VmError::PackageMountLimit {
+            used: 0,
+            requested: 3,
+            limit: 2
+        }
+    ));
+    let mounts = agentos_vm::package_projection::build_package_leaf_mounts_with_limit(
+        &[descriptor],
+        "/opt/agentos",
+        3,
     )
     .unwrap();
-    finalize_package_tar(&pkg);
-
-    let descriptor = read_package_manifest_from_path(pkg.to_str().unwrap()).unwrap();
-    let err = build_package_leaf_mounts(&[descriptor], "/opt/agentos").unwrap_err();
-    assert!(err.to_string().contains("acpEntrypoint"), "{err}");
+    assert_eq!(mounts.len(), 3);
 }
 
 #[test]

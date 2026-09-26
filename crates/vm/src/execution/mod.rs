@@ -2,11 +2,21 @@
 
 mod child_process;
 use self::child_process::*;
+pub(crate) use self::child_process::{
+    service_owned_child_bridge_event, OwnedChildBridgeEventService,
+};
 mod coordinator;
+mod owned_rpc;
 use self::coordinator::*;
+pub(crate) use self::coordinator::{
+    close_stdin_owned, guest_kernel_core_error, resize_pty_owned, write_stdin_owned,
+    OwnedVmRouteFuture, OwnedVmRouteInput,
+};
 mod launch;
-pub(crate) use self::launch::sanitize_javascript_child_process_internal_bootstrap_env;
 use self::launch::*;
+pub(crate) use self::launch::{
+    execute_owned, sanitize_javascript_child_process_internal_bootstrap_env,
+};
 mod host_dispatch;
 use self::host_dispatch::*;
 pub(crate) use host_dispatch::checked_deferred_guest_wait_deadline;
@@ -14,14 +24,16 @@ mod process;
 use self::process::*;
 pub(crate) use self::process::{settle_execution_host_call, terminate_child_process_tree};
 mod process_events;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 #[allow(unused_imports)]
-pub(crate) use self::process_events::send_binding_process_event;
+pub(crate) use self::process_events::send_host_function_process_event;
 use self::process_events::*;
 pub(crate) use self::process_events::{
-    mark_execute_exit_event_queued, record_execute_exit_event_queue_wait, record_execute_phase,
-    record_execute_response_to_exit_milestone,
+    internal_event_reply, mark_execute_exit_event_queued, record_execute_exit_event_queue_wait,
+    record_execute_phase, record_execute_response_to_exit_milestone, OwnedHostEventService,
+    ProcessEventPumpTurn,
 };
+pub(crate) use self::signals::kill_process_owned;
 mod signals;
 #[cfg(test)]
 #[allow(unused_imports)]
@@ -60,15 +72,16 @@ pub(crate) use self::javascript::{
 };
 pub(crate) use self::javascript::{
     deferred_kernel_wait_request_for_process, dispatch_loopback_http_request_deferred,
-    ensure_vm_fetch_response_frame_within_limit, error_code, host_bytes_value,
-    host_service_error_code, javascript_sync_rpc_arg_bool, javascript_sync_rpc_arg_i32,
-    javascript_sync_rpc_arg_str, javascript_sync_rpc_arg_u32, javascript_sync_rpc_arg_u32_optional,
-    javascript_sync_rpc_arg_u64, javascript_sync_rpc_arg_u64_optional,
-    javascript_sync_rpc_bytes_arg, javascript_sync_rpc_encoding,
-    javascript_sync_rpc_may_make_fd_readable, javascript_sync_rpc_may_make_fd_writable,
-    javascript_sync_rpc_option_bool, javascript_sync_rpc_option_u32,
-    service_javascript_crypto_sync_rpc, service_javascript_sync_rpc, HostServiceResponse,
-    JavascriptSyncRpcServiceRequest, KernelPollFdRequest, LoopbackHttpDispatchRequest,
+    ensure_vm_fetch_response_frame_within_limit, error_code, find_vm_fetch_target_process,
+    host_bytes_value, host_service_error_code, javascript_sync_rpc_arg_bool,
+    javascript_sync_rpc_arg_i32, javascript_sync_rpc_arg_str, javascript_sync_rpc_arg_u32,
+    javascript_sync_rpc_arg_u32_optional, javascript_sync_rpc_arg_u64,
+    javascript_sync_rpc_arg_u64_optional, javascript_sync_rpc_bytes_arg,
+    javascript_sync_rpc_encoding, javascript_sync_rpc_may_make_fd_readable,
+    javascript_sync_rpc_may_make_fd_writable, javascript_sync_rpc_option_bool,
+    javascript_sync_rpc_option_u32, service_javascript_crypto_sync_rpc,
+    service_javascript_sync_rpc, HostServiceResponse, JavascriptSyncRpcServiceRequest,
+    KernelPollFdRequest, LoopbackHttpDispatchRequest,
 };
 use agentos_vm_config as vm_config;
 
@@ -82,13 +95,14 @@ fn executor_feature_disabled(executor: &str, feature: &str) -> VmError {
     ))
 }
 
-use crate::bindings::{
-    format_binding_failure_output, is_binding_command, normalized_binding_command_name,
-    resolve_binding_command, BindingCommandResolution,
-};
 use crate::filesystem::{
     service_javascript_fs_read_sync_rpc, service_javascript_fs_readdir_raw_sync_rpc,
     service_javascript_fs_sync_rpc, service_javascript_module_sync_rpc,
+};
+use crate::host_functions::{
+    format_host_function_failure_output, is_host_function_command,
+    normalized_host_function_command_name, resolve_host_function_command,
+    HostFunctionCommandResolution,
 };
 use crate::protocol::{
     CloseStdinRequest, DgramBindOptions, DgramConnectOptions, DgramCreateSocketOptions,
@@ -122,13 +136,14 @@ use crate::state::{
     ActiveHttp2Server, ActiveHttp2Session, ActiveHttp2Stream, ActiveHttpServer, ActiveProcess,
     ActiveRealIntervalTimer, ActiveSqliteDatabase, ActiveSqliteStatement, ActiveTcpListener,
     ActiveTcpSocket, ActiveTlsState, ActiveUdpSocket, ActiveUnixListener, ActiveUnixSocket,
-    AsyncCompletionReceiver, AsyncCompletionSender, BindingExecution, BridgeError, DatagramEvent,
-    DeferredGuestWait, DeferredGuestWaitKind, DeferredKernelPoll, DeferredKernelRead,
-    DeferredKernelReadResponse, ExecutionAdapterPolicy, ExecutionHostCall, ExitedProcessSnapshot,
-    GuestUnixAddress, GuestUnixAddressRegistry, GuestUnixAddressRegistryEntry,
-    GuestUnixConnectionState, HostNetTransferDescription, HostNetTransferDescriptionRegistry,
-    Http2BridgeEvent, Http2ResponseSender, Http2RuntimeSnapshot, Http2SessionCommand,
-    Http2SessionSnapshot, Http2SocketSnapshot, HttpLoopbackTarget, KernelSocketReadinessEvent,
+    AsyncCompletionReceiver, AsyncCompletionSender, BridgeError, DatagramEvent, DeferredGuestWait,
+    DeferredGuestWaitKind, DeferredKernelPoll, DeferredKernelRead, DeferredKernelReadResponse,
+    ExecutionAdapterPolicy, ExecutionHostCall, ExitedProcessSnapshot, GuestUnixAddress,
+    GuestUnixAddressRegistry, GuestUnixAddressRegistryEntry, GuestUnixConnectionState,
+    GuestUnixListenerRoute, HostFunctionExecution, HostNetTransferDescription,
+    HostNetTransferDescriptionRegistry, Http2BridgeEvent, Http2ResponseSender,
+    Http2RuntimeSnapshot, Http2SessionCommand, Http2SessionSnapshot, Http2SocketSnapshot,
+    HttpLoopbackTarget, JavascriptHttp2LoopbackTarget, KernelSocketReadinessEvent,
     KernelSocketReadinessRegistry, KernelSocketReadinessTarget, ListenerConnectionRetirement,
     NativeCapabilityKey, NativePlainSocketCommand, NativeTlsCommand, NativeUdpCommand,
     NativeUdpSendPayload, NativeUdpSocketOption, NetworkResourceCounts, PendingChildProcessSync,
@@ -141,10 +156,11 @@ use crate::state::{
     SocketReadinessRegistration, SocketReadinessSubscribers, TcpListenerEvent, TcpSocketEvent,
     TlsBridgeOptions, TlsClientHello, TlsDataValue, TlsMaterial, TlsWritePayload, UdpFamily,
     UnixListenerEvent, VmDnsConfig, VmFetchBodyMode, VmFetchStreamState, VmListenPolicy,
-    VmPendingBudgetReservation, VmPendingByteBudget, VmState, BINDING_DRIVER_NAME,
-    DEFAULT_NET_BACKLOG, EXECUTION_DRIVER_NAME, EXECUTION_SANDBOX_ROOT_ENV, JAVASCRIPT_COMMAND,
-    LOOPBACK_EXEMPT_PORTS_ENV, PYTHON_COMMAND, VM_LISTEN_ALLOW_PRIVILEGED_METADATA_KEY,
-    WASM_COMMAND, WASM_EXEC_COMMIT_RPC_ENV, WASM_STDIO_SYNC_RPC_ENV,
+    VmPendingBudgetReservation, VmPendingByteBudget, VmState, DEFAULT_NET_BACKLOG,
+    EXECUTION_DRIVER_NAME, EXECUTION_SANDBOX_ROOT_ENV, HOST_FUNCTION_DRIVER_NAME,
+    JAVASCRIPT_COMMAND, LOOPBACK_EXEMPT_PORTS_ENV, PYTHON_COMMAND,
+    VM_LISTEN_ALLOW_PRIVILEGED_METADATA_KEY, WASM_COMMAND, WASM_EXEC_COMMIT_RPC_ENV,
+    WASM_STDIO_SYNC_RPC_ENV,
 };
 use crate::wire::{ProtocolFrame as WireProtocolFrame, WireFrameCodec};
 use crate::{DispatchResult, VmError, VmManager, VmManagerHost};
@@ -159,9 +175,6 @@ use md5::Md5;
 use nix::libc;
 use nix::poll::{poll, PollFd as NixPollFd, PollFlags, PollTimeout};
 use nix::sys::signal::{kill as send_signal, Signal};
-#[cfg(target_os = "linux")]
-use nix::sys::socket::connect as connect_socket;
-use nix::sys::socket::{bind as bind_socket, UnixAddr};
 use nix::sys::wait::WaitStatus;
 #[cfg(not(target_os = "macos"))]
 use nix::sys::wait::{waitid as wait_on_child, Id as WaitId, WaitPidFlag};
@@ -277,7 +290,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use sha1::Sha1;
 use sha2::{digest::Digest, Sha224, Sha256, Sha384, Sha512};
-use socket2::{Domain, SockAddr, SockRef, Socket, TcpKeepalive, Type};
+use socket2::{SockAddr, SockRef, TcpKeepalive};
 use std::collections::VecDeque;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -314,7 +327,6 @@ fn reactor_io_limits(limits: &crate::limits::VmLimits) -> ReactorIoLimits {
     ReactorIoLimits {
         operation_quantum: limits.reactor.per_handle_operation_quantum,
         byte_quantum: limits.reactor.byte_quantum,
-        accept_quantum: limits.reactor.accept_quantum,
         datagram_quantum: limits.reactor.datagram_quantum,
         max_handle_commands: limits.reactor.max_handle_commands,
         max_async_completions: limits.reactor.max_async_completions,
@@ -495,7 +507,7 @@ fn listener_accept_capacity(backlog: Option<u32>, limits: ReactorIoLimits) -> us
         .min(socket_completion_capacity(limits))
 }
 
-const BINDING_HOST_CALL_BLOCKING_JOB_BYTES: usize = 64 * 1024;
+const HOST_FUNCTION_CALL_BLOCKING_JOB_BYTES: usize = 64 * 1024;
 
 pub(crate) const MAX_PER_PROCESS_STATE_HANDLES: usize = 1024;
 const HTTP_LOOPBACK_REQUEST_TIMEOUT_MS_ENV: &str = "AGENTOS_TEST_HTTP_LOOPBACK_REQUEST_TIMEOUT_MS";

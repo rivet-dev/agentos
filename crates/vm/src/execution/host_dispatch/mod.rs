@@ -1,7 +1,7 @@
 //! Production runtime-neutral host-operation dispatch.
 //!
-//! Execution adapters decode only calls whose wire contract is already an
-//! exact match for a [`HostOperation`]. Everything below this router is split
+//! Execution adapters decode calls into [`HostOperation`] values, preserving
+//! compatibility reply formats at this boundary. Everything below this router is split
 //! by capability family and invokes the existing kernel semantic operation;
 //! no Linux state is mirrored here.
 
@@ -728,6 +728,53 @@ pub(super) fn authorize_host_operation(
     }
 }
 
+#[derive(Clone, Copy)]
+enum CompatibilityNetworkReply {
+    Accept,
+    NodeRead,
+}
+
+struct CompatibilityNetworkReplyTarget {
+    original: DirectHostReplyHandle,
+    format: CompatibilityNetworkReply,
+}
+
+impl crate::executor::backend::DirectHostReplyTarget for CompatibilityNetworkReplyTarget {
+    fn claim(&self, _: u64) -> Result<bool, HostServiceError> {
+        self.original.claim()
+    }
+
+    fn respond(
+        &self,
+        _: u64,
+        _: bool,
+        result: Result<HostCallReply, HostServiceError>,
+    ) -> Result<(), HostServiceError> {
+        let reply = match result {
+            Ok(HostCallReply::Json(value))
+                if value.get("kind").and_then(Value::as_str) == Some("wouldBlock") =>
+            {
+                HostCallReply::Json(net_timeout_value())
+            }
+            Ok(HostCallReply::Raw(bytes))
+                if matches!(self.format, CompatibilityNetworkReply::NodeRead) =>
+            {
+                HostCallReply::Json(Value::String(base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    bytes,
+                )))
+            }
+            Ok(reply) => reply,
+            Err(error) => return self.original.fail(error),
+        };
+        self.original.succeed(reply)
+    }
+
+    fn dismiss_claimed(&self, _: u64) -> Result<(), HostServiceError> {
+        self.original.dismiss_claimed()
+    }
+}
+
 pub(super) fn decode_compatibility_host_call(
     call: ExecutionHostCall,
     full_filesystem: bool,
@@ -738,9 +785,30 @@ pub(super) fn decode_compatibility_host_call(
     let Some(operation) = decode_host_operation(request, full_filesystem, max_reply_bytes)? else {
         return Ok(ActiveExecutionEvent::HostRpcRequest(call));
     };
+    // Node's compatibility bridge predates typed managed-network replies.
+    // Preserve its sentinel/base64 ABI only at this request boundary; typed
+    // host operations and the WASM runner's explicit read form retain bytes.
+    let format = match request.method.as_str() {
+        "net.server_accept" => Some(CompatibilityNetworkReply::Accept),
+        "net.socket_read" if request.args.len() == 1 => Some(CompatibilityNetworkReply::NodeRead),
+        _ => None,
+    };
+    let reply = if let Some(format) = format {
+        DirectHostReplyHandle::new(
+            call.reply.identity(),
+            Arc::new(CompatibilityNetworkReplyTarget {
+                original: call.reply,
+                format,
+            }),
+            max_reply_bytes,
+        )
+        .map_err(VmError::from)?
+    } else {
+        call.reply
+    };
     Ok(ActiveExecutionEvent::Common(ExecutionEvent::HostCall {
         operation,
-        reply: call.reply,
+        reply,
     }))
 }
 
@@ -2440,19 +2508,91 @@ pub(super) fn requires_context_host_dispatch(operation: &HostOperation) -> bool 
 /// Dispatch operations that need VM-scoped sidecar capabilities in addition
 /// to the kernel/process pair. Waiting variants use this seam as well: they
 /// retain only owned operation data and the direct reply capability.
-pub(super) async fn dispatch_context_host_operation<B>(
+impl<B> VmManager<B>
+where
+    B: VmManagerHost + Send + 'static,
+    BridgeError<B>: fmt::Debug + Send + Sync + 'static,
+{
+    /// Called only after internal-event admission. Preparation performs bounded
+    /// synchronous work; any returned wait owns its VM handle and reply.
+    pub(crate) fn prepare_owned_root_host_call(
+        &mut self,
+        vm_id: &str,
+        process_id: &str,
+        vm: crate::state::VmHandle,
+        operation: HostOperation,
+        reply: DirectHostReplyHandle,
+    ) -> Pin<Box<dyn Future<Output = Result<(), VmError>> + 'static>> {
+        let future = dispatch_context_host_operation(self, vm_id, process_id, operation, reply);
+        let process_id = process_id.to_owned();
+        let notify = Arc::clone(&self.process_event_notify);
+        Box::pin(async move {
+            let Some((operation, reply)) = future.await? else {
+                return Ok(());
+            };
+            vm.try_command("dispatch admitted host operation", |vm| {
+                let generation = vm.generation;
+                let Some(process) = vm.active_processes.get_mut(&process_id) else {
+                    reply
+                        .fail(HostServiceError::new(
+                            "ESTALE",
+                            "host call process has exited",
+                        ))
+                        .map_err(VmError::from)?;
+                    return Ok(());
+                };
+                let effects =
+                    dispatch_host_operation(generation, &mut vm.kernel, process, operation, reply)?;
+                if effects.may_make_fd_readable {
+                    Self::wake_ready_deferred_fd_reads(vm)?;
+                }
+                if effects.may_make_fd_writable {
+                    Self::wake_ready_deferred_fd_writes(vm)?;
+                }
+                notify.notify_one();
+                Ok(())
+            })
+        })
+    }
+}
+
+type OwnedContextHostFuture = Pin<
+    Box<
+        dyn Future<Output = Result<Option<(HostOperation, DirectHostReplyHandle)>, VmError>>
+            + 'static,
+    >,
+>;
+
+pub(super) fn dispatch_context_host_operation<B>(
     sidecar: &mut VmManager<B>,
     vm_id: &str,
     process_id: &str,
     operation: HostOperation,
     reply: DirectHostReplyHandle,
-) -> Result<Option<(HostOperation, DirectHostReplyHandle)>, VmError>
+) -> OwnedContextHostFuture
+where
+    B: VmManagerHost + Send + 'static,
+    BridgeError<B>: fmt::Debug + Send + Sync + 'static,
+{
+    match prepare_context_host_operation(sidecar, vm_id, process_id, operation, reply) {
+        Ok(future) => future,
+        Err(error) => Box::pin(async move { Err(error) }),
+    }
+}
+
+fn prepare_context_host_operation<B>(
+    sidecar: &mut VmManager<B>,
+    vm_id: &str,
+    process_id: &str,
+    operation: HostOperation,
+    reply: DirectHostReplyHandle,
+) -> Result<OwnedContextHostFuture, VmError>
 where
     B: VmManagerHost + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
     if !validate_context_host_call(sidecar, vm_id, process_id, &reply)? {
-        return Ok(None);
+        return Ok(Box::pin(async { Ok(None) }));
     }
     let vm = sidecar
         .vms
@@ -2460,9 +2600,10 @@ where
         .expect("validated host-call VM remains registered");
     if let Err(error) = authorize_host_operation(&vm.kernel, reply.identity().pid, &operation) {
         reply.fail(error).map_err(VmError::from)?;
-        return Ok(None);
+        return Ok(Box::pin(async { Ok(None) }));
     }
-    match operation {
+    drop(vm);
+    let result = match operation {
         HostOperation::Network(operation @ NetworkOperation::HttpRequest { .. }) => {
             dispatch_context_http_operation(sidecar, vm_id, process_id, operation, reply)?;
             Ok(None)
@@ -2563,8 +2704,7 @@ where
         ) => {
             network_compat::dispatch_context_managed_network_operation(
                 sidecar, vm_id, process_id, operation, reply,
-            )
-            .await?;
+            )?;
             Ok(None)
         }
         HostOperation::Process(
@@ -2575,9 +2715,9 @@ where
             | ProcessOperation::WriteChildStdin { .. }
             | ProcessOperation::CloseChildStdin { .. }),
         ) => {
-            dispatch_context_process_operation(sidecar, vm_id, process_id, operation, reply)
-                .await?;
-            Ok(None)
+            let future =
+                dispatch_context_process_operation(sidecar, vm_id, process_id, operation, reply);
+            return Ok(Box::pin(async move { future.await.map(|()| None) }));
         }
         HostOperation::Process(ProcessOperation::Wait {
             target,
@@ -2592,7 +2732,7 @@ where
                         "waitpid does not accept a temporary signal mask",
                     ))
                     .map_err(VmError::from)?;
-                return Ok(None);
+                return Ok(Box::pin(async { Ok(None) }));
             }
             let deadline = match deadline_ms
                 .map(checked_deferred_guest_wait_deadline)
@@ -2601,7 +2741,7 @@ where
                 Ok(deadline) => deadline,
                 Err(error) => {
                     reply.fail(error).map_err(VmError::from)?;
-                    return Ok(None);
+                    return Ok(Box::pin(async { Ok(None) }));
                 }
             };
             dispatch_context_guest_wait(
@@ -2619,7 +2759,7 @@ where
                 Ok(deadline) => deadline,
                 Err(error) => {
                     reply.fail(error).map_err(VmError::from)?;
-                    return Ok(None);
+                    return Ok(Box::pin(async { Ok(None) }));
                 }
             };
             dispatch_context_guest_wait(
@@ -2633,7 +2773,8 @@ where
             Ok(None)
         }
         operation => Ok(Some((operation, reply))),
-    }
+    };
+    Ok(Box::pin(async move { result }))
 }
 
 fn dispatch_context_guest_wait<B>(
@@ -2652,13 +2793,14 @@ where
         return Ok(());
     }
     let notify = Arc::clone(&sidecar.process_event_notify);
-    let vm = sidecar
+    let mut vm = sidecar
         .vms
         .get_mut(vm_id)
         .expect("validated VM must remain borrowed");
     let runtime = vm.runtime_context.clone();
     let wait_handle = vm.kernel.process_wait_handle();
     let generation = vm.generation;
+    let vm = &mut *vm;
     let (kernel, active_processes) = (&mut vm.kernel, &mut vm.active_processes);
     let process = active_processes
         .get_mut(process_id)
@@ -3006,7 +3148,7 @@ where
         return Ok(());
     }
     let prepared = (|| {
-        let vm = sidecar
+        let mut vm = sidecar
             .vms
             .get_mut(vm_id)
             .expect("validated HTTP host-call VM remains registered");
@@ -3121,19 +3263,20 @@ where
     Ok(())
 }
 
-async fn dispatch_context_process_operation<B>(
+fn dispatch_context_process_operation<B>(
     sidecar: &mut VmManager<B>,
     vm_id: &str,
     process_id: &str,
     operation: ProcessOperation,
     reply: DirectHostReplyHandle,
-) -> Result<(), VmError>
+) -> Pin<Box<dyn Future<Output = Result<(), VmError>> + 'static>>
 where
     B: VmManagerHost + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
+    let prepared = (|| -> Result<Option<Pin<Box<dyn Future<Output = Result<(), VmError>> + 'static>>>, VmError> {
     if !validate_context_host_call(sidecar, vm_id, process_id, &reply)? {
-        return Ok(());
+        return Ok(None);
     }
 
     match operation {
@@ -3143,15 +3286,16 @@ where
                 .and_then(|()| validate_process_launch_request(&request, false))
             {
                 settle_context_process_reply(&reply, Err(error))?;
-                return Ok(());
+                return Ok(None);
             }
             if !reply.claim().map_err(VmError::from)? {
-                return Ok(());
+                return Ok(None);
             }
-            let result = sidecar
-                .spawn_child_process(vm_id, process_id, request)
-                .await;
-            settle_context_process_reply(&reply, result.map(HostCallReply::Json))?;
+            let future = sidecar.spawn_child_process(vm_id, process_id, request);
+            return Ok(Some(Box::pin(async move {
+                let result = future.await;
+                settle_context_process_reply(&reply, result.map(HostCallReply::Json))
+            })));
         }
         ProcessOperation::RunCaptured {
             request,
@@ -3162,50 +3306,42 @@ where
                 .and_then(|()| validate_process_launch_request(&request, false))
             {
                 settle_context_process_reply(&reply, Err(error))?;
-                return Ok(());
+                return Ok(None);
             }
             if !reply.claim().map_err(VmError::from)? {
-                return Ok(());
+                return Ok(None);
             }
             let completion = PendingChildProcessSyncCompletion::Direct(reply.clone());
-            if let Err(error) = sidecar
-                .begin_javascript_child_process_sync(
-                    vm_id,
-                    process_id,
-                    request,
-                    Some(max_buffer.get()),
-                    completion,
-                )
-                .await
-            {
-                reply
-                    .fail(host_service_error(&error))
-                    .map_err(VmError::from)?;
-            }
+            let future = sidecar.begin_javascript_child_process_sync(vm_id, process_id, request, Some(max_buffer.get()), completion);
+            return Ok(Some(Box::pin(async move {
+                if let Err(error) = future.await {
+                    reply.fail(host_service_error(&error)).map_err(VmError::from)?;
+                }
+                Ok(())
+            })));
         }
-        ProcessOperation::PollChild { child_id, wait_ms } => {
+        ProcessOperation::PollChild { child_id, wait_ms: _ } => {
             if let Err(error) =
                 sidecar.validate_child_poll_target(vm_id, process_id, &[], child_id.as_str())
             {
                 settle_context_process_reply(&reply, Err(error))?;
-                return Ok(());
+                return Ok(None);
             }
             if !reply.claim().map_err(VmError::from)? {
-                return Ok(());
+                return Ok(None);
             }
             // Polling is deliberately nonblocking in the sidecar. Settle the
             // claimed reply in this event turn so the guest can re-poll after
             // a concurrent child HostCall without depending on another edge
             // from the shared process broker.
             let result = sidecar
-                .poll_child_process(vm_id, process_id, child_id.as_str(), wait_ms)
-                .await
+                .poll_child_process_nowait(vm_id, process_id, child_id.as_str())
                 .map(HostCallReply::Json);
             settle_context_process_reply(&reply, result)?;
         }
         ProcessOperation::WriteChildStdin { child_id, chunk } => {
             if !reply.claim().map_err(VmError::from)? {
-                return Ok(());
+                return Ok(None);
             }
             let result = sidecar
                 .write_child_process_stdin(vm_id, process_id, child_id.as_str(), chunk.as_slice())
@@ -3214,7 +3350,7 @@ where
         }
         ProcessOperation::CloseChildStdin { child_id } => {
             if !reply.claim().map_err(VmError::from)? {
-                return Ok(());
+                return Ok(None);
             }
             let result = sidecar
                 .close_child_process_stdin(vm_id, process_id, child_id.as_str())
@@ -3232,10 +3368,10 @@ where
             };
             if let Err(error) = preflight {
                 settle_context_process_reply(&reply, Err(error))?;
-                return Ok(());
+                return Ok(None);
             }
             if !reply.claim().map_err(VmError::from)? {
-                return Ok(());
+                return Ok(None);
             }
             let local_replacement = request.options.local_replacement;
             let result = if fd_image_commit {
@@ -3259,7 +3395,12 @@ where
                 .map_err(VmError::from)?;
         }
     }
-    Ok(())
+    Ok(None)
+    })();
+    match prepared {
+        Ok(Some(future)) => future,
+        result => Box::pin(async move { result.map(|_| ()) }),
+    }
 }
 
 pub(super) fn merge_process_internal_bootstrap_env<B>(
@@ -4129,5 +4270,130 @@ mod tests {
                 clock: GuestClockId::Monotonic,
             },
         )));
+    }
+}
+
+#[cfg(test)]
+mod compatibility_network_reply_tests {
+    use super::*;
+    use crate::executor::backend::{DirectHostReplyTarget, HostCallIdentity};
+
+    #[derive(Default)]
+    struct Replies(Mutex<Vec<HostCallReply>>);
+    impl DirectHostReplyTarget for Replies {
+        fn claim(&self, _: u64) -> Result<bool, HostServiceError> {
+            Ok(true)
+        }
+        fn respond(
+            &self,
+            _: u64,
+            _: bool,
+            result: Result<HostCallReply, HostServiceError>,
+        ) -> Result<(), HostServiceError> {
+            self.0.lock().unwrap().push(result?);
+            Ok(())
+        }
+    }
+
+    fn reply_for(method: &str, args: Vec<Value>) -> (DirectHostReplyHandle, Arc<Replies>) {
+        let target = Arc::new(Replies::default());
+        let original = DirectHostReplyHandle::new(
+            HostCallIdentity {
+                generation: 1,
+                pid: 1,
+                call_id: 1,
+            },
+            target.clone(),
+            4096,
+        )
+        .unwrap();
+        let event = decode_compatibility_host_call(
+            ExecutionHostCall {
+                request: HostRpcRequest {
+                    id: 1,
+                    method: method.into(),
+                    args,
+                    raw_bytes_args: Default::default(),
+                },
+                reply: original,
+            },
+            true,
+            4096,
+        )
+        .unwrap();
+        let ActiveExecutionEvent::Common(ExecutionEvent::HostCall { reply, .. }) = event else {
+            panic!("typed route")
+        };
+        (reply, target)
+    }
+
+    #[test]
+    fn compatibility_accept_preserves_guest_timeout_sentinel() {
+        let (reply, target) = reply_for("net.server_accept", vec![json!("listener-1")]);
+        reply
+            .succeed(HostCallReply::Json(json!({"kind":"wouldBlock"})))
+            .unwrap();
+        assert!(
+            matches!(&target.0.lock().unwrap()[0], HostCallReply::Json(value) if value == &net_timeout_value())
+        );
+    }
+
+    #[test]
+    fn compatibility_node_read_preserves_base64_and_timeout() {
+        let (reply, target) = reply_for("net.socket_read", vec![json!("socket-1")]);
+        reply
+            .succeed(HostCallReply::Raw(b"hello".to_vec()))
+            .unwrap();
+        assert!(
+            matches!(&target.0.lock().unwrap()[0], HostCallReply::Json(value) if value == &json!("aGVsbG8="))
+        );
+        let (reply, target) = reply_for("net.socket_read", vec![json!("socket-1")]);
+        reply
+            .succeed(HostCallReply::Json(json!({"kind":"wouldBlock"})))
+            .unwrap();
+        assert!(
+            matches!(&target.0.lock().unwrap()[0], HostCallReply::Json(value) if value == &net_timeout_value())
+        );
+        let (reply, target) = reply_for("net.socket_read", vec![json!("socket-1")]);
+        reply.succeed(HostCallReply::Json(Value::Null)).unwrap();
+        assert!(matches!(
+            &target.0.lock().unwrap()[0],
+            HostCallReply::Json(Value::Null)
+        ));
+    }
+
+    #[test]
+    fn compatibility_node_read_defaults_to_a_bounded_nonzero_chunk() {
+        for (args, expected) in [
+            (vec![json!("socket-1")], 64 * 1024),
+            (vec![json!("socket-1"), json!(0)], 0),
+        ] {
+            let request = HostRpcRequest {
+                id: 1,
+                method: "net.socket_read".into(),
+                args,
+                raw_bytes_args: Default::default(),
+            };
+            let operation = decode_host_operation(&request, true, 1024 * 1024)
+                .unwrap()
+                .unwrap();
+            assert!(
+                matches!(operation, HostOperation::Network(NetworkOperation::ManagedRead { max_bytes, .. }) if max_bytes == expected)
+            );
+        }
+    }
+
+    #[test]
+    fn compatibility_wasm_read_keeps_typed_bytes() {
+        let (reply, target) = reply_for(
+            "net.socket_read",
+            vec![json!("socket-1"), json!(1024), json!(false), json!(0)],
+        );
+        reply
+            .succeed(HostCallReply::Raw(b"hello".to_vec()))
+            .unwrap();
+        assert!(
+            matches!(&target.0.lock().unwrap()[0], HostCallReply::Raw(bytes) if bytes == b"hello")
+        );
     }
 }

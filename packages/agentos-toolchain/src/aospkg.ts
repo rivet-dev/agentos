@@ -1,7 +1,7 @@
 /**
  * `.aospkg` packer — the toolchain half of the canonical packer in
  * `crates/vfs-core/src/package_format/pack.rs` (both encode the schema in
- * `crates/vfs-core/package-format/v1.bare`; the TS codecs are generated from it by
+ * `crates/vfs-core/package-format/v2.bare`; the TS codecs are generated from it by
  * `pnpm --dir packages/build-tools build:package-format`).
  *
  * Container layout: `16-byte header + vbare PackageManifest + vbare MountIndex
@@ -20,7 +20,6 @@ import {
 	encodeMountIndex,
 	encodePackageManifest,
 	TarEntryKind,
-	type AgentBlock,
 	type CommandTarget,
 	type ManPage,
 	type PackageManifest,
@@ -29,10 +28,9 @@ import {
 } from "./generated-package-format.js";
 
 const AOSPKG_MAGIC = Uint8Array.from([0x89, 0x41, 0x4f, 0x53]); // 0x89 'A' 'O' 'S'
-const AOSPKG_FORMAT_VERSION = 1;
-const PACKAGE_MANIFEST_VERSION = 1;
+const AOSPKG_FORMAT_VERSION = 2;
+const PACKAGE_MANIFEST_VERSION = 2;
 const MANIFEST_JSON_NAME = "agentos-package.json";
-const SNAPSHOT_BUNDLE_PATH = "/dist/sdk-snapshot.js";
 const BLOCK = 512;
 /** Pack-time mirror of the load-side index cap (`MAX_TAR_INDEX_ENTRIES`). */
 const MAX_PACK_INDEX_ENTRIES = 200_000;
@@ -76,12 +74,6 @@ export function decodeAospkgManifest(source: Uint8Array): DecodedAospkgManifest 
 interface SourceManifestJson {
 	name?: string;
 	version?: string;
-	agent?: {
-		acpEntrypoint: string;
-		snapshot?: boolean;
-		env?: Record<string, string>;
-		launchArgs?: string[];
-	};
 	provides?: {
 		env?: Record<string, string>;
 		files?: { source: string; target: string }[];
@@ -198,20 +190,12 @@ export function packAospkgFromTarBytes(source: Buffer): {
 	const tarEntries = sortedPaths.map((path) => entries.get(path) as TarEntry);
 	const commands = commandTargets(sortedPaths, packageJson);
 	const manPages = manPagesFromIndex(sortedPaths);
-	const agent = agentBlock(sourceManifest);
-	const snapshotBundlePath =
-		agent?.snapshot && entries.has(SNAPSHOT_BUNDLE_PATH)
-			? SNAPSHOT_BUNDLE_PATH
-			: null;
-
 	const manifest: PackageManifest = {
 		name,
 		version,
-		agent,
 		provides: providesBlock(sourceManifest),
 		commands,
 		manPages,
-		snapshotBundlePath,
 	};
 
 	const manifestChunk = versionedChunk(encodePackageManifest(manifest));
@@ -238,17 +222,6 @@ function versionedChunk(payload: Uint8Array): Buffer {
 	chunk.writeUInt16LE(PACKAGE_MANIFEST_VERSION, 0);
 	Buffer.from(payload).copy(chunk, 2);
 	return chunk;
-}
-
-function agentBlock(manifest: SourceManifestJson): AgentBlock | null {
-	const agent = manifest.agent;
-	if (agent === undefined) return null;
-	return {
-		acpEntrypoint: agent.acpEntrypoint,
-		snapshot: agent.snapshot ?? false,
-		env: new Map(Object.entries(agent.env ?? {})),
-		launchArgs: agent.launchArgs ?? [],
-	};
 }
 
 function providesBlock(manifest: SourceManifestJson): ProvidesBlock | null {

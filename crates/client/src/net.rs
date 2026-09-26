@@ -57,8 +57,48 @@ pub struct HttpResponse {
     pub status: u16,
     #[serde(rename = "statusText")]
     pub status_text: String,
-    pub headers: BTreeMap<String, String>,
+    pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HttpStreamHead {
+    pub stream_id: String,
+    pub status: u16,
+    pub status_text: String,
+    pub headers: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HttpStreamChunk {
+    pub body: Vec<u8>,
+    pub done: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VmFetchStreamHeadPayload {
+    stream_id: String,
+    status: u16,
+    #[serde(default)]
+    status_text: Option<String>,
+    #[serde(default)]
+    headers: Option<Vec<(String, String)>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct VmFetchStreamChunkPayload {
+    body: String,
+    done: bool,
+}
+
+struct PreparedHttpRequest {
+    port: u16,
+    path: String,
+    method: String,
+    headers_json: String,
+    body_base64: Option<String>,
 }
 
 impl AgentOs {
@@ -68,84 +108,20 @@ impl AgentOs {
     /// is only sent for methods other than GET/HEAD. The response body is base64-decoded.
     pub async fn http_request(&self, request: HttpRequest) -> Result<HttpResponse> {
         let buffer_limit = self.fetch_buffer_limit();
-        let HttpRequest {
-            port,
-            path,
-            method,
-            headers: header_map,
-            body,
-        } = request;
-        if !path.starts_with('/') {
-            return Err(ClientError::Sidecar(format!(
-                "HTTP request path must be absolute: {path}"
-            ))
-            .into());
-        }
-        ensure_fetch_component_within_limit("HTTP request path", path.len(), buffer_limit)?;
-        let method = method.to_uppercase();
-        let raw_header_bytes = header_map.iter().fold(0usize, |size, (name, value)| {
-            size.saturating_add(name.len()).saturating_add(value.len())
-        });
-        ensure_fetch_component_within_limit(
-            "fetch request headers",
-            raw_header_bytes,
-            buffer_limit,
-        )?;
-        let headers_json =
-            serde_json::to_string(&header_map).context("serializing fetch request headers")?;
-        ensure_fetch_component_within_limit(
-            "fetch request headers json",
-            headers_json.len(),
-            buffer_limit,
-        )?;
-
-        // Body is only attached for methods other than GET/HEAD (TS `request.method !== "GET" && ...`).
-        let wire_body = if method == "GET" || method == "HEAD" {
-            None
-        } else {
-            body.map(|body| String::from_utf8_lossy(&body).into_owned())
-        };
-        if let Some(body) = &wire_body {
-            ensure_fetch_component_within_limit("HTTP request body", body.len(), buffer_limit)?;
-        }
-        ensure_fetch_request_payload_within_limit(
-            &method,
-            &path,
-            &headers_json,
-            wire_body.as_deref(),
-            buffer_limit,
-        )?;
-
-        let response = self
-            .transport()
-            .request_wire_bounded(
-                self.vm_fetch_ownership(),
-                wire::RequestPayload::VmFetchRequest(wire::VmFetchRequest {
-                    port,
-                    method,
-                    path,
-                    headers_json,
-                    body: wire_body,
-                    body_base64: None,
-                    stream_operation: None,
-                    stream_id: None,
-                    max_bytes: None,
-                }),
-                buffer_limit,
-            )
+        let request = prepare_http_request(request, buffer_limit)?;
+        let response_json = self
+            .vm_fetch_response(wire::VmFetchRequest {
+                port: request.port,
+                method: request.method,
+                path: request.path,
+                headers_json: request.headers_json,
+                body: None,
+                body_base64: request.body_base64,
+                stream_operation: None,
+                stream_id: None,
+                max_bytes: None,
+            })
             .await?;
-
-        let response_json = match response {
-            wire::ResponsePayload::VmFetchResponse(result) => result.response_json,
-            wire::ResponsePayload::RejectedResponse(rejected) => {
-                return Err(ClientError::from_rejection(rejected).into());
-            }
-            other => {
-                return Err(
-                    ClientError::Sidecar(format!("fetch: unexpected response {other:?}")).into(),
-                );
-            }
-        };
         ensure_fetch_component_within_limit(
             "fetch response json",
             response_json.len(),
@@ -176,9 +152,147 @@ impl AgentOs {
         Ok(HttpResponse {
             status: payload.status,
             status_text: payload.status_text.unwrap_or_default(),
-            headers: payload.headers.unwrap_or_default().into_iter().collect(),
+            headers: payload.headers.unwrap_or_default(),
             body: decoded_body,
         })
+    }
+
+    /// Starts a bounded streaming request to a guest HTTP listener.
+    pub async fn http_request_stream_start(&self, request: HttpRequest) -> Result<HttpStreamHead> {
+        let buffer_limit = self.fetch_buffer_limit();
+        let request = prepare_http_request(request, buffer_limit)?;
+        let response_json = self
+            .vm_fetch_response(wire::VmFetchRequest {
+                port: request.port,
+                method: request.method,
+                path: request.path,
+                headers_json: request.headers_json,
+                body: None,
+                body_base64: request.body_base64,
+                stream_operation: Some(String::from("start")),
+                stream_id: None,
+                max_bytes: None,
+            })
+            .await?;
+        ensure_fetch_component_within_limit(
+            "fetch stream response head",
+            response_json.len(),
+            buffer_limit,
+        )?;
+        let payload: VmFetchStreamHeadPayload =
+            serde_json::from_str(&response_json).context("parsing vm_fetch stream head")?;
+        if !(100..=599).contains(&payload.status) {
+            return Err(ClientError::Sidecar(format!(
+                "HTTP stream response has invalid status {}",
+                payload.status
+            ))
+            .into());
+        }
+        Ok(HttpStreamHead {
+            stream_id: payload.stream_id,
+            status: payload.status,
+            status_text: payload.status_text.unwrap_or_default(),
+            headers: payload.headers.unwrap_or_default(),
+        })
+    }
+
+    /// Reads at most `max_bytes` from an existing guest HTTP response stream.
+    pub async fn http_request_stream_read(
+        &self,
+        stream_id: &str,
+        max_bytes: u32,
+    ) -> Result<HttpStreamChunk> {
+        if stream_id.is_empty() {
+            return Err(
+                ClientError::Sidecar(String::from("fetch stream id cannot be empty")).into(),
+            );
+        }
+        if max_bytes == 0 {
+            return Err(ClientError::Sidecar(String::from(
+                "fetch stream max_bytes must be greater than zero",
+            ))
+            .into());
+        }
+        let response_json = self
+            .vm_fetch_response(wire::VmFetchRequest {
+                port: 0,
+                method: String::from("GET"),
+                path: String::from("/"),
+                headers_json: String::from("{}"),
+                body: None,
+                body_base64: None,
+                stream_operation: Some(String::from("read")),
+                stream_id: Some(stream_id.to_owned()),
+                max_bytes: Some(max_bytes),
+            })
+            .await?;
+        let payload: VmFetchStreamChunkPayload =
+            serde_json::from_str(&response_json).context("parsing vm_fetch stream chunk")?;
+        ensure_fetch_base64_body_within_limit(
+            &payload.body,
+            usize::try_from(max_bytes).unwrap_or(usize::MAX),
+        )?;
+        let body = BASE64
+            .decode(payload.body.as_bytes())
+            .context("decoding vm_fetch stream chunk")?;
+        Ok(HttpStreamChunk {
+            body,
+            done: payload.done,
+        })
+    }
+
+    /// Cancels an existing guest HTTP response stream.
+    pub async fn http_request_stream_cancel(&self, stream_id: &str) -> Result<()> {
+        if stream_id.is_empty() {
+            return Err(
+                ClientError::Sidecar(String::from("fetch stream id cannot be empty")).into(),
+            );
+        }
+        let response_json = self
+            .vm_fetch_response(wire::VmFetchRequest {
+                port: 0,
+                method: String::from("GET"),
+                path: String::from("/"),
+                headers_json: String::from("{}"),
+                body: None,
+                body_base64: None,
+                stream_operation: Some(String::from("cancel")),
+                stream_id: Some(stream_id.to_owned()),
+                max_bytes: None,
+            })
+            .await?;
+        let cancelled = serde_json::from_str::<serde_json::Value>(&response_json)
+            .context("parsing vm_fetch stream cancellation")?
+            .get("cancelled")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        if !cancelled {
+            return Err(ClientError::Sidecar(String::from(
+                "fetch stream cancellation was not acknowledged",
+            ))
+            .into());
+        }
+        Ok(())
+    }
+
+    async fn vm_fetch_response(&self, payload: wire::VmFetchRequest) -> Result<String> {
+        let response = self
+            .transport()
+            .request_wire_bounded(
+                self.vm_fetch_ownership(),
+                wire::RequestPayload::VmFetchRequest(payload),
+                self.fetch_buffer_limit(),
+            )
+            .await?;
+        match response {
+            wire::ResponsePayload::VmFetchResponse(result) => Ok(result.response_json),
+            wire::ResponsePayload::RejectedResponse(rejected) => {
+                Err(ClientError::from_rejection(rejected).into())
+            }
+            other => {
+                Err(ClientError::Sidecar(format!("fetch: unexpected response {other:?}")).into())
+            }
+        }
     }
 
     /// The VM-scoped ownership used for the `VmFetch` wire request.
@@ -195,6 +309,67 @@ impl AgentOs {
             .max_frame_bytes()
             .min(VM_FETCH_BUFFER_LIMIT_BYTES)
     }
+}
+
+fn prepare_http_request(request: HttpRequest, buffer_limit: usize) -> Result<PreparedHttpRequest> {
+    let HttpRequest {
+        port,
+        path,
+        method,
+        headers,
+        body,
+    } = request;
+    if port == 0 {
+        return Err(ClientError::Sidecar(String::from(
+            "HTTP request port must be greater than zero",
+        ))
+        .into());
+    }
+    if !path.starts_with('/') {
+        return Err(
+            ClientError::Sidecar(format!("HTTP request path must be absolute: {path}")).into(),
+        );
+    }
+    ensure_fetch_component_within_limit("HTTP request path", path.len(), buffer_limit)?;
+    let method = method.to_uppercase();
+    if method.is_empty() {
+        return Err(
+            ClientError::Sidecar(String::from("HTTP request method cannot be empty")).into(),
+        );
+    }
+    let raw_header_bytes = headers.iter().fold(0usize, |size, (name, value)| {
+        size.saturating_add(name.len()).saturating_add(value.len())
+    });
+    ensure_fetch_component_within_limit("fetch request headers", raw_header_bytes, buffer_limit)?;
+    let headers_json =
+        serde_json::to_string(&headers).context("serializing fetch request headers")?;
+    ensure_fetch_component_within_limit(
+        "fetch request headers json",
+        headers_json.len(),
+        buffer_limit,
+    )?;
+    let body_base64 = if method == "GET" || method == "HEAD" {
+        None
+    } else {
+        body.map(|body| BASE64.encode(body))
+    };
+    if let Some(body) = &body_base64 {
+        ensure_fetch_component_within_limit("HTTP request body base64", body.len(), buffer_limit)?;
+    }
+    ensure_fetch_request_payload_within_limit(
+        &method,
+        &path,
+        &headers_json,
+        body_base64.as_deref(),
+        buffer_limit,
+    )?;
+    Ok(PreparedHttpRequest {
+        port,
+        path,
+        method,
+        headers_json,
+        body_base64,
+    })
 }
 
 fn ensure_fetch_component_within_limit(
@@ -243,8 +418,10 @@ mod tests {
     use super::{
         base64_decoded_upper_bound, ensure_fetch_base64_body_within_limit,
         ensure_fetch_component_within_limit, ensure_fetch_request_payload_within_limit,
+        prepare_http_request, HttpRequest, VmFetchResponsePayload, BASE64,
         VM_FETCH_BUFFER_LIMIT_BYTES,
     };
+    use std::collections::BTreeMap;
 
     #[test]
     fn fetch_component_limit_rejects_oversized_buffers() {
@@ -309,6 +486,31 @@ mod tests {
         );
     }
 
+    #[test]
+    fn fetch_preserves_binary_request_bodies() {
+        let prepared = prepare_http_request(
+            HttpRequest {
+                port: 3000,
+                path: String::from("/upload"),
+                method: String::from("POST"),
+                headers: BTreeMap::new(),
+                body: Some(vec![0xff, 0x00, 0x80]),
+            },
+            VM_FETCH_BUFFER_LIMIT_BYTES,
+        )
+        .expect("prepare request");
+        assert_eq!(prepared.body_base64.as_deref(), Some("/wCA"));
+    }
+
+    #[test]
+    fn fetch_response_keeps_repeated_headers() {
+        let payload: VmFetchResponsePayload = serde_json::from_str(
+            r#"{"status":200,"headers":[["set-cookie","a=1"],["set-cookie","b=2"]]}"#,
+        )
+        .expect("parse repeated response headers");
+        assert_eq!(payload.headers.expect("headers").len(), 2);
+    }
+
     // ── Security: AOSCLIENT-P3-fetch (N-010 guest-server VmFetch response) ───────────────────────
     //
     // Threat: a guest server controls the `VmFetch` RESPONSE JSON that the client parses. A hostile
@@ -317,7 +519,6 @@ mod tests {
     // (a panic in the shared host process is cross-tenant DoS, F.4). This is a regression guard for
     // the parse path in `AgentOs::fetch`: `serde_json::from_str` -> `StatusCode::from_u16` ->
     // `ensure_fetch_base64_body_within_limit` -> `BASE64.decode`.
-    use super::{VmFetchResponsePayload, BASE64};
     use base64::Engine as _;
 
     /// A status that overflows u16 (70000) must fail JSON deserialization of the response payload,

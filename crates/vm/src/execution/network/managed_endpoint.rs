@@ -50,7 +50,7 @@ where
             return Err(VmError::host(
                 "EINVAL",
                 format!("managed endpoint reactor received unsupported operation: {other:?}"),
-            ))
+            ));
         }
     };
     Ok(HostServiceResponse::Json(response))
@@ -88,7 +88,6 @@ where
                         path: abstract_unix_node_path(&guest_name),
                         abstract_path_hex: Some(abstract_unix_name_hex(&guest_name)),
                     },
-                    None,
                     None,
                 )?;
                 match ActiveUnixListener::bind_abstract_unlistened(
@@ -130,7 +129,6 @@ where
                     path: abstract_unix_node_path(&guest_name),
                     abstract_path_hex: Some(abstract_unix_name_hex(&guest_name)),
                 },
-                None,
                 None,
             )?;
             match ActiveUnixListener::bind_abstract_unlistened(
@@ -188,7 +186,6 @@ where
                     abstract_path_hex: None,
                 },
                 Some((node.stat.dev, node.stat.ino)),
-                Some(host_path.clone()),
             ) {
                 if let Err(rollback_error) = context.kernel.remove_file(&guest_path) {
                     return Err(VmError::Execution(format!(
@@ -276,7 +273,7 @@ where
         agentos_vm_kernel::permissions::NetworkOperation::Listen,
         format_unix_socket_resource(path, abstract_hex, autobind),
     )?;
-    let binding_id = guest_unix_binding_id(
+    let host_function_id = guest_unix_binding_id(
         context.process.kernel_pid,
         &format!("connected:{socket_id}"),
     );
@@ -307,33 +304,32 @@ where
             let mut bound_name = None;
             for nonce in 0..attempts {
                 let guest_name = explicit_name.clone().unwrap_or_else(|| {
-                    guest_autobind_unix_name(context.process.kernel_pid, &binding_id, nonce)
+                    guest_autobind_unix_name(context.process.kernel_pid, &host_function_id, nonce)
                         .to_vec()
                 });
                 let host_name = host_abstract_unix_name(context.socket_paths, &guest_name);
                 register_guest_unix_binding(
                     &context.socket_paths.unix_bound_addresses,
-                    &binding_id,
+                    &host_function_id,
                     &abstract_unix_host_address_key(&host_name),
                     GuestUnixAddress {
                         path: abstract_unix_node_path(&guest_name),
                         abstract_path_hex: Some(abstract_unix_name_hex(&guest_name)),
                     },
                     None,
-                    None,
                 )?;
                 if peer_can_observe_late_bind {
-                    let target_binding_id = remote_registry_binding_id
+                    let target_host_function_id = remote_registry_binding_id
                         .as_deref()
-                        .expect("tracked Unix connection has a target binding");
+                        .expect("tracked Unix connection has a target host_function");
                     if let Err(error) = queue_guest_unix_peer(
                         &context.socket_paths.unix_bound_addresses,
-                        &binding_id,
-                        target_binding_id,
+                        &host_function_id,
+                        target_host_function_id,
                     ) {
                         rollback_guest_unix_binding(
                             &context.socket_paths.unix_bound_addresses,
-                            &binding_id,
+                            &host_function_id,
                         )?;
                         return Err(error);
                     }
@@ -343,7 +339,7 @@ where
                     .unix_sockets
                     .get_mut(socket_id)
                     .expect("validated Unix socket remains registered")
-                    .bind_abstract(&host_name, &guest_name, &binding_id);
+                    .bind_abstract(&host_name, &guest_name, &host_function_id);
                 match result {
                     Ok(()) => {
                         bound_name = Some(guest_name);
@@ -352,7 +348,7 @@ where
                     Err(error) => {
                         rollback_guest_unix_binding(
                             &context.socket_paths.unix_bound_addresses,
-                            &binding_id,
+                            &host_function_id,
                         )?;
                         if explicit_name.is_some() || guest_error_code(&error) != Some("EADDRINUSE")
                         {
@@ -396,19 +392,18 @@ where
             let host_path = allocate_guest_socket_host_path(
                 context.socket_paths,
                 context.process.kernel_pid,
-                &binding_id,
+                &host_function_id,
                 &guest_path,
             );
             if let Err(error) = register_guest_unix_binding(
                 &context.socket_paths.unix_bound_addresses,
-                &binding_id,
+                &host_function_id,
                 &pathname_unix_host_address_key(&host_path),
                 GuestUnixAddress {
                     path: reported_path.clone(),
                     abstract_path_hex: None,
                 },
                 Some((node.stat.dev, node.stat.ino)),
-                Some(host_path.clone()),
             ) {
                 if let Err(rollback_error) = context.kernel.remove_file(&guest_path) {
                     return Err(VmError::Execution(format!(
@@ -419,17 +414,17 @@ where
                 return Err(error);
             }
             if peer_can_observe_late_bind {
-                let target_binding_id = remote_registry_binding_id
+                let target_host_function_id = remote_registry_binding_id
                     .as_deref()
-                    .expect("tracked Unix connection has a target binding");
+                    .expect("tracked Unix connection has a target host_function");
                 if let Err(error) = queue_guest_unix_peer(
                     &context.socket_paths.unix_bound_addresses,
-                    &binding_id,
-                    target_binding_id,
+                    &host_function_id,
+                    target_host_function_id,
                 ) {
                     rollback_guest_unix_path_binding(
                         &context.socket_paths.unix_bound_addresses,
-                        &binding_id,
+                        &host_function_id,
                         context.kernel,
                         &guest_path,
                         &host_path,
@@ -442,11 +437,11 @@ where
                 .unix_sockets
                 .get_mut(socket_id)
                 .expect("validated Unix socket remains registered")
-                .bind_path(&host_path, &reported_path, &binding_id)
+                .bind_path(&host_path, &reported_path, &host_function_id)
             {
                 rollback_guest_unix_path_binding(
                     &context.socket_paths.unix_bound_addresses,
-                    &binding_id,
+                    &host_function_id,
                     context.kernel,
                     &guest_path,
                     &host_path,
@@ -725,7 +720,7 @@ where
         agentos_vm_kernel::permissions::NetworkOperation::Http,
         format_unix_socket_resource(path, abstract_hex, false),
     )?;
-    let (target, target_binding_id, remote_address) = if let Some(hex) = abstract_hex {
+    let (target_binding_id, remote_address) = if let Some(hex) = abstract_hex {
         let guest_name = decode_abstract_unix_name(hex)?;
         let host_name = host_abstract_unix_name(context.socket_paths, &guest_name);
         let target = guest_unix_binding_for_host_key(
@@ -733,11 +728,7 @@ where
             &abstract_unix_host_address_key(&host_name),
         )?
         .ok_or_else(|| sidecar_net_error(std::io::Error::from_raw_os_error(libc::ECONNREFUSED)))?;
-        (
-            NativeUnixConnectTarget::Abstract(host_name.to_vec()),
-            target.0,
-            target.1,
-        )
+        target
     } else {
         let path = path.expect("validated Unix path");
         let (candidate_path, _) = resolve_guest_unix_path(context.process, path)?;
@@ -752,47 +743,47 @@ where
             )
             .map_err(kernel_error)?;
         reject_host_mounted_unix_socket_path(context.socket_paths, &node.canonical_path)?;
-        let (host_path, binding_id, address) =
+        let (binding_id, address) =
             guest_unix_path_target(context.socket_paths, (node.stat.dev, node.stat.ino))?
                 .ok_or_else(|| {
                     sidecar_net_error(std::io::Error::from_raw_os_error(libc::ECONNREFUSED))
                 })?;
-        (
-            NativeUnixConnectTarget::Path(host_path),
-            binding_id,
-            address,
-        )
+        (binding_id, address)
     };
     let pending = reserve_capability(&context.capabilities, CapabilityKind::UnixSocket)?;
-    let bound_listener = if let Some(listener_id) = bound_server_id {
-        let listener_id = listener_id.into_string();
+    let bound_listener_id = bound_server_id.map(|id| id.into_string());
+    let bound_listener = if let Some(listener_id) = bound_listener_id.as_deref() {
         let listener = context
             .process
             .unix_listeners
-            .remove(&listener_id)
+            .get(listener_id)
             .ok_or_else(|| {
                 VmError::host("EBADF", format!("unknown bound Unix socket {listener_id}"))
             })?;
-        if listener.acceptor_started || listener.bound_socket.is_none() {
-            context.process.unix_listeners.insert(listener_id, listener);
+        if listener.acceptor_started {
             return Err(sidecar_net_error(std::io::Error::from_raw_os_error(
                 libc::EINVAL,
             )));
         }
-        Some((listener_id, listener))
+        Some((listener_id.to_owned(), listener.clone_for_fd_transfer()?))
     } else {
         None
     };
-    defer_native_unix_connect(
+    let response = defer_vm_local_unix_connect(
         context.process,
         context.call_id,
         pending,
-        target,
         remote_address,
         Arc::clone(&context.socket_paths.unix_bound_addresses),
         target_binding_id,
         bound_listener,
-    )
+    )?;
+    // Keep the bound endpoint available if connecting failed. A successful
+    // deferred connect now owns its cloned open description until completion.
+    if let Some(listener_id) = bound_listener_id {
+        context.process.unix_listeners.remove(&listener_id);
+    }
+    Ok(response)
 }
 
 fn listen_endpoint<B>(

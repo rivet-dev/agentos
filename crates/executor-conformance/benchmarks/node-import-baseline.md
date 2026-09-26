@@ -4,7 +4,7 @@
 - Node binary: `node`
 - Node version: `v24.13.0`
 - Host: `linux` / `x86_64` / `20` logical CPUs
-- Repo root: `/home/nathan/a5`
+- Repo root: local checkout
 - Iterations: `5` recorded, `1` warmup
 - Reproduce: `cargo run -p agentos-executor-conformance --bin node-import-bench -- --iterations 5 --warmup-iterations 1`
 
@@ -52,4 +52,3 @@
 - Wall samples (ms): [207.96, 203.42, 215.58, 200.22, 207.47]
 - Guest import samples (ms): [190.64, 186.51, 198.01, 182.53, 189.76]
 - Startup overhead samples (ms): [17.32, 16.91, 17.57, 17.69, 17.71]
-

@@ -1,73 +1,131 @@
-// Stateless action transport for inspector-tab iframes, over the SAME rivetkit
-// client the React layer uses for `useActor` (set by <RivetProvider> via
-// `setRivetClient`). Actions go through `handle.action`, which POSTs to
-// `/gateway/<actorId>@<authToken>/action/<name>` with `x-rivet-encoding: json`.
-//
-// React Query's query functions live outside React, so they can't read the
-// provider's client from context — hence the module-level shared handle. The
-// provider always mounts before any tab (and its queries) render, so the client
-// is set by the time `callAction` runs.
-import { INSPECTOR_ACTOR_NAME } from "./registry";
+import type {
+	AgentOsActorHandle,
+	AgentOsClient,
+} from "../../generated/contract";
 
-// Untyped here: `callAction` dispatches by string name. The typed surface is the
-// `useActor` connection (see lib/rivet.tsx), not this raw transport.
-// biome-ignore lint/suspicious/noExplicitAny: untyped shared rivetkit client
-type Any = any;
-
-let client: Any;
-let handle: Any;
+let client: AgentOsClient | undefined;
+let handle: AgentOsActorHandle | undefined;
 let actorId: string | undefined;
 
-/** Called once by <RivetProvider> with the shared rivetkit client + actor id. */
-export function setRivetClient(nextClient: Any, nextActorId: string): void {
+export function setRivetClient(
+	nextClient: AgentOsClient,
+	nextActorId: string,
+): void {
 	client = nextClient;
 	actorId = nextActorId;
 	handle = undefined;
 }
 
-/** The tab id this iframe is rendering, parsed from its own gateway URL. */
+export function getAgentOsHandle(): AgentOsActorHandle {
+	if (!client || !actorId) {
+		throw new Error("agentOS inspector client has not been initialized");
+	}
+	handle ??= client.getForId("agentOS", actorId);
+	return handle as AgentOsActorHandle;
+}
+
 export function tabIdFromUrl(): string | undefined {
 	const parts = window.location.pathname.split("/").filter(Boolean);
-	const idx = parts.indexOf("custom-tabs");
-	return idx >= 0 ? parts[idx + 1] : undefined;
+	const index = parts.indexOf("custom-tabs");
+	return index >= 0 ? parts[index + 1] : undefined;
 }
 
-export interface ActionError {
-	group?: string;
-	code?: string;
-	message?: string;
+export type ActionErrorLayer =
+	| "gateway"
+	| "auth"
+	| "contract"
+	| "runtime"
+	| "timeout";
+
+export class InspectorActionError extends Error {
+	constructor(
+		readonly layer: ActionErrorLayer,
+		readonly action: string,
+		message: string,
+		readonly hint: string,
+	) {
+		super(message);
+		this.name = "InspectorActionError";
+	}
 }
 
-function getHandle(): Any {
-	if (!client || !actorId) {
-		throw new Error(
-			"not initialized: rivet client unset (missing <RivetProvider>)",
+export function isInspectorActionError(
+	error: unknown,
+): error is InspectorActionError {
+	return (
+		error instanceof InspectorActionError ||
+		(typeof error === "object" &&
+			error !== null &&
+			(error as { name?: string }).name === "InspectorActionError")
+	);
+}
+
+function classifyActionError(
+	action: string,
+	error: unknown,
+): InspectorActionError {
+	const message = error instanceof Error ? error.message : String(error);
+	const rivet = (error ?? {}) as {
+		code?: string;
+		statusCode?: number;
+		name?: string;
+	};
+	if (rivet.name === "AbortError" || /\baborted\b/i.test(message)) {
+		return new InspectorActionError(
+			"timeout",
+			action,
+			`${action} timed out`,
+			"The VM may still be booting. Retry in a few seconds.",
 		);
 	}
-	if (!handle) handle = client.getForId(INSPECTOR_ACTOR_NAME, actorId);
-	return handle;
+	if (/was not found/i.test(message) && /action/i.test(message)) {
+		return new InspectorActionError(
+			"contract",
+			action,
+			`This actor does not expose ${action}.`,
+			"The inspector and actor contract versions do not match.",
+		);
+	}
+	if (
+		rivet.statusCode === 401 ||
+		rivet.statusCode === 403 ||
+		rivet.code === "unauthorized" ||
+		/unauthorized|forbidden/i.test(message)
+	) {
+		return new InspectorActionError(
+			"auth",
+			action,
+			message,
+			"Reload the inspector to refresh its actor token.",
+		);
+	}
+	if (
+		error instanceof TypeError ||
+		/fetch failed|failed to fetch/i.test(message)
+	) {
+		return new InspectorActionError(
+			"gateway",
+			action,
+			message,
+			"The actor gateway could not be reached.",
+		);
+	}
+	return new InspectorActionError(
+		"runtime",
+		action,
+		message || `${action} failed`,
+		"See the actor logs for the underlying error.",
+	);
 }
 
-/** Invoke an actor action over the gateway (`handle.action`, JSON encoding).
- *
- * `timeoutMs` aborts the request (via AbortController) on expiry — some VM
- * actions (e.g. `stat` on /proc, /sys) hang server-side, and an un-aborted hung
- * request keeps a browser connection slot open; enough of those exhaust the
- * ~6-connection pool and starve every other request.
- */
-export async function callAction<T = unknown>(
-	name: string,
-	args: unknown[] = [],
-	opts: { timeoutMs?: number } = {},
+export async function runInspectorAction<T>(
+	action: string,
+	call: (handle: AgentOsActorHandle) => Promise<T>,
+	boundHandle?: AgentOsActorHandle,
 ): Promise<T> {
-	const h = getHandle();
-	const ctrl = new AbortController();
-	const timer = opts.timeoutMs
-		? setTimeout(() => ctrl.abort(), opts.timeoutMs)
-		: undefined;
 	try {
-		return (await h.action({ name, args, signal: ctrl.signal })) as T;
-	} finally {
-		if (timer) clearTimeout(timer);
+		return await call(boundHandle ?? getAgentOsHandle());
+	} catch (error) {
+		throw classifyActionError(action, error);
 	}
 }

@@ -70,6 +70,7 @@ struct AtomicityProbeFileSystem {
     inner: RefCell<MemoryFileSystem>,
     exclusive_race_pending: Cell<bool>,
     append_race_pending: Cell<bool>,
+    fail_next_chmod: Cell<bool>,
     target_path: &'static str,
 }
 
@@ -83,6 +84,7 @@ impl AtomicityProbeFileSystem {
             inner: RefCell::new(inner),
             exclusive_race_pending: Cell::new(false),
             append_race_pending: Cell::new(false),
+            fail_next_chmod: Cell::new(false),
             target_path,
         }
     }
@@ -216,6 +218,11 @@ impl VirtualFileSystem for AtomicityProbeFileSystem {
     }
 
     fn chmod(&mut self, path: &str, mode: u32) -> VfsResult<()> {
+        if self.fail_next_chmod.replace(false) {
+            return Err(agentos_vm_kernel::vfs::VfsError::io(
+                "injected chmod failure",
+            ));
+        }
         self.inner.borrow_mut().chmod(path, mode)
     }
 
@@ -234,6 +241,49 @@ impl VirtualFileSystem for AtomicityProbeFileSystem {
     fn pread(&mut self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>> {
         self.inner.borrow_mut().pread(path, offset, length)
     }
+}
+
+#[test]
+fn operator_driver_registration_rejects_chmod_failure_without_publishing_commands() {
+    let filesystem = AtomicityProbeFileSystem::new("/sentinel");
+    filesystem.fail_next_chmod.set(true);
+    let mut kernel = KernelVm::new(filesystem, KernelVmConfig::new("operator-chmod-failure"));
+    assert_kernel_error_code(
+        kernel.register_driver_for_operator(CommandDriver::new("runtime", ["operator-command"])),
+        "EIO",
+    );
+    assert!(!kernel.commands().contains_key("operator-command"));
+    assert!(!kernel.exists_for_operator("/bin/operator-command").unwrap());
+    kernel
+        .register_driver_for_operator(CommandDriver::new("runtime", ["operator-command"]))
+        .expect("retry creates an executable stub");
+    assert!(kernel.commands().contains_key("operator-command"));
+    assert_eq!(
+        kernel
+            .filesystem_mut()
+            .inner_mut()
+            .stat("/bin/operator-command")
+            .unwrap()
+            .mode
+            & 0o777,
+        0o755,
+    );
+    assert!(kernel.read_file("/bin/operator-command").is_err());
+}
+
+#[test]
+fn regular_driver_registration_keeps_registry_unchanged_on_chmod_failure() {
+    let filesystem = AtomicityProbeFileSystem::new("/sentinel");
+    filesystem.fail_next_chmod.set(true);
+    let mut config = KernelVmConfig::new("regular-chmod-failure");
+    config.permissions = Permissions::allow_all();
+    let mut kernel = KernelVm::new(filesystem, config);
+    assert_kernel_error_code(
+        kernel.register_driver(CommandDriver::new("runtime", ["failed-command"])),
+        "EIO",
+    );
+    assert!(!kernel.commands().contains_key("failed-command"));
+    assert!(!kernel.exists("/bin/failed-command").unwrap());
 }
 
 #[test]

@@ -30,7 +30,7 @@ export function resolvePublishedSidecarBinary(): string {
 		mod = require("@rivet-dev/agentos-sidecar") as SidecarBinaryModule;
 	} catch (error) {
 		throw new Error(
-			"failed to resolve the Agent OS sidecar binary: the @rivet-dev/agentos-sidecar " +
+			"failed to resolve the agentOS runtime sidecar binary: the @rivet-dev/agentos-sidecar " +
 				"package is not installed. Install it, or set AGENTOS_SIDECAR_BIN to a local " +
 				`agentos-sidecar binary. (${(error as Error).message})`,
 		);

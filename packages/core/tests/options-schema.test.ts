@@ -6,12 +6,26 @@ import {
 } from "../src/sandbox.js";
 
 describe("AgentOsOptions validation", () => {
-	test("accepts the path-only actor runtime socket descriptor", () => {
+	test("accepts a complete initial environment including an explicit empty map", () => {
+		expect(agentOsOptionsSchema.safeParse({ environment: {} }).success).toBe(
+			true,
+		);
+		expect(
+			agentOsOptionsSchema.safeParse({
+				environment: { EMPTY: "", PATH: "/opt/agentos/bin" },
+			}).success,
+		).toBe(true);
+		expect(
+			agentOsOptionsSchema.safeParse({ environment: { PORT: 3000 } }).success,
+		).toBe(false);
+	});
+
+	test("accepts the temporary local SQLite descriptor", () => {
 		expect(
 			agentOsOptionsSchema.safeParse({
 				database: {
-					type: "actor_uds",
-					path: "/tmp/actor-runtime.sock",
+					type: "sqlite_file",
+					path: "/tmp/agentos.sqlite",
 				},
 			}).success,
 		).toBe(true);
@@ -23,8 +37,8 @@ describe("AgentOsOptions validation", () => {
 				rootFilesystem: {
 					type: "native",
 					plugin: {
-						id: "chunked_actor_sqlite",
-						config: { path: "/tmp/actor.sock" },
+						id: "chunked_sqlite",
+						config: { namespace: "root" },
 					},
 				},
 			}).success,
@@ -150,16 +164,10 @@ describe("AgentOsOptions validation", () => {
 		).toThrow(/createOptions/);
 	});
 
-	test("accepts bindings as the public name for host binding collections", () => {
+	test("accepts hostFunctions as the public name for host-function collections", () => {
 		expect(
 			agentOsOptionsSchema.safeParse({
-				bindings: [
-					{
-						name: "weather",
-						description: "Weather bindings",
-						bindings: {},
-					},
-				],
+				hostFunctions: { weather: {} },
 			}).success,
 		).toBe(true);
 	});
@@ -172,15 +180,15 @@ describe("AgentOsOptions validation", () => {
 		).toBe(true);
 	});
 
-	test("uses the sidecar wire name for the per-VM binding limit", () => {
+	test("uses the sidecar wire name for the per-VM host-function limit", () => {
 		expect(
 			agentOsOptionsSchema.safeParse({
-				limits: { bindings: { maxRegisteredBindingsPerVm: 256 } },
+				limits: { hostFunctions: { maxRegisteredFunctionsPerVm: 256 } },
 			}).success,
 		).toBe(true);
 		expect(
 			agentOsOptionsSchema.safeParse({
-				limits: { bindings: { maxRegisteredCollectionsPerVm: 256 } },
+				limits: { hostFunctions: { maxRegisteredCollectionsPerVm: 256 } },
 			}).success,
 		).toBe(false);
 	});
@@ -205,6 +213,54 @@ describe("AgentOsOptions validation", () => {
 			).toBe(false);
 		}
 	});
+
+	test("accepts optional TLS/execution fields and validates TLS bytes", () => {
+		for (const limits of [
+			{ tls: {}, execution: {} },
+			{ tls: { maxBufferedBytes: 2048 } },
+		]) {
+			expect(agentOsOptionsSchema.parse({ limits }).limits).toEqual(limits);
+		}
+		for (const maxBufferedBytes of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+			expect(
+				agentOsOptionsSchema.safeParse({
+					limits: { tls: { maxBufferedBytes } },
+				}).success,
+			).toBe(false);
+		}
+		expect(
+			agentOsOptionsSchema.safeParse({
+				limits: { tls: { max_buffered_bytes: 2048 } },
+			}).success,
+		).toBe(false);
+		expect(
+			agentOsOptionsSchema.safeParse({
+				limits: { execution: { completedTtl: 60_000 } },
+			}).success,
+		).toBe(false);
+	});
+
+	test("accepts package mount limits and rejects invalid or unknown fields", () => {
+		for (const packages of [{}, { maxMounts: 8192 }]) {
+			expect(
+				agentOsOptionsSchema.safeParse({
+					limits: { agentosPackages: packages },
+				}).success,
+			).toBe(true);
+		}
+		for (const maxMounts of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+			expect(
+				agentOsOptionsSchema.safeParse({
+					limits: { agentosPackages: { maxMounts } },
+				}).success,
+			).toBe(false);
+		}
+		expect(
+			agentOsOptionsSchema.safeParse({
+				limits: { agentosPackages: { maxMount: 8 } },
+			}).success,
+		).toBe(false);
+	});
 	test("provider sandbox starts a client and owns disposal", async () => {
 		let disposed = false;
 		const client = {
@@ -223,7 +279,7 @@ describe("AgentOsOptions validation", () => {
 		} as never);
 		expect(options).not.toHaveProperty("sandbox");
 		expect(options.mounts?.[0]?.path).toBe("/mnt/sandbox");
-		expect(options.bindings?.[0]?.name).toBe("sandbox");
+		expect(Object.keys(options.hostFunctions ?? {})).toContain("sandbox");
 
 		for (const hook of getSandboxDisposeHooks(options)) {
 			await hook();
@@ -280,20 +336,14 @@ describe("AgentOsOptions validation", () => {
 						},
 					},
 				},
-				bindings: [
-					{
-						name: "INVALID",
-						description: "Invalid binding collection",
-						bindings: {},
-					},
-				],
+				hostFunctions: { INVALID_NAME: {} },
 			}),
-		).rejects.toThrow(/must be lowercase alphanumeric/);
+		).rejects.toThrow(/must be alphanumeric, written in camelCase/);
 		expect(started).toBe(0);
 		expect(disposed).toBe(0);
 	});
 
-	test("rejects removed sandbox mount and binding toggles", async () => {
+	test("rejects removed sandbox mount and hostFunction toggles", async () => {
 		const client = { baseUrl: "http://127.0.0.1:1234" } as never;
 		await expect(
 			resolveSandboxOptions({
@@ -308,10 +358,10 @@ describe("AgentOsOptions validation", () => {
 			resolveSandboxOptions({
 				sandbox: {
 					client,
-					bindings: false,
+					hostFunctions: false,
 				} as never,
 			} as never),
-		).rejects.toThrow(/sandbox\.bindings has been removed/);
+		).rejects.toThrow(/sandbox\.hostFunctions has been removed/);
 	});
 
 	test("rejects old sandbox path option names", async () => {

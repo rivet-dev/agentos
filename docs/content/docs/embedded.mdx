@@ -1,0 +1,42 @@
+---
+title: "Embedded VMs"
+description: "Embed agentOS Core in a trusted Node.js application."
+skill: true
+---
+
+`@rivet-dev/agentos-core` runs the same VM runtime without Rivet actor
+lifecycle. Your application owns VM identity, persistence, and disposal.
+Its native sidecar and platform package must match the installed agentOS
+version. If resolution reports a missing or mismatched binary, reinstall the
+packages; `AGENTOS_SIDECAR_BIN` can select a custom local build.
+
+<CodeSnippet file="examples/quickstart/hello-world/index.ts" />
+
+## Embedded-only capabilities
+
+Because the embedding process is trusted, Core can accept values that cannot
+cross the hosted actor boundary:
+
+- host functions;
+- host-directory and callback-backed mount plugins;
+- external VM providers;
+- trusted local `.aospkg` paths;
+- custom schedule drivers and sidecar placement.
+
+<CodeSnippet file="examples/embedded/config-reference.ts" title="config-reference.ts" />
+
+The hosted actor uses a smaller generated configuration type and a fixed
+filesystem registry. It never serializes callbacks or exposes a host path.
+
+## WASM backend selection
+
+Set `wasmBackend` to `"wasmtime"` to run standalone WASM commands with Wasmtime.
+Omitting this option keeps the default V8 backend. JavaScript continues to use
+V8 regardless of this setting. The sidecar must be built with the selected
+executor; an unavailable executor returns an error.
+
+The `"wasmtime-threads"` option selects the separate threaded WASM backend and
+requires a sidecar built with thread support. Use it for compatible shared-memory
+WASM programs that need threads.
+
+<CodeSnippet file="examples/embedded/wasm-backend.ts" />

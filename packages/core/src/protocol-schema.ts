@@ -1,6 +1,6 @@
 export const SIDECAR_PROTOCOL_SCHEMA = {
 	name: "agentos-sidecar",
-	version: 8,
+	version: 10,
 } as const;
 
 export type LiveProtocolSchema = typeof SIDECAR_PROTOCOL_SCHEMA;

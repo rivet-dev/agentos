@@ -1,0 +1,23 @@
+---
+title: "Introduction"
+description: "Secure Exec is a library for running code you do not trust. Give an AI agent, a plugin author, or a user the ability to write and run code, without giving them your host."
+skill: true
+---
+
+<CodeSnippet file="secure-exec/examples/quickstart/src/index.ts" region="evaluate" />
+
+- **One function call.** `evaluate` and `execute` are all you need. There is no
+  runtime object to create, configure, and dispose.
+- **Real Node.js inside.** Guest code runs on V8 with `node:fs`,
+  `node:child_process`, sockets, and npm packages. It is not a stripped-down
+  interpreter.
+- **Deny by default.** The guest sees a virtual filesystem and no network until
+  you [allow it](/secure-exec/docs/permissions).
+- **No infrastructure.** `npm install secure-exec`. No containers, no vendor
+  account, no API keys.
+
+## Where to start
+
+- [Quickstart](/secure-exec/docs/quickstart) installs the package and runs your first snippet.
+- [Agent Code Tool](/secure-exec/docs/use-cases/agent-code-tool) wires it into an agent tool.
+- [Security](/secure-exec/docs/security) covers what is isolated and what is denied by default.

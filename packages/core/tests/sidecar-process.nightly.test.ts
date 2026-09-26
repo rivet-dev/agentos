@@ -14,7 +14,7 @@ import {
 import { constants as osConstants, tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { CreateVmConfig } from "@rivet-dev/agentos-core/vm-config";
+import type { CreateVmConfig } from "../src/vm-config.js";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createHostDirBackend } from "../src/host-dir-mount.js";
 import {

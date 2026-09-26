@@ -68,10 +68,11 @@ where
         }
     };
     let notify = Arc::clone(&sidecar.process_event_notify);
-    let vm = sidecar
+    let mut vm = sidecar
         .vms
         .get_mut(vm_id)
         .expect("validated descriptor-read VM remains registered");
+    let vm = &mut *vm;
     let runtime = vm.runtime_context.clone();
     let wait_handle = vm.kernel.poll_wait_handle();
     let generation = vm.generation;
@@ -890,7 +891,7 @@ pub(super) fn decode(
                     return Err(VmError::host(
                         "EINVAL",
                         format!("unsupported fd_record_lock command {command}"),
-                    ))
+                    ));
                 }
             },
             kind: match javascript_sync_rpc_arg_u32(&request.args, 2, "fd_record_lock type")? {
@@ -933,7 +934,7 @@ pub(super) fn decode(
                     return Err(VmError::host(
                         "EINVAL",
                         format!("invalid fd_seek whence {value}"),
-                    ))
+                    ));
                 }
             };
             FilesystemOperation::Seek {
@@ -2792,7 +2793,7 @@ mod tests {
             crate::limits::VmLimits::default(),
             agentos_sidecar_protocol::config::DEFAULT_MAX_PROCESS_EVENTS,
             GuestRuntimeKind::WebAssembly,
-            ActiveExecution::Binding(BindingExecution::default()),
+            ActiveExecution::HostFunction(HostFunctionExecution::default()),
         )
         .with_guest_cwd(String::from("/workspace"));
         let operation = HostOperation::Filesystem(FilesystemOperation::OpenAt {
@@ -3175,7 +3176,7 @@ mod tests {
             crate::limits::VmLimits::default(),
             agentos_sidecar_protocol::config::DEFAULT_MAX_PROCESS_EVENTS,
             GuestRuntimeKind::WebAssembly,
-            ActiveExecution::Binding(BindingExecution::default()),
+            ActiveExecution::HostFunction(HostFunctionExecution::default()),
         )
         .with_kernel_stdin_writer_fd(writer_fd);
 
@@ -3293,7 +3294,7 @@ mod tests {
             crate::limits::VmLimits::default(),
             agentos_sidecar_protocol::config::DEFAULT_MAX_PROCESS_EVENTS,
             GuestRuntimeKind::WebAssembly,
-            ActiveExecution::Binding(BindingExecution::default()),
+            ActiveExecution::HostFunction(HostFunctionExecution::default()),
         );
         let (read_fd, write_fd) = kernel
             .open_pipe(EXECUTION_DRIVER_NAME, parent_pid)

@@ -1,0 +1,52 @@
+---
+title: "Architecture"
+description: "How the fixed actor, Core, sidecar, kernel, VFS, and executors fit together."
+---
+
+agentOS has one runtime implementation and two entry surfaces.
+
+## Hosted
+
+The prebuilt Rust binary starts with the `actor` entry point and registers one
+Rivet actor named `agentOS`. Its handlers validate serializable DTOs, manage
+durable actor configuration, and call the Rust Core client. Dotted action names
+are generated as nested TypeScript objects.
+
+The actor owns Rivet lifecycle, actor state in RivetKit SQLite, previews, cron
+wiring, event broadcasts, URL-only package policy, and preload coordination. It
+does not implement filesystem, process, language, networking, or package
+projection semantics.
+
+## Embedded
+
+`@rivet-dev/agentos-core` controls the same runtime from a trusted Node.js
+process. It may retain host-only state such as callbacks, host-function handlers,
+mount plugins, local package paths, and custom scheduling.
+
+## Runtime boundary
+
+The trusted sidecar owns the kernel, VFS, process and socket tables,
+permissions, resource policy, package acquisition and projection, and language
+executors. Untrusted JavaScript, Python, WASM, and third-party package code runs
+on the guest side of that boundary.
+
+The binary's default `sidecar` entry point uses fd 0 for requests, stdout for
+ordinary events, and inherited fd 3 for responses, callbacks, heartbeats, and
+shutdown control.
+
+## Durability
+
+The hosted actor uses RivetKit SQLite with independent schema owners:
+
+| Owner | Namespace |
+| --- | --- |
+| Filesystem | `agentos_fs_*` |
+| Core | `agentos_core_*` |
+| Actor | `agentos_actor_*` |
+
+Each owner advances only its own migration ladder. There is no legacy storage
+adoption path.
+
+Durable actor state does not make VM files persistent: the default VM root is an
+ephemeral in-memory overlay over the bundled base image. Configure an
+`actor-sqlite` root or mount for files that must survive VM replacement.

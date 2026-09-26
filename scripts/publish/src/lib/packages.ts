@@ -63,16 +63,6 @@ export const META_PACKAGES: readonly MetaPackageSpec[] = [
 const SIDECAR_BINARY_PACKAGE_DIRS = ["packages/sidecar/npm"] as const;
 
 /**
- * Runtime packages consumed directly by lockstep AgentOS packages. Ordinary
- * registry software keeps its independent release flow.
- */
-export const LOCKSTEP_SOFTWARE_PACKAGES = new Set([
-	"@agentos-software/common",
-	"@agentos-software/apps-builder",
-	"@agentos-software/sh",
-]);
-
-/**
  * Platforms whose sidecar binary package is built and published. Kept in sync
  * with the build matrix in `.github/workflows/publish.yaml`. Override via the
  * `SIDECAR_PLATFORMS` env var (space-separated) to publish a different set.
@@ -148,9 +138,8 @@ export function discoverPackages(
 		}
 	}
 
-	// 2. pnpm workspace packages. Skip independently-versioned software/* WASM
-	//    packages, but include the small runtime packages consumed directly by
-	//    lockstep AgentOS packages.
+	// 2. pnpm workspace packages. Registry software is packed into .aospkg
+	//    artifacts and released independently from the agentOS npm packages.
 	const pnpmList = execSync("pnpm -r list --json --depth -1", {
 		cwd: repoRoot,
 		encoding: "utf8",
@@ -166,13 +155,7 @@ export function discoverPackages(
 		if (
 			!p.name.startsWith("@rivet-dev/agentos-") &&
 			p.name !== "@rivet-dev/agentos" &&
-			!p.name.startsWith("@agentos-software/")
-		) {
-			continue;
-		}
-		if (
-			p.path.includes("/software/") &&
-			!LOCKSTEP_SOFTWARE_PACKAGES.has(p.name)
+			p.name !== "secure-exec"
 		) {
 			continue;
 		}
@@ -216,12 +199,6 @@ export function assertDiscoverySanity(packages: Package[]): void {
 			"@rivet-dev/agentos",
 			"@rivet-dev/agentos-core",
 			"@rivet-dev/agentos-sidecar",
-		);
-	}
-	if (byName.has("@rivet-dev/agentos-apps")) {
-		required.push(
-			"@agentos-software/apps-builder",
-			"@agentos-software/sh",
 		);
 	}
 	const missing = required.filter((r) => !byName.has(r));

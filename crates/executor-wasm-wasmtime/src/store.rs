@@ -25,6 +25,7 @@ use wasmtime::{Store, StoreLimits, UpdateDeadline};
 
 pub const DEFAULT_MAX_HOST_REPLY_BYTES: usize = 16 * 1024 * 1024;
 
+#[derive(Debug)]
 pub struct PendingExecReplacement {
     pub module: Arc<wasmtime::Module>,
     pub argv: Vec<String>,
@@ -312,6 +313,17 @@ impl WasmtimeHostClient {
         Ok(())
     }
 
+    pub(super) fn worker_client(&self) -> Option<&WorkerIpcClient> {
+        self.worker.as_ref()
+    }
+
+    pub(super) fn report_thread_group_exit(&self, code: i32) -> Result<(), HostServiceError> {
+        if let Some(worker) = self.worker.as_ref() {
+            worker.report_group_exit(code)?;
+        }
+        Ok(())
+    }
+
     pub(super) fn report_thread_group_failure(&self, error: HostServiceError) {
         if let Some(worker) = self.worker.as_ref() {
             if let Err(report_error) = worker.report_group_failure(error) {
@@ -330,7 +342,6 @@ pub struct WasmtimeStoreState {
     pub argv: Vec<Vec<u8>>,
     pub env: Vec<Vec<u8>>,
     pub virtual_pid: u32,
-    pub virtual_ppid: u32,
     pub thread_id: i32,
     pub thread_group: Option<Arc<ThreadGroup>>,
     pub limits: StoreLimits,
@@ -438,18 +449,12 @@ impl WasmtimeStoreState {
             .virtual_pid
             .and_then(|value| u32::try_from(value).ok())
             .unwrap_or_else(|| host.process().pid);
-        let virtual_ppid = request
-            .guest_runtime
-            .virtual_ppid
-            .and_then(|value| u32::try_from(value).ok())
-            .unwrap_or_default();
         Ok(Self {
             host,
             engine,
             argv,
             env,
             virtual_pid,
-            virtual_ppid,
             thread_id,
             thread_group,
             limits: limits::store_limits(&request.limits)?,
@@ -507,6 +512,18 @@ impl WasmtimeStoreState {
 
     pub fn canceled(&self) -> bool {
         self.host.canceled()
+            || self
+                .thread_group
+                .as_ref()
+                .is_some_and(|group| group.is_shutting_down())
+    }
+
+    pub(super) fn remaining_active_cpu_ms(&self) -> Option<u32> {
+        self.active_cpu_limit_ns.map(|limit| {
+            let remaining = limit
+                .saturating_sub(thread_cpu_time_ns().saturating_sub(self.active_cpu_started_ns));
+            (remaining / 1_000_000).min(u32::MAX as u64) as u32
+        })
     }
 
     fn active_cpu_exhausted(&self) -> bool {

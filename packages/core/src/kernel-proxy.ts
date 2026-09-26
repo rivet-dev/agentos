@@ -80,7 +80,7 @@ const TRAILING_OUTPUT_DRAIN_MAX_MS = 250;
 const TRAILING_OUTPUT_DRAIN_QUIET_TURNS = 2;
 
 async function drainTrailingProcessOutputTurn(delayMs = 0): Promise<void> {
-	// Sidecar `process_output` events can lag one macrotask behind the
+	// Native-sidecar `process_output` events can lag one macrotask behind the
 	// terminal `process_exited` notification for very short-lived processes, and
 	// under suite load the sidecar event pump can need a little extra time to
 	// flush delayed output through its listener callbacks.
@@ -341,6 +341,15 @@ interface SidecarKernelProxyOptions {
 	onDispose?: () => Promise<void>;
 }
 
+class VmDisposalTimeoutError extends Error {
+	readonly code = "timeout";
+	readonly operation = "vm.dispose";
+	constructor(readonly vmId: string, readonly deadlineMs: number) {
+		super(`timeout: VM ${vmId} disposal was not confirmed within ${deadlineMs}ms`);
+		this.name = "VmDisposalTimeoutError";
+	}
+}
+
 export class SidecarKernelProxy {
 	readonly env: Record<string, string>;
 	readonly cwd: string;
@@ -430,28 +439,74 @@ export class SidecarKernelProxy {
 		const liveProcesses = [...this.trackedProcesses.values()].filter(
 			(entry) => entry.exitCode === null,
 		);
-		await Promise.allSettled(
+		const signals = await Promise.allSettled(
 			liveProcesses.map((entry) => this.signalProcess(entry, 15)),
 		);
+		for (const result of signals) {
+			if (result.status === "rejected") {
+				console.error("agentOS process signal during disposal failed:", result.reason);
+			}
+		}
 
-		await Promise.race([
-			this.client.disposeVm(this.session, this.vm),
-			new Promise<void>((resolve) => setTimeout(resolve, 1000)),
-		]).catch(() => {});
+		let disposalFailed = false;
+		let disposalError: unknown;
+		let timedOut = false;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		try {
+			const deadlineMs = 1000;
+			await Promise.race([
+				this.client.disposeVm(this.session, this.vm).catch((error) => {
+					if (timedOut) {
+						console.error("agentOS VM disposal failed after its client deadline:", error);
+					}
+					throw error;
+				}),
+				new Promise<never>((_resolve, reject) => {
+					timer = setTimeout(() => {
+						timedOut = true;
+						reject(new VmDisposalTimeoutError(this.vm.vmId, deadlineMs));
+					}, deadlineMs);
+				}),
+			]);
+		} catch (error) {
+			disposalFailed = true;
+			disposalError = error;
+			console.error("agentOS VM disposal failed:", error);
+		} finally {
+			clearTimeout(timer);
+		}
 		for (const entry of liveProcesses) {
 			if (entry.exitCode === null) {
+				if (disposalFailed) {
+					// A rejected or timed-out disposal cannot prove guest termination.
+					// Observe rejection even when the caller never invokes proc.wait().
+					void entry.waitPromise.catch((error) => {
+						console.error("agentOS process wait aborted by failed VM disposal:", error);
+					});
+					entry.rejectWait(disposalError instanceof Error
+						? disposalError
+						: new Error(String(disposalError)));
+					continue;
+				}
 				// The sidecar dispose path already performs TERM/KILL escalation for any
 				// guest executions that are still live. Resolve local waiters eagerly so
-				// VM teardown does not hang on killed ACP adapter processes that never
+				// VM teardown does not hang on killed guest processes that never
 				// surface a terminal process_exited event back to the JS bridge.
 				this.finishProcess(entry, 143);
 			}
 		}
 		if (this.disposeClient) {
-			await this.client.dispose().catch(() => {});
+			await this.client.dispose().catch((error) => {
+				console.error("agentOS secondary sidecar disposal failed:", error);
+			});
 		}
-		await this.eventPump.catch(() => {});
-		await this.onDispose?.().catch(() => {});
+		await this.eventPump.catch((error) => {
+			console.error("agentOS event pump failed during disposal:", error);
+		});
+		await this.onDispose?.().catch((error) => {
+			console.error("agentOS disposal callback failed:", error);
+		});
+		if (disposalFailed) throw disposalError;
 	}
 
 	async exec(

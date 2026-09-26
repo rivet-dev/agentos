@@ -1,0 +1,59 @@
+---
+title: "Quickstart"
+description: "Install Secure Exec and run untrusted JavaScript in an isolated VM in a few minutes."
+skill: true
+---
+
+<Steps>
+
+<Step title="Install">
+
+```sh
+npm install secure-exec
+```
+
+Secure Exec requires Node.js 22 or newer on Linux (glibc) or macOS.
+
+</Step>
+
+<Step title="Evaluate an expression">
+
+`evaluate` runs one expression in a fresh VM and returns its JSON value.
+
+<CodeSnippet file="secure-exec/examples/quickstart/src/index.ts" region="evaluate" />
+
+</Step>
+
+<Step title="Pass data in">
+
+<CodeSnippet file="secure-exec/examples/quickstart/src/index.ts" region="inputs" />
+
+</Step>
+
+<Step title="Call host functions">
+
+Host functions run in your process, with your credentials. Each collection is a
+global inside the VM whose methods are async, so the guest calls them like
+ordinary functions. Nothing else about your process crosses into the VM.
+
+<CodeSnippet file="secure-exec/examples/host-functions/src/index.ts" region="quickstart" />
+
+</Step>
+
+<Step title="Handle failures">
+
+Guest failures are returned, never thrown, so untrusted code cannot crash your
+process.
+
+<CodeSnippet file="secure-exec/examples/quickstart/src/index.ts" region="errors" />
+
+</Step>
+
+</Steps>
+
+## Next steps
+
+- [Host Functions](/secure-exec/docs/host-functions) covers schemas, errors, and Code Mode.
+- [VMs](/secure-exec/docs/vms) keep files, packages, and processes across calls.
+- [Execute & Evaluate](/secure-exec/docs/execute-and-evaluate) explains results and options in detail.
+- [Permissions](/secure-exec/docs/permissions) shows how to grant the network.

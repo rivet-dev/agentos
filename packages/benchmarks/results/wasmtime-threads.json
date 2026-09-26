@@ -1,7 +1,7 @@
 {
   "metadata": {
     "startedAt": "2026-07-24T12:02:00.118Z",
-    "hostname": "nathan-dev",
+    "hostname": "benchmark-host",
     "platform": "linux",
     "arch": "x64",
     "cpuModel": "12th Gen Intel(R) Core(TM) i7-12700KF",
@@ -9,14 +9,14 @@
     "totalMemoryBytes": 67170398208,
     "node": "v24.18.0",
     "sidecar": {
-      "path": "/tmp/agentos-wasmtime-validation.OpTF6J/release/agentos-vm",
+      "path": "<temporary>/agentos-vm",
       "profile": "release",
       "mtimeMs": 1784894193003.0815,
       "mtimeIso": "2026-07-24T04:56:33.003-07:00",
       "sizeBytes": 147510200
     },
     "fixture": {
-      "path": "/home/nathan/.herdr/workspaces/agent-os/wasmtime-executor/toolchain/c/build/pthread_benchmark.wasm",
+      "path": "<local>/pthread_benchmark.wasm",
       "sizeBytes": 17082,
       "sha256": "f9dc5046b1e9d0316e0ea82796b391adf332fde05a50cd041772656a53406a6b"
     },

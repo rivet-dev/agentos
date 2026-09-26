@@ -144,6 +144,8 @@ fn collect_process_output_bounded(
                 | EventPayload::ExecutionCompletedEvent(_)
                 | EventPayload::VmLifecycleEvent(_)
                 | EventPayload::StructuredEvent(_)
+                | EventPayload::ExecutionOutputEvent(_)
+                | EventPayload::ExecutionCompletedEvent(_)
                 | EventPayload::ExtEnvelope(_) => {}
             }
         }
@@ -170,7 +172,6 @@ fn sidecar_rejects_oversized_request_frames_before_dispatch() {
             max_frame_bytes: 512,
             compile_cache_root: Some(root.join("cache")),
             expected_auth_token: Some(String::from(TEST_AUTH_TOKEN)),
-            acp_termination_grace: Duration::from_secs(3),
             ..VmManagerConfig::default()
         },
     )
@@ -266,10 +267,10 @@ const result = {
 };
 
 try {
-  process.binding('fs');
-  result.binding = 'unexpected';
+  process.host_function('fs');
+  result.host_function = 'unexpected';
 } catch (error) {
-  result.binding = { code: error.code ?? null, message: error.message };
+  result.host_function = { code: error.code ?? null, message: error.message };
 }
 
 console.log(JSON.stringify(result));
@@ -331,7 +332,7 @@ console.log(JSON.stringify(result));
     );
     assert_ne!(parsed["home"], Value::String(String::from("/host/home")));
     assert_eq!(
-        parsed["binding"]["code"],
+        parsed["hostFunction"]["code"],
         Value::String(String::from("ERR_ACCESS_DENIED"))
     );
 }
@@ -514,7 +515,7 @@ fn execute_rejects_host_only_absolute_command_path() {
                 packages: Vec::new(),
                 packages_mount_at: String::new(),
                 bootstrap_commands: Vec::new(),
-                binding_shim_commands: Vec::new(),
+                host_function_shim_commands: Vec::new(),
             }),
         ))
         .expect("configure host-only command permissions");

@@ -1,9 +1,6 @@
-import { agentOS, setup, nodeModulesMount } from "@rivet-dev/agentos";
+import { AgentOs, nodeModulesMount } from "@rivet-dev/agentos-core";
 
-const vm = agentOS({
-  // Project a host node_modules tree into the VM (read-only by default).
-  mounts: [nodeModulesMount("/absolute/path/to/node_modules")],
+// Host mounts are available only to trusted embedded Core callers.
+export const vm = await AgentOs.create({
+	mounts: [nodeModulesMount("/absolute/path/to/node_modules")],
 });
-
-export const registry = setup({ use: { vm } });
-registry.start();

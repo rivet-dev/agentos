@@ -35,6 +35,7 @@ fn rollback_new_deferred_connect_resources(
 }
 
 pub(super) fn settle_host_call_completion_for_process(
+    generation: u64,
     kernel: &mut SidecarKernel,
     kernel_readiness: &KernelSocketReadinessRegistry,
     unix_addresses: &GuestUnixAddressRegistry,
@@ -42,6 +43,16 @@ pub(super) fn settle_host_call_completion_for_process(
     process: &mut ActiveProcess,
     completion: crate::state::HostCallCompletion,
 ) -> Result<(), VmError> {
+    let identity = completion.reply.identity();
+    if identity.generation != generation || identity.pid != process.kernel_pid {
+        return completion
+            .reply
+            .fail(HostServiceError::new(
+                "ESTALE",
+                "host completion identity does not name the active process",
+            ))
+            .map_err(VmError::from);
+    }
     let previous_tcp_ids = process.tcp_sockets.keys().cloned().collect::<BTreeSet<_>>();
     let previous_unix_ids = process
         .unix_sockets
@@ -130,13 +141,73 @@ pub(super) fn settle_host_call_completion_for_process(
     result.map_err(VmError::from)
 }
 
-pub(super) struct BindingProcessEventRequest {
+pub(crate) fn internal_event_reply(event: &ActiveExecutionEvent) -> Option<DirectHostReplyHandle> {
+    match event {
+        ActiveExecutionEvent::Common(ExecutionEvent::HostCall { reply, .. }) => Some(reply.clone()),
+        ActiveExecutionEvent::HostRpcRequest(request) => Some(request.reply.clone()),
+        ActiveExecutionEvent::HostCallCompletion(completion) => Some(completion.reply.clone()),
+        ActiveExecutionEvent::ManagedStreamReadRecheck(pending) => Some(pending.reply.clone()),
+        ActiveExecutionEvent::ManagedUdpPollRecheck(pending) => Some(pending.reply.clone()),
+        _ => None,
+    }
+}
+
+fn reject_internal_event(event: ActiveExecutionEvent, error: &VmError) {
+    if let Some(reply) = internal_event_reply(&event) {
+        if let Err(reply_error) = reply.fail(host_service_error(error)) {
+            tracing::error!(%reply_error, "failed to reject internal process event");
+        }
+    }
+}
+
+pub struct ProcessEventPumpTurn {
+    pub emitted_any: bool,
+    pub host_services: Vec<OwnedHostEventService>,
+    pub child_bridge_services: Vec<OwnedChildBridgeEventService>,
+}
+
+/// An already claimed internal event retains its byte reservation until the
+/// bounded supervisor finishes servicing it.
+pub struct OwnedHostEventService {
+    pub(crate) ownership: OwnershipScope,
+    pub(crate) vm_id: String,
+    pub(crate) process_id: String,
+    pub(crate) child_path: Vec<String>,
+    pub(crate) vm: crate::state::VmHandle,
+    pub(crate) event: ActiveExecutionEvent,
+    pub(crate) reservation: Option<PendingExecutionEventReservation>,
+}
+
+impl OwnedHostEventService {
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn new(
+        ownership: OwnershipScope,
+        vm_id: String,
+        process_id: String,
+        child_path: Vec<String>,
+        vm: crate::state::VmHandle,
+        event: ActiveExecutionEvent,
+        reservation: Option<PendingExecutionEventReservation>,
+    ) -> Self {
+        Self {
+            ownership,
+            vm_id,
+            process_id,
+            child_path,
+            vm,
+            event,
+            reservation,
+        }
+    }
+}
+
+pub(super) struct HostFunctionProcessEventRequest {
     pub(super) runtime_context: agentos_driver_tokio::DriverHandle,
     pub(super) sidecar_requests: SharedSidecarRequestClient,
     pub(super) connection_id: String,
     pub(super) session_id: String,
     pub(super) vm_id: String,
-    pub(super) binding_resolution: BindingCommandResolution,
+    pub(super) host_function_resolution: HostFunctionCommandResolution,
     pub(super) cancelled: Arc<AtomicBool>,
     pub(super) paused: Arc<AtomicBool>,
     pub(super) pause_notify: Arc<tokio::sync::Notify>,
@@ -208,6 +279,7 @@ where
             session_id,
             vm_id: envelope_vm_id,
             process_id: envelope_process_id,
+            child_path: Vec::new(),
             event: ActiveExecutionEvent::HostCallCompletion(
                 crate::state::HostCallCompletion {
                     reply: task_reply,
@@ -243,7 +315,7 @@ where
 // The producer owns these independent atomics/queues; keeping them explicit
 // avoids introducing another partially initialized shared-state wrapper.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn send_binding_process_event(
+pub(crate) fn send_host_function_process_event(
     cancelled: &AtomicBool,
     pending_events: &Arc<Mutex<VecDeque<ActiveExecutionEvent>>>,
     event_overflow_reason: &Mutex<Option<HostServiceError>>,
@@ -333,7 +405,7 @@ pub(crate) fn send_binding_process_event(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn send_binding_process_event_and_notify(
+fn send_host_function_process_event_and_notify(
     cancelled: &AtomicBool,
     pending_events: &Arc<Mutex<VecDeque<ActiveExecutionEvent>>>,
     event_overflow_reason: &Mutex<Option<HostServiceError>>,
@@ -344,7 +416,7 @@ fn send_binding_process_event_and_notify(
     event_notify: &tokio::sync::Notify,
     event: ActiveExecutionEvent,
 ) -> bool {
-    let sent = send_binding_process_event(
+    let sent = send_host_function_process_event(
         cancelled,
         pending_events,
         event_overflow_reason,
@@ -360,7 +432,7 @@ fn send_binding_process_event_and_notify(
     sent
 }
 
-pub(super) fn spawn_binding_process_events(request: BindingProcessEventRequest) {
+pub(super) fn spawn_host_function_process_events(request: HostFunctionProcessEventRequest) {
     // A STOP acknowledged before producer admission must prevent the trusted
     // callback from starting. Resume wakes this one bounded gate task. A
     // callback already in flight may finish, but its events remain hidden by
@@ -383,28 +455,28 @@ pub(super) fn spawn_binding_process_events(request: BindingProcessEventRequest) 
                 }
                 notified.await;
             }
-            spawn_binding_process_events(request);
+            spawn_host_function_process_events(request);
         }) {
             let mut reason = failure_reason
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             reason.get_or_insert_with(|| {
                 HostServiceError::new(
-                    "ERR_AGENTOS_BINDING_PAUSE_GATE",
-                    format!("failed to schedule paused binding producer gate: {error}"),
+                    "ERR_AGENTOS_HOST_FUNCTION_PAUSE_GATE",
+                    format!("failed to schedule paused host_function producer gate: {error}"),
                 )
             });
             failure_notify.notify_one();
         }
         return;
     }
-    let BindingProcessEventRequest {
+    let HostFunctionProcessEventRequest {
         runtime_context,
         sidecar_requests,
         connection_id,
         session_id,
         vm_id,
-        binding_resolution,
+        host_function_resolution,
         cancelled,
         paused: _,
         pause_notify: _,
@@ -427,9 +499,9 @@ pub(super) fn spawn_binding_process_events(request: BindingProcessEventRequest) 
     let submit_result =
         runtime_context
             .blocking()
-            .submit(BINDING_HOST_CALL_BLOCKING_JOB_BYTES, move || {
+            .submit(HOST_FUNCTION_CALL_BLOCKING_JOB_BYTES, move || {
                 let enqueue = |event| {
-                    send_binding_process_event_and_notify(
+                    send_host_function_process_event_and_notify(
                         &cancelled,
                         &pending_events,
                         &event_overflow_reason,
@@ -441,27 +513,27 @@ pub(super) fn spawn_binding_process_events(request: BindingProcessEventRequest) 
                         event,
                     )
                 };
-                match binding_resolution {
-                    BindingCommandResolution::Failure(message) => {
+                match host_function_resolution {
+                    HostFunctionCommandResolution::Failure(message) => {
                         let output_enqueued = enqueue(ActiveExecutionEvent::Stderr(
-                            format_binding_failure_output(
+                            format_host_function_failure_output(
                             &message,
                             ),
                         ));
                         if !output_enqueued && !cancelled.load(Ordering::Acquire) {
                             eprintln!(
-                                "ERR_AGENTOS_BINDING_EVENT_DELIVERY: failed to enqueue binding failure output; queue limit state retains the typed failure"
+                                "ERR_AGENTOS_HOST_FUNCTION_EVENT_DELIVERY: failed to enqueue host_function failure output; queue limit state retains the typed failure"
                             );
                         } else if output_enqueued
                             && !enqueue(ActiveExecutionEvent::Exited(1))
                             && !cancelled.load(Ordering::Acquire)
                         {
                             eprintln!(
-                                "ERR_AGENTOS_BINDING_EVENT_DELIVERY: failed to enqueue binding failure exit event; queue limit state retains the typed failure"
+                                "ERR_AGENTOS_HOST_FUNCTION_EVENT_DELIVERY: failed to enqueue host_function failure exit event; queue limit state retains the typed failure"
                             );
                         }
                     }
-                    BindingCommandResolution::Invoke { request, timeout } => {
+                    HostFunctionCommandResolution::Invoke { request, timeout } => {
                         let response = sidecar_requests.invoke(
                             OwnershipScope::vm(connection_id, session_id, vm_id),
                             SidecarRequestPayload::HostCallback(request),
@@ -482,28 +554,30 @@ pub(super) fn spawn_binding_process_events(request: BindingProcessEventRequest) 
                                         "result": value,
                                     }))
                                     .unwrap_or_else(|error| {
-                                        format_binding_failure_output(&format!(
-                                            "failed to serialize binding result: {error}"
+                                        format_host_function_failure_output(&format!(
+                                            "failed to serialize host function result: {error}"
                                         ))
                                     });
                                     (output, 0, true)
                                 } else {
                                     let message = result.error.unwrap_or_else(|| {
-                                        String::from("binding invocation returned no result")
+                                        String::from("host function invocation returned no result")
                                     });
-                                    (format_binding_failure_output(&message), 1, false)
+                                    (format_host_function_failure_output(&message), 1, false)
                                 }
                             }
                             Ok(_) => (
-                                format_binding_failure_output(
-                                    "unexpected sidecar binding response",
+                                format_host_function_failure_output(
+                                    "unexpected sidecar host function response",
                                 ),
                                 1,
                                 false,
                             ),
-                            Err(error) => {
-                                (format_binding_failure_output(&error.to_string()), 1, false)
-                            }
+                            Err(error) => (
+                                format_host_function_failure_output(&error.to_string()),
+                                1,
+                                false,
+                            ),
                         };
                         let output_event = if stdout {
                             ActiveExecutionEvent::Stdout(output)
@@ -513,14 +587,14 @@ pub(super) fn spawn_binding_process_events(request: BindingProcessEventRequest) 
                         let output_enqueued = enqueue(output_event);
                         if !output_enqueued && !cancelled.load(Ordering::Acquire) {
                             eprintln!(
-                                "ERR_AGENTOS_BINDING_EVENT_DELIVERY: failed to enqueue binding result output; queue limit state retains the typed failure"
+                                "ERR_AGENTOS_HOST_FUNCTION_EVENT_DELIVERY: failed to enqueue host_function result output; queue limit state retains the typed failure"
                             );
                         } else if output_enqueued
                             && !enqueue(ActiveExecutionEvent::Exited(exit_code))
                             && !cancelled.load(Ordering::Acquire)
                         {
                             eprintln!(
-                                "ERR_AGENTOS_BINDING_EVENT_DELIVERY: failed to enqueue binding exit event; queue limit state retains the typed failure"
+                                "ERR_AGENTOS_HOST_FUNCTION_EVENT_DELIVERY: failed to enqueue host_function exit event; queue limit state retains the typed failure"
                             );
                         }
                     }
@@ -528,7 +602,7 @@ pub(super) fn spawn_binding_process_events(request: BindingProcessEventRequest) 
             });
     if let Err(error) = submit_result {
         let enqueue_failure = |event| {
-            send_binding_process_event_and_notify(
+            send_host_function_process_event_and_notify(
                 &failure_cancelled,
                 &failure_events,
                 &failure_overflow_reason,
@@ -541,18 +615,18 @@ pub(super) fn spawn_binding_process_events(request: BindingProcessEventRequest) 
             )
         };
         let output_enqueued = enqueue_failure(ActiveExecutionEvent::Stderr(
-            format_binding_failure_output(&error.to_string()),
+            format_host_function_failure_output(&error.to_string()),
         ));
         if !output_enqueued && !failure_cancelled.load(Ordering::Acquire) {
             eprintln!(
-                "ERR_AGENTOS_BINDING_EVENT_DELIVERY: failed to enqueue blocking-admission failure output; queue limit state retains the typed failure"
+                "ERR_AGENTOS_HOST_FUNCTION_EVENT_DELIVERY: failed to enqueue blocking-admission failure output; queue limit state retains the typed failure"
             );
         } else if output_enqueued
             && !enqueue_failure(ActiveExecutionEvent::Exited(1))
             && !failure_cancelled.load(Ordering::Acquire)
         {
             eprintln!(
-                "ERR_AGENTOS_BINDING_EVENT_DELIVERY: failed to enqueue blocking-admission exit event; queue limit state retains the typed failure"
+                "ERR_AGENTOS_HOST_FUNCTION_EVENT_DELIVERY: failed to enqueue blocking-admission exit event; queue limit state retains the typed failure"
             );
         }
     }
@@ -742,82 +816,646 @@ where
     B: VmManagerHost + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
+    /// Prepare only after the supervisor owns the VM operation permit. All
+    /// suspension retains owned capabilities, never the central manager.
+    pub(crate) fn prepare_owned_host_event_service(
+        &mut self,
+        target: OwnedHostEventService,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), VmError>> + 'static>> {
+        let OwnedHostEventService {
+            vm_id,
+            process_id,
+            child_path,
+            vm,
+            event,
+            reservation,
+            ..
+        } = target;
+        let future: std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), VmError>>>> =
+            match event {
+                ActiveExecutionEvent::Common(ExecutionEvent::HostCall { operation, reply }) => {
+                    if child_path.is_empty() {
+                        self.prepare_owned_root_host_call(&vm_id, &process_id, vm, operation, reply)
+                    } else {
+                        self.prepare_owned_descendant_host_call(
+                            &vm_id,
+                            &process_id,
+                            &child_path,
+                            vm,
+                            operation,
+                            reply,
+                        )
+                    }
+                }
+                ActiveExecutionEvent::HostRpcRequest(request) => {
+                    self.prepare_owned_host_rpc(&vm_id, &process_id, &child_path, vm, request)
+                }
+                event => {
+                    let result = (|| -> Result<(), VmError> {
+                        match event {
+                            ActiveExecutionEvent::HostCallCompletion(completion) => {
+                                vm.try_command("settle owned host completion", |state| {
+                                    let readiness = Arc::clone(&state.kernel_socket_readiness);
+                                    let unix_addresses = Arc::clone(&state.unix_address_registry);
+                                    let descriptions =
+                                        Arc::clone(&state.managed_host_net_descriptions);
+                                    let Some(root) = state.active_processes.get_mut(&process_id)
+                                    else {
+                                        return completion
+                                            .reply
+                                            .fail(HostServiceError::new(
+                                                "ESTALE",
+                                                "host completion root was reaped",
+                                            ))
+                                            .map_err(VmError::from);
+                                    };
+                                    let Some(process) =
+                                        Self::active_process_by_owned_path_mut(root, &child_path)
+                                    else {
+                                        return completion
+                                            .reply
+                                            .fail(HostServiceError::new(
+                                                "ESTALE",
+                                                "host completion descendant was reaped",
+                                            ))
+                                            .map_err(VmError::from);
+                                    };
+                                    settle_host_call_completion_for_process(
+                                        state.generation,
+                                        &mut state.kernel,
+                                        &readiness,
+                                        &unix_addresses,
+                                        &descriptions,
+                                        process,
+                                        completion,
+                                    )
+                                })
+                            }
+                            ActiveExecutionEvent::ManagedStreamReadRecheck(pending) => {
+                                dispatch_claimed_context_stream_read(
+                                    self,
+                                    &vm_id,
+                                    &process_id,
+                                    *pending,
+                                )
+                            }
+                            ActiveExecutionEvent::ManagedUdpPollRecheck(pending) => {
+                                dispatch_claimed_context_udp_poll(
+                                    self,
+                                    &vm_id,
+                                    &process_id,
+                                    *pending,
+                                )
+                            }
+                            ActiveExecutionEvent::SignalState {
+                                signal,
+                                registration,
+                            } => vm.try_read("apply owned signal registration", |state| {
+                                let root = state
+                                    .active_processes
+                                    .get(&process_id)
+                                    .ok_or_else(|| missing_process_error(&vm_id, &process_id))?;
+                                let path =
+                                    child_path.iter().map(String::as_str).collect::<Vec<_>>();
+                                let process = Self::active_process_by_path(root, &path)
+                                    .ok_or_else(|| missing_process_error(&vm_id, &process_id))?;
+                                apply_kernel_signal_registration(process, signal, &registration)
+                            })?,
+                            ActiveExecutionEvent::DeferredPosixPollWake => {
+                                if child_path.is_empty() {
+                                    self.recheck_root_deferred_operations(&vm_id, &process_id, true)
+                                } else {
+                                    let path =
+                                        child_path.iter().map(String::as_str).collect::<Vec<_>>();
+                                    self.service_descendant_guest_wait(
+                                        &vm_id,
+                                        &process_id,
+                                        &path,
+                                        None,
+                                    )?;
+                                    self.service_descendant_kernel_poll(
+                                        &vm_id,
+                                        &process_id,
+                                        &path,
+                                        None,
+                                    )?;
+                                    self.service_descendant_kernel_read(
+                                        &vm_id,
+                                        &process_id,
+                                        &path,
+                                        None,
+                                    )
+                                }
+                            }
+                            ActiveExecutionEvent::Common(ExecutionEvent::Warning(error)) => {
+                                tracing::warn!(%error, "executor warning");
+                                Ok(())
+                            }
+                            event => Err(VmError::InvalidState(format!(
+                                "ERR_AGENTOS_PUBLIC_EVENT_ON_INTERNAL_SERVICE: {event:?}"
+                            ))),
+                        }
+                    })();
+                    Box::pin(async move { result })
+                }
+            };
+        Box::pin(async move {
+            let _reservation = reservation;
+            future.await
+        })
+    }
+
+    /// Move a thread-safe runtime completion back into the exact LocalSet-owned
+    /// process queue. Public stdout/stderr/exit envelopes continue to the
+    /// broker unchanged.
+    fn route_received_internal_process_event(
+        &mut self,
+        envelope: ProcessEventEnvelope,
+    ) -> Result<Option<ProcessEventEnvelope>, VmError> {
+        if !Self::internal_execution_event(&envelope.event) {
+            return Ok(Some(envelope));
+        }
+        self.validate_process_event_envelope_locator(&envelope)?;
+        let target_label = if envelope.child_path.is_empty() {
+            envelope.process_id.clone()
+        } else {
+            format!("{}/{}", envelope.process_id, envelope.child_path.join("/"))
+        };
+        let Some(mut vm) = self.vms.get_mut(&envelope.vm_id) else {
+            tracing::debug!(
+                vm_id = envelope.vm_id,
+                process_id = target_label,
+                "ERR_AGENTOS_STALE_PROCESS_EVENT: runtime completion targeted a disposed VM"
+            );
+            reject_internal_event(
+                envelope.event,
+                &VmError::host("ESTALE", "internal process event target no longer exists"),
+            );
+            return Ok(None);
+        };
+        if vm.connection_id != envelope.connection_id || vm.session_id != envelope.session_id {
+            return Err(VmError::InvalidState(format!(
+                "ERR_AGENTOS_PROCESS_EVENT_SCOPE_MISMATCH: runtime completion for VM {} carried connection/session {}/{}, expected {}/{}",
+                envelope.vm_id,
+                envelope.connection_id,
+                envelope.session_id,
+                vm.connection_id,
+                vm.session_id
+            )));
+        }
+        let Some(root) = vm.active_processes.get_mut(&envelope.process_id) else {
+            tracing::debug!(
+                vm_id = envelope.vm_id,
+                process_id = target_label,
+                "ERR_AGENTOS_STALE_PROCESS_EVENT: runtime completion targeted a reaped root process"
+            );
+            reject_internal_event(
+                envelope.event,
+                &VmError::host("ESTALE", "internal process event target no longer exists"),
+            );
+            return Ok(None);
+        };
+        let Some(process) = Self::active_process_by_owned_path_mut(root, &envelope.child_path)
+        else {
+            tracing::debug!(
+                vm_id = envelope.vm_id,
+                process_id = target_label,
+                "ERR_AGENTOS_STALE_PROCESS_EVENT: runtime completion targeted a reaped descendant"
+            );
+            reject_internal_event(
+                envelope.event,
+                &VmError::host("ESTALE", "internal process event target no longer exists"),
+            );
+            return Ok(None);
+        };
+        match process.try_queue_pending_execution_envelope(envelope) {
+            Ok(()) => Ok(None),
+            Err((error, envelope)) => {
+                reject_internal_event(envelope.event, &error);
+                Err(error)
+            }
+        }
+    }
+
+    /// Transfer channel events one at a time so an admission error cannot drop
+    /// later envelopes that were already removed from the bounded channel.
+    fn drain_runtime_process_event_channel_nowait(&mut self) -> Result<bool, VmError> {
+        let transfer_limit = self.config.runtime.protocol.max_process_events.max(1);
+        let mut transferred = 0usize;
+        while transferred < transfer_limit {
+            let envelope = if let Some(envelope) = self.deferred_process_event_envelope.take() {
+                self.observe_pending_process_event_depth();
+                envelope
+            } else {
+                if self.pending_process_event_capacity() == 0 {
+                    break;
+                }
+                let next = {
+                    let receiver = self.process_event_receiver.as_mut().ok_or_else(|| {
+                        VmError::InvalidState(String::from("process event receiver unavailable"))
+                    })?;
+                    receiver.try_recv()
+                };
+                match next {
+                    Ok(envelope) => envelope,
+                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
+                }
+            };
+            transferred = transferred.saturating_add(1);
+            if let Some(envelope) = self.route_received_internal_process_event(envelope)? {
+                self.validate_process_event_envelope_locator(&envelope)?;
+                let event_byte_limit = self
+                    .vms
+                    .get(&envelope.vm_id)
+                    .map(|vm| vm.limits.process.pending_event_bytes)
+                    .unwrap_or(crate::core::limits::DEFAULT_PROCESS_PENDING_EVENT_BYTES);
+                if envelope.retained_bytes() > event_byte_limit {
+                    return Err(VmError::InvalidState(format!(
+                        "ERR_AGENTOS_PROCESS_EVENT_BYTES_LIMIT: process event for VM {} retains {} bytes, exceeding limits.process.pendingEventBytes ({event_byte_limit}); raise limits.process.pendingEventBytes",
+                        envelope.vm_id,
+                        envelope.retained_bytes()
+                    )));
+                }
+                if let Err((error, envelope)) = self.try_queue_pending_process_event(envelope) {
+                    debug_assert!(self.deferred_process_event_envelope.is_none());
+                    self.deferred_process_event_envelope = Some(envelope);
+                    self.observe_pending_process_event_depth();
+                    tracing::debug!(
+                        %error,
+                        "process-event receiver paused at temporary public-queue capacity"
+                    );
+                    break;
+                }
+            }
+        }
+        let has_more = self
+            .process_event_receiver
+            .as_ref()
+            .is_some_and(|receiver| !receiver.is_empty());
+        if has_more && self.deferred_process_event_envelope.is_none() {
+            self.process_event_notify.notify_one();
+        }
+        Ok(transferred > 0)
+    }
+
+    /// Perform one bounded, non-suspending process-event turn. Runtime-owned
+    /// queues remain durable; this command only transfers events that are
+    /// already ready and never waits for a producer.
+    pub fn pump_process_events_nowait(
+        &mut self,
+        ownership: &OwnershipScope,
+        max_service_claims: usize,
+    ) -> Result<ProcessEventPumpTurn, VmError> {
+        let mut emitted_any = self.poll_in_process_event_services_nowait();
+        let mut host_services = Vec::new();
+        let mut child_bridge_services = Vec::new();
+        let mut root_source_remains = false;
+        self.expire_public_execution_deadlines()?;
+
+        if self.drain_runtime_process_event_channel_nowait()? {
+            emitted_any = true;
+        }
+
+        for vm_id in self.vm_ids_for_scope(ownership)? {
+            let work_limit = self.config.runtime.fairness.vm_quantum_operations;
+            let Some((connection_id, session_id, process_ids)) = self.vms.get(&vm_id).map(|vm| {
+                vm.kernel.reap_due_zombies();
+                (
+                    vm.connection_id.clone(),
+                    vm.session_id.clone(),
+                    vm.active_processes.keys().cloned().collect::<Vec<_>>(),
+                )
+            }) else {
+                continue;
+            };
+            let mut work = 0usize;
+            for process_id in process_ids {
+                if host_services
+                    .len()
+                    .saturating_add(child_bridge_services.len())
+                    >= max_service_claims
+                {
+                    self.process_event_notify.notify_one();
+                    break;
+                }
+                if work >= work_limit {
+                    self.process_event_notify.notify_one();
+                    break;
+                }
+                if self
+                    .vms
+                    .get(&vm_id)
+                    .is_some_and(|vm| vm.detached_child_processes.contains(&process_id))
+                {
+                    continue;
+                }
+                self.recheck_root_deferred_operations(&vm_id, &process_id, false)?;
+                enum PollResult {
+                    Event(Option<PolledExecutionEvent>),
+                    RecoverClosed,
+                }
+                let polled = {
+                    let Some(mut vm) = self.vms.get_mut(&vm_id) else {
+                        continue;
+                    };
+                    let Some(process) = vm.active_processes.get_mut(&process_id) else {
+                        continue;
+                    };
+                    if let Some(event) = process.lease_pending_execution_event() {
+                        PollResult::Event(Some(event))
+                    } else {
+                        match process.try_poll_execution_event() {
+                            Ok(event) => PollResult::Event(event),
+                            Err(VmError::ExecutionEventChannelClosed { .. }) => {
+                                PollResult::RecoverClosed
+                            }
+                            Err(error) => return Err(error),
+                        }
+                    }
+                };
+                let event = match polled {
+                    PollResult::Event(event) => event,
+                    PollResult::RecoverClosed => self
+                        .recover_closed_root_runtime_process_event(&vm_id, &process_id)?
+                        .map(PolledExecutionEvent::unreserved),
+                };
+                let Some(event) = event else { continue };
+                root_source_remains |= self.vms.get(&vm_id).is_some_and(|vm| {
+                    vm.active_processes.get(&process_id).is_some_and(|process| {
+                        !process.pending_execution_events.is_empty()
+                            || process.execution.has_pending_events()
+                    })
+                });
+                if Self::internal_execution_event(event.event()) {
+                    let PolledExecutionEvent { event, reservation } = event;
+                    if let Some(vm) = self.vms.handle(&vm_id) {
+                        host_services.push(OwnedHostEventService::new(
+                            OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                            vm_id.clone(),
+                            process_id,
+                            Vec::new(),
+                            vm,
+                            event,
+                            reservation,
+                        ));
+                    }
+
+                    work = work.saturating_add(1);
+                    continue;
+                }
+                let PolledExecutionEvent { event, reservation } = event;
+                let envelope = ProcessEventEnvelope {
+                    connection_id: connection_id.clone(),
+                    session_id: session_id.clone(),
+                    vm_id: vm_id.clone(),
+                    child_path: Vec::new(),
+                    process_id,
+                    event,
+                };
+                if let Err(error) = self.check_pending_process_event_capacity(&envelope) {
+                    let Some(mut vm) = self.vms.get_mut(&vm_id) else {
+                        return Err(error);
+                    };
+                    if let Some(process) = vm.active_processes.get_mut(&envelope.process_id) {
+                        process.requeue_pending_execution_event(PolledExecutionEvent {
+                            event: envelope.event,
+                            reservation,
+                        })?;
+                    }
+                    return Err(error);
+                }
+                self.queue_pending_process_event(envelope)?;
+                drop(reservation);
+                emitted_any = true;
+                work = work.saturating_add(1);
+            }
+            if self.pump_child_process_events_nowait(
+                &vm_id,
+                &mut host_services,
+                &mut child_bridge_services,
+                max_service_claims,
+            )? {
+                emitted_any = true;
+            }
+            if self.pump_detached_child_process_events_nowait(
+                &vm_id,
+                &mut host_services,
+                &mut child_bridge_services,
+                max_service_claims,
+            )? {
+                emitted_any = true;
+            }
+            let root_ids = self
+                .vms
+                .get(&vm_id)
+                .map(|vm| vm.active_processes.keys().cloned().collect::<Vec<_>>())
+                .unwrap_or_default();
+            for root_id in root_ids {
+                self.recheck_root_deferred_operations(&vm_id, &root_id, true)?;
+            }
+        }
+        if self.route_claimed_pending_process_events()? > 0 {
+            emitted_any = true;
+        }
+        let service_claims = host_services
+            .len()
+            .saturating_add(child_bridge_services.len());
+        if max_service_claims > 0 && service_claims >= max_service_claims {
+            // `Notify` coalesces producer edges. If this turn consumes the one
+            // stored permit while filling the owned-service staging capacity,
+            // source queues may still contain work but no producer will emit a
+            // second edge. Preserve one continuation permit; an empty follow-up
+            // turn does not rearm and therefore cannot hot-spin.
+            self.process_event_notify.notify_one();
+        }
+        if root_source_remains {
+            // A root process is probed once per bounded coordinator turn. Its
+            // runtime producer uses a coalesced Notify, so one producer edge
+            // can represent an arbitrary number of already-durable stdout,
+            // stderr, exit, or internal events. Preserve one continuation
+            // edge whenever the non-consuming post-claim probe still observes
+            // source work. An exactly drained turn does not rearm and therefore
+            // cannot hot-spin.
+            self.process_event_notify.notify_one();
+        }
+        self.rearm_kernel_reaper_task()?;
+        Ok(ProcessEventPumpTurn {
+            emitted_any,
+            host_services,
+            child_bridge_services,
+        })
+    }
+
+    /// Apply one already-polled public process event without suspending the
+    /// protocol coordinator. Internal RPC events are never valid broker
+    /// payloads; they stay on the owned VM event-service path.
+    pub(crate) fn handle_public_execution_event_nowait(
+        &mut self,
+        vm_id: &str,
+        process_id: &str,
+        event: ActiveExecutionEvent,
+    ) -> Result<Option<EventFrame>, VmError> {
+        let event = match event {
+            ActiveExecutionEvent::Common(ExecutionEvent::RuntimeFault(fault)) => {
+                let fault = fault.into_error();
+                let kernel_fault =
+                    agentos_vm_kernel::process_runtime::ProcessRuntimeFault::try_new(
+                        fault.code.clone(),
+                        fault.message.clone(),
+                        fault.details.clone(),
+                    )
+                    .map_err(|error| VmError::host(error.code(), error.message()))?;
+                let Some(mut vm) = self.vms.get_mut(vm_id) else {
+                    log_stale_process_event(
+                        &self.bridge,
+                        vm_id,
+                        process_id,
+                        "runtime fault dispatch",
+                    );
+                    return Ok(None);
+                };
+                let Some(process) = vm.active_processes.get_mut(process_id) else {
+                    log_stale_process_event(
+                        &self.bridge,
+                        vm_id,
+                        process_id,
+                        "runtime fault dispatch",
+                    );
+                    return Ok(None);
+                };
+                process.kernel_handle.finish_runtime_fault(kernel_fault);
+                tracing::error!(
+                    vm_id,
+                    process_id,
+                    code = %fault.code,
+                    message = %fault.message,
+                    details = ?fault.details,
+                    "executor reported a typed runtime fault"
+                );
+                ActiveExecutionEvent::Exited(1)
+            }
+            ActiveExecutionEvent::Common(ExecutionEvent::Exited(exit)) => {
+                let exit_code = match exit {
+                    crate::executor::backend::ExecutionExit::Exited(code) => code,
+                    crate::executor::backend::ExecutionExit::Signaled { signal, .. } => {
+                        128_i32.saturating_add(signal)
+                    }
+                };
+                ActiveExecutionEvent::Exited(exit_code)
+            }
+            ActiveExecutionEvent::Common(ExecutionEvent::Output { stream, bytes }) => {
+                match stream {
+                    crate::executor::backend::OutputStream::Stdout => {
+                        ActiveExecutionEvent::Stdout(bytes.into_vec())
+                    }
+                    crate::executor::backend::OutputStream::Stderr => {
+                        ActiveExecutionEvent::Stderr(bytes.into_vec())
+                    }
+                }
+            }
+            event => event,
+        };
+        let Some((connection_id, session_id, active)) = self.vms.get(vm_id).map(|vm| {
+            (
+                vm.connection_id.clone(),
+                vm.session_id.clone(),
+                vm.active_processes.contains_key(process_id),
+            )
+        }) else {
+            log_stale_process_event(&self.bridge, vm_id, process_id, "public event dispatch");
+            return Ok(None);
+        };
+        if !active {
+            log_stale_process_event(&self.bridge, vm_id, process_id, "public event dispatch");
+            return Ok(None);
+        }
+        let ownership = OwnershipScope::vm(&connection_id, &session_id, vm_id);
+        let public_execution = self.is_public_execution_process(vm_id, process_id);
+
+        if self.capture_extension_process_output_event(vm_id, process_id, &event) {
+            return Ok(None);
+        }
+
+        match event {
+            ActiveExecutionEvent::Stdout(chunk) if public_execution => Ok(self
+                .record_public_execution_output(
+                    vm_id,
+                    process_id,
+                    ExecutionStreamChannel::Stdout,
+                    chunk,
+                )
+                .map(|payload| EventFrame::new(ownership, payload))),
+            ActiveExecutionEvent::Stderr(chunk) if public_execution => Ok(self
+                .record_public_execution_output(
+                    vm_id,
+                    process_id,
+                    ExecutionStreamChannel::Stderr,
+                    chunk,
+                )
+                .map(|payload| EventFrame::new(ownership, payload))),
+            ActiveExecutionEvent::Stdout(chunk) => Ok(Some(EventFrame::new(
+                ownership,
+                EventPayload::ProcessOutput(ProcessOutputEvent {
+                    process_id: process_id.to_owned(),
+                    channel: StreamChannel::Stdout,
+                    chunk,
+                }),
+            ))),
+            ActiveExecutionEvent::Stderr(chunk) => Ok(Some(EventFrame::new(
+                ownership,
+                EventPayload::ProcessOutput(ProcessOutputEvent {
+                    process_id: process_id.to_owned(),
+                    channel: StreamChannel::Stderr,
+                    chunk,
+                }),
+            ))),
+            ActiveExecutionEvent::Exited(exit_code) => {
+                record_execute_response_to_exit_milestone(
+                    "execute_response_to_exit_event_handle",
+                    vm_id,
+                    process_id,
+                );
+                record_execute_response_to_exit(vm_id, process_id);
+                let park_resident = public_execution
+                    && self.should_park_public_execution_process(vm_id, process_id);
+                let became_idle = if park_resident {
+                    false
+                } else {
+                    self.finish_active_process_exit(vm_id, process_id, exit_code)?
+                        .unwrap_or(false)
+                };
+                if became_idle || (park_resident && !self.has_running_nonresident_processes(vm_id))
+                {
+                    self.bridge.emit_lifecycle(vm_id, LifecycleState::Ready)?;
+                }
+                if public_execution {
+                    Ok(self
+                        .complete_public_execution(vm_id, process_id, exit_code)
+                        .map(|payload| EventFrame::new(ownership, payload)))
+                } else {
+                    Ok(Some(EventFrame::new(
+                        ownership,
+                        EventPayload::ProcessExited(ProcessExitedEvent {
+                            process_id: process_id.to_owned(),
+                            exit_code,
+                        }),
+                    )))
+                }
+            }
+            other => Err(VmError::InvalidState(format!(
+                "ERR_AGENTOS_INTERNAL_EVENT_ON_PUBLIC_BROKER: process {process_id} produced internal event {other:?}"
+            ))),
+        }
+    }
+
     pub async fn pump_process_events(
         &mut self,
         ownership: &OwnershipScope,
     ) -> Result<bool, VmError> {
-        let mut emitted_any = false;
+        let mut emitted_any = self.poll_in_process_event_services_nowait();
         self.expire_public_execution_deadlines()?;
-
-        let mut queued_envelopes = Vec::new();
-        {
-            let pending_capacity = self.pending_process_event_capacity();
-            let receiver = self.process_event_receiver.as_mut().ok_or_else(|| {
-                VmError::InvalidState(String::from("process event receiver unavailable"))
-            })?;
-            loop {
-                if queued_envelopes.len() >= pending_capacity {
-                    if receiver.is_empty() {
-                        break;
-                    }
-                    return Err(process_event_queue_overflow_error(
-                        self.config.protocol.max_process_events,
-                    ));
-                }
-                match receiver.try_recv() {
-                    Ok(envelope) => {
-                        queued_envelopes.push(envelope);
-                        emitted_any = true;
-                    }
-                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
-                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
-                }
-            }
-        }
-        for envelope in queued_envelopes {
-            if Self::internal_execution_event(&envelope.event) {
-                let root_exists = self
-                    .vms
-                    .get(&envelope.vm_id)
-                    .is_some_and(|vm| vm.active_processes.contains_key(&envelope.process_id));
-                if root_exists {
-                    self.vms
-                        .get_mut(&envelope.vm_id)
-                        .and_then(|vm| vm.active_processes.get_mut(&envelope.process_id))
-                        .expect("root process existence checked above")
-                        .queue_pending_execution_event(envelope.event)?;
-                    continue;
-                }
-                let descendant_exists = self.vms.get(&envelope.vm_id).is_some_and(|vm| {
-                    vm.active_processes.keys().any(|root_process_id| {
-                        envelope
-                            .process_id
-                            .strip_prefix(root_process_id)
-                            .is_some_and(|suffix| suffix.starts_with('/'))
-                    })
-                });
-                if descendant_exists {
-                    // Descendant pumps transfer these envelopes into the
-                    // child's bounded event queue using the slash-qualified
-                    // route. Handling them as a missing root would cancel a
-                    // still-live deferred reply.
-                    self.queue_pending_process_event(envelope)?;
-                } else {
-                    // A stale root completion still owns a reply handle. Fail
-                    // it immediately instead of leaving it in a public queue
-                    // that can no longer have a matching process consumer.
-                    self.handle_execution_event(
-                        &envelope.vm_id,
-                        &envelope.process_id,
-                        envelope.event,
-                    )
-                    .await?;
-                }
-            } else {
-                self.queue_pending_process_event(envelope)?;
-            }
-        }
-
+        emitted_any |= self.drain_runtime_process_event_channel_nowait()?;
         let vm_ids = self.vm_ids_for_scope(ownership)?;
         for vm_id in vm_ids {
             let vm_work_limit = self.config.runtime.fairness.vm_quantum_operations;
@@ -825,14 +1463,18 @@ where
             if let Some(vm) = self.vms.get(&vm_id) {
                 vm.kernel.reap_due_zombies();
             }
-            'vm_event_turn: while let Some(vm) = self.vms.get(&vm_id) {
-                let connection_id = vm.connection_id.clone();
-                let session_id = vm.session_id.clone();
-                let process_ids = self
-                    .vms
-                    .get(&vm_id)
-                    .map(|vm| vm.active_processes.keys().cloned().collect::<Vec<_>>())
-                    .unwrap_or_default();
+            'vm_event_turn: while self.vms.contains_key(&vm_id) {
+                let Some((connection_id, session_id, process_ids)) =
+                    self.vms.get(&vm_id).map(|vm| {
+                        (
+                            vm.connection_id.clone(),
+                            vm.session_id.clone(),
+                            vm.active_processes.keys().cloned().collect::<Vec<_>>(),
+                        )
+                    })
+                else {
+                    break;
+                };
                 let mut emitted_this_pass = false;
 
                 for process_id in process_ids {
@@ -853,7 +1495,7 @@ where
                         RecoverClosedChannel,
                     }
                     let poll_result = {
-                        let Some(vm) = self.vms.get_mut(&vm_id) else {
+                        let Some(mut vm) = self.vms.get_mut(&vm_id) else {
                             continue;
                         };
                         let Some(process) = vm.active_processes.get_mut(&process_id) else {
@@ -902,19 +1544,20 @@ where
                             connection_id: connection_id.clone(),
                             session_id: session_id.clone(),
                             vm_id: vm_id.clone(),
+                            child_path: Vec::new(),
                             process_id: process_id.clone(),
                             event,
                         };
                         if let Err(error) = self.check_pending_process_event_capacity(&envelope) {
-                            if let Some(process) = self
-                                .vms
-                                .get_mut(&vm_id)
-                                .and_then(|vm| vm.active_processes.get_mut(&process_id))
-                            {
-                                process.requeue_pending_execution_event(PolledExecutionEvent {
-                                    event: envelope.event,
-                                    reservation,
-                                })?;
+                            if let Some(mut vm) = self.vms.get_mut(&vm_id) {
+                                if let Some(process) = vm.active_processes.get_mut(&process_id) {
+                                    process.requeue_pending_execution_event(
+                                        PolledExecutionEvent {
+                                            event: envelope.event,
+                                            reservation,
+                                        },
+                                    )?;
+                                }
                             }
                             return Err(error);
                         }
@@ -961,6 +1604,9 @@ where
             }
         }
 
+        if self.route_claimed_pending_process_events()? > 0 {
+            emitted_any = true;
+        }
         self.rearm_kernel_reaper_task()?;
         Ok(emitted_any)
     }
@@ -977,34 +1623,33 @@ where
             // Do not wait for the notifier task to observe the same generation
             // transition before probing on the owner thread. Retire its old
             // registration now; each service below rearms it if still blocked.
-            if let Some(process) = self
-                .vms
-                .get_mut(vm_id)
-                .and_then(|vm| vm.active_processes.get_mut(process_id))
-            {
-                if let Some(task) = process
-                    .deferred_guest_wait
-                    .as_mut()
-                    .and_then(|wait| wait.wake_task.take())
-                {
-                    task.abort();
-                }
-                if let Some(task) = process
-                    .deferred_kernel_poll
-                    .as_mut()
-                    .and_then(|poll| poll.wake_task.take())
-                {
-                    task.abort();
-                }
-                if let Some(task) = process
-                    .deferred_kernel_read
-                    .as_mut()
-                    .and_then(|read| read.wake_task.take())
-                {
-                    task.abort();
+            if let Some(mut vm) = self.vms.get_mut(vm_id) {
+                if let Some(process) = vm.active_processes.get_mut(process_id) {
+                    if let Some(task) = process
+                        .deferred_guest_wait
+                        .as_mut()
+                        .and_then(|wait| wait.wake_task.take())
+                    {
+                        task.abort();
+                    }
+                    if let Some(task) = process
+                        .deferred_kernel_poll
+                        .as_mut()
+                        .and_then(|poll| poll.wake_task.take())
+                    {
+                        task.abort();
+                    }
+                    if let Some(task) = process
+                        .deferred_kernel_read
+                        .as_mut()
+                        .and_then(|read| read.wake_task.take())
+                    {
+                        task.abort();
+                    }
                 }
             }
         }
+
         self.recheck_root_deferred_guest_wait(vm_id, process_id)?;
         self.recheck_root_deferred_kernel_poll(vm_id, process_id)?;
         self.recheck_root_deferred_kernel_read(vm_id, process_id)
@@ -1016,12 +1661,13 @@ where
         process_id: &str,
     ) -> Result<(), VmError> {
         let notify = Arc::clone(&self.process_event_notify);
-        let Some(vm) = self.vms.get_mut(vm_id) else {
+        let Some(mut vm) = self.vms.get_mut(vm_id) else {
             return Ok(());
         };
         let runtime = vm.runtime_context.clone();
         let wait_handle = vm.kernel.process_wait_handle();
         let generation = vm.generation;
+        let vm = &mut *vm;
         let (kernel, active_processes) = (&mut vm.kernel, &mut vm.active_processes);
         let Some(process) = active_processes.get_mut(process_id) else {
             return Ok(());
@@ -1051,9 +1697,9 @@ where
         let socket_paths = self
             .vms
             .get(vm_id)
-            .map(build_socket_path_context)
+            .map(|vm| build_socket_path_context(&vm))
             .transpose()?;
-        let Some(vm) = self.vms.get_mut(vm_id) else {
+        let Some(mut vm) = self.vms.get_mut(vm_id) else {
             return Ok(());
         };
         let runtime = vm.runtime_context.clone();
@@ -1062,6 +1708,7 @@ where
         let kernel_readiness = Arc::clone(&vm.kernel_socket_readiness);
         let capabilities = vm.capabilities.clone();
         let managed_descriptions = Arc::clone(&vm.managed_host_net_descriptions);
+        let vm = &mut *vm;
         let (kernel, active_processes) = (&mut vm.kernel, &mut vm.active_processes);
         let Some(process) = active_processes.get_mut(process_id) else {
             return Ok(());
@@ -1109,12 +1756,13 @@ where
         process_id: &str,
     ) -> Result<(), VmError> {
         let notify = Arc::clone(&self.process_event_notify);
-        let Some(vm) = self.vms.get_mut(vm_id) else {
+        let Some(mut vm) = self.vms.get_mut(vm_id) else {
             return Ok(());
         };
         let runtime = vm.runtime_context.clone();
         let wait_handle = vm.kernel.poll_wait_handle();
         let generation = vm.generation;
+        let vm = &mut *vm;
         let (kernel, active_processes) = (&mut vm.kernel, &mut vm.active_processes);
         let Some(process) = active_processes.get_mut(process_id) else {
             return Ok(());
@@ -1188,7 +1836,7 @@ where
         Ok(())
     }
 
-    fn internal_execution_event(event: &ActiveExecutionEvent) -> bool {
+    pub(super) fn internal_execution_event(event: &ActiveExecutionEvent) -> bool {
         matches!(
             event,
             ActiveExecutionEvent::Common(ExecutionEvent::HostCall { .. })
@@ -1217,7 +1865,7 @@ where
         vm_id: &str,
         process_id: &str,
     ) -> Result<Option<ActiveExecutionEvent>, VmError> {
-        let Some(vm) = self.vms.get_mut(vm_id) else {
+        let Some(mut vm) = self.vms.get_mut(vm_id) else {
             return Ok(None);
         };
         let Some(process) = vm.active_processes.get_mut(process_id) else {
@@ -1233,12 +1881,16 @@ where
                 Ok(Some(ActiveExecutionEvent::Exited(status.status)))
             }
             RuntimeChildStatusObservation::Running => Ok(None),
-            RuntimeChildStatusObservation::NotWaitable => Err(VmError::host("ECHILD", format!("guest runtime process {runtime_child_pid} exited without an observable wait status"
-            ))),
+            RuntimeChildStatusObservation::NotWaitable => Err(VmError::host(
+                "ECHILD",
+                format!(
+                    "guest runtime process {runtime_child_pid} exited without an observable wait status"
+                ),
+            )),
         }
     }
 
-    pub(super) fn active_process_by_path<'a>(
+    pub(crate) fn active_process_by_path<'a>(
         process: &'a ActiveProcess,
         child_path: &[&str],
     ) -> Option<&'a ActiveProcess> {
@@ -1249,7 +1901,7 @@ where
         Some(current)
     }
 
-    pub(super) fn active_process_by_path_mut<'a>(
+    pub(crate) fn active_process_by_path_mut<'a>(
         process: &'a mut ActiveProcess,
         child_path: &[&str],
     ) -> Option<&'a mut ActiveProcess> {
@@ -1416,7 +2068,7 @@ where
                         fault.details.clone(),
                     )
                     .map_err(|error| VmError::host(error.code(), error.message()))?;
-                let Some(vm) = self.vms.get_mut(vm_id) else {
+                let Some(mut vm) = self.vms.get_mut(vm_id) else {
                     log_stale_process_event(
                         &self.bridge,
                         vm_id,
@@ -1454,17 +2106,32 @@ where
                 };
                 ActiveExecutionEvent::Exited(exit_code)
             }
+            ActiveExecutionEvent::Common(ExecutionEvent::Output { stream, bytes }) => {
+                match stream {
+                    crate::executor::backend::OutputStream::Stdout => {
+                        ActiveExecutionEvent::Stdout(bytes.into_vec())
+                    }
+                    crate::executor::backend::OutputStream::Stderr => {
+                        ActiveExecutionEvent::Stderr(bytes.into_vec())
+                    }
+                }
+            }
             event => event,
         };
-        let Some(vm) = self.vms.get(vm_id) else {
+        let Some((connection_id, session_id, active)) = self.vms.get(vm_id).map(|vm| {
+            (
+                vm.connection_id.clone(),
+                vm.session_id.clone(),
+                vm.active_processes.contains_key(process_id),
+            )
+        }) else {
             log_stale_process_event(&self.bridge, vm_id, process_id, "execution event dispatch");
             return Ok(None);
         };
-        if !vm.active_processes.contains_key(process_id) {
+        if !active {
             log_stale_process_event(&self.bridge, vm_id, process_id, "execution event dispatch");
             return Ok(None);
         }
-        let (connection_id, session_id) = { (vm.connection_id.clone(), vm.session_id.clone()) };
         let ownership = OwnershipScope::vm(&connection_id, &session_id, vm_id);
         let public_execution = self.is_public_execution_process(vm_id, process_id);
 
@@ -1503,7 +2170,7 @@ where
                 else {
                     return Ok(None);
                 };
-                let Some(vm) = self.vms.get_mut(vm_id) else {
+                let Some(mut vm) = self.vms.get_mut(vm_id) else {
                     log_stale_process_event(
                         &self.bridge,
                         vm_id,
@@ -1512,7 +2179,9 @@ where
                     );
                     return Ok(None);
                 };
+                let vm = &mut *vm;
                 let generation = vm.generation;
+                let vm = &mut *vm;
                 let (kernel, active_processes) = (&mut vm.kernel, &mut vm.active_processes);
                 let Some(process) = active_processes.get_mut(process_id) else {
                     log_stale_process_event(
@@ -1604,7 +2273,7 @@ where
                 signal,
                 registration,
             } => {
-                let Some(vm) = self.vms.get_mut(vm_id) else {
+                let Some(mut vm) = self.vms.get_mut(vm_id) else {
                     return Ok(None);
                 };
                 let Some(process) = vm.active_processes.get(process_id) else {
@@ -1661,7 +2330,7 @@ where
         process_id: &str,
         completion: crate::state::HostCallCompletion,
     ) -> Result<(), VmError> {
-        let Some(vm) = self.vms.get_mut(vm_id) else {
+        let Some(mut vm) = self.vms.get_mut(vm_id) else {
             completion
                 .reply
                 .fail(HostServiceError::new(
@@ -1671,6 +2340,7 @@ where
                 .map_err(VmError::from)?;
             return Ok(());
         };
+        let vm = &mut *vm;
         let kernel_readiness = Arc::clone(&vm.kernel_socket_readiness);
         let unix_addresses = Arc::clone(&vm.unix_address_registry);
         let managed_descriptions = Arc::clone(&vm.managed_host_net_descriptions);
@@ -1685,6 +2355,7 @@ where
             return Ok(());
         };
         settle_host_call_completion_for_process(
+            vm.generation,
             &mut vm.kernel,
             &kernel_readiness,
             &unix_addresses,
@@ -1694,23 +2365,21 @@ where
         )
     }
 
-    pub(crate) fn finish_active_process_exit(
-        &mut self,
+    pub(crate) fn finish_active_process_exit_owned(
+        bridge: &SharedBridge<B>,
+        vm_handle: &crate::state::VmHandle,
         vm_id: &str,
         process_id: &str,
         exit_code: i32,
-    ) -> Result<Option<bool>, VmError> {
-        let Some(vm) = self.vms.get_mut(vm_id) else {
-            log_stale_process_event(&self.bridge, vm_id, process_id, "process exit cleanup");
-            return Ok(None);
-        };
+    ) -> Result<Option<FinishedActiveProcessExit>, VmError> {
+        let mut vm = vm_handle.try_borrow_mut("finish active process exit")?;
         if !vm.active_processes.contains_key(process_id) {
-            log_stale_process_event(&self.bridge, vm_id, process_id, "process exit cleanup");
+            log_stale_process_event(bridge, vm_id, process_id, "process exit cleanup");
             return Ok(None);
         }
 
         let phase_start = Instant::now();
-        prune_exited_process_snapshots(vm);
+        prune_exited_process_snapshots(&mut vm);
         record_execute_phase(
             "process_exit_cleanup_prune_snapshots",
             phase_start.elapsed(),
@@ -1725,7 +2394,7 @@ where
                 .expect("validated exiting process remains registered"),
         );
         for kernel_pid in terminating_kernel_pids {
-            retire_managed_process_routes(&self.bridge, vm_id, vm, kernel_pid)?;
+            retire_managed_process_routes(bridge, vm_id, &mut vm, kernel_pid)?;
         }
         record_execute_phase(
             "process_exit_cleanup_managed_network_routes",
@@ -1787,7 +2456,7 @@ where
                 process.kernel_pid
             );
         }
-        retire_orphaned_managed_descriptions(vm)?;
+        retire_orphaned_managed_descriptions(&mut vm)?;
         record_execute_phase("process_exit_cleanup_wait_and_reap", phase_start.elapsed());
         let phase_start = Instant::now();
         record_execute_phase(
@@ -1809,13 +2478,299 @@ where
         let became_idle = vm.active_processes.is_empty();
         record_execute_phase("process_exit_cleanup_became_idle", phase_start.elapsed());
         let phase_start = Instant::now();
-        self.transfer_extension_process_resource(process_id, &detached_process_ids);
+
         record_execute_phase("process_exit_cleanup_prune_resource", phase_start.elapsed());
 
         // The process was removed from active_processes before the fallible
         // raw-mode cleanup. Surface the error only after all process-owned
         // resources have been finalized.
         raw_mode_result?;
-        Ok(Some(became_idle))
+        Ok(Some(FinishedActiveProcessExit {
+            became_idle,
+            process_id: process_id.to_owned(),
+            detached_process_ids,
+        }))
+    }
+
+    pub(crate) fn finish_active_process_exit(
+        &mut self,
+        vm_id: &str,
+        process_id: &str,
+        exit_code: i32,
+    ) -> Result<Option<bool>, VmError> {
+        let Some(vm_handle) = self.vms.handle(vm_id) else {
+            log_stale_process_event(&self.bridge, vm_id, process_id, "process exit cleanup");
+            return Ok(None);
+        };
+        let finished = Self::finish_active_process_exit_owned(
+            &self.bridge,
+            &vm_handle,
+            vm_id,
+            process_id,
+            exit_code,
+        )?;
+        if let Some(finished) = finished {
+            let phase_start = Instant::now();
+            self.transfer_extension_process_resource(
+                &finished.process_id,
+                &finished.detached_process_ids,
+            );
+            record_execute_phase("process_exit_cleanup_prune_resource", phase_start.elapsed());
+            return Ok(Some(finished.became_idle));
+        }
+        Ok(None)
+    }
+}
+
+pub(crate) struct FinishedActiveProcessExit {
+    pub(crate) detached_process_ids: Vec<String>,
+    pub(crate) became_idle: bool,
+    pub(crate) process_id: String,
+}
+
+#[cfg(test)]
+mod process_event_channel_tests {
+    use super::*;
+    use crate::VmManagerConfig;
+    use agentos_vm_host_interface::LocalVmHost as LocalBridge;
+    use std::future::Future as _;
+    use std::task::{Context, Poll, Waker};
+
+    #[test]
+    fn stale_internal_completion_settles_its_direct_reply() {
+        #[derive(Default)]
+        struct ReplyTarget(Mutex<Vec<String>>);
+        impl crate::executor::backend::DirectHostReplyTarget for ReplyTarget {
+            fn claim(&self, _call_id: u64) -> Result<bool, HostServiceError> {
+                Ok(true)
+            }
+            fn respond(
+                &self,
+                _call_id: u64,
+                _claimed: bool,
+                result: Result<HostCallReply, HostServiceError>,
+            ) -> Result<(), HostServiceError> {
+                self.0
+                    .lock()
+                    .expect("record replies")
+                    .push(result.expect_err("stale completion must fail").code);
+                Ok(())
+            }
+        }
+        let config = VmManagerConfig::default();
+        let runtime =
+            agentos_driver_tokio::TokioDriver::process(&config.runtime).expect("test runtime");
+        let mut sidecar = VmManager::with_config_extensions_and_runtime(
+            LocalBridge::default(),
+            config,
+            Vec::new(),
+            runtime.handle(),
+        )
+        .expect("test VM manager");
+        let target = Arc::new(ReplyTarget::default());
+        let reply = DirectHostReplyHandle::new(
+            crate::executor::backend::HostCallIdentity {
+                generation: 1,
+                pid: 1,
+                call_id: 1,
+            },
+            target.clone(),
+            1024,
+        )
+        .expect("direct reply");
+        let envelope = ProcessEventEnvelope {
+            connection_id: "connection".into(),
+            session_id: "session".into(),
+            vm_id: "disposed-vm".into(),
+            process_id: "process".into(),
+            child_path: Vec::new(),
+            event: ActiveExecutionEvent::HostCallCompletion(crate::state::HostCallCompletion {
+                reply,
+                result: Ok(Value::Null),
+            }),
+        };
+        assert!(sidecar
+            .route_received_internal_process_event(envelope)
+            .expect("route stale event")
+            .is_none());
+        assert_eq!(*target.0.lock().expect("read replies"), vec!["ESTALE"]);
+    }
+
+    #[test]
+    fn receiver_admission_failure_does_not_drop_later_envelopes() {
+        let config = VmManagerConfig::default();
+        let runtime = agentos_driver_tokio::TokioDriver::process(&config.runtime)
+            .expect("process-event channel test runtime");
+        let mut sidecar = VmManager::with_config_extensions_and_runtime(
+            LocalBridge::default(),
+            config,
+            Vec::new(),
+            runtime.handle(),
+        )
+        .expect("process-event channel test sidecar");
+        sidecar.config.runtime.protocol.max_process_events = 2;
+        let envelope = |child_path, byte| ProcessEventEnvelope {
+            connection_id: String::from("connection"),
+            session_id: String::from("session"),
+            vm_id: String::from("vm"),
+            child_path,
+            process_id: String::from("process"),
+            event: ActiveExecutionEvent::Stdout(vec![byte]),
+        };
+        sidecar
+            .process_event_sender
+            .try_send(envelope(
+                vec![String::from("a"), String::from("b"), String::from("c")],
+                1,
+            ))
+            .expect("queue invalid first envelope");
+        sidecar
+            .process_event_sender
+            .try_send(envelope(Vec::new(), 2))
+            .expect("queue valid later envelope");
+
+        let error = sidecar
+            .drain_runtime_process_event_channel_nowait()
+            .expect_err("invalid locator must fail admission");
+        assert!(error
+            .to_string()
+            .contains("ERR_AGENTOS_PROCESS_EVENT_PATH_LIMIT"));
+        assert_eq!(
+            sidecar
+                .process_event_receiver
+                .as_ref()
+                .expect("process event receiver")
+                .len(),
+            1,
+            "the later envelope must remain in the bounded channel"
+        );
+    }
+
+    #[test]
+    fn deferred_current_envelope_retries_before_later_channel_envelopes() {
+        let config = VmManagerConfig::default();
+        let runtime = agentos_driver_tokio::TokioDriver::process(&config.runtime)
+            .expect("process-event retry-order test runtime");
+        let mut sidecar = VmManager::with_config_extensions_and_runtime(
+            LocalBridge::default(),
+            config,
+            Vec::new(),
+            runtime.handle(),
+        )
+        .expect("process-event retry-order test sidecar");
+        let envelope = |byte| ProcessEventEnvelope {
+            connection_id: String::from("connection"),
+            session_id: String::from("session"),
+            vm_id: String::from("vm"),
+            child_path: Vec::new(),
+            process_id: String::from("process"),
+            event: ActiveExecutionEvent::Stdout(vec![byte]),
+        };
+        sidecar.deferred_process_event_envelope = Some(envelope(1));
+        sidecar
+            .process_event_sender
+            .try_send(envelope(2))
+            .expect("queue later envelope");
+
+        assert!(sidecar
+            .drain_runtime_process_event_channel_nowait()
+            .expect("retry staged and later envelopes"));
+        let bytes = sidecar
+            .pending_process_events
+            .drain(..)
+            .map(|envelope| match envelope.event {
+                ActiveExecutionEvent::Stdout(bytes) => bytes[0],
+                other => panic!("expected stdout, received {other:?}"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(bytes, vec![1, 2]);
+        assert!(sidecar.deferred_process_event_envelope.is_none());
+        assert!(sidecar
+            .process_event_receiver
+            .as_ref()
+            .expect("process event receiver")
+            .is_empty());
+    }
+
+    #[test]
+    fn temporary_rejection_stays_open_and_rearms_only_after_capacity_release() {
+        let config = VmManagerConfig::default();
+        let runtime = agentos_driver_tokio::TokioDriver::process(&config.runtime)
+            .expect("process-event no-spin test runtime");
+        let mut sidecar = VmManager::with_config_extensions_and_runtime(
+            LocalBridge::default(),
+            config,
+            Vec::new(),
+            runtime.handle(),
+        )
+        .expect("process-event no-spin test sidecar");
+        sidecar.config.runtime.protocol.max_process_events = 2;
+        let envelope = |byte| ProcessEventEnvelope {
+            connection_id: String::from("connection"),
+            session_id: String::from("session"),
+            vm_id: String::from("vm"),
+            child_path: Vec::new(),
+            process_id: String::from("process"),
+            event: ActiveExecutionEvent::Stdout(vec![byte]),
+        };
+        sidecar.pending_process_events.push_back(envelope(8));
+        sidecar.pending_process_events.push_back(envelope(9));
+        sidecar.deferred_process_event_envelope = Some(envelope(1));
+        sidecar
+            .process_event_sender
+            .try_send(envelope(2))
+            .expect("queue later envelope");
+
+        assert!(sidecar
+            .drain_runtime_process_event_channel_nowait()
+            .expect("temporary saturation must not close the protocol"));
+        assert!(sidecar.deferred_process_event_envelope.is_some());
+        assert_eq!(sidecar.pending_process_events.len(), 2);
+        assert_eq!(
+            sidecar
+                .process_event_receiver
+                .as_ref()
+                .expect("process event receiver")
+                .len(),
+            1
+        );
+
+        let mut notified = Box::pin(sidecar.process_event_notify.notified());
+        let mut context = Context::from_waker(Waker::noop());
+        assert!(matches!(
+            notified.as_mut().poll(&mut context),
+            Poll::Pending
+        ));
+
+        sidecar.pending_process_events.pop_front();
+        sidecar.observe_pending_process_event_depth();
+        sidecar.rearm_deferred_process_event_after_capacity_release();
+        assert!(matches!(
+            notified.as_mut().poll(&mut context),
+            Poll::Ready(())
+        ));
+        drop(notified);
+
+        sidecar
+            .drain_runtime_process_event_channel_nowait()
+            .expect("retry staged current envelope");
+        let queued = sidecar
+            .pending_process_events
+            .iter()
+            .map(|envelope| match &envelope.event {
+                ActiveExecutionEvent::Stdout(bytes) => bytes[0],
+                other => panic!("expected stdout, received {other:?}"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(queued, vec![9, 1]);
+        assert_eq!(
+            sidecar
+                .process_event_receiver
+                .as_ref()
+                .expect("process event receiver")
+                .len(),
+            1,
+            "later envelope remains behind the retried current envelope"
+        );
     }
 }

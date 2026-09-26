@@ -5,7 +5,7 @@ use super::vfs::{
     VirtualUtimeSpec,
 };
 use crate::package_format::{
-    generated::v1::{self, TarEntryKind},
+    generated::v2::{self, TarEntryKind},
     parse_aospkg_header, validate_mount_range, AospkgHeader,
 };
 use memmap2::Mmap;
@@ -706,7 +706,7 @@ fn ensure_index_capacity(observed: usize) -> VfsResult<()> {
     Ok(())
 }
 
-fn validate_sorted_entries(entries: &[v1::TarEntry]) -> VfsResult<()> {
+fn validate_sorted_entries(entries: &[v2::TarEntry]) -> VfsResult<()> {
     for pair in entries.windows(2) {
         let [previous, current] = pair else {
             continue;

@@ -1,0 +1,80 @@
+---
+title: "Security Model"
+description: "Understand agentOS trust boundaries, VM isolation, and host responsibilities."
+skill: true
+---
+
+<Warning>
+agentOS is in beta and is still undergoing security review.
+</Warning>
+
+agentOS runs untrusted guest code on behalf of a trusted client. Each VM has a
+kernel-owned filesystem, process table, socket table, pipes, PTYs, permission
+policy, and language runtimes. Guest JavaScript executes in V8; WASM and Python
+use their managed executors. Guest operations reach the host only through the
+sidecar's policy-enforcing interfaces.
+
+## Trust boundary
+
+| Component | Trust | Responsibility |
+| --- | --- | --- |
+| Client | Trusted, except for submitted guest code and data | Chooses configuration, permissions, software URLs, and credentials |
+| Sidecar, kernel, and VFS | Trusted enforcement point | Applies limits and permissions; owns processes, filesystems, sockets, and mounts |
+| Executor | Untrusted | Runs guest JavaScript, Python, WASM, and third-party code |
+
+The security boundary is **sidecar/runtime to executor**. A guest bypassing an
+applied permission, mount boundary, egress rule, or resource limit is in scope.
+A trusted client deliberately choosing a permissive configuration or unsafe
+credential is not a runtime escape.
+
+## Hosted actor restrictions
+
+The static hosted actor accepts only serializable configuration. Its filesystem
+descriptors are resolved through a fixed whitelist, and software installation
+accepts only remote HTTPS `.aospkg` sources. It cannot receive:
+
+- a host filesystem path or host-directory mount;
+- a host-function callback, closure, or arbitrary host object;
+- a custom filesystem or software resolver;
+- an unregistered actor implementation or lifecycle hook.
+
+Embedded Core runs inside a trusted application process and may explicitly
+configure host functions, host-backed mounts, and local software paths. Those are
+embedded capabilities, not actor capabilities.
+
+## Isolation guarantees
+
+- Guest processes are kernel-managed and never become host processes.
+- Guest sockets pass through the kernel socket table and applied network policy.
+- Trusted VM setup can update mounts and command stubs without relaxing guest
+  filesystem permissions, including while a VM is running.
+- Each actor's filesystem and runtime state are isolated from other actors.
+- Host-backed embedded mounts are confined to the configured root on every
+  operation, including symlink and `..` resolution.
+- Resource limits bound process count, descriptors, sockets, filesystem bytes,
+  runtime memory, CPU time, queues, payloads, and waits.
+- Limit pressure is logged or emitted as a structured warning; exhaustion fails
+  with a typed error naming the limit and how to raise it.
+
+## Deny by default
+
+Network access and host capabilities require explicit policy. Filesystem and
+guest process capabilities operate only within the VM-owned namespace. A scope
+can be `"allow"`, `"deny"`, or a rule set that matches the operation and target.
+
+<CodeSnippet file="examples/permissions/server.ts" region="allow-one-host" />
+
+## Operator responsibilities
+
+- Authenticate and authorize clients before they receive an actor connection.
+- Keep object-store credentials and operator package-download settings outside
+  actor-readable durable configuration.
+- Choose permissions and resource limits for the workload.
+- Treat software URLs and config as trusted control-plane input, while treating
+  the downloaded bytes and executed code as hostile.
+- Harden the host/container that runs the trusted sidecar.
+- Prefer a distinct VM identity for mutually untrusted tenants.
+
+See [Permissions](/agentos/docs/permissions),
+[Resource Limits](/agentos/docs/resource-limits), and
+[Filesystem](/agentos/docs/filesystem) for the public configuration surfaces.

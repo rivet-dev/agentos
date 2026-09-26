@@ -1,0 +1,40 @@
+---
+title: "Quickstart (Embedded)"
+description: "Run an agentOS VM directly inside a Node.js application."
+skill: true
+---
+
+Use `@rivet-dev/agentos-core` when your application owns VM identity,
+persistence, and lifecycle. The embedded API returns a VM handle directly;
+there is no actor server or generated transport client.
+
+## Install
+
+```bash
+npm install @rivet-dev/agentos-core
+```
+
+## Create a VM
+
+<CodeSnippet file="examples/embedded/vm.ts" region="boot" />
+
+The VM remains active until `dispose()` is called. Configure SQLite when its
+filesystem must survive process replacement; omit `database` for an in-memory
+VM.
+
+## Embedded-only capabilities
+
+Embedded Core may use trusted resources that cannot cross the hosted actor
+boundary:
+
+- host functions implemented as in-process callbacks;
+- host-directory and callback-backed mounts;
+- local `.aospkg` paths;
+- explicit ownership of a shared sidecar process.
+
+<CodeSnippet file="examples/embedded/config-reference.ts" />
+
+The static hosted actor accepts only serializable configuration, whitelisted
+filesystem descriptors, and remote HTTPS software sources. Use the
+[hosted quickstart](/agentos/docs/quickstart) when Rivet should own durable
+identity, sleep/wake, events, previews, and routing.

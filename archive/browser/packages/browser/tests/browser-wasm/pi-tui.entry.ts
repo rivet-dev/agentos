@@ -410,7 +410,7 @@ async function start(): Promise<PiTuiResult> {
 					providers: {
 						[MODEL_PROVIDER]: {
 							baseUrl: MODEL_BASE_URL,
-							apiKey: "sk-chrome-language-model",
+							apiKey: "sk-test-only",
 							api: "openai-completions",
 							models: [
 								{

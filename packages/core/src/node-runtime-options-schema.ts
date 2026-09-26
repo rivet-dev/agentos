@@ -244,7 +244,7 @@ export const nodeRuntimePermissionsSchema = z
 		childProcess: patternPermissionsSchema.optional(),
 		process: patternPermissionsSchema.optional(),
 		env: patternPermissionsSchema.optional(),
-		binding: patternPermissionsSchema.optional(),
+		hostFunction: patternPermissionsSchema.optional(),
 	})
 	.strict();
 
@@ -277,24 +277,22 @@ const jsRuntimeSchema = z
 	})
 	.strict();
 
-const bindingExampleSchema = z
+const hostFunctionExampleSchema = z
 	.object({
 		description: z.string(),
 		input: z.unknown(),
 	})
 	.strict();
 
-const bindingDefinitionSchema = z
+const hostFunctionDefinitionSchema = z
 	.object({
-		description: z.string(),
 		inputSchema: z.custom<object>(
 			(value: unknown) => typeof value === "object" && value !== null,
-			{ message: "Expected JSON Schema object" },
+			{ message: "Expected Zod schema object" },
 		),
-		timeoutMs: z.number().int().nonnegative().optional(),
-		examples: z.array(bindingExampleSchema).optional(),
-		commandAliases: stringArray.optional(),
-		handler: z.custom<(input: unknown) => unknown | Promise<unknown>>(
+		timeout: z.number().int().nonnegative().optional(),
+		examples: z.array(hostFunctionExampleSchema).optional(),
+		execute: z.custom<(input: unknown) => unknown | Promise<unknown>>(
 			(value: unknown) => typeof value === "function",
 			{ message: "Expected function" },
 		),
@@ -345,7 +343,9 @@ export const nodeRuntimeCreateOptionsSchema = z
 			.optional(),
 		mounts: z.array(hostDirectoryMountSchema).optional(),
 		nodeModules: z.union([z.string(), nodeModulesMountSchema]).optional(),
-		bindings: z.record(z.string(), bindingDefinitionSchema).optional(),
+		hostFunctions: z
+			.record(z.string(), hostFunctionDefinitionSchema)
+			.optional(),
 		loopbackExemptPorts: z.array(z.number().int().min(0).max(65535)).optional(),
 		jsRuntime: jsRuntimeSchema.optional(),
 	})

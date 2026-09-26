@@ -1,0 +1,92 @@
+---
+title: "Secure Exec vs Vercel Run"
+description: "How Secure Exec and the Vercel Run SDK differ: a tool-call orchestrator on a WebAssembly interpreter compared with a full Node.js runtime on V8."
+---
+
+Both are npm libraries that run model-generated code with one function call.
+They make opposite bets about what that code should be able to do.
+
+[Run](https://github.com/vercel-labs/run) executes code in a fresh QuickJS
+context inside a worker thread. The code can compute and call the host functions
+you pass in, and nothing else. Secure Exec executes code on V8 in an isolated VM
+in a separate process, with a Node.js surface, a virtual filesystem, and npm.
+
+## At a glance
+
+| | Secure Exec | Vercel Run |
+|---|---|---|
+| **Engine** | V8 with JIT | quickjs-ng interpreter compiled to WebAssembly |
+| **Where guest code runs** | A separate sidecar process | A worker thread in your process |
+| **Guest capabilities** | Node.js builtins, virtual filesystem, processes, npm | ECMAScript plus your host functions |
+| **Timers, `fetch`, `crypto`, `Buffer`** | Available | Not exposed |
+| **TypeScript** | Runs, and type-checks with the real compiler | Types stripped, never checked |
+| **Host functions** | [Globals](/secure-exec/docs/host-functions) with validated inputs | Globals |
+| **State between calls** | [VMs](/secure-exec/docs/vms) and [contexts](/secure-exec/docs/contexts) | None |
+| **Network** | Denied by default, grantable per host | None. Only through host functions |
+| **Human in the loop** | Not built in | Interrupt and resume |
+| **Install** | Native sidecar binary, Linux and macOS | Pure JavaScript, Node.js and Bun |
+
+## Where Run falls short
+
+- **It is not process isolation.** Run's own docs say the sandbox "is not a
+  container, a virtual machine, or a separate operating-system process", and its
+  README points workloads that need "package installation, or process-level
+  isolation" to a different product.
+- **Your host functions are the whole security boundary.** In Run's words, "A
+  broad host function grants broad authority, however well the sandbox itself is
+  configured."
+- **The guest can do very little.** There is no `process`, `require`, `Buffer`,
+  `fetch`, or `WebSocket`. Timers such as `setTimeout` are not available, and
+  `crypto` and `WebAssembly` are not exposed. `Date` and `Math.random()` are
+  deterministic, so the guest has no real clock or randomness.
+- **It is an interpreter.** See [performance](#performance) below.
+- **Every host call copies its data.** "Arguments, host function outputs, and
+  final results are serialized and copied." The default caps are small: 256 host
+  calls per run, a 1 MiB result, and 1 MiB of arguments.
+- **The memory limit does not bound memory.** "A worker can consume more memory
+  than the configured guest `memoryLimitBytes`." The timeout is a wall-clock
+  budget, and it cannot stop a host function that ignores its abort signal.
+- **TypeScript is never checked.** "Nothing is type-checked."
+- **Resume replays your program.** Interrupt and resume "starts a new invocation
+  and replays the source", and "an interrupted host function itself is
+  reinvoked". Continuation tokens give "integrity, not confidentiality": source,
+  arguments, and results are base64-encoded, not encrypted.
+- **It is an experiment.** The repository carries a Labs experiment badge, and
+  Vercel says of those: "Expect fast iteration, rough edges, and breaking
+  changes." The changelog for its first month includes fixes for guests bypassing
+  host-function tracking and forging serialization codes.
+
+## Performance
+
+QuickJS is an interpreter, and Run executes it inside WebAssembly. In our
+[benchmarks](/secure-exec/docs/benchmarks) Run took 5.6 to 12.2 times longer
+than Secure Exec to do the same computation. Run does start faster: about 5 ms
+per call against 14 to 40 ms. If the generated code only calls two tools and
+returns, that is what you will notice. If it parses, transforms, or validates
+data, the interpreter is what you will notice.
+
+## What Run does well
+
+Run installs as pure JavaScript with no native binary and runs on Bun. The
+WebAssembly layer confines memory-safety bugs in the engine itself. Its host
+functions are well designed, and interrupt and resume for approvals is built in.
+
+## Only choose Run when
+
+All of these hold:
+
+1. The generated code is short glue that orchestrates a handful of your own host
+   functions, and will **never** need npm packages, files, the network, timers,
+   `crypto`, or Node.js APIs.
+2. **You do not care about performance.** The code never parses, transforms, or
+   loops over real data, so interpreter speed inside WebAssembly is acceptable.
+3. A worker thread in your own process meets your isolation bar, and you accept
+   that your host functions are the entire security boundary.
+4. You can build on a Labs experiment with breaking changes expected.
+
+## Choose Secure Exec when
+
+The generated code needs to be a real program: import an npm package, read a
+file, run a computation at JIT speed, keep state, or be type-checked before it
+runs. Or when the library itself, not your host functions, has to be the
+boundary.

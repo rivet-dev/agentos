@@ -7,7 +7,7 @@
 - The engine data plane (`chunked`/`object` engines, `MetadataStore`/`BlockStore`/`ObjectBackend` impls, `CachedMetadataStore`, and the `MountedEngineFileSystem` adapter) assumes **single-writer semantics**: one writer owns a given filesystem/mount at a time. Block refcounting, cache invalidation, and read-modify-write chunk edits are correct only under that assumption. There is no cross-process coordination, locking, or conflict resolution; concurrent writers against the same metadata/block backing store (e.g. two sidecars sharing one S3 prefix + SQLite file, or a shared callback store) can corrupt refcounts and orphan or double-free blocks. Do not rely on these engines for multi-writer/shared-storage scenarios without adding an external coordination layer.
 - `MetadataStore::snapshot`/`fork` are intentionally not production-GC-ready yet. There is no snapshot deletion API, so snapshot-pinned block refs are permanent for now. Do not wire snapshot/fork into plugins that need block reclamation until snapshot lifecycle and persistent snapshot rows are implemented.
 - `package_format` is a sanctioned exception to the no-registry-coupling rule:
-  the `.aospkg` container, its `v1.bare` schema (including the agentOS package
+  the `.aospkg` container, its `v2.bare` schema (including the agentOS package
   manifest), and the canonical packer live here because `TarFileSystem` decodes
   the container on the VM load path and the packer must stay byte-compatible
   with it. Keep the module self-contained; do not let it grow sidecar, bridge,

@@ -66,7 +66,7 @@ where
                 return Err(sidecar_net_error(std::io::Error::new(
                     std::io::ErrorKind::WriteZero,
                     "socket write returned zero bytes",
-                )))
+                )));
             }
             Ok(written) => {
                 remaining = &remaining[written..];
@@ -1122,7 +1122,7 @@ mod tests {
             crate::limits::VmLimits::default(),
             agentos_sidecar_protocol::config::DEFAULT_MAX_PROCESS_EVENTS,
             GuestRuntimeKind::WebAssembly,
-            ActiveExecution::Binding(BindingExecution::default()),
+            ActiveExecution::HostFunction(HostFunctionExecution::default()),
         )
         .with_kernel_stdin_writer_fd(writer_fd);
 

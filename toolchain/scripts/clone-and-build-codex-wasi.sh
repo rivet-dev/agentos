@@ -235,10 +235,10 @@ if [ "$STOP_AFTER" = "vendor" ]; then
 	export AR_wasm32_wasip1="$WASI_SDK_DIR/bin/llvm-ar"
 	export CFLAGS_wasm32_wasip1="--sysroot=$WASI_SDK_DIR/share/wasi-sysroot -D_WASI_EMULATED_SIGNAL -D_WASI_EMULATED_PTHREAD -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_PROCESS_CLOCKS"
 	# Compile-check the crates whose wasi patches this script injects (path-dedot,
-	# rustls-native-certs, tokio) plus their reverse-deps, without the full link.
+	# rustls-native-certs, tokio, ignore) without the full Codex link.
 	RUSTFLAGS="-C link-arg=-L$SELF_CONTAINED --cfg tokio_unstable" \
 		cargo "+$TOOLCHAIN" build --target wasm32-wasip1 -Z build-std \
-		-p path-dedot -p rustls-native-certs -p tokio
+		-p path-dedot -p rustls-native-certs -p tokio -p ignore
 	echo "== vendor/patch frontier OK =="
 	exit 0
 fi

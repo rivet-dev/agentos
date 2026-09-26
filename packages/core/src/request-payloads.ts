@@ -54,6 +54,11 @@ export interface LiveRegisteredHostCallbackDefinition {
 	examples?: LiveRegisteredHostCallbackExample[];
 }
 
+/** Trusted session input; hosted adapters must accept only the URL branch. */
+export type LivePackageAcquisitionSource =
+	| { type: "url"; url: string; expected_digest?: string }
+	| { type: "path"; path: string; expected_digest?: string };
+
 export type LiveRequestPayload =
 	| {
 			type: "authenticate";
@@ -73,6 +78,30 @@ export type LiveRequestPayload =
 			config: CreateVmConfig;
 	  }
 	| {
+			type: "compare_vm_config";
+			before: CreateVmConfig;
+			after: CreateVmConfig;
+	  }
+	| {
+			type: "acquire_package";
+			source: LivePackageAcquisitionSource;
+			advisory?: boolean;
+			timeout_ms?: bigint;
+			max_package_bytes?: bigint;
+			download_timeout_ms?: bigint;
+			connect_timeout_ms?: bigint;
+			max_redirects?: number;
+			allow_insecure_local_http?: boolean;
+	  }
+	| {
+			type: "install_package";
+			acquisition: Omit<
+				Extract<LiveRequestPayload, { type: "acquire_package" }>,
+				"type" | "advisory"
+			>;
+	  }
+	| { type: "get_package_cache_stats" }
+	| {
 			type: "configure_vm";
 			mounts: LiveMountDescriptor[];
 			software: LiveSoftwareDescriptor[];
@@ -85,11 +114,16 @@ export type LiveRequestPayload =
 			packages?: LivePackageDescriptor[];
 			packages_mount_at?: string;
 			bootstrap_commands?: string[];
-			binding_shim_commands?: string[];
+			host_function_shim_commands?: string[];
 	  }
 	| {
 			type: "link_package";
 			package: LivePackageDescriptor;
+			package_id: string;
+	  }
+	| {
+			type: "unlink_package";
+			package_id: string;
 	  }
 	| {
 			type: "provided_commands";
@@ -326,6 +360,39 @@ export type LiveRequestPayload =
 			envelope: LiveExtEnvelope;
 	  };
 
+function toGeneratedAcquisition(
+	payload: Omit<
+		Extract<LiveRequestPayload, { type: "acquire_package" }>,
+		"type"
+	>,
+): protocol.AcquirePackageRequest {
+	return {
+		source:
+			payload.source.type === "url"
+				? {
+						tag: "PackageUrlSource",
+						val: {
+							url: payload.source.url,
+							expectedDigest: payload.source.expected_digest ?? null,
+						},
+					}
+				: {
+						tag: "PackagePathSource",
+						val: {
+							path: payload.source.path,
+							expectedDigest: payload.source.expected_digest ?? null,
+						},
+					},
+		advisory: payload.advisory ?? false,
+		timeoutMs: payload.timeout_ms ?? null,
+		maxPackageBytes: payload.max_package_bytes ?? null,
+		downloadTimeoutMs: payload.download_timeout_ms ?? null,
+		connectTimeoutMs: payload.connect_timeout_ms ?? null,
+		maxRedirects: payload.max_redirects ?? null,
+		allowInsecureLocalHttp: payload.allow_insecure_local_http ?? false,
+	};
+}
+
 export function toGeneratedRequestPayload(
 	payload: LiveRequestPayload,
 ): protocol.RequestPayload {
@@ -356,6 +423,28 @@ export function toGeneratedRequestPayload(
 					config: stringifyJsonUtf8(payload.config, "create VM config"),
 				},
 			};
+		case "compare_vm_config":
+			return {
+				tag: "CompareVmConfigRequest",
+				val: {
+					before: stringifyJsonUtf8(payload.before, "before VM config"),
+					after: stringifyJsonUtf8(payload.after, "after VM config"),
+				},
+			};
+		case "acquire_package":
+			return {
+				tag: "AcquirePackageRequest",
+				val: toGeneratedAcquisition(payload),
+			};
+		case "install_package":
+			return {
+				tag: "InstallPackageRequest",
+				val: {
+					acquisition: toGeneratedAcquisition(payload.acquisition),
+				},
+			};
+		case "get_package_cache_stats":
+			return { tag: "GetPackageCacheStatsRequest", val: null };
 		case "dispose_vm":
 			return {
 				tag: "DisposeVmRequest",
@@ -389,7 +478,7 @@ export function toGeneratedRequestPayload(
 					packages: (payload.packages ?? []).map(toGeneratedPackageDescriptor),
 					packagesMountAt: payload.packages_mount_at ?? "",
 					bootstrapCommands: payload.bootstrap_commands ?? [],
-					bindingShimCommands: payload.binding_shim_commands ?? [],
+					hostFunctionShimCommands: payload.host_function_shim_commands ?? [],
 				},
 			};
 		case "link_package":
@@ -397,7 +486,13 @@ export function toGeneratedRequestPayload(
 				tag: "LinkPackageRequest",
 				val: {
 					package: toGeneratedPackageDescriptor(payload.package),
+					packageId: payload.package_id,
 				},
+			};
+		case "unlink_package":
+			return {
+				tag: "UnlinkPackageRequest",
+				val: { packageId: payload.package_id },
 			};
 		case "provided_commands":
 			return {

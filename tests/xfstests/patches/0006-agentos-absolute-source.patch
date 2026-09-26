@@ -1,0 +1,108 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AgentOS Tests <tests@agentos.invalid>
+Date: Thu, 9 Jul 2026 21:19:00 -0700
+Subject: [PATCH 6/6] fstests: use absolute source paths in agentos
+
+Brush command substitutions run in a child process whose kernel cwd can differ
+from the parent shell's logical cwd. Keep xfstests source discovery independent
+of that detail, and skip host service probes that do not exist inside a VM.
+
+diff --git a/check b/check
+index bb7408a7..95c35c65 100755
+--- a/check
++++ b/check
+@@ -52,6 +52,10 @@ rm -f $tmp.list $tmp.tmp $tmp.grep $here/$iam.out $tmp.report.* $tmp.arglist
+ 
+ SRC_GROUPS="generic"
+-export SRC_DIR="tests"
++if [ "$FSTYP" = "agentos" ]; then
++	export SRC_DIR="$here/tests"
++else
++	export SRC_DIR="tests"
++fi
+ 
+ usage()
+ {
+@@ -677,9 +681,11 @@ max_test_namelen=$(ls "$SRC_DIR"/*/* | \
+ 
+ # Can we run systemd scopes?
+ HAVE_SYSTEMD_SCOPES=
+-systemctl reset-failed "fstests-check" &>/dev/null
+-systemd-run --quiet --unit "fstests-check" --scope bash -c "exit 77" &> /dev/null
+-test $? -eq 77 && HAVE_SYSTEMD_SCOPES=yes
++if [ "$FSTYP" != "agentos" ]; then
++	systemctl reset-failed "fstests-check" &>/dev/null
++	systemd-run --quiet --unit "fstests-check" --scope bash -c "exit 77" &> /dev/null
++	test $? -eq 77 && HAVE_SYSTEMD_SCOPES=yes
++fi
+ 
+ # Make the check script unattractive to the OOM killer...
+ OOM_SCORE_ADJ="/proc/self/oom_score_adj"
+@@ -684,6 +690,11 @@ function _adjust_oom_score() {
++	if [ "$FSTYP" = "agentos" ]; then
++		return 0
++	fi
+ 	test -w "${OOM_SCORE_ADJ}" && echo "$1" > "${OOM_SCORE_ADJ}"
+ }
+-_adjust_oom_score -500
++if [ "$FSTYP" != "agentos" ]; then
++	_adjust_oom_score -500
++fi
+ 
+ # ...and make the tests themselves somewhat more attractive to it, so that if
+ # the system runs out of memory it'll be the test that gets killed and not the
+@@ -701,4 +712,13 @@ _run_seq() {
+-	local cmd=(bash -c "test -w ${OOM_SCORE_ADJ} && echo 250 > ${OOM_SCORE_ADJ}; exec ./$seq")
++	local seq_path="./$seq"
++	if [ "$FSTYP" = "agentos" ]; then
++		seq_path="$seq"
++	fi
++	local cmd
++	if [ "$FSTYP" = "agentos" ]; then
++		cmd=(bash -c "exec \"$seq_path\"")
++	else
++		cmd=(bash -c "test -w ${OOM_SCORE_ADJ} && echo 250 > ${OOM_SCORE_ADJ}; exec \"$seq_path\"")
++	fi
+ 	local res
+ 
+ 	if [ -n "${HAVE_SYSTEMD_SCOPES}" ]; then
+@@ -936,7 +956,7 @@ function run_section()
+ 		$timestamp && _timestamp
+ 		[ ! -x $seq ] && chmod u+x $seq # ensure we can run it
+ 		$LOGGER_PROG "run xfstest $seqnum"
+-		if [ -w /dev/kmsg ]; then
++		if [ "$FSTYP" != "agentos" ] && [ -w /dev/kmsg ]; then
+ 			export date_time=`date +"%F %T"`
+ 			echo "run fstests $seqnum at $date_time" > /dev/kmsg
+ 			# _check_dmesg depends on this log in dmesg
+diff --git a/common/rc b/common/rc
+index 5f6b81ce..d8dd9178 100644
+--- a/common/rc
++++ b/common/rc
+@@ -5015,6 +5015,9 @@ _capture_kmemleak()
+ # needs to be primed like this once per ./check invocation.
+ _detect_kmemleak()
+ {
++	if [ "$FSTYP" = "agentos" ]; then
++		return 0
++	fi
+ 	local kern_knob="$DEBUGFS_MNT/kmemleak"
+ 	KMEMLEAK_CHECK_FILE="/tmp/check_kmemleak"
+ 
+diff --git a/common/config b/common/config
+index 6d84120b..0383bfa6 100644
+--- a/common/config
++++ b/common/config
+@@ -363,7 +363,8 @@ export MKFS_BCACHEFS_PROG=$(set_mkfs_prog_path_with_opts bcachefs)
+ # different context names, use the context of an existing directory.
+ # Assume that any valid context is fine, since xfstests should really
+ # only be run from an "unconfined" process, or with SELinux in permissive
+ # mode.  But if not, just specify your own SELINUX_MOUNT_OPTIONS.
+-if [ -x /usr/sbin/selinuxenabled ] && /usr/sbin/selinuxenabled; then
++if [ "$FSTYP" != "agentos" ] && [ -x /usr/sbin/selinuxenabled ] &&
++   /usr/sbin/selinuxenabled; then
+ 	: ${SELINUX_MOUNT_OPTIONS:="-o context=$(stat -c %C /)"}
+ 	export SELINUX_MOUNT_OPTIONS
+ fi
+-- 
+2.47.3

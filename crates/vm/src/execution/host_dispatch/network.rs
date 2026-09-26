@@ -98,13 +98,14 @@ where
         }
     };
     let notify = Arc::clone(&sidecar.process_event_notify);
-    let vm = sidecar
+    let mut vm = sidecar
         .vms
         .get_mut(vm_id)
         .expect("validated kernel-poll VM remains registered");
     let runtime = vm.runtime_context.clone();
     let wait_handle = vm.kernel.poll_wait_handle();
     let generation = vm.generation;
+    let vm = &mut *vm;
     let (kernel, active_processes) = (&mut vm.kernel, &mut vm.active_processes);
     let process = active_processes
         .get_mut(process_id)

@@ -1665,7 +1665,7 @@ impl HostDirModuleMount {
 /// the host-direct path translator.
 ///
 /// It never touches the `&mut` kernel, so a large cold-start module graph cannot
-/// serialize behind / starve work on the service-loop thread (e.g. an ACP
+/// serialize behind / starve work on the service-loop thread (e.g. an extension
 /// `session/new` bootstrap awaiting the adapter's response on that same loop).
 #[allow(dead_code)]
 #[derive(Clone)]

@@ -11,4 +11,4 @@ publish = false
 # ripgrep is a bin-only crate. `toolchain/Makefile` builds its upstream `rg`
 # binary directly; this local package exists only so `cmd/rg` is discoverable
 # and the upstream package is present in Cargo's resolved/vendor set.
-ripgrep = { version = "15.1.0", default-features = false }
+ripgrep = { version = "=15.1.0", default-features = false }

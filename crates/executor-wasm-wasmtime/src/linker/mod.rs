@@ -72,7 +72,17 @@ pub fn validate_module_imports(
         if import_permitted(import.module(), import.name(), tier)
             || (threaded && is_thread_runtime_import(import.module(), import.name()))
         {
-            continue;
+            if import_type_supported(import.module(), import.name(), import.ty()) {
+                continue;
+            }
+            return Err(HostServiceError::new(
+                "ERR_AGENTOS_WASM_IMPORT_TYPE",
+                format!(
+                    "incompatible WebAssembly host import type {}.{}",
+                    import.module(),
+                    import.name()
+                ),
+            ));
         }
         return Err(HostServiceError::new(
             "ERR_AGENTOS_WASM_UNSUPPORTED_IMPORT",
@@ -88,6 +98,48 @@ pub fn validate_module_imports(
         })));
     }
     Ok(())
+}
+
+// Name allowlisting does not establish linkability. Validate the exact ABI
+// signature before exec can commit destructive changes to the old image.
+fn import_type_supported(module: &str, name: &str, ty: wasmtime::ExternType) -> bool {
+    if (module, name) == ("env", "memory") {
+        return matches!(ty, wasmtime::ExternType::Memory(memory) if memory.is_shared() && !memory.is_64());
+    }
+    let wasmtime::ExternType::Func(ty) = ty else {
+        return false;
+    };
+    let abi = ABI_BINDINGS
+        .iter()
+        .copied()
+        .find(|abi| abi.module == module && abi.name == name)
+        .or_else(|| {
+            ALIAS_BINDINGS.iter().find_map(|alias| {
+                let abi = *binding(alias.import);
+                (alias.alias_module == module && abi.name == name).then_some(abi)
+            })
+        });
+    let (params, results): (&[CoreValueType], &[CoreValueType]) = if let Some(abi) = abi {
+        let signature = core_signature(abi.signature);
+        (signature.params, signature.results)
+    } else if (module, name) == ("wasi", "thread-spawn") {
+        (&[CoreValueType::I32], &[CoreValueType::I32])
+    } else {
+        return false;
+    };
+    fn matches_types(
+        actual: impl ExactSizeIterator<Item = ValType>,
+        expected: &[CoreValueType],
+    ) -> bool {
+        actual.len() == expected.len()
+            && actual.zip(expected).all(|(actual, expected)| {
+                matches!(
+                    (actual, expected),
+                    (ValType::I32, CoreValueType::I32) | (ValType::I64, CoreValueType::I64)
+                )
+            })
+    }
+    matches_types(ty.params(), params) && matches_types(ty.results(), results)
 }
 
 fn is_thread_runtime_import(module: &str, name: &str) -> bool {
@@ -275,6 +327,11 @@ async fn dispatch_once(
         ImportId::WasiSnapshotPreview1SchedYield => set_i32_result(results, WASI_ERRNO_SUCCESS)?,
         ImportId::WasiSnapshotPreview1ProcExit => {
             let code = i32_arg(params, 0)? as i32;
+            if let Some(group) = caller.data().thread_group.as_ref() {
+                group
+                    .request_process_exit(code)
+                    .map_err(|error| wasmtime::format_err!("{error}"))?;
+            }
             caller.data_mut().exit_code = Some(code);
             return Err(wasmtime::format_err!("agentos:wasi-exit:{code}"));
         }
@@ -595,10 +652,25 @@ mod tests {
             .iter()
             .find(|abi| permitted(**abi, WasmPermissionTier::Isolated))
             .expect("isolated import");
+        let signature = core_signature(allowed.signature);
+        let wat_type = |ty: &CoreValueType| match ty {
+            CoreValueType::I32 => "i32",
+            CoreValueType::I64 => "i64",
+        };
+        let params = signature
+            .params
+            .iter()
+            .map(|ty| format!("(param {})", wat_type(ty)))
+            .collect::<String>();
+        let results = signature
+            .results
+            .iter()
+            .map(|ty| format!("(result {})", wat_type(ty)))
+            .collect::<String>();
         let module = Module::new(
             &engine,
             wat::parse_str(format!(
-                "(module (import {:?} {:?} (func)))",
+                "(module (import {:?} {:?} (func {params} {results})))",
                 allowed.module, allowed.name
             ))
             .expect("allowed import module"),

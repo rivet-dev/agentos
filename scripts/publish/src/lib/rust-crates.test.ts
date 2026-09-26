@@ -73,6 +73,9 @@ test("Rust crate publish order satisfies internal dependencies", () => {
 	assertBefore("agentos-sidecar-client", "agentos-vm");
 	assertBefore("agentos-acp-protocol", "agentos-client");
 	assertBefore("agentos-client", "agentos-sidecar");
+	assertBefore("agentos-client", "agentos-actor-contract");
+	assertBefore("agentos-actor-contract", "agentos-preload");
+	assertBefore("agentos-preload", "agentos-actor");
 });
 
 test("archived browser crates stay excluded from real publish discovery", () => {

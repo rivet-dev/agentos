@@ -13,18 +13,21 @@ import type {
 	NativeMountPluginDescriptor,
 } from "./descriptors.js";
 import * as executionProtocol from "./generated-protocol.js";
+import type { LivePackageAcquisitionSource } from "./request-payloads.js";
 import { SidecarRejectedError } from "./sidecar-errors.js";
 import type {
 	CreateVmConfig,
 	VmUserConfig,
 } from "./vm-config.js";
-import { type Binding, type Bindings, validateBindings } from "./bindings.js";
-import { zodToJsonSchema } from "./bindings-zod.js";
-import type {
-	JsonRpcNotification,
-	JsonRpcRequest,
-	JsonRpcResponse,
-} from "./json-rpc.js";
+import {
+	type HostFunction,
+	type HostFunctionCollections,
+	type HostFunctionSchemas,
+	hostFunctionDescription,
+	type ResolvedHostFunctions,
+	resolveHostFunctions,
+} from "./host-functions.js";
+import { zodToJsonSchema } from "./host-functions-zod.js";
 import type {
 	CodeEvaluationResult,
 	CodeExecutionResult,
@@ -33,6 +36,7 @@ import type {
 	InlineExecutionOptions,
 	JavaScriptEvaluationOptions,
 	JavaScriptExecutionOptions,
+	JsonValue,
 	LanguageExecutionOptions,
 	LanguageSpawnOptions,
 	NpmPackageInstallOptions,
@@ -51,6 +55,7 @@ import type {
 	TypeScriptFileExecutionOptions,
 } from "./language-execution.js";
 import { parseAgentOsOptions } from "./options-schema.js";
+import { buildProcessForest } from "./process-forest.js";
 import type {
 	ConnectTerminalOptions,
 	Kernel,
@@ -70,30 +75,6 @@ import {
 	getSandboxDisposeHooks,
 	resolveSandboxOptions,
 } from "./sandbox.js";
-import type {
-	AcpSessionEvent,
-	CancelPromptResult,
-	PromptResult as DurablePromptResult,
-	DurableSessionEventEntry,
-	SessionInfo as DurableSessionInfo,
-	EphemeralSessionEventEntry,
-	HistoryPage,
-	JsonValue,
-	ListSessionsInput,
-	OpenSessionInput,
-	PermissionResponse,
-	PermissionResponseResult,
-	PermissionTerminalReason,
-	PromptInput,
-	ReadHistoryInput,
-	SessionAgentInfo,
-	SessionCapabilities,
-	SessionConfig,
-	SessionPage,
-	SessionStreamEntry,
-	SessionTarget,
-	SetSessionConfigOptionInput,
-} from "./session-api.js";
 import { resolvePublishedSidecarBinary } from "./sidecar/binary.js";
 import { findCargoBinary, resolveCargoBinary } from "./sidecar/cargo.js";
 
@@ -104,173 +85,9 @@ export type {
 	NativeMountPluginDescriptor,
 } from "./descriptors.js";
 export type { ConnectTerminalOptions } from "./runtime-compat.js";
-export type * from "./session-api.js";
 
-const ACP_PROTOCOL_VERSION = 1;
-const ACP_EXTENSION_NAMESPACE = "dev.rivet.agent-os.acp";
 const SHELL_DISPOSE_TIMEOUT_MS = 5_000;
 const PROCESS_OUTPUT_EVENT_LIMIT = 1_024;
-
-function safeWireU64(value: bigint): number {
-	const result = Number(value);
-	if (!Number.isSafeInteger(result) || result < 0) {
-		throw new RangeError(
-			`wire integer ${value} exceeds JavaScript's safe range`,
-		);
-	}
-	return result;
-}
-
-function decodeDurableSessionInfo(
-	value: AcpDurableSessionInfo,
-): DurableSessionInfo {
-	return {
-		sessionId: value.sessionId,
-		agent: value.agent,
-		cwd: value.cwd,
-		additionalDirectories: JSON.parse(value.additionalDirectories),
-		state: JSON.parse(value.state),
-		latestSequence: safeWireU64(value.latestSequence),
-		title: value.title ?? undefined,
-		metadata: value.metadata === null ? undefined : JSON.parse(value.metadata),
-		createdAt: value.createdAt,
-		updatedAt: value.updatedAt,
-	};
-}
-
-const PERMISSION_TERMINAL_REASONS = new Set<PermissionTerminalReason>([
-	"already_resolved",
-	"prompt_cancelled",
-	"adapter_exited",
-	"session_deleted",
-	"vm_shutdown",
-	"request_not_found",
-]);
-
-function permissionTerminalReason(
-	value: string | null,
-): PermissionTerminalReason {
-	if (
-		value !== null &&
-		PERMISSION_TERMINAL_REASONS.has(value as PermissionTerminalReason)
-	) {
-		return value as PermissionTerminalReason;
-	}
-	throw new Error(`invalid permission terminal reason: ${value ?? "missing"}`);
-}
-
-function decodeDurableSessionEvent(value: {
-	sessionId: string;
-	sequence: bigint;
-	timestamp: string;
-	event: AcpDurableEvent;
-}): DurableSessionEventEntry {
-	const envelope = {
-		durability: "durable" as const,
-		sessionId: value.sessionId,
-		sequence: safeWireU64(value.sequence),
-		timestamp: value.timestamp,
-	};
-	switch (value.event.tag) {
-		case "AcpDurableSessionUpdate": {
-			const update = JSON.parse(value.event.val.update) as {
-				sessionUpdate: AcpSessionEvent["type"];
-			} & Record<string, unknown>;
-			const { sessionUpdate: type, ...payload } = update;
-			return {
-				...envelope,
-				type,
-				...payload,
-			} as DurableSessionEventEntry;
-		}
-		case "AcpDurablePermissionRequest": {
-			const request = JSON.parse(value.event.val.request) as {
-				sessionId: string;
-			} & Record<string, unknown>;
-			const { sessionId: _sessionId, ...payload } = request;
-			return {
-				...envelope,
-				type: "permission_request",
-				requestId: value.event.val.requestId,
-				...payload,
-			} as DurableSessionEventEntry;
-		}
-		case "AcpDurablePermissionResponse": {
-			const status = value.event.val.status;
-			if (status !== "accepted" && status !== "not_pending") {
-				throw new Error(`invalid permission response event status: ${status}`);
-			}
-			const response = JSON.parse(value.event.val.response) as Record<
-				string,
-				unknown
-			>;
-			return {
-				...envelope,
-				type: "permission_response",
-				requestId: value.event.val.requestId,
-				...response,
-				status,
-				...(value.event.val.reason === null
-					? {}
-					: { reason: permissionTerminalReason(value.event.val.reason) }),
-			} as DurableSessionEventEntry;
-		}
-	}
-}
-
-function normalizeSessionCapabilities(value: unknown): SessionCapabilities {
-	const capabilities = toRecord(value);
-	const prompt = toRecord(capabilities.promptCapabilities);
-	const mcp = toRecord(capabilities.mcpCapabilities);
-	const session = toRecord(capabilities.sessionCapabilities);
-	const extensions = Object.fromEntries(
-		Object.entries(capabilities).filter(
-			([key]) =>
-				!(
-					[
-						"loadSession",
-						"promptCapabilities",
-						"mcpCapabilities",
-						"sessionCapabilities",
-					] as const
-				).includes(key as never),
-		),
-	) as Record<string, JsonValue>;
-	return {
-		protocolVersion: ACP_PROTOCOL_VERSION,
-		loadSession: capabilities.loadSession === true,
-		...(Object.keys(prompt).length > 0
-			? {
-					prompt: {
-						audio: prompt.audio === true || undefined,
-						embeddedContext: prompt.embeddedContext === true || undefined,
-						image: prompt.image === true || undefined,
-					},
-				}
-			: {}),
-		...(Object.keys(mcp).length > 0
-			? {
-					mcp: {
-						http: mcp.http === true || undefined,
-						sse: mcp.sse === true || undefined,
-					},
-				}
-			: {}),
-		...(Object.keys(session).length > 0
-			? {
-					session: {
-						list: typeof session.list === "object" || undefined,
-						resume: typeof session.resume === "object" || undefined,
-						close: typeof session.close === "object" || undefined,
-						delete: typeof session.delete === "object" || undefined,
-						additionalDirectories:
-							typeof session.additionalDirectories === "object" || undefined,
-					},
-				}
-			: {}),
-		...(Object.keys(extensions).length > 0 ? { extensions } : {}),
-	};
-}
 
 async function waitForTrackedExitPromises(
 	promises: Promise<unknown>[],
@@ -323,6 +140,14 @@ export interface HttpResponse {
 	statusText: string;
 	headers: Record<string, string>;
 	body: Uint8Array;
+}
+
+function headersToRecord(headers: Headers): Record<string, string> {
+	const result: Record<string, string> = {};
+	headers.forEach((value, name) => {
+		result[name] = value;
+	});
+	return result;
 }
 
 export interface ProcessOutput {
@@ -391,10 +216,18 @@ export interface BatchReadResult {
 	error?: string;
 }
 
-/** Entry in the agent registry, describing an available agent type. */
-export interface AgentRegistryEntry {
-	id: string;
-	installed: boolean;
+/** The hosted actor accepts only URL sources; embedded Core also accepts trusted paths. */
+export type SoftwarePackageSource =
+	| { type: "url"; url: string; expectedDigest?: string }
+	| { type: "path"; path: string; expectedDigest?: string };
+
+export interface InstalledSoftware {
+	packageId: string;
+	digest: string;
+	sizeBytes: bigint;
+	packageName: string;
+	version: string;
+	commands: string[];
 }
 
 import {
@@ -434,19 +267,7 @@ import {
 } from "./layers.js";
 import type { SoftwareInput, SoftwareRoot } from "./packages.js";
 import type { PermissionTier } from "./runtime.js";
-import { allowAll, createNodeHostNetworkAdapter } from "./runtime-compat.js";
-import {
-	type AcpDurableEvent,
-	type AcpDurableSessionInfo,
-	type AcpRequest,
-	type AcpResponse,
-	AcpRuntimeKind,
-	decodeAcpCallback,
-	decodeAcpEvent,
-	decodeAcpResponse,
-	encodeAcpCallbackResponse,
-	encodeAcpRequest,
-} from "./sidecar/agentos-acp-protocol.js";
+import { createNodeHostNetworkAdapter } from "./runtime-compat.js";
 import { serializePermissionsForSidecar } from "./sidecar/permissions.js";
 import {
 	type AgentOsSidecarClient,
@@ -472,14 +293,28 @@ import {
 
 export interface AgentOsSharedSidecarOptions {
 	pool?: string;
+	runtime?: AgentOsSidecarRuntimeConfig;
 }
 
 export interface AgentOsCreateSidecarOptions {
 	sidecarId?: string;
+	runtime?: AgentOsSidecarRuntimeConfig;
+}
+
+/** Process-wide runtime settings applied when the native sidecar starts. */
+export interface AgentOsSidecarRuntimeConfig {
+	executor?: {
+		/** Optional ceiling for concurrent V8 executors. Omit to leave admission uncapped. */
+		maxActiveVms?: number;
+	};
 }
 
 export type AgentOsSidecarConfig =
-	| { kind: "shared"; pool?: string }
+	| {
+			kind: "shared";
+			pool?: string;
+			runtime?: AgentOsSidecarRuntimeConfig;
+	  }
 	| { kind: "explicit"; handle: AgentOsSidecar };
 
 export interface AgentOsSidecarDescription {
@@ -512,7 +347,6 @@ interface AgentOsVmAdmin extends InProcessSidecarVmAdmin {
 	rootView: VirtualFileSystem;
 	hostMounts: HostMountInfo[];
 	env: Record<string, string>;
-	permissions: Permissions;
 	sidecarMounts: SidecarMountDescriptor[];
 	sidecarPermissions: SidecarPermissionsPolicy | undefined;
 	commandPermissions: Record<string, PermissionTier>;
@@ -521,17 +355,8 @@ interface AgentOsVmAdmin extends InProcessSidecarVmAdmin {
 	sidecarSession: AuthenticatedSession;
 	sidecarVm: CreatedVm;
 	snapshotRootFilesystem?: (maxBytes: number) => Promise<RootSnapshotExport>;
-	bindings: Bindings[];
-	bindingReference: string;
-}
-
-interface AcpTerminalEntry {
-	handle: ShellHandle;
-	output: string;
-	truncated: boolean;
-	outputByteLimit: number;
-	exitCode: number | null;
-	waitPromise: Promise<number>;
+	hostFunctions: ResolvedHostFunctions[];
+	hostFunctionReference: string;
 }
 
 interface ShellEntry {
@@ -564,10 +389,8 @@ export type RootFilesystemConfig =
 	| OverlayRootFilesystemConfig
 	| NativeRootFilesystemConfig;
 
-/** VM-scoped SQLite storage shared by VFS and agentOS durable state. */
-export type VmSqliteConfig =
-	| { type: "actor_uds"; path: string }
-	| { type: "sqlite_file"; path: string };
+/** Temporary local VM-scoped SQLite storage. */
+export type VmSqliteConfig = { type: "sqlite_file"; path: string };
 
 /**
  * Compatibility path for arbitrary caller-supplied filesystems.
@@ -620,6 +443,8 @@ export type MountConfig =
  * non-integer values are rejected by the sidecar before VM construction.
  */
 export interface AgentOsLimits {
+	/** Maximum package-owned filesystem leaves projected into one VM. */
+	agentosPackages?: { maxMounts?: number };
 	/** Kernel resource limits (processes, FDs, sockets, filesystem bytes, WASM caps, etc.). */
 	resources?: {
 		cpuCount?: number;
@@ -651,37 +476,23 @@ export interface AgentOsLimits {
 	tls?: {
 		maxBufferedBytes?: number;
 	};
-	/** Host binding registration and invocation limits. */
-	bindings?: {
-		defaultBindingTimeoutMs?: number;
-		maxBindingTimeoutMs?: number;
+	/** Host function registration and invocation limits. */
+	hostFunctions?: {
+		defaultTimeoutMs?: number;
+		maxTimeoutMs?: number;
 		maxRegisteredCollections?: number;
-		maxRegisteredBindingsPerVm?: number;
-		maxBindingsPerCollection?: number;
-		maxBindingSchemaBytes?: number;
-		maxExamplesPerBinding?: number;
-		maxBindingExampleInputBytes?: number;
+		maxRegisteredFunctionsPerVm?: number;
+		maxFunctionsPerCollection?: number;
+		maxSchemaBytes?: number;
+		maxExamplesPerFunction?: number;
+		maxExampleInputBytes?: number;
 	};
 	/** Mount plugin manifest size limits. */
 	plugins?: {
 		maxPersistedManifestBytes?: number;
 		maxPersistedManifestFileBytes?: number;
 	};
-	/** ACP adapter, active-turn, history-retention, and page limits. */
-	acp?: {
-		maxReadLineBytes?: number;
-		stdoutBufferByteLimit?: number;
-		maxCompletedMessageBytes?: number;
-		maxTurnOutputBytes?: number;
-		maxPromptBytes?: number;
-		maxPromptBlocks?: number;
-		maxFallbackContinuationBytes?: number;
-		maxSessionHistoryBytes?: number;
-		maxSessionHistoryEvents?: number;
-		maxHistoryPageEntries?: number;
-		maxSessionListEntries?: number;
-	};
-	/** Shared local-file/actor-UDS SQLite result materialization limit. */
+	/** Local SQLite result materialization limit. */
 	sqlite?: {
 		maxResultBytes?: number;
 	};
@@ -719,6 +530,12 @@ export interface AgentOsLimits {
 		/** Maximum threads reserved by all concurrent threaded WASM processes in this VM. */
 		maxConcurrentThreads?: number;
 	};
+	/** Completed language-execution retention and live execution warning threshold. */
+	execution?: {
+		completedTtlMs?: number;
+		maxCompletedExecutions?: number;
+		liveExecutionWarningThreshold?: number;
+	};
 	/** Process spawn, I/O, and lifecycle-event backlog limits. */
 	process?: {
 		maxSpawnFileActions?: number;
@@ -729,55 +546,6 @@ export interface AgentOsLimits {
 		maxPendingChildSyncCount?: number;
 		maxPendingChildSyncBytes?: number;
 	};
-}
-
-export interface AgentStderrEvent {
-	sessionId: string;
-	agentType: string;
-	processId: string;
-	pid: number | null;
-	chunk: Uint8Array;
-}
-
-export type AgentStderrHandler = (event: AgentStderrEvent) => void;
-
-function defaultAgentStderrHandler(event: AgentStderrEvent): void {
-	process.stderr.write(event.chunk);
-}
-
-/**
- * Restart disposition reported on an {@link AgentExitEvent}. agentOS never
- * respawns an adapter or replays an interrupted request implicitly.
- */
-export type AgentRestartOutcome = "not_attempted";
-
-/**
- * An unexpected ACP adapter process exit — a crash from the host's
- * perspective (any spontaneous exit before `unloadSession()`, including exit
- * code 0). The live route is evicted and must be restored explicitly.
- */
-export interface AgentExitEvent {
-	sessionId: string;
-	agentType: string;
-	/** Sidecar process id of the adapter that exited. */
-	processId: string;
-	pid: number | null;
-	/** Adapter exit code; `null` when the exit was observed indirectly. */
-	exitCode: number | null;
-	/** Always `"not_attempted"`; agentOS does not restart adapters implicitly. */
-	restart: AgentRestartOutcome;
-	/** Always zero. */
-	restartCount: number;
-	/** Always zero. */
-	maxRestarts: number;
-}
-
-export type AgentExitHandler = (event: AgentExitEvent) => void;
-
-function defaultAgentExitHandler(event: AgentExitEvent): void {
-	process.stderr.write(
-		`[agentos] agent adapter exited unexpectedly: session=${event.sessionId} agent=${event.agentType} exitCode=${event.exitCode ?? "unknown"}; restore explicitly before retrying\n`,
-	);
 }
 
 /**
@@ -808,17 +576,24 @@ export type LimitWarningHandler = (warning: LimitWarning) => void;
  * `packages/core/src/options-schema.ts::agentOsOptionsSchema`. The TypeScript
  * Rivet actor accepts this surface directly alongside ordinary actor options.
  */
-export interface AgentOsOptions {
+export interface AgentOsOptions<
+	HOST_FUNCTIONS extends HostFunctionSchemas = HostFunctionSchemas,
+> {
 	/** Initial virtual Linux credentials and account record. Defaults to `1000:1000` (`agentos`). */
 	user?: VmUserConfig;
+	/**
+	 * Complete initial VM environment. Omission selects Core's base environment;
+	 * an explicit empty object starts with an empty environment.
+	 */
+	environment?: Record<string, string>;
 	/**
 	 * Software to install in the VM. Each entry is a package-dir ref. Arrays are
 	 * flattened, so meta-packages that export arrays of sub-packages work directly.
 	 */
 	software?: SoftwareInput[];
 	/**
-	 * Whether to auto-include the default software bundle (`@agentos-software/common`
-	 * — `sh` + coreutils + the standard CLI tools agents rely on) in addition to
+	 * Whether to auto-include Core's vendored default software bundle (`sh`,
+	 * coreutils, and the standard CLI tools programs rely on) in addition to
 	 * any `software` you pass. Defaults to `true`; set `false` for a bare VM with
 	 * only the software you list explicitly. Entries already present in `software`
 	 * are not duplicated.
@@ -841,21 +616,23 @@ export interface AgentOsOptions {
 	 * profiling workloads.
 	 */
 	highResolutionTime?: boolean;
-	/** Durable SQLite storage for VM-owned filesystem and session state. */
+	/** Durable SQLite storage for VM-owned filesystem and runtime state. */
 	database?: VmSqliteConfig;
 	/** Root filesystem configuration. Defaults to an overlay with the bundled base snapshot as its deepest lower. */
 	rootFilesystem?: RootFilesystemConfig;
 	/** Filesystems to mount at boot time. */
 	mounts?: MountConfig[];
-	/** External sandbox mounted into this VM with process bindings. */
+	/** External sandbox mounted into this VM with process hostFunctions. */
 	sandbox?: AgentOsSandboxInput;
 	/** Custom schedule driver for cron jobs. Defaults to TimerScheduleDriver. */
 	scheduleDriver?: ScheduleDriver;
-	/** Host-side bindings available to agents inside the VM. */
-	bindings?: Bindings[];
+	/** Trusted host functions available to programs inside the VM. */
+	hostFunctions?: HostFunctionCollections<HOST_FUNCTIONS>;
 	/**
-	 * Custom permission policy for the kernel. Controls access to filesystem,
-	 * network, child process, and environment operations. Defaults to allowAll.
+	 * Permission policy for the kernel. By default the guest behaves like a
+	 * sandboxed machine: its virtual filesystem, processes, environment, listeners,
+	 * and loopback networking work, while external network access is denied. Your
+	 * policy is merged over that default, so an omitted scope keeps it.
 	 */
 	permissions?: Permissions;
 	/**
@@ -869,20 +646,6 @@ export interface AgentOsOptions {
 	 */
 	limits?: AgentOsLimits;
 	/**
-	 * Called with stderr chunks from the top-level ACP-speaking agent process.
-	 * The agent process uses stdout for ACP JSON-RPC protocol traffic, so only
-	 * stderr is forwarded through this hook. Defaults to writing chunks to
-	 * `process.stderr`.
-	 */
-	onAgentStderr?: AgentStderrHandler;
-	/**
-	 * Called when the ACP adapter process behind a session exits unexpectedly.
-	 * The sidecar evicts the live
-	 * route and never retries the adapter or interrupted request implicitly.
-	 * Defaults to writing a warning line to `process.stderr`.
-	 */
-	onAgentExit?: AgentExitHandler;
-	/**
 	 * Called when a bounded limit inside the VM runtime approaches capacity
 	 * (~80%, edge-triggered with hysteresis so it does not spam). Use it to alert
 	 * on a slow consumer or a runaway guest before the limit is actually hit.
@@ -895,75 +658,6 @@ export interface AgentOsRuntimeAdmin {
 	rootView: VirtualFileSystem;
 	env: Record<string, string>;
 	sidecar: AgentOsSidecar;
-}
-
-/** @deprecated Use {@link ProcessDescriptor} through `process.get()` or `process.list()`. */
-export interface SpawnedProcessInfo {
-	pid: number;
-	command: string;
-	args: string[];
-	running: boolean;
-	exitCode: number | null;
-}
-
-class AcpDispatchError extends Error {
-	readonly code: number;
-	readonly data?: Record<string, unknown>;
-
-	constructor(code: number, message: string, data?: Record<string, unknown>) {
-		super(message);
-		this.name = "AcpDispatchError";
-		this.code = code;
-		this.data = data;
-	}
-}
-
-function toJsonRpcNotification(value: unknown): JsonRpcNotification {
-	if (
-		!value ||
-		typeof value !== "object" ||
-		Array.isArray(value) ||
-		(value as { jsonrpc?: unknown }).jsonrpc !== "2.0" ||
-		typeof (value as { method?: unknown }).method !== "string"
-	) {
-		throw new Error("Invalid JSON-RPC notification from sidecar");
-	}
-	return value as JsonRpcNotification;
-}
-
-function toJsonRpcResponse(value: unknown): JsonRpcResponse {
-	if (
-		!value ||
-		typeof value !== "object" ||
-		Array.isArray(value) ||
-		(value as { jsonrpc?: unknown }).jsonrpc !== "2.0" ||
-		!(
-			typeof (value as { id?: unknown }).id === "number" ||
-			typeof (value as { id?: unknown }).id === "string" ||
-			(value as { id?: unknown }).id === null
-		)
-	) {
-		throw new Error("Invalid JSON-RPC response from sidecar");
-	}
-	return value as JsonRpcResponse;
-}
-
-function toJsonRpcRequest(value: unknown): JsonRpcRequest {
-	if (
-		!value ||
-		typeof value !== "object" ||
-		Array.isArray(value) ||
-		(value as { jsonrpc?: unknown }).jsonrpc !== "2.0" ||
-		!(
-			typeof (value as { id?: unknown }).id === "number" ||
-			typeof (value as { id?: unknown }).id === "string" ||
-			(value as { id?: unknown }).id === null
-		) ||
-		typeof (value as { method?: unknown }).method !== "string"
-	) {
-		throw new Error("Invalid JSON-RPC request from ACP callback");
-	}
-	return value as JsonRpcRequest;
 }
 
 function toRecord(value: unknown): Record<string, unknown> {
@@ -1308,16 +1002,6 @@ const KERNEL_POSIX_BOOTSTRAP_DIR_METADATA: Record<
 	"/var/tmp": { mode: "1777", uid: 0, gid: 0 },
 };
 
-// Runtime commands that get a `/bin/<cmd>` stub at bootstrap so the guest shell
-// resolves them on PATH (e.g. `sh -c "python ..."`, pipelines). The sidecar
-// intercepts these by name and routes them to the embedded V8 / Pyodide runtime.
-const RUNTIME_BOOTSTRAP_COMMANDS = [
-	"node",
-	"npm",
-	"npx",
-	"python",
-	"python3",
-] as const;
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const SIDECAR_BINARY = join(REPO_ROOT, "target/debug/agentos-sidecar");
 const SIDECAR_BUILD_INPUTS = [
@@ -1555,10 +1239,14 @@ function ensureSidecarBinary(): string {
 	if (sidecarBinaryNeedsBuild()) {
 		const cargoBinary = findCargoBinary();
 		if (cargoBinary) {
-			execFileSync(cargoBinary, ["build", "-q", "-p", "agentos-sidecar"], {
-				cwd: REPO_ROOT,
-				stdio: "pipe",
-			});
+			execFileSync(
+				cargoBinary,
+				["build", "-q", "-p", "agentos-sidecar"],
+				{
+					cwd: REPO_ROOT,
+					stdio: "pipe",
+				},
+			);
 		} else if (!existsSync(SIDECAR_BINARY)) {
 			execFileSync(
 				resolveCargoBinary(),
@@ -1709,14 +1397,18 @@ function collectSidecarMountPlan(options: { mounts?: MountConfig[] }): {
 	return { sidecarMounts, hostMounts, hostPathMappings };
 }
 
-function collectBindingBootstrapCommands(bindings: Bindings[]): string[] {
-	if (bindings.length === 0) {
+function collectHostFunctionBootstrapCommands(
+	hostFunctions: ResolvedHostFunctions[],
+): string[] {
+	if (hostFunctions.length === 0) {
 		return [];
 	}
 
 	return [
 		"agentos",
-		...bindings.map((bindingCollection) => `agentos-${bindingCollection.name}`),
+		...hostFunctions.map(
+			(hostFunctionCollection) => `agentos-${hostFunctionCollection.name}`,
+		),
 	];
 }
 
@@ -1742,11 +1434,11 @@ function validationMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
-function bindingToSidecarDefinition(
-	definition: Binding,
+function hostFunctionToSidecarDefinition(
+	definition: HostFunction,
 ): SidecarRegisteredHostCallbackDefinition {
 	return {
-		description: definition.description,
+		description: hostFunctionDescription(definition),
 		inputSchema: zodToJsonSchema(definition.inputSchema),
 		...(definition.timeout !== undefined
 			? { timeoutMs: definition.timeout }
@@ -1764,9 +1456,9 @@ function bindingToSidecarDefinition(
 
 function combineInstructions(
 	additionalInstructions: string | undefined,
-	bindingReference: string,
+	hostFunctionReference: string,
 ): string | null {
-	const parts = [additionalInstructions, bindingReference]
+	const parts = [additionalInstructions, hostFunctionReference]
 		.map((part) => part?.trim())
 		.filter((part): part is string => Boolean(part));
 	if (parts.length === 0) {
@@ -1775,49 +1467,54 @@ function combineInstructions(
 	return parts.join("\n\n");
 }
 
-function buildBindingReference(bindings: Bindings[]): string {
-	if (bindings.length === 0) {
+function buildHostFunctionReference(
+	hostFunctions: ResolvedHostFunctions[],
+): string {
+	if (hostFunctions.length === 0) {
 		return "";
 	}
 
 	const lines = [
-		"## Available Host Bindings",
+		"## Available Host Functions",
 		"",
-		"Run `agentos list-bindings` to see all available bindings.",
+		"Run `agentos list-host-functions` to see all available host functions.",
 		"",
 	];
 
-	for (const bindingCollection of bindings) {
-		lines.push(`### ${bindingCollection.name}`);
+	for (const hostFunctionCollection of hostFunctions) {
+		lines.push(`### ${hostFunctionCollection.name}`);
 		lines.push("");
-		lines.push(bindingCollection.description);
-		lines.push("");
-		for (const [bindingName, definition] of Object.entries(
-			bindingCollection.bindings,
+		for (const [functionName, definition] of Object.entries(
+			hostFunctionCollection.functions,
 		)) {
-			const sidecarBinding = bindingToSidecarDefinition(definition);
-			const signature = buildBindingFlagSignature(sidecarBinding.inputSchema);
+			const sidecarHostFunction = hostFunctionToSidecarDefinition(definition);
+			const signature = buildHostFunctionFlagSignature(
+				sidecarHostFunction.inputSchema,
+			);
 			const suffix = signature.length > 0 ? ` ${signature}` : "";
+			const description = hostFunctionDescription(definition);
 			lines.push(
-				`- \`agentos-${bindingCollection.name} ${bindingName}${suffix}\` — ${definition.description}`,
+				description.length > 0
+					? `- \`agentos-${hostFunctionCollection.name} ${functionName}${suffix}\` - ${description}`
+					: `- \`agentos-${hostFunctionCollection.name} ${functionName}${suffix}\``,
 			);
 		}
 		lines.push("");
 
-		const bindingsWithExamples = Object.entries(
-			bindingCollection.bindings,
+		const functionsWithExamples = Object.entries(
+			hostFunctionCollection.functions,
 		).filter(
 			([, definition]) => definition.examples && definition.examples.length > 0,
 		);
-		if (bindingsWithExamples.length > 0) {
+		if (functionsWithExamples.length > 0) {
 			lines.push("**Examples:**");
 			lines.push("");
-			for (const [bindingName, definition] of bindingsWithExamples) {
+			for (const [functionName, definition] of functionsWithExamples) {
 				for (const example of definition.examples ?? []) {
-					const args = inputToBindingFlags(example.input);
+					const args = inputToHostFunctionFlags(example.input);
 					const suffix = args.length > 0 ? ` ${args}` : "";
 					lines.push(
-						`- ${example.description}: \`agentos-${bindingCollection.name} ${bindingName}${suffix}\``,
+						`- ${example.description}: \`agentos-${hostFunctionCollection.name} ${functionName}${suffix}\``,
 					);
 				}
 			}
@@ -1825,7 +1522,7 @@ function buildBindingReference(bindings: Bindings[]): string {
 		}
 
 		lines.push(
-			`Run \`agentos-${bindingCollection.name} <binding> --help\` for details.`,
+			`Run \`agentos-${hostFunctionCollection.name} <function> --help\` for details.`,
 		);
 		lines.push("");
 	}
@@ -1833,8 +1530,8 @@ function buildBindingReference(bindings: Bindings[]): string {
 	return lines.join("\n");
 }
 
-function buildBindingFlagSignature(schema: unknown): string {
-	return describeBindingFlags(schema)
+function buildHostFunctionFlagSignature(schema: unknown): string {
+	return describeHostFunctionFlags(schema)
 		.map((flag) => {
 			if (flag.required) {
 				return `${flag.name} <${flag.type}>`;
@@ -1844,7 +1541,7 @@ function buildBindingFlagSignature(schema: unknown): string {
 		.join(" ");
 }
 
-function describeBindingFlags(
+function describeHostFunctionFlags(
 	schema: unknown,
 ): Array<{ name: string; type: string; required: boolean }> {
 	const schemaObject = asRecord(schema);
@@ -1859,12 +1556,12 @@ function describeBindingFlags(
 
 	return Object.entries(properties).map(([fieldName, fieldSchema]) => ({
 		name: `--${camelToKebab(fieldName)}`,
-		type: describeBindingFlagType(fieldSchema),
+		type: describeHostFunctionFlagType(fieldSchema),
 		required: required.has(fieldName),
 	}));
 }
 
-function describeBindingFlagType(schema: unknown): string {
+function describeHostFunctionFlagType(schema: unknown): string {
 	const schemaObject = asRecord(schema);
 	const type =
 		typeof schemaObject.type === "string" ? schemaObject.type : undefined;
@@ -1888,7 +1585,7 @@ function describeJsonSchemaScalarType(schema: unknown): string {
 	return typeof schemaObject.type === "string" ? schemaObject.type : "string";
 }
 
-function inputToBindingFlags(input: unknown): string {
+function inputToHostFunctionFlags(input: unknown): string {
 	const inputObject = asRecord(input);
 	return Object.entries(inputObject)
 		.flatMap(([key, value]) => {
@@ -1900,14 +1597,14 @@ function inputToBindingFlags(input: unknown): string {
 				return [`--no-${camelToKebab(key)}`];
 			}
 			if (Array.isArray(value)) {
-				return value.map((item) => `${flag} ${bindingCliString(item)}`);
+				return value.map((item) => `${flag} ${hostFunctionCliString(item)}`);
 			}
-			return [`${flag} ${bindingCliString(value)}`];
+			return [`${flag} ${hostFunctionCliString(value)}`];
 		})
 		.join(" ");
 }
 
-function bindingCliString(value: unknown): string {
+function hostFunctionCliString(value: unknown): string {
 	return typeof value === "string" ? value : (JSON.stringify(value) ?? "null");
 }
 
@@ -1955,26 +1652,17 @@ async function handleHostCallback(
 		}
 	}
 
-	const definition = context.bindingMap.get(payload.callback_key);
+	const definition = context.hostFunctionMap.get(payload.callback_key);
 	if (!definition) {
 		return {
 			type: "host_callback_result",
 			invocation_id: payload.invocation_id,
-			error: `Unknown binding "${payload.callback_key}"`,
+			error: `Unknown host function "${payload.callback_key}"`,
 		};
 	}
 
-	const permissionMode = bindingPermissionMode(
-		context.permissions,
-		payload.callback_key,
-	);
-	if (permissionMode !== "allow") {
-		return {
-			type: "host_callback_result",
-			invocation_id: payload.invocation_id,
-			error: `EACCES: blocked by binding.invoke policy for ${payload.callback_key}`,
-		};
-	}
+	// The sidecar checks the `hostFunction` permission scope before it forwards a
+	// host function call, so a call that reaches the host is already permitted.
 
 	const parsed = definition.inputSchema.safeParse(payload.input);
 	if (!parsed.success) {
@@ -1989,7 +1677,7 @@ async function handleHostCallback(
 		return {
 			type: "host_callback_result",
 			invocation_id: payload.invocation_id,
-			result: await executeBinding(
+			result: await executeHostFunction(
 				definition,
 				payload.callback_key,
 				parsed.data,
@@ -2004,16 +1692,21 @@ async function handleHostCallback(
 	}
 }
 
-function buildBindingMap(bindings: Bindings[]): Map<string, Binding> {
-	const bindingMap = new Map<string, Binding>();
-	for (const bindingCollection of bindings) {
-		for (const [bindingName, definition] of Object.entries(
-			bindingCollection.bindings,
+function buildHostFunctionMap(
+	hostFunctions: ResolvedHostFunctions[],
+): Map<string, HostFunction> {
+	const hostFunctionMap = new Map<string, HostFunction>();
+	for (const hostFunctionCollection of hostFunctions) {
+		for (const [functionName, definition] of Object.entries(
+			hostFunctionCollection.functions,
 		)) {
-			bindingMap.set(`${bindingCollection.name}:${bindingName}`, definition);
+			hostFunctionMap.set(
+				`${hostFunctionCollection.name}:${functionName}`,
+				definition,
+			);
 		}
 	}
-	return bindingMap;
+	return hostFunctionMap;
 }
 
 interface HostCommandCallbackInput {
@@ -2024,9 +1717,8 @@ interface HostCommandCallbackInput {
 }
 
 interface HostCallbackContext {
-	bindings: Bindings[];
-	bindingMap: ReadonlyMap<string, Binding>;
-	permissions: Permissions;
+	hostFunctions: ResolvedHostFunctions[];
+	hostFunctionMap: ReadonlyMap<string, HostFunction>;
 	readFile(path: string): Promise<Uint8Array>;
 }
 
@@ -2231,15 +1923,19 @@ async function handleHostCommandCallback(
 	command: HostCommandCallbackInput,
 	context: HostCallbackContext,
 ): Promise<unknown> {
-	const directBindings = context.bindings.find(
-		(bindingCollection) =>
-			`agentos-${bindingCollection.name}` === command.command,
+	const directHostFunctions = context.hostFunctions.find(
+		(hostFunctionCollection) =>
+			`agentos-${hostFunctionCollection.name}` === command.command,
 	);
 	if (command.command === "agentos") {
 		return handleAgentOsRegistryCommand(command, context);
 	}
-	if (directBindings) {
-		return handleAgentOsBindingCommand(command, context, directBindings);
+	if (directHostFunctions) {
+		return handleAgentOsHostFunctionCommand(
+			command,
+			context,
+			directHostFunctions,
+		);
 	}
 	throw new Error(`Unknown host callback command "${command.command}"`);
 }
@@ -2248,37 +1944,37 @@ async function handleAgentOsRegistryCommand(
 	command: HostCommandCallbackInput,
 	context: HostCallbackContext,
 ): Promise<unknown> {
-	const [subcommand, collectionName, bindingName, ...bindingArgs] =
+	const [subcommand, collectionName, functionName, ...functionArgs] =
 		command.args;
 	if (!subcommand || isHelpFlag(subcommand)) {
 		return {
 			usage:
-				"agentos <command>: list-bindings [collection], <collection> --help, or <collection> <binding> ...",
+				"agentos <command>: list-host-functions [collection], <collection> --help, or <collection> <function> ...",
 		};
 	}
-	if (subcommand === "list-bindings") {
+	if (subcommand === "list-host-functions" || subcommand === "list-bindings") {
 		return collectionName
-			? describeBindingsPayload(context.bindings, collectionName)
-			: listBindingsPayload(context.bindings);
+			? describeHostFunctionsPayload(context.hostFunctions, collectionName)
+			: listHostFunctionsPayload(context.hostFunctions);
 	}
-	const bindingCollection = context.bindings.find(
+	const hostFunctionCollection = context.hostFunctions.find(
 		(collection) => collection.name === subcommand,
 	);
-	if (!bindingCollection) {
+	if (!hostFunctionCollection) {
 		throw new Error(
-			`No binding collection "${subcommand}". Available: ${bindingsNames(context.bindings)}`,
+			`No host function collection "${subcommand}". Available: ${hostFunctionsNames(context.hostFunctions)}`,
 		);
 	}
 	if (!collectionName || isHelpFlag(collectionName)) {
-		return describeBindingsPayload(context.bindings, subcommand);
+		return describeHostFunctionsPayload(context.hostFunctions, subcommand);
 	}
-	if (bindingName && isHelpFlag(bindingName)) {
-		return describeBindingPayload(bindingCollection, collectionName);
+	if (functionName && isHelpFlag(functionName)) {
+		return describeHostFunctionPayload(hostFunctionCollection, collectionName);
 	}
-	return invokeBinding({
-		bindingCollection,
-		bindingName: collectionName,
-		args: [bindingName, ...bindingArgs].filter(
+	return invokeHostFunction({
+		hostFunctionCollection,
+		functionName: collectionName,
+		args: [functionName, ...functionArgs].filter(
 			(value): value is string => typeof value === "string",
 		),
 		cwd: command.cwd,
@@ -2286,21 +1982,24 @@ async function handleAgentOsRegistryCommand(
 	});
 }
 
-async function handleAgentOsBindingCommand(
+async function handleAgentOsHostFunctionCommand(
 	command: HostCommandCallbackInput,
 	context: HostCallbackContext,
-	bindingCollection: Bindings,
+	hostFunctionCollection: ResolvedHostFunctions,
 ): Promise<unknown> {
-	const [bindingName, helpOrFirstArg, ...rest] = command.args;
-	if (!bindingName || isHelpFlag(bindingName)) {
-		return describeBindingsPayload(context.bindings, bindingCollection.name);
+	const [functionName, helpOrFirstArg, ...rest] = command.args;
+	if (!functionName || isHelpFlag(functionName)) {
+		return describeHostFunctionsPayload(
+			context.hostFunctions,
+			hostFunctionCollection.name,
+		);
 	}
 	if (helpOrFirstArg && isHelpFlag(helpOrFirstArg)) {
-		return describeBindingPayload(bindingCollection, bindingName);
+		return describeHostFunctionPayload(hostFunctionCollection, functionName);
 	}
-	return invokeBinding({
-		bindingCollection,
-		bindingName,
+	return invokeHostFunction({
+		hostFunctionCollection,
+		functionName,
 		args: [helpOrFirstArg, ...rest].filter(
 			(value): value is string => typeof value === "string",
 		),
@@ -2309,46 +2008,39 @@ async function handleAgentOsBindingCommand(
 	});
 }
 
-async function invokeBinding({
-	bindingCollection,
-	bindingName,
+async function invokeHostFunction({
+	hostFunctionCollection,
+	functionName,
 	args,
 	cwd,
 	context,
 }: {
-	bindingCollection: Bindings;
-	bindingName: string;
+	hostFunctionCollection: ResolvedHostFunctions;
+	functionName: string;
 	args: string[];
 	cwd: string;
 	context: HostCallbackContext;
 }): Promise<unknown> {
-	const definition = bindingCollection.bindings[bindingName];
+	const definition = hostFunctionCollection.functions[functionName];
 	if (!definition) {
 		throw new Error(
-			`No binding "${bindingName}" in collection "${bindingCollection.name}". Available: ${bindingNames(bindingCollection)}`,
+			`No host function "${functionName}" in collection "${hostFunctionCollection.name}". Available: ${hostFunctionNames(hostFunctionCollection)}`,
 		);
 	}
-	const callbackKey = `${bindingCollection.name}:${bindingName}`;
-	const permissionMode = bindingPermissionMode(
-		context.permissions,
-		callbackKey,
-	);
-	if (permissionMode !== "allow") {
-		throw new Error(
-			`EACCES: blocked by binding.invoke policy for ${callbackKey}`,
-		);
-	}
-	const input = await parseBindingInput(
+	// The sidecar checks the `hostFunction` permission scope for registry commands
+	// before forwarding them, the same as for collection commands.
+	const callbackKey = `${hostFunctionCollection.name}:${functionName}`;
+	const input = await parseHostFunctionInput(
 		definition,
 		args,
 		cwd,
 		context.readFile,
 	);
-	return executeBinding(definition, callbackKey, input);
+	return executeHostFunction(definition, callbackKey, input);
 }
 
-async function executeBinding(
-	definition: Binding,
+async function executeHostFunction(
+	definition: HostFunction,
 	callbackKey: string,
 	input: unknown,
 ): Promise<unknown> {
@@ -2367,7 +2059,7 @@ async function executeBinding(
 				() =>
 					reject(
 						new Error(
-							`Binding "${callbackKey}" timed out after ${definition.timeout}ms`,
+							`Host function "${callbackKey}" timed out after ${definition.timeout}ms`,
 						),
 					),
 				definition.timeout,
@@ -2376,8 +2068,8 @@ async function executeBinding(
 	]);
 }
 
-async function parseBindingInput(
-	definition: Binding,
+async function parseHostFunctionInput(
+	definition: HostFunction,
 	args: string[],
 	cwd: string,
 	readFile: (path: string) => Promise<Uint8Array>,
@@ -2400,13 +2092,13 @@ async function parseBindingInput(
 		const text = new TextDecoder().decode(await readFile(guestPath));
 		return JSON.parse(text);
 	}
-	return parseBindingArgv(
-		bindingToSidecarDefinition(definition).inputSchema,
+	return parseHostFunctionArgv(
+		hostFunctionToSidecarDefinition(definition).inputSchema,
 		args,
 	);
 }
 
-function parseBindingArgv(
+function parseHostFunctionArgv(
 	schema: unknown,
 	argv: string[],
 ): Record<string, unknown> {
@@ -2490,39 +2182,39 @@ function parseBindingArgv(
 	return input;
 }
 
-function listBindingsPayload(bindings: Bindings[]): unknown {
+function listHostFunctionsPayload(
+	hostFunctions: ResolvedHostFunctions[],
+): unknown {
 	return {
-		bindings: bindings.map((bindingCollection) => ({
-			name: bindingCollection.name,
-			description: bindingCollection.description,
-			bindings: Object.keys(bindingCollection.bindings),
+		hostFunctions: hostFunctions.map((hostFunctionCollection) => ({
+			name: hostFunctionCollection.name,
+			functions: Object.keys(hostFunctionCollection.functions),
 		})),
 	};
 }
 
-function describeBindingsPayload(
-	bindings: Bindings[],
+function describeHostFunctionsPayload(
+	hostFunctions: ResolvedHostFunctions[],
 	collectionName: string,
 ): unknown {
-	const bindingCollection = bindings.find(
+	const hostFunctionCollection = hostFunctions.find(
 		(collection) => collection.name === collectionName,
 	);
-	if (!bindingCollection) {
+	if (!hostFunctionCollection) {
 		throw new Error(
-			`No binding collection "${collectionName}". Available: ${bindingsNames(bindings)}`,
+			`No host function collection "${collectionName}". Available: ${hostFunctionsNames(hostFunctions)}`,
 		);
 	}
 	return {
-		name: bindingCollection.name,
-		description: bindingCollection.description,
-		bindings: Object.fromEntries(
-			Object.entries(bindingCollection.bindings).map(
-				([bindingName, definition]) => [
-					bindingName,
+		name: hostFunctionCollection.name,
+		functions: Object.fromEntries(
+			Object.entries(hostFunctionCollection.functions).map(
+				([functionName, definition]) => [
+					functionName,
 					{
-						description: definition.description,
-						flags: describeBindingFlags(
-							bindingToSidecarDefinition(definition).inputSchema,
+						description: hostFunctionDescription(definition),
+						flags: describeHostFunctionFlags(
+							hostFunctionToSidecarDefinition(definition).inputSchema,
 						),
 					},
 				],
@@ -2531,22 +2223,22 @@ function describeBindingsPayload(
 	};
 }
 
-function describeBindingPayload(
-	bindingCollection: Bindings,
-	bindingName: string,
+function describeHostFunctionPayload(
+	hostFunctionCollection: ResolvedHostFunctions,
+	functionName: string,
 ): unknown {
-	const definition = bindingCollection.bindings[bindingName];
+	const definition = hostFunctionCollection.functions[functionName];
 	if (!definition) {
 		throw new Error(
-			`No binding "${bindingName}" in collection "${bindingCollection.name}". Available: ${bindingNames(bindingCollection)}`,
+			`No host function "${functionName}" in collection "${hostFunctionCollection.name}". Available: ${hostFunctionNames(hostFunctionCollection)}`,
 		);
 	}
 	return {
-		collection: bindingCollection.name,
-		binding: bindingName,
-		description: definition.description,
-		flags: describeBindingFlags(
-			bindingToSidecarDefinition(definition).inputSchema,
+		collection: hostFunctionCollection.name,
+		function: functionName,
+		description: hostFunctionDescription(definition),
+		flags: describeHostFunctionFlags(
+			hostFunctionToSidecarDefinition(definition).inputSchema,
 		),
 		examples:
 			definition.examples?.map((example) => ({
@@ -2556,54 +2248,16 @@ function describeBindingPayload(
 	};
 }
 
-function bindingPermissionMode(
-	permissions: Permissions,
-	callbackKey: string,
-): "allow" | "deny" {
-	const scope = permissions.binding;
-	if (!scope) {
-		return "deny";
-	}
-	if (typeof scope === "string") {
-		return scope;
-	}
-	let mode: "allow" | "deny" = scope.default ?? "deny";
-	for (const rule of scope.rules) {
-		const operations = rule.operations ?? ["*"];
-		const patterns = rule.patterns ?? ["**"];
-		if (
-			operations.some(
-				(operation) => operation === "*" || operation === "invoke",
-			) &&
-			patterns.some((pattern) => permissionPatternMatches(pattern, callbackKey))
-		) {
-			mode = rule.mode;
-		}
-	}
-	return mode;
+function hostFunctionsNames(hostFunctions: ResolvedHostFunctions[]): string {
+	return hostFunctions
+		.map((hostFunctionCollection) => hostFunctionCollection.name)
+		.join(", ");
 }
 
-function permissionPatternMatches(pattern: string, value: string): boolean {
-	if (pattern === "*" || pattern === "**" || pattern === value) {
-		return true;
-	}
-	const parts = pattern.split(/(\*\*|\*)/u);
-	const source = parts
-		.map((part) => {
-			if (part === "**") return ".*";
-			if (part === "*") return "[^:]*";
-			return part.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
-		})
-		.join("");
-	return new RegExp(`^${source}$`).test(value);
-}
-
-function bindingsNames(bindings: Bindings[]): string {
-	return bindings.map((bindingCollection) => bindingCollection.name).join(", ");
-}
-
-function bindingNames(bindingCollection: Bindings): string {
-	return Object.keys(bindingCollection.bindings).join(", ");
+function hostFunctionNames(
+	hostFunctionCollection: ResolvedHostFunctions,
+): string {
+	return Object.keys(hostFunctionCollection.functions).join(", ");
 }
 
 function isHelpFlag(value: string): boolean {
@@ -2615,34 +2269,34 @@ function jsonSchemaType(schema: unknown): string | undefined {
 	return typeof schemaObject.type === "string" ? schemaObject.type : undefined;
 }
 
-async function registerBindingsOnSidecar(
+async function registerHostFunctionsOnSidecar(
 	client: SidecarProcess,
 	session: AuthenticatedSession,
 	vm: CreatedVm,
-	bindings: Bindings[],
+	hostFunctions: ResolvedHostFunctions[],
 ): Promise<string> {
-	if (bindings.length === 0) {
+	if (hostFunctions.length === 0) {
 		return "";
 	}
 
-	for (const bindingCollection of bindings) {
+	for (const hostFunctionCollection of hostFunctions) {
 		await client.registerHostCallbacks(session, vm, {
-			name: bindingCollection.name,
-			description: bindingCollection.description,
-			commandAliases: [`agentos-${bindingCollection.name}`],
+			name: hostFunctionCollection.name,
+			description: "",
+			commandAliases: [`agentos-${hostFunctionCollection.name}`],
 			registryCommandAliases: ["agentos"],
 			callbacks: Object.fromEntries(
-				Object.entries(bindingCollection.bindings).map(
-					([bindingName, definition]) => [
-						bindingName,
-						bindingToSidecarDefinition(definition),
+				Object.entries(hostFunctionCollection.functions).map(
+					([functionName, definition]) => [
+						functionName,
+						hostFunctionToSidecarDefinition(definition),
 					],
 				),
 			),
 		});
 	}
 
-	return buildBindingReference(bindings);
+	return buildHostFunctionReference(hostFunctions);
 }
 
 function executionIdentity(options: {
@@ -2942,11 +2596,6 @@ function mapExecutionCompletedEvent(
 export class AgentOs {
 	#kernel: Kernel;
 	readonly sidecar: AgentOsSidecar;
-	private _durableSessionEventHandlers = new Map<
-		string,
-		Set<(entry: SessionStreamEntry) => void>
-	>();
-	private _agentExitHandlers = new Map<string, Set<AgentExitHandler>>();
 	private _processes = new Map<
 		number,
 		{
@@ -2991,13 +2640,12 @@ export class AgentOs {
 	);
 	private _pendingShellExitPromises = new Set<Promise<number>>();
 	private _shellCounter = 0;
-	private _acpTerminals = new Map<string, AcpTerminalEntry>();
-	private _acpTerminalCounter = 0;
 	private _softwareRoots: SoftwareRoot[];
+	private readonly _installedSoftware = new Map<string, InstalledSoftware>();
+	private _vmMutationActive = false;
 	private _cronManager!: CronManager;
-	private _bindings: Bindings[] = [];
-	private _bindingReference = "";
-	private _permissions: Permissions = allowAll;
+	private _hostFunctions: ResolvedHostFunctions[] = [];
+	private _hostFunctionReference = "";
 	private _hostMounts: HostMountInfo[];
 	private _env: Record<string, string>;
 	private _rootFilesystem: VirtualFileSystem;
@@ -3006,8 +2654,6 @@ export class AgentOs {
 	private readonly _sidecarSession: AuthenticatedSession;
 	private readonly _sidecarVm: CreatedVm;
 	private readonly _disposeSidecarEventListener: () => void;
-	private readonly _agentStderrHandler?: AgentStderrHandler;
-	private readonly _agentExitHandler?: AgentExitHandler;
 	private readonly _limitWarningHandler?: LimitWarningHandler;
 	private readonly _disposeHooks: Array<() => void | Promise<void>> = [];
 
@@ -3088,9 +2734,7 @@ export class AgentOs {
 
 	readonly filesystem = {
 		readFile: this._readFile.bind(this),
-		pread: this._pread.bind(this),
 		writeFile: this._writeFile.bind(this),
-		pwrite: this._pwrite.bind(this),
 		readFiles: this._readFiles.bind(this),
 		writeFiles: this._writeFiles.bind(this),
 		stat: this._stat.bind(this),
@@ -3114,26 +2758,9 @@ export class AgentOs {
 	readonly software = {
 		list: this._listSoftware.bind(this),
 		link: this._linkSoftware.bind(this),
-	};
-
-	readonly agents = {
-		list: this._listAgents.bind(this),
-	};
-
-	readonly sessions = {
-		open: this._openSession.bind(this),
-		get: this._getSession.bind(this),
-		list: this._listSessions.bind(this),
-		delete: this._deleteSession.bind(this),
-		unload: this._unloadSession.bind(this),
-		prompt: this._prompt.bind(this),
-		cancelPrompt: this._cancelPrompt.bind(this),
-		respondPermission: this._respondPermission.bind(this),
-		readHistory: this._readHistory.bind(this),
-		getConfig: this._getSessionConfig.bind(this),
-		setConfigOption: this._setSessionConfigOption.bind(this),
-		getCapabilities: this._getSessionCapabilities.bind(this),
-		getAgentInfo: this._getSessionAgentInfo.bind(this),
+		install: this._installSoftware.bind(this),
+		uninstall: this._uninstallSoftware.bind(this),
+		installed: this._installedSoftwareList.bind(this),
 	};
 
 	readonly cron = {
@@ -3152,8 +2779,6 @@ export class AgentOs {
 		sidecarClient: SidecarProcess,
 		sidecarSession: AuthenticatedSession,
 		sidecarVm: CreatedVm,
-		agentStderrHandler?: AgentStderrHandler,
-		agentExitHandler?: AgentExitHandler,
 		limitWarningHandler?: LimitWarningHandler,
 	) {
 		this.#kernel = kernel;
@@ -3165,8 +2790,6 @@ export class AgentOs {
 		this._sidecarClient = sidecarClient;
 		this._sidecarSession = sidecarSession;
 		this._sidecarVm = sidecarVm;
-		this._agentStderrHandler = agentStderrHandler;
-		this._agentExitHandler = agentExitHandler;
 		this._limitWarningHandler = limitWarningHandler;
 		this._disposeSidecarEventListener = this._sidecarClient.onEvent((event) => {
 			this._handleSidecarEvent(event);
@@ -3191,15 +2814,14 @@ export class AgentOs {
 		return getSharedAgentOsSidecarInternal(options);
 	}
 
-	static async create(options?: AgentOsOptions): Promise<AgentOs> {
-		options = parseAgentOsOptions(options);
-		// Default software is FULLY DYNAMIC: this package's own NON-agent
-		// @agentos-software/* dependencies (e.g. common), each default-exporting
-		// its registry-built descriptor. Agent packages are NOT projected here —
-		// openSession({ agent: id }) links the matching agent dependency into the running
-		// VM on first use, so agent closures (and pi's V8 snapshot bundle) only
-		// enter VMs that run them. Unbuilt packages throw with build
-		// instructions; opt out via defaultSoftware: false.
+	static async create<HOST_FUNCTIONS extends HostFunctionSchemas>(
+		callerOptions?: AgentOsOptions<HOST_FUNCTIONS>,
+	): Promise<AgentOs> {
+		let options: AgentOsOptions | undefined = parseAgentOsOptions(
+			callerOptions as AgentOsOptions | undefined,
+		);
+		// Default software is resolved from immutable `.aospkg` files vendored in
+		// this package. Runtime package resolution never consults npm.
 		const defaultSoftware =
 			options?.defaultSoftware === false ? [] : resolveDefaultSoftware();
 		const software: unknown[] =
@@ -3225,37 +2847,33 @@ export class AgentOs {
 			return [{ path: ref.path }];
 		});
 		// All package software is projected into `/opt/agentos` by the sidecar. The
-		// client stages nothing host-side and parses NO package manifests: the
-		// sidecar owns agent resolution, agent enumeration, and agent snapshot
-		// bundle loading from the projected package dirs.
+		// client stages nothing host-side and parses no package manifests.
 		const localMounts = await resolveCompatLocalMounts(options?.mounts);
-		if (options?.bindings && options.bindings.length > 0) {
-			validateBindings(options.bindings);
-		}
+		// Keys become command names, so resolve and check them before anything
+		// else in `create()` allocates a sidecar or a sandbox.
+		const resolvedHostFunctions = options?.hostFunctions
+			? resolveHostFunctions(options.hostFunctions)
+			: [];
 
 		// Resolve the sidecar handle before starting an external sandbox so option
 		// validation failures cannot leak provider resources.
 		const sidecar = resolveAgentOsSidecar(options?.sidecar);
 		options = await resolveSandboxOptions(options);
 		const sandboxDisposeHooks = getSandboxDisposeHooks(options);
-		const bindings = options.bindings;
+		const hostFunctions = resolvedHostFunctions;
 
 		const createVmAdmin = async (): Promise<AgentOsVmAdmin> => {
 			// The `/opt/agentos` projection is built by the sidecar from the
 			// forwarded `packages` (it owns the staging dir + read-only mount, and
 			// runtime `linkSoftware` appends to that live dir). The client no longer
 			// stages packages host-side.
-			const bindingBootstrapCommands = collectBindingBootstrapCommands(
-				bindings ?? [],
+			const hostFunctionBootstrapCommands = collectHostFunctionBootstrapCommands(
+				hostFunctions,
 			);
-			const bootstrapCommands = [
-				...RUNTIME_BOOTSTRAP_COMMANDS,
-				...bindingBootstrapCommands,
-			];
 			const bootstrapLower = createKernelBootstrapLower(
 				options?.rootFilesystem,
 			);
-			let bindingReference = "";
+			let hostFunctionReference = "";
 			let rootBridge: SidecarKernelProxy | null = null;
 			let kernel: Kernel | null = null;
 			let client: SidecarProcess | null = null;
@@ -3271,10 +2889,13 @@ export class AgentOs {
 			};
 
 			try {
-				const env: Record<string, string> = getBaseEnvironment();
+				const env: Record<string, string> =
+					options?.environment !== undefined
+						? { ...options.environment }
+						: getBaseEnvironment();
 				// Guest command paths. The sidecar owns the `/opt/agentos` projection and
 				// reports the exact projected package commands after `configureVm`.
-				// Binding-shim commands are added below.
+				// HostFunction-shim commands are added below.
 				const commandGuestPaths = new Map<string, string>();
 				const { sidecarMounts, hostMounts, hostPathMappings } =
 					collectSidecarMountPlan({
@@ -3286,25 +2907,27 @@ export class AgentOs {
 				client = shared.client;
 				const session = shared.session;
 				nativeSession = session;
-				const hostPermissions = options?.permissions ?? {
-					...allowAll,
-					binding: "allow",
-				};
-				const sidecarPermissions =
-					serializePermissionsForSidecar(hostPermissions);
+				const sidecarPermissions = serializePermissionsForSidecar(
+					options?.permissions,
+				);
 				const createVmConfig: CreateVmConfig = {
-					env,
+					defaultsProfile: "agent_os",
 					wasmBackend: options?.wasmBackend,
+					...(options?.environment !== undefined
+						? { env: { ...options.environment } }
+						: {}),
 					database: options?.database,
 					...(options?.user ? { user: options.user } : {}),
 					rootFilesystem: serializeRootFilesystemForSidecar(
 						options?.rootFilesystem,
 						bootstrapLower,
 					),
-					permissions: sidecarPermissions,
+					...(sidecarPermissions ? { permissions: sidecarPermissions } : {}),
 					limits: options?.limits,
 					loopbackExemptPorts: options?.loopbackExemptPorts ?? [],
-					bootstrapCommands,
+					...(hostFunctionBootstrapCommands.length > 0
+						? { bootstrapCommands: hostFunctionBootstrapCommands }
+						: {}),
 					...(options?.rootFilesystem?.type === "native"
 						? {
 								nativeRoot: {
@@ -3366,29 +2989,28 @@ export class AgentOs {
 				}
 				const configuredVm = await client.configureVm(session, nativeVm, {
 					mounts: sidecarMounts,
-					permissions: sidecarPermissions,
+					permissions: undefined,
 					commandPermissions: {},
 					loopbackExemptPorts: options?.loopbackExemptPorts,
 					packages: sidecarPackages,
 					packagesMountAt: OPT_AGENTOS_ROOT,
-					bootstrapCommands,
-					bindingShimCommands: bindingBootstrapCommands,
+					hostFunctionShimCommands: hostFunctionBootstrapCommands,
 				});
 				for (const command of configuredVm.projectedCommands) {
 					commandGuestPaths.set(command.name, command.guestPath);
 				}
-				if (bindings && bindings.length > 0) {
-					bindingReference = await registerBindingsOnSidecar(
+				if (hostFunctions.length > 0) {
+					hostFunctionReference = await registerHostFunctionsOnSidecar(
 						client,
 						session,
 						nativeVm,
-						bindings,
+						hostFunctions,
 					);
 					commandGuestPaths.set("agentos", "/bin/agentos");
-					for (const bindingCollection of bindings) {
+					for (const hostFunctionCollection of hostFunctions) {
 						commandGuestPaths.set(
-							`agentos-${bindingCollection.name}`,
-							`/bin/agentos-${bindingCollection.name}`,
+							`agentos-${hostFunctionCollection.name}`,
+							`/bin/agentos-${hostFunctionCollection.name}`,
 						);
 					}
 				}
@@ -3401,16 +3023,15 @@ export class AgentOs {
 					cwd: "/workspace",
 					localMounts,
 					sidecarMounts,
-					permissions: sidecarPermissions,
+					permissions: undefined,
 					commandPermissions: {},
 					loopbackExemptPorts: options?.loopbackExemptPorts,
 					// Retained for runtime mount reconfigures: `configure_vm` is
 					// replace-on-write for the whole payload, so post-boot mountFs
-					// must resend the boot packages and binding shims.
+					// must resend the boot packages and host-function shims.
 					packages: sidecarPackages,
 					packagesMountAt: OPT_AGENTOS_ROOT,
-					bootstrapCommands,
-					bindingShimCommands: bindingBootstrapCommands,
+					hostFunctionShimCommands: hostFunctionBootstrapCommands,
 					commandGuestPaths,
 					onDispose: cleanup,
 					// The native process is owned by the AgentOsSidecar handle and
@@ -3427,13 +3048,12 @@ export class AgentOs {
 					kernel,
 					rootView: rootBridge.createRootView(),
 					sidecarMounts,
-					sidecarPermissions,
+					sidecarPermissions: undefined,
 					commandPermissions: {},
 					loopbackExemptPorts: options?.loopbackExemptPorts,
 					sidecarClient: client,
 					sidecarSession: session,
 					sidecarVm: nativeVm,
-					permissions: hostPermissions,
 					snapshotRootFilesystem: async (maxBytes) =>
 						createSnapshotExport(
 							convertSidecarRootSnapshotEntries(
@@ -3444,8 +3064,8 @@ export class AgentOs {
 								),
 							),
 						),
-					bindings: bindings ?? [],
-					bindingReference,
+					hostFunctions,
+					hostFunctionReference,
 					async dispose() {
 						if (kernel) {
 							const currentKernel = kernel;
@@ -3499,14 +3119,11 @@ export class AgentOs {
 				vmAdmin.sidecarClient,
 				vmAdmin.sidecarSession,
 				vmAdmin.sidecarVm,
-				options?.onAgentStderr ?? defaultAgentStderrHandler,
-				options?.onAgentExit ?? defaultAgentExitHandler,
 				options?.onLimitWarning,
 			);
 			vm._sidecarLease = sidecarLease;
-			vm._bindings = vmAdmin.bindings;
-			vm._bindingReference = vmAdmin.bindingReference;
-			vm._permissions = vmAdmin.permissions;
+			vm._hostFunctions = vmAdmin.hostFunctions;
+			vm._hostFunctionReference = vmAdmin.hostFunctionReference;
 			vm._disposeHooks.push(...sandboxDisposeHooks);
 			vm._installSidecarRequestHandler();
 			vm._cronManager = new CronManager(
@@ -3623,21 +3240,12 @@ export class AgentOs {
 		}
 		completed = completedBeforeAdmission.has(executionId);
 		if (completed) resolveCompletion?.();
-		let rejectAbort: ((reason?: unknown) => void) | undefined;
-		const aborted =
-			!background && options.signal
-				? new Promise<never>((_resolve, reject) => {
-						rejectAbort = reject;
-					})
-				: undefined;
 		const abort = () => {
+			// Admitted executions report cancellation through their structured result.
 			void this._cancelExecution(response.response.operationId).catch(
 				(error) => {
 					console.error("[agentos] failed to cancel aborted execution", error);
 				},
-			);
-			rejectAbort?.(
-				options.signal?.reason ?? new DOMException("Aborted", "AbortError"),
 			);
 		};
 		options.signal?.addEventListener("abort", abort, { once: true });
@@ -3674,7 +3282,7 @@ export class AgentOs {
 			};
 		}
 		try {
-			await (aborted ? Promise.race([completion, aborted]) : completion);
+			await completion;
 			return await this._waitExecutionResult(response.response.operationId);
 		} finally {
 			cleanup();
@@ -4588,16 +4196,26 @@ export class AgentOs {
 		// requires exited processes to stay queryable (running:false, exitCode set).
 		// `_processes` is a process table for this VM's lifetime; it is freed wholesale
 		// in dispose(). (H5: the leak was that dispose() never cleared it.)
-		void proc.wait().then((code) => {
-			const exit: ProcessExit = {
-				pid: proc.pid,
-				outcome: entry.signal ? "signalled" : "exited",
-				exitCode: code,
-				...(entry.signal ? { signal: entry.signal } : {}),
-			};
-			entry.exit = exit;
-			for (const h of exitHandlers) h(exit);
-		});
+		void proc
+			.wait()
+			.then((code) => {
+				const exit: ProcessExit = {
+					pid: proc.pid,
+					outcome: entry.signal ? "signalled" : "exited",
+					exitCode: code,
+					...(entry.signal ? { signal: entry.signal } : {}),
+				};
+				entry.exit = exit;
+				for (const h of exitHandlers) h(exit);
+			})
+			.catch((error) => {
+				// A failed wait is not an exit event. Explicit process.wait calls retain
+				// the error, and callers may still signal an unconfirmed live process.
+				console.error(
+					`[agentOS] process ${proc.pid} exit observation failed`,
+					error,
+				);
+			});
 
 		return {
 			pid: proc.pid,
@@ -4670,16 +4288,6 @@ export class AgentOs {
 		options?: SpawnOptions,
 	): ProcessDescriptor {
 		return this._spawnProcess(command, args, options);
-	}
-
-	/** @deprecated Use `process.writeStdin()`. */
-	writeProcessStdin(pid: number, data: string | Uint8Array): Promise<void> {
-		return this._writeProcessStdin(pid, data);
-	}
-
-	/** @deprecated Use `process.closeStdin()`. */
-	closeProcessStdin(pid: number): Promise<void> {
-		return this._closeProcessStdin(pid);
 	}
 
 	/** Write data to a process's stdin. */
@@ -4773,12 +4381,6 @@ export class AgentOs {
 		);
 	}
 
-	/** @deprecated Use `process.wait()` and inspect the returned `ProcessExit`. */
-	async waitProcess(pid: number): Promise<number> {
-		const exit = await this.process.wait(pid);
-		return exit.exitCode ?? 1;
-	}
-
 	private _assertSafeAbsolutePath(path: string): void {
 		if (!path.startsWith("/")) {
 			throw new Error(`Path must be absolute: ${path}`);
@@ -4804,30 +4406,12 @@ export class AgentOs {
 		return this.#kernel.readFile(path);
 	}
 
-	private async _pread(
-		path: string,
-		offset: number,
-		length: number,
-	): Promise<Uint8Array> {
-		this._assertSafeAbsolutePath(path);
-		return this._vfs().pread(path, offset, length);
-	}
-
 	private async _writeFile(
 		path: string,
 		content: string | Uint8Array,
 	): Promise<void> {
 		this._assertWritableAbsolutePath(path);
 		return this.#kernel.writeFile(path, content);
-	}
-
-	private async _pwrite(
-		path: string,
-		offset: number,
-		data: Uint8Array,
-	): Promise<void> {
-		this._assertWritableAbsolutePath(path);
-		return this._vfs().pwrite(path, offset, data);
 	}
 
 	private async _writeFiles(
@@ -4990,26 +4574,30 @@ export class AgentOs {
 	 * leaving the mount silently host-only.
 	 */
 	private async _mountFs(descriptor: DynamicMountDescriptor): Promise<void> {
-		this._assertSafeAbsolutePath(descriptor.path);
-		if (!(this.#kernel instanceof SidecarKernelProxy)) {
-			throw new Error("portable dynamic mounts require the sidecar");
-		}
-		await this.#kernel.mountDescriptor({
-			guestPath: descriptor.path,
-			readOnly: descriptor.readOnly ?? false,
-			plugin: {
-				id: descriptor.plugin.id,
-				config: descriptor.plugin.config ?? {},
-			},
+		return this._withVmMutation(async () => {
+			this._assertSafeAbsolutePath(descriptor.path);
+			if (!(this.#kernel instanceof SidecarKernelProxy)) {
+				throw new Error("portable dynamic mounts require the native sidecar");
+			}
+			await this.#kernel.mountDescriptor({
+				guestPath: descriptor.path,
+				readOnly: descriptor.readOnly ?? false,
+				plugin: {
+					id: descriptor.plugin.id,
+					config: descriptor.plugin.config ?? {},
+				},
+			});
 		});
 	}
 
 	private async _unmountFs(path: string): Promise<void> {
-		this._assertSafeAbsolutePath(path);
-		if (!(this.#kernel instanceof SidecarKernelProxy)) {
-			throw new Error("portable dynamic mounts require the sidecar");
-		}
-		await this.#kernel.unmountDescriptor(path);
+		return this._withVmMutation(async () => {
+			this._assertSafeAbsolutePath(path);
+			if (!(this.#kernel instanceof SidecarKernelProxy)) {
+				throw new Error("portable dynamic mounts require the native sidecar");
+			}
+			await this.#kernel.unmountDescriptor(path);
+		});
 	}
 
 	private async _listMounts(): Promise<MountInfo[]> {
@@ -5038,19 +4626,9 @@ export class AgentOs {
 		return this.filesystem.readFile(path);
 	}
 
-	/** @deprecated Use `filesystem.pread()`. */
-	pread(path: string, offset: number, length: number): Promise<Uint8Array> {
-		return this.filesystem.pread(path, offset, length);
-	}
-
 	/** @deprecated Use `filesystem.writeFile()`. */
 	writeFile(path: string, content: string | Uint8Array): Promise<void> {
 		return this.filesystem.writeFile(path, content);
-	}
-
-	/** @deprecated Use `filesystem.pwrite()`. */
-	pwrite(path: string, offset: number, data: Uint8Array): Promise<void> {
-		return this.filesystem.pwrite(path, offset, data);
 	}
 
 	/** @deprecated Use `filesystem.writeFiles()`. */
@@ -5172,8 +4750,8 @@ export class AgentOs {
 
 	/**
 	 * Fetch an HTTP endpoint inside the VM while preserving duplicate response
-	 * headers and arbitrary binary bodies. agentOS Apps uses this compatibility
-	 * surface for its direct actor API.
+	 * headers and arbitrary binary bodies. This compatibility surface supports
+	 * fetch-like callers that proxy requests into a guest VM.
 	 */
 	async fetch(port: number, request: Request): Promise<Response> {
 		const url = new URL(request.url);
@@ -5182,9 +4760,7 @@ export class AgentOs {
 				port,
 				method: request.method,
 				path: `${url.pathname}${url.search}`,
-				headersJson: JSON.stringify(
-					Object.fromEntries(request.headers.entries()),
-				),
+				headersJson: JSON.stringify(headersToRecord(request.headers)),
 				...(request.method !== "GET" && request.method !== "HEAD"
 					? {
 							bodyBase64: Buffer.from(await request.arrayBuffer()).toString(
@@ -5225,9 +4801,7 @@ export class AgentOs {
 				port,
 				method: request.method,
 				path: `${url.pathname}${url.search}`,
-				headersJson: JSON.stringify(
-					Object.fromEntries(request.headers.entries()),
-				),
+				headersJson: JSON.stringify(headersToRecord(request.headers)),
 				...(request.method !== "GET" && request.method !== "HEAD"
 					? {
 							bodyBase64: Buffer.from(await request.arrayBuffer()).toString(
@@ -5480,17 +5054,6 @@ export class AgentOs {
 		];
 	}
 
-	/** @deprecated Use `process.list()`. */
-	listProcesses(): SpawnedProcessInfo[] {
-		return [...this._processes.values()].map(({ proc, command, args }) => ({
-			pid: proc.pid,
-			command,
-			args,
-			running: proc.exitCode === null,
-			exitCode: proc.exitCode,
-		}));
-	}
-
 	/** Returns all kernel processes across all active runtimes (WASM and Node). */
 	private _listAllProcesses(): KernelProcessInfo[] {
 		if (this.#kernel instanceof SidecarKernelProxy) {
@@ -5499,58 +5062,39 @@ export class AgentOs {
 		return [...this.#kernel.processes.values()];
 	}
 
-	/** @deprecated Use `process.list()`. */
-	allProcesses(): KernelProcessInfo[] {
-		return this._listAllProcesses();
-	}
-
-	private _buildProcessTree(): ProcessTreeNode[] {
-		const all = this._listAllProcesses();
-		const nodeMap = new Map<number, ProcessTreeNode>();
-
-		// Index: create a tree node for each process
-		for (const proc of all) {
-			nodeMap.set(proc.pid, {
+	/** Returns processes organized as a tree using ppid relationships. */
+	private async _processTree(): Promise<ProcessTreeNode[]> {
+		const records =
+			this.#kernel instanceof SidecarKernelProxy
+				? this.#kernel.snapshotProcessTopology()
+				: this._listAllProcesses().map((info) => ({
+						info,
+						key: `kernel:${info.pid}`,
+						parentKey: `kernel:${info.ppid}`,
+					}));
+		const roots = buildProcessForest<KernelProcessInfo, ProcessTreeNode>(
+			records,
+			(proc, children) => ({
 				pid: proc.pid,
 				ppid: proc.ppid,
 				command: proc.command,
 				state: proc.status,
 				startedAtMs: proc.startTime,
-				children: [],
-			});
-		}
+				children,
+			}),
+		);
+		const kernelKeys = new Set(records.map((record) => record.key));
 		for (const process of this._languageProcesses.values()) {
-			if (!nodeMap.has(process.descriptor.pid)) {
-				nodeMap.set(process.descriptor.pid, {
+			// Language admission returns a raw kernel PID and bypasses the proxy's
+			// synthetic spawn registry. A matching display PID is not identity.
+			if (!kernelKeys.has(`kernel:${process.descriptor.pid}`)) {
+				roots.push({
 					...process.descriptor,
 					children: [],
 				});
 			}
 		}
-
-		// Wire: attach each node to its parent
-		const roots: ProcessTreeNode[] = [];
-		for (const node of nodeMap.values()) {
-			const parent =
-				node.ppid === undefined ? undefined : nodeMap.get(node.ppid);
-			if (parent) {
-				parent.children.push(node);
-			} else {
-				roots.push(node);
-			}
-		}
-
 		return roots;
-	}
-
-	/** Returns processes organized as a tree using ppid relationships. */
-	private async _processTree(): Promise<ProcessTreeNode[]> {
-		return this._buildProcessTree();
-	}
-
-	/** @deprecated Use `process.tree()`. */
-	processTree(): ProcessTreeNode[] {
-		return this._buildProcessTree();
 	}
 
 	/** Returns info about a specific process by PID. Throws if not found. */
@@ -5566,21 +5110,6 @@ export class AgentOs {
 			command: entry.command,
 			state: entry.proc.exitCode === null ? "running" : "exited",
 			startedAtMs: entry.startedAtMs,
-		};
-	}
-
-	/** @deprecated Use `process.get()`. */
-	getProcess(pid: number): SpawnedProcessInfo {
-		const entry = this._processes.get(pid);
-		if (!entry) {
-			throw new Error(`Process not found: ${pid}`);
-		}
-		return {
-			pid: entry.proc.pid,
-			command: entry.command,
-			args: entry.args,
-			running: entry.proc.exitCode === null,
-			exitCode: entry.proc.exitCode,
 		};
 	}
 
@@ -5604,35 +5133,9 @@ export class AgentOs {
 		entry.proc.kill(number);
 	}
 
-	/** @deprecated Use `process.signal(pid, "SIGTERM")`. */
-	stopProcess(pid: number): void {
-		const entry = this._processes.get(pid);
-		if (entry) {
-			if (entry.proc.exitCode === null) entry.proc.kill();
-			return;
-		}
-		if (!this._languageProcesses.has(pid)) {
-			throw new Error(`Process not found: ${pid}`);
-		}
-		void this.process.signal(pid, "SIGTERM");
-	}
-
 	/** Send SIGKILL to force-kill a process. No-op if already exited. */
 	private async _killProcess(pid: number): Promise<void> {
 		await this._signalProcess(pid, "SIGKILL");
-	}
-
-	/** @deprecated Use `process.kill()`. */
-	killProcess(pid: number): void {
-		const entry = this._processes.get(pid);
-		if (entry) {
-			if (entry.proc.exitCode === null) entry.proc.kill(9);
-			return;
-		}
-		if (!this._languageProcesses.has(pid)) {
-			throw new Error(`Process not found: ${pid}`);
-		}
-		void this.process.kill(pid);
 	}
 
 	private async _resizeProcessPty(
@@ -5690,364 +5193,112 @@ export class AgentOs {
 		};
 	}
 
-	private async _openSession(input: OpenSessionInput): Promise<void> {
-		const response = await this._sendAcpRequest({
-			tag: "AcpOpenSessionRequest",
-			val: {
-				sessionId: input.sessionId ?? null,
-				agent: input.agent,
-				cwd: input.cwd ?? null,
-				additionalDirectories:
-					input.additionalDirectories === undefined
-						? null
-						: JSON.stringify(input.additionalDirectories),
-				env: input.env === undefined ? null : JSON.stringify(input.env),
-				mcpServers:
-					input.mcpServers === undefined
-						? null
-						: JSON.stringify(input.mcpServers),
-				permissionPolicy: input.permissionPolicy ?? null,
-				skipOsInstructions: input.skipOsInstructions ?? null,
-				additionalInstructions:
-					combineInstructions(
-						input.additionalInstructions,
-						this._bindingReference,
-					) ?? null,
-			},
-		});
-		if (response.tag !== "AcpOpenSessionResponse") {
-			throw new Error(`unexpected openSession response: ${response.tag}`);
-		}
-	}
-
-	private async _getSession(
-		input?: SessionTarget,
-	): Promise<DurableSessionInfo> {
-		const response = await this._sendAcpRequest({
-			tag: "AcpGetDurableSessionRequest",
-			val: { sessionId: input?.sessionId ?? null },
-		});
-		if (response.tag !== "AcpGetDurableSessionResponse") {
-			throw new Error(`unexpected getSession response: ${response.tag}`);
-		}
-		return decodeDurableSessionInfo(response.val.session);
-	}
-
-	private async _listSessions(input?: ListSessionsInput): Promise<SessionPage> {
-		const response = await this._sendAcpRequest({
-			tag: "AcpListDurableSessionsRequest",
-			val: { cursor: input?.cursor ?? null, limit: input?.limit ?? null },
-		});
-		if (response.tag !== "AcpListDurableSessionsResponse") {
-			throw new Error(`unexpected listSessions response: ${response.tag}`);
-		}
-		return {
-			sessions: response.val.sessions.map(decodeDurableSessionInfo),
-			nextCursor: response.val.nextCursor,
-		};
-	}
-
-	private async _deleteSession(input: SessionTarget = {}): Promise<void> {
-		const response = await this._sendAcpRequest({
-			tag: "AcpDeleteSessionRequest",
-			val: { sessionId: input.sessionId ?? null },
-		});
-		if (response.tag !== "AcpDeleteSessionResponse") {
-			throw new Error(`unexpected deleteSession response: ${response.tag}`);
-		}
-	}
-
-	private async _unloadSession(input?: SessionTarget): Promise<void> {
-		const response = await this._sendAcpRequest({
-			tag: "AcpUnloadSessionRequest",
-			val: { sessionId: input?.sessionId ?? null },
-		});
-		if (response.tag !== "AcpUnloadSessionResponse") {
-			throw new Error(`unexpected unloadSession response: ${response.tag}`);
-		}
-	}
-
-	private async _prompt(input: PromptInput): Promise<DurablePromptResult> {
-		const response = await this._sendAcpRequest({
-			tag: "AcpPromptRequest",
-			val: {
-				sessionId: input.sessionId ?? null,
-				idempotencyKey: input.idempotencyKey ?? null,
-				content: JSON.stringify(input.content),
-			},
-		});
-		if (response.tag !== "AcpPromptResponse") {
-			throw new Error(`unexpected prompt response: ${response.tag}`);
-		}
-		return {
-			sessionId: response.val.sessionId,
-			message:
-				response.val.message === null ? null : JSON.parse(response.val.message),
-			stopReason: response.val.stopReason as DurablePromptResult["stopReason"],
-		};
-	}
-
-	private async _cancelPrompt(
-		input?: SessionTarget,
-	): Promise<CancelPromptResult> {
-		const response = await this._sendAcpRequest({
-			tag: "AcpCancelPromptRequest",
-			val: { sessionId: input?.sessionId ?? null },
-		});
-		if (response.tag !== "AcpCancelPromptResponse") {
-			throw new Error(`unexpected cancelPrompt response: ${response.tag}`);
-		}
-		if (
-			response.val.status !== "cancelled" &&
-			response.val.status !== "no_active_prompt"
-		) {
-			throw new Error(`invalid cancelPrompt status: ${response.val.status}`);
-		}
-		return { status: response.val.status };
-	}
-
-	private async _respondPermission(
-		input: PermissionResponse,
-	): Promise<PermissionResponseResult> {
-		const response = await this._sendAcpRequest({
-			tag: "AcpRespondPermissionRequest",
-			val: {
-				sessionId: input.sessionId,
-				requestId: input.requestId,
-				optionId: input.optionId,
-			},
-		});
-		if (response.tag !== "AcpRespondPermissionResponse") {
-			throw new Error(`unexpected respondPermission response: ${response.tag}`);
-		}
-		if (
-			response.val.status !== "accepted" &&
-			response.val.status !== "not_pending"
-		) {
+	private async _withVmMutation<T>(operation: () => Promise<T>): Promise<T> {
+		if (this._vmMutationActive) {
 			throw new Error(
-				`invalid respondPermission status: ${response.val.status}`,
+				"invalid_state: another VM mount or software mutation is already in progress; wait for it to finish before retrying",
 			);
 		}
-		if (response.val.status === "accepted") {
-			if (response.val.reason !== null) {
-				throw new Error(
-					"accepted permission response must not include a reason",
+		this._vmMutationActive = true;
+		try {
+			return await operation();
+		} finally {
+			this._vmMutationActive = false;
+		}
+	}
+
+	private async _linkSoftware(descriptor: PackageDescriptor): Promise<void> {
+		return this._withVmMutation(async () => {
+			// Forward to the sidecar, which owns the `/opt/agentos` projection and
+			// appends the package to its live host-backed staging dir; the commands
+			// appear under `/opt/agentos/bin` immediately. The sidecar rejects a
+			// duplicate command, surfaced here as a thrown error.
+			const commands = await this._sidecarClient.linkPackage(
+				this._sidecarSession,
+				this._sidecarVm,
+				descriptor,
+			);
+			if (this.#kernel instanceof SidecarKernelProxy) {
+				this.#kernel.registerCommandGuestPaths(
+					new Map(
+						commands.projectedCommands.map((command) => [
+							command.name,
+							command.guestPath,
+						]),
+					),
 				);
 			}
-			return { status: "accepted" };
-		}
-		return {
-			status: "not_pending",
-			reason: permissionTerminalReason(response.val.reason),
-		};
-	}
-
-	private async _readHistory(input?: ReadHistoryInput): Promise<HistoryPage> {
-		const response = await this._sendAcpRequest({
-			tag: "AcpReadHistoryRequest",
-			val: {
-				sessionId: input?.sessionId ?? null,
-				before: input?.before === undefined ? null : BigInt(input.before),
-				after: input?.after === undefined ? null : BigInt(input.after),
-				limit: input?.limit ?? null,
-			},
 		});
-		if (response.tag !== "AcpHistoryPageResponse") {
-			throw new Error(`unexpected readHistory response: ${response.tag}`);
-		}
-		return {
-			events: response.val.events.map(decodeDurableSessionEvent),
-			hasMoreBefore: response.val.hasMoreBefore,
-			hasMoreAfter: response.val.hasMoreAfter,
-		};
 	}
 
-	private async _getSessionConfig(
-		input?: SessionTarget,
-	): Promise<SessionConfig> {
-		const response = await this._sendAcpRequest({
-			tag: "AcpGetSessionConfigRequest",
-			val: { sessionId: input?.sessionId ?? null },
+	private async _installSoftware(
+		source: SoftwarePackageSource,
+	): Promise<InstalledSoftware> {
+		return this._withVmMutation(async () => {
+			const wireSource: LivePackageAcquisitionSource =
+				source.type === "url"
+					? {
+							type: "url",
+							url: source.url,
+							expected_digest: source.expectedDigest,
+						}
+					: {
+							type: "path",
+							path: source.path,
+							expected_digest: source.expectedDigest,
+						};
+			const result = await this._sidecarClient.installPackage(
+				this._sidecarSession,
+				this._sidecarVm,
+				{ source: wireSource },
+			);
+			const packageInfo = result.package;
+			const installed: InstalledSoftware = {
+				packageId: packageInfo.package_id,
+				digest: packageInfo.digest,
+				sizeBytes: packageInfo.size,
+				packageName: packageInfo.package_name,
+				version: packageInfo.version,
+				commands: [...packageInfo.commands],
+			};
+			this._installedSoftware.set(installed.packageId, installed);
+			if (this.#kernel instanceof SidecarKernelProxy) {
+				this.#kernel.registerCommandGuestPaths(
+					new Map(
+						result.projected_commands.map((command) => [
+							command.name,
+							command.guest_path,
+						]),
+					),
+				);
+			}
+			return { ...installed, commands: [...installed.commands] };
 		});
-		if (response.tag !== "AcpSessionConfigResponse") {
-			throw new Error(`unexpected getSessionConfig response: ${response.tag}`);
-		}
-		return {
-			revision: safeWireU64(response.val.revision),
-			options: JSON.parse(response.val.options),
-		};
 	}
 
-	private async _setSessionConfigOption(
-		input: SetSessionConfigOptionInput,
-	): Promise<SessionConfig> {
-		const response = await this._sendAcpRequest({
-			tag: "AcpSetSessionConfigOptionRequest",
-			val: {
-				sessionId: input.sessionId ?? null,
-				configId: input.configId,
-				value: JSON.stringify(input.value),
-			},
+	private async _uninstallSoftware(
+		packageId: string,
+	): Promise<InstalledSoftware> {
+		return this._withVmMutation(async () => {
+			const installed = this._installedSoftware.get(packageId);
+			if (!installed) throw new Error(`Software not found: ${packageId}`);
+			const removedCommands = await this._sidecarClient.unlinkPackage(
+				this._sidecarSession,
+				this._sidecarVm,
+				packageId,
+			);
+			this._installedSoftware.delete(packageId);
+			if (this.#kernel instanceof SidecarKernelProxy) {
+				this.#kernel.unregisterCommandGuestPaths(removedCommands);
+			}
+			return { ...installed, commands: [...installed.commands] };
 		});
-		if (response.tag !== "AcpSessionConfigResponse") {
-			throw new Error(
-				`unexpected setSessionConfigOption response: ${response.tag}`,
-			);
-		}
-		return {
-			revision: safeWireU64(response.val.revision),
-			options: JSON.parse(response.val.options),
-		};
 	}
 
-	private async _getSessionCapabilities(
-		input?: SessionTarget,
-	): Promise<SessionCapabilities | null> {
-		const response = await this._sendAcpRequest({
-			tag: "AcpGetSessionCapabilitiesRequest",
-			val: { sessionId: input?.sessionId ?? null },
-		});
-		if (response.tag !== "AcpSessionCapabilitiesResponse") {
-			throw new Error(
-				`unexpected getSessionCapabilities response: ${response.tag}`,
-			);
-		}
-		return response.val.capabilities === null
-			? null
-			: normalizeSessionCapabilities(JSON.parse(response.val.capabilities));
-	}
-
-	private async _getSessionAgentInfo(
-		input?: SessionTarget,
-	): Promise<SessionAgentInfo | null> {
-		const response = await this._sendAcpRequest({
-			tag: "AcpGetSessionAgentInfoRequest",
-			val: { sessionId: input?.sessionId ?? null },
-		});
-		if (response.tag !== "AcpSessionAgentInfoResponse") {
-			throw new Error(
-				`unexpected getSessionAgentInfo response: ${response.tag}`,
-			);
-		}
-		return response.val.agentInfo === null
-			? null
-			: JSON.parse(response.val.agentInfo);
-	}
-
-	/** @deprecated Use `sessions.open()`. */
-	openSession(input: OpenSessionInput): Promise<void> {
-		return this.sessions.open(input);
-	}
-
-	/** @deprecated Use `sessions.get()`. */
-	getSession(input?: SessionTarget): Promise<DurableSessionInfo> {
-		return this.sessions.get(input);
-	}
-
-	/** @deprecated Use `sessions.list()`. */
-	listSessions(input?: ListSessionsInput): Promise<SessionPage> {
-		return this.sessions.list(input);
-	}
-
-	/** @deprecated Use `sessions.delete()`. */
-	deleteSession(input: SessionTarget = {}): Promise<void> {
-		return this.sessions.delete(input);
-	}
-
-	/** @deprecated Use `sessions.unload()`. */
-	unloadSession(input?: SessionTarget): Promise<void> {
-		return this.sessions.unload(input);
-	}
-
-	/** @deprecated Use `sessions.prompt()`. */
-	prompt(input: PromptInput): Promise<DurablePromptResult> {
-		return this.sessions.prompt(input);
-	}
-
-	/** @deprecated Use `sessions.cancelPrompt()`. */
-	cancelPrompt(input?: SessionTarget): Promise<CancelPromptResult> {
-		return this.sessions.cancelPrompt(input);
-	}
-
-	/** @deprecated Use `sessions.respondPermission()`. */
-	respondPermission(
-		input: PermissionResponse,
-	): Promise<PermissionResponseResult> {
-		return this.sessions.respondPermission(input);
-	}
-
-	/** @deprecated Use `sessions.readHistory()`. */
-	readHistory(input?: ReadHistoryInput): Promise<HistoryPage> {
-		return this.sessions.readHistory(input);
-	}
-
-	/** @deprecated Use `sessions.getConfig()`. */
-	getSessionConfig(input?: SessionTarget): Promise<SessionConfig> {
-		return this.sessions.getConfig(input);
-	}
-
-	/** @deprecated Use `sessions.setConfigOption()`. */
-	setSessionConfigOption(
-		input: SetSessionConfigOptionInput,
-	): Promise<SessionConfig> {
-		return this.sessions.setConfigOption(input);
-	}
-
-	/** @deprecated Use `sessions.getCapabilities()`. */
-	getSessionCapabilities(
-		input?: SessionTarget,
-	): Promise<SessionCapabilities | null> {
-		return this.sessions.getCapabilities(input);
-	}
-
-	/** @deprecated Use `sessions.getAgentInfo()`. */
-	getSessionAgentInfo(input?: SessionTarget): Promise<SessionAgentInfo | null> {
-		return this.sessions.getAgentInfo(input);
-	}
-
-	/**
-	 * Dynamically link a software package into the RUNNING VM. The package's
-	 * `bin/` commands appear under `/opt/agentos/bin` (on `$PATH`) and its `share/man`
-	 * pages under MANPATH immediately — the `/opt/agentos` mount is host-backed, so
-	 * writing into its staging dir is reflected live with no reboot. An `agent`
-	 * block registers the package for `openSession({ agent: name })`. Persists for the VM's
-	 * lifetime (and across a snapshot iff the volume persists).
-	 */
-	private async _linkSoftware(
-		descriptor: PackageDescriptor | SoftwarePackageRef | string,
-	): Promise<void> {
-		// Forward to the sidecar, which owns the `/opt/agentos` projection and
-		// appends the package to its live host-backed staging dir; the commands
-		// appear under `/opt/agentos/bin` immediately. The sidecar rejects a
-		// duplicate command, surfaced here as a thrown error.
-		const normalized = normalizePackageRef(descriptor);
-		if (!normalized) {
-			throw new TypeError(
-				"linkSoftware requires a package path string, { path }, or { packagePath }",
-			);
-		}
-		const commands = await this._sidecarClient.linkPackage(
-			this._sidecarSession,
-			this._sidecarVm,
-			normalized,
-		);
-		if (this.#kernel instanceof SidecarKernelProxy) {
-			this.#kernel.registerCommandGuestPaths(
-				new Map(
-					commands.projectedCommands.map((command) => [
-						command.name,
-						command.guestPath,
-					]),
-				),
-			);
-			// Retain the linked package for runtime mount reconfigures:
-			// `configure_vm` is replace-on-write, so a later `mountFs` that
-			// resent only the boot packages would unproject this one.
-			this.#kernel.registerLinkedPackage(normalized);
-		}
-		// The client parses no manifests: an `agent` block in the linked package is
-		// picked up by the sidecar (it owns the projected `/opt/agentos` and answers
-		// openSession/listAgents from it). Nothing to record client-side.
+	private _installedSoftwareList(): InstalledSoftware[] {
+		return [...this._installedSoftware.values()]
+			.sort((left, right) => left.packageId.localeCompare(right.packageId))
+			.map((software) => ({ ...software, commands: [...software.commands] }));
 	}
 
 	private async _listSoftware(): Promise<
@@ -6058,109 +5309,6 @@ export class AgentOs {
 			this._sidecarVm,
 		);
 	}
-
-	/**
-	 * Returns all registered agents with their installation status. Thin forwarder:
-	 * sends `AcpListAgentsRequest` and maps the response. The sidecar enumerates the
-	 * projected `/opt/agentos` packages (the client parses no manifests). Every such
-	 * agent is a package materialized into the VM, so `installed` is always `true`.
-	 */
-	private async _listAgents(): Promise<AgentRegistryEntry[]> {
-		const response = await this._sendAcpRequest({
-			tag: "AcpListAgentsRequest",
-			val: { reserved: false },
-		});
-		if (response.tag !== "AcpListAgentsResponse") {
-			throw new Error(`unexpected list_agents response: ${response.tag}`);
-		}
-		return response.val.agents.map((agent) => ({
-			id: agent.id,
-			installed: agent.installed,
-		}));
-	}
-
-	/** @deprecated Use `software.link()`. */
-	linkSoftware(
-		descriptor: PackageDescriptor | SoftwarePackageRef | string,
-	): Promise<void> {
-		return this.software.link(descriptor);
-	}
-
-	/** @deprecated Use `software.list()`. */
-	listSoftware(): Promise<{ packageName: string; commands: string[] }[]> {
-		return this.software.list();
-	}
-
-	/** @deprecated Use `agents.list()`. */
-	listAgents(): Promise<AgentRegistryEntry[]> {
-		return this.agents.list();
-	}
-
-	private _recordAgentStderr(event: {
-		sessionId: string;
-		agentType: string;
-		processId: string;
-		chunk: ArrayBuffer;
-	}): void {
-		if (!event.sessionId) {
-			return;
-		}
-		const handler = this._agentStderrHandler;
-		if (!handler) {
-			return;
-		}
-		try {
-			handler({
-				sessionId: event.sessionId,
-				agentType: event.agentType,
-				processId: event.processId,
-				pid: null,
-				chunk: new Uint8Array(event.chunk),
-			});
-		} catch (error) {
-			console.error("agentOS stderr handler failed", error);
-		}
-	}
-
-	private _recordAgentExit(event: {
-		sessionId: string;
-		agentType: string;
-		processId: string;
-		pid: number | null;
-		exitCode: number | null;
-		restart: string;
-		restartCount: number;
-		maxRestarts: number;
-	}): void {
-		const publicEvent: AgentExitEvent = {
-			sessionId: event.sessionId,
-			agentType: event.agentType,
-			processId: event.processId,
-			pid: event.pid,
-			exitCode: event.exitCode,
-			restart: event.restart as AgentRestartOutcome,
-			restartCount: event.restartCount,
-			maxRestarts: event.maxRestarts,
-		};
-		const handler = this._agentExitHandler;
-		if (handler) {
-			try {
-				handler(publicEvent);
-			} catch (error) {
-				console.error("agentOS agent-exit handler failed", error);
-			}
-		}
-		for (const key of ["*", event.sessionId]) {
-			for (const subscription of this._agentExitHandlers.get(key) ?? []) {
-				try {
-					subscription(publicEvent);
-				} catch (error) {
-					console.error("agentOS agent-exit subscription failed", error);
-				}
-			}
-		}
-	}
-
 	private _handleSidecarEvent(
 		event: Parameters<SidecarProcess["onEvent"]>[0] extends (
 			event: infer T,
@@ -6240,10 +5388,6 @@ export class AgentOs {
 			}
 			return;
 		}
-		if (event.payload.type === "ext") {
-			this._handleAcpExtEvent(event.payload.envelope);
-			return;
-		}
 		if (event.payload.type !== "structured") {
 			return;
 		}
@@ -6273,90 +5417,10 @@ export class AgentOs {
 		}
 	}
 
-	private _handleAcpExtEvent(envelope: {
-		namespace: string;
-		payload: Uint8Array;
-	}): void {
-		if (envelope.namespace !== ACP_EXTENSION_NAMESPACE) {
-			return;
-		}
-		try {
-			const event = decodeAcpEvent(envelope.payload);
-			switch (event.tag) {
-				case "AcpDurableSessionEvent": {
-					this._emitDurableSessionEvent(decodeDurableSessionEvent(event.val));
-					return;
-				}
-				case "AcpEphemeralSessionUpdateEvent": {
-					const update = JSON.parse(event.val.update) as {
-						sessionUpdate: EphemeralSessionEventEntry["type"];
-					} & Record<string, unknown>;
-					const { sessionUpdate: type, ...payload } = update;
-					this._emitDurableSessionEvent({
-						durability: "ephemeral",
-						type,
-						sessionId: event.val.sessionId,
-						afterSequence: safeWireU64(event.val.afterSequence),
-						...payload,
-					} as EphemeralSessionEventEntry);
-					return;
-				}
-				case "AcpSessionEvent":
-					return;
-				case "AcpAgentStderrEvent": {
-					this._recordAgentStderr(event.val);
-					return;
-				}
-				case "AcpAgentExitedEvent": {
-					this._recordAgentExit(event.val);
-					return;
-				}
-			}
-		} catch (error) {
-			console.error("agentOS failed to decode an ACP sidecar event", error);
-		}
-	}
-
-	private _emitDurableSessionEvent(entry: SessionStreamEntry): void {
-		for (const handler of this._durableSessionEventHandlers.get(
-			entry.sessionId,
-		) ?? []) {
-			try {
-				handler(entry);
-			} catch (error) {
-				console.error("agentOS session event handler failed", error);
-			}
-		}
-	}
-
-	private async _sendAcpRequest(request: AcpRequest): Promise<AcpResponse> {
-		const envelope = await this._sidecarClient.extensionRequest(
-			this._sidecarSession,
-			this._sidecarVm,
-			{
-				namespace: ACP_EXTENSION_NAMESPACE,
-				payload: encodeAcpRequest(request),
-			},
-		);
-		if (envelope.namespace !== ACP_EXTENSION_NAMESPACE) {
-			throw new Error(`unexpected ACP Ext namespace: ${envelope.namespace}`);
-		}
-		const response = decodeAcpResponse(envelope.payload);
-		if (response.tag === "AcpErrorResponse") {
-			const error = new Error(response.val.message) as Error & {
-				code?: string;
-			};
-			error.code = response.val.code;
-			throw error;
-		}
-		return response;
-	}
-
 	private _installSidecarRequestHandler(): void {
 		const context: HostCallbackContext = {
-			bindings: this._bindings,
-			bindingMap: buildBindingMap(this._bindings),
-			permissions: this._permissions,
+			hostFunctions: this._hostFunctions,
+			hostFunctionMap: buildHostFunctionMap(this._hostFunctions),
 			readFile: (path) => this.readFile(path),
 		};
 		this._sidecarClient.setSidecarRequestHandler((request) => {
@@ -6368,554 +5432,18 @@ export class AgentOs {
 						filesystem: this.#kernel.vfs,
 					});
 				case "ext":
-					return this._handleAcpExtSidecarRequest(request.payload.envelope);
-			}
-		});
-	}
-
-	private async _handleAcpExtSidecarRequest(envelope: {
-		namespace: string;
-		payload: Uint8Array;
-	}): Promise<SidecarResponsePayload> {
-		if (envelope.namespace !== ACP_EXTENSION_NAMESPACE) {
-			return {
-				type: "ext_result",
-				envelope: {
-					namespace: envelope.namespace,
-					payload: Buffer.from("unknown extension namespace", "utf8"),
-				},
-			};
-		}
-		const callback = decodeAcpCallback(envelope.payload);
-		switch (callback.tag) {
-			case "AcpHostRequestCallback": {
-				const response = await this._dispatchAcpSidecarRequest(
-					toJsonRpcRequest(JSON.parse(callback.val.request)),
-				);
-				return {
-					type: "ext_result",
-					envelope: {
-						namespace: ACP_EXTENSION_NAMESPACE,
-						payload: encodeAcpCallbackResponse({
-							tag: "AcpHostRequestCallbackResponse",
-							val: {
-								response: JSON.stringify(response),
-							},
-						}),
-					},
-				};
-			}
-		}
-	}
-
-	private async _dispatchAcpSidecarRequest(
-		request: JsonRpcRequest,
-	): Promise<JsonRpcResponse> {
-		try {
-			const result = await this._handleSupportedAcpSidecarRequest(request);
-			return {
-				jsonrpc: "2.0",
-				id: request.id,
-				result,
-			};
-		} catch (error) {
-			if (error instanceof AcpDispatchError) {
-				return {
-					jsonrpc: "2.0",
-					id: request.id,
-					error: {
-						code: error.code,
-						message: error.message,
-						...(error.data ? { data: error.data } : {}),
-					},
-				};
-			}
-			return {
-				jsonrpc: "2.0",
-				id: request.id,
-				error: {
-					code: -32603,
-					message: error instanceof Error ? error.message : String(error),
-				},
-			};
-		}
-	}
-
-	private async _handleSupportedAcpSidecarRequest(
-		request: JsonRpcRequest,
-	): Promise<unknown> {
-		const params = this._acpParams(request);
-		switch (request.method) {
-			case "fs/read":
-			case "fs/read_text_file":
-				return this._handleAcpReadFile(params);
-			case "fs/write":
-			case "fs/write_text_file":
-				return this._handleAcpWriteFile(params);
-			case "fs/readDir":
-			case "fs/read_dir":
-				return this._handleAcpReadDir(params);
-			case "terminal/create":
-				return this._handleAcpCreateTerminal(params);
-			case "terminal/write":
-				return this._handleAcpWriteTerminal(params);
-			case "terminal/output":
-			case "terminal/read":
-				return this._handleAcpReadTerminal(params);
-			case "terminal/wait_for_exit":
-			case "terminal/waitForExit":
-				return this._handleAcpWaitForTerminalExit(params);
-			case "terminal/kill":
-				return this._handleAcpKillTerminal(params);
-			case "terminal/release":
-			case "terminal/close":
-				return this._handleAcpReleaseTerminal(params);
-			case "terminal/resize":
-				return this._handleAcpResizeTerminal(params);
-			default:
-				throw new AcpDispatchError(
-					-32601,
-					`Method not found: ${request.method}`,
-					{
-						method: request.method,
-					},
-				);
-		}
-	}
-
-	private _acpParams(request: JsonRpcRequest): Record<string, unknown> {
-		if (!request.params) {
-			return {};
-		}
-		if (
-			typeof request.params !== "object" ||
-			request.params === null ||
-			Array.isArray(request.params)
-		) {
-			throw new AcpDispatchError(
-				-32602,
-				`${request.method} requires object params`,
-			);
-		}
-		return request.params as Record<string, unknown>;
-	}
-
-	private _requireAcpStringParam(
-		params: Record<string, unknown>,
-		name: string,
-		method: string,
-	): string {
-		const value = params[name];
-		if (typeof value !== "string") {
-			throw new AcpDispatchError(-32602, `${method} requires a string ${name}`);
-		}
-		return value;
-	}
-
-	private _optionalAcpStringParam(
-		params: Record<string, unknown>,
-		name: string,
-		method: string,
-	): string | undefined {
-		const value = params[name];
-		if (value === undefined || value === null) {
-			return undefined;
-		}
-		if (typeof value !== "string") {
-			throw new AcpDispatchError(
-				-32602,
-				`${method} requires ${name} to be a string when provided`,
-			);
-		}
-		return value;
-	}
-
-	private _optionalAcpNumberParam(
-		params: Record<string, unknown>,
-		name: string,
-		method: string,
-	): number | undefined {
-		const value = params[name];
-		if (value === undefined || value === null) {
-			return undefined;
-		}
-		if (typeof value !== "number" || !Number.isFinite(value)) {
-			throw new AcpDispatchError(
-				-32602,
-				`${method} requires ${name} to be a number when provided`,
-			);
-		}
-		return value;
-	}
-
-	private _optionalAcpStringArrayParam(
-		params: Record<string, unknown>,
-		name: string,
-		method: string,
-	): string[] | undefined {
-		const value = params[name];
-		if (value === undefined || value === null) {
-			return undefined;
-		}
-		if (
-			!Array.isArray(value) ||
-			value.some((entry) => typeof entry !== "string")
-		) {
-			throw new AcpDispatchError(
-				-32602,
-				`${method} requires ${name} to be an array of strings when provided`,
-			);
-		}
-		return [...value];
-	}
-
-	private _optionalAcpEnvParam(
-		params: Record<string, unknown>,
-		name: string,
-		method: string,
-	): Record<string, string> | undefined {
-		const value = params[name];
-		if (value === undefined || value === null) {
-			return undefined;
-		}
-		if (Array.isArray(value)) {
-			const env: Record<string, string> = {};
-			for (const entry of value) {
-				if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-					throw new AcpDispatchError(
-						-32602,
-						`${method} requires ${name} entries to be { name, value } objects`,
-					);
-				}
-				const record = entry as Record<string, unknown>;
-				if (
-					typeof record.name !== "string" ||
-					typeof record.value !== "string"
-				) {
-					throw new AcpDispatchError(
-						-32602,
-						`${method} requires ${name} entries to be { name, value } objects`,
-					);
-				}
-				env[record.name] = record.value;
-			}
-			return env;
-		}
-		if (typeof value !== "object") {
-			throw new AcpDispatchError(
-				-32602,
-				`${method} requires ${name} to be an object or name/value array`,
-			);
-		}
-		const env: Record<string, string> = {};
-		for (const [key, entryValue] of Object.entries(
-			value as Record<string, unknown>,
-		)) {
-			if (typeof entryValue !== "string") {
-				throw new AcpDispatchError(
-					-32602,
-					`${method} requires ${name} values to be strings`,
-				);
-			}
-			env[key] = entryValue;
-		}
-		return env;
-	}
-
-	private _requireAcpTerminal(
-		params: Record<string, unknown>,
-		method: string,
-	): AcpTerminalEntry {
-		const terminalId = this._requireAcpStringParam(
-			params,
-			"terminalId",
-			method,
-		);
-		const terminal = this._acpTerminals.get(terminalId);
-		if (!terminal) {
-			throw new AcpDispatchError(
-				-32602,
-				`ACP terminal not found: ${terminalId}`,
-			);
-		}
-		return terminal;
-	}
-
-	private _appendAcpTerminalOutput(
-		terminal: AcpTerminalEntry,
-		data: Uint8Array,
-	): void {
-		const chunk = Buffer.from(data).toString("utf8");
-		if (!chunk) {
-			return;
-		}
-		terminal.output += chunk;
-		if (
-			Number.isFinite(terminal.outputByteLimit) &&
-			terminal.outputByteLimit >= 0 &&
-			terminal.output.length > terminal.outputByteLimit
-		) {
-			terminal.output = terminal.output.slice(
-				terminal.output.length - terminal.outputByteLimit,
-			);
-			terminal.truncated = true;
-		}
-	}
-
-	private async _handleAcpReadFile(
-		params: Record<string, unknown>,
-	): Promise<{ content: string }> {
-		const method = "fs/read";
-		const path = this._requireAcpStringParam(params, "path", method);
-		const line = this._optionalAcpNumberParam(params, "line", method);
-		const limit = this._optionalAcpNumberParam(params, "limit", method);
-		const encoding = this._optionalAcpStringParam(params, "encoding", method);
-		const bytes = await this.readFile(path);
-		if (encoding === "base64") {
-			return { content: Buffer.from(bytes).toString("base64") };
-		}
-		const text = new TextDecoder().decode(bytes);
-		if (line === undefined && limit === undefined) {
-			return { content: text };
-		}
-		const startLine = Math.max(1, Math.trunc(line ?? 1));
-		const lineLimit =
-			limit === undefined
-				? Number.POSITIVE_INFINITY
-				: Math.max(0, Math.trunc(limit));
-		return {
-			content: text
-				.split("\n")
-				.slice(startLine - 1, startLine - 1 + lineLimit)
-				.join("\n"),
-		};
-	}
-
-	private async _handleAcpWriteFile(
-		params: Record<string, unknown>,
-	): Promise<null> {
-		const method = "fs/write";
-		const path = this._requireAcpStringParam(params, "path", method);
-		const content = this._requireAcpStringParam(params, "content", method);
-		const encoding = this._optionalAcpStringParam(params, "encoding", method);
-		await this.writeFile(
-			path,
-			encoding === "base64" ? Buffer.from(content, "base64") : content,
-		);
-		return null;
-	}
-
-	private async _handleAcpReadDir(params: Record<string, unknown>): Promise<{
-		entries: Array<{
-			name: string;
-			path: string;
-			type: "file" | "directory" | "symlink";
-		}>;
-	}> {
-		const method = "fs/readDir";
-		const path = this._requireAcpStringParam(params, "path", method);
-		const entries = await this._vfs().readDirWithTypes(path);
-		return {
-			entries: entries
-				.filter((entry) => entry.name !== "." && entry.name !== "..")
-				.map((entry) => ({
-					name: entry.name,
-					path: path === "/" ? `/${entry.name}` : `${path}/${entry.name}`,
-					type: entry.isSymbolicLink
-						? "symlink"
-						: entry.isDirectory
-							? "directory"
-							: "file",
-				})),
-		};
-	}
-
-	private _handleAcpCreateTerminal(params: Record<string, unknown>): {
-		terminalId: string;
-	} {
-		const method = "terminal/create";
-		const command = this._requireAcpStringParam(params, "command", method);
-		const args = this._optionalAcpStringArrayParam(params, "args", method);
-		const env = this._optionalAcpEnvParam(params, "env", method);
-		const cwd = this._optionalAcpStringParam(params, "cwd", method);
-		const cols = this._optionalAcpNumberParam(params, "cols", method);
-		const rows = this._optionalAcpNumberParam(params, "rows", method);
-		const outputByteLimit = Math.max(
-			0,
-			Math.trunc(
-				this._optionalAcpNumberParam(params, "outputByteLimit", method) ??
-					1_048_576,
-			),
-		);
-		const terminalId = `acp-terminal-${++this._acpTerminalCounter}`;
-		const terminal: AcpTerminalEntry = {
-			handle: this.#kernel.openShell({
-				command,
-				...(args ? { args } : {}),
-				...(env ? { env } : {}),
-				...(cwd ? { cwd } : {}),
-				...(cols !== undefined ? { cols: Math.trunc(cols) } : {}),
-				...(rows !== undefined ? { rows: Math.trunc(rows) } : {}),
-			}),
-			output: "",
-			truncated: false,
-			outputByteLimit,
-			exitCode: null,
-			waitPromise: Promise.resolve(0),
-		};
-		terminal.handle.onData = (data) => {
-			this._appendAcpTerminalOutput(terminal, data);
-		};
-		terminal.waitPromise = terminal.handle.wait().then((exitCode) => {
-			terminal.exitCode = exitCode;
-			return exitCode;
-		});
-		this._acpTerminals.set(terminalId, terminal);
-		return { terminalId };
-	}
-
-	private async _handleAcpWriteTerminal(
-		params: Record<string, unknown>,
-	): Promise<null> {
-		const method = "terminal/write";
-		const terminal = this._requireAcpTerminal(params, method);
-		const data = this._requireAcpStringParam(params, "data", method);
-		const encoding = this._optionalAcpStringParam(params, "encoding", method);
-		await terminal.handle.write(
-			encoding === "base64" ? Buffer.from(data, "base64") : data,
-		);
-		return null;
-	}
-
-	private _handleAcpReadTerminal(params: Record<string, unknown>): {
-		output: string;
-		truncated: boolean;
-		exitStatus?: { exitCode: number; signal: null };
-	} {
-		const terminal = this._requireAcpTerminal(params, "terminal/output");
-		return {
-			output: terminal.output,
-			truncated: terminal.truncated,
-			...(terminal.exitCode !== null
-				? {
-						exitStatus: {
-							exitCode: terminal.exitCode,
-							signal: null,
+					return {
+						type: "ext_result",
+						envelope: {
+							namespace: request.payload.envelope.namespace,
+							payload: Buffer.from(
+								"extension handlers are not configured",
+								"utf8",
+							),
 						},
-					}
-				: {}),
-		};
-	}
-
-	private async _handleAcpWaitForTerminalExit(
-		params: Record<string, unknown>,
-	): Promise<{ exitCode: number; signal: null }> {
-		const terminal = this._requireAcpTerminal(params, "terminal/wait_for_exit");
-		const exitCode = await terminal.waitPromise;
-		return { exitCode, signal: null };
-	}
-
-	private _handleAcpKillTerminal(params: Record<string, unknown>): null {
-		const method = "terminal/kill";
-		const terminal = this._requireAcpTerminal(params, method);
-		const signal = this._optionalAcpNumberParam(params, "signal", method) ?? 15;
-		terminal.handle.kill(Math.trunc(signal));
-		return null;
-	}
-
-	private _handleAcpReleaseTerminal(params: Record<string, unknown>): null {
-		const method = "terminal/release";
-		const terminalId = this._requireAcpStringParam(
-			params,
-			"terminalId",
-			method,
-		);
-		const terminal = this._acpTerminals.get(terminalId);
-		if (!terminal) {
-			throw new AcpDispatchError(
-				-32602,
-				`ACP terminal not found: ${terminalId}`,
-			);
-		}
-		if (terminal.exitCode === null) {
-			terminal.handle.kill();
-		}
-		this._acpTerminals.delete(terminalId);
-		return null;
-	}
-
-	private _handleAcpResizeTerminal(params: Record<string, unknown>): null {
-		const method = "terminal/resize";
-		const terminal = this._requireAcpTerminal(params, method);
-		const cols = this._optionalAcpNumberParam(params, "cols", method);
-		const rows = this._optionalAcpNumberParam(params, "rows", method);
-		if (cols === undefined || rows === undefined) {
-			throw new AcpDispatchError(
-				-32602,
-				`${method} requires numeric cols and rows`,
-			);
-		}
-		terminal.handle.resize(Math.trunc(cols), Math.trunc(rows));
-		return null;
-	}
-
-	onSessionEvent(handler: (entry: SessionStreamEntry) => void): () => void;
-	onSessionEvent(
-		sessionId: string | undefined,
-		handler: (entry: SessionStreamEntry) => void,
-	): () => void;
-	onSessionEvent(
-		sessionIdOrHandler:
-			| string
-			| ((entry: SessionStreamEntry) => void)
-			| undefined,
-		maybeHandler?: (entry: SessionStreamEntry) => void,
-	): () => void {
-		const sessionId =
-			typeof sessionIdOrHandler === "string" ? sessionIdOrHandler : "main";
-		const handler =
-			typeof sessionIdOrHandler === "function"
-				? sessionIdOrHandler
-				: maybeHandler;
-		if (!handler) {
-			throw new TypeError("onSessionEvent requires a handler");
-		}
-		const handlers =
-			this._durableSessionEventHandlers.get(sessionId) ?? new Set();
-		handlers.add(handler);
-		this._durableSessionEventHandlers.set(sessionId, handlers);
-		return () => {
-			handlers.delete(handler);
-			if (handlers.size === 0) {
-				this._durableSessionEventHandlers.delete(sessionId);
+					};
 			}
-		};
-	}
-
-	/** Subscribe to unexpected adapter exits without changing session liveness. */
-	onAgentExit(handler: AgentExitHandler): () => void;
-	onAgentExit(
-		sessionId: string | undefined,
-		handler: AgentExitHandler,
-	): () => void;
-	onAgentExit(
-		sessionIdOrHandler: string | AgentExitHandler | undefined,
-		maybeHandler?: AgentExitHandler,
-	): () => void {
-		const sessionId =
-			typeof sessionIdOrHandler === "string" ? sessionIdOrHandler : "*";
-		const handler =
-			typeof sessionIdOrHandler === "function"
-				? sessionIdOrHandler
-				: maybeHandler;
-		if (!handler) throw new TypeError("onAgentExit requires a handler");
-		const handlers = this._agentExitHandlers.get(sessionId) ?? new Set();
-		handlers.add(handler);
-		this._agentExitHandlers.set(sessionId, handlers);
-		return () => {
-			handlers.delete(handler);
-			if (handlers.size === 0) this._agentExitHandlers.delete(sessionId);
-		};
+		});
 	}
 
 	// ── Cron ────────────────────────────────────────────────────
@@ -6958,27 +5486,16 @@ export class AgentOs {
 	async dispose(): Promise<void> {
 		this._cronManager.dispose();
 
-		for (const [id, entry] of this._shells) {
+		for (const entry of this._shells.values()) {
 			entry.handle.kill();
 		}
 		const shellExitPromises = [...this._pendingShellExitPromises];
 		this._shells.clear();
-		const terminalExitPromises: Promise<unknown>[] = [];
-		for (const terminal of this._acpTerminals.values()) {
-			terminal.handle.kill();
-			terminalExitPromises.push(
-				terminal.waitPromise.then(
-					() => undefined,
-					() => undefined,
-				),
-			);
-		}
-		this._acpTerminals.clear();
 		this._processes.clear();
 		this._executionOutputHandlers.clear();
 		this._executionCompletedHandlers.clear();
 		await waitForTrackedExitPromises(
-			[...shellExitPromises, ...terminalExitPromises],
+			shellExitPromises,
 			SHELL_DISPOSE_TIMEOUT_MS,
 		);
 
@@ -7028,7 +5545,9 @@ function resolveAgentOsSidecar(
 ): AgentOsSidecar {
 	if (!config || config.kind === "shared") {
 		return getSharedAgentOsSidecarInternal(
-			config?.kind === "shared" ? { pool: config.pool } : undefined,
+			config?.kind === "shared"
+				? { pool: config.pool, runtime: config.runtime }
+				: undefined,
 		);
 	}
 
@@ -7060,6 +5579,7 @@ interface SharedSidecarNativeProcess {
 
 interface AgentOsSidecarState {
 	description: AgentOsSidecarDescription;
+	runtime: AgentOsSidecarRuntimeConfig;
 	activeLeases: Set<AgentOsSidecarLeaseRecord>;
 	sharedPool?: string;
 	/**
@@ -7213,7 +5733,7 @@ function ensureSharedSidecarNativeProcess(
 			const client = SidecarProcess.spawn({
 				cwd: REPO_ROOT,
 				command: ensureSidecarBinary(),
-				args: [],
+				args: sidecarRuntimeArgs(state.runtime),
 			});
 			// Track the child immediately — BEFORE the handshake await — so a
 			// failed `authenticateAndOpenSession()` can still reap it (otherwise
@@ -7283,6 +5803,7 @@ export class AgentOsSidecar {
 		sidecarId: string,
 		placement: AgentOsSidecarPlacement,
 		sharedPool?: string,
+		runtime?: AgentOsSidecarRuntimeConfig,
 	) {
 		sidecarStates.set(this, {
 			description: {
@@ -7293,6 +5814,7 @@ export class AgentOsSidecar {
 			},
 			activeLeases: new Set(),
 			sharedPool,
+			runtime: normalizeSidecarRuntimeConfig(runtime),
 		});
 	}
 
@@ -7334,10 +5856,15 @@ function createAgentOsSidecarInternal(
 	options: AgentOsCreateSidecarOptions = {},
 ): AgentOsSidecar {
 	const sidecarId = options.sidecarId ?? `agentos-sidecar-${randomUUID()}`;
-	return new AgentOsSidecar(sidecarId, {
-		kind: "explicit",
+	return new AgentOsSidecar(
 		sidecarId,
-	});
+		{
+			kind: "explicit",
+			sidecarId,
+		},
+		undefined,
+		options.runtime,
+	);
 }
 
 /**
@@ -7371,6 +5898,15 @@ function getSharedAgentOsSidecarInternal(
 	const pool = options.pool ?? "default";
 	const existing = sharedSidecars.get(pool);
 	if (existing && existing.describe().state !== "disposed") {
+		if (options.runtime !== undefined) {
+			const requested = normalizeSidecarRuntimeConfig(options.runtime);
+			const configured = getSidecarState(existing).runtime;
+			if (!sidecarRuntimeConfigsEqual(requested, configured)) {
+				throw new Error(
+					`Shared sidecar pool ${JSON.stringify(pool)} already exists with different runtime settings`,
+				);
+			}
+		}
 		return existing;
 	}
 
@@ -7378,9 +5914,37 @@ function getSharedAgentOsSidecarInternal(
 		`agentos-shared-sidecar:${pool}`,
 		{ kind: "shared", ...(pool ? { pool } : {}) },
 		pool,
+		options.runtime,
 	);
 	sharedSidecars.set(pool, sidecar);
 	return sidecar;
+}
+
+function normalizeSidecarRuntimeConfig(
+	runtime: AgentOsSidecarRuntimeConfig | undefined,
+): AgentOsSidecarRuntimeConfig {
+	const maxActiveVms = runtime?.executor?.maxActiveVms;
+	if (maxActiveVms === undefined) return {};
+	if (!Number.isSafeInteger(maxActiveVms) || maxActiveVms <= 0) {
+		throw new Error(
+			"runtime.executor.maxActiveVms must be a positive safe integer",
+		);
+	}
+	return { executor: { maxActiveVms } };
+}
+
+function sidecarRuntimeConfigsEqual(
+	left: AgentOsSidecarRuntimeConfig,
+	right: AgentOsSidecarRuntimeConfig,
+): boolean {
+	return left.executor?.maxActiveVms === right.executor?.maxActiveVms;
+}
+
+function sidecarRuntimeArgs(runtime: AgentOsSidecarRuntimeConfig): string[] {
+	const maxActiveVms = runtime.executor?.maxActiveVms;
+	return maxActiveVms === undefined
+		? []
+		: ["--max-active-vms", String(maxActiveVms)];
 }
 
 async function leaseAgentOsSidecarVm<TVmAdmin extends InProcessSidecarVmAdmin>(

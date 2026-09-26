@@ -130,7 +130,7 @@ fn ext_envelope_event_encoding_microbench() {
         let ext_frame = ProtocolFrame::Event(EventFrame::new(
             ownership.clone(),
             EventPayload::Ext(ExtEnvelope {
-                namespace: String::from("dev.rivet.agentos.acp"),
+                namespace: String::from("dev.rivet.agentos.test"),
                 payload: inner,
             }),
         ));
@@ -158,7 +158,7 @@ fn codec_round_trips_sidecar_request_and_response_frames() {
         OwnershipScope::vm("conn-1", "session-1", "vm-1"),
         SidecarRequestPayload::HostCallback(HostCallbackRequest {
             invocation_id: "invoke-1".to_string(),
-            callback_key: "collection:binding".to_string(),
+            callback_key: "collection:host_function".to_string(),
             input: json!({ "prompt": "ping" }).to_string(),
             timeout_ms: 5_000,
         }),
@@ -401,7 +401,7 @@ fn codec_auto_detects_json_and_bare_payloads() {
 }
 
 #[test]
-fn codec_rejects_invalid_ownership_binding() {
+fn codec_rejects_invalid_ownership_host_function() {
     let frame = ProtocolFrame::Request(RequestFrame::new(
         9,
         OwnershipScope::connection("conn-1"),
@@ -636,7 +636,7 @@ fn sidecar_response_tracker_enforces_request_response_correlation() {
         OwnershipScope::vm("conn-1", "session-1", "vm-1"),
         SidecarRequestPayload::HostCallback(HostCallbackRequest {
             invocation_id: "invoke-1".to_string(),
-            callback_key: "collection:binding".to_string(),
+            callback_key: "collection:host_function".to_string(),
             input: json!({ "value": 1 }).to_string(),
             timeout_ms: 1_000,
         }),
@@ -678,7 +678,7 @@ fn sidecar_response_tracker_keeps_pending_entries_after_mismatches() {
         OwnershipScope::vm("conn-1", "session-1", "vm-1"),
         SidecarRequestPayload::HostCallback(HostCallbackRequest {
             invocation_id: "invoke-10".to_string(),
-            callback_key: "collection:binding".to_string(),
+            callback_key: "collection:host_function".to_string(),
             input: json!({ "value": 10 }).to_string(),
             timeout_ms: 1_000,
         }),
@@ -760,7 +760,7 @@ fn sidecar_response_tracker_caps_completed_entries() {
             OwnershipScope::vm("conn-1", "session-1", "vm-1"),
             SidecarRequestPayload::HostCallback(HostCallbackRequest {
                 invocation_id: format!("invoke-{sequence}"),
-                callback_key: "collection:binding".to_string(),
+                callback_key: "collection:host_function".to_string(),
                 input: json!({ "value": sequence }).to_string(),
                 timeout_ms: 1_000,
             }),
@@ -828,7 +828,7 @@ fn codec_rejects_request_id_direction_mismatches() {
         OwnershipScope::vm("conn-1", "session-1", "vm-1"),
         SidecarRequestPayload::HostCallback(HostCallbackRequest {
             invocation_id: "invoke-2".to_string(),
-            callback_key: "collection:binding".to_string(),
+            callback_key: "collection:host_function".to_string(),
             input: json!({}).to_string(),
             timeout_ms: 100,
         }),
@@ -872,7 +872,7 @@ fn schema_supports_configuration_and_structured_events() {
                 child_process: None,
                 process: None,
                 env: None,
-                binding: None,
+                host_function: None,
             }),
             module_access_cwd: None,
             instructions: vec!["keep timing mitigation enabled".to_string()],
@@ -885,7 +885,7 @@ fn schema_supports_configuration_and_structured_events() {
             packages: Vec::new(),
             packages_mount_at: String::new(),
             bootstrap_commands: Vec::new(),
-            binding_shim_commands: Vec::new(),
+            host_function_shim_commands: Vec::new(),
         }),
     ));
 

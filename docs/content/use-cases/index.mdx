@@ -1,0 +1,66 @@
+---
+title: "Use Cases"
+description: "What people build with agentOS."
+---
+
+agentOS runs untrusted code inside isolated VMs with a real filesystem, shell,
+and process model. Agent frameworks can use that execution surface, but agentOS
+does not own agent sessions, prompts, messaging, or workflow orchestration.
+
+## Programming Agents
+
+Purpose-built for agents that write, test, and deploy code autonomously.
+
+- Native file system access with git support
+- Shell execution with full toolchain access
+- Package installation and dependency management
+- Test runner integration
+
+**Example:** An agent that takes a GitHub issue, writes the fix, runs tests, and opens a pull request.
+
+## Background Commands
+
+Run long-lived commands asynchronously and observe their bounded output.
+
+- Durable files survive actor sleep and restart
+- Spawn and signal independent guest processes
+- Recover bounded output by sequence cursor
+- Monitor progress in real-time
+
+**Example:** A migration tool that refactors a large codebase over several hours
+and commits changes incrementally.
+
+## Evals
+
+Run agent evaluations and benchmarks at scale without spinning up expensive sandboxes for each test.
+
+- Low memory per instance compared to sandboxes
+- Near-zero cold starts for rapid iteration
+- Bounded process-output replay for debugging
+- Cost-effective at thousands of runs
+
+**Example:** Evaluating 10,000 agent responses in parallel to measure performance across different prompts.
+
+## Data Processing
+
+Run ETL pipelines, data transformations, and analysis commands.
+
+- Process and network streaming capabilities
+- Database connections and queries
+- File format conversion
+- Scheduled command execution
+
+**Example:** A command that ingests raw data, cleans it, runs analysis, and
+generates reports on a schedule.
+
+## Workflow Automation
+
+Use agentOS as the execution layer beneath an external workflow system.
+
+- Isolated command execution
+- Durable files and configuration
+- Scheduled command runs
+- Typed failures and resource limits
+
+**Example:** A CI workflow that delegates each untrusted build step to an
+agentOS VM and keeps approvals in the workflow product.

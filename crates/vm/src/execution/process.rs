@@ -31,7 +31,7 @@ pub(super) fn admit_one_slot_rpc(
 /// capacity check prevents a concurrent producer from consuming the bytes an
 /// already-accepted event needs if that event must be put back.
 #[derive(Debug)]
-pub(super) struct PendingExecutionEventReservation {
+pub(crate) struct PendingExecutionEventReservation {
     budget: Arc<VmPendingByteBudget>,
     bytes: usize,
 }
@@ -198,7 +198,7 @@ impl ActiveProcess {
         let pending_event_bytes_limit = limits.process.pending_event_bytes;
         execution
             .configure_adapter_event_limits(pending_event_count_limit, pending_event_bytes_limit);
-        // Binding producers lease retained-byte reservations from their own
+        // HostFunction producers lease retained-byte reservations from their own
         // queue before an event can be moved into the ActiveProcess queue.
         // Both queues must therefore start with the same budget identity; a
         // signal-state drain may temporarily lease stdout/exit and requeue it.
@@ -263,7 +263,7 @@ impl ActiveProcess {
             tty_master_fd: None,
             runtime,
             standalone_wasm_backend,
-            adapter_policy: ExecutionAdapterPolicy::BINDING,
+            adapter_policy: ExecutionAdapterPolicy::HOST_FUNCTION,
             detached: false,
             execution,
             guest_cwd: String::from("/"),
@@ -300,6 +300,7 @@ impl ActiveProcess {
             next_child_process_id: 0,
             pending_child_process_sync: BTreeMap::new(),
             child_process_bridge_owns_output: false,
+            child_bridge_relay_in_flight: Arc::new(AtomicBool::new(false)),
             http_servers: BTreeMap::new(),
             pending_http_requests: BTreeMap::new(),
             http2: Default::default(),
@@ -699,6 +700,7 @@ impl ActiveProcess {
             connection_id,
             session_id,
             vm_id,
+            child_path,
             process_id,
             event,
         } = envelope;
@@ -710,6 +712,7 @@ impl ActiveProcess {
                         connection_id,
                         session_id,
                         vm_id,
+                        child_path,
                         process_id,
                         event,
                     },
@@ -1463,7 +1466,7 @@ mod pending_event_reservation_tests {
             crate::limits::VmLimits::default(),
             agentos_sidecar_protocol::config::DEFAULT_MAX_PROCESS_EVENTS,
             super::GuestRuntimeKind::WebAssembly,
-            ActiveExecution::Binding(BindingExecution::default()),
+            ActiveExecution::HostFunction(HostFunctionExecution::default()),
             runtime_control,
             Arc::clone(&notify),
         );
@@ -1530,7 +1533,7 @@ mod pending_event_reservation_tests {
             crate::limits::VmLimits::default(),
             agentos_sidecar_protocol::config::DEFAULT_MAX_PROCESS_EVENTS,
             GuestRuntimeKind::WebAssembly,
-            ActiveExecution::Binding(BindingExecution::default()),
+            ActiveExecution::HostFunction(HostFunctionExecution::default()),
         );
         let retained = resources
             .reserve(ResourceClass::ExecutorBytes, 4)
@@ -1628,7 +1631,7 @@ mod pending_event_reservation_tests {
             crate::limits::VmLimits::default(),
             agentos_sidecar_protocol::config::DEFAULT_MAX_PROCESS_EVENTS,
             GuestRuntimeKind::WebAssembly,
-            ActiveExecution::Binding(BindingExecution::default()),
+            ActiveExecution::HostFunction(HostFunctionExecution::default()),
         )
         .with_vm_pending_byte_budgets(
             VmPendingByteBudget::new(
@@ -1742,7 +1745,7 @@ mod pending_event_reservation_tests {
             crate::limits::VmLimits::default(),
             agentos_sidecar_protocol::config::DEFAULT_MAX_PROCESS_EVENTS,
             GuestRuntimeKind::WebAssembly,
-            ActiveExecution::Binding(BindingExecution::default()),
+            ActiveExecution::HostFunction(HostFunctionExecution::default()),
         )
         .with_vm_pending_byte_budgets(
             VmPendingByteBudget::new(
@@ -1758,7 +1761,7 @@ mod pending_event_reservation_tests {
             crate::limits::VmLimits::default(),
             agentos_sidecar_protocol::config::DEFAULT_MAX_PROCESS_EVENTS,
             GuestRuntimeKind::WebAssembly,
-            ActiveExecution::Binding(BindingExecution::default()),
+            ActiveExecution::HostFunction(HostFunctionExecution::default()),
         )
         .with_vm_pending_byte_budgets(
             VmPendingByteBudget::new(
@@ -1913,7 +1916,7 @@ mod pending_event_reservation_tests {
             crate::limits::VmLimits::default(),
             agentos_sidecar_protocol::config::DEFAULT_MAX_PROCESS_EVENTS,
             GuestRuntimeKind::WebAssembly,
-            ActiveExecution::Binding(BindingExecution::default()),
+            ActiveExecution::HostFunction(HostFunctionExecution::default()),
         );
 
         process
@@ -1978,7 +1981,7 @@ mod pending_event_reservation_tests {
                     ..SpawnOptions::default()
                 },
             )
-            .expect("spawn binding process");
+            .expect("spawn host_function process");
         let mut process = ActiveProcess::new(
             handle.pid(),
             handle,
@@ -1986,7 +1989,7 @@ mod pending_event_reservation_tests {
             crate::limits::VmLimits::default(),
             agentos_sidecar_protocol::config::DEFAULT_MAX_PROCESS_EVENTS,
             GuestRuntimeKind::JavaScript,
-            ActiveExecution::Binding(BindingExecution::default()),
+            ActiveExecution::HostFunction(HostFunctionExecution::default()),
         );
 
         kernel
@@ -2024,7 +2027,7 @@ mod pending_event_reservation_tests {
                     ..SpawnOptions::default()
                 },
             )
-            .expect("spawn binding process");
+            .expect("spawn host_function process");
         let mut process = ActiveProcess::new(
             handle.pid(),
             handle,
@@ -2032,19 +2035,19 @@ mod pending_event_reservation_tests {
             crate::limits::VmLimits::default(),
             agentos_sidecar_protocol::config::DEFAULT_MAX_PROCESS_EVENTS,
             GuestRuntimeKind::JavaScript,
-            ActiveExecution::Binding(BindingExecution::default()),
+            ActiveExecution::HostFunction(HostFunctionExecution::default()),
         );
-        let ActiveExecution::Binding(binding) = &process.execution else {
-            unreachable!("test process must retain binding execution");
+        let ActiveExecution::HostFunction(host_function) = &process.execution else {
+            unreachable!("test process must retain host_function execution");
         };
-        let paused = Arc::clone(&binding.paused);
-        let cancelled = Arc::clone(&binding.cancelled);
-        let pending_events = Arc::clone(&binding.pending_events);
-        let overflow_reason = Arc::clone(&binding.event_overflow_reason);
-        let pending_bytes = Arc::clone(&binding.pending_event_bytes);
-        let count_limit = Arc::clone(&binding.pending_event_count_limit);
-        let bytes_limit = Arc::clone(&binding.pending_event_bytes_limit);
-        let event_budget = Arc::clone(&binding.vm_pending_event_bytes_budget);
+        let paused = Arc::clone(&host_function.paused);
+        let cancelled = Arc::clone(&host_function.cancelled);
+        let pending_events = Arc::clone(&host_function.pending_events);
+        let overflow_reason = Arc::clone(&host_function.event_overflow_reason);
+        let pending_bytes = Arc::clone(&host_function.pending_event_bytes);
+        let count_limit = Arc::clone(&host_function.pending_event_count_limit);
+        let bytes_limit = Arc::clone(&host_function.pending_event_bytes_limit);
+        let event_budget = Arc::clone(&host_function.vm_pending_event_bytes_budget);
 
         kernel
             .kill_process(EXECUTION_DRIVER_NAME, process.kernel_pid, libc::SIGTSTP)
@@ -2070,7 +2073,7 @@ mod pending_event_reservation_tests {
         );
         assert!(process.runtime_control.pending().is_empty());
         assert!(paused.load(Ordering::Acquire));
-        assert!(send_binding_process_event(
+        assert!(send_host_function_process_event(
             &cancelled,
             &pending_events,
             &overflow_reason,
@@ -2082,7 +2085,7 @@ mod pending_event_reservation_tests {
         ));
         assert!(process
             .try_poll_execution_event()
-            .expect("poll stopped binding")
+            .expect("poll stopped host_function")
             .is_none());
 
         kernel
@@ -2111,8 +2114,8 @@ mod pending_event_reservation_tests {
         assert!(!paused.load(Ordering::Acquire));
         let event = process
             .try_poll_execution_event()
-            .expect("poll resumed binding")
-            .expect("queued binding event after resume")
+            .expect("poll resumed host_function")
+            .expect("queued host_function event after resume")
             .into_event();
         assert!(matches!(
             event,
@@ -2124,21 +2127,21 @@ mod pending_event_reservation_tests {
     }
 
     #[test]
-    fn root_binding_signal_state_drain_preserves_output_and_exit_events() {
+    fn root_host_function_signal_state_drain_preserves_output_and_exit_events() {
         let event_budget = VmPendingByteBudget::new(
             1024,
             queue_tracker::TrackedLimit::PendingExecutionEventBytes,
         );
-        let binding = BindingExecution::default()
+        let host_function = HostFunctionExecution::default()
             .with_vm_pending_event_bytes_budget(Arc::clone(&event_budget));
-        let cancelled = Arc::clone(&binding.cancelled);
-        let pending_events = Arc::clone(&binding.pending_events);
-        let overflow_reason = Arc::clone(&binding.event_overflow_reason);
-        let pending_bytes = Arc::clone(&binding.pending_event_bytes);
-        let count_limit = Arc::clone(&binding.pending_event_count_limit);
-        let bytes_limit = Arc::clone(&binding.pending_event_bytes_limit);
+        let cancelled = Arc::clone(&host_function.cancelled);
+        let pending_events = Arc::clone(&host_function.pending_events);
+        let overflow_reason = Arc::clone(&host_function.event_overflow_reason);
+        let pending_bytes = Arc::clone(&host_function.pending_event_bytes);
+        let count_limit = Arc::clone(&host_function.pending_event_count_limit);
+        let bytes_limit = Arc::clone(&host_function.pending_event_bytes_limit);
 
-        let mut config = KernelVmConfig::new("root-binding-signal-state-drain");
+        let mut config = KernelVmConfig::new("root-host_function-signal-state-drain");
         config.permissions = Permissions::allow_all();
         let mut kernel = SidecarKernel::new(MountTable::new(MemoryFileSystem::new()), config);
         kernel
@@ -2153,7 +2156,7 @@ mod pending_event_reservation_tests {
                     ..SpawnOptions::default()
                 },
             )
-            .expect("spawn binding process");
+            .expect("spawn host_function process");
         let mut process = ActiveProcess::new(
             handle.pid(),
             handle,
@@ -2161,22 +2164,22 @@ mod pending_event_reservation_tests {
             crate::limits::VmLimits::default(),
             agentos_sidecar_protocol::config::DEFAULT_MAX_PROCESS_EVENTS,
             GuestRuntimeKind::JavaScript,
-            ActiveExecution::Binding(binding),
+            ActiveExecution::HostFunction(host_function),
         );
 
-        let ActiveExecution::Binding(binding) = &process.execution else {
-            unreachable!("test process must retain binding execution");
+        let ActiveExecution::HostFunction(host_function) = &process.execution else {
+            unreachable!("test process must retain host_function execution");
         };
         assert!(Arc::ptr_eq(
-            &binding.vm_pending_event_bytes_budget,
+            &host_function.vm_pending_event_bytes_budget,
             &process.vm_pending_event_bytes_budget,
         ));
 
         for event in [
-            ActiveExecutionEvent::Stdout(b"binding-output".to_vec()),
+            ActiveExecutionEvent::Stdout(b"host_function-output".to_vec()),
             ActiveExecutionEvent::Exited(0),
         ] {
-            assert!(send_binding_process_event(
+            assert!(send_host_function_process_event(
                 &cancelled,
                 &pending_events,
                 &overflow_reason,
@@ -2193,19 +2196,19 @@ mod pending_event_reservation_tests {
         let mut deferred = VecDeque::new();
         while let Some(event) = process
             .try_poll_execution_event()
-            .expect("lease binding event")
+            .expect("lease host_function event")
         {
             deferred.push_back(event);
         }
         for event in deferred.into_iter().rev() {
             process
                 .requeue_pending_execution_event(event)
-                .expect("signal-state drain must preserve leased binding event");
+                .expect("signal-state drain must preserve leased host_function event");
         }
 
         assert!(matches!(
             process.pop_pending_execution_event(),
-            Some(ActiveExecutionEvent::Stdout(bytes)) if bytes == b"binding-output"
+            Some(ActiveExecutionEvent::Stdout(bytes)) if bytes == b"host_function-output"
         ));
         assert!(matches!(
             process.pop_pending_execution_event(),
@@ -2280,7 +2283,7 @@ mod pending_event_reservation_tests {
             crate::limits::VmLimits::default(),
             agentos_sidecar_protocol::config::DEFAULT_MAX_PROCESS_EVENTS,
             GuestRuntimeKind::WebAssembly,
-            ActiveExecution::Binding(BindingExecution::default()),
+            ActiveExecution::HostFunction(HostFunctionExecution::default()),
         );
         let key = NativeCapabilityKey::UdpSocket(String::from("same-key"));
         process
@@ -2369,7 +2372,7 @@ mod pending_event_reservation_tests {
     }
 }
 
-impl BindingExecution {
+impl HostFunctionExecution {
     pub(crate) fn with_vm_pending_event_bytes_budget(
         mut self,
         budget: Arc<VmPendingByteBudget>,
@@ -2378,7 +2381,7 @@ impl BindingExecution {
         debug_assert!(self
             .pending_events
             .lock()
-            .expect("binding pending-event queue")
+            .expect("host_function pending-event queue")
             .is_empty());
         self.vm_pending_event_bytes_budget = budget;
         self
@@ -2405,7 +2408,7 @@ impl BindingExecution {
     }
 }
 
-impl Drop for BindingExecution {
+impl Drop for HostFunctionExecution {
     fn drop(&mut self) {
         // Stop a background callback producer before reclaiming the queue. The
         // producer checks this flag while holding the same queue lock, so it
@@ -2416,7 +2419,7 @@ impl Drop for BindingExecution {
             Ok(pending_events) => pending_events,
             Err(poisoned) => {
                 eprintln!(
-                    "ERR_AGENTOS_BINDING_EVENT_QUEUE_POISONED: recovering the binding event queue while releasing reservations"
+                    "ERR_AGENTOS_HOST_FUNCTION_EVENT_QUEUE_POISONED: recovering the host_function event queue while releasing reservations"
                 );
                 poisoned.into_inner()
             }
@@ -2619,20 +2622,21 @@ impl ProcessEventEnvelope {
             .len()
             .saturating_add(self.session_id.len())
             .saturating_add(self.vm_id.len())
+            .saturating_add(self.child_path.iter().map(String::len).sum::<usize>())
             .saturating_add(self.process_id.len())
             .saturating_add(self.event.retained_bytes())
     }
 }
 
-fn poll_binding_process_event(
-    execution: &BindingExecution,
+fn poll_host_function_process_event(
+    execution: &HostFunctionExecution,
 ) -> Result<Option<ActiveExecutionEvent>, VmError> {
-    poll_binding_process_event_leased(execution)
+    poll_host_function_process_event_leased(execution)
         .map(|event| event.map(PolledExecutionEvent::into_event))
 }
 
-fn poll_binding_process_event_leased(
-    execution: &BindingExecution,
+fn poll_host_function_process_event_leased(
+    execution: &HostFunctionExecution,
 ) -> Result<Option<PolledExecutionEvent>, VmError> {
     if execution.paused.load(Ordering::Acquire) && !execution.cancelled.load(Ordering::Acquire) {
         return Ok(None);
@@ -2643,7 +2647,7 @@ fn poll_binding_process_event_leased(
         .map_err(|_| {
             VmError::host(
                 "EIO",
-                "ERR_AGENTOS_BINDING_EVENT_QUEUE_POISONED: binding event queue was poisoned by a prior panic",
+                "ERR_AGENTOS_HOST_FUNCTION_EVENT_QUEUE_POISONED: host_function event queue was poisoned by a prior panic",
             )
         })?
         .pop_front();
@@ -2666,7 +2670,7 @@ fn poll_binding_process_event_leased(
         .map_err(|_| {
             VmError::host(
                 "EIO",
-                "ERR_AGENTOS_BINDING_OVERFLOW_STATE_POISONED: binding overflow state was poisoned by a prior panic",
+                "ERR_AGENTOS_HOST_FUNCTION_OVERFLOW_STATE_POISONED: host_function overflow state was poisoned by a prior panic",
             )
         })?
         .clone()
@@ -2701,7 +2705,7 @@ pub(super) fn poll_child_execution_after_exit(
     }
 }
 
-impl ExecutionBackend for BindingExecution {
+impl ExecutionBackend for HostFunctionExecution {
     fn kind(&self) -> ExecutionBackendKind {
         ExecutionBackendKind::Binding
     }
@@ -2725,7 +2729,7 @@ impl ExecutionBackend for BindingExecution {
     fn start_prepared(&mut self) -> Result<(), HostServiceError> {
         Err(HostServiceError::new(
             "ERR_AGENTOS_EXECUTION_NOT_PREPARED",
-            "binding execution cannot be a prepared execve image",
+            "host_function execution cannot be a prepared execve image",
         ))
     }
 
@@ -2790,7 +2794,7 @@ impl ActiveExecution {
             Self::Javascript(_) => ExecutionStandaloneWasmBackend::V8,
             #[cfg(feature = "python-v8-pyodide")]
             Self::Python(_) => ExecutionStandaloneWasmBackend::V8,
-            Self::Binding(_) => ExecutionStandaloneWasmBackend::V8,
+            Self::HostFunction(_) => ExecutionStandaloneWasmBackend::V8,
         }
     }
 
@@ -2801,7 +2805,7 @@ impl ActiveExecution {
             #[cfg(feature = "python-v8-pyodide")]
             Self::Python(execution) => execution,
             Self::Wasm(execution) => execution.as_ref(),
-            Self::Binding(execution) => execution,
+            Self::HostFunction(execution) => execution,
         }
     }
 
@@ -2812,7 +2816,7 @@ impl ActiveExecution {
             #[cfg(feature = "python-v8-pyodide")]
             Self::Python(execution) => execution,
             Self::Wasm(execution) => execution.as_mut(),
-            Self::Binding(execution) => execution,
+            Self::HostFunction(execution) => execution,
         }
     }
 
@@ -2824,7 +2828,9 @@ impl ActiveExecution {
         &mut self,
     ) -> Option<Result<Option<PolledExecutionEvent>, VmError>> {
         match self {
-            Self::Binding(execution) => Some(poll_binding_process_event_leased(execution)),
+            Self::HostFunction(execution) => {
+                Some(poll_host_function_process_event_leased(execution))
+            }
             #[cfg(feature = "node-v8")]
             Self::Javascript(_) => None,
             #[cfg(feature = "python-v8-pyodide")]
@@ -2834,7 +2840,7 @@ impl ActiveExecution {
     }
 
     fn configure_adapter_event_limits(&self, count: usize, bytes: usize) {
-        if let Self::Binding(execution) = self {
+        if let Self::HostFunction(execution) = self {
             execution
                 .pending_event_count_limit
                 .store(count, Ordering::Release);
@@ -2846,7 +2852,9 @@ impl ActiveExecution {
 
     fn adapter_event_bytes_budget(&self) -> Option<Arc<VmPendingByteBudget>> {
         match self {
-            Self::Binding(execution) => Some(Arc::clone(&execution.vm_pending_event_bytes_budget)),
+            Self::HostFunction(execution) => {
+                Some(Arc::clone(&execution.vm_pending_event_bytes_budget))
+            }
             #[cfg(feature = "node-v8")]
             Self::Javascript(_) => None,
             #[cfg(feature = "python-v8-pyodide")]
@@ -2856,7 +2864,7 @@ impl ActiveExecution {
     }
 
     fn bind_adapter_event_bytes_budget(&mut self, budget: Arc<VmPendingByteBudget>) {
-        if let Self::Binding(execution) = self {
+        if let Self::HostFunction(execution) = self {
             if !Arc::ptr_eq(&execution.vm_pending_event_bytes_budget, &budget) {
                 debug_assert_eq!(execution.pending_event_bytes.load(Ordering::Acquire), 0);
                 execution.vm_pending_event_bytes_budget = budget;
@@ -2882,6 +2890,28 @@ impl ActiveExecution {
             return execution.has_exited();
         }
         false
+    }
+
+    pub(crate) fn has_pending_events(&self) -> bool {
+        match self {
+            #[cfg(feature = "node-v8")]
+            Self::Javascript(execution) => execution.has_pending_events(),
+            #[cfg(feature = "python-v8-pyodide")]
+            Self::Python(execution) => execution.has_pending_events(),
+            Self::Wasm(execution) => execution.has_pending_events(),
+            Self::HostFunction(execution) => {
+                !execution
+                    .pending_events
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .is_empty()
+                    || execution
+                        .event_overflow_reason
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .is_some()
+            }
+        }
     }
 
     pub(crate) fn execute_retained_language(
@@ -3057,9 +3087,9 @@ impl ActiveExecution {
                     None => Ok(None),
                 }
             }
-            Self::Binding(execution) => {
+            Self::HostFunction(execution) => {
                 let _ = timeout;
-                poll_binding_process_event(execution)
+                poll_host_function_process_event(execution)
             }
         }
     }
@@ -3128,7 +3158,7 @@ impl ActiveExecution {
                     None => Ok(None),
                 }
             }
-            Self::Binding(execution) => poll_binding_process_event(execution),
+            Self::HostFunction(execution) => poll_host_function_process_event(execution),
         }
     }
 }
@@ -3246,13 +3276,13 @@ mod execution_backend_lifecycle_tests {
     fn assert_execution_backend<T: ExecutionBackend>() {}
 
     #[test]
-    fn binding_and_active_execution_use_the_common_lifecycle_contract() {
-        assert_execution_backend::<BindingExecution>();
+    fn host_function_and_active_execution_use_the_common_lifecycle_contract() {
+        assert_execution_backend::<HostFunctionExecution>();
         assert_execution_backend::<ActiveExecution>();
 
-        let binding = BindingExecution::default();
-        let cancelled = Arc::clone(&binding.cancelled);
-        let mut execution = ActiveExecution::Binding(binding);
+        let host_function = HostFunctionExecution::default();
+        let cancelled = Arc::clone(&host_function.cancelled);
+        let mut execution = ActiveExecution::HostFunction(host_function);
 
         let process = HostProcessContext {
             generation: 11,
@@ -3269,11 +3299,11 @@ mod execution_backend_lifecycle_tests {
             &mut execution,
             ProcessHostCapabilitySet::from_event_submission(events),
         );
-        let ActiveExecution::Binding(binding) = &execution else {
-            unreachable!("binding execution")
+        let ActiveExecution::HostFunction(host_function) = &execution else {
+            unreachable!("host_function execution")
         };
         assert_eq!(
-            binding
+            host_function
                 .host_capabilities
                 .as_ref()
                 .expect("backend received host services")
@@ -3288,16 +3318,16 @@ mod execution_backend_lifecycle_tests {
         assert!(!execution.is_prepared_for_start());
 
         let error = ExecutionBackend::start_prepared(&mut execution)
-            .expect_err("binding adapters are never prepared exec images");
+            .expect_err("host_function adapters are never prepared exec images");
         assert_eq!(error.code, "ERR_AGENTOS_EXECUTION_NOT_PREPARED");
 
         let outcome = ExecutionBackend::begin_shutdown(&mut execution, ShutdownReason::VmTeardown)
-            .expect("binding shutdown uses the shared lifecycle");
+            .expect("host_function shutdown uses the shared lifecycle");
         assert_eq!(outcome, ShutdownOutcome::Exited(ExecutionExit::Exited(137)));
         assert!(cancelled.load(Ordering::Acquire));
 
         let outcome = ExecutionBackend::begin_shutdown(&mut execution, ShutdownReason::Signal(15))
-            .expect("binding signal shutdown uses the shared lifecycle");
+            .expect("host_function signal shutdown uses the shared lifecycle");
         assert_eq!(
             outcome,
             ShutdownOutcome::Exited(ExecutionExit::Signaled {
@@ -4156,6 +4186,7 @@ pub(super) fn collect_socket_port_state(
     process: &ActiveProcess,
     tcp_guest_to_host: &mut BTreeMap<(SocketFamily, u16), u16>,
     http_loopback_targets: &mut BTreeMap<(SocketFamily, u16), HttpLoopbackTarget>,
+    http2_loopback_targets: &mut BTreeMap<(SocketFamily, u16), JavascriptHttp2LoopbackTarget>,
     udp_guest_to_host: &mut BTreeMap<(SocketFamily, u16), u16>,
     udp_host_to_guest: &mut BTreeMap<(SocketFamily, u16), u16>,
     used_tcp_ports: &mut BTreeMap<SocketFamily, BTreeSet<u16>>,
@@ -4209,8 +4240,20 @@ pub(super) fn collect_socket_port_state(
 
     match process.http2.shared.lock() {
         Ok(http2) => {
-            for server in http2.servers.values() {
-                record_tcp_listener(server.guest_local_addr, server.actual_local_addr.port());
+            for (server_id, server) in &http2.servers {
+                let family = SocketFamily::from_ip(server.guest_local_addr.ip());
+                used_tcp_ports
+                    .entry(family)
+                    .or_default()
+                    .insert(server.guest_local_addr.port());
+                http2_loopback_targets.insert(
+                    (family, server.guest_local_addr.port()),
+                    JavascriptHttp2LoopbackTarget {
+                        shared: Arc::clone(&process.http2.shared),
+                        server_id: *server_id,
+                        runtime_context: process.runtime_context.clone(),
+                    },
+                );
             }
         }
         Err(error) => {
@@ -4272,6 +4315,7 @@ pub(super) fn collect_socket_port_state(
             child,
             tcp_guest_to_host,
             http_loopback_targets,
+            http2_loopback_targets,
             udp_guest_to_host,
             udp_host_to_guest,
             used_tcp_ports,

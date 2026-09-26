@@ -19,6 +19,7 @@ pub type SocketResult<T> = Result<T, SocketTableError>;
 pub enum SocketReadinessKind {
     Data,
     Accept,
+    Hangup,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

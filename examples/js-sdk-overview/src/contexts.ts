@@ -1,17 +1,20 @@
-import { AgentOs } from "@rivet-dev/agentos";
+import { AgentOs } from "@rivet-dev/agentos-core";
 
 const runtime = await AgentOs.create();
 
 try {
 	await runtime.createContext("analysis");
 
-	await runtime.javascript.execute("const answer = 40", {
+	await runtime.javascript.execute("globalThis.answer = 40", {
 		contextId: "analysis",
 	});
 
-	const result = await runtime.javascript.evaluate<number>("answer + 2", {
-		contextId: "analysis",
-	});
+	const result = await runtime.javascript.evaluate<number>(
+		"globalThis.answer + 2",
+		{
+			contextId: "analysis",
+		},
+	);
 	console.log(result.outcome === "succeeded" ? result.value : result.error); // 42
 
 	// Delete an idle context when you are done with it. `contexts.reset()`

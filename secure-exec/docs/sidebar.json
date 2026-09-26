@@ -1,0 +1,120 @@
+{
+	"docs": [
+		{
+			"title": "General",
+			"pages": [
+				{
+					"title": "Introduction",
+					"href": "/secure-exec/docs",
+					"icon": "faSquareInfo"
+				},
+				{
+					"title": "Quickstart",
+					"href": "/secure-exec/docs/quickstart",
+					"icon": "faForwardFast"
+				}
+			]
+		},
+		{
+			"title": "Use Cases",
+			"pages": [
+				{
+					"title": "Agent Code Tool",
+					"href": "/secure-exec/docs/use-cases/agent-code-tool",
+					"icon": "faRobot"
+				},
+				{
+					"title": "Code Mode",
+					"href": "/secure-exec/docs/use-cases/code-mode",
+					"icon": "faCode"
+				},
+				{
+					"title": "Plugin Systems",
+					"href": "/secure-exec/docs/use-cases/plugin-systems",
+					"icon": "faRoute"
+				},
+				{
+					"title": "Dev Servers",
+					"href": "/secure-exec/docs/use-cases/dev-servers",
+					"icon": "faTowerBroadcast"
+				}
+			]
+		},
+		{
+			"title": "Executing Code",
+			"pages": [
+				{
+					"title": "Execute & Evaluate",
+					"href": "/secure-exec/docs/execute-and-evaluate"
+				},
+				{
+					"title": "Host Functions",
+					"href": "/secure-exec/docs/host-functions"
+				},
+				{
+					"title": "TypeScript",
+					"href": "/secure-exec/docs/typescript"
+				},
+				{
+					"title": "VMs",
+					"href": "/secure-exec/docs/vms"
+				},
+				{
+					"title": "Contexts",
+					"href": "/secure-exec/docs/contexts"
+				},
+				{
+					"title": "Long-Running Processes",
+					"href": "/secure-exec/docs/long-running-code"
+				},
+				{
+					"title": "npm Packages",
+					"href": "/secure-exec/docs/npm"
+				},
+				{
+					"title": "Output Capture",
+					"href": "/secure-exec/docs/output-capture"
+				}
+			]
+		},
+		{
+			"title": "Security",
+			"pages": [
+				{
+					"title": "Overview",
+					"href": "/secure-exec/docs/security"
+				},
+				{
+					"title": "Permissions",
+					"href": "/secure-exec/docs/permissions"
+				},
+				{
+					"title": "Resource Limits",
+					"href": "/secure-exec/docs/resource-limits"
+				},
+				{
+					"title": "Filesystem & Mounts",
+					"href": "/secure-exec/docs/filesystem"
+				},
+				{
+					"title": "Networking",
+					"href": "/secure-exec/docs/networking"
+				}
+			]
+		},
+		{
+			"title": "Reference",
+			"pages": [
+				{
+					"title": "Lifecycle",
+					"href": "/secure-exec/docs/lifecycle"
+				},
+				{
+					"title": "Benchmarks",
+					"href": "/secure-exec/docs/benchmarks"
+				}
+			]
+		}
+	],
+	"tutorials": []
+}

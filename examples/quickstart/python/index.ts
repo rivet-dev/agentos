@@ -1,6 +1,6 @@
-// Run a Python program inside an AgentOS VM.
+// Run a Python program inside an agentOS VM.
 
-import { AgentOs } from "@rivet-dev/agentos";
+import { AgentOs } from "@rivet-dev/agentos-core";
 
 const vm = await AgentOs.create();
 
@@ -27,7 +27,9 @@ print(child.stdout)
 `,
 );
 
-const result = await vm.process.exec("python /tmp/demo.py");
+const result = await vm.process.exec("python /tmp/demo.py", {
+	output: { capture: "all" },
+});
 console.log(result.stdout);
 console.log("Exit code:", result.exitCode);
 

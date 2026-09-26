@@ -1,0 +1,25 @@
+---
+title: "Software Package Definition"
+description: "Define an immutable agentOS .aospkg artifact."
+---
+
+An agentOS software package is a packed v2 `.aospkg` file containing commands
+and their runtime files.
+
+The container contains:
+
+1. a fixed header;
+2. a versioned vbare package manifest;
+3. a versioned mount index;
+4. the mount tar.
+
+`agentos-package.json` is toolchain input only. Packing encodes its runtime
+fields into the vbare manifest and removes the JSON file from the mounted
+payload.
+
+Commands are projected under `/opt/agentos/pkgs/<name>/<version>` and linked
+under `/opt/agentos/bin`. The sidecar reads the package projection live.
+
+The package format contains no hosted action, callback, or host-path metadata.
+The hosted actor accepts an HTTPS URL and optional exact digest; embedded Core
+also accepts a trusted local path.

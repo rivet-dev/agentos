@@ -6,8 +6,13 @@
 use crate::core::VmLayerStore;
 #[cfg(feature = "node-v8")]
 use crate::executor::JavascriptExecution;
+#[cfg(feature = "node-v8")]
+use crate::executor::JavascriptExecutionEngine;
 #[cfg(feature = "python-v8-pyodide")]
 use crate::executor::PythonExecution;
+#[cfg(feature = "python-v8-pyodide")]
+use crate::executor::PythonExecutionEngine;
+use crate::executor::WasmExecutionEngine;
 use crate::executor::{
     backend::{
         DescendantOutputOwnership, DescendantWaitOwnership, DirectHostReplyHandle,
@@ -44,12 +49,17 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use socket2::Socket;
+use std::borrow::Borrow as StdBorrow;
+use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::error::Error;
 use std::fmt;
+use std::future::Future;
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
+use std::pin::Pin;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
@@ -844,7 +854,7 @@ pub(crate) const VM_LISTEN_PORT_MAX_METADATA_KEY: &str = "network.listen.port_ma
 pub(crate) const VM_LISTEN_ALLOW_PRIVILEGED_METADATA_KEY: &str = "network.listen.allow_privileged";
 pub(crate) const DEFAULT_NET_BACKLOG: u32 = 511;
 pub(crate) const LOOPBACK_EXEMPT_PORTS_ENV: &str = "AGENTOS_LOOPBACK_EXEMPT_PORTS";
-pub(crate) const BINDING_DRIVER_NAME: &str = "agentos-host-callbacks";
+pub(crate) const HOST_FUNCTION_DRIVER_NAME: &str = "agentos-host-callbacks";
 
 // ---------------------------------------------------------------------------
 // Public API types
@@ -856,8 +866,6 @@ pub struct VmManagerConfig {
     pub max_frame_bytes: usize,
     pub compile_cache_root: Option<PathBuf>,
     pub expected_auth_token: Option<String>,
-    pub acp_termination_grace: Duration,
-    pub protocol: agentos_sidecar_protocol::SidecarProtocolConfig,
     pub runtime: agentos_driver_tokio::DriverConfig,
 }
 
@@ -868,8 +876,6 @@ impl Default for VmManagerConfig {
             max_frame_bytes: DEFAULT_MAX_FRAME_BYTES,
             compile_cache_root: None,
             expected_auth_token: None,
-            acp_termination_grace: Duration::from_secs(3),
-            protocol: agentos_sidecar_protocol::SidecarProtocolConfig::default(),
             runtime: agentos_driver_tokio::DriverConfig::default(),
         }
     }
@@ -878,6 +884,23 @@ impl Default for VmManagerConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VmError {
     ResourceLimit(agentos_driver_tokio::accounting::LimitError),
+    PackageMountLimit {
+        used: usize,
+        requested: usize,
+        limit: usize,
+    },
+    RequestAdmission {
+        code: &'static str,
+        message: String,
+        configuration_path: Option<&'static str>,
+        retryable: bool,
+        errno: &'static str,
+    },
+    VmTeardownDeadline {
+        message: String,
+        vm_id: String,
+        deadline_ms: u64,
+    },
     Host(crate::executor::backend::HostServiceError),
     InvalidState(String),
     ProtocolVersionMismatch(String),
@@ -889,7 +912,9 @@ pub enum VmError {
     Kernel(String),
     Plugin(String),
     Execution(String),
-    ExecutionEventChannelClosed { backend: ExecutionBackendKind },
+    ExecutionEventChannelClosed {
+        backend: ExecutionBackendKind,
+    },
     Bridge(String),
     Io(String),
 }
@@ -932,6 +957,17 @@ impl fmt::Display for VmError {
         match self {
             Self::ResourceLimit(error) => error.fmt(f),
             Self::Host(error) => error.fmt(f),
+            Self::PackageMountLimit {
+                used,
+                requested,
+                limit,
+            } => write!(
+                f,
+                "ERR_AGENTOS_RESOURCE_LIMIT: scope=vm resource=packageMounts used={used} requested={requested} limit={limit}; raise limits.agentosPackages.maxMounts"
+            ),
+            Self::RequestAdmission { message, .. } | Self::VmTeardownDeadline { message, .. } => {
+                f.write_str(message)
+            }
             Self::InvalidState(message)
             | Self::ProtocolVersionMismatch(message)
             | Self::BridgeVersionMismatch(message)
@@ -1031,6 +1067,18 @@ pub trait SidecarRequestTransport: Send + Sync {
         request: SidecarRequestFrame,
         timeout: Duration,
     ) -> Result<SidecarResponseFrame, VmError>;
+
+    /// Async callback delivery for extension request tasks. Transports with a
+    /// native async waiter override this so a callback never parks the sidecar
+    /// runtime thread. The default preserves compatibility for in-process test
+    /// transports that only implement the synchronous API.
+    fn send_request_async<'a>(
+        &'a self,
+        request: SidecarRequestFrame,
+        timeout: Duration,
+    ) -> Pin<Box<dyn Future<Output = Result<SidecarResponseFrame, VmError>> + Send + 'a>> {
+        Box::pin(async move { self.send_request(request, timeout) })
+    }
 }
 
 #[derive(Clone)]
@@ -1065,6 +1113,32 @@ impl SharedSidecarRequestClient {
         let request_id = self.next_request_id.fetch_sub(1, Ordering::Relaxed);
         let request = SidecarRequestFrame::new(request_id, ownership.clone(), payload);
         let response = transport.send_request(request, timeout)?;
+        if response.request_id != request_id {
+            return Err(VmError::InvalidState(format!(
+                "sidecar response {} did not match request {request_id}",
+                response.request_id
+            )));
+        }
+        if response.ownership != ownership {
+            return Err(VmError::InvalidState(String::from(
+                "sidecar response ownership did not match request ownership",
+            )));
+        }
+        Ok(response.payload)
+    }
+
+    pub(crate) async fn invoke_async(
+        &self,
+        ownership: crate::protocol::OwnershipScope,
+        payload: SidecarRequestPayload,
+        timeout: Duration,
+    ) -> Result<SidecarResponsePayload, VmError> {
+        let transport = self.transport.as_ref().ok_or_else(|| {
+            VmError::Unsupported(String::from("sidecar request transport is not configured"))
+        })?;
+        let request_id = self.next_request_id.fetch_sub(1, Ordering::Relaxed);
+        let request = SidecarRequestFrame::new(request_id, ownership.clone(), payload);
+        let response = transport.send_request_async(request, timeout).await?;
         if response.request_id != request_id {
             return Err(VmError::InvalidState(format!(
                 "sidecar response {} did not match request {request_id}",
@@ -1127,6 +1201,8 @@ pub(crate) struct SharedBridge<B> {
     pub(crate) inner: Arc<Mutex<B>>,
     pub(crate) permissions: Arc<Mutex<BTreeMap<String, PermissionsPolicy>>>,
     #[cfg(test)]
+    pub(crate) set_vm_permissions_history: Arc<Mutex<Vec<(String, PermissionsPolicy)>>>,
+    #[cfg(test)]
     pub(crate) set_vm_permissions_outcomes: Arc<Mutex<VecDeque<Option<VmError>>>>,
     #[cfg(test)]
     pub(crate) emit_lifecycle_outcomes: Arc<Mutex<VecDeque<Option<VmError>>>>,
@@ -1137,6 +1213,8 @@ impl<B> Clone for SharedBridge<B> {
         Self {
             inner: Arc::clone(&self.inner),
             permissions: Arc::clone(&self.permissions),
+            #[cfg(test)]
+            set_vm_permissions_history: Arc::clone(&self.set_vm_permissions_history),
             #[cfg(test)]
             set_vm_permissions_outcomes: Arc::clone(&self.set_vm_permissions_outcomes),
             #[cfg(test)]
@@ -1168,6 +1246,7 @@ pub(crate) struct SessionState {
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) struct VmConfiguration {
+    pub(crate) defaults_profile: vm_config::VmDefaultsProfile,
     pub(crate) mounts: Vec<MountDescriptor>,
     pub(crate) software: Vec<SoftwareDescriptor>,
     pub(crate) permissions: PermissionsPolicy,
@@ -1180,15 +1259,13 @@ pub(crate) struct VmConfiguration {
     /// builtin allow-list). Set at `create_vm` from `CreateVmConfig.jsRuntime`
     /// and preserved across `configure_vm`. `None` => full Node.js emulation.
     pub(crate) js_runtime: Option<vm_config::JsRuntimeConfig>,
-    /// Agent SDK bundle read by the sidecar from the configured package dir and
-    /// evaluated into the shared V8 startup snapshot.
-    pub(crate) snapshot_userland_code: Option<String>,
     pub(crate) loopback_exempt_ports: Vec<u16>,
 }
 
 impl Default for VmConfiguration {
     fn default() -> Self {
         Self {
+            defaults_profile: vm_config::VmDefaultsProfile::Secure,
             mounts: Vec::new(),
             software: Vec::new(),
             permissions: crate::core::permissions::deny_all_policy(),
@@ -1198,14 +1275,159 @@ impl Default for VmConfiguration {
             command_permissions: BTreeMap::new(),
             provided_commands: BTreeMap::new(),
             js_runtime: None,
-            snapshot_userland_code: None,
             loopback_exempt_ports: Vec::new(),
         }
     }
 }
 
+/// VM-local language-engine ownership.
+///
+/// Engine context maps are mutable and must not remain process-global: a long
+/// launch in one VM would otherwise serialize every other VM behind the same
+/// engine owner. A launch clones this owner out through [`VmHandle`], releases
+/// the outer `VmState` borrow, and may then hold only the selected language's
+/// `RefCell` borrow across startup awaits. That deliberately preserves narrow
+/// per-VM/per-runtime ordering while leaving the same VM's kernel, filesystem,
+/// sockets, and other language engines independently accessible.
+#[derive(Clone)]
+pub(crate) struct VmExecutionEngines {
+    inner: Rc<VmExecutionEnginesInner>,
+}
+
+struct VmExecutionEnginesInner {
+    vm_id: String,
+    startup: tokio::sync::Mutex<()>,
+    pending_startups: Cell<usize>,
+    #[cfg(feature = "node-v8")]
+    javascript: RefCell<JavascriptExecutionEngine>,
+    #[cfg(feature = "python-v8-pyodide")]
+    python: RefCell<PythonExecutionEngine>,
+    wasm: RefCell<WasmExecutionEngine>,
+}
+
+struct PendingExecutionStartup<'a>(&'a Cell<usize>);
+
+impl Drop for PendingExecutionStartup<'_> {
+    fn drop(&mut self) {
+        self.0.set(self.0.get() - 1);
+    }
+}
+
+pub(crate) struct ExecutionStartupPermit<'a> {
+    _lock: tokio::sync::MutexGuard<'a, ()>,
+    _pending: PendingExecutionStartup<'a>,
+}
+
+impl VmExecutionEngines {
+    /// Serialize only startup, before allocating kernel resources. Running guests
+    /// remain concurrent. The kernel process limit also bounds queued starts;
+    /// cancellation drops both the queue reservation and the FIFO mutex waiter.
+    pub(crate) async fn admit_startup(
+        &self,
+        max_processes: Option<usize>,
+    ) -> Result<ExecutionStartupPermit<'_>, VmError> {
+        let pending = self.inner.pending_startups.get();
+        if let Some(limit) = max_processes {
+            if pending >= limit {
+                return Err(VmError::host_resource_limit(
+                    "resourceLimits.maxProcesses", limit, pending.saturating_add(1),
+                    format!("VM {} startup queue reached maxProcesses ({limit}); raise resourceLimits.maxProcesses to allow more pending starts", self.inner.vm_id),
+                ));
+            }
+        }
+        if let Some(limit) = max_processes {
+            if pending + 1 == limit.saturating_sub(limit / 5) {
+                tracing::warn!(vm_id = %self.inner.vm_id, pending = pending + 1, limit,
+                    "VM startup queue nearing resourceLimits.maxProcesses; raise this limit to allow more pending starts");
+            }
+        }
+        self.inner.pending_startups.set(pending + 1);
+        let pending = PendingExecutionStartup(&self.inner.pending_startups);
+        let lock = self.inner.startup.lock().await;
+        Ok(ExecutionStartupPermit {
+            _lock: lock,
+            _pending: pending,
+        })
+    }
+    pub(crate) fn new(
+        vm_id: String,
+        runtime: agentos_driver_tokio::DriverHandle,
+        event_notify: Arc<tokio::sync::Notify>,
+    ) -> Self {
+        #[cfg(feature = "node-v8")]
+        let mut javascript = JavascriptExecutionEngine::new(runtime.clone());
+        #[cfg(feature = "node-v8")]
+        javascript.set_event_notify(Some(Arc::clone(&event_notify)));
+        #[cfg(feature = "python-v8-pyodide")]
+        let mut python = PythonExecutionEngine::new(runtime.clone());
+        #[cfg(feature = "python-v8-pyodide")]
+        python.set_event_notify(Some(Arc::clone(&event_notify)));
+        let mut wasm = WasmExecutionEngine::new(runtime);
+        wasm.set_event_notify(Some(event_notify));
+        Self {
+            inner: Rc::new(VmExecutionEnginesInner {
+                vm_id,
+                startup: tokio::sync::Mutex::new(()),
+                pending_startups: Cell::new(0),
+                #[cfg(feature = "node-v8")]
+                javascript: RefCell::new(javascript),
+                #[cfg(feature = "python-v8-pyodide")]
+                python: RefCell::new(python),
+                wasm: RefCell::new(wasm),
+            }),
+        }
+    }
+
+    #[cfg(feature = "node-v8")]
+    pub(crate) fn javascript(
+        &self,
+        operation: &'static str,
+    ) -> Result<RefMut<'_, JavascriptExecutionEngine>, VmError> {
+        self.inner.javascript.try_borrow_mut().map_err(|_| {
+            execution_engine_conflict_error(&self.inner.vm_id, "JavaScript", operation)
+        })
+    }
+
+    #[cfg(feature = "python-v8-pyodide")]
+    pub(crate) fn python(
+        &self,
+        operation: &'static str,
+    ) -> Result<RefMut<'_, PythonExecutionEngine>, VmError> {
+        self.inner
+            .python
+            .try_borrow_mut()
+            .map_err(|_| execution_engine_conflict_error(&self.inner.vm_id, "Python", operation))
+    }
+
+    pub(crate) fn wasm(
+        &self,
+        operation: &'static str,
+    ) -> Result<RefMut<'_, WasmExecutionEngine>, VmError> {
+        self.inner.wasm.try_borrow_mut().map_err(|_| {
+            execution_engine_conflict_error(&self.inner.vm_id, "WebAssembly", operation)
+        })
+    }
+}
+
+impl Drop for VmExecutionEnginesInner {
+    fn drop(&mut self) {
+        #[cfg(feature = "node-v8")]
+        self.javascript.get_mut().dispose_vm(&self.vm_id);
+        #[cfg(feature = "python-v8-pyodide")]
+        self.python.get_mut().dispose_vm(&self.vm_id);
+        self.wasm.get_mut().dispose_vm(&self.vm_id);
+    }
+}
+
+fn execution_engine_conflict_error(vm_id: &str, runtime: &str, operation: &str) -> VmError {
+    VmError::InvalidState(format!(
+        "ERR_AGENTOS_VM_EXECUTION_CONFLICT: {runtime} execution state for VM {vm_id} is already in use during {operation}"
+    ))
+}
+
 #[allow(dead_code)]
 pub(crate) struct VmState {
+    pub(crate) execution_engines: VmExecutionEngines,
     pub(crate) connection_id: String,
     pub(crate) session_id: String,
     /// Process-unique VM generation. Capability and completion identities are
@@ -1223,6 +1445,7 @@ pub(crate) struct VmState {
     /// VM-scoped admission view over the process's single Tokio runtime and
     /// fixed blocking executor. This owns no runtime or worker of its own.
     pub(crate) runtime_context: agentos_driver_tokio::DriverHandle,
+    /// Language runtime context maps owned by this VM generation.
     /// One resolved SQLite transport shared by every durable VM subsystem.
     pub(crate) database: Option<crate::vm_sqlite::SharedVmSqliteDatabase>,
     /// Common lifecycle/identity registry for native and kernel backends.
@@ -1230,6 +1453,10 @@ pub(crate) struct VmState {
     pub(crate) dns: VmDnsConfig,
     pub(crate) listen_policy: VmListenPolicy,
     pub(crate) create_loopback_exempt_ports: BTreeSet<u16>,
+    /// Guest environment before package `provides.env` defaults are applied.
+    /// Dynamic package link/unlink rebuilds from this source so uninstall does
+    /// not leave stale package-owned variables behind.
+    pub(crate) base_guest_env: BTreeMap<String, String>,
     pub(crate) guest_env: BTreeMap<String, String>,
     /// VM-wide standalone-WASM engine policy. JavaScript itself remains on V8;
     /// this affinity is copied to every top-level process for spawn/exec.
@@ -1256,9 +1483,32 @@ pub(crate) struct VmState {
     pub(crate) loaded_snapshot: Option<FilesystemSnapshot>,
     pub(crate) configuration: VmConfiguration,
     pub(crate) layers: VmLayerStore,
+    /// Configure-time response metadata; execution always resolves the live kernel VFS.
+    pub(crate) command_guest_paths: BTreeMap<String, String>,
     pub(crate) provided_commands: BTreeMap<String, Vec<String>>,
+    /// Package manifests in projection order. This is sidecar-owned live state
+    /// used to rebuild package environment and command projections after a
+    /// dynamic unlink.
+    pub(crate) package_descriptors: Vec<(String, crate::package_projection::PackageDescriptor)>,
+    /// Identities added by LinkPackage rather than the boot ConfigureVm payload.
+    /// Reconfiguration must retain these until an explicit UnlinkPackage, even
+    /// when a client only knows its creation-time package list.
+    pub(crate) runtime_linked_package_ids: BTreeSet<String>,
+    /// Verified package bytes stay pinned while their leaves are projected.
+    /// Trusted LinkPackage paths are deliberately not represented here.
+    pub(crate) installed_package_pins: BTreeMap<String, agentos_client::VerifiedPackage>,
+    /// Projection roots are part of package identity. Pinning a boot package
+    /// must retain its custom root through later configuration and unlink.
+    pub(crate) package_mount_roots: BTreeMap<String, String>,
+    /// Successfully installed package-owned leaves. Accounting and unlink
+    /// must not reconstruct these by reopening a mutable or removed source.
+    pub(crate) package_mount_paths: BTreeMap<String, BTreeSet<String>>,
+    /// Cosmetic mountpoints materialized by the VFS for each package. Unlink
+    /// removes only entries created for that package, revealing pre-existing
+    /// paths underneath package-provided overlays without deleting them.
+    pub(crate) package_created_mountpoints: BTreeMap<String, BTreeSet<String>>,
     pub(crate) command_permissions: BTreeMap<String, WasmPermissionTier>,
-    pub(crate) bindings: BTreeMap<String, RegisterHostCallbacksRequest>,
+    pub(crate) host_functions: BTreeMap<String, RegisterHostCallbacksRequest>,
     pub(crate) active_processes: BTreeMap<String, ActiveProcess>,
     /// Pull-driven host fetches retained between sidecar requests. A stream
     /// owns exactly one kernel socket and capability lease; reads advance it
@@ -1291,9 +1541,251 @@ pub(crate) struct VmState {
     /// packed vbare manifests at `ConfigureVm`/`LinkPackage` time — packed
     /// packages ship no `agentos-package.json`, so agent enumeration and
     /// resolution read this instead of the guest filesystem.
-    pub(crate) projected_agent_launch: BTreeMap<String, ProjectedAgentLaunch>,
     pub(crate) unix_address_registry: GuestUnixAddressRegistry,
     pub(crate) unix_socket_host_dir: PathBuf,
+}
+
+/// Cloneable, thread-affine access to one VM's mutable state.
+///
+/// Guest execution is deliberately driven by the protocol process's
+/// `LocalSet`, so this is an `Rc` boundary rather than a cross-thread mutex.
+/// Callers must release a borrow before awaiting external work; cloning a
+/// handle never grants access to another VM.
+#[derive(Clone)]
+pub(crate) struct VmHandle {
+    inner: Rc<RefCell<VmState>>,
+}
+
+impl VmHandle {
+    pub(crate) fn new(state: VmState) -> Self {
+        Self {
+            inner: Rc::new(RefCell::new(state)),
+        }
+    }
+
+    pub(crate) fn borrow(&self) -> Ref<'_, VmState> {
+        self.inner.as_ref().borrow()
+    }
+
+    pub(crate) fn borrow_mut(&self) -> RefMut<'_, VmState> {
+        self.inner.borrow_mut()
+    }
+
+    pub(crate) fn try_borrow_mut(
+        &self,
+        operation: &'static str,
+    ) -> Result<RefMut<'_, VmState>, VmError> {
+        self.inner.try_borrow_mut().map_err(|_| {
+            VmError::InvalidState(format!(
+                "ERR_AGENTOS_VM_COORDINATOR_CONFLICT: VM state is already in a critical section during {operation}"
+            ))
+        })
+    }
+
+    pub(crate) fn try_read<T>(
+        &self,
+        operation: &'static str,
+        read: impl FnOnce(&VmState) -> T,
+    ) -> Result<T, VmError> {
+        let state = self.inner.try_borrow().map_err(|_| {
+            VmError::InvalidState(format!(
+                "ERR_AGENTOS_VM_COORDINATOR_CONFLICT: VM state is already in a mutable critical section during {operation}"
+            ))
+        })?;
+        Ok(read(&state))
+    }
+
+    pub(crate) fn try_command<T>(
+        &self,
+        operation: &'static str,
+        command: impl FnOnce(&mut VmState) -> Result<T, VmError>,
+    ) -> Result<T, VmError> {
+        let mut state = self.inner.try_borrow_mut().map_err(|_| {
+            VmError::InvalidState(format!(
+                "ERR_AGENTOS_VM_COORDINATOR_CONFLICT: VM state is already in a critical section during {operation}"
+            ))
+        })?;
+        command(&mut state)
+    }
+}
+
+impl std::fmt::Debug for VmHandle {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let state = self.borrow();
+        formatter
+            .debug_struct("VmHandle")
+            .field("connection_id", &state.connection_id)
+            .field("session_id", &state.session_id)
+            .field("generation", &state.generation)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Registry facade that preserves the sidecar's existing short-borrow API
+/// while storing each VM behind an independently cloneable handle.
+#[derive(Debug, Default)]
+pub(crate) struct VmRegistry {
+    vms: BTreeMap<String, VmHandle>,
+}
+
+impl VmRegistry {
+    pub(crate) fn len(&self) -> usize {
+        self.vms.len()
+    }
+
+    // TODO(clippy-1.98): unused; wire up or remove.
+    #[allow(dead_code)]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.vms.is_empty()
+    }
+
+    pub(crate) fn contains_key<Q>(&self, key: &Q) -> bool
+    where
+        String: StdBorrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        self.vms.contains_key(key)
+    }
+
+    pub(crate) fn get<Q>(&self, key: &Q) -> Option<Ref<'_, VmState>>
+    where
+        String: StdBorrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        self.vms.get(key).map(VmHandle::borrow)
+    }
+
+    pub(crate) fn get_mut<Q>(&self, key: &Q) -> Option<RefMut<'_, VmState>>
+    where
+        String: StdBorrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        self.vms.get(key).map(VmHandle::borrow_mut)
+    }
+
+    pub(crate) fn handle<Q>(&self, key: &Q) -> Option<VmHandle>
+    where
+        String: StdBorrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        self.vms.get(key).cloned()
+    }
+
+    pub(crate) fn insert(
+        &mut self,
+        key: String,
+        state: VmState,
+    ) -> Result<Option<VmState>, VmError> {
+        let replacement = match self.vms.remove(&key) {
+            Some(handle) => match Rc::try_unwrap(handle.inner) {
+                Ok(state) => Some(state.into_inner()),
+                Err(inner) => {
+                    self.vms.insert(key.clone(), VmHandle { inner });
+                    return Err(vm_handle_conflict_error(&key, "replace"));
+                }
+            },
+            None => None,
+        };
+        self.vms.insert(key, VmHandle::new(state));
+        Ok(replacement)
+    }
+
+    pub(crate) fn try_remove<Q>(
+        &mut self,
+        key: &Q,
+        operation: &'static str,
+    ) -> Result<Option<VmState>, VmError>
+    where
+        String: StdBorrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        let Some((owned_key, handle)) = self.vms.remove_entry(key) else {
+            return Ok(None);
+        };
+        match Rc::try_unwrap(handle.inner) {
+            Ok(state) => Ok(Some(state.into_inner())),
+            Err(inner) => {
+                self.vms.insert(owned_key.clone(), VmHandle { inner });
+                Err(vm_handle_conflict_error(&owned_key, operation))
+            }
+        }
+    }
+
+    // TODO(clippy-1.98): unused; wire up or remove.
+    #[allow(dead_code)]
+    pub(crate) fn clear(&mut self) -> Result<(), VmError> {
+        if let Some((key, _)) = self
+            .vms
+            .iter()
+            .find(|(_, handle)| Rc::strong_count(&handle.inner) != 1)
+        {
+            return Err(vm_handle_conflict_error(key, "clear"));
+        }
+        for (key, handle) in std::mem::take(&mut self.vms) {
+            match Rc::try_unwrap(handle.inner) {
+                Ok(state) => drop(state.into_inner()),
+                Err(inner) => {
+                    self.vms.insert(key.clone(), VmHandle { inner });
+                    return Err(vm_handle_conflict_error(&key, "clear"));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    // TODO(clippy-1.98): unused; wire up or remove.
+    #[allow(dead_code)]
+    pub(crate) fn retain(&mut self, mut keep: impl FnMut(&String, &mut VmState) -> bool) {
+        self.vms.retain(|key, handle| {
+            match handle.inner.try_borrow_mut() {
+                Ok(mut state) => {
+                    let retained = keep(key, &mut state);
+                    if !retained && Rc::strong_count(&handle.inner) != 1 {
+                        eprintln!(
+                            "ERR_AGENTOS_VM_COORDINATOR_CONFLICT: deferring removal of VM {key} while an owned operation retains its handle"
+                        );
+                        true
+                    } else {
+                        retained
+                    }
+                }
+                Err(_) => {
+                    eprintln!(
+                        "ERR_AGENTOS_VM_COORDINATOR_CONFLICT: deferring retain-filter for VM {key} while a short critical section is active"
+                    );
+                    true
+                }
+            }
+        });
+    }
+
+    pub(crate) fn keys(&self) -> impl Iterator<Item = &String> {
+        self.vms.keys()
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&String, Ref<'_, VmState>)> {
+        self.vms.iter().map(|(key, handle)| (key, handle.borrow()))
+    }
+
+    pub(crate) fn values(&self) -> impl Iterator<Item = Ref<'_, VmState>> {
+        self.vms.values().map(VmHandle::borrow)
+    }
+
+    pub(crate) fn values_mut(&self) -> impl Iterator<Item = RefMut<'_, VmState>> {
+        self.vms.values().filter_map(|handle| {
+            handle.inner.try_borrow_mut().map_err(|_| {
+                eprintln!(
+                    "ERR_AGENTOS_VM_COORDINATOR_CONFLICT: deferring mutable VM iteration while a short critical section is active"
+                );
+            }).ok()
+        })
+    }
+}
+
+fn vm_handle_conflict_error(vm_id: &str, operation: &str) -> VmError {
+    VmError::InvalidState(format!(
+        "ERR_AGENTOS_VM_COORDINATOR_CONFLICT: cannot {operation} VM {vm_id} while an owned operation retains its handle"
+    ))
 }
 
 #[derive(Debug)]
@@ -1321,7 +1813,7 @@ pub(crate) struct VmFetchStreamState {
 
 /// Minimal ownership retained when a VM generation misses its teardown
 /// barrier. Kernel, adapter, filesystem, and routing state are deliberately not
-/// retained; only the handles needed to prove eventual reconciliation survive.
+/// retained; only reconciliation handles and unconfirmed-cleanup evidence survive.
 #[derive(Debug)]
 pub(crate) struct QuarantinedVmGeneration {
     pub(crate) connection_id: String,
@@ -1332,6 +1824,9 @@ pub(crate) struct QuarantinedVmGeneration {
     pub(crate) runtime_context: agentos_driver_tokio::DriverHandle,
     pub(crate) capabilities: agentos_driver_tokio::capability::CapabilityRegistry,
     pub(crate) reason: VmQuarantineReason,
+    /// A canceled close may have unobserved external work. Zero local counts
+    /// cannot prove its completion, so retain this generation until restart.
+    pub(crate) sqlite_close_unconfirmed: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1361,7 +1856,7 @@ impl QuarantinedVmGeneration {
     }
 
     pub(crate) fn can_reap(&self) -> bool {
-        if self.reason != VmQuarantineReason::TeardownDeadline {
+        if self.sqlite_close_unconfirmed || self.reason != VmQuarantineReason::TeardownDeadline {
             return false;
         }
         let snapshot = self.reconciliation_snapshot();
@@ -1370,14 +1865,6 @@ impl QuarantinedVmGeneration {
             && snapshot.ledger_zero
             && snapshot.integrity_ok
     }
-}
-
-/// Launch parameters for one projected agent package.
-#[derive(Debug, Clone)]
-pub(crate) struct ProjectedAgentLaunch {
-    pub(crate) acp_entrypoint: String,
-    pub(crate) env: BTreeMap<String, String>,
-    pub(crate) launch_args: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1408,10 +1895,27 @@ pub(crate) struct SocketPathContext {
     pub(crate) loopback_exempt_ports: BTreeSet<u16>,
     pub(crate) tcp_loopback_guest_to_host_ports: BTreeMap<(SocketFamily, u16), u16>,
     pub(crate) http_loopback_targets: BTreeMap<(SocketFamily, u16), HttpLoopbackTarget>,
+    pub(crate) http2_loopback_targets: BTreeMap<(SocketFamily, u16), JavascriptHttp2LoopbackTarget>,
     pub(crate) udp_loopback_guest_to_host_ports: BTreeMap<(SocketFamily, u16), u16>,
     pub(crate) udp_loopback_host_to_guest_ports: BTreeMap<(SocketFamily, u16), u16>,
     pub(crate) used_tcp_guest_ports: BTreeMap<SocketFamily, BTreeSet<u16>>,
     pub(crate) used_udp_guest_ports: BTreeMap<SocketFamily, BTreeSet<u16>>,
+}
+
+#[derive(Clone)]
+pub(crate) struct JavascriptHttp2LoopbackTarget {
+    pub(crate) shared: Arc<Mutex<Http2SharedState>>,
+    pub(crate) server_id: u64,
+    pub(crate) runtime_context: agentos_driver_tokio::DriverHandle,
+}
+
+impl fmt::Debug for JavascriptHttp2LoopbackTarget {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("JavascriptHttp2LoopbackTarget")
+            .field("server_id", &self.server_id)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -1431,12 +1935,27 @@ pub(crate) struct GuestUnixAddressRegistryEntry {
     pub(crate) host_address_key: String,
     pub(crate) address: GuestUnixAddress,
     pub(crate) guest_device_inode: Option<(u64, u64)>,
-    pub(crate) host_path: Option<PathBuf>,
     pub(crate) generation: u64,
     pub(crate) active_bindings: usize,
     pub(crate) queued_by_target: BTreeMap<String, usize>,
     pub(crate) pending_connection_limit: usize,
     pub(crate) pending_connections: VecDeque<Arc<GuestUnixConnectionState>>,
+    pub(crate) listener_route: Option<GuestUnixListenerRoute>,
+}
+
+#[derive(Clone)]
+pub(crate) struct GuestUnixListenerRoute {
+    pub(crate) sender: AsyncCompletionSender<UnixListenerEvent>,
+    pub(crate) event_pusher: Arc<SocketReadinessSubscribers>,
+    pub(crate) capabilities: agentos_driver_tokio::capability::CapabilityRegistry,
+}
+
+impl fmt::Debug for GuestUnixListenerRoute {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("GuestUnixListenerRoute")
+            .finish_non_exhaustive()
+    }
 }
 
 pub(crate) type GuestUnixAddressRegistry =
@@ -1649,6 +2168,7 @@ pub(crate) struct ActiveProcess {
     /// their inherited descriptions must not bypass JavaScript pipes,
     /// spawnSync capture, or stdout-framed fork IPC.
     pub(crate) child_process_bridge_owns_output: bool,
+    pub(crate) child_bridge_relay_in_flight: Arc<AtomicBool>,
     pub(crate) http_servers: BTreeMap<u64, ActiveHttpServer>,
     pub(crate) pending_http_requests: BTreeMap<(u64, u64), PendingHttpRequest>,
     pub(crate) http2: ActiveHttp2State,
@@ -1882,7 +2402,6 @@ impl Default for Http2SharedState {
 
 #[derive(Debug)]
 pub(crate) struct ActiveHttp2Server {
-    pub(crate) actual_local_addr: SocketAddr,
     pub(crate) guest_local_addr: SocketAddr,
     pub(crate) secure: bool,
     pub(crate) tls: Option<TlsBridgeOptions>,
@@ -2200,9 +2719,13 @@ impl SocketReadinessSubscribers {
                 }
             }
             if !subscribers.contains_key(&identity) && subscribers.len() >= self.maximum {
-                return Err(VmError::host("ERR_AGENTOS_SOCKET_READINESS_SUBSCRIBER_LIMIT", format!("socket description readiness subscribers exceeded {}; raise limits.reactor.maxCapabilities",
-                    self.maximum
-                )));
+                return Err(VmError::host(
+                    "ERR_AGENTOS_SOCKET_READINESS_SUBSCRIBER_LIMIT",
+                    format!(
+                        "socket description readiness subscribers exceeded {}; raise limits.reactor.maxCapabilities",
+                        self.maximum
+                    ),
+                ));
             }
         }
         if let Some(previous) = subscribers.insert(
@@ -2496,9 +3019,13 @@ impl KernelSocketReadinessRegistryState {
         if !already_registered {
             let registered = targets.values().map(BTreeMap::len).sum::<usize>();
             if registered >= self.maximum {
-                return Err(VmError::host("ERR_AGENTOS_KERNEL_READINESS_TARGET_LIMIT", format!("kernel readiness targets exceeded {}; raise limits.reactor.maxCapabilities",
-                    self.maximum
-                )));
+                return Err(VmError::host(
+                    "ERR_AGENTOS_KERNEL_READINESS_TARGET_LIMIT",
+                    format!(
+                        "kernel readiness targets exceeded {}; raise limits.reactor.maxCapabilities",
+                        self.maximum
+                    ),
+                ));
             }
         }
         if let Some(previous) = targets
@@ -2692,7 +3219,6 @@ pub(crate) struct TlsWritePayload {
 pub(crate) struct ReactorIoLimits {
     pub(crate) operation_quantum: usize,
     pub(crate) byte_quantum: usize,
-    pub(crate) accept_quantum: usize,
     pub(crate) datagram_quantum: usize,
     pub(crate) max_handle_commands: usize,
     pub(crate) max_async_completions: usize,
@@ -2837,13 +3363,13 @@ pub(crate) struct ActiveTcpListener {
 
 #[derive(Debug)]
 pub(crate) enum UnixListenerEvent {
-    Connection {
-        socket: PendingUnixSocket,
-        capability: agentos_driver_tokio::capability::PendingCapability,
-    },
     Error {
         code: Option<String>,
         message: String,
+    },
+    Connection {
+        socket: PendingUnixSocket,
+        capability: agentos_driver_tokio::capability::PendingCapability,
     },
 }
 
@@ -2930,6 +3456,7 @@ pub(crate) struct ActiveUnixSocket {
 pub(crate) struct ActiveUnixListener {
     pub(crate) listener: Option<UnixListener>,
     pub(crate) bound_socket: Option<Socket>,
+    pub(crate) virtual_sender: Option<AsyncCompletionSender<UnixListenerEvent>>,
     pub(crate) events: Arc<Mutex<AsyncCompletionReceiver<UnixListenerEvent>>>,
     pub(crate) event_pusher: Arc<SocketReadinessSubscribers>,
     pub(crate) readiness_registration: SocketReadinessRegistration,
@@ -2939,9 +3466,9 @@ pub(crate) struct ActiveUnixListener {
     pub(crate) path: String,
     pub(crate) abstract_path_hex: Option<String>,
     pub(crate) registry_binding_id: String,
-    pub(crate) private_host_path: Option<PathBuf>,
     pub(crate) guest_node_path: Option<String>,
     pub(crate) backlog: usize,
+    pub(crate) accept_queue_capacity: usize,
     pub(crate) active_connection_ids: Arc<Mutex<BTreeSet<String>>>,
     pub(crate) description_handles: Arc<()>,
     pub(crate) description_lease: Arc<SocketDescriptionLease>,
@@ -3162,13 +3689,13 @@ pub(crate) enum ActiveExecution {
     #[cfg(feature = "python-v8-pyodide")]
     Python(PythonExecution),
     Wasm(Box<WasmExecution>),
-    Binding(BindingExecution),
+    HostFunction(HostFunctionExecution),
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct BindingExecution {
+pub(crate) struct HostFunctionExecution {
     pub(crate) cancelled: Arc<AtomicBool>,
-    /// Durable kernel stop state. Binding callbacks may finish trusted host
+    /// Durable kernel stop state. HostFunction callbacks may finish trusted host
     /// work already in flight, but no adapter event is exposed to the process
     /// while it is stopped.
     pub(crate) paused: Arc<AtomicBool>,
@@ -3186,7 +3713,7 @@ pub(crate) struct BindingExecution {
     pub(crate) descendant_output_ownership: DescendantOutputOwnership,
 }
 
-impl Default for BindingExecution {
+impl Default for HostFunctionExecution {
     fn default() -> Self {
         Self::with_event_notify(
             Arc::new(Notify::new()),
@@ -3195,7 +3722,7 @@ impl Default for BindingExecution {
     }
 }
 
-impl BindingExecution {
+impl HostFunctionExecution {
     pub(crate) fn with_event_notify(event_notify: Arc<Notify>, event_capacity: usize) -> Self {
         Self {
             cancelled: Arc::new(AtomicBool::new(false)),
@@ -3351,6 +3878,8 @@ pub(crate) struct ProcessEventEnvelope {
     pub(crate) connection_id: String,
     pub(crate) session_id: String,
     pub(crate) vm_id: String,
+    /// Exact descendant locator relative to `process_id`. Empty targets the root.
+    pub(crate) child_path: Vec<String>,
     pub(crate) process_id: String,
     pub(crate) event: ActiveExecutionEvent,
 }
@@ -3398,14 +3927,14 @@ fn wasm_captured_output_limit(limits: &crate::limits::VmLimits) -> usize {
 }
 
 impl ExecutionAdapterPolicy {
-    pub(crate) const BINDING: Self = Self {
+    pub(crate) const HOST_FUNCTION: Self = Self {
         accepts_inherited_host_network_fds: false,
         materializes_direct_runtime_stdio: false,
         canonicalizes_runtime_stdin: false,
         supports_prepared_in_place_exec: false,
         captured_output_limit: javascript_captured_output_limit,
         captured_output_limit_setting: "limits.jsRuntime.capturedOutputLimitBytes",
-        kernel_driver_command: BINDING_DRIVER_NAME,
+        kernel_driver_command: HOST_FUNCTION_DRIVER_NAME,
         forwards_kernel_stdin_rpc: false,
         encodes_inherited_fd_bootstrap: false,
         uses_javascript_entrypoint_projection: false,
@@ -3462,7 +3991,7 @@ pub(crate) struct ResolvedChildProcessExecution {
     pub(crate) guest_cwd: String,
     pub(crate) host_cwd: PathBuf,
     pub(crate) wasm_permission_tier: Option<WasmPermissionTier>,
-    pub(crate) binding_command: bool,
+    pub(crate) host_function_command: bool,
     pub(crate) adapter_policy: ExecutionAdapterPolicy,
 }
 
@@ -3986,5 +4515,48 @@ mod socket_readiness_registry_tests {
 
         drop(parent);
         assert!(subscribers.targets().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod execution_startup_admission_tests {
+    use super::*;
+    use std::future::Future;
+    use std::task::{Context, Poll, Waker};
+
+    #[test]
+    fn startup_queue_is_bounded_fifo_and_cancellation_releases_capacity() {
+        let runtime = agentos_driver_tokio::TokioDriver::process(
+            &agentos_driver_tokio::DriverConfig::default(),
+        )
+        .expect("runtime");
+        let engines = VmExecutionEngines::new(
+            "startup-admission".into(),
+            runtime.handle(),
+            Arc::new(Notify::new()),
+        );
+        let mut cx = Context::from_waker(Waker::noop());
+        let mut first = Box::pin(engines.admit_startup(Some(2)));
+        let first = match first.as_mut().poll(&mut cx) {
+            Poll::Ready(Ok(permit)) => permit,
+            _ => panic!("first startup must be admitted"),
+        };
+        let mut queued = Box::pin(engines.admit_startup(Some(2)));
+        assert!(queued.as_mut().poll(&mut cx).is_pending());
+        let mut excess = Box::pin(engines.admit_startup(Some(2)));
+        match excess.as_mut().poll(&mut cx) {
+            Poll::Ready(Err(error)) => assert!(error.to_string().contains("maxProcesses")),
+            _ => panic!("queue overflow must fail immediately"),
+        }
+        drop(queued);
+        let mut replacement = Box::pin(engines.admit_startup(Some(2)));
+        assert!(replacement.as_mut().poll(&mut cx).is_pending());
+        drop(first);
+        let replacement = match replacement.as_mut().poll(&mut cx) {
+            Poll::Ready(Ok(permit)) => permit,
+            _ => panic!("queued startup must run after prior startup releases"),
+        };
+        drop(replacement);
+        assert_eq!(engines.inner.pending_startups.get(), 0);
     }
 }

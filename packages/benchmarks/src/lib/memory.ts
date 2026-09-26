@@ -62,12 +62,19 @@ export interface ProcessTreeMemorySnapshot extends ProcessMemorySnapshot {
 }
 
 /** Read orthogonal Linux process-memory counters without conflating VIRT/RSS/PSS. */
-export function readProcessMemorySnapshot(pid: number): ProcessMemorySnapshot {
-	const status = readFileSync(`/proc/${pid}/status`, "utf8");
-	const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+export function readProcessMemorySnapshot(
+	pid: number,
+	readProcFile: (path: string) => string = (path) => readFileSync(path, "utf8"),
+): ProcessMemorySnapshot {
+	const status = readProcFile(`/proc/${pid}/status`);
+	const stat = readProcFile(`/proc/${pid}/stat`);
+	let rssBytes = readKibibytes(status, "VmRSS");
 	let pssBytes = 0;
 	try {
-		const rollup = readFileSync(`/proc/${pid}/smaps_rollup`, "utf8");
+		const rollup = readProcFile(`/proc/${pid}/smaps_rollup`);
+		// status VmRSS uses approximate counters. Pair resident and proportional
+		// memory from one page walk so stale VmRSS cannot make PSS exceed RSS.
+		rssBytes = readKibibytes(rollup, "Rss");
 		pssBytes = readKibibytes(rollup, "Pss");
 	} catch {
 		// Some hardened Linux hosts deny smaps_rollup. Preserve an explicit zero.
@@ -81,7 +88,7 @@ export function readProcessMemorySnapshot(pid: number): ProcessMemorySnapshot {
 		.trim()
 		.split(/\s+/);
 	return {
-		rssBytes: readKibibytes(status, "VmRSS"),
+		rssBytes,
 		peakRssBytes: readKibibytes(status, "VmHWM"),
 		pssBytes,
 		virtualBytes: readKibibytes(status, "VmSize"),

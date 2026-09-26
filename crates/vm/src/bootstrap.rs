@@ -8,7 +8,7 @@ use agentos_vm_kernel::root_fs::{
     FilesystemEntry as KernelFilesystemEntry, RootFilesystemSnapshot,
 };
 use agentos_vm_kernel::vfs::VirtualFileSystem;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) fn root_snapshot_entry(entry: &KernelFilesystemEntry) -> RootFilesystemEntry {
     crate::core::root_snapshot_entry(entry)
@@ -45,10 +45,29 @@ pub(crate) struct KernelCommandInventory {
 /// Enumerate legacy command mounts from the live kernel VFS for one immediate
 /// registration/PATH rebuild. Nothing returned here is retained as pathname
 /// authority; launch resolution revalidates the selected file in the kernel.
-pub(crate) fn discover_kernel_commands(kernel: &mut SidecarKernel) -> KernelCommandInventory {
-    let mut inventory = KernelCommandInventory::default();
-    let Ok(command_roots) = kernel.read_dir("/__agentos/commands") else {
-        return inventory;
+pub(crate) fn discover_kernel_commands(
+    kernel: &mut SidecarKernel,
+) -> Result<KernelCommandInventory, VmError> {
+    let commands = discover_command_guest_paths(kernel)?;
+    Ok(KernelCommandInventory {
+        names: commands.keys().cloned().collect(),
+        search_roots: commands
+            .values()
+            .filter_map(|path| path.rsplit_once('/').map(|(parent, _)| parent.to_owned()))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect(),
+    })
+}
+
+pub(crate) fn discover_command_guest_paths(
+    kernel: &mut SidecarKernel,
+) -> Result<BTreeMap<String, String>, VmError> {
+    let mut command_guest_paths = BTreeMap::new();
+    let command_roots = match kernel.read_dir_for_operator("/__agentos/commands") {
+        Ok(roots) => roots,
+        Err(error) if error.code() == "ENOENT" => return Ok(command_guest_paths),
+        Err(error) => return Err(crate::service::kernel_error(error)),
     };
 
     let mut ordered_roots = command_roots
@@ -59,34 +78,26 @@ pub(crate) fn discover_kernel_commands(kernel: &mut SidecarKernel) -> KernelComm
 
     for root in ordered_roots {
         let guest_root = format!("/__agentos/commands/{root}");
-        let Ok(entries) = kernel.read_dir(&guest_root) else {
-            continue;
-        };
+        let entries = kernel
+            .read_dir_for_operator(&guest_root)
+            .map_err(crate::service::kernel_error)?;
 
-        let mut root_has_commands = false;
         for entry in entries {
-            if entry.starts_with('.') || entry.contains('/') {
+            if entry.starts_with('.') || command_guest_paths.contains_key(&entry) {
                 continue;
             }
-            let candidate = format!("{guest_root}/{entry}");
-            let Some(canonical) = kernel.realpath(&candidate).ok() else {
-                continue;
-            };
-            let Some(stat) = kernel.lstat(&canonical).ok() else {
-                continue;
-            };
-            if stat.is_directory || stat.is_symbolic_link {
+            let guest_path = format!("{guest_root}/{entry}");
+            let stat = kernel
+                .stat_for_operator(&guest_path)
+                .map_err(crate::service::kernel_error)?;
+            if stat.is_directory {
                 continue;
             }
-            root_has_commands = true;
-            inventory.names.insert(entry);
-        }
-        if root_has_commands {
-            inventory.search_roots.push(guest_root);
+            command_guest_paths.insert(entry, guest_path);
         }
     }
 
-    inventory
+    Ok(command_guest_paths)
 }
 
 #[cfg(test)]
@@ -125,7 +136,7 @@ mod tests {
             )
             .expect("write hidden entry");
 
-        let discovered = discover_kernel_commands(&mut kernel);
+        let discovered = discover_kernel_commands(&mut kernel).unwrap();
         assert_eq!(discovered.names, BTreeSet::from([String::from("alpha")]));
         assert_eq!(
             discovered.search_roots,
@@ -136,7 +147,7 @@ mod tests {
             .remove_file("/__agentos/commands/001/alpha")
             .expect("remove command after initial discovery");
         assert_eq!(
-            discover_kernel_commands(&mut kernel),
+            discover_kernel_commands(&mut kernel).unwrap(),
             KernelCommandInventory::default(),
             "transient discovery must not retain deleted commands or roots"
         );

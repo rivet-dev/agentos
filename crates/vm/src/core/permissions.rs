@@ -25,7 +25,7 @@ pub fn deny_all_policy() -> vm_config::PermissionsPolicy {
         env: Some(vm_config::PatternPermissionScope::Mode(
             vm_config::PermissionMode::Deny,
         )),
-        binding: Some(vm_config::PatternPermissionScope::Mode(
+        host_function: Some(vm_config::PatternPermissionScope::Mode(
             vm_config::PermissionMode::Deny,
         )),
     }
@@ -48,10 +48,150 @@ pub fn allow_all_policy() -> vm_config::PermissionsPolicy {
         env: Some(vm_config::PatternPermissionScope::Mode(
             vm_config::PermissionMode::Allow,
         )),
-        binding: Some(vm_config::PatternPermissionScope::Mode(
+        host_function: Some(vm_config::PatternPermissionScope::Mode(
             vm_config::PermissionMode::Allow,
         )),
     }
+}
+
+/// The policy for every scope a client leaves out. The guest behaves like a
+/// sandboxed machine: its virtual filesystem, processes, environment, host
+/// functions, listeners, and loopback networking work. External network access
+/// is denied until the client grants it explicitly.
+/// The host filesystem is reachable only through mounts the client configures.
+pub fn default_permissions_policy() -> vm_config::PermissionsPolicy {
+    let allow = || {
+        Some(vm_config::PatternPermissionScope::Mode(
+            vm_config::PermissionMode::Allow,
+        ))
+    };
+    vm_config::PermissionsPolicy {
+        fs: Some(vm_config::FsPermissionScope::Mode(
+            vm_config::PermissionMode::Allow,
+        )),
+        network: Some(vm_config::PatternPermissionScope::Rules(
+            vm_config::PatternPermissionRuleSet {
+                default: Some(vm_config::PermissionMode::Deny),
+                rules: vec![
+                    vm_config::PatternPermissionRule {
+                        mode: vm_config::PermissionMode::Allow,
+                        operations: vec![String::from("listen")],
+                        patterns: vec![String::from("tcp://**"), String::from("unix:**")],
+                    },
+                    vm_config::PatternPermissionRule {
+                        mode: vm_config::PermissionMode::Allow,
+                        operations: vec![String::from("http")],
+                        patterns: vec![
+                            String::from("tcp://127.0.0.1:*"),
+                            String::from("tcp://localhost:*"),
+                            String::from("tcp://::1:*"),
+                            String::from("unix:**"),
+                        ],
+                    },
+                ],
+            },
+        )),
+        child_process: allow(),
+        process: allow(),
+        env: allow(),
+        host_function: allow(),
+    }
+}
+
+/// Resolve a client's policy: each scope it sets replaces the default for that
+/// scope, and every scope it leaves out keeps the default. No policy at all
+/// means the default policy.
+pub fn resolve_permissions_policy(
+    requested: Option<&vm_config::PermissionsPolicy>,
+) -> vm_config::PermissionsPolicy {
+    let defaults = default_permissions_policy();
+    let Some(requested) = requested else {
+        return defaults;
+    };
+    vm_config::PermissionsPolicy {
+        fs: requested.fs.clone().or(defaults.fs),
+        network: requested.network.clone().or(defaults.network),
+        child_process: requested.child_process.clone().or(defaults.child_process),
+        process: requested.process.clone().or(defaults.process),
+        env: requested.env.clone().or(defaults.env),
+        host_function: requested.host_function.clone().or(defaults.host_function),
+    }
+}
+
+/// Canonical agentOS VM policy used whenever an embedded or hosted client
+/// omits permission fields. All local VM capabilities are enabled, while
+/// outbound networking starts with the hosted LLM endpoint allowlist.
+pub fn agentos_default_permissions_policy() -> vm_config::PermissionsPolicy {
+    const EGRESS_HOSTS: &[&str] = &[
+        "api.anthropic.com",
+        "api.openai.com",
+        "generativelanguage.googleapis.com",
+        "openrouter.ai",
+    ];
+    let patterns = EGRESS_HOSTS
+        .iter()
+        .flat_map(|host| [format!("dns://{host}"), format!("tcp://{host}:*")])
+        .collect();
+    vm_config::PermissionsPolicy {
+        fs: Some(vm_config::FsPermissionScope::Mode(
+            vm_config::PermissionMode::Allow,
+        )),
+        network: Some(vm_config::PatternPermissionScope::Rules(
+            vm_config::PatternPermissionRuleSet {
+                default: Some(vm_config::PermissionMode::Deny),
+                rules: vec![vm_config::PatternPermissionRule {
+                    mode: vm_config::PermissionMode::Allow,
+                    operations: vec![String::from("*")],
+                    patterns,
+                }],
+            },
+        )),
+        child_process: Some(vm_config::PatternPermissionScope::Mode(
+            vm_config::PermissionMode::Allow,
+        )),
+        process: Some(vm_config::PatternPermissionScope::Mode(
+            vm_config::PermissionMode::Allow,
+        )),
+        env: Some(vm_config::PatternPermissionScope::Mode(
+            vm_config::PermissionMode::Allow,
+        )),
+        host_function: Some(vm_config::PatternPermissionScope::Mode(
+            vm_config::PermissionMode::Allow,
+        )),
+    }
+}
+
+/// Applies an optional field-by-field policy over the selected profile. This
+/// gives explicit partial permission objects the same defaults in every client.
+pub fn resolve_profile_permissions_policy(
+    profile: vm_config::VmDefaultsProfile,
+    overrides: Option<vm_config::PermissionsPolicy>,
+) -> vm_config::PermissionsPolicy {
+    let mut resolved = match profile {
+        vm_config::VmDefaultsProfile::Secure => default_permissions_policy(),
+        vm_config::VmDefaultsProfile::AgentOs => agentos_default_permissions_policy(),
+    };
+    if let Some(overrides) = overrides {
+        if overrides.fs.is_some() {
+            resolved.fs = overrides.fs;
+        }
+        if overrides.network.is_some() {
+            resolved.network = overrides.network;
+        }
+        if overrides.child_process.is_some() {
+            resolved.child_process = overrides.child_process;
+        }
+        if overrides.process.is_some() {
+            resolved.process = overrides.process;
+        }
+        if overrides.env.is_some() {
+            resolved.env = overrides.env;
+        }
+        if overrides.host_function.is_some() {
+            resolved.host_function = overrides.host_function;
+        }
+    }
+    resolved
 }
 
 pub fn evaluate_permissions_policy(
@@ -86,8 +226,8 @@ pub fn evaluate_permissions_policy(
             capability_operation(capability, domain),
             resource,
         ),
-        "binding" => evaluate_pattern_permission_scope(
-            permissions.binding.as_ref(),
+        "hostFunction" => evaluate_pattern_permission_scope(
+            permissions.host_function.as_ref(),
             capability_operation(capability, domain),
             resource,
         ),
@@ -112,7 +252,7 @@ pub fn evaluate_matching_pattern_permission_policy(
         "child_process" => permissions.child_process.as_ref(),
         "process" => permissions.process.as_ref(),
         "env" => permissions.env.as_ref(),
-        "binding" => permissions.binding.as_ref(),
+        "hostFunction" => permissions.host_function.as_ref(),
         _ => return None,
     }?;
     let operation = capability_operation(capability, domain);
@@ -219,8 +359,8 @@ pub fn validate_permissions_policy(
     if let Some(scope) = permissions.env.as_ref() {
         validate_pattern_permission_scope("env", scope)?;
     }
-    if let Some(scope) = permissions.binding.as_ref() {
-        validate_pattern_permission_scope("binding", scope)?;
+    if let Some(scope) = permissions.host_function.as_ref() {
+        validate_pattern_permission_scope("hostFunction", scope)?;
     }
     Ok(())
 }
@@ -415,6 +555,150 @@ pub fn environment_permission_capability(operation: EnvironmentOperation) -> &'s
 mod tests {
     use super::*;
 
+    fn allowed(
+        policy: &vm_config::PermissionsPolicy,
+        domain: &str,
+        capability: &str,
+        resource: &str,
+    ) -> bool {
+        evaluate_permissions_policy(policy, domain, capability, Some(resource))
+            == vm_config::PermissionMode::Allow
+    }
+
+    #[test]
+    fn default_creation_profile_allows_local_vm_operations_and_denies_external_network() {
+        let profile = vm_config::CreateVmConfig::default().defaults_profile();
+        let policy = resolve_profile_permissions_policy(profile, None);
+
+        assert!(allowed(&policy, "fs", "fs.read", "/workspace/a"));
+        assert!(allowed(
+            &policy,
+            "child_process",
+            "child_process.spawn",
+            "node"
+        ));
+        assert!(allowed(&policy, "env", "env.read", "HOME"));
+        assert!(allowed(
+            &policy,
+            "hostFunction",
+            "hostFunction.invoke",
+            "tools:weather"
+        ));
+        assert!(!allowed(
+            &policy,
+            "network",
+            "network.http",
+            "tcp://example.com:443"
+        ));
+        assert!(allowed(
+            &policy,
+            "network",
+            "network.listen",
+            "tcp://127.0.0.1:3000"
+        ));
+        assert!(allowed(
+            &policy,
+            "network",
+            "network.http",
+            "tcp://127.0.0.1:3000"
+        ));
+        assert!(!allowed(
+            &policy,
+            "network",
+            "network.dns",
+            "dns://api.anthropic.com"
+        ));
+        assert!(!allowed(
+            &policy,
+            "network",
+            "network.http",
+            "tcp://api.anthropic.com:443"
+        ));
+    }
+
+    #[test]
+    fn requested_scopes_replace_defaults_and_omitted_scopes_keep_them() {
+        let requested = vm_config::PermissionsPolicy {
+            fs: None,
+            network: Some(vm_config::PatternPermissionScope::Mode(
+                vm_config::PermissionMode::Allow,
+            )),
+            child_process: Some(vm_config::PatternPermissionScope::Mode(
+                vm_config::PermissionMode::Deny,
+            )),
+            process: None,
+            env: None,
+            host_function: None,
+        };
+        let policy = resolve_permissions_policy(Some(&requested));
+
+        assert!(allowed(
+            &policy,
+            "network",
+            "network.http",
+            "tcp://example.com:443"
+        ));
+        assert!(!allowed(
+            &policy,
+            "child_process",
+            "child_process.spawn",
+            "node"
+        ));
+        assert!(allowed(&policy, "fs", "fs.write", "/workspace/a"));
+        assert!(allowed(&policy, "env", "env.read", "HOME"));
+    }
+
+    #[test]
+    fn agentos_profile_materializes_defaults_and_merges_partial_overrides() {
+        let defaults =
+            resolve_profile_permissions_policy(vm_config::VmDefaultsProfile::AgentOs, None);
+        assert_eq!(
+            defaults.child_process,
+            Some(vm_config::PatternPermissionScope::Mode(
+                vm_config::PermissionMode::Allow
+            ))
+        );
+        let Some(vm_config::PatternPermissionScope::Rules(network)) = &defaults.network else {
+            panic!("agentOS network default must be an allowlist");
+        };
+        assert_eq!(network.default, Some(vm_config::PermissionMode::Deny));
+        assert_eq!(network.rules.len(), 1);
+        for expected in [
+            "dns://api.anthropic.com",
+            "tcp://api.anthropic.com:*",
+            "dns://api.openai.com",
+            "dns://generativelanguage.googleapis.com",
+            "dns://openrouter.ai",
+        ] {
+            assert!(network.rules[0]
+                .patterns
+                .iter()
+                .any(|value| value == expected));
+        }
+
+        let overridden = resolve_profile_permissions_policy(
+            vm_config::VmDefaultsProfile::AgentOs,
+            Some(vm_config::PermissionsPolicy {
+                fs: None,
+                network: Some(vm_config::PatternPermissionScope::Mode(
+                    vm_config::PermissionMode::Deny,
+                )),
+                child_process: None,
+                process: None,
+                env: None,
+                host_function: None,
+            }),
+        );
+        assert_eq!(overridden.fs, defaults.fs);
+        assert_eq!(overridden.child_process, defaults.child_process);
+        assert_eq!(
+            overridden.network,
+            Some(vm_config::PatternPermissionScope::Mode(
+                vm_config::PermissionMode::Deny
+            ))
+        );
+    }
+
     #[test]
     fn permissions_default_to_deny() {
         let policy = vm_config::PermissionsPolicy {
@@ -423,7 +707,7 @@ mod tests {
             child_process: None,
             process: None,
             env: None,
-            binding: None,
+            host_function: None,
         };
 
         assert_eq!(
@@ -440,7 +724,7 @@ mod tests {
             child_process: None,
             process: None,
             env: None,
-            binding: None,
+            host_function: None,
         };
 
         for (domain, capability, resource) in [
@@ -449,7 +733,7 @@ mod tests {
             ("child_process", "child_process.spawn", "sh"),
             ("process", "process.kill", "123"),
             ("env", "env.read", "TOKEN"),
-            ("binding", "binding.call", "shell"),
+            ("hostFunction", "hostFunction.invoke", "shell"),
         ] {
             assert_eq!(
                 evaluate_permissions_policy(&policy, domain, capability, Some(resource)),
@@ -476,7 +760,7 @@ mod tests {
             child_process: None,
             process: None,
             env: None,
-            binding: None,
+            host_function: None,
         };
 
         assert_eq!(
@@ -529,7 +813,7 @@ mod tests {
             env: Some(vm_config::PatternPermissionScope::Mode(
                 vm_config::PermissionMode::Ask,
             )),
-            binding: Some(vm_config::PatternPermissionScope::Mode(
+            host_function: Some(vm_config::PatternPermissionScope::Mode(
                 vm_config::PermissionMode::Ask,
             )),
         };
@@ -540,7 +824,7 @@ mod tests {
             ("child_process", "child_process.spawn", "sh"),
             ("process", "process.kill", "123"),
             ("env", "env.read", "TOKEN"),
-            ("binding", "binding.call", "shell"),
+            ("hostFunction", "hostFunction.invoke", "shell"),
         ] {
             let mode = evaluate_permissions_policy(&policy, domain, capability, Some(resource));
             assert_eq!(
@@ -577,7 +861,7 @@ mod tests {
             env: Some(vm_config::PatternPermissionScope::Mode(
                 vm_config::PermissionMode::Ask,
             )),
-            binding: None,
+            host_function: None,
         });
 
         assert!(
@@ -642,7 +926,7 @@ mod tests {
             child_process: None,
             process: None,
             env: None,
-            binding: None,
+            host_function: None,
         };
 
         let permissions = permissions_from_policy(policy);
@@ -679,7 +963,7 @@ mod tests {
             child_process: None,
             process: None,
             env: None,
-            binding: None,
+            host_function: None,
         });
         assert!(unrestricted.filesystem.is_allow());
         assert!(unrestricted.filesystem_unrestricted);
@@ -695,7 +979,7 @@ mod tests {
             child_process: None,
             process: None,
             env: None,
-            binding: None,
+            host_function: None,
         });
         assert!(!rule_based.filesystem.is_allow());
         assert!(!rule_based.filesystem_unrestricted);
@@ -725,7 +1009,7 @@ mod tests {
             child_process: None,
             process: None,
             env: None,
-            binding: None,
+            host_function: None,
         };
 
         assert_eq!(
@@ -751,7 +1035,7 @@ mod tests {
             child_process: None,
             process: None,
             env: None,
-            binding: None,
+            host_function: None,
         };
 
         let error = validate_permissions_policy(&policy).expect_err("policy should be invalid");

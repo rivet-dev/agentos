@@ -228,7 +228,7 @@ export type ProcessPermissions =
 export type EnvPermissions =
 	| PermissionMode
 	| RulePermissions<PatternPermissionRule>;
-export type BindingPermissions =
+export type HostFunctionPermissions =
 	| PermissionMode
 	| RulePermissions<PatternPermissionRule>;
 
@@ -330,45 +330,30 @@ export interface Permissions {
 	childProcess?: ChildProcessPermissions;
 	process?: ProcessPermissions;
 	env?: EnvPermissions;
-	binding?: BindingPermissions;
-}
-
-/** A worked example shown alongside a registered binding. */
-export interface BindingExample {
-	/** What this example demonstrates. */
-	description: string;
-	/** Example input matching the binding's input schema. */
-	input: unknown;
+	hostFunction?: HostFunctionPermissions;
 }
 
 /**
- * A host-side binding that guest code can invoke as a shell command. The guest
- * runs the binding by name and the invocation round-trips back to the host JS
- * `handler`, whose return value is passed back to the guest. Bindings never run
+ * A host-side function that guest code can invoke as a shell command. The guest
+ * runs the host function by name and the invocation round-trips back to the host JS
+ * `handler`, whose return value is passed back to the guest. Host functions never run
  * inside the guest: they execute on the host, so they are the bridge for giving
  * sandboxed guest code controlled, named capabilities (the kind AI agents call
  * as tools).
  */
-export interface BindingDefinition {
-	/** Human-readable description of what the binding does. */
-	description: string;
-	/** JSON Schema describing the binding's input. */
-	inputSchema: object;
-	/** Abort the invocation after this many milliseconds. */
-	timeoutMs?: number;
-	/** Worked examples shown alongside the binding. */
-	examples?: BindingExample[];
-	/**
-	 * Extra command names the guest can use to invoke this binding, in addition
-	 * to the key it is registered under.
-	 */
-	commandAliases?: string[];
-	/**
-	 * Host handler invoked when guest code runs the binding. Receives the parsed
-	 * input and returns a JSON-serializable result delivered back to the guest.
-	 */
-	handler: (input: unknown) => unknown | Promise<unknown>;
-}
+import {
+	type HostFunctionCollections,
+	hostFunctionDescription,
+	resolveHostFunctions,
+} from "./host-functions.js";
+import { zodToJsonSchema } from "./host-functions-zod.js";
+
+export type {
+	HostFunction,
+	HostFunctionCollection,
+	HostFunctionCollections,
+	HostFunctionExample,
+} from "./host-functions.js";
 
 export interface ResourceBudgets {
 	maxOutputBytes?: number;
@@ -524,7 +509,7 @@ export interface Kernel extends KernelInterface {
 		streamId?: string;
 		maxBytes?: number;
 	}): Promise<string>;
-	registerBindings(bindings: Record<string, BindingDefinition>): Promise<void>;
+	registerHostFunctions(hostFunctions: HostFunctionCollections): Promise<void>;
 	getResourceSnapshot(): Promise<{
 		runningProcesses: number;
 		stoppedProcesses: number;
@@ -577,11 +562,17 @@ export interface Kernel extends KernelInterface {
 	readonly zombieTimerCount: number;
 }
 
-export interface BindingTree {
-	[key: string]: BindingFunction | BindingTree;
+export interface HostFunctionTree {
+	[key: string]: HostFunctionHandler | HostFunctionTree;
 }
 
-export type BindingFunction = (...args: unknown[]) => unknown;
+export type HostFunctionHandler = (...args: unknown[]) => unknown;
+
+/** The description the agent sees, taken from the input schema. */
+function jsonSchemaDescription(inputSchema: object): string {
+	const description = (inputSchema as { description?: unknown }).description;
+	return typeof description === "string" ? description : "";
+}
 
 export interface ModuleAccessOptions {
 	cwd?: string;
@@ -607,7 +598,7 @@ export interface NodeRuntimeOptions {
 	permissions?: Partial<Permissions>;
 	memoryLimit?: number;
 	moduleAccessPaths?: string[];
-	bindings?: BindingTree;
+	hostFunctions?: HostFunctionTree;
 	loopbackExemptPorts?: number[];
 	moduleAccessCwd?: string;
 	packageRoots?: Array<{ hostPath: string; vmPath: string }>;
@@ -1368,7 +1359,7 @@ function normalizePatternPermissionScope(
 		| ChildProcessPermissions
 		| ProcessPermissions
 		| EnvPermissions
-		| BindingPermissions
+		| HostFunctionPermissions
 		| undefined,
 ): PermissionsPolicy["network"] {
 	if (scope === undefined || typeof scope === "string") {
@@ -1396,7 +1387,7 @@ function normalizePermissionsPolicy(
 		childProcess: normalizePatternPermissionScope(permissions.childProcess),
 		process: normalizePatternPermissionScope(permissions.process),
 		env: normalizePatternPermissionScope(permissions.env),
-		binding: normalizePatternPermissionScope(permissions.binding),
+		hostFunction: normalizePatternPermissionScope(permissions.hostFunction),
 	};
 }
 
@@ -1743,8 +1734,6 @@ export const WASMVM_COMMANDS = Object.freeze([
 	"users",
 	"uptime",
 	"stty",
-	"codex",
-	"codex-exec",
 ]) as readonly string[];
 
 export type PermissionTier = "full" | "read-write" | "read-only" | "isolated";
@@ -1760,8 +1749,6 @@ export const DEFAULT_FIRST_PARTY_TIERS: Readonly<
 	nice: "full",
 	nohup: "full",
 	stdbuf: "full",
-	codex: "full",
-	"codex-exec": "full",
 	git: "full",
 	"git-remote-http": "full",
 	"git-remote-https": "full",
@@ -2794,14 +2781,14 @@ class NativeKernel implements Kernel {
 		number
 	>();
 	private readonly loopbackExemptPorts: number[];
-	// Bindings registered with the VM, keyed by the callback key the sidecar
-	// sends back on a host_callback request (the binding name). Installed lazily
-	// on the first registerBindings call.
-	private readonly bindingHandlers = new Map<
+	// Host functions registered with the VM, keyed by the callback key the sidecar
+	// sends back on a host_callback request (the host-function name). Installed lazily
+	// on the first registerHostFunctions call.
+	private readonly hostFunctionHandlers = new Map<
 		string,
 		(input: unknown) => unknown | Promise<unknown>
 	>();
-	private bindingRequestHandlerInstalled = false;
+	private hostFunctionRequestHandlerInstalled = false;
 
 	constructor(
 		private readonly options: {
@@ -3106,8 +3093,8 @@ class NativeKernel implements Kernel {
 		return this.proxy!.vmFetch(request);
 	}
 
-	async registerBindings(
-		bindings: Record<string, BindingDefinition>,
+	async registerHostFunctions(
+		hostFunctions: HostFunctionCollections,
 	): Promise<void> {
 		await this.ensureReady();
 		if (!this.client || !this.session || !this.vm) {
@@ -3117,73 +3104,72 @@ class NativeKernel implements Kernel {
 		// Install the dispatcher once. It routes every host_callback request the
 		// sidecar emits to the matching registered handler and replies with a
 		// host_callback_result frame.
-		if (!this.bindingRequestHandlerInstalled) {
+		if (!this.hostFunctionRequestHandlerInstalled) {
 			this.client.setSidecarRequestHandler((request: SidecarRequestFrame) =>
-				this.dispatchBindingRequest(request),
+				this.dispatchHostFunctionRequest(request),
 			);
-			this.bindingRequestHandlerInstalled = true;
+			this.hostFunctionRequestHandlerInstalled = true;
 		}
 
-		for (const [name, binding] of Object.entries(bindings)) {
-			this.bindingHandlers.set(name, binding.handler);
-			const definition: SidecarRegisteredHostCallbackDefinition = {
-				description: binding.description,
-				inputSchema: binding.inputSchema,
-				...(binding.timeoutMs !== undefined
-					? { timeoutMs: binding.timeoutMs }
-					: {}),
-				...(binding.examples && binding.examples.length > 0
-					? {
-							examples: binding.examples.map((example) => ({
-								description: example.description,
-								input: example.input,
-							})),
-						}
-					: {}),
-			};
-			// Register each binding as its own single-callback binding collection so the guest
-			// can invoke it directly by name (or by any caller-provided alias). The
-			// sidecar exposes the binding collection name as a guest command; the single
-			// callback carries the binding's schema and gates the `binding`
-			// permission.
-			await this.client.registerHostCallbacks(this.session, this.vm, {
-				name,
-				description: binding.description,
-				commandAliases: [name, ...(binding.commandAliases ?? [])],
-				callbacks: { [name]: definition },
-			});
-			this.commands.set(name, "wasmvm");
-			for (const alias of binding.commandAliases ?? []) {
-				this.commands.set(alias, "wasmvm");
+		for (const collection of resolveHostFunctions(hostFunctions)) {
+			const callbacks: Record<string, SidecarRegisteredHostCallbackDefinition> =
+				{};
+			for (const [functionName, definition] of Object.entries(
+				collection.functions,
+			)) {
+				this.hostFunctionHandlers.set(
+					`${collection.name}:${functionName}`,
+					definition.execute,
+				);
+				callbacks[functionName] = {
+					description: hostFunctionDescription(definition),
+					inputSchema: zodToJsonSchema(definition.inputSchema) as object,
+					...(definition.timeout !== undefined
+						? { timeoutMs: definition.timeout }
+						: {}),
+					...(definition.examples && definition.examples.length > 0
+						? {
+								examples: definition.examples.map((example) => ({
+									description: example.description,
+									input: example.input,
+								})),
+							}
+						: {}),
+				};
 			}
+			// One registration per collection, exposed to the guest as the command
+			// `agentos-<collection>` with each function as a subcommand. This is the
+			// same shape `AgentOs.create()` registers.
+			const command = `agentos-${collection.name}`;
+			await this.client.registerHostCallbacks(this.session, this.vm, {
+				name: collection.name,
+				description: "",
+				commandAliases: [command],
+				registryCommandAliases: ["agentos"],
+				callbacks,
+			});
+			this.commands.set(command, "wasmvm");
 		}
 	}
 
-	private async dispatchBindingRequest(
+	private async dispatchHostFunctionRequest(
 		request: SidecarRequestFrame,
 	): Promise<SidecarResponsePayload> {
 		const { payload } = request;
 		if (payload.type !== "host_callback") {
 			throw new Error(
-				`unsupported sidecar request for bindings: ${payload.type}`,
+				`unsupported sidecar request for host functions: ${payload.type}`,
 			);
 		}
-		// Callback keys arrive as `${collection}:${binding}` for collection invocations
-		// and as the bare command name otherwise. The collection and binding name are
-		// the same here, so the registered binding name is the segment after the last
-		// colon (or the whole key when no colon is present).
+		// Callback keys arrive as `<collection>:<function>`, the key each handler
+		// was registered under.
 		const callbackKey = payload.callback_key;
-		const bindingName = callbackKey.includes(":")
-			? callbackKey.slice(callbackKey.lastIndexOf(":") + 1)
-			: callbackKey;
-		const handler =
-			this.bindingHandlers.get(bindingName) ??
-			this.bindingHandlers.get(callbackKey);
+		const handler = this.hostFunctionHandlers.get(callbackKey);
 		if (!handler) {
 			return {
 				type: "host_callback_result",
 				invocation_id: payload.invocation_id,
-				error: `no binding registered for ${callbackKey}`,
+				error: `no host function registered for ${callbackKey}`,
 			};
 		}
 		try {

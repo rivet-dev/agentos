@@ -1,0 +1,39 @@
+---
+title: "Crons & Loops"
+description: "Schedule recurring VM commands with durable RivetKit schedules."
+skill: true
+---
+
+The hosted actor exposes command-only cron actions. RivetKit owns the durable
+schedule and invokes the actor's process execution path when a trigger fires;
+agentOS does not maintain a second scheduler database.
+
+## Schedule a command
+
+<CodeSnippet file="examples/cron/schedule-command.ts" />
+
+## Monitor executions
+
+Subscribe before creating the schedule when the first event matters.
+
+<CodeSnippet file="examples/cron/monitor.ts" region="subscribe" />
+
+`cron.fired` contains either a process handle or a bounded `error` with `code`
+and `message`. A schedule validated against an older configuration revision
+fails with `revision_conflict`; replace the schedule after updating configuration.
+The execution follows the same limits, permissions, and output policy as
+`process.spawn`. Listed jobs use `nextRunAtMs` and `lastRunAtMs` Unix timestamps
+in milliseconds.
+
+## List and cancel schedules
+
+<CodeSnippet file="examples/cron/list-cancel.ts" />
+
+## Heartbeat pattern
+
+Use a small shell command for periodic maintenance or checks.
+
+<CodeSnippet file="examples/cron/heartbeat.ts" region="heartbeat" />
+
+Embedded Core also has an in-process cron helper, but its jobs only run while
+the embedding process and VM are alive.

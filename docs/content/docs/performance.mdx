@@ -1,0 +1,67 @@
+---
+title: "Performance"
+description: "Measure agentOS VM startup latency, memory use, and execution throughput."
+skill: true
+---
+
+Measure the exact workload and hardware used in production. VM startup includes
+Core configuration, filesystem bootstrap, required software reconciliation,
+and the first execution. Hosted startup additionally includes actor resolution.
+
+## Cold-start phases
+
+Record these phases separately:
+
+1. actor resolution and process startup;
+2. required software acquisition;
+3. optional preload warming;
+4. Core and filesystem boot;
+5. first guest instruction.
+
+Required software must finish before readiness. Optional preload work has a
+strict startup deadline and may time out without making the actor unhealthy.
+The process-local content-addressed cache should make a digest hit visible as a
+separate metric from a network download.
+
+## Memory per VM
+
+Use staircase measurement to isolate marginal VM cost:
+
+1. create and destroy one warmup VM;
+2. force garbage collection and record the process-tree RSS baseline;
+3. add VMs one at a time and sample RSS after each settles;
+4. average the step deltas;
+5. dispose every VM and record reclaimed RSS.
+
+Process-tree RSS matters because execution workers may not be represented by
+the embedding Node.js process's `process.memoryUsage()` value.
+
+## Repository benchmarks
+
+From the repository root:
+
+```sh
+./scripts/benchmarks/run-benchmarks.sh
+```
+
+The benchmark script builds an optimized native binary, points the Core client
+at it with `AGENT_OS_SIDECAR_BIN`, and writes JSON results under
+`scripts/benchmarks/results/`.
+
+For a focused run, build first and select the minimal sleep/command workload:
+
+```sh
+pnpm build
+cargo build --release -p agentos-native-sidecar
+export AGENT_OS_SIDECAR_BIN="$PWD/target/release/agentos-native-sidecar"
+
+pnpm exec tsx scripts/benchmarks/coldstart.bench.ts \
+  --workload=sleep --iterations=2000
+pnpm exec tsx --expose-gc scripts/benchmarks/memory.bench.ts \
+  --workload=sleep --count=20
+```
+
+Use a release build and an otherwise idle machine. Percentiles require enough
+samples: roughly 30 for p50, 200 for p95, and 1,000 for p99. Keep the raw JSON
+with any published comparison so changes in hardware, package cache state, and
+workload remain auditable.

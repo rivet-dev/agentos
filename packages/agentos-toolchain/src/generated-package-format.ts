@@ -127,89 +127,6 @@ export function writeTarEntry(bc: bare.ByteCursor, x: TarEntry): void {
     write0(bc, x.linkTarget)
 }
 
-function read1(bc: bare.ByteCursor): ReadonlyMap<string, string> {
-    const len = bare.readUintSafe(bc)
-    const result = new Map<string, string>()
-    for (let i = 0; i < len; i++) {
-        const offset = bc.offset
-        const key = bare.readString(bc)
-        if (result.has(key)) {
-            bc.offset = offset
-            throw new bare.BareError(offset, "duplicated key")
-        }
-        result.set(key, bare.readString(bc))
-    }
-    return result
-}
-
-function write1(bc: bare.ByteCursor, x: ReadonlyMap<string, string>): void {
-    bare.writeUintSafe(bc, x.size)
-    for (const kv of x) {
-        bare.writeString(bc, kv[0])
-        bare.writeString(bc, kv[1])
-    }
-}
-
-function read2(bc: bare.ByteCursor): readonly string[] {
-    const len = bare.readUintSafe(bc)
-    if (len === 0) {
-        return []
-    }
-    const result = [bare.readString(bc)]
-    for (let i = 1; i < len; i++) {
-        result[i] = bare.readString(bc)
-    }
-    return result
-}
-
-function write2(bc: bare.ByteCursor, x: readonly string[]): void {
-    bare.writeUintSafe(bc, x.length)
-    for (let i = 0; i < x.length; i++) {
-        bare.writeString(bc, x[i])
-    }
-}
-
-/**
- * Agent metadata for packages that ship an ACP agent adapter. Present only on
- * agent packages; absence means the package is not launchable as an agent.
- */
-export type AgentBlock = {
-    /**
-     * Name of a command in `PackageManifest.commands` that speaks ACP on
-     * stdio. The sidecar launches this to run the agent.
-     */
-    readonly acpEntrypoint: string
-    /**
-     * True when the package ships a prebuilt SDK snapshot bundle for fast agent
-     * cold starts; see `PackageManifest.snapshotBundlePath`.
-     */
-    readonly snapshot: boolean
-    /**
-     * Environment variables applied to the agent process at launch.
-     */
-    readonly env: ReadonlyMap<string, string>
-    /**
-     * Extra argv appended when launching the ACP entrypoint.
-     */
-    readonly launchArgs: readonly string[]
-}
-
-export function readAgentBlock(bc: bare.ByteCursor): AgentBlock {
-    return {
-        acpEntrypoint: bare.readString(bc),
-        snapshot: bare.readBool(bc),
-        env: read1(bc),
-        launchArgs: read2(bc),
-    }
-}
-
-export function writeAgentBlock(bc: bare.ByteCursor, x: AgentBlock): void {
-    bare.writeString(bc, x.acpEntrypoint)
-    bare.writeBool(bc, x.snapshot)
-    write1(bc, x.env)
-    write2(bc, x.launchArgs)
-}
-
 /**
  * One command projected into the shared `$PATH` dir. All packages link their
  * commands into a single `/opt/agentos/bin`, each as its own virtual symlink
@@ -300,7 +217,30 @@ export function writeProvidesFile(bc: bare.ByteCursor, x: ProvidesFile): void {
     bare.writeString(bc, x.target)
 }
 
-function read3(bc: bare.ByteCursor): readonly ProvidesFile[] {
+function read1(bc: bare.ByteCursor): ReadonlyMap<string, string> {
+    const len = bare.readUintSafe(bc)
+    const result = new Map<string, string>()
+    for (let i = 0; i < len; i++) {
+        const offset = bc.offset
+        const key = bare.readString(bc)
+        if (result.has(key)) {
+            bc.offset = offset
+            throw new bare.BareError(offset, "duplicated key")
+        }
+        result.set(key, bare.readString(bc))
+    }
+    return result
+}
+
+function write1(bc: bare.ByteCursor, x: ReadonlyMap<string, string>): void {
+    bare.writeUintSafe(bc, x.size)
+    for (const kv of x) {
+        bare.writeString(bc, kv[0])
+        bare.writeString(bc, kv[1])
+    }
+}
+
+function read2(bc: bare.ByteCursor): readonly ProvidesFile[] {
     const len = bare.readUintSafe(bc)
     if (len === 0) {
         return []
@@ -312,7 +252,7 @@ function read3(bc: bare.ByteCursor): readonly ProvidesFile[] {
     return result
 }
 
-function write3(bc: bare.ByteCursor, x: readonly ProvidesFile[]): void {
+function write2(bc: bare.ByteCursor, x: readonly ProvidesFile[]): void {
     bare.writeUintSafe(bc, x.length)
     for (let i = 0; i < x.length; i++) {
         writeProvidesFile(bc, x[i])
@@ -338,38 +278,27 @@ export type ProvidesBlock = {
 export function readProvidesBlock(bc: bare.ByteCursor): ProvidesBlock {
     return {
         env: read1(bc),
-        files: read3(bc),
+        files: read2(bc),
     }
 }
 
 export function writeProvidesBlock(bc: bare.ByteCursor, x: ProvidesBlock): void {
     write1(bc, x.env)
-    write3(bc, x.files)
+    write2(bc, x.files)
 }
 
-function read4(bc: bare.ByteCursor): AgentBlock | null {
-    return bare.readBool(bc) ? readAgentBlock(bc) : null
-}
-
-function write4(bc: bare.ByteCursor, x: AgentBlock | null): void {
-    bare.writeBool(bc, x != null)
-    if (x != null) {
-        writeAgentBlock(bc, x)
-    }
-}
-
-function read5(bc: bare.ByteCursor): ProvidesBlock | null {
+function read3(bc: bare.ByteCursor): ProvidesBlock | null {
     return bare.readBool(bc) ? readProvidesBlock(bc) : null
 }
 
-function write5(bc: bare.ByteCursor, x: ProvidesBlock | null): void {
+function write3(bc: bare.ByteCursor, x: ProvidesBlock | null): void {
     bare.writeBool(bc, x != null)
     if (x != null) {
         writeProvidesBlock(bc, x)
     }
 }
 
-function read6(bc: bare.ByteCursor): readonly CommandTarget[] {
+function read4(bc: bare.ByteCursor): readonly CommandTarget[] {
     const len = bare.readUintSafe(bc)
     if (len === 0) {
         return []
@@ -381,14 +310,14 @@ function read6(bc: bare.ByteCursor): readonly CommandTarget[] {
     return result
 }
 
-function write6(bc: bare.ByteCursor, x: readonly CommandTarget[]): void {
+function write4(bc: bare.ByteCursor, x: readonly CommandTarget[]): void {
     bare.writeUintSafe(bc, x.length)
     for (let i = 0; i < x.length; i++) {
         writeCommandTarget(bc, x[i])
     }
 }
 
-function read7(bc: bare.ByteCursor): readonly ManPage[] {
+function read5(bc: bare.ByteCursor): readonly ManPage[] {
     const len = bare.readUintSafe(bc)
     if (len === 0) {
         return []
@@ -400,7 +329,7 @@ function read7(bc: bare.ByteCursor): readonly ManPage[] {
     return result
 }
 
-function write7(bc: bare.ByteCursor, x: readonly ManPage[]): void {
+function write5(bc: bare.ByteCursor, x: readonly ManPage[]): void {
     bare.writeUintSafe(bc, x.length)
     for (let i = 0; i < x.length; i++) {
         writeManPage(bc, x[i])
@@ -414,8 +343,8 @@ function write7(bc: bare.ByteCursor, x: readonly ManPage[]): void {
  */
 export type PackageManifest = {
     /**
-     * Runtime package name, e.g. `jq` or `claude-code`. Names the projection dir
-     * `/opt/agentos/pkgs/<name>/` and, for agent packages, the agent id.
+     * Runtime package name, e.g. `jq`. Names the projection directory
+     * `/opt/agentos/pkgs/<name>/`.
      */
     readonly name: string
     /**
@@ -423,10 +352,6 @@ export type PackageManifest = {
      * package projection dir.
      */
     readonly version: string
-    /**
-     * Agent metadata; present only for packages launchable as ACP agents.
-     */
-    readonly agent: AgentBlock | null
     /**
      * Env/file projections; present only when the package provides them.
      */
@@ -440,34 +365,24 @@ export type PackageManifest = {
      * Man pages shipped under `/share/man/` in the mount.
      */
     readonly manPages: readonly ManPage[]
-    /**
-     * Mount-root-relative path to the prebuilt SDK snapshot bundle
-     * (`/dist/sdk-snapshot.js`), set iff `agent.snapshot` is true and the file
-     * exists in the mount. Null otherwise.
-     */
-    readonly snapshotBundlePath: string | null
 }
 
 export function readPackageManifest(bc: bare.ByteCursor): PackageManifest {
     return {
         name: bare.readString(bc),
         version: bare.readString(bc),
-        agent: read4(bc),
-        provides: read5(bc),
-        commands: read6(bc),
-        manPages: read7(bc),
-        snapshotBundlePath: read0(bc),
+        provides: read3(bc),
+        commands: read4(bc),
+        manPages: read5(bc),
     }
 }
 
 export function writePackageManifest(bc: bare.ByteCursor, x: PackageManifest): void {
     bare.writeString(bc, x.name)
     bare.writeString(bc, x.version)
-    write4(bc, x.agent)
-    write5(bc, x.provides)
-    write6(bc, x.commands)
-    write7(bc, x.manPages)
-    write0(bc, x.snapshotBundlePath)
+    write3(bc, x.provides)
+    write4(bc, x.commands)
+    write5(bc, x.manPages)
 }
 
 export function encodePackageManifest(x: PackageManifest, config?: Partial<bare.Config>): Uint8Array {
@@ -489,7 +404,7 @@ export function decodePackageManifest(bytes: Uint8Array): PackageManifest {
     return result
 }
 
-function read8(bc: bare.ByteCursor): readonly TarEntry[] {
+function read6(bc: bare.ByteCursor): readonly TarEntry[] {
     const len = bare.readUintSafe(bc)
     if (len === 0) {
         return []
@@ -501,7 +416,7 @@ function read8(bc: bare.ByteCursor): readonly TarEntry[] {
     return result
 }
 
-function write8(bc: bare.ByteCursor, x: readonly TarEntry[]): void {
+function write6(bc: bare.ByteCursor, x: readonly TarEntry[]): void {
     bare.writeUintSafe(bc, x.length)
     for (let i = 0; i < x.length; i++) {
         writeTarEntry(bc, x[i])
@@ -517,12 +432,12 @@ export type MountIndex = {
 
 export function readMountIndex(bc: bare.ByteCursor): MountIndex {
     return {
-        tarEntries: read8(bc),
+        tarEntries: read6(bc),
     }
 }
 
 export function writeMountIndex(bc: bare.ByteCursor, x: MountIndex): void {
-    write8(bc, x.tarEntries)
+    write6(bc, x.tarEntries)
 }
 
 export function encodeMountIndex(x: MountIndex, config?: Partial<bare.Config>): Uint8Array {

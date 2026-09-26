@@ -483,6 +483,7 @@ pub struct ProcessInfo {
     pub sid: u32,
     pub driver: String,
     pub command: String,
+    pub args: Vec<String>,
     pub status: ProcessStatus,
     pub exit_code: Option<i32>,
     pub pending_termination: Option<ProcessTermination>,
@@ -891,6 +892,31 @@ impl ProcessTable {
         cwd: String,
         requested_permission_tier: Option<ProcessPermissionTier>,
     ) -> ProcessResult<()> {
+        self.exec_from_thread(
+            pid,
+            MAIN_SIGNAL_THREAD_ID,
+            driver,
+            command,
+            args,
+            env,
+            cwd,
+            requested_permission_tier,
+        )
+    }
+
+    /// Replace an image on behalf of the calling signal thread.
+    #[allow(clippy::too_many_arguments)]
+    pub fn exec_from_thread(
+        &self,
+        pid: u32,
+        thread_id: u32,
+        driver: impl Into<String>,
+        command: impl Into<String>,
+        args: Vec<String>,
+        env: BTreeMap<String, String>,
+        cwd: String,
+        requested_permission_tier: Option<ProcessPermissionTier>,
+    ) -> ProcessResult<()> {
         let mut state = self.inner.lock_state();
         let record = state
             .entries
@@ -904,6 +930,15 @@ impl ProcessTable {
                 "process {pid} cannot replace its image after termination was requested"
             )));
         }
+        let blocked = record
+            .signal_threads
+            .get(&thread_id)
+            .ok_or_else(|| {
+                ProcessTableError::invalid_argument(format!(
+                    "signal thread {thread_id} does not exist for process {pid}"
+                ))
+            })?
+            .blocked_signals;
         record.entry.driver = driver.into();
         record.entry.command = command.into();
         record.entry.args = args;
@@ -921,7 +956,7 @@ impl ProcessTable {
                 *action = SignalAction::DEFAULT;
             }
         }
-        reset_signal_threads_for_exec(record);
+        reset_signal_threads_for_exec_with_mask(record, blocked);
         self.inner.notify_waiters();
         Ok(())
     }
@@ -1505,9 +1540,12 @@ impl ProcessTable {
             .get_mut(&pid)
             .ok_or_else(|| ProcessTableError::no_such_process(pid))?;
         record.signal_threads.remove(&thread_id).ok_or_else(|| {
-            ProcessTableError::invalid_argument(format!(
-                "signal thread {thread_id} does not exist for process {pid}"
-            ))
+            // A successful exec has already retired every old secondary.
+            // Distinguish a missing thread from an invalid main-thread teardown.
+            ProcessTableError {
+                code: "ESRCH",
+                message: format!("signal thread {thread_id} does not exist for process {pid}"),
+            }
         })?;
         Ok(())
     }
@@ -1784,6 +1822,7 @@ fn to_process_info(entry: &ProcessEntry) -> ProcessInfo {
         sid: entry.sid,
         driver: entry.driver.clone(),
         command: entry.command.clone(),
+        args: entry.args.clone(),
         status: entry.status,
         exit_code: entry.exit_code,
         pending_termination: entry.pending_termination,
@@ -2163,6 +2202,10 @@ fn reset_signal_threads_for_exec(record: &mut ProcessRecord) {
         .get(&MAIN_SIGNAL_THREAD_ID)
         .map(|thread| thread.blocked_signals)
         .unwrap_or_else(SignalSet::empty);
+    reset_signal_threads_for_exec_with_mask(record, blocked);
+}
+
+fn reset_signal_threads_for_exec_with_mask(record: &mut ProcessRecord, blocked: SignalSet) {
     record.signal_threads.clear();
     record.signal_threads.insert(
         MAIN_SIGNAL_THREAD_ID,
@@ -3246,6 +3289,58 @@ mod tests {
             .sigprocmask(10, SigmaskHow::Block, SignalSet::empty())
             .expect("query restored mask");
         assert_eq!(restored, original);
+    }
+
+    #[test]
+    fn exec_rejects_missing_signal_thread_before_replacing_image() {
+        let table = ProcessTable::with_zombie_ttl(Duration::from_secs(3600));
+        table.register(10, "test", "initial", Vec::new(), context(0), endpoint());
+        let error = table
+            .exec_from_thread(
+                10,
+                7,
+                "test",
+                "replacement",
+                Vec::new(),
+                BTreeMap::new(),
+                "/".into(),
+                None,
+            )
+            .unwrap_err();
+        assert_eq!(error.code, "EINVAL");
+        assert_eq!(table.get(10).unwrap().command, "initial");
+    }
+
+    #[test]
+    fn secondary_exec_preserves_calling_thread_signal_mask() {
+        let table = ProcessTable::with_zombie_ttl(Duration::from_secs(3600));
+        table.register(10, "test", "initial", Vec::new(), context(0), endpoint());
+        table
+            .register_signal_thread(10, 1, MAIN_SIGNAL_THREAD_ID)
+            .unwrap();
+        let mask = SignalSet::from_signal(SIGTERM).unwrap();
+        table
+            .sigprocmask_for_thread(10, 1, SigmaskHow::Block, mask)
+            .unwrap();
+        table
+            .exec_from_thread(
+                10,
+                1,
+                "test",
+                "replacement",
+                Vec::new(),
+                BTreeMap::new(),
+                "/".into(),
+                None,
+            )
+            .unwrap();
+        let actual = table
+            .sigprocmask(10, SigmaskHow::Block, SignalSet::empty())
+            .unwrap();
+        assert!(
+            actual.contains(SIGTERM),
+            "exec must preserve the calling secondary thread's blocked signals"
+        );
     }
 
     #[test]

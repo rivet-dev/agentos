@@ -1,0 +1,88 @@
+---
+title: "Secure Exec vs secure-eval-worker"
+description: "How Secure Exec and secure-eval-worker differ: a virtualized VM in a separate process compared with Node.js worker threads under the Permission Model."
+---
+
+Both are npm libraries that run untrusted JavaScript from a Node.js host with one
+function call, inputs, timeouts, and host functions. They differ in what stands
+between the guest and your machine.
+
+[secure-eval-worker](https://github.com/platformatic/secure-eval-worker) runs
+code in a `node:worker_threads` worker with the Node.js Permission Model enabled
+and permissions dropped before guest code loads. Secure Exec runs code in a V8
+isolate inside a separate process, where every Node.js API is reimplemented
+against a virtual kernel.
+
+## At a glance
+
+| | Secure Exec | secure-eval-worker |
+|---|---|---|
+| **Where guest code runs** | A separate sidecar process | A worker thread in your process |
+| **Boundary** | Virtualized kernel. No guest call reaches a real host API | Real Node.js builtins, restricted by an allowlist and the Permission Model |
+| **Stated threat model** | Built to run hostile code | Defense in depth, by its own description |
+| **Filesystem** | Virtual filesystem, plus explicit mounts | None, or read-only access to a staged snapshot |
+| **Network and npm** | Grantable per host, install or mount packages | None. Bundle dependencies on the host first |
+| **TypeScript** | Runs, and type-checks with the real compiler | Types erased, never checked |
+| **Limits** | Timeouts, heap, processes, sockets, filesystem bytes | V8 heap limits and a wall-clock deadline |
+| **Requirements** | Node.js 22+, Linux and macOS | Node.js 26.5.1 to 26.x only |
+
+## Where secure-eval-worker falls short
+
+- **It says it is not a security boundary.** The README warns that the Permission
+  Model and worker threads are "defense-in-depth controls, **not a complete
+  security boundary against malicious code**. Workers share a process, and
+  resource limits do not constrain every kind of allocation." It tells you to
+  "put this module inside a separately sandboxed process or container".
+- **Node.js says the same about its foundation.** The
+  [Permission Model docs](https://nodejs.org/api/permissions.html) state: "This
+  feature does not protect against malicious code", and "Malicious code can
+  bypass the permission model and execute arbitrary code". Node.js's
+  [security policy](https://github.com/nodejs/node/blob/main/SECURITY.md)
+  excludes "any expectation that the Permission Model sandboxes malicious
+  same-process code" from what it treats as a vulnerability.
+- **Its core primitive is unstable.** `process.permission.drop()` is marked
+  "Stability: 1.1 - Active Development".
+- **Memory limits cover only the V8 heap.** Node.js documents that worker limits
+  affect "no external data, including no `ArrayBuffer`s", and that "the process
+  may still abort if it encounters a global out-of-memory situation". That
+  process is yours.
+- **There is no CPU limit.** Only wall-clock deadlines and termination, and
+  "uninterruptible native work can continue after the public termination promises
+  settle."
+- **You cannot upgrade Node.js freely.** It supports Node.js `>=26.5.1 <27`, and
+  "a Node 26 update with an unreviewed identity or export change fails worker
+  startup until the package policy is reviewed". Node.js 26 is not an LTS release
+  until late October 2026.
+- **Guest code can do very little.** No network, no filesystem writes, no npm
+  resolution, and no native addons. TypeScript "does not type-check source".
+- **It is slow to start and does not queue.** Every execution uses a new worker,
+  which takes about 200 ms by the project's own benchmarks. The default
+  concurrency is 4, and "there is no internal queue".
+- **It is very new.** The first release was in September 2026, with one
+  maintainer. Its second release was a fix that hardened it against a class of
+  escapes.
+
+## What secure-eval-worker does well
+
+It is pure JavaScript with zero dependencies. Its host functions and persistent
+components with message passing are well designed, it fails closed everywhere,
+it runs on Windows, and its documentation is unusually candid about its limits.
+
+## Only choose secure-eval-worker when
+
+All of these hold:
+
+1. The code is semi-trusted, such as your own plugins or templates, or an OS
+   sandbox or container already wraps the process, as its README requires.
+2. You can pin Node.js to the 26.x line and gate every Node.js upgrade on a new
+   release of the package.
+3. Guest code needs pure computation plus host functions, with no network, no
+   writes, no npm install, and no type-checking.
+4. Your load tolerates about 200 ms of startup per run, low concurrency, and a
+   pre-1.0 dependency with a single maintainer.
+
+## Choose Secure Exec when
+
+The code is hostile or model-generated and the library itself must be the
+boundary, or when the code needs a filesystem, the network, npm packages, or
+type-checking.

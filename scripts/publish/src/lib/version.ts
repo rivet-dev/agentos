@@ -7,7 +7,7 @@
  *   Does NOT touch Cargo.toml or non-discovered files.
  *
  * - `bumpCargoVersions` — rewrites the Rust `[workspace.package]` version,
- *   lock-step internal dependencies, and excluded AgentOS crate manifests so
+ *   lock-step internal dependencies, and excluded agentOS crate manifests so
  *   the crates.io publish chain stays consistent.
  *
  * - `resolveVersion` / `shouldTagAsLatest` — semver helpers for the local cut.
@@ -28,6 +28,11 @@ const log = scoped("version");
 interface PackageJson {
 	name?: string;
 	version?: string;
+	repository?: {
+		type: "git";
+		url: string;
+		directory: string;
+	};
 	dependencies?: Record<string, string>;
 	devDependencies?: Record<string, string>;
 	peerDependencies?: Record<string, string>;
@@ -85,8 +90,6 @@ async function readPnpmCatalog(repoRoot: string): Promise<Map<string, string>> {
 export interface BumpOptions {
 	/** If true, report actions but do not write. */
 	dryRun?: boolean;
-	/** Test hook for independently versioned registry package resolution. */
-	resolveNpmLatestVersion?: (name: string) => Promise<string>;
 	/**
 	 * When true, only rewrite the `version` field. Does not touch dependency
 	 * references or inject `optionalDependencies`. Safe to commit to git
@@ -97,58 +100,29 @@ export interface BumpOptions {
 	 * the publish-time mode used by CI — never committed.
 	 */
 	versionOnly?: boolean;
+	/** GitHub repository slug recorded in publish-time package metadata. */
+	repository?: string;
 }
 
-/**
- * Rewrite every discovered package's `version` to the given string.
- *
- * In full mode (default, `versionOnly: false`): also injects
- * `optionalDependencies` on meta packages and rewrites `workspace:*`
- * dependency references to the literal version. This is the publish-time
- * mode used by CI and must NOT be committed — it breaks
- * `pnpm install --frozen-lockfile` because the lockfile expects
- * `workspace:*`, not literal versions.
- *
- * In version-only mode (`versionOnly: true`): only rewrites the `version`
- * field, preserving `workspace:*`/`catalog:` dep specs so the lockfile still
- * resolves. Used by the CI `bump-versions` build step before `turbo build` so
- * the built JS carries the real version; never committed.
- *
- * Returns the number of files written.
- */
-/**
- * Resolve the published `latest` version of an independently-versioned
- * registry package from npm. Registry software packages (except `common`)
- * publish from local on their own release track; the main release track pins
- * `workspace:*` deps on them to whatever was last deliberately released.
- * Memoized per run. Throws when the package has never been released — a
- * published manifest carrying `workspace:` protocol is uninstallable by every
- * consumer, so this must fail the publish, loudly.
- */
-const npmLatestCache = new Map<string, string>();
-async function npmLatestVersion(dep: string): Promise<string> {
-	const cached = npmLatestCache.get(dep);
-	if (cached) return cached;
-	const { execa } = await import("execa");
-	const { stdout } = await execa("npm", [
-		"view",
-		dep,
-		"dist-tags.latest",
-	]).catch((error: Error & { shortMessage?: string }) => {
+export function githubRepositoryUrl(repository: string): string {
+	if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) {
 		throw new Error(
-			`cannot resolve npm latest for workspace dep "${dep}": ${error.shortMessage ?? error.message}`,
-		);
-	});
-	const version = stdout.trim();
-	if (!version) {
-		throw new Error(
-			`workspace dep "${dep}" has no published latest on npm; release it from local first (agentos-toolchain publish ... --latest)`,
+			`invalid GitHub repository ${JSON.stringify(repository)}; expected owner/repo`,
 		);
 	}
-	npmLatestCache.set(dep, version);
-	return version;
+	return `https://github.com/${repository}.git`;
 }
 
+function requirePublishRepository(repository: string | undefined): string {
+	if (!repository) {
+		throw new Error(
+			"publish-time package metadata requires a GitHub repository",
+		);
+	}
+	return repository;
+}
+
+/** Rewrite every discovered package's version and publish-time dependencies. */
 export async function bumpPackageJsons(
 	repoRoot: string,
 	version: string,
@@ -171,6 +145,12 @@ export async function bumpPackageJsons(
 		pkgJson.version = version;
 
 		if (!versionOnly) {
+			pkgJson.repository = {
+				type: "git",
+				url: githubRepositoryUrl(requirePublishRepository(opts.repository)),
+				directory: pkg.relDir,
+			};
+
 			// Inject optionalDependencies on meta packages so end users get the
 			// correct platform-specific binary via npm's os/cpu/libc resolution.
 			const platformPkgs = metaPlatformMap.get(pkg.name);
@@ -205,12 +185,13 @@ export async function bumpPackageJsons(
 						deps[dep] = version;
 						continue;
 					}
-					// Independently-versioned registry software packages: pin to
-					// the npm `latest` the owner last deliberately released from
-					// local. Never leave `workspace:` in a published manifest.
-					deps[dep] = await (
-						opts.resolveNpmLatestVersion ?? npmLatestVersion
-					)(dep);
+					if (field === "devDependencies") {
+						delete deps[dep];
+						continue;
+					}
+					throw new Error(
+						`published package ${pkg.name} depends on unpublished workspace package ${dep}; bundle it or move it to devDependencies`,
+					);
 				}
 			}
 		}
@@ -231,7 +212,7 @@ export async function bumpPackageJsons(
 }
 
 /**
- * Rewrite the AgentOS Rust workspace version (`[workspace.package]`). AgentOS crates
+ * Rewrite the agentOS Rust workspace version (`[workspace.package]`). agentOS crates
  * inherit it via `version.workspace = true`.
  */
 export async function bumpCargoVersions(
@@ -245,12 +226,12 @@ export async function bumpCargoVersions(
 		/(\[workspace\.package\]\n(?:[^\n]*\n)*?[ \t]*version = )"[^"]+"/,
 		`$1"${version}"`,
 	);
-	// Bump AgentOS-owned crate dep requirements (path = "crates/...").
+	// Bump agentOS-owned crate dep requirements (path = "crates/...").
 	next = next.replace(
 		/((?:agentos|agent-os)-[a-z0-9-]+ = \{ path = "crates\/[^"]+", version = ")[^"]+(" \})/g,
 		`$1${version}$2`,
 	);
-	// Also bump aliased AgentOS-owned crate deps declared as
+	// Also bump aliased agentOS-owned crate deps declared as
 	// `<alias> = { package = "agentos-...", path = "crates/...", version = "..." }`
 	// (e.g. `vfs = { package = "agentos-vfs-core", ... }`), which the pattern
 	// above misses because the line starts with the alias key, not `agentos-`.
@@ -264,7 +245,7 @@ export async function bumpCargoVersions(
 
 	// Excluded crates cannot inherit workspace values, but Cargo still resolves
 	// their path dependency graph during a workspace publish dry-run. Rewrite
-	// their explicit package and AgentOS path-dependency versions transiently.
+	// their explicit package and agentOS path-dependency versions transiently.
 	const cratesDir = join(repoRoot, "crates");
 	for (const entry of await fs.readdir(cratesDir, { withFileTypes: true })) {
 		if (!entry.isDirectory()) continue;

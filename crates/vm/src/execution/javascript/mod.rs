@@ -22,5 +22,5 @@ mod http;
 pub(in crate::execution) use self::http::*;
 pub(crate) use self::http::{
     dispatch_loopback_http_request_deferred, ensure_vm_fetch_response_frame_within_limit,
-    LoopbackHttpDispatchRequest,
+    find_vm_fetch_target_process, LoopbackHttpDispatchRequest,
 };

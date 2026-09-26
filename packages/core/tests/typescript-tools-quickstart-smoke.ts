@@ -3,11 +3,11 @@ import {
 	type ProjectCompileResult,
 	type TypeCheckResult,
 	type TypeScriptTools,
-} from "@rivet-dev/agentos-core/internal/typescript-tools";
+} from "../src/internal/typescript-tools.js";
 import {
 	createNodeDriver,
 	createNodeRuntimeDriverFactory,
-} from "@rivet-dev/agentos-core/internal/runtime-compat";
+} from "../src/runtime-compat.js";
 
 export function createQuickstartTools(): TypeScriptTools {
 	return createTypeScriptTools({

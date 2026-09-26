@@ -43,6 +43,7 @@ impl DeferredPosixPollWakeLane {
             session_id: self.session_id,
             vm_id: self.vm_id,
             process_id: self.process_id,
+            child_path: Vec::new(),
             event: ActiveExecutionEvent::DeferredPosixPollWake,
         };
         // Wake the owner before waiting for bounded queue admission. If the
@@ -393,16 +394,17 @@ where
     };
     let wake_lane = deferred_posix_poll_wake_lane(sidecar, vm_id, process_id)?;
     let socket_paths = build_socket_path_context(
-        sidecar
+        &sidecar
             .vms
             .get(vm_id)
             .expect("validated POSIX-poll VM remains registered"),
     )?;
     let notify = Arc::clone(&sidecar.process_event_notify);
-    let vm = sidecar
+    let mut vm_guard = sidecar
         .vms
         .get_mut(vm_id)
         .expect("validated POSIX-poll VM remains registered");
+    let vm = &mut *vm_guard;
     let generation = vm.generation;
     let runtime = vm.runtime_context.clone();
     let wait_handle = vm.kernel.poll_wait_handle();
@@ -739,7 +741,7 @@ where
     }
     let kernel_pid = reply.identity().pid;
     let socket_paths = build_socket_path_context(
-        sidecar
+        &sidecar
             .vms
             .get(vm_id)
             .expect("validated close VM remains registered"),
@@ -748,10 +750,11 @@ where
         return Ok(());
     }
     let bridge = sidecar.bridge.clone();
-    let vm = sidecar
+    let mut vm_guard = sidecar
         .vms
         .get_mut(vm_id)
         .expect("validated close VM remains registered");
+    let vm = &mut *vm_guard;
     let result = close_with_managed_retirement(&bridge, vm_id, &socket_paths, vm, kernel_pid, fd);
     match result {
         Ok(response) => reply.succeed(response).map_err(VmError::from),
@@ -782,7 +785,7 @@ where
         .vms
         .get(vm_id)
         .expect("validated fd-snapshot VM remains registered");
-    let result = fd_snapshot_with_managed_routes(vm, pid);
+    let result = fd_snapshot_with_managed_routes(&vm, pid);
     match result {
         Ok(response) => reply.succeed(response).map_err(VmError::from),
         Err(error) => reply
@@ -887,7 +890,7 @@ where
     }
     let kernel_pid = reply.identity().pid;
     let socket_paths = build_socket_path_context(
-        sidecar
+        &sidecar
             .vms
             .get(vm_id)
             .expect("validated closefrom VM remains registered"),
@@ -896,10 +899,11 @@ where
         return Ok(());
     }
     let bridge = sidecar.bridge.clone();
-    let vm = sidecar
+    let mut vm_guard = sidecar
         .vms
         .get_mut(vm_id)
         .expect("validated closefrom VM remains registered");
+    let vm = &mut *vm_guard;
     let response = closefrom_with_managed_retirement(
         &bridge,
         vm_id,
@@ -1004,16 +1008,17 @@ where
         return Ok(());
     }
     let socket_paths = build_socket_path_context(
-        sidecar
+        &sidecar
             .vms
             .get(vm_id)
             .expect("validated descriptor-mutation VM remains registered"),
     )?;
     let bridge = sidecar.bridge.clone();
-    let vm = sidecar
+    let mut vm_guard = sidecar
         .vms
         .get_mut(vm_id)
         .expect("validated descriptor-mutation VM remains registered");
+    let vm = &mut *vm_guard;
     let result = replace_descriptor_with_managed_retirement(
         &bridge,
         vm_id,
@@ -1063,7 +1068,7 @@ where
             return Err(VmError::host(
                 "EINVAL",
                 "invalid descriptor replacement operation",
-            ))
+            ));
         }
     };
     let result = match operation {
@@ -1215,50 +1220,50 @@ fn retire_managed_description_routes<B>(
                 Ok(Value::Null.into())
             }
             ManagedHostNetRoute::TcpSocket(socket_id)
-            | ManagedHostNetRoute::UnixSocket(socket_id) => {
-                service_managed_network_operation(
-                    ManagedNetworkServiceContext {
-                        vm_id,
-                        socket_paths,
-                        kernel: &mut vm.kernel,
-                        kernel_readiness: kernel_readiness.clone(),
-                        process,
-                        capabilities: capabilities.clone(),
+            | ManagedHostNetRoute::UnixSocket(socket_id) => service_managed_network_operation(
+                ManagedNetworkServiceContext {
+                    vm_id,
+                    socket_paths,
+                    kernel: &mut vm.kernel,
+                    kernel_readiness: kernel_readiness.clone(),
+                    process,
+                    capabilities: capabilities.clone(),
+                },
+                NetworkOperation::ManagedDestroy {
+                    socket_id: match bounded_managed_id(socket_id) {
+                        Ok(id) => id,
+                        Err(error) => {
+                            eprintln!(
+                                "ERR_AGENTOS_SOCKET_CLEANUP: invalid retired socket id: {error}"
+                            );
+                            continue;
+                        }
                     },
-                    NetworkOperation::ManagedDestroy {
-                        socket_id: match bounded_managed_id(socket_id) {
-                            Ok(id) => id,
-                            Err(error) => {
-                                eprintln!("ERR_AGENTOS_SOCKET_CLEANUP: invalid retired socket id: {error}");
-                                continue;
-                            }
-                        },
-                    },
-                )
-            }
+                },
+            ),
             ManagedHostNetRoute::TcpListener(listener_id)
             | ManagedHostNetRoute::UnixListener(listener_id)
-            | ManagedHostNetRoute::UnixBound { listener_id } => {
-                service_managed_network_operation(
-                    ManagedNetworkServiceContext {
-                        vm_id,
-                        socket_paths,
-                        kernel: &mut vm.kernel,
-                        kernel_readiness: kernel_readiness.clone(),
-                        process,
-                        capabilities: capabilities.clone(),
+            | ManagedHostNetRoute::UnixBound { listener_id } => service_managed_network_operation(
+                ManagedNetworkServiceContext {
+                    vm_id,
+                    socket_paths,
+                    kernel: &mut vm.kernel,
+                    kernel_readiness: kernel_readiness.clone(),
+                    process,
+                    capabilities: capabilities.clone(),
+                },
+                NetworkOperation::ManagedCloseListener {
+                    listener_id: match bounded_managed_id(listener_id) {
+                        Ok(id) => id,
+                        Err(error) => {
+                            eprintln!(
+                                "ERR_AGENTOS_SOCKET_CLEANUP: invalid retired listener id: {error}"
+                            );
+                            continue;
+                        }
                     },
-                    NetworkOperation::ManagedCloseListener {
-                        listener_id: match bounded_managed_id(listener_id) {
-                            Ok(id) => id,
-                            Err(error) => {
-                                eprintln!("ERR_AGENTOS_SOCKET_CLEANUP: invalid retired listener id: {error}");
-                                continue;
-                            }
-                        },
-                    },
-                )
-            }
+                },
+            ),
             ManagedHostNetRoute::UdpSocket(socket_id) => service_managed_udp_operation(
                 ManagedUdpServiceRequest {
                     bridge,
@@ -1320,7 +1325,7 @@ where
     B: VmManagerHost + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
-    let socket_paths = build_socket_path_context(vm)?;
+    let socket_paths = build_socket_path_context(&vm)?;
     let retired_routes = {
         let mut descriptions = vm
             .managed_host_net_descriptions
@@ -1365,7 +1370,7 @@ where
                 .then_some(*description_id)
         })
         .collect::<Vec<_>>();
-    let socket_paths = build_socket_path_context(vm)?;
+    let socket_paths = build_socket_path_context(&vm)?;
     prune_managed_descriptions_after_fd_mutation(
         bridge,
         vm_id,
@@ -1564,7 +1569,14 @@ pub(super) fn decode_managed(
         },
         "net.socket_read" => NetworkOperation::ManagedRead {
             socket_id: id(0, "socket id")?,
-            max_bytes: optional_u64(request, 1, "maximum read bytes")?,
+            // The one-argument Node bridge asks for the next bounded chunk;
+            // explicit WASM reads retain their requested length, including zero.
+            max_bytes: javascript_sync_rpc_arg_u64_optional(
+                &request.args,
+                1,
+                "maximum read bytes",
+            )?
+            .unwrap_or(64 * 1024),
             peek: optional_bool(request, 2, "peek flag")?,
             wait_ms: optional_u64(request, 3, "wait ms")?,
         },
@@ -1602,7 +1614,7 @@ pub(super) fn decode_managed(
                         return Err(VmError::host(
                             "EINVAL",
                             format!("unsupported UDP type {other}"),
-                        ))
+                        ));
                     }
                 },
             }
@@ -1768,8 +1780,11 @@ where
     let process_path = sidecar
         .vms
         .get(vm_id)
-        .and_then(|vm| vm.active_processes.get(process_id))
-        .and_then(|root| VmManager::<B>::active_process_path_by_kernel_pid(root, kernel_pid))
+        .and_then(|vm| {
+            vm.active_processes.get(process_id).and_then(|root| {
+                VmManager::<B>::active_process_path_by_kernel_pid(root, kernel_pid)
+            })
+        })
         .ok_or_else(|| {
             VmError::host(
                 "ESTALE",
@@ -1868,16 +1883,17 @@ where
         return Ok(());
     }
     let socket_paths = build_socket_path_context(
-        sidecar
+        &*sidecar
             .vms
             .get(vm_id)
             .ok_or_else(|| missing_vm_error(vm_id))?,
     )?;
     let (runtime, connection_id, session_id, notify, response) = {
-        let vm = sidecar
+        let mut vm_guard = sidecar
             .vms
             .get_mut(vm_id)
             .ok_or_else(|| missing_vm_error(vm_id))?;
+        let vm = &mut *vm_guard;
         let root = vm
             .active_processes
             .get_mut(root_process_id)
@@ -1959,6 +1975,7 @@ where
             session_id,
             vm_id: vm_id_owned,
             process_id: root_process_id_owned,
+            child_path: Vec::new(),
             event: ActiveExecutionEvent::ManagedStreamReadRecheck(Box::new(pending)),
         };
         if let Err(error) = sender.send(envelope).await {
@@ -1984,7 +2001,7 @@ where
     Ok(())
 }
 
-pub(super) async fn dispatch_context_managed_network_operation<B>(
+pub(super) fn dispatch_context_managed_network_operation<B>(
     sidecar: &mut VmManager<B>,
     vm_id: &str,
     process_id: &str,
@@ -2040,6 +2057,7 @@ where
             .map_err(|_| VmError::host("EIO", "managed description registry lock poisoned"))?
             .get(&description_id)
             .and_then(|description| description.route_for(kernel_pid).cloned());
+        drop(vm);
         if let Some(ManagedHostNetRoute::UdpSocket(socket_id)) = route {
             return dispatch_context_udp_poll(
                 sidecar,
@@ -2076,15 +2094,16 @@ where
     if is_managed_fd_operation(&operation) {
         let bridge = sidecar.bridge.clone();
         let socket_paths = build_socket_path_context(
-            sidecar
+            &sidecar
                 .vms
                 .get(vm_id)
                 .expect("validated fd-network VM remains registered"),
         )?;
-        let vm = sidecar
+        let mut vm_guard = sidecar
             .vms
             .get_mut(vm_id)
             .expect("validated fd-network VM remains registered");
+        let vm = &mut *vm_guard;
         let runtime = vm.runtime_context.clone();
         let capabilities = vm.capabilities.clone();
         let managed_descriptions = Arc::clone(&vm.managed_host_net_descriptions);
@@ -2112,6 +2131,7 @@ where
             },
             operation,
         );
+        drop(vm_guard);
         return settle_managed_network_response(
             sidecar,
             vm_id,
@@ -2131,15 +2151,16 @@ where
     ) {
         let bridge = sidecar.bridge.clone();
         let socket_paths = build_socket_path_context(
-            sidecar
+            &sidecar
                 .vms
                 .get(vm_id)
                 .expect("validated managed UDP VM remains registered"),
         )?;
-        let vm = sidecar
+        let mut vm_guard = sidecar
             .vms
             .get_mut(vm_id)
             .expect("validated managed UDP VM remains registered");
+        let vm = &mut *vm_guard;
         let runtime = vm.runtime_context.clone();
         let capabilities = vm.capabilities.clone();
         let dns = vm.dns.clone();
@@ -2164,6 +2185,7 @@ where
             },
             operation,
         );
+        drop(vm_guard);
         return settle_managed_network_response(
             sidecar,
             vm_id,
@@ -2186,15 +2208,16 @@ where
             | NetworkOperation::ManagedTlsUpgrade { .. }
     ) {
         let socket_paths = build_socket_path_context(
-            sidecar
+            &sidecar
                 .vms
                 .get(vm_id)
                 .expect("validated managed-network VM remains registered"),
         )?;
-        let vm = sidecar
+        let mut vm_guard = sidecar
             .vms
             .get_mut(vm_id)
             .expect("validated managed-network VM remains registered");
+        let vm = &mut *vm_guard;
         let runtime = vm.runtime_context.clone();
         let capabilities = vm.capabilities.clone();
         let kernel_readiness = Arc::clone(&vm.kernel_socket_readiness);
@@ -2216,6 +2239,7 @@ where
             },
             operation,
         );
+        drop(vm_guard);
         return settle_managed_network_response(
             sidecar,
             vm_id,
@@ -2229,15 +2253,16 @@ where
     if is_managed_endpoint_operation(&operation) {
         let bridge = sidecar.bridge.clone();
         let socket_paths = build_socket_path_context(
-            sidecar
+            &sidecar
                 .vms
                 .get(vm_id)
                 .expect("validated managed-endpoint VM remains registered"),
         )?;
-        let vm = sidecar
+        let mut vm_guard = sidecar
             .vms
             .get_mut(vm_id)
             .expect("validated managed-endpoint VM remains registered");
+        let vm = &mut *vm_guard;
         let runtime = vm.runtime_context.clone();
         let capabilities = vm.capabilities.clone();
         let dns = vm.dns.clone();
@@ -2263,6 +2288,7 @@ where
             },
             operation,
         );
+        drop(vm_guard);
         return settle_managed_network_response(
             sidecar,
             vm_id,
@@ -2281,15 +2307,16 @@ where
     }
     let bridge = sidecar.bridge.clone();
     let socket_paths = build_socket_path_context(
-        sidecar
+        &sidecar
             .vms
             .get(vm_id)
             .expect("validated managed-network VM remains registered"),
     )?;
-    let vm = sidecar
+    let mut vm_guard = sidecar
         .vms
         .get_mut(vm_id)
         .expect("validated managed-network VM remains registered");
+    let vm = &mut *vm_guard;
     let runtime = vm.runtime_context.clone();
     let capabilities = vm.capabilities.clone();
     let kernel_readiness = Arc::clone(&vm.kernel_socket_readiness);
@@ -2313,9 +2340,9 @@ where
         Arc::clone(&vm.managed_host_net_descriptions),
         reply.identity().call_id,
         operation,
-    )
-    .await;
+    );
 
+    drop(vm_guard);
     settle_managed_network_response(
         sidecar,
         vm_id,
@@ -2994,7 +3021,7 @@ where
                     endpoint.bound_server_id = Some(bounded_managed_id(listener_id)?);
                 }
                 ManagedHostNetRoute::TcpListener(_) | ManagedHostNetRoute::UnixListener(_) => {
-                    return Err(VmError::host("EINVAL", "listening socket cannot connect"))
+                    return Err(VmError::host("EINVAL", "listening socket cannot connect"));
                 }
                 _ => return Err(VmError::host("EISCONN", "socket is already connected")),
             }
@@ -3074,7 +3101,7 @@ where
                         managed_endpoint_context(&mut context),
                         &listener_id,
                         backlog,
-                    )
+                    );
                 }
                 ManagedHostNetRoute::Unbound => {}
                 _ => return Err(VmError::host("EINVAL", "socket cannot enter listen state")),
@@ -3130,7 +3157,7 @@ where
                     return Err(VmError::host(
                         "EINVAL",
                         "accept requires a listening socket",
-                    ))
+                    ));
                 }
             };
             let response = service_managed_network_operation(
@@ -3310,7 +3337,7 @@ where
                             return Err(VmError::host(
                                 "EAFNOSUPPORT",
                                 "UDP send requires INET address",
-                            ))
+                            ));
                         }
                     };
                     let response = service_managed_udp_operation(
@@ -3463,7 +3490,7 @@ where
                     return Err(VmError::host(
                         "ENOPROTOOPT",
                         "socket option is unsupported for this transport",
-                    ))
+                    ));
                 }
             }
             Ok(Value::Null.into())
@@ -3487,7 +3514,7 @@ where
                     return Err(VmError::host(
                         "ENOPROTOOPT",
                         "socket option getter is unsupported",
-                    ))
+                    ));
                 }
             };
             Ok(value.into())
@@ -3734,8 +3761,11 @@ where
     let process_path = sidecar
         .vms
         .get(vm_id)
-        .and_then(|vm| vm.active_processes.get(process_id))
-        .and_then(|root| VmManager::<B>::active_process_path_by_kernel_pid(root, kernel_pid))
+        .and_then(|vm| {
+            vm.active_processes.get(process_id).and_then(|root| {
+                VmManager::<B>::active_process_path_by_kernel_pid(root, kernel_pid)
+            })
+        })
         .ok_or_else(|| {
             VmError::host(
                 "ESTALE",
@@ -3746,9 +3776,13 @@ where
     let socket = sidecar
         .vms
         .get(vm_id)
-        .and_then(|vm| vm.active_processes.get(process_id))
-        .and_then(|root| VmManager::<B>::active_process_by_path(root, &path))
-        .and_then(|process| process.udp_sockets.get(socket_id.as_str()))
+        .and_then(|vm| {
+            vm.active_processes
+                .get(process_id)
+                .and_then(|root| VmManager::<B>::active_process_by_path(root, &path))
+                .and_then(|process| process.udp_sockets.get(socket_id.as_str()))
+                .map(|socket| socket.poll_handle().operation_deadline())
+        })
         .ok_or_else(|| VmError::host("EBADF", "unknown UDP socket"));
     let socket = match socket {
         Ok(socket) => socket,
@@ -3760,7 +3794,7 @@ where
         }
     };
     let requested_wait = Duration::from_millis(wait_ms);
-    let operation_deadline = socket.poll_handle().operation_deadline();
+    let operation_deadline = socket;
     let wait = requested_wait.min(operation_deadline);
     dispatch_claimed_context_udp_poll(
         sidecar,
@@ -3831,11 +3865,11 @@ where
     if !pending.reply.claim().map_err(VmError::from)? {
         return Ok(());
     }
-    let socket = sidecar
-        .vms
-        .get(vm_id)
-        .and_then(|vm| udp_poll_target_process::<B>(vm, &pending))
-        .and_then(|process| process.udp_sockets.get(&pending.socket_id));
+    let socket = sidecar.vms.get(vm_id).and_then(|vm| {
+        udp_poll_target_process::<B>(&vm, &pending)
+            .and_then(|process| process.udp_sockets.get(&pending.socket_id))
+            .map(|socket| socket.poll_handle().operation_deadline())
+    });
     let Some(socket) = socket else {
         pending
             .reply
@@ -3844,7 +3878,7 @@ where
         return Ok(());
     };
     let requested_wait = Duration::from_millis(wait_ms);
-    let operation_deadline = socket.poll_handle().operation_deadline();
+    let operation_deadline = socket;
     let wait = requested_wait.min(operation_deadline);
     pending.deadline = Instant::now() + wait;
     pending.operation_deadline =
@@ -3868,7 +3902,7 @@ where
     }
 
     let socket_paths = build_socket_path_context(
-        sidecar
+        &sidecar
             .vms
             .get(vm_id)
             .expect("validated UDP-poll VM remains registered"),
@@ -3879,7 +3913,7 @@ where
         .expect("validated UDP-poll VM remains registered");
     let wait_handle = vm.kernel.poll_wait_handle();
     let observed_generation = wait_handle.snapshot();
-    let process = udp_poll_target_process::<B>(vm, &pending)
+    let process = udp_poll_target_process::<B>(&vm, &pending)
         .expect("validated UDP-poll process remains registered");
     let socket = match process.udp_sockets.get(&pending.socket_id) {
         Some(socket) => socket,
@@ -3918,10 +3952,11 @@ where
 
     if kernel_readable {
         if let Some(turn) = pending.fair_turn.take() {
-            let vm = sidecar
+            let mut vm_guard = sidecar
                 .vms
                 .get_mut(vm_id)
                 .expect("validated UDP-poll VM remains registered");
+            let vm = &mut *vm_guard;
             let (kernel, active_processes) = (&mut vm.kernel, &mut vm.active_processes);
             let process = udp_poll_target_process_mut::<B>(active_processes, &pending)
                 .expect("validated UDP-poll process remains registered");
@@ -4032,7 +4067,7 @@ where
             .map_err(VmError::from)?;
         return Ok(false);
     };
-    let Some(process) = udp_poll_target_process::<B>(vm, pending) else {
+    let Some(process) = udp_poll_target_process::<B>(&vm, pending) else {
         pending
             .reply
             .fail(HostServiceError::new(
@@ -4255,6 +4290,7 @@ async fn send_udp_reentry(
         session_id,
         vm_id,
         process_id,
+        child_path: Vec::new(),
         event: ActiveExecutionEvent::ManagedUdpPollRecheck(Box::new(pending)),
     };
     if let Err(error) = sender.send(envelope).await {
@@ -5144,6 +5180,7 @@ mod managed_tests {
             session_id: "session".to_owned(),
             vm_id: "vm".to_owned(),
             process_id: "filler".to_owned(),
+            child_path: Vec::new(),
             event: ActiveExecutionEvent::DeferredPosixPollWake,
         };
         sender.try_send(filler).expect("fill bounded owner lane");

@@ -12,6 +12,15 @@ on:
         required: true
         type: boolean
         default: true
+      profile:
+        description: "Native binary build profile. Auto keeps releases optimized and previews in debug mode."
+        required: true
+        type: choice
+        options:
+          - auto
+          - release
+          - debug
+        default: auto
 
 concurrency:
   group: publish-${{ github.ref }}
@@ -21,9 +30,9 @@ env:
   R2_BUCKET: rivet-releases
   R2_ENDPOINT: https://2a94c6a0ced8d35ea63cddc86c2681e7.r2.cloudflarestorage.com
   SIDECAR_PLATFORMS: "linux-x64-gnu linux-arm64-gnu darwin-x64 darwin-arm64"
-  # Wasmtime 46's reviewed MSRV. Keep the Docker defaults in sync so release
+  # Wasmtime 48's declared MSRV. Keep the Docker defaults in sync so release
   # artifacts cannot accidentally build with an older unsupported compiler.
-  RUST_TOOLCHAIN: "1.94.0"
+  RUST_TOOLCHAIN: "1.95.0"
   LINUX_GNU_LLVM_VERSION: "22"
   LINUX_GNU_SYSROOT_TAG: "sysroot-20250207"
 
@@ -37,6 +46,7 @@ jobs:
       npm_tag: ${{ steps.ctx.outputs.npm_tag }}
       sha: ${{ steps.ctx.outputs.sha }}
       latest: ${{ steps.ctx.outputs.latest }}
+      build_profile: ${{ steps.mode.outputs.profile }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -51,6 +61,26 @@ jobs:
       - id: ctx
         name: Resolve publish context
         run: pnpm --filter=publish exec tsx src/ci/bin.ts context-output
+      - id: mode
+        name: Resolve native build profile
+        env:
+          REQUESTED_PROFILE: ${{ inputs.profile }}
+          TRIGGER: ${{ steps.ctx.outputs.trigger }}
+        run: |
+          set -euo pipefail
+          profile="${REQUESTED_PROFILE:-auto}"
+          if [ "$profile" = "auto" ]; then
+            if [ "$TRIGGER" = "release" ]; then
+              profile="release"
+            else
+              profile="debug"
+            fi
+          fi
+          case "$profile" in
+            release|debug) ;;
+            *) echo "invalid native build profile: $profile" >&2; exit 2 ;;
+          esac
+          echo "profile=$profile" >> "$GITHUB_OUTPUT"
 
   wasm-commands:
     name: WASM Commands
@@ -163,15 +193,6 @@ jobs:
         with:
           name: agentos-${{ matrix.platform }}
           keep-state: ${{ contains(matrix.runner, 'self-hosted') }}
-      - name: Resolve build profile
-        id: mode
-        run: |
-          set -euo pipefail
-          if [ "${{ needs.context.outputs.trigger }}" = "release" ]; then
-            echo "profile=release" >> "$GITHUB_OUTPUT"
-          else
-            echo "profile=debug" >> "$GITHUB_OUTPUT"
-          fi
       - name: Build linux artifacts
         uses: docker/build-push-action@v6
         with:
@@ -179,7 +200,7 @@ jobs:
           file: docker/build/linux-gnu.Dockerfile
           build-args: |
             TARGET=${{ matrix.target }}
-            BUILD_PROFILE=${{ steps.mode.outputs.profile }}
+            BUILD_PROFILE=${{ needs.context.outputs.build_profile }}
             CACHE_PLATFORM=${{ matrix.platform }}
             RUST_TOOLCHAIN=${{ env.RUST_TOOLCHAIN }}
             LINUX_GNU_LLVM_VERSION=${{ env.LINUX_GNU_LLVM_VERSION }}
@@ -235,15 +256,6 @@ jobs:
           keep-state: true
       - name: Log in to ghcr.io
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-      - name: Compute build profile
-        id: mode
-        run: |
-          set -euo pipefail
-          if [ "${{ needs.context.outputs.trigger }}" = "release" ]; then
-            echo "profile=release" >> "$GITHUB_OUTPUT"
-          else
-            echo "profile=debug" >> "$GITHUB_OUTPUT"
-          fi
       - name: Cross-compile via osxcross
         uses: docker/build-push-action@v6
         with:
@@ -252,7 +264,7 @@ jobs:
           build-args: |
             TARGET=${{ matrix.target }}
             CLANG=${{ matrix.clang }}
-            BUILD_PROFILE=${{ steps.mode.outputs.profile }}
+            BUILD_PROFILE=${{ needs.context.outputs.build_profile }}
             CACHE_PLATFORM=${{ matrix.platform }}
             RUST_TOOLCHAIN=${{ env.RUST_TOOLCHAIN }}
           tags: agentos-darwin-${{ matrix.platform }}
@@ -336,6 +348,9 @@ jobs:
     name: Publish npm
     if: ${{ !cancelled() && needs.wasm-commands.result == 'success' && needs.codex-wasm.result == 'success' && needs.wasmtime-darwin-smoke.result == 'success' && needs.build-sidecar.result == 'success' && needs.build-sidecar-darwin.result == 'success' && needs.smoke-sidecar-artifacts.result == 'success' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -345,7 +360,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
           registry-url: https://registry.npmjs.org
-      - run: pnpm install --frozen-lockfile --filter='!@rivet-dev/agentos-website'
+      - run: pnpm install --frozen-lockfile
       - uses: actions/download-artifact@v4
         with:
           name: wasm-commands
@@ -386,24 +401,47 @@ jobs:
         env:
           AGENTOS_SKIP_NATIVE_META_BUILD: "1"
         run: |
-          # Browser reference sources are archived outside the active workspace.
           npx turbo build \
-            --filter='!@rivet-dev/agentos-website' \
             --filter='!./examples/*' \
             --filter='!./examples/quickstart/*'
+      - name: Stage immutable software artifacts
+        run: |
+          pnpm --filter=publish exec tsx src/ci/bin.ts stage-software \
+            --output "$GITHUB_WORKSPACE/software-artifacts"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: software-artifacts
+          path: software-artifacts
+          if-no-files-found: error
       - name: Finalize package versions for publish
         run: |
           pnpm --filter=publish exec tsx src/ci/bin.ts bump-versions \
             --version ${{ needs.context.outputs.version }}
       - name: Publish npm packages
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ""
         run: |
           pnpm --filter=publish exec tsx src/ci/bin.ts publish-npm \
             --tag ${{ needs.context.outputs.npm_tag }} \
             --parallel 16 \
             --retries 3 \
             ${{ needs.context.outputs.trigger == 'release' && '--release-mode' || '' }}
+      - name: Upload software artifacts to R2
+        if: ${{ needs.context.outputs.trigger == 'release' }}
+        env:
+          R2_RELEASES_ACCESS_KEY_ID: ${{ secrets.R2_RELEASES_ACCESS_KEY_ID }}
+          R2_RELEASES_SECRET_ACCESS_KEY: ${{ secrets.R2_RELEASES_SECRET_ACCESS_KEY }}
+          VERSION: ${{ needs.context.outputs.version }}
+          SHA: ${{ needs.context.outputs.sha }}
+          LATEST: ${{ needs.context.outputs.latest }}
+        run: |
+          set -euo pipefail
+          test -n "$R2_RELEASES_ACCESS_KEY_ID"
+          test -n "$R2_RELEASES_SECRET_ACCESS_KEY"
+          pnpm --filter=publish exec tsx src/ci/bin.ts upload-r2 \
+            --source "$GITHUB_WORKSPACE/software-artifacts" --sha "$SHA" --name software
+          pnpm --filter=publish exec tsx src/ci/bin.ts copy-r2 \
+            --sha "$SHA" --version "$VERSION" --latest "$LATEST" --name software
 
   release-assets:
     needs: [context, wasmtime-darwin-smoke, build-sidecar, build-sidecar-darwin, smoke-sidecar-artifacts]
@@ -510,7 +548,7 @@ jobs:
           key: ${{ runner.os }}-x86_64-unknown-linux-gnu-rusty-v8-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-x86_64-unknown-linux-gnu-rusty-v8-
-      - run: pnpm install --frozen-lockfile --filter='!@rivet-dev/agentos-website'
+      - run: pnpm install --frozen-lockfile
       - name: Bump Cargo versions
         run: |
           pnpm --filter=publish exec tsx src/ci/bin.ts bump-versions \
@@ -547,3 +585,20 @@ jobs:
           pnpm --filter=publish exec tsx src/ci/bin.ts publish-crates \
             --version ${{ needs.context.outputs.version }} \
             --allow-dirty
+
+  notify-managed-services:
+    name: Notify managed services
+    needs: [context, publish-npm, release-assets, publish-crates]
+    if: ${{ success() && needs.context.outputs.trigger == 'release' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify managed services
+        env:
+          GH_TOKEN: ${{ secrets.MANAGED_SERVICES_DISPATCH_TOKEN }}
+          VERSION: ${{ needs.context.outputs.version }}
+        run: |
+          gh api --method POST /repos/rivet-dev/services/dispatches \
+            -f event_type=downstream-release \
+            -f client_payload[product]=agentos \
+            -f client_payload[version]="$VERSION" \
+            -f client_payload[sha]="$GITHUB_SHA"

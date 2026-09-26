@@ -78,7 +78,10 @@ const KERNEL_POSIX_BOOTSTRAP_DIRS = [
 	"/var/tmp",
 ] as const;
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
-const SIDECAR_BINARY = path.join(REPO_ROOT, "target/debug/agentos-sidecar");
+const SIDECAR_BINARY = path.join(
+	REPO_ROOT,
+	"target/debug/agentos-sidecar",
+);
 const SIDECAR_BUILD_INPUTS = [
 	path.join(REPO_ROOT, "Cargo.toml"),
 	path.join(REPO_ROOT, "Cargo.lock"),
@@ -208,7 +211,7 @@ export type ProcessPermissions =
 export type EnvPermissions =
 	| PermissionMode
 	| RulePermissions<PatternPermissionRule>;
-export type BindingPermissions =
+export type HostFunctionPermissions =
 	| PermissionMode
 	| RulePermissions<PatternPermissionRule>;
 
@@ -311,7 +314,7 @@ export interface Permissions {
 	childProcess?: ChildProcessPermissions;
 	process?: ProcessPermissions;
 	env?: EnvPermissions;
-	binding?: BindingPermissions;
+	hostFunction?: HostFunctionPermissions;
 }
 
 export interface ResourceBudgets {
@@ -487,11 +490,11 @@ export interface Kernel extends KernelInterface {
 	readonly zombieTimerCount: number;
 }
 
-export interface BindingTree {
-	[key: string]: BindingFunction | BindingTree;
+export interface HostFunctionTree {
+	[key: string]: HostFunctionHandler | HostFunctionTree;
 }
 
-export type BindingFunction = (...args: unknown[]) => unknown;
+export type HostFunctionHandler = (...args: unknown[]) => unknown;
 
 export interface NodeDriverOptions {
 	filesystem?: VirtualFileSystem;
@@ -512,7 +515,7 @@ export interface NodeRuntimeOptions {
 	runtimeDriverFactory?: NodeRuntimeDriverFactory;
 	permissions?: Partial<Permissions>;
 	memoryLimit?: number;
-	bindings?: BindingTree;
+	hostFunctions?: HostFunctionTree;
 	loopbackExemptPorts?: number[];
 }
 
@@ -1156,8 +1159,6 @@ export const WASMVM_COMMANDS = Object.freeze([
 	"users",
 	"uptime",
 	"stty",
-	"codex",
-	"codex-exec",
 ]) as readonly string[];
 
 export type PermissionTier = "full" | "read-write" | "read-only" | "isolated";
@@ -1173,8 +1174,6 @@ export const DEFAULT_FIRST_PARTY_TIERS: Readonly<
 	nice: "full",
 	nohup: "full",
 	stdbuf: "full",
-	codex: "full",
-	"codex-exec": "full",
 	git: "full",
 	"git-remote-http": "full",
 	"git-remote-https": "full",
@@ -1444,10 +1443,14 @@ function ensureSidecarBinary(): string {
 	if (sidecarBinaryNeedsBuild()) {
 		const cargoBinary = findCargoBinary();
 		if (cargoBinary) {
-			execFileSync(cargoBinary, ["build", "-q", "-p", "agentos-sidecar"], {
-				cwd: REPO_ROOT,
-				stdio: "pipe",
-			});
+			execFileSync(
+				cargoBinary,
+				["build", "-q", "-p", "agentos-sidecar"],
+				{
+					cwd: REPO_ROOT,
+					stdio: "pipe",
+				},
+			);
 		} else if (!fsSync.existsSync(SIDECAR_BINARY)) {
 			execFileSync(
 				resolveCargoBinary(),

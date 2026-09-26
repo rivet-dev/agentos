@@ -1,0 +1,121 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AgentOS Tests <tests@agentos.invalid>
+Date: Wed, 15 Jul 2026 15:15:00 -0700
+Subject: [PATCH] fstests: preserve Linux helper output under WASI
+
+The WASI permname port re-executes each worker, so keep the coordinator-only
+configuration line out of child output. nametest's golden output depends on
+glibc random(3)'s seeded sequence and stdio/write ordering; provide those
+compatibility details only for the WASI build.
+---
+ src/nametest.c | 60 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ src/permname.c |  6 +++++
+ 2 files changed, 66 insertions(+)
+
+diff --git a/src/permname.c b/src/permname.c
+--- a/src/permname.c
++++ b/src/permname.c
+@@ -102,10 +102,16 @@ main(int argc, char **argv)
+ 	for (a = 0, tot = 1; a < len; a++)
+ 		tot *= asize;
++#ifdef __wasi__
++	if (child_index < 0) {
++#endif
+         if (vflag) fprintf(stderr,"[%d] ",pid);
+ 	fprintf(stderr,
+ 		"alpha size = %d, name length = %d, total files = %lld, nproc=%d\n",
+ 		asize, len, tot, nproc);
+ 	fflush(stderr);
++#ifdef __wasi__
++	}
++#endif
+ 	for (a = 0; a < asize; a++) {
+ 		if (a < 26)
+ 			alpha[a] = 'a' + a;
+diff --git a/src/nametest.c b/src/nametest.c
+--- a/src/nametest.c
++++ b/src/nametest.c
+@@ -7,6 +7,58 @@
+ #include "global.h"
+ #include <ctype.h>
+ 
++#ifdef __wasi__
++#include <stdint.h>
++
++/* Match the glibc random(3) stream used to generate the pinned Linux output. */
++static uint32_t linux_random_state[31];
++static size_t linux_random_front = 3;
++static size_t linux_random_rear;
++
++static long
++linux_random(void)
++{
++	uint32_t value = linux_random_state[linux_random_front] +
++		linux_random_state[linux_random_rear];
++
++	linux_random_state[linux_random_front] = value;
++	if (++linux_random_front == 31)
++		linux_random_front = 0;
++	if (++linux_random_rear == 31)
++		linux_random_rear = 0;
++	return (long)((value >> 1) & 0x7fffffffU);
++}
++
++static void
++linux_srandom(unsigned int seed)
++{
++	int32_t word;
++	int32_t hi;
++	int32_t lo;
++	int i;
++
++	if (seed == 0)
++		seed = 1;
++	word = (int32_t)seed;
++	linux_random_state[0] = (uint32_t)word;
++	for (i = 1; i < 31; i++) {
++		hi = word / 127773;
++		lo = word % 127773;
++		word = 16807 * lo - 2836 * hi;
++		if (word < 0)
++			word += 2147483647;
++		linux_random_state[i] = (uint32_t)word;
++	}
++	linux_random_front = 3;
++	linux_random_rear = 0;
++	for (i = 0; i < 310; i++)
++		(void)linux_random();
++}
++
++#define random linux_random
++#define srandom linux_srandom
++#endif
++
+ /*
+  * nametest.c
+  *
+@@ -192,6 +244,10 @@ main(int argc, char *argv[])
+ 	 * Run random transactions against the directory.
+ 	 */
+ 	zone = -1;
++#ifdef __wasi__
++	write(1, ".", 1);
++	linedots = 1;
++#endif
+ 	printf("Seed = %d (use \"-s %d\" to re-execute this test)\n", seed, seed);
+         srandom(seed);
+ 
+@@ -229,7 +285,11 @@ main(int argc, char *argv[])
+                 /* output '.' every DOT_COUNT ops
+                  * and output '\n" every 72 dots
+                  */
++#ifdef __wasi__
++		if (i != 0 && (i % DOT_COUNT) == 0) {
++#else
+ 		if ((i % DOT_COUNT) == 0) {
++#endif
+ 			if (linedots++ == 72) {
+ 				linedots = 0;
+ 				write(1, "\n", 1);
+-- 
+2.47.0

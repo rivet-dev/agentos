@@ -1,0 +1,16 @@
+---
+title: "Vercel Eve"
+description: "Use the fixed agentOS actor as Vercel Eve's VM backend."
+---
+
+Eve owns its application runtime; agentOS supplies the isolated VM and durable
+workspace.
+
+<CodeSnippet file="examples/vercel-eve/agent/sandbox.ts" />
+
+`agentOSBackend({ createInput, clientConfig })` connects to the fixed actor.
+Each Eve key maps to a stable actor key. Shutdown stops processes opened by the
+adapter and disconnects; it does not destroy durable actor state.
+
+Use `agentOSCoreBackend` when a trusted embedding needs host-backed mounts or
+host functions.

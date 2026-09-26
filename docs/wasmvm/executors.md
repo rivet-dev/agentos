@@ -8,13 +8,12 @@ share guest memory and there is no V8-to-Wasmtime bridge.
 
 ## Production decision
 
-Omitting the selector currently chooses **V8**. Wasmtime is production-ready
-and explicitly selectable, but the July 2026 post-threading canonical
-comparison did not pass the cold-start p95 or retained RSS/PSS gates.
-Warm Wasmtime module-cache hits were generally much faster than V8-WASM, so an
-explicit Wasmtime selection is appropriate for a process expected to reuse a
-small module set. It is not yet the safe fleet-wide default for cold or
-module-diverse traffic.
+Omitting the selector currently chooses **V8**. Wasmtime is explicitly
+selectable. The September 26, 2026 integrated-tree comparison passed
+correctness and retained RSS/PSS gates, but failed cold-start p95 and
+throughput/admission gates. Warm module-cache hits were much faster in the
+measured workloads; evaluate explicit Wasmtime selection against your own
+module mix and concurrency requirements. V8 remains the default.
 
 Select a backend per execution:
 
@@ -123,34 +122,42 @@ Memory figures must be kept separate:
 
 ## Canonical benchmark and rollback criteria
 
-The latest raw release result is
-[`packages/benchmarks/results/wasm-backend-comparison-phase4.json`](../../packages/benchmarks/results/wasm-backend-comparison-phase4.json).
-It uses identical hashed source modules and host-service paths on one machine,
-five independent sidecar processes per engine, five samples per workload, and
-warm cache hits. V8 adds its existing two-byte memory-maximum rewrite before
-compilation; both the identical source byte count and the transformed V8 byte
-count are retained in phase diagnostics.
+The current raw release result is
+[`packages/benchmarks/results/wasm-backend-comparison.json`](../../packages/benchmarks/results/wasm-backend-comparison.json),
+recorded September 26, 2026 from source snapshot
+`bef626a57054af31af505ecefdc834c90dc31b67` with Wasmtime 48.0.3. It uses
+identical hashed source modules and host-service paths on one x86-64 machine,
+five fresh processes per backend, and five samples per workload. Cold and
+warm samples are reported separately. V8 adds its memory-maximum rewrite
+before compilation; phase diagnostics retain both source and transformed
+byte counts.
 
-The matrix covers trivial, coreutils, shell pipeline, loopback curl, sqlite,
-Vim, large-module git, compute-heavy SHA-256, and host-call-heavy filesystem
-work, plus repeated/diverse concurrency at 1/10/50/100/200 and permission
-denial, cancellation, and CPU-limit paths.
-
-The canonical result completed with this decision table:
+The nine workloads cover trivial, coreutils, shell pipeline, loopback curl,
+sqlite, Vim, large-module git, compute-heavy SHA-256, and host-call-heavy
+filesystem work. Separate checks cover repeated/diverse concurrency at
+1/10/50/100/200, permission denial, cancellation, and CPU limits.
 
 | Gate | Result | Evidence |
 | --- | --- | --- |
-| Correctness and safety | Pass | Zero V8 or Wasmtime workload validation failures; denial, cancellation, and CPU-limit paths passed. |
-| Geometric-mean p50 | Pass | Wasmtime/V8 ratio `0.2741` (about 73% lower latency across the mixed sample set). |
-| Individual p95 | **Fail** | Cold Wasmtime compilation dominates substantive-module p95; several workload ratios exceed the `1.20` ceiling. |
-| Throughput | Pass | Wasmtime exceeded V8 on every comparable repeated/diverse row through concurrency 100; at 200, Wasmtime completed admitted work while V8 produced its typed admission outcome. |
-| Retained RSS | **Fail** | V8 `161,894,400` bytes; Wasmtime `256,995,328` bytes. |
-| Retained PSS | **Fail** | V8 `162,531,328` bytes; Wasmtime `257,593,344` bytes. |
+| Correctness and safety | Pass | Workload validation and denial, cancellation, and CPU-limit checks passed. |
+| Geometric-mean p50 | Pass | Wasmtime/V8 ratio `0.217923`. |
+| Individual p95 | **Fail** | Cold shell p95: Wasmtime 2,673 ms versus V8 334 ms. |
+| Throughput/admission | **Fail** | Wasmtime admitted 20/50 and 20/100 requested executions; V8 admitted 50/50 and 100/100. |
+| Retained RSS | Pass | V8 `515,252,224` bytes; Wasmtime `520,683,520` bytes. |
+| Retained PSS | Pass | V8 `512,814,080` bytes; Wasmtime `518,329,344` bytes. |
 
-Across workload medians, Wasmtime cold p50 ranged from slightly faster than V8
-for the trivial module to about 13× slower for Vim; warm p50 was about
-2.8–5.2× faster. These results support explicit warm-cache use, but the failed
-p95 and retained-memory gates require the omission default to remain V8.
+At concurrency 1 and 10, both engines admitted all requested work and Wasmtime
+throughput was 2.4–12.4× V8's across repeated/diverse rows. Rows with different
+admission counts cannot establish an equal-load throughput win. Warm shell
+p50 was 47.3 ms versus 317.8 ms; warm host-call-heavy filesystem p50 was
+36.8 ms versus 178.3 ms. The latter measures a complete workload, not isolated
+host-call binding latency.
+
+Retained RSS/PSS are medians of absolute process-tree memory after VM disposal,
+including retained runtime and compiled-module state. The historical
+[phase-4 result](../../packages/benchmarks/results/wasm-backend-comparison-phase4.json)
+used sidecar-only deltas above baseline and is not directly comparable.
+The failed cold-tail and throughput/admission gates keep V8 as the default.
 
 Run it from the repository root with a release sidecar and rebuilt canonical
 commands:
@@ -166,7 +173,7 @@ zero correctness/safety regressions and passes every locked threshold:
 
 - geometric-mean p50 no more than 10% slower;
 - no individual p95 more than 20% slower;
-- throughput no more than 10% lower;
+- throughput no more than 10% lower with no reduction in admitted work;
 - retained RSS and PSS no more than the greater of 10% or 4 MiB above V8.
 
 Keep or restore V8 as the default when any threshold fails, a stable typed

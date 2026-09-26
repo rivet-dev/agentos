@@ -1,0 +1,27 @@
+---
+title: "Publishing Software"
+description: "Stage and upload digest-addressed .aospkg artifacts."
+---
+
+Registry software is not published to npm. The release workflow builds every
+package, computes its SHA-256 digest, and stages:
+
+```text
+software/
+├── manifest.json
+└── packages/<name>/<sha256>.aospkg
+```
+
+`manifest.json` contains a package name, exact `sha256:<hex>` digest, byte size,
+and a path relative to the manifest URL. It is a build inventory, not a
+semantic-version resolver.
+
+Run the credential-free release staging path locally:
+
+```bash
+just software-artifacts-dry-run
+```
+
+The release workflow uploads the same directory through the configured
+S3-compatible endpoint under immutable commit and version prefixes. Consumers
+pass the resulting artifact URL and digest directly to `software.install`.

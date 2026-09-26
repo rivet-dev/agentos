@@ -1,5 +1,6 @@
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::protocol::{
@@ -12,38 +13,13 @@ use crate::state::{SharedEventSink, SharedSidecarRequestClient, VmError};
 
 pub type ExtensionFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, VmError>> + 'a>>;
 
-/// One projected agent package's launch surface, served from sidecar-owned VM
-/// state (sourced from packed vbare manifests; packed packages ship no
-/// `agentos-package.json` for extensions to read from the guest filesystem).
-#[derive(Debug, Clone)]
-pub struct ProjectedAgentLaunchEntry {
-    pub id: String,
-    pub acp_entrypoint: String,
-    pub env: std::collections::BTreeMap<String, String>,
-    pub launch_args: Vec<String>,
-}
-
 pub trait ExtensionHost {
-    /// Return the VM-scoped ACP/session limits. Test hosts that do not own a VM
-    /// use the same generous defaults as a normal sidecar.
-    fn vm_acp_limits<'a>(
-        &'a mut self,
-        _ownership: OwnershipScope,
-    ) -> ExtensionFuture<'a, crate::core::limits::AcpLimits> {
-        Box::pin(async { Ok(crate::core::limits::AcpLimits::default()) })
-    }
-
     /// Return the VM's single resolved SQLite handle. Reads through this handle
     /// never create another transport, connection pool, or database namespace.
     fn vm_database<'a>(
         &'a mut self,
         ownership: OwnershipScope,
     ) -> ExtensionFuture<'a, Option<crate::vm_sqlite::SharedVmSqliteDatabase>>;
-
-    fn projected_agents<'a>(
-        &'a mut self,
-        ownership: OwnershipScope,
-    ) -> ExtensionFuture<'a, Vec<ProjectedAgentLaunchEntry>>;
 
     fn spawn_process<'a>(
         &'a mut self,
@@ -72,6 +48,13 @@ pub trait ExtensionHost {
     fn poll_event<'a>(
         &'a mut self,
         ownership: OwnershipScope,
+        timeout: Duration,
+    ) -> ExtensionFuture<'a, Option<EventFrame>>;
+
+    fn poll_process_event<'a>(
+        &'a mut self,
+        ownership: OwnershipScope,
+        process_id: String,
         timeout: Duration,
     ) -> ExtensionFuture<'a, Option<EventFrame>>;
 
@@ -117,6 +100,100 @@ pub trait ExtensionHost {
         process_id: String,
         timeout: Duration,
     ) -> ExtensionFuture<'a, ExtensionBufferedProcessOutput>;
+}
+
+/// Cloneable host services used by independently executing extension requests.
+///
+/// The mutable [`ExtensionHost`] backend exists for the direct, in-process
+/// `VmManager::dispatch` API. Transports that supervise more than one
+/// request at a time provide this owned backend instead, so an extension never
+/// retains the sidecar coordinator's mutable borrow while it waits on process
+/// output, filesystem work, or cancellation.
+pub trait ExtensionServices: Send + Sync {
+    fn vm_database(
+        &self,
+        ownership: OwnershipScope,
+    ) -> ExtensionFuture<'static, Option<crate::vm_sqlite::SharedVmSqliteDatabase>>;
+
+    fn spawn_process(
+        &self,
+        ownership: OwnershipScope,
+        request: ExecuteRequest,
+    ) -> ExtensionFuture<'static, ProcessStartedResponse>;
+
+    fn write_stdin(
+        &self,
+        ownership: OwnershipScope,
+        request: WriteStdinRequest,
+    ) -> ExtensionFuture<'static, StdinWrittenResponse>;
+
+    fn close_stdin(
+        &self,
+        ownership: OwnershipScope,
+        request: CloseStdinRequest,
+    ) -> ExtensionFuture<'static, StdinClosedResponse>;
+
+    fn kill_process(
+        &self,
+        ownership: OwnershipScope,
+        request: KillProcessRequest,
+    ) -> ExtensionFuture<'static, ProcessKilledResponse>;
+
+    fn poll_event(
+        &self,
+        ownership: OwnershipScope,
+        timeout: Duration,
+    ) -> ExtensionFuture<'static, Option<EventFrame>>;
+
+    fn poll_process_event(
+        &self,
+        ownership: OwnershipScope,
+        process_id: String,
+        timeout: Duration,
+    ) -> ExtensionFuture<'static, Option<EventFrame>>;
+
+    fn guest_filesystem_call(
+        &self,
+        ownership: OwnershipScope,
+        request: GuestFilesystemCallRequest,
+    ) -> ExtensionFuture<'static, GuestFilesystemResultResponse>;
+
+    fn bind_process_to_session(
+        &self,
+        ownership: OwnershipScope,
+        namespace: String,
+        ext_session_id: String,
+        process_id: String,
+    ) -> ExtensionFuture<'static, ()>;
+
+    fn bind_vm_to_session(
+        &self,
+        ownership: OwnershipScope,
+        namespace: String,
+        ext_session_id: String,
+    ) -> ExtensionFuture<'static, ()>;
+
+    fn dispose_session_resources(
+        &self,
+        ownership: OwnershipScope,
+        namespace: String,
+        ext_session_id: String,
+    ) -> ExtensionFuture<'static, Vec<EventFrame>>;
+
+    fn start_buffering_process_output(
+        &self,
+        ownership: OwnershipScope,
+        process_id: String,
+    ) -> ExtensionFuture<'static, ()>;
+
+    fn handoff_buffered_process_output(
+        &self,
+        ownership: OwnershipScope,
+        namespace: String,
+        ext_session_id: String,
+        process_id: String,
+        timeout: Duration,
+    ) -> ExtensionFuture<'static, ExtensionBufferedProcessOutput>;
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -186,9 +263,9 @@ pub struct ExtensionSnapshot {
     event_sink: SharedEventSink,
 }
 
-pub struct ExtensionContext<'a> {
+pub struct ExtensionContext {
     snapshot: ExtensionSnapshot,
-    host: &'a mut dyn ExtensionHost,
+    services: Arc<dyn ExtensionServices>,
 }
 
 impl ExtensionSnapshot {
@@ -261,11 +338,33 @@ impl ExtensionSnapshot {
         )?;
         extension_callback_response_payload(&self.namespace, response)
     }
+
+    pub async fn invoke_callback_async(
+        &self,
+        payload: Vec<u8>,
+        timeout: Duration,
+    ) -> Result<Vec<u8>, VmError> {
+        let response = self
+            .sidecar_requests
+            .invoke_async(
+                self.ownership.clone(),
+                SidecarRequestPayload::Ext(ExtEnvelope {
+                    namespace: self.namespace.clone(),
+                    payload,
+                }),
+                timeout,
+            )
+            .await?;
+        extension_callback_response_payload(&self.namespace, response)
+    }
 }
 
-impl<'a> ExtensionContext<'a> {
-    pub(crate) fn new(snapshot: ExtensionSnapshot, host: &'a mut dyn ExtensionHost) -> Self {
-        Self { snapshot, host }
+impl ExtensionContext {
+    pub(crate) fn with_services(
+        snapshot: ExtensionSnapshot,
+        services: Arc<dyn ExtensionServices>,
+    ) -> Self {
+        ExtensionContext { snapshot, services }
     }
 
     pub fn snapshot(&self) -> ExtensionSnapshot {
@@ -310,23 +409,19 @@ impl<'a> ExtensionContext<'a> {
         self.snapshot.invoke_callback(payload, timeout)
     }
 
-    pub async fn vm_database(
-        &mut self,
-    ) -> Result<Option<crate::vm_sqlite::SharedVmSqliteDatabase>, VmError> {
-        self.host.vm_database(self.snapshot.ownership.clone()).await
-    }
-
-    pub async fn vm_acp_limits(&mut self) -> Result<crate::core::limits::AcpLimits, VmError> {
-        self.host
-            .vm_acp_limits(self.snapshot.ownership.clone())
-            .await
+    pub async fn invoke_callback_async(
+        &self,
+        payload: Vec<u8>,
+        timeout: Duration,
+    ) -> Result<Vec<u8>, VmError> {
+        self.snapshot.invoke_callback_async(payload, timeout).await
     }
 
     pub async fn spawn_process(
         &mut self,
         request: ExecuteRequest,
     ) -> Result<ProcessStartedResponse, VmError> {
-        self.host
+        self.services
             .spawn_process(self.snapshot.ownership.clone(), request)
             .await
     }
@@ -359,7 +454,7 @@ impl<'a> ExtensionContext<'a> {
         &mut self,
         request: WriteStdinRequest,
     ) -> Result<StdinWrittenResponse, VmError> {
-        self.host
+        self.services
             .write_stdin(self.snapshot.ownership.clone(), request)
             .await
     }
@@ -392,7 +487,7 @@ impl<'a> ExtensionContext<'a> {
         &mut self,
         request: CloseStdinRequest,
     ) -> Result<StdinClosedResponse, VmError> {
-        self.host
+        self.services
             .close_stdin(self.snapshot.ownership.clone(), request)
             .await
     }
@@ -425,7 +520,7 @@ impl<'a> ExtensionContext<'a> {
         &mut self,
         request: KillProcessRequest,
     ) -> Result<ProcessKilledResponse, VmError> {
-        self.host
+        self.services
             .kill_process(self.snapshot.ownership.clone(), request)
             .await
     }
@@ -455,7 +550,7 @@ impl<'a> ExtensionContext<'a> {
     }
 
     pub async fn poll_event(&mut self, timeout: Duration) -> Result<Option<EventFrame>, VmError> {
-        self.host
+        self.services
             .poll_event(self.snapshot.ownership.clone(), timeout)
             .await
     }
@@ -471,21 +566,34 @@ impl<'a> ExtensionContext<'a> {
             .map_err(wire_protocol_error)
     }
 
+    /// Await one event from exactly `process_id` through the ownership-aware
+    /// event broker without retaining VM or whole-sidecar state.
+    pub async fn poll_process_event_wire(
+        &mut self,
+        process_id: &str,
+        timeout: Duration,
+    ) -> Result<Option<crate::wire::EventFrame>, VmError> {
+        let event = self
+            .services
+            .poll_process_event(
+                self.snapshot.ownership.clone(),
+                process_id.to_owned(),
+                timeout,
+            )
+            .await?;
+        event
+            .map(crate::wire::event_frame_from_compat)
+            .transpose()
+            .map_err(wire_protocol_error)
+    }
+
     pub async fn guest_filesystem_call(
         &mut self,
         request: GuestFilesystemCallRequest,
     ) -> Result<GuestFilesystemResultResponse, VmError> {
-        self.host
+        self.services
             .guest_filesystem_call(self.snapshot.ownership.clone(), request)
             .await
-    }
-
-    /// Enumerate the VM's projected agent packages (id + launch surface) from
-    /// sidecar-owned state. This is the agent source of truth for extensions;
-    /// it reflects `ConfigureVm` and live `LinkPackage` updates.
-    pub async fn projected_agents(&mut self) -> Result<Vec<ProjectedAgentLaunchEntry>, VmError> {
-        let ownership = self.snapshot.ownership().clone();
-        self.host.projected_agents(ownership).await
     }
 
     pub async fn guest_filesystem_call_wire(
@@ -517,13 +625,12 @@ impl<'a> ExtensionContext<'a> {
         ext_session_id: impl Into<String>,
         process_id: impl Into<String>,
     ) -> Result<(), VmError> {
-        self.host
-            .bind_process_to_session(
-                self.snapshot.ownership.clone(),
-                self.snapshot.namespace.clone(),
-                ext_session_id.into(),
-                process_id.into(),
-            )
+        let ownership = self.snapshot.ownership.clone();
+        let namespace = self.snapshot.namespace.clone();
+        let ext_session_id = ext_session_id.into();
+        let process_id = process_id.into();
+        self.services
+            .bind_process_to_session(ownership, namespace, ext_session_id, process_id)
             .await
     }
 
@@ -531,12 +638,11 @@ impl<'a> ExtensionContext<'a> {
         &mut self,
         ext_session_id: impl Into<String>,
     ) -> Result<(), VmError> {
-        self.host
-            .bind_vm_to_session(
-                self.snapshot.ownership.clone(),
-                self.snapshot.namespace.clone(),
-                ext_session_id.into(),
-            )
+        let ownership = self.snapshot.ownership.clone();
+        let namespace = self.snapshot.namespace.clone();
+        let ext_session_id = ext_session_id.into();
+        self.services
+            .bind_vm_to_session(ownership, namespace, ext_session_id)
             .await
     }
 
@@ -544,12 +650,11 @@ impl<'a> ExtensionContext<'a> {
         &mut self,
         ext_session_id: impl Into<String>,
     ) -> Result<Vec<EventFrame>, VmError> {
-        self.host
-            .dispose_session_resources(
-                self.snapshot.ownership.clone(),
-                self.snapshot.namespace.clone(),
-                ext_session_id.into(),
-            )
+        let ownership = self.snapshot.ownership.clone();
+        let namespace = self.snapshot.namespace.clone();
+        let ext_session_id = ext_session_id.into();
+        self.services
+            .dispose_session_resources(ownership, namespace, ext_session_id)
             .await
     }
 
@@ -569,8 +674,10 @@ impl<'a> ExtensionContext<'a> {
         &mut self,
         process_id: impl Into<String>,
     ) -> Result<(), VmError> {
-        self.host
-            .start_buffering_process_output(self.snapshot.ownership.clone(), process_id.into())
+        let ownership = self.snapshot.ownership.clone();
+        let process_id = process_id.into();
+        self.services
+            .start_buffering_process_output(ownership, process_id)
             .await
     }
 
@@ -580,12 +687,16 @@ impl<'a> ExtensionContext<'a> {
         process_id: impl Into<String>,
         timeout: Duration,
     ) -> Result<ExtensionBufferedProcessOutput, VmError> {
-        self.host
+        let ownership = self.snapshot.ownership.clone();
+        let namespace = self.snapshot.namespace.clone();
+        let ext_session_id = ext_session_id.into();
+        let process_id = process_id.into();
+        self.services
             .handoff_buffered_process_output(
-                self.snapshot.ownership.clone(),
-                self.snapshot.namespace.clone(),
-                ext_session_id.into(),
-                process_id.into(),
+                ownership,
+                namespace,
+                ext_session_id,
+                process_id,
                 timeout,
             )
             .await
@@ -627,30 +738,25 @@ fn extension_callback_response_payload(
     }
 }
 
-pub enum ExtensionInterruptRequest<'a> {
-    ExtensionPayload {
-        payload: &'a [u8],
-        ownership: &'a OwnershipScope,
-    },
-    KillProcess,
-}
-
-#[derive(Debug, Clone)]
-pub struct ExtensionInterruptResponse {
-    /// Whether the active request future should be dropped and replaced by the
-    /// synthetic response. Cooperative interrupts can signal the active future
-    /// and leave this false so it commits its own terminal state.
-    pub interrupt_active: bool,
-    pub interrupted_response_payload: Vec<u8>,
-    pub interrupting_response_payload: Option<Vec<u8>>,
+/// Admission class chosen by the extension after decoding its own opaque
+/// payload. Progress requests receive reserved routing admission because they
+/// unblock an already-active operation; core never interprets their payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExtensionRequestClass {
+    Ordinary,
+    Progress,
 }
 
 pub trait Extension: Send + Sync {
     fn namespace(&self) -> &str;
 
+    fn request_class(&self, _payload: &[u8]) -> ExtensionRequestClass {
+        ExtensionRequestClass::Ordinary
+    }
+
     fn handle_request<'a>(
         &'a self,
-        ctx: ExtensionContext<'a>,
+        ctx: ExtensionContext,
         payload: Vec<u8>,
     ) -> ExtensionFuture<'a, ExtensionResponse>;
 
@@ -673,22 +779,10 @@ pub trait Extension: Send + Sync {
     /// session's ownership scope so it can release the per-session state it
     /// keyed on that session. Default is a no-op. This is the only signal an
     /// extension receives that a client has disconnected, so it is what lets an
-    /// ACP-style extension free per-session state instead of leaking it for the
+    /// extension free per-connection state instead of leaking it for the
     /// process lifetime.
     fn on_session_disposed<'a>(&'a self, _ctx: ExtensionSnapshot) -> ExtensionFuture<'a, ()> {
         Box::pin(async { Ok(()) })
-    }
-
-    fn is_blocking_request(&self, _payload: &[u8]) -> bool {
-        false
-    }
-
-    fn interrupt_blocking_request(
-        &self,
-        _blocking_payload: &[u8],
-        _interrupt: ExtensionInterruptRequest<'_>,
-    ) -> Option<ExtensionInterruptResponse> {
-        None
     }
 
     fn on_dispose<'a>(&'a self) -> ExtensionFuture<'a, ()> {

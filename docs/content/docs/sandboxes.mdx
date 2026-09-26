@@ -1,0 +1,14 @@
+---
+title: "External VMs"
+description: "Attach an external VM provider through trusted embedded Core."
+---
+
+External VM providers expose a trusted host-backed filesystem and process
+bridge. They are supported by `@rivet-dev/agentos-core`, not by the hosted
+actor.
+
+<CodeSnippet file="examples/sandbox/client.ts" />
+
+The fixed actor rejects host mounts and provider clients because they would
+cross its security boundary. Use its whitelisted filesystem registry for hosted
+storage.

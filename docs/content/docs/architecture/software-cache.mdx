@@ -1,0 +1,98 @@
+---
+title: "Software Installation and Preloading"
+description: "Understand URL package installation, process caching, readiness, and preload coordination."
+---
+
+Each VM projects installed packages as read-only filesystem leaves. The
+projection is bounded by `config.limits.agentosPackages.maxMounts` (4,096 by
+default), including command aliases and `provides.files` directory mounts.
+Installing another package can fail with a resource-limit error even when the
+download succeeded; the existing VM projection remains in place.
+
+Hosted actors install immutable `.aospkg` files from HTTPS URLs. Embedded Core
+also accepts a trusted local file path. A hosted actor never receives or
+materializes a host path.
+
+## Resolution and projection
+
+The resolver validates the URL, blocks ambient credentials and private network
+destinations, bounds redirects and response headers, downloads into a temporary
+file, verifies the optional SHA-256 digest, and validates the package format.
+The verified content digest becomes the package identity.
+
+The sidecar projects installed packages under
+`/opt/agentos/pkgs/<name>/<version>` and command links under
+`/opt/agentos/bin`. `software.list` reads the current installed set.
+`software.install` and `software.uninstall` are durable config mutations, so
+they use the same revision checks and reconciliation as `config.patch`.
+
+## Process cache
+
+All VMs in one worker process share the child sidecar's content-addressed cache. Concurrent
+requests for the same digest are coalesced into one acquisition. The cache is
+bounded by bytes, entries, active downloads, pending downloads, and acquisition
+time. Live VM generations pin their package files. Unpinned entries are evicted
+in least-recently-used order.
+
+By default, each worker gets an isolated process-lifetime temporary cache. For
+persistent recovery, set a distinct `--package-cache-dir` or
+`AGENTOS_PACKAGE_CACHE_DIR` for each concurrently running worker. An OS lock
+prevents startup recovery or eviction from removing another worker's live
+package files. Restarting a worker with the same directory recovers verified
+packages.
+
+The standalone actor worker removes its temporary cache after normal shutdown
+or startup failure. Forced termination or a host crash can leave temporary
+directories behind; configure host temporary-directory cleanup for those
+leftovers. Persistent directories are never removed at worker shutdown.
+
+Partial downloads and failed publications use temporary files that are removed
+when their operation is cancelled or fails. Package source URLs are kept only
+as a short-lived bounded hint. Bytes are still verified before projection.
+
+## Startup preloading
+
+The `agentOS-preload-coordinator` is a central Rivet Actor that stores a
+low-frequency popularity hint. It is not an authoritative registry or cache.
+Each worker process reads one bounded plan at startup, coalesces that read for
+the process, and warms likely package digests with bounded concurrency.
+
+The default process warm deadline is 10 seconds. Packages required by a VM's
+desired config are separate from advisory warming and must resolve before that
+VM reports ready. When the advisory deadline expires, completed cache entries
+remain usable and VM startup continues. The actor stops waiting, but an
+already-sent sidecar acquisition can continue until its own bounded timeout;
+it may populate the cache after startup. Failed or timed-out acquisitions
+remove their partial temporary files. The
+report records ready, failed, skipped, warmed-byte, deadline, and coordinator
+availability counts. The timeout warning includes the pending package digests
+so operators can identify repeatedly slow downloads.
+
+Coordinator writes are infrequent usage summaries. An unavailable or stale
+coordinator only reduces cache hit rate and does not prevent a VM from starting
+with its required packages.
+
+## Operations and metrics
+
+The actor worker exports process-cache gauges (entries, bytes, pins, and
+pending acquisitions) and cumulative counters (hits, misses, coalesced waits,
+acquisitions, evictions, capacity failures, and cancellations). Preload counters
+record ready, failed, and skipped packages, warmed bytes, missed startup
+deadlines, and unavailable coordinator plans. These metrics contain no package
+URL or digest labels. The worker samples cache state after startup preloading
+and on the configured observation-flush interval (five minutes by default), so
+gauges are intentionally not instantaneous.
+
+These metrics use RivetKit's process-global Prometheus registry and aggregate
+all VMs in the worker. In the pinned RivetKit version, the actor-registry
+`/metrics` route does not check `RIVETKIT_METRICS_ENABLED` or
+`RIVETKIT_METRICS_TOKEN`. Those settings do not disable or protect this route.
+Block it at the deployment boundary or require authentication through a trusted
+proxy before exposing actor URLs. Use the preload report and worker logs for
+package-specific failures.
+
+## Embedded API
+
+Embedded Core uses the same resolver and process cache. It may additionally
+install a trusted local `.aospkg` path. Read more in the
+[embedded API quickstart](/agentos/docs/quickstart-embedded).

@@ -125,6 +125,9 @@ pub struct ProcessLaunchOptions {
     pub cloexec_fds: Vec<u32>,
     #[serde(rename = "localReplacement", default)]
     pub local_replacement: bool,
+    /// Kernel signal-thread identity whose mask survives exec; omitted means main.
+    #[serde(rename = "execSignalThreadId", default)]
+    pub exec_signal_thread_id: Option<u32>,
     #[serde(rename = "executableFd", default)]
     pub executable_fd: Option<u32>,
     #[serde(default)]
@@ -337,6 +340,19 @@ pub enum ProcessOperation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exec_signal_thread_identity_round_trips_and_defaults_to_main() {
+        let omitted: ProcessLaunchOptions = serde_json::from_str("{}").unwrap();
+        assert_eq!(omitted.exec_signal_thread_id.unwrap_or(0), 0);
+        let options: ProcessLaunchOptions =
+            serde_json::from_value(serde_json::json!({"execSignalThreadId": 7})).unwrap();
+        assert_eq!(options.exec_signal_thread_id, Some(7));
+        assert_eq!(
+            serde_json::to_value(options).unwrap()["execSignalThreadId"],
+            7
+        );
+    }
 
     #[test]
     fn queued_process_launch_requires_named_payload_admission() {

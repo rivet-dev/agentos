@@ -293,3 +293,28 @@ Current captured results:
 - `results/coldstart-resident-full-matrix-20260619.log`
 
 `coldstart-final.*` is the latest full run from June 19, 2026. It includes the three SDK scenarios above. It also contains an `isolate-only` reference row from a lower-level one-off V8 snapshot/restore benchmark; that row is captured for comparison but is not part of the normal SDK benchmark command.
+
+The focused `bench:wasm-backends` comparison samples the sidecar process tree,
+including live worker processes. Its `summary.retained` values are absolute
+RSS/PSS after VM disposal and the configured settling interval. Growth from the
+configured VM before fixture creation is reported separately as
+`retainedGrowthAgainstEmptyVm`. The metadata records this measurement scope and
+baseline; older result files reported sidecar-only deltas and are not directly
+comparable. Sampled peaks can miss short-lived workers, and summed RSS can count
+shared pages more than once; prefer PSS when comparing process trees.
+
+Summary version 3 checks that every configured run, workload, sample, control
+path, and concurrency row is present. It includes per-backend completion and failure counts
+in each row's `admissions` field. Its gate requires Wasmtime to complete at least
+as many requests as V8 at the same concurrency and mode, in addition to meeting
+the rate threshold. Serving fewer requests cannot pass through a higher
+successful-requests-per-second rate. Original failure examples remain available.
+
+Recompute a completed result without launching a sidecar or rerunning workloads:
+
+```sh
+pnpm --dir packages/benchmarks exec tsx src/focused/summarize-wasm-backends.ts /tmp/raw.json /tmp/recomputed.json
+```
+
+The output must be a new file. This preserves the raw observations and replaces
+only the derived `summary`.

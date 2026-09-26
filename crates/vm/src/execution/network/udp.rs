@@ -546,9 +546,13 @@ where
     if payload_len > allowance.bytes {
         turn.complete(FairBudget::default(), false)
             .map_err(|error| VmError::Execution(error.to_string()))?;
-        return Err(VmError::host("ERR_AGENTOS_FAIRNESS_BYTE_BUDGET", format!("UDP datagram uses {payload_len} bytes, allowance {} bytes; raise limits.reactor.byteQuantum",
-            allowance.bytes
-        )));
+        return Err(VmError::host(
+            "ERR_AGENTOS_FAIRNESS_BYTE_BUDGET",
+            format!(
+                "UDP datagram uses {payload_len} bytes, allowance {} bytes; raise limits.reactor.byteQuantum",
+                allowance.bytes
+            ),
+        ));
     }
 
     // `try_send*` performs one nonblocking syscall. Settle the process-global

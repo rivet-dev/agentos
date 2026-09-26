@@ -151,7 +151,7 @@ fn write_fixture_tar_at(path: PathBuf) -> PathBuf {
 
 #[derive(Clone)]
 struct IndexedEntry {
-    kind: v1::TarEntryKind,
+    kind: v2::TarEntryKind,
     offset: u64,
     size: u64,
     mode: u32,
@@ -164,14 +164,12 @@ struct IndexedEntry {
 fn write_aospkg(source_tar: &PathBuf, dest: &PathBuf) {
     let source_bytes = std::fs::read(source_tar).expect("read source tar");
     let index = scan_tar_index(source_tar);
-    let manifest = v1::PackageManifest {
+    let manifest = v2::PackageManifest {
         name: String::from("fixture"),
         version: String::from("1.0.0"),
-        agent: None,
         provides: None,
         commands: Vec::new(),
         man_pages: Vec::new(),
-        snapshot_bundle_path: None,
     };
     let manifest_bytes = encode_package_manifest(manifest).expect("encode manifest");
     let index_bytes = encode_mount_index(index).expect("encode index");
@@ -184,14 +182,14 @@ fn write_aospkg(source_tar: &PathBuf, dest: &PathBuf) {
     file.flush().expect("flush aospkg");
 }
 
-fn scan_tar_index(source_tar: &PathBuf) -> v1::MountIndex {
+fn scan_tar_index(source_tar: &PathBuf) -> v2::MountIndex {
     let file = File::open(source_tar).expect("open source tar");
     let mut archive = tar::Archive::new(file);
     let mut entries = BTreeMap::<String, IndexedEntry>::new();
     entries.insert(
         String::from("/"),
         IndexedEntry {
-            kind: v1::TarEntryKind::Directory,
+            kind: v2::TarEntryKind::Directory,
             offset: 0,
             size: 0,
             mode: S_IFDIR | 0o755,
@@ -212,7 +210,7 @@ fn scan_tar_index(source_tar: &PathBuf) -> v1::MountIndex {
         let mtime = header.mtime().unwrap_or(0) as i64;
         let indexed = if entry_type.is_dir() {
             Some(IndexedEntry {
-                kind: v1::TarEntryKind::Directory,
+                kind: v2::TarEntryKind::Directory,
                 offset: 0,
                 size: 0,
                 mode: S_IFDIR | mode,
@@ -223,7 +221,7 @@ fn scan_tar_index(source_tar: &PathBuf) -> v1::MountIndex {
             })
         } else if entry_type.is_symlink() {
             Some(IndexedEntry {
-                kind: v1::TarEntryKind::Symlink,
+                kind: v2::TarEntryKind::Symlink,
                 offset: 0,
                 size: 0,
                 mode: S_IFLNK | mode.max(0o777),
@@ -245,7 +243,7 @@ fn scan_tar_index(source_tar: &PathBuf) -> v1::MountIndex {
             let mut drain = Vec::new();
             let _ = entry.read_to_end(&mut drain);
             Some(IndexedEntry {
-                kind: v1::TarEntryKind::File,
+                kind: v2::TarEntryKind::File,
                 offset,
                 size,
                 mode: S_IFREG | mode,
@@ -262,10 +260,10 @@ fn scan_tar_index(source_tar: &PathBuf) -> v1::MountIndex {
             entries.insert(path, indexed);
         }
     }
-    v1::MountIndex {
+    v2::MountIndex {
         tar_entries: entries
             .into_iter()
-            .map(|(path, entry)| v1::TarEntry {
+            .map(|(path, entry)| v2::TarEntry {
                 path,
                 kind: entry.kind,
                 offset: entry.offset,
@@ -311,7 +309,7 @@ fn synthesize_parent_dirs(path: &str, entries: &mut BTreeMap<String, IndexedEntr
             format!("{current}/{component}")
         };
         entries.entry(current.clone()).or_insert(IndexedEntry {
-            kind: v1::TarEntryKind::Directory,
+            kind: v2::TarEntryKind::Directory,
             offset: 0,
             size: 0,
             mode: S_IFDIR | 0o755,

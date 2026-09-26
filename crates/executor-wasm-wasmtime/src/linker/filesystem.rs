@@ -128,19 +128,19 @@ pub async fn dispatch(
         HostFsFdRemovexattr => xattr_remove(caller, params, false).await,
         HostFsFdMode => return scalar_stat(caller, params, results, false, "mode", false, 0).await,
         HostFsFdSize => {
-            return scalar_stat(caller, params, results, false, "size", true, u64::MAX).await
+            return scalar_stat(caller, params, results, false, "size", true, u64::MAX).await;
         }
         HostFsFdBlocks => {
-            return scalar_stat(caller, params, results, false, "blocks", true, u64::MAX).await
+            return scalar_stat(caller, params, results, false, "blocks", true, u64::MAX).await;
         }
         HostFsPathMode => {
-            return scalar_stat(caller, params, results, true, "mode", false, 0).await
+            return scalar_stat(caller, params, results, true, "mode", false, 0).await;
         }
         HostFsPathSize => {
-            return scalar_stat(caller, params, results, true, "size", true, u64::MAX).await
+            return scalar_stat(caller, params, results, true, "size", true, u64::MAX).await;
         }
         HostFsPathBlocks => {
-            return scalar_stat(caller, params, results, true, "blocks", true, u64::MAX).await
+            return scalar_stat(caller, params, results, true, "blocks", true, u64::MAX).await;
         }
         HostFsPathRdev => return scalar_stat(caller, params, results, true, "rdev", true, 0).await,
         _ => return Ok(false),

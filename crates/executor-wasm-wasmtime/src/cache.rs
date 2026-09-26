@@ -100,6 +100,22 @@ impl WasmtimeModuleCache {
                 "WebAssembly module could not be compiled for the configured feature profile",
             )
         })?);
+        // Source size alone does not bound generated code and metadata: many
+        // tiny exported functions can expand far beyond the source multiplier.
+        // Charge at least the actual compiled image retained by this entry.
+        let image = module.image_range();
+        let charged_bytes = charged_bytes.max(image.end.addr() - image.start.addr());
+        if charged_bytes > self.maximum_charged_bytes {
+            return Err(cache_limit_error(
+                "limits.wasm.moduleCacheBytes",
+                self.maximum_charged_bytes,
+                charged_bytes,
+            ));
+        }
+        while self.metrics.charged_bytes.saturating_add(charged_bytes) > self.maximum_charged_bytes
+        {
+            self.evict_lru()?;
+        }
         self.metrics.compile_time = self.metrics.compile_time.saturating_add(started.elapsed());
         self.metrics.source_bytes = self
             .metrics
@@ -220,6 +236,31 @@ mod tests {
         assert_eq!(metrics.misses, 2);
         assert_eq!(metrics.evictions, 1);
         assert_eq!(metrics.charged_bytes, MINIMUM_MODULE_CHARGE_BYTES);
+    }
+
+    #[test]
+    fn cache_charge_covers_the_compiled_image() {
+        let mut source = String::from("(module");
+        for index in 0..3000 {
+            source.push_str(&format!(" (func (export \"f{index}\"))"));
+        }
+        source.push(')');
+        let bytes = wat::parse_str(source).unwrap();
+        let mut cache = WasmtimeModuleCache::default();
+        let module = cache.get_or_compile(&engine(), &bytes).unwrap();
+        let image = module.image_range();
+        let compiled_bytes = image.end.addr() - image.start.addr();
+        assert!(
+            cache.metrics().charged_bytes >= compiled_bytes,
+            "source={} charged={} compiled={compiled_bytes}",
+            bytes.len(),
+            cache.metrics().charged_bytes
+        );
+        let mut limited = WasmtimeModuleCache::new(32, MINIMUM_MODULE_CHARGE_BYTES);
+        let error = limited.get_or_compile(&engine(), &bytes).unwrap_err();
+        assert_eq!(error.code, "ERR_AGENTOS_WASMTIME_MODULE_CACHE_LIMIT");
+        assert_eq!(limited.metrics().entries, 0);
+        assert_eq!(limited.metrics().charged_bytes, 0);
     }
 
     #[test]

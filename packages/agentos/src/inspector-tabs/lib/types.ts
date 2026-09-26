@@ -1,76 +1,83 @@
-// Display + raw types for the inspector tabs. Raw types match the agentOS
-// action return shapes; the source adapter (source.ts) transforms raw → display.
+import type { Output } from "../../generated/contract";
 
-// ── Software ──────────────────────────────────────────────────────────
 export interface SoftwareBundle {
 	name: string;
+	slug: string;
 	version: string;
 	source: "rivet-dev" | "user";
-	binaries: string[]; // command names the package ships (from SoftwareInfo.commands)
-}
-export interface SoftwareInfo {
-	packageName: string;
-	/** Command names projected from this package. */
-	commands: string[];
+	binaries: string[];
 }
 
-// ── Processes ─────────────────────────────────────────────────────────
-/** Actual `listProcesses` serialized shape (a subset of the kernel struct;
- * ppid/cwd/cpu/mem/signal/stdout are NOT exposed — PARTIAL). Only processes
- * started via the SDK `spawn` are listed; `startedAt` is the spawn time. */
-export interface ProcessInfo {
+export interface KernelProcessInfo {
+	generation: number | bigint;
+	process: Output.ActorProcessId | null;
 	pid: number;
+	ppid: number;
+	pgid: number;
+	sid: number;
+	driver: string;
 	command: string;
 	args: string[];
-	running: boolean;
+	cwd: string;
+	status: "running" | "exited";
 	exitCode: number | null;
-	/** Epoch milliseconds when the process was spawned. */
-	startedAt: number;
+	startTime: number;
+	exitTime: number | null;
 }
 
-// ── Filesystem ────────────────────────────────────────────────────────
-/** Raw `readdirRecursive` entry. */
-export interface DirEntry {
-	path: string;
-	type: "file" | "directory" | "symlink";
-	size: number;
+export interface ProcessTreeNode extends KernelProcessInfo {
+	children: ProcessTreeNode[];
 }
-/** One directory entry, fetched lazily per-level (readdir + stat). Recursive
- * `readdirRecursive("/")` times out on a real VM fs, so the tree loads on
- * demand: each expanded dir fetches just its own children. */
+
+export interface ProcessOutputPayload {
+	pid: number;
+	stream: "stdout" | "stderr";
+	data: unknown;
+	seq: number;
+}
+
+export interface ProcessExitPayload {
+	pid: number;
+	exitCode: number;
+}
+
+export interface ShellDataPayload {
+	shellId: string;
+	data: unknown;
+	seq: number | bigint;
+}
+
+export interface ShellExitPayload {
+	shellId: string;
+	exitCode: number;
+}
+
+export interface SignedPreviewUrl {
+	path: string;
+	token: string;
+	port: number;
+	expiresAt: number;
+}
+
 export interface FsEntry {
 	name: string;
 	path: string;
 	dir: boolean;
 	size?: number;
-	/** Virtual/system fs (/proc, /sys, …) — shown but not stat-ed or expanded,
-	 * because touching it wedges the VM sidecar. */
+	symlink?: boolean;
 	virtual?: boolean;
 }
-/** Raw `readdirEntries` entry — one typed child in a single round-trip. No
- * `size` (the fast path skips the per-entry `stat`); the file viewer stats on open. */
-export interface ReaddirEntry {
-	name: string;
-	isDirectory: boolean;
-	isSymbolicLink: boolean;
-}
-/** Raw `stat` shape (subset we use). */
-export interface VirtualStat {
-	size: number;
-	mtimeMs: number;
-	isDirectory: boolean;
-	isSymbolicLink: boolean;
-}
+
 export interface FileContent {
 	path: string;
 	sizeBytes: number;
 	mtimeMs: number;
-	text: string | null; // null = binary
+	text: string | null;
+	bytes: Uint8Array | null;
+	oversize: boolean;
+	special?: boolean;
 }
 
-// ── Mounts ────────────────────────────────────────────────────────────
-/** Safe `listMounts` metadata derived from the actor's declarative mounts.
- * Native plugin config is intentionally omitted because it may contain secrets. */
 export interface MountInfo {
 	path: string;
 	kind: string;
@@ -78,13 +85,22 @@ export interface MountInfo {
 	config?: unknown | null;
 }
 
-// ── Sessions / transcript ─────────────────────────────────────────────
-export interface SessionInfo {
-	sessionId: string;
-	agentType: string;
+export interface ShellInfo {
+	shellId: string;
+	openedAt: number;
 }
-/** Mapped, displayable live transcript event (defensive; unknown → "raw"). */
-export type TranscriptEvent =
-	| { kind: "user" | "assistant" | "thinking"; text: string }
-	| { kind: "tool"; tool: string; status?: string }
-	| { kind: "raw"; label: string; json: unknown };
+
+export type ShellReplayMode = "none" | "screen" | "scrollback";
+
+export interface ShellSnapshot {
+	shellId: string;
+	mode: ShellReplayMode;
+	seq: number | bigint;
+	truncated: boolean;
+	cols: number;
+	rows: number;
+	data: Uint8Array;
+}
+
+export type RuntimeHealth = Output.VmStatusSnapshot;
+export type VmShutdownPayload = Output.VmShutdown;

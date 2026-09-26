@@ -45,5 +45,5 @@ pub use lifecycle::{WasmtimeExecution, WasmtimeExecutionEngine};
 pub use limits::DEFAULT_TABLE_ACCOUNTING_BYTES;
 pub use worker::{run_worker_entry, WORKER_MODE_ARGUMENT};
 
-pub const PINNED_WASMTIME_VERSION: &str = "46.0.0";
+pub const PINNED_WASMTIME_VERSION: &str = "48.0.3";
 pub const TRUSTED_INITIAL_MODULE_PREFIX: &str = "agentos-trusted-initial:";

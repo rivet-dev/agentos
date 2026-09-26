@@ -226,20 +226,20 @@ fn directory_import_uses_package_main_field() {
 #[test]
 fn bare_package_main_only_type_module_resolves() {
     // Regression guard: a bare ESM package whose package.json has `main` but NO
-    // `exports` map (e.g. @agentclientprotocol/sdk@0.16.1) must still resolve via
+    // `exports` map must still resolve via
     // the `main` fallback. `exports` and `main` are separate code paths; this case
     // exercises the latter for a scoped package looked up through node_modules.
     let fixture = Fixture::new();
     fixture.write_json(
         "node_modules/@scope/pkg/package.json",
-        serde_json::json!({ "type": "module", "main": "dist/acp.js" }),
+        serde_json::json!({ "type": "module", "main": "dist/main.js" }),
     );
-    fixture.write("node_modules/@scope/pkg/dist/acp.js", "export default 1;");
+    fixture.write("node_modules/@scope/pkg/dist/main.js", "export default 1;");
     assert_import(
         &fixture,
         "@scope/pkg",
         "/root/project/src/adapter.js",
-        "/root/node_modules/@scope/pkg/dist/acp.js",
+        "/root/node_modules/@scope/pkg/dist/main.js",
     );
 }
 

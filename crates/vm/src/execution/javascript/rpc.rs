@@ -507,7 +507,7 @@ pub(in crate::execution) fn descriptor_rights_compat_request(
             return Err(VmError::host(
                 "EINVAL",
                 format!("descriptor-rights adapter received unsupported operation: {other:?}"),
-            ))
+            ));
         }
     };
     Ok(HostRpcRequest {
@@ -519,10 +519,10 @@ pub(in crate::execution) fn descriptor_rights_compat_request(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::execution) async fn service_descriptor_rights_compat_operation<B>(
-    bridge: &SharedBridge<B>,
-    vm_id: &str,
-    dns: &VmDnsConfig,
+pub(in crate::execution) fn service_descriptor_rights_compat_operation<B>(
+    _bridge: &SharedBridge<B>,
+    _vm_id: &str,
+    _dns: &VmDnsConfig,
     socket_paths: &SocketPathContext,
     kernel: &mut SidecarKernel,
     kernel_readiness: KernelSocketReadinessRegistry,
@@ -537,19 +537,641 @@ where
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
     let request = descriptor_rights_compat_request(call_id, operation)?;
-    service_javascript_sync_rpc(JavascriptSyncRpcServiceRequest {
-        bridge,
-        vm_id,
-        dns,
-        socket_paths,
+    validate_guest_network_capability_alias(process, &request)?;
+    service_descriptor_rights_sync_rpc(
         kernel,
         kernel_readiness,
         process,
-        sync_request: &request,
+        socket_paths,
         capabilities,
-        managed_descriptions: Some(managed_descriptions),
-    })
-    .await
+        Some(managed_descriptions),
+        &request,
+    )
+    .map(HostServiceResponse::Json)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn service_descriptor_rights_sync_rpc(
+    kernel: &mut SidecarKernel,
+    kernel_readiness: KernelSocketReadinessRegistry,
+    process: &mut ActiveProcess,
+    socket_paths: &SocketPathContext,
+    capabilities: CapabilityRegistry,
+    managed_descriptions: Option<crate::state::ManagedHostNetDescriptionRegistry>,
+    request: &HostRpcRequest,
+) -> Result<Value, VmError> {
+    match request.method.as_str() {
+        "process.fd_sendmsg_rights" => {
+            let socket_fd = javascript_sync_rpc_arg_u32(&request.args, 0, "sendmsg socket fd")?;
+            let data = javascript_sync_rpc_request_bytes_arg(request, 1, "sendmsg data")?;
+            let raw_rights = request
+                .args
+                .get(2)
+                .and_then(Value::as_array)
+                .ok_or_else(|| {
+                    VmError::InvalidState(
+                        "sendmsg rights must be an array of file descriptors".into(),
+                    )
+                })?;
+            if raw_rights.len() > LINUX_SCM_MAX_FD {
+                return Err(VmError::host(
+                    "EINVAL",
+                    format!("SCM_RIGHTS accepts at most {LINUX_SCM_MAX_FD} descriptors"),
+                ));
+            }
+            if let Some(limit) = kernel.resource_limits().max_open_fds {
+                if raw_rights.len() > limit {
+                    return Err(VmError::host(
+                        "EMFILE",
+                        format!(
+                            "SCM_RIGHTS descriptor list has {} entries, exceeding limits.resources.maxOpenFds ({limit}); raise limits.resources.maxOpenFds",
+                            raw_rights.len()
+                        ),
+                    ));
+                }
+            }
+
+            // Snapshot before constructing new pending descriptions. Existing
+            // transferred aliases are de-duplicated by their open-description
+            // identity; only a metadata-only pending socket adds a description.
+            let network_counts = process_network_resource_counts_with_transfers(
+                kernel,
+                process,
+                &socket_paths.host_net_transfer_descriptions,
+            );
+            let mut rights = Vec::with_capacity(raw_rights.len());
+            let mut pending_host_net_count = 0usize;
+            for value in raw_rights {
+                if let Some(fd) = value.as_u64().and_then(|fd| u32::try_from(fd).ok()) {
+                    rights.push(FdTransferRequest::Fd(fd));
+                    continue;
+                }
+                if value.get("kind").and_then(Value::as_str) != Some("hostNet") {
+                    return Err(VmError::InvalidState(
+                        "sendmsg rights entries must be kernel fds or hostNet descriptions".into(),
+                    ));
+                }
+                let managed_fd = value
+                    .get("fd")
+                    .and_then(Value::as_u64)
+                    .and_then(|fd| u32::try_from(fd).ok());
+                let managed_description_id = value
+                    .get("descriptionId")
+                    .and_then(Value::as_str)
+                    .map(|description_id| {
+                        description_id.parse::<u64>().map_err(|_| {
+                            VmError::host(
+                                "EINVAL",
+                                "SCM_RIGHTS host-network descriptionId must be a u64 decimal string",
+                            )
+                        })
+                    })
+                    .transpose()?;
+                if let (Some(fd), Some(description_id)) = (managed_fd, managed_description_id) {
+                    let (actual_description_id, _) = kernel
+                        .fd_description_identity(EXECUTION_DRIVER_NAME, process.kernel_pid, fd)
+                        .map_err(kernel_error)?;
+                    if actual_description_id != description_id {
+                        return Err(VmError::host(
+                            "EINVAL",
+                            "SCM_RIGHTS host-network fd and descriptionId disagree",
+                        ));
+                    }
+                    let description = managed_descriptions
+                        .as_ref()
+                        .ok_or_else(|| {
+                            VmError::host("ENOTSOCK", "managed SCM_RIGHTS registry is unavailable")
+                        })?
+                        .lock()
+                        .map_err(|_| {
+                            VmError::host("EIO", "managed description registry lock poisoned")
+                        })?
+                        .get(&description_id)
+                        .cloned()
+                        .ok_or_else(|| {
+                            VmError::host("ENOTSOCK", "managed SCM_RIGHTS description is unknown")
+                        })?;
+                    let transferred = prepare_managed_transferred_host_net_resource(
+                        kernel,
+                        process,
+                        description_id,
+                        fd,
+                        &description,
+                        "managed SCM_RIGHTS host-network",
+                    )?;
+                    register_host_net_transfer_description(
+                        &socket_paths.host_net_transfer_descriptions,
+                        &transferred,
+                    )?;
+                    let transfer = kernel
+                        .fd_transfer(EXECUTION_DRIVER_NAME, process.kernel_pid, fd)
+                        .map_err(kernel_error)?;
+                    rights.push(FdTransferRequest::Opaque(Arc::new(
+                        ManagedTransferredHostNetSocket {
+                            resource: transferred,
+                            transfer,
+                        },
+                    )));
+                    continue;
+                }
+                if managed_fd.is_some() || managed_description_id.is_some() {
+                    return Err(VmError::host(
+                        "EINVAL",
+                        "SCM_RIGHTS host-network fd and descriptionId must be provided together",
+                    ));
+                }
+                let source = scm_rights_host_net_source(value)?;
+                let transferred = if let Some(source) = source {
+                    prepare_transferred_host_net_resource(
+                        kernel,
+                        process,
+                        &source,
+                        value,
+                        "SCM_RIGHTS host-network",
+                    )?
+                } else {
+                    let options =
+                        host_net_open_description_options(value, "SCM_RIGHTS pending socket")?;
+                    let metadata = TransferredHostNetMetadata::pending(
+                        value,
+                        options,
+                        "SCM_RIGHTS pending socket",
+                    )?;
+                    pending_host_net_count = pending_host_net_count.saturating_add(1);
+                    TransferredHostNetSocket::Pending {
+                        metadata,
+                        description_handles: Arc::new(()),
+                        tcp_reservation: None,
+                    }
+                };
+                register_host_net_transfer_description(
+                    &socket_paths.host_net_transfer_descriptions,
+                    &transferred,
+                )?;
+                rights.push(FdTransferRequest::Opaque(Arc::new(transferred)));
+            }
+            check_spawn_host_net_resource_limit(
+                kernel.resource_limits().max_sockets,
+                network_counts.sockets,
+                pending_host_net_count,
+                "EMFILE",
+                "SCM_RIGHTS socket descriptions",
+                "maxSockets",
+            )?;
+            check_spawn_host_net_resource_limit(
+                kernel.resource_limits().max_connections,
+                network_counts.connections,
+                0,
+                "EAGAIN",
+                "SCM_RIGHTS connected socket descriptions",
+                "maxConnections",
+            )?;
+            kernel
+                .fd_socket_sendmsg_transfers(
+                    EXECUTION_DRIVER_NAME,
+                    process.kernel_pid,
+                    socket_fd,
+                    &data,
+                    &rights,
+                )
+                .map(Value::from)
+                .map_err(kernel_error)
+        }
+        "process.fd_recvmsg_rights" => {
+            let socket_fd = javascript_sync_rpc_arg_u32(&request.args, 0, "recvmsg socket fd")?;
+            let max_bytes = usize::try_from(javascript_sync_rpc_arg_u64(
+                &request.args,
+                1,
+                "recvmsg maximum bytes",
+            )?)
+            .map_err(|_| VmError::InvalidState("recvmsg byte limit is too large".into()))?;
+            let max_rights = usize::try_from(javascript_sync_rpc_arg_u64(
+                &request.args,
+                2,
+                "recvmsg maximum rights",
+            )?)
+            .map_err(|_| VmError::InvalidState("recvmsg rights limit is too large".into()))?;
+            let close_on_exec =
+                javascript_sync_rpc_arg_bool(&request.args, 3, "recvmsg close-on-exec")?;
+            let peek = request
+                .args
+                .get(4)
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let dontwait = request
+                .args
+                .get(5)
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let waitall = request
+                .args
+                .get(6)
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let message = kernel
+                .fd_socket_recvmsg(
+                    EXECUTION_DRIVER_NAME,
+                    process.kernel_pid,
+                    socket_fd,
+                    max_bytes,
+                    max_rights,
+                    close_on_exec,
+                    peek,
+                    dontwait,
+                    waitall,
+                )
+                .map_err(kernel_error)?;
+            Ok(if let Some(message) = message {
+                let mut rights = Vec::with_capacity(message.rights.len());
+                for right in message.rights {
+                    match right {
+                        ReceivedFdRight::Fd(fd) => {
+                            rights.push(json!({ "kind": "kernel", "fd": fd }));
+                        }
+                        ReceivedFdRight::Opaque(resource) => {
+                            let (transferred, managed_transfer) =
+                                match Arc::downcast::<ManagedTransferredHostNetSocket>(resource) {
+                                    Ok(managed) => {
+                                        let managed = match Arc::try_unwrap(managed) {
+                                            Ok(managed) => managed,
+                                            Err(shared) => shared.clone_for_fd_transfer()?,
+                                        };
+                                        (managed.resource, Some(managed.transfer))
+                                    }
+                                    Err(resource) => {
+                                        let transferred =
+                                            Arc::downcast::<TransferredHostNetSocket>(resource)
+                                                .map_err(|_| {
+                                                    VmError::InvalidState(
+                                                        "received unknown SCM_RIGHTS resource type"
+                                                            .into(),
+                                                    )
+                                                })?;
+                                        let transferred = match Arc::try_unwrap(transferred) {
+                                            Ok(transferred) => transferred,
+                                            Err(shared) => shared.clone_for_fd_transfer()?,
+                                        };
+                                        (transferred, None)
+                                    }
+                                };
+                            let managed_transfer =
+                                managed_transfer.or_else(|| transferred.kernel_transfer_guard());
+                            let managed_description_id =
+                                managed_transfer.as_ref().map(TransferredFd::description_id);
+                            let mut managed_registry = if let Some(description_id) =
+                                managed_description_id
+                            {
+                                let registry = managed_descriptions.as_ref().ok_or_else(|| {
+                                    VmError::host(
+                                        "ENOTSOCK",
+                                        "managed SCM_RIGHTS registry is unavailable",
+                                    )
+                                })?;
+                                let descriptions = registry.lock().map_err(|_| {
+                                    VmError::host(
+                                        "EIO",
+                                        "managed description registry lock poisoned",
+                                    )
+                                })?;
+                                if !descriptions.contains_key(&description_id) {
+                                    return Err(VmError::host(
+                                        "ESTALE",
+                                        "managed SCM_RIGHTS description disappeared in transit",
+                                    ));
+                                }
+                                Some(descriptions)
+                            } else {
+                                None
+                            };
+                            let installed_managed_fd = managed_transfer
+                                .as_ref()
+                                .map(|transfer| {
+                                    kernel
+                                        .fd_install_transfer(
+                                            EXECUTION_DRIVER_NAME,
+                                            process.kernel_pid,
+                                            transfer,
+                                            close_on_exec,
+                                        )
+                                        .map_err(kernel_error)
+                                })
+                                .transpose()?;
+                            let mut installed_managed_route = None;
+                            let install_result = (|| -> Result<(), VmError> {
+                                match transferred {
+                                    TransferredHostNetSocket::Tcp {
+                                        mut socket,
+                                        metadata,
+                                    } => {
+                                        let pending = reserve_capability(
+                                            &capabilities,
+                                            CapabilityKind::TcpSocket,
+                                        )?;
+                                        let socket_id = process.allocate_tcp_socket_id();
+                                        socket.listener_id = None;
+                                        let capability_key =
+                                            NativeCapabilityKey::TcpSocket(socket_id.clone());
+                                        let identity = commit_process_capability(
+                                            process,
+                                            pending,
+                                            capability_key.clone(),
+                                            socket_id.clone(),
+                                            socket.kernel_socket_id,
+                                        )?;
+                                        socket.set_event_pusher(
+                                            process.execution.execution_wake_handle(
+                                                process.kernel_handle.runtime_identity(),
+                                            ),
+                                            Some(identity),
+                                            Arc::clone(&process.process_event_notify),
+                                        );
+                                        register_kernel_readiness_target(
+                                            &kernel_readiness,
+                                            socket.kernel_socket_id,
+                                            process.execution.execution_wake_handle(
+                                                process.kernel_handle.runtime_identity(),
+                                            ),
+                                            Some(Arc::clone(&socket.read_event_notify)),
+                                            process.capability_readiness_identity(&capability_key),
+                                            socket_id.clone(),
+                                            KernelSocketReadinessEvent::Data,
+                                        );
+                                        let local = socket.guest_local_addr;
+                                        let remote = socket.guest_remote_addr;
+                                        process.tcp_sockets.insert(socket_id.clone(), *socket);
+                                        installed_managed_route =
+                                            Some(ManagedHostNetRoute::TcpSocket(socket_id.clone()));
+                                        rights.push(transferred_hostnet_value(
+                                            "tcp",
+                                            metadata,
+                                            Some(("socketId", socket_id)),
+                                            Some(identity),
+                                            Some(local),
+                                            Some(remote),
+                                        ));
+                                    }
+                                    TransferredHostNetSocket::TcpListener {
+                                        listener,
+                                        metadata,
+                                    } => {
+                                        let pending = reserve_capability(
+                                            &capabilities,
+                                            CapabilityKind::TcpListener,
+                                        )?;
+                                        let listener_id = process.allocate_tcp_listener_id();
+                                        let local = listener.guest_local_addr();
+                                        let capability_key =
+                                            NativeCapabilityKey::TcpListener(listener_id.clone());
+                                        let identity = commit_process_capability(
+                                            process,
+                                            pending,
+                                            capability_key.clone(),
+                                            listener_id.clone(),
+                                            listener.kernel_socket_id,
+                                        )?;
+                                        register_kernel_readiness_target(
+                                            &kernel_readiness,
+                                            listener.kernel_socket_id,
+                                            process.execution.execution_wake_handle(
+                                                process.kernel_handle.runtime_identity(),
+                                            ),
+                                            None,
+                                            process.capability_readiness_identity(&capability_key),
+                                            listener_id.clone(),
+                                            KernelSocketReadinessEvent::Accept,
+                                        );
+                                        process.tcp_listeners.insert(listener_id.clone(), listener);
+                                        installed_managed_route = Some(
+                                            ManagedHostNetRoute::TcpListener(listener_id.clone()),
+                                        );
+                                        rights.push(transferred_hostnet_value(
+                                            "listener",
+                                            metadata,
+                                            Some(("serverId", listener_id)),
+                                            Some(identity),
+                                            Some(local),
+                                            None,
+                                        ));
+                                    }
+                                    TransferredHostNetSocket::Udp { socket, metadata } => {
+                                        let pending = reserve_capability(
+                                            &capabilities,
+                                            CapabilityKind::UdpSocket,
+                                        )?;
+                                        let socket_id = process.allocate_udp_socket_id();
+                                        let local = socket.guest_local_addr;
+                                        let capability_key =
+                                            NativeCapabilityKey::UdpSocket(socket_id.clone());
+                                        let identity = commit_process_capability(
+                                            process,
+                                            pending,
+                                            capability_key.clone(),
+                                            socket_id.clone(),
+                                            socket.kernel_socket_id,
+                                        )?;
+                                        socket.set_event_pusher(
+                                            process.execution.execution_wake_handle(
+                                                process.kernel_handle.runtime_identity(),
+                                            ),
+                                            Some(identity),
+                                            Arc::clone(&process.process_event_notify),
+                                        );
+                                        register_kernel_readiness_target(
+                                            &kernel_readiness,
+                                            socket.kernel_socket_id,
+                                            process.execution.execution_wake_handle(
+                                                process.kernel_handle.runtime_identity(),
+                                            ),
+                                            Some(Arc::clone(&socket.read_event_notify)),
+                                            process.capability_readiness_identity(&capability_key),
+                                            socket_id.clone(),
+                                            KernelSocketReadinessEvent::Datagram,
+                                        );
+                                        process.udp_sockets.insert(socket_id.clone(), socket);
+                                        installed_managed_route =
+                                            Some(ManagedHostNetRoute::UdpSocket(socket_id.clone()));
+                                        rights.push(transferred_hostnet_value(
+                                            "udp",
+                                            metadata,
+                                            Some(("udpSocketId", socket_id)),
+                                            Some(identity),
+                                            local,
+                                            None,
+                                        ));
+                                    }
+                                    TransferredHostNetSocket::Unix {
+                                        mut socket,
+                                        metadata,
+                                    } => {
+                                        let pending = reserve_capability(
+                                            &capabilities,
+                                            CapabilityKind::UnixSocket,
+                                        )?;
+                                        let socket_id = process.allocate_unix_socket_id();
+                                        socket.listener_id = None;
+                                        let capability_key =
+                                            NativeCapabilityKey::UnixSocket(socket_id.clone());
+                                        let identity = commit_process_capability(
+                                            process,
+                                            pending,
+                                            capability_key,
+                                            socket_id.clone(),
+                                            None,
+                                        )?;
+                                        socket.set_event_pusher(
+                                            process.execution.execution_wake_handle(
+                                                process.kernel_handle.runtime_identity(),
+                                            ),
+                                            Some(identity),
+                                            Arc::clone(&process.process_event_notify),
+                                        );
+                                        process.unix_sockets.insert(socket_id.clone(), socket);
+                                        installed_managed_route = Some(
+                                            ManagedHostNetRoute::UnixSocket(socket_id.clone()),
+                                        );
+                                        rights.push(transferred_hostnet_value(
+                                            "unix",
+                                            metadata,
+                                            Some(("socketId", socket_id)),
+                                            Some(identity),
+                                            None,
+                                            None,
+                                        ));
+                                    }
+                                    TransferredHostNetSocket::UnixListener {
+                                        listener,
+                                        metadata,
+                                    } => {
+                                        let pending = reserve_capability(
+                                            &capabilities,
+                                            CapabilityKind::UnixListener,
+                                        )?;
+                                        let listener_id = process.allocate_unix_listener_id();
+                                        let capability_key =
+                                            NativeCapabilityKey::UnixListener(listener_id.clone());
+                                        let identity = commit_process_capability(
+                                            process,
+                                            pending,
+                                            capability_key,
+                                            listener_id.clone(),
+                                            None,
+                                        )?;
+                                        listener.set_event_pusher(
+                                            process.execution.execution_wake_handle(
+                                                process.kernel_handle.runtime_identity(),
+                                            ),
+                                            Some(identity),
+                                            Arc::clone(&process.process_event_notify),
+                                        );
+                                        process
+                                            .unix_listeners
+                                            .insert(listener_id.clone(), listener);
+                                        installed_managed_route = if metadata.listening {
+                                            Some(ManagedHostNetRoute::UnixListener(
+                                                listener_id.clone(),
+                                            ))
+                                        } else {
+                                            Some(ManagedHostNetRoute::UnixBound {
+                                                listener_id: listener_id.clone(),
+                                            })
+                                        };
+                                        rights.push(transferred_hostnet_value(
+                                            "unix-listener",
+                                            metadata,
+                                            Some(("serverId", listener_id)),
+                                            Some(identity),
+                                            None,
+                                            None,
+                                        ));
+                                    }
+                                    TransferredHostNetSocket::Pending {
+                                        metadata,
+                                        tcp_reservation,
+                                        ..
+                                    } => {
+                                        installed_managed_route = if let Some(reservation) =
+                                            tcp_reservation
+                                        {
+                                            let reservation_id =
+                                                process.allocate_tcp_port_reservation_id();
+                                            process
+                                                .tcp_port_reservations
+                                                .insert(reservation_id.clone(), reservation);
+                                            Some(ManagedHostNetRoute::TcpBound { reservation_id })
+                                        } else {
+                                            Some(ManagedHostNetRoute::Unbound)
+                                        };
+                                        rights.push(transferred_hostnet_value(
+                                            "pending", metadata, None, None, None, None,
+                                        ));
+                                    }
+                                }
+                                Ok(())
+                            })();
+                            if let Err(error) = install_result {
+                                if let Some(fd) = installed_managed_fd {
+                                    if let Err(close_error) = kernel.fd_close(
+                                        EXECUTION_DRIVER_NAME,
+                                        process.kernel_pid,
+                                        fd,
+                                    ) {
+                                        eprintln!(
+                                            "[agentos] failed to roll back received managed host-network fd {fd}: {close_error}"
+                                        );
+                                    }
+                                }
+                                return Err(error);
+                            }
+                            if let Some(fd) = installed_managed_fd {
+                                let description_id = managed_description_id.expect(
+                                    "managed fd installation requires a canonical description",
+                                );
+                                if let Some(route) = installed_managed_route {
+                                    managed_registry
+                                        .as_mut()
+                                        .expect("managed registry was prevalidated")
+                                        .get_mut(&description_id)
+                                        .expect("managed description remains locked")
+                                        .routes
+                                        .insert(process.kernel_pid, route);
+                                }
+                                let value = rights
+                                    .last_mut()
+                                    .expect("host-network receive must append one bootstrap right");
+                                let object = value.as_object_mut().expect(
+                                    "host-network receive metadata is constructed as an object",
+                                );
+                                object.insert("fd".into(), Value::from(fd));
+                                object.insert(
+                                    "descriptionId".into(),
+                                    Value::String(description_id.to_string()),
+                                );
+                            }
+                        }
+                    }
+                }
+                json!({
+                    "data": host_bytes_value(&message.payload),
+                    "rights": rights,
+                    "payloadTruncated": message.payload_truncated,
+                    "controlTruncated": message.control_truncated,
+                    "fullLength": message.full_length,
+                })
+            } else {
+                json!({
+                    "data": host_bytes_value(&[]),
+                    "rights": [],
+                    "payloadTruncated": false,
+                    "controlTruncated": false,
+                    "fullLength": 0,
+                })
+            })
+        }
+        other => Err(VmError::host(
+            "EINVAL",
+            format!("unsupported descriptor-rights operation: {other}"),
+        )),
+    }
 }
 
 pub(crate) enum HostServiceResponse {
@@ -866,8 +1488,8 @@ pub(in crate::execution) fn javascript_sync_rpc_base64_arg(
 // ── Sync-RPC round-trip counting (opt-in via AGENTOS_SYNC_RPC_TRACE=1) ──
 // Each guest fs/module/net sync RPC funnels through service_javascript_sync_rpc,
 // so this is the one place to measure the kernel-VFS "syscall storm" that makes
-// metadata-heavy phases (resourceLoader.reload, createAgentSession) 40-90x slower
-// in the VM than on bare node. Emits a perf log line every 200 calls with the
+// metadata-heavy module-resolution phases much slower in the VM than on bare
+// node. Emits a perf log line every 200 calls with the
 // running per-method breakdown.
 
 fn wasm_process_resolve_at_path(
@@ -1147,7 +1769,7 @@ where
         | "net.http2_stream_pause"
         | "net.http2_stream_resume"
         | "net.http2_stream_respond_with_file" => {
-            return service_javascript_http2_sync_rpc(Http2ServiceRequest {
+            return service_javascript_http2_sync_rpc(JavascriptHttp2SyncRpcServiceRequest {
                 bridge,
                 kernel,
                 vm_id,
@@ -1999,17 +2621,31 @@ where
             .map_err(|_| VmError::InvalidState("fd_read length is too large".into()))?;
             let timeout_ms =
                 javascript_sync_rpc_arg_u64_optional(&request.args, 2, "fd_read timeout ms")?;
-            match timeout_ms {
-                Some(timeout_ms) => kernel
+            // Read non-blocking for WASM so the reactor is never parked in a
+            // pipe read; the runner poll+retries on EAGAIN (#1959).
+            if process.runtime == GuestRuntimeKind::WebAssembly {
+                kernel
                     .fd_read_with_timeout_result(
                         EXECUTION_DRIVER_NAME,
                         process.kernel_pid,
                         fd,
                         length,
-                        Some(Duration::from_millis(timeout_ms)),
+                        Some(Duration::ZERO),
                     )
-                    .map(Option::unwrap_or_default),
-                None => kernel.fd_read(EXECUTION_DRIVER_NAME, process.kernel_pid, fd, length),
+                    .map(Option::unwrap_or_default)
+            } else {
+                match timeout_ms {
+                    Some(timeout_ms) => kernel
+                        .fd_read_with_timeout_result(
+                            EXECUTION_DRIVER_NAME,
+                            process.kernel_pid,
+                            fd,
+                            length,
+                            Some(Duration::from_millis(timeout_ms)),
+                        )
+                        .map(Option::unwrap_or_default),
+                    None => kernel.fd_read(EXECUTION_DRIVER_NAME, process.kernel_pid, fd, length),
+                }
             }
             .map(|bytes| host_bytes_value(&bytes))
             .map_err(kernel_error)
@@ -2459,608 +3095,8 @@ where
                 json!({ "masterFd": master_fd, "slaveFd": slave_fd, "path": path })
             })
             .map_err(kernel_error),
-        "process.fd_sendmsg_rights" => {
-            let socket_fd = javascript_sync_rpc_arg_u32(&request.args, 0, "sendmsg socket fd")?;
-            let data = javascript_sync_rpc_request_bytes_arg(request, 1, "sendmsg data")?;
-            let raw_rights = request
-                .args
-                .get(2)
-                .and_then(Value::as_array)
-                .ok_or_else(|| {
-                    VmError::InvalidState(
-                        "sendmsg rights must be an array of file descriptors".into(),
-                    )
-                })?;
-            if raw_rights.len() > LINUX_SCM_MAX_FD {
-                return Err(VmError::host("EINVAL", format!("SCM_RIGHTS accepts at most {LINUX_SCM_MAX_FD} descriptors"
-                )));
-            }
-            if let Some(limit) = kernel.resource_limits().max_open_fds {
-                if raw_rights.len() > limit {
-                    return Err(VmError::host("EMFILE", format!("SCM_RIGHTS descriptor list has {} entries, exceeding limits.resources.maxOpenFds ({limit}); raise limits.resources.maxOpenFds",
-                        raw_rights.len()
-                    )));
-                }
-            }
-
-            // Snapshot before constructing new pending descriptions. Existing
-            // transferred aliases are de-duplicated by their open-description
-            // identity; only a metadata-only pending socket adds a description.
-            let network_counts = process_network_resource_counts_with_transfers(
-                kernel,
-                process,
-                &socket_paths.host_net_transfer_descriptions,
-            );
-            let mut rights = Vec::with_capacity(raw_rights.len());
-            let mut pending_host_net_count = 0usize;
-            for value in raw_rights {
-                if let Some(fd) = value.as_u64().and_then(|fd| u32::try_from(fd).ok()) {
-                    rights.push(FdTransferRequest::Fd(fd));
-                    continue;
-                }
-                if value.get("kind").and_then(Value::as_str) != Some("hostNet") {
-                    return Err(VmError::InvalidState(
-                        "sendmsg rights entries must be kernel fds or hostNet descriptions".into(),
-                    ));
-                }
-                let managed_fd = value
-                    .get("fd")
-                    .and_then(Value::as_u64)
-                    .and_then(|fd| u32::try_from(fd).ok());
-                let managed_description_id = value
-                    .get("descriptionId")
-                    .and_then(Value::as_str)
-                    .map(|description_id| {
-                        description_id.parse::<u64>().map_err(|_| {
-                            VmError::host(
-                                "EINVAL",
-                                "SCM_RIGHTS host-network descriptionId must be a u64 decimal string",
-                            )
-                        })
-                    })
-                    .transpose()?;
-                if let (Some(fd), Some(description_id)) =
-                    (managed_fd, managed_description_id)
-                {
-                    let (actual_description_id, _) = kernel
-                        .fd_description_identity(
-                            EXECUTION_DRIVER_NAME,
-                            process.kernel_pid,
-                            fd,
-                        )
-                        .map_err(kernel_error)?;
-                    if actual_description_id != description_id {
-                        return Err(VmError::host(
-                            "EINVAL",
-                            "SCM_RIGHTS host-network fd and descriptionId disagree",
-                        ));
-                    }
-                    let description = managed_descriptions
-                        .as_ref()
-                        .ok_or_else(|| {
-                            VmError::host(
-                                "ENOTSOCK",
-                                "managed SCM_RIGHTS registry is unavailable",
-                            )
-                        })?
-                        .lock()
-                        .map_err(|_| {
-                            VmError::host(
-                                "EIO",
-                                "managed description registry lock poisoned",
-                            )
-                        })?
-                        .get(&description_id)
-                        .cloned()
-                        .ok_or_else(|| {
-                            VmError::host(
-                                "ENOTSOCK",
-                                "managed SCM_RIGHTS description is unknown",
-                            )
-                        })?;
-                    let transferred = prepare_managed_transferred_host_net_resource(
-                        kernel,
-                        process,
-                        description_id,
-                        fd,
-                        &description,
-                        "managed SCM_RIGHTS host-network",
-                    )?;
-                    register_host_net_transfer_description(
-                        &socket_paths.host_net_transfer_descriptions,
-                        &transferred,
-                    )?;
-                    let transfer = kernel
-                        .fd_transfer(EXECUTION_DRIVER_NAME, process.kernel_pid, fd)
-                        .map_err(kernel_error)?;
-                    rights.push(FdTransferRequest::Opaque(Arc::new(
-                        ManagedTransferredHostNetSocket {
-                            resource: transferred,
-                            transfer,
-                        },
-                    )));
-                    continue;
-                }
-                if managed_fd.is_some() || managed_description_id.is_some() {
-                    return Err(VmError::host(
-                        "EINVAL",
-                        "SCM_RIGHTS host-network fd and descriptionId must be provided together",
-                    ));
-                }
-                let source = scm_rights_host_net_source(value)?;
-                let transferred = if let Some(source) = source {
-                    prepare_transferred_host_net_resource(
-                        kernel,
-                        process,
-                        &source,
-                        value,
-                        "SCM_RIGHTS host-network",
-                    )?
-                } else {
-                    let options =
-                        host_net_open_description_options(value, "SCM_RIGHTS pending socket")?;
-                    let metadata = TransferredHostNetMetadata::pending(
-                        value,
-                        options,
-                        "SCM_RIGHTS pending socket",
-                    )?;
-                    pending_host_net_count = pending_host_net_count.saturating_add(1);
-                    TransferredHostNetSocket::Pending {
-                        metadata,
-                        description_handles: Arc::new(()),
-                        tcp_reservation: None,
-                    }
-                };
-                register_host_net_transfer_description(
-                    &socket_paths.host_net_transfer_descriptions,
-                    &transferred,
-                )?;
-                rights.push(FdTransferRequest::Opaque(Arc::new(transferred)));
-            }
-            check_spawn_host_net_resource_limit(
-                kernel.resource_limits().max_sockets,
-                network_counts.sockets,
-                pending_host_net_count,
-                "EMFILE",
-                "SCM_RIGHTS socket descriptions",
-                "maxSockets",
-            )?;
-            check_spawn_host_net_resource_limit(
-                kernel.resource_limits().max_connections,
-                network_counts.connections,
-                0,
-                "EAGAIN",
-                "SCM_RIGHTS connected socket descriptions",
-                "maxConnections",
-            )?;
-            kernel
-                .fd_socket_sendmsg_transfers(
-                    EXECUTION_DRIVER_NAME,
-                    process.kernel_pid,
-                    socket_fd,
-                    &data,
-                    &rights,
-                )
-                .map(Value::from)
-                .map_err(kernel_error)
-        }
-        "process.fd_recvmsg_rights" => {
-            let socket_fd = javascript_sync_rpc_arg_u32(&request.args, 0, "recvmsg socket fd")?;
-            let max_bytes = usize::try_from(javascript_sync_rpc_arg_u64(
-                &request.args,
-                1,
-                "recvmsg maximum bytes",
-            )?)
-            .map_err(|_| VmError::InvalidState("recvmsg byte limit is too large".into()))?;
-            let max_rights = usize::try_from(javascript_sync_rpc_arg_u64(
-                &request.args,
-                2,
-                "recvmsg maximum rights",
-            )?)
-            .map_err(|_| VmError::InvalidState("recvmsg rights limit is too large".into()))?;
-            let close_on_exec =
-                javascript_sync_rpc_arg_bool(&request.args, 3, "recvmsg close-on-exec")?;
-            let peek = request
-                .args
-                .get(4)
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let dontwait = request
-                .args
-                .get(5)
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let waitall = request
-                .args
-                .get(6)
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let message = kernel
-                .fd_socket_recvmsg(
-                    EXECUTION_DRIVER_NAME,
-                    process.kernel_pid,
-                    socket_fd,
-                    max_bytes,
-                    max_rights,
-                    close_on_exec,
-                    peek,
-                    dontwait,
-                    waitall,
-                )
-                .map_err(kernel_error)?;
-            Ok(if let Some(message) = message {
-                let mut rights = Vec::with_capacity(message.rights.len());
-                for right in message.rights {
-                    match right {
-                        ReceivedFdRight::Fd(fd) => {
-                            rights.push(json!({ "kind": "kernel", "fd": fd }));
-                        }
-                        ReceivedFdRight::Opaque(resource) => {
-                            let (transferred, managed_transfer) = match Arc::downcast::<
-                                ManagedTransferredHostNetSocket,
-                            >(resource)
-                            {
-                                Ok(managed) => {
-                                    let managed = match Arc::try_unwrap(managed) {
-                                        Ok(managed) => managed,
-                                        Err(shared) => shared.clone_for_fd_transfer()?,
-                                    };
-                                    (managed.resource, Some(managed.transfer))
-                                }
-                                Err(resource) => {
-                                    let transferred = Arc::downcast::<TransferredHostNetSocket>(
-                                        resource,
-                                    )
-                                    .map_err(|_| {
-                                        VmError::InvalidState(
-                                            "received unknown SCM_RIGHTS resource type".into(),
-                                        )
-                                    })?;
-                                    let transferred = match Arc::try_unwrap(transferred) {
-                                        Ok(transferred) => transferred,
-                                        Err(shared) => shared.clone_for_fd_transfer()?,
-                                    };
-                                    (transferred, None)
-                                }
-                            };
-                            let managed_transfer = managed_transfer
-                                .or_else(|| transferred.kernel_transfer_guard());
-                            let managed_description_id = managed_transfer
-                                .as_ref()
-                                .map(TransferredFd::description_id);
-                            let mut managed_registry = if let Some(description_id) = managed_description_id {
-                                let registry = managed_descriptions.as_ref().ok_or_else(|| {
-                                    VmError::host(
-                                        "ENOTSOCK",
-                                        "managed SCM_RIGHTS registry is unavailable",
-                                    )
-                                })?;
-                                let descriptions = registry.lock().map_err(|_| {
-                                    VmError::host(
-                                        "EIO",
-                                        "managed description registry lock poisoned",
-                                    )
-                                })?;
-                                if !descriptions.contains_key(&description_id) {
-                                    return Err(VmError::host(
-                                        "ESTALE",
-                                        "managed SCM_RIGHTS description disappeared in transit",
-                                    ));
-                                }
-                                Some(descriptions)
-                            } else {
-                                None
-                            };
-                            let installed_managed_fd = managed_transfer
-                                .as_ref()
-                                .map(|transfer| {
-                                    kernel
-                                        .fd_install_transfer(
-                                            EXECUTION_DRIVER_NAME,
-                                            process.kernel_pid,
-                                            transfer,
-                                            close_on_exec,
-                                        )
-                                        .map_err(kernel_error)
-                                })
-                                .transpose()?;
-                            let mut installed_managed_route = None;
-                            let install_result = (|| -> Result<(), VmError> {
-                                match transferred {
-                                TransferredHostNetSocket::Tcp {
-                                    mut socket,
-                                    metadata,
-                                } => {
-                                    let pending = reserve_capability(
-                                        &capabilities,
-                                        CapabilityKind::TcpSocket,
-                                    )?;
-                                    let socket_id = process.allocate_tcp_socket_id();
-                                    socket.listener_id = None;
-                                    let capability_key =
-                                        NativeCapabilityKey::TcpSocket(socket_id.clone());
-                                    let identity = commit_process_capability(
-                                        process,
-                                        pending,
-                                        capability_key.clone(),
-                                        socket_id.clone(),
-                                        socket.kernel_socket_id,
-                                    )?;
-                                    socket.set_event_pusher(
-                                        process.execution.execution_wake_handle(
-                                            process.kernel_handle.runtime_identity(),
-                                        ),
-                                        Some(identity),
-                                        Arc::clone(&process.process_event_notify),
-                                    );
-                                    register_kernel_readiness_target(
-                                        &kernel_readiness,
-                                        socket.kernel_socket_id,
-                                        process.execution.execution_wake_handle(
-                                            process.kernel_handle.runtime_identity(),
-                                        ),
-                                        Some(Arc::clone(&socket.read_event_notify)),
-                                        process.capability_readiness_identity(&capability_key),
-                                        socket_id.clone(),
-                                        KernelSocketReadinessEvent::Data,
-                                    );
-                                    let local = socket.guest_local_addr;
-                                    let remote = socket.guest_remote_addr;
-                                    process.tcp_sockets.insert(socket_id.clone(), *socket);
-                                    installed_managed_route =
-                                        Some(ManagedHostNetRoute::TcpSocket(socket_id.clone()));
-                                    rights.push(transferred_hostnet_value(
-                                        "tcp",
-                                        metadata,
-                                        Some(("socketId", socket_id)),
-                                        Some(identity),
-                                        Some(local),
-                                        Some(remote),
-                                    ));
-                                }
-                                TransferredHostNetSocket::TcpListener { listener, metadata } => {
-                                    let pending = reserve_capability(
-                                        &capabilities,
-                                        CapabilityKind::TcpListener,
-                                    )?;
-                                    let listener_id = process.allocate_tcp_listener_id();
-                                    let local = listener.guest_local_addr();
-                                    let capability_key =
-                                        NativeCapabilityKey::TcpListener(listener_id.clone());
-                                    let identity = commit_process_capability(
-                                        process,
-                                        pending,
-                                        capability_key.clone(),
-                                        listener_id.clone(),
-                                        listener.kernel_socket_id,
-                                    )?;
-                                    register_kernel_readiness_target(
-                                        &kernel_readiness,
-                                        listener.kernel_socket_id,
-                                        process.execution.execution_wake_handle(
-                                            process.kernel_handle.runtime_identity(),
-                                        ),
-                                        None,
-                                        process.capability_readiness_identity(&capability_key),
-                                        listener_id.clone(),
-                                        KernelSocketReadinessEvent::Accept,
-                                    );
-                                    process.tcp_listeners.insert(listener_id.clone(), listener);
-                                    installed_managed_route = Some(
-                                        ManagedHostNetRoute::TcpListener(listener_id.clone()),
-                                    );
-                                    rights.push(transferred_hostnet_value(
-                                        "listener",
-                                        metadata,
-                                        Some(("serverId", listener_id)),
-                                        Some(identity),
-                                        Some(local),
-                                        None,
-                                    ));
-                                }
-                                TransferredHostNetSocket::Udp { socket, metadata } => {
-                                    let pending = reserve_capability(
-                                        &capabilities,
-                                        CapabilityKind::UdpSocket,
-                                    )?;
-                                    let socket_id = process.allocate_udp_socket_id();
-                                    let local = socket.guest_local_addr;
-                                    let capability_key =
-                                        NativeCapabilityKey::UdpSocket(socket_id.clone());
-                                    let identity = commit_process_capability(
-                                        process,
-                                        pending,
-                                        capability_key.clone(),
-                                        socket_id.clone(),
-                                        socket.kernel_socket_id,
-                                    )?;
-                                    socket.set_event_pusher(
-                                        process.execution.execution_wake_handle(
-                                            process.kernel_handle.runtime_identity(),
-                                        ),
-                                        Some(identity),
-                                        Arc::clone(&process.process_event_notify),
-                                    );
-                                    register_kernel_readiness_target(
-                                        &kernel_readiness,
-                                        socket.kernel_socket_id,
-                                        process.execution.execution_wake_handle(
-                                            process.kernel_handle.runtime_identity(),
-                                        ),
-                                        Some(Arc::clone(&socket.read_event_notify)),
-                                        process.capability_readiness_identity(&capability_key),
-                                        socket_id.clone(),
-                                        KernelSocketReadinessEvent::Datagram,
-                                    );
-                                    process.udp_sockets.insert(socket_id.clone(), socket);
-                                    installed_managed_route =
-                                        Some(ManagedHostNetRoute::UdpSocket(socket_id.clone()));
-                                    rights.push(transferred_hostnet_value(
-                                        "udp",
-                                        metadata,
-                                        Some(("udpSocketId", socket_id)),
-                                        Some(identity),
-                                        local,
-                                        None,
-                                    ));
-                                }
-                                TransferredHostNetSocket::Unix {
-                                    mut socket,
-                                    metadata,
-                                } => {
-                                    let pending = reserve_capability(
-                                        &capabilities,
-                                        CapabilityKind::UnixSocket,
-                                    )?;
-                                    let socket_id = process.allocate_unix_socket_id();
-                                    socket.listener_id = None;
-                                    let capability_key =
-                                        NativeCapabilityKey::UnixSocket(socket_id.clone());
-                                    let identity = commit_process_capability(
-                                        process,
-                                        pending,
-                                        capability_key,
-                                        socket_id.clone(),
-                                        None,
-                                    )?;
-                                    socket.set_event_pusher(
-                                        process.execution.execution_wake_handle(
-                                            process.kernel_handle.runtime_identity(),
-                                        ),
-                                        Some(identity),
-                                        Arc::clone(&process.process_event_notify),
-                                    );
-                                    process.unix_sockets.insert(socket_id.clone(), socket);
-                                    installed_managed_route =
-                                        Some(ManagedHostNetRoute::UnixSocket(socket_id.clone()));
-                                    rights.push(transferred_hostnet_value(
-                                        "unix",
-                                        metadata,
-                                        Some(("socketId", socket_id)),
-                                        Some(identity),
-                                        None,
-                                        None,
-                                    ));
-                                }
-                                TransferredHostNetSocket::UnixListener { listener, metadata } => {
-                                    let pending = reserve_capability(
-                                        &capabilities,
-                                        CapabilityKind::UnixListener,
-                                    )?;
-                                    let listener_id = process.allocate_unix_listener_id();
-                                    let capability_key =
-                                        NativeCapabilityKey::UnixListener(listener_id.clone());
-                                    let identity = commit_process_capability(
-                                        process,
-                                        pending,
-                                        capability_key,
-                                        listener_id.clone(),
-                                        None,
-                                    )?;
-                                    listener.set_event_pusher(
-                                        process.execution.execution_wake_handle(
-                                            process.kernel_handle.runtime_identity(),
-                                        ),
-                                        Some(identity),
-                                        Arc::clone(&process.process_event_notify),
-                                    );
-                                    process.unix_listeners.insert(listener_id.clone(), listener);
-                                    installed_managed_route = if metadata.listening {
-                                        Some(ManagedHostNetRoute::UnixListener(listener_id.clone()))
-                                    } else {
-                                        Some(ManagedHostNetRoute::UnixBound {
-                                            listener_id: listener_id.clone(),
-                                        })
-                                    };
-                                    rights.push(transferred_hostnet_value(
-                                        "unix-listener",
-                                        metadata,
-                                        Some(("serverId", listener_id)),
-                                        Some(identity),
-                                        None,
-                                        None,
-                                    ));
-                                }
-                                TransferredHostNetSocket::Pending {
-                                    metadata,
-                                    tcp_reservation,
-                                    ..
-                                } => {
-                                    installed_managed_route = if let Some(reservation) = tcp_reservation {
-                                        let reservation_id = process.allocate_tcp_port_reservation_id();
-                                        process.tcp_port_reservations.insert(
-                                            reservation_id.clone(),
-                                            reservation,
-                                        );
-                                        Some(ManagedHostNetRoute::TcpBound { reservation_id })
-                                    } else {
-                                        Some(ManagedHostNetRoute::Unbound)
-                                    };
-                                    rights.push(transferred_hostnet_value(
-                                        "pending", metadata, None, None, None, None,
-                                    ));
-                                }
-                                }
-                                Ok(())
-                            })();
-                            if let Err(error) = install_result {
-                                if let Some(fd) = installed_managed_fd {
-                                    if let Err(close_error) = kernel.fd_close(
-                                        EXECUTION_DRIVER_NAME,
-                                        process.kernel_pid,
-                                        fd,
-                                    ) {
-                                        eprintln!(
-                                            "[agentos] failed to roll back received managed host-network fd {fd}: {close_error}"
-                                        );
-                                    }
-                                }
-                                return Err(error);
-                            }
-                            if let Some(fd) = installed_managed_fd {
-                                let description_id = managed_description_id.expect(
-                                    "managed fd installation requires a canonical description",
-                                );
-                                if let Some(route) = installed_managed_route {
-                                    managed_registry
-                                        .as_mut()
-                                        .expect("managed registry was prevalidated")
-                                        .get_mut(&description_id)
-                                        .expect("managed description remains locked")
-                                        .routes
-                                        .insert(process.kernel_pid, route);
-                                }
-                                let value = rights.last_mut().expect(
-                                    "host-network receive must append one bootstrap right",
-                                );
-                                let object = value
-                                    .as_object_mut()
-                                    .expect("host-network receive metadata is constructed as an object");
-                                object.insert("fd".into(), Value::from(fd));
-                                object.insert(
-                                    "descriptionId".into(),
-                                    Value::String(description_id.to_string()),
-                                );
-                            }
-                        }
-                    }
-                }
-                json!({
-                    "data": host_bytes_value(&message.payload),
-                    "rights": rights,
-                    "payloadTruncated": message.payload_truncated,
-                    "controlTruncated": message.control_truncated,
-                    "fullLength": message.full_length,
-                })
-            } else {
-                json!({
-                    "data": host_bytes_value(&[]),
-                    "rights": [],
-                    "payloadTruncated": false,
-                    "controlTruncated": false,
-                    "fullLength": 0,
-                })
-            })
+        "process.fd_sendmsg_rights" | "process.fd_recvmsg_rights" => {
+            service_descriptor_rights_sync_rpc(kernel, kernel_readiness, process, socket_paths, capabilities, managed_descriptions, request)
         }
         "process.fd_socket_shutdown" => {
             let socket_fd = javascript_sync_rpc_arg_u32(&request.args, 0, "shutdown socket fd")?;
@@ -3697,7 +3733,7 @@ where
                     false,
                 ),
             )?;
-            let (target, target_binding_id, remote_address) = if let Some(hex) =
+            let (target_host_function_id, remote_address) = if let Some(hex) =
                 payload.abstract_path_hex.as_deref()
             {
                 let guest_name = decode_abstract_unix_name(hex)?;
@@ -3709,11 +3745,7 @@ where
                 .ok_or_else(|| {
                     sidecar_net_error(std::io::Error::from_raw_os_error(libc::ECONNREFUSED))
                 })?;
-                (
-                    NativeUnixConnectTarget::Abstract(host_name.to_vec()),
-                    target.0,
-                    target.1,
-                )
+                (target.0, target.1)
             } else {
                 let path = payload.path.as_deref().expect("validated Unix path");
                 let (candidate_path, _) = resolve_guest_unix_path(request.process, path)?;
@@ -3728,49 +3760,49 @@ where
                     )
                     .map_err(kernel_error)?;
                 reject_host_mounted_unix_socket_path(request.socket_paths, &node.canonical_path)?;
-                let (host_path, binding_id, address) =
+                let (host_function_id, address) =
                     guest_unix_path_target(request.socket_paths, (node.stat.dev, node.stat.ino))?
                         .ok_or_else(|| {
                         sidecar_net_error(std::io::Error::from_raw_os_error(libc::ECONNREFUSED))
                     })?;
-                (
-                    NativeUnixConnectTarget::Path(host_path),
-                    binding_id,
-                    address,
-                )
+                (host_function_id, address)
             };
             let pending = reserve_capability(&request.capabilities, CapabilityKind::UnixSocket)?;
             let bound_listener = if let Some(listener_id) = payload.bound_server_id.as_deref() {
-                let listener = request
-                    .process
-                    .unix_listeners
-                    .remove(listener_id)
-                    .ok_or_else(|| {
-                        VmError::InvalidState(format!("unknown bound Unix socket {listener_id}"))
-                    })?;
-                if listener.acceptor_started || listener.bound_socket.is_none() {
+                let listener =
                     request
                         .process
                         .unix_listeners
-                        .insert(listener_id.to_owned(), listener);
+                        .get(listener_id)
+                        .ok_or_else(|| {
+                            VmError::InvalidState(format!(
+                                "unknown bound Unix socket {listener_id}"
+                            ))
+                        })?;
+                if listener.acceptor_started {
                     return Err(sidecar_net_error(std::io::Error::from_raw_os_error(
                         libc::EINVAL,
                     )));
                 }
-                Some((listener_id.to_owned(), listener))
+                Some((listener_id.to_owned(), listener.clone_for_fd_transfer()?))
             } else {
                 None
             };
-            return defer_native_unix_connect(
+            let response = defer_vm_local_unix_connect(
                 request.process,
                 request.sync_request.id,
                 pending,
-                target,
                 remote_address,
                 Arc::clone(&request.socket_paths.unix_bound_addresses),
-                target_binding_id,
+                target_host_function_id,
                 bound_listener,
-            );
+            )?;
+            // A failed connect must preserve the bound endpoint, including its
+            // address and capability, so Linux callers can retry or listen.
+            if let Some(listener_id) = payload.bound_server_id.as_deref() {
+                request.process.unix_listeners.remove(listener_id);
+            }
+            return Ok(response);
         }
 
         let port = payload.port.ok_or_else(|| {
@@ -4025,6 +4057,13 @@ async fn service_javascript_dgram_poll_response(
         .poll(kernel, process.kernel_pid, Duration::from_millis(wait_ms))
         .await?;
 
+    javascript_dgram_poll_event_response(socket_paths, event)
+}
+
+pub(in crate::execution) fn javascript_dgram_poll_event_response(
+    socket_paths: &SocketPathContext,
+    event: Option<DatagramEvent>,
+) -> Result<HostServiceResponse, VmError> {
     match event {
         Some(DatagramEvent::Message {
             data,
@@ -4223,7 +4262,7 @@ where
                     let guest_name =
                         guest_autobind_unix_name(process.kernel_pid, &listener_id, nonce);
                     let host_name = host_abstract_unix_name(socket_paths, &guest_name);
-                    register_guest_unix_binding(
+                    if let Err(error) = register_guest_unix_binding(
                         &socket_paths.unix_bound_addresses,
                         &registry_binding_id,
                         &abstract_unix_host_address_key(&host_name),
@@ -4232,8 +4271,12 @@ where
                             abstract_path_hex: Some(abstract_unix_name_hex(&guest_name)),
                         },
                         None,
-                        None,
-                    )?;
+                    ) {
+                        if error.code() == Some("EADDRINUSE") {
+                            continue;
+                        }
+                        return Err(error);
+                    }
                     match ActiveUnixListener::bind_abstract_unlistened(
                         &host_name,
                         &guest_name,
@@ -4274,7 +4317,6 @@ where
                         path: abstract_unix_node_path(&guest_name),
                         abstract_path_hex: Some(abstract_unix_name_hex(&guest_name)),
                     },
-                    None,
                     None,
                 )?;
                 match ActiveUnixListener::bind_abstract_unlistened(
@@ -4329,7 +4371,6 @@ where
                         abstract_path_hex: None,
                     },
                     Some((node.stat.dev, node.stat.ino)),
-                    Some(host_path.clone()),
                 ) {
                     if let Err(rollback_error) = kernel.remove_file(&guest_path) {
                         return Err(VmError::Execution(format!(
@@ -4432,7 +4473,7 @@ where
                     payload.autobind,
                 ),
             )?;
-            let binding_id = guest_unix_binding_id(
+            let host_function_id = guest_unix_binding_id(
                 process.kernel_pid,
                 &format!("connected:{}", payload.socket_id),
             );
@@ -4461,32 +4502,32 @@ where
                 let mut bound_name = None;
                 for nonce in 0..attempts {
                     let guest_name = explicit_name.clone().unwrap_or_else(|| {
-                        guest_autobind_unix_name(process.kernel_pid, &binding_id, nonce).to_vec()
+                        guest_autobind_unix_name(process.kernel_pid, &host_function_id, nonce)
+                            .to_vec()
                     });
                     let host_name = host_abstract_unix_name(socket_paths, &guest_name);
                     register_guest_unix_binding(
                         &socket_paths.unix_bound_addresses,
-                        &binding_id,
+                        &host_function_id,
                         &abstract_unix_host_address_key(&host_name),
                         GuestUnixAddress {
                             path: abstract_unix_node_path(&guest_name),
                             abstract_path_hex: Some(abstract_unix_name_hex(&guest_name)),
                         },
                         None,
-                        None,
                     )?;
                     if peer_can_observe_late_bind {
-                        let target_binding_id = remote_registry_binding_id
+                        let target_host_function_id = remote_registry_binding_id
                             .as_deref()
-                            .expect("tracked Unix connection has a target binding");
+                            .expect("tracked Unix connection has a target host_function");
                         if let Err(error) = queue_guest_unix_peer(
                             &socket_paths.unix_bound_addresses,
-                            &binding_id,
-                            target_binding_id,
+                            &host_function_id,
+                            target_host_function_id,
                         ) {
                             rollback_guest_unix_binding(
                                 &socket_paths.unix_bound_addresses,
-                                &binding_id,
+                                &host_function_id,
                             )?;
                             return Err(error);
                         }
@@ -4495,7 +4536,7 @@ where
                         .unix_sockets
                         .get_mut(&payload.socket_id)
                         .expect("validated Unix socket remains registered")
-                        .bind_abstract(&host_name, &guest_name, &binding_id);
+                        .bind_abstract(&host_name, &guest_name, &host_function_id);
                     match result {
                         Ok(()) => {
                             bound_name = Some(guest_name);
@@ -4504,7 +4545,7 @@ where
                         Err(error) => {
                             rollback_guest_unix_binding(
                                 &socket_paths.unix_bound_addresses,
-                                &binding_id,
+                                &host_function_id,
                             )?;
                             if explicit_name.is_some()
                                 || guest_error_code(&error) != Some("EADDRINUSE")
@@ -4546,19 +4587,18 @@ where
                 let host_path = allocate_guest_socket_host_path(
                     socket_paths,
                     process.kernel_pid,
-                    &binding_id,
+                    &host_function_id,
                     &guest_path,
                 );
                 if let Err(error) = register_guest_unix_binding(
                     &socket_paths.unix_bound_addresses,
-                    &binding_id,
+                    &host_function_id,
                     &pathname_unix_host_address_key(&host_path),
                     GuestUnixAddress {
                         path: reported_path.clone(),
                         abstract_path_hex: None,
                     },
                     Some((node.stat.dev, node.stat.ino)),
-                    Some(host_path.clone()),
                 ) {
                     if let Err(rollback_error) = kernel.remove_file(&guest_path) {
                         return Err(VmError::Execution(format!(
@@ -4569,17 +4609,17 @@ where
                     return Err(error);
                 }
                 if peer_can_observe_late_bind {
-                    let target_binding_id = remote_registry_binding_id
+                    let target_host_function_id = remote_registry_binding_id
                         .as_deref()
-                        .expect("tracked Unix connection has a target binding");
+                        .expect("tracked Unix connection has a target host_function");
                     if let Err(error) = queue_guest_unix_peer(
                         &socket_paths.unix_bound_addresses,
-                        &binding_id,
-                        target_binding_id,
+                        &host_function_id,
+                        target_host_function_id,
                     ) {
                         rollback_guest_unix_path_binding(
                             &socket_paths.unix_bound_addresses,
-                            &binding_id,
+                            &host_function_id,
                             kernel,
                             &guest_path,
                             &host_path,
@@ -4591,11 +4631,11 @@ where
                     .unix_sockets
                     .get_mut(&payload.socket_id)
                     .expect("validated Unix socket remains registered")
-                    .bind_path(&host_path, &reported_path, &binding_id)
+                    .bind_path(&host_path, &reported_path, &host_function_id)
                 {
                     rollback_guest_unix_path_binding(
                         &socket_paths.unix_bound_addresses,
-                        &binding_id,
+                        &host_function_id,
                         kernel,
                         &guest_path,
                         &host_path,
@@ -4965,7 +5005,7 @@ where
                         let host_name = host_abstract_unix_name(socket_paths, &guest_name);
                         let local_path = abstract_unix_node_path(&guest_name);
                         let local_hex = abstract_unix_name_hex(&guest_name);
-                        register_guest_unix_binding(
+                        if let Err(error) = register_guest_unix_binding(
                             &socket_paths.unix_bound_addresses,
                             &registry_binding_id,
                             &abstract_unix_host_address_key(&host_name),
@@ -4974,8 +5014,12 @@ where
                                 abstract_path_hex: Some(local_hex.clone()),
                             },
                             None,
-                            None,
-                        )?;
+                        ) {
+                            if error.code() == Some("EADDRINUSE") {
+                                continue;
+                            }
+                            return Err(error);
+                        }
                         match ActiveUnixListener::bind_abstract(
                             &host_name,
                             &guest_name,
@@ -5027,7 +5071,6 @@ where
                             path: local_path.clone(),
                             abstract_path_hex: Some(local_hex.clone()),
                         },
-                        None,
                         None,
                     )?;
                     let listener = match ActiveUnixListener::bind_abstract(
@@ -5092,7 +5135,6 @@ where
                             abstract_path_hex: None,
                         },
                         Some((node.stat.dev, node.stat.ino)),
-                        Some(host_path.clone()),
                     )?;
                     let listener = match ActiveUnixListener::bind(
                         &host_path,
@@ -5772,7 +5814,7 @@ where
                 };
             }
 
-            let target_binding_id = process
+            let target_host_function_id = process
                 .unix_listeners
                 .get(listener_id)
                 .ok_or_else(|| {
@@ -5810,7 +5852,7 @@ where
                         reactor_io_limits(&process.limits),
                     )?;
                     socket.connection_state = pending.connection_guard.state.take();
-                    socket.remote_registry_binding_id = Some(target_binding_id);
+                    socket.remote_registry_binding_id = Some(target_host_function_id);
                     let socket_id = process.allocate_unix_socket_id();
                     let capability_key = NativeCapabilityKey::UnixSocket(socket_id.clone());
                     let identity = commit_process_capability(
@@ -6112,7 +6154,11 @@ pub(in crate::execution) fn format_unix_socket_resource(
 
 pub(crate) fn error_code(error: &VmError) -> &str {
     match error {
-        VmError::ResourceLimit(_) => "ERR_AGENTOS_RESOURCE_LIMIT",
+        VmError::ResourceLimit(_) | VmError::PackageMountLimit { .. } => {
+            "ERR_AGENTOS_RESOURCE_LIMIT"
+        }
+        VmError::RequestAdmission { code, .. } => code,
+        VmError::VmTeardownDeadline { .. } => "timeout",
         VmError::Host(error) => &error.code,
         VmError::InvalidState(_) => "invalid_state",
         VmError::ProtocolVersionMismatch(_) => "protocol_version_mismatch",

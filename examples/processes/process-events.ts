@@ -1,22 +1,25 @@
-import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
+import { vm } from "./client.js";
 
-const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
-const conn = client.vm.getOrCreate("my-agent").connect();
-const { pid } = await conn.process.spawn("node", ["/home/agentos/server.js"]);
-
-conn.on("processOutput", (data) => {
-	if (data.pid !== pid) return;
-  // data.pid: number
-  // data.stream: "stdout" | "stderr"
-  // data.data: Uint8Array
-  const text = new TextDecoder().decode(data.data);
-  console.log(`[${data.pid}] ${data.stream}: ${text}`);
+const conn = vm.connect();
+await conn.ready;
+const spawned = await conn.process.spawn({
+	command: "node",
+	args: ["/home/agentos/server.js"],
+	options: { env: {} },
 });
 
-conn.on("processExit", (data) => {
-	if (data.pid !== pid) return;
-  // data.pid: number
-  // data.exitCode: number
-  console.log(`Process ${data.pid} exited with code ${data.exitCode}`);
+conn.on("process.output", (data) => {
+	if (data.process.pid !== spawned.pid) return;
+	// data.process: { generation, pid }
+	// data.stream: "stdout" | "stderr"
+	// data.data: Uint8Array
+	const text = new TextDecoder().decode(data.data);
+	console.log(`[${data.process.pid}] ${data.stream}: ${text}`);
+});
+
+conn.on("process.exit", (data) => {
+	if (data.process.pid !== spawned.pid) return;
+	// data.process: { generation, pid }
+	// data.status.exitCode: number
+	console.log(`Process ${data.process.pid} exited with code ${data.status.exitCode}`);
 });

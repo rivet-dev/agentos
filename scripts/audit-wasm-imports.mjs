@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 
-import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { basename, relative, resolve } from 'node:path';
@@ -33,26 +32,82 @@ function option(name, fallback) {
 const commandsDir = option('--commands', defaultCommandsDir);
 const manifestPath = option('--manifest', defaultManifestPath);
 
-function signatureFromImportLine(line, command) {
-  const header = line.match(/^\s*\(import\s+"([^"]+)"\s+"([^"]+)"\s+(.+)\)\s*$/);
-  if (!header) return null;
-  const [, module, name, declaration] = header;
-  if (!declaration.startsWith('(func ')) {
-    throw new Error(
-      `${command}: non-function import ${module}.${name} is outside the AgentOS ABI`,
-    );
-  }
+const valueTypes = new Map([
+  [0x7f, 'i32'], [0x7e, 'i64'], [0x7d, 'f32'], [0x7c, 'f64'],
+  [0x7b, 'v128'], [0x70, 'funcref'], [0x6f, 'externref'], [0x69, 'exnref'],
+]);
 
-  const params = [...declaration.matchAll(/\(param(?:\s+\$[^\s)]+)?\s+([^)]+)\)/g)]
-    .flatMap((match) => match[1].trim().split(/\s+/));
-  const results = [...declaration.matchAll(/\(result\s+([^)]+)\)/g)]
-    .flatMap((match) => match[1].trim().split(/\s+/));
-  for (const type of [...params, ...results]) {
-    if (!['i32', 'i64', 'f32', 'f64', 'v128', 'funcref', 'externref'].includes(type)) {
-      throw new Error(`${command}: unsupported import value type ${type}`);
-    }
+// The import/type sections precede code and data. Reading them directly keeps
+// the audit bounded even when a large program disassembles to >1 GiB of WAT.
+function readImports(bytes, command) {
+  let offset = 8;
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  function byte(end) {
+    if (offset >= end) throw new Error(`${command}: truncated WASM section`);
+    return bytes[offset++];
   }
-  return { module, name, params, results };
+  function uint(end) {
+    let value = 0;
+    for (let shift = 0; shift <= 28; shift += 7) {
+      const next = byte(end);
+      value += (next & 0x7f) * 2 ** shift;
+      if ((next & 0x80) === 0) {
+        if (value > 0xffffffff) throw new Error(`${command}: invalid WASM integer`);
+        return value;
+      }
+    }
+    throw new Error(`${command}: overlong WASM integer`);
+  }
+  function string(end) {
+    const length = uint(end);
+    if (length > end - offset) throw new Error(`${command}: truncated WASM name`);
+    const value = decoder.decode(bytes.subarray(offset, offset + length));
+    offset += length;
+    return value;
+  }
+  function types(end) {
+    const count = uint(end);
+    if (count > end - offset) throw new Error(`${command}: invalid WASM type vector`);
+    return Array.from({ length: count }, () => {
+      const code = byte(end);
+      const type = valueTypes.get(code);
+      if (!type) throw new Error(`${command}: unsupported import value type 0x${code.toString(16)}`);
+      return type;
+    });
+  }
+  const signatures = [];
+  const imports = [];
+  while (offset < bytes.length) {
+    const section = byte(bytes.length);
+    const length = uint(bytes.length);
+    const end = offset + length;
+    if (end > bytes.length) throw new Error(`${command}: truncated WASM section`);
+    if (section === 1) {
+      const count = uint(end);
+      for (let index = 0; index < count; index++) {
+        if (byte(end) !== 0x60) throw new Error(`${command}: unsupported WASM function type`);
+        signatures.push({ params: types(end), results: types(end) });
+      }
+      if (offset !== end) throw new Error(`${command}: malformed WASM type section`);
+    } else if (section === 2) {
+      const count = uint(end);
+      for (let index = 0; index < count; index++) {
+        const module = string(end);
+        const name = string(end);
+        const kind = byte(end);
+        if (kind !== 0) {
+          throw new Error(`${command}: non-function import ${module}.${name} is outside the AgentOS ABI`);
+        }
+        const signature = signatures[uint(end)];
+        if (!signature) throw new Error(`${command}: import ${module}.${name} has an invalid type index`);
+        imports.push({ module, name, ...signature });
+      }
+      if (offset !== end) throw new Error(`${command}: malformed WASM import section`);
+      break;
+    }
+    offset = end;
+  }
+  return imports;
 }
 
 function inspectCommand(path, command) {
@@ -60,17 +115,7 @@ function inspectCommand(path, command) {
   if (bytes.length < 8 || bytes.subarray(0, 4).toString('hex') !== '0061736d') {
     throw new Error(`${command}: expected a WebAssembly binary`);
   }
-  const wat = execFileSync('wasm-dis', [path, '-o', '-'], {
-    encoding: 'utf8',
-    maxBuffer: 512 * 1024 * 1024,
-  });
-  const imports = wat
-    .split('\n')
-    .filter((line) => /^\s*\(import\s/.test(line))
-    .map((line) => signatureFromImportLine(line, command));
-  if (imports.some((entry) => entry === null)) {
-    throw new Error(`${command}: failed to parse one or more WebAssembly imports`);
-  }
+  const imports = readImports(bytes, command);
   imports.sort((a, b) =>
     `${a.module}\0${a.name}`.localeCompare(`${b.module}\0${b.name}`),
   );

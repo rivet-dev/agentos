@@ -1,9 +1,998 @@
 [
 	{
-		"name": "ACP_TERMINAL_DEFAULT_OUTPUT_BYTE_LIMIT",
-		"path": "crates/client/src/agent_os.rs",
+		"name": "MAX_ACTION_INPUT_DEPTH",
+		"path": "crates/actor-contract/src/lib.rs",
 		"class": "policy-deferred",
-		"rationale": "Bounded SDK-side retention, registry, or capture limit; expose through client configuration if operators need to tune it."
+		"rationale": "Fixed recursion ceiling while normalizing TypeScript transport tags in actor inputs; no decoder-depth option."
+	},
+	{
+		"name": "MAX_ACTION_INPUT_NODES",
+		"path": "crates/actor-contract/src/lib.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed aggregate value-count budget for actor input tag normalization; not wired to an operator setting."
+	},
+	{
+		"name": "MAX_BINARY_BYTES",
+		"path": "crates/actor-contract/src/lib.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed decoded binary-input ceiling with base64 envelope headroom; raising it requires coordinating action-message sizing."
+	},
+	{
+		"name": "MAX_ACTIVE_PREVIEWS",
+		"path": "crates/actor/src/config.rs",
+		"class": "policy-deferred",
+		"rationale": "Hard ceiling on preview.maxActive as well as its default; callers can lower it but cannot raise the 128-lease ceiling."
+	},
+	{
+		"name": "MAX_ENVIRONMENT_BYTES",
+		"path": "crates/actor/src/config.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed aggregate byte budget for persisted actor environment keys and values; no hosted input-size override."
+	},
+	{
+		"name": "MAX_ENVIRONMENT_ENTRIES",
+		"path": "crates/actor/src/config.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed count ceiling for persisted actor environment variables; not configurable through VM limits."
+	},
+	{
+		"name": "MAX_ENVIRONMENT_KEY_BYTES",
+		"path": "crates/actor/src/config.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed byte ceiling for each persisted actor environment variable name; no hosted input-size override."
+	},
+	{
+		"name": "MAX_ENVIRONMENT_VALUE_BYTES",
+		"path": "crates/actor/src/config.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed per-value byte ceiling for persisted actor environment; no hosted input-size override."
+	},
+	{
+		"name": "MAX_FILESYSTEM_NAMESPACE_BYTES",
+		"path": "crates/actor/src/config.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed SQLite filesystem namespace length in hosted configuration; not adjustable through mount options."
+	},
+	{
+		"name": "MAX_FILESYSTEM_PATH_BYTES",
+		"path": "crates/actor/src/config.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed guest path length accepted by hosted filesystem configuration; no hosted path-budget setting."
+	},
+	{
+		"name": "MAX_HOSTED_MOUNTS",
+		"path": "crates/actor/src/config.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed count ceiling for additional hosted filesystem mounts; separate from package-owned mount accounting."
+	},
+	{
+		"name": "MAX_PERMISSION_CONFIG_BYTES",
+		"path": "crates/actor/src/config.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed serialized byte ceiling for hosted permission configuration; distinct from sidecar permission enforcement."
+	},
+	{
+		"name": "MAX_PERMISSION_RULES_PER_DOMAIN",
+		"path": "crates/actor/src/config.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed count ceiling for hosted permission rules in each domain; no rule-count configuration."
+	},
+	{
+		"name": "MAX_PERMISSION_VALUE_BYTES",
+		"path": "crates/actor/src/config.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed byte ceiling for each hosted permission rule value; not a configurable VM resource."
+	},
+	{
+		"name": "MAX_PERMISSION_VALUES_PER_RULE",
+		"path": "crates/actor/src/config.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed path/operation/pattern count per hosted permission rule; no per-rule collection limit setting."
+	},
+	{
+		"name": "MAX_PREVIEW_TTL_MS",
+		"path": "crates/actor/src/config.rs",
+		"class": "policy-deferred",
+		"rationale": "Hard ceiling and default for preview.maxTtlMs; callers can shorten leases but cannot raise the one-day ceiling."
+	},
+	{
+		"name": "MAX_REMOTE_SOFTWARE",
+		"path": "crates/actor/src/config.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed desired-software list length enforced by config and install actions; no hosted package-count override."
+	},
+	{
+		"name": "MAX_CRON_ARGUMENT_BYTES",
+		"path": "crates/actor/src/cron.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed encoded cron invocation payload ceiling before persistence; no job-payload budget setting."
+	},
+	{
+		"name": "MAX_CRON_ERROR_BYTES",
+		"path": "crates/actor/src/cron.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed byte ceiling for cron error text exposed in history; no error-retention byte setting."
+	},
+	{
+		"name": "MAX_CRON_EXPRESSION_BYTES",
+		"path": "crates/actor/src/cron.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed cron expression text length before scheduler parsing; no expression-budget setting."
+	},
+	{
+		"name": "MAX_CRON_HISTORY",
+		"path": "crates/actor/src/cron.rs",
+		"class": "policy-deferred",
+		"rationale": "Hard per-job history retention ceiling; maxHistory can lower but cannot raise the 256-entry ceiling."
+	},
+	{
+		"name": "MAX_CRON_JOBS",
+		"path": "crates/actor/src/cron.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed actor-owned cron job count checked on schedule/list; no hosted cron capacity setting."
+	},
+	{
+		"name": "MAX_CRON_NAME_BYTES",
+		"path": "crates/actor/src/cron.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed cron job name length in persisted schedules; no operator name-size override."
+	},
+	{
+		"name": "MAX_TIMEZONE_BYTES",
+		"path": "crates/actor/src/cron.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed timezone identifier length accepted for cron schedules; no operator size override."
+	},
+	{
+		"name": "MAX_BATCH_PATHS",
+		"path": "crates/actor/src/filesystem.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed number of paths per filesystem batch action; splitting batches is the current workaround."
+	},
+	{
+		"name": "MAX_DIRECTORY_ENTRIES",
+		"path": "crates/actor/src/filesystem.rs",
+		"class": "policy-deferred",
+		"rationale": "Hard directory enumeration count ceiling; requested maxEntries can only lower it."
+	},
+	{
+		"name": "MAX_DIRECTORY_RESULT_BYTES",
+		"path": "crates/actor/src/filesystem.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed aggregate directory result byte ceiling before response encoding; no independent result-budget setting."
+	},
+	{
+		"name": "MAX_PATH_BYTES",
+		"path": "crates/actor/src/filesystem.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed path-string ceiling for filesystem actions; no operator path-length override."
+	},
+	{
+		"name": "MAX_RECURSION_DEPTH",
+		"path": "crates/actor/src/filesystem.rs",
+		"class": "policy-deferred",
+		"rationale": "Hard filesystem traversal depth ceiling; maxDepth cannot increase it above 64."
+	},
+	{
+		"name": "MAX_TRANSFER_BYTES",
+		"path": "crates/actor/src/filesystem.rs",
+		"class": "policy-deferred",
+		"rationale": "Hard per-action file transfer ceiling; maxBytes may lower the budget but cannot raise it beyond envelope headroom."
+	},
+	{
+		"name": "MAX_ARGUMENT_BYTES",
+		"path": "crates/actor/src/language.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed byte ceiling per hosted language argument; independent of sidecar spawn-byte limits."
+	},
+	{
+		"name": "MAX_ARGUMENTS",
+		"path": "crates/actor/src/language.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed argument-count ceiling for hosted language execution; no hosted argv-count option."
+	},
+	{
+		"name": "MAX_CONTEXT_ID_BYTES",
+		"path": "crates/actor/src/language.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed identifier length accepted by language context actions; no context-ID byte setting."
+	},
+	{
+		"name": "MAX_CONTEXTS",
+		"path": "crates/actor/src/language.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed language context list/result count ceiling; no hosted context-count setting."
+	},
+	{
+		"name": "MAX_DIAGNOSTIC_BYTES",
+		"path": "crates/actor/src/language.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed aggregate TypeScript diagnostic text budget; not wired to a caller/operator limit."
+	},
+	{
+		"name": "MAX_DIAGNOSTICS",
+		"path": "crates/actor/src/language.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed TypeScript diagnostic count ceiling returned by hosted checks; no diagnostic-count setting."
+	},
+	{
+		"name": "MAX_ENVIRONMENT_BYTES",
+		"path": "crates/actor/src/language.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed aggregate environment byte ceiling per language action; no actor environment budget override."
+	},
+	{
+		"name": "MAX_ENVIRONMENT_ENTRIES",
+		"path": "crates/actor/src/language.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed environment-variable count per hosted language action; no actor count override."
+	},
+	{
+		"name": "MAX_INDEX_URLS",
+		"path": "crates/actor/src/language.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed number of package index URLs in hosted language install options; no operator count override."
+	},
+	{
+		"name": "MAX_JSON_BYTES",
+		"path": "crates/actor/src/language.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed serialized JSON argument/context value ceiling for language actions; not operator-configurable."
+	},
+	{
+		"name": "MAX_PACKAGES",
+		"path": "crates/actor/src/language.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed package list length for hosted npm/pip installation actions; split install requests to stay below it."
+	},
+	{
+		"name": "MAX_PATH_BYTES",
+		"path": "crates/actor/src/language.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed language file/working-directory path length ceiling; not wired to VM limits."
+	},
+	{
+		"name": "MAX_RESULT_BYTES",
+		"path": "crates/actor/src/language.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed captured language result byte ceiling before actor response encoding; no result-limit override."
+	},
+	{
+		"name": "MAX_SOURCE_BYTES",
+		"path": "crates/actor/src/language.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed source-code byte ceiling per language action, reserving room for the rest of the actor envelope."
+	},
+	{
+		"name": "MAX_STDIN_BYTES",
+		"path": "crates/actor/src/language.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed inline stdin byte ceiling for language actions; larger input requires filesystem or streaming APIs."
+	},
+	{
+		"name": "MAX_TERMINAL_DIMENSION",
+		"path": "crates/actor/src/language.rs",
+		"class": "policy-deferred",
+		"rationale": "Hard PTY row/column ceiling for language execution options; larger terminal dimensions require a policy change."
+	},
+	{
+		"name": "MAX_TIMEOUT_MS",
+		"path": "crates/actor/src/language.rs",
+		"class": "policy-deferred",
+		"rationale": "Hard five-minute synchronous language execution deadline; timeoutMs can lower but cannot raise this actor ceiling."
+	},
+	{
+		"name": "ACTION_CONCURRENCY_LIMIT",
+		"path": "crates/actor/src/lib.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed admission semaphore for simultaneous actor actions; no actor/operator option raises its 64 permits."
+	},
+	{
+		"name": "ACTOR_MESSAGE_SIZE_LIMIT",
+		"path": "crates/actor/src/lib.rs",
+		"class": "invariant",
+		"rationale": "Shared 1 MiB actor transport envelope contract: RivetKit ingress/egress and typed action encoding must change together."
+	},
+	{
+		"name": "DEFAULT_STREAM_CHUNK_BYTES",
+		"path": "crates/actor/src/network.rs",
+		"class": "policy",
+		"rationale": "Default requested fetch-stream read size; callers override maxBytes within actor and sidecar ceilings.",
+		"wired": "NetworkFetchStreamRead.max_bytes"
+	},
+	{
+		"name": "MAX_HTTP_BODY_BYTES",
+		"path": "crates/actor/src/network.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed inline HTTP request body budget for actor fetch actions; no actor body-size override."
+	},
+	{
+		"name": "MAX_HTTP_HEADER_BYTES",
+		"path": "crates/actor/src/network.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed aggregate HTTP header byte budget; separate from body and transport envelope limits."
+	},
+	{
+		"name": "MAX_HTTP_HEADERS",
+		"path": "crates/actor/src/network.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed HTTP header count in hosted request/response validation; no actor header-count setting."
+	},
+	{
+		"name": "MAX_HTTP_METHOD_BYTES",
+		"path": "crates/actor/src/network.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed HTTP method token length for hosted requests; no operator method-size override."
+	},
+	{
+		"name": "MAX_HTTP_PATH_BYTES",
+		"path": "crates/actor/src/network.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed HTTP path length accepted by hosted VM requests; no actor path-budget setting."
+	},
+	{
+		"name": "MAX_HTTP_RESPONSE_BYTES",
+		"path": "crates/actor/src/network.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed buffered actor fetch response ceiling; streaming is the supported alternative for larger bodies."
+	},
+	{
+		"name": "MAX_PREVIEW_TOKEN_BYTES",
+		"path": "crates/actor/src/network.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed incoming preview token length guard before lookup; no operator token-length setting."
+	},
+	{
+		"name": "MAX_STREAM_CHUNK_BYTES",
+		"path": "crates/actor/src/network.rs",
+		"class": "policy-deferred",
+		"rationale": "Hard actor fetch-stream read ceiling; requested maxBytes can only lower it, and the sidecar may clamp further."
+	},
+	{
+		"name": "MAX_STREAM_ID_BYTES",
+		"path": "crates/actor/src/network.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed identifier length accepted by fetch-stream read/cancel actions; no identifier-budget setting."
+	},
+	{
+		"name": "MAX_STREAM_LIFETIME_MS",
+		"path": "crates/actor/src/network.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed one-hour expiry for actor-held fetch streams; no stream lifetime policy input."
+	},
+	{
+		"name": "MAX_BATCH_OBSERVATIONS_HARD",
+		"path": "crates/preload/src/lib.rs",
+		"class": "policy-deferred",
+		"rationale": "Hard ceiling on coordinator max_batch_observations and process observation batches; configured counts cannot raise it."
+	},
+	{
+		"name": "MAX_CANDIDATE_SCORE",
+		"path": "crates/preload/src/lib.rs",
+		"class": "invariant",
+		"rationale": "Saturation range for the persisted preload ranking algorithm, not a retained-entry or allocation budget; scoring and state validation agree on it."
+	},
+	{
+		"name": "MAX_CANDIDATES_HARD",
+		"path": "crates/preload/src/lib.rs",
+		"class": "policy-deferred",
+		"rationale": "Hard ceiling on coordinator max_candidates; actual candidate count is tunable only within this ceiling."
+	},
+	{
+		"name": "MAX_OBSERVATION_CLOCK_SKEW_MS",
+		"path": "crates/preload/src/lib.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed allowed future timestamp skew for usage observations; no coordinator clock-skew setting."
+	},
+	{
+		"name": "MAX_OBSERVATION_WINDOW_MS",
+		"path": "crates/preload/src/lib.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed maximum usage observation window accepted by the coordinator; no freshness-window option."
+	},
+	{
+		"name": "MAX_PLAN_BYTES_HARD",
+		"path": "crates/preload/src/lib.rs",
+		"class": "policy-deferred",
+		"rationale": "Hard 64 GiB validation ceiling for coordinator/process predicted preload bytes; configured budgets cannot raise it."
+	},
+	{
+		"name": "MAX_PLAN_ENTRIES_HARD",
+		"path": "crates/preload/src/lib.rs",
+		"class": "policy-deferred",
+		"rationale": "Hard validation ceiling for coordinator/process max_plan_entries and warm concurrency; configured budgets may only be smaller."
+	},
+	{
+		"name": "MAX_PLAN_TTL_MS",
+		"path": "crates/preload/src/lib.rs",
+		"class": "policy-deferred",
+		"rationale": "Hard one-day ceiling on coordinator plan_ttl_ms; the actual lease TTL is configurable only below it."
+	},
+	{
+		"name": "MAX_PROCESS_ACTION_TIMEOUT_MS",
+		"path": "crates/preload/src/lib.rs",
+		"class": "policy-deferred",
+		"rationale": "Hard ceiling for PreloadProcessOptions.action_timeout_ms; configured coordinator calls cannot exceed one minute."
+	},
+	{
+		"name": "MAX_PROCESS_FLUSH_INTERVAL_MS",
+		"path": "crates/preload/src/lib.rs",
+		"class": "policy-deferred",
+		"rationale": "Hard ceiling for PreloadProcessOptions.flush_interval_ms; no override above one day."
+	},
+	{
+		"name": "MAX_PROCESS_ID_BYTES",
+		"path": "crates/preload/src/lib.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed reporting process identifier length in coordinator requests; no identifier budget setting."
+	},
+	{
+		"name": "MAX_PROCESS_PLAN_READ_TIMEOUT_MS",
+		"path": "crates/preload/src/lib.rs",
+		"class": "policy-deferred",
+		"rationale": "Hard ceiling for PreloadProcessOptions.plan_read_timeout_ms; configured reads cannot exceed one minute."
+	},
+	{
+		"name": "MAX_PROCESS_STARTUP_DEADLINE_MS",
+		"path": "crates/preload/src/lib.rs",
+		"class": "policy-deferred",
+		"rationale": "Hard ceiling for PreloadProcessOptions.startup_deadline_ms; increasing the option beyond five minutes is rejected."
+	},
+	{
+		"name": "MAX_SUPPORTED_FORMATS",
+		"path": "crates/preload/src/lib.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed advertised package-format version list length in plan requests; no coordinator override."
+	},
+	{
+		"name": "MAX_TRACKED_PROCESSES_HARD",
+		"path": "crates/preload/src/lib.rs",
+		"class": "policy-deferred",
+		"rationale": "Hard ceiling on coordinator max_tracked_processes deduplication state; actual retention count can only be lower."
+	},
+	{
+		"name": "MAX_URL_BYTES",
+		"path": "crates/preload/src/lib.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed artifact URL length in preload plan/usage validation; no coordinator URL-size option."
+	},
+	{
+		"name": "MAX_USAGE_COUNT_PER_OBSERVATION",
+		"path": "crates/preload/src/lib.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed saturation/rejection count per coalesced package observation; callers can flush more often but cannot raise it."
+	},
+	{
+		"name": "MAX_ARGUMENT_BYTES",
+		"path": "crates/actor/src/process.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed per-argument and cwd byte ceiling for hosted process actions; no actor override."
+	},
+	{
+		"name": "MAX_ARGUMENTS",
+		"path": "crates/actor/src/process.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed argv count ceiling for hosted process actions; distinct from sidecar spawn argument-byte limits."
+	},
+	{
+		"name": "MAX_COMMAND_BYTES",
+		"path": "crates/actor/src/process.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed command-string ceiling for hosted process actions and cron commands; not operator-configurable."
+	},
+	{
+		"name": "MAX_ENVIRONMENT_BYTES",
+		"path": "crates/actor/src/process.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed aggregate environment byte ceiling per hosted process action; no actor byte-budget setting."
+	},
+	{
+		"name": "MAX_ENVIRONMENT_ENTRIES",
+		"path": "crates/actor/src/process.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed environment entry count per hosted process action; no actor count setting."
+	},
+	{
+		"name": "MAX_EXEC_OUTPUT_BYTES",
+		"path": "crates/actor/src/process.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed captured process.run output budget before actor response encoding; no capture-budget setting."
+	},
+	{
+		"name": "MAX_PROCESS_LIST_ENTRIES",
+		"path": "crates/actor/src/process.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed process list/tree result count ceiling; no hosted enumeration-count override."
+	},
+	{
+		"name": "MAX_STDIN_BYTES",
+		"path": "crates/actor/src/process.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed process/terminal stdin write payload ceiling; callers must split larger writes."
+	},
+	{
+		"name": "MAX_TERMINAL_DIMENSION",
+		"path": "crates/actor/src/process.rs",
+		"class": "policy-deferred",
+		"rationale": "Hard PTY row/column ceiling for process and terminal actions; not a configurable terminal-size policy."
+	},
+	{
+		"name": "MAX_WAIT_MS",
+		"path": "crates/actor/src/process.rs",
+		"class": "policy-deferred",
+		"rationale": "Hard five-minute process wait/run ceiling; timeoutMs may lower it but cannot raise the actor action deadline."
+	},
+	{
+		"name": "MAX_RUNTIME_ISSUES",
+		"path": "crates/actor/src/runtime.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed rolling retention for VM readiness/failure issues; older issues are evicted after 32 without a retention setting."
+	},
+	{
+		"name": "DEFAULT_MAX_PACKAGE_BYTES",
+		"path": "crates/client/src/software.rs",
+		"class": "policy",
+		"rationale": "Default packed-package download/file byte ceiling.",
+		"wired": "PackageResolverOptions.max_package_bytes"
+	},
+	{
+		"name": "DEFAULT_PACKAGE_CACHE_ACQUISITION_TIMEOUT_MS",
+		"path": "crates/client/src/software.rs",
+		"class": "policy",
+		"rationale": "Default acquisition deadline including cache admission and resolution.",
+		"wired": "ProcessPackageCacheOptions.acquisition_timeout_ms"
+	},
+	{
+		"name": "DEFAULT_PACKAGE_CACHE_MAX_BYTES",
+		"path": "crates/client/src/software.rs",
+		"class": "policy",
+		"rationale": "Default retained byte budget for the process-wide verified package cache.",
+		"wired": "ProcessPackageCacheOptions.max_bytes"
+	},
+	{
+		"name": "DEFAULT_PACKAGE_CACHE_MAX_CONCURRENT_ACQUISITIONS",
+		"path": "crates/client/src/software.rs",
+		"class": "policy",
+		"rationale": "Default simultaneous process-cache download/verification permits.",
+		"wired": "ProcessPackageCacheOptions.max_concurrent_acquisitions"
+	},
+	{
+		"name": "DEFAULT_PACKAGE_CACHE_MAX_ENTRIES",
+		"path": "crates/client/src/software.rs",
+		"class": "policy",
+		"rationale": "Default verified artifact count retained in the process package cache.",
+		"wired": "ProcessPackageCacheOptions.max_entries"
+	},
+	{
+		"name": "DEFAULT_PACKAGE_CACHE_MAX_PENDING_ACQUISITIONS",
+		"path": "crates/client/src/software.rs",
+		"class": "policy",
+		"rationale": "Default admitted active/waiting package acquisitions in the process cache.",
+		"wired": "ProcessPackageCacheOptions.max_pending_acquisitions"
+	},
+	{
+		"name": "DEFAULT_PACKAGE_CACHE_MAX_SOURCE_ENTRIES",
+		"path": "crates/client/src/software.rs",
+		"class": "policy",
+		"rationale": "Default URL/path-to-digest source-index capacity in the process package cache.",
+		"wired": "ProcessPackageCacheOptions.max_source_entries"
+	},
+	{
+		"name": "DEFAULT_PACKAGE_CACHE_MIN_FREE_BYTES",
+		"path": "crates/client/src/software.rs",
+		"class": "policy",
+		"rationale": "Default host disk free-space reserve checked before package cache writes.",
+		"wired": "ProcessPackageCacheOptions.min_free_bytes"
+	},
+	{
+		"name": "DEFAULT_PACKAGE_CONNECT_TIMEOUT_MS",
+		"path": "crates/client/src/software.rs",
+		"class": "policy",
+		"rationale": "Default package HTTP connection establishment deadline.",
+		"wired": "PackageResolverOptions.connect_timeout_ms"
+	},
+	{
+		"name": "DEFAULT_PACKAGE_DOWNLOAD_TIMEOUT_MS",
+		"path": "crates/client/src/software.rs",
+		"class": "policy",
+		"rationale": "Default deadline for a complete package download.",
+		"wired": "PackageResolverOptions.download_timeout_ms"
+	},
+	{
+		"name": "DEFAULT_PACKAGE_REDIRECT_LIMIT",
+		"path": "crates/client/src/software.rs",
+		"class": "policy",
+		"rationale": "Default package download redirect count; validation also imposes a fixed ceiling of 16.",
+		"wired": "PackageResolverOptions.max_redirects"
+	},
+	{
+		"name": "MAX_PACKAGE_COMMAND_BYTES",
+		"path": "crates/client/src/software.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed manifest command-name byte ceiling; resolver options cannot raise it."
+	},
+	{
+		"name": "MAX_PACKAGE_COMMANDS",
+		"path": "crates/client/src/software.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed verified manifest command count ceiling; distinct from aggregate live package mount capacity."
+	},
+	{
+		"name": "MAX_PACKAGE_ENTRY_BYTES",
+		"path": "crates/client/src/software.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed manifest command entry path byte ceiling; resolver options cannot raise it."
+	},
+	{
+		"name": "MAX_PACKAGE_INDEX_BYTES",
+		"path": "crates/client/src/software.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed accepted .aospkg mount-index byte ceiling during verification; no resolver index-size override."
+	},
+	{
+		"name": "MAX_PACKAGE_MANIFEST_BYTES",
+		"path": "crates/client/src/software.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed accepted .aospkg manifest byte ceiling during package verification; no resolver format-size override."
+	},
+	{
+		"name": "MAX_PACKAGE_NAME_BYTES",
+		"path": "crates/client/src/software.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed verified manifest package-name byte ceiling; not configurable through resolver options."
+	},
+	{
+		"name": "MAX_PACKAGE_PROVIDES_ENV",
+		"path": "crates/client/src/software.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed verified provides.env entry-count ceiling; this numeric budget is not an environment-key name and has no resolver override."
+	},
+	{
+		"name": "MAX_PACKAGE_PROVIDES_FILES",
+		"path": "crates/client/src/software.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed verified provides.files declaration count ceiling; separate from whether entries produce live mounts."
+	},
+	{
+		"name": "MAX_PACKAGE_RESPONSE_HEADER_BYTES",
+		"path": "crates/client/src/software.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed aggregate package HTTP response header byte ceiling; not part of resolver options."
+	},
+	{
+		"name": "MAX_PACKAGE_RESPONSE_HEADERS",
+		"path": "crates/client/src/software.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed package HTTP response header count ceiling; download size options do not raise it."
+	},
+	{
+		"name": "MAX_PACKAGE_URL_BYTES",
+		"path": "crates/client/src/software.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed package URL length validation before resolution; not exposed by PackageResolverOptions."
+	},
+	{
+		"name": "MAX_PACKAGE_VERSION_BYTES",
+		"path": "crates/client/src/software.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed verified manifest version-string byte ceiling; no package metadata-size option."
+	},
+	{
+		"name": "MAX_SUPPLEMENTARY_GROUPS",
+		"path": "crates/vm-kernel/src/kernel.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed supplementary group count enforced by setgroups; must be coordinated with VM user-config validation and is not operator-tunable."
+	},
+	{
+		"name": "POSIX_ACL_ENTRY_LIMIT",
+		"path": "crates/vm-kernel/src/kernel.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed 25-entry access/default ACL validation ceiling; not a general POSIX encoding invariant or configurable ACL policy."
+	},
+	{
+		"name": "XATTR_NAME_MAX",
+		"path": "crates/vm-kernel/src/kernel.rs",
+		"class": "invariant",
+		"rationale": "255-byte extended-attribute name contract shared by kernel and VFS validation; not an independent resource budget."
+	},
+	{
+		"name": "DEFAULT_EXECUTION_MAX_COMPLETED_EXECUTIONS",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Default retained completed language-execution record count per VM.",
+		"wired": "VmLimits.execution.max_completed_executions"
+	},
+	{
+		"name": "DEFAULT_WASM_RUNNER_CPU_TIME_LIMIT_MS",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Default CPU-time budget carried into the WASM runner execution limits.",
+		"wired": "VmLimits.wasm.runner_cpu_time_limit_ms"
+	},
+	{
+		"name": "VM_FETCH_STREAM_CHUNK_MAX_BYTES",
+		"path": "crates/vm/src/execution/javascript/http.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed VM-fetch socket read quantum and stream-chunk ceiling; caller maxBytes cannot raise the 64 KiB cap."
+	},
+	{
+		"name": "VM_FETCH_STREAM_COUNT_LIMIT",
+		"path": "crates/vm/src/execution/javascript/http.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed simultaneous VM-fetch stream count per VM; not exposed by VmLimits.http."
+	},
+	{
+		"name": "MAX_NODE_CLI_SHIM_BYTES",
+		"path": "crates/vm/src/execution/launch.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed host npm/npx launcher script inspection byte ceiling; oversized shims are not resolved and no resolver setting raises it."
+	},
+	{
+		"name": "EXECUTION_EVENT_BYTES_LIMIT",
+		"path": "crates/vm/src/language_execution.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed byte budget for retained language-execution events; not wired to VmLimits.execution."
+	},
+	{
+		"name": "MAX_EXECUTION_OUTPUT_PAGE_EVENTS",
+		"path": "crates/vm/src/language_execution.rs",
+		"class": "policy-deferred",
+		"rationale": "Hard language-execution replay page event ceiling; request limit is clamped and cannot raise it."
+	},
+	{
+		"name": "CONNECTION_LIMIT_PATH",
+		"path": "crates/vm/src/ownership_coordinator.rs",
+		"class": "invariant",
+		"rationale": "Diagnostic configuration-path string for connection admission errors, not the numeric bound itself."
+	},
+	{
+		"name": "INTERNAL_EVENT_OPERATION_LIMIT_PATH",
+		"path": "crates/vm/src/ownership_coordinator.rs",
+		"class": "invariant",
+		"rationale": "Diagnostic configuration-path string naming internal-event admission capacity; the numeric value comes from DriverConfig."
+	},
+	{
+		"name": "SESSION_LIMIT_PATH",
+		"path": "crates/vm/src/ownership_coordinator.rs",
+		"class": "invariant",
+		"rationale": "Diagnostic configuration-path string for per-connection session admission, not a second session cap."
+	},
+	{
+		"name": "VM_LIMIT_PATH",
+		"path": "crates/vm/src/ownership_coordinator.rs",
+		"class": "invariant",
+		"rationale": "Diagnostic configuration-path string for VM admission errors, not a separate VM capacity."
+	},
+	{
+		"name": "DEFAULT_MAX_METADATA_BYTES",
+		"path": "crates/vm/src/plugins/chunked_sqlite.rs",
+		"class": "policy",
+		"rationale": "Default serialized SQLite filesystem metadata snapshot byte ceiling, enforced on save and load.",
+		"wired": "ChunkedSqliteMountConfig.max_metadata_bytes"
+	},
+	{
+		"name": "DEFAULT_METADATA_CACHE_ENTRIES",
+		"path": "crates/vm/src/plugins/chunked_sqlite.rs",
+		"class": "policy",
+		"rationale": "Default per-mount metadata lookup cache entry count; zero disables this cache.",
+		"wired": "ChunkedSqliteMountConfig.metadata_cache_entries"
+	},
+	{
+		"name": "MAX_CHUNK_SIZE",
+		"path": "crates/vm/src/plugins/chunked_sqlite.rs",
+		"class": "policy-deferred",
+		"rationale": "Hard validation ceiling on chunked_sqlite chunkSize; callers may configure smaller chunks but cannot raise this ceiling."
+	},
+	{
+		"name": "MAX_METADATA_BYTES",
+		"path": "crates/vm/src/plugins/chunked_sqlite.rs",
+		"class": "policy-deferred",
+		"rationale": "Hard 1 GiB validation ceiling on maxMetadataBytes; the mount option only tunes below this ceiling."
+	},
+	{
+		"name": "MAX_METADATA_CACHE_ENTRIES",
+		"path": "crates/vm/src/plugins/chunked_sqlite.rs",
+		"class": "policy-deferred",
+		"rationale": "Hard validation ceiling on metadataCacheEntries; the mount option may lower but cannot raise this ceiling."
+	},
+	{
+		"name": "PROCESS_EVENT_CONSUMER_LIMIT_PATH",
+		"path": "crates/vm/src/process_event_broker.rs",
+		"class": "invariant",
+		"rationale": "Diagnostic name of DriverConfig.protocol.max_in_flight_requests for broker consumers; not a separate numeric limit."
+	},
+	{
+		"name": "PROCESS_EVENT_LIMIT_PATH",
+		"path": "crates/vm/src/process_event_broker.rs",
+		"class": "invariant",
+		"rationale": "Diagnostic name of DriverConfig.protocol.max_process_events; this string allocates no event capacity."
+	},
+	{
+		"name": "SERVICE_CAPACITY",
+		"path": "crates/vm/src/stdio.rs",
+		"class": "invariant",
+		"rationale": "Local test fixture capacity for JoinSet completion/admission regression waves; never used by production service admission."
+	},
+	{
+		"name": "DEFAULT_PROTOCOL_MAX_SESSIONS_PER_CONNECTION",
+		"path": "crates/driver-tokio/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default session admission count for each protocol connection.",
+		"wired": "DriverConfig.protocol.max_sessions_per_connection"
+	},
+	{
+		"name": "DEFAULT_BLOCK_CACHE_BYTES",
+		"path": "crates/vfs-storage/src/local/file_block_store.rs",
+		"class": "invariant",
+		"rationale": "Bounded read-through block cache with eviction/bypass; changes performance rather than which filesystem operations are admitted."
+	},
+	{
+		"name": "MAX_PENDING_WRITE_COMMITS",
+		"path": "crates/vfs-storage/src/local/sqlite_metadata_store.rs",
+		"class": "invariant",
+		"rationale": "Internal transaction batching threshold that forces COMMIT after 256 writes; not a ceiling on accepted writes."
+	},
+	{
+		"name": "MAX_ADAPTIVE_CHUNK_SIZE",
+		"path": "crates/vfs-core/src/engine/engines/chunked.rs",
+		"class": "invariant",
+		"rationale": "Adaptive write chunk growth heuristic; explicit larger chunk_size still wins, so this is not a maximum admitted block size."
+	},
+	{
+		"name": "XATTR_LIST_MAX",
+		"path": "crates/vfs-core/src/engine/types.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed per-inode aggregate extended-attribute name-plus-value storage budget; despite the name it is not merely a listxattr buffer-size invariant."
+	},
+	{
+		"name": "XATTR_NAME_MAX",
+		"path": "crates/vfs-core/src/engine/types.rs",
+		"class": "invariant",
+		"rationale": "255-byte extended-attribute name contract shared by kernel and VFS validation; not an independent resource budget."
+	},
+	{
+		"name": "XATTR_SIZE_MAX",
+		"path": "crates/vfs-core/src/engine/types.rs",
+		"class": "invariant",
+		"rationale": "64 KiB per-value extended-attribute compatibility ceiling shared by both VFS implementations."
+	},
+	{
+		"name": "MAX_TAR_REALPATH_CACHE_ENTRIES",
+		"path": "crates/vfs-core/src/posix/tar_fs.rs",
+		"class": "invariant",
+		"rationale": "Internal realpath memoization capacity; clearing the cache preserves path semantics and bounds only an optimization."
+	},
+	{
+		"name": "XATTR_LIST_MAX",
+		"path": "crates/vfs-core/src/posix/vfs.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed per-inode aggregate extended-attribute name-plus-value storage budget; despite the name it is not merely a listxattr buffer-size invariant."
+	},
+	{
+		"name": "XATTR_NAME_MAX",
+		"path": "crates/vfs-core/src/posix/vfs.rs",
+		"class": "invariant",
+		"rationale": "255-byte extended-attribute name contract shared by kernel and VFS validation; not an independent resource budget."
+	},
+	{
+		"name": "XATTR_SIZE_MAX",
+		"path": "crates/vfs-core/src/posix/vfs.rs",
+		"class": "invariant",
+		"rationale": "64 KiB per-value extended-attribute compatibility ceiling shared by both VFS implementations."
+	},
+	{
+		"name": "MAX_ACCOUNTS",
+		"path": "crates/vm-config/src/lib.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed maximum bootstrap user.accounts entries; no VM identity-table count setting."
+	},
+	{
+		"name": "MAX_GROUPS",
+		"path": "crates/vm-config/src/lib.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed maximum bootstrap user.groups entries; no VM identity-table count setting."
+	},
+	{
+		"name": "MAX_SAFE_INTEGER",
+		"path": "crates/vm-config/src/lib.rs",
+		"class": "invariant",
+		"rationale": "JavaScript integer precision boundary for JS-runtime numeric settings; increasing it would silently lose wire/runtime precision."
+	},
+	{
+		"name": "MAX_SUPPLEMENTARY_GIDS",
+		"path": "crates/vm-config/src/lib.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed supplementary group count for default and named users; raising it requires matching the kernel setgroups ceiling."
+	},
+	{
+		"name": "MAX_VM_ALLOWED_NODE_BUILTIN_BYTES",
+		"path": "crates/vm-config/src/lib.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed allowed-builtin name byte ceiling; no policy-name size override."
+	},
+	{
+		"name": "MAX_VM_ALLOWED_NODE_BUILTINS",
+		"path": "crates/vm-config/src/lib.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed allowed-builtin list count validated before normalization; no policy-list budget override."
+	},
+	{
+		"name": "MAX_VM_LOOPBACK_EXEMPT_PORTS",
+		"path": "crates/vm-config/src/lib.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed loopback exemption list count before deduplication; no per-VM list-size setting."
+	},
+	{
+		"name": "CHILD_PROCESS_EXIT_DRAIN_MAX_MS",
+		"path": "packages/build-tools/bridge-src/builtins/child-process.ts",
+		"class": "policy-deferred",
+		"rationale": "Fixed post-exit deadline for buffered child stdout/stderr consumption; no host-configured drain timeout."
+	},
+	{
+		"name": "CHILD_PROCESS_IPC_MAX_GRAPH_DEPTH",
+		"path": "packages/build-tools/bridge-src/builtins/child-process.ts",
+		"class": "policy-deferred",
+		"rationale": "Fixed recursive depth guard shared by advanced IPC encoder/decoder; no VM IPC graph-depth setting."
+	},
+	{
+		"name": "CHILD_PROCESS_IPC_MAX_GRAPH_NODES",
+		"path": "packages/build-tools/bridge-src/builtins/child-process.ts",
+		"class": "policy-deferred",
+		"rationale": "Fixed advanced IPC object graph node budget shared by encoder/decoder; no VM IPC graph-count setting."
+	},
+	{
+		"name": "MAX_EARLY_CHILD_PROCESS_EVENTS",
+		"path": "packages/build-tools/bridge-src/builtins/child-process.ts",
+		"class": "policy-deferred",
+		"rationale": "Fixed buffered event count per child before its bridge instance is registered; overflow discards events and is not configurable."
+	},
+	{
+		"name": "MAX_EARLY_CHILD_PROCESS_IDS",
+		"path": "packages/build-tools/bridge-src/builtins/child-process.ts",
+		"class": "policy-deferred",
+		"rationale": "Fixed number of early child event buckets before bridge registration; oldest buckets are evicted without a host capacity setting."
+	},
+	{
+		"name": "MAX_ABORT_SIGNAL_ANY_INPUTS",
+		"path": "packages/build-tools/bridge-src/polyfills/abort.ts",
+		"class": "policy-deferred",
+		"rationale": "Fixed AbortSignal.any input count guard in the guest polyfill; no sidecar-provided operator override."
+	},
+	{
+		"name": "MAX_BLOB_BYTES",
+		"path": "packages/build-tools/bridge-src/polyfills/blob-file.ts",
+		"class": "policy-deferred",
+		"rationale": "Fixed aggregate input byte ceiling per guest Blob/File construction; no sidecar-provided Blob budget."
+	},
+	{
+		"name": "MAX_BLOB_PARTS",
+		"path": "packages/build-tools/bridge-src/polyfills/blob-file.ts",
+		"class": "policy-deferred",
+		"rationale": "Fixed part count per guest Blob/File construction; no sidecar-provided part-count setting."
+	},
+	{
+		"name": "MAX_EVENT_LISTENERS",
+		"path": "packages/build-tools/bridge-src/polyfills/dom-events.ts",
+		"class": "policy-deferred",
+		"rationale": "Fixed total listener count per guest EventTarget; no operator-provided listener budget."
+	},
+	{
+		"name": "MAX_EVENT_TYPES",
+		"path": "packages/build-tools/bridge-src/polyfills/dom-events.ts",
+		"class": "policy-deferred",
+		"rationale": "Fixed distinct event type count per guest EventTarget; no operator-provided event-type budget."
+	},
+	{
+		"name": "MAX_BLOB_URLS",
+		"path": "packages/build-tools/bridge-src/polyfills/whatwg-url.ts",
+		"class": "policy-deferred",
+		"rationale": "Fixed live object URL registry size per isolate; guests can revoke entries but hosts cannot configure the ceiling."
+	},
+	{
+		"name": "PROCESS_OUTPUT_EVENT_LIMIT",
+		"path": "packages/core/src/agent-os.ts",
+		"class": "policy-deferred",
+		"rationale": "Fixed TypeScript Core per-process retained event count; oldest events are evicted and the replay result marks truncation."
 	},
 	{
 		"name": "CLOSED_SHELL_EXIT_CODE_RETENTION_LIMIT",
@@ -49,16 +1038,16 @@
 		"rationale": "Bounded SDK fan-out channel capacity used for flow control; not a sidecar VM resource policy."
 	},
 	{
-		"name": "ACP_TERMINAL_LIMIT",
-		"path": "crates/client/src/shell.rs",
-		"class": "policy-deferred",
-		"rationale": "Bounded SDK-side retention, registry, or capture limit; expose through client configuration if operators need to tune it."
-	},
-	{
 		"name": "SHELL_DATA_CHANNEL_CAPACITY",
 		"path": "crates/client/src/shell.rs",
 		"class": "invariant",
 		"rationale": "Bounded SDK fan-out channel capacity used for flow control; not a sidecar VM resource policy."
+	},
+	{
+		"name": "TERMINAL_LIMIT",
+		"path": "crates/client/src/shell.rs",
+		"class": "policy-deferred",
+		"rationale": "Bounded SDK-side terminal registry; expose through client configuration if operators need to tune it."
 	},
 	{
 		"name": "SHARED_SIDECAR_POOL_LIMIT",
@@ -163,6 +1152,12 @@
 		"class": "policy",
 		"rationale": "Python runtime execution timeout.",
 		"wired": "VmLimits.python.execution_timeout_ms"
+	},
+	{
+		"name": "DEFAULT_PYTHON_MANAGED_HOST_FILE_LIMIT",
+		"path": "crates/execution/src/python.rs",
+		"class": "invariant",
+		"rationale": "Bounded fallback for standalone Python execution; VM launches use configured kernel fd limits."
 	},
 	{
 		"name": "DEFAULT_PYTHON_MAX_OLD_SPACE_MB",
@@ -276,10 +1271,10 @@
 		"rationale": "Standalone/test fallback only; production derives the record-lock bound from the policy-wired VmLimits.resources.max_open_fds."
 	},
 	{
-		"name": "SHEBANG_LINE_MAX_BYTES",
-		"path": "crates/vm-kernel/src/kernel.rs",
+		"name": "MAX_FDS_PER_PROCESS",
+		"path": "crates/vm-kernel/src/fd_table.rs",
 		"class": "invariant",
-		"rationale": "Shebang parse guard; matches Linux BINPRM_BUF_SIZE-style bound, parser-safety."
+		"rationale": "FD table layout fixed at 0-255; max_open_fds is the policy knob above it."
 	},
 	{
 		"name": "MAX_EXEC_INTERPRETER_DEPTH",
@@ -292,6 +1287,12 @@
 		"path": "crates/vm-kernel/src/kernel.rs",
 		"class": "invariant",
 		"rationale": "Linux ELOOP compatibility limit for Unix-socket path resolution."
+	},
+	{
+		"name": "SHEBANG_LINE_MAX_BYTES",
+		"path": "crates/vm-kernel/src/kernel.rs",
+		"class": "invariant",
+		"rationale": "Shebang parse guard; matches Linux BINPRM_BUF_SIZE-style bound, parser-safety."
 	},
 	{
 		"name": "MAX_PIPE_BUFFER_BYTES",
@@ -738,8 +1739,8 @@
 		"name": "DEFAULT_PROCESS_MAX_SPAWN_FILE_ACTIONS",
 		"path": "crates/vm/src/core/limits.rs",
 		"class": "policy",
-		"rationale": "Default for the configured per-VM child-process file-action count bound.",
-		"wired": "VmLimits.process.max_spawn_file_actions"
+		"rationale": "Node import-cache materialization timeout.",
+		"wired": "VmLimits.js_runtime.import_cache_materialize_timeout_ms"
 	},
 	{
 		"name": "DEFAULT_PROCESS_MAX_SPAWN_FILE_ACTION_BYTES",
@@ -752,8 +1753,8 @@
 		"name": "DEFAULT_PROCESS_PENDING_STDIN_BYTES",
 		"path": "crates/vm/src/core/limits.rs",
 		"class": "policy",
-		"rationale": "Default for the configured per-VM pending child-stdin byte bound.",
-		"wired": "VmLimits.process.pending_stdin_bytes"
+		"rationale": "Default for the configured per-VM child-process file-action count bound.",
+		"wired": "VmLimits.process.max_spawn_file_actions"
 	},
 	{
 		"name": "DEFAULT_PROCESS_PENDING_EVENT_BYTES",
@@ -766,8 +1767,8 @@
 		"name": "DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT_MS",
 		"path": "crates/vm/src/core/limits.rs",
 		"class": "policy",
-		"rationale": "Node import-cache materialization timeout.",
-		"wired": "VmLimits.js_runtime.import_cache_materialize_timeout_ms"
+		"rationale": "Default for the configured per-VM pending child-stdin byte bound.",
+		"wired": "VmLimits.process.pending_stdin_bytes"
 	},
 	{
 		"name": "DEFAULT_PYTHON_EXECUTION_TIMEOUT_MS",
@@ -885,15 +1886,15 @@
 		"name": "DEFAULT_TLS_MAX_BUFFERED_BYTES",
 		"path": "crates/vm/src/core/limits.rs",
 		"class": "policy",
-		"rationale": "Default for the configured per-VM TLS buffering bound.",
-		"wired": "VmLimits.tls.max_buffered_bytes"
+		"rationale": "Maximum materialized bytes returned by one VM SQLite statement.",
+		"wired": "VmLimits.sqlite.max_result_bytes"
 	},
 	{
 		"name": "DEFAULT_BINDING_TIMEOUT_MS",
 		"path": "crates/vm/src/core/limits.rs",
 		"class": "policy",
-		"rationale": "Default binding invocation timeout.",
-		"wired": "VmLimits.bindings.default_binding_timeout_ms"
+		"rationale": "Default for the configured per-VM TLS buffering bound.",
+		"wired": "VmLimits.tls.max_buffered_bytes"
 	},
 	{
 		"name": "DEFAULT_UDP_MAX_BUFFERED_BYTES",
@@ -1136,18 +2137,6 @@
 		"wired": "VmLimits.http.max_fetch_response_bytes"
 	},
 	{
-		"name": "DEFAULT_KERNEL_STDIN_READ_MAX_BYTES",
-		"path": "crates/vm/src/execution/mod.rs",
-		"class": "invariant",
-		"rationale": "Internal stdin pump chunking; not a guest-visible bound."
-	},
-	{
-		"name": "DEFAULT_KERNEL_STDIN_READ_TIMEOUT_MS",
-		"path": "crates/vm/src/execution/mod.rs",
-		"class": "invariant",
-		"rationale": "Internal stdin pump poll interval; not a guest-visible bound."
-	},
-	{
 		"name": "LINUX_GUEST_FD_LIMIT",
 		"path": "crates/vm/src/execution/child_process.rs",
 		"class": "invariant",
@@ -1178,6 +2167,12 @@
 		"rationale": "Internal bridge-response batch granularity; total directory entries remain governed by VmLimits.resources.max_readdir_entries."
 	},
 	{
+		"name": "SQLITE_JS_SAFE_INTEGER_MAX",
+		"path": "crates/vm/src/execution/javascript/sqlite.rs",
+		"class": "invariant",
+		"rationale": "JS Number.MAX_SAFE_INTEGER boundary for SQLite integer coercion, not a tunable bound."
+	},
+	{
 		"name": "LINUX_MAX_INTERPRETER_DEPTH",
 		"path": "crates/vm/src/execution/launch.rs",
 		"class": "invariant",
@@ -1196,10 +2191,10 @@
 		"rationale": "Linux BINPRM_BUF_SIZE-style compatibility bound for JavaScript child-process shebang parsing."
 	},
 	{
-		"name": "MAX_PER_PROCESS_STATE_HANDLES",
+		"name": "DEFAULT_KERNEL_STDIN_READ_MAX_BYTES",
 		"path": "crates/vm/src/execution/mod.rs",
-		"class": "policy-deferred",
-		"rationale": "Crypto/state handle table cap tunable in principle; low demand, wire later."
+		"class": "invariant",
+		"rationale": "Internal stdin pump chunking; not a guest-visible bound."
 	},
 	{
 		"name": "SQLITE_JS_SAFE_INTEGER_MAX",
@@ -1299,6 +2294,12 @@
 		"path": "crates/vm/src/service.rs",
 		"class": "invariant",
 		"rationale": "Internal queue backpressure guard; fails loudly on overflow."
+	},
+	{
+		"name": "DEFAULT_MAX_SOCKET_READINESS_SUBSCRIBERS",
+		"path": "crates/vm/src/state.rs",
+		"class": "policy-deferred",
+		"rationale": "Default socket readiness subscriber bound; wire through typed VM networking limits."
 	},
 	{
 		"name": "HOST_REALPATH_MAX_SYMLINK_DEPTH",
@@ -1624,6 +2625,20 @@
 		"wired": "DriverConfig.protocol.max_egress_frames"
 	},
 	{
+		"name": "DEFAULT_PROTOCOL_MAX_IN_FLIGHT_REQUEST_BYTES",
+		"path": "crates/driver-tokio/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured process-wide protocol request admission bound.",
+		"wired": "DriverConfig.protocol.max_in_flight_request_bytes"
+	},
+	{
+		"name": "DEFAULT_PROTOCOL_MAX_IN_FLIGHT_REQUESTS",
+		"path": "crates/driver-tokio/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured process-wide protocol request admission bound.",
+		"wired": "DriverConfig.protocol.max_in_flight_requests"
+	},
+	{
 		"name": "DEFAULT_PROTOCOL_MAX_INGRESS_BYTES",
 		"path": "crates/driver-tokio/src/lib.rs",
 		"class": "policy",
@@ -1664,6 +2679,62 @@
 		"class": "policy",
 		"rationale": "Default for the configured process-wide protocol queue bound.",
 		"wired": "DriverConfig.protocol.max_process_events"
+	},
+	{
+		"name": "DEFAULT_PROTOCOL_MAX_PROGRESS_BYTES",
+		"path": "crates/driver-tokio/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured process-wide protocol progress output reserve.",
+		"wired": "DriverConfig.protocol.max_progress_bytes"
+	},
+	{
+		"name": "DEFAULT_PROTOCOL_MAX_PROGRESS_FRAMES",
+		"path": "crates/driver-tokio/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured process-wide protocol progress output reserve.",
+		"wired": "DriverConfig.protocol.max_progress_frames"
+	},
+	{
+		"name": "DEFAULT_PROTOCOL_MAX_REJECTION_BYTES",
+		"path": "crates/driver-tokio/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured process-wide protocol rejection output reserve.",
+		"wired": "DriverConfig.protocol.max_rejection_bytes"
+	},
+	{
+		"name": "DEFAULT_PROTOCOL_MAX_REJECTION_FRAMES",
+		"path": "crates/driver-tokio/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured process-wide protocol rejection output reserve.",
+		"wired": "DriverConfig.protocol.max_rejection_frames"
+	},
+	{
+		"name": "DEFAULT_PROTOCOL_MAX_TERMINAL_BYTES",
+		"path": "crates/driver-tokio/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured process-wide protocol terminal output reserve.",
+		"wired": "DriverConfig.protocol.max_terminal_bytes"
+	},
+	{
+		"name": "DEFAULT_PROTOCOL_MAX_TERMINAL_FRAMES",
+		"path": "crates/driver-tokio/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured process-wide protocol terminal output reserve.",
+		"wired": "DriverConfig.protocol.max_terminal_frames"
+	},
+	{
+		"name": "DEFAULT_PROTOCOL_SHUTDOWN_GRACE_TIMEOUT_MS",
+		"path": "crates/driver-tokio/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default finite deadline for draining already-admitted protocol work during shutdown.",
+		"wired": "DriverConfig.protocol.shutdown_grace_ms"
+	},
+	{
+		"name": "DEFAULT_PROTOCOL_TERMINAL_FALLBACK_BYTES",
+		"path": "crates/driver-tokio/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured per-request protocol terminal fallback reservation.",
+		"wired": "DriverConfig.protocol.terminal_fallback_bytes"
 	},
 	{
 		"name": "DEFAULT_VM_EXECUTOR_TEARDOWN_TIMEOUT_MS",
@@ -1798,6 +2869,12 @@
 		"path": "crates/executor-v8-runtime/src/execution.rs",
 		"class": "invariant",
 		"rationale": "Module resolver parser/amplification hardening; sized as safety ceiling, not a tuning knob."
+	},
+	{
+		"name": "DEFAULT_BRIDGE_CALL_TIMEOUT",
+		"path": "crates/executor-v8-runtime/src/host_call.rs",
+		"class": "policy-deferred",
+		"rationale": "V8 host-call fallback timeout; expose through runtime configuration if tuning is needed."
 	},
 	{
 		"name": "MAX_PENDING_BRIDGE_CALLS",
@@ -1937,6 +3014,18 @@
 		"rationale": "Linux ELOOP resolution limit."
 	},
 	{
+		"name": "MAX_SYMLINK_DEPTH",
+		"path": "packages/build-tools/bridge-src/builtins/fs.ts",
+		"class": "invariant",
+		"rationale": "Linux ELOOP mirror of the kernel invariant."
+	},
+	{
+		"name": "NET_BRIDGE_MAX_RAW_WRITE_BYTES",
+		"path": "packages/build-tools/bridge-src/builtins/net.ts",
+		"class": "invariant",
+		"rationale": "Internal socket bridge flush granularity preserving configured backpressure."
+	},
+	{
 		"name": "CLOSED_SHELL_ID_RETENTION_LIMIT",
 		"path": "packages/core/src/agent-os.ts",
 		"class": "policy-deferred",
@@ -2004,62 +3093,106 @@
 		"rationale": "Bounded fallback for standalone Python execution; VM launches use configured kernel fd limits."
 	},
 	{
-		"name": "DEFAULT_MAX_METADATA_BYTES",
-		"path": "crates/vm/src/plugins/chunked_actor_sqlite.rs",
-		"class": "policy-deferred",
-		"rationale": "Default actor-SQLite VFS metadata budget, overridable in the plugin descriptor."
+		"name": "DEFAULT_HOST_FUNCTION_TIMEOUT_MS",
+		"path": "crates/native-sidecar-core/src/host_functions.rs",
+		"class": "policy",
+		"rationale": "Host function invocation timeout policy.",
+		"wired": "VmLimits.host_functions.default_timeout_ms"
 	},
 	{
-		"name": "DEFAULT_METADATA_CACHE_ENTRIES",
-		"path": "crates/vm/src/plugins/chunked_actor_sqlite.rs",
-		"class": "policy-deferred",
-		"rationale": "Default actor-SQLite VFS metadata cache capacity, overridable in the plugin descriptor."
+		"name": "MAX_REGISTERED_HOST_FUNCTION_COLLECTIONS",
+		"path": "crates/native-sidecar-core/src/host_functions.rs",
+		"class": "policy",
+		"rationale": "Host function registration capacity policy.",
+		"wired": "VmLimits.host_functions.max_registered_collections"
 	},
 	{
-		"name": "MAX_CHUNK_SIZE",
-		"path": "crates/vm/src/plugins/chunked_actor_sqlite.rs",
+		"name": "MAX_REGISTERED_HOST_FUNCTIONS_PER_VM",
+		"path": "crates/native-sidecar-core/src/host_functions.rs",
+		"class": "policy",
+		"rationale": "Host function registration capacity policy.",
+		"wired": "VmLimits.host_functions.max_registered_functions_per_vm"
+	},
+	{
+		"name": "MAX_HOST_FUNCTION_DESCRIPTION_LENGTH",
+		"path": "crates/native-sidecar-core/src/host_functions.rs",
+		"class": "policy-deferred",
+		"rationale": "Cross-boundary contract with packages/core/src/host-functions.ts; both sides must change together."
+	},
+	{
+		"name": "MAX_HOST_FUNCTION_EXAMPLE_INPUT_BYTES",
+		"path": "crates/native-sidecar-core/src/host_functions.rs",
+		"class": "policy",
+		"rationale": "Example input size policy.",
+		"wired": "VmLimits.host_functions.max_example_input_bytes"
+	},
+	{
+		"name": "MAX_EXAMPLES_PER_HOST_FUNCTION",
+		"path": "crates/native-sidecar-core/src/host_functions.rs",
+		"class": "policy",
+		"rationale": "Example count policy.",
+		"wired": "VmLimits.host_functions.max_examples_per_function"
+	},
+	{
+		"name": "MAX_HOST_FUNCTION_NAME_LENGTH",
+		"path": "crates/native-sidecar-core/src/host_functions.rs",
+		"class": "policy-deferred",
+		"rationale": "Cross-boundary contract with packages/core/src/host-functions.ts; both sides must change together."
+	},
+	{
+		"name": "MAX_HOST_FUNCTION_SCHEMA_BYTES",
+		"path": "crates/native-sidecar-core/src/host_functions.rs",
+		"class": "policy",
+		"rationale": "Schema payload size policy.",
+		"wired": "VmLimits.host_functions.max_schema_bytes"
+	},
+	{
+		"name": "MAX_HOST_FUNCTION_SCHEMA_DEPTH",
+		"path": "crates/native-sidecar-core/src/host_functions.rs",
 		"class": "invariant",
-		"rationale": "Actor-SQLite VFS storage-format chunk-size ceiling."
+		"rationale": "JSON recursion guard for schema validation; parser-safety."
 	},
 	{
-		"name": "MAX_METADATA_BYTES",
-		"path": "crates/vm/src/plugins/chunked_actor_sqlite.rs",
+		"name": "MAX_HOST_FUNCTION_TIMEOUT_MS",
+		"path": "crates/native-sidecar-core/src/host_functions.rs",
+		"class": "policy",
+		"rationale": "Host function invocation timeout policy.",
+		"wired": "VmLimits.host_functions.max_timeout_ms"
+	},
+	{
+		"name": "MAX_HOST_FUNCTION_COLLECTION_NAME_LENGTH",
+		"path": "crates/native-sidecar-core/src/host_functions.rs",
 		"class": "policy-deferred",
-		"rationale": "Hard ceiling for the plugin-configured actor-SQLite VFS metadata budget."
+		"rationale": "Cross-boundary contract with packages/core/src/host-functions.ts; both sides must change together."
 	},
 	{
-		"name": "MAX_METADATA_CACHE_ENTRIES",
-		"path": "crates/vm/src/plugins/chunked_actor_sqlite.rs",
+		"name": "MAX_HOST_FUNCTIONS_PER_COLLECTION",
+		"path": "crates/native-sidecar-core/src/host_functions.rs",
+		"class": "policy",
+		"rationale": "Host function registration capacity policy.",
+		"wired": "VmLimits.host_functions.max_functions_per_collection"
+	},
+	{
+		"name": "OUTPUT_REPLAY_EVENT_LIMIT",
+		"path": "crates/client/src/output_replay.rs",
 		"class": "policy-deferred",
-		"rationale": "Hard ceiling for the plugin-configured actor-SQLite VFS metadata cache."
+		"rationale": "Bounded client output replay retention or page budget; expose through client configuration if tuning is needed."
 	},
 	{
-		"name": "DEFAULT_MAX_SOCKET_READINESS_SUBSCRIBERS",
-		"path": "crates/vm/src/state.rs",
+		"name": "OUTPUT_REPLAY_BYTE_LIMIT",
+		"path": "crates/client/src/output_replay.rs",
 		"class": "policy-deferred",
-		"rationale": "Default socket readiness subscriber bound; wire through typed VM networking limits."
+		"rationale": "Bounded client output replay retention or page budget; expose through client configuration if tuning is needed."
 	},
 	{
-		"name": "DEFAULT_BRIDGE_CALL_TIMEOUT",
-		"path": "crates/executor-v8-runtime/src/host_call.rs",
+		"name": "OUTPUT_REPLAY_PAGE_EVENT_LIMIT",
+		"path": "crates/client/src/output_replay.rs",
 		"class": "policy-deferred",
-		"rationale": "V8 host-call fallback timeout; expose through runtime configuration if tuning is needed."
+		"rationale": "Bounded client output replay retention or page budget; expose through client configuration if tuning is needed."
 	},
 	{
-		"name": "MAX_SYMLINK_DEPTH",
-		"path": "packages/build-tools/bridge-src/builtins/fs.ts",
-		"class": "invariant",
-		"rationale": "Linux ELOOP mirror of the kernel invariant."
-	},
-	{
-		"name": "NET_BRIDGE_MAX_RAW_WRITE_BYTES",
-		"path": "packages/build-tools/bridge-src/builtins/net.ts",
-		"class": "invariant",
-		"rationale": "Internal socket bridge flush granularity preserving configured backpressure."
-	},
-	{
-		"name": "MAX_BINDING_DESCRIPTION_LENGTH",
-		"path": "packages/core/src/bindings.ts",
+		"name": "OUTPUT_REPLAY_PAGE_BYTE_LIMIT",
+		"path": "crates/client/src/output_replay.rs",
 		"class": "policy-deferred",
 		"rationale": "Cross-boundary contract with sidecar core bindings validation; both sides must change together."
 	},

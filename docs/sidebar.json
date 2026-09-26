@@ -1,0 +1,274 @@
+{
+	"docs": [
+		{
+			"title": "General",
+			"pages": [
+				{
+					"title": "Overview",
+					"href": "/agentos/docs",
+					"icon": "faSquareInfo"
+				},
+				{
+					"title": "Quickstart",
+					"href": "/agentos/docs/quickstart",
+					"icon": "faForwardFast"
+				},
+				{
+					"title": "Quickstart (Embedded)",
+					"href": "/agentos/docs/quickstart-embedded",
+					"icon": "faForwardFast"
+				},
+				{
+					"title": "Hosted Actor API",
+					"href": "/agentos/docs/actor-api",
+					"icon": "faCode"
+				},
+				{
+					"title": "agentOS vs Sandbox",
+					"href": "/agentos/docs/versus-sandbox",
+					"icon": "faScaleBalanced"
+				}
+			]
+		},
+		{
+			"title": "Execution",
+			"pages": [
+				{
+					"title": "Bash",
+					"href": "/agentos/docs/bash",
+					"icon": "faTerminal"
+				},
+				{
+					"title": "Node.js",
+					"href": "/agentos/docs/javascript",
+					"icon": "faNodeJs"
+				},
+				{
+					"title": "Python",
+					"href": "/agentos/docs/python",
+					"icon": "faPython"
+				}
+			]
+		},
+		{
+			"title": "Scheduling",
+			"pages": [
+				{
+					"title": "Crons & Loops",
+					"href": "/agentos/docs/cron",
+					"icon": "faClock"
+				}
+			]
+		},
+		{
+			"title": "Operating System",
+			"pages": [
+				{
+					"title": "Software",
+					"href": "/agentos/docs/software",
+					"icon": "faDownload"
+				},
+				{
+					"title": "Filesystem",
+					"href": "/agentos/docs/filesystem",
+					"icon": "faFloppyDisk"
+				},
+				{
+					"title": "Processes & Shells",
+					"href": "/agentos/docs/processes",
+					"icon": "faTerminal"
+				},
+				{
+					"title": "Networking & Previews",
+					"href": "/agentos/docs/networking",
+					"icon": "faGlobe"
+				},
+				{
+					"title": "Permissions",
+					"href": "/agentos/docs/permissions",
+					"icon": "faKey"
+				},
+				{
+					"title": "Resource Limits",
+					"href": "/agentos/docs/resource-limits",
+					"icon": "faGauge"
+				},
+				{
+					"title": "Hosted Actor Limits",
+					"href": "/agentos/docs/actor-limits",
+					"icon": "faGauge"
+				}
+			]
+		},
+		{
+			"title": "Extensions",
+			"pages": [
+				{
+					"title": "Custom Host Functions",
+					"href": "/agentos/docs/host-functions",
+					"icon": "faWrench"
+				},
+				{
+					"title": "Browser Automation",
+					"href": "/agentos/docs/browser",
+					"badge": "Beta",
+					"icon": "faWindowMaximize"
+				},
+				{
+					"title": "External Sandboxes",
+					"href": "/agentos/docs/sandboxes",
+					"badge": "Beta",
+					"icon": "faHardDrive"
+				}
+			]
+		},
+		{
+			"title": "Reference",
+			"pages": [
+				{
+					"title": "Custom Software",
+					"collapsible": true,
+					"pages": [
+						{
+							"title": "Definition",
+							"href": "/agentos/docs/custom-software/definition"
+						},
+						{
+							"title": "Building Binaries",
+							"href": "/agentos/docs/custom-software/building-wasm"
+						},
+						{
+							"title": "Publishing",
+							"href": "/agentos/docs/custom-software/publishing"
+						},
+						{
+							"title": "Request Software",
+							"href": "https://github.com/rivet-dev/agentos/issues/new/choose",
+							"external": true,
+							"target": "_blank"
+						}
+					]
+				},
+				{
+					"title": "Architecture",
+					"collapsible": true,
+					"pages": [
+						{
+							"title": "Overview",
+							"href": "/agentos/docs/architecture"
+						},
+						{
+							"title": "Security Model",
+							"href": "/agentos/docs/security-model"
+						},
+						{
+							"title": "Limitations",
+							"href": "/agentos/docs/limitations"
+						},
+						{
+							"title": "Node.js Compatibility",
+							"href": "/agentos/docs/javascript-compatibility"
+						},
+						{
+							"title": "Advanced",
+							"collapsible": true,
+							"pages": [
+								{
+									"title": "Processes",
+									"href": "/agentos/docs/architecture/processes"
+								},
+								{
+									"title": "Filesystem",
+									"href": "/agentos/docs/architecture/filesystem"
+								},
+								{
+									"title": "Networking",
+									"href": "/agentos/docs/architecture/networking"
+								},
+								{
+									"title": "TLS & SSL",
+									"href": "/agentos/docs/architecture/tls-ssl"
+								},
+								{
+									"title": "JavaScript Executor & Reactor",
+									"href": "/agentos/docs/architecture/javascript-executor"
+								},
+								{
+									"title": "POSIX Syscalls",
+									"href": "/agentos/docs/architecture/posix-syscalls"
+								},
+								{
+									"title": "Package Architecture",
+									"href": "/agentos/docs/architecture/package-structure"
+								},
+								{
+									"title": "Packages & Command Resolution",
+									"href": "/agentos/docs/architecture/packages-and-command-resolution"
+								},
+								{
+									"title": "Software Installation & Preloading",
+									"href": "/agentos/docs/architecture/software-cache"
+								},
+								{
+									"title": "Compiler Toolchain",
+									"href": "/agentos/docs/architecture/compiler-toolchain"
+								},
+								{
+									"title": "Limits & Observability",
+									"href": "/agentos/docs/architecture/limits-and-observability"
+								},
+								{
+									"title": "Persistence & Sleep",
+									"href": "/agentos/docs/persistence"
+								}
+							]
+						}
+					]
+				},
+				{
+					"title": "More",
+					"collapsible": true,
+					"pages": [
+						{
+							"title": "Embedded VMs",
+							"href": "/agentos/docs/embedded"
+						},
+						{
+							"title": "Performance",
+							"href": "/agentos/docs/performance"
+						}
+					]
+				}
+			]
+		}
+	],
+	"integrations": [
+		{
+			"title": "General",
+			"pages": [
+				{
+					"title": "Overview",
+					"href": "/agentos/integrations",
+					"icon": "faSquareInfo"
+				}
+			]
+		},
+		{
+			"title": "Frameworks",
+			"pages": [
+				{
+					"title": "Flue",
+					"href": "/agentos/integrations/flue"
+				},
+				{
+					"title": "Rivet Actors",
+					"href": "/agentos/integrations/rivet-actors"
+				},
+				{
+					"title": "Vercel Eve",
+					"href": "/agentos/integrations/vercel-eve"
+				}
+			]
+		}
+	]
+}

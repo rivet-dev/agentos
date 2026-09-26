@@ -1,10 +1,11 @@
-export type { AcpLimitsConfig } from "./generated/AcpLimitsConfig.js";
-export type { BindingLimitsConfig } from "./generated/BindingLimitsConfig.js";
 export type { CreateVmConfig } from "./generated/CreateVmConfig.js";
 export type { FsPermissionRule } from "./generated/FsPermissionRule.js";
 export type { FsPermissionRuleSet } from "./generated/FsPermissionRuleSet.js";
 export type { FsPermissionScope } from "./generated/FsPermissionScope.js";
+export type { AgentOsPackageLimitsConfig } from "./generated/AgentOsPackageLimitsConfig.js";
 export type { HttpLimitsConfig } from "./generated/HttpLimitsConfig.js";
+export type { TlsLimitsConfig } from "./generated/TlsLimitsConfig.js";
+export type { ExecutionLimitsConfig } from "./generated/ExecutionLimitsConfig.js";
 export type { JsModuleResolution } from "./generated/JsModuleResolution.js";
 export type { JsRuntimeConfig } from "./generated/JsRuntimeConfig.js";
 export type { JsRuntimeLimitsConfig } from "./generated/JsRuntimeLimitsConfig.js";
@@ -26,6 +27,7 @@ export type { RootFilesystemEntryEncoding } from "./generated/RootFilesystemEntr
 export type { RootFilesystemEntryKind } from "./generated/RootFilesystemEntryKind.js";
 export type { RootFilesystemLowerDescriptor } from "./generated/RootFilesystemLowerDescriptor.js";
 export type { RootFilesystemMode } from "./generated/RootFilesystemMode.js";
+export type { HostFunctionLimitsConfig } from "./generated/HostFunctionLimitsConfig.js";
 export type { StandaloneWasmBackend } from "./generated/StandaloneWasmBackend.js";
 export type { VmDnsConfig } from "./generated/VmDnsConfig.js";
 export type { VmGroupConfig } from "./generated/VmGroupConfig.js";

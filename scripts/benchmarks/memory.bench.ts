@@ -1,5 +1,5 @@
 /**
- * Memory overhead benchmark for AgentOS VMs.
+ * Memory overhead benchmark for agentOS VMs.
  *
  * Staircase approach: all VMs lease one shared sidecar process. A throwaway
  * cold-run VM is created and disposed first (paying process spawn + bootstrap),
@@ -9,16 +9,12 @@
  *
  * Workloads:
  *   --workload=sleep             (default) Minimal VM with idle Node.js process
- *   --workload=pi-session        VM with PI agent session via openSession
- *   --workload=claude-session    VM with Claude agent session via openSession
  *
  * Pass --count=N to control how many VMs to add (default 5; marketing run
- * uses 20 for shell / 10 for agent).
+ * uses 20 for the default workload).
  *
  * Usage:
  *   npx tsx --expose-gc benchmarks/memory.bench.ts
- *   npx tsx --expose-gc benchmarks/memory.bench.ts --workload=pi-session --count=1
- *   npx tsx --expose-gc benchmarks/memory.bench.ts --workload=claude-session --count=1
  */
 
 import type { AgentOs } from "@rivet-dev/agentos-core";
@@ -35,7 +31,6 @@ import {
 	sleep,
 	startBenchSidecar,
 	stopBenchSidecar,
-	stopLlmock,
 } from "./bench-utils.js";
 
 const DEFAULT_COUNT = 5;
@@ -126,8 +121,8 @@ async function measure(
 	// Cold run / warmup: create and destroy one VM to pay one-time costs (module
 	// cache, JIT, etc.) before measurement begins. This is the cold run; the
 	// staircase VMs below are the warm, steady-state per-VM measurements. (We do
-	// not reuse its filesystem snapshot here — agent-session workloads relaunch
-	// their adapter process per VM and must not inherit a prior VM's root.)
+	// not reuse its filesystem snapshot here so each measurement starts from the
+	// same VM lifecycle boundary.)
 	console.error("  warming up...");
 	const warmupVm = await workload.createVm();
 	await workload.start(warmupVm);
@@ -149,7 +144,7 @@ async function measure(
 		vms.push(vm);
 
 		await sleep(workload.settleMs);
-		workload.verify(vm);
+		await workload.verify(vm);
 		const cur = await sampleMemory();
 
 		const rssDelta = cur.rss - prev.rss;
@@ -254,7 +249,6 @@ async function main() {
 	console.log(JSON.stringify({ hardware, result }, null, 2));
 
 	await stopBenchSidecar();
-	await stopLlmock();
 }
 
 main().catch((err) => {

@@ -1,18 +1,4 @@
 /**
- * Agent metadata for an agent package descriptor.
- */
-export interface PackageAgentDescriptor {
-	/** `bin/` command that speaks ACP over stdio. */
-	acpEntrypoint: string;
-	/** Static environment variables for the agent process. */
-	env?: Record<string, string>;
-	/** Optional extra launch arguments. */
-	launchArgs?: string[];
-	/** Optional snapshot flag. */
-	snapshot?: boolean;
-}
-
-/**
  * Read-only file content contributed by a package.
  *
  * `source` is absolute or relative to the package directory. `target` is the
@@ -43,8 +29,6 @@ export interface AgentosPackageManifest {
 	name: string;
 	/** Package version. */
 	version: string;
-	/** Present only for agent packages. */
-	agent?: PackageAgentDescriptor;
 	/** Optional VM environment defaults and read-only file layers. */
 	provides?: PackageProvidesDescriptor;
 }
@@ -61,7 +45,7 @@ export interface SoftwarePackageRef {
 }
 
 /**
- * Descriptor for a registry package (software or agent).
+ * Descriptor for a registry software package.
  *
  * Each @agentos-software/* package default-exports a plain object literal
  * satisfying this type. Commands are derived by the sidecar from the package's
@@ -72,8 +56,6 @@ export interface PackageDescriptor {
 	name: string;
 	/** Absolute path to the self-contained package directory. */
 	dir: string;
-	/** Present only for agent packages. */
-	agent?: PackageAgentDescriptor;
 	/** Optional VM environment defaults and read-only file layers. */
 	provides?: PackageProvidesDescriptor;
 }

@@ -5,9 +5,9 @@ use agentos_vm_kernel::mount_plugin::{
 };
 
 pub(crate) mod agentos_packages;
-pub(crate) mod chunked_actor_sqlite;
 pub(crate) mod chunked_local;
 pub(crate) mod chunked_s3;
+pub(crate) mod chunked_sqlite;
 pub(crate) mod google_drive;
 pub(crate) mod host_dir;
 pub(crate) mod js_bridge;
@@ -17,9 +17,9 @@ pub(crate) mod s3_common;
 pub(crate) mod sandbox_agent;
 
 use agentos_packages::AgentosPackagesMountPlugin;
-use chunked_actor_sqlite::ChunkedActorSqliteMountPlugin;
 use chunked_local::ChunkedLocalMountPlugin;
 use chunked_s3::ChunkedS3MountPlugin;
+use chunked_sqlite::ChunkedSqliteMountPlugin;
 use google_drive::GoogleDriveMountPlugin;
 use host_dir::HostDirMountPlugin;
 use js_bridge::JsBridgeMountPlugin;
@@ -57,7 +57,7 @@ pub(crate) fn register_native_mount_plugins<B>(
     register_plugin(registry, JsBridgeMountPlugin)?;
     register_plugin(registry, SandboxAgentMountPlugin)?;
     register_plugin(registry, ChunkedLocalMountPlugin)?;
-    register_plugin(registry, ChunkedActorSqliteMountPlugin)?;
+    register_plugin(registry, ChunkedSqliteMountPlugin)?;
     // Temporarily dormant; see the detailed rationale beside the retained import above.
     // register_plugin(registry, ObjectS3MountPlugin)?;
     register_plugin(registry, ChunkedS3MountPlugin)?;

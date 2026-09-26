@@ -134,6 +134,8 @@ fn guest_failure_in_one_vm_does_not_break_peer_vm_execution() {
             | EventPayload::ExecutionCompletedEvent(_)
             | EventPayload::VmLifecycleEvent(_)
             | EventPayload::StructuredEvent(_)
+            | EventPayload::ExecutionOutputEvent(_)
+            | EventPayload::ExecutionCompletedEvent(_)
             | EventPayload::ExtEnvelope(_) => {}
         }
     }
@@ -223,6 +225,8 @@ fn collect_crash_process_output(
                 | EventPayload::ExecutionCompletedEvent(_)
                 | EventPayload::VmLifecycleEvent(_)
                 | EventPayload::StructuredEvent(_)
+                | EventPayload::ExecutionOutputEvent(_)
+                | EventPayload::ExecutionCompletedEvent(_)
                 | EventPayload::ExtEnvelope(_) => {}
             }
         }
@@ -247,4 +251,125 @@ fn append_process_output(buffer: &mut String, chunk: &[u8], process_id: &str, ch
         "crash-isolation process {process_id} exceeded {PROCESS_OUTPUT_BYTE_LIMIT} bytes on {channel}"
     );
     buffer.push_str(&text);
+}
+
+/// Sync RPC deferral pre-checks (`fs.writeSync` pipe detection and descendant
+/// `process.fd_read` parking) stat guest-supplied fds against the kernel fd
+/// table. An fd the kernel does not know must still produce a prompt `EBADF`
+/// for the guest, in a top-level process and in a descendant, instead of a
+/// sidecar error that leaves the sync RPC unanswered and fails the process
+/// event pump. A peer VM on the same sidecar must keep executing afterwards.
+#[test]
+fn unknown_fd_sync_rpcs_return_ebadf_promptly_in_root_and_child() {
+    assert_node_available();
+
+    let mut sidecar = new_sidecar("unknown-fd-pre-check");
+    let cwd = temp_dir("unknown-fd-pre-check-cwd");
+    let probe_entry = cwd.join("probe.cjs");
+    let healthy_entry = cwd.join("healthy.cjs");
+    write_fixture(&healthy_entry, "console.log(\"healthy\");\n");
+    write_fixture(
+        &probe_entry,
+        r#"
+const { spawnSync } = require("node:child_process");
+
+const PROBE = `
+const fs = require("node:fs");
+const expectPromptEbadf = (label, fn) => {
+  const started = Date.now();
+  let code = "ok";
+  try {
+    fn();
+  } catch (error) {
+    code = error && error.code;
+  }
+  const elapsedMs = Date.now() - started;
+  if (code !== "EBADF" || elapsedMs > 5000) {
+    throw new Error(label + " returned " + code + " after " + elapsedMs + "ms");
+  }
+};
+if (typeof _processWasmSyncRpc === "undefined") {
+  throw new Error("process sync RPC bridge is unavailable");
+}
+expectPromptEbadf("fs.writeSync", () => fs.writeSync(987654, "x"));
+expectPromptEbadf("process.fd_read", () =>
+  _processWasmSyncRpc.applySync(void 0, ["process.fd_read", 987654, 16, 0]));
+`;
+
+eval(PROBE);
+console.log("root ok");
+const child = spawnSync("/bin/node", ["-e", PROBE + "console.log('child ok');"], {
+  encoding: "utf8",
+});
+if (child.status !== 0) {
+  throw new Error("child failed: " + JSON.stringify(child));
+}
+process.stdout.write(child.stdout);
+"#,
+    );
+
+    let connection_id = authenticate_wire(&mut sidecar, "conn-unknown-fd");
+    let session_id = open_session_wire(&mut sidecar, 2, &connection_id);
+    let (probe_vm_id, _) = create_vm_wire(
+        &mut sidecar,
+        3,
+        &connection_id,
+        &session_id,
+        GuestRuntimeKind::JavaScript,
+        &cwd,
+    );
+    let (healthy_vm_id, _) = create_vm_wire(
+        &mut sidecar,
+        4,
+        &connection_id,
+        &session_id,
+        GuestRuntimeKind::JavaScript,
+        &cwd,
+    );
+
+    execute_wire(
+        &mut sidecar,
+        5,
+        &connection_id,
+        &session_id,
+        &probe_vm_id,
+        "proc-unknown-fd",
+        GuestRuntimeKind::JavaScript,
+        &probe_entry,
+        Vec::new(),
+    );
+    let (stdout, stderr, exit_code) = collect_crash_process_output(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &probe_vm_id,
+        "proc-unknown-fd",
+    );
+    assert_eq!(exit_code, 0, "stdout:\n{stdout}\nstderr:\n{stderr}");
+    assert!(stdout.contains("root ok"), "stdout:\n{stdout}");
+    assert!(stdout.contains("child ok"), "stdout:\n{stdout}");
+
+    execute_wire(
+        &mut sidecar,
+        6,
+        &connection_id,
+        &session_id,
+        &healthy_vm_id,
+        "proc-unknown-fd-peer",
+        GuestRuntimeKind::JavaScript,
+        &healthy_entry,
+        Vec::new(),
+    );
+    let (peer_stdout, peer_stderr, peer_exit) = collect_crash_process_output(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &healthy_vm_id,
+        "proc-unknown-fd-peer",
+    );
+    assert_eq!(peer_exit, 0, "peer stderr:\n{peer_stderr}");
+    assert!(
+        peer_stdout.contains("healthy"),
+        "peer stdout:\n{peer_stdout}"
+    );
 }

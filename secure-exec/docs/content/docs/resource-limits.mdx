@@ -1,0 +1,31 @@
+---
+title: "Resource Limits"
+description: "Bound runaway code in Secure Exec with timeouts and VM resource limits."
+skill: true
+---
+
+Untrusted code should always run with a timeout. Everything else is bounded by
+default, and you can tighten it.
+
+## Timeouts
+
+`timeoutMs` is an execution option, so it works on every call, one-shot or on a
+VM.
+
+<CodeSnippet file="secure-exec/examples/limits/src/index.ts" region="timeout" />
+
+## Memory and other VM limits
+
+`limits` is a VM option. Pass it on a call, or on `createVm`.
+
+<CodeSnippet file="secure-exec/examples/limits/src/index.ts" region="memory" />
+
+When a limit is hit, the call fails with an error that names the limit. Pass
+`onLimitWarning` to hear about a limit before it is reached.
+
+## Every limit
+
+Secure Exec accepts the agentOS `limits` object unchanged: processes, file
+descriptors, sockets, filesystem bytes, the V8 heap, output buffers, and more.
+Read the [agentOS resource limits reference](/agentos/docs/resource-limits) for
+every field and default.

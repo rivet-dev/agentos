@@ -125,6 +125,8 @@ else
 		exit 1; \
 	fi
 endif
+	@mkdir -p "$(COMMANDS_DIR)"
+	@cp ../software/codex/wasm/codex ../software/codex/wasm/codex-exec "$(COMMANDS_DIR)/"
 
 c/vendor/wasi-sdk/bin/clang:
 	$(MAKE) -C c wasi-sdk

@@ -1,12 +1,14 @@
 import { z } from "zod/v4";
 import type {
-	AgentExitHandler,
 	AgentOsOptions,
-	AgentStderrHandler,
 	LimitWarningHandler,
 	NativeMountConfig,
 } from "./agent-os.js";
-import type { Binding, Bindings } from "./bindings.js";
+import type {
+	HostFunction,
+	HostFunctionCollection,
+	HostFunctionCollections,
+} from "./host-functions.js";
 
 const stringArray = z.array(z.string());
 const nonNegativeInteger = z.number().int().nonnegative();
@@ -258,12 +260,16 @@ export const permissionsSchema = z
 		childProcess: patternPermissionsSchema.optional(),
 		process: patternPermissionsSchema.optional(),
 		env: patternPermissionsSchema.optional(),
-		binding: patternPermissionsSchema.optional(),
+		hostFunction: patternPermissionsSchema.optional(),
 	})
 	.strict();
 
 export const agentOsLimitsSchema = z
 	.object({
+		agentosPackages: z
+			.object({ maxMounts: positiveInteger.optional() })
+			.strict()
+			.optional(),
 		resources: z
 			.object({
 				cpuCount: positiveInteger.optional(),
@@ -296,16 +302,16 @@ export const agentOsLimitsSchema = z
 			.object({ maxBufferedBytes: positiveInteger.optional() })
 			.strict()
 			.optional(),
-		bindings: z
+		hostFunctions: z
 			.object({
-				defaultBindingTimeoutMs: nonNegativeInteger.optional(),
-				maxBindingTimeoutMs: nonNegativeInteger.optional(),
+				defaultTimeoutMs: nonNegativeInteger.optional(),
+				maxTimeoutMs: nonNegativeInteger.optional(),
 				maxRegisteredCollections: positiveInteger.optional(),
-				maxRegisteredBindingsPerVm: positiveInteger.optional(),
-				maxBindingsPerCollection: positiveInteger.optional(),
-				maxBindingSchemaBytes: positiveInteger.optional(),
-				maxExamplesPerBinding: nonNegativeInteger.optional(),
-				maxBindingExampleInputBytes: positiveInteger.optional(),
+				maxRegisteredFunctionsPerVm: positiveInteger.optional(),
+				maxFunctionsPerCollection: positiveInteger.optional(),
+				maxSchemaBytes: positiveInteger.optional(),
+				maxExamplesPerFunction: nonNegativeInteger.optional(),
+				maxExampleInputBytes: positiveInteger.optional(),
 			})
 			.strict()
 			.optional(),
@@ -313,29 +319,6 @@ export const agentOsLimitsSchema = z
 			.object({
 				maxPersistedManifestBytes: positiveInteger.optional(),
 				maxPersistedManifestFileBytes: nonNegativeInteger.optional(),
-			})
-			.strict()
-			.optional(),
-		acp: z
-			.object({
-				maxReadLineBytes: positiveInteger.optional(),
-				stdoutBufferByteLimit: positiveInteger.optional(),
-				maxCompletedMessageBytes: positiveInteger.optional(),
-				maxTurnOutputBytes: positiveInteger.optional(),
-				maxPromptBytes: positiveInteger.optional(),
-				maxPromptBlocks: positiveInteger.optional(),
-				maxFallbackContinuationBytes: positiveInteger.optional(),
-				maxSessionHistoryBytes: positiveInteger.optional(),
-				maxSessionHistoryEvents: positiveInteger.optional(),
-				maxHistoryPageEntries: positiveInteger.optional(),
-				maxSessionListEntries: positiveInteger.optional(),
-				maxSessionsPerVm: positiveInteger.optional(),
-				maxPromptsPerSession: positiveInteger.optional(),
-				maxPromptsPerVm: positiveInteger.optional(),
-				maxPendingPermissionsPerSession: positiveInteger.optional(),
-				maxPendingPermissionsPerVm: positiveInteger.optional(),
-				maxPermissionOutcomesPerSession: positiveInteger.optional(),
-				maxPermissionOutcomesPerVm: positiveInteger.optional(),
 			})
 			.strict()
 			.optional(),
@@ -482,10 +465,22 @@ export const mountConfigSchema = z.union([
 	overlayMountConfigSchema,
 ]);
 
+export const sidecarRuntimeConfigSchema = z
+	.object({
+		executor: z
+			.object({
+				maxActiveVms: positiveInteger.max(Number.MAX_SAFE_INTEGER).optional(),
+			})
+			.strict()
+			.optional(),
+	})
+	.strict();
+
 export const sharedSidecarConfigSchema = z
 	.object({
 		kind: z.literal("shared"),
 		pool: z.string().optional(),
+		runtime: sidecarRuntimeConfigSchema.optional(),
 	})
 	.strict();
 
@@ -501,16 +496,15 @@ export const sidecarConfigSchema = z.union([
 	explicitSidecarSchema,
 ]);
 
-const bindingExampleSchema = z
+const hostFunctionExampleSchema = z
 	.object({
 		description: z.string(),
 		input: z.unknown(),
 	})
 	.strict();
 
-export const bindingSchema = z
+export const hostFunctionSchema = z
 	.object({
-		description: z.string(),
 		inputSchema: z.custom(
 			(value) => typeof value === "object" && value !== null,
 			{
@@ -518,18 +512,20 @@ export const bindingSchema = z
 			},
 		),
 		execute: functionSchema,
-		examples: z.array(bindingExampleSchema).optional(),
+		examples: z.array(hostFunctionExampleSchema).optional(),
 		timeout: nonNegativeInteger.optional(),
 	})
-	.strict() as z.ZodType<Binding>;
+	.strict() as z.ZodType<HostFunction>;
 
-export const bindingsSchema = z
-	.object({
-		name: z.string(),
-		description: z.string(),
-		bindings: z.record(z.string(), bindingSchema),
-	})
-	.strict() as z.ZodType<Bindings>;
+export const hostFunctionCollectionSchema = z.record(
+	z.string(),
+	hostFunctionSchema,
+) as z.ZodType<HostFunctionCollection>;
+
+export const hostFunctionsSchema = z.record(
+	z.string(),
+	hostFunctionCollectionSchema,
+) as z.ZodType<HostFunctionCollections>;
 
 /**
  * Shared AgentOsOptions field schemas.
@@ -539,6 +535,7 @@ export const bindingsSchema = z
  */
 export const agentOsOptionFieldSchemas = {
 	user: vmUserConfigSchema.optional(),
+	environment: z.record(z.string(), z.string()).optional(),
 	software: z.array(z.unknown()).optional(),
 	defaultSoftware: z.boolean().optional(),
 	loopbackExemptPorts: z.array(z.number().int().min(0).max(65535)).optional(),
@@ -546,20 +543,11 @@ export const agentOsOptionFieldSchemas = {
 	wasmBackend: z.enum(["v8", "wasmtime", "wasmtime-threads"]).optional(),
 	highResolutionTime: z.boolean().optional(),
 	database: z
-		.discriminatedUnion("type", [
-			z
-				.object({
-					type: z.literal("actor_uds"),
-					path: z.string().min(1),
-				})
-				.strict(),
-			z
-				.object({
-					type: z.literal("sqlite_file"),
-					path: z.string().min(1),
-				})
-				.strict(),
-		])
+		.object({
+			type: z.literal("sqlite_file"),
+			path: z.string().min(1),
+		})
+		.strict()
 		.optional(),
 	rootFilesystem: rootFilesystemConfigSchema.optional(),
 	mounts: z.array(mountConfigSchema).optional(),
@@ -576,20 +564,10 @@ export const agentOsOptionFieldSchemas = {
 			message: "Expected schedule driver object",
 		})
 		.optional(),
-	bindings: z.array(bindingsSchema).optional(),
+	hostFunctions: hostFunctionsSchema.optional(),
 	permissions: permissionsSchema.optional(),
 	sidecar: sidecarConfigSchema.optional(),
 	limits: agentOsLimitsSchema.optional(),
-	onAgentStderr: z
-		.custom<AgentStderrHandler>((value) => typeof value === "function", {
-			message: "Expected function",
-		})
-		.optional(),
-	onAgentExit: z
-		.custom<AgentExitHandler>((value) => typeof value === "function", {
-			message: "Expected function",
-		})
-		.optional(),
 	onLimitWarning: z
 		.custom<LimitWarningHandler>((value) => typeof value === "function", {
 			message: "Expected function",

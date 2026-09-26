@@ -1,0 +1,28 @@
+---
+title: "Filesystem"
+description: "Read and write VM files and configure safe durable filesystems."
+---
+
+The generated actor client exposes file operations under `filesystem`.
+`filesystem.stat` and `filesystem.readdirRecursive` report file lengths as
+`sizeBytes`.
+
+<CodeSnippet file="examples/filesystem/operations.ts" region="read-write" />
+
+<CodeSnippet file="examples/filesystem/operations.ts" region="batch" />
+
+The actor's filesystem configuration is a closed registry. By default, each VM
+uses an ephemeral in-memory overlay over the bundled base image. Its writes
+survive for that VM's lifetime but are discarded when the VM is replaced. Use
+an `actor-sqlite` root or mount when files must survive VM replacement. Unknown
+backends, JavaScript VFS objects, callbacks, and host paths are rejected.
+
+<CodeSnippet file="examples/filesystem/client.ts" />
+
+Host-directory, S3, Google Drive, and custom plugins remain available only in
+trusted embedded Core:
+
+<CodeSnippet file="examples/embedded/mounts.ts" />
+
+Large-file streaming is a follow-up. Current actions enforce bounded payloads
+and fail with a typed limit error.

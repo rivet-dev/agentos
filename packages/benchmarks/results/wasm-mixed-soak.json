@@ -3,7 +3,7 @@
   "status": "complete",
   "metadata": {
     "startedAt": "2026-07-24T11:57:02.335Z",
-    "hostname": "nathan-dev",
+    "hostname": "benchmark-host",
     "platform": "linux",
     "arch": "x64",
     "cpuModel": "12th Gen Intel(R) Core(TM) i7-12700KF",
@@ -11,7 +11,7 @@
     "totalMemoryBytes": 67170398208,
     "node": "v24.18.0",
     "sidecar": {
-      "path": "/tmp/agentos-wasmtime-validation.OpTF6J/release/agentos-vm",
+      "path": "<temporary>/agentos-vm",
       "profile": "release",
       "mtimeMs": 1784894193003.0815,
       "mtimeIso": "2026-07-24T04:56:33.003-07:00",

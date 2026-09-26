@@ -125,7 +125,7 @@ struct MockProcessState {
     kills: Vec<i32>,
     #[allow(dead_code)]
     exit_code: Option<i32>,
-    binding: Option<(ProcessTable, u32)>,
+    host_function: Option<(ProcessTable, u32)>,
 }
 
 #[derive(Default)]
@@ -150,21 +150,21 @@ impl MockDriverProcess {
         self.state
             .lock()
             .expect("mock process lock poisoned")
-            .binding = Some((table.clone(), pid));
+            .host_function = Some((table.clone(), pid));
     }
 
     #[allow(dead_code)]
     fn exit(&self, exit_code: i32) {
-        let binding = {
+        let host_function = {
             let mut state = self.state.lock().expect("mock process lock poisoned");
             if state.exit_code.is_some() {
                 return;
             }
             state.exit_code = Some(exit_code);
-            state.binding.clone()
+            state.host_function.clone()
         };
 
-        if let Some((table, pid)) = binding {
+        if let Some((table, pid)) = host_function {
             table
                 .report_exit(pid, ProcessExit::Exited(exit_code))
                 .expect("mock process exit must reach the bound kernel process");
@@ -181,11 +181,11 @@ impl ProcessRuntimeEndpoint for MockDriverProcess {
         &self,
         request: ProcessControlRequest,
     ) -> Result<(), ProcessRuntimeEndpointError> {
-        let (binding, termination) = {
+        let (host_function, termination) = {
             let mut state = self.state.lock().expect("mock process lock poisoned");
             let signal = match request {
                 ProcessControlRequest::Checkpoint => state
-                    .binding
+                    .host_function
                     .as_ref()
                     .and_then(|(table, pid)| table.sigpending(*pid).ok())
                     .and_then(|pending| pending.signals().into_iter().next()),
@@ -208,10 +208,10 @@ impl ProcessRuntimeEndpoint for MockDriverProcess {
                 | ProcessControlRequest::Cancel(_) => Some(ProcessExit::Exited(1)),
                 _ => None,
             };
-            (state.binding.clone(), termination)
+            (state.host_function.clone(), termination)
         };
 
-        if let (Some((table, pid)), Some(termination)) = (binding, termination) {
+        if let (Some((table, pid)), Some(termination)) = (host_function, termination) {
             table
                 .report_exit(pid, termination)
                 .expect("mock termination must reach the bound kernel process");

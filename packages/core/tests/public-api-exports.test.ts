@@ -4,12 +4,9 @@ import {
 	AgentOs,
 	type AgentOsLimits,
 	AgentOsSidecar,
+	type AgentOsSidecarRuntimeConfig,
 	agentOsLimitsSchema,
 	agentOsOptionsSchema,
-	binding,
-	bindingSchema,
-	bindings,
-	bindingsSchema,
 	type ContextDescriptor,
 	CronManager,
 	createHostDirBackend,
@@ -17,6 +14,10 @@ import {
 	defineSoftware,
 	type ExecOptions,
 	type HostDirMountPluginConfig,
+	hostFunctionCommandName,
+	hostFunctionDescription,
+	hostFunctionSchema,
+	hostFunctionsSchema,
 	InvalidScheduleError,
 	isPackageDescriptor,
 	KernelError,
@@ -24,30 +25,24 @@ import {
 	type KernelExecResult,
 	type KernelSpawnOptions,
 	type LanguageSpawnOptions,
-	MAX_BINDING_DESCRIPTION_LENGTH,
 	type MountConfigJsonPrimitive,
 	mountConfigSchema,
 	type NodeModulesMountConfig,
 	nodeModulesMount,
 	OPT_AGENTOS_BIN,
 	OPT_AGENTOS_ROOT,
-	type OpenSessionInput,
 	type OpenShellOptions,
 	PastScheduleError,
-	type PermissionResponse,
 	type ProcessDescriptor,
 	type ProcessExit,
-	type PromptResult,
 	parseAgentOsOptions,
+	resolveHostFunctions,
 	rootFilesystemConfigSchema,
-	type SessionCapabilities,
-	type SessionInfo,
-	type SessionStreamEntry,
 	type SpawnOptions,
 	type StdioChannel,
+	sidecarRuntimeConfigSchema,
 	TimerScheduleDriver,
 	type TimingMitigation,
-	validateBindings,
 } from "../src/index.js";
 
 describe("root public API exports", () => {
@@ -57,16 +52,14 @@ describe("root public API exports", () => {
 	});
 	test("re-exports the main public value surface from the root entrypoint", () => {
 		expect(AgentOs).toBeTypeOf("function");
-		expect(AgentOs.prototype.pread).toBeTypeOf("function");
-		expect(AgentOs.prototype.pwrite).toBeTypeOf("function");
+		expect(AgentOs.prototype).not.toHaveProperty("pread");
 		expect(AgentOsSidecar).toBeTypeOf("function");
 		expect(CronManager).toBeTypeOf("function");
 		expect(TimerScheduleDriver).toBeTypeOf("function");
 		expect(createHostDirBackend).toBeTypeOf("function");
-		expect(binding).toBeTypeOf("function");
-		expect(bindings).toBeTypeOf("function");
-		expect(validateBindings).toBeTypeOf("function");
-		expect(MAX_BINDING_DESCRIPTION_LENGTH).toBeGreaterThan(0);
+		expect(hostFunctionCommandName).toBeTypeOf("function");
+		expect(hostFunctionDescription).toBeTypeOf("function");
+		expect(resolveHostFunctions).toBeTypeOf("function");
 		expect(agentOsLimitsSchema.safeParse({}).success).toBe(true);
 		expect(
 			agentOsLimitsSchema.safeParse({
@@ -98,8 +91,8 @@ describe("root public API exports", () => {
 		expect(
 			agentOsOptionsSchema.safeParse({ defaultSoftware: false }).success,
 		).toBe(true);
-		expect(bindingSchema).toBeTypeOf("object");
-		expect(bindingsSchema).toBeTypeOf("object");
+		expect(hostFunctionSchema).toBeTypeOf("object");
+		expect(hostFunctionsSchema).toBeTypeOf("object");
 		expect(mountConfigSchema).toBeTypeOf("object");
 		expect(rootFilesystemConfigSchema).toBeTypeOf("object");
 		expect(parseAgentOsOptions({ defaultSoftware: false })).toEqual({
@@ -114,8 +107,13 @@ describe("root public API exports", () => {
 		expect(OPT_AGENTOS_BIN).toBe("/opt/agentos/bin");
 	});
 
+	test("re-exports the sidecar runtime configuration schema", () => {
+		expect(sidecarRuntimeConfigSchema).toBeTypeOf("object");
+	});
+
 	test("re-exports current public SDK types from the root entrypoint", () => {
 		void (null as AgentOsLimits | null);
+		void (null as AgentOsSidecarRuntimeConfig | null);
 		void (null as ContextDescriptor | null);
 		void (null as ExecOptions | null);
 		void (null as HostDirMountPluginConfig | null);
@@ -126,14 +124,8 @@ describe("root public API exports", () => {
 		void (null as MountConfigJsonPrimitive | null);
 		void (null as NodeModulesMountConfig | null);
 		void (null as OpenShellOptions | null);
-		void (null as OpenSessionInput | null);
-		void (null as PermissionResponse | null);
-		void (null as PromptResult | null);
 		void (null as ProcessDescriptor | null);
 		void (null as ProcessExit | null);
-		void (null as SessionCapabilities | null);
-		void (null as SessionInfo | null);
-		void (null as SessionStreamEntry | null);
 		void (null as StdioChannel | null);
 		void (null as SpawnOptions | null);
 		void (null as TimingMitigation | null);

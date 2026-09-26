@@ -3,12 +3,7 @@ import {
 	type AgentOsOptions,
 	type AgentOsSidecar,
 	type RootSnapshotExport,
-	type SoftwareInput,
 } from "@rivet-dev/agentos-core";
-import { coreutils } from "@agentos-software/common";
-import claude from "@agentos-software/claude-code";
-import pi from "@agentos-software/pi";
-import { LLMock } from "@copilotkit/llmock";
 import os from "node:os";
 
 // Benchmark parameters. Keep batch sizes minimal for fast iteration.
@@ -17,11 +12,6 @@ export const WARMUP_ITERATIONS = 1;
 
 export const ECHO_COMMAND = "echo hello";
 export const EXPECTED_OUTPUT = "hello\n";
-export const PI_BENCHMARK_PROMPT = "Reply with exactly: Hello from llmock";
-export const PI_HEADLESS_BLOCKER_REFERENCE =
-	"packages/core/tests/pi-headless.test.ts";
-export const PI_HEADLESS_BLOCKER_REASON =
-	'Standalone `spawn("pi", ...)` is not exposed on the sidecar PATH; use `openSession({ sessionId: "main", agent: "pi-cli" })` to benchmark the native PI CLI RPC path tracked in packages/core/tests/pi-headless.test.ts.';
 // ── Shared bench sidecar + cold-run snapshot ───────────────────────
 //
 // Benchmarks create the sidecar ONCE up front and lease every VM from it,
@@ -78,57 +68,10 @@ export function benchCreateOptions(options: AgentOsOptions = {}): AgentOsOptions
 	return overlay;
 }
 
-// ── Shared mock LLM server ─────────────────────────────────────────
-
-let _llmock: LLMock | undefined;
-let _llmockUrl: string | undefined;
-let _llmockPort: number | undefined;
-
-/** Start a shared llmock server (idempotent). */
-export async function ensureLlmock(): Promise<{
-	url: string;
-	port: number;
-}> {
-	if (_llmock) return { url: _llmockUrl!, port: _llmockPort! };
-	_llmock = new LLMock({ port: 0, logLevel: "silent" });
-	_llmock.addFixtures([
-		{
-			match: { predicate: () => true },
-			response: { content: "Hello from llmock" },
-		},
-	]);
-	_llmockUrl = await _llmock.start();
-	_llmockPort = Number(new URL(_llmockUrl).port);
-	return { url: _llmockUrl, port: _llmockPort };
-}
-
-/** Stop the shared llmock server. */
-export async function stopLlmock(): Promise<void> {
-	if (_llmock) {
-		await _llmock.stop();
-		_llmock = undefined;
-		_llmockUrl = undefined;
-		_llmockPort = undefined;
-	}
-}
-
-export function getLlmockRequestCount(): number {
-	return _llmock?.getRequests().length ?? 0;
-}
-
 // ── Workload abstraction ────────────────────────────────────────────
 
 export interface WorkloadObservation {
-	promptCompleted?: boolean;
-	providerRequestCount?: number;
-	sessionUpdateCount?: number;
-	textEventCount?: number;
-	finalText?: string | null;
-	stopReason?: string;
 	workloadPath?: string;
-	substituteReason?: string;
-	blockerReference?: string;
-	blockerReason?: string;
 }
 
 /** A workload describes how to create a VM and start a long-running process for memory measurement. */
@@ -139,156 +82,9 @@ export interface Workload {
 	/** Start a long-running process so the Worker thread stays alive. */
 	start: (vm: AgentOs) => Promise<WorkloadObservation | void> | WorkloadObservation | void;
 	/** Verify the expected processes are running. Throws if not. */
-	verify: (vm: AgentOs) => void;
+	verify: (vm: AgentOs) => Promise<void> | void;
 	/** Time to wait after start for the process to fully initialize. */
 	settleMs: number;
-}
-
-function makeAgentSessionWorkload(opts: {
-	agentId: string;
-	description: string;
-	software: SoftwareInput[];
-	processMarker: string;
-}): Workload {
-	return {
-		name: `${opts.agentId}-session`,
-		description: opts.description,
-		createVm: async () => {
-			const { port } = await ensureLlmock();
-			return AgentOs.create(
-				benchCreateOptions({
-					software: opts.software,
-					loopbackExemptPorts: [port],
-				}),
-			);
-		},
-		start: async (vm) => {
-			const { url } = await ensureLlmock();
-			const sessionId = "main";
-			await vm.openSession({
-				sessionId,
-				agent: opts.agentId,
-				env: {
-					ANTHROPIC_API_KEY: "bench-key",
-					ANTHROPIC_BASE_URL: url,
-				},
-			});
-		},
-		verify: (vm) => {
-			const procs = vm.listProcesses();
-			const running = procs.filter((p) => p.running);
-			const hasAgent = running.some(
-				(p) =>
-					p.command === "node" &&
-					p.args.some((a) => a.includes(opts.processMarker)),
-			);
-			if (!hasAgent) {
-				throw new Error(
-					`Expected running ${opts.processMarker} process, got: ${JSON.stringify(running.map((p) => ({ cmd: p.command, args: p.args })))}`,
-				);
-			}
-		},
-		settleMs: 2000,
-	};
-}
-
-function getTextEventPayload(
-	event: unknown,
-): { text?: string; type?: string } | undefined {
-	if (!event || typeof event !== "object") {
-		return undefined;
-	}
-	const update = (event as { update?: unknown }).update;
-	if (!update || typeof update !== "object") {
-		return undefined;
-	}
-	const content = (update as { content?: unknown }).content;
-	if (!content || typeof content !== "object") {
-		return undefined;
-	}
-	return content as { text?: string; type?: string };
-}
-
-function makeAgentPromptWorkload(opts: {
-	agentId: string;
-	description: string;
-	software: SoftwareInput[];
-	processMarker: string;
-	prompt: string;
-}): Workload {
-	return {
-		name: `${opts.agentId}-prompt-turn`,
-		description: opts.description,
-		createVm: async () => {
-			const { port } = await ensureLlmock();
-			return AgentOs.create(
-				benchCreateOptions({
-					loopbackExemptPorts: [port],
-					software: opts.software,
-				}),
-			);
-		},
-		start: async (vm) => {
-			const { url } = await ensureLlmock();
-			const sessionId = "main";
-			await vm.openSession({ sessionId,
-				agent: opts.agentId,
-				env: {
-					ANTHROPIC_API_KEY: "bench-key",
-					ANTHROPIC_BASE_URL: url,
-				},
-			});
-
-			const events: unknown[] = [];
-			const unsubscribe = vm.onSessionEvent(sessionId, (event) => {
-				events.push(event);
-			});
-			const requestCountBefore = getLlmockRequestCount();
-
-			try {
-				const { text, stopReason } = await vm.prompt({
-					sessionId,
-					content: [{ type: "text", text: opts.prompt }],
-				});
-				const textEvents = events
-					.map(getTextEventPayload)
-					.filter((event) => event?.type === "text");
-				const finalText = textEvents.at(-1)?.text ?? text;
-				const providerRequestCount =
-					getLlmockRequestCount() - requestCountBefore;
-
-				return {
-					promptCompleted: true,
-					providerRequestCount,
-					sessionUpdateCount: events.length,
-					textEventCount: textEvents.length,
-					finalText,
-					stopReason,
-					workloadPath:
-						'openSession({ sessionId: "main", agent: "pi-cli" }) + vm.prompt(...) via pi-acp -> PI CLI --mode rpc',
-					blockerReference: PI_HEADLESS_BLOCKER_REFERENCE,
-					blockerReason: PI_HEADLESS_BLOCKER_REASON,
-				} satisfies WorkloadObservation;
-			} finally {
-				unsubscribe();
-			}
-		},
-		verify: (vm) => {
-			const procs = vm.listProcesses();
-			const running = procs.filter((p) => p.running);
-			const hasAgent = running.some(
-				(p) =>
-					p.command === "node" &&
-					p.args.some((a) => a.includes(opts.processMarker)),
-			);
-			if (!hasAgent) {
-				throw new Error(
-					`Expected running ${opts.processMarker} process, got: ${JSON.stringify(running.map((p) => ({ cmd: p.command, args: p.args })))}`,
-				);
-			}
-		},
-		settleMs: 2000,
-	};
 }
 
 export const WORKLOADS: Record<string, Workload> = {
@@ -296,14 +92,12 @@ export const WORKLOADS: Record<string, Workload> = {
 		name: "sleep",
 		description: "Minimal VM with idle Node.js process (setTimeout keepalive)",
 		createVm: () => AgentOs.create(benchCreateOptions()),
-		start: (vm) => {
-			vm.spawn("node", ["-e", "setTimeout(() => {}, 999999999)"], {
-				streamStdin: true,
-			});
+		start: async (vm) => {
+			await vm.process.spawn("node", ["-e", "setTimeout(() => {}, 999999999)"]);
 		},
-		verify: (vm) => {
-			const procs = vm.listProcesses();
-			const running = procs.filter((p) => p.running);
+		verify: async (vm) => {
+			const procs = await vm.process.list();
+			const running = procs.filter((p) => p.state === "running");
 			const hasNode = running.some((p) => p.command === "node");
 			if (!hasNode) {
 				throw new Error(
@@ -313,40 +107,15 @@ export const WORKLOADS: Record<string, Workload> = {
 		},
 		settleMs: 2000,
 	},
-	"pi-session": makeAgentSessionWorkload({
-		agentId: "pi",
-		description: "VM with PI agent session via openSession",
-		software: [pi],
-		processMarker: "agentos-pi",
-	}),
-	"pi-prompt-turn": makeAgentPromptWorkload({
-		agentId: "pi-cli",
-		description:
-			'Native PI CLI headless benchmark path via openSession({ sessionId: "main", agent: "pi-cli" }), which drives the real PI CLI through pi-acp RPC mode and records a full prompt turn.',
-		software: [],
-		processMarker: "pi-acp",
-		prompt: PI_BENCHMARK_PROMPT,
-	}),
-	"claude-session": makeAgentSessionWorkload({
-		agentId: "claude",
-		description: "VM with Claude agent session via openSession",
-		software: [claude],
-		processMarker: "agentos-claude",
-	}),
 };
 
 // ── VM creation helpers ─────────────────────────────────────────────
 
 /**
- * Create a fresh AgentOS VM with only coreutils (WASM shell + echo).
- * This is the minimal setup needed to run shell commands.
+ * Create a fresh agentOS VM with its default software (WASM shell + echo).
  */
 export async function createBenchVm(): Promise<AgentOs> {
-	return AgentOs.create(
-		benchCreateOptions({
-			software: [coreutils],
-		}),
-	);
+	return AgentOs.create(benchCreateOptions());
 }
 
 // ── Stats and formatting ────────────────────────────────────────────

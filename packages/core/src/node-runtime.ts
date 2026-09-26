@@ -21,13 +21,16 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { JsRuntimeConfig } from "./generated/JsRuntimeConfig.js";
 import type { VmLimitsConfig } from "./generated/VmLimitsConfig.js";
+import type { JsRuntimeConfig } from "./generated/JsRuntimeConfig.js";
 import type { VmUserConfig } from "./generated/VmUserConfig.js";
+import type {
+	HostFunctionCollections,
+	HostFunctionSchemas,
+} from "./host-functions.js";
 import { parseNodeRuntimeCreateOptions } from "./node-runtime-options-schema.js";
 import type { SidecarProcess } from "./sidecar-process.js";
 import type {
-	BindingDefinition,
 	ExecResult,
 	Kernel,
 	KernelBootTiming,
@@ -43,8 +46,7 @@ import {
 } from "./test-runtime.js";
 
 export type {
-	BindingDefinition,
-	BindingExample,
+	HostFunctionExample,
 	VirtualDirEntry,
 } from "./test-runtime.js";
 export { resolveNodeRuntimeSidecarBinary } from "./test-runtime.js";
@@ -53,7 +55,7 @@ export type NodeRuntimeBootTimingPhase =
 	| KernelBootTiming["phase"]
 	| "runtime_mount_wasm"
 	| "runtime_mount_node"
-	| "bindings";
+	| "hostFunctions";
 
 export interface NodeRuntimeBootTiming {
 	phase: NodeRuntimeBootTimingPhase;
@@ -113,24 +115,6 @@ export function resolveNodeRuntimeCommandsDir(explicit?: string): string {
 }
 
 /**
- * Secure-by-default permission policy applied when the caller passes no
- * `permissions`. Outward-facing capabilities are denied: there is **no network
- * access** (and no host callbacks) by default — guest code cannot reach the
- * network until you opt in. The filesystem, child-process, process, and env
- * scopes are allowed because they are fully virtualized (the guest only ever
- * sees the VM's in-memory filesystem and kernel-managed processes, never the
- * real host) and are required for the runtime to execute a guest program at
- * all. Tighten or widen any scope by passing your own `permissions`.
- */
-const DEFAULT_PERMISSIONS: Permissions = {
-	fs: "allow",
-	childProcess: "allow",
-	process: "allow",
-	env: "allow",
-	network: "deny",
-};
-
-/**
  * Options for {@link NodeRuntime.create}.
  *
  * Keep this public interface in sync with
@@ -138,7 +122,9 @@ const DEFAULT_PERMISSIONS: Permissions = {
  * Options that translate into sidecar VM JSON must also stay aligned with
  * `crates/vm-config/src/lib.rs::CreateVmConfig`.
  */
-export interface NodeRuntimeCreateOptions {
+export interface NodeRuntimeCreateOptions<
+	HOST_FUNCTIONS extends HostFunctionSchemas = HostFunctionSchemas,
+> {
 	/**
 	 * Caller-owned filesystem used only by this low-level compatibility runtime.
 	 * AgentOS clients do not create a TypeScript filesystem implicitly; normal
@@ -156,12 +142,11 @@ export interface NodeRuntimeCreateOptions {
 	/** Sidecar-enforced VM resource and runtime limits. */
 	limits?: VmLimitsConfig;
 	/**
-	 * Permission policy for the VM. Merged over a secure default that **denies
-	 * network access** (guest code cannot reach the network until you opt in);
-	 * the virtualized filesystem and processes stay enabled so programs run.
-	 * Because it merges, a partial policy works: `{ network: "allow" }` grants
-	 * the network while keeping the execution essentials. Pass a fuller policy
-	 * (rule sets) to further sandbox individual scopes.
+	 * Permission policy for the VM, merged over the sidecar's default: the
+	 * virtual filesystem, processes, environment, bindings, listeners, and
+	 * loopback networking work, while external network access is denied. A partial
+	 * policy works: `{ network: "allow" }` grants external access and keeps every
+	 * other scope at its default.
 	 */
 	permissions?: Permissions;
 	/**
@@ -255,41 +240,43 @@ export interface NodeRuntimeCreateOptions {
 	 */
 	nodeModules?: string | NodeModulesMount;
 	/**
-	 * Host-side bindings the guest can invoke as shell commands. Each entry is
-	 * registered as a named guest command; when the guest runs it, the
-	 * invocation round-trips back to the host and runs the binding's `handler`,
-	 * whose return value is delivered back to the guest. This is how you give
-	 * sandboxed guest code controlled, named host capabilities (the kind an AI
-	 * agent calls as tools) without granting it the underlying access directly.
+	 * Host-side functions the guest can invoke as shell commands, as a record of
+	 * collections. The keys name everything: the collection key becomes the guest
+	 * command `agentos-{name}` and each function key becomes one of its
+	 * subcommands. When the guest runs it the invocation round-trips back to the
+	 * host, runs the function's `execute`, and its return value is delivered back
+	 * to the guest. This is how you give sandboxed guest code controlled, named
+	 * host capabilities (the kind an AI agent calls as tools) without granting it
+	 * the underlying access directly.
 	 *
-	 * The guest invokes a binding by name with JSON input:
+	 * This is the same shape `AgentOs.create()` takes. A function needs only a
+	 * Zod `inputSchema` and an `execute` handler; `.describe()` on the schema is
+	 * what the agent reads.
 	 *
 	 * ```ts
 	 * const rt = await NodeRuntime.create({
-	 *   bindings: {
-	 *     add: {
-	 *       description: "Add two numbers",
-	 *       inputSchema: {
-	 *         type: "object",
-	 *         properties: { a: { type: "number" }, b: { type: "number" } },
-	 *         required: ["a", "b"],
+	 *   hostFunctions: {
+	 *     math: {
+	 *       add: {
+	 *         inputSchema: z
+	 *           .object({ a: z.number(), b: z.number() })
+	 *           .describe("Add two numbers"),
+	 *         execute: ({ a, b }) => ({ sum: a + b }),
 	 *       },
-	 *       handler: ({ a, b }: { a: number; b: number }) => ({ sum: a + b }),
 	 *     },
 	 *   },
 	 * });
 	 * await rt.exec(`
 	 *   import { execFileSync } from "node:child_process";
-	 *   const out = execFileSync("add", ["add", "--json", JSON.stringify({ a: 2, b: 3 })]);
+	 *   const out = execFileSync("agentos-math", ["add", "--json", JSON.stringify({ a: 2, b: 3 })]);
 	 *   console.log(out.toString());
 	 * `);
 	 * ```
 	 *
-	 * When `bindings` is provided and no `binding` permission scope is set, the
-	 * `binding` scope is granted so the registered bindings are invocable; pass
-	 * your own `permissions.binding` policy to gate individual bindings.
+	 * The `hostFunction` permission scope is allowed by default; pass your own
+	 * `permissions.hostFunction` policy to gate individual host functions.
 	 */
-	bindings?: Record<string, BindingDefinition>;
+	hostFunctions?: HostFunctionCollections<HOST_FUNCTIONS>;
 	/**
 	 * Guest-bound ports that may accept non-loopback connections. By default a
 	 * guest server is reachable only over loopback inside the VM; listing a port
@@ -569,26 +556,26 @@ let nextProgramId = 0;
 let nextResidentRequestId = 0;
 
 /**
- * Guest preamble exposing `globalThis.callBinding(name, input?)`: an ergonomic
- * async wrapper over the binding invocation path. It runs the registered binding
- * as the guest would by hand (`<binding> --json <input>` through
+ * Guest preamble exposing `globalThis.callHostFunction(name, input?)`: an ergonomic
+ * async wrapper over the hostFunction invocation path. It runs the registered hostFunction
+ * as the guest would by hand (`<host-function> --json <input>` through
  * `node:child_process`), so it inherits every security property of that path:
- * the `binding` permission scope, the binding's input-schema validation, and the
+ * the `hostFunction` permission scope, the host function's input-schema validation, and the
  * host-side handler all still apply. It adds no new trust surface; it only
  * removes the manual `execFile`/JSON boilerplate so guest and agent code can do
- * `const out = await callBinding("add", { a, b })`. The value is a single line
+ * `const out = await callHostFunction("add", { a, b })`. The value is a single line
  * so it shifts guest source line numbers by at most one in stack traces.
  *
- * Note: the binding still runs through a guest process. Eliminating that spawn
- * would require a dedicated async guest-to-host binding channel (the synchronous
+ * Note: the hostFunction still runs through a guest process. Eliminating that spawn
+ * would require a dedicated async guest-to-host hostFunction channel (the synchronous
  * sync-RPC path cannot be used: it runs on the sidecar's main sync-RPC thread and
  * a host round-trip would block it); that is a separate, test-gated change.
  */
-const BINDING_PREAMBLE = `globalThis.callBinding = (name, input = {}) => import("node:child_process").then(({ execFile }) => new Promise((resolve, reject) => { execFile(name, [name, "--json", JSON.stringify(input)], { maxBuffer: 64 * 1024 * 1024 }, (error, stdout, stderr) => { if (error) { reject(new Error(String(stderr || "").trim() || error.message)); return; } const text = String(stdout ?? "").trim(); let reply; try { reply = text ? JSON.parse(text) : undefined; } catch { reject(new Error("binding returned invalid JSON: " + text)); return; } if (reply && reply.ok === false) { reject(new Error(reply.error || "binding failed")); return; } resolve(reply && typeof reply === "object" && "result" in reply ? reply.result : reply); }); }));`;
+const HOST_FUNCTION_PREAMBLE = `globalThis.callHostFunction = (name, input = {}) => import("node:child_process").then(({ execFile }) => new Promise((resolve, reject) => { execFile(name, [name, "--json", JSON.stringify(input)], { maxBuffer: 64 * 1024 * 1024 }, (error, stdout, stderr) => { if (error) { reject(new Error(String(stderr || "").trim() || error.message)); return; } const text = String(stdout ?? "").trim(); let reply; try { reply = text ? JSON.parse(text) : undefined; } catch { reject(new Error("host function returned invalid JSON: " + text)); return; } if (reply && reply.ok === false) { reject(new Error(reply.error || "host function failed")); return; } resolve(reply && typeof reply === "object" && "result" in reply ? reply.result : reply); }); }));`;
 
-/** Prepend the binding helper preamble to guest program source. */
-function withBindingPreamble(code: string): string {
-	return `${BINDING_PREAMBLE}\n${code}`;
+/** Prepend the hostFunction helper preamble to guest program source. */
+function withHostFunctionPreamble(code: string): string {
+	return `${HOST_FUNCTION_PREAMBLE}\n${code}`;
 }
 
 const RESIDENT_READY_PREFIX = "__AGENTOS_RESIDENT_READY__";
@@ -610,8 +597,14 @@ export class NodeRuntime {
 	 * session, creates the VM with a bootstrapped root filesystem, mounts the
 	 * shell and Node runtimes, and waits for the VM to report ready.
 	 */
-	static async create(options: NodeRuntimeCreateOptions): Promise<NodeRuntime> {
-		options = parseNodeRuntimeCreateOptions(options);
+	static async create<HOST_FUNCTIONS extends HostFunctionSchemas>(
+		callerOptions: NodeRuntimeCreateOptions<HOST_FUNCTIONS>,
+	): Promise<NodeRuntime> {
+		// The generic exists only so each `execute` infers its input from its own
+		// `inputSchema`; past this point the concrete schemas carry no meaning.
+		const options: NodeRuntimeCreateOptions = parseNodeRuntimeCreateOptions(
+			callerOptions as NodeRuntimeCreateOptions,
+		);
 		const commandsDir = resolveNodeRuntimeCommandsDir(options.commandsDir);
 
 		// Seed caller-provided files into the VM's in-memory filesystem before
@@ -651,26 +644,12 @@ export class NodeRuntime {
 			readOnly: mount.readOnly ?? true,
 		}));
 
-		// Grant the `binding` scope when the caller registers bindings but does not
-		// set their own binding policy, so the registered bindings are invocable.
-		const bindingDefaults =
-			options.bindings &&
-			Object.keys(options.bindings).length > 0 &&
-			options.permissions?.binding === undefined
-				? { binding: "allow" as const }
-				: {};
-
 		const kernel = createKernel({
 			filesystem,
 			mounts: mounts.length > 0 ? mounts : undefined,
-			// Merge the caller's policy over the secure default so partial
-			// opt-ins work: `{ network: "allow" }` enables the network while the
-			// execution essentials (fs/childProcess/process/env) stay granted.
-			permissions: {
-				...DEFAULT_PERMISSIONS,
-				...bindingDefaults,
-				...options.permissions,
-			},
+			// The sidecar owns the defaults and merges this policy over them, so
+			// only the scopes the caller set are sent.
+			permissions: options.permissions,
 			env: options.env,
 			cwd: options.cwd,
 			user: options.user,
@@ -699,12 +678,12 @@ export class NodeRuntime {
 				kernel.mount(createNodeRuntime()),
 			);
 
-			// Register bindings after the runtimes are mounted so they are
+			// Register hostFunctions after the runtimes are mounted so they are
 			// installed as guest commands the moment the VM is ready.
-			const bindings = options.bindings;
-			if (bindings && Object.keys(bindings).length > 0) {
-				await measureBootTiming("bindings", options.onBootTiming, () =>
-					kernel.registerBindings(bindings),
+			const hostFunctions = options.hostFunctions;
+			if (hostFunctions && Object.keys(hostFunctions).length > 0) {
+				await measureBootTiming("hostFunctions", options.onBootTiming, () =>
+					kernel.registerHostFunctions(hostFunctions),
 				);
 			}
 		} catch (error) {
@@ -732,7 +711,7 @@ export class NodeRuntime {
 		options: NodeRuntimeExecOptions = {},
 	): Promise<NodeRuntimeExecResult> {
 		const programPath = `/tmp/agentos-program-${nextProgramId++}.mjs`;
-		await this.kernel.writeFile(programPath, withBindingPreamble(code));
+		await this.kernel.writeFile(programPath, withHostFunctionPreamble(code));
 		return this.runProgram(programPath, options);
 	}
 
@@ -851,7 +830,7 @@ export class NodeRuntime {
 		options: NodeRuntimeSpawnOptions = {},
 	): Promise<NodeRuntimeProcess> {
 		const programPath = `/tmp/agentos-program-${nextProgramId++}.mjs`;
-		await this.kernel.writeFile(programPath, withBindingPreamble(code));
+		await this.kernel.writeFile(programPath, withHostFunctionPreamble(code));
 		const proc = this.kernel.spawn("node", [programPath], {
 			env: options.env,
 			cwd: options.cwd,
@@ -1008,7 +987,7 @@ export class NodeRuntime {
 		// statements inside a function and make them a SyntaxError.
 		const wrapped = [
 			`import { writeFileSync as __writeFileSync } from "node:fs";`,
-			BINDING_PREAMBLE,
+			HOST_FUNCTION_PREAMBLE,
 			`globalThis.__return = (value) => {`,
 			`  __writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify(value === undefined ? null : value));`,
 			`};`,
@@ -1152,22 +1131,21 @@ export class NodeRuntime {
 	}
 
 	/**
-	 * Register host-side bindings the guest can invoke as shell commands, after
+	 * Register host-side hostFunctions the guest can invoke as shell commands, after
 	 * the VM is already running. Each entry becomes a named guest command; when
 	 * the guest runs it, the invocation round-trips back to the host and runs the
-	 * binding's `handler`, whose return value is delivered back to the guest. This
-	 * is the same capability as the `bindings` create option, exposed for adding
-	 * bindings to a live runtime. See `bindings` on {@link NodeRuntime.create} for
+	 * hostFunction's `handler`, whose return value is delivered back to the guest. This
+	 * is the same capability as the `hostFunctions` create option, exposed for adding
+	 * host functions to a live runtime. See `hostFunctions` on {@link NodeRuntime.create} for
 	 * the invocation shape and permission behavior.
 	 *
-	 * When registering bindings this way, make sure the `binding` permission scope
-	 * is granted (for example `permissions: { binding: "allow" }` on
-	 * {@link NodeRuntime.create}) so the bindings are invocable.
+	 * The `hostFunction` permission scope is allowed by default, so these host
+	 * functions are invocable unless the runtime's policy restricts them.
 	 */
-	async registerBindings(
-		bindings: Record<string, BindingDefinition>,
+	async registerHostFunctions(
+		hostFunctions: HostFunctionCollections,
 	): Promise<void> {
-		await this.kernel.registerBindings(bindings);
+		await this.kernel.registerHostFunctions(hostFunctions);
 	}
 
 	/**

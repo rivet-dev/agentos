@@ -1,16 +1,16 @@
 use crate::core::frames::{reject, DispatchResult};
 use agentos_sidecar_protocol::protocol::{
-    AuthenticateRequest, BootstrapRootFilesystemRequest, CloseStdinRequest, ConfigureVmRequest,
-    CreateLayerRequest, CreateOverlayRequest, CreateVmRequest, DisposeVmRequest, ExecuteRequest,
-    ExportSnapshotRequest, ExtEnvelope, FindBoundUdpRequest, FindListenerRequest,
+    AcquirePackageRequest, AuthenticateRequest, BootstrapRootFilesystemRequest, CloseStdinRequest,
+    CompareVmConfigRequest, ConfigureVmRequest, CreateLayerRequest, CreateOverlayRequest,
+    CreateVmRequest, DisposeVmRequest, ExecuteRequest, ExportSnapshotRequest, ExtEnvelope,
+    FindBoundUdpRequest, FindListenerRequest, GetPackageCacheStatsRequest,
     GetProcessSnapshotRequest, GetResourceSnapshotRequest, GetSignalStateRequest,
     GetZombieTimerCountRequest, GuestFilesystemCallRequest, GuestKernelCallRequest,
-    ImportSnapshotRequest, KillProcessRequest, LinkPackageRequest, ListMountsRequest,
-    OpenSessionRequest, OwnershipScope, ProvidedCommandsRequest, RegisterHostCallbacksRequest,
-    RequestFrame, RequestPayload, ResizePtyRequest, SealLayerRequest,
-    SnapshotRootFilesystemRequest, VmFetchRequest, WriteStdinRequest,
+    ImportSnapshotRequest, InstallPackageRequest, KillProcessRequest, LinkPackageRequest,
+    ListMountsRequest, OpenSessionRequest, OwnershipScope, ProvidedCommandsRequest,
+    RegisterHostCallbacksRequest, RequestFrame, RequestPayload, ResizePtyRequest, SealLayerRequest,
+    SnapshotRootFilesystemRequest, UnlinkPackageRequest, VmFetchRequest, WriteStdinRequest,
 };
-use agentos_sidecar_protocol::wire as generated_wire;
 
 pub const UNSUPPORTED_HOST_CALLBACK_DIRECTION_CODE: &str = "unsupported_direction";
 pub const UNSUPPORTED_HOST_CALLBACK_DIRECTION_MESSAGE: &str =
@@ -30,6 +30,7 @@ pub enum RequestRoute {
     Authenticate(AuthenticateRequest),
     OpenSession(OpenSessionRequest),
     CreateVm(CreateVmRequest),
+    CompareVmConfig(CompareVmConfigRequest),
     DisposeVm(DisposeVmRequest),
     BootstrapRootFilesystem(BootstrapRootFilesystemRequest),
     ConfigureVm(ConfigureVmRequest),
@@ -56,6 +57,10 @@ pub enum RequestRoute {
     GetSignalState(GetSignalStateRequest),
     GetZombieTimerCount(GetZombieTimerCountRequest),
     LinkPackage(LinkPackageRequest),
+    UnlinkPackage(UnlinkPackageRequest),
+    AcquirePackage(AcquirePackageRequest),
+    InstallPackage(InstallPackageRequest),
+    GetPackageCacheStats(GetPackageCacheStatsRequest),
     ProvidedCommands(ProvidedCommandsRequest),
     ExecutionOperation(RequestPayload),
     ExecutionLifecycle(RequestPayload),
@@ -63,17 +68,12 @@ pub enum RequestRoute {
     UnsupportedHostCallbackDirection,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BlockingExtensionInterrupt<'a> {
-    ExtensionPayload(&'a [u8]),
-    KillProcess,
-}
-
 pub fn route_request_payload(request: &RequestFrame) -> RequestRoute {
     match request.payload.clone() {
         RequestPayload::Authenticate(payload) => RequestRoute::Authenticate(payload),
         RequestPayload::OpenSession(payload) => RequestRoute::OpenSession(payload),
         RequestPayload::CreateVm(payload) => RequestRoute::CreateVm(payload),
+        RequestPayload::CompareVmConfig(payload) => RequestRoute::CompareVmConfig(payload),
         RequestPayload::DisposeVm(payload) => RequestRoute::DisposeVm(payload),
         RequestPayload::BootstrapRootFilesystem(payload) => {
             RequestRoute::BootstrapRootFilesystem(payload)
@@ -106,6 +106,12 @@ pub fn route_request_payload(request: &RequestFrame) -> RequestRoute {
         RequestPayload::GetSignalState(payload) => RequestRoute::GetSignalState(payload),
         RequestPayload::GetZombieTimerCount(payload) => RequestRoute::GetZombieTimerCount(payload),
         RequestPayload::LinkPackage(payload) => RequestRoute::LinkPackage(payload),
+        RequestPayload::UnlinkPackage(payload) => RequestRoute::UnlinkPackage(payload),
+        RequestPayload::AcquirePackage(payload) => RequestRoute::AcquirePackage(payload),
+        RequestPayload::InstallPackage(payload) => RequestRoute::InstallPackage(payload),
+        RequestPayload::GetPackageCacheStats(payload) => {
+            RequestRoute::GetPackageCacheStats(payload)
+        }
         RequestPayload::ProvidedCommands(payload) => RequestRoute::ProvidedCommands(payload),
         payload @ (RequestPayload::ShellExecution(_)
         | RequestPayload::ArgvExecution(_)
@@ -145,37 +151,13 @@ pub fn route_request_payload(request: &RequestFrame) -> RequestRoute {
     }
 }
 
-pub fn generated_wire_blocking_extension_interrupt<'a>(
-    active_request: &generated_wire::RequestFrame,
-    blocking_namespace: &str,
-    interrupting_request: &'a generated_wire::RequestFrame,
-) -> Option<BlockingExtensionInterrupt<'a>> {
-    if interrupting_request.ownership != active_request.ownership {
-        return None;
-    }
-
-    match &interrupting_request.payload {
-        generated_wire::RequestPayload::ExtEnvelope(envelope)
-            if envelope.namespace == blocking_namespace =>
-        {
-            Some(BlockingExtensionInterrupt::ExtensionPayload(
-                &envelope.payload,
-            ))
-        }
-        generated_wire::RequestPayload::ExtEnvelope(_) => None,
-        generated_wire::RequestPayload::KillProcessRequest(_) => {
-            Some(BlockingExtensionInterrupt::KillProcess)
-        }
-        _ => None,
-    }
-}
-
 pub fn request_dispatch_mode(request: &RequestFrame) -> RequestDispatchMode {
     match request.payload {
         RequestPayload::DisposeVm(_) | RequestPayload::Ext(_) => RequestDispatchMode::Async,
         RequestPayload::Authenticate(_)
         | RequestPayload::OpenSession(_)
         | RequestPayload::CreateVm(_)
+        | RequestPayload::CompareVmConfig(_)
         | RequestPayload::BootstrapRootFilesystem(_)
         | RequestPayload::ConfigureVm(_)
         | RequestPayload::RegisterHostCallbacks(_)
@@ -201,6 +183,10 @@ pub fn request_dispatch_mode(request: &RequestFrame) -> RequestDispatchMode {
         | RequestPayload::GetSignalState(_)
         | RequestPayload::GetZombieTimerCount(_)
         | RequestPayload::LinkPackage(_)
+        | RequestPayload::UnlinkPackage(_)
+        | RequestPayload::AcquirePackage(_)
+        | RequestPayload::InstallPackage(_)
+        | RequestPayload::GetPackageCacheStats(_)
         | RequestPayload::ProvidedCommands(_)
         | RequestPayload::ShellExecution(_)
         | RequestPayload::ArgvExecution(_)
@@ -297,23 +283,9 @@ mod tests {
         OwnershipScope, PersistenceFlushRequest, PersistenceLoadRequest, ResponsePayload,
         PROTOCOL_VERSION,
     };
-    use agentos_sidecar_protocol::wire as generated_wire;
 
     fn request(payload: RequestPayload) -> RequestFrame {
         RequestFrame::new(7, OwnershipScope::connection("conn"), payload)
-    }
-
-    fn generated_request(
-        request_id: i64,
-        ownership: generated_wire::OwnershipScope,
-        payload: generated_wire::RequestPayload,
-    ) -> generated_wire::RequestFrame {
-        generated_wire::RequestFrame {
-            schema: generated_wire::protocol_schema(),
-            request_id,
-            ownership,
-            payload,
-        }
     }
 
     fn reverse_host_callback_payloads() -> Vec<RequestPayload> {
@@ -421,83 +393,6 @@ mod tests {
                 other => panic!("unexpected response payload: {other:?}"),
             }
         }
-    }
-
-    #[test]
-    fn generated_wire_prompt_interrupt_classifier_matches_only_same_scope_interrupts() {
-        let ownership = generated_wire::OwnershipScope::VmOwnership(generated_wire::VmOwnership {
-            connection_id: String::from("conn"),
-            session_id: String::from("session"),
-            vm_id: String::from("vm"),
-        });
-        let active = generated_request(
-            1,
-            ownership.clone(),
-            generated_wire::RequestPayload::ExtEnvelope(generated_wire::ExtEnvelope {
-                namespace: String::from("prompt"),
-                payload: b"active".to_vec(),
-            }),
-        );
-
-        let same_namespace = generated_request(
-            2,
-            ownership.clone(),
-            generated_wire::RequestPayload::ExtEnvelope(generated_wire::ExtEnvelope {
-                namespace: String::from("prompt"),
-                payload: b"cancel".to_vec(),
-            }),
-        );
-        assert_eq!(
-            generated_wire_blocking_extension_interrupt(&active, "prompt", &same_namespace),
-            Some(BlockingExtensionInterrupt::ExtensionPayload(b"cancel"))
-        );
-
-        let kill = generated_request(
-            3,
-            ownership.clone(),
-            generated_wire::RequestPayload::KillProcessRequest(
-                generated_wire::KillProcessRequest {
-                    process_id: String::from("proc"),
-                    signal: String::from("SIGTERM"),
-                },
-            ),
-        );
-        assert_eq!(
-            generated_wire_blocking_extension_interrupt(&active, "prompt", &kill),
-            Some(BlockingExtensionInterrupt::KillProcess)
-        );
-
-        let other_namespace = generated_request(
-            4,
-            ownership.clone(),
-            generated_wire::RequestPayload::ExtEnvelope(generated_wire::ExtEnvelope {
-                namespace: String::from("other"),
-                payload: b"cancel".to_vec(),
-            }),
-        );
-        assert_eq!(
-            generated_wire_blocking_extension_interrupt(&active, "prompt", &other_namespace),
-            None
-        );
-
-        let other_scope = generated_request(
-            5,
-            generated_wire::OwnershipScope::VmOwnership(generated_wire::VmOwnership {
-                connection_id: String::from("conn"),
-                session_id: String::from("session"),
-                vm_id: String::from("other-vm"),
-            }),
-            generated_wire::RequestPayload::KillProcessRequest(
-                generated_wire::KillProcessRequest {
-                    process_id: String::from("proc"),
-                    signal: String::from("SIGTERM"),
-                },
-            ),
-        );
-        assert_eq!(
-            generated_wire_blocking_extension_interrupt(&active, "prompt", &other_scope),
-            None
-        );
     }
 
     #[test]

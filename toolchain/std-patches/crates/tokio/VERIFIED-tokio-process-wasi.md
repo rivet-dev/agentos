@@ -2,7 +2,7 @@
 
 Proven in isolation (/tmp/tokio-dev + [patch], --cfg tokio_unstable, -Z build-std):
 `Command::new("echo").arg("hi").output().await` COMPILES for wasm32-wasip1.
-This de-risks codex's entire exec path under the pipeline-only approach.
+This verifies that asynchronous guest tools can use the owned process model.
 
 ## The exact changes (to capture as agentos patches):
 
@@ -25,21 +25,9 @@ This de-risks codex's entire exec path under the pipeline-only approach.
 
 ### C. Makefile: add `--cfg tokio_unstable` to the wasm-target RUSTFLAGS.
 
-## NEXT (remaining pipeline-only): same pattern for tokio::net (host_net sockets) → unblocks
-reqwest/tungstenite/rmcp → vendor codex into toolchain (resolve version conflicts) →
-make wasm builds codex-core UNCHANGED → un-stub codex-exec --session-turn → EE adapter + a5 test → matrix.
-
 ## UPDATE — VERIFIED 2026-06-23 (compile): full hard stack compiles on wasm32-wasip1
 `tokio` (features process+net+rt+macros+io-util+time) + `reqwest` (rustls-tls) COMPILE TOGETHER
 for wasm32-wasip1 with the tokio patch + `--cfg tokio_unstable` (mio compiles as a limited impl).
-=> codex-core's hardest deps (tokio::process, tokio::net, reqwest, rmcp) compile pipeline-only with
-NO codex source changes. tokio::process is verified to also RUN. tokio::net/reqwest COMPILE; RUNTIME
-HTTP needs routing to wasi-http (reqwest connector patch) because wasi preview1 has no outbound connect.
-
-## Remaining for codex-core to COMPILE pipeline-only (toolchain-level, codex source unchanged):
-- C-dep crates: `zip` (xz/lzma) → `[patch.crates-io] zip` defeatured (deflate only); `sqlx`/sqlite
-  (codex-state) → stub or [patch] (no wasi sqlite). These are [patch]/vendoring, not codex edits.
-- stub crates codex-network-proxy/codex-otel 0.0.0 already exist.
-Then: vendor codex into toolchain → make wasm builds codex-core unchanged.
-## Remaining for codex to WORK: reqwest→wasi-http connector patch (runtime HTTP) → un-stub
-codex-exec --session-turn → EE adapter + a5 test → matrix.
+`tokio::process` is verified to run. `tokio::net` and `reqwest` compile; runtime
+HTTP still needs the agentOS `wasi-http` connector because Preview 1 has no
+direct outbound-connect implementation.

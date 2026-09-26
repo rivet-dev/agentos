@@ -25,7 +25,7 @@ use crate::fd_table::{
     WASI_RIGHT_PATH_RENAME_SOURCE, WASI_RIGHT_PATH_RENAME_TARGET, WASI_RIGHT_PATH_SYMLINK,
     WASI_RIGHT_PATH_UNLINK_FILE,
 };
-use crate::mount_table::{MountEntry, MountOptions, MountTable, MountedFileSystem};
+use crate::mount_table::{DetachedMount, MountEntry, MountOptions, MountTable, MountedFileSystem};
 use crate::network_policy::format_tcp_resource;
 use crate::permissions::{
     check_command_execution, check_network_access, FsOperation, NetworkOperation, PermissionError,
@@ -323,6 +323,12 @@ pub struct VirtualProcessOptions {
     pub cwd: Option<String>,
     /// Trusted virtual-process ceiling. Omission inherits the parent's tier.
     pub permission_tier: Option<crate::process_table::ProcessPermissionTier>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChildProcessPermissionCheck {
+    Enforce,
+    TrustedRootProcess,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -1703,15 +1709,37 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
     }
 
     pub fn register_driver(&mut self, driver: CommandDriver) -> KernelResult<()> {
+        self.register_driver_internal(driver, false)
+    }
+
+    /// Register sidecar-owned commands without consulting guest filesystem policy.
+    /// Never expose this operation through guest calls.
+    pub fn register_driver_for_operator(&mut self, driver: CommandDriver) -> KernelResult<()> {
+        self.register_driver_internal(driver, true)
+    }
+
+    fn register_driver_internal(
+        &mut self,
+        driver: CommandDriver,
+        operator: bool,
+    ) -> KernelResult<()> {
         self.assert_not_terminated()?;
         let driver_name = driver.name().to_owned();
-        let populate_driver = driver.clone();
-        self.commands.register(driver)?;
+        let mut commands = self.commands.clone();
+        commands.register(driver.clone())?;
+        let populated = if operator {
+            commands.populate_driver_bin(self.filesystem.inner_mut(), &driver)
+        } else {
+            commands.populate_driver_bin(&mut self.filesystem, &driver)
+        };
+        // Failed population can still have created stubs. Quota observations
+        // must include those writes even when the registry is not published.
+        self.invalidate_filesystem_usage_cache();
+        populated?;
+        self.commands = commands;
         lock_or_recover(&self.driver_pids)
             .entry(driver_name)
             .or_default();
-        self.commands
-            .populate_driver_bin(&mut self.filesystem, &populate_driver)?;
         Ok(())
     }
 
@@ -2434,6 +2462,18 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         self.exists_internal(None, path)
     }
 
+    /// Inspect a trusted runtime path without interpreting guest denial as
+    /// absence. Used when tracking sidecar-created mountpoints.
+    pub fn exists_for_operator(&self, path: &str) -> KernelResult<bool> {
+        self.assert_not_terminated()?;
+        crate::vfs::validate_path(path).map_err(KernelError::from)?;
+        match self.filesystem.inner().lstat(path) {
+            Ok(_) => Ok(true),
+            Err(error) if error.code() == "ENOENT" => Ok(false),
+            Err(error) => Err(error.into()),
+        }
+    }
+
     pub fn exists_for_process(
         &mut self,
         requester_driver: &str,
@@ -2578,6 +2618,27 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
     pub fn read_dir(&mut self, path: &str) -> KernelResult<Vec<String>> {
         self.assert_not_terminated()?;
         let entries = self.read_dir_internal(None, path)?;
+        self.resources.check_readdir_entries(entries.len())?;
+        Ok(entries)
+    }
+
+    /// Inspect trusted runtime entries without applying guest permission policy.
+    pub fn stat_for_operator(&mut self, path: &str) -> KernelResult<VirtualStat> {
+        self.assert_not_terminated()?;
+        crate::vfs::validate_path(path).map_err(KernelError::from)?;
+        Ok(self.filesystem.inner_mut().stat(path)?)
+    }
+
+    /// Discover trusted runtime entries while keeping guest policy unchanged.
+    /// The ordinary directory-entry limit also applies to operator discovery.
+    pub fn read_dir_for_operator(&mut self, path: &str) -> KernelResult<Vec<String>> {
+        self.assert_not_terminated()?;
+        crate::vfs::validate_path(path).map_err(KernelError::from)?;
+        let max_entries = self.resources.max_readdir_entries().unwrap_or(usize::MAX);
+        let entries = self
+            .filesystem
+            .inner_mut()
+            .read_dir_limited(path, max_entries)?;
         self.resources.check_readdir_entries(entries.len())?;
         Ok(entries)
     }
@@ -2769,11 +2830,29 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
     }
 
     pub fn remove_dir(&mut self, path: &str) -> KernelResult<()> {
+        self.remove_dir_internal(path, false)
+    }
+
+    /// Remove an empty sidecar-created mountpoint without guest authorization
+    /// or guest-only protected-path guards. Backend read-only enforcement,
+    /// open-directory handles, and resource accounting remain unchanged.
+    pub fn remove_dir_for_operator(&mut self, path: &str) -> KernelResult<()> {
+        self.remove_dir_internal(path, true)
+    }
+
+    fn remove_dir_internal(&mut self, path: &str, operator: bool) -> KernelResult<()> {
         self.assert_not_terminated()?;
-        self.reject_read_only_entry_write_path(path)?;
+        crate::vfs::validate_path(path).map_err(KernelError::from)?;
+        if !operator {
+            self.reject_read_only_entry_write_path(path)?;
+        }
         let removed = self.storage_lstat(path)?;
         let detached = self.prepare_detached_directory_backing(path, removed.as_ref())?;
-        self.filesystem.remove_dir(path)?;
+        if operator {
+            self.filesystem.inner_mut().remove_dir(path)?;
+        } else {
+            self.filesystem.remove_dir(path)?;
+        }
         if let Some((descriptions, stat, xattrs)) = detached {
             for description in descriptions {
                 description.detach_directory(path, stat.clone(), xattrs.clone());
@@ -4527,6 +4606,37 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         image_command: Option<&str>,
         requested_permission_tier: Option<ProcessPermissionTier>,
     ) -> KernelResult<()> {
+        self.exec_process_retaining_internal_fds_from_thread(
+            requester_driver,
+            pid,
+            0,
+            command,
+            args,
+            env,
+            _cwd,
+            retained_internal_fds,
+            additional_cloexec_fds,
+            image_command,
+            requested_permission_tier,
+        )
+    }
+
+    /// Commit exec using the invoking thread's kernel-owned signal mask.
+    #[allow(clippy::too_many_arguments)]
+    pub fn exec_process_retaining_internal_fds_from_thread(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        thread_id: u32,
+        command: &str,
+        args: Vec<String>,
+        env: BTreeMap<String, String>,
+        _cwd: String,
+        retained_internal_fds: &[u32],
+        additional_cloexec_fds: &[u32],
+        image_command: Option<&str>,
+        requested_permission_tier: Option<ProcessPermissionTier>,
+    ) -> KernelResult<()> {
         self.assert_not_terminated()?;
         self.assert_driver_owns(requester_driver, pid)?;
         // execve has no cwd argument. Resolve the new image from the process's
@@ -4588,8 +4698,9 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
                     .filter(|fd| table.get(*fd).is_some()),
             );
 
-            self.processes.exec(
+            self.processes.exec_from_thread(
                 pid,
+                thread_id,
                 resolved.driver.name().to_owned(),
                 committed_argv0,
                 committed_args,
@@ -4647,6 +4758,28 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         )
     }
 
+    /// Creates a virtual root process requested by the trusted client/runtime.
+    /// Guest-originated binding commands must use [`Self::create_virtual_process`]
+    /// or [`Self::create_virtual_process_with_process_group`] instead.
+    pub fn create_trusted_root_virtual_process(
+        &mut self,
+        requester_driver: &str,
+        driver: &str,
+        command: &str,
+        args: Vec<String>,
+        options: VirtualProcessOptions,
+    ) -> KernelResult<KernelProcessHandle> {
+        self.create_virtual_process_with_process_group_and_permission_check(
+            requester_driver,
+            driver,
+            command,
+            args,
+            options,
+            None,
+            ChildProcessPermissionCheck::TrustedRootProcess,
+        )
+    }
+
     pub fn create_virtual_process_with_process_group(
         &mut self,
         requester_driver: &str,
@@ -4655,6 +4788,28 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         args: Vec<String>,
         options: VirtualProcessOptions,
         requested_pgid: Option<u32>,
+    ) -> KernelResult<KernelProcessHandle> {
+        self.create_virtual_process_with_process_group_and_permission_check(
+            requester_driver,
+            driver,
+            command,
+            args,
+            options,
+            requested_pgid,
+            ChildProcessPermissionCheck::Enforce,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn create_virtual_process_with_process_group_and_permission_check(
+        &mut self,
+        requester_driver: &str,
+        driver: &str,
+        command: &str,
+        args: Vec<String>,
+        options: VirtualProcessOptions,
+        requested_pgid: Option<u32>,
+        permission_check: ChildProcessPermissionCheck,
     ) -> KernelResult<KernelProcessHandle> {
         self.assert_not_terminated()?;
         if let Some(parent_pid) = options.parent_pid {
@@ -4680,14 +4835,16 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             .map(|context| context.env.clone())
             .unwrap_or_else(|| self.env.clone());
         env.extend(options.env.clone());
-        check_command_execution(
-            &self.vm_id,
-            &self.permissions,
-            command,
-            &args,
-            Some(&cwd),
-            &env,
-        )?;
+        if permission_check == ChildProcessPermissionCheck::Enforce {
+            check_command_execution(
+                &self.vm_id,
+                &self.permissions,
+                command,
+                &args,
+                Some(&cwd),
+                &env,
+            )?;
+        }
 
         let inherited_fds = {
             let tables = lock_or_recover(&self.fd_tables);
@@ -9106,6 +9263,10 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             return Ok(Some(normalized));
         }
 
+        // This internal guard resolves through the unpermissioned layer: the
+        // write operation's own permission check enforces policy, and writing
+        // must not require fs.read on the target (Linux opens write-only files
+        // without read permission).
         if follow_final_symlink {
             // This resolution protects the kernel-owned read-only agentOS
             // projection; it is not a guest read. Use trusted VFS metadata so
@@ -11416,13 +11577,14 @@ impl KernelVm<MountTable> {
     ) -> KernelResult<()> {
         self.assert_not_terminated()?;
         self.check_mount_permissions(path)?;
-        self.filesystem
+        let result = self
+            .filesystem
             .inner_mut()
             .inner_mut()
             .mount(path, filesystem, options)
-            .map_err(KernelError::from)?;
+            .map_err(KernelError::from);
         self.invalidate_filesystem_usage_cache();
-        Ok(())
+        result
     }
 
     pub fn mount_boxed_filesystem(
@@ -11433,22 +11595,89 @@ impl KernelVm<MountTable> {
     ) -> KernelResult<()> {
         self.assert_not_terminated()?;
         self.check_mount_permissions(path)?;
-        self.filesystem
+        let result = self
+            .filesystem
             .inner_mut()
             .inner_mut()
             .mount_boxed(path, filesystem, options)
-            .map_err(KernelError::from)?;
+            .map_err(KernelError::from);
         self.invalidate_filesystem_usage_cache();
-        Ok(())
+        result
+    }
+
+    /// Attach a mount during trusted runtime configuration, bypassing only
+    /// guest authorization while retaining mount-table and resource checks.
+    pub fn mount_boxed_filesystem_for_operator(
+        &mut self,
+        path: &str,
+        filesystem: Box<dyn MountedFileSystem>,
+        options: MountOptions,
+    ) -> KernelResult<()> {
+        self.assert_not_terminated()?;
+        crate::vfs::validate_path(path).map_err(KernelError::from)?;
+        let result = self
+            .filesystem
+            .inner_mut()
+            .inner_mut()
+            .mount_boxed(path, filesystem, options)
+            .map_err(KernelError::from);
+        self.invalidate_filesystem_usage_cache();
+        result
     }
 
     pub fn unmount_filesystem(&mut self, path: &str) -> KernelResult<()> {
         self.assert_not_terminated()?;
         self.check_mount_permissions(path)?;
-        self.filesystem
+        let result = self
+            .filesystem
             .inner_mut()
             .inner_mut()
             .unmount(path)
+            .map_err(KernelError::from);
+        self.invalidate_filesystem_usage_cache();
+        result
+    }
+
+    /// Detach a mount during trusted runtime configuration or teardown,
+    /// bypassing guest authorization but retaining mount-table checks.
+    pub fn unmount_filesystem_for_operator(&mut self, path: &str) -> KernelResult<()> {
+        self.assert_not_terminated()?;
+        crate::vfs::validate_path(path).map_err(KernelError::from)?;
+        let result = self
+            .filesystem
+            .inner_mut()
+            .inner_mut()
+            .unmount(path)
+            .map_err(KernelError::from);
+        self.invalidate_filesystem_usage_cache();
+        result
+    }
+
+    /// Temporarily detach an existing leaf without shutting down its backend.
+    /// Only trusted reconfiguration can hold and later restore this capability.
+    pub fn detach_filesystem_for_operator(&mut self, path: &str) -> KernelResult<DetachedMount> {
+        self.assert_not_terminated()?;
+        crate::vfs::validate_path(path).map_err(KernelError::from)?;
+        let mount = self
+            .filesystem
+            .inner_mut()
+            .inner_mut()
+            .detach(path)
+            .map_err(KernelError::from)?;
+        self.invalidate_filesystem_usage_cache();
+        Ok(mount)
+    }
+
+    /// Put a detached backend back without reopening it or changing its policy.
+    pub fn restore_detached_filesystem_for_operator(
+        &mut self,
+        mount: DetachedMount,
+    ) -> KernelResult<()> {
+        self.assert_not_terminated()?;
+        self.filesystem
+            .inner_mut()
+            .inner_mut()
+            .restore_detached(mount)
             .map_err(KernelError::from)?;
         self.invalidate_filesystem_usage_cache();
         Ok(())

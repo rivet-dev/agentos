@@ -3,12 +3,36 @@ set positional-arguments := true
 release *args:
 	pnpm --filter=publish release "$@"
 
+# Emergency release path: compile larger, slower debug sidecars.
+release-fast *args:
+	pnpm --filter=publish release --profile debug "$@"
+
 # Cut a release-preview (debug build, npm-only, branch dist-tag) — see the
 # release-preview skill for the end-to-end flow.
 release-preview REF:
-	gh workflow run .github/workflows/publish.yaml --ref "{{ REF }}"
+	gh workflow run publish.yaml --repo rivet-dev/agentos --ref "{{ REF }}"
 
-# --- @agentos-software/* software packages (independent, PER-PACKAGE versions) ---
+check-layout:
+	node scripts/check-layout.mjs
+
+check-types:
+	node scripts/verify-check-types.mjs
+	pnpm check-types
+
+lint:
+	pnpm exec biome check .
+
+fmt:
+	pnpm exec biome check --write --diagnostic-level=error .
+
+bench:
+	bash scripts/benchmarks/run-benchmarks.sh
+
+test-post-python-parity:
+	pnpm --dir packages/core build
+	pnpm --dir packages/core exec vitest run tests/agentos-base-filesystem.nightly.test.ts
+
+# --- private @agentos-software/* build workspaces ---
 toolchain-build:
 	make -C toolchain commands
 	make -C toolchain cmd/duckdb cmd/vim
@@ -47,6 +71,12 @@ software-build:
 	pnpm --filter @rivet-dev/agentos-toolchain build
 	pnpm --filter '@agentos-software/*' build
 
+# Build the catalog and stage exactly what a release would upload. This is the
+# local, credential-free dry run for object-store software publication.
+software-artifacts-dry-run output="target/software-artifacts":
+	just tools-rebuild
+	pnpm --filter=publish exec tsx src/ci/bin.ts stage-software --output "{{ output }}"
+
 # Rebuild and stage the complete default WASM tool set from source. All outputs
 # land in ignored build/bin/commands directories and must not be committed.
 tools-rebuild:
@@ -70,36 +100,10 @@ install-shell:
 	done
 	(cd packages/shell && PATH="$global_bin_dir:$PATH" pnpm link --global)
 
-install-gigacode:
-	#!/usr/bin/env bash
-	set -euo pipefail
-	repo_root='{{justfile_directory()}}'
-	pnpm --dir "$repo_root" install
-	make -C "$repo_root/toolchain" wasm
-	if [[ -n "${CODEX_REPO:-}" ]]; then
-		make -C "$repo_root/toolchain" codex-required CODEX_REPO="$CODEX_REPO"
-	else
-		make -C "$repo_root/toolchain" codex-required
-	fi
-	if [[ -n "${AGENTOS_SIDECAR_BIN:-}" ]]; then
-		export AGENTOS_SKIP_NATIVE_META_BUILD=1
-	fi
-	pnpm --dir "$repo_root" --filter '@rivet-dev/agentos-experiment-gigacode...' build
-	pnpm --dir "$repo_root/experiments/gigacode" check-types
-	pnpm --dir "$repo_root/experiments/gigacode" install-global
-	"$HOME/.local/bin/gigacode" --version
-
 shell *args:
 	#!/usr/bin/env bash
 	set -euo pipefail
-	actor_mode=false
-	for arg in "$@"; do
-		if [[ "$arg" == "--actor" ]]; then
-			actor_mode=true
-		fi
-	done
 	if [[ ! -x packages/shell/node_modules/.bin/tsx \
-		|| ! -e packages/shell/node_modules/@agentos-software/codex-cli \
 		|| ! -d packages/build-tools/node_modules ]]; then
 		pnpm install --force
 	fi
@@ -128,184 +132,15 @@ shell *args:
 		pnpm --filter @agentos-software/common build
 	fi
 	if [[ ! -e packages/core/dist/index.js \
-		|| ! -e packages/core/dist/index.js \
 		|| ! -e packages/agentos/dist/index.js ]]; then
 		pnpm --filter @rivet-dev/agentos-core build
-		pnpm --filter @rivet-dev/agentos-core build
 		pnpm --filter @rivet-dev/agentos build
-	fi
-	if [[ "$actor_mode" == true ]]; then
-		r6_root="${AGENTOS_R6_ROOT:-$PWD/../r6}"
-		rivetkit_loader="$r6_root/rivetkit-typescript/packages/rivetkit/node_modules/tsx/dist/loader.mjs"
-		if [[ ! -e "$r6_root/pnpm-lock.yaml" ]]; then
-			echo "just shell --actor requires the Rivet repo at $r6_root (override with AGENTOS_R6_ROOT)" >&2
-			exit 1
-		fi
-		if [[ ! -e "$rivetkit_loader" ]]; then
-			pnpm --dir "$r6_root" install --frozen-lockfile --filter 'rivetkit...'
-		fi
-		if [[ ! -e "$r6_root/shared/typescript/virtual-websocket/dist/mod.js" \
-			|| ! -e "$r6_root/rivetkit-typescript/packages/traces/dist/tsup/index.js" \
-			|| ! -e "$r6_root/rivetkit-typescript/packages/workflow-engine/dist/tsup/index.js" \
-			|| ! -e "$r6_root/engine/sdks/typescript/envoy-protocol/dist/index.js" \
-			|| ! -e "$r6_root/rivetkit-typescript/packages/rivetkit-wasm/pkg/rivetkit_wasm.js" ]]; then
-			pnpm --dir "$r6_root" --filter 'rivetkit...' build
-		fi
 	fi
 	CARGO_TARGET_DIR="$PWD/target" cargo build -p agentos-sidecar
 	env \
 		AGENTOS_SIDECAR_BIN="$PWD/target/debug/agentos-sidecar" \
 		NODE_OPTIONS="--no-deprecation ${NODE_OPTIONS:-}" \
 		pnpm --filter @rivet-dev/agentos-shell exec tsx src/main.ts "$@"
-
-# --- agentos-sdk.dev docs site (landing + /docs) ---
-# The site (packages under website/) depends on the private @rivet-dev/docs-theme
-# and @rivet-gg/icons, which are NOT committed here. `dev-website-setup` vendors
-# the theme from a sibling workspace, builds it, and links the site into the
-# pnpm workspace. Then `dev-website` (or `dev-website-start`) serves it with hot
-# reload. Building the icon set needs a Font Awesome Pro token exported as
-# FONTAWESOME_PACKAGE_TOKEN (e.g. `source ~/misc/env.txt` first).
-
-# Vendor + build the docs theme and link the site into the workspace (idempotent).
-dev-website-setup:
-	#!/usr/bin/env bash
-	set -euo pipefail
-	theme="website/vendor/theme"
-	icons="$theme/vendor/icons"
-	built=0
-
-	# A symlink keeps Node's real module path in the source checkout, where the
-	# workspace-installed build dependencies are not visible. Materialize it.
-	if [ -L "$theme" ]; then
-		src="$(readlink -f "$theme")"
-		[ -f "$src/package.json" ] || { echo "error: docs-theme symlink target is invalid: $src" >&2; exit 1; }
-		tmp="$(mktemp -d website/vendor/theme.XXXXXX)"
-		cp -RL "$src/." "$tmp/"
-		unlink "$theme"
-		mv "$tmp" "$theme"
-		echo "materialized docs-theme from $src"
-	fi
-
-	# 1. Vendor the private docs theme from a sibling workspace if absent.
-	if [ ! -f "$theme/package.json" ]; then
-		src=""
-		for d in ../*/website/vendor/theme; do
-			[ -f "$d/package.json" ] || continue
-			v="$(node -p "require('$d/package.json').version" 2>/dev/null)" || continue
-			case "$v" in *stub*) continue;; esac
-			src="$d"; break
-		done
-		[ -n "$src" ] || { echo "error: no sibling docs-theme found under ../*/website/vendor/theme" >&2; exit 1; }
-		echo "vendoring docs-theme from $src"
-		mkdir -p website/vendor
-		cp -R "$src" "$theme"
-	fi
-
-	# 2. Include the site + theme in the pnpm workspace (local-only; do not commit).
-	if grep -qE '^[[:space:]]*# - website(/|$)' pnpm-workspace.yaml; then
-		sed -i '/^[[:space:]]*# - website\(\/\|$\)/ s/# - /- /' pnpm-workspace.yaml
-		echo "enabled website workspace globs in pnpm-workspace.yaml (local-only)"
-	fi
-
-	# 3. Install so workspace links + build deps (esbuild) exist.
-	pnpm install --lockfile=false
-
-	# 4. Build the theme's config-time modules (dist/) if missing.
-	if [ ! -f "$theme/dist/mdx/remark.js" ]; then
-		pnpm --filter @rivet-dev/docs-theme build
-		built=1
-	fi
-
-	# 5. Build the icon set (dist/). Requires a Font Awesome Pro token.
-	if [ ! -f "$icons/dist/index.js" ]; then
-		if [ -z "${FONTAWESOME_PACKAGE_TOKEN:-}" ]; then
-			echo "error: FONTAWESOME_PACKAGE_TOKEN is required to build @rivet-gg/icons." >&2
-			echo "       export it (e.g. 'source ~/misc/env.txt') and re-run." >&2
-			exit 1
-		fi
-		pnpm --filter @rivet-gg/icons generate
-		built=1
-	fi
-
-	# 6. Re-sync the pnpm store with freshly built dist/ (file: deps are copied in).
-	if [ "$built" = 1 ]; then
-		pnpm install --lockfile=false
-	fi
-
-	# A workspace-wide install can leave website/node_modules partially linked
-	# after generated theme packages are rebuilt. Refresh the site package last
-	# so Astro renderers and the newly generated icon files resolve immediately.
-	pnpm --dir website install --lockfile=false
-
-	echo "dev-website-setup: ready"
-
-# Start the docs site dev server with hot reload (run dev-website-setup first).
-dev-website-start:
-	pnpm --filter @rivet-dev/agentos-website dev
-
-# Set up (if needed) and start the docs site dev server.
-dev-website: dev-website-setup dev-website-start
-
-# Set up (if needed) and build the agentos-sdk.dev site to website/dist.
-dev-website-build: dev-website-setup
-	pnpm --filter @rivet-dev/agentos-website build
-
-# Run the agentos-sdk.dev site (landing + /docs) locally with hot reload
-docs:
-	pnpm --filter @rivet-dev/agentos-website dev
-
-# Build the agentos-sdk.dev site to website/dist
-docs-build:
-	pnpm --filter @rivet-dev/agentos-website build
-
-# Build and crawl the generated site for broken routes, anchors, and assets.
-# Pass `true` to also check external URLs. Crawling the rendered output checks
-# Astro's actual routing behavior instead of guessing routes from MDX paths.
-docs-check-links external='false': docs-build
-	#!/usr/bin/env bash
-	set -euo pipefail
-	command -v docker >/dev/null || {
-		echo "error: docker is required to run the docs link checker" >&2
-		exit 1
-	}
-	repo_root='{{justfile_directory()}}'
-	external='{{ external }}'
-	case "$external" in
-		false) network_args=(--offline) ;;
-		true) network_args=() ;;
-		*)
-			echo "error: external must be 'true' or 'false'" >&2
-			exit 1
-			;;
-	esac
-	docker_env=()
-	if [[ "$external" == true && -n "${GITHUB_TOKEN:-}" ]]; then
-		docker_env=(-e GITHUB_TOKEN)
-	elif [[ "$external" == true && -n "${GH_TOKEN:-}" ]]; then
-		export GITHUB_TOKEN="$GH_TOKEN"
-		docker_env=(-e GITHUB_TOKEN)
-	elif [[ "$external" == true ]] \
-		&& command -v gh >/dev/null \
-		&& GITHUB_TOKEN="$(gh auth token 2>/dev/null)"; then
-		export GITHUB_TOKEN
-		docker_env=(-e GITHUB_TOKEN)
-	fi
-	docker run --rm \
-		"${docker_env[@]}" \
-		-v "$repo_root/website/dist:/site:ro" \
-		lycheeverse/lychee:0.24.2 \
-		--root-dir /site \
-		--index-files index.html \
-		--include-fragments=anchor-only \
-		--exclude-all-private \
-		--max-concurrency 32 \
-		--host-concurrency 2 \
-		--host-request-interval 200ms \
-		--max-retries 1 \
-		--timeout 20 \
-		--no-progress \
-		"${network_args[@]}" \
-		/site
 
 test-bounded cmd='pnpm test':
 	#!/usr/bin/env bash
@@ -355,3 +190,47 @@ test-bounded cmd='pnpm test':
 
 test-risky-probe *tests:
 	./.agent/scripts/run-risky-test-probe.sh "$@"
+
+# --- Dev container (docker/dev) ---
+#
+# agentOS runs Linux-only, so on macOS the engine, sidecar, and VMs live in a
+# container while the working tree stays on the host. The repo is bind-mounted
+# at /build; node_modules, cargo target, and the toolchain build trees are
+# container-owned volumes, so host edits are visible instantly without dragging
+# darwin-native binaries into Linux.
+#
+# First run: `just dev-up && just dev-bootstrap` (the bootstrap is slow — it
+# builds the WASM command set and the sidecar from source). After that,
+# `just dev-terminal-example` and edit TypeScript with hot reload.
+
+dev-compose := "docker compose -f docker/dev/compose.yaml"
+
+# Build the image and start the container.
+dev-up:
+	{{dev-compose}} up -d --build
+
+dev-down:
+	{{dev-compose}} down
+
+# Drop into a shell inside the dev container.
+dev-shell:
+	{{dev-compose}} exec dev bash
+
+# Run any command inside the dev container: `just dev-exec 'cargo check --workspace'`
+dev-exec cmd:
+	{{dev-compose}} exec dev bash -lc "{{cmd}}"
+
+# One-time (slow) build of everything the engine needs from source.
+dev-bootstrap:
+	{{dev-compose}} exec dev bash -lc '\
+		set -euo pipefail; \
+		echo "==> pnpm install"; \
+		pnpm install --frozen-lockfile; \
+		echo "==> WASM tools and software (long)"; \
+		just tools-rebuild; \
+		echo "==> agentos-sidecar (debug)"; \
+		cargo build -p agentos-sidecar; \
+		echo "==> workspace TypeScript"; \
+		pnpm --filter @rivet-dev/agentos-core build; \
+		pnpm --filter @rivet-dev/agentos build; \
+		echo "==> done"'

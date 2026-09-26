@@ -445,7 +445,7 @@ mod kernel_authority {
                     packages: Vec::new(),
                     packages_mount_at: String::new(),
                     bootstrap_commands: Vec::new(),
-                    binding_shim_commands: Vec::new(),
+                    host_function_shim_commands: Vec::new(),
                 }),
             ))
             .expect("configure command mount");
@@ -1104,5 +1104,179 @@ try {
 
         dispose_vm_and_close_session(&mut sidecar, &connection_id, &session_id, &vm_id);
         fs::remove_dir_all(host_dir).expect("remove temp dir");
+    }
+    fn host_write_text(
+        sidecar: &mut agentos_vm::VmManager<RecordingBridge>,
+        connection_id: &str,
+        session_id: &str,
+        vm_id: &str,
+        request_id: i64,
+        path: &str,
+        content: &str,
+    ) {
+        let mut write = base_guest_filesystem_request(GuestFilesystemOperation::WriteFile, path);
+        write.content = Some(String::from(content));
+        write.encoding = Some(RootFilesystemEntryEncoding::Utf8);
+        guest_filesystem_call(sidecar, connection_id, session_id, vm_id, request_id, write);
+    }
+
+    /// Regression for #1961: a guest process that overwrites, appends to, or
+    /// truncates a file the host seeded with `writeFile` must not have its
+    /// edit replaced by the host-seeded bytes when the host (or a later
+    /// process) reads the file back.
+    #[test]
+    fn guest_edits_to_host_written_files_survive_shadow_reconciliation() {
+        if registry_command_root().is_none() {
+            return;
+        }
+
+        let mut sidecar = create_test_sidecar();
+        let (connection_id, session_id) = authenticate_and_open_session(&mut sidecar);
+        let vm_id = create_vm_with_mounts(&mut sidecar, &connection_id, &session_id, Vec::new());
+
+        let cases = [
+            (
+                "overwrite",
+                r#"require("node:fs").writeFileSync("/workspace/overwrite.txt", "EDITED\n");"#,
+                "EDITED\n",
+            ),
+            (
+                "append",
+                r#"require("node:fs").appendFileSync("/workspace/append.txt", "APPENDED\n");"#,
+                "original\nAPPENDED\n",
+            ),
+            (
+                "truncate",
+                r#"require("node:fs").truncateSync("/workspace/truncate.txt", 4);"#,
+                "orig",
+            ),
+        ];
+
+        let mut request_id = 20;
+        for (name, script, expected) in cases {
+            let target = format!("/workspace/{name}.txt");
+            let entrypoint = format!("/workspace/edit-{name}.js");
+            host_write_text(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                &vm_id,
+                request_id,
+                &target,
+                "original\n",
+            );
+            host_write_text(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                &vm_id,
+                request_id + 1,
+                &entrypoint,
+                script,
+            );
+
+            let (stdout, stderr, exit_code) = execute_javascript_entrypoint(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                &vm_id,
+                request_id + 2,
+                &format!("proc-edit-{name}"),
+                &entrypoint,
+            );
+            assert_eq!(
+                exit_code,
+                Some(0),
+                "{name}: stdout: {stdout}\nstderr: {stderr}"
+            );
+
+            assert_eq!(
+                guest_read_text(
+                    &mut sidecar,
+                    &connection_id,
+                    &session_id,
+                    &vm_id,
+                    request_id + 3,
+                    &target,
+                ),
+                expected,
+                "{name}: host readFile lost the guest edit to a host-written file"
+            );
+
+            let (cat_stdout, cat_stderr, cat_exit_code) = execute_command(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                &vm_id,
+                request_id + 4,
+                &format!("proc-cat-{name}"),
+                "/bin/cat",
+                vec![target.clone()],
+            );
+            assert_eq!(cat_exit_code, Some(0), "{name}: stderr: {cat_stderr}");
+            assert_eq!(
+                cat_stdout, expected,
+                "{name}: a later process saw stale host-written bytes"
+            );
+
+            assert_eq!(
+                guest_read_text(
+                    &mut sidecar,
+                    &connection_id,
+                    &session_id,
+                    &vm_id,
+                    request_id + 5,
+                    &target,
+                ),
+                expected,
+                "{name}: host readFile after a later process lost the guest edit"
+            );
+            request_id += 10;
+        }
+
+        // The issue's exact shape: `node -e` through the command path.
+        host_write_text(
+            &mut sidecar,
+            &connection_id,
+            &session_id,
+            &vm_id,
+            request_id,
+            "/workspace/node-e.txt",
+            "original\n",
+        );
+        let (stdout, stderr, exit_code) = execute_command(
+            &mut sidecar,
+            &connection_id,
+            &session_id,
+            &vm_id,
+            request_id + 1,
+            "proc-edit-node-e",
+            "node",
+            vec![
+                String::from("-e"),
+                String::from(
+                    r#"require("node:fs").writeFileSync("/workspace/node-e.txt", "EDITED\n")"#,
+                ),
+            ],
+        );
+        assert_eq!(
+            exit_code,
+            Some(0),
+            "node -e: stdout: {stdout}\nstderr: {stderr}"
+        );
+        assert_eq!(
+            guest_read_text(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                &vm_id,
+                request_id + 2,
+                "/workspace/node-e.txt",
+            ),
+            "EDITED\n",
+            "node -e: host readFile lost the guest edit to a host-written file"
+        );
+
+        dispose_vm_and_close_session(&mut sidecar, &connection_id, &session_id, &vm_id);
     }
 }

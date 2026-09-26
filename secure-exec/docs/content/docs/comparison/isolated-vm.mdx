@@ -1,0 +1,85 @@
+---
+title: "Secure Exec vs isolated-vm"
+description: "How Secure Exec and isolated-vm differ in isolation boundary, security history, maintenance status, and developer experience."
+---
+
+Both run untrusted JavaScript in V8 isolates.
+[isolated-vm](https://github.com/laverdet/isolated-vm) is a low-level library
+that hands you a bare isolate inside your Node.js process, with manual value
+marshaling and no system surface. Secure Exec runs isolates in a separate
+process behind a virtualized kernel with a filesystem, processes, sockets,
+permissions, and resource limits.
+
+## At a glance
+
+| | Secure Exec | isolated-vm |
+|---|---|---|
+| **Layer** | Full virtualized runtime around V8 isolates | Bare V8 isolate primitive |
+| **Where guest code runs** | A separate sidecar process | Inside your Node.js process |
+| **System surface** | Virtual filesystem, processes, sockets, DNS, timers | None. Not even `setTimeout` |
+| **Host and guest data** | JSON `inputs` in, JSON values out, [host functions](/secure-exec/docs/host-functions) | Manual `Reference`, `Copy`, and `ExternalCopy` |
+| **Permissions** | Deny-by-default policy per VM | None. Whatever you expose is reachable |
+| **Resource limits** | Timeouts, heap, processes, sockets, filesystem bytes | A soft memory limit and an optional timeout |
+| **npm and TypeScript** | Real npm packages, and TypeScript with type-checking | No module support |
+| **Status** | Active | Maintenance mode |
+
+## Where isolated-vm falls short
+
+- **It is in maintenance mode.** The README says: "`isolated-vm` is currently in
+  *maintenance mode*. It will continue to be supported for as long as is
+  technically feasible." It is still patched, but the architecture is not
+  changing.
+- **It had a critical sandbox escape in 2026.**
+  [GHSA-864f-rcv7-6rh4](https://github.com/laverdet/isolated-vm/security/advisories/GHSA-864f-rcv7-6rh4)
+  affected every version up to 7.0.0: "a guest that holds a single
+  `ivm.Reference` can obtain the `ExternalCopy` constructor and trigger the bug,
+  so this breaks isolated-vm's core guest/host boundary."
+- **It is not a sandbox by itself.** The README's security section opens with:
+  "Use of `isolated-vm` to run untrusted code does not automatically make your
+  application safe."
+- **One leaked handle is an escape.** "It is usually trivial for an attacker to
+  use these instances as a springboard back into the nodejs isolate which will
+  yield complete control over a process."
+- **It runs in your process, and can take it down.** The README advises keeping
+  it "in a different nodejs process than other critical infrastructure". The
+  maintainer has written that "with the current architecture there can be process
+  crashes on certain user code", and that hardening it would need a rebuild "on a
+  multi-process abstraction".
+- **The limits are soft.** The memory limit is "more of a guideline instead of a
+  strict limit. A determined attacker could use 2-3 times this limit." There is
+  no timeout unless you set one, and "there are certain classes of scripts which
+  v8 simply cannot preempt."
+- **It constrains how you run Node.js.** Node.js 20 and later need the
+  `--no-node-snapshot` flag. Each major version of the library supports specific
+  Node.js majors, it is a native addon that needs a compiler where no prebuild
+  exists, and it is "a nodejs-only project for the foreseeable future".
+- **Everything else is yours to build.** There is no filesystem, network, module
+  loading, or timers. Every capability is a bridge function you write, and the
+  README's advice on that is blunt: "You should be a security-focused hacker,
+  otherwise you will almost certainly make a company-ending mistake."
+
+## What isolated-vm does well
+
+It is the thinnest possible layer over V8, so calls into an isolate are
+synchronous and cost almost nothing, with the same JIT speed as Secure Exec. It
+reports detailed heap and CPU statistics per isolate, supports the inspector,
+and has years of production use behind it.
+
+## Only choose isolated-vm when
+
+All of these hold:
+
+1. The guest code is small, pure-computation JavaScript that needs no
+   filesystem, network, npm, timers, or TypeScript.
+2. You have engineers with V8 security expertise who will write and audit every
+   `Reference` and `Callback` you expose.
+3. You already run it in a disposable child process, with `--no-node-snapshot`,
+   on a Node.js line you control, and you apply V8 point releases promptly.
+4. Sub-millisecond synchronous calls into the isolate matter more to you than
+   process-level isolation.
+
+## Choose Secure Exec when
+
+You want to run untrusted or generated code with a filesystem, networking,
+permissions, and limits, behind a process boundary, without hand-building and
+auditing the sandbox yourself.

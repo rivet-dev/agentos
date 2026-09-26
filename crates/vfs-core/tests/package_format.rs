@@ -1,13 +1,12 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use agentos_vfs_core::package_format::{
     encode_aospkg_header,
-    generated::v1,
+    generated::v2,
     parse_aospkg_header,
     versioned::{
         decode_mount_index, decode_package_manifest, encode_mount_index, encode_package_manifest,
@@ -17,23 +16,21 @@ use agentos_vfs_core::posix::{TarFileSystem, VirtualFileSystem};
 
 #[test]
 fn package_format_round_trips_manifest_all_none_and_mount_index() {
-    let manifest = v1::PackageManifest {
+    let manifest = v2::PackageManifest {
         name: String::from("empty"),
         version: String::from("1.0.0"),
-        agent: None,
         provides: None,
         commands: Vec::new(),
         man_pages: Vec::new(),
-        snapshot_bundle_path: None,
     };
     let decoded = decode_package_manifest(&encode_package_manifest(manifest.clone()).unwrap())
         .expect("decode manifest");
     assert_eq!(decoded, manifest);
 
-    let index = v1::MountIndex {
-        tar_entries: vec![v1::TarEntry {
+    let index = v2::MountIndex {
+        tar_entries: vec![v2::TarEntry {
             path: String::from("/"),
-            kind: v1::TarEntryKind::Directory,
+            kind: v2::TarEntryKind::Directory,
             offset: 0,
             size: 0,
             mode: 0o040755,
@@ -48,30 +45,8 @@ fn package_format_round_trips_manifest_all_none_and_mount_index() {
 }
 
 #[test]
-fn package_format_round_trips_agent_metadata() {
-    let manifest = v1::PackageManifest {
-        name: "wasm-agent".into(),
-        version: "1.0.0".into(),
-        agent: Some(v1::AgentBlock {
-            acp_entrypoint: "pi-acp".into(),
-            snapshot: false,
-            env: HashMap::new(),
-            launch_args: Vec::new(),
-        }),
-        provides: None,
-        commands: Vec::new(),
-        man_pages: Vec::new(),
-        snapshot_bundle_path: None,
-    };
-    let encoded = encode_package_manifest(manifest).expect("encode v1 manifest");
-    assert_eq!(u16::from_le_bytes([encoded[0], encoded[1]]), 1);
-    let decoded = decode_package_manifest(&encoded).expect("decode v1 manifest");
-    assert_eq!(decoded.agent.expect("agent block").acp_entrypoint, "pi-acp");
-}
-
-#[test]
 fn package_format_rejects_unknown_schema_version_and_corrupt_headers() {
-    let mut bad_version = 2u16.to_le_bytes().to_vec();
+    let mut bad_version = 3u16.to_le_bytes().to_vec();
     bad_version.extend_from_slice(&[]);
     let err = decode_package_manifest(&bad_version).unwrap_err();
     assert!(err.to_string().contains("decode package manifest"));
@@ -85,12 +60,12 @@ fn package_format_rejects_unknown_schema_version_and_corrupt_headers() {
 
     let mut bad_format = [0u8; 16];
     bad_format[0..4].copy_from_slice(&[0x89, b'A', b'O', b'S']);
-    bad_format[4..6].copy_from_slice(&2u16.to_le_bytes());
+    bad_format[4..6].copy_from_slice(&1u16.to_le_bytes());
     assert!(parse_aospkg_header(&bad_format).is_err());
 
     let mut oversized = [0u8; 16];
     oversized[0..4].copy_from_slice(&[0x89, b'A', b'O', b'S']);
-    oversized[4..6].copy_from_slice(&1u16.to_le_bytes());
+    oversized[4..6].copy_from_slice(&2u16.to_le_bytes());
     oversized[8..12].copy_from_slice(&u32::MAX.to_le_bytes());
     assert!(parse_aospkg_header(&oversized).is_err());
 }
@@ -98,17 +73,15 @@ fn package_format_rejects_unknown_schema_version_and_corrupt_headers() {
 #[test]
 fn tar_filesystem_rejects_unsorted_index() {
     let path = unique_path("agentos-unsorted-aospkg");
-    let manifest = encode_package_manifest(v1::PackageManifest {
+    let manifest = encode_package_manifest(v2::PackageManifest {
         name: String::from("unsorted"),
         version: String::from("1.0.0"),
-        agent: None,
         provides: None,
         commands: Vec::new(),
         man_pages: Vec::new(),
-        snapshot_bundle_path: None,
     })
     .unwrap();
-    let index = encode_mount_index(v1::MountIndex {
+    let index = encode_mount_index(v2::MountIndex {
         tar_entries: vec![entry("/z"), entry("/a")],
     })
     .unwrap();
@@ -126,10 +99,10 @@ fn tar_filesystem_rejects_unsorted_index() {
     assert!(err.to_string().contains("not sorted"), "{err}");
 }
 
-fn entry(path: &str) -> v1::TarEntry {
-    v1::TarEntry {
+fn entry(path: &str) -> v2::TarEntry {
+    v2::TarEntry {
         path: path.to_owned(),
-        kind: v1::TarEntryKind::Directory,
+        kind: v2::TarEntryKind::Directory,
         offset: 0,
         size: 0,
         mode: 0o040755,
@@ -207,7 +180,7 @@ fn pack_strips_agentos_package_json_and_uses_it_as_manifest_input() {
 /// Cross-language validation hook: point `AOSPKG_CROSS_CHECK` at a `.aospkg`
 /// produced by the TS toolchain packer (`packages/agentos-toolchain/src/aospkg.ts`)
 /// and this test decodes it with the Rust reader — both packers encode
-/// `crates/vfs-core/package-format/v1.bare`, and this catches codec drift.
+/// `crates/vfs-core/package-format/v2.bare`, and this catches codec drift.
 #[test]
 fn cross_validates_toolchain_built_aospkg() {
     let Ok(path) = std::env::var("AOSPKG_CROSS_CHECK") else {
