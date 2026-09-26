@@ -182,6 +182,12 @@
 					"icon": "faWindowMaximize"
 				},
 				{
+					"title": "Skyvern",
+					"href": "/agentos/docs/skyvern",
+					"badge": "Beta",
+					"icon": "faArrowPointer"
+				},
+				{
 					"title": "External Sandboxes",
 					"href": "/agentos/docs/sandboxes",
 					"badge": "Beta",
