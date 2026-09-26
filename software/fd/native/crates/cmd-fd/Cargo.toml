@@ -11,4 +11,4 @@ publish = false
 # fd-find is a bin-only crate. `toolchain/Makefile` builds its upstream `fd`
 # binary directly; this local package exists only so `cmd/fd` is discoverable
 # and the upstream package is present in Cargo's resolved/vendor set.
-fd-find = { version = "10.4.2", default-features = false }
+fd-find = { version = "=10.4.2", default-features = false }

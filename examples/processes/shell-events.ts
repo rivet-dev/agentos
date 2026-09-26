@@ -1,14 +1,13 @@
-import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
+import { vm } from "./client.js";
 
-const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
-const conn = client.vm.getOrCreate("my-agent").connect();
-const { shellId } = await conn.terminal.open();
+const conn = vm.connect();
+await conn.ready;
+const terminal = await conn.terminal.open({ options: { args: [], env: {} } });
 
-conn.on("shellData", (data) => {
-	if (data.shellId !== shellId) return;
-  // data.shellId: string
-  // data.data: Uint8Array
-  const text = new TextDecoder().decode(data.data);
-  process.stdout.write(text);
+conn.on("terminal.output", (data) => {
+	if (data.terminal.shellId !== terminal.shellId) return;
+	// data.terminal: { generation, shellId }
+	// data.data: Uint8Array
+	const text = new TextDecoder().decode(data.data);
+	process.stdout.write(text);
 });

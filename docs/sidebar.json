@@ -19,71 +19,14 @@
 					"icon": "faForwardFast"
 				},
 				{
+					"title": "Hosted Actor API",
+					"href": "/agentos/docs/actor-api",
+					"icon": "faCode"
+				},
+				{
 					"title": "agentOS vs Sandbox",
 					"href": "/agentos/docs/versus-sandbox",
 					"icon": "faScaleBalanced"
-				}
-			]
-		},
-		{
-			"title": "Agent",
-			"pages": [
-				{
-					"title": "Agents",
-					"collapsible": true,
-					"icon": "faRobot",
-					"pages": [
-						{
-							"title": "Pi",
-							"href": "/agentos/docs/agents/pi",
-							"icon": {
-								"src": "/images/registry/pi.svg"
-							}
-						},
-						{
-							"title": "ClaudeCode",
-							"href": "/agentos/docs/agents/claude",
-							"badge": "Beta",
-							"icon": {
-								"src": "/images/registry/claude-code.svg"
-							}
-						},
-						{
-							"title": "Codex",
-							"href": "/agentos/docs/agents/codex",
-							"badge": "Beta",
-							"icon": {
-								"src": "/images/registry/codex.svg"
-							}
-						},
-						{
-							"title": "OpenCode",
-							"href": "/agentos/docs/agents/opencode",
-							"icon": {
-								"src": "/images/registry/opencode.svg"
-							}
-						},
-						{
-							"title": "Custom Agents",
-							"href": "/agentos/docs/agents/custom",
-							"icon": "faWrench"
-						}
-					]
-				},
-				{
-					"title": "Sessions & Transcripts",
-					"href": "/agentos/docs/sessions",
-					"icon": "faMessages"
-				},
-				{
-					"title": "Approvals",
-					"href": "/agentos/docs/approvals",
-					"icon": "faCheck"
-				},
-				{
-					"title": "Models & Credentials",
-					"href": "/agentos/docs/models-and-credentials",
-					"icon": "faKey"
 				}
 			]
 		},
@@ -108,27 +51,12 @@
 			]
 		},
 		{
-			"title": "Orchestration",
+			"title": "Scheduling",
 			"pages": [
-				{
-					"title": "Multiplayer",
-					"href": "/agentos/docs/multiplayer",
-					"icon": "faTowerBroadcast"
-				},
-				{
-					"title": "Workflows & Graphs",
-					"href": "/agentos/docs/workflows",
-					"icon": "faDiagramNext"
-				},
 				{
 					"title": "Crons & Loops",
 					"href": "/agentos/docs/cron",
 					"icon": "faClock"
-				},
-				{
-					"title": "Agent-to-Agent",
-					"href": "/agentos/docs/agent-to-agent",
-					"icon": "faArrowsLeftRight"
 				}
 			]
 		},
@@ -164,6 +92,11 @@
 					"title": "Resource Limits",
 					"href": "/agentos/docs/resource-limits",
 					"icon": "faGauge"
+				},
+				{
+					"title": "Hosted Actor Limits",
+					"href": "/agentos/docs/actor-limits",
+					"icon": "faGauge"
 				}
 			]
 		},
@@ -193,10 +126,6 @@
 			"title": "Reference",
 			"pages": [
 				{
-					"title": "Authentication",
-					"href": "/agentos/docs/authentication"
-				},
-				{
 					"title": "Custom Software",
 					"collapsible": true,
 					"pages": [
@@ -207,6 +136,10 @@
 						{
 							"title": "Building Binaries",
 							"href": "/agentos/docs/custom-software/building-wasm"
+						},
+						{
+							"title": "Publishing",
+							"href": "/agentos/docs/custom-software/publishing"
 						},
 						{
 							"title": "Request Software",
@@ -241,18 +174,6 @@
 							"collapsible": true,
 							"pages": [
 								{
-									"title": "Agent Sessions",
-									"href": "/agentos/docs/architecture/agent-sessions"
-								},
-								{
-									"title": "Agent SDK Snapshots",
-									"href": "/agentos/docs/architecture/agent-sdk-snapshots"
-								},
-								{
-									"title": "Sessions & Persistence",
-									"href": "/agentos/docs/architecture/sessions-persistence"
-								},
-								{
 									"title": "Processes",
 									"href": "/agentos/docs/architecture/processes"
 								},
@@ -277,8 +198,16 @@
 									"href": "/agentos/docs/architecture/posix-syscalls"
 								},
 								{
+									"title": "Package Architecture",
+									"href": "/agentos/docs/architecture/package-structure"
+								},
+								{
 									"title": "Packages & Command Resolution",
 									"href": "/agentos/docs/architecture/packages-and-command-resolution"
+								},
+								{
+									"title": "Software Installation & Preloading",
+									"href": "/agentos/docs/architecture/software-cache"
 								},
 								{
 									"title": "Compiler Toolchain",
@@ -287,10 +216,6 @@
 								{
 									"title": "Limits & Observability",
 									"href": "/agentos/docs/architecture/limits-and-observability"
-								},
-								{
-									"title": "System Prompt",
-									"href": "/agentos/docs/system-prompt"
 								},
 								{
 									"title": "Persistence & Sleep",
@@ -307,10 +232,6 @@
 						{
 							"title": "Embedded VMs",
 							"href": "/agentos/docs/embedded"
-						},
-						{
-							"title": "Debugging",
-							"href": "/agentos/docs/debugging"
 						},
 						{
 							"title": "Performance",

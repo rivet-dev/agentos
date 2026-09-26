@@ -3,7 +3,7 @@
 //! Implements `spec.md` §5 / ADR-001 §5. The TypeScript `on*(id, handler) -> unsubscribe` pattern
 //! becomes streams + a uniform RAII [`Subscription`] guard:
 //!
-//! - process stdout/stderr, shell data, session events, permission requests, cron events ->
+//! - process stdout/stderr, shell data, and cron events ->
 //!   [`tokio::sync::broadcast`] (multi-subscriber; no replay).
 //! - process exit -> [`tokio::sync::watch`] seeded `None` (already-exited branch fires immediately
 //!   because the watch already holds `Some(code)`).

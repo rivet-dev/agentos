@@ -1,17 +1,19 @@
-// Kernel process table for the System tab: one dense table sized to content,
-// with detail on demand — clicking a row expands it inline (fields, stop/kill,
-// live output tail) instead of a permanently open side pane.
+// Kernel process table with bounded output replay and control actions.
 import { useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { ActionErrorNote, ChevronRight, relativeTime, StatusDot } from "../common";
 import { cn } from "../lib/cn";
+import { processRowIdentity } from "../lib/process-identity";
+import { drainProcessReplay, ProcessOutputDecoder } from "../lib/process-output";
 import { useArmedConfirm } from "../lib/hooks";
 import { useAgentOsActor } from "../lib/rivet";
-import { agentOsSource, decodeActionBytes } from "../lib/source";
-import type { KernelProcessInfo, ProcessExitPayload, ProcessOutputPayload, ProcessTreeNode } from "../lib/types";
+import { agentOsSource } from "../lib/source";
+import type { KernelProcessInfo, ProcessExitPayload, ProcessTreeNode } from "../lib/types";
+import { VmStatusBadges } from "../vm-status-badges";
 import React from "react";
+import type { Output } from "../../generated/contract";
 
-/** Format an epoch-ms spawn time for display; `—` when absent. */
+/** Format an epoch-ms first-observed time for display; `—` when absent. */
 function formatStartedAt(startedAt: number | undefined): string {
 	if (!startedAt) return "—";
 	return new Date(startedAt).toLocaleTimeString();
@@ -39,29 +41,70 @@ function flattenTree(nodes: ProcessTreeNode[], depth = 0, out: ProcessRow[] = []
 	return out;
 }
 
-// ── Live output tail ───────────────────────────────────────────────────────
-// Bounded per-pid buffers fed by the `processOutput` broadcast. Only pids
-// spawned through the SDK have output pumps; everything else shows nothing.
-const MAX_TRACKED_PIDS = 32;
+function requireProcessHandle(row: ProcessRow): Output.ActorProcessId {
+	if (!row.process) throw new Error("This guest process has no actor process handle");
+	return row.process;
+}
+
+// Replay is authoritative after a disconnected tab or VM restart. Events only
+// prompt an earlier refresh of the process table; the output cursor is pulled.
 const MAX_BUFFER_CHARS = 64_000;
 
-class OutputBuffers {
-	private buffers = new Map<number, string>();
-
-	append(pid: number, text: string): void {
-		const prev = this.buffers.get(pid);
-		if (prev === undefined && this.buffers.size >= MAX_TRACKED_PIDS) {
-			// Bounded: drop the oldest-tracked pid's buffer.
-			const oldest = this.buffers.keys().next().value;
-			if (oldest !== undefined) this.buffers.delete(oldest);
-		}
-		const next = (prev ?? "") + text;
-		this.buffers.set(pid, next.length > MAX_BUFFER_CHARS ? next.slice(-MAX_BUFFER_CHARS) : next);
-	}
-
-	get(pid: number): string | undefined {
-		return this.buffers.get(pid);
-	}
+function useProcessReplay(actorId: string, process: Output.ActorProcessId | null) {
+	const generation = process?.generation;
+	const pid = process?.pid;
+	const [output, setOutput] = useState("");
+	const [error, setError] = useState<unknown>(null);
+	const [historyTruncated, setHistoryTruncated] = useState(false);
+	useEffect(() => {
+		// ExpandedDetail is keyed by actor, generation, PID, and handle identity,
+		// so a new target starts with fresh state before it is rendered.
+		if (generation === undefined || pid === undefined) return;
+		let disposed = false;
+		let pending = false;
+		let cursor: number | bigint | undefined;
+		let endReported = false;
+		const controller = new AbortController();
+		const decoder = new ProcessOutputDecoder();
+		const pull = async () => {
+			if (pending || disposed) return;
+			pending = true;
+			try {
+				const replay = await drainProcessReplay(
+					agentOsSource.processOutputReader(generation, pid),
+					generation,
+					cursor,
+					controller.signal,
+				);
+				if (disposed) return;
+				if (replay.truncated) setHistoryTruncated(true);
+				cursor = replay.nextCursor ?? cursor;
+				let text = replay.events.map((event) => decoder.decode(event)).join("");
+				const gap = replay.truncated ? "\n[earlier output was truncated]\n" : "";
+				const end = !replay.hasMore && replay.end && !endReported
+					? `\n[exited ${replay.end.exitCode}]`
+					: "";
+				if (end) text += decoder.finish();
+				if (end) endReported = true;
+				if (text || gap || end) {
+					setOutput((previous) => (previous + gap + text + end).slice(-MAX_BUFFER_CHARS));
+				}
+				setError(null);
+			} catch (failure) {
+				if (!disposed) setError(failure);
+			} finally {
+				pending = false;
+			}
+		};
+		void pull();
+		const timer = window.setInterval(() => void pull(), 2_000);
+		return () => {
+			disposed = true;
+			controller.abort();
+			window.clearInterval(timer);
+		};
+	}, [actorId, generation, pid]);
+	return { output, error, historyTruncated };
 }
 
 /** Label-over-value cell for the expanded detail grid — compact, no divider
@@ -78,20 +121,21 @@ function Field({ label, value }: { label: string; value: string }) {
 }
 
 function ExpandedDetail({
+	actorId,
 	p,
-	outputTail,
 	onStop,
 	onKill,
 	actionError,
 }: {
+	actorId: string;
 	p: ProcessRow;
-	outputTail?: string;
 	onStop: () => void;
 	onKill: () => void;
 	actionError: unknown;
 }) {
+	const replay = useProcessReplay(actorId, p.process);
 	// Arming is per-process: expanding another row must not inherit it.
-	const { armed, confirm } = useArmedConfirm<"stop" | "kill">({ resetKey: p.pid });
+	const { armed, confirm } = useArmedConfirm<"stop" | "kill">({ resetKey: processRowIdentity(p) });
 	return (
 		<div className="flex flex-col gap-3 px-4 py-3 text-xs">
 			<div className="grid grid-cols-2 gap-x-8 gap-y-2 sm:grid-cols-4">
@@ -100,11 +144,11 @@ function ExpandedDetail({
 				<Field label="driver" value={p.driver || "—"} />
 				<Field label="exit code" value={p.exitCode == null ? "—" : String(p.exitCode)} />
 				<Field label="args" value={p.args.join(" ") || "—"} />
-				<Field label="started" value={formatStartedAt(p.startTime)} />
-				<Field label="exited" value={p.exitTime == null ? "—" : relativeTime(p.exitTime)} />
+				<Field label="first seen" value={formatStartedAt(p.startTime)} />
+				<Field label="exit observed" value={p.exitTime == null ? "—" : relativeTime(p.exitTime)} />
 				<Field label="group / session" value={`${p.pgid} / ${p.sid}`} />
 			</div>
-			{p.status === "running" ? (
+			{p.status === "running" && p.process ? (
 				<div className="flex items-center gap-2">
 					<button
 						type="button"
@@ -122,19 +166,28 @@ function ExpandedDetail({
 					</button>
 				</div>
 			) : null}
+			{!p.process ? (
+				<div className="text-muted-foreground/60">
+					Control and output replay are available only for processes started through this actor.
+				</div>
+			) : null}
 			{actionError ? <ActionErrorNote error={actionError} className="p-0" /> : null}
-			{outputTail ? (
+			{replay.error ? <ActionErrorNote error={replay.error} className="p-0" /> : null}
+			{replay.historyTruncated ? (
+				<div className="text-muted-foreground">Some earlier output is no longer available.</div>
+			) : null}
+			{replay.output ? (
 				<div>
-					<div className="mb-1 text-muted-foreground/70">Output (live tail)</div>
+					<div className="mb-1 text-muted-foreground/70">Output (replay, latest 64,000 characters)</div>
 					<pre className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded bg-muted/50 p-2 font-mono text-[11px] leading-relaxed">
-						{outputTail}
+						{replay.output}
 					</pre>
 				</div>
-			) : (
+			) : p.process ? (
 				<div className="text-muted-foreground/60">
-					No live output. Only processes spawned through the SDK stream stdout/stderr here.
+					No captured output for this process.
 				</div>
-			)}
+			) : null}
 		</div>
 	);
 }
@@ -150,34 +203,19 @@ export function useProcessCounts(actorId: string): { running: number; total: num
 export function ProcessTable({ actorId }: { actorId: string }) {
 	const { data: tree } = useSuspenseQuery(agentOsSource.processTreeQueryOptions(actorId));
 	const queryClient = useQueryClient();
-	const [expandedPid, setExpandedPid] = useState<number | null>(null);
+	const [expandedIdentity, setExpandedIdentity] = useState<string | null>(null);
 	const [actionError, setActionError] = useState<unknown>(null);
 
 	const rows = flattenTree(tree);
 
-	// Live output tail for SDK-spawned pids; exit refreshes the table.
-	const buffersRef = useRef(new OutputBuffers());
-	const [, setOutputVersion] = useState(0);
 	const actor = useAgentOsActor();
 	const useAgentEvent = actor.useEvent as (
 		name: string,
 		handler: (payload: unknown) => void,
 	) => void;
-	useAgentEvent("processOutput", (raw) => {
-		const payload = raw as ProcessOutputPayload | undefined;
-		if (!payload || typeof payload.pid !== "number") return;
-		const text = new TextDecoder("utf-8", { fatal: false }).decode(
-			decodeActionBytes(payload.data),
-		);
-		if (!text) return;
-		buffersRef.current.append(payload.pid, text);
-		setOutputVersion((v) => v + 1);
-	});
 	useAgentEvent("processExit", (raw) => {
 		const payload = raw as ProcessExitPayload | undefined;
 		if (!payload || typeof payload.pid !== "number") return;
-		buffersRef.current.append(payload.pid, `\n[exited ${payload.exitCode}]`);
-		setOutputVersion((v) => v + 1);
 		void queryClient.invalidateQueries({
 			queryKey: agentOsSource.processTreeQueryOptions(actorId).queryKey,
 		});
@@ -208,18 +246,18 @@ export function ProcessTable({ actorId }: { actorId: string }) {
 						<th className="w-8 px-3 py-2" aria-label="Expand" />
 						<th className="w-16 px-2 py-2 text-left font-medium">PID</th>
 						<th className="px-2 py-2 text-left font-medium">Command</th>
-						<th className="w-28 px-2 py-2 text-left font-medium">Started</th>
+						<th className="w-28 px-2 py-2 text-left font-medium">First seen</th>
 						<th className="w-28 px-2 py-2 text-left font-medium">Status</th>
 					</tr>
 				</thead>
 				<tbody>
 					{rows.map((p) => (
-						<React.Fragment key={p.pid}>
+						<React.Fragment key={processRowIdentity(p)}>
 							<tr
-								onClick={() => setExpandedPid((cur) => (cur === p.pid ? null : p.pid))}
+								onClick={() => setExpandedIdentity((cur) => (cur === processRowIdentity(p) ? null : processRowIdentity(p)))}
 								className={cn(
 									"cursor-pointer border-b border-foreground/[0.06] hover:bg-muted/50",
-									expandedPid === p.pid && "bg-muted/40",
+									expandedIdentity === processRowIdentity(p) && "bg-muted/40",
 									p.status === "exited" && "opacity-50",
 								)}
 							>
@@ -227,7 +265,7 @@ export function ProcessTable({ actorId }: { actorId: string }) {
 									<ChevronRight
 										className={cn(
 											"size-3 text-muted-foreground/60 transition-transform",
-											expandedPid === p.pid && "rotate-90",
+											expandedIdentity === processRowIdentity(p) && "rotate-90",
 										)}
 									/>
 								</td>
@@ -251,14 +289,21 @@ export function ProcessTable({ actorId }: { actorId: string }) {
 									</span>
 								</td>
 							</tr>
-							{expandedPid === p.pid ? (
+							{expandedIdentity === processRowIdentity(p) ? (
 								<tr className="border-b border-foreground/[0.06] bg-muted/20">
 									<td colSpan={5}>
 										<ExpandedDetail
+											key={`${actorId}:${processRowIdentity(p)}`}
+											actorId={actorId}
 											p={p}
-											outputTail={buffersRef.current.get(p.pid)}
-											onStop={() => void runControl(() => agentOsSource.stopProcess(p.pid))}
-											onKill={() => void runControl(() => agentOsSource.killProcess(p.pid))}
+											onStop={() => void runControl(() => {
+											const handle = requireProcessHandle(p);
+											return agentOsSource.stopProcess(handle.generation, handle.pid);
+										})}
+											onKill={() => void runControl(() => {
+											const handle = requireProcessHandle(p);
+											return agentOsSource.killProcess(handle.generation, handle.pid);
+										})}
 											actionError={actionError}
 										/>
 									</td>
@@ -268,6 +313,21 @@ export function ProcessTable({ actorId }: { actorId: string }) {
 					))}
 				</tbody>
 			</table>
+		</div>
+	);
+}
+
+export function ProcessesTabConnected({ actorId }: { actorId: string }) {
+	return (
+		<div className="relative h-full min-h-0 overflow-auto p-4">
+			<div className="mb-3 flex items-center gap-2">
+				<h1 className="text-sm font-semibold">Processes</h1>
+				<span className="ml-auto" />
+				<VmStatusBadges actorId={actorId} />
+			</div>
+			<div className="overflow-hidden rounded-lg border bg-secondary">
+				<ProcessTable actorId={actorId} />
+			</div>
 		</div>
 	);
 }

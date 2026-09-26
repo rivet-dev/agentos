@@ -5,13 +5,13 @@ import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 const require = createRequire(import.meta.url);
 const playgroundDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
-// Converged: the worker is @rivet-dev/agentos-runtime-browser's, bundled as-is (no source
+// Converged: the worker is @rivet-dev/agentos-browser's, bundled as-is (no source
 // patching — the converged driver wires the bridge via the convergedSidecar
 // option, not by injecting it into the worker source). Resolve it through the
 // @rivet-dev/agentos-browser package (which depends on the runtime browser);
 // the playground itself does not depend on the runtime browser directly.
 const requireFromBrowserPkg = createRequire(require.resolve("@rivet-dev/agentos-browser"));
-const workerSourcePath = requireFromBrowserPkg.resolve("@rivet-dev/agentos-runtime-browser/internal/worker");
+const workerSourcePath = requireFromBrowserPkg.resolve("@rivet-dev/agentos-browser/internal/worker");
 const workerOutputPath = resolve(playgroundDir, "agentos-worker.js");
 const appSourcePath = resolve(playgroundDir, "frontend/app.ts");
 const appOutputPath = resolve(playgroundDir, "dist/app.js");

@@ -3,30 +3,34 @@
 	"globalEnv": [
 		"AGENTOS_PLUGIN_BIN",
 		"AGENTOS_SIDECAR_BIN",
-		"AGENTOS_NATIVE_SIDECAR_BIN",
+		"AGENTOS_TEST_WASM_BACKEND",
 		"AGENTOS_SKIP_NATIVE_META_BUILD"
 	],
-	"globalPassThroughEnv": ["CARGO_TARGET_DIR"],
+	"globalPassThroughEnv": [
+		"CARGO_TARGET_DIR"
+	],
 	"globalDependencies": [
-		"crates/actor-uds-client/protocol/**",
 		"crates/sidecar-protocol/protocol/**",
 		"packages/build-tools/scripts/compile-sidecar-protocol.mjs"
 	],
 	"tasks": {
-		"//#fmt": {
-			"cache": false
-		},
 		"build": {
-			"dependsOn": ["^build"],
+			"dependsOn": [
+				"^build"
+			],
 			"inputs": [
 				"src/**",
 				"tsconfig.json",
 				"package.json"
 			],
-			"outputs": ["dist/**"]
+			"outputs": [
+				"dist/**"
+			]
 		},
 		"check-types": {
-			"dependsOn": ["^build"],
+			"dependsOn": [
+				"^build"
+			],
 			"inputs": [
 				"src/**",
 				"tests/**",
@@ -43,7 +47,10 @@
 				"scripts/**",
 				"package.json"
 			],
-			"dependsOn": ["^build", "check-types"]
+			"dependsOn": [
+				"build",
+				"check-types"
+			]
 		},
 		"test:nightly": {
 			"inputs": [
@@ -54,20 +61,25 @@
 				"scripts/**",
 				"package.json"
 			],
-			"dependsOn": ["^build", "check-types"]
+			"dependsOn": [
+				"build",
+				"check-types"
+			]
 		},
-		"@rivet-dev/agentos-sidecar#build": {
-			"cache": false
-		},
-		"@rivet-dev/agentos-runtime-core#build": {
-			"dependsOn": ["^build"],
+		"@rivet-dev/agentos-core#build": {
+			"dependsOn": [
+				"^build"
+			],
 			"inputs": [
 				"src/**",
 				"scripts/**",
 				"tsconfig.json",
 				"package.json"
 			],
-			"outputs": ["dist/**", "commands/**"]
+			"outputs": [
+				"dist/**",
+				"commands/**"
+			]
 		}
 	}
 }

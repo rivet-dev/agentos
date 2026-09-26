@@ -1,15 +1,11 @@
 {
 	"compilerOptions": {
-		"jsx": "react",
-		"target": "ES2020",
-		"useDefineForClassFields": true,
-		"lib": ["ES2020", "DOM", "DOM.Iterable"],
+		"target": "ES2022",
 		"module": "ESNext",
+		"jsx": "react-jsx",
 		"skipLibCheck": true,
-		"types": [],
+		"types": ["react", "react-dom"],
 		"moduleResolution": "bundler",
-		"allowImportingTsExtensions": true,
-		"resolveJsonModule": true,
 		"isolatedModules": true,
 		"noEmit": true,
 		"strict": true,
@@ -17,5 +13,5 @@
 		"noUnusedParameters": true,
 		"noFallthroughCasesInSwitch": true
 	},
-	"include": ["src"]
+	"include": ["src", "tests"]
 }

@@ -34,12 +34,7 @@ export interface DiscoverPackagesOptions {
 export const EXCLUDED = new Set<string>([
 	"@rivet-dev/agentos-workspace",
 	"@rivet-dev/agentos-dev-shell",
-	"@rivet-dev/agentos-playground",
 	"@rivet-dev/agentos-shell",
-	// Browser support stays in-tree as migration source, but it is outside the
-	// unified sidecar reactor/security contract and must not be published.
-	"@rivet-dev/agentos-browser",
-	"@rivet-dev/agentos-runtime-browser",
 	"publish",
 ]);
 
@@ -63,27 +58,9 @@ export const META_PACKAGES: readonly MetaPackageSpec[] = [
 		meta: "@rivet-dev/agentos-sidecar",
 		platformPrefix: "@rivet-dev/agentos-sidecar-",
 	},
-	{
-		meta: "@rivet-dev/agentos-runtime-sidecar",
-		platformPrefix: "@rivet-dev/agentos-runtime-sidecar-",
-	},
 ];
 
-const SIDECAR_BINARY_PACKAGE_DIRS = [
-	"packages/sidecar-binary/npm",
-	"packages/runtime-sidecar/npm",
-	"packages/sidecar/npm",
-] as const;
-
-/**
- * Runtime packages consumed directly by lockstep AgentOS packages. Ordinary
- * registry software keeps its independent release flow.
- */
-export const LOCKSTEP_SOFTWARE_PACKAGES = new Set([
-	"@agentos-software/common",
-	"@agentos-software/apps-builder",
-	"@agentos-software/sh",
-]);
+const SIDECAR_BINARY_PACKAGE_DIRS = ["packages/sidecar/npm"] as const;
 
 /**
  * Platforms whose sidecar binary package is built and published. Kept in sync
@@ -161,9 +138,8 @@ export function discoverPackages(
 		}
 	}
 
-	// 2. pnpm workspace packages. Skip independently-versioned software/* WASM
-	//    packages, but include the small runtime packages consumed directly by
-	//    lockstep AgentOS packages.
+	// 2. pnpm workspace packages. Registry software is packed into .aospkg
+	//    artifacts and released independently from the agentOS npm packages.
 	const pnpmList = execSync("pnpm -r list --json --depth -1", {
 		cwd: repoRoot,
 		encoding: "utf8",
@@ -179,14 +155,7 @@ export function discoverPackages(
 		if (
 			!p.name.startsWith("@rivet-dev/agentos-") &&
 			p.name !== "@rivet-dev/agentos" &&
-			p.name !== "secure-exec" &&
-			!p.name.startsWith("@agentos-software/")
-		) {
-			continue;
-		}
-		if (
-			p.path.includes("/software/") &&
-			!LOCKSTEP_SOFTWARE_PACKAGES.has(p.name)
+			p.name !== "secure-exec"
 		) {
 			continue;
 		}
@@ -230,13 +199,6 @@ export function assertDiscoverySanity(packages: Package[]): void {
 			"@rivet-dev/agentos",
 			"@rivet-dev/agentos-core",
 			"@rivet-dev/agentos-sidecar",
-			"@rivet-dev/agentos-runtime-sidecar",
-		);
-	}
-	if (byName.has("@rivet-dev/agentos-apps")) {
-		required.push(
-			"@agentos-software/apps-builder",
-			"@agentos-software/sh",
 		);
 	}
 	const missing = required.filter((r) => !byName.has(r));

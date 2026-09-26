@@ -38,7 +38,7 @@ test("httpRequest reaches a guest http.createServer listener", async () => {
 		resolvePort = resolve;
 	});
 
-	const { pid } = vm.spawn("node", ["/tmp/server.js"]);
+	const { pid } = await vm.process.spawn("node", ["/tmp/server.js"]);
 	const unsubscribe = vm.onProcessOutput(pid, (event) => {
 		if (event.stream === "stdout") {
 			const chunk = event.data;
@@ -65,7 +65,7 @@ test("httpRequest reaches a guest http.createServer listener", async () => {
 		});
 	} finally {
 		unsubscribe();
-		vm.stopProcess(pid);
-		await vm.waitProcess(pid).catch(() => {});
+		await vm.process.signal(pid, "SIGTERM");
+		await vm.process.wait(pid).catch(() => {});
 	}
 });

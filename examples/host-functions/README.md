@@ -1,27 +1,19 @@
 ---
 title: "Host Functions"
-description: "Expose host functions to the agent as CLI commands with Zod-typed inputs."
+description: "Expose trusted host functions to embedded VMs as Zod-typed commands."
 category: "Reference"
 order: 3
 ---
 
-Give an agent access to your own host code, such as API calls, database lookups, and internal services, through type-safe inputs and an auto-generated CLI surface inside the VM.
+Give embedded VM programs access to trusted host code through type-safe inputs and an automatically generated CLI.
 
-## How it works
-
-A host-function collection bundles a `name`, a `description`, and a map of named `functions`. Each function declares a Zod `inputSchema`, an `execute` handler that runs on the host, and optional `examples`. Pass collections to `agentOS({ hostFunctions: [...] })`; agentOS exposes each collection as `/bin/agentos-{name}` inside the VM. When an agent invokes a function, its schema validates the arguments before the handler executes on the host.
+Pass `AgentOs.create({ hostFunctions })` a record of collections. Collection keys name the `/bin/agentos-{name}` commands; function keys name their subcommands. Each function defines a Zod `inputSchema` and an `execute` callback. The hosted actor does not accept host functions; they run only in a trusted embedding process.
 
 ## Run it
 
 ```sh
 npm install
-ANTHROPIC_API_KEY=sk-... npx tsx server.ts
-# in another terminal:
-npx tsx client.ts
+WEATHER_API_KEY=... npx tsx exec-bash.ts
 ```
 
-The agent receives the prompt, calls the `weather` forecast host function, and answers using the host-side result.
-
-## Source
-
-View the source on GitHub: https://github.com/rivet-dev/agent-os/tree/main/examples/host-functions
+The guest command calls the `weather` host function and writes its result into the VM filesystem.

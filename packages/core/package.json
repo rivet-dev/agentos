@@ -6,7 +6,9 @@
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
 	"files": [
-		"dist"
+		"dist",
+		"commands",
+		"README.md"
 	],
 	"exports": {
 		".": {
@@ -23,6 +25,51 @@
 			"types": "./dist/code-execution.d.ts",
 			"import": "./dist/code-execution.js",
 			"default": "./dist/code-execution.js"
+		},
+		"./internal/typescript-tools": {
+			"types": "./dist/internal/typescript-tools.d.ts",
+			"import": "./dist/internal/typescript-tools.js",
+			"default": "./dist/internal/typescript-tools.js"
+		},
+		"./protocol": {
+			"types": "./dist/generated-protocol.d.ts",
+			"import": "./dist/generated-protocol.js",
+			"default": "./dist/generated-protocol.js"
+		},
+		"./protocol-frames": {
+			"types": "./dist/protocol-frames.d.ts",
+			"import": "./dist/protocol-frames.js",
+			"default": "./dist/protocol-frames.js"
+		},
+		"./vm-config": {
+			"types": "./dist/vm-config.d.ts",
+			"import": "./dist/vm-config.js",
+			"default": "./dist/vm-config.js"
+		},
+		"./descriptors": {
+			"types": "./dist/descriptors.d.ts",
+			"import": "./dist/descriptors.js",
+			"default": "./dist/descriptors.js"
+		},
+		"./sidecar-client": {
+			"types": "./dist/sidecar-process.d.ts",
+			"import": "./dist/sidecar-process.js",
+			"default": "./dist/sidecar-process.js"
+		},
+		"./sidecar-errors": {
+			"types": "./dist/sidecar-errors.d.ts",
+			"import": "./dist/sidecar-errors.js",
+			"default": "./dist/sidecar-errors.js"
+		},
+		"./stdio-client": {
+			"types": "./dist/stdio-client.d.ts",
+			"import": "./dist/stdio-client.js",
+			"default": "./dist/stdio-client.js"
+		},
+		"./test-runtime": {
+			"types": "./dist/test-runtime.d.ts",
+			"import": "./dist/test-runtime.js",
+			"default": "./dist/test-runtime.js"
 		},
 		"./test/file-system": {
 			"types": "./dist/test/file-system.d.ts",
@@ -48,30 +95,68 @@
 			"types": "./dist/test/runtime.d.ts",
 			"import": "./dist/test/runtime.js",
 			"default": "./dist/test/runtime.js"
+		},
+		"./host-functions": {
+			"types": "./dist/host-functions.d.ts",
+			"import": "./dist/host-functions.js",
+			"default": "./dist/host-functions.js"
+		},
+		"./host-functions-zod": {
+			"types": "./dist/host-functions-zod.d.ts",
+			"import": "./dist/host-functions-zod.js",
+			"default": "./dist/host-functions-zod.js"
+		},
+		"./request-payloads": {
+			"types": "./dist/request-payloads.d.ts",
+			"import": "./dist/request-payloads.js",
+			"default": "./dist/request-payloads.js"
+		},
+		"./permissions": {
+			"types": "./dist/permissions.d.ts",
+			"import": "./dist/permissions.js",
+			"default": "./dist/permissions.js"
+		},
+		"./protocol-schema": {
+			"types": "./dist/protocol-schema.d.ts",
+			"import": "./dist/protocol-schema.js",
+			"default": "./dist/protocol-schema.js"
+		},
+		"./node-runtime": {
+			"types": "./dist/node-runtime.d.ts",
+			"import": "./dist/node-runtime.js",
+			"default": "./dist/node-runtime.js"
+		},
+		"./node-runtime-options-schema": {
+			"types": "./dist/node-runtime-options-schema.d.ts",
+			"import": "./dist/node-runtime-options-schema.js",
+			"default": "./dist/node-runtime-options-schema.js"
+		},
+		"./process": {
+			"types": "./dist/process.d.ts",
+			"import": "./dist/process.js",
+			"default": "./dist/process.js"
+		},
+		"./response-payloads": {
+			"types": "./dist/response-payloads.d.ts",
+			"import": "./dist/response-payloads.js",
+			"default": "./dist/response-payloads.js"
 		}
 	},
 	"scripts": {
-		"check-types": "pnpm run build:protocols && tsc --noEmit && tsc -p tsconfig.type-tests.json",
-		"build": "pnpm run build:protocols && tsc",
-		"build:agentos-protocol": "node ./scripts/compile-agentos-protocol.mjs",
-		"build:protocols": "pnpm run build:agentos-protocol",
+		"check-types": "tsc --noEmit && tsc -p tsconfig.type-tests.json",
+		"build": "pnpm run build:protocols && tsc && node scripts/stage-default-software.mjs && pnpm run copy-commands",
 		"test": "vitest run --exclude '**/*.nightly.test.ts' --reporter=verbose",
-		"test:unit": "vitest run tests/agent-exit-event.test.ts tests/agentos-package.test.ts tests/agentos-protocol.test.ts tests/allowed-node-builtins.test.ts tests/host-functions-zod.test.ts tests/host-functions.test.ts tests/cron-manager.test.ts tests/cron-timer-driver.test.ts tests/execution-abort.test.ts tests/generated-protocol.test.ts tests/leak-agent-os-processes.test.ts tests/leak-rpc-client.test.ts tests/mount-descriptors.test.ts tests/mount-reconfigure.test.ts tests/options-schema.test.ts tests/public-api-exports.test.ts tests/root-filesystem-descriptors.test.ts tests/runtime-compat-mount.test.ts tests/session-event-ordering.test.ts tests/session-permission-surface.test.ts tests/sidecar-client.test.ts tests/sidecar-permission-descriptors.test.ts tests/wasm-permission-tiers.test.ts --fileParallelism=false",
-		"test:pr": "pnpm test:unit && vitest run tests/migration-parity.test.ts tests/acp-reactor-regression.test.ts --fileParallelism=false --reporter=verbose",
-		"test:nightly": "vitest run tests/*.nightly.test.ts --reporter=verbose --passWithNoTests"
+		"test:unit": "vitest run tests/agentos-package.test.ts tests/allowed-node-builtins.test.ts tests/host-functions-zod.test.ts tests/host-functions.test.ts tests/cron-manager.test.ts tests/cron-timer-driver.test.ts tests/exec-timeout.test.ts tests/execution-abort.test.ts tests/generated-protocol.test.ts tests/leak-agent-os-processes.test.ts tests/leak-rpc-client.test.ts tests/mount-descriptors.test.ts tests/mount-reconfigure.test.ts tests/options-schema.test.ts tests/output-replay.test.ts tests/kernel-proxy-dispose.test.ts tests/public-api-exports.test.ts tests/root-filesystem-descriptors.test.ts tests/runtime-compat-mount.test.ts tests/sidecar-client.test.ts tests/sidecar-permission-descriptors.test.ts tests/software-install.test.ts tests/wasm-permission-tiers.test.ts --fileParallelism=false",
+		"test:pr": "pnpm test:unit",
+		"test:nightly": "vitest run tests/*.nightly.test.ts --reporter=verbose --passWithNoTests",
+		"build:sidecar-protocol": "pnpm --dir ../build-tools build:protocol",
+		"build:protocols": "pnpm run build:sidecar-protocol",
+		"copy-commands": "node scripts/copy-wasm-commands.mjs",
+		"prepack": "node scripts/copy-wasm-commands.mjs --require"
 	},
 	"dependencies": {
-		"@agentclientprotocol/sdk": "0.16.1",
-		"@agentos-software/claude-code": "workspace:*",
-		"@agentos-software/codex-cli": "workspace:*",
-		"@agentos-software/common": "workspace:*",
-		"@agentos-software/manifest": "workspace:*",
-		"@agentos-software/opencode": "workspace:*",
-		"@agentos-software/pi": "workspace:*",
 		"@aws-sdk/client-s3": "^3.1019.0",
 		"@rivet-dev/agentos-sidecar": "workspace:*",
-		"@rivetkit/bare-ts": "^0.6.2",
-		"@rivet-dev/agentos-runtime-core": "workspace:*",
 		"@xterm/headless": "^6.0.0",
 		"better-sqlite3": "^12.8.0",
 		"croner": "^10.0.1",
@@ -79,11 +164,11 @@
 		"long-timeout": "^0.1.1",
 		"minimatch": "^10.2.4",
 		"zod": "^4.1.11",
-		"zod-to-json-schema": "^3.25.2"
+		"zod-to-json-schema": "^3.25.2",
+		"@rivetkit/bare-ts": "^0.6.2"
 	},
 	"devDependencies": {
-		"@agentos-software/claude-code": "workspace:*",
-		"@agentos-software/codex": "workspace:*",
+		"@agentos-software/common": "workspace:*",
 		"@agentos-software/coreutils": "workspace:*",
 		"@agentos-software/curl": "workspace:*",
 		"@agentos-software/diffutils": "workspace:*",
@@ -96,8 +181,6 @@
 		"@agentos-software/grep": "workspace:*",
 		"@agentos-software/gzip": "workspace:*",
 		"@agentos-software/jq": "workspace:*",
-		"@agentos-software/opencode": "workspace:*",
-		"@agentos-software/pi": "workspace:*",
 		"@agentos-software/ripgrep": "workspace:*",
 		"@agentos-software/sed": "workspace:*",
 		"@agentos-software/tar": "workspace:*",
@@ -105,19 +188,15 @@
 		"@agentos-software/vim": "workspace:*",
 		"@agentos-software/wget": "workspace:*",
 		"@agentos-software/yq": "workspace:*",
-		"@rivet-dev/agentos-test-harness": "workspace:*",
-		"@anthropic-ai/claude-agent-sdk": "^0.2.87",
-		"@anthropic-ai/claude-code": "^2.1.86",
-		"@bare-ts/tools": "0.15.0",
 		"@browserbasehq/browse-cli": "0.5.0",
 		"@browserbasehq/cli": "0.5.4",
 		"@browserbasehq/sdk": "2.10.0",
-		"@copilotkit/llmock": "^1.6.0",
 		"@types/node": "^22.10.2",
 		"sandbox-agent": "^0.4.2",
 		"typescript": "^5.7.2",
 		"vitest": "^2.1.8",
 		"ws": "^8.18.0",
-		"zod3": "npm:zod@^3.25.76"
+		"zod3": "npm:zod@^3.25.76",
+		"@bare-ts/tools": "0.15.0"
 	}
 }

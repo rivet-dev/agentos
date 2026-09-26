@@ -4,15 +4,21 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "High-level Rust client SDK for the Agent OS native sidecar (1:1 port of the TypeScript AgentOs client)"
+description = "High-level Rust client SDK for the agentOS sidecar"
+
+[features]
+default = []
+contract = ["dep:ts-rs"]
+# Private integration surface for the same-version static Rust actor, not Core SDK methods.
+actor-internals = []
+# Transitional cache access; remove when the resolver moves out of this crate.
+sidecar-internals = []
 
 [dependencies]
 # Reuse the agentos BARE wire schema + IPC transport. No new wire types are defined here.
-agent-client-protocol-schema = { workspace = true }
 agentos-sidecar-client = { workspace = true }
 agentos-vm-config = { workspace = true }
-agentos-protocol = { workspace = true }
-agentos-bridge = { workspace = true }
+agentos-vm-host-interface = { workspace = true }
 
 anyhow = "1"
 async-trait = "0.1"
@@ -20,18 +26,26 @@ base64 = "0.22"
 bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
 futures = "0.3"
+fs2 = "0.4"
 http = "1"
 once_cell = "1"
 parking_lot = "0.12"
+reqwest = { version = "0.12", default-features = false, features = ["http2", "rustls-tls", "stream"] }
 scc = "2"
 serde = { version = "1.0", features = ["derive"] }
 serde_bare = "0.5"
+serde_bytes = "0.11"
 serde_json = "1.0"
+sha2 = "0.10"
+tempfile = "3"
 thiserror = "2"
-tokio = { version = "1", features = ["io-util", "macros", "process", "rt", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt", "rt-multi-thread", "sync", "time"] }
 tokio-util = "0.7"
 tracing = "0.1"
+ts-rs = { version = "10.1", features = ["no-serde-warnings", "serde-compat", "serde-json-impl"], optional = true }
 uuid = { version = "1", features = ["v4"] }
+vfs = { workspace = true }
 
 [dev-dependencies]
+tar = "0.4"
 tokio = { version = "1", features = ["full"] }

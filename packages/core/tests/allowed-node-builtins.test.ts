@@ -1,20 +1,22 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SidecarRejectedError } from "../src/sidecar-errors.js";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type {
 	AuthenticatedSession,
 	CreatedVm,
-	NativeSidecarProcessClient,
+	SidecarProcess,
 } from "../src/sidecar/rpc-client.js";
-import { NativeSidecarKernelProxy } from "../src/sidecar/rpc-client.js";
+import { SidecarKernelProxy } from "../src/sidecar/rpc-client.js";
 
-describe("NativeSidecarKernelProxy execute payloads", () => {
-	let proxy: NativeSidecarKernelProxy | null = null;
+describe("SidecarKernelProxy execute payloads", () => {
+	let proxy: SidecarKernelProxy | null = null;
 	let fixtureRoot: string | null = null;
 
 	afterEach(async () => {
 		await proxy?.dispose();
+		vi.restoreAllMocks();
 		proxy = null;
 		if (fixtureRoot) {
 			rmSync(fixtureRoot, { recursive: true, force: true });
@@ -23,6 +25,7 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 	});
 
 	function createMockClient() {
+		vi.spyOn(console, "error").mockImplementation(() => {});
 		let stopped = false;
 		const execute = vi.fn(
 			async (
@@ -30,7 +33,23 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 				_vm: CreatedVm,
 				_execution: { env?: Record<string, string> },
 			) => {
-				throw new Error("stop after capture");
+				throw new SidecarRejectedError(1, {
+					code: "ENOENT",
+					message: "stop after capture",
+					errno: "ENOENT",
+					limit_name: null,
+					configured_limit: null,
+					current_usage: null,
+					requested: null,
+					unit: null,
+					scope: null,
+					vm_id: null,
+					session_generation: null,
+					capability_id: null,
+					operation: null,
+					configuration_path: null,
+					retryable: null,
+				});
 			},
 		);
 		const client = {
@@ -47,7 +66,7 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 			dispose: vi.fn(async () => {
 				stopped = true;
 			}),
-		} as unknown as NativeSidecarProcessClient;
+		} as unknown as SidecarProcess;
 
 		return { client, execute };
 	}
@@ -56,7 +75,7 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 		fixtureRoot = mkdtempSync(join(tmpdir(), "agentos-allowed-builtins-"));
 		const { client, execute } = createMockClient();
 
-		proxy = new NativeSidecarKernelProxy({
+		proxy = new SidecarKernelProxy({
 			client,
 			session: {
 				connectionId: "conn-1",
@@ -74,21 +93,21 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 			cwd: "/workspace",
 			env: { HOME: "/workspace" },
 		});
-		const exitCode = await proc.wait();
-
-		expect(exitCode).toBe(1);
+		await expect(proc.wait()).rejects.toThrow("stop after capture");
+		expect(proc.exitCode).toBeNull();
 		expect(execute).toHaveBeenCalledTimes(1);
 		return execute.mock.calls[0]?.[2];
 	}
 
 	test("leaves internal AGENT_OS runtime env construction to the sidecar", async () => {
-		await expect(captureExecutePayload()).resolves.toMatchObject({
+		const payload = await captureExecutePayload();
+		expect(payload).toMatchObject({
 			command: "node",
 			args: ["/workspace/entry.mjs"],
 			cwd: "/workspace",
 			env: { HOME: "/workspace" },
 		});
-		await expect(captureExecutePayload()).resolves.not.toMatchObject({
+		expect(payload).not.toMatchObject({
 			env: {
 				AGENT_OS_ALLOWED_NODE_BUILTINS: expect.anything(),
 			},
@@ -99,7 +118,7 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 		fixtureRoot = mkdtempSync(join(tmpdir(), "agentos-shell-exec-"));
 		const { client, execute } = createMockClient();
 
-		proxy = new NativeSidecarKernelProxy({
+		proxy = new SidecarKernelProxy({
 			client,
 			session: {
 				connectionId: "conn-1",
@@ -115,9 +134,7 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 
 		await expect(
 			proxy.exec("node /workspace/entry.mjs --flag"),
-		).resolves.toMatchObject({
-			exitCode: 1,
-		});
+		).rejects.toThrow("stop after capture");
 		expect(execute).toHaveBeenCalledTimes(1);
 		expect(execute.mock.calls[0]?.[2]).toMatchObject({
 			command: "node",
@@ -130,7 +147,7 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 		fixtureRoot = mkdtempSync(join(tmpdir(), "agentos-shell-missing-"));
 		const { client } = createMockClient();
 
-		proxy = new NativeSidecarKernelProxy({
+		proxy = new SidecarKernelProxy({
 			client,
 			session: {
 				connectionId: "conn-1",
@@ -145,7 +162,7 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 		});
 
 		await expect(proxy.exec("node /workspace/entry.mjs")).rejects.toThrow(
-			"native sidecar exec requires guest shell command 'sh'",
+			"sidecar exec requires guest shell command 'sh'",
 		);
 	});
 });

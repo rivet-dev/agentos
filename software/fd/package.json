@@ -1,5 +1,6 @@
 {
 	"name": "@agentos-software/fd",
+	"private": true,
 	"version": "0.3.3",
 	"type": "module",
 	"license": "Apache-2.0",
@@ -28,7 +29,6 @@
 		"@rivet-dev/agentos-toolchain": "workspace:*",
 		"@types/node": "^22.10.2",
 		"typescript": "^5.9.2",
-		"@rivet-dev/agentos-test-harness": "workspace:*",
 		"vitest": "^2.1.9"
 	}
 }

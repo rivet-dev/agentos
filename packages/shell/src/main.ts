@@ -25,7 +25,6 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import codex from "@agentos-software/codex-cli";
 import coreutils from "@agentos-software/coreutils";
 import curl from "@agentos-software/curl";
 import diffutils from "@agentos-software/diffutils";
@@ -51,7 +50,6 @@ import type { MountConfig, SoftwareInput } from "@rivet-dev/agentos-core";
 import { AgentOs } from "@rivet-dev/agentos-core";
 import { allowAll } from "@rivet-dev/agentos-core/internal/runtime-compat";
 import { Command, Option } from "commander";
-import { createActorShellVm, type ShellVmHandle } from "./actor-vm.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const workspaceRoot = resolve(__dirname, "../../..");
@@ -75,7 +73,6 @@ const SHELL_OPTIONS_WITH_VALUES = new Set([
 interface CliOptions {
 	interactive: boolean;
 	tty: boolean;
-	actor: boolean;
 	workdir: string;
 	env: string[];
 	envFile: string[];
@@ -85,6 +82,40 @@ interface CliOptions {
 	name?: string;
 	command: string;
 	args: string[];
+}
+
+interface ShellVmHandle {
+	spawn(
+		command: string,
+		args: string[],
+		options: {
+			cwd?: string;
+			env?: Record<string, string>;
+			streamStdin?: boolean;
+			onStdout?: (data: Uint8Array) => void;
+			onStderr?: (data: Uint8Array) => void;
+		},
+	): { pid: number } | Promise<{ pid: number }>;
+	writeProcessStdin(pid: number, data: Uint8Array | string): Promise<void>;
+	closeProcessStdin(pid: number): Promise<void>;
+	waitProcess(pid: number): Promise<number>;
+	openShell(options: {
+		command?: string;
+		args?: string[];
+		cwd?: string;
+		env?: Record<string, string>;
+		cols?: number;
+		rows?: number;
+		onStderr?: (data: Uint8Array) => void;
+	}): { shellId: string } | Promise<{ shellId: string }>;
+	writeShell(shellId: string, data: Uint8Array | string): Promise<void>;
+	resizeShell(shellId: string, cols: number, rows: number): void;
+	onShellData(
+		shellId: string,
+		handler: (event: { data: Uint8Array }) => void,
+	): () => void;
+	waitShell(shellId: string): Promise<number>;
+	dispose(): Promise<void>;
 }
 
 // The `@agentos-software/*` packages default-export a package descriptor
@@ -151,7 +182,6 @@ const software: SoftwareInput[] = [
 	tree,
 	file,
 	yq,
-	codex,
 	git,
 	sqlite3,
 	wget,
@@ -244,12 +274,6 @@ function parseCli(argv: string[]): CliOptions {
 		.addOption(new Option("--no-interactive", "detach stdin"))
 		.addOption(new Option("-t, --tty", "connect a terminal").default(true))
 		.addOption(new Option("--no-tty", "disable terminal mode"))
-		.addOption(
-			new Option(
-				"--actor",
-				"run through the RivetKit AgentOS actor instead of the in-process core client",
-			).default(false),
-		)
 		.option(
 			"-e, --env <env>",
 			"set environment variable (KEY=VALUE or KEY to copy from host)",
@@ -298,7 +322,6 @@ function parseCli(argv: string[]): CliOptions {
 	const opts = program.opts<{
 		interactive: boolean;
 		tty: boolean;
-		actor: boolean;
 		workdir: string;
 		env: string[];
 		envFile: string[];
@@ -312,7 +335,6 @@ function parseCli(argv: string[]): CliOptions {
 	return {
 		interactive: opts.interactive,
 		tty: opts.tty,
-		actor: opts.actor,
 		workdir: opts.workdir,
 		env: opts.env,
 		envFile: opts.envFile,
@@ -702,16 +724,14 @@ const cli = parseCli(process.argv.slice(2));
 const env = buildEnv(cli);
 const mounts = buildMounts(cli);
 
-const vm: ShellVmHandle = cli.actor
-	? await createActorShellVm({ software, mounts, defaultSoftware: false })
-	: coreShellVm(
-			await AgentOs.create({
-				mounts,
-				permissions: allowAll,
-				software,
-				defaultSoftware: false,
-			}),
-		);
+const vm: ShellVmHandle = coreShellVm(
+	await AgentOs.create({
+		mounts,
+		permissions: allowAll,
+		software,
+		defaultSoftware: false,
+	}),
+);
 
 let exitCode = 1;
 try {

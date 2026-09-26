@@ -10,9 +10,168 @@
 
 mod common;
 
+#[tokio::test]
+async fn language_spawn_retains_output_and_completion_from_fast_scripts() {
+    if !common::require_sidecar("language_spawn_retains_output_and_completion_from_fast_scripts") {
+        return;
+    }
+    let vm = common::new_vm().await;
+    let result = async {
+        for index in 0..3 {
+            let marker = format!("fast-language-{index}");
+            let process = vm
+                .spawn_javascript(
+                    format!("console.log('{marker}')"),
+                    agentos_client::LanguageSpawnOptions {
+                        retain_events: true,
+                        ..Default::default()
+                    },
+                )
+                .await?;
+            anyhow::ensure!(
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(10),
+                    vm.wait_process(process.pid)
+                )
+                .await??
+                    == 0,
+                "fast language process must report a confirmed successful exit"
+            );
+            let replay = vm
+                .read_process_output(process.pid, None, None, None)
+                .await?;
+            let output = replay
+                .events
+                .into_iter()
+                .flat_map(|event| event.data)
+                .collect::<Vec<_>>();
+            anyhow::ensure!(
+                String::from_utf8_lossy(&output).contains(&marker),
+                "fast language replay lost its output"
+            );
+        }
+        Ok::<(), anyhow::Error>(())
+    }
+    .await;
+    vm.shutdown().await.expect("shutdown fast language test VM");
+    result.unwrap();
+}
+
 use std::sync::{Arc, Mutex};
 
 use agentos_client::{ClientError, ExecOptions, SpawnOptions, StdinInput};
+
+#[tokio::test]
+async fn spawn_rejection_and_fast_exit_remain_distinct_for_late_waiters() {
+    if !common::require_sidecar("spawn_rejection_and_fast_exit_remain_distinct_for_late_waiters") {
+        return;
+    }
+    let os = common::new_vm().await;
+    let result = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        let rejected = os.spawn(
+            "agentos-nonexistent-review-command",
+            Vec::new(),
+            SpawnOptions::default(),
+        )?;
+        anyhow::ensure!(
+            matches!(
+                os.wait_process(rejected.pid).await,
+                Err(ClientError::Kernel { .. })
+            ),
+            "a rejected launch must be an error, not exit 1"
+        );
+        anyhow::ensure!(
+            os.get_process(rejected.pid)?.exit_code.is_none(),
+            "rejection must not invent an exit status"
+        );
+        anyhow::ensure!(
+            matches!(
+                os.wait_process(rejected.pid).await,
+                Err(ClientError::Kernel { .. })
+            ),
+            "late waiters must retain the typed rejection"
+        );
+
+        let fast = os.spawn(
+            "node",
+            vec!["-e".into(), "process.exit(23)".into()],
+            SpawnOptions::default(),
+        )?;
+        // Deliberately do not subscribe to exit while this guest runs.
+        loop {
+            if os.get_process(fast.pid)?.exit_code.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        anyhow::ensure!(
+            os.wait_process(fast.pid).await? == 23,
+            "fast exit must survive until a late wait"
+        );
+        Ok::<_, anyhow::Error>(())
+    })
+    .await;
+    tokio::time::timeout(std::time::Duration::from_secs(4), os.shutdown())
+        .await
+        .expect("bounded VM cleanup")
+        .expect("shutdown VM");
+    result
+        .expect("bounded process observation probe")
+        .expect("process outcome parity");
+}
+
+#[tokio::test]
+async fn exec_argv_timeout_confirms_node_guest_exit() {
+    if !common::require_sidecar("exec_argv_timeout_confirms_node_guest_exit") {
+        return;
+    }
+    let os = common::new_vm().await;
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        let args = vec!["-e".to_owned(), "setInterval(() => {}, 1000)".to_owned()];
+        let run = os.exec_argv_process("node", &args, ExecOptions {
+            timeout: Some(10_000.0),
+            ..Default::default()
+        });
+        tokio::pin!(run);
+        // Observe a concrete running kernel PID first. Checking only that all matching entries
+        // are exited after the timeout would pass vacuously if snapshot matching were broken.
+        let mut last_snapshot = Vec::new();
+        let pid = loop {
+            tokio::select! {
+                result = &mut run => anyhow::bail!("run ended before a running guest was observed: {result:?}; last snapshot: {last_snapshot:?}"),
+                _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {
+                    last_snapshot = os.all_processes().await?;
+                    if let Some(process) = last_snapshot.iter().find(|process| {
+                        process.status == agentos_client::ProcessStatus::Running
+                            && process.command == "node"
+                            && process.args.iter().any(|arg| arg == "-e")
+                    }) {
+                        break process.pid;
+                    }
+                }
+            }
+        };
+        let error = run.await.expect_err("long-running guest must time out");
+        anyhow::ensure!(
+            matches!(error.downcast_ref::<ClientError>(), Some(ClientError::ExecutionTimedOut { .. })),
+            "timeout must confirm guest exit, not merely issue a signal: {error:#}"
+        );
+        let processes = os.all_processes().await?;
+        anyhow::ensure!(
+            processes.iter().filter(|process| process.pid == pid)
+                .all(|process| process.status == agentos_client::ProcessStatus::Exited),
+            "previously running PID {pid} must be exited or reaped: {processes:?}"
+        );
+        Ok::<_, anyhow::Error>(())
+    }).await;
+    tokio::time::timeout(std::time::Duration::from_secs(4), os.shutdown())
+        .await
+        .expect("VM teardown must not wait for the five-second reconciliation deadline")
+        .expect("shutdown after timeout");
+    outcome
+        .expect("bounded timeout probe")
+        .expect("timeout termination proof");
+}
 
 #[tokio::test]
 async fn process_surface_exec_spawn_and_snapshot() {
@@ -36,14 +195,15 @@ async fn process_surface_exec_spawn_and_snapshot() {
     );
     assert!(
         matches!(
-            os.write_process_stdin(MISSING_PID, StdinInput::Text("x".to_string())),
+            os.write_process_stdin(MISSING_PID, StdinInput::Text("x".to_string()))
+                .await,
             Err(ClientError::ProcessNotFound(_))
         ),
         "write_process_stdin(unknown) must return ProcessNotFound"
     );
     assert!(
         matches!(
-            os.close_process_stdin(MISSING_PID),
+            os.close_process_stdin(MISSING_PID).await,
             Err(ClientError::ProcessNotFound(_))
         ),
         "close_process_stdin(unknown) must return ProcessNotFound"
@@ -163,7 +323,7 @@ async fn process_surface_exec_spawn_and_snapshot() {
 
     // --- spawn: pid + stdin write + stdout stream + exit wait -------------------------------------
     let handle = os
-        .spawn_process("cat", Vec::new(), SpawnOptions::default())
+        .spawn("cat", Vec::new(), SpawnOptions::default())
         .expect("spawn cat");
     assert!(
         handle.pid >= 1_000_000,
@@ -193,8 +353,11 @@ async fn process_surface_exec_spawn_and_snapshot() {
 
     // Write to stdin, then close it so `cat` sees EOF and exits.
     os.write_process_stdin(handle.pid, StdinInput::Text("spawned-input".to_string()))
+        .await
         .expect("write stdin");
-    os.close_process_stdin(handle.pid).expect("close stdin");
+    os.close_process_stdin(handle.pid)
+        .await
+        .expect("close stdin");
 
     // Collect the expected stdout bytes. The stdout subscription is a live multi-subscriber stream,
     // so process exit is observed through wait_process rather than channel closure.
@@ -217,13 +380,21 @@ async fn process_surface_exec_spawn_and_snapshot() {
     );
 
     // wait_process resolves with the exit code (cat exits 0 on clean EOF).
-    let exit_code = tokio::time::timeout(
+    let exit_code = match tokio::time::timeout(
         std::time::Duration::from_secs(10),
         os.wait_process(handle.pid),
     )
     .await
-    .expect("wait_process timed out")
-    .expect("wait_process");
+    {
+        Ok(result) => result.expect("wait_process"),
+        Err(error) => {
+            let sdk_process = os.get_process(handle.pid);
+            let kernel_processes = os.all_processes().await;
+            panic!(
+                "wait_process timed out: {error}; sdk_process={sdk_process:?}; kernel_processes={kernel_processes:?}"
+            );
+        }
+    };
     assert_eq!(exit_code, 0, "cat should exit 0 after EOF");
 
     // --- kernel snapshot: all_processes / process_tree -------------------------------------------

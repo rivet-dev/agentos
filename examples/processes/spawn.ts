@@ -1,23 +1,25 @@
-import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
+import { vm } from "./client.js";
 
-const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
-const agent = client.vm.getOrCreate("my-agent");
-const conn = agent.connect();
+const conn = vm.connect();
+await conn.ready;
 
 // Spawn a dev server
-const { pid } = await agent.process.spawn("node", ["/home/agentos/server.js"]);
+const spawned = await conn.process.spawn({
+	command: "node",
+	args: ["/home/agentos/server.js"],
+	options: { env: {} },
+});
 
 // Subscribe to process output
-conn.on("processOutput", (data) => {
-	if (data.pid !== pid) return;
-  const text = new TextDecoder().decode(data.data);
-  console.log(`[pid ${data.pid}] ${data.stream}: ${text}`);
+conn.on("process.output", (data) => {
+	if (data.process.pid !== spawned.pid) return;
+	const text = new TextDecoder().decode(data.data);
+	console.log(`[pid ${data.process.pid}] ${data.stream}: ${text}`);
 });
 
-conn.on("processExit", (data) => {
-	if (data.pid !== pid) return;
-  console.log(`[pid ${data.pid}] exited with code ${data.exitCode}`);
+conn.on("process.exit", (data) => {
+	if (data.process.pid !== spawned.pid) return;
+	console.log(`[pid ${data.process.pid}] exited with code ${data.status.exitCode}`);
 });
 
-console.log("Started process:", pid);
+console.log("Started process:", spawned.pid);

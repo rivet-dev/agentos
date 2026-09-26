@@ -31,19 +31,13 @@ import {
 	nodeModulesMount,
 	OPT_AGENTOS_BIN,
 	OPT_AGENTOS_ROOT,
-	type OpenSessionInput,
 	type OpenShellOptions,
 	PastScheduleError,
-	type PermissionResponse,
 	type ProcessDescriptor,
 	type ProcessExit,
-	type PromptResult,
 	parseAgentOsOptions,
 	resolveHostFunctions,
 	rootFilesystemConfigSchema,
-	type SessionCapabilities,
-	type SessionInfo,
-	type SessionStreamEntry,
 	type SpawnOptions,
 	type StdioChannel,
 	sidecarRuntimeConfigSchema,
@@ -58,6 +52,7 @@ describe("root public API exports", () => {
 	});
 	test("re-exports the main public value surface from the root entrypoint", () => {
 		expect(AgentOs).toBeTypeOf("function");
+		expect(AgentOs.prototype).not.toHaveProperty("pread");
 		expect(AgentOsSidecar).toBeTypeOf("function");
 		expect(CronManager).toBeTypeOf("function");
 		expect(TimerScheduleDriver).toBeTypeOf("function");
@@ -129,14 +124,8 @@ describe("root public API exports", () => {
 		void (null as MountConfigJsonPrimitive | null);
 		void (null as NodeModulesMountConfig | null);
 		void (null as OpenShellOptions | null);
-		void (null as OpenSessionInput | null);
-		void (null as PermissionResponse | null);
-		void (null as PromptResult | null);
 		void (null as ProcessDescriptor | null);
 		void (null as ProcessExit | null);
-		void (null as SessionCapabilities | null);
-		void (null as SessionInfo | null);
-		void (null as SessionStreamEntry | null);
 		void (null as StdioChannel | null);
 		void (null as SpawnOptions | null);
 		void (null as TimingMitigation | null);

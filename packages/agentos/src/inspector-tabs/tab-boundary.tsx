@@ -3,7 +3,6 @@ import { QueryErrorResetBoundary } from "@tanstack/react-query";
 import { Component, type ReactNode, Suspense } from "react";
 import { ActionErrorNote, UnsupportedAction } from "./common";
 import { isInspectorActionError } from "./lib/actor-client";
-import React from "react";
 
 function TabFallback() {
 	return (

@@ -1,24 +1,20 @@
 ---
 title: "Software"
-description: "Declare which software packages and CLI commands are available inside the VM."
-category: "Reference"
-order: 2
+description: "Install immutable command packages in an agentOS VM."
+category: "Runtime"
+order: 5
 ---
 
-The commands an agent can run are determined by the software you install into its VM. This example declares a software set so a shell pipeline like `echo hello | grep hello` resolves inside the sandbox.
+The hosted actor installs an HTTPS `.aospkg` URL with
+`software.install`, lists live installed packages with `software.list`, and
+removes one by content-derived package ID with `software.uninstall`.
 
-## How it works
+Set `AGENTOS_PACKAGE_URL` and optionally `AGENTOS_PACKAGE_DIGEST`, then run:
 
-`agentOS({ software: [...] })` takes a list of imported software packages, and together they define the CLI surface available to the guest. Common utilities — coreutils, sed, grep, gawk, findutils, diffutils, tar, and gzip — ship by default, so you only list the extras you need; here `pi` adds the agent itself. The client then runs commands through the VM via `exec`, which only succeed when the underlying binaries are present in the declared software set.
-
-## Run it
-
-```sh
+```bash
 npm install
-npm run server   # starts the registry on http://localhost:6420
-npm run client   # runs "echo hello | grep hello" in the VM, prints "hello"
+npx tsx client.ts
 ```
 
-## Source
-
-View the source on GitHub: https://github.com/rivet-dev/agent-os/tree/main/examples/software
+The `quickstart-node` and `quickstart-wasm` examples show the separate
+embedded Core API, which also accepts trusted local artifact paths.

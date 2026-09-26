@@ -1,10 +1,10 @@
-import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
+import { vm } from "./client.js";
 
-const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
-
-// Mint a short-lived preview token so access expires automatically.
-const agent = client.vm.getOrCreate("my-agent");
-const preview = await agent.createPreviewUrl(3000, 300); // 5 minutes
+const preview = await vm.network.preview.create({
+	port: 3000,
+	ttlMs: 5 * 60 * 1_000,
+});
 console.log("Preview path:", preview.path);
-console.log("Expires at:", new Date(preview.expiresAt));
+console.log("Expires at:", new Date(Number(preview.expiresAtMs)));
+
+await vm.network.preview.expire({ token: preview.token });

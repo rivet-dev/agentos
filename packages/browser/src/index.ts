@@ -1,38 +1,25 @@
 // AGENTOS_BROWSER_SUPPORT_DISABLED: retained for reference, but AgentOS is native-only.
 /*
-// @rivet-dev/agentos-browser — converged browser runtime for Agent OS.
-//
-// The browser runtime is @rivet-dev/agentos-runtime-browser's CONVERGED stack (worker,
-// SharedArrayBuffer sync-bridge, fs/net/dns/module servicers, all enforced by the
-// wasm kernel). Agent OS does not carry its own copy; it re-exports that runtime
-// and adds only the ACP/wasm-sidecar layer (createAgentOsConvergedSidecar). The
-// pre-convergence TS-kernel files (worker/runtime/driver/sync-bridge/permission
-// eval) were deleted in the reconciliation — the kernel is the sole enforcement
-// point, so guest-side permission eval no longer exists here.
-//
-// Per the converged model (kernel-owns-fs), per-runtime OPFS *namespace* helpers
-// (listOpfsNamespaces/releaseOpfsNamespace) are gone: storage isolation is the
-// kernel's responsibility, not a TS-layer concern.
-
-// --- Converged runtime, re-exported from @rivet-dev/agentos-runtime-browser ---
 export type {
 	BrowserDriverOptions,
 	BrowserRuntimeSystemOptions,
-} from "@rivet-dev/agentos-runtime-browser";
+} from "./driver.js";
 export {
 	createBrowserDriver,
 	createBrowserNetworkAdapter,
 	createOpfsFileSystem,
-	InMemoryFileSystem,
-} from "@rivet-dev/agentos-runtime-browser";
+} from "./driver.js";
+export { InMemoryFileSystem } from "./os-filesystem.js";
 export type {
 	ExecOptions,
 	ExecResult,
+	NetworkAdapter,
 	NodeRuntimeDriver,
+	PtyOpenResult,
 	StdioChannel,
 	StdioEvent,
 	TimingMitigation,
-} from "@rivet-dev/agentos-runtime-browser";
+} from "./runtime.js";
 export {
 	allowAll,
 	allowAllChildProcess,
@@ -40,21 +27,55 @@ export {
 	allowAllFs,
 	allowAllNetwork,
 	createInMemoryFileSystem,
-} from "@rivet-dev/agentos-runtime-browser";
+} from "./runtime.js";
+export type { WasiCommandBootstrapOptions } from "./wasi-command-bootstrap.js";
+export { createWasiCommandBootstrapScript } from "./wasi-command-bootstrap.js";
 export type {
 	BrowserRuntimeDriverFactoryOptions,
 	ConvergedSidecarFactoryOptions,
 	ConvergedSidecarHandle,
-} from "@rivet-dev/agentos-runtime-browser";
-export { createBrowserRuntimeDriverFactory } from "@rivet-dev/agentos-runtime-browser";
-export type { WorkerHandle } from "@rivet-dev/agentos-runtime-browser";
-export { BrowserWorkerAdapter } from "@rivet-dev/agentos-runtime-browser";
+} from "./runtime-driver.js";
+export { createBrowserRuntimeDriverFactory } from "./runtime-driver.js";
+export type { DefaultConvergedSidecarOptions } from "./default-sidecar.js";
+export { createDefaultConvergedSidecar } from "./default-sidecar.js";
+export type { WorkerHandle } from "./worker-adapter.js";
+export { BrowserWorkerAdapter } from "./worker-adapter.js";
 
-// --- Agent OS converged layer: plug the ACP wasm sidecar into the runtime ---
-export type { AgentOsConvergedSidecarOptions } from "./converged-sidecar.js";
-export { createAgentOsConvergedSidecar } from "./converged-sidecar.js";
-export type { ConvergedExecutionHostBridge } from "./converged-execution-host-bridge.js";
-export { createConvergedExecutionHostBridge } from "./converged-execution-host-bridge.js";
+// Asynchronous executor primitives: the SAB ring, kernel-worker reactor, and
+// execution-worker endpoint.
+export {
+	SabRing,
+	SabRingProtocolError,
+	sabRingByteLength,
+	sabRingMaxFrameBytes,
+} from "./sab-ring.js";
+export type { SabRingLayout } from "./sab-ring.js";
+export {
+	KernelReactor,
+	REACTOR_CONTROL_BYTES,
+	FRAME_SYSCALL,
+	FRAME_STDOUT,
+	FRAME_STDERR,
+	FRAME_EXIT,
+	FRAME_RESULT,
+	FRAME_POISON,
+	DEFERRED,
+	encodeSyscallCompletion,
+} from "./sab-reactor.js";
+export type { OutputFrame, OutputKind, ServiceSyscall } from "./sab-reactor.js";
+export {
+	SabExecutionEndpoint,
+	ExecutionKilledError,
+} from "./sab-execution-endpoint.js";
+
+// The converged guest-syscall handler, reusable to service a guest execution's
+// syscalls over the in-worker pushFrame (the kernel reactor's serviceSyscall).
+export {
+	ConvergedSyncBridgeHandler,
+	PushFrameSidecarTransport,
+} from "./converged-sync-bridge-handler.js";
+export type { ConvergedSidecarRequestTransport } from "./converged-sync-bridge-handler.js";
+export type { ConvergedSyncResponse } from "./converged-fs-bridge.js";
 */
 
 // Keep this file a module while exposing no browser entrypoint.

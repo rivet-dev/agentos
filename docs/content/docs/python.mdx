@@ -6,10 +6,10 @@ skill: true
 ---
 
 agentOS runs CPython 3.13 as a first-class VM execution engine. Python shares the
-VM filesystem, process tree, networking, permissions, and limits with agents,
-Bash, JavaScript, and installed software.
+VM filesystem, process tree, networking, permissions, and limits with Bash,
+JavaScript, and installed software.
 
-Letting an agent write code instead of chaining one tool call per step is called
+Running a multi-step operation as code instead of chaining one host call per step is called
 [Code Mode](https://blog.cloudflare.com/code-mode/). It has a few advantages over
 driving [Bash](/agentos/docs/bash):
 
@@ -80,8 +80,8 @@ stdin, output, signals, and waiting.
 ## A full Linux environment underneath
 
 There is a real Linux environment behind all of this, shared by every language.
-Files and installed packages are immediately visible to Bash, JavaScript, agents,
-and other executions.
+Files and installed packages are immediately visible to Bash, JavaScript, and
+other executions.
 
 <CodeSnippet file="examples/python-sdk-overview/src/platform.ts" />
 

@@ -42,7 +42,7 @@ class MockScheduleDriver implements ScheduleDriver {
 }
 
 // ---------------------------------------------------------------------------
-// Mock AgentOs — stubs for exec and durable sessions
+// Mock AgentOs — stubs for command execution
 // ---------------------------------------------------------------------------
 
 function createMockVm() {
@@ -51,9 +51,6 @@ function createMockVm() {
 		execArgv: vi
 			.fn()
 			.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }),
-		openSession: vi.fn().mockResolvedValue({ sessionId: "mock-session-1" }),
-		prompt: vi.fn().mockResolvedValue(undefined),
-		deleteSession: vi.fn(),
 	};
 }
 
@@ -235,35 +232,6 @@ describe("CronManager", () => {
 		expect(vm.execArgv).toHaveBeenCalledTimes(1);
 		expect(vm.execArgv).toHaveBeenCalledWith("printenv", ["$(id)", "a b"]);
 		expect(vm.exec).not.toHaveBeenCalled();
-	});
-
-	// -----------------------------------------------------------------------
-	// Session action
-	// -----------------------------------------------------------------------
-
-	it("session action opens, prompts, and deletes a durable session", async () => {
-		manager.schedule({
-			id: "j5",
-			schedule: "* * * * *",
-			action: {
-				type: "session",
-				agentType: "pi" as any,
-				prompt: "do something",
-			},
-		});
-
-		await driver.fire("j5");
-
-		expect(vm.openSession).toHaveBeenCalledWith({
-			agent: "pi",
-			sessionId: expect.stringMatching(/^cron-/),
-		});
-		const sessionId = vm.openSession.mock.calls[0][0].sessionId;
-		expect(vm.prompt).toHaveBeenCalledWith({
-			sessionId,
-			content: [{ type: "text", text: "do something" }],
-		});
-		expect(vm.deleteSession).toHaveBeenCalledWith({ sessionId });
 	});
 
 	// -----------------------------------------------------------------------

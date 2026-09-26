@@ -1,12 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { SidecarKernelProxy } from "../src/sidecar/rpc-client.js";
 import { createInMemoryFileSystem } from "../src/test/runtime.js";
-import { NativeSidecarKernelProxy } from "../src/sidecar/rpc-client.js";
 
 // Regression coverage for post-boot mountFs delivery to the native sidecar:
-//   1. Rust `configure_vm` rebuilds the whole VM configuration from each
-//      payload, so a runtime mount reconfigure that omits the boot `packages` /
-//      `packagesMountAt` / `hostFunctionShimCommands` strips the `/opt/agentos`
-//      projections and hostFunction shims from the VM as a side effect.
+//   1. `configure_vm` replaces boot configuration, so mount changes must resend
+//      boot packages, their projection root, and host-function shims. Runtime-linked
+//      packages are retained by the sidecar, not mirrored by this client.
 //   2. mountFs used to be fire-and-forget with a swallowed rejection, so a
 //      failed reconfigure left the mount silently host-only and callers had no
 //      way to know when (or whether) the guest could see it.
@@ -24,6 +23,7 @@ const bootPackages = [
 	},
 ];
 const bootBindingShims = ["agentos", "agentos-demo"];
+const bootRuntimeCommands = ["node", "npm", "python"];
 
 function createStubClient(options?: { failConfigureVm?: boolean }) {
 	const configureCalls: Array<Record<string, unknown>> = [];
@@ -41,7 +41,6 @@ function createStubClient(options?: { failConfigureVm?: boolean }) {
 				appliedMounts: [],
 				appliedSoftware: [],
 				projectedCommands: [],
-				agents: [],
 			};
 		},
 		async disposeVm() {},
@@ -76,8 +75,8 @@ function createProxy(client: unknown) {
 		commandGuestPaths: new Map<string, string>(),
 		ownsClient: true,
 	};
-	return new NativeSidecarKernelProxy(
-		options as ConstructorParameters<typeof NativeSidecarKernelProxy>[0],
+	return new SidecarKernelProxy(
+		options as ConstructorParameters<typeof SidecarKernelProxy>[0],
 	);
 }
 
@@ -106,27 +105,21 @@ describe("post-boot mount reconfiguration", () => {
 		await proxy.dispose();
 	});
 
-	it("resends runtime-linked packages on later mount reconfigures", async () => {
+	it("keeps runtime command registrations out of the boot package payload", async () => {
 		const { client, configureCalls } = createStubClient();
 		const proxy = createProxy(client);
 
-		// linkSoftware() records the linked package on the proxy; a later
-		// mountFs must resend it alongside the boot packages or configure_vm
-		// (replace-on-write) unprojects it from /opt/agentos.
-		proxy.registerLinkedPackage({ path: "/tmp/linked.aospkg" });
+		// This is the only local update made after linkSoftware receives the
+		// sidecar's projected command paths. Rust tests verify that the sidecar
+		// retains the package across these boot-only configuration payloads.
+		proxy.registerCommandGuestPaths(
+			new Map([["linked-command", "/opt/agentos/bin/linked-command"]]),
+		);
 		await proxy.mountFs("/mnt/dynamic", createInMemoryFileSystem());
-		expect(configureCalls[0].packages).toEqual([
-			...bootPackages,
-			{ path: "/tmp/linked.aospkg" },
-		]);
+		expect(configureCalls[0].packages).toEqual(bootPackages);
 
-		// Duplicate registration is a no-op.
-		proxy.registerLinkedPackage({ path: "/tmp/linked.aospkg" });
 		await proxy.unmountFs("/mnt/dynamic");
-		expect(configureCalls[1].packages).toEqual([
-			...bootPackages,
-			{ path: "/tmp/linked.aospkg" },
-		]);
+		expect(configureCalls[1].packages).toEqual(bootPackages);
 
 		await proxy.dispose();
 	});

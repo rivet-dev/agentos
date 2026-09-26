@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import agentOsHeroLogo from "./assets/agentos-hero-logo.svg";
 import { type ActionErrorLayer, isInspectorActionError } from "./lib/actor-client";
 import { cn } from "./lib/cn";
-import React, { useState } from "react";
+import { useState } from "react";
 
 /** Centered empty/placeholder state filling the tab body. */
 export function AgentOsEmpty({ children }: { children: ReactNode }) {

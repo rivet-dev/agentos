@@ -3,19 +3,17 @@ import { lazy, type ComponentType, StrictMode, useEffect, useState } from "react
 import { createRoot } from "react-dom/client";
 import { isInspectorActionError, tabIdFromUrl } from "./lib/actor-client";
 import { RivetProvider } from "./lib/rivet";
-import { PermissionPrompts } from "./permission-prompts";
 import { TabBoundary } from "./tab-boundary";
-import React from "react";
 
 import "./styles.css";
 
 // Tab registry: id → lazy component. Add a tab here + register the same id in
 // actor.ts `inspectorTabs` pointing `source` at this shared asset dir.
 const TABS: Record<string, () => Promise<{ default: ComponentType<{ actorId: string }> }>> = {
-	transcript: () =>
-		import("./tabs/transcript").then((m) => ({ default: m.TranscriptTabConnected })),
 	filesystem: () =>
 		import("./tabs/filesystem").then((m) => ({ default: m.FilesystemTabConnected })),
+	processes: () =>
+		import("./tabs/processes").then((m) => ({ default: m.ProcessesTabConnected })),
 	system: () =>
 		import("./tabs/system").then((m) => ({ default: m.SystemTabConnected })),
 	terminal: () =>
@@ -24,11 +22,10 @@ const TABS: Record<string, () => Promise<{ default: ComponentType<{ actorId: str
 
 // Hosts vendor built copies of this bundle and pin their tab-id config at
 // server start, so ids that existed in older configs must keep rendering.
-// Software, Mounts, and Processes merged into System; route their ids there.
+// Software and mounts remain sections inside System.
 const LEGACY_TAB_ALIASES: Record<string, string> = {
 	software: "system",
 	mounts: "system",
-	processes: "system",
 };
 
 // Theme comes from the dashboard via the iframe URL; the tokens and all
@@ -134,10 +131,6 @@ function App() {
 	return (
 		<RivetProvider actorId={auth.actorId} authToken={auth.authToken}>
 			<div className="flex h-full min-h-0 flex-col">
-				{/* Permission prompts sit outside the boundary: an agent blocked on
-				    approval must stay answerable from every tab even when the tab
-				    body itself is broken. */}
-				<PermissionPrompts actorId={auth.actorId} />
 				<div className="min-h-0 flex-1">
 					<TabBoundary>
 						<Tab actorId={auth.actorId} />

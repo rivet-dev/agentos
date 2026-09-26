@@ -1,21 +1,21 @@
 // "What is this VM made of and what is it doing": the live process tree plus
-// installed software, configured mounts, preview links, and the actor id in
+// installed software, configured mounts, preview links, and VM status in
 // one scroll view, keeping the tab bar to the high-traffic surfaces
-// (transcript, filesystem).
-import { useMutation, useSuspenseQueries } from "@tanstack/react-query";
+// (filesystem, processes, terminal).
+import { useMutation, useQuery, useQueryClient, useSuspenseQueries } from "@tanstack/react-query";
 import { type ReactNode, useState } from "react";
 import { ActionErrorNote, ChevronRight, CopyButton } from "../common";
+import { runInspectorAction } from "../lib/actor-client";
 import { cn } from "../lib/cn";
-import { agentOsSource } from "../lib/source";
+import { agentOsSource, healthQueryOptions } from "../lib/source";
 import type { MountInfo, SignedPreviewUrl, SoftwareBundle } from "../lib/types";
 import { Badge } from "../ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 import { SOFTWARE_LOGO_DARK_CLASS, SOFTWARE_LOGOS } from "../software-logos";
 import { ScrollArea } from "../ui/scroll-area";
-import { VmBootGate } from "../vm-boot-gate";
+import { TabBoundary } from "../tab-boundary";
 import { VmStatusBadges } from "../vm-status-badges";
 import { ProcessTable, useProcessCounts } from "./processes";
-import React from "react";
 
 function SoftwareRow({ bundle }: { bundle: SoftwareBundle }) {
 	const [open, setOpen] = useState(false);
@@ -241,17 +241,20 @@ function Card({
 }
 
 export function SystemTabConnected({ actorId }: { actorId: string }) {
-	// Every section here (process tree, software commands, mounts) is
-	// enumerated by the running VM, so opening the tab would wake a sleeping
-	// one. Gate first.
+	const status = useQuery(healthQueryOptions(actorId));
+	// Configuration and restart must remain reachable when VM-dependent
+	// resource queries fail during startup.
 	return (
-		<VmBootGate
-			actorId={actorId}
-			note="VM not booted."
-			actionLabel="Boot the VM and show system info"
-		>
-			<SystemLoaded actorId={actorId} />
-		</VmBootGate>
+		<div className="flex h-full min-h-0 flex-col">
+			<div className="mx-auto w-full max-w-4xl shrink-0 px-4 pt-4">
+				<VmConfiguration actorId={actorId} />
+			</div>
+			<div className="min-h-0 flex-1">
+				<TabBoundary key={String(status.data?.generation)}>
+					<SystemLoaded actorId={actorId} />
+				</TabBoundary>
+			</div>
+		</div>
 	);
 }
 
@@ -309,5 +312,62 @@ function SystemLoaded({ actorId }: { actorId: string }) {
 				</div>
 			</ScrollArea>
 		</div>
+	);
+}
+
+function VmConfiguration({ actorId }: { actorId: string }) {
+	const queryClient = useQueryClient();
+	const status = useQuery(healthQueryOptions(actorId));
+	const config = useQuery({
+		queryKey: ["agentOS", actorId, "config"],
+		queryFn: () => runInspectorAction("config.get", (actor) => actor.config.get({})),
+		refetchInterval: 5_000,
+	});
+	const restart = useMutation({
+		mutationFn: () => runInspectorAction("vm.restart", (actor) => actor.vm.restart({})),
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: ["agentOS", actorId] }),
+	});
+	const json = (value: unknown) => JSON.stringify(value, (_key, item) =>
+		typeof item === "bigint" ? item.toString() : item, 2);
+
+	return (
+		<Card
+			title="VM status and configuration"
+			right={
+				<button
+					type="button"
+					className="rounded border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
+					disabled={restart.isPending}
+					onClick={() => restart.mutate()}
+				>
+					{restart.isPending ? "Restarting…" : "Restart VM"}
+				</button>
+			}
+		>
+			{status.error ? <ActionErrorNote error={status.error} /> : null}
+			{config.error ? <ActionErrorNote error={config.error} /> : null}
+			{restart.error ? <ActionErrorNote error={restart.error} /> : null}
+			{status.data ? (
+				<div className="mb-3 text-xs">
+					<span className="font-medium">{status.data.lifecycle}</span>
+					<span className="ml-2 text-muted-foreground">
+						Generation {String(status.data.generation)} · Config {status.data.configState}
+					</span>
+					{status.data.issues.map((issue, index) => (
+						<p key={`${issue.code}-${index}`} className="mt-1 text-destructive">
+							{issue.code}: {issue.message}
+						</p>
+					))}
+				</div>
+			) : null}
+			{config.data ? (
+				<details>
+					<summary className="cursor-pointer text-xs">
+						Desired config, revision {String(config.data.revision)}
+					</summary>
+					<pre className="mt-2 max-h-64 overflow-auto rounded bg-muted p-3 text-xs">{json(config.data.desired)}</pre>
+				</details>
+			) : null}
+		</Card>
 	);
 }

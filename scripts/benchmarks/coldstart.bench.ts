@@ -4,17 +4,9 @@
  * Measures time from AgentOs.create() through workload ready:
  *   --workload=sleep            Minimal VM + idle Node.js process (marketing cold-start workload)
  *   --workload=echo             Minimal VM + first exec("echo hello") completing
- *   --workload=pi-session       VM + openSession({ sessionId: "main", agent: "pi" }) completing
- *   --workload=pi-prompt-turn   VM + openSession({ sessionId: "main", agent: "pi-cli" }) + first prompt turn
- *   --workload=claude-session   VM + openSession({ sessionId: "main", agent: "claude" }) completing
  *
  * All VMs lease one shared sidecar process; a cold-run VM is created and
  * snapshotted first so measured iterations reflect warm, incremental cost.
- *
- * `pi-prompt-turn` benchmarks the native PI CLI path through
- * `openSession({ sessionId: "main", agent: "pi-cli" })`, which uses `pi-acp` to drive the real PI CLI in
- * RPC mode. The same PI headless test file documents that raw `spawn("pi", ...)`
- * is still not exposed on the native sidecar PATH.
  *
  * Pass --iterations=N to override default (5). The reported p95/p99 are only
  * meaningful with enough samples (~200 for p95, ~1000 for p99); the marketing
@@ -22,8 +14,6 @@
  *
  * Usage:
  *   pnpm exec tsx scripts/benchmarks/coldstart.bench.ts --workload=sleep --iterations=2000
- *   pnpm exec tsx scripts/benchmarks/coldstart.bench.ts --workload=pi-session --iterations=3
- *   pnpm exec tsx scripts/benchmarks/coldstart.bench.ts --workload=claude-session --iterations=3
  */
 
 import {
@@ -42,17 +32,10 @@ import {
 	startBenchSidecar,
 	stats,
 	stopBenchSidecar,
-	stopLlmock,
 } from "./bench-utils.js";
 import { AgentOs } from "@rivet-dev/agentos-core";
 
-const VALID_WORKLOADS = [
-	"echo",
-	"sleep",
-	...Object.keys(WORKLOADS).filter(
-		(k) => k.endsWith("-session") || k.endsWith("-turn"),
-	),
-];
+const VALID_WORKLOADS = ["echo", "sleep"];
 
 interface Measurement {
 	ms: number;
@@ -62,7 +45,7 @@ interface Measurement {
 async function measureEcho(): Promise<Measurement> {
 	const t0 = performance.now();
 	const vm = await createBenchVm();
-	const result = await vm.exec(ECHO_COMMAND);
+	const result = await vm.process.exec(ECHO_COMMAND);
 	const ms = performance.now() - t0;
 	if (result.stdout !== EXPECTED_OUTPUT) {
 		throw new Error(`Unexpected output: ${JSON.stringify(result.stdout)}`);
@@ -71,7 +54,7 @@ async function measureEcho(): Promise<Measurement> {
 	return { ms };
 }
 
-async function measureAgentSession(workloadName: string): Promise<Measurement> {
+async function measureWorkload(workloadName: string): Promise<Measurement> {
 	const workload = WORKLOADS[workloadName];
 	const t0 = performance.now();
 	const vm = await workload.createVm();
@@ -117,14 +100,14 @@ async function coldRunSnapshot(workloadName: string): Promise<void> {
 	let vm: AgentOs;
 	if (workloadName === "echo") {
 		vm = await createBenchVm();
-		await vm.exec(ECHO_COMMAND);
+		await vm.process.exec(ECHO_COMMAND);
 	} else {
 		const workload = WORKLOADS[workloadName];
 		vm = await workload.createVm();
 		await workload.start(vm);
 	}
 	try {
-		setBenchRootSnapshot(await vm.snapshotRootFilesystem());
+		setBenchRootSnapshot(await vm.filesystem.export({ maxBytes: 128 * 1024 * 1024 }));
 	} finally {
 		await vm.dispose();
 	}
@@ -134,7 +117,7 @@ async function main() {
 	const { workload, iterations } = parseArgs();
 	const measure = workload === "echo"
 		? measureEcho
-		: () => measureAgentSession(workload);
+		: () => measureWorkload(workload);
 
 	const hardware = getHardware();
 	console.error(`=== Cold-Start Benchmark (${workload}) ===`);
@@ -172,15 +155,6 @@ async function main() {
 		[["cold start", `${s.mean}ms`, `${s.p50}ms`, `${s.p95}ms`, `${s.min}ms`, `${s.max}ms`]],
 	);
 
-	if (lastObservation) {
-		console.error(
-			`observed work: providerRequests=${lastObservation.providerRequestCount ?? 0} textEvents=${lastObservation.textEventCount ?? 0} stopReason=${lastObservation.stopReason ?? "n/a"}`,
-		);
-		if (lastObservation.finalText) {
-			console.error(`final text: ${JSON.stringify(lastObservation.finalText)}`);
-		}
-	}
-
 	console.log(
 		JSON.stringify(
 			{
@@ -196,7 +170,6 @@ async function main() {
 	);
 
 	await stopBenchSidecar();
-	await stopLlmock();
 }
 
 main().catch((err) => {

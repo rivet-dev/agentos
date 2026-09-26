@@ -1,6 +1,4 @@
 export type {
-	AgentExitEvent,
-	AgentExitHandler,
 	AgentOsCreateSidecarOptions,
 	AgentOsLimits,
 	AgentOsOptions,
@@ -8,10 +6,6 @@ export type {
 	AgentOsSidecarConfig,
 	AgentOsSidecarDescription,
 	AgentOsSidecarRuntimeConfig,
-	AgentRegistryEntry,
-	AgentRestartOutcome,
-	AgentStderrEvent,
-	AgentStderrHandler,
 	BatchReadResult,
 	BatchWriteEntry,
 	BatchWriteResult,
@@ -20,6 +14,7 @@ export type {
 	ExportRootFilesystemOptions,
 	HttpRequest,
 	HttpResponse,
+	InstalledSoftware,
 	LimitWarning,
 	LimitWarningHandler,
 	MountConfig,
@@ -42,7 +37,30 @@ export type {
 	ShellData,
 	ShellExit,
 	ShellOptions,
+	SoftwarePackageSource,
 } from "./agent-os.js";
+export type {
+	PackageDescriptor,
+	PackageRef,
+	SoftwarePackageRef,
+} from "./agentos-package.js";
+export type {
+	CronAction,
+	CronActionInfo,
+	CronEvent,
+	CronEventHandler,
+	CronJob,
+	CronJobInfo,
+	CronJobOptions,
+	ScheduleDriver,
+	ScheduleEntry,
+	ScheduleHandle,
+} from "./cron/index.js";
+export type {
+	HostDirBackendOptions,
+	HostDirMountPluginConfig,
+	NodeModulesMountConfig,
+} from "./host-dir-mount.js";
 export type {
 	CodeEvaluationResult,
 	CodeExecutionResult,
@@ -71,37 +89,6 @@ export type {
 	TypeScriptExecutionOptions,
 	TypeScriptFileExecutionOptions,
 } from "./language-execution.js";
-export type * from "./session-api.js";
-/**
- * An agent type id — the `name` of an `/opt/agentos` agent package manifest
- * (e.g. `"pi"`, `"claude"`). Agents are resolved by the SIDECAR from the projected
- * package manifest (`/opt/agentos/<name>/current/agentos-package.json`); the client
- * passes only the name, so any manifest `name` is a valid agent type.
- */
-export type AgentType = string;
-export type {
-	AgentBlock,
-	PackageDescriptor,
-	PackageRef,
-	SoftwarePackageRef,
-} from "./agentos-package.js";
-export type {
-	CronAction,
-	CronActionInfo,
-	CronEvent,
-	CronEventHandler,
-	CronJob,
-	CronJobInfo,
-	CronJobOptions,
-	ScheduleDriver,
-	ScheduleEntry,
-	ScheduleHandle,
-} from "./cron/index.js";
-export type {
-	HostDirBackendOptions,
-	HostDirMountPluginConfig,
-	NodeModulesMountConfig,
-} from "./host-dir-mount.js";
 export type {
 	HostFunction,
 	HostFunctionCollection,
@@ -109,7 +96,7 @@ export type {
 	HostFunctionExample,
 	HostFunctionSchemas,
 	ResolvedHostFunctions,
-} from "@rivet-dev/agentos-runtime-core/host-functions";
+} from "./host-functions.js";
 export type {
 	FilesystemSnapshotExport,
 	LayerHandle,

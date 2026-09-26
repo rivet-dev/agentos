@@ -10,32 +10,6 @@
       "type": "string",
       "minLength": 1
     },
-    "agent": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["acpEntrypoint"],
-      "properties": {
-        "acpEntrypoint": {
-          "type": "string",
-          "minLength": 1
-        },
-        "env": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
-        },
-        "launchArgs": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "snapshot": {
-          "type": "boolean"
-        }
-      }
-    },
     "provides": {
       "type": "object",
       "additionalProperties": false,

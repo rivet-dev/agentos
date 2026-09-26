@@ -1,6 +1,6 @@
 ---
 title: "AI Agent Code Exec"
-description: "Execute agent-generated code inside an isolated AgentOS VM."
+description: "Execute generated code inside an isolated agentOS VM."
 ---
 
 Treat every generated program as hostile input. This example creates one

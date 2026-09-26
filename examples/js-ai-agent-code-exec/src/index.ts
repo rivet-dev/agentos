@@ -1,7 +1,7 @@
 import { AgentOs } from "@rivet-dev/agentos-core";
 
-// Imagine this expression came from an AI agent. It executes inside an
-// isolated AgentOS VM and can only use capabilities granted to that VM.
+// Imagine this expression came from an untrusted model. It executes inside an
+// isolated agentOS VM and can only use capabilities granted to that VM.
 const untrustedExpression = `
 (async () => {
   const fib = [0, 1];

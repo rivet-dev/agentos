@@ -166,6 +166,7 @@ type CreateVmRequest struct {
   config: JsonUtf8
 }
 
+
 type DisposeReason enum {
   REQUESTED
   CONNECTION_CLOSED
@@ -193,6 +194,15 @@ type MountDescriptor struct {
   plugin: MountPluginDescriptor
 }
 
+type CompareVmConfigRequest struct {
+  before: JsonUtf8
+  after: JsonUtf8
+  beforeMounts: list<MountDescriptor>
+  afterMounts: list<MountDescriptor>
+  beforeRestartIdentity: list<str>
+  afterRestartIdentity: list<str>
+}
+
 type MountInfo struct {
   path: str
   kind: str
@@ -216,9 +226,15 @@ type WasmPermissionTier enum {
   ISOLATED
 }
 
+type StandaloneWasmBackend enum {
+  V8
+  WASMTIME
+  WASMTIME_THREADS
+}
+
 # agentOS package descriptor. `path` is the trusted host path of the package:
 # normally the packed `.aospkg` file (header + vbare manifest + mount index +
-# mount tar; see crates/vfs/package-format/v1.bare). The sidecar reads the
+# mount tar; see crates/vfs-core/package-format/v2.bare). The sidecar reads the
 # vbare chunk1 manifest, projects the package read-only under
 # `<packagesMountAt>/pkgs/<name>/<version>`, and links its `bin/` commands onto
 # $PATH. A directory path is accepted only for local transition fixtures and is
@@ -229,14 +245,61 @@ type PackageDescriptor struct {
   path: str
 }
 
-type AgentosProjectedAgent struct {
-  id: str
-  acpEntrypoint: str
-  adapterEntrypoint: str
-}
-
 type LinkPackageRequest struct {
   package: PackageDescriptor
+  packageId: str
+}
+
+type UnlinkPackageRequest struct {
+  packageId: str
+}
+
+# Package acquisition is session-scoped so a worker can warm the sidecar cache
+# before creating a VM. A hosted actor only sends URL sources; trusted embedded
+# Core may also send a local path. Neither source exposes a host path to guests.
+type PackageUrlSource struct {
+  url: str
+  expectedDigest: optional<str>
+}
+
+type PackagePathSource struct {
+  path: str
+  expectedDigest: optional<str>
+}
+
+type PackageAcquisitionSource union {
+  PackageUrlSource |
+  PackagePathSource
+}
+
+type AcquirePackageRequest struct {
+  source: PackageAcquisitionSource
+  advisory: bool
+  # Entire server-side waiter deadline; omitted uses the operator cache cap.
+  # Overrides may shorten, but never raise, that cap. Zero is invalid.
+  # Dropping a client waiter alone does not immediately cancel this operation.
+  timeoutMs: optional<u64>
+  maxPackageBytes: optional<u64>
+  downloadTimeoutMs: optional<u64>
+  connectTimeoutMs: optional<u64>
+  maxRedirects: optional<u32>
+  allowInsecureLocalHttp: bool
+}
+
+type PackageAcquiredResponse struct {
+  packageId: str
+  digest: str
+  size: u64
+  packageName: str
+  version: str
+  commands: list<str>
+}
+
+# Unlike trusted LinkPackage, installation resolves and verifies the source
+# inside the sidecar. advisory must be false: installed artifacts retain a VM
+# pin until UnlinkPackage succeeds.
+type InstallPackageRequest struct {
+  acquisition: AcquirePackageRequest
 }
 
 type PackageCommands struct {
@@ -255,9 +318,34 @@ type ProjectedCommand struct {
   guestPath: str
 }
 
+type PackageInstalledResponse struct {
+  package: PackageAcquiredResponse
+  projectedCommands: list<ProjectedCommand>
+}
+
+type GetPackageCacheStatsRequest void
+
+type PackageCacheStatsResponse struct {
+  entries: u64
+  sourceEntries: u64
+  bytes: u64
+  pinnedEntries: u64
+  pendingAcquisitions: u64
+  hits: u64
+  misses: u64
+  coalescedWaiters: u64
+  acquisitions: u64
+  evictions: u64
+  capacityFailures: u64
+  cancelledAcquisitions: u64
+}
+
 type PackageLinkedResponse struct {
   projectedCommands: list<ProjectedCommand>
-  agents: list<AgentosProjectedAgent>
+}
+
+type PackageUnlinkedResponse struct {
+  removedCommands: list<str>
 }
 
 type ConfigureVmRequest struct {
@@ -382,6 +470,8 @@ type ExecuteRequest struct {
   env: map<str><str>
   cwd: optional<str>
   wasmPermissionTier: optional<WasmPermissionTier>
+  wasmBackend: optional<StandaloneWasmBackend>
+  retainOutput: bool
 }
 
 # First-class execution lifecycle. The legacy process request above remains an
@@ -667,6 +757,14 @@ type KillProcessRequest struct {
 
 type GetProcessSnapshotRequest void
 
+type ReadProcessOutputRequest struct {
+  processId: str
+  after: optional<u64>
+  # Zero requests the VM-configured default; nonzero is an explicit bound.
+  maxEvents: u32
+  maxBytes: u32
+}
+
 type GetResourceSnapshotRequest void
 
 type FindListenerRequest struct {
@@ -788,7 +886,13 @@ type RequestPayload union {
   WriteExecutionStdinRequest |
   CloseExecutionStdinRequest |
   ResizeExecutionPtyRequest |
-  ReadExecutionOutputRequest
+  ReadExecutionOutputRequest |
+  UnlinkPackageRequest |
+  CompareVmConfigRequest |
+  AcquirePackageRequest |
+  InstallPackageRequest |
+  GetPackageCacheStatsRequest |
+  ReadProcessOutputRequest
 }
 
 type RequestFrame struct {
@@ -813,6 +917,10 @@ type VmCreatedResponse struct {
   vmId: str
 }
 
+type VmConfigComparedResponse struct {
+  equivalent: bool
+}
+
 type VmDisposedResponse struct {
   vmId: str
 }
@@ -825,7 +933,6 @@ type VmConfiguredResponse struct {
   appliedMounts: u32
   appliedSoftware: u32
   projectedCommands: list<ProjectedCommand>
-  agents: list<AgentosProjectedAgent>
 }
 
 type HostCallbacksRegisteredResponse struct {
@@ -951,6 +1058,27 @@ type ProcessSnapshotResponse struct {
   processes: list<ProcessSnapshotEntry>
 }
 
+type StreamChannel enum {
+  STDOUT
+  STDERR
+}
+
+type ProcessOutputReplayEvent struct {
+  sequence: u64
+  channel: StreamChannel
+  chunk: data
+  timestampMs: u64
+}
+
+type ProcessOutputPageResponse struct {
+  processId: str
+  events: list<ProcessOutputReplayEvent>
+  nextCursor: optional<u64>
+  hasMore: bool
+  truncated: bool
+  exitCode: optional<i32>
+}
+
 type QueueSnapshotEntry struct {
   name: str
   category: str
@@ -962,6 +1090,7 @@ type QueueSnapshotEntry struct {
 
 type ResourceSnapshotResponse struct {
   runningProcesses: u64
+  stoppedProcesses: u64
   exitedProcesses: u64
   fdTables: u64
   openFds: u64
@@ -975,6 +1104,16 @@ type ResourceSnapshotResponse struct {
   socketConnections: u64
   socketBufferedBytes: u64
   socketDatagramQueueLen: u64
+  wasmReservedMemoryBytes: u64
+  wasmtimeEngineProfiles: u64
+  wasmtimeModuleEntries: u64
+  wasmtimeModuleCacheHits: u64
+  wasmtimeModuleCacheMisses: u64
+  wasmtimeModuleCacheEvictions: u64
+  wasmtimeCompiledSourceBytes: u64
+  wasmtimeChargedModuleBytes: u64
+  wasmtimeCompileTimeMicros: u64
+  wasmtimeProcessRetainedRssBytes: optional<u64>
   queueSnapshots: list<QueueSnapshotEntry>
 }
 
@@ -1199,7 +1338,13 @@ type ResponsePayload union {
   ExecutionListResponse |
   ExecutionDeletedResponse |
   ExecutionIoResponse |
-  ExecutionOutputPageResponse
+  ExecutionOutputPageResponse |
+  PackageUnlinkedResponse |
+  VmConfigComparedResponse |
+  PackageAcquiredResponse |
+  PackageInstalledResponse |
+  PackageCacheStatsResponse |
+  ProcessOutputPageResponse
 }
 
 type ResponseFrame struct {
@@ -1221,15 +1366,13 @@ type VmLifecycleEvent struct {
   state: VmLifecycleState
 }
 
-type StreamChannel enum {
-  STDOUT
-  STDERR
-}
 
 type ProcessOutputEvent struct {
   processId: str
   channel: StreamChannel
   chunk: data
+  sequence: optional<u64>
+  timestampMs: optional<u64>
 }
 
 type ProcessExitedEvent struct {
@@ -1339,3 +1482,6 @@ type ProtocolFrame union {
   SidecarResponseFrame |
   ControlFrame
 }
+
+
+

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer as createHostServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -142,6 +142,8 @@ describe("one-shot calls", () => {
 	test("run a mounted file", async () => {
 		const hostDir = mkdtempSync(join(tmpdir(), "secure-exec-files-"));
 		try {
+			// The guest UID may differ from the host UID; allow mount traversal.
+			chmodSync(hostDir, 0o755);
 			writeFileSync(join(hostDir, "main.mjs"), 'console.log("from a mount");');
 			const result = await executeFile("/mnt/app/main.mjs", {
 				mounts: [hostDirMount("/mnt/app", hostDir)],

@@ -4,7 +4,9 @@
 //! Ported from `packages/core/src/agent-os.ts` (`AgentOsSidecar`). The shared-sidecar pool is a
 //! process-global map (default pool `"default"`).
 
-use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
+#[cfg(any(feature = "actor-internals", feature = "sidecar-internals", test))]
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 use std::sync::Arc;
 
 use once_cell::sync::OnceCell;
@@ -24,11 +26,78 @@ const SHARED_SIDECAR_POOL_LIMIT: usize = 1024;
 /// Env var that overrides the Agent OS wrapper sidecar binary path.
 const AGENTOS_SIDECAR_BIN_ENV: &str = "AGENTOS_SIDECAR_BIN";
 
+static SHARED_SIDECAR_PACKAGE_CACHE: OnceCell<crate::software::ProcessPackageCacheOptions> =
+    OnceCell::new();
+
+/// Configure the package cache of child sidecars before opening any shared
+/// connection. The hosted worker uses this once at process startup.
+#[cfg(feature = "sidecar-internals")]
+pub fn configure_shared_sidecar_package_cache(
+    options: crate::software::ProcessPackageCacheOptions,
+) -> Result<(), ClientError> {
+    options.validate()?;
+    if let Some(existing) = SHARED_SIDECAR_PACKAGE_CACHE.get() {
+        if existing == &options {
+            return Ok(());
+        }
+        return Err(ClientError::PackageCacheConfiguration(
+            "shared sidecar package cache is already configured differently".into(),
+        ));
+    }
+    match SHARED_SIDECAR_PACKAGE_CACHE.set(options.clone()) {
+        Ok(()) => Ok(()),
+        Err(_) => configure_shared_sidecar_package_cache(options),
+    }
+}
+
+fn sidecar_spawn_args() -> Result<Vec<String>, ClientError> {
+    let Some(options) = SHARED_SIDECAR_PACKAGE_CACHE.get() else {
+        return Ok(Vec::new());
+    };
+    let mut args = vec!["sidecar".to_owned()];
+    if let Some(path) = &options.root {
+        let path = path.to_str().ok_or_else(|| {
+            ClientError::PackageCacheConfiguration(
+                "package cache directory is not valid UTF-8 for sidecar startup".into(),
+            )
+        })?;
+        args.extend(["--package-cache-dir".into(), path.into()]);
+    }
+    for (name, value) in [
+        ("--package-cache-min-free-bytes", options.min_free_bytes),
+        ("--package-cache-max-bytes", options.max_bytes),
+        ("--package-cache-max-entries", options.max_entries as u64),
+        (
+            "--package-cache-max-concurrent-acquisitions",
+            options.max_concurrent_acquisitions as u64,
+        ),
+        (
+            "--package-cache-max-pending-acquisitions",
+            options.max_pending_acquisitions as u64,
+        ),
+        (
+            "--package-cache-acquisition-timeout-ms",
+            options.acquisition_timeout_ms,
+        ),
+        (
+            "--package-cache-max-source-entries",
+            options.max_source_entries as u64,
+        ),
+        ("--package-cache-source-ttl-ms", options.source_ttl_ms),
+    ] {
+        args.extend([name.into(), value.to_string()]);
+    }
+    Ok(args)
+}
+
 /// The lazily-established shared sidecar process + authenticated connection. Multiple VMs in the same
 /// (shared) sidecar reuse this single process/connection, each opening its own session + VM on it.
 pub(crate) struct SharedConnection {
     pub(crate) transport: Arc<SidecarProcess>,
     pub(crate) connection_id: String,
+    #[cfg(any(feature = "actor-internals", feature = "sidecar-internals", test))]
+    package_session_id: Option<String>,
+    authenticated: bool,
 }
 
 /// Sidecar lifecycle state, encoded as a `u8` for `AtomicU8`.
@@ -106,13 +175,15 @@ pub struct AgentOsSidecarDescription {
     pub active_vm_count: u32,
 }
 
-/// Public transport handle for a (possibly shared) native sidecar process hosting VMs.
+/// Public transport handle for a (possibly shared) sidecar process hosting VMs.
 pub struct AgentOsSidecar {
     pub(crate) sidecar_id: String,
     pub(crate) placement: AgentOsSidecarPlacement,
     pub(crate) shared_pool: Option<String>,
     pub(crate) state: AtomicU8,
     pub(crate) active_vm_count: AtomicU32,
+    pub(crate) active_package_sessions: AtomicU32,
+    lifecycle: tokio::sync::Mutex<()>,
     /// Absolute path to the `agentos-sidecar` binary, threaded from `AgentOsConfig` when present.
     /// Otherwise `ensure_connection` resolves the Agent OS env fallback and passes an explicit path
     /// to the generic transport.
@@ -136,20 +207,33 @@ impl AgentOsSidecar {
             shared_pool,
             state: AtomicU8::new(SidecarState::Ready.as_u8()),
             active_vm_count: AtomicU32::new(0),
+            active_package_sessions: AtomicU32::new(0),
+            lifecycle: tokio::sync::Mutex::new(()),
             sidecar_binary_path,
             connection: tokio::sync::Mutex::new(None),
         }
     }
 
     /// Get (or lazily establish) the shared sidecar process + authenticated connection. The first
-    /// caller spawns the `agentos-sidecar` child and runs the `Authenticate` handshake; subsequent
+    /// caller spawns the native sidecar child and runs the `Authenticate` handshake; subsequent
     /// callers reuse the same transport + connection id. This is what makes a shared sidecar host
     /// multiple VMs in one process.
     pub(crate) async fn ensure_connection(
         &self,
     ) -> Result<(Arc<SidecarProcess>, String, usize), ClientError> {
         let mut guard = self.connection.lock().await;
+        if self.state.load(Ordering::SeqCst) != SidecarState::Ready.as_u8() {
+            return Err(ClientError::Sidecar(
+                "sidecar is disposing or disposed".into(),
+            ));
+        }
         if let Some(existing) = guard.as_ref() {
+            if !existing.authenticated {
+                return Err(ClientError::Sidecar(
+                    "sidecar authentication did not complete; dispose this sidecar before retrying"
+                        .into(),
+                ));
+            }
             let max_frame = existing.transport.max_frame_bytes();
             return Ok((
                 existing.transport.clone(),
@@ -158,7 +242,20 @@ impl AgentOsSidecar {
             ));
         }
 
-        let transport = SidecarProcess::spawn(Some(self.resolved_sidecar_binary_path())).await?;
+        let transport = SidecarProcess::spawn_with_args(
+            Some(self.resolved_sidecar_binary_path()),
+            sidecar_spawn_args()?,
+        )
+        .await?;
+        // Retain ownership before the authentication await, so errors or
+        // cancellation cannot orphan a child that holds the cache directory.
+        *guard = Some(SharedConnection {
+            transport: transport.clone(),
+            connection_id: String::new(),
+            #[cfg(any(feature = "actor-internals", feature = "sidecar-internals", test))]
+            package_session_id: None,
+            authenticated: false,
+        });
         let authed = match transport
             .request_wire(
                 wire::OwnershipScope::ConnectionOwnership(wire::ConnectionOwnership {
@@ -168,7 +265,7 @@ impl AgentOsSidecar {
                     client_name: "agentos-client".to_string(),
                     auth_token: "agentos-client".to_string(),
                     protocol_version: wire::PROTOCOL_VERSION,
-                    bridge_version: agentos_bridge::bridge_contract().version,
+                    bridge_version: agentos_vm_host_interface::bridge_contract().version,
                 }),
             )
             .await?
@@ -192,6 +289,9 @@ impl AgentOsSidecar {
         *guard = Some(SharedConnection {
             transport: transport.clone(),
             connection_id: authed.connection_id.clone(),
+            #[cfg(any(feature = "actor-internals", feature = "sidecar-internals", test))]
+            package_session_id: None,
+            authenticated: true,
         });
         Ok((transport, authed.connection_id, max_frame))
     }
@@ -199,10 +299,129 @@ impl AgentOsSidecar {
     /// Kill the shared sidecar child process if a connection was established. Used when the last VM
     /// on a shared sidecar shuts down, so the sidecar process does not leak (process-global pool
     /// entries are never dropped, so `kill_on_drop` alone would not fire at process exit).
-    pub(crate) async fn kill_connection(&self) {
-        if let Some(connection) = self.connection.lock().await.take() {
-            connection.transport.kill_child();
+    pub(crate) async fn kill_connection(&self) -> Result<(), ClientError> {
+        let mut connection = self.connection.lock().await;
+        if let Some(connection) = connection.as_ref() {
+            connection.transport.terminate_child().await?;
         }
+        // Keep the transport reachable if termination fails or is cancelled.
+        connection.take();
+        Ok(())
+    }
+
+    pub(crate) async fn acquire_vm_lease(
+        self: &Arc<Self>,
+    ) -> Result<AgentOsSidecarVmLease, ClientError> {
+        self.acquire_lease(false).await
+    }
+
+    async fn acquire_lease(
+        self: &Arc<Self>,
+        package: bool,
+    ) -> Result<AgentOsSidecarVmLease, ClientError> {
+        let _lifecycle = self.lifecycle.lock().await;
+        if self.state.load(Ordering::SeqCst) != SidecarState::Ready.as_u8() {
+            return Err(ClientError::Sidecar(
+                "sidecar is disposing or disposed".into(),
+            ));
+        }
+        let count = if package {
+            &self.active_package_sessions
+        } else {
+            &self.active_vm_count
+        };
+        count
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |count| {
+                count.checked_add(1)
+            })
+            .map_err(|_| {
+                ClientError::Sidecar("limit_exceeded: sidecar lease count overflow".into())
+            })?;
+        Ok(AgentOsSidecarVmLease {
+            sidecar: self.clone(),
+            package,
+            released: AtomicBool::new(false),
+        })
+    }
+
+    pub(crate) async fn dispose_if_unused(&self) -> Result<(), ClientError> {
+        let _lifecycle = self.lifecycle.lock().await;
+        if self.active_vm_count.load(Ordering::SeqCst) == 0
+            && self.active_package_sessions.load(Ordering::SeqCst) == 0
+        {
+            self.dispose_locked().await?;
+        }
+        Ok(())
+    }
+
+    /// Open a sidecar-owned package acquisition session before any VM exists.
+    #[cfg(any(feature = "actor-internals", feature = "sidecar-internals", test))]
+    pub async fn open_package_session(
+        self: &Arc<Self>,
+    ) -> Result<AgentOsPackageSession, ClientError> {
+        // Reserve before the first I/O await: last-VM shutdown must not kill
+        // the child while this session is still opening.
+        let lease = self.acquire_lease(true).await?;
+        let result = async {
+            let (transport, connection_id, _) = self.ensure_connection().await?;
+            let mut connection = self.connection.lock().await;
+            let current = connection.as_mut().ok_or_else(|| {
+                ClientError::Sidecar(
+                    "sidecar connection closed while opening package session".into(),
+                )
+            })?;
+            // The wire has no CloseSession operation. Reuse one acquisition
+            // session per connection so repeated open/close does not exhaust the
+            // bounded sidecar session table while sibling VMs remain alive.
+            let session_id = if let Some(session_id) = &current.package_session_id {
+                session_id.clone()
+            } else {
+                let response = transport
+                    .request_wire(
+                        wire::OwnershipScope::ConnectionOwnership(wire::ConnectionOwnership {
+                            connection_id: connection_id.clone(),
+                        }),
+                        wire::RequestPayload::OpenSessionRequest(wire::OpenSessionRequest {
+                            placement: crate::agent_os::sidecar_wire_placement(self),
+                            metadata: HashMap::new(),
+                        }),
+                    )
+                    .await?;
+                let wire::ResponsePayload::SessionOpenedResponse(opened) = response else {
+                    return Err(match response {
+                        wire::ResponsePayload::RejectedResponse(rejected) => {
+                            ClientError::from_rejection(rejected)
+                        }
+                        other => ClientError::Sidecar(format!(
+                            "unexpected package session response: {other:?}"
+                        )),
+                    });
+                };
+                current.package_session_id = Some(opened.session_id.clone());
+                opened.session_id
+            };
+            drop(connection);
+            Ok((transport, connection_id, session_id))
+        }
+        .await;
+        let (transport, connection_id, session_id) = match result {
+            Ok(opened) => opened,
+            Err(error) => {
+                lease.release();
+                if let Err(cleanup_error) = self.dispose_if_unused().await {
+                    tracing::error!(%cleanup_error, "failed to stop sidecar after package session open failed");
+                }
+                return Err(error);
+            }
+        };
+        Ok(AgentOsPackageSession {
+            sidecar: self.clone(),
+            transport,
+            connection_id,
+            session_id,
+            closed: AtomicBool::new(false),
+            lease,
+        })
     }
 
     fn resolved_sidecar_binary_path(&self) -> String {
@@ -237,6 +456,11 @@ impl AgentOsSidecar {
     /// 5. If this sidecar is the cached shared sidecar for its pool, remove it from the pool.
     /// 6. If any lease disposal failed, return an aggregated error.
     pub async fn dispose(&self) -> Result<(), ClientError> {
+        let _lifecycle = self.lifecycle.lock().await;
+        self.dispose_locked().await
+    }
+
+    async fn dispose_locked(&self) -> Result<(), ClientError> {
         if SidecarState::from_u8(self.state.load(Ordering::SeqCst)) == SidecarState::Disposed {
             return Ok(());
         }
@@ -244,12 +468,13 @@ impl AgentOsSidecar {
         self.state
             .store(SidecarState::Disposing.as_u8(), Ordering::SeqCst);
 
-        let errors: Vec<String> = Vec::new();
-
-        // Parity note: TypeScript iterates `state.activeLeases` here and aggregates per-lease
-        // disposal errors. Active leases are owned by `AgentOs` and are released through
-        // `AgentOsSidecarVmLease::dispose` during `AgentOs::shutdown`.
+        // Explicit sidecar disposal owns all its VMs. Reap the process before
+        // reporting disposal, even if a failed VM still retained a lease.
+        // On cancellation/error, remain Disposing and retain the connection
+        // so a later call can finish instead of reporting false success.
+        self.kill_connection().await?;
         self.active_vm_count.store(0, Ordering::SeqCst);
+        self.active_package_sessions.store(0, Ordering::SeqCst);
         self.state
             .store(SidecarState::Disposed.as_u8(), Ordering::SeqCst);
 
@@ -260,30 +485,161 @@ impl AgentOsSidecar {
                 .remove_if(pool, |cached| std::ptr::eq(Arc::as_ptr(cached), self_ptr));
         }
 
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            // Parity: TypeScript throws `new Error(errors.map(e => e.message).join("; "))`, a bare
-            // joined message with NO prefix. The aggregated text is built here verbatim.
-            //
-            // Constraint: `ClientError` (error.rs, owned by another agent) currently has no
-            // transparent/no-prefix variant, so the only generic carrier is `ClientError::Sidecar`,
-            // whose `Display` prepends `"sidecar error: "`. To surface the joined string byte-for-byte
-            // identical to TS, error.rs must grow a transparent variant (e.g.
-            // `#[error("{0}")] Aggregate(String)`); this site should switch to it once it exists. The
-            // joined string is constructed here so that wiring is a one-line variant swap.
-            let aggregated = errors.join("; ");
-            Err(ClientError::Sidecar(aggregated))
+        Ok(())
+    }
+}
+
+/// A process-scoped sidecar session for package acquisition without a VM.
+#[cfg(any(feature = "actor-internals", feature = "sidecar-internals", test))]
+pub struct AgentOsPackageSession {
+    sidecar: Arc<AgentOsSidecar>,
+    transport: Arc<SidecarProcess>,
+    connection_id: String,
+    session_id: String,
+    closed: AtomicBool,
+    lease: AgentOsSidecarVmLease,
+}
+
+#[cfg(any(feature = "actor-internals", feature = "sidecar-internals", test))]
+impl AgentOsPackageSession {
+    pub async fn cache_stats(
+        &self,
+    ) -> Result<crate::software::ProcessPackageCacheStats, ClientError> {
+        if self.closed.load(Ordering::SeqCst) {
+            return Err(ClientError::Sidecar("package session is closed".into()));
         }
+        let response = self
+            .transport
+            .request_wire(
+                wire::OwnershipScope::SessionOwnership(wire::SessionOwnership {
+                    connection_id: self.connection_id.clone(),
+                    session_id: self.session_id.clone(),
+                }),
+                wire::RequestPayload::GetPackageCacheStatsRequest,
+            )
+            .await?;
+        match response {
+            wire::ResponsePayload::PackageCacheStatsResponse(stats) => {
+                let count = |value: u64| usize::try_from(value).unwrap_or(usize::MAX);
+                Ok(crate::software::ProcessPackageCacheStats {
+                    entries: count(stats.entries),
+                    source_entries: count(stats.source_entries),
+                    bytes: stats.bytes,
+                    pinned_entries: count(stats.pinned_entries),
+                    pending_acquisitions: count(stats.pending_acquisitions),
+                    hits: stats.hits,
+                    misses: stats.misses,
+                    coalesced_waiters: stats.coalesced_waiters,
+                    acquisitions: stats.acquisitions,
+                    evictions: stats.evictions,
+                    capacity_failures: stats.capacity_failures,
+                    cancelled_acquisitions: stats.cancelled_acquisitions,
+                })
+            }
+            wire::ResponsePayload::RejectedResponse(rejected) => {
+                Err(ClientError::from_rejection(rejected))
+            }
+            other => Err(ClientError::Sidecar(format!(
+                "unexpected package cache stats response: {other:?}"
+            ))),
+        }
+    }
+
+    pub async fn acquire(
+        &self,
+        source: crate::software::PackageSource,
+        advisory: bool,
+        timeout_ms: Option<u64>,
+        options: Option<&crate::software::PackageResolverOptions>,
+    ) -> Result<crate::software::InstalledSoftware, ClientError> {
+        if self.closed.load(Ordering::SeqCst) {
+            return Err(ClientError::Sidecar("package session is closed".into()));
+        }
+        let source = match source {
+            crate::software::PackageSource::Url {
+                url,
+                expected_digest,
+            } => wire::PackageAcquisitionSource::PackageUrlSource(wire::PackageUrlSource {
+                url,
+                expected_digest,
+            }),
+            crate::software::PackageSource::Path {
+                path,
+                expected_digest,
+            } => wire::PackageAcquisitionSource::PackagePathSource(wire::PackagePathSource {
+                path,
+                expected_digest,
+            }),
+        };
+        let response = self
+            .transport
+            .request_wire(
+                wire::OwnershipScope::SessionOwnership(wire::SessionOwnership {
+                    connection_id: self.connection_id.clone(),
+                    session_id: self.session_id.clone(),
+                }),
+                wire::RequestPayload::AcquirePackageRequest(wire::AcquirePackageRequest {
+                    source,
+                    advisory,
+                    timeout_ms,
+                    max_package_bytes: options.map(|options| options.max_package_bytes),
+                    download_timeout_ms: options.map(|options| options.download_timeout_ms),
+                    connect_timeout_ms: options.map(|options| options.connect_timeout_ms),
+                    max_redirects: options.map(|options| options.max_redirects as u32),
+                    allow_insecure_local_http: options
+                        .is_some_and(|options| options.allow_insecure_local_http),
+                }),
+            )
+            .await?;
+        match response {
+            wire::ResponsePayload::PackageAcquiredResponse(package) => {
+                Ok(crate::software::InstalledSoftware {
+                    package_id: package.package_id,
+                    digest: package.digest,
+                    size_bytes: package.size,
+                    package_name: package.package_name,
+                    version: package.version,
+                    commands: package.commands,
+                })
+            }
+            wire::ResponsePayload::RejectedResponse(rejected) => {
+                Err(ClientError::from_rejection(rejected))
+            }
+            other => Err(ClientError::Sidecar(format!(
+                "unexpected acquire_package response: {other:?}"
+            ))),
+        }
+    }
+
+    pub async fn close(&self) -> Result<(), ClientError> {
+        self.closed.store(true, Ordering::SeqCst);
+        self.lease.release();
+        // Retry unfinished disposal even when an earlier close was cancelled.
+        self.sidecar.dispose_if_unused().await
+    }
+
+    #[cfg(feature = "actor-internals")]
+    pub(crate) async fn shutdown_worker(&self) -> Result<(), ClientError> {
+        self.closed.store(true, Ordering::SeqCst);
+        self.lease.release();
+        self.sidecar.dispose().await
     }
 }
 
 /// A lease over a VM; released on `AgentOs` dispose.
 pub(crate) struct AgentOsSidecarVmLease {
     pub(crate) sidecar: Arc<AgentOsSidecar>,
+    package: bool,
+    released: AtomicBool,
 }
 
 impl AgentOsSidecarVmLease {
+    /// An initialization error has no VM handle left to retry disposal. Keep
+    /// that ownership counted until the explicit worker owner stops the child.
+    pub(crate) fn retain_until_worker_shutdown(self) {
+        self.released.store(true, Ordering::SeqCst);
+    }
+
     /// Release the lease.
     ///
     /// Parity with the TypeScript lease `dispose()`: it is idempotent, removes itself from the
@@ -293,22 +649,35 @@ impl AgentOsSidecarVmLease {
     /// `state.description.activeVmCount = state.activeLeases.size`.
     ///
     pub(crate) async fn dispose(self) -> Result<(), ClientError> {
-        let sidecar = self.sidecar;
-        // Mirror `activeVmCount = activeLeases.size` by decrementing, never underflowing past 0.
-        let mut current = sidecar.active_vm_count.load(Ordering::SeqCst);
-        loop {
-            let next = current.saturating_sub(1);
-            match sidecar.active_vm_count.compare_exchange_weak(
-                current,
-                next,
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            ) {
-                Ok(_) => break,
-                Err(observed) => current = observed,
-            }
-        }
+        self.release();
         Ok(())
+    }
+
+    fn release(&self) -> bool {
+        if self.released.swap(true, Ordering::SeqCst) {
+            return false;
+        }
+        let count = if self.package {
+            &self.sidecar.active_package_sessions
+        } else {
+            &self.sidecar.active_vm_count
+        };
+        count
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |count| {
+                Some(count.saturating_sub(1))
+            })
+            .expect("saturating lease decrement");
+        true
+    }
+}
+
+impl Drop for AgentOsSidecarVmLease {
+    fn drop(&mut self) {
+        if self.release()
+            && self.sidecar.state.load(Ordering::SeqCst) == SidecarState::Ready.as_u8()
+        {
+            tracing::warn!(sidecar_id = %self.sidecar.sidecar_id, "sidecar lease dropped without explicit cleanup; ownership released, call sidecar.dispose() to confirm child teardown");
+        }
     }
 }
 
@@ -451,6 +820,77 @@ mod tests {
     use std::sync::Mutex;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[tokio::test]
+    async fn opening_leases_prevent_last_vm_from_disposing_the_child() {
+        let sidecar = shared("opening-leases", SidecarState::Ready);
+        let vm = sidecar.acquire_vm_lease().await.unwrap();
+        let package = sidecar.acquire_lease(true).await.unwrap();
+        vm.dispose().await.unwrap();
+        sidecar.dispose_if_unused().await.unwrap();
+        assert_eq!(sidecar.describe().state, SidecarState::Ready);
+        assert_eq!(sidecar.active_package_sessions.load(Ordering::SeqCst), 1);
+        package.release();
+        sidecar.dispose_if_unused().await.unwrap();
+        assert_eq!(sidecar.describe().state, SidecarState::Disposed);
+        assert!(sidecar.acquire_vm_lease().await.is_err());
+        assert!(sidecar.ensure_connection().await.is_err());
+        drop(package);
+        assert_eq!(sidecar.active_package_sessions.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn unconfirmed_vm_cleanup_keeps_ownership_until_force_disposal() {
+        let sidecar = shared("unconfirmed-cleanup", SidecarState::Ready);
+        sidecar
+            .acquire_vm_lease()
+            .await
+            .unwrap()
+            .retain_until_worker_shutdown();
+        sidecar.dispose_if_unused().await.unwrap();
+        assert_eq!(sidecar.describe().active_vm_count, 1);
+        assert_eq!(sidecar.describe().state, SidecarState::Ready);
+        sidecar.dispose().await.unwrap();
+        assert_eq!(sidecar.describe().active_vm_count, 0);
+        assert_eq!(sidecar.describe().state, SidecarState::Disposed);
+    }
+
+    #[tokio::test]
+    async fn failed_package_session_open_releases_its_reserved_lease() {
+        let sidecar = Arc::new(AgentOsSidecar::new(
+            "missing-binary",
+            AgentOsSidecarPlacement::Explicit {
+                sidecar_id: "missing-binary".into(),
+            },
+            None,
+            Some("/agentos-missing-test-binary".into()),
+        ));
+        assert!(sidecar.open_package_session().await.is_err());
+        assert_eq!(sidecar.active_package_sessions.load(Ordering::SeqCst), 0);
+        assert_eq!(sidecar.describe().state, SidecarState::Disposed);
+    }
+
+    #[tokio::test]
+    async fn failed_vm_creation_releases_its_reserved_lease() {
+        let sidecar = Arc::new(AgentOsSidecar::new(
+            "missing-vm-binary",
+            AgentOsSidecarPlacement::Explicit {
+                sidecar_id: "missing-vm-binary".into(),
+            },
+            None,
+            Some("/agentos-missing-test-binary".into()),
+        ));
+        let result = AgentOs::create(crate::AgentOsConfig {
+            sidecar: Some(crate::AgentOsSidecarConfig::Explicit {
+                handle: sidecar.clone(),
+            }),
+            ..Default::default()
+        })
+        .await;
+        assert!(result.is_err());
+        assert_eq!(sidecar.describe().active_vm_count, 0);
+        assert_eq!(sidecar.describe().state, SidecarState::Disposed);
+    }
 
     fn shared(pool: &str, state: SidecarState) -> Arc<AgentOsSidecar> {
         let sidecar = Arc::new(AgentOsSidecar::new(

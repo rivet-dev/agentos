@@ -1,8 +1,8 @@
-import { agentOS, setup } from "@rivet-dev/agentos";
+import { setup } from "rivetkit";
 import { vercelWorldActors } from "@rivet-dev/vercel-world/registry";
 
-const vm = agentOS();
+// The hosted agentOS actor runs as a separate static deployment.
 
 export const registry = setup({
-	use: { ...vercelWorldActors, vm },
+	use: { ...vercelWorldActors },
 });

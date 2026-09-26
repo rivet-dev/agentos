@@ -19,6 +19,9 @@ export type VmOptions<
 // unknown key a compile error.
 const VM_OPTION_KEYS = Object.keys({
 	user: true,
+	environment: true,
+	wasmBackend: true,
+	defaultsProfile: true,
 	software: true,
 	defaultSoftware: true,
 	loopbackExemptPorts: true,
@@ -33,8 +36,6 @@ const VM_OPTION_KEYS = Object.keys({
 	permissions: true,
 	sidecar: true,
 	limits: true,
-	onAgentStderr: true,
-	onAgentExit: true,
 	onLimitWarning: true,
 } satisfies Record<keyof VmOptions, true>) as (keyof VmOptions)[];
 
@@ -59,7 +60,7 @@ export interface Vm extends AsyncDisposable {
 export async function createVm<HOST_FUNCTIONS extends HostFunctionSchemas>(
 	options: VmOptions<HOST_FUNCTIONS> = {},
 ): Promise<Vm> {
-	const vm = await AgentOs.create(options);
+	const vm = await AgentOs.create({ defaultsProfile: "secure", ...options });
 	const { npm, ...javascript } = vm.javascript;
 	const dispose = () => vm.dispose();
 	return {

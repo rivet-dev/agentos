@@ -24,7 +24,7 @@ describe("sidecar root filesystem descriptors", () => {
 			serializeRootFilesystemForSidecar({
 				type: "native",
 				plugin: {
-					id: "chunked_actor_sqlite",
+					id: "chunked_sqlite",
 					config: { path: "/tmp/actor.sock" },
 				},
 			}),

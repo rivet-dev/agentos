@@ -6,12 +6,26 @@ import {
 } from "../src/sandbox.js";
 
 describe("AgentOsOptions validation", () => {
-	test("accepts the path-only actor runtime socket descriptor", () => {
+	test("accepts a complete initial environment including an explicit empty map", () => {
+		expect(agentOsOptionsSchema.safeParse({ environment: {} }).success).toBe(
+			true,
+		);
+		expect(
+			agentOsOptionsSchema.safeParse({
+				environment: { EMPTY: "", PATH: "/opt/agentos/bin" },
+			}).success,
+		).toBe(true);
+		expect(
+			agentOsOptionsSchema.safeParse({ environment: { PORT: 3000 } }).success,
+		).toBe(false);
+	});
+
+	test("accepts the temporary local SQLite descriptor", () => {
 		expect(
 			agentOsOptionsSchema.safeParse({
 				database: {
-					type: "actor_uds",
-					path: "/tmp/actor-runtime.sock",
+					type: "sqlite_file",
+					path: "/tmp/agentos.sqlite",
 				},
 			}).success,
 		).toBe(true);
@@ -23,8 +37,8 @@ describe("AgentOsOptions validation", () => {
 				rootFilesystem: {
 					type: "native",
 					plugin: {
-						id: "chunked_actor_sqlite",
-						config: { path: "/tmp/actor.sock" },
+						id: "chunked_sqlite",
+						config: { namespace: "root" },
 					},
 				},
 			}).success,
@@ -47,6 +61,110 @@ describe("AgentOsOptions validation", () => {
 				},
 			}),
 		).toThrow(/filesystem/);
+	});
+
+	test("accepts the distinct WASM CPU fields and rejects removed aliases", () => {
+		expect(
+			agentOsOptionsSchema.safeParse({
+				limits: {
+					wasm: {
+						activeCpuTimeLimitMs: 30_000,
+						wallClockLimitMs: 45_000,
+						deterministicFuel: 1_000_000,
+					},
+				},
+			}).success,
+		).toBe(true);
+		expect(() =>
+			agentOsOptionsSchema.parse({
+				limits: { resources: { maxWasmFuel: 1 } },
+			}),
+		).toThrow(/maxWasmFuel/);
+		expect(() =>
+			agentOsOptionsSchema.parse({
+				limits: { wasm: { runnerCpuTimeLimitMs: 1 } },
+			}),
+		).toThrow(/runnerCpuTimeLimitMs/);
+	});
+
+	test("accepts distinct per-process and per-VM WASM thread limits", () => {
+		expect(
+			agentOsOptionsSchema.safeParse({
+				limits: {
+					wasm: { maxThreads: 8, maxConcurrentThreads: 32 },
+				},
+			}).success,
+		).toBe(true);
+		expect(
+			agentOsOptionsSchema.safeParse({
+				limits: { wasm: { maxConcurrentThreads: 0 } },
+			}).success,
+		).toBe(false);
+	});
+
+	test("accepts only supported VM-wide standalone WASM backends", () => {
+		for (const wasmBackend of ["v8", "wasmtime", "wasmtime-threads"] as const) {
+			expect(agentOsOptionsSchema.safeParse({ wasmBackend }).success).toBe(
+				true,
+			);
+		}
+		expect(
+			agentOsOptionsSchema.safeParse({ wasmBackend: "automatic" }).success,
+		).toBe(false);
+	});
+
+	test("accepts only sidecar-owned VM defaults profiles", () => {
+		for (const defaultsProfile of ["agent_os", "secure"] as const) {
+			expect(agentOsOptionsSchema.safeParse({ defaultsProfile }).success).toBe(
+				true,
+			);
+		}
+		expect(
+			agentOsOptionsSchema.safeParse({ defaultsProfile: "custom" }).success,
+		).toBe(false);
+	});
+
+	test("bounds and materializes Linux account records", () => {
+		const exactPasswdRecord = {
+			uid: 0,
+			gid: 0,
+			username: "u",
+			homedir: "/",
+			shell: "/",
+			gecos: "x".repeat(4083),
+		};
+		expect(
+			agentOsOptionsSchema.safeParse({ user: exactPasswdRecord }).success,
+		).toBe(true);
+		expect(
+			agentOsOptionsSchema.safeParse({
+				user: { ...exactPasswdRecord, gecos: "😀".repeat(1021) },
+			}).success,
+		).toBe(false);
+		expect(
+			agentOsOptionsSchema.safeParse({
+				user: {
+					uid: 0,
+					gid: 0,
+					username: "root",
+					supplementaryGids: [44],
+					groups: [{ gid: 99, name: "group44", members: [] }],
+				},
+			}).success,
+		).toBe(false);
+		expect(
+			agentOsOptionsSchema.safeParse({
+				user: {
+					groups: [
+						{
+							gid: 7,
+							name: "g",
+							members: Array.from({ length: 257 }, (_, index) => `m${index}`),
+						},
+					],
+				},
+			}).success,
+		).toBe(false);
 	});
 
 	test("rejects create option factories on the one-shot core constructor", () => {
@@ -105,6 +223,54 @@ describe("AgentOsOptions validation", () => {
 				}).success,
 			).toBe(false);
 		}
+	});
+
+	test("accepts optional TLS/execution fields and validates TLS bytes", () => {
+		for (const limits of [
+			{ tls: {}, execution: {} },
+			{ tls: { maxBufferedBytes: 2048 } },
+		]) {
+			expect(agentOsOptionsSchema.parse({ limits }).limits).toEqual(limits);
+		}
+		for (const maxBufferedBytes of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+			expect(
+				agentOsOptionsSchema.safeParse({
+					limits: { tls: { maxBufferedBytes } },
+				}).success,
+			).toBe(false);
+		}
+		expect(
+			agentOsOptionsSchema.safeParse({
+				limits: { tls: { max_buffered_bytes: 2048 } },
+			}).success,
+		).toBe(false);
+		expect(
+			agentOsOptionsSchema.safeParse({
+				limits: { execution: { completedTtl: 60_000 } },
+			}).success,
+		).toBe(false);
+	});
+
+	test("accepts package mount limits and rejects invalid or unknown fields", () => {
+		for (const packages of [{}, { maxMounts: 8192 }]) {
+			expect(
+				agentOsOptionsSchema.safeParse({
+					limits: { agentosPackages: packages },
+				}).success,
+			).toBe(true);
+		}
+		for (const maxMounts of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+			expect(
+				agentOsOptionsSchema.safeParse({
+					limits: { agentosPackages: { maxMounts } },
+				}).success,
+			).toBe(false);
+		}
+		expect(
+			agentOsOptionsSchema.safeParse({
+				limits: { agentosPackages: { maxMount: 8 } },
+			}).success,
+		).toBe(false);
 	});
 	test("provider sandbox starts a client and owns disposal", async () => {
 		let disposed = false;

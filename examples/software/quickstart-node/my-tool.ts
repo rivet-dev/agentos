@@ -1,4 +1,4 @@
-import { defineSoftware } from "@rivet-dev/agentos";
+import { defineSoftware } from "@rivet-dev/agentos-core";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 

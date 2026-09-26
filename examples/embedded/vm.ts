@@ -1,7 +1,6 @@
 // docs:start boot
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
-import pi from "@agentos-software/pi";
 import { AgentOs } from "@rivet-dev/agentos-core";
 
 // Embed a VM with the agentOS package. There is no actor runtime or
@@ -12,10 +11,11 @@ const vm = await AgentOs.create({
 		type: "sqlite_file",
 		path: resolve(".agentos/agentos.sqlite"),
 	},
-	software: [pi],
 });
 
-const result = await vm.process.exec("echo hello");
+const result = await vm.process.exec("echo hello", {
+	output: { capture: "all" },
+});
 console.log(result.stdout); // "hello\n"
 // docs:end boot
 
@@ -46,7 +46,9 @@ async function filesystem() {
 async function processes() {
 	// docs:start processes
 	// One-shot execution
-	const result = await vm.process.exec("ls -la /home/agentos");
+	const result = await vm.process.exec("ls -la /home/agentos", {
+		output: { capture: "all" },
+	});
 	console.log(result.stdout);
 
 	// Long-running process with portable output and exit subscriptions.
@@ -86,35 +88,6 @@ async function contexts() {
 	// docs:end contexts
 }
 
-// ── Agent sessions ────────────────────────────────────────────────
-async function agentSessions() {
-	// docs:start sessions
-	// openSession() negotiates ACP and durably records the session in SQLite.
-	await vm.sessions.open({
-		agent: "pi",
-		env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
-		permissionPolicy: "ask",
-	});
-
-	// Native ACP updates and permission records share one session event union.
-	vm.onSessionEvent((event) => {
-		if (event.type === "permission_request") {
-			console.log("Permission:", event.requestId, event.toolCall);
-		} else {
-			console.log(event.durability, event);
-		}
-	});
-
-	const result = await vm.sessions.prompt({
-		content: [{ type: "text", text: "Write a hello world script" }],
-	});
-	console.log(result.message?.content ?? []);
-
-	// Unload releases the adapter but preserves SQLite history for restoration.
-	await vm.sessions.unload();
-	// docs:end sessions
-}
-
 // ── Networking ────────────────────────────────────────────────────
 async function networking() {
 	// docs:start networking
@@ -141,17 +114,6 @@ async function cronJobs() {
 	});
 	console.log("Scheduled:", job.id);
 
-	// Run an agent session on a schedule
-	vm.cron.schedule({
-		schedule: "0 9 * * *",
-		action: {
-			type: "session",
-			agentType: "pi",
-			prompt: "Review the logs and summarize any errors",
-			options: { cwd: "/workspace" },
-		},
-	});
-
 	vm.onCronEvent((event) => {
 		console.log("Cron event:", event.type, event.jobId);
 	});
@@ -160,4 +122,4 @@ async function cronJobs() {
 	// docs:end cron
 }
 
-export { agentSessions, cronJobs, filesystem, networking, processes };
+export { contexts, cronJobs, filesystem, networking, processes };

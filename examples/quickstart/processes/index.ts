@@ -4,16 +4,15 @@ import { AgentOs } from "@rivet-dev/agentos-core";
 
 const vm = await AgentOs.create();
 
-// Run shell commands with exec()
-// exec() captures nothing unless you ask for it.
+// Run shell commands with exec(). Capture output explicitly.
 const capture = { output: { capture: "all" } } as const;
 const result = await vm.process.exec("echo 'hello from shell'", capture);
-console.log("exec stdout:", (result.stdout ?? "").trim());
+console.log("exec stdout:", result.stdout?.trim());
 console.log("exec exit code:", result.exitCode);
 
 // Shell pipeline
 const piped = await vm.process.exec("echo hello | tr a-z A-Z", capture);
-console.log("piped:", (piped.stdout ?? "").trim());
+console.log("piped:", piped.stdout?.trim());
 
 // grep
 await vm.filesystem.writeFile(
@@ -21,14 +20,14 @@ await vm.filesystem.writeFile(
 	"apple\nbanana\ncherry\napricot\n",
 );
 const grepped = await vm.process.exec("grep ap /tmp/data.txt", capture);
-console.log("grep:", (grepped.stdout ?? "").trim());
+console.log("grep:", grepped.stdout?.trim());
 
 // sed
 const sedResult = await vm.process.exec(
-	"echo 'hello world' | sed 's/world/agentOS/'",
+	"echo 'hello world' | sed 's/world/agentos/'",
 	capture,
 );
-console.log("sed:", (sedResult.stdout ?? "").trim());
+console.log("sed:", sedResult.stdout?.trim());
 
 // Spawn a Node.js script and wait for it to complete
 await vm.filesystem.writeFile(

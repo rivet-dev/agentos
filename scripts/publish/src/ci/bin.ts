@@ -29,6 +29,7 @@ import { createGhRelease, tagAndPush } from "../lib/git.js";
 import { scoped } from "../lib/logger.js";
 import { publishAll } from "../lib/npm.js";
 import { copyPrefix, uploadDir } from "../lib/r2.js";
+import { stageSoftwareArtifacts } from "../lib/software-artifacts.js";
 import { discoverRustCrates } from "../lib/rust-crates.js";
 import { bumpCargoVersions, bumpPackageJsons } from "../lib/version.js";
 
@@ -248,8 +249,20 @@ program
 	});
 
 // ---------------------------------------------------------------------------
-// upload-r2 — upload the sidecar artifact dir to {namespace}/{sha}/sidecar/
+// software staging and generic R2 artifact-directory upload
 // ---------------------------------------------------------------------------
+program
+	.command("stage-software")
+	.description("Stage immutable .aospkg files and their manifest")
+	.requiredOption("--output <dir>", "Local artifact directory to replace")
+	.action((opts) => {
+		const repoRoot = findRepoRoot();
+		const result = stageSoftwareArtifacts(repoRoot, opts.output);
+		log.info(
+			`staged ${result.manifest.artifacts.length} software artifacts in ${result.outputDir}`,
+		);
+	});
+
 program
 	.command("upload-r2")
 	.description("Upload an artifact directory to R2")

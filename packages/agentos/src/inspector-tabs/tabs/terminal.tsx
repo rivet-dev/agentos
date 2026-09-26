@@ -10,24 +10,18 @@ import {
 	AgentOsEmpty,
 	IconButton,
 	PlusIcon,
-	UnsupportedAction,
 } from "../common";
 import { cn } from "../lib/cn";
 import { useAgentOsActor } from "../lib/rivet";
 import { agentOsSource, decodeActionBytes, shellsQueryOptions } from "../lib/source";
+import { OutputRouter } from "../lib/terminal-output";
 import type { ShellDataPayload, ShellExitPayload, ShellInfo } from "../lib/types";
-import { VmBootGate } from "../vm-boot-gate";
 import { VmStatusBadges } from "../vm-status-badges";
-import React from "react";
 
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
 const SCROLLBACK_LINES = 5_000;
 const MAX_SHELLS = 8;
-// Output that arrives between `openShell` resolving and the pane mounting is
-// held here. Bounded: a shell that floods before its pane exists drops the
-// oldest bytes rather than growing without limit.
-const MAX_PENDING_BYTES = 256 * 1024;
 // Unsent PTY input held while an earlier write is in flight.
 const MAX_PENDING_INPUT_CHARS = 1024 * 1024;
 
@@ -55,61 +49,6 @@ function useGhostty(): { ready: boolean; error: unknown } {
 		};
 	}, []);
 	return state;
-}
-
-// ── Output router ──────────────────────────────────────────────────────────
-/** Routes `shellData` broadcasts to whichever pane owns that shell, buffering
- * for shells whose pane has not mounted yet. Lives in a ref (not state): PTY
- * output must never drive a React render. */
-interface PendingChunk {
-	seq: number;
-	bytes: Uint8Array;
-}
-
-class OutputRouter {
-	private writers = new Map<string, (bytes: Uint8Array) => void>();
-	private pending = new Map<string, PendingChunk[]>();
-
-	push(shellId: string, seq: number, bytes: Uint8Array): void {
-		const writer = this.writers.get(shellId);
-		if (writer) {
-			writer(bytes);
-			return;
-		}
-		const buffered = this.pending.get(shellId) ?? [];
-		buffered.push({ seq, bytes });
-		let total = buffered.reduce((sum, chunk) => sum + chunk.bytes.length, 0);
-		while (total > MAX_PENDING_BYTES && buffered.length > 1) {
-			total -= buffered.shift()?.bytes.length ?? 0;
-		}
-		this.pending.set(shellId, buffered);
-	}
-
-	/** Attaches a writer and flushes what it missed. `sinceSeq` drops chunks a
-	 * server snapshot already painted; the actor stamps every broadcast from the
-	 * same counter the snapshot reports, so the two can neither gap nor overlap. */
-	attach(
-		shellId: string,
-		writer: (bytes: Uint8Array) => void,
-		sinceSeq = 0,
-	): () => void {
-		this.writers.set(shellId, writer);
-		const buffered = this.pending.get(shellId);
-		if (buffered) {
-			this.pending.delete(shellId);
-			for (const chunk of buffered) {
-				if (chunk.seq > sinceSeq) writer(chunk.bytes);
-			}
-		}
-		return () => {
-			if (this.writers.get(shellId) === writer) this.writers.delete(shellId);
-		};
-	}
-
-	forget(shellId: string): void {
-		this.writers.delete(shellId);
-		this.pending.delete(shellId);
-	}
 }
 
 // ── Input queue ────────────────────────────────────────────────────────────
@@ -176,7 +115,7 @@ function terminalTheme(): Record<string, string> {
 
 // The kernel answers a cursor-position query (ESC[6n) itself with a synthetic
 // report, because a converged PTY may have no emulator on the master side
-// (crates/kernel/src/pty.rs). With a real emulator attached, Ghostty answers
+// (crates/vm-kernel/src/pty.rs). With a real emulator attached, Ghostty answers
 // too — and the second report lands in the guest's input stream as garbage.
 // Drop ours; the kernel's already went through.
 const CURSOR_POSITION_REPORT = /\x1b\[\d+;\d+R/g;
@@ -243,12 +182,18 @@ function TerminalPane({
 		// and is replayed after it, minus whatever the snapshot already covered.
 		let detach: (() => void) | null = null;
 		let disposed = false;
+		const replay = new AbortController();
 		const writer = (bytes: Uint8Array) => term.write(bytes);
-		void agentOsSource.shellSnapshot(shellId, "screen").then(
+		void agentOsSource.shellSnapshot(shellId, "screen", replay.signal).then(
 			(snapshot) => {
 				if (disposed) return;
-				if (snapshot?.data) term.write(snapshot.data);
-				detach = router.attach(shellId, writer, snapshot?.seq ?? 0);
+				term.write(snapshot.data);
+				detach = router.attach(shellId, writer, snapshot.seq);
+				if (snapshot.truncated) {
+					onErrorRef.current(
+						new Error("Terminal replay is incomplete because retained output was truncated"),
+					);
+				}
 			},
 			(error) => {
 				if (disposed) return;
@@ -261,6 +206,7 @@ function TerminalPane({
 
 		return () => {
 			disposed = true;
+			replay.abort();
 			detach?.();
 			fit.dispose();
 			term.dispose();
@@ -293,22 +239,14 @@ interface ShellTab {
 }
 
 export function TerminalTabConnected({ actorId }: { actorId: string }) {
-	// Opening a shell boots the VM and then pins it awake for as long as the
-	// shell lives, so never do it just because someone clicked the tab.
-	return (
-		<VmBootGate
-			actorId={actorId}
-			note="VM not booted."
-			actionLabel="Boot the VM and open a terminal"
-		>
-			<TerminalTab actorId={actorId} />
-		</VmBootGate>
-	);
+	return <TerminalTab actorId={actorId} />;
 }
 
 function TerminalTab({ actorId }: { actorId: string }) {
 	const ghostty = useGhostty();
-	const routerRef = useRef(new OutputRouter());
+	const [error, setError] = useState<unknown>(null);
+	const routerRef = useRef<OutputRouter | null>(null);
+	routerRef.current ??= new OutputRouter(setError);
 	const router = routerRef.current;
 
 	const queryClient = useQueryClient();
@@ -316,7 +254,6 @@ function TerminalTab({ actorId }: { actorId: string }) {
 	// outlives the page that opened it and holds the VM awake, so it has to
 	// stay discoverable from a fresh page.
 	const shellsQuery = useQuery(shellsQueryOptions(actorId));
-	const [error, setError] = useState<unknown>(null);
 
 	const shells = useMemo<ShellTab[]>(
 		() =>
@@ -349,7 +286,7 @@ function TerminalTab({ actorId }: { actorId: string }) {
 			inputRef.current?.forget(shellId);
 			queryClient.setQueryData(
 				shellsQueryOptions(actorId).queryKey,
-				(prev: ShellInfo[] | null | undefined) =>
+				(prev: ShellInfo[] | undefined) =>
 					prev ? prev.filter((s) => s.shellId !== shellId) : prev,
 			);
 			void refreshShells();
@@ -384,7 +321,7 @@ function TerminalTab({ actorId }: { actorId: string }) {
 			// output that lands before it mounts is held by the router.
 			queryClient.setQueryData(
 				shellsQueryOptions(actorId).queryKey,
-				(prev: ShellInfo[] | null | undefined) =>
+				(prev: ShellInfo[] | undefined) =>
 					prev ? [...prev, { shellId, openedAt: Date.now() }] : prev,
 			);
 			setSelectedId(shellId);
@@ -421,10 +358,6 @@ function TerminalTab({ actorId }: { actorId: string }) {
 			</AgentOsEmpty>
 		);
 	}
-	// `null` = this runtime predates the `listShells` action, so shells cannot
-	// be enumerated and the tab has no safe way to track them.
-	if (shellsQuery.data === null) return <UnsupportedAction action="listShells" />;
-
 	const atLimit = shells.length >= MAX_SHELLS;
 	return (
 		<div className="flex h-full min-h-0 flex-col">
@@ -467,6 +400,7 @@ function TerminalTab({ actorId }: { actorId: string }) {
 			</div>
 
 			{error ? <ActionErrorNote error={error} /> : null}
+			{shellsQuery.error ? <ActionErrorNote error={shellsQuery.error} /> : null}
 
 			<div className="relative min-h-0 flex-1 bg-background">
 				{/* Constructing a Terminal before `init()` resolves throws; a
@@ -474,6 +408,8 @@ function TerminalTab({ actorId }: { actorId: string }) {
 				    meanwhile is held by the router and flushed on mount. */}
 				{!ghostty.ready ? (
 					<AgentOsEmpty>Loading terminal renderer…</AgentOsEmpty>
+				) : shellsQuery.isPending ? (
+					<AgentOsEmpty>Loading terminal list…</AgentOsEmpty>
 				) : shells.length === 0 ? (
 					<AgentOsEmpty>No shells open — click + to start one.</AgentOsEmpty>
 				) : (

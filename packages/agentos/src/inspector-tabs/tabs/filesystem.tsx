@@ -20,12 +20,10 @@ import {
 } from "../common";
 import { cn } from "../lib/cn";
 import { useArmedConfirm, useObjectUrl, useSettledValue } from "../lib/hooks";
-import { agentOsSource } from "../lib/source";
+import { agentOsQueryKey, agentOsSource } from "../lib/source";
 import type { FsEntry } from "../lib/types";
 import { ScrollArea } from "../ui/scroll-area";
-import { VmBootGate } from "../vm-boot-gate";
 import { VmStatusBadges } from "../vm-status-badges";
-import React from "react";
 
 const IMAGE_EXTENSIONS = /\.(png|jpe?g|gif|webp|svg|ico|bmp|avif)$/i;
 
@@ -132,14 +130,12 @@ function downloadBytes(bytes: Uint8Array, filename: string): void {
  * transition instead of a setState pile in an effect. */
 interface FileView {
 	path: string | null;
-	force: boolean;
 	renameDraft: string | null;
 	error: unknown;
 }
 
 const freshFileView = (path: string | null): FileView => ({
 	path,
-	force: false,
 	renameDraft: null,
 	error: null,
 });
@@ -165,7 +161,7 @@ function FileViewer({
 	const patch = (changes: Partial<FileView>) =>
 		setStored((prev) => ({ ...prev, ...changes }));
 	const { data, error } = useQuery(
-		agentOsSource.fileContentQueryOptions(actorId, path, view.force),
+		agentOsSource.fileContentQueryOptions(actorId, path),
 	);
 	const isImage = !!data?.bytes && data.text === null && IMAGE_EXTENSIONS.test(data.path);
 	const imageUrl = useObjectUrl(isImage ? data?.bytes : null);
@@ -283,16 +279,8 @@ function FileViewer({
 				) : data.oversize ? (
 					<div className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center text-sm text-muted-foreground">
 						<span>
-							Large file ({formatBytes(data.sizeBytes)}) — preview skipped to avoid dragging it
-							through the gateway.
+							Large file ({formatBytes(data.sizeBytes)}). Preview exceeds the hosted action limit.
 						</span>
-						<button
-							type="button"
-							onClick={() => patch({ force: true })}
-							className="rounded border px-2.5 py-1 text-xs transition-colors hover:bg-muted hover:text-foreground"
-						>
-							Load anyway
-						</button>
 					</div>
 				) : data.text === null ? (
 					imageUrl ? (
@@ -334,17 +322,7 @@ function normalizeRoot(input: string): string {
 const joinRoot = (root: string, name: string) => (root === "/" ? `/${name}` : `${root}/${name}`);
 
 export function FilesystemTabConnected({ actorId }: { actorId: string }) {
-	// The root filesystem is in-memory and served by the VM's kernel: a
-	// sleeping VM has no file tree, and listing would boot it. Gate first.
-	return (
-		<VmBootGate
-			actorId={actorId}
-			note="VM not booted."
-			actionLabel="Boot the VM and browse files"
-		>
-			<FilesystemLoaded actorId={actorId} />
-		</VmBootGate>
-	);
+	return <FilesystemLoaded actorId={actorId} />;
 }
 
 // Browsing state survives tab switches: the dashboard swaps the iframe per
@@ -474,9 +452,6 @@ function FilesystemLoaded({ actorId }: { actorId: string }) {
 	const queryClient = useQueryClient();
 
 	const rootsQuery = useQuery(agentOsSource.listDirQueryOptions(actorId, root));
-	// `null` data = the path is not a listable directory (does not exist / is a
-	// file); `[]` = an empty directory. Keep them distinct for the message.
-	const notADir = rootsQuery.data === null;
 	const roots = rootsQuery.data ?? [];
 
 	// Commit the normalized draft once the user pauses typing.
@@ -484,7 +459,7 @@ function FilesystemLoaded({ actorId }: { actorId: string }) {
 
 	// Every directory listing under this actor (the tree fetches per-level).
 	const refreshTree = () =>
-		queryClient.invalidateQueries({ queryKey: ["agent-os", actorId, "dir"] });
+		queryClient.invalidateQueries({ queryKey: agentOsQueryKey(actorId, "dir") });
 
 	// Folder actions target the location shown in the path bar, which follows
 	// tree clicks (a folder moves it there; a file moves it to its parent).
@@ -596,8 +571,6 @@ function FilesystemLoaded({ actorId }: { actorId: string }) {
 						<AgentOsEmpty>Loading {root}…</AgentOsEmpty>
 					) : rootsQuery.error ? (
 						<ActionErrorNote error={rootsQuery.error} />
-					) : notADir ? (
-						<AgentOsEmpty>Not a directory, or does not exist: {root}</AgentOsEmpty>
 					) : roots.length === 0 ? (
 						<AgentOsEmpty>
 							<div className="flex flex-col items-center gap-2">

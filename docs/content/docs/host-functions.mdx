@@ -4,17 +4,13 @@ description: "Expose trusted host functions to agentOS coding agents as typed CL
 skill: true
 ---
 
-Expose your host JavaScript functions (defined with Zod input schemas) to agents as auto-generated CLI commands installed at `/bin/agentos-{name}` inside the VM, injected into the agent's [system prompt](/agentos/docs/system-prompt) and callable inside scripts for code-mode token savings.
+Expose trusted host JavaScript functions to embedded VMs as typed commands installed at `/bin/agentos-{name}` and callable from guest scripts. The hosted `agentOS` actor cannot accept callbacks, closures, host objects, or host-function implementations. Put product-specific callbacks in your own trusted application using embedded Core.
 
 ## Getting started
 
-Pass `agentOS({ hostFunctions })` a record of collections. The keys name everything: the collection key becomes the CLI binary `agentos-{name}` and a guest global, and each function key becomes a subcommand. A function needs only an `inputSchema` and an `execute` handler. `.describe()` on the schema is what the agent reads.
+Pass `AgentOs.create({ hostFunctions })` a record of collections. The keys name everything: the collection key becomes the CLI binary `agentos-{name}` and a guest global, and each function key becomes a subcommand. A function needs only an `inputSchema` and an `execute` handler. `.describe()` on the schema is what the agent reads.
 
-<CodeGroup>
-<CodeSnippet file="examples/host-functions/server.ts" />
-
-<CodeSnippet file="examples/host-functions/client.ts" />
-</CodeGroup>
+<CodeSnippet file="examples/embedded/host-functions.ts" />
 
 Each host function can override its `timeout` in milliseconds. The default is 30 seconds and can be changed with `limits.hostFunctions.defaultTimeoutMs`.
 
@@ -34,7 +30,7 @@ Optional fields (via `.optional()`) become optional flags. Required fields are e
 
 ### What the agent sees
 
-When host functions are registered, CLI shims are installed at `/bin/agentos-{name}` inside the VM and the function list is injected into the agent's [system prompt](/agentos/docs/system-prompt), so keep each schema's `.describe()` concise to save tokens.
+When host functions are registered, CLI shims are installed at `/bin/agentos-{name}` inside the VM. Keep each schema's `.describe()` concise and useful for guest callers.
 
 The agent interacts with host functions as shell commands:
 
@@ -85,20 +81,6 @@ violation, a thrown error, or a timeout. A collection whose name is already a
 global, such as `process`, is not defined, and a warning is written to stderr.
 The `hostFunction` permission scope applies exactly as it does to the commands.
 
-## Host functions and MCP servers
-
-agentOS supports two ways to give agents access to external functionality: **host functions** and session-scoped **MCP servers**. Both work, but they have different tradeoffs.
-
-|  | Host functions | MCP servers |
-|---|---|---|
-| **How it works** | Call JavaScript functions on the host directly | Connect to a standard MCP server |
-| **Authentication** | None required. Calls go directly to the host process. | Requires custom auth configuration per server |
-| **Code mode** | Built in. Host functions are exposed as CLI commands, so agents can call them inside scripts for up to 80% token reduction. | Requires extra work to make code mode work out of the box |
-| **Latency** | Near-zero. Bound directly to the host process. | Extra network hop to reach the MCP server |
-| **Setup** | Define host functions in your actor code with Zod schemas | Configure any standard MCP server |
-
-Use host functions when you want to expose your own JavaScript functions to agents. Use MCP servers when you want to connect to existing third-party services. See [Sessions](/agentos/docs/sessions#open-a-session) for MCP server configuration.
-
 ## Security
 
 Host-function calls from the agent invoke your `execute()` functions on the host. Your functions run with full access to the host environment, so you can call databases, APIs, and services directly without proxying credentials into the VM. The agent never sees the credentials, only the function's input/output contract.
@@ -107,9 +89,8 @@ Host functions run on the host with full access to the host environment, so do n
 
 ## Embedded API
 
-Pass the same host-function collections to `AgentOs.create()`. The function contract and
-generated VM commands are unchanged.
+Use host functions from guest JavaScript through embedded Core:
 
-<CodeSnippet file="examples/embedded/host-functions.ts" title="hostFunctions.ts" />
+<CodeSnippet file="examples/host-functions/exec-javascript.ts" />
 
 Read more in the [embedded API quickstart](/agentos/docs/quickstart-embedded).

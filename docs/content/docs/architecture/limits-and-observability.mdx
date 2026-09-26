@@ -43,7 +43,7 @@ follows the same contract:
 ## Backpressure, not catastrophe
 
 The path from guest code to the host is a **chain of bounded queues**: the V8
-runtime → a per-session frame channel → the V8→host event channel → the sidecar
+runtime → a per-execution frame channel → the V8→host event channel → the sidecar
 stdout frame queue → the host. Streaming channels apply backpressure where the
 producer can safely wait. Process/runtime delivery queues that cannot block
 reject the crossing event with an error naming `limits.process.pendingEventCount`
@@ -86,4 +86,6 @@ a parsed log line.
 ## See also
 
 - [Resource Limits](/agentos/docs/resource-limits) — the full `limits` config surface.
-- [Processes](/agentos/docs/architecture/processes) and [Sessions & Persistence](/agentos/docs/architecture/sessions-persistence) — the layers the queue chain runs through.
+- [Processes](/agentos/docs/architecture/processes) and
+  [Persistence](/agentos/docs/persistence) — the layers the queue chain runs
+  through.

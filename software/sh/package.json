@@ -1,5 +1,6 @@
 {
 	"name": "@agentos-software/sh",
+	"private": true,
 	"version": "0.0.1",
 	"type": "module",
 	"license": "Apache-2.0",
@@ -26,7 +27,6 @@
 		"@agentos-software/manifest": "workspace:*",
 		"@rivet-dev/agentos-toolchain": "workspace:*",
 		"@types/node": "^22.10.2",
-		"@rivet-dev/agentos-test-harness": "workspace:*",
 		"typescript": "^5.9.2",
 		"vitest": "^2.1.9"
 	}

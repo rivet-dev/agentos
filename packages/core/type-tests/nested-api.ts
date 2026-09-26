@@ -92,16 +92,6 @@ async function checkNestedApi(): Promise<void> {
 	await vm.filesystem.listMounts();
 
 	await vm.software.list();
-	await vm.agents.list();
-	await vm.sessions.get();
-	await vm.sessions.list();
-	await vm.sessions.delete();
-	await vm.sessions.unload();
-	await vm.sessions.cancelPrompt();
-	await vm.sessions.readHistory();
-	await vm.sessions.getConfig();
-	await vm.sessions.getCapabilities();
-	await vm.sessions.getAgentInfo();
 	vm.cron.list();
 
 	// New execution APIs were renamed, not retained as flat aliases.

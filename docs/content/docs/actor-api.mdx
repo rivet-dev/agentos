@@ -1,0 +1,117 @@
+---
+title: "Hosted Actor API"
+description: "Configure and operate an agentOS VM through a typed RivetKit actor handle."
+---
+
+The hosted `agentOS` actor is a fixed Rust actor. Use a normal RivetKit client
+with the generated `AgentOsRegistry` contract. The `createAgentOsClient`
+helper only supplies that type parameter and does not add another transport or
+API layer.
+
+Creation input is considered only when RivetKit creates the actor. Calling
+`getOrCreate` with different creation input for an existing key does not
+reconfigure it. Use the config actions for later changes.
+
+## Configuration
+
+`config.get` returns the durable desired config and its revision.
+`config.set` replaces the complete config. An omitted field selects its
+default. `config.patch` applies an RFC 7386 JSON Merge Patch to the current
+desired config.
+
+Merge Patch recursively merges objects and replaces arrays as complete values.
+Setting a property to `null` removes the override, which selects its default.
+Both mutation actions accept `expectedRevision` for compare-and-set updates.
+A stale revision fails without changing durable state.
+
+Core owns VM defaults and validation; the generated client does not copy those
+defaults. Hosted-only policy, including preview leases and the filesystem
+registry, is normalized by the actor.
+
+When a VM is running, the actor asks that VM's sidecar to compare the resolved
+creation policies for supported runtime fields. Setting an explicit value equal
+to the active default does not by itself require a restart. Software sources,
+hosted filesystem policy, and any future fields not explicitly covered by that
+comparison remain replacement-triggering.
+
+## VM lifecycle
+
+`vm.status` reports the active generation, applied config revision, package
+readiness, lifecycle state, and recent issues. A desired config can be durable
+while the active generation reports that a restart is required.
+
+`vm.restart` stops the active VM, waits for bounded shutdown, and starts a new
+generation from the latest desired config. Process, terminal, context, and
+network stream handles include their generation. Using an old handle after a
+restart fails as `stale_generation`.
+
+Lifecycle notifications use `vm.booted`, `vm.shutdown`, and
+`vm.limitWarning` events.
+
+## Pull APIs and events
+
+Live events reduce latency, but bounded pull actions are the recovery path
+after a disconnect or inspector reload.
+
+| Resource | Pull action | Events |
+| --- | --- | --- |
+| Process | `process.output.read`, `process.wait` | `process.output`, `process.exit` |
+| Terminal | `terminal.output.read`, `terminal.wait` | `terminal.output`, `terminal.exit` |
+| HTTP response | `network.fetchStream.read` | None |
+| VM | `vm.status` | `vm.booted`, `vm.shutdown`, `vm.limitWarning` |
+| Cron | `cron.list` | `cron.fired` |
+
+Process and terminal replay use a generation-scoped sequence cursor. Request
+limits bound both the number of events and their aggregate bytes. Network
+response streams are pull-based so each action is bounded and the caller owns
+backpressure. See [Hosted Actor Limits](/agentos/docs/actor-limits).
+An expired fetch-stream handle returns the typed `expired` error. A required
+package-resolution deadline returns `timeout`.
+
+## Contract compatibility
+
+The package exports `AGENTOS_API_VERSION`, `AGENTOS_CONTRACT_MAJOR`,
+`AGENTOS_CONTRACT_HASH`, and `AGENTOS_CAPABILITIES`. Rust DTOs and the action
+registry generate the TypeScript surface. The actor and client package ship in
+lockstep during the alpha contract period.
+
+The contract is currently `https://rivet.dev/agentos/v1alpha1`, major `1`. The hash covers
+the canonical public actions, events, DTOs, and capabilities. Private cron and
+maintenance actions are excluded from both the generated client and hash.
+
+## Inspector
+
+The inspector is a client of the same public contract. Its filesystem,
+process, terminal, software, preview, config, status, and limit views do not
+receive private actor access. Install `@rivet-dev/agentos` alongside the Rust
+binary and point the actor at its built UI assets:
+
+```sh
+agentos-sidecar actor \
+  --inspector-tabs-dir node_modules/@rivet-dev/agentos/assets/inspector-tabs-app
+```
+
+When a terminal tab reconnects, it pages through retained output using
+`terminal.output.read` (up to 256 events per action). The repaint is bounded to
+eight pages and 2 MiB in the inspector, with at most 700 KiB per action. If it
+cannot complete, the tab reports the error and continues displaying new live
+output. The tab also reports truncated retained history or live-output gaps;
+replaying partial history cannot guarantee a complete screen repaint. Output
+arriving during replay is buffered up to 256 KiB or 2,048 events per terminal.
+The process tab drains up to eight output pages per poll, each limited to 256
+events and 64 KiB, and resumes from its last cursor if more output remains.
+It displays the most recent 64,000 characters and reports any gaps in retained
+history. Closing the process detail stops further replay requests.
+
+`AGENTOS_INSPECTOR_TABS_DIR` provides the same setting. Startup fails if the
+directory does not contain `index.html`. Without the setting, the custom tabs
+are not registered. The UI can read desired configuration and VM status,
+restart the VM, and show runtime issues, but it cannot edit host mounts.
+Agent, session, ACP, and permission-prompt views are not part of the hosted
+actor.
+
+## Embedded API
+
+Embedded Core exposes the same VM capabilities without RivetKit actor
+lifecycle, durable actor config, previews, or hosted URL-only policy. Read more
+in the [embedded API quickstart](/agentos/docs/quickstart-embedded).

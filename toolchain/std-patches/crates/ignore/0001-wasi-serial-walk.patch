@@ -28,15 +28,15 @@
 +                })
 +                .collect::<Vec<_>>()
 +                .into_iter();
-+            let mut walk = Walk {
-+                its,
-+                it: None,
-+                ig_root: self.ig_root.clone(),
-+                ig: self.ig_root,
-+                max_filesize: self.max_filesize,
-+                skip: self.skip,
-+                filter: self.filter,
-+            };
++            // Build version-specific walker state through the stable builder API.
++            // In particular, newer ignore releases store max_depth on Walk too.
++            let mut walk = WalkBuilder::new("-").max_depth(self.max_depth).build();
++            walk.its = its;
++            walk.ig_root = self.ig_root.clone();
++            walk.ig = self.ig_root;
++            walk.max_filesize = self.max_filesize;
++            walk.skip = self.skip;
++            walk.filter = self.filter;
 +            for entry in &mut walk {
 +                if visitor.visit(entry).is_quit() {
 +                    break;

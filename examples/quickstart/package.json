@@ -28,9 +28,6 @@
 		"dockerode": "^4.0.9",
 		"get-port": "^7.1.0",
 		"@agentos-software/git": "workspace:*",
-		"@agentos-software/claude-code": "workspace:*",
-		"@agentos-software/opencode": "workspace:*",
-		"@agentos-software/pi": "workspace:*",
 		"zod": "^4.1.11"
 	},
 	"devDependencies": {

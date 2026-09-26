@@ -1,7 +1,7 @@
 import {
 	ExecutionOutcome,
 	ExecutionState,
-} from "@rivet-dev/agentos-runtime-core/protocol";
+} from "../src/generated-protocol.js";
 import { describe, expect, it, vi } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
 import type { CodeExecutionResult } from "../src/language-execution.js";

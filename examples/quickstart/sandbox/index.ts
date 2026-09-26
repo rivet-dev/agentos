@@ -38,36 +38,14 @@ try {
 
 	const runCommandResult = await vm.process.exec(
 		"agentos-sandbox run-command --command echo --args 'hello from Docker sandbox'",
+		{ output: { capture: "all" } },
 	);
 	console.log("Sandbox command:", (runCommandResult.stdout ?? "").trim());
 
-	const processList = await vm.process.exec("agentos-sandbox list-processes");
+	const processList = await vm.process.exec("agentos-sandbox list-processes", {
+		output: { capture: "all" },
+	});
 	console.log("Sandbox processes:", (processList.stdout ?? "").trim());
-
-	const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-	if (ANTHROPIC_API_KEY) {
-		await vm.sessions.open({
-			agent: "pi",
-			cwd: SANDBOX_MOUNT,
-			env: { ANTHROPIC_API_KEY },
-		});
-		const result = await vm.sessions.prompt({
-			content: [
-				{
-					type: "text",
-					text: "Create a C source file named fib.c in the current directory that prints Fibonacci numbers.",
-				},
-			],
-		});
-		console.log("Agent:", result.message?.content ?? []);
-		if (!(await vm.filesystem.exists(`${SANDBOX_MOUNT}/fib.c`))) {
-			throw new Error(`Expected the agent to create ${SANDBOX_MOUNT}/fib.c`);
-		}
-		console.log(`Verified ${SANDBOX_MOUNT}/fib.c exists.`);
-		await vm.sessions.delete();
-	} else {
-		console.log("Skipping agent prompt because ANTHROPIC_API_KEY is not set.");
-	}
 } finally {
 	await vm.dispose();
 }

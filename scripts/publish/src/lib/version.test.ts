@@ -4,11 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { DEFAULT_SIDECAR_PLATFORMS } from "./packages.js";
-import {
-	bumpCargoVersions,
-	bumpPackageJsons,
-	githubRepositoryUrl,
-} from "./version.js";
+import { bumpCargoVersions, bumpPackageJsons } from "./version.js";
 
 async function writeJson(root: string, rel: string, value: unknown) {
 	const path = join(root, rel);
@@ -16,7 +12,7 @@ async function writeJson(root: string, rel: string, value: unknown) {
 	await writeFile(path, `${JSON.stringify(value, null, "\t")}\n`);
 }
 
-test("bumpCargoVersions bumps [workspace.package] and AgentOS path deps", async () => {
+test("bumpCargoVersions bumps [workspace.package] and agentOS path deps", async () => {
 	const repoRoot = await mkdtemp(join(tmpdir(), "agentos-version-test-"));
 	try {
 		await writeFile(
@@ -25,8 +21,8 @@ test("bumpCargoVersions bumps [workspace.package] and AgentOS path deps", async 
 version = "0.2.0"
 
 [workspace.dependencies]
-agentos-protocol = { path = "crates/agentos-protocol", version = "0.2.0-rc.3" }
-agentos-kernel = { path = "crates/kernel", version = "0.2.0-rc.3" }
+agentos-acp-protocol = { path = "crates/acp-protocol", version = "0.2.0-rc.3" }
+agentos-vm-kernel = { path = "crates/vm-kernel", version = "0.2.0-rc.3" }
 serde = "1"
 `,
 		);
@@ -38,7 +34,7 @@ name = "agentos-excluded-core"
 version = "0.2.0"
 
 [dependencies]
-agentos-protocol = { path = "../agentos-protocol", version = "0.2.0" }
+agentos-acp-protocol = { path = "../acp-protocol", version = "0.2.0" }
 `,
 		);
 
@@ -47,14 +43,14 @@ agentos-protocol = { path = "../agentos-protocol", version = "0.2.0" }
 		const cargoToml = await readFile(join(repoRoot, "Cargo.toml"), "utf8");
 		// a6 workspace version bumped...
 		assert.match(cargoToml, /\[workspace\.package\]\nversion = "0\.3\.0"/);
-		// ...AgentOS-owned crate deps (path = "crates/...") bumped...
+		// ...agentOS-owned crate deps (path = "crates/...") bumped...
 		assert.match(
 			cargoToml,
-			/agentos-protocol = \{ path = "crates\/agentos-protocol", version = "0\.3\.0" \}/,
+			/agentos-acp-protocol = \{ path = "crates\/acp-protocol", version = "0\.3\.0" \}/,
 		);
 		assert.match(
 			cargoToml,
-			/agentos-kernel = \{ path = "crates\/kernel", version = "0\.3\.0" \}/,
+			/agentos-vm-kernel = \{ path = "crates\/vm-kernel", version = "0\.3\.0" \}/,
 		);
 		assert.match(cargoToml, /serde = "1"/);
 		const excludedCargoToml = await readFile(
@@ -64,7 +60,7 @@ agentos-protocol = { path = "../agentos-protocol", version = "0.2.0" }
 		assert.match(excludedCargoToml, /version = "0\.3\.0"/);
 		assert.match(
 			excludedCargoToml,
-			/agentos-protocol = \{ path = "\.\.\/agentos-protocol", version = "0\.3\.0" \}/,
+			/agentos-acp-protocol = \{ path = "\.\.\/acp-protocol", version = "0\.3\.0" \}/,
 		);
 	} finally {
 		await rm(repoRoot, { recursive: true, force: true });
@@ -83,25 +79,19 @@ test("bumpPackageJsons injects sidecar platform optional dependencies", async ()
 			join(repoRoot, "pnpm-workspace.yaml"),
 			[
 				"packages:",
-				"  - secure-exec",
 				"  - packages/*",
-				"  - packages/sidecar-binary/npm/*",
-				"  - packages/runtime-sidecar/npm/*",
+				"  - packages/sidecar/npm/*",
+				"  - secure-exec",
 				"",
 			].join("\n"),
 		);
 		for (const [rel, name] of [
 			["packages/agentos", "@rivet-dev/agentos"],
 			["packages/core", "@rivet-dev/agentos-core"],
-			["packages/sidecar-binary", "@rivet-dev/agentos-sidecar"],
-			["packages/runtime-sidecar", "@rivet-dev/agentos-runtime-sidecar"],
+			["packages/sidecar", "@rivet-dev/agentos-sidecar"],
 			...DEFAULT_SIDECAR_PLATFORMS.map((platform) => [
-				`packages/sidecar-binary/npm/${platform}`,
+				`packages/sidecar/npm/${platform}`,
 				`@rivet-dev/agentos-sidecar-${platform}`,
-			]),
-			...DEFAULT_SIDECAR_PLATFORMS.map((platform) => [
-				`packages/runtime-sidecar/npm/${platform}`,
-				`@rivet-dev/agentos-runtime-sidecar-${platform}`,
 			]),
 		]) {
 			await writeJson(repoRoot, join(rel, "package.json"), {
@@ -119,12 +109,6 @@ test("bumpPackageJsons injects sidecar platform optional dependencies", async ()
 			repository: "rivet-dev/agentos",
 		});
 
-		const sidecarManifest = JSON.parse(
-			await readFile(
-				join(repoRoot, "packages/sidecar-binary/package.json"),
-				"utf8",
-			),
-		);
 		const secureExecManifest = JSON.parse(
 			await readFile(join(repoRoot, "secure-exec/package.json"), "utf8"),
 		);
@@ -135,6 +119,13 @@ test("bumpPackageJsons injects sidecar platform optional dependencies", async ()
 			url: "https://github.com/rivet-dev/agentos.git",
 			directory: "secure-exec",
 		});
+
+		const sidecarManifest = JSON.parse(
+			await readFile(
+				join(repoRoot, "packages/sidecar/package.json"),
+				"utf8",
+			),
+		);
 		assert.deepEqual(
 			sidecarManifest.optionalDependencies,
 			Object.fromEntries(
@@ -145,33 +136,12 @@ test("bumpPackageJsons injects sidecar platform optional dependencies", async ()
 			),
 		);
 
-		const runtimeSidecarManifest = JSON.parse(
-			await readFile(
-				join(repoRoot, "packages/runtime-sidecar/package.json"),
-				"utf8",
-			),
-		);
-		assert.deepEqual(sidecarManifest.repository, {
-			type: "git",
-			url: "https://github.com/rivet-dev/agentos.git",
-			directory: "packages/sidecar-binary",
-		});
-		assert.deepEqual(
-			runtimeSidecarManifest.optionalDependencies,
-			Object.fromEntries(
-				DEFAULT_SIDECAR_PLATFORMS.map((platform) => [
-					`@rivet-dev/agentos-runtime-sidecar-${platform}`,
-					"0.3.0",
-				]).sort(),
-			),
-		);
-
 	} finally {
 		await rm(repoRoot, { recursive: true, force: true });
 	}
 });
 
-test("bumpPackageJsons pins lockstep and independent AgentOS Apps runtimes", async () => {
+test("bumpPackageJsons rejects unpublished registry software runtime dependencies", async () => {
 	const repoRoot = await mkdtemp(join(tmpdir(), "agentos-version-test-"));
 	try {
 		await writeJson(repoRoot, "package.json", {
@@ -183,59 +153,25 @@ test("bumpPackageJsons pins lockstep and independent AgentOS Apps runtimes", asy
 			join(repoRoot, "pnpm-workspace.yaml"),
 			["packages:", "  - packages/*", "  - software/*", ""].join("\n"),
 		);
-		await writeJson(repoRoot, "packages/apps/package.json", {
-			name: "@rivet-dev/agentos-apps",
+		await writeJson(repoRoot, "packages/core/package.json", {
+			name: "@rivet-dev/agentos-core",
 			version: "0.0.1",
 			dependencies: {
-				"@agentos-software/apps-builder": "workspace:*",
-				"@agentos-software/sh": "workspace:*",
 				"@agentos-software/tar": "workspace:*",
 			},
 		});
-		for (const name of [
-			"@agentos-software/apps-builder",
-			"@agentos-software/sh",
-			"@agentos-software/tar",
-		]) {
-			await writeJson(
-				repoRoot,
-				`software/${name.split("/")[1]}/package.json`,
-				{ name, version: "0.0.1" },
-			);
-		}
-
-		await bumpPackageJsons(repoRoot, "0.0.0-preview.abc1234", {
-			repository: "rivet-dev/agentos",
-			resolveNpmLatestVersion: async (name) => {
-				assert.equal(name, "@agentos-software/tar");
-				return "0.3.5";
-			},
+		await writeJson(repoRoot, "software/tar/package.json", {
+			name: "@agentos-software/tar",
+			version: "0.0.1",
 		});
 
-		const appsManifest = JSON.parse(
-			await readFile(
-				join(repoRoot, "packages/apps/package.json"),
-				"utf8",
-			),
+		await assert.rejects(
+			bumpPackageJsons(repoRoot, "0.0.0-preview.abc1234", {
+				repository: "rivet-dev/agentos",
+			}),
+			/published package @rivet-dev\/agentos-core depends on unpublished workspace package @agentos-software\/tar/,
 		);
-		assert.deepEqual(appsManifest.dependencies, {
-			"@agentos-software/apps-builder": "0.0.0-preview.abc1234",
-			"@agentos-software/sh": "0.0.0-preview.abc1234",
-			"@agentos-software/tar": "0.3.5",
-		});
 	} finally {
 		await rm(repoRoot, { recursive: true, force: true });
 	}
-});
-
-test("githubRepositoryUrl validates owner/repo slugs", () => {
-	assert.equal(
-		githubRepositoryUrl("rivet-dev/agentos"),
-		"https://github.com/rivet-dev/agentos.git",
-	);
-	assert.throws(() => githubRepositoryUrl("rivet-dev"), /expected owner\/repo/);
-	assert.throws(
-		() => githubRepositoryUrl("https://github.com/rivet-dev/agentos"),
-		/expected owner\/repo/,
-	);
 });

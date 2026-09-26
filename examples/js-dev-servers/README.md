@@ -1,6 +1,6 @@
 ---
 title: "Dev Servers"
-description: "Run a long-lived guest server and request it through AgentOS."
+description: "Run a long-lived guest server and request it through agentOS."
 ---
 
 This example starts a Node.js HTTP server with `runtime.javascript.spawn()`,

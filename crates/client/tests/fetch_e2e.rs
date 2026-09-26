@@ -1,9 +1,9 @@
 //! Port-based virtual `fetch` e2e against a real `agentos-sidecar`.
 //!
 //! `fetch` dispatches to a guest HTTP server listening on a port INSIDE the kernel (never the host).
-//! Standing up that guest listener requires the V8/JS guest runtime, which may be broken in this
-//! environment. This suite fails fast by default when prerequisites are missing; set
-//! `AGENT_OS_CLIENT_ALLOW_E2E_SKIPS=1` only for local skip-only runs:
+//! Standing up that guest listener requires the V8/JS guest runtime. This suite fails fast by
+//! default when prerequisites are missing; set `AGENT_OS_CLIENT_ALLOW_E2E_SKIPS=1` only for local
+//! skip-only runs:
 //!
 //!   1. The sidecar binary must be present.
 //!   2. The guest command/runtime toolchain must be present.
@@ -49,7 +49,7 @@ async fn fetch_tolerant(
                 )
             })
             .collect(),
-        body: Some(body.to_vec()),
+        body: Some(body.to_vec().into()),
     };
     let handle = tokio::spawn(async move {
         let response = os.http_request(request).await?;
@@ -95,7 +95,7 @@ async fn fetch_tolerant_with_timeout(
                 )
             })
             .collect(),
-        body: Some(body.to_vec()),
+        body: Some(body.to_vec().into()),
     };
     let mut handle = tokio::spawn(async move {
         let response = os.http_request(request).await?;
@@ -130,7 +130,6 @@ fn append_output(buffer: &mut String, chunk: Vec<u8>) {
 }
 
 #[tokio::test]
-#[ignore = "TODO(P6): guest fetch network-permission E2E is artifact/runtime-dependent"]
 async fn fetch_surface_get_post_and_headers() {
     if !common::require_sidecar("fetch_surface_get_post_and_headers") {
         return;
@@ -184,7 +183,7 @@ async fn fetch_surface_get_post_and_headers() {
     }
 
     let server = os
-        .spawn_process(
+        .spawn(
             "node",
             vec![
                 "-e".to_string(),

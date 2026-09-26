@@ -9,7 +9,7 @@ Run real shell commands inside a VM. Reach for this when you need to shell out â
 
 ## How it works
 
-Create a VM with `AgentOs.create()`, then call `vm.process.exec()` with any shell string. Each call runs the command in the VM and resolves to a result carrying an `outcome`, `stdout`, `stderr`, and `exitCode`. Because it's a real shell, pipes (`|`), redirects (`>`, `>>`), and tools like `wc` and `tr` work as written, and files persist across calls within the same VM. `vm.process.execFile()` skips the shell entirely so arguments can never be reinterpreted, `vm.process.spawn()` starts a background process you drive by pid, and `timeoutMs` bounds any call. Call `vm.dispose()` when you're done to release it.
+Create a VM with `AgentOs.create()`, then call `vm.process.exec()` with any shell string. Each call runs the command in the VM and resolves to a result carrying an `outcome` and `exitCode`. Set `output: { capture: "all" }` to retain `stdout` and `stderr`. Because it's a real shell, pipes (`|`), redirects (`>`, `>>`), and tools like `wc` and `tr` work as written, and files persist across calls within the same VM. `vm.process.execFile()` skips the shell entirely so arguments can never be reinterpreted, `vm.process.spawn()` starts a background process you drive by pid, and `timeoutMs` bounds any call. Call `vm.dispose()` when you're done to release it.
 
 ## Run it
 

@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
 	EXCLUDED,
-	LOCKSTEP_SOFTWARE_PACKAGES,
 	assertDiscoverySanity,
 	buildMetaPlatformMap,
 	discoverPackages,
@@ -44,11 +43,11 @@ test("discovers Agent OS sidecar resolver packages", () => {
 		);
 	}
 
-	assert(names.includes("@rivet-dev/agentos-runtime-sidecar-linux-x64-gnu"));
-	assert(names.includes("@rivet-dev/agentos-runtime-sidecar"));
+	assert(names.includes("@rivet-dev/agentos-sidecar-linux-x64-gnu"));
+	assert(names.includes("@rivet-dev/agentos-sidecar"));
 	assert(
-		names.indexOf("@rivet-dev/agentos-runtime-sidecar-linux-x64-gnu") <
-			names.indexOf("@rivet-dev/agentos-runtime-sidecar"),
+		names.indexOf("@rivet-dev/agentos-sidecar-linux-x64-gnu") <
+			names.indexOf("@rivet-dev/agentos-sidecar"),
 	);
 });
 
@@ -64,11 +63,11 @@ test("builds platform map for the agent-os sidecar meta package", () => {
 			"@rivet-dev/agentos-sidecar-linux-arm64-gnu",
 			"@rivet-dev/agentos-sidecar-linux-x64-gnu",
 		]);
-		assert.deepEqual(metaMap.get("@rivet-dev/agentos-runtime-sidecar"), [
-			"@rivet-dev/agentos-runtime-sidecar-darwin-arm64",
-			"@rivet-dev/agentos-runtime-sidecar-darwin-x64",
-			"@rivet-dev/agentos-runtime-sidecar-linux-arm64-gnu",
-			"@rivet-dev/agentos-runtime-sidecar-linux-x64-gnu",
+		assert.deepEqual(metaMap.get("@rivet-dev/agentos-sidecar"), [
+			"@rivet-dev/agentos-sidecar-darwin-arm64",
+			"@rivet-dev/agentos-sidecar-darwin-x64",
+			"@rivet-dev/agentos-sidecar-linux-arm64-gnu",
+			"@rivet-dev/agentos-sidecar-linux-x64-gnu",
 		]);
 	}
 });
@@ -82,19 +81,17 @@ test("sanity check passes for the agent-os workspace", () => {
 	assert(names.has("secure-exec"));
 });
 
-test("publishes only new AgentOS Apps software packages in lockstep", () => {
+test("keeps registry software out of the agentOS npm release", () => {
 	const names = discoverPackages(repoRoot).map((pkg) => pkg.name);
 
-	assert(LOCKSTEP_SOFTWARE_PACKAGES.has("@agentos-software/apps-builder"));
-	assert(LOCKSTEP_SOFTWARE_PACKAGES.has("@agentos-software/sh"));
-	assert(!LOCKSTEP_SOFTWARE_PACKAGES.has("@agentos-software/tar"));
-	assert(names.includes("@rivet-dev/agentos-apps"));
-	assert(names.includes("@agentos-software/apps-builder"));
-	assert(names.includes("@agentos-software/sh"));
-	assert(!names.includes("@agentos-software/tar"));
+	assert(names.includes("@rivet-dev/agentos-core"));
+	assert(names.includes("secure-exec"));
+	assert(!names.some((name) => name.startsWith("@agentos-software/")));
 });
 
-test("browser migration packages stay explicitly excluded from publication", () => {
-	assert(EXCLUDED.has("@rivet-dev/agentos-browser"));
-	assert(EXCLUDED.has("@rivet-dev/agentos-runtime-browser"));
+test("archived browser packages are outside publication discovery", () => {
+	const names = discoverPackages(repoRoot).map((pkg) => pkg.name);
+	assert(!names.includes("@rivet-dev/agentos-browser"));
+	assert(!names.includes("@rivet-dev/agentos-runtime-browser"));
+	assert(!names.includes("@rivet-dev/agentos-playground"));
 });

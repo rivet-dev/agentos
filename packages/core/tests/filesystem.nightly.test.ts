@@ -1,53 +1,8 @@
 // Nightly: projects the complete registry command bundle.
-import { resolve } from "node:path";
-import type { Fixture, ToolCall } from "@copilotkit/llmock";
-import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { AgentOs } from "../src/index.js";
 import { getAgentOsKernel } from "../src/test/runtime.js";
-import {
-	createAnthropicFixture,
-	startLlmock,
-	stopLlmock,
-} from "./helpers/llmock-helper.js";
 import { REGISTRY_SOFTWARE } from "./helpers/registry-commands.js";
-import { ALLOW_ALL_VM_PERMISSIONS } from "./helpers/permissions.js";
-
-const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
-function hasToolResult(req: unknown): boolean {
-	const directMessages = (
-		req as {
-			messages?: Array<{ role?: string }>;
-			body?: { messages?: Array<{ role?: string }> };
-		}
-	).messages;
-	const bodyMessages = (
-		req as { body?: { messages?: Array<{ role?: string }> } }
-	).body?.messages;
-	const messages = Array.isArray(directMessages)
-		? directMessages
-		: Array.isArray(bodyMessages)
-			? bodyMessages
-			: [];
-	return messages.some((message) => message.role === "tool");
-}
-
-function createToolFixtures(toolCall: ToolCall, finalText: string): Fixture[] {
-	return [
-		createAnthropicFixture(
-			{
-				predicate: (req) => !hasToolResult(req),
-			},
-			{ toolCalls: [toolCall] },
-		),
-		createAnthropicFixture(
-			{
-				predicate: (req) => hasToolResult(req),
-			},
-			{ content: finalText },
-		),
-	];
-}
 
 describe("filesystem operations", () => {
 	let vm: AgentOs;
@@ -68,7 +23,7 @@ describe("filesystem operations", () => {
 	});
 
 	// Regression guard: `mkdir(path, { recursive: true })` must NOT probe each
-	// ancestor with a read-side `exists()`. On the native sidecar every read-side op
+	// ancestor with a read-side `exists()`. On the sidecar every read-side op
 	// triggers a full shadow-tree walk, so a per-component exists() loop made
 	// `mkdir -p` cost O(components * tree) -- a major source of session-creation
 	// latency on populated VMs. The recursive kernel mkdir is sufficient on its own.
@@ -113,63 +68,6 @@ describe("filesystem operations", () => {
 		expect(ls.exitCode, ls.stderr || ls.stdout).toBe(0);
 		expect(ls.stdout).toContain("test.txt");
 	});
-
-	test("agent bash tool writes are visible to readFile before the session exits", async () => {
-		const { mock, url } = await startLlmock(
-			createToolFixtures(
-				{
-					name: "Bash",
-					arguments: JSON.stringify({
-						command: "printf 'agent-shadow-ok' > /tmp/agent-shadow.txt",
-					}),
-				},
-				"done",
-			),
-		);
-		const mockPort = Number(new URL(url).port);
-
-		await vm.dispose();
-		vm = await AgentOs.create({
-			loopbackExemptPorts: [mockPort],
-			mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-			permissions: ALLOW_ALL_VM_PERMISSIONS,
-			software: [...REGISTRY_SOFTWARE],
-		});
-
-		let sessionId: string | undefined;
-		try {
-			sessionId = "main";
-			await vm.openSession({
-				sessionId,
-				agent: "claude",
-				cwd: "/home/agentos",
-				permissionPolicy: "allow_all",
-				env: {
-					ANTHROPIC_API_KEY: "mock-key",
-					ANTHROPIC_BASE_URL: url,
-				},
-			});
-			const response = await vm.prompt({
-				sessionId,
-				content: [
-					{
-						type: "text",
-						text: "Use bash to write agent-shadow-ok into /tmp/agent-shadow.txt.",
-					},
-				],
-			});
-
-			expect(response.stopReason).toBeDefined();
-			expect(
-				new TextDecoder().decode(await vm.readFile("/tmp/agent-shadow.txt")),
-			).toBe("agent-shadow-ok");
-		} finally {
-			if (sessionId) {
-				await vm.unloadSession({ sessionId });
-			}
-			await stopLlmock(mock);
-		}
-	}, 120_000);
 
 	test("mkdir and readdir", async () => {
 		await vm.mkdir("/tmp/testdir");

@@ -1,62 +1,122 @@
 import { createHash } from "node:crypto";
+import type { AgentOsActorConnection } from "@rivet-dev/agentos";
+import type { VirtualStat } from "@rivet-dev/agentos-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const clientMocks = vi.hoisted(() => ({ createClient: vi.fn() }));
+const clientMocks = vi.hoisted(() => ({ createAgentOsClient: vi.fn() }));
 
-vi.mock("@rivet-dev/agentos/client", () => ({
-	createClient: clientMocks.createClient,
+vi.mock("@rivet-dev/agentos", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@rivet-dev/agentos")>()),
+	createAgentOsClient: clientMocks.createAgentOsClient,
 }));
 
 import { AgentOSFlueConfigurationError, agentOSSandbox } from "../src/index.js";
-
-function makeRegistry() {
-	return {
-		startAndWait: vi.fn(async () => {}),
-	};
-}
 
 function makeHarness() {
 	const keyCalls: string[][] = [];
 	const connection = {
 		ready: Promise.resolve(),
-		exec: vi.fn(async () => ({ exitCode: 0, stdout: "ok", stderr: "" })),
-		readFile: vi.fn(async () => new TextEncoder().encode("hello")),
-		writeFile: vi.fn(async () => {}),
-		stat: vi.fn(async () => ({
-			mode: 0o100644,
-			size: 5,
-			isDirectory: false,
-			isSymbolicLink: false,
-			mtimeMs: 1234,
+		exec: vi.fn(async (_command: string, _options?: unknown) => ({
+			exitCode: 0,
+			stdout: "ok",
+			stderr: "",
 		})),
-		readdir: vi.fn(async () => ["a.txt"]),
-		exists: vi.fn(async () => true),
-		mkdir: vi.fn(async () => {}),
-		remove: vi.fn(async () => {}),
+		readFile: vi.fn(async (_path: string) => new TextEncoder().encode("hello")),
+		writeFile: vi.fn(
+			async (_path: string, _content: string | Uint8Array) => {},
+		),
+		stat: vi.fn(
+			async (_path: string): Promise<VirtualStat> => ({
+				mode: 0o100644,
+				size: 5,
+				blocks: 1,
+				dev: 1,
+				rdev: 0,
+				isDirectory: false,
+				isSymbolicLink: false,
+				atimeMs: 1234,
+				mtimeMs: 1234,
+				ctimeMs: 1234,
+				birthtimeMs: 1234,
+				ino: 7,
+				nlink: 1,
+				uid: 0,
+				gid: 0,
+			}),
+		),
+		readdir: vi.fn(async (_path: string) => ["a.txt"]),
+		exists: vi.fn(async (_path: string) => true),
+		mkdir: vi.fn(async (_path: string, _options?: unknown) => {}),
+		remove: vi.fn(async (_path: string, _options?: unknown) => {}),
 	};
-	const connect = vi.fn(() => connection);
+	const actorConnection = {
+		ready: Promise.resolve(),
+		process: {
+			run: vi.fn<AgentOsActorConnection["process"]["run"]>(
+				async ({ command, args, options }) => {
+					if (
+						command !== "sh" ||
+						args?.[0] !== "-c" ||
+						typeof args[1] !== "string"
+					) {
+						throw new Error("expected shell command");
+					}
+					const result = await connection.exec(args[1], {
+						cwd: options?.cwd,
+						env: options?.env,
+						timeout: options?.timeoutMs,
+						captureStdio: options?.captureStdio,
+					});
+					return {
+						status: { exitCode: result.exitCode },
+						stdout: result.stdout,
+						stderr: result.stderr,
+					};
+				},
+			),
+		},
+		filesystem: {
+			readFile: vi.fn(({ path }: any) => connection.readFile(path)),
+			writeFile: vi.fn(({ path, content }: any) =>
+				connection.writeFile(path, content),
+			),
+			stat: vi.fn<AgentOsActorConnection["filesystem"]["stat"]>(
+				async ({ path }) => {
+					const { size, ...stat } = await connection.stat(path);
+					return { ...stat, sizeBytes: size };
+				},
+			),
+			readdir: vi.fn(({ path }: any) => connection.readdir(path)),
+			exists: vi.fn(({ path }: any) => connection.exists(path)),
+			mkdir: vi.fn(({ path, recursive }: any) =>
+				connection.mkdir(path, { recursive }),
+			),
+			remove: vi.fn(({ path, recursive }: any) =>
+				connection.remove(path, { recursive }),
+			),
+		},
+	};
+	const connect = vi.fn(() => actorConnection);
 	const getOrCreate = vi.fn(
 		(key: string[], _options?: { params?: unknown }) => {
 			keyCalls.push(key);
 			return { connect };
 		},
 	);
-	clientMocks.createClient.mockReturnValue({ vm: { getOrCreate } });
-	return { connect, connection, getOrCreate, keyCalls };
+	clientMocks.createAgentOsClient.mockReturnValue({ agentOS: { getOrCreate } });
+	return { actorConnection, connect, connection, getOrCreate, keyCalls };
 }
 
 describe("agentOSSandbox", () => {
-	beforeEach(() => clientMocks.createClient.mockReset());
+	beforeEach(() => clientMocks.createAgentOsClient.mockReset());
 
 	it("reconnects to the same actor without retaining session environments", async () => {
-		const registry = makeRegistry();
 		const harness = makeHarness();
-		const sandbox = agentOSSandbox({ actor: "vm", registry });
+		const sandbox = agentOSSandbox();
 		const first = await sandbox.createSessionEnv({ id: "ticket-1" });
 		const second = await sandbox.createSessionEnv({ id: "ticket-1" });
 
 		expect(first).not.toBe(second);
-		expect(registry.startAndWait).toHaveBeenCalledTimes(2);
 		expect(harness.connect).toHaveBeenCalledTimes(2);
 		expect(harness.keyCalls).toEqual([
 			[
@@ -71,29 +131,24 @@ describe("agentOSSandbox", () => {
 			],
 		]);
 		expect(harness.getOrCreate).toHaveBeenCalledTimes(2);
-		expect(clientMocks.createClient).toHaveBeenCalledOnce();
-		expect(clientMocks.createClient).toHaveBeenCalledWith();
+		expect(clientMocks.createAgentOsClient).toHaveBeenCalledOnce();
+		expect(clientMocks.createAgentOsClient).toHaveBeenCalledWith(undefined);
 	});
 
-	it("forwards actor connection parameters", async () => {
+	it("forwards actor creation input", async () => {
 		const harness = makeHarness();
 		await agentOSSandbox({
-			actor: "vm",
-			registry: makeRegistry(),
-			params: { authToken: "allowed" },
+			createInput: { config: { environment: { MODE: "test" } } },
 		}).createSessionEnv({ id: "ticket-auth" });
 
 		expect(harness.getOrCreate).toHaveBeenCalledWith(expect.any(Array), {
-			params: { authToken: "allowed" },
+			createWithInput: { config: { environment: { MODE: "test" } } },
 		});
 	});
 
 	it("maps Flue shell and filesystem operations to agentOS", async () => {
 		const harness = makeHarness();
-		const env = await agentOSSandbox({
-			actor: "vm",
-			registry: makeRegistry(),
-		}).createSessionEnv({ id: "ticket-2" });
+		const env = await agentOSSandbox().createSessionEnv({ id: "ticket-2" });
 
 		await expect(env.readFile("note.txt")).resolves.toBe("hello");
 		await expect(env.stat("note.txt")).resolves.toEqual({
@@ -110,18 +165,49 @@ describe("agentOSSandbox", () => {
 		});
 		expect(harness.connection.exec).toHaveBeenCalledWith("printf ok", {
 			cwd: "/workspace",
-			env: undefined,
+			env: {},
 			timeout: 500,
 			captureStdio: true,
 		});
 	});
 
+	it("maps bigint hosted metadata and nonzero structured exits", async () => {
+		const harness = makeHarness();
+		const env = await agentOSSandbox().createSessionEnv({
+			id: "ticket-wire-types",
+		});
+		const { size, ...stat } = await harness.connection.stat("note.txt");
+		harness.actorConnection.filesystem.stat.mockResolvedValueOnce({
+			...stat,
+			sizeBytes: BigInt(size),
+			blocks: 1n,
+			dev: 1n,
+			rdev: 0n,
+			ino: 7n,
+			nlink: 1n,
+		});
+		await expect(env.stat("note.txt")).resolves.toEqual({
+			isFile: true,
+			isDirectory: false,
+			isSymbolicLink: false,
+			size: 5,
+			mtime: new Date(1234),
+		});
+		harness.actorConnection.process.run.mockResolvedValueOnce({
+			status: { exitCode: 23 },
+			stdout: "partial output",
+			stderr: "command failed",
+		});
+		await expect(env.exec("exit 23")).resolves.toEqual({
+			exitCode: 23,
+			stdout: "partial output",
+			stderr: "command failed",
+		});
+	});
+
 	it("implements force removal without hiding other failures", async () => {
 		const harness = makeHarness();
-		const env = await agentOSSandbox({
-			actor: "vm",
-			registry: makeRegistry(),
-		}).createSessionEnv({ id: "ticket-3" });
+		const env = await agentOSSandbox().createSessionEnv({ id: "ticket-3" });
 
 		harness.connection.exists.mockResolvedValueOnce(false);
 		await expect(env.rm("missing", { force: true })).resolves.toBeUndefined();
@@ -137,8 +223,8 @@ describe("agentOSSandbox", () => {
 	});
 
 	it("reports a missing actor as a configuration error", async () => {
-		clientMocks.createClient.mockReturnValue({});
-		const sandbox = agentOSSandbox({ actor: "vm", registry: makeRegistry() });
+		clientMocks.createAgentOsClient.mockReturnValue({});
+		const sandbox = agentOSSandbox();
 		await expect(
 			sandbox.createSessionEnv({ id: "ticket-4" }),
 		).rejects.toBeInstanceOf(AgentOSFlueConfigurationError);

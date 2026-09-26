@@ -1,8 +1,5 @@
-import { agentOS, setup } from "@rivet-dev/agentos";
-import coreutils from "@agentos-software/coreutils";
-import ripgrep from "@agentos-software/ripgrep";
+import { vm } from "./actor.js";
 
-const vm = agentOS({ software: [coreutils, ripgrep] });
-
-export const registry = setup({ use: { vm } });
-registry.start();
+for (const software of await vm.software.list({})) {
+	console.log(software.packageId, software.commands.join(", "));
+}

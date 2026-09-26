@@ -1,21 +1,23 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SidecarRejectedError } from "../src/sidecar-errors.js";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { KernelSpawnOptions } from "../src/runtime-compat.js";
 import type {
 	AuthenticatedSession,
 	CreatedVm,
-	NativeSidecarProcessClient,
+	SidecarProcess,
 } from "../src/sidecar/rpc-client.js";
-import { NativeSidecarKernelProxy } from "../src/sidecar/rpc-client.js";
+import { SidecarKernelProxy } from "../src/sidecar/rpc-client.js";
 
 describe("WASM command permission tiers", () => {
-	let proxy: NativeSidecarKernelProxy | null = null;
+	let proxy: SidecarKernelProxy | null = null;
 	let fixtureRoot: string | null = null;
 
 	afterEach(async () => {
 		await proxy?.dispose();
+		vi.restoreAllMocks();
 		proxy = null;
 		if (fixtureRoot) {
 			rmSync(fixtureRoot, { recursive: true, force: true });
@@ -24,9 +26,26 @@ describe("WASM command permission tiers", () => {
 	});
 
 	function createMockClient() {
+		vi.spyOn(console, "error").mockImplementation(() => {});
 		let stopped = false;
 		const execute = vi.fn(async () => {
-			throw new Error("stop after capture");
+			throw new SidecarRejectedError(1, {
+				code: "ENOENT",
+				message: "stop after capture",
+				errno: "ENOENT",
+				limit_name: null,
+				configured_limit: null,
+				current_usage: null,
+				requested: null,
+				unit: null,
+				scope: null,
+				vm_id: null,
+				session_generation: null,
+				capability_id: null,
+				operation: null,
+				configuration_path: null,
+				retryable: null,
+			});
 		});
 		const client = {
 			waitForEvent: vi.fn(async () => {
@@ -42,7 +61,7 @@ describe("WASM command permission tiers", () => {
 			dispose: vi.fn(async () => {
 				stopped = true;
 			}),
-		} as unknown as NativeSidecarProcessClient;
+		} as unknown as SidecarProcess;
 
 		return { client, execute };
 	}
@@ -51,7 +70,7 @@ describe("WASM command permission tiers", () => {
 		fixtureRoot = mkdtempSync(join(tmpdir(), "agentos-wasm-tiers-"));
 		const { client, execute } = createMockClient();
 
-		proxy = new NativeSidecarKernelProxy({
+		proxy = new SidecarKernelProxy({
 			client,
 			session: {
 				connectionId: "conn-1",
@@ -68,9 +87,8 @@ describe("WASM command permission tiers", () => {
 		const proc = proxy.spawn("grep", ["needle", "haystack.txt"], {
 			cwd: "/workspace",
 		});
-		const exitCode = await proc.wait();
-
-		expect(exitCode).toBe(1);
+		await expect(proc.wait()).rejects.toThrow("stop after capture");
+		expect(proc.exitCode).toBeNull();
 		expect(execute).toHaveBeenCalledTimes(1);
 		expect(execute.mock.calls[0]?.[2]).toMatchObject({
 			command: "grep",
@@ -83,7 +101,7 @@ describe("WASM command permission tiers", () => {
 		fixtureRoot = mkdtempSync(join(tmpdir(), "agentos-wasm-tiers-"));
 		const { client } = createMockClient();
 
-		proxy = new NativeSidecarKernelProxy({
+		proxy = new SidecarKernelProxy({
 			client,
 			session: {
 				connectionId: "conn-1",

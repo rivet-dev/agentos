@@ -8,7 +8,7 @@ frame shape from
 
 ## Framing
 
-The native sidecar transport keeps the current framing boundary during migration:
+The sidecar transport keeps the current framing boundary during migration:
 
 - 4-byte big-endian length prefix
 - one encoded `ProtocolFrame` payload immediately after the prefix
@@ -20,7 +20,7 @@ US-083 and US-084 should replace only the payload codec first. They should not r
 The migration keeps the current semantic invariants unchanged across codecs:
 
 - `ProtocolSchema.name` is `agentos-native-sidecar`
-- `ProtocolSchema.version` is `8`
+- `ProtocolSchema.version` is `10`
 - host-originated `request_id` values stay positive
 - sidecar-originated `request_id` values stay negative
 - ownership scope rules and response-correlation rules stay exactly the same
@@ -34,7 +34,7 @@ The current protocol still has several fields modeled as `serde_json::Value` on 
 - canonicalized by the codec before hashing/comparison in tests
 - intentionally temporary until later protocol work replaces them with BARE-native typed payloads
 
-This applies to fields such as session config blobs, ACP notifications, mount plugin configs, host-function schemas and inputs, JS bridge arguments, and host-function results.
+This applies to fields such as runtime config blobs, mount plugin configs, host-function schemas/inputs, JS bridge arguments, and host-function results.
 
 ## Rollout Plan
 
@@ -43,10 +43,15 @@ This applies to fields such as session config blobs, ACP notifications, mount pl
 3. US-083: make the Rust decoder dual-stack by inspecting the first payload byte after the length prefix.
    JSON frames begin with `{` today, while BARE frames begin with a union tag byte/varint, so the decoder can distinguish the two without an extra wrapper frame.
 4. US-083: once a connection's first successfully decoded frame is known, pin the connection to that codec for all later frames on that transport.
-5. US-084: teach the TypeScript native sidecar client and related bridge transports to emit and decode the BARE payload form using the same schema.
+5. US-084: teach the TypeScript sidecar client and related bridge transports to emit and decode the BARE payload form using the same schema.
 6. US-084: keep JSON decode support only for the migration window; once both sides default to BARE and the targeted tests are green, delete JSON encoding and the dual-stack sniffing path.
 
 ## Normalization Notes
+
+`ReadProcessOutputRequest.maxEvents` and `maxBytes` use zero as a wire-only
+omission sentinel: the sidecar selects that VM's configured replay page limit.
+Public APIs reject explicitly supplied zero; explicit nonzero bounds above the
+configured VM limit receive a typed rejection rather than silent clamping.
 
 BARE does not have Serde's "omitted but defaults to empty list/map" behavior. The codec should therefore normalize these fields explicitly:
 

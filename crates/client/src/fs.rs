@@ -29,10 +29,33 @@ use crate::error::ClientError;
 // ---------------------------------------------------------------------------
 
 /// `string | Uint8Array` file content.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
+#[cfg_attr(feature = "contract", ts(rename = "FileContentInput"))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum FileContent {
     Text(String),
-    Bytes(Vec<u8>),
+    Bytes(
+        #[serde(with = "serde_bytes")]
+        #[cfg_attr(feature = "contract", ts(type = "Uint8Array"))]
+        Vec<u8>,
+    ),
+}
+
+impl FileContent {
+    pub fn byte_len(&self) -> usize {
+        match self {
+            Self::Text(value) => value.len(),
+            Self::Bytes(value) => value.len(),
+        }
+    }
+
+    pub fn into_bytes(self) -> Vec<u8> {
+        match self {
+            Self::Text(value) => value.into_bytes(),
+            Self::Bytes(value) => value,
+        }
+    }
 }
 
 impl From<String> for FileContent {
@@ -60,15 +83,20 @@ impl From<&[u8]> for FileContent {
 }
 
 /// An entry returned by `readdir_recursive`.
+#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
+#[cfg_attr(feature = "contract", ts(rename = "ActorDirectoryEntry"))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DirEntry {
     pub path: String,
     #[serde(rename = "type")]
     pub entry_type: DirEntryType,
+    #[serde(rename = "sizeBytes")]
+    #[cfg_attr(feature = "contract", ts(rename = "sizeBytes"))]
     pub size: u64,
 }
 
 /// The type of a directory entry.
+#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DirEntryType {
@@ -86,17 +114,24 @@ pub struct ReaddirRecursiveOptions {
 }
 
 /// A batch write entry.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
+#[cfg_attr(feature = "contract", ts(rename = "FilesystemWriteEntry"))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BatchWriteEntry {
     pub path: String,
     pub content: FileContent,
 }
 
 /// Result of a single batch write (never an `Err`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
+#[cfg_attr(feature = "contract", ts(rename = "FilesystemWriteResult"))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BatchWriteResult {
     pub path: String,
     pub success: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 
@@ -120,6 +155,7 @@ pub struct RemoveOptions {
     pub recursive: bool,
 }
 
+#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DynamicMountDescriptor {
     pub path: String,
@@ -129,6 +165,7 @@ pub struct DynamicMountDescriptor {
     pub read_only: bool,
 }
 
+#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MountInfo {
     pub path: String,
@@ -138,9 +175,13 @@ pub struct MountInfo {
 }
 
 /// Stat result. 16 fields; `*_ms` time fields are `f64` (JS ms, possibly fractional).
+#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
+#[cfg_attr(feature = "contract", ts(rename = "ActorFileStat"))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VirtualStat {
     pub mode: u32,
+    #[serde(rename = "sizeBytes")]
+    #[cfg_attr(feature = "contract", ts(rename = "sizeBytes"))]
     pub size: u64,
     pub blocks: u64,
     pub dev: u64,
@@ -164,7 +205,10 @@ pub struct VirtualStat {
 }
 
 /// A directory entry with a known type, returned by `read_dir_with_types` on the mount contract.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
+#[cfg_attr(feature = "contract", ts(rename = "FilesystemDirectoryEntry"))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VirtualDirEntry {
     pub name: String,
     pub is_directory: bool,
@@ -176,6 +220,7 @@ pub struct VirtualDirEntry {
 // ---------------------------------------------------------------------------
 
 /// `{ kind: "snapshot-export"; source }`.
+#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RootSnapshotExport {
     pub kind: SnapshotExportKind,
@@ -183,6 +228,7 @@ pub struct RootSnapshotExport {
 }
 
 /// The literal `"snapshot-export"` tag.
+#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SnapshotExportKind {
     #[serde(rename = "snapshot-export")]
@@ -190,6 +236,7 @@ pub enum SnapshotExportKind {
 }
 
 /// `{ format: "agentos-filesystem-snapshot-v1"; filesystem: { entries } }`.
+#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FilesystemSnapshotExport {
     pub format: String,
@@ -197,12 +244,14 @@ pub struct FilesystemSnapshotExport {
 }
 
 /// `{ entries: FilesystemEntry[] }`.
+#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FilesystemSnapshotEntries {
     pub entries: Vec<FilesystemEntry>,
 }
 
 /// A single snapshot entry. `mode` is an OCTAL STRING (e.g. `"0755"`). `content` is utf8 or base64.
+#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FilesystemEntry {
     pub path: String,
@@ -220,6 +269,7 @@ pub struct FilesystemEntry {
 }
 
 /// Snapshot content encoding.
+#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FilesystemEntryEncoding {
@@ -682,9 +732,9 @@ impl AgentOs {
     }
 
     /// List directory entries with their resolved type, mirroring the TS `readDirWithTypes` used by
-    /// the ACP `fs/readDir` host request. `.`/`..` are filtered by the caller. A symlink is reported
+    /// a typed `fs/readDir` host request. `.`/`..` are filtered by the caller. A symlink is reported
     /// as a symlink (lstat-style, not followed); other entries are stat'd as directory vs file.
-    pub(crate) async fn acp_read_dir_with_types(&self, path: &str) -> Result<Vec<VirtualDirEntry>> {
+    pub async fn read_dir_with_types(&self, path: &str) -> Result<Vec<VirtualDirEntry>> {
         Self::assert_safe_absolute_path(path)?;
         let names = self.kernel_readdir(path).await?;
         let mut entries = Vec::with_capacity(names.len());
@@ -701,14 +751,6 @@ impl AgentOs {
             });
         }
         Ok(entries)
-    }
-
-    /// Typed directory listing: each child reported with its resolved type. agentos's native
-    /// `READ_DIR` returns basenames only (`entries: list<str>`), so the type of each entry is derived
-    /// with a per-child `lstat` (a symlink is reported as such, lstat-style, not followed). Goes
-    /// through the kernel, so mounts are listed correctly. `.`/`..` are filtered.
-    pub async fn read_dir_with_types(&self, path: &str) -> Result<Vec<VirtualDirEntry>> {
-        self.acp_read_dir_with_types(path).await
     }
 
     /// Recursive BFS listing; symlinks recorded but NOT descended; a stat failure aborts the call.
@@ -841,6 +883,7 @@ impl AgentOs {
 
     /// Mount a portable sidecar-owned filesystem descriptor.
     pub async fn mount_fs(&self, descriptor: DynamicMountDescriptor) -> Result<()> {
+        let _vm_configuration = self.inner().vm_configuration_operation.lock().await;
         Self::assert_safe_absolute_path(&descriptor.path)?;
         let config = descriptor
             .plugin
@@ -880,6 +923,7 @@ impl AgentOs {
     }
 
     pub async fn unmount_fs(&self, path: &str) -> Result<()> {
+        let _vm_configuration = self.inner().vm_configuration_operation.lock().await;
         Self::assert_safe_absolute_path(path)?;
         let removed = {
             let mut mounts = self.inner().dynamic_mounts.lock();
@@ -934,9 +978,11 @@ impl AgentOs {
                 wire::RequestPayload::ConfigureVmRequest(wire::ConfigureVmRequest {
                     mounts,
                     software: Vec::new(),
-                    permissions: crate::agent_os::permissions_policy(config),
+                    // Dynamic mount reconfiguration must retain the VM policy
+                    // resolved at creation, not reconstruct it in the client.
+                    permissions: None,
                     module_access_cwd: None,
-                    instructions: config.additional_instructions.clone().into_iter().collect(),
+                    instructions: Vec::new(),
                     projected_modules: Vec::new(),
                     command_permissions: std::collections::HashMap::new(),
                     loopback_exempt_ports: config.loopback_exempt_ports.clone(),

@@ -4,7 +4,7 @@ Always spell the product name `agentOS`, never `AgentOS`; do not alter type
 identifiers such as `AgentOSActorConfig`.
 
 agentOS owns the runtime, kernel, VFS, language execution, registry packages,
-ACP/session layer, agentOS client APIs, docs, and publish machinery. agentOS
+agentOS client APIs, docs, and publish machinery. agentOS
 Exec is the JavaScript, TypeScript, and Python execution surface of agentOS.
 
 ## Boundaries
@@ -28,6 +28,34 @@ Exec is the JavaScript, TypeScript, and Python execution surface of agentOS.
   code, but their entrypoints must stay disabled and they must not enter default
   builds, CI, publication, or behavioral-parity requirements without a
   separately approved design.
+
+## VM, Driver, And Executor Crate Boundaries
+
+- The locked native packages are `agentos-vm`, `agentos-driver-tokio`,
+  `agentos-executor-contract`, and one feature-gated crate per concrete
+  execution engine.
+- Keep the kernel and executor contract independent of Tokio and concrete
+  engines. Keep each engine in a separate feature-gated crate.
+- The sidecar is the native composition root: it constructs the Tokio driver,
+  registers enabled executors, creates the VM manager, and owns transport and
+  ACP extensions. `agentos-vm` is also supported as an embedded Rust library
+  with no sidecar, client, or executors.
+- `agentos-vm` with default features disabled must retain only the kernel and
+  in-memory VFS composition. Persistent filesystems/SQLite/S3, package/tar
+  filesystems and schema generation, Tokio, protocol adapters, ARS, JavaScript
+  tooling, crypto/TLS, WASM ABI support, and concrete executors must be optional
+  and absent from that dependency graph.
+- Keep capability dependencies attached to their owning features:
+  `javascript-tooling` is selected by `node-v8`, and `wasm-api` is selected
+  only by `wasm-v8` or `wasm-wasmtime`. Persistent VFS backends and crypto must
+  never become unconditional dependencies of the embedded VM.
+- New `agentos-vm` dependencies are optional unless the executor-free kernel
+  directly requires them. Validate changes with
+  `node scripts/check-embedded-vm-dependencies.mjs` and keep the checked
+  `agentos-example-embedded-vm` binary under the configured size ceiling.
+- Browser implementation remains out of scope. See
+  [Package Architecture](docs/content/docs/architecture/package-structure.mdx)
+  for the package graph, responsibilities, and rationale.
 
 ## Security Model
 
@@ -81,7 +109,7 @@ migrate, or delete another owner's schema:
 - Sidecar/core durable state owns `agentos_core_*`, including
   `agentos_core_schema_version`. This namespace is intentionally generic; do
   not name it after sessions, ACP, or another current consumer.
-- The agentOS TypeScript actor layer owns `agentos_actor_*`, including
+- The static agentOS Rust actor owns `agentos_actor_*`, including
   `agentos_actor_schema_version`.
 
 Do not use a shared schema-version table, a `component` discriminator, or a
@@ -104,41 +132,34 @@ add compatibility views, aliases, legacy adoption paths, or dual writes.
   Python). Do NOT reason about guest capabilities from plain-WASI limits (e.g.
   "no shell", "no subprocess spawning", "no process model") — those hold for raw
   WASI Preview 1, not for agentOS. See
-  `website/public/docs/docs/architecture/processes.md` and
-  `posix-syscalls.md`, and `crates/kernel/CLAUDE.md`.
+  `docs/content/docs/architecture/processes.mdx` and
+  `docs/content/docs/architecture/posix-syscalls.mdx`, and `crates/vm-kernel/CLAUDE.md`.
 - The projected `/opt/agentos` filesystem is the source of truth for software
-  and agent resolution. Read it live; do not cache package lists captured at VM
+  and command resolution. Read it live; do not cache package lists captured at VM
   configuration time.
-- Packages are packed `.aospkg` files (`crates/vfs/package-format/v1.bare`:
+- Packages are packed `.aospkg` files (`crates/vfs-core/package-format/v2.bare`:
   header + vbare manifest + mount index + mount tar) projected under
   `/opt/agentos/pkgs/<name>/<version>`; commands are linked under
   `/opt/agentos/bin/`. The vbare chunk1 manifest is the only runtime manifest —
   `agentos-package.json` is toolchain input, stripped at pack time and never
   shipped or materialized into the guest.
-- Agent resolution and enumeration are sidecar-owned. Clients send agent names
-  and forward a single package `path` (the `.aospkg`, or a transition dir);
-  they do not scan `node_modules` or parse adapter manifests for discovery.
+- Software resolution and enumeration are sidecar-owned. Clients forward a
+  closed package source (`url` for hosted actors; trusted local path for embedded
+  Core); they do not scan `node_modules` or parse manifests for discovery.
 - TypeScript and Rust clients must stay behaviorally identical. Any public
   method or wire behavior change in one client must be mirrored in the other.
 - Clients are thin transport adapters, not runtime policy owners. They may
   validate and serialize explicit caller input, forward requests, route host
   callbacks/events, and retain host-only state that the sidecar cannot access.
   VM defaults, base environment, filesystem/bootstrap policy, default software,
-  permission policy, agent/session orchestration, prompt assembly, and other
+  permission policy, package projection, and other
   behavior shared across clients belong in the sidecar/runtime.
 - Behavioral parity must come from one sidecar-owned implementation, not copied
   TypeScript/Rust/actor constants or parallel state machines. Prefer omitted
   wire fields meaning "use the sidecar default"; clients should send overrides
   only when the caller explicitly supplied them.
-- Agent adapters must use real upstream SDKs. Do not replace SDK adapters with
-  direct API-call stubs.
-- `rivet-dev/pi-acp` is an agentOS-maintained fork. When Pi ACP behavior needs
-  to change, fix and test the fork directly, push the fork commit, then update
-  the pinned commit and verified source-archive checksum in
-  `software/pi/scripts/build-pi-acp.mjs`; do not work around fork bugs in the
-  agentOS package wrapper or resolve `pi-acp` from npm.
 - WASM command binaries and every toolchain build output are generated
-  artifacts. Never commit `packages/runtime-core/commands/`, `software/*/bin/`,
+  artifacts. Never commit `packages/core/commands/`, `software/*/bin/`,
   `toolchain/vendor/`, `toolchain/c/{build,vendor,libs,sysroot,.cache}/`, or
   `toolchain/std-patches/wasi-libc-overrides/*.o`. A fresh checkout intentionally
   contains source and patches only. Rebuild and stage the complete default tool
@@ -227,7 +248,7 @@ custom host-syscall imports. Treat that target as **native POSIX**;
   dormant reference code; browser entrypoints and support remain disabled until
   a separate design is approved.
 - The architecture and migration contract are specified in
-  `docs/design/unified-sidecar-runtime.md`.
+  `docs/content/docs/architecture/javascript-executor.mdx`.
 
 ## Publishing
 
@@ -242,9 +263,8 @@ custom host-syscall imports. Treat that target as **native POSIX**;
   `@rivet-dev/agentos-core` that exposes `secure-exec/typescript`. Its
   top-level functions are one-shot conveniences, and `createVm()` returns the
   agentOS VM's own namespaces; keep it a thin forwarding layer.
-- The release workflow must build and stage the native sidecar binaries,
-  runtime-sidecar binaries, registry WASM commands, and pyodide assets before
-  publish.
+- The release workflow must build and stage the single `agentos-sidecar`
+  binary family, registry WASM commands, and pyodide assets before publish.
 - For an urgent release, use `just release-fast --patch` (or pass
   `--profile debug` to `just release`). This still rebuilds every release
   artifact, but publishes larger, unoptimized debug native binaries.
@@ -301,29 +321,6 @@ custom host-syscall imports. Treat that target as **native POSIX**;
   limits, or watchdog timeouts must be ignored/skipped by default with a clear
   reason. Fast tests where the configured safeguard fires should stay in the
   default suite.
-
-## Gigacode Performance Investigations
-
-- For cold-start latency, run `gigacode` directly and use the plain
-  `[gigacode]` phase lines and durations mirrored from `daemon.log` while the
-  client waits for provider bootstrap. These startup lines are intentionally
-  human-readable and separate from Pino session logs.
-- Investigate Gigacode latency from its per-session Pino JSONL logs, not by
-  inferring timing from the OpenCode screen or the aggregate `daemon.log`.
-- Logs live at
-  `~/.local/state/gigacode/session-logs/<open-code-session-id>.jsonl` by default,
-  or under `$GIGACODE_STATE_DIR/session-logs/` when that override is set.
-- Reproduce one turn in a fresh session, identify the newest log with
-  `ls -lt ~/.local/state/gigacode/session-logs`, then inspect its ordered
-  `event` and `durationMs` fields with `jq`.
-- Compare `rivet.actor.resolved`, `agentos.session.created`,
-  `agentos.prompt.completed`, `prompt.completed`, `session.idle`, and
-  `agentos.connection.disposed` before optimizing. The actor event measures
-  resolution of the shared per-cwd workspace actor; the ACP event measures the
-  distinct harness session created inside it.
-- Preserve the raw JSONL file when reporting a regression. Use
-  `GIGACODE_LOG_LEVEL` to change the Pino level; performance phase records are
-  emitted at `info`.
 
 ## Version Control
 

@@ -2,7 +2,7 @@ import common from "@agentos-software/common";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { z } from "zod";
 import { AgentOs, hostFunction, hostFunctions } from "../src/index.js";
-import { NativeSidecarProcessClient } from "../src/sidecar/rpc-client.js";
+import { SidecarProcessClient } from "../src/sidecar/rpc-client.js";
 
 // ---------------------------------------------------------------------------
 // Adversarial host_callback RPC tests (security review: aos-ts N-001/N-002).
@@ -27,11 +27,11 @@ async function createVmCapturingHandler(
 ): Promise<{ vm: AgentOs; handler: CapturedHandler }> {
 	let captured: CapturedHandler | null = null;
 	const original =
-		NativeSidecarProcessClient.prototype.setSidecarRequestHandler;
+		SidecarProcessClient.prototype.setSidecarRequestHandler;
 	const spy = vi
-		.spyOn(NativeSidecarProcessClient.prototype, "setSidecarRequestHandler")
+		.spyOn(SidecarProcessClient.prototype, "setSidecarRequestHandler")
 		.mockImplementation(function (
-			this: NativeSidecarProcessClient,
+			this: SidecarProcessClient,
 			handler: any,
 		) {
 			if (handler) {

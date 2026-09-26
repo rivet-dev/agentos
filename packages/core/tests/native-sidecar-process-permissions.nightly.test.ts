@@ -8,10 +8,10 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { CreateVmConfig } from "@rivet-dev/agentos-runtime-core/vm-config";
+import type { CreateVmConfig } from "../src/vm-config.js";
 import { afterEach, describe, expect, test } from "vitest";
 import {
-	NativeSidecarProcessClient,
+	SidecarProcessClient,
 	serializeRootFilesystemForSidecar,
 } from "../src/sidecar/rpc-client.js";
 
@@ -104,7 +104,7 @@ describe("native sidecar process client permissions", () => {
 			[
 				"import { writeFileSync } from 'node:fs';",
 				"const capturePath = process.argv[2];",
-				"const schema = { name: 'agentos-native-sidecar', version: 8 };",
+				"const schema = { name: 'agentos-sidecar', version: 10 };",
 				"let stdinBuffer = Buffer.alloc(0);",
 				"const captures = [];",
 				"const writeFrame = (frame) => {",
@@ -175,7 +175,7 @@ describe("native sidecar process client permissions", () => {
 			].join("\n"),
 		);
 
-		const client = NativeSidecarProcessClient.spawn({
+		const client = SidecarProcessClient.spawn({
 			cwd: REPO_ROOT,
 			command: "node",
 			args: [driverPath, capturePath],
@@ -292,7 +292,7 @@ describe("native sidecar process client permissions", () => {
 	test("rejects empty permission rule operations and paths in the native sidecar", async () => {
 		ensureSidecarBinaryReady();
 
-		const client = NativeSidecarProcessClient.spawn({
+		const client = SidecarProcessClient.spawn({
 			cwd: REPO_ROOT,
 			command: SIDECAR_BINARY,
 			args: [],
@@ -379,7 +379,7 @@ describe("native sidecar process client permissions", () => {
 			["console.log('idle-ready');", "setInterval(() => {}, 1000);"].join("\n"),
 		);
 
-		const client = NativeSidecarProcessClient.spawn({
+		const client = SidecarProcessClient.spawn({
 			cwd: REPO_ROOT,
 			command: SIDECAR_BINARY,
 			args: [],
@@ -615,7 +615,7 @@ describe("native sidecar process client permissions", () => {
 		cleanupPaths.push(fixtureRoot);
 		ensureSidecarBinaryReady();
 
-		const client = NativeSidecarProcessClient.spawn({
+		const client = SidecarProcessClient.spawn({
 			cwd: REPO_ROOT,
 			command: SIDECAR_BINARY,
 			args: [],

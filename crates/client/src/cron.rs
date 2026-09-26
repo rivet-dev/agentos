@@ -12,7 +12,6 @@
 //!
 //! Cron fields are interpreted in the host LOCAL timezone, matching croner's default behavior.
 
-use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -26,7 +25,6 @@ use tokio::sync::broadcast;
 use crate::agent_os::AgentOs;
 use crate::config::{ScheduleDriver, ScheduleEntry, ScheduleHandle};
 use crate::error::ClientError;
-use crate::session::{McpServerConfig, OpenSessionInput, PermissionPolicy, PromptInput};
 
 // ---------------------------------------------------------------------------
 // Supporting types
@@ -45,12 +43,6 @@ pub enum CronOverlap {
 /// A cron action. `Callback` holds an in-process closure and cannot cross the wire.
 #[derive(Clone)]
 pub enum CronAction {
-    /// Open a fresh durable session, prompt it, then delete it.
-    Session {
-        agent_type: String,
-        prompt: String,
-        options: Option<CronSessionOptions>,
-    },
     /// Run a command via `exec`.
     Exec { command: String, args: Vec<String> },
     /// Invoke a host-side callback.
@@ -60,32 +52,11 @@ pub enum CronAction {
     },
 }
 
-/// Durable session options accepted by a cron action. The action owns the
-/// agent name and generates a unique session ID for each run.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CronSessionOptions {
-    pub cwd: Option<String>,
-    pub additional_directories: Option<Vec<String>>,
-    pub env: Option<BTreeMap<String, String>>,
-    pub mcp_servers: Option<Vec<McpServerConfig>>,
-    pub permission_policy: Option<PermissionPolicy>,
-    pub skip_os_instructions: Option<bool>,
-    pub additional_instructions: Option<String>,
-}
-
 /// Serializable description of a scheduled action. Callback jobs deliberately
 /// expose only their kind: the host closure is execution state, not job data.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum CronActionInfo {
-    Session {
-        #[serde(rename = "agentType")]
-        agent_type: String,
-        prompt: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        options: Option<CronSessionOptions>,
-    },
     Exec {
         command: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -97,15 +68,6 @@ pub enum CronActionInfo {
 impl From<&CronAction> for CronActionInfo {
     fn from(action: &CronAction) -> Self {
         match action {
-            CronAction::Session {
-                agent_type,
-                prompt,
-                options,
-            } => Self::Session {
-                agent_type: agent_type.clone(),
-                prompt: prompt.clone(),
-                options: options.clone(),
-            },
             CronAction::Exec { command, args } => Self::Exec {
                 command: command.clone(),
                 args: args.clone(),
@@ -118,13 +80,6 @@ impl From<&CronAction> for CronActionInfo {
 impl std::fmt::Debug for CronAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CronAction::Session {
-                agent_type, prompt, ..
-            } => f
-                .debug_struct("Session")
-                .field("agent_type", agent_type)
-                .field("prompt", prompt)
-                .finish_non_exhaustive(),
             CronAction::Exec { command, args } => f
                 .debug_struct("Exec")
                 .field("command", command)
@@ -364,60 +319,11 @@ async fn execute_job_inner(manager: Arc<CronManager>, vm: AgentOs, id: String) {
 
 /// Dispatch a [`CronAction`]. Mirrors TS `CronManager.runAction`.
 ///
-/// `Session` opens a session, prompts it, and always deletes it (even if the prompt errors, the
-/// delete still runs, matching the TS `finally`). `Exec` sends the structured `(command, args)` argv
+/// `Exec` sends the structured `(command, args)` argv
 /// verbatim via [`AgentOs::exec_argv`] (no string flattening / re-parsing). `Callback` awaits the
 /// in-process future.
 async fn run_action(vm: &AgentOs, action: &CronAction) -> Result<(), ClientError> {
     match action {
-        CronAction::Session {
-            agent_type,
-            prompt,
-            options,
-        } => {
-            let options = options.clone().unwrap_or_default();
-            let session_id = format!("cron-{}", uuid::Uuid::new_v4());
-            vm.open_session(OpenSessionInput {
-                session_id: Some(session_id.clone()),
-                agent: agent_type.clone(),
-                cwd: options.cwd,
-                additional_directories: options.additional_directories,
-                env: options.env,
-                mcp_servers: options.mcp_servers,
-                permission_policy: options.permission_policy,
-                skip_os_instructions: options.skip_os_instructions,
-                additional_instructions: options.additional_instructions,
-            })
-            .await
-            .map_err(|err| ClientError::Sidecar(err.to_string()))?;
-            let content = serde_json::from_value(serde_json::json!({
-                "type": "text",
-                "text": prompt,
-            }))
-            .map_err(|err| ClientError::Sidecar(err.to_string()))?;
-            let prompt_result = vm
-                .prompt(PromptInput {
-                    session_id: Some(session_id.clone()),
-                    idempotency_key: None,
-                    content: vec![content],
-                })
-                .await;
-            // Always delete this per-run session so cron does not grow the durable catalog.
-            let delete_result = vm.delete_session(Some(&session_id)).await;
-            match (prompt_result, delete_result) {
-                (Ok(_), Ok(())) => Ok(()),
-                (Err(prompt_error), Ok(())) => Err(ClientError::Sidecar(prompt_error.to_string())),
-                (Ok(_), Err(delete_error)) => Err(ClientError::Sidecar(format!(
-                    "cron prompt completed but durable session cleanup failed: {delete_error}"
-                ))),
-                (Err(prompt_error), Err(delete_error)) => {
-                    eprintln!(
-                        "ERR_AGENTOS_CRON_SESSION_CLEANUP: prompt failed with {prompt_error}; durable session cleanup also failed: {delete_error}"
-                    );
-                    Err(ClientError::Sidecar(prompt_error.to_string()))
-                }
-            }
-        }
         CronAction::Exec { command, args } => {
             // Send the structured argv verbatim. Flattening `command`/`args` into a single string
             // and re-parsing it through the `exec` command-line parser would re-split argv elements

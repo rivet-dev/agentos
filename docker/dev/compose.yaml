@@ -14,8 +14,6 @@ services:
       # RivetKit engine: actor gateway + /inspector/* + custom-tab assets. The
       # hosted dashboard runs in the host browser and points at this port.
       - "6420:6420"
-      # Vite dev server for examples/browser-terminal.
-      - "5173:5173"
     # Docker Desktop's embedded resolver (192.168.65.7) intermittently stops
     # answering, which surfaces as EAI_AGAIN storms during `pnpm install`.
     dns:
@@ -25,8 +23,6 @@ services:
       # Unambiguous sidecar resolution; `just dev-bootstrap` builds this path.
       AGENTOS_SIDECAR_BIN: /build/target/debug/agentos-sidecar
       RUST_BACKTRACE: "1"
-      # Vite/RivetKit must listen on all interfaces to be reachable from the host.
-      HOST: 0.0.0.0
       # RivetKit binds the engine it spawns to loopback, which a published port
       # cannot reach. This is the supported override for that bind address
       # (rivetkit's `engineHost`); setting RIVET__GUARD__HOST does not work,

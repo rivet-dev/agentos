@@ -1,5 +1,6 @@
-import type { Permissions } from "@rivet-dev/agentos";
-import { agentOS, setup } from "@rivet-dev/agentos";
+import { createAgentOsClient, type Input } from "@rivet-dev/agentos";
+
+type Permissions = NonNullable<Input.AgentOsActorConfigInput["permissions"]>;
 
 // Allow the filesystem everywhere, but deny anything under /home/agentos/vault.
 const denyVault = {
@@ -16,30 +17,22 @@ const allowOneHost = {
 	network: {
 		default: "deny",
 		rules: [
-			{
-				mode: "allow",
-				operations: ["*"],
-				patterns: ["dns://api.example.com", "tcp://api.example.com:*"],
-			},
+			{ mode: "allow", operations: ["*"], patterns: ["api.example.com"] },
 		],
 	},
 } satisfies Permissions;
 
-// Deny all host functions by default, then allow only "add" by name.
-const allowOneHostFunction = {
-	hostFunction: {
-		default: "deny",
-		rules: [{ mode: "allow", operations: ["invoke"], patterns: ["add"] }],
+const client = createAgentOsClient();
+export const vm = client.agentOS.getOrCreate(
+	["examples", "permissions", "combined"],
+	{
+		createWithInput: {
+			config: {
+				permissions: {
+					...denyVault,
+					...allowOneHost,
+				},
+			},
+		},
 	},
-} satisfies Permissions;
-
-const vm = agentOS({
-	permissions: {
-		...denyVault,
-		...allowOneHost,
-		...allowOneHostFunction,
-	},
-});
-
-export const registry = setup({ use: { vm } });
-registry.start();
+);

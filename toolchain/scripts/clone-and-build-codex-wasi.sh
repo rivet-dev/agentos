@@ -18,9 +18,11 @@
 #   5. `cargo vendor` the workspace (+ the std library deps needed by -Z build-std) and
 #      apply toolchain/std-patches/crates/* to the vendored sources (tokio wasi-process,
 #      path-dedot, rustls-native-certs, socket2, ...) via scripts/patch-vendor.sh.
-#   6. Build codex-exec for wasm32-wasip1 by reusing the fork's own
+#   6. Remove target-specific state from a prior fork build so Cargo cannot mix
+#      crates compiled against the restored sysroot with the next build-std run.
+#   7. Build codex-exec for wasm32-wasip1 by reusing the fork's own
 #      scripts/build-wasi-codex-exec.sh (sysroot massaging + build-std + wasm-opt).
-#   7. Install the optimized artifact to software/codex/wasm/{codex,codex-exec}.
+#   8. Install the optimized artifact to software/codex/wasm/{codex,codex-exec}.
 #
 # Usage:
 #   toolchain/scripts/clone-and-build-codex-wasi.sh
@@ -233,10 +235,10 @@ if [ "$STOP_AFTER" = "vendor" ]; then
 	export AR_wasm32_wasip1="$WASI_SDK_DIR/bin/llvm-ar"
 	export CFLAGS_wasm32_wasip1="--sysroot=$WASI_SDK_DIR/share/wasi-sysroot -D_WASI_EMULATED_SIGNAL -D_WASI_EMULATED_PTHREAD -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_PROCESS_CLOCKS"
 	# Compile-check the crates whose wasi patches this script injects (path-dedot,
-	# rustls-native-certs, tokio) plus their reverse-deps, without the full link.
+	# rustls-native-certs, tokio, ignore) without the full Codex link.
 	RUSTFLAGS="-C link-arg=-L$SELF_CONTAINED --cfg tokio_unstable" \
 		cargo "+$TOOLCHAIN" build --target wasm32-wasip1 -Z build-std \
-		-p path-dedot -p rustls-native-certs -p tokio
+		-p path-dedot -p rustls-native-certs -p tokio -p ignore
 	echo "== vendor/patch frontier OK =="
 	exit 0
 fi
@@ -245,13 +247,24 @@ fi
 echo "== building codex-exec (fork scripts/build-wasi-codex-exec.sh) =="
 AGENTOS_WASI_LIBDIR="$TOOLCHAIN_DIR/c/sysroot/lib/wasm32-wasi"
 [ -f "$AGENTOS_WASI_LIBDIR/libc.a" ] || {
-	echo "ERROR: patched AgentOS wasi-libc is missing: $AGENTOS_WASI_LIBDIR/libc.a" >&2
+	echo "ERROR: patched agentOS wasi-libc is missing: $AGENTOS_WASI_LIBDIR/libc.a" >&2
 	echo "       Run: make -C $TOOLCHAIN_DIR c/sysroot/lib/wasm32-wasi/libc.a" >&2
 	exit 1
 }
 LIBC_DIGEST="$(sha256sum "$AGENTOS_WASI_LIBDIR/libc.a" | cut -d ' ' -f1 | cut -c1-16)"
 BUILD_SCRIPT="$WORKSPACE/scripts/build-wasi-codex-exec.sh"
 [ -x "$BUILD_SCRIPT" ] || { echo "ERROR: fork build script missing: $BUILD_SCRIPT" >&2; exit 1; }
+
+# The fork build script temporarily combines build-std artifacts with the
+# rustup target sysroot. Reusing a prior wasm32-wasip1 target directory can make
+# Cargo reuse fingerprints compiled against the restored prebuilt sysroot, then
+# link those crates beside the new build-std core/panic runtime. Start this
+# reproducibility build with no target-specific fingerprints or rlibs.
+echo "== cleaning stale Codex wasm32-wasip1 build state =="
+(
+	cd "$WORKSPACE"
+	cargo "+$TOOLCHAIN" clean --target wasm32-wasip1
+)
 
 INSTALL=0 \
 TOOLCHAIN="$TOOLCHAIN" \

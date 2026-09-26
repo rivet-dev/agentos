@@ -1,13 +1,4 @@
-import type { OpenSessionInput } from "../session-api.js";
-import type { AgentType } from "../types.js";
-
 export type CronAction =
-	| {
-			type: "session";
-			agentType: AgentType;
-			prompt: string;
-			options?: Omit<OpenSessionInput, "agent" | "sessionId">;
-	  }
 	| { type: "exec"; command: string; args?: string[] }
 	| { type: "callback"; fn: () => void | Promise<void> };
 
@@ -16,12 +7,6 @@ export type CronAction =
  * expose only their kind: the host closure is execution state, not job data.
  */
 export type CronActionInfo =
-	| {
-			type: "session";
-			agentType: AgentType;
-			prompt: string;
-			options?: Omit<OpenSessionInput, "agent" | "sessionId">;
-	  }
 	| { type: "exec"; command: string; args?: string[] }
 	| { type: "callback" };
 

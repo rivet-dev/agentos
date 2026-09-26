@@ -4,14 +4,13 @@ import { join } from "node:path";
 /**
  * The agentOS package manifest (`agentos-package.json`) at a package root.
  *
- * `name` / `agent` / `provides` describe the package to the runtime (they are
+ * `name` / `provides` describe the package to the runtime (they are
  * copied into `dist/package/agentos-package.json` by `build`). `commands` /
  * `aliases` / `stubs` describe how `stage` populates `bin/` from a compiled
  * commands directory.
  */
 export interface AgentosPackageManifest {
 	name?: string;
-	agent?: unknown;
 	provides?: unknown;
 	/** Command binaries copied from the commands dir into `bin/<name>`. */
 	commands?: string[];

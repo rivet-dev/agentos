@@ -17,6 +17,7 @@ pub use crate::generated_protocol::v1::*;
 impl Copy for crate::generated_protocol::v1::GuestFilesystemOperation {}
 impl Copy for crate::generated_protocol::v1::RootFilesystemMode {}
 impl Copy for crate::generated_protocol::v1::WasmPermissionTier {}
+impl Copy for crate::generated_protocol::v1::StandaloneWasmBackend {}
 
 // `derive(Default)` cannot be added: these are foreign generated types, so the
 // `Default` impl must be written by hand here (orphan rule).
@@ -128,7 +129,7 @@ impl crate::generated_protocol::v1::CreateVmRequest {
         let metadata: std::collections::BTreeMap<_, _> = metadata.into_iter().collect();
         let mut config = agentos_vm_config::CreateVmConfig {
             cwd: metadata.get("cwd").cloned(),
-            env: legacy_env_config(&metadata),
+            env: Some(legacy_env_config(&metadata)),
             root_filesystem: legacy_root_filesystem_config(root_filesystem),
             permissions: permissions.map(permissions_policy_config_from_wire),
             limits: legacy_limits_config(&metadata),
@@ -137,7 +138,8 @@ impl crate::generated_protocol::v1::CreateVmRequest {
             listen: legacy_listen_config(&metadata),
             ..Default::default()
         };
-        config.loopback_exempt_ports = legacy_loopback_exempt_ports(&config.env);
+        config.loopback_exempt_ports =
+            legacy_loopback_exempt_ports(config.env.as_ref().expect("legacy env is present"));
         Self::json_config(runtime, config)
     }
 }
@@ -440,7 +442,6 @@ fn legacy_limits_config(
         max_readdir_entries: legacy_u64(metadata, "resource.max_readdir_entries"),
         max_recursive_fs_depth: legacy_u64(metadata, "resource.max_recursive_fs_depth"),
         max_recursive_fs_entries: legacy_u64(metadata, "resource.max_recursive_fs_entries"),
-        max_wasm_fuel: legacy_u64(metadata, "resource.max_wasm_fuel"),
         max_wasm_memory_bytes: legacy_u64(metadata, "resource.max_wasm_memory_bytes"),
         max_wasm_stack_bytes: legacy_u64(metadata, "resource.max_wasm_stack_bytes"),
     };
@@ -480,41 +481,6 @@ fn legacy_limits_config(
         max_persisted_manifest_file_bytes: legacy_u64(
             metadata,
             "limits.plugins.max_persisted_manifest_file_bytes",
-        ),
-    };
-    let acp = agentos_vm_config::AcpLimitsConfig {
-        max_read_line_bytes: legacy_u64(metadata, "limits.acp.max_read_line_bytes"),
-        stdout_buffer_byte_limit: legacy_u64(metadata, "limits.acp.stdout_buffer_byte_limit"),
-        max_completed_message_bytes: legacy_u64(metadata, "limits.acp.max_completed_message_bytes"),
-        max_turn_output_bytes: legacy_u64(metadata, "limits.acp.max_turn_output_bytes"),
-        max_prompt_bytes: legacy_u64(metadata, "limits.acp.max_prompt_bytes"),
-        max_prompt_blocks: legacy_u64(metadata, "limits.acp.max_prompt_blocks"),
-        max_fallback_continuation_bytes: legacy_u64(
-            metadata,
-            "limits.acp.max_fallback_continuation_bytes",
-        ),
-        max_session_history_bytes: legacy_u64(metadata, "limits.acp.max_session_history_bytes"),
-        max_session_history_events: legacy_u64(metadata, "limits.acp.max_session_history_events"),
-        max_history_page_entries: legacy_u64(metadata, "limits.acp.max_history_page_entries"),
-        max_session_list_entries: legacy_u64(metadata, "limits.acp.max_session_list_entries"),
-        max_sessions_per_vm: legacy_u64(metadata, "limits.acp.max_sessions_per_vm"),
-        max_prompts_per_session: legacy_u64(metadata, "limits.acp.max_prompts_per_session"),
-        max_prompts_per_vm: legacy_u64(metadata, "limits.acp.max_prompts_per_vm"),
-        max_pending_permissions_per_session: legacy_u64(
-            metadata,
-            "limits.acp.max_pending_permissions_per_session",
-        ),
-        max_pending_permissions_per_vm: legacy_u64(
-            metadata,
-            "limits.acp.max_pending_permissions_per_vm",
-        ),
-        max_permission_outcomes_per_session: legacy_u64(
-            metadata,
-            "limits.acp.max_permission_outcomes_per_session",
-        ),
-        max_permission_outcomes_per_vm: legacy_u64(
-            metadata,
-            "limits.acp.max_permission_outcomes_per_vm",
         ),
     };
     let sqlite = agentos_vm_config::SqliteLimitsConfig {
@@ -562,7 +528,11 @@ fn legacy_limits_config(
         sync_read_limit_bytes: legacy_u64(metadata, "limits.wasm.sync_read_limit_bytes"),
         prewarm_timeout_ms: legacy_u64(metadata, "limits.wasm.prewarm_timeout_ms"),
         runner_heap_limit_mb: legacy_u64(metadata, "limits.wasm.runner_heap_limit_mb"),
-        runner_cpu_time_limit_ms: legacy_u64(metadata, "limits.wasm.runner_cpu_time_limit_ms"),
+        active_cpu_time_limit_ms: legacy_u64(metadata, "limits.wasm.active_cpu_time_limit_ms"),
+        wall_clock_limit_ms: legacy_u64(metadata, "limits.wasm.wall_clock_limit_ms"),
+        deterministic_fuel: legacy_u64(metadata, "limits.wasm.deterministic_fuel"),
+        max_threads: legacy_u64(metadata, "limits.wasm.max_threads"),
+        max_concurrent_threads: legacy_u64(metadata, "limits.wasm.max_concurrent_threads"),
     };
     let execution = agentos_vm_config::ExecutionLimitsConfig {
         completed_ttl_ms: legacy_u64(metadata, "limits.execution.completed_ttl_ms"),
@@ -583,6 +553,20 @@ fn legacy_limits_config(
         pending_stdin_bytes: legacy_u64(metadata, "limits.process.pending_stdin_bytes"),
         pending_event_count: legacy_u64(metadata, "limits.process.pending_event_count"),
         pending_event_bytes: legacy_u64(metadata, "limits.process.pending_event_bytes"),
+        output_replay_events: legacy_u64(metadata, "limits.process.output_replay_events"),
+        output_replay_bytes: legacy_u64(metadata, "limits.process.output_replay_bytes"),
+        output_replay_page_events: legacy_u64(metadata, "limits.process.output_replay_page_events"),
+        output_replay_page_bytes: legacy_u64(metadata, "limits.process.output_replay_page_bytes"),
+        max_output_replays: legacy_u64(metadata, "limits.process.max_output_replays"),
+
+        max_pending_child_sync_count: legacy_u64(
+            metadata,
+            "limits.process.max_pending_child_sync_count",
+        ),
+        max_pending_child_sync_bytes: legacy_u64(
+            metadata,
+            "limits.process.max_pending_child_sync_bytes",
+        ),
     };
 
     let config = agentos_vm_config::VmLimitsConfig {
@@ -594,7 +578,6 @@ fn legacy_limits_config(
         http2: None,
         host_functions: legacy_has_host_function_limits(&host_functions).then_some(host_functions),
         plugins: legacy_has_plugin_limits(&plugins).then_some(plugins),
-        acp: legacy_has_acp_limits(&acp).then_some(acp),
         sqlite: sqlite.max_result_bytes.is_some().then_some(sqlite),
         js_runtime: legacy_has_js_runtime_limits(&js_runtime).then_some(js_runtime),
         python: legacy_has_python_limits(&python).then_some(python),
@@ -604,13 +587,13 @@ fn legacy_limits_config(
             || execution.live_execution_warning_threshold.is_some())
         .then_some(execution),
         process: legacy_has_process_limits(&process).then_some(process),
+        agentos_packages: None,
     };
 
     if config.resources.is_none()
         && config.http.is_none()
         && config.host_functions.is_none()
         && config.plugins.is_none()
-        && config.acp.is_none()
         && config.sqlite.is_none()
         && config.js_runtime.is_none()
         && config.python.is_none()
@@ -650,7 +633,6 @@ fn legacy_has_resource_limits(config: &agentos_vm_config::ResourceLimitsConfig) 
         || config.max_process_argv_bytes.is_some()
         || config.max_process_env_bytes.is_some()
         || config.max_readdir_entries.is_some()
-        || config.max_wasm_fuel.is_some()
         || config.max_wasm_memory_bytes.is_some()
         || config.max_wasm_stack_bytes.is_some()
 }
@@ -669,27 +651,6 @@ fn legacy_has_host_function_limits(config: &agentos_vm_config::HostFunctionLimit
 fn legacy_has_plugin_limits(config: &agentos_vm_config::PluginLimitsConfig) -> bool {
     config.max_persisted_manifest_bytes.is_some()
         || config.max_persisted_manifest_file_bytes.is_some()
-}
-
-fn legacy_has_acp_limits(config: &agentos_vm_config::AcpLimitsConfig) -> bool {
-    config.max_read_line_bytes.is_some()
-        || config.stdout_buffer_byte_limit.is_some()
-        || config.max_completed_message_bytes.is_some()
-        || config.max_turn_output_bytes.is_some()
-        || config.max_prompt_bytes.is_some()
-        || config.max_prompt_blocks.is_some()
-        || config.max_fallback_continuation_bytes.is_some()
-        || config.max_session_history_bytes.is_some()
-        || config.max_session_history_events.is_some()
-        || config.max_history_page_entries.is_some()
-        || config.max_session_list_entries.is_some()
-        || config.max_sessions_per_vm.is_some()
-        || config.max_prompts_per_session.is_some()
-        || config.max_prompts_per_vm.is_some()
-        || config.max_pending_permissions_per_session.is_some()
-        || config.max_pending_permissions_per_vm.is_some()
-        || config.max_permission_outcomes_per_session.is_some()
-        || config.max_permission_outcomes_per_vm.is_some()
 }
 
 fn legacy_has_js_runtime_limits(config: &agentos_vm_config::JsRuntimeLimitsConfig) -> bool {
@@ -718,7 +679,11 @@ fn legacy_has_wasm_limits(config: &agentos_vm_config::WasmLimitsConfig) -> bool 
         || config.sync_read_limit_bytes.is_some()
         || config.prewarm_timeout_ms.is_some()
         || config.runner_heap_limit_mb.is_some()
-        || config.runner_cpu_time_limit_ms.is_some()
+        || config.active_cpu_time_limit_ms.is_some()
+        || config.wall_clock_limit_ms.is_some()
+        || config.deterministic_fuel.is_some()
+        || config.max_threads.is_some()
+        || config.max_concurrent_threads.is_some()
 }
 
 fn legacy_has_process_limits(config: &agentos_vm_config::ProcessLimitsConfig) -> bool {
@@ -727,6 +692,13 @@ fn legacy_has_process_limits(config: &agentos_vm_config::ProcessLimitsConfig) ->
         || config.pending_stdin_bytes.is_some()
         || config.pending_event_count.is_some()
         || config.pending_event_bytes.is_some()
+        || config.max_pending_child_sync_count.is_some()
+        || config.max_pending_child_sync_bytes.is_some()
+        || config.output_replay_events.is_some()
+        || config.output_replay_bytes.is_some()
+        || config.output_replay_page_events.is_some()
+        || config.output_replay_page_bytes.is_some()
+        || config.max_output_replays.is_some()
 }
 
 // Ownership-scope constructor ergonomics. The generated BARE union exposes only the
@@ -761,8 +733,8 @@ impl crate::generated_protocol::v1::OwnershipScope {
     }
 }
 
-pub const PROTOCOL_NAME: &str = "agentos-native-sidecar";
-pub const PROTOCOL_VERSION: u16 = 8;
+pub const PROTOCOL_NAME: &str = "agentos-sidecar";
+pub const PROTOCOL_VERSION: u16 = 11;
 // 16 MiB: large enough to carry a trusted-client CreateVm config that inlines an
 // entire base-filesystem snapshot, while still bounding a single frame.
 pub const DEFAULT_MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
@@ -1335,16 +1307,28 @@ mod tests {
     }
 
     #[test]
-    fn legacy_metadata_preserves_wasm_runner_cpu_limit_as_only_new_field() {
-        let metadata = BTreeMap::from([(
-            String::from("limits.wasm.runner_cpu_time_limit_ms"),
-            String::from("987"),
-        )]);
+    fn legacy_metadata_preserves_wasm_cpu_fields() {
+        let metadata = BTreeMap::from([
+            (
+                String::from("limits.wasm.active_cpu_time_limit_ms"),
+                String::from("987"),
+            ),
+            (
+                String::from("limits.wasm.wall_clock_limit_ms"),
+                String::from("654"),
+            ),
+            (
+                String::from("limits.wasm.deterministic_fuel"),
+                String::from("321"),
+            ),
+        ]);
 
         let config = legacy_limits_config(&metadata).expect("limits config");
         let wasm = config.wasm.expect("wasm limits");
 
-        assert_eq!(wasm.runner_cpu_time_limit_ms, Some(987));
+        assert_eq!(wasm.active_cpu_time_limit_ms, Some(987));
+        assert_eq!(wasm.wall_clock_limit_ms, Some(654));
+        assert_eq!(wasm.deterministic_fuel, Some(321));
     }
 
     #[test]
@@ -1390,6 +1374,137 @@ mod tests {
                     PermissionMode::Allow
                 ))
             ));
+        }
+    }
+
+    #[test]
+    fn package_unlink_frames_round_trip() {
+        let codec = WireFrameCodec::default();
+        let ownership = OwnershipScope::VmOwnership(VmOwnership {
+            connection_id: String::from("connection"),
+            session_id: String::from("session"),
+            vm_id: String::from("vm"),
+        });
+        let request = ProtocolFrame::RequestFrame(RequestFrame {
+            schema: protocol_schema(),
+            request_id: 1,
+            ownership: ownership.clone(),
+            payload: RequestPayload::UnlinkPackageRequest(UnlinkPackageRequest {
+                package_id: String::from("sha256:package"),
+            }),
+        });
+        let response = ProtocolFrame::ResponseFrame(ResponseFrame {
+            schema: protocol_schema(),
+            request_id: 1,
+            ownership,
+            payload: ResponsePayload::PackageUnlinkedResponse(PackageUnlinkedResponse {
+                removed_commands: vec![String::from("tool")],
+            }),
+        });
+
+        for frame in [request, response] {
+            let encoded = codec.encode(&frame).expect("encode frame");
+            assert_eq!(codec.decode(&encoded).expect("decode frame"), frame);
+        }
+    }
+
+    #[test]
+    fn session_package_acquisition_frames_round_trip_without_host_path() {
+        let codec = WireFrameCodec::default();
+        let ownership = OwnershipScope::SessionOwnership(SessionOwnership {
+            connection_id: String::from("connection"),
+            session_id: String::from("session"),
+        });
+        let request = ProtocolFrame::RequestFrame(RequestFrame {
+            schema: protocol_schema(),
+            request_id: 2,
+            ownership: ownership.clone(),
+            payload: RequestPayload::AcquirePackageRequest(AcquirePackageRequest {
+                source: PackageAcquisitionSource::PackageUrlSource(PackageUrlSource {
+                    url: String::from("https://packages.example/tool.aospkg"),
+                    expected_digest: Some(String::from("sha256:abc")),
+                }),
+                advisory: true,
+                timeout_ms: Some(250),
+                max_package_bytes: None,
+                download_timeout_ms: None,
+                connect_timeout_ms: None,
+                max_redirects: None,
+                allow_insecure_local_http: false,
+            }),
+        });
+        let response = ProtocolFrame::ResponseFrame(ResponseFrame {
+            schema: protocol_schema(),
+            request_id: 2,
+            ownership,
+            payload: ResponsePayload::PackageAcquiredResponse(PackageAcquiredResponse {
+                package_id: String::from("sha256:abc"),
+                digest: String::from("sha256:abc"),
+                size: 123,
+                package_name: String::from("tool"),
+                version: String::from("1"),
+                commands: vec![String::from("tool")],
+            }),
+        });
+        for frame in [request, response] {
+            let encoded = codec.encode(&frame).expect("encode frame");
+            assert_eq!(codec.decode(&encoded).expect("decode frame"), frame);
+        }
+    }
+
+    #[test]
+    fn vm_package_install_frames_round_trip_without_host_path_in_response() {
+        let codec = WireFrameCodec::default();
+        let ownership = OwnershipScope::VmOwnership(VmOwnership {
+            connection_id: "connection".into(),
+            session_id: "session".into(),
+            vm_id: "vm".into(),
+        });
+        let package = PackageAcquiredResponse {
+            package_id: "sha256:abc".into(),
+            digest: "sha256:abc".into(),
+            size: 123,
+            package_name: "tool".into(),
+            version: "1".into(),
+            commands: vec!["tool".into()],
+        };
+        let frames = [
+            ProtocolFrame::RequestFrame(RequestFrame {
+                schema: protocol_schema(),
+                request_id: 3,
+                ownership: ownership.clone(),
+                payload: RequestPayload::InstallPackageRequest(InstallPackageRequest {
+                    acquisition: AcquirePackageRequest {
+                        source: PackageAcquisitionSource::PackageUrlSource(PackageUrlSource {
+                            url: "https://packages.example/tool.aospkg".into(),
+                            expected_digest: Some("sha256:abc".into()),
+                        }),
+                        advisory: false,
+                        timeout_ms: Some(250),
+                        max_package_bytes: None,
+                        download_timeout_ms: None,
+                        connect_timeout_ms: None,
+                        max_redirects: None,
+                        allow_insecure_local_http: false,
+                    },
+                }),
+            }),
+            ProtocolFrame::ResponseFrame(ResponseFrame {
+                schema: protocol_schema(),
+                request_id: 3,
+                ownership,
+                payload: ResponsePayload::PackageInstalledResponse(PackageInstalledResponse {
+                    package,
+                    projected_commands: vec![ProjectedCommand {
+                        name: "tool".into(),
+                        guest_path: "/opt/agentos/bin/tool".into(),
+                    }],
+                }),
+            }),
+        ];
+        for frame in frames {
+            let encoded = codec.encode(&frame).expect("encode frame");
+            assert_eq!(codec.decode(&encoded).expect("decode frame"), frame);
         }
     }
 }

@@ -1,20 +1,31 @@
 ---
 title: "Introduction"
-description: "Run coding agents in isolated agentOS VMs with controlled filesystems, processes, networking, durable sessions, and Rivet Actor persistence."
+description: "Run isolated Linux-compatible VMs through the fixed agentOS actor or embedded Core."
 ---
 
-agentOS runs coding agents in lightweight, isolated VMs inside your process, with
-filesystem and process support, network controls, host functions, permissions,
-and orchestration built in.
+agentOS provides isolated filesystem, process, terminal, language, and networking
+APIs in a lightweight VM.
 
 <CardGroup>
-  <Card title="Quickstart" href="/agentos/docs/quickstart">
-    Boot a VM and run your first coding agent.
+  <Card title="Hosted actor" href="/agentos/docs/quickstart">
+    Connect to the fixed Rust `agentOS` actor with its generated TypeScript client.
   </Card>
-  <Card title="Quickstart (Embedded)" href="/agentos/docs/quickstart-embedded">
-    Run agentOS directly inside an existing Node.js application.
+  <Card title="Embedded Core" href="/agentos/docs/quickstart-embedded">
+    Run a VM inside a trusted Node.js backend.
   </Card>
-  <Card title="Agents" href="/agentos/docs/agents/pi">
-    Run Pi, Claude Code, Codex, and OpenCode.
+  <Card title="Software" href="/agentos/docs/software">
+    Install immutable `.aospkg` command packages.
   </Card>
 </CardGroup>
+
+The hosted actor is a thin wrapper around the same Core runtime. It adds durable
+actor configuration, sleep/wake lifecycle, previews, cron, and Rivet events. It
+does not accept executable TypeScript actor code, host callbacks, or host paths.
+
+Read the [hosted actor API](/agentos/docs/actor-api) for configuration,
+lifecycle, pull transport, events, generated types, and compatibility metadata.
+
+## Embedded API
+
+Use embedded Core when a trusted backend owns the VM process and host functions.
+Read more in the [embedded API quickstart](/agentos/docs/quickstart-embedded).

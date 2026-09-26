@@ -4,8 +4,8 @@ const sidecar = await AgentOs.createSidecar({
 	runtime: { executor: { maxActiveVms: 8 } },
 });
 
-// The same `limits` object the actor takes. `onLimitWarning` is an embedded
-// create option rather than a broadcast event, so it fires only in this process.
+// Core uses the same runtime-limit tree as the hosted actor. `onLimitWarning`
+// is an embedded callback rather than an actor event.
 const vm = await AgentOs.create({
 	sidecar: { kind: "explicit", handle: sidecar },
 	limits: {

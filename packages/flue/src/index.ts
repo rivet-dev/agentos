@@ -7,11 +7,16 @@ import {
 	type SandboxFactory,
 	type ShellResult,
 } from "@flue/runtime";
-import type { Registry } from "@rivet-dev/agentos";
-import type { Client } from "@rivet-dev/agentos/client";
+import {
+	type AgentOsActorCreateInput,
+	type AgentOsClient,
+	createAgentOsClient,
+	type AgentOsActorConnection as GeneratedAgentOsActorConnection,
+} from "@rivet-dev/agentos";
 import type { AgentOs, VirtualStat } from "@rivet-dev/agentos-core";
 
 const DEFAULT_CWD = "/workspace";
+type AgentOsClientConfig = Parameters<typeof createAgentOsClient>[0];
 
 interface AgentOSActorConnection {
 	readonly ready: PromiseLike<void>;
@@ -33,31 +38,15 @@ interface AgentOSActorConnection {
 	remove(path: string, options?: { recursive?: boolean }): Promise<void>;
 }
 
-interface AgentOSActorAccessor {
-	getOrCreate(
-		key: string[],
-		options?: { params?: unknown },
-	): { connect(): AgentOSActorConnection };
-}
-
-type ActorName<TRegistry extends Registry<any>> = Extract<
-	keyof TRegistry["config"]["use"],
-	string
->;
-
-export interface AgentOSSandboxOptions<
-	TRegistry extends Registry<any> = Registry<any>,
-> {
-	/** Registry key of an actor created with `agentOS()`. */
-	actor: ActorName<TRegistry>;
-	/** Application registry containing the selected agentOS actor. */
-	registry: TRegistry;
+export interface AgentOSSandboxOptions {
+	/** Creation input used only when the actor does not already exist. */
+	createInput?: AgentOsActorCreateInput;
+	/** RivetKit client configuration for the deployed agentOS actor. */
+	clientConfig?: AgentOsClientConfig;
 	/** Base directory exposed to Flue. Defaults to `/workspace`. */
 	cwd?: string;
-	/** Connection parameters forwarded to the actor's `onBeforeConnect` hook. */
-	params?: unknown;
-	/** Advanced: an existing client for the same registry. */
-	client?: Client<TRegistry>;
+	/** Advanced: an existing generated agentOS client. */
+	client?: AgentOsClient;
 }
 
 export interface AgentOSCoreSandboxOptions {
@@ -73,41 +62,27 @@ export interface AgentOSCoreSandboxOptions {
 export class AgentOSFlueConfigurationError extends Error {
 	readonly code = "agentos_flue_configuration";
 
-	constructor(
-		readonly actor: string,
-		message: string,
-		options?: ErrorOptions,
-	) {
+	constructor(message: string, options?: ErrorOptions) {
 		super(message, options);
 		this.name = "AgentOSFlueConfigurationError";
 	}
 }
 
-/** Uses an existing `agentOS()` actor as the sandbox for each Flue context. */
-export function agentOSSandbox<TRegistry extends Registry<any>>(
-	options: AgentOSSandboxOptions<TRegistry>,
+/** Uses the deployed Rust agentOS actor as the VM for each Flue context. */
+export function agentOSSandbox(
+	options: AgentOSSandboxOptions = {},
 ): SandboxFactory {
-	if (!options || typeof options.actor !== "string" || !options.actor.trim()) {
-		throw new TypeError("agentOSSandbox requires the registry actor name");
-	}
-	if (
-		!options.registry ||
-		typeof options.registry.startAndWait !== "function"
-	) {
-		throw new TypeError("agentOSSandbox requires the application registry");
-	}
-	const actor = options.actor.trim();
 	const cwd = sandboxCwd(options.cwd);
-	const getClient = createActorClient(options);
+	let client = options.client;
+	const getClient = () =>
+		(client ??= createAgentOsClient(options.clientConfig));
 
 	return {
 		async createSessionEnv({ id }) {
-			await options.registry.startAndWait();
 			const connection = await connectActor(
-				await getClient(),
-				actor,
+				getClient(),
 				actorKey(id),
-				options.params,
+				options.createInput,
 			);
 			return createSandboxSessionEnv(actorSandboxApi(connection), cwd);
 		},
@@ -132,68 +107,83 @@ export function agentOSCoreSandbox(
 	};
 }
 
-function createActorClient<TRegistry extends Registry<any>>(
-	options: AgentOSSandboxOptions<TRegistry>,
-): () => Promise<Client<TRegistry>> {
-	if (options.client) {
-		return () => Promise.resolve(options.client as Client<TRegistry>);
-	}
-	let pending: Promise<Client<TRegistry>> | undefined;
-	return () => {
-		pending ??= import("@rivet-dev/agentos/client").then(({ createClient }) =>
-			createClient<TRegistry>(),
-		);
-		return pending;
-	};
-}
-
-async function connectActor<TRegistry extends Registry<any>>(
-	client: Client<TRegistry>,
-	actor: string,
+async function connectActor(
+	client: AgentOsClient,
 	key: string[],
-	params: unknown,
+	createInput: AgentOsActorCreateInput | undefined,
 ): Promise<AgentOSActorConnection> {
 	try {
-		const accessor = client[
-			actor as keyof Client<TRegistry>
-		] as unknown as AgentOSActorAccessor | undefined;
-		if (!accessor || typeof accessor.getOrCreate !== "function") {
-			throw new Error(`registry has no actor named ${JSON.stringify(actor)}`);
-		}
-		const connection = accessor
-			.getOrCreate(key, { params })
+		const connection = client.agentOS
+			.getOrCreate(key, { createWithInput: createInput })
 			.connect();
 		await connection.ready;
-		assertActorConnection(connection);
-		return connection;
+		return actorConnection(connection);
 	} catch (cause) {
 		if (cause instanceof AgentOSFlueConfigurationError) throw cause;
 		throw new AgentOSFlueConfigurationError(
-			actor,
-			`agentOS actor ${JSON.stringify(actor)} could not be used; register an agentOS() actor under that exact setup({ use }) key: ${cause instanceof Error ? cause.message : String(cause)}`,
+			`the deployed agentOS actor could not be used: ${cause instanceof Error ? cause.message : String(cause)}`,
 			{ cause },
 		);
 	}
 }
 
-function assertActorConnection(
-	connection: AgentOSActorConnection,
-): asserts connection is AgentOSActorConnection {
-	const methods = connection as unknown as Record<string, unknown>;
-	for (const method of [
-		"exec",
-		"readFile",
-		"writeFile",
-		"stat",
-		"readdir",
-		"exists",
-		"mkdir",
-		"remove",
-	]) {
-		if (typeof methods[method] !== "function") {
-			throw new Error("selected actor is not an @rivet-dev/agentos actor");
-		}
-	}
+function actorConnection(
+	connection: GeneratedAgentOsActorConnection,
+): AgentOSActorConnection {
+	return {
+		ready: connection.ready,
+		async exec(command, options) {
+			const result = await connection.process.run({
+				command: "sh",
+				args: ["-c", command],
+				options: {
+					cwd: options?.cwd,
+					env: options?.env ?? {},
+					timeoutMs: options?.timeout,
+					captureStdio: options?.captureStdio,
+				},
+			});
+			return {
+				exitCode: result.status.exitCode,
+				stdout: result.stdout,
+				stderr: result.stderr,
+			};
+		},
+		readFile: (path) => connection.filesystem.readFile({ path }),
+		async writeFile(path, content) {
+			await connection.filesystem.writeFile({ path, content });
+		},
+		async stat(path) {
+			const stat = await connection.filesystem.stat({ path });
+			return {
+				...stat,
+				size: Number(stat.sizeBytes),
+				blocks: Number(stat.blocks),
+				dev: Number(stat.dev),
+				rdev: Number(stat.rdev),
+				atimeMs: Number(stat.atimeMs),
+				mtimeMs: Number(stat.mtimeMs),
+				ctimeMs: Number(stat.ctimeMs),
+				birthtimeMs: Number(stat.birthtimeMs),
+				ino: Number(stat.ino),
+				nlink: Number(stat.nlink),
+			};
+		},
+		readdir: (path) => connection.filesystem.readdir({ path }),
+		exists: (path) => connection.filesystem.exists({ path }),
+		async mkdir(path, options) {
+			await connection.filesystem.mkdir({
+				path,
+				recursive: options?.recursive ?? false,
+			});
+		},
+		async remove(path, options) {
+			await connection.filesystem.remove({
+				path,
+				recursive: options?.recursive ?? false,
+			});
+		},
+	};
 }
 
 function assertCoreVm(vm: AgentOs): void {

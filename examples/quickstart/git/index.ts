@@ -57,7 +57,11 @@ async function run(command: string): Promise<ExecResult> {
 	if (result.exitCode !== 0) {
 		throw new Error(`command failed: ${command}\n${stderr || stdout}`);
 	}
-	return { stdout, stderr, exitCode: result.exitCode ?? 0 };
+	return {
+		exitCode: result.exitCode,
+		stdout: result.stdout ?? "",
+		stderr: result.stderr ?? "",
+	};
 }
 
 await run("git init /tmp/origin");

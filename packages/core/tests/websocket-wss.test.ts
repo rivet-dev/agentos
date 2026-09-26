@@ -110,6 +110,19 @@ if (!wsUrl) {
   throw new Error("missing WS_URL");
 }
 
+const descriptor = Object.getOwnPropertyDescriptor(globalThis, "WebSocket");
+if (
+  !descriptor ||
+  descriptor.writable !== true ||
+  descriptor.configurable !== true ||
+  descriptor.enumerable !== false
+) {
+  throw new Error(
+    "global WebSocket descriptor does not match Node: " +
+      JSON.stringify(descriptor),
+  );
+}
+
 const reply = await new Promise((resolve, reject) => {
   const socket = new WebSocket(wsUrl);
   const timer = setTimeout(() => {
@@ -202,7 +215,7 @@ describe("guest websocket over wss", () => {
 			let stdout = "";
 			let stderr = "";
 
-			const { pid } = vm.spawn("node", ["/tmp/websocket-wss-test.mjs"], {
+			const { pid } = await vm.process.spawn("node", ["/tmp/websocket-wss-test.mjs"], {
 				env: {
 					WS_URL: `wss://127.0.0.1:${port}`,
 				},
@@ -216,7 +229,7 @@ describe("guest websocket over wss", () => {
 				}
 			});
 
-			const exitCode = await vm.waitProcess(pid);
+			const exitCode = (await vm.process.wait(pid)).exitCode;
 			unsubscribeOutput();
 			expect(exitCode, `stdout:\n${stdout}\nstderr:\n${stderr}`).toBe(0);
 

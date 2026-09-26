@@ -3,8 +3,9 @@ title: "Use Cases"
 description: "What people build with agentOS."
 ---
 
-agentOS runs coding agents inside isolated VMs with a real filesystem, shell,
-and process model. These are the shapes that keep coming up.
+agentOS runs untrusted code inside isolated VMs with a real filesystem, shell,
+and process model. Agent frameworks can use that execution surface, but agentOS
+does not own agent sessions, prompts, messaging, or workflow orchestration.
 
 ## Programming Agents
 
@@ -17,16 +18,17 @@ Purpose-built for agents that write, test, and deploy code autonomously.
 
 **Example:** An agent that takes a GitHub issue, writes the fix, runs tests, and opens a pull request.
 
-## Background Agents
+## Background Commands
 
-Long-running agents that operate asynchronously, processing tasks over hours or days without human intervention.
+Run long-lived commands asynchronously and observe their bounded output.
 
-- Persistent state survives crashes and restarts
-- Queue commands while agents work
-- Resume from exactly where they left off
+- Durable files survive actor sleep and restart
+- Spawn and signal independent guest processes
+- Recover bounded output by sequence cursor
 - Monitor progress in real-time
 
-**Example:** A code migration agent that refactors a large codebase over several hours, committing changes incrementally.
+**Example:** A migration tool that refactors a large codebase over several hours
+and commits changes incrementally.
 
 ## Evals
 
@@ -34,51 +36,31 @@ Run agent evaluations and benchmarks at scale without spinning up expensive sand
 
 - Low memory per instance compared to sandboxes
 - Near-zero cold starts for rapid iteration
-- Deterministic replay for debugging
+- Bounded process-output replay for debugging
 - Cost-effective at thousands of runs
 
 **Example:** Evaluating 10,000 agent responses in parallel to measure performance across different prompts.
 
-## Multi-Agent Systems
-
-Coordinate multiple agents working together on complex tasks with shared state and communication.
-
-- Shared file systems between agents
-- Real-time inter-agent messaging
-- Workflow orchestration primitives
-- Centralized observability
-
-**Example:** A team of agents where one researches, one writes, and one reviews, all collaborating on a document.
-
 ## Data Processing
 
-Run ETL pipelines, data transformations, and analysis tasks with agent intelligence.
+Run ETL pipelines, data transformations, and analysis commands.
 
-- Stream processing capabilities
+- Process and network streaming capabilities
 - Database connections and queries
 - File format conversion
-- Incremental processing
+- Scheduled command execution
 
-**Example:** An agent that ingests raw data, cleans it, runs analysis, and generates reports on a schedule.
+**Example:** A command that ingests raw data, cleans it, runs analysis, and
+generates reports on a schedule.
 
 ## Workflow Automation
 
-Chain agent tasks into complex workflows with conditional logic and human-in-the-loop steps.
+Use agentOS as the execution layer beneath an external workflow system.
 
-- Durable workflow execution
-- Retry and error handling
-- Scheduled and triggered runs
-- Approval gates and notifications
+- Isolated command execution
+- Durable files and configuration
+- Scheduled command runs
+- Typed failures and resource limits
 
-**Example:** A hiring workflow where agents screen resumes, schedule interviews, and prepare onboarding docs.
-
-## Personal Agents
-
-Lightweight agents that assist individual users with daily tasks and workflows.
-
-- Low resource overhead for personal use
-- Local-first with optional cloud sync
-- Custom tool integration
-- Privacy-focused execution
-
-**Example:** A personal agent that organizes your calendar, drafts emails, and manages your todo list.
+**Example:** A CI workflow that delegates each untrusted build step to an
+agentOS VM and keeps approvals in the workflow product.

@@ -22,16 +22,12 @@ change.
 ## Daily use
 
 ```bash
-just dev-terminal-example   # engine on :6420, Vite on :5173
 just dev-shell              # interactive shell in the container
 just dev-exec 'cargo check --workspace'
-just dev-build-tabs         # rebuild the inspector custom-tab bundle
 just dev-down               # stop
 ```
 
-Open <http://localhost:5173> for the example UI. The hosted Rivet dashboard runs
-in the host browser and points at <http://localhost:6420>, which serves the actor
-gateway, `/inspector/*`, and custom-tab assets.
+The container publishes port 6420 for a RivetKit engine started inside it.
 
 ## Layout
 
@@ -52,7 +48,7 @@ gateway, `/inspector/*`, and custom-tab assets.
 - DNS is pinned to 1.1.1.1/8.8.8.8. Docker Desktop's embedded resolver
   intermittently stops answering, which surfaces as an `EAI_AGAIN` storm during
   install.
-- `AGENTOS_SIDECAR_BIN` points at `/build/target/debug/agentos-sidecar`. Rebuild
-  it with `just dev-exec 'cargo build -p agentos-sidecar'`.
-- The container publishes 6420 and 5173. Free them on the host first if another
+- `AGENTOS_SIDECAR_BIN` points at `/build/target/debug/agentos-sidecar`.
+  Rebuild it with `just dev-exec 'cargo build -p agentos-sidecar'`.
+- The container publishes 6420. Free it on the host first if another
   engine is already bound.

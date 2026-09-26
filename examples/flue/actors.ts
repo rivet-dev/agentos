@@ -1,7 +1,6 @@
-import { agentOS, setup } from "@rivet-dev/agentos";
+import { setup } from "rivetkit";
 
-const vm = agentOS({
-	// Configure software, permissions, mounts, and resource limits here.
-});
-
-export const registry = setup({ use: { vm } });
+// Flue adds its product-owned actors to this registry during `flue build`.
+// The hosted agentOS actor is a separate static deployment and is not embedded
+// or configured from this application.
+export const registry = setup({ use: {} });

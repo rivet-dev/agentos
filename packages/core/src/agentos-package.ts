@@ -7,26 +7,35 @@
  * projection. Package metadata lives in `<dir>/agentos-package.json`.
  *
  * This module is therefore only the client-facing package-dir surface plus the
- * `/opt/agentos` path constants used for agent-config wiring.
+ * `/opt/agentos` path constants used for package wiring.
  *
  * See `website/src/content/docs/docs/architecture/packages-and-command-resolution.mdx`.
  */
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type {
-	AgentosPackageManifest,
-	PackageAgentDescriptor,
-	PackageRef as ManifestPackageRef,
-} from "@agentos-software/manifest";
+export interface PackageProvidesFileDescriptor {
+	source: string;
+	target: string;
+}
+
+export interface PackageProvidesDescriptor {
+	env?: Record<string, string>;
+	files?: PackageProvidesFileDescriptor[];
+}
+
+export interface AgentosPackageManifest {
+	name: string;
+	version: string;
+	provides?: PackageProvidesDescriptor;
+}
 
 /** Root of the agentOS package tree inside the VM. */
 export const OPT_AGENTOS_ROOT = "/opt/agentos";
 /** The symlink farm on `$PATH` (commands link here). */
 export const OPT_AGENTOS_BIN = "/opt/agentos/bin";
 
-export type AgentBlock = PackageAgentDescriptor;
-export type PackageRef = ManifestPackageRef;
+export type PackageRef = string;
 export type SoftwarePackageRef = { packagePath: string };
 /** Portable descriptor used to link a package into a running VM. */
 export interface PackageDescriptor {
@@ -98,27 +107,6 @@ function validateAgentosPackageManifest(
 		name: value.name,
 		version: value.version,
 	};
-	if (value.agent !== undefined) {
-		if (
-			!isPlainObject(value.agent) ||
-			typeof value.agent.acpEntrypoint !== "string"
-		) {
-			throw new Error(
-				`Invalid agentOS package manifest at ${source}: invalid agent.acpEntrypoint`,
-			);
-		}
-		manifest.agent = {
-			acpEntrypoint: value.agent.acpEntrypoint,
-			...(isStringRecord(value.agent.env) ? { env: value.agent.env } : {}),
-			...(Array.isArray(value.agent.launchArgs) &&
-			value.agent.launchArgs.every((arg) => typeof arg === "string")
-				? { launchArgs: value.agent.launchArgs }
-				: {}),
-			...(typeof value.agent.snapshot === "boolean"
-				? { snapshot: value.agent.snapshot }
-				: {}),
-		};
-	}
 	if (value.provides !== undefined) {
 		manifest.provides = value.provides as AgentosPackageManifest["provides"];
 	}
@@ -127,11 +115,4 @@ function validateAgentosPackageManifest(
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isStringRecord(value: unknown): value is Record<string, string> {
-	return (
-		isPlainObject(value) &&
-		Object.values(value).every((entry) => typeof entry === "string")
-	);
 }

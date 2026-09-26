@@ -14,7 +14,7 @@ import {
 import { constants as osConstants, tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { CreateVmConfig } from "@rivet-dev/agentos-runtime-core/vm-config";
+import type { CreateVmConfig } from "../src/vm-config.js";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createHostDirBackend } from "../src/host-dir-mount.js";
 import {
@@ -25,8 +25,8 @@ import {
 } from "../src/runtime-compat.js";
 import { createInMemoryFileSystem } from "../src/test/runtime.js";
 import {
-	NativeSidecarKernelProxy,
-	NativeSidecarProcessClient,
+	SidecarKernelProxy,
+	SidecarProcessClient,
 	SidecarEventBufferOverflow,
 	SidecarProcessError,
 	SidecarProcessExited,
@@ -355,9 +355,9 @@ describe("native sidecar process client", () => {
 			waitForEvent,
 			disposeVm: vi.fn(async () => {}),
 			dispose: vi.fn(async () => {}),
-		} as unknown as NativeSidecarProcessClient;
+		} as unknown as SidecarProcessClient;
 
-		const proxy = new NativeSidecarKernelProxy({
+		const proxy = new SidecarKernelProxy({
 			client,
 			session: {
 				connectionId: "connection-1",
@@ -398,7 +398,7 @@ describe("native sidecar process client", () => {
 			[
 				"import { writeFileSync } from 'node:fs';",
 				"const capturePath = process.argv[2];",
-				"const schema = { name: 'agentos-native-sidecar', version: 8 };",
+				"const schema = { name: 'agentos-sidecar', version: 10 };",
 				"let stdinBuffer = Buffer.alloc(0);",
 				BARE_FIXTURE_PROTOCOL_HELPERS,
 				"const drain = () => {",
@@ -441,7 +441,7 @@ describe("native sidecar process client", () => {
 			].join("\n"),
 		);
 
-		const client = NativeSidecarProcessClient.spawn({
+		const client = SidecarProcessClient.spawn({
 			cwd: REPO_ROOT,
 			command: "node",
 			args: [driverPath, capturePath],
@@ -510,7 +510,7 @@ describe("native sidecar process client", () => {
 			].join("\n"),
 		);
 
-		const client = NativeSidecarProcessClient.spawn({
+		const client = SidecarProcessClient.spawn({
 			cwd: REPO_ROOT,
 			command: "node",
 			args: [driverPath],
@@ -562,7 +562,7 @@ describe("native sidecar process client", () => {
 		writeFileSync(
 			driverPath,
 			[
-				"const schema = { name: 'agentos-native-sidecar', version: 8 };",
+				"const schema = { name: 'agentos-sidecar', version: 10 };",
 				"const writeFrame = (frame) => {",
 				"  const payload = Buffer.from(JSON.stringify(frame), 'utf8');",
 				"  const prefix = Buffer.allocUnsafe(4);",
@@ -591,7 +591,7 @@ describe("native sidecar process client", () => {
 			].join("\n"),
 		);
 
-		const client = NativeSidecarProcessClient.spawn({
+		const client = SidecarProcessClient.spawn({
 			cwd: REPO_ROOT,
 			command: "node",
 			args: [driverPath],
@@ -650,7 +650,7 @@ describe("native sidecar process client", () => {
 		writeFileSync(
 			driverPath,
 			[
-				"const schema = { name: 'agentos-native-sidecar', version: 8 };",
+				"const schema = { name: 'agentos-sidecar', version: 10 };",
 				"let stdinBuffer = Buffer.alloc(0);",
 				"const writeFrame = (frame) => {",
 				"  const payload = Buffer.from(JSON.stringify(frame), 'utf8');",
@@ -706,7 +706,7 @@ describe("native sidecar process client", () => {
 			].join("\n"),
 		);
 
-		const client = NativeSidecarProcessClient.spawn({
+		const client = SidecarProcessClient.spawn({
 			cwd: REPO_ROOT,
 			command: "node",
 			args: [driverPath],
@@ -771,7 +771,7 @@ describe("native sidecar process client", () => {
 	});
 
 	test("surfaces spawn failures as typed sidecar process errors", async () => {
-		const client = NativeSidecarProcessClient.spawn({
+		const client = SidecarProcessClient.spawn({
 			cwd: REPO_ROOT,
 			command: join(
 				tmpdir(),
@@ -790,7 +790,7 @@ describe("native sidecar process client", () => {
 
 	test("NativeKernel refreshes zombieTimerCount from the sidecar proxy", async () => {
 		const zombieTimerCount = vi
-			.spyOn(NativeSidecarProcessClient.prototype, "getZombieTimerCount")
+			.spyOn(SidecarProcessClient.prototype, "getZombieTimerCount")
 			.mockResolvedValueOnce({ count: 3 })
 			.mockResolvedValueOnce({ count: 0 });
 
@@ -1022,7 +1022,7 @@ describe("native sidecar process client", () => {
 	}, 60_000);
 
 	test("speaks to the real Rust sidecar binary over the framed stdio protocol", async () => {
-		const fixtureRoot = mkdtempSync(join(tmpdir(), "agentos-native-sidecar-"));
+		const fixtureRoot = mkdtempSync(join(tmpdir(), "agentos-sidecar-"));
 		cleanupPaths.push(fixtureRoot);
 		writeFileSync(
 			join(fixtureRoot, "entry.mjs"),
@@ -1030,7 +1030,7 @@ describe("native sidecar process client", () => {
 		);
 		ensureSidecarBinaryReady();
 
-		const client = NativeSidecarProcessClient.spawn({
+		const client = SidecarProcessClient.spawn({
 			cwd: REPO_ROOT,
 			command: SIDECAR_BINARY,
 			args: [],
@@ -1158,7 +1158,7 @@ describe("native sidecar process client", () => {
 	}, 60_000);
 
 	test("exercises a /root/node_modules host_dir mount and layer RPCs against the real sidecar binary", async () => {
-		const fixtureRoot = mkdtempSync(join(tmpdir(), "agentos-native-sidecar-"));
+		const fixtureRoot = mkdtempSync(join(tmpdir(), "agentos-sidecar-"));
 		cleanupPaths.push(fixtureRoot);
 		const hostNodeModulesRoot = join(REPO_ROOT, "node_modules");
 		const vitestPackageJsonGuestPath = `/root/node_modules/${relative(
@@ -1172,7 +1172,7 @@ describe("native sidecar process client", () => {
 			.join("/")}`;
 		ensureSidecarBinaryReady();
 
-		const client = NativeSidecarProcessClient.spawn({
+		const client = SidecarProcessClient.spawn({
 			cwd: REPO_ROOT,
 			command: SIDECAR_BINARY,
 			args: [],
@@ -1272,7 +1272,7 @@ describe("native sidecar process client", () => {
 	}, 60_000);
 
 	test("configures native mounts and streams stdin through the real Rust sidecar binary", async () => {
-		const fixtureRoot = mkdtempSync(join(tmpdir(), "agentos-native-sidecar-"));
+		const fixtureRoot = mkdtempSync(join(tmpdir(), "agentos-sidecar-"));
 		const hostMountRoot = mkdtempSync(
 			join(tmpdir(), "agentos-sidecar-host-dir-"),
 		);
@@ -1291,7 +1291,7 @@ describe("native sidecar process client", () => {
 		writeFileSync(join(hostMountRoot, "existing.txt"), "host-mounted");
 		ensureSidecarBinaryReady();
 
-		const client = NativeSidecarProcessClient.spawn({
+		const client = SidecarProcessClient.spawn({
 			cwd: REPO_ROOT,
 			command: SIDECAR_BINARY,
 			args: [],
@@ -1385,7 +1385,7 @@ describe("native sidecar process client", () => {
 	}, 60_000);
 
 	test("queries listener and UDP through the real sidecar protocol and ignores forged signal-state stderr", async () => {
-		const fixtureRoot = mkdtempSync(join(tmpdir(), "agentos-native-sidecar-"));
+		const fixtureRoot = mkdtempSync(join(tmpdir(), "agentos-sidecar-"));
 		cleanupPaths.push(fixtureRoot);
 		writeFileSync(
 			join(fixtureRoot, "tcp-listener.mjs"),
@@ -1425,7 +1425,7 @@ describe("native sidecar process client", () => {
 		);
 		ensureSidecarBinaryReady();
 
-		const client = NativeSidecarProcessClient.spawn({
+		const client = SidecarProcessClient.spawn({
 			cwd: REPO_ROOT,
 			command: SIDECAR_BINARY,
 			args: [],
@@ -1610,7 +1610,7 @@ describe("native sidecar process client", () => {
 	}, 60_000);
 
 	test("delivers SIGSTOP and SIGCONT through killProcess", async () => {
-		const fixtureRoot = mkdtempSync(join(tmpdir(), "agentos-native-sidecar-"));
+		const fixtureRoot = mkdtempSync(join(tmpdir(), "agentos-sidecar-"));
 		cleanupPaths.push(fixtureRoot);
 		writeFileSync(
 			join(fixtureRoot, "signal-routing.mjs"),
@@ -1618,7 +1618,7 @@ describe("native sidecar process client", () => {
 		);
 		ensureSidecarBinaryReady();
 
-		const client = NativeSidecarProcessClient.spawn({
+		const client = SidecarProcessClient.spawn({
 			cwd: REPO_ROOT,
 			command: SIDECAR_BINARY,
 			args: [],
@@ -1692,7 +1692,7 @@ describe("native sidecar process client", () => {
 	test("process snapshots retain fast node failure exit codes until the client observes them", async () => {
 		ensureSidecarBinaryReady();
 
-		const client = NativeSidecarProcessClient.spawn({
+		const client = SidecarProcessClient.spawn({
 			cwd: REPO_ROOT,
 			command: SIDECAR_BINARY,
 			args: [],

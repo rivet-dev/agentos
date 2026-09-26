@@ -52,6 +52,7 @@ describe("sandbox quickstart truth test", () => {
 		}
 
 		vm = await AgentOs.create({
+			defaultSoftware: false,
 			permissions: SANDBOX_QUICKSTART_PERMISSIONS,
 			software: [common],
 			mounts: [

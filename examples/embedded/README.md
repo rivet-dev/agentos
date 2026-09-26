@@ -1,49 +1,28 @@
 ---
 title: "Embedded VMs"
-description: "Embedded agentOS API: exec, configuration, lifecycle events, and mounts."
+description: "Embedded agentOS runtime API."
 category: "Reference"
 order: 1
 ---
 
-The embedded `@rivet-dev/agentos-core` API surface in one place: boot a VM with
-`AgentOs.create()` and control it from your application for exec, filesystem,
-processes, agent sessions, networking, and cron. There is no actor runtime or
-client/server split. Reach for this when you already own the application
-lifecycle and want a reference for what an `AgentOs` instance can do and how it
-is configured.
+Use `@rivet-dev/agentos-core` to boot and control a VM directly from a trusted
+Node.js application. The embedded API covers files, processes, terminals,
+language execution, networking, command scheduling, software, permissions,
+limits, host functions, and trusted host-backed mounts.
 
-## How it works
-
-`AgentOs.create({ ... })` boots a VM through a shared sidecar process with its
-mounts, software, and network settings, then returns an `AgentOs` instance to
-the application. Everything runs through that instance: `exec`/`spawn` for processes, `readFile`/`writeFiles`/`readdirEntries`
-for the filesystem, `openSession`/`prompt` for agents, `httpRequest` for in-VM
-servers, and `scheduleCron` for jobs. Portable process, shell, session, adapter,
-and cron events use explicit subscription methods. Interactive permission
-requests and responses are variants of the generic `onSessionEvent` union.
-
-- `vm.ts`: boot a VM and every instance capability (exec, filesystem,
-  processes, sessions, networking, cron).
-- `quickstart.ts`: run a coding agent directly from a Node.js application.
-- `advanced.ts`: pin VMs to a dedicated sidecar process.
-- `agent-to-agent.ts`: connect two embedded agents through a host function.
-- `host-functions.ts`: expose a host function as a command inside the VM.
-- `config-reference.ts`: common `AgentOs.create()` configuration.
-- `hooks.ts`: generic durable session-event observation.
-- `limits.ts`: configure resource limits and receive local warnings.
-- `models-and-credentials.ts`: pass provider credentials to a session.
-- `mounts.ts`: host-directory and S3 mount descriptors.
-- `persistence.ts`: restore filesystem state from a SQLite database.
-- `permissions.ts`: apply a kernel permission policy at VM creation.
-- `software.ts`: install a software package and run its command.
-
-## Run it
+- `vm.ts`: the complete embedded runtime surface.
+- `advanced.ts`: a dedicated sidecar process.
+- `host-functions.ts`: expose a trusted host function to guest programs.
+- `config-reference.ts`: common VM configuration.
+- `limits.ts`: resource limits and warnings.
+- `mounts.ts`: host-directory and S3 mounts.
+- `persistence.ts`: restore filesystem state from SQLite.
+- `permissions.ts`: configure the kernel permission policy.
+- `software.ts`: install a local software package and run its command.
 
 ```sh
 npm install
 npx tsx vm.ts
 ```
 
-## Source
-
-View the source on GitHub: https://github.com/rivet-dev/agentos/tree/main/examples/embedded
+- `wasm-backend.ts`: select Wasmtime for standalone WASM commands. The default backend remains V8.

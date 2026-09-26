@@ -2,7 +2,7 @@
 	"name": "browserbase",
 	"registry": {
 		"title": "Browserbase",
-		"description": "The Browserbase `browse` CLI: let agents browse the web with a cloud browser, no sandbox required.",
+		"description": "The Browserbase `browse` CLI for controlling a cloud browser from guest programs.",
 		"beta": true,
 		"types": [
 			"browser"
