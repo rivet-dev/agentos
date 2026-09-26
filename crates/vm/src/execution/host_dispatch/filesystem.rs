@@ -33,7 +33,18 @@ where
         } => (
             Some(fd),
             max_bytes,
-            deadline_ms,
+            Some(
+                deadline_ms
+                    .or_else(|| {
+                        sidecar
+                            .vms
+                            .get(vm_id)
+                            .and_then(|vm| vm.limits.resources.max_blocking_read_ms)
+                    })
+                    .unwrap_or(
+                        agentos_vm_kernel::resource_accounting::DEFAULT_BLOCKING_READ_TIMEOUT_MS,
+                    ),
+            ),
             DeferredKernelReadResponse::DescriptorBytes,
         ),
         FilesystemOperation::StdinRead {
@@ -42,7 +53,7 @@ where
         } => (
             None,
             max_bytes,
-            Some(timeout_ms),
+            timeout_ms,
             DeferredKernelReadResponse::KernelStdin,
         ),
         _ => {
@@ -52,15 +63,10 @@ where
             ));
         }
     };
-    let timeout_ms = requested_timeout_ms
-        .or_else(|| {
-            sidecar
-                .vms
-                .get(vm_id)
-                .and_then(|vm| vm.limits.resources.max_blocking_read_ms)
-        })
-        .unwrap_or(agentos_vm_kernel::resource_accounting::DEFAULT_BLOCKING_READ_TIMEOUT_MS);
-    let deadline = match checked_deferred_guest_wait_deadline(timeout_ms) {
+    let deadline = match requested_timeout_ms
+        .map(checked_deferred_guest_wait_deadline)
+        .transpose()
+    {
         Ok(deadline) => deadline,
         Err(error) => {
             reply.fail(error).map_err(VmError::from)?;
@@ -116,7 +122,7 @@ pub(in crate::execution) fn service_deferred_kernel_read(
                 fd,
                 max_bytes,
                 DeferredKernelReadResponse::DescriptorBytes,
-                deadline,
+                Some(deadline),
                 reply,
             )
         }),
@@ -133,7 +139,7 @@ pub(in crate::execution) fn service_deferred_kernel_stdin_read(
     notify: Arc<tokio::sync::Notify>,
     kernel: &mut SidecarKernel,
     process: &mut ActiveProcess,
-    incoming: Option<(BoundedUsize, Instant, DirectHostReplyHandle)>,
+    incoming: Option<(BoundedUsize, Option<Instant>, DirectHostReplyHandle)>,
 ) -> Result<(), VmError> {
     let fd = process.kernel_stdin_reader_fd;
     service_deferred_kernel_read_with_response(
@@ -166,7 +172,7 @@ fn service_deferred_kernel_read_with_response(
         u32,
         BoundedUsize,
         DeferredKernelReadResponse,
-        Instant,
+        Option<Instant>,
         DirectHostReplyHandle,
     )>,
 ) -> Result<(), VmError> {
@@ -211,6 +217,7 @@ fn service_deferred_kernel_read_with_response(
             response,
             reply,
             deadline,
+            readiness_generation: wait_handle.snapshot(),
             wake_task: None,
         });
     }
@@ -218,7 +225,10 @@ fn service_deferred_kernel_read_with_response(
     let now = Instant::now();
     let should_probe = process.deferred_kernel_read.as_ref().is_some_and(|read| {
         newly_admitted
-            || now >= read.deadline
+            // The wake task notifies before it returns. Durable kernel state
+            // must permit progress even when its JoinHandle is not finished.
+            || read.readiness_generation != wait_handle.snapshot()
+            || read.deadline.is_some_and(|deadline| now >= deadline)
             || read
                 .wake_task
                 .as_ref()
@@ -289,7 +299,10 @@ fn service_deferred_kernel_read_with_response(
                 .fail(kernel_host_error(error))
                 .map_err(VmError::from);
         }
-        Err(error) if matches!(error.code(), "EAGAIN" | "EWOULDBLOCK") && now >= read.deadline => {
+        Err(error)
+            if matches!(error.code(), "EAGAIN" | "EWOULDBLOCK")
+                && read.deadline.is_some_and(|deadline| now >= deadline) =>
+        {
             return match read.response {
                 DeferredKernelReadResponse::DescriptorBytes => read
                     .reply
@@ -313,12 +326,17 @@ fn service_deferred_kernel_read_with_response(
         }
     }
 
+    read.readiness_generation = observed;
     let deadline = read.deadline;
     let wake_task = runtime.spawn(agentos_driver_tokio::TaskClass::Vm, async move {
-        let delay = deadline.saturating_duration_since(Instant::now());
-        tokio::select! {
-            _ = wait_handle.wait_for_change_async(observed) => {}
-            _ = tokio::time::sleep(delay) => {}
+        if let Some(deadline) = deadline {
+            let delay = deadline.saturating_duration_since(Instant::now());
+            tokio::select! {
+                _ = wait_handle.wait_for_change_async(observed) => {}
+                _ = tokio::time::sleep(delay) => {}
+            }
+        } else {
+            wait_handle.wait_for_change_async(observed).await;
         }
         notify.notify_one();
     });
@@ -398,19 +416,7 @@ pub(super) fn decode(
             )?
             .unwrap_or(DEFAULT_KERNEL_STDIN_READ_MAX_BYTES as u64)
             .clamp(1, DEFAULT_KERNEL_STDIN_READ_MAX_BYTES as u64);
-            let timeout_ms = if request.args.get(1).is_some_and(Value::is_null) {
-                return Err(VmError::host(
-                    "EINVAL",
-                    "an indefinite __kernel_stdin_read must use deferred readiness",
-                ));
-            } else {
-                javascript_sync_rpc_arg_u64_optional(
-                    &request.args,
-                    1,
-                    "__kernel_stdin_read timeout ms",
-                )?
-                .unwrap_or(DEFAULT_KERNEL_STDIN_READ_TIMEOUT_MS)
-            };
+            let timeout_ms = parse_kernel_stdin_read_args(request)?.1;
             FilesystemOperation::StdinRead {
                 max_bytes: output_count(requested, "stdin read length")?,
                 timeout_ms,
@@ -2116,8 +2122,18 @@ impl SidecarHostCapability<FilesystemOperation> for FilesystemCapability {
                         max_bytes.get() as u64,
                     ));
                 }
-                typed_kernel_stdin_read(kernel, process, max_bytes.get(), timeout_ms)
-                    .map_err(sidecar_host_error)?
+                typed_kernel_stdin_read(
+                    kernel,
+                    process,
+                    max_bytes.get(),
+                    timeout_ms.ok_or_else(|| {
+                        HostServiceError::new(
+                            "EINVAL",
+                            "indefinite stdin reads require deferred dispatch",
+                        )
+                    })?,
+                )
+                .map_err(sidecar_host_error)?
             }
             FilesystemOperation::StdioWrite { fd, bytes } => {
                 typed_kernel_stdio_write(kernel, process, fd, bytes.into_vec())
@@ -3070,6 +3086,30 @@ mod tests {
     }
 
     #[test]
+    fn stdin_decoder_preserves_readiness_wait_and_finite_timeouts() {
+        for (args, expected) in [
+            (vec![json!(64), Value::Null], None),
+            (vec![json!(64), json!(0)], Some(0)),
+            (vec![json!(64)], Some(DEFAULT_KERNEL_STDIN_READ_TIMEOUT_MS)),
+        ] {
+            let request = HostRpcRequest {
+                args,
+                ..request("__kernel_stdin_read")
+            };
+            let Some(HostOperation::Filesystem(FilesystemOperation::StdinRead {
+                max_bytes,
+                timeout_ms,
+            })) = super::super::decode_host_operation(&request, true, 1024)
+                .expect("stdin timeout must reach deferred dispatch")
+            else {
+                panic!("stdin read must decode as a typed filesystem operation")
+            };
+            assert_eq!(max_bytes.get(), 64);
+            assert_eq!(timeout_ms, expected);
+        }
+    }
+
+    #[test]
     fn decoder_rejects_paths_and_payloads_before_constructing_operations() {
         let mut overlong_path = request("fs.statSync");
         overlong_path.args[0] = json!("x".repeat(MAX_PATH_BYTES + 1));
@@ -3219,7 +3259,7 @@ mod tests {
                     stdin_reader_fd,
                     maximum,
                     DeferredKernelReadResponse::KernelStdin,
-                    Instant::now(),
+                    Some(Instant::now()),
                     direct_reply(Arc::clone(&target), identity.generation, pid, call_id),
                 )),
             )
@@ -3351,6 +3391,18 @@ mod tests {
         {
             task.abort();
         }
+        // Model the owner consuming a readiness notification before the waking
+        // task returns. The task must remain unfinished when the owner probes.
+        let unfinished_wake = runtime
+            .spawn(agentos_driver_tokio::TaskClass::Vm, async {
+                std::future::pending::<()>().await;
+            })
+            .expect("hold wake task before completion");
+        parent
+            .deferred_kernel_read
+            .as_mut()
+            .expect("parked read")
+            .wake_task = Some(unfinished_wake);
         service_deferred_kernel_read(
             identity.generation,
             &runtime,
@@ -3362,8 +3414,9 @@ mod tests {
         )
         .expect("complete parent read after child progress");
 
+        let reply_count = target.replies.lock().expect("reply lock").len();
+        assert_eq!(reply_count, 1);
         let replies = target.replies.lock().expect("reply lock");
-        assert_eq!(replies.len(), 1);
         let HostCallReply::Json(payload) = replies[0].as_ref().expect("successful read reply")
         else {
             panic!("read reply must be JSON")

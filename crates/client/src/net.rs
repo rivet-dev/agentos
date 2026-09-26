@@ -16,6 +16,7 @@ use agentos_sidecar_client::wire;
 
 use crate::agent_os::AgentOs;
 use crate::error::ClientError;
+use crate::fs::FileContent;
 
 /// Maximum fully buffered fetch component size. `VmFetch` is a single request/response frame, so
 /// keeping this at the default frame size prevents fetch-specific buffers from growing just because
@@ -36,16 +37,21 @@ struct VmFetchResponsePayload {
     body: Option<String>,
 }
 
+#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
+#[cfg_attr(feature = "contract", ts(rename = "ActorHttpRequest"))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct HttpRequest {
     pub port: u16,
     pub path: String,
+    #[cfg_attr(feature = "contract", ts(optional, as = "Option<_>"))]
     #[serde(default = "default_http_method")]
     pub method: String,
+    #[cfg_attr(feature = "contract", ts(optional, as = "Option<_>"))]
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub body: Option<Vec<u8>>,
+    pub body: Option<FileContent>,
 }
 
 fn default_http_method() -> String {
@@ -351,7 +357,7 @@ fn prepare_http_request(request: HttpRequest, buffer_limit: usize) -> Result<Pre
     let body_base64 = if method == "GET" || method == "HEAD" {
         None
     } else {
-        body.map(|body| BASE64.encode(body))
+        body.map(|body| BASE64.encode(body.into_bytes()))
     };
     if let Some(body) = &body_base64 {
         ensure_fetch_component_within_limit("HTTP request body base64", body.len(), buffer_limit)?;
@@ -494,7 +500,7 @@ mod tests {
                 path: String::from("/upload"),
                 method: String::from("POST"),
                 headers: BTreeMap::new(),
-                body: Some(vec![0xff, 0x00, 0x80]),
+                body: Some(vec![0xff, 0x00, 0x80].into()),
             },
             VM_FETCH_BUFFER_LIMIT_BYTES,
         )

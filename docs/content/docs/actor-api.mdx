@@ -75,7 +75,7 @@ The package exports `AGENTOS_API_VERSION`, `AGENTOS_CONTRACT_MAJOR`,
 registry generate the TypeScript surface. The actor and client package ship in
 lockstep during the alpha contract period.
 
-The contract is currently `agentos-sdk.dev/v1alpha1`, major `1`. The hash covers
+The contract is currently `https://rivet.dev/agentos/v1alpha1`, major `1`. The hash covers
 the canonical public actions, events, DTOs, and capabilities. Private cron and
 maintenance actions are excluded from both the generated client and hash.
 
@@ -87,7 +87,7 @@ receive private actor access. Install `@rivet-dev/agentos` alongside the Rust
 binary and point the actor at its built UI assets:
 
 ```sh
-agentos-native-sidecar actor \
+agentos-sidecar actor \
   --inspector-tabs-dir node_modules/@rivet-dev/agentos/assets/inspector-tabs-app
 ```
 

@@ -2,7 +2,7 @@
 
 use agentos_vfs_core::package_format::{
     encode_aospkg_header,
-    generated::v1,
+    generated::v2,
     versioned::{encode_mount_index, encode_package_manifest},
 };
 use agentos_vfs_core::posix::{TarFileSystem, VirtualFileSystem};

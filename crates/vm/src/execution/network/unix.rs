@@ -1129,7 +1129,9 @@ pub(in crate::execution) fn defer_vm_local_unix_connect(
     }));
     process.pending_net_connects.insert(request_id, connected);
     let (respond_to, receiver) = tokio::sync::oneshot::channel();
-    let _ = respond_to.send(Ok(Value::Null));
+    respond_to
+        .send(Ok(Value::Null))
+        .expect("fresh Unix connect receiver remains owned until returned");
     Ok(HostServiceResponse::Deferred {
         receiver,
         timeout: None,

@@ -163,11 +163,11 @@ processNode.exitCode;
 const filesystemDefaults: AgentOsActorCreateInput = {
 	config: {
 		filesystem: {
-			root: { type: "actor-sqlite" },
+			root: { type: "durable" },
 			mounts: [
 				{
 					path: "/data",
-					backend: { type: "actor-sqlite" },
+					backend: { type: "durable" },
 				},
 			],
 		},

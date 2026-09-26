@@ -62,6 +62,11 @@ pub const DEFAULT_PROCESS_PENDING_STDIN_BYTES: usize = 64 * 1024 * 1024;
 pub const DEFAULT_PROCESS_MAX_SPAWN_FILE_ACTIONS: usize = 4096;
 pub const DEFAULT_PROCESS_MAX_SPAWN_FILE_ACTION_BYTES: usize = 1024 * 1024;
 pub const DEFAULT_PROCESS_PENDING_EVENT_COUNT: usize = 10_000;
+pub const DEFAULT_PROCESS_OUTPUT_REPLAY_EVENTS: usize = 1_024;
+pub const DEFAULT_PROCESS_OUTPUT_REPLAY_BYTES: usize = 1024 * 1024;
+pub const DEFAULT_PROCESS_OUTPUT_REPLAY_PAGE_EVENTS: usize = 256;
+pub const DEFAULT_PROCESS_OUTPUT_REPLAY_PAGE_BYTES: usize = 768 * 1024;
+pub const DEFAULT_PROCESS_MAX_OUTPUT_REPLAYS: usize = 1_024;
 pub const DEFAULT_PROCESS_PENDING_EVENT_BYTES: usize = 64 * 1024 * 1024;
 pub const DEFAULT_EXECUTION_COMPLETED_TTL_MS: u64 = 5 * 60 * 1000;
 pub const DEFAULT_EXECUTION_MAX_COMPLETED_EXECUTIONS: usize = 1_024;
@@ -344,6 +349,12 @@ pub struct WasmLimits {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessLimits {
+    pub output_replay_events: usize,
+    pub output_replay_bytes: usize,
+    pub output_replay_page_events: usize,
+    pub output_replay_page_bytes: usize,
+    pub max_output_replays: usize,
+
     /// Maximum file actions decoded for one posix_spawn request.
     pub max_spawn_file_actions: usize,
     /// Maximum serialized file-action bytes accepted for one spawn request.
@@ -485,6 +496,11 @@ impl Default for WasmLimits {
 impl Default for ProcessLimits {
     fn default() -> Self {
         Self {
+            output_replay_events: DEFAULT_PROCESS_OUTPUT_REPLAY_EVENTS,
+            output_replay_bytes: DEFAULT_PROCESS_OUTPUT_REPLAY_BYTES,
+            output_replay_page_events: DEFAULT_PROCESS_OUTPUT_REPLAY_PAGE_EVENTS,
+            output_replay_page_bytes: DEFAULT_PROCESS_OUTPUT_REPLAY_PAGE_BYTES,
+            max_output_replays: DEFAULT_PROCESS_MAX_OUTPUT_REPLAYS,
             max_spawn_file_actions: DEFAULT_PROCESS_MAX_SPAWN_FILE_ACTIONS,
             max_spawn_file_action_bytes: DEFAULT_PROCESS_MAX_SPAWN_FILE_ACTION_BYTES,
             pending_stdin_bytes: DEFAULT_PROCESS_PENDING_STDIN_BYTES,
@@ -727,6 +743,32 @@ pub fn vm_limits_from_config(
         )?;
     }
     if let Some(process) = config.process.as_ref() {
+        set_usize(
+            &mut limits.process.output_replay_events,
+            process.output_replay_events,
+            "limits.process.outputReplayEvents",
+        )?;
+        set_usize(
+            &mut limits.process.output_replay_bytes,
+            process.output_replay_bytes,
+            "limits.process.outputReplayBytes",
+        )?;
+        set_usize(
+            &mut limits.process.output_replay_page_events,
+            process.output_replay_page_events,
+            "limits.process.outputReplayPageEvents",
+        )?;
+        set_usize(
+            &mut limits.process.output_replay_page_bytes,
+            process.output_replay_page_bytes,
+            "limits.process.outputReplayPageBytes",
+        )?;
+        set_usize(
+            &mut limits.process.max_output_replays,
+            process.max_output_replays,
+            "limits.process.maxOutputReplays",
+        )?;
+
         set_usize(
             &mut limits.process.max_spawn_file_actions,
             process.max_spawn_file_actions,
@@ -1138,6 +1180,19 @@ pub fn validate_vm_limits(
     limits: &VmLimits,
     sidecar_max_frame_bytes: usize,
 ) -> Result<(), SidecarCoreError> {
+    validate_parent_limit(
+        "limits.process.outputReplayPageEvents",
+        limits.process.output_replay_page_events,
+        "limits.process.outputReplayEvents",
+        limits.process.output_replay_events,
+    )?;
+    validate_parent_limit(
+        "limits.process.outputReplayPageBytes",
+        limits.process.output_replay_page_bytes,
+        "limits.process.outputReplayBytes",
+        limits.process.output_replay_bytes,
+    )?;
+
     if limits.agentos_packages.max_mounts == 0 {
         return Err(SidecarCoreError::new(
             "limits.agentosPackages.maxMounts must be greater than zero",
@@ -1523,6 +1578,26 @@ pub fn validate_vm_limits(
         (
             "limits.process.pending_event_bytes",
             limits.process.pending_event_bytes,
+        ),
+        (
+            "limits.process.output_replay_events",
+            limits.process.output_replay_events,
+        ),
+        (
+            "limits.process.output_replay_bytes",
+            limits.process.output_replay_bytes,
+        ),
+        (
+            "limits.process.output_replay_page_events",
+            limits.process.output_replay_page_events,
+        ),
+        (
+            "limits.process.output_replay_page_bytes",
+            limits.process.output_replay_page_bytes,
+        ),
+        (
+            "limits.process.max_output_replays",
+            limits.process.max_output_replays,
         ),
         (
             "limits.process.max_pending_child_sync_count",

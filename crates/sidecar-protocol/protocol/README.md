@@ -48,6 +48,11 @@ This applies to fields such as runtime config blobs, mount plugin configs, host-
 
 ## Normalization Notes
 
+`ReadProcessOutputRequest.maxEvents` and `maxBytes` use zero as a wire-only
+omission sentinel: the sidecar selects that VM's configured replay page limit.
+Public APIs reject explicitly supplied zero; explicit nonzero bounds above the
+configured VM limit receive a typed rejection rather than silent clamping.
+
 BARE does not have Serde's "omitted but defaults to empty list/map" behavior. The codec should therefore normalize these fields explicitly:
 
 - omitted/defaulted collection fields in JSON become empty lists/maps in BARE

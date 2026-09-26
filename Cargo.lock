@@ -104,6 +104,8 @@ name = "agentos-actor-contract"
 version = "0.0.1"
 dependencies = [
  "agentos-client",
+ "agentos-sidecar-client",
+ "agentos-vm-config",
  "anyhow",
  "base64",
  "ciborium",
@@ -111,6 +113,7 @@ dependencies = [
  "rivet-error",
  "rivetkit",
  "serde",
+ "serde_bytes",
  "serde_json",
  "sha2 0.10.9",
  "tracing",
@@ -152,6 +155,7 @@ dependencies = [
  "scc 2.4.0",
  "serde",
  "serde_bare",
+ "serde_bytes",
  "serde_json",
  "sha2 0.10.9",
  "tar",

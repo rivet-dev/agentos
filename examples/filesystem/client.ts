@@ -9,7 +9,7 @@ export const vm = client.agentOS.getOrCreate(["examples", "filesystem"], {
 				mounts: [
 					{
 						path: "/home/agentos/scratch",
-						backend: { type: "actor-sqlite", namespace: "scratch" },
+						backend: { type: "durable", namespace: "scratch" },
 					},
 				],
 			},

@@ -2,7 +2,7 @@ import type {
 	LiveSidecarRequestPayload,
 	LiveSidecarResponsePayload,
 } from "./callbacks.js";
-import type { MountConfigJsonObject } from "./descriptors.js";
+import type { LiveMountDescriptor, MountConfigJsonObject } from "./descriptors.js";
 import type { LiveSidecarEventSelector } from "./event-buffer.js";
 import {
 	decodeGuestFilesystemContent,
@@ -451,6 +451,12 @@ export class SidecarProcess {
 		session: AuthenticatedSession,
 		before: CreateVmConfig,
 		after: CreateVmConfig,
+		options: {
+			beforeMounts?: LiveMountDescriptor[];
+			afterMounts?: LiveMountDescriptor[];
+			beforeRestartIdentity?: string[];
+			afterRestartIdentity?: string[];
+		} = {},
 	): Promise<boolean> {
 		const response = await this.sendRequest({
 			ownership: {
@@ -458,7 +464,15 @@ export class SidecarProcess {
 				connection_id: session.connectionId,
 				session_id: session.sessionId,
 			},
-			payload: { type: "compare_vm_config", before, after },
+			payload: {
+				type: "compare_vm_config",
+				before,
+				after,
+				before_mounts: options.beforeMounts ?? [],
+				after_mounts: options.afterMounts ?? [],
+				before_restart_identity: options.beforeRestartIdentity ?? [],
+				after_restart_identity: options.afterRestartIdentity ?? [],
+			},
 		});
 		if (response.payload.type !== "vm_config_compared") {
 			throw new Error(
@@ -1371,6 +1385,7 @@ export class SidecarProcess {
 			cwd?: string;
 			wasmPermissionTier?: WasmPermissionTier;
 			wasmBackend?: StandaloneWasmBackend;
+			retainOutput?: boolean;
 		},
 	): Promise<{ pid: number | null }> {
 		const response = await this.sendRequest({
@@ -1393,6 +1408,7 @@ export class SidecarProcess {
 					? { wasm_permission_tier: options.wasmPermissionTier }
 					: {}),
 				...(options.wasmBackend ? { wasm_backend: options.wasmBackend } : {}),
+				retain_output: options.retainOutput ?? false,
 			},
 		});
 		if (response.payload.type !== "process_started") {

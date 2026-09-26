@@ -1325,7 +1325,7 @@ where
     B: VmManagerHost + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
-    let socket_paths = build_socket_path_context(&vm)?;
+    let socket_paths = build_socket_path_context(vm)?;
     let retired_routes = {
         let mut descriptions = vm
             .managed_host_net_descriptions
@@ -1370,7 +1370,7 @@ where
                 .then_some(*description_id)
         })
         .collect::<Vec<_>>();
-    let socket_paths = build_socket_path_context(&vm)?;
+    let socket_paths = build_socket_path_context(vm)?;
     prune_managed_descriptions_after_fd_mutation(
         bridge,
         vm_id,
@@ -3949,6 +3949,9 @@ where
         );
     }
     let kernel_readable = socket.kernel_readable(&vm.kernel, process.kernel_pid)?;
+    // Re-entry consumes the datagram under an exclusive VM borrow. Retain only
+    // the owned poll/wait handles after the readiness probe.
+    drop(vm);
 
     if kernel_readable {
         if let Some(turn) = pending.fair_turn.take() {

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
 
 /**
@@ -76,12 +76,12 @@ function track(vm: AgentOs, proc: MockProc): void {
 				p: MockProc,
 				command: string,
 				args: string[],
+				retainEvents: boolean,
 				a: Set<unknown>,
 				b: Set<unknown>,
-				c: Set<unknown>,
 			) => { pid: number };
 		}
-	)._trackProcess(proc, "cmd", [], new Set(), new Set(), new Set());
+	)._trackProcess(proc, "cmd", [], false, new Set(), new Set());
 }
 
 describe("AgentOs _processes leak (H5)", () => {
@@ -112,5 +112,59 @@ describe("AgentOs _processes leak (H5)", () => {
 		await vm.dispose();
 
 		expect(processes.size).toBe(0);
+	});
+
+	test("command and language spawns share bounded pending admission", () => {
+		const { vm, processes } = makeAgentOs();
+		const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const internals = vm as unknown as {
+			_languageProcesses: Map<number, unknown>;
+			_languageProcessIds: Map<string, number>;
+			_pendingProcessRegistrations: number;
+			_reserveProcessRegistrySlot: () => () => void;
+		};
+
+		for (let pid = 1; pid <= 512; pid++) {
+			processes.set(pid, {
+				startedAtMs: pid,
+			});
+		}
+		for (let pid = 513; pid <= 1024; pid++) {
+			const executionId = `execution-${pid}`;
+			internals._languageProcesses.set(pid, {
+				executionId,
+				descriptor: { startedAtMs: pid === 513 ? 1 : pid },
+				...(pid === 513 ? { exit: { pid } } : {}),
+			});
+			internals._languageProcessIds.set(executionId, pid);
+		}
+
+		try {
+			const release = internals._reserveProcessRegistrySlot();
+			expect(processes.has(1)).toBe(true);
+			expect(internals._languageProcesses.has(513)).toBe(false);
+			expect(internals._languageProcessIds.has("execution-513")).toBe(false);
+			expect(internals._pendingProcessRegistrations).toBe(1);
+
+			try {
+				internals._reserveProcessRegistrySlot();
+				throw new Error("expected process registry admission to fail");
+			} catch (error) {
+				expect(error).toMatchObject({
+					code: "ERR_AGENTOS_RESOURCE_LIMIT",
+					limitName: "process_registry_entries",
+					configuredLimit: 1024,
+					operation: "process.spawn",
+				});
+			}
+
+			release();
+			const releaseAgain = internals._reserveProcessRegistrySlot();
+			expect(internals._pendingProcessRegistrations).toBe(1);
+			releaseAgain();
+			expect(internals._pendingProcessRegistrations).toBe(0);
+		} finally {
+			warned.mockRestore();
+		}
 	});
 });

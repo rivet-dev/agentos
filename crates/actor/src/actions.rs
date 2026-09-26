@@ -4,59 +4,23 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use rivetkit::{Ctx, Handles};
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::config::resolve_remote_software;
 use crate::events::{VmBooted, VmShutdown};
-use crate::runtime::VmStatusSnapshot;
 use crate::software::{persist_snapshot, require_revision};
-use crate::{store, AgentOsActor, AgentOsActorConfig, AgentOsActorConfigInput, ConfigSnapshot};
+use crate::{
+    store, AgentOsActor, AgentOsActorConfig, AgentOsActorConfigInput, ConfigGet, ConfigPatch,
+    ConfigSet, ConfigSnapshot, VmRestart, VmStatus, VmStatusSnapshot,
+};
 
 pub(crate) type BoxFuture<T> = Pin<Box<dyn Future<Output = Result<T>> + Send>>;
 
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ConfigGet {}
-
-crate::register_action!(ConfigGet => ConfigSnapshot, "config.get");
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ConfigSet {
-    pub config: AgentOsActorConfigInput,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expected_revision: Option<u64>,
-}
-
-crate::register_action!(ConfigSet => ConfigSnapshot, "config.set");
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ConfigPatch {
-    pub patch: Value,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expected_revision: Option<u64>,
-}
-
-crate::register_action!(ConfigPatch => ConfigSnapshot, "config.patch");
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct VmStatus {}
-
-crate::register_action!(VmStatus => VmStatusSnapshot, "vm.status");
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct VmRestart {}
-
-crate::register_action!(VmRestart => VmStatusSnapshot, "vm.restart");
+crate::register_contract_action!(ConfigGet);
+crate::register_contract_action!(ConfigSet);
+crate::register_contract_action!(ConfigPatch);
+crate::register_contract_action!(VmStatus);
+crate::register_contract_action!(VmRestart);
 
 impl Handles<ConfigGet> for AgentOsActor {
     type Future = BoxFuture<ConfigSnapshot>;
@@ -117,84 +81,7 @@ fn merge_config_patch(
     current: &AgentOsActorConfig,
     patch: Value,
 ) -> Result<AgentOsActorConfigInput> {
-    if !patch.is_object() {
-        anyhow::bail!("invalid_input: config.patch patch must be a JSON object");
-    }
-    let mut removals = Vec::new();
-    collect_patch_removals(&patch, &mut Vec::new(), &mut removals);
-    let mut document = serde_json::to_value(current).context("serialize current desired config")?;
-    apply_merge_patch(&mut document, patch);
-    let input = AgentOsActorConfigInput::deserialize(&document)
-        .context("invalid_input: decode merged config input")?;
-    // Validate erased members against the real serde DTOs as well. A null
-    // removal of an unknown struct field must fail, while removing an absent
-    // environment key or a known non-nullable field remains valid RFC 7386.
-    // Probing a single null in an otherwise valid document distinguishes
-    // unknown fields from valid fields whose input type rejects literal null.
-    for path in removals {
-        patch_parent_mut(&mut document, &path).insert(
-            path.last().expect("removal has a field").clone(),
-            Value::Null,
-        );
-        let probe = AgentOsActorConfigInput::deserialize(&document);
-        patch_parent_mut(&mut document, &path).remove(path.last().expect("removal has a field"));
-        if let Err(error) = probe {
-            let message = error.to_string();
-            if message.starts_with("unknown field ")
-                || message.contains("did not match any variant of untagged enum")
-            {
-                return Err(error).context("invalid_input: validate config patch removal");
-            }
-        }
-    }
-    Ok(input)
-}
-
-fn collect_patch_removals(value: &Value, path: &mut Vec<String>, out: &mut Vec<Vec<String>>) {
-    if let Value::Object(object) = value {
-        for (key, value) in object {
-            path.push(key.clone());
-            if value.is_null() {
-                out.push(path.clone());
-            } else {
-                collect_patch_removals(value, path, out);
-            }
-            path.pop();
-        }
-    }
-}
-
-fn patch_parent_mut<'a>(
-    document: &'a mut Value,
-    path: &[String],
-) -> &'a mut serde_json::Map<String, Value> {
-    let mut parent = document;
-    for key in &path[..path.len() - 1] {
-        parent = parent.get_mut(key).expect("merge patch created the parent");
-    }
-    parent
-        .as_object_mut()
-        .expect("merge patch parent is an object")
-}
-
-fn apply_merge_patch(target: &mut Value, patch: Value) {
-    let Value::Object(patch) = patch else {
-        *target = patch;
-        return;
-    };
-    if !target.is_object() {
-        *target = Value::Object(Default::default());
-    }
-    let target = target
-        .as_object_mut()
-        .expect("target was replaced with a JSON object");
-    for (key, value) in patch {
-        if value.is_null() {
-            target.remove(&key);
-        } else {
-            apply_merge_patch(target.entry(key).or_insert(Value::Null), value);
-        }
-    }
+    agentos_actor_contract::merge_patch::merge_typed(current, patch)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -212,7 +99,7 @@ fn replacement_snapshot(
     mode: ConfigCommitMode,
 ) -> Result<ConfigSnapshot> {
     let core_changed =
-        mode == ConfigCommitMode::Classify && !current.desired.core_runtime_eq(&desired);
+        mode == ConfigCommitMode::Classify && current.desired.runtime_intent_differs(&desired);
     replacement_snapshot_classified(current, desired, core_changed)
 }
 
@@ -265,19 +152,22 @@ impl AgentOsActor {
         if current.desired == desired {
             return Ok(current.clone());
         }
-        let core_changed = if mode == ConfigCommitMode::Classify
-            && !current.desired.core_runtime_eq(&desired)
-        {
-            if !current.desired.sidecar_comparison_covers_changes(&desired) {
-                true
-            } else if let Ok(vm) = self.runtime.vm().await {
+        let core_changed = if mode == ConfigCommitMode::Classify {
+            if let Ok(vm) = self.runtime.vm().await {
                 let before = current.desired.to_core_config(None, None, None);
                 let after = desired.to_core_config(None, None, None);
-                !agentos_client::actor_internals::vm_config_equivalent(&vm, &before, &after).await?
+                !agentos_client::actor_internals::vm_config_equivalent(
+                    &vm,
+                    &before,
+                    &after,
+                    current.desired.restart_identity(),
+                    desired.restart_identity(),
+                )
+                .await?
             } else {
                 // No serving VM exists to resolve the live sidecar defaults.
                 // Preserve the conservative replacement classification.
-                true
+                current.desired.runtime_intent_differs(&desired)
             }
         } else {
             false
@@ -427,7 +317,7 @@ mod tests {
             ..Default::default()
         })
         .expect("preview replacement");
-        assert!(current.desired.core_runtime_eq(&desired));
+        assert!(!current.desired.runtime_intent_differs(&desired));
 
         let next = replacement_snapshot(&current, desired, ConfigCommitMode::Classify)
             .expect("replacement");

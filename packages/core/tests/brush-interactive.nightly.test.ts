@@ -36,7 +36,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "../../..");
 const SIDECAR_BINARY =
 	process.env.AGENTOS_SIDECAR_BIN ??
-	resolve(REPO_ROOT, "target/debug/agentos-sidecar");
+	resolve(REPO_ROOT, "target/debug/agentos-native-sidecar");
 const REGISTRY_SH_CANDIDATES = [
 	"toolchain/target/wasm32-wasip1/release/commands/sh",
 ].map((candidate) => resolve(REPO_ROOT, candidate));

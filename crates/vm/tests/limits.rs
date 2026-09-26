@@ -165,7 +165,9 @@ fn rejects_default_timeout_above_max() {
     };
     let error =
         vm_limits_from_config(Some(&config), SIDECAR_FRAME_CAP).expect_err("default above max");
-    assert!(error.to_string().contains("max_timeout_ms"));
+    assert!(error
+        .to_string()
+        .contains("limits.hostFunctions.maxTimeoutMs"));
 }
 
 #[test]

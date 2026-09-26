@@ -28,6 +28,12 @@ cross the hosted actor boundary:
 The hosted actor uses a smaller generated configuration type and a fixed
 filesystem registry. It never serializes callbacks or exposes a host path.
 
+The sidecar uses the `agent_os` defaults profile unless `defaultsProfile` is
+`"secure"`. Both profiles permit guest loopback and deny external network and
+DNS access by default, including model-provider endpoints. Explicit
+`permissions` can grant additional access. Secure Exec selects the secure
+profile automatically.
+
 ## WASM backend selection
 
 Set `wasmBackend` to `"wasmtime"` to run standalone WASM commands with Wasmtime.

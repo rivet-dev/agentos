@@ -37,6 +37,9 @@ describe("runtime-compat mountFs bookkeeping", () => {
 		kernel = createKernel({ filesystem: root });
 		await kernel.mountFs("/root/node_modules", mounted, { readOnly: true });
 		await kernel.mount(createNodeRuntime());
+		await expect(
+			kernel.readFile("/root/node_modules/package/index.js"),
+		).resolves.toEqual(new TextEncoder().encode("mounted"));
 		await kernel.dispose();
 		kernel = undefined;
 

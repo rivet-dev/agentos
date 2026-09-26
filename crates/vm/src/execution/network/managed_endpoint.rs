@@ -723,12 +723,12 @@ where
     let (target_binding_id, remote_address) = if let Some(hex) = abstract_hex {
         let guest_name = decode_abstract_unix_name(hex)?;
         let host_name = host_abstract_unix_name(context.socket_paths, &guest_name);
-        let target = guest_unix_binding_for_host_key(
+
+        guest_unix_binding_for_host_key(
             &context.socket_paths.unix_bound_addresses,
             &abstract_unix_host_address_key(&host_name),
         )?
-        .ok_or_else(|| sidecar_net_error(std::io::Error::from_raw_os_error(libc::ECONNREFUSED)))?;
-        target
+        .ok_or_else(|| sidecar_net_error(std::io::Error::from_raw_os_error(libc::ECONNREFUSED)))?
     } else {
         let path = path.expect("validated Unix path");
         let (candidate_path, _) = resolve_guest_unix_path(context.process, path)?;

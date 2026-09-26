@@ -104,11 +104,11 @@ pub trait ExtensionHost {
 
 /// Cloneable host services used by independently executing extension requests.
 ///
-/// The mutable [`ExtensionHost`] backend exists for the direct, in-process
-/// `VmManager::dispatch` API. Transports that supervise more than one
-/// request at a time provide this owned backend instead, so an extension never
-/// retains the sidecar coordinator's mutable borrow while it waits on process
-/// output, filesystem work, or cancellation.
+/// The direct, in-process `VmManager::dispatch` API services a bounded command
+/// channel through its mutable [`ExtensionHost`] backend. Transports provide
+/// their own supervised routing. Both paths keep the extension context owned,
+/// so an extension never retains the sidecar coordinator's mutable borrow while
+/// it waits on process output, filesystem work, or cancellation.
 pub trait ExtensionServices: Send + Sync {
     fn vm_database(
         &self,
@@ -194,6 +194,77 @@ pub trait ExtensionServices: Send + Sync {
         process_id: String,
         timeout: Duration,
     ) -> ExtensionFuture<'static, ExtensionBufferedProcessOutput>;
+}
+
+// Direct callers own one manager for the duration of dispatch. Route extension
+// operations back to that caller without lending the manager to the extension.
+pub(crate) type DirectExtensionCommand =
+    Box<dyn for<'a> FnOnce(&'a mut dyn ExtensionHost) -> ExtensionFuture<'a, ()> + Send>;
+
+pub(crate) struct DirectExtensionServices {
+    commands: tokio::sync::mpsc::Sender<DirectExtensionCommand>,
+}
+
+impl DirectExtensionServices {
+    pub(crate) fn channel() -> (
+        Arc<dyn ExtensionServices>,
+        tokio::sync::mpsc::Receiver<DirectExtensionCommand>,
+    ) {
+        // A direct dispatch services one operation at a time. Backpressure
+        // bounds admission even if an extension issues concurrent operations.
+        let (commands, receiver) = tokio::sync::mpsc::channel(1);
+        (Arc::new(Self { commands }), receiver)
+    }
+}
+
+macro_rules! direct_extension_service {
+    ($name:ident($($argument:ident: $ty:ty),*) -> $result:ty) => {
+        fn $name(&self, $($argument: $ty),*) -> ExtensionFuture<'static, $result> {
+            let commands = self.commands.clone();
+            Box::pin(async move {
+                let (mut reply, response) = tokio::sync::oneshot::channel();
+                let command: DirectExtensionCommand = Box::new(move |host| {
+                    Box::pin(async move {
+                        let result = tokio::select! {
+                            // Cancelling one call must release its host borrow
+                            // even when the extension continues with another.
+                            biased;
+                            _ = reply.closed() => return Ok(()),
+                            result = host.$name($($argument),*) => result,
+                        };
+                        if let Err(Err(error)) = reply.send(result) {
+                            // A cancellation racing a completed operation must
+                            // not hide that operation's failure.
+                            tracing::warn!(operation = stringify!($name), %error, "cancelled direct extension operation failed");
+                        }
+                        Ok(())
+                    })
+                });
+                commands.send(command).await.map_err(|_| VmError::Io(String::from(
+                    "ERR_AGENTOS_EXTENSION_SERVICE_CLOSED: direct extension dispatch ended",
+                )))?;
+                response.await.map_err(|_| VmError::Io(String::from(
+                    "ERR_AGENTOS_EXTENSION_SERVICE_REPLY_CLOSED: direct extension operation ended without a result",
+                )))?
+            })
+        }
+    };
+}
+
+impl ExtensionServices for DirectExtensionServices {
+    direct_extension_service!(vm_database(ownership: OwnershipScope) -> Option<crate::vm_sqlite::SharedVmSqliteDatabase>);
+    direct_extension_service!(spawn_process(ownership: OwnershipScope, request: ExecuteRequest) -> ProcessStartedResponse);
+    direct_extension_service!(write_stdin(ownership: OwnershipScope, request: WriteStdinRequest) -> StdinWrittenResponse);
+    direct_extension_service!(close_stdin(ownership: OwnershipScope, request: CloseStdinRequest) -> StdinClosedResponse);
+    direct_extension_service!(kill_process(ownership: OwnershipScope, request: KillProcessRequest) -> ProcessKilledResponse);
+    direct_extension_service!(poll_event(ownership: OwnershipScope, timeout: Duration) -> Option<EventFrame>);
+    direct_extension_service!(poll_process_event(ownership: OwnershipScope, process_id: String, timeout: Duration) -> Option<EventFrame>);
+    direct_extension_service!(guest_filesystem_call(ownership: OwnershipScope, request: GuestFilesystemCallRequest) -> GuestFilesystemResultResponse);
+    direct_extension_service!(bind_process_to_session(ownership: OwnershipScope, namespace: String, ext_session_id: String, process_id: String) -> ());
+    direct_extension_service!(bind_vm_to_session(ownership: OwnershipScope, namespace: String, ext_session_id: String) -> ());
+    direct_extension_service!(dispose_session_resources(ownership: OwnershipScope, namespace: String, ext_session_id: String) -> Vec<EventFrame>);
+    direct_extension_service!(start_buffering_process_output(ownership: OwnershipScope, process_id: String) -> ());
+    direct_extension_service!(handoff_buffered_process_output(ownership: OwnershipScope, namespace: String, ext_session_id: String, process_id: String, timeout: Duration) -> ExtensionBufferedProcessOutput);
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

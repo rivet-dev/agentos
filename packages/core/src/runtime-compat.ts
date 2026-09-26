@@ -4,11 +4,8 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as posixPath from "node:path/posix";
 import { fileURLToPath } from "node:url";
-import type {
-	CreateVmConfig,
-	RootFilesystemEntry as VmConfigRootFilesystemEntry,
-} from "./vm-config.js";
 import type { NodeModulesMountConfig } from "./host-dir-mount.js";
+import { handleJsBridgeCall } from "./js-bridge-handler.js";
 import { resolvePublishedSidecarBinary } from "./sidecar/binary.js";
 import { findCargoBinary, resolveCargoBinary } from "./sidecar/cargo.js";
 import { serializePermissionsForSidecar } from "./sidecar/permissions.js";
@@ -16,12 +13,16 @@ import {
 	type AuthenticatedSession,
 	type CreatedVm,
 	type LocalCompatMount,
-	SidecarKernelProxy,
 	type RootFilesystemEntry,
+	SidecarKernelProxy,
 	type SidecarMountDescriptor,
 	SidecarProcess,
 	serializeMountConfigForSidecar,
 } from "./sidecar/rpc-client.js";
+import type {
+	CreateVmConfig,
+	RootFilesystemEntry as VmConfigRootFilesystemEntry,
+} from "./vm-config.js";
 
 export const AF_INET = 2;
 export const AF_UNIX = 1;
@@ -78,10 +79,7 @@ const KERNEL_POSIX_BOOTSTRAP_DIRS = [
 	"/var/tmp",
 ] as const;
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
-const SIDECAR_BINARY = path.join(
-	REPO_ROOT,
-	"target/debug/agentos-sidecar",
-);
+const SIDECAR_BINARY = path.join(REPO_ROOT, "target/debug/agentos-sidecar");
 const SIDECAR_BUILD_INPUTS = [
 	path.join(REPO_ROOT, "Cargo.toml"),
 	path.join(REPO_ROOT, "Cargo.lock"),
@@ -231,6 +229,7 @@ export interface ProcessInfo {
 }
 
 export interface ManagedProcess {
+	readonly processId?: string;
 	pid: number;
 	writeStdin(data: Uint8Array | string): Promise<void>;
 	closeStdin(): Promise<void>;
@@ -294,6 +293,16 @@ export interface RunResult<T = unknown> {
 }
 
 export interface KernelSpawnOptions extends ExecOptions {
+	retainOutput?: boolean;
+	/** Internal sidecar replay identity; absent for local/synthetic output. */
+	onStdout?: (
+		data: Uint8Array,
+		metadata?: { sequence?: number; timestampMs?: number },
+	) => void;
+	onStderr?: (
+		data: Uint8Array,
+		metadata?: { sequence?: number; timestampMs?: number },
+	) => void;
 	stdio?: "pipe" | "inherit";
 	stdinFd?: number;
 	stdoutFd?: number;
@@ -1443,14 +1452,10 @@ function ensureSidecarBinary(): string {
 	if (sidecarBinaryNeedsBuild()) {
 		const cargoBinary = findCargoBinary();
 		if (cargoBinary) {
-			execFileSync(
-				cargoBinary,
-				["build", "-q", "-p", "agentos-sidecar"],
-				{
-					cwd: REPO_ROOT,
-					stdio: "pipe",
-				},
-			);
+			execFileSync(cargoBinary, ["build", "-q", "-p", "agentos-sidecar"], {
+				cwd: REPO_ROOT,
+				stdio: "pipe",
+			});
 		} else if (!fsSync.existsSync(SIDECAR_BINARY)) {
 			execFileSync(
 				resolveCargoBinary(),
@@ -2546,6 +2551,22 @@ class NativeKernel implements Kernel {
 			cwd: REPO_ROOT,
 			command: ensureSidecarBinary(),
 			args: [],
+		});
+		client.setSidecarRequestHandler((request) => {
+			const payload = request.payload;
+			if (payload.type !== "js_bridge_call") {
+				throw new Error(`unsupported kernel sidecar request: ${payload.type}`);
+			}
+			const mount = this.pendingLocalMounts.find(
+				(candidate) => candidate.path === payload.mount_id,
+			);
+			if (!mount) {
+				throw new Error(`unknown kernel filesystem mount: ${payload.mount_id}`);
+			}
+			return handleJsBridgeCall(
+				{ ...payload, mount_id: "/" },
+				{ filesystem: mount.fs },
+			);
 		});
 		const session = await client.authenticateAndOpenSession();
 		const createVmConfig: CreateVmConfig = {

@@ -855,6 +855,7 @@ impl VmCoordinator {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    #[cfg(test)]
     fn begin_lifecycle(
         &self,
         cancellation: OperationCancellation,
@@ -1073,7 +1074,7 @@ pub struct CoordinatorOperationPermit {
 }
 
 impl CoordinatorOperationPermit {
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(test)]
     pub(crate) fn is_vm_lifecycle(&self) -> bool {
         self.vm_lifecycle.is_some()
     }

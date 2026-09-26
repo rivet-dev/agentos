@@ -376,20 +376,6 @@ fn transpile_typescript(
 }
 
 #[cfg(feature = "javascript-tooling")]
-fn transform_retained_javascript_module(source: &str, file_path: &str) -> Result<String, VmError> {
-    let source = rewrite_static_imports(source, file_path, false)?;
-    transform_source(&source, file_path, false, true)
-}
-
-#[cfg(not(feature = "javascript-tooling"))]
-fn transform_retained_javascript_module(
-    _source: &str,
-    _file_path: &str,
-) -> Result<String, VmError> {
-    Err(javascript_tooling_disabled())
-}
-
-#[cfg(feature = "javascript-tooling")]
 fn transform_retained_typescript_module(source: &str, file_path: &str) -> Result<String, VmError> {
     let source = rewrite_static_imports(source, file_path, true)?;
     transform_source(&source, file_path, true, true)
@@ -1761,6 +1747,8 @@ where
                 .insert(String::from(RETAIN_LANGUAGE_CONTEXT_ENV), String::from("1"));
         }
         let execute_payload = ExecuteRequest {
+            retain_output: false,
+
             process_id: process_id.clone(),
             command: Some(operation.command),
             runtime: None,
@@ -2207,19 +2195,12 @@ where
                     })
                     .map_err(|error| VmError::Execution(error.to_string()))?;
                 let mut vm = self.vms.get_mut(&vm_id).expect("execution VM exists");
-                vm.executions
+                let execution = vm
+                    .executions
                     .get_mut(&payload.execution_id)
-                    .expect("execution checked above")
-                    .deadline_task = Some(task);
-                let descriptor = self
-                    .vms
-                    .get(&vm_id)
-                    .and_then(|vm| {
-                        vm.executions
-                            .get(&payload.execution_id)
-                            .map(|execution| execution.descriptor.clone())
-                    })
                     .expect("execution checked above");
+                execution.deadline_task = Some(task);
+                let descriptor = execution.descriptor.clone();
                 ResponsePayload::ExecutionDescriptor(ExecutionDescriptorResponse {
                     execution: descriptor,
                 })

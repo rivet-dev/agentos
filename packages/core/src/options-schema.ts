@@ -541,6 +541,7 @@ export const agentOsOptionFieldSchemas = {
 	loopbackExemptPorts: z.array(z.number().int().min(0).max(65535)).optional(),
 	allowedNodeBuiltins: stringArray.optional(),
 	wasmBackend: z.enum(["v8", "wasmtime", "wasmtime-threads"]).optional(),
+	defaultsProfile: z.enum(["agent_os", "secure"]).optional(),
 	highResolutionTime: z.boolean().optional(),
 	database: z
 		.object({

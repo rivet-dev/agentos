@@ -29,10 +29,17 @@ behavioral owner.
 | Cron | 391 | RivetKit scheduling plus Core execution | Schedule persistence and private invocation |
 | Events and metrics | 304 | Contract transport plus actor bridge | Bounded RivetKit event emission |
 
-The first extraction leaves about 9,600 total lines in `crates/actor/src`
-(including inline tests), down from about 12,500. The process preload service,
-central coordinator actor, and their metrics/tests now live in
-`agentos-preload`; `crates/actor/src/preload.rs` is a 22-line lifecycle adapter.
+The extraction leaves approximately 3,980 production lines and 5,631 total lines in
+`crates/actor/src`, down from approximately 9,900 and 12,500 respectively. The
+public config, lifecycle, action, event, and transport DTOs plus their pure
+Core adapters live in `agentos-actor-contract`. The process preload service,
+central coordinator actor, and their metrics/tests live in `agentos-preload`;
+`crates/actor/src/preload.rs` is a 22-line lifecycle adapter.
+
+The largest remaining actor files are the Rivet SQLite adapter (587 production
+lines), lifecycle controller (487), process/terminal routing and event bridging
+(521), filesystem forwarding (391), and language forwarding (336). The hosted
+SQLite path uses `Ctx::sql()`; `rusqlite` is confined to an opt-in adapter test.
 
 ## Ownership rules
 

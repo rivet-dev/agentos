@@ -3270,22 +3270,26 @@ async fn admit_trusted_initial_wasm_source_if_missing(
     else {
         return Ok(());
     };
-    let mut vm = handle.try_borrow_mut("prepare trusted initial image admission")?;
-    let maximum_bytes = vm.limits.wasm.max_module_file_bytes;
-    match vm
-        .kernel
-        .load_trusted_initial_runtime_image(&guest_entrypoint, maximum_bytes)
-    {
-        Ok(_) => return Ok(()),
-        Err(error)
-            if error.code() == "ENOENT"
-                && !resolved_entrypoint_uses_kernel_launch_asset(
-                    &vm,
-                    resolved,
-                    &guest_entrypoint,
-                ) => {}
-        Err(error) => return Err(kernel_error(error)),
-    }
+    let (maximum_bytes, runtime) = {
+        let mut vm = handle.try_borrow_mut("prepare trusted initial image admission")?;
+        let maximum_bytes = vm.limits.wasm.max_module_file_bytes;
+        match vm
+            .kernel
+            .load_trusted_initial_runtime_image(&guest_entrypoint, maximum_bytes)
+        {
+            Ok(_) => return Ok(()),
+            Err(error)
+                if error.code() == "ENOENT"
+                    && !resolved_entrypoint_uses_kernel_launch_asset(
+                        &vm,
+                        resolved,
+                        &guest_entrypoint,
+                    ) => {}
+            Err(error) => return Err(kernel_error(error)),
+        }
+
+        (maximum_bytes, vm.runtime_context.clone())
+    };
 
     // A low-level Execute request may name a trusted caller-supplied host
     // module while selecting a guest cwd such as `/`. Open and read that exact
@@ -3300,8 +3304,6 @@ async fn admit_trusted_initial_wasm_source_if_missing(
             resolved.host_cwd.join(candidate)
         }
     };
-    let runtime = vm.runtime_context.clone();
-    drop(vm);
     let source =
         read_bounded_host_launch_source_async(runtime, host_entrypoint, maximum_bytes).await?;
     let mut vm = handle.try_borrow_mut("admit trusted initial image")?;
@@ -4745,6 +4747,10 @@ where
         vm.kernel.resource_limits().max_processes
     })?;
     let _startup_permit = execution_engines.admit_startup(max_processes).await?;
+    let _replay_admission = payload
+        .retain_output
+        .then(|| input.vm.reserve_process_output_replay(&payload.process_id))
+        .transpose()?;
     let mut vm = input.vm.try_borrow_mut("prepare and start execution")?;
     if vm.active_processes.contains_key(&payload.process_id) {
         return Err(VmError::InvalidState(format!(
@@ -4782,7 +4788,7 @@ where
             let guest_env = vm.guest_env.clone();
             let kernel_handle = vm
                 .kernel
-                .create_virtual_process(
+                .create_trusted_root_virtual_process(
                     EXECUTION_DRIVER_NAME,
                     HOST_FUNCTION_DRIVER_NAME,
                     command,
@@ -4831,7 +4837,7 @@ where
                 .vm_pending_event_bytes_budget
                 .clone();
             let event_notify = host_function_execution.event_notify.clone();
-            let host_cwd = runtime_launch_path_for_guest(&mut vm, &guest_cwd);
+            let host_cwd = runtime_launch_path_for_guest(&vm, &guest_cwd);
             let mut process = ActiveProcess::new_with_attached_runtime_control(
                 kernel_pid,
                 kernel_handle,
@@ -4971,7 +4977,7 @@ where
     let phase_start = Instant::now();
     let kernel_handle = vm
         .kernel
-        .spawn_process(
+        .spawn_initial_process(
             &resolved.command,
             argv,
             SpawnOptions {
@@ -5159,7 +5165,7 @@ where
             let execution = match javascript_engine
                 .start_execution_with_module_reader_and_runtime(
                     StartJavascriptExecutionRequest {
-                        guest_runtime: guest_runtime_identity(&mut vm, None, None),
+                        guest_runtime: guest_runtime_identity(&vm, None, None),
                         vm_id: vm_id.clone(),
                         context_id: context_id.clone(),
                         argv: std::iter::once(launch_entrypoint.clone())
@@ -5168,7 +5174,7 @@ where
                         argv0: None,
                         env: env.clone(),
                         cwd: resolved.host_cwd.clone(),
-                        limits: javascript_execution_limits(&mut vm),
+                        limits: javascript_execution_limits(&vm),
                         inline_code,
                         wasm_module_bytes: None,
                     },
@@ -5280,8 +5286,8 @@ where
                     file_path: python_file_path,
                     env: env.clone(),
                     cwd: resolved.host_cwd.clone(),
-                    limits: python_execution_limits_with_env(&mut vm, &env),
-                    guest_runtime: guest_runtime_identity(&mut vm, None, None),
+                    limits: python_execution_limits_with_env(&vm, &env),
+                    guest_runtime: guest_runtime_identity(&vm, None, None),
                 },
                 vm.runtime_context.clone(),
             );
@@ -5332,9 +5338,9 @@ where
                 execution_engines.wasm("start wasm execution"),
                 "top-level wasm engine admission"
             );
-            let wasm_limits = wasm_execution_limits(&mut vm);
+            let wasm_limits = wasm_execution_limits(&vm);
             let wasm_guest_runtime =
-                guest_runtime_identity(&mut vm, Some(u64::from(kernel_pid)), Some(0));
+                guest_runtime_identity(&vm, Some(u64::from(kernel_pid)), Some(0));
             let wasm_permission_tier = top_level_start_step!(
                 vm.kernel
                     .process_permission_tier(EXECUTION_DRIVER_NAME, kernel_pid)

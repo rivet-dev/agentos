@@ -25,6 +25,8 @@ pub(crate) struct Outcome {
     pub(crate) exec_commits: usize,
 }
 
+// Shared with the threaded sidecar suite, which calls run_with_threads directly.
+#[allow(dead_code)]
 pub(crate) fn run(initial: &[u8], replacement: Option<&[u8]>) -> Outcome {
     run_with_threads(initial, replacement, false)
 }

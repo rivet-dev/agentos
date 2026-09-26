@@ -427,6 +427,8 @@ fn run_raw_module_for_backend(
             4,
             wire_vm(&connection_id, &session_id, &vm_id),
             RequestPayload::ExecuteRequest(ExecuteRequest {
+                retain_output: false,
+
                 process_id: process_id.clone(),
                 command: None,
                 runtime: Some(GuestRuntimeKind::WebAssembly),

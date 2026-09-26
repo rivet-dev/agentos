@@ -7,6 +7,10 @@ Pass a serializable permission tree in creation config or a later complete
 `config.set` replacement. The trusted sidecar enforces it for every guest
 operation.
 
+Both defaults profiles allow VM-local networking. External networking and DNS,
+including model-provider endpoints, require an explicit permission grant.
+Omitted permission scopes retain their sidecar-owned defaults.
+
 <CodeSnippet file="examples/permissions/server.ts" region="grant-network" />
 
 <CodeSnippet file="examples/permissions/server.ts" region="allow-one-host" />

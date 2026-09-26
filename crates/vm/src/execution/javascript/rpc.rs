@@ -425,9 +425,11 @@ pub(crate) fn deferred_kernel_wait_request_for_process(
         return Ok(None);
     }
     let fd = javascript_sync_rpc_arg_u32(&request.args, 0, "filesystem write fd")?;
-    let is_pipe = kernel
-        .fd_is_pipe(EXECUTION_DRIVER_NAME, process.kernel_pid, fd)
-        .map_err(kernel_error)?;
+    // Descriptor errors belong to the normal handler, which settles the guest
+    // reply. Escaping this classification precheck leaves the RPC unanswered.
+    let Ok(is_pipe) = kernel.fd_is_pipe(EXECUTION_DRIVER_NAME, process.kernel_pid, fd) else {
+        return Ok(None);
+    };
     if !is_pipe {
         return Ok(None);
     }
@@ -1198,17 +1200,7 @@ impl From<Value> for HostServiceResponse {
     }
 }
 
-impl HostServiceResponse {
-    pub(in crate::execution) fn as_json(&self) -> Option<&Value> {
-        match self {
-            Self::Json(value) => Some(value),
-            Self::Raw(_)
-            | Self::Deferred { .. }
-            | Self::SourceBackedJson { .. }
-            | Self::SourceBackedRaw { .. } => None,
-        }
-    }
-}
+impl HostServiceResponse {}
 
 pub(crate) struct NetServiceRequest<'a, B> {
     pub(crate) bridge: &'a SharedBridge<B>,
@@ -1769,7 +1761,7 @@ where
         | "net.http2_stream_pause"
         | "net.http2_stream_resume"
         | "net.http2_stream_respond_with_file" => {
-            return service_javascript_http2_sync_rpc(JavascriptHttp2SyncRpcServiceRequest {
+            return service_javascript_http2_sync_rpc(Http2SyncRpcServiceRequest {
                 bridge,
                 kernel,
                 vm_id,
@@ -2623,7 +2615,9 @@ where
                 javascript_sync_rpc_arg_u64_optional(&request.args, 2, "fd_read timeout ms")?;
             // Read non-blocking for WASM so the reactor is never parked in a
             // pipe read; the runner poll+retries on EAGAIN (#1959).
-            if process.runtime == GuestRuntimeKind::WebAssembly {
+            if process.execution.synchronous_fd_read_policy()
+                == crate::executor::backend::SynchronousFdReadPolicy::NonblockingRetry
+            {
                 kernel
                     .fd_read_with_timeout_result(
                         EXECUTION_DRIVER_NAME,
@@ -4128,58 +4122,10 @@ where
     } = request;
     let trace_enabled = net_tcp_trace_enabled(&process.env);
     match request.method.as_str() {
-        "net.http_listen" => {
-            let pending = reserve_capability(&capabilities, CapabilityKind::TcpListener)?;
-            let payload_json =
-                javascript_sync_rpc_arg_str(&request.args, 0, "net.http_listen payload")?;
-            let payload: JavascriptHttpListenRequest =
-                serde_json::from_str(payload_json).map_err(|error| {
-                    VmError::InvalidState(format!(
-                        "net.http_listen payload must be valid JSON: {error}"
-                    ))
-                })?;
-            let (family, bind_host, guest_host) =
-                normalize_tcp_listen_host(payload.hostname.as_deref())?;
-            let requested_port = payload.port.unwrap_or(0);
-            bridge.require_network_access(
-                vm_id,
-                NetworkOperation::Listen,
-                format_tcp_resource(bind_host, requested_port),
-            )?;
-            let port = allocate_guest_listen_port(
-                requested_port,
-                family,
-                &socket_paths.used_tcp_guest_ports,
-                socket_paths.listen_policy,
-            )?;
-            let mut listener =
-                ActiveTcpListener::bind(bind_host, guest_host, port, Some(DEFAULT_NET_BACKLOG))?;
-            let guest_local_addr = listener.guest_local_addr();
-            commit_process_capability(
-                process,
-                pending,
-                NativeCapabilityKey::HttpServer(payload.server_id),
-                format!("http-server-{}", payload.server_id),
-                None,
-            )?;
-            process.http_servers.insert(
-                payload.server_id,
-                ActiveHttpServer {
-                    listener: listener.listener.take().ok_or_else(|| {
-                        VmError::InvalidState(String::from("HTTP listener missing host TCP socket"))
-                    })?,
-                    guest_local_addr,
-                    next_request_id: 0,
-                    closed: Arc::new(AtomicBool::new(false)),
-                    close_notify: Arc::new(tokio::sync::Notify::new()),
-                },
-            );
-            serde_json::to_string(&json!({
-                "address": socket_address_value(&guest_local_addr)
-            }))
-            .map(Value::String)
-            .map_err(|error| VmError::host("ERR_AGENTOS_NODE_SYNC_RPC", format!("{error}")))
-        }
+        "net.http_listen" => Err(VmError::host(
+            "ENOTSUP",
+            "legacy host-backed HTTP listeners are disabled; node:http uses the VM-local net.listen transport",
+        )),
         "net.http_close" => {
             let server_id =
                 javascript_sync_rpc_arg_u64(&request.args, 0, "net.http_close server id")?;

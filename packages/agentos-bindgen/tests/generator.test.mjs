@@ -13,7 +13,7 @@ test("rejects action/group path collisions", () => {
 
 test("reconstructs dotted actions as a nested type tree", () => {
 	const output = emitTypeScript({
-		apiVersion: "agentos-sdk.dev/v1alpha1",
+		apiVersion: "https://rivet.dev/agentos/v1alpha1",
 		contractMajor: 1,
 		contractHash: `sha256:${"a".repeat(64)}`,
 		capabilities: ["network.pull-streaming"],
@@ -41,7 +41,7 @@ test("retains reserved actions in the IR but omits them from the client", () => 
 	const contract = validateContract({
 		schemaVersion: 1,
 		actorName: "agentOS",
-		apiVersion: "agentos-sdk.dev/v1alpha1",
+		apiVersion: "https://rivet.dev/agentos/v1alpha1",
 		contractMajor: 1,
 		contractHash: `sha256:${"a".repeat(64)}`,
 		capabilities: [],

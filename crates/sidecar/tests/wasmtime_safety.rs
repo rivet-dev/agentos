@@ -73,6 +73,8 @@ fn run_wasm_backend_with_tier(
             4,
             wire_vm(&connection_id, &session_id, &vm_id),
             RequestPayload::ExecuteRequest(ExecuteRequest {
+                retain_output: false,
+
                 process_id: process_id.clone(),
                 command: None,
                 runtime: Some(GuestRuntimeKind::WebAssembly),
@@ -121,6 +123,8 @@ fn start_threaded_process(
             request_id,
             wire_vm(connection_id, session_id, vm_id),
             RequestPayload::ExecuteRequest(ExecuteRequest {
+                retain_output: false,
+
                 process_id: process_id.to_owned(),
                 command: None,
                 runtime: Some(GuestRuntimeKind::WebAssembly),
@@ -133,10 +137,14 @@ fn start_threaded_process(
             }),
         ))
         .expect("start threaded Wasmtime process");
-    assert!(matches!(
-        started.response.payload,
-        ResponsePayload::ProcessStartedResponse(_)
-    ));
+    assert!(
+        matches!(
+            &started.response.payload,
+            ResponsePayload::ProcessStartedResponse(_)
+        ),
+        "threaded process {process_id} in {vm_id} was rejected: {:?}",
+        started.response.payload
+    );
 }
 
 fn threaded_wait_forever_module() -> Vec<u8> {
@@ -870,7 +878,12 @@ fn concurrent_thread_groups_preserve_memory_isolation_and_process_admission() {
         "AGENTOS_WASMTIME_WORKER_PATH",
         env!("CARGO_BIN_EXE_agentos-sidecar"),
     );
-    const GROUPS: usize = 8;
+    // The process-wide default admission bound follows available CPUs. Run as
+    // many concurrent groups as this host can admit, capped at eight, so the
+    // test exercises concurrency on both small CI runners and larger hosts.
+    let groups = agentos_driver_tokio::DriverConfig::default()
+        .max_active_vm_executors
+        .min(8);
     let name = "wasmtime-threaded-high-concurrency";
     let module = wat::parse_str(
         r#"(module
@@ -902,7 +915,7 @@ fn concurrent_thread_groups_preserve_memory_isolation_and_process_admission() {
     let connection_id = authenticate_wire(&mut sidecar, "conn-wasmtime-thread-concurrency");
     let session_id = open_session_wire(&mut sidecar, 2, &connection_id);
     let mut processes = HashMap::new();
-    for index in 0..GROUPS {
+    for index in 0..groups {
         let (vm_id, _) = support::create_vm_wire_with_metadata(
             &mut sidecar,
             10 + index as i64,
@@ -927,7 +940,7 @@ fn concurrent_thread_groups_preserve_memory_isolation_and_process_admission() {
 
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     let mut exits = HashMap::new();
-    while exits.len() < GROUPS && std::time::Instant::now() < deadline {
+    while exits.len() < groups && std::time::Instant::now() < deadline {
         let event = sidecar
             .poll_event_wire_blocking(
                 &wire_session(&connection_id, &session_id),
@@ -942,7 +955,7 @@ fn concurrent_thread_groups_preserve_memory_isolation_and_process_admission() {
             }
         }
     }
-    assert_eq!(exits.len(), GROUPS, "not every threaded group completed");
+    assert_eq!(exits.len(), groups, "not every threaded group completed");
     assert!(
         exits.values().all(|exit_code| *exit_code == 0),
         "threaded group failures: {exits:?}"
@@ -1138,6 +1151,8 @@ fn terminal_signal_interrupts_and_reaps_pure_guest_compute() {
             4,
             wire_vm(&connection_id, &session_id, &vm_id),
             RequestPayload::ExecuteRequest(ExecuteRequest {
+                retain_output: false,
+
                 process_id: process_id.clone(),
                 command: None,
                 runtime: Some(GuestRuntimeKind::WebAssembly),
@@ -1224,6 +1239,8 @@ fn threaded_atomic_wait_is_killed_and_reaped_before_the_fixed_deadline() {
             4,
             wire_vm(&connection_id, &session_id, &vm_id),
             RequestPayload::ExecuteRequest(ExecuteRequest {
+                retain_output: false,
+
                 process_id: process_id.clone(),
                 command: None,
                 runtime: Some(GuestRuntimeKind::WebAssembly),

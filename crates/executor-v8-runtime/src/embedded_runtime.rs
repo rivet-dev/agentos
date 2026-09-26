@@ -1244,7 +1244,7 @@ mod tests {
                 .lock()
                 .expect("session manager")
                 .max_concurrency(),
-            Some(2)
+            2
         );
         assert_eq!(runtime.executor_teardown_timeout, Duration::from_millis(31));
         let (_receiver, registration) = runtime

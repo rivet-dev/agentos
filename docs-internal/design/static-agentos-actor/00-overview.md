@@ -687,7 +687,7 @@ generalization.
 7. **Preload ranking:** the coordinator uses a bounded recency-weighted exact map
    with deterministic eviction, not a probabilistic sketch.
 8. **Filesystem descriptors:** the hosted whitelist contains `default` and
-   `actor-sqlite` roots plus `actor-sqlite` mounts. Unknown backends and every
+   `durable` roots plus `durable` mounts. Unknown backends and every
    host path are rejected during config normalization.
 9. **Event naming:** public events use dotted names.
 10. **Binary transport:** RivetKit CBOR carries byte strings as `Uint8Array`;

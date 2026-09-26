@@ -1277,6 +1277,7 @@ fn decrement_saturating(counter: &AtomicUsize) {
 
 #[derive(Clone, Debug)]
 pub struct DriverHandle {
+    process_scope: Option<Arc<DriverHandle>>,
     handle: tokio::runtime::Handle,
     blocking: BlockingExecutor,
     resources: Arc<ResourceLedger>,
@@ -1301,6 +1302,12 @@ pub struct DriverHandle {
 pub type VmDriverHandle = DriverHandle;
 
 impl DriverHandle {
+    /// The process scope of this injected driver, without consulting or creating
+    /// a global runtime. Permanent shared services must not charge a VM scope.
+    pub fn process_scope(&self) -> Self {
+        self.process_scope.as_deref().unwrap_or(self).clone()
+    }
+
     pub fn tokio_handle(&self) -> &tokio::runtime::Handle {
         &self.handle
     }
@@ -1424,6 +1431,11 @@ impl DriverHandle {
         let admission_open = Arc::new(AtomicBool::new(true));
         let admission_gate = Arc::new(Mutex::new(()));
         Self {
+            process_scope: Some(
+                self.process_scope
+                    .clone()
+                    .unwrap_or_else(|| Arc::new(self.clone())),
+            ),
             handle: self.handle.clone(),
             blocking: self.blocking.scoped(
                 Arc::clone(&resources),
@@ -1704,6 +1716,7 @@ impl TokioDriver {
                 ))
             })?;
         let context = DriverHandle {
+            process_scope: None,
             handle: runtime.handle().clone(),
             blocking,
             resources: Arc::clone(&resources),
@@ -1781,6 +1794,39 @@ impl TokioDriver {
 mod tests {
     use super::*;
 
+    #[test]
+    fn scoped_driver_preserves_injected_process_scope() {
+        let runtime = TokioDriver::build(DriverConfig::default()).expect("build injected runtime");
+        let process = runtime.handle();
+        let resources = Arc::new(ResourceLedger::child(
+            "vm=injected-process-scope",
+            [(
+                ResourceClass::Timers,
+                ResourceLimit::new(1, "limits.jsRuntime.maxTimers"),
+            )],
+            Arc::clone(process.resources()),
+        ));
+        let vm = process.scoped_for_vm(Arc::clone(&resources), 1);
+        let nested = vm.scoped(Arc::clone(&resources));
+        let recovered = nested.process_scope();
+        assert!(Arc::ptr_eq(recovered.resources(), process.resources()));
+        assert!(matches!(recovered.default_owner, TaskOwner::Process));
+        let (release, wait) = tokio::sync::oneshot::channel::<()>();
+        let task = recovered
+            .spawn(TaskClass::Timer, async move {
+                wait.await.unwrap();
+            })
+            .expect("process-owned task");
+        assert_eq!(vm.tasks().active_scoped(), 0);
+        assert_eq!(nested.tasks().active_scoped(), 0);
+        assert_eq!(process.tasks().active_scoped(), 1);
+        vm.close_admission();
+        assert!(recovered.admission_is_open());
+        release.send(()).unwrap();
+        runtime.handle().tokio_handle().block_on(task).unwrap();
+        assert_eq!(process.tasks().active_scoped(), 0);
+        assert!(resources.is_zero());
+    }
     #[test]
     fn process_runtime_bounds_every_resource_class_by_default() {
         let runtime = TokioDriver::build(DriverConfig::default()).expect("build runtime");

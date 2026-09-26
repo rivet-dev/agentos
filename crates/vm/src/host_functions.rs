@@ -1,8 +1,9 @@
+#[cfg(test)]
+use crate::core::host_functions::validate_host_functions_registration as core_validate_host_functions_registration;
 use crate::core::host_functions::{
     ensure_collection_name_available as core_ensure_collection_name_available,
     ensure_command_aliases_available as core_ensure_command_aliases_available,
     ensure_host_function_registry_capacity_with_limits, registered_host_function_command_names,
-    validate_host_functions_registration as core_validate_host_functions_registration,
     validate_host_functions_registration_with_limits, HostFunctionRegistrationError,
 };
 #[cfg(test)]
@@ -711,6 +712,7 @@ fn host_function_command_names(vm: &VmState) -> Vec<String> {
     registered_host_function_command_names(&vm.host_functions)
 }
 
+#[cfg(test)]
 fn validate_host_functions_registration(
     payload: &RegisterHostCallbacksRequest,
 ) -> Result<(), VmError> {

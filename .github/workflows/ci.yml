@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
@@ -99,31 +100,31 @@ jobs:
           key: wasm-commands-${{ hashFiles('toolchain/Cargo.lock') }}
       - run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos-core...'
       - name: Build the bounded PR command corpus
-        if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
+        if: github.event_name == 'pull_request'
         run: make -C toolchain pr-commands
       - name: Build the complete command corpus
-        if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
+        if: github.event_name != 'pull_request'
         run: make -C toolchain commands
       # DuckDB and Vim are intentionally outside the default command set because
       # they are heavy builds, but the runtime/parity suites require their real
       # command artifacts.
       - name: Build required heavy integration commands
-        if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
+        if: github.event_name != 'pull_request'
         run: make -C toolchain cmd/duckdb cmd/vim
       - name: Build the pinned Codex WASI artifacts required by the software suite
-        if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
+        if: github.event_name != 'pull_request'
         run: make -C toolchain codex-required
       - name: Build mandatory threaded-WASM conformance fixtures
-        if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
+        if: github.event_name != 'pull_request'
         run: make -C toolchain/c pthread-conformance-wasm pthread-benchmark-wasm
       - name: Stage native/WASM C parity fixtures
-        if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
+        if: github.event_name != 'pull_request'
         run: make -C toolchain/c conformance-artifacts
       - name: Stage the bounded PR command corpus
-        if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
+        if: github.event_name == 'pull_request'
         run: node packages/core/scripts/copy-wasm-commands.mjs --require-coreutils
       - name: Stage the complete command corpus
-        if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
+        if: github.event_name != 'pull_request'
         run: node packages/core/scripts/copy-wasm-commands.mjs --require
       - uses: actions/upload-artifact@v4
         with:
@@ -132,13 +133,13 @@ jobs:
           retention-days: 1
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
-        if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
+        if: github.event_name != 'pull_request'
         with:
           name: codex-wasi
           path: software/codex/wasm
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
-        if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
+        if: github.event_name != 'pull_request'
         with:
           name: wasm-thread-fixtures
           path: |
@@ -147,14 +148,14 @@ jobs:
             toolchain/c/build/exec_variants
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
-        if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
+        if: github.event_name != 'pull_request'
         with:
           name: wasm-c-parity-fixtures
           path: toolchain/c/build/conformance
           if-no-files-found: error
 
-  rust:
-    name: Rust
+  executor-feature-isolation:
+    name: Executor Feature Isolation
     if: github.event_name != 'pull_request' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
     runs-on: ubuntu-latest
     env:
@@ -171,17 +172,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: native-pr-${{ hashFiles('Cargo.lock') }}
       - name: Install V8 bridge build dependencies
         run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos-build-tools...'
-      - name: Verify generated VM config bindings
-        run: |
-          cargo test -p agentos-vm-config --quiet
-          git diff --exit-code -- packages/core/src/generated
-      - name: Build PR sidecar binaries
-        run: cargo build -p agentos-sidecar
       - name: Check native executor feature isolation
         run: |
           cargo check -p agentos-vm --no-default-features
@@ -213,8 +205,40 @@ jobs:
               --no-default-features \
               --features "$feature"
           done
+
+  rust:
+    name: Rust
+    if: github.event_name != 'pull_request' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
+    runs-on: ubuntu-latest
+    env:
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: native-pr-${{ hashFiles('Cargo.lock') }}
+      - name: Install V8 bridge build dependencies
+        run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos-build-tools...'
+      - name: Verify generated VM config bindings
+        run: |
+          cargo test -p agentos-vm-config --quiet
+          git diff --exit-code -- packages/core/src/generated
+      - name: Build PR sidecar binaries
+        run: cargo build -p agentos-sidecar
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test -p agentos-acp-protocol -p agentos-sidecar -- --test-threads=1
+      - name: Check VM architecture boundaries
+        run: cargo test -p agentos-vm --test architecture_guards -- --test-threads=1
+      - run: cargo test -p agentos-actor -p agentos-acp-protocol -p agentos-sidecar -- --test-threads=1
       - name: Test Rust client contracts
         env:
           AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/target/debug/agentos-sidecar
@@ -353,7 +377,7 @@ jobs:
   required:
     name: CI / Required
     if: ${{ always() && (github.event_name != 'pull_request' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')) }}
-    needs: [checks, wasm-commands, rust, core-pr, core-runtime-pr, actor-pr, wasm-backend-matrix]
+    needs: [checks, wasm-commands, rust, executor-feature-isolation, core-pr, core-runtime-pr, actor-pr, wasm-backend-matrix]
     runs-on: ubuntu-latest
     steps:
       - name: Require every PR gate
@@ -361,16 +385,18 @@ jobs:
           CHECKS_RESULT: ${{ needs.checks.result }}
           WASM_RESULT: ${{ needs.wasm-commands.result }}
           RUST_RESULT: ${{ needs.rust.result }}
+          FEATURE_ISOLATION_RESULT: ${{ needs.executor-feature-isolation.result }}
           CORE_RESULT: ${{ needs.core-pr.result }}
           CORE_RUNTIME_RESULT: ${{ needs.core-runtime-pr.result }}
           ACTOR_RESULT: ${{ needs.actor-pr.result }}
           WASM_BACKEND_RESULT: ${{ needs.wasm-backend-matrix.result }}
-          EXPECT_WASM_BACKEND_MATRIX: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci') }}
+          EXPECT_WASM_BACKEND_MATRIX: ${{ github.event_name != 'pull_request' }}
         run: |
           for result in \
             "$CHECKS_RESULT" \
             "$WASM_RESULT" \
             "$RUST_RESULT" \
+            "$FEATURE_ISOLATION_RESULT" \
             "$CORE_RESULT" \
             "$CORE_RUNTIME_RESULT" \
             "$ACTOR_RESULT"; do
@@ -386,9 +412,9 @@ jobs:
 
   wasm-backend-matrix:
     name: "WASM backend (${{ matrix.backend }})"
-    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
+    if: github.event_name != 'pull_request'
     needs: [wasm-commands]
-    runs-on: [self-hosted, agentos-builder]
+    runs-on: depot-ubuntu-24.04-8
     timeout-minutes: 180
     strategy:
       fail-fast: false
@@ -472,8 +498,8 @@ jobs:
         run: pnpm exec turbo test --concurrency=1 --filter='@agentos-software/*'
       - name: Run every registry software nightly suite through the selected WASM backend
         run: pnpm exec turbo test:nightly --concurrency=1 --filter='@agentos-software/*'
-      - name: Run deterministic actor, ACP, and agent-tool conformance
-        run: pnpm --filter @rivet-dev/agentos test:e2e:run
+      - name: Run actor and ACP contracts
+        run: cargo test -p agentos-actor -p agentos-acp-protocol -- --test-threads=1
       - name: Run mixed V8-JavaScript and Wasmtime resource-plateau smoke
         if: matrix.backend == 'wasmtime'
         run: pnpm --dir packages/benchmarks test:wasm-mixed-smoke

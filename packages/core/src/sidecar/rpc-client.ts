@@ -414,6 +414,7 @@ interface SocketLookupCacheEntry {
 }
 
 interface TrackedProcessEntry {
+	retainOutput: boolean;
 	pid: number;
 	processId: string;
 	command: string;
@@ -432,8 +433,8 @@ interface TrackedProcessEntry {
 	waitError: Error | null;
 	wakeWait: (() => void) | null;
 	confirmExit: (exitCode: number) => void;
-	onStdout: Set<(data: Uint8Array) => void>;
-	onStderr: Set<(data: Uint8Array) => void>;
+	onStdout: Set<NonNullable<KernelSpawnOptions["onStdout"]>>;
+	onStderr: Set<NonNullable<KernelSpawnOptions["onStderr"]>>;
 	pendingStdin: Array<string | Uint8Array>;
 	stdinFlushPromise: Promise<void> | null;
 	pendingCloseStdin: boolean;
@@ -906,6 +907,7 @@ export class SidecarKernelProxy {
 				...(options?.env ?? {}),
 				...(options?.streamStdin ? { AGENTOS_KEEP_STDIN_OPEN: "1" } : {}),
 			},
+			retainOutput: options?.retainOutput ?? false,
 			wasmBackend: options?.wasmBackend,
 			startTime: Date.now(),
 			exitTime: null,
@@ -933,6 +935,7 @@ export class SidecarKernelProxy {
 
 		const proc: ManagedProcess = {
 			pid,
+			processId,
 			writeStdin: (data) => {
 				if (entry.exitCode !== null) {
 					return Promise.resolve();
@@ -1389,6 +1392,7 @@ export class SidecarKernelProxy {
 			cwd: options?.cwd,
 			wasmBackend: options?.wasmBackend,
 			streamStdin: true,
+			retainOutput: true,
 			onStdout: (chunk) => {
 				const sanitized = sanitizeNativeShellOutput(chunk);
 				if (!sanitized) {
@@ -2008,6 +2012,7 @@ export class SidecarKernelProxy {
 			args: entry.args,
 			env: entry.env,
 			cwd: entry.cwd,
+			retainOutput: entry.retainOutput,
 			wasmBackend: entry.wasmBackend,
 		});
 		entry.hostPid = started.pid;
@@ -2069,7 +2074,10 @@ export class SidecarKernelProxy {
 							? entry.onStdout
 							: entry.onStderr;
 					for (const listener of listeners) {
-						listener(chunk);
+						listener(chunk, {
+							sequence: event.payload.sequence,
+							timestampMs: event.payload.timestamp_ms,
+						});
 					}
 					continue;
 				}
@@ -2106,6 +2114,14 @@ export class SidecarKernelProxy {
 				return;
 			}
 		}
+	}
+
+	/** Internal: replay carries the same authoritative exit proof as a live event. */
+	reconcileReplayExit(processId: string, exitCode: number): void {
+		const entry = this.trackedProcessesById.get(processId);
+		if (!entry) return;
+		entry.confirmExit(exitCode);
+		this.finishProcess(entry, exitCode);
 	}
 
 	private finishProcess(entry: TrackedProcessEntry, exitCode: number): void {

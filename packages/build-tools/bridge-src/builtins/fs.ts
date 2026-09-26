@@ -2408,11 +2408,16 @@ async function fsReadFileAsync(path, options) {
 
   const rawPath = normalizePathLike(path);
   const encoding = typeof options === "string" ? options : options?.encoding;
+  const signal = validateAbortSignal(typeof options === "object" ? options?.signal : void 0);
+  throwIfAborted(signal);
   try {
     if (encoding) {
-      return await _fsAsync.readFile.apply(void 0, [rawPath, encoding]);
+      const contents = await _fsAsync.readFile.apply(void 0, [rawPath, encoding]);
+      throwIfAborted(signal);
+      return contents;
     }
     const base64Content = await _fsAsync.readFileBinary.apply(void 0, [rawPath]);
+    throwIfAborted(signal);
     return import_buffer.Buffer.from(base64Content, "base64");
   } catch (err) {
     if (bridgeErrorCode(err) === "ENOENT") {

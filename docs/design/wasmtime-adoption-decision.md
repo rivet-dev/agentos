@@ -101,24 +101,24 @@ adapter to maintain while V8 remains necessary for JavaScript.
 ## Performance and memory evidence
 
 The [September 26 integrated-tree benchmark](../../packages/benchmarks/results/wasm-backend-comparison.json)
-used source snapshot `bef626a57054af31af505ecefdc834c90dc31b67`, Wasmtime
+used source snapshot `d6591c0f41fdd19243b570edc66af1182d7a2a0c`, Wasmtime
 48.0.3, and five fresh processes per backend with five samples for each of nine
 workloads on one x86-64 host. Correctness passed, and the geometric-mean
-workload p50 ratio was `0.217923` (Wasmtime/V8). Warm shell p50 was 47.3 ms
-versus 317.8 ms; the host-call-heavy filesystem workload was 36.8 ms versus
-178.3 ms. These are whole-workload timings, not isolated host-call binding
+workload p50 ratio was `0.236617` (Wasmtime/V8). Warm shell p50 was 48.0 ms
+versus 306.8 ms; the host-call-heavy filesystem workload was 39.0 ms versus
+172.2 ms. These are whole-workload timings, not isolated host-call binding
 latencies.
 
-Cold-start tails still failed: shell cold p95 was 2,673 ms on Wasmtime versus
-334 ms on V8. The throughput/admission gate also failed: Wasmtime admitted
+Cold-start tails still failed: shell cold p95 was 2,657 ms on Wasmtime versus
+327 ms on V8. The throughput/admission gate also failed: Wasmtime admitted
 20 of 50 and 20 of 100 requested executions, while V8 admitted all 50 and
 100. A faster subset is not an equal-load throughput win. At concurrency 1
 and 10, both backends admitted all requested work and Wasmtime throughput
-was 2.4–12.4 times V8's across the repeated/diverse rows.
+was 2.5–16.0 times V8's across the repeated/diverse rows.
 
 Retained-memory gates passed. Median absolute process-tree RSS after VM
-disposal was 520,683,520 bytes on Wasmtime versus 515,252,224 on V8; PSS was
-518,329,344 versus 512,814,080 bytes. These totals include retained runtime
+disposal was 523,018,240 bytes on Wasmtime versus 526,983,168 on V8; PSS was
+520,773,632 versus 524,635,136 bytes. These totals include retained runtime
 and compiled-module state, not only live guest memory. The older
 [phase-4 artifact](../../packages/benchmarks/results/wasm-backend-comparison-phase4.json)
 measured sidecar-only increases over baseline, so its memory numbers are not

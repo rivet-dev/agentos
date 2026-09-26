@@ -45,15 +45,15 @@ From the repository root:
 ```
 
 The benchmark script builds an optimized native binary, points the Core client
-at it with `AGENT_OS_SIDECAR_BIN`, and writes JSON results under
+at it with `AGENTOS_SIDECAR_BIN`, and writes JSON results under
 `scripts/benchmarks/results/`.
 
 For a focused run, build first and select the minimal sleep/command workload:
 
 ```sh
 pnpm build
-cargo build --release -p agentos-native-sidecar
-export AGENT_OS_SIDECAR_BIN="$PWD/target/release/agentos-native-sidecar"
+cargo build --release -p agentos-sidecar
+export AGENTOS_SIDECAR_BIN="$PWD/target/release/agentos-sidecar"
 
 pnpm exec tsx scripts/benchmarks/coldstart.bench.ts \
   --workload=sleep --iterations=2000

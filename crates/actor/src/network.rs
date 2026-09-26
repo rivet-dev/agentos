@@ -1,195 +1,24 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use agentos_client::{HttpRequest, HttpResponse, HttpStreamChunk, HttpStreamHead};
+pub(crate) use agentos_actor_contract::network::*;
 use anyhow::{bail, Context, Result};
 use rivetkit::{Ctx, Handles, Request, Response};
-use serde::{Deserialize, Serialize};
 
 use crate::actions::BoxFuture;
 use crate::config::MIN_PREVIEW_TTL_MS;
 use crate::runtime::now_ms;
 use crate::store::{self, PreviewLease};
-use crate::{AgentOsActor, FileBytes, FileContentInput};
+use crate::{AgentOsActor, FileContentInput};
 
-const MAX_HTTP_PATH_BYTES: usize = 16 * 1024;
-const MAX_HTTP_METHOD_BYTES: usize = 32;
-const MAX_HTTP_HEADERS: usize = 128;
-const MAX_HTTP_HEADER_BYTES: usize = 64 * 1024;
-const MAX_HTTP_BODY_BYTES: usize = 512 * 1024;
-const MAX_HTTP_RESPONSE_BYTES: usize = 768 * 1024;
-const MAX_STREAM_CHUNK_BYTES: u32 = 128 * 1024;
-const DEFAULT_STREAM_CHUNK_BYTES: u32 = 64 * 1024;
-const MAX_STREAM_ID_BYTES: usize = 256;
-const MAX_STREAM_LIFETIME_MS: i64 = 60 * 60 * 1_000;
-const MAX_PREVIEW_TOKEN_BYTES: usize = 128;
 const PREVIEW_PREFIX: &str = "/preview/";
 
-fn default_http_method() -> String {
-    String::from("GET")
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ActorHttpRequest {
-    pub port: u16,
-    pub path: String,
-    #[cfg_attr(feature = "contract", ts(optional, as = "Option<_>"))]
-    #[serde(default = "default_http_method")]
-    pub method: String,
-    #[cfg_attr(feature = "contract", ts(optional, as = "Option<_>"))]
-    #[serde(default)]
-    pub headers: BTreeMap<String, String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub body: Option<FileContentInput>,
-}
-
-impl ActorHttpRequest {
-    fn validate(&self) -> Result<()> {
-        if self.port == 0 {
-            bail!("invalid_input: network port must be between 1 and 65535");
-        }
-        validate_nonempty_bytes("HTTP path", &self.path, MAX_HTTP_PATH_BYTES)?;
-        if !self.path.starts_with('/') {
-            bail!("invalid_input: HTTP path must start with '/'");
-        }
-        validate_nonempty_bytes("HTTP method", &self.method, MAX_HTTP_METHOD_BYTES)?;
-        if !self
-            .method
-            .bytes()
-            .all(|byte| byte.is_ascii_uppercase() || byte == b'-')
-        {
-            let uppercase = self.method.to_ascii_uppercase();
-            if !uppercase
-                .bytes()
-                .all(|byte| byte.is_ascii_uppercase() || byte == b'-')
-            {
-                bail!("invalid_input: HTTP method contains invalid bytes");
-            }
-        }
-        validate_headers(&self.headers)?;
-        if let Some(body) = &self.body {
-            validate_limit("HTTP body", body.byte_len(), MAX_HTTP_BODY_BYTES)?;
-        }
-        Ok(())
-    }
-
-    fn into_core(self) -> HttpRequest {
-        HttpRequest {
-            port: self.port,
-            path: self.path,
-            method: self.method,
-            headers: self.headers,
-            body: self.body.map(file_content_into_bytes),
-        }
-    }
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ActorHttpResponse {
-    pub status: u16,
-    pub status_text: String,
-    pub headers: Vec<(String, String)>,
-    pub body: FileBytes,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ActorFetchStreamId {
-    pub generation: u64,
-    pub stream_id: String,
-    pub expires_at_ms: i64,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ActorFetchStreamHead {
-    pub stream: ActorFetchStreamId,
-    pub status: u16,
-    pub status_text: String,
-    pub headers: Vec<(String, String)>,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ActorFetchStreamChunk {
-    pub body: FileBytes,
-    pub done: bool,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct NetworkFetch {
-    pub request: ActorHttpRequest,
-}
-
-crate::register_action!(NetworkFetch => ActorHttpResponse, "network.fetch");
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct NetworkFetchStreamStart {
-    pub request: ActorHttpRequest,
-}
-
-crate::register_action!(NetworkFetchStreamStart => ActorFetchStreamHead, "network.fetchStream.start");
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct NetworkFetchStreamRead {
-    pub stream: ActorFetchStreamId,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_bytes: Option<u32>,
-}
-
-crate::register_action!(NetworkFetchStreamRead => ActorFetchStreamChunk, "network.fetchStream.read");
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct NetworkFetchStreamCancel {
-    pub stream: ActorFetchStreamId,
-}
-
-crate::register_action!(NetworkFetchStreamCancel => (), "network.fetchStream.cancel");
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct NetworkPreviewCreate {
-    pub port: u16,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ttl_ms: Option<u64>,
-}
-
-crate::register_action!(NetworkPreviewCreate => ActorPreview, "network.preview.create");
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ActorPreview {
-    pub token: String,
-    pub path: String,
-    pub port: u16,
-    pub expires_at_ms: i64,
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct NetworkPreviewExpire {
-    pub token: String,
-}
-
-crate::register_action!(NetworkPreviewExpire => bool, "network.preview.expire");
+crate::register_contract_action!(NetworkFetch);
+crate::register_contract_action!(NetworkFetchStreamStart);
+crate::register_contract_action!(NetworkFetchStreamRead);
+crate::register_contract_action!(NetworkFetchStreamCancel);
+crate::register_contract_action!(NetworkPreviewCreate);
+crate::register_contract_action!(NetworkPreviewExpire);
 
 impl Handles<NetworkFetch> for AgentOsActor {
     type Future = BoxFuture<ActorHttpResponse>;
@@ -197,12 +26,12 @@ impl Handles<NetworkFetch> for AgentOsActor {
     fn handle(self: Arc<Self>, _ctx: Ctx<Self>, action: NetworkFetch) -> Self::Future {
         Box::pin(async move {
             let _permit = self.admit_action()?;
-            action.request.validate()?;
+            validate_http_request(&action.request)?;
             actor_http_response(
                 self.runtime
                     .vm()
                     .await?
-                    .http_request(action.request.into_core())
+                    .http_request(action.request)
                     .await?,
             )
         })
@@ -215,15 +44,15 @@ impl Handles<NetworkFetchStreamStart> for AgentOsActor {
     fn handle(self: Arc<Self>, _ctx: Ctx<Self>, action: NetworkFetchStreamStart) -> Self::Future {
         Box::pin(async move {
             let _permit = self.admit_action()?;
-            action.request.validate()?;
+            validate_http_request(&action.request)?;
             let status = self.runtime.status().await;
             let head = self
                 .runtime
                 .vm_at_generation(status.generation)
                 .await?
-                .http_request_stream_start(action.request.into_core())
+                .http_request_stream_start(action.request)
                 .await?;
-            actor_stream_head(status.generation, head)
+            actor_stream_head(status.generation, now_ms()?, head)
         })
     }
 }
@@ -382,13 +211,8 @@ pub(crate) async fn handle_preview_fetch(
         headers,
         body: Some(FileContentInput::Bytes(request.body().clone())),
     };
-    request.validate()?;
-    let response = actor
-        .runtime
-        .vm()
-        .await?
-        .http_request(request.into_core())
-        .await?;
+    validate_http_request(&request)?;
+    let response = actor.runtime.vm().await?.http_request(request).await?;
     validate_limit(
         "preview response body",
         response.body.len(),
@@ -417,125 +241,6 @@ pub(crate) async fn handle_preview_fetch(
     Ok(Response::from(outgoing))
 }
 
-fn actor_http_response(response: HttpResponse) -> Result<ActorHttpResponse> {
-    let header_bytes = response
-        .headers
-        .iter()
-        .fold(0usize, |total, (name, value)| {
-            total.saturating_add(name.len()).saturating_add(value.len())
-        });
-    validate_limit("HTTP response headers", header_bytes, MAX_HTTP_HEADER_BYTES)?;
-    validate_limit(
-        "HTTP response body",
-        response.body.len(),
-        MAX_HTTP_RESPONSE_BYTES,
-    )?;
-    Ok(ActorHttpResponse {
-        status: response.status,
-        status_text: response.status_text,
-        headers: response.headers,
-        body: FileBytes(response.body),
-    })
-}
-
-fn actor_stream_head(generation: u64, head: HttpStreamHead) -> Result<ActorFetchStreamHead> {
-    validate_nonempty_bytes("fetch stream id", &head.stream_id, MAX_STREAM_ID_BYTES)?;
-    let header_bytes = head.headers.iter().fold(0usize, |total, (name, value)| {
-        total.saturating_add(name.len()).saturating_add(value.len())
-    });
-    validate_limit("HTTP response headers", header_bytes, MAX_HTTP_HEADER_BYTES)?;
-    Ok(ActorFetchStreamHead {
-        stream: ActorFetchStreamId {
-            generation,
-            stream_id: head.stream_id,
-            expires_at_ms: now_ms()?
-                .checked_add(MAX_STREAM_LIFETIME_MS)
-                .context("fetch stream expiration overflow")?,
-        },
-        status: head.status,
-        status_text: head.status_text,
-        headers: head.headers,
-    })
-}
-
-fn actor_stream_chunk(chunk: HttpStreamChunk) -> Result<ActorFetchStreamChunk> {
-    validate_limit(
-        "fetch stream chunk",
-        chunk.body.len(),
-        MAX_STREAM_CHUNK_BYTES as usize,
-    )?;
-    Ok(ActorFetchStreamChunk {
-        body: FileBytes(chunk.body),
-        done: chunk.done,
-    })
-}
-
-fn validate_headers(headers: &BTreeMap<String, String>) -> Result<()> {
-    if headers.len() > MAX_HTTP_HEADERS {
-        bail!(
-            "limit_exceeded: HTTP headers has {} entries; maximum is {MAX_HTTP_HEADERS}",
-            headers.len()
-        );
-    }
-    let bytes = headers.iter().fold(0usize, |total, (name, value)| {
-        total.saturating_add(name.len()).saturating_add(value.len())
-    });
-    validate_limit("HTTP headers", bytes, MAX_HTTP_HEADER_BYTES)
-}
-
-fn validate_stream(stream: &ActorFetchStreamId) -> Result<()> {
-    if stream.generation == 0 {
-        bail!("invalid_input: fetch stream generation must be greater than zero");
-    }
-    if stream.expires_at_ms <= 0 {
-        bail!("invalid_input: fetch stream expiration must be greater than zero");
-    }
-    validate_nonempty_bytes("fetch stream id", &stream.stream_id, MAX_STREAM_ID_BYTES)
-}
-
-fn validate_token(token: &str) -> Result<()> {
-    validate_nonempty_bytes("preview token", token, MAX_PREVIEW_TOKEN_BYTES)?;
-    if !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        bail!("invalid_input: preview token contains invalid bytes");
-    }
-    Ok(())
-}
-
-fn validate_nonempty_bytes(label: &str, value: &str, max: usize) -> Result<()> {
-    if value.is_empty() {
-        bail!("invalid_input: {label} cannot be empty");
-    }
-    validate_limit(label, value.len(), max)
-}
-
-fn validate_limit(label: &str, actual: usize, max: usize) -> Result<()> {
-    if actual > max {
-        bail!("limit_exceeded: {label} is {actual}; maximum is {max}");
-    }
-    Ok(())
-}
-
-fn file_content_into_bytes(content: FileContentInput) -> Vec<u8> {
-    match content {
-        FileContentInput::Text(value) => value.into_bytes(),
-        FileContentInput::Bytes(value) => value,
-    }
-}
-
-fn is_hop_by_hop_header(name: &str) -> bool {
-    matches!(
-        name.to_ascii_lowercase().as_str(),
-        "connection"
-            | "keep-alive"
-            | "proxy-authenticate"
-            | "proxy-authorization"
-            | "te"
-            | "trailer"
-            | "transfer-encoding"
-            | "upgrade"
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -549,7 +254,7 @@ mod tests {
             headers: BTreeMap::new(),
             body: None,
         };
-        assert!(request.validate().is_err());
+        assert!(validate_http_request(&request).is_err());
         assert!(validate_limit(
             "chunk",
             MAX_STREAM_CHUNK_BYTES as usize + 1,

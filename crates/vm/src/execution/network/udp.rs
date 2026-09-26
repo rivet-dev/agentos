@@ -218,6 +218,29 @@ pub(crate) fn reserve_udp_receive_buffer(
     ))
 }
 
+async fn wait_for_native_udp_receive_capacity(resources: &ResourceLedger, capacity: usize) {
+    loop {
+        // A consumer may release its datagram after receive admission fails
+        // but before this future is polled. Arm before probing durable capacity
+        // so both that release and a release racing the probe are observed.
+        let changed = resources.capacity_changed();
+        if [
+            (ResourceClass::BufferedBytes, capacity),
+            (ResourceClass::Datagrams, 1),
+            (ResourceClass::UdpBytes, capacity),
+            (ResourceClass::UdpDatagrams, 1),
+        ]
+        .into_iter()
+        .all(|(resource, amount)| resources.capacity_available(resource, amount))
+        {
+            return;
+        }
+        // Probe without speculative reservations: rolling them back would
+        // publish our own capacity wake and spin while a consumer holds data.
+        changed.await;
+    }
+}
+
 pub(in crate::execution) enum ActiveUdpSendResult {
     Immediate {
         written: usize,
@@ -841,7 +864,10 @@ async fn run_native_udp_owner(task: NativeUdpOwnerTask) {
             }
         }
 
-        let capacity_changed = resources.capacity_changed();
+        let capacity_changed = wait_for_native_udp_receive_capacity(
+            &resources,
+            udp_receive_capacity(&resources, limits),
+        );
         tokio::pin!(capacity_changed);
         tokio::select! {
             biased;
@@ -2644,6 +2670,71 @@ mod native_udp_owner_tests {
         );
         drop(payload);
         assert!(resources.is_zero());
+    }
+
+    #[test]
+    fn receive_capacity_wait_rechecks_releases_before_registration() {
+        for (resource, amount) in [
+            (ResourceClass::BufferedBytes, 64),
+            (ResourceClass::Datagrams, 1),
+            (ResourceClass::UdpBytes, 64),
+            (ResourceClass::UdpDatagrams, 1),
+        ] {
+            for block_parent in [false, true] {
+                let parent = Arc::new(ResourceLedger::root(
+                    "udp-capacity-parent",
+                    [(
+                        resource,
+                        ResourceLimit::new(
+                            if block_parent { amount } else { amount * 2 },
+                            "test.parentCapacity",
+                        ),
+                    )],
+                ));
+                let resources = ResourceLedger::child(
+                    "udp-capacity-child",
+                    [(resource, ResourceLimit::new(amount, "test.childCapacity"))],
+                    Arc::clone(&parent),
+                );
+                let reserve = || {
+                    if block_parent {
+                        parent.reserve(resource, amount)
+                    } else {
+                        resources.reserve(resource, amount)
+                    }
+                    .unwrap()
+                };
+                let held = reserve();
+                assert!(reserve_udp_receive_buffer(&resources, 64).is_err());
+                // Reproduce the owner race: the consumer releases capacity
+                // after failed admission, before the owner registers its wait.
+                drop(held);
+                let mut wait = Box::pin(wait_for_native_udp_receive_capacity(&resources, 64));
+                let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+                assert!(
+                    wait.as_mut().poll(&mut context).is_ready(),
+                    "release before registration was lost for {resource:?}, parent={block_parent}"
+                );
+
+                let held = reserve();
+                let mut wait = Box::pin(wait_for_native_udp_receive_capacity(&resources, 64));
+                assert!(
+                    wait.as_mut().poll(&mut context).is_pending(),
+                    "wait must honor {resource:?}, parent={block_parent}"
+                );
+                assert!(
+                    wait.as_mut().poll(&mut context).is_pending(),
+                    "capacity probes must not release speculative reservations"
+                );
+                drop(held);
+                assert!(
+                    wait.as_mut().poll(&mut context).is_ready(),
+                    "registered wait must observe {resource:?} release, parent={block_parent}"
+                );
+                assert!(resources.is_zero());
+                assert!(parent.is_zero());
+            }
+        }
     }
 
     #[test]

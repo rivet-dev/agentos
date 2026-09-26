@@ -298,6 +298,7 @@ interface SocketLookupCacheEntry {
 }
 
 interface TrackedProcessEntry {
+	retainOutput: boolean;
 	pid: number;
 	processId: string;
 	command: string;
@@ -315,8 +316,8 @@ interface TrackedProcessEntry {
 	waitPromise: Promise<number>;
 	resolveWait: (exitCode: number) => void;
 	rejectWait: (error: Error) => void;
-	onStdout: Set<(data: Uint8Array) => void>;
-	onStderr: Set<(data: Uint8Array) => void>;
+	onStdout: Set<NonNullable<KernelSpawnOptions["onStdout"]>>;
+	onStderr: Set<NonNullable<KernelSpawnOptions["onStderr"]>>;
 	pendingStdin: Array<string | Uint8Array>;
 	stdinFlushPromise: Promise<void> | null;
 	pendingCloseStdin: boolean;
@@ -344,8 +345,13 @@ interface SidecarKernelProxyOptions {
 class VmDisposalTimeoutError extends Error {
 	readonly code = "timeout";
 	readonly operation = "vm.dispose";
-	constructor(readonly vmId: string, readonly deadlineMs: number) {
-		super(`timeout: VM ${vmId} disposal was not confirmed within ${deadlineMs}ms`);
+	constructor(
+		readonly vmId: string,
+		readonly deadlineMs: number,
+	) {
+		super(
+			`timeout: VM ${vmId} disposal was not confirmed within ${deadlineMs}ms`,
+		);
 		this.name = "VmDisposalTimeoutError";
 	}
 }
@@ -444,7 +450,10 @@ export class SidecarKernelProxy {
 		);
 		for (const result of signals) {
 			if (result.status === "rejected") {
-				console.error("agentOS process signal during disposal failed:", result.reason);
+				console.error(
+					"agentOS process signal during disposal failed:",
+					result.reason,
+				);
 			}
 		}
 
@@ -457,7 +466,10 @@ export class SidecarKernelProxy {
 			await Promise.race([
 				this.client.disposeVm(this.session, this.vm).catch((error) => {
 					if (timedOut) {
-						console.error("agentOS VM disposal failed after its client deadline:", error);
+						console.error(
+							"agentOS VM disposal failed after its client deadline:",
+							error,
+						);
 					}
 					throw error;
 				}),
@@ -481,11 +493,16 @@ export class SidecarKernelProxy {
 					// A rejected or timed-out disposal cannot prove guest termination.
 					// Observe rejection even when the caller never invokes proc.wait().
 					void entry.waitPromise.catch((error) => {
-						console.error("agentOS process wait aborted by failed VM disposal:", error);
+						console.error(
+							"agentOS process wait aborted by failed VM disposal:",
+							error,
+						);
 					});
-					entry.rejectWait(disposalError instanceof Error
-						? disposalError
-						: new Error(String(disposalError)));
+					entry.rejectWait(
+						disposalError instanceof Error
+							? disposalError
+							: new Error(String(disposalError)),
+					);
 					continue;
 				}
 				// The sidecar dispose path already performs TERM/KILL escalation for any
@@ -707,6 +724,7 @@ export class SidecarKernelProxy {
 				...(options?.env ?? {}),
 				...(options?.streamStdin ? { AGENTOS_KEEP_STDIN_OPEN: "1" } : {}),
 			},
+			retainOutput: options?.retainOutput ?? false,
 			wasmBackend: options?.wasmBackend,
 			startTime: Date.now(),
 			exitTime: null,
@@ -734,6 +752,7 @@ export class SidecarKernelProxy {
 
 		const proc: ManagedProcess = {
 			pid,
+			processId,
 			writeStdin: (data) => {
 				if (entry.exitCode !== null) {
 					return;
@@ -1140,6 +1159,7 @@ export class SidecarKernelProxy {
 			cwd: options?.cwd,
 			wasmBackend: options?.wasmBackend,
 			streamStdin: true,
+			retainOutput: true,
 			onStdout: (chunk) => {
 				for (const handler of terminalHandlers) {
 					handler(chunk);
@@ -1585,6 +1605,7 @@ export class SidecarKernelProxy {
 			args: entry.args,
 			env: entry.env,
 			cwd: entry.cwd,
+			retainOutput: entry.retainOutput,
 			wasmBackend: entry.wasmBackend,
 		});
 		entry.hostPid = started.pid;
@@ -1635,7 +1656,10 @@ export class SidecarKernelProxy {
 							? entry.onStdout
 							: entry.onStderr;
 					for (const listener of listeners) {
-						listener(chunk);
+						listener(chunk, {
+							sequence: event.payload.sequence,
+							timestampMs: event.payload.timestamp_ms,
+						});
 					}
 					continue;
 				}

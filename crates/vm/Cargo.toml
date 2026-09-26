@@ -214,3 +214,183 @@ tempfile = "3"
 vbare.workspace = true
 wat = "1.0"
 v8 = "130"
+
+[[test]]
+name = "bidirectional_frames"
+required-features = ["runtime"]
+
+[[test]]
+name = "bridge"
+required-features = ["runtime"]
+
+[[test]]
+name = "builtin_completeness"
+required-features = ["runtime"]
+
+[[test]]
+name = "builtin_conformance"
+required-features = ["runtime"]
+
+[[test]]
+name = "connection_auth"
+required-features = ["runtime"]
+
+[[test]]
+name = "crash_isolation"
+required-features = ["runtime"]
+
+[[test]]
+name = "extension"
+required-features = ["runtime"]
+
+[[test]]
+name = "fetch_via_undici"
+required-features = ["runtime"]
+
+[[test]]
+name = "filesystem"
+required-features = ["runtime"]
+
+[[test]]
+name = "fs_read_options"
+required-features = ["runtime"]
+
+[[test]]
+name = "fs_watch_and_streams"
+required-features = ["runtime"]
+
+[[test]]
+name = "generated_protocol"
+required-features = ["runtime"]
+
+[[test]]
+name = "google_drive"
+required-features = ["runtime"]
+
+[[test]]
+name = "guest_identity"
+required-features = ["runtime"]
+
+[[test]]
+name = "host_dir"
+required-features = ["runtime"]
+
+[[test]]
+name = "kill_cleanup"
+required-features = ["runtime"]
+
+[[test]]
+name = "language_execution"
+required-features = ["runtime"]
+
+[[test]]
+name = "layer_management"
+required-features = ["runtime"]
+
+[[test]]
+name = "limits"
+required-features = ["runtime"]
+
+[[test]]
+name = "limits_audit"
+required-features = ["runtime"]
+
+[[test]]
+name = "node_child_compat"
+required-features = ["runtime"]
+
+[[test]]
+name = "node_modules_host_mount_resolution"
+required-features = ["runtime"]
+
+[[test]]
+name = "node_modules_symlink_resolution"
+required-features = ["runtime"]
+
+[[test]]
+name = "package_projection"
+required-features = ["runtime"]
+
+[[test]]
+name = "permission_flags"
+required-features = ["runtime"]
+
+[[test]]
+name = "posix_compliance"
+required-features = ["runtime"]
+
+[[test]]
+name = "posix_path_repro"
+required-features = ["runtime"]
+
+[[test]]
+name = "process_isolation"
+required-features = ["runtime"]
+
+[[test]]
+name = "projection_bench"
+required-features = ["runtime"]
+
+[[test]]
+name = "promisify_module_load"
+required-features = ["runtime"]
+
+[[test]]
+name = "protocol"
+required-features = ["runtime"]
+
+[[test]]
+name = "python"
+required-features = ["runtime"]
+
+[[test]]
+name = "sandbox_agent"
+required-features = ["runtime"]
+
+[[test]]
+name = "security_audit"
+required-features = ["runtime"]
+
+[[test]]
+name = "security_hardening"
+required-features = ["runtime"]
+
+[[test]]
+name = "service"
+required-features = ["all-executors"]
+
+[[test]]
+name = "session_isolation"
+required-features = ["runtime"]
+
+[[test]]
+name = "signal"
+required-features = ["runtime"]
+
+[[test]]
+name = "smoke"
+required-features = ["runtime"]
+
+[[test]]
+name = "socket_state_queries"
+required-features = ["runtime"]
+
+[[test]]
+name = "vm_lifecycle"
+required-features = ["runtime"]
+
+[[test]]
+name = "wasm_raw_abi"
+required-features = ["runtime"]
+
+[[test]]
+name = "wasm_software_parity"
+required-features = ["runtime"]
+
+[[test]]
+name = "wire_dispatch"
+required-features = ["runtime"]
+
+[[test]]
+name = "xfstests_correctness"
+required-features = ["runtime"]

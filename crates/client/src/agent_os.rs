@@ -58,9 +58,11 @@ pub(crate) struct ProcessEntry {
     /// The entry retains its own `stdout_tx`/`stderr_tx` clones for late subscribers, so these tasks
     /// never observe the broadcast `Closed`; `shutdown` aborts them when draining the registry.
     pub output_tasks: Vec<JoinHandle<()>>,
-    /// Optional bounded output replay owned by Core. Hosted actor spawns enable
-    /// this so dropped live events can be recovered without actor-owned state.
-    pub replay: Option<Arc<parking_lot::Mutex<crate::output_replay::OutputReplayBuffer>>>,
+    /// Whether the sidecar owns a bounded output replay for this process.
+    pub retain_output: bool,
+    /// First-class language executions use the semantic execution replay route.
+    pub execution_id: Option<String>,
+    pub execution_generation: Option<u64>,
     /// Epoch milliseconds captured when `spawn` registered this process (TS `Date.now()`).
     pub started_at: i64,
 }
@@ -77,17 +79,22 @@ pub(crate) struct ShellEntry {
     pub event_tx: broadcast::Sender<crate::shell::TerminalOutputEvent>,
     /// The sidecar-side process id used on the wire.
     pub process_id: String,
-    /// Spawn-readiness gate. Seeded `false`; flips to `true` once the background `Execute` request is
+    /// Spawn-readiness gate. Pending until the background `Execute` request is
     /// acked. TS `openShell` is fully synchronous so `writeShell` always addresses a live spawn; the
     /// Rust wire spawn is async, so `write_shell`/`close_shell` await this gate before issuing their
     /// wire request to preserve the deterministic ordering and avoid dropping early input.
-    pub spawned_tx: watch::Sender<bool>,
+    pub spawned_tx: watch::Sender<Option<Result<(), ClientError>>>,
     /// Exit-code channel backing `wait_shell` (TS `ShellHandle.wait`). Seeded `None`; the background
-    /// event loop publishes `Some(exit_code)` when the shell process exits.
-    pub exit_tx: watch::Sender<Option<i32>>,
-    /// Bounded ordered raw terminal replay. Screen interpretation stays in the
-    /// client; Core retains bytes only.
-    pub replay: Arc<parking_lot::Mutex<crate::output_replay::OutputReplayBuffer>>,
+    /// event loop publishes a confirmed exit code or a typed observation failure.
+    pub exit_tx: watch::Sender<Option<Result<i32, ClientError>>>,
+}
+
+#[derive(Clone)]
+pub(crate) struct ClosedShellEntry {
+    pub shell_id: String,
+    pub process_id: String,
+    pub pid: u32,
+    pub result: Result<i32, ClientError>,
 }
 
 /// A connected terminal process and its output fan-out task.
@@ -138,6 +145,9 @@ pub(crate) struct AgentOsInner {
 
     // Process registries.
     pub(crate) process_registry_lock: parking_lot::Mutex<()>,
+    /// Slots reserved by asynchronous language spawns that have reached client
+    /// admission but have not published their [`ProcessEntry`] yet.
+    pub(crate) pending_process_registrations: AtomicUsize,
     pub(crate) processes: SccHashMap<u32, ProcessEntry>,
     /// Wire `process_id` allocator for `exec` (the kernel-process view). Distinct from the
     /// spawn synthetic-pid space so an `exec` call never perturbs the observable `spawn` pid sequence
@@ -162,7 +172,7 @@ pub(crate) struct AgentOsInner {
     /// Bounded ordered map (cap [`crate::CLOSED_SHELL_EXIT_CODE_RETENTION_LIMIT`]) of exited shells'
     /// exit codes, so `wait_shell` issued after the shell already exited (entry dropped from
     /// `shells`) still resolves with the recorded code — mirrors the TS `_closedShellIds` retention.
-    pub(crate) closed_shell_exit_codes: parking_lot::Mutex<VecDeque<(String, i32)>>,
+    pub(crate) closed_shells: parking_lot::Mutex<VecDeque<ClosedShellEntry>>,
     pub(crate) terminals: SccHashMap<String, TerminalEntry>,
     pub(crate) terminal_count: AtomicUsize,
     pub(crate) terminal_lifecycle_lock: tokio::sync::Mutex<()>,
@@ -322,7 +332,8 @@ impl AgentOs {
                 | wire::ResponsePayload::ExecutionListResponse(_)
                 | wire::ResponsePayload::ExecutionDeletedResponse(_)
                 | wire::ResponsePayload::ExecutionIoResponse(_)
-                | wire::ResponsePayload::ExecutionOutputPageResponse(_) => {
+                | wire::ResponsePayload::ExecutionOutputPageResponse(_)
+                | wire::ResponsePayload::ProcessOutputPageResponse(_) => {
                     return Err(ClientError::Sidecar(
                         "unexpected open_session response".to_string(),
                     ));
@@ -411,7 +422,8 @@ impl AgentOs {
                 | wire::ResponsePayload::ExecutionListResponse(_)
                 | wire::ResponsePayload::ExecutionDeletedResponse(_)
                 | wire::ResponsePayload::ExecutionIoResponse(_)
-                | wire::ResponsePayload::ExecutionOutputPageResponse(_) => {
+                | wire::ResponsePayload::ExecutionOutputPageResponse(_)
+                | wire::ResponsePayload::ProcessOutputPageResponse(_) => {
                     return Err(ClientError::Sidecar(
                         "unexpected create_vm response".to_string(),
                     ));
@@ -522,7 +534,8 @@ impl AgentOs {
                 | wire::ResponsePayload::ExecutionListResponse(_)
                 | wire::ResponsePayload::ExecutionDeletedResponse(_)
                 | wire::ResponsePayload::ExecutionIoResponse(_)
-                | wire::ResponsePayload::ExecutionOutputPageResponse(_) => {
+                | wire::ResponsePayload::ExecutionOutputPageResponse(_)
+                | wire::ResponsePayload::ProcessOutputPageResponse(_) => {
                     return Err(ClientError::Sidecar(
                         "unexpected configure_vm response".to_string(),
                     ));
@@ -622,7 +635,8 @@ impl AgentOs {
                         | wire::ResponsePayload::ExecutionListResponse(_)
                         | wire::ResponsePayload::ExecutionDeletedResponse(_)
                         | wire::ResponsePayload::ExecutionIoResponse(_)
-                        | wire::ResponsePayload::ExecutionOutputPageResponse(_) => {
+                        | wire::ResponsePayload::ExecutionOutputPageResponse(_)
+                        | wire::ResponsePayload::ProcessOutputPageResponse(_) => {
                             return Err(ClientError::Sidecar(
                                 "unexpected register_host_callbacks response".to_string(),
                             ));
@@ -655,6 +669,7 @@ impl AgentOs {
                 vm_configuration_operation: tokio::sync::Mutex::new(()),
                 installed_software: parking_lot::Mutex::new(BTreeMap::new()),
                 process_registry_lock: parking_lot::Mutex::new(()),
+                pending_process_registrations: AtomicUsize::new(0),
                 processes: SccHashMap::new(),
                 process_counter: AtomicU64::new(1),
                 synthetic_pid_counter: AtomicU64::new(SYNTHETIC_PID_BASE),
@@ -664,7 +679,7 @@ impl AgentOs {
                 shells: SccHashMap::new(),
                 shell_counter: AtomicU64::new(0),
                 pending_shell_exits: SccHashMap::new(),
-                closed_shell_exit_codes: parking_lot::Mutex::new(VecDeque::new()),
+                closed_shells: parking_lot::Mutex::new(VecDeque::new()),
                 terminals: SccHashMap::new(),
                 terminal_count: AtomicUsize::new(0),
                 terminal_lifecycle_lock: tokio::sync::Mutex::new(()),
@@ -1105,7 +1120,11 @@ impl AgentOs {
         &self,
         before: &AgentOsConfig,
         after: &AgentOsConfig,
+        before_restart_identity: Vec<String>,
+        after_restart_identity: Vec<String>,
     ) -> Result<bool, ClientError> {
+        let before_mounts = serialize_mounts(before)?;
+        let after_mounts = serialize_mounts(after)?;
         let before = serialize_create_vm_config_for_sidecar(before)?;
         let after = serialize_create_vm_config_for_sidecar(after)?;
         let response = self
@@ -1119,6 +1138,10 @@ impl AgentOs {
                     after: serde_json::to_string(&after).map_err(|error| {
                         ClientError::Sidecar(format!("serialize after VM config: {error}"))
                     })?,
+                    before_mounts,
+                    after_mounts,
+                    before_restart_identity,
+                    after_restart_identity,
                 }),
             )
             .await?;
@@ -1175,7 +1198,11 @@ fn serialize_create_vm_config_for_sidecar(
     let (root_filesystem, native_root) =
         serialize_root_filesystem_config_for_sidecar(&config.root_filesystem)?;
     let mut create = vm_config::CreateVmConfig {
-        defaults_profile: Some(vm_config::VmDefaultsProfile::AgentOs),
+        defaults_profile: Some(
+            config
+                .defaults_profile
+                .unwrap_or(vm_config::VmDefaultsProfile::AgentOs),
+        ),
         wasm_backend: config.wasm_backend.map(|backend| match backend {
             crate::process::StandaloneWasmBackend::V8 => vm_config::StandaloneWasmBackend::V8,
             crate::process::StandaloneWasmBackend::Wasmtime => {
@@ -1236,13 +1263,6 @@ pub(crate) fn validate_config(config: &AgentOsConfig) -> Result<(), ClientError>
         .map_err(|error| ClientError::Sidecar(format!("invalid VM config: {error}")))?;
     serialize_mounts(config)?;
     Ok(())
-}
-
-pub(crate) fn runtime_bootstrap_commands() -> Vec<String> {
-    ["node", "npm", "npx", "python", "python3"]
-        .into_iter()
-        .map(String::from)
-        .collect()
 }
 
 fn serialize_root_filesystem_config_for_sidecar(
@@ -3045,6 +3065,17 @@ mod tests {
     fn create_vm_omits_permissions_so_sidecar_applies_product_defaults() {
         let config = serialize_create_vm_config_for_sidecar(&AgentOsConfig::default()).unwrap();
         assert_eq!(config.defaults_profile, Some(VmDefaultsProfile::AgentOs));
+        assert_eq!(config.permissions, None);
+    }
+
+    #[test]
+    fn create_vm_can_select_secure_sidecar_defaults() {
+        let config = serialize_create_vm_config_for_sidecar(&AgentOsConfig {
+            defaults_profile: Some(VmDefaultsProfile::Secure),
+            ..AgentOsConfig::default()
+        })
+        .unwrap();
+        assert_eq!(config.defaults_profile, Some(VmDefaultsProfile::Secure));
         assert_eq!(config.permissions, None);
     }
 

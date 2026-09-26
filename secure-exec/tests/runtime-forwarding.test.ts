@@ -4,7 +4,7 @@ import { execute } from "../src/index.js";
 
 afterEach(() => vi.restoreAllMocks());
 
-test("one-shot calls forward environment and WASM backend to VM creation", async () => {
+test("one-shot calls select secure defaults and forward VM options", async () => {
 	const result = { outcome: "succeeded", exitCode: 0 };
 	const executeGuest = vi.fn().mockResolvedValue(result);
 	const dispose = vi.fn().mockResolvedValue(undefined);
@@ -17,18 +17,23 @@ test("one-shot calls forward environment and WASM backend to VM creation", async
 		dispose,
 	} as unknown as AgentOs);
 
-	await expect(execute("console.log('test')", {
-		defaultSoftware: false,
-		environment: { CUSTOM: "value" },
-		wasmBackend: "wasmtime",
-		timeoutMs: 100,
-	})).resolves.toBe(result);
+	await expect(
+		execute("console.log('test')", {
+			defaultSoftware: false,
+			environment: { CUSTOM: "value" },
+			wasmBackend: "wasmtime",
+			timeoutMs: 100,
+		}),
+	).resolves.toBe(result);
 
 	expect(create).toHaveBeenCalledWith({
 		defaultSoftware: false,
+		defaultsProfile: "secure",
 		environment: { CUSTOM: "value" },
 		wasmBackend: "wasmtime",
 	});
-	expect(executeGuest).toHaveBeenCalledWith("console.log('test')", { timeoutMs: 100 });
+	expect(executeGuest).toHaveBeenCalledWith("console.log('test')", {
+		timeoutMs: 100,
+	});
 	expect(dispose).toHaveBeenCalledOnce();
 });

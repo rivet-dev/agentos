@@ -26,7 +26,7 @@ const PATCHED_ERRNO = resolve(
 const SIDECAR_BINARY = resolve(
 	REPO_ROOT,
 	process.env.CARGO_TARGET_DIR ?? "target",
-	"debug/agentos-sidecar",
+	"debug/agentos-native-sidecar",
 );
 const HAS_PATCHED_SYSROOT =
 	existsSync(PATCHED_LIBC) && existsSync(PATCHED_ERRNO);
@@ -111,9 +111,9 @@ function ensureWorkspaceSidecarBuilt(): void {
 		process.env.AGENTOS_WASM_SNAPSHOT_RUNNER = "off";
 		return;
 	}
-	runChecked("cargo", ["build", "-q", "-p", "agentos-sidecar"], {
+	runChecked("cargo", ["build", "-q", "-p", "agentos-native-sidecar"], {
 		cwd: REPO_ROOT,
-		label: "failed to build workspace agentos-sidecar",
+		label: "failed to build workspace agentos-native-sidecar",
 	});
 	process.env.AGENTOS_SIDECAR_BIN = SIDECAR_BINARY;
 	process.env.AGENTOS_WASM_SNAPSHOT_RUNNER = "off";

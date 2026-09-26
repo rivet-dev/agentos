@@ -333,9 +333,9 @@ fn phase_two_keeps_wasmtime_scoped_to_the_standalone_wasm_adapter() {
     let workspace = std::fs::read_to_string(root.join("Cargo.toml")).expect("read Cargo.toml");
     let lock = std::fs::read_to_string(root.join("Cargo.lock")).expect("read Cargo.lock");
     assert!(
-        workspace.contains("wasmtime = { version = \"=46.0.0\", default-features = false")
+        workspace.contains("wasmtime = { version = \"=48.0.3\", default-features = false")
             && workspace.contains("wasmparser = \"=0.251.0\"")
-            && lock.contains("name = \"wasmtime\"\nversion = \"46.0.0\"")
+            && lock.contains("name = \"wasmtime\"\nversion = \"48.0.3\"")
             && !lock.contains("name = \"wasmtime-wasi\""),
         "Phase 2 must pin reviewed Wasmtime without installing ambient wasmtime-wasi"
     );
@@ -367,8 +367,8 @@ fn phase_two_keeps_wasmtime_scoped_to_the_standalone_wasm_adapter() {
         ("Darwin release build", darwin.as_str()),
     ] {
         assert!(
-            source.contains("1.94.0"),
-            "{name} must use Wasmtime 46's reviewed Rust MSRV"
+            source.contains("1.95.0"),
+            "{name} must use Wasmtime 48's reviewed Rust MSRV"
         );
     }
     assert!(
@@ -668,10 +668,39 @@ fn maintained_wasm_surfaces_are_mechanically_gated_on_both_backends() {
     let root = repo_root();
     let ci =
         std::fs::read_to_string(root.join(".github/workflows/ci.yml")).expect("read CI workflow");
+    let required_job = ci
+        .split("\n  required:")
+        .nth(1)
+        .expect("required CI gate")
+        .split("\n  wasm-backend-matrix:")
+        .next()
+        .unwrap();
+    let dependencies = required_job
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("needs: ["))
+        .expect("required gate dependency list")
+        .trim_end_matches(']')
+        .split(',')
+        .map(str::trim)
+        .collect::<BTreeSet<_>>();
+    for gate in [
+        "checks",
+        "wasm-commands",
+        "rust",
+        "core-pr",
+        "core-runtime-pr",
+        "actor-pr",
+        "wasm-backend-matrix",
+    ] {
+        assert!(
+            dependencies.contains(gate),
+            "required CI gate must depend on {gate}"
+        );
+    }
     for required in [
         "backend: [v8, wasmtime]",
         "AGENTOS_TEST_WASM_BACKEND: ${{ matrix.backend }}",
-        "needs: [checks, wasm-commands, rust, core-pr, core-runtime-pr, actor-pr, wasm-backend-matrix]",
+
         "EXPECT_WASM_BACKEND_MATRIX:",
         "required dual-backend CI job did not succeed",
         "cargo test --release -p agentos-vm --features all-executors --tests -- --test-threads=1",
@@ -686,7 +715,7 @@ fn maintained_wasm_surfaces_are_mechanically_gated_on_both_backends() {
         "turbo test:nightly --concurrency=1 --filter='@agentos-software/*'",
         "make -C toolchain codex-required",
         "name: codex-wasi",
-        "@rivet-dev/agentos test:e2e:run",
+        "cargo test -p agentos-actor -p agentos-acp-protocol -- --test-threads=1",
         "pthread-conformance-wasm pthread-benchmark-wasm",
         "owned_pthread_libc_mutex_cond_tls_join_detach_and_cancel_conform",
         "test:wasm-mixed-smoke",
@@ -718,10 +747,6 @@ fn maintained_wasm_surfaces_are_mechanically_gated_on_both_backends() {
         (
             "packages/core/tests/helpers/default-vm-permissions.ts",
             "const backend = process.env.AGENTOS_TEST_WASM_BACKEND",
-        ),
-        (
-            "packages/agentos/tests/fixtures/actor-runtime-server.mjs",
-            "wasmBackend = process.env.AGENTOS_TEST_WASM_BACKEND",
         ),
     ] {
         let source = std::fs::read_to_string(root.join(path))
@@ -945,8 +970,9 @@ fn common_posix_semantics_do_not_switch_on_executor_variants() {
     );
     assert!(
         !rpc.contains("process.runtime == GuestRuntimeKind")
-            && rpc.contains("process.execution.synchronous_fd_write_policy()"),
-        "descriptor write semantics must use an explicit backend policy"
+            && rpc.contains("process.execution.synchronous_fd_write_policy()")
+            && rpc.contains("process.execution.synchronous_fd_read_policy()"),
+        "descriptor read/write semantics must use an explicit backend policy"
     );
 }
 
@@ -1025,23 +1051,17 @@ fn production_backends_route_typed_host_calls_through_family_capabilities() {
 fn loopback_vm_fetch_uses_the_vm_scoped_event_pump() {
     let coordinator = include_str!("../src/execution/coordinator.rs");
     let http = include_str!("../src/execution/javascript/http.rs");
-    let vm_fetch = coordinator
-        .split_once("pub(crate) async fn vm_fetch(")
-        .expect("vm.fetch coordinator")
-        .1
-        .split_once("pub(crate) async fn get_signal_state(")
-        .expect("end of vm.fetch coordinator")
-        .0;
-
+    assert!(coordinator
+        .contains("dispatch_owned_vm_fetch(&input.vm_id, input.vm.clone(), payload).await"));
     for required in [
-        "begin_loopback_http_request",
-        "self.pump_process_events(&ownership).await",
-        "process_event_notify.notified()",
-        "take_loopback_http_response",
+        "async fn wait_for_owned_fetch_progress(",
+        "readiness_notify.notified()",
+        "process_notify.notify_one()",
+        "tokio::time::timeout(remaining",
     ] {
         assert!(
-            vm_fetch.contains(required),
-            "loopback vm.fetch must retain main event-pump step {required}"
+            http.contains(required),
+            "owned fetch lost bounded wake path {required}"
         );
     }
     assert!(
@@ -1053,27 +1073,27 @@ fn loopback_vm_fetch_uses_the_vm_scoped_event_pump() {
 #[test]
 fn stdio_process_events_register_before_probing_durable_state() {
     let stdio = include_str!("../../sidecar/src/transport.rs");
-    let protocol_loop = stdio
-        .split_once("let process_event_notified = process_event_notify.notified();")
-        .expect("registered process-event waiter")
-        .1;
-    let enable = protocol_loop
-        .find("process_event_notified.as_mut().enable();")
-        .expect("enable process-event waiter");
-    let probe = protocol_loop
-        .find(".pump_process_events(&session.compat_ownership_scope())")
-        .expect("probe durable process-event state");
-    let select_waiter = protocol_loop
-        .find("_ = process_event_notified.as_mut() =>")
-        .expect("select on the registered process-event waiter");
-
+    // The transport now consumes a retained notify_one permit before probing;
+    // it no longer probes and then constructs a fresh edge-triggered waiter.
+    let branch = stdio.split_once("_ = process_event_notify.notified(), if pending_owned_process_events.len() < owned_process_event_capacity => {")
+        .expect("capacity-gated process-event waiter").1;
+    assert!(branch.contains("sidecar.pump_process_events_nowait("));
+    assert!(!stdio.contains(".pump_process_events(&session.compat_ownership_scope())"));
+    let service = include_str!("../src/service.rs");
+    let rearm = service
+        .split_once("fn rearm_deferred_process_event_after_capacity_release(&self)")
+        .unwrap()
+        .1
+        .split_once("fn ")
+        .unwrap()
+        .0;
     assert!(
-        enable < probe && probe < select_waiter,
-        "the stdio event owner must register and enable its waiter before probing durable process state"
+        rearm.contains("self.process_event_notify.notify_one()"),
+        "capacity release must retain a wake permit"
     );
     assert!(
-        !protocol_loop[..select_waiter].contains("_ = process_event_notify.notified() =>"),
-        "the protocol loop must not recreate an edge-triggered waiter after probing process state"
+        !service.contains("self.process_event_notify.notify_waiters()"),
+        "process ingress requires retained permits"
     );
 }
 
@@ -1402,9 +1422,9 @@ fn unix_listener_close_is_lossless_and_acknowledged() {
         "Unix listener close must retain a notification permit between acceptor select points"
     );
     assert!(
-        compact_unix.contains("UnixListenerTaskCompletion(Some(close_complete))")
-            && compact_unix.contains("completion.send(())"),
-        "the Unix listener owner must acknowledge every terminal path after dropping its FD"
+        compact_unix.contains("if!self.acceptor_started||self.virtual_sender.is_some(){returnBox::pin(async{Ok(())});}")
+            && compact_unix.contains("Some(completion)=>completion.await"),
+        "virtual Unix listeners close immediately; any native listener must await owner completion"
     );
     assert!(
         compact_managed.contains(
@@ -1653,10 +1673,9 @@ const FS_ALLOW: &[&str] = &[
     // it never handles guest paths at runtime.
     "crates/vfs-core/src/package_format/mod.rs",
     "crates/vfs-core/src/package_format/pack.rs",
-    // ACP trace output is an operator-selected host diagnostic sink. The
-    // extension is split mechanically across its module root and restore path.
-    "crates/sidecar/src/acp/mod.rs",
-    "crates/sidecar/src/acp/restore.rs",
+    // Trusted client package resolver owns its content-addressed host cache,
+    // artifact locks and explicitly supplied local package sources.
+    "crates/client/src/software.rs",
     // Tar-backed read-only VFS: mmaps the trusted, client-configured package
     // tar from the host and serves member byte ranges without extracting.
     // Same sanctioned read-only host-source boundary as host_dir.rs (the tar is
@@ -1721,9 +1740,9 @@ const NET_ALLOW: &[&str] = &[
     // Authenticated local transport from the sidecar to the owning actor's
     // SQLite UDS endpoint. This is local IPC, not external network egress.
     "crates/rivetkit-ars-client/src/lib.rs",
-    // Test-only actor SQLite UDS fixture; it opens local Unix sockets but no
-    // external network connection.
-    "crates/sidecar/src/session_store/performance_tests.rs",
+    // Trusted package URL resolver pins validated DNS answers and bounds
+    // downloads/redirects; this is host software installation, not guest egress.
+    "crates/client/src/software.rs",
 ];
 
 /// process: OS subprocess creation.
@@ -1752,8 +1771,10 @@ const PROCESS_ALLOW: &[&str] = &[
 const ENV_ALLOW: &[&str] = &[
     "crates/sidecar-client/src/transport.rs",
     "crates/client/src/sidecar.rs",
-    // Operator-selected ACP trace output path.
-    "crates/sidecar/src/acp/restore.rs",
+    // Hosted configuration/preload bootstrap reads the operator-only local
+    // package HTTP opt-in before constructing the trusted package resolver.
+    "crates/actor-contract/src/config.rs",
+    "crates/preload/src/lib.rs",
     "crates/sidecar/src/main.rs",
     "crates/executor-v8-runtime/src/host_node.rs",
     // Node import cache reads an operator timeout knob before materializing
@@ -2149,7 +2170,8 @@ fn common_execution_lifecycle_has_no_backend_specific_signal_or_process_residenc
 
     let state = std::fs::read_to_string(root.join("crates/vm/src/state.rs"))
         .expect("read typed sidecar errors");
-    assert!(state.contains("ExecutionEventChannelClosed { backend: ExecutionBackendKind }"));
+    let compact: String = state.chars().filter(|c| !c.is_whitespace()).collect();
+    assert!(compact.contains("ExecutionEventChannelClosed{backend:ExecutionBackendKind,}"));
 }
 
 #[test]
@@ -2210,11 +2232,11 @@ fn every_production_active_process_attaches_the_real_kernel_runtime_endpoint() {
     let launch = std::fs::read_to_string(root.join("crates/vm/src/execution/launch.rs"))
         .expect("read top-level launch implementation");
     let execute = launch
-        .split_once("    pub(crate) async fn execute(")
+        .split_once("pub(crate) async fn execute_owned<")
         .expect("top-level execute implementation")
         .1;
     let allocated = execute
-        .find("let kernel_handle = vm\n            .kernel\n            .spawn_process(")
+        .find("let kernel_handle = vm\n        .kernel\n        .spawn_initial_process(")
         .expect("top-level kernel process allocation");
     let startup = &execute[allocated..];
     let attach = startup
@@ -2234,10 +2256,32 @@ fn every_production_active_process_attaches_the_real_kernel_runtime_endpoint() {
         "the real endpoint must attach before any fallible setup or engine start"
     );
     let fallible_startup = &startup[attach..publish];
+    // Owned asynchronous starts drop the VM borrow while their RAII rollback
+    // guard owns the allocated process. Reborrowing may return early safely.
+    let mut unguarded_startup = fallible_startup.to_owned();
+    for context in [
+        "complete Python asset preparation",
+        "register started python execution",
+        "register started wasm execution",
+    ] {
+        let reborrow = format!(".try_borrow_mut(\"{context}\")?;");
+        let offset = fallible_startup
+            .find(&reborrow)
+            .expect("owned startup reborrow");
+        let preceding = &fallible_startup[..offset];
+        let guard = preceding
+            .rfind("PendingOwnedProcessStart::top_level(")
+            .expect("owned startup rollback guard");
+        assert!(
+            !preceding[guard..].contains("pending_start.disarm()"),
+            "rollback must remain armed through the fallible VM reborrow"
+        );
+        unguarded_startup = unguarded_startup.replace(&reborrow, "");
+    }
     assert!(
         startup[..publish].contains("macro_rules! top_level_start_step")
             && startup[..publish].contains("rollback_failed_top_level_process_start(")
-            && !fallible_startup.contains("?;"),
+            && !unguarded_startup.contains("?;"),
         "every fallible post-allocation setup/start step must use the common rollback funnel"
     );
     let rollback = rust_braced_item(&launch, "fn rollback_failed_top_level_process_start(");
@@ -2256,7 +2300,7 @@ fn every_production_active_process_attaches_the_real_kernel_runtime_endpoint() {
     );
     assert_eq!(
         launch
-            .matches("if let Err(error) = self.bridge.emit_lifecycle(&vm_id, LifecycleState::Busy)")
+            .matches("if let Err(error) = bridge.emit_lifecycle(&vm_id, LifecycleState::Busy)")
             .count(),
         2,
         "both host_function and engine lifecycle publications must handle bridge failure"
@@ -2281,6 +2325,14 @@ fn every_production_active_process_attaches_the_real_kernel_runtime_endpoint() {
         .into_iter()
         .filter(|path| path.starts_with("crates/vm/src/"))
     {
+        if relative == Path::new("crates/vm/src/test_support.rs") {
+            let lib = std::fs::read_to_string(root.join("crates/vm/src/lib.rs"))
+                .expect("read VM modules");
+            assert!(lib.contains(
+                "#[cfg(feature = \"test-support\")]\n#[doc(hidden)]\npub mod test_support;"
+            ));
+            continue;
+        }
         let source = std::fs::read_to_string(root.join(&relative))
             .unwrap_or_else(|error| panic!("read {}: {error}", relative.display()));
         let mut tracker = CfgTestTracker::new();
@@ -2952,16 +3004,21 @@ fn kernel_resource_accounting_has_no_runtime_or_tokio_dependency_cycle() {
 #[test]
 fn native_sidecar_has_no_prompt_specific_interrupt_workaround() {
     let root = repo_root();
-    let production = ["mod.rs", "runtime.rs", "restore.rs", "turn.rs"]
-        .into_iter()
+    // ACP moved out of the sidecar. The generic execution and transport layers
+    // must still reject product-specific interrupt/launch branches.
+    let mut files = Vec::new();
+    collect_rs(&root.join("crates/vm/src/execution"), &root, &mut files);
+    assert!(
+        !files.is_empty(),
+        "generic execution source inventory must not be empty"
+    );
+    files.push(PathBuf::from("crates/sidecar/src/transport.rs"));
+    let production = files
+        .iter()
         .map(|file| {
-            let source = std::fs::read_to_string(root.join("crates/sidecar/src/acp").join(file))
-                .unwrap_or_else(|error| panic!("read native ACP module {file}: {error}"));
-            source
-                .split("#[cfg(test)]")
-                .next()
-                .unwrap_or(&source)
-                .to_owned()
+            let source = std::fs::read_to_string(root.join(file))
+                .unwrap_or_else(|error| panic!("read generic runtime {}: {error}", file.display()));
+            production_source_text(&source)
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -2977,6 +3034,8 @@ fn native_sidecar_has_no_prompt_specific_interrupt_workaround() {
             "shared ACP runtime must not branch on adapter name {adapter_name}; put launch compatibility in the agentOS-owned package launcher"
         );
     }
+    let classification = std::fs::read_to_string(root.join("crates/sidecar/src/transport.rs"))
+        .expect("read transport request classification");
     assert!(
         classification.contains("RequestPayload::ExtEnvelope(_)")
             && classification.contains("VmConcurrencyClass::OwnershipOnly")
@@ -3043,102 +3102,39 @@ fn extension_context_cannot_borrow_the_whole_sidecar() {
 
 #[test]
 fn owned_javascript_event_preparation_does_not_execute_business_work_inline() {
-    let root = repo_root();
-    let source = std::fs::read_to_string(root.join("crates/vm/src/execution/child_process.rs"))
-        .expect("read JavaScript process-event service source");
-    let start = source
-        .find("pub(crate) fn prepare_owned_javascript_process_event_service(")
-        .expect("owned JavaScript event preparation function");
-    let tail = &source[start..];
-    let end = tail
-        .find("pub(crate) async fn spawn_descendant_javascript_child_process_for_test(")
-        .expect("function following owned JavaScript event preparation");
-    let body = &tail[..end];
-
-    assert!(
-        body.contains("Pin<Box<dyn Future<Output = Result<(), VmError>> + 'static>>"),
-        "owned JavaScript event preparation must return detached supervised work"
-    );
-    assert!(
-        !body.contains("poll_descendant_javascript_child_process(")
-            && !body.contains("handle_javascript_process_rpc("),
-        "owned preparation must not restore a legacy whole-sidecar async RPC handler"
-    );
-
-    let special_setup = body
-        .find("let cache_root = self.cache_root.clone();")
-        .expect("special RPC setup boundary");
-    let supervised_start = body[special_setup..]
-        .find("Box::pin(async move {")
-        .map(|offset| special_setup + offset)
-        .expect("special RPC supervised future boundary");
-    let inline_preparation = &body[..supervised_start];
-    for business_operation in [
-        "poll_owned_descendant_javascript_child_process(",
-        "write_descendant_javascript_child_process_stdin_owned(",
-        "close_descendant_javascript_child_process_stdin_owned(",
-        "kill_descendant_javascript_child_process_owned(",
-        "commit_wasm_fd_process_image_owned(",
-        "exec_javascript_process_image_owned(",
-        "handle_owned_process_kill_rpc(",
-    ] {
+    // JavaScript, Python, and WASM now share the owned host-event service.
+    let source = include_str!("../src/extension_services.rs");
+    let body = source
+        .split_once("fn prepare_owned_host_event_service(")
+        .unwrap()
+        .1
+        .split_once("pub(crate) fn prepare_owned_child_bridge_event_service(")
+        .unwrap()
+        .0;
+    let (inline, deferred) = body
+        .split_once("deferred_prepare: Some(Box::new(move |sidecar| {")
+        .unwrap();
+    for operation in ["try_command(", "sidecar.prepare_owned_host_event_service("] {
         assert!(
-            !inline_preparation.contains(business_operation),
-            "business operation {business_operation} must start only after the supervised owned future is polled"
-        );
-        assert!(
-            body[supervised_start..].contains(business_operation),
-            "owned JavaScript service lost supervised operation {business_operation}"
+            !inline.contains(operation),
+            "owned ingress must defer {operation}"
         );
     }
+    assert!(deferred.contains("sidecar.prepare_owned_host_event_service(target)"));
+    assert!(deferred.contains("service.await"));
+    assert!(
+        deferred.contains("with_internal_vm_event_admission(prepared, coordinator, &ownership)")
+    );
 }
 
 #[test]
 fn owned_python_event_preparation_does_not_execute_business_work_inline() {
     let root = repo_root();
-    let subprocess =
-        std::fs::read_to_string(root.join("crates/vm/src/execution/python/subprocess.rs"))
-            .expect("read Python process-event service source");
-    let start = subprocess
-        .find("pub(crate) fn prepare_owned_python_process_event_service")
-        .expect("owned Python event preparation function");
-    let tail = &subprocess[start..];
-    let end = tail
-        .find("pub(crate) fn prepare_owned_python_subprocess_run")
-        .expect("function following owned Python event preparation");
-    let body = &tail[..end];
-
-    assert!(
-        body.contains("Pin<Box<dyn Future<Output = Result<(), VmError>> + 'static>>"),
-        "owned Python event preparation must return detached supervised work"
-    );
-    let supervised_start = body
-        .find("Box::pin(async move {")
-        .expect("Python event supervised future boundary");
-    let inline_preparation = &body[..supervised_start];
-    assert!(
-        !inline_preparation.contains("try_command("),
-        "Python event preparation must not touch VM state inline"
-    );
-    for business_operation in [
-        "prepare_owned_python_subprocess_run",
-        "service_owned_python_vfs_rpc_request(",
-    ] {
-        assert!(
-            !inline_preparation.contains(business_operation),
-            "Python business operation {business_operation} must start only after the supervised owned future is polled"
-        );
-        assert!(
-            body[supervised_start..].contains(business_operation),
-            "owned Python service lost supervised operation {business_operation}"
-        );
-    }
-
     let extension_services =
         std::fs::read_to_string(root.join("crates/vm/src/extension_services.rs"))
             .expect("read owned extension services");
     let start = extension_services
-        .find("pub(crate) fn prepare_owned_python_event_service(")
+        .find("fn prepare_owned_host_event_service(")
         .expect("owned Python extension-service preparation");
     let tail = &extension_services[start..];
     let end = tail
@@ -3146,7 +3142,7 @@ fn owned_python_event_preparation_does_not_execute_business_work_inline() {
         .expect("function following owned Python extension service");
     let body = &tail[..end];
     let supervised_start = body
-        .find("future: Box::pin(async move {")
+        .find("deferred_prepare: Some(Box::new(move |sidecar| {")
         .expect("owned Python extension-service future boundary");
     assert!(
         !body[..supervised_start].contains("try_command("),
@@ -3165,7 +3161,7 @@ fn owned_python_event_preparation_does_not_execute_business_work_inline() {
 #[test]
 fn protocol_ingress_router_only_registers_and_starts_owned_work() {
     let root = repo_root();
-    let source = std::fs::read_to_string(root.join("crates/vm/src/stdio.rs"))
+    let source = std::fs::read_to_string(root.join("crates/sidecar/src/transport.rs"))
         .expect("read protocol engine source");
     let start = source
         .find("fn route_protocol_frame(")
@@ -3216,11 +3212,11 @@ fn generic_request_preparation_defers_business_handlers() {
     let service = std::fs::read_to_string(root.join("crates/vm/src/service.rs"))
         .expect("read native sidecar service source");
     let start = service
-        .find("pub(crate) fn prepare_request_wire(")
+        .find("pub fn prepare_request_wire(")
         .expect("generic request preparation function");
     let tail = &service[start..];
     let end = tail
-        .find("pub(crate) fn complete_request(")
+        .find("pub fn complete_request(")
         .expect("function following generic request preparation");
     let preparation = &tail[..end];
 
@@ -3692,40 +3688,36 @@ fn top_level_python_start_uses_the_async_runtime_adapter() {
         .filter(|character| !character.is_whitespace())
         .collect::<String>();
     assert!(
-        compact.contains(".python_engine.start_execution_with_runtime_async("),
+        compact.contains("python_engine.start_execution_with_runtime_async("),
         "top-level Python startup must await cache materialization and prewarm instead of blocking a Tokio worker"
     );
     assert!(
         compact.contains(
-            "python_engine.bundled_pyodide_dist_path_for_vm_async(&vm_id,&runtime_context).await"
+            "python_engine.bundled_pyodide_dist_path_for_vm_async(&vm_id,&runtime).await"
         ),
         "top-level Pyodide cache materialization must not run synchronously before the async Python start"
     );
     assert!(
-        compact.contains("drop(vm);letmutpython_engine=execution_engines.python("),
+        compact.contains("drop(vm);letstarted=pending_execution.await.map_err(python_error);"),
         "top-level Python startup must release mutable VM state before awaiting runtime warmup"
     );
+    assert!(compact.contains(
+        "drop(vm);letpyodide_assets=python_engine.bundled_pyodide_dist_path_for_vm_async("
+    ));
 }
 
 #[test]
 fn nested_child_start_never_blocks_the_shared_runtime_worker() {
     let root = repo_root();
     let source = native_execution_source(&root);
-    let child_path = root.join("crates/vm/src/execution/child_process.rs");
-    let child_source = std::fs::read_to_string(&child_path)
-        .unwrap_or_else(|error| panic!("read {child_path:?}: {error}"));
-    let compact_child: String = child_source
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .collect();
 
     assert!(
-        source.contains("pub(crate) async fn spawn_child_process("),
-        "root child startup must be an async sidecar dispatch path"
+        source.contains("pub(crate) fn spawn_child_process("),
+        "root child startup must expose an owned future without retaining the manager borrow"
     );
     assert!(
-        source.contains("async fn spawn_descendant_process("),
-        "descendant child startup must be an async sidecar dispatch path"
+        source.contains("fn spawn_descendant_process("),
+        "descendant child startup must expose an owned future without retaining the manager borrow"
     );
     assert!(
         source
@@ -4121,12 +4113,12 @@ fn protocol_and_abort_delivery_have_no_recurring_poll_timer() {
     let root = repo_root();
     for (relative_path, forbidden) in [
         (
-            "crates/sidecar/src/acp/runtime.rs",
-            &["ACP_JSON_RPC_POLL_INTERVAL", "remaining.min(ACP_"][..],
-        ),
-        (
             "crates/sidecar/src/transport.rs",
-            &["write_rx.recv_timeout(Duration::from_millis(5))"][..],
+            &[
+                "ACP_JSON_RPC_POLL_INTERVAL",
+                "remaining.min(ACP_",
+                "write_rx.recv_timeout(Duration::from_millis(5))",
+            ][..],
         ),
         (
             "packages/build-tools/bridge-src/builtins/http.ts",
@@ -4518,12 +4510,33 @@ fn native_udp_has_one_descriptor_owner_and_no_readiness_clone() {
     for required in [
         "receive_queue",
         "reserve_udp_receive_buffer",
-        "resources.capacity_changed()",
+        "wait_for_native_udp_receive_capacity(",
         "socket.try_recv_from",
         "limits.datagram_quantum.min(limits.operation_quantum)",
         "tokio::task::yield_now().await",
     ] {
         assert!(owner.contains(required), "UDP owner is missing {required}");
+    }
+    let receive_wait = execution
+        .split("async fn wait_for_native_udp_receive_capacity")
+        .nth(1)
+        .and_then(|tail| {
+            tail.split("pub(in crate::execution) enum ActiveUdpSendResult")
+                .next()
+        })
+        .expect("locate native UDP receive capacity wait");
+    for required in [
+        "resources.capacity_changed()",
+        "ResourceClass::BufferedBytes",
+        "ResourceClass::Datagrams",
+        "ResourceClass::UdpBytes",
+        "ResourceClass::UdpDatagrams",
+        "resources.capacity_available(resource, amount)",
+    ] {
+        assert!(
+            receive_wait.contains(required),
+            "UDP receive capacity wait is missing {required}"
+        );
     }
     let spawn = execution
         .split("fn spawn_native_udp_owner")

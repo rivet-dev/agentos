@@ -10,7 +10,7 @@ version and migration transaction.
 
 This durable metadata does not make the default VM filesystem persistent. The
 default root is an ephemeral in-memory overlay and is discarded when the VM is
-replaced. Configure an `actor-sqlite` root or mount only for paths that need to
+replaced. Configure an `durable` root or mount only for paths that need to
 survive VM replacement.
 
 Configured actor-SQLite filesystems, desired software sources, cron schedules,

@@ -125,19 +125,10 @@ impl Default for VmManagerConfig {
 }
 
 /// Configuration for one executor-free embedded VM.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct VmConfig {
     vm_id: Option<String>,
     permissions: Permissions,
-}
-
-impl Default for VmConfig {
-    fn default() -> Self {
-        Self {
-            vm_id: None,
-            permissions: Permissions::default(),
-        }
-    }
 }
 
 impl VmConfig {

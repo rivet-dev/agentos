@@ -268,6 +268,8 @@ print(json.dumps({
             4,
             support::wire_vm(&connection_id, &session_id, &vm_id),
             RequestPayload::ExecuteRequest(ExecuteRequest {
+                retain_output: false,
+
                 process_id: String::from("proc-python-identity"),
                 command: None,
                 runtime: Some(GuestRuntimeKind::Python),

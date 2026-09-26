@@ -223,7 +223,9 @@ export interface ProcessOutputEvent<TChunk = Uint8Array> {
 export interface OutputReplay<TChunk = Uint8Array> {
 	pid: number;
 	events: ProcessOutputEvent<TChunk>[];
-	nextCursor: string;
+	nextCursor: number | null;
 	hasMore: boolean;
 	truncated: boolean;
+	/** Sidecar-confirmed exit, or null while completion is not known. */
+	exitCode: number | null;
 }

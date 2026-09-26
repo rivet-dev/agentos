@@ -743,6 +743,8 @@ fn try_execute_command_with_env(
             request_id,
             wire_vm(connection_id, session_id, vm_id),
             RequestPayload::ExecuteRequest(ExecuteRequest {
+                retain_output: false,
+
                 process_id: process_id.to_owned(),
                 command: Some(command.to_owned()),
                 runtime: None,

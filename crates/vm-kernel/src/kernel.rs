@@ -4409,6 +4409,26 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         self.spawn_process_with_process_group(command, args, options, None)
     }
 
+    /// Start an initial program requested by the trusted VM owner.
+    /// Guest subprocess and exec operations must use the policy-checked APIs.
+    /// This does not relax the permissions applied to the running process.
+    pub fn spawn_initial_process(
+        &mut self,
+        command: &str,
+        args: Vec<String>,
+        options: SpawnOptions,
+    ) -> KernelResult<KernelProcessHandle> {
+        if options.parent_pid.is_some() {
+            return Err(KernelError::new(
+                "EINVAL",
+                "initial process cannot have a guest parent",
+            ));
+        }
+        self.spawn_process_with_process_group_and_cloexec(
+            command, args, options, None, false, false,
+        )
+    }
+
     pub fn spawn_process_with_process_group(
         &mut self,
         command: &str,
@@ -4422,6 +4442,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             options,
             requested_pgid,
             false,
+            true,
         )
     }
 
@@ -4444,6 +4465,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             options,
             requested_pgid,
             true,
+            true,
         )
     }
 
@@ -4454,6 +4476,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         options: SpawnOptions,
         requested_pgid: Option<u32>,
         preserve_cloexec: bool,
+        enforce_spawn_policy: bool,
     ) -> KernelResult<KernelProcessHandle> {
         self.assert_not_terminated()?;
         if let (Some(requester), Some(parent_pid)) =
@@ -4484,14 +4507,16 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             .map(|context| context.env.clone())
             .unwrap_or_else(|| self.env.clone());
         env.extend(options.env.clone());
-        check_command_execution(
-            &self.vm_id,
-            &self.permissions,
-            &resolved.command,
-            &resolved.args,
-            Some(&cwd),
-            &env,
-        )?;
+        if enforce_spawn_policy {
+            check_command_execution(
+                &self.vm_id,
+                &self.permissions,
+                &resolved.command,
+                &resolved.args,
+                Some(&cwd),
+                &env,
+            )?;
+        }
 
         let inherited_fds = {
             let tables = lock_or_recover(&self.fd_tables);
@@ -12377,8 +12402,9 @@ impl PosixAcl {
         if version != POSIX_ACL_XATTR_VERSION {
             return Err(invalid_acl(path, "unsupported xattr version"));
         }
-        let entries = value[4..]
-            .chunks_exact(8)
+        let (chunks, _) = value[4..].as_chunks::<8>();
+        let entries = chunks
+            .iter()
             .map(|bytes| {
                 let tag = u16::from_le_bytes([bytes[0], bytes[1]]);
                 let raw_id = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);

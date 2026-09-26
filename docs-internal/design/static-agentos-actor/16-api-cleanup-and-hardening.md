@@ -30,7 +30,7 @@ move together.
 - Network response streaming remains bounded pull-based for this version.
 - The hosted actor never accepts host filesystem paths or host mounts.
 - The hosted actor defaults to an ephemeral VM root. Durable filesystems are
-  explicit whitelisted `actor-sqlite` roots or mounts; actor state itself uses
+  explicit whitelisted `durable` roots or mounts; actor state itself uses
   the RivetKit SQLite adapter independently of that filesystem choice.
 - Actor-owned, Core-owned, and filesystem-owned schemas share Rivet SQLite but
   retain independent migration tables and namespaces.
@@ -240,7 +240,7 @@ normal RivetKit actor handle. RivetKit itself is not modified by this step.
 
 The exported contract includes:
 
-- `apiVersion`, initially `agentos-sdk.dev/v1alpha1`;
+- `apiVersion`, initially `https://rivet.dev/agentos/v1alpha1`;
 - `contractMajor`, initially `1`;
 - `contractHash`, derived deterministically from the canonical public contract;
 - `capabilities`, including pull streaming, config merge patch, inspector

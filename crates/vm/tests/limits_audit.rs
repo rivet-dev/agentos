@@ -52,7 +52,11 @@ fn name_qualifies(name: &str) -> bool {
         return true;
     }
     if let Some(rest) = name.strip_prefix("DEFAULT_") {
-        if rest.contains("BYTES") || rest.contains("TIMEOUT") || rest.contains("ENTRIES") {
+        if rest.contains("BYTES")
+            || rest.contains("TIMEOUT")
+            || rest.contains("ENTRIES")
+            || rest.contains("EVENTS")
+        {
             return true;
         }
     }
@@ -428,6 +432,8 @@ fn match_rule_unit_assertions() {
     assert!(name_qualifies("ACP_SESSION_EVENT_RETENTION_LIMIT"));
     assert!(name_qualifies("DEFAULT_COMPLETED_RESPONSE_CAP"));
     assert!(name_qualifies("DEFAULT_TIMEOUT_MS"));
+    assert!(name_qualifies("DEFAULT_PROCESS_OUTPUT_REPLAY_EVENTS"));
+    assert!(name_qualifies("DEFAULT_OUTPUT_REPLAY_PAGE_EVENTS"));
     assert!(name_qualifies("DEFAULT_MAX_PREAD_BYTES"));
     assert!(name_qualifies("MAX_MODULE_RESOLVE_CACHE_ENTRIES"));
 

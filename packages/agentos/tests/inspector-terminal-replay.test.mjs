@@ -147,6 +147,17 @@ test("snapshot rejects missing, stalled, and inconsistent cursors", async () => 
 	assert.equal(reads, 2);
 });
 
+test("snapshot accepts final cursors covering dropped trailing output", async () => {
+	for (const events of [[], [[0, Uint8Array.of(65)]]]) {
+		const shell = `trailing-gap-${events.length}`;
+		useTerminal(shell, async () => ({ ...page(events), nextCursor: 2n, truncated: true }));
+		const snapshot = await agentOsSource.shellSnapshot(shell);
+		assert.equal(snapshot.seq, 2n);
+		assert.equal(snapshot.truncated, true);
+		assert.equal(snapshot.data.byteLength, events.length);
+	}
+});
+
 test("snapshot rejects responses exceeding either requested page bound", async () => {
 	for (const [name, events] of [
 		["events", Array.from({ length: 257 }, (_, seq) => [seq, Uint8Array.of(65)])],

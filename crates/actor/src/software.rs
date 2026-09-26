@@ -2,81 +2,21 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use agentos_client::InstalledSoftware;
+use agentos_actor_contract::software::*;
 use anyhow::{anyhow, bail, Result};
 use rivetkit::{Ctx, Handles};
-use serde::{Deserialize, Serialize};
 
 use crate::actions::ConfigCommitMode;
-use crate::config::{
-    normalize_remote_source, RemotePackageSource, RemotePackageSourceInput, MAX_REMOTE_SOFTWARE,
-};
+#[cfg(test)]
+use crate::config::RemotePackageSourceInput;
+use crate::config::{normalize_remote_source, RemotePackageSource, MAX_REMOTE_SOFTWARE};
 use crate::{store, AgentOsActor, AgentOsActorState, ConfigSnapshot};
 
 type BoxFuture<T> = Pin<Box<dyn Future<Output = Result<T>> + Send>>;
 
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct SoftwareInstall {
-    pub source: RemotePackageSourceInput,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expected_revision: Option<u64>,
-}
-
-crate::register_action!(SoftwareInstall => SoftwareMutationResult, "software.install");
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct SoftwareUninstall {
-    pub package_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expected_revision: Option<u64>,
-}
-
-crate::register_action!(SoftwareUninstall => SoftwareMutationResult, "software.uninstall");
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SoftwareList {}
-
-crate::register_action!(SoftwareList => Vec<ActorInstalledSoftware>, "software.list");
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ActorInstalledSoftware {
-    pub package_id: String,
-    pub digest: String,
-    pub size_bytes: u64,
-    pub package_name: String,
-    pub version: String,
-    pub commands: Vec<String>,
-}
-
-impl From<InstalledSoftware> for ActorInstalledSoftware {
-    fn from(value: InstalledSoftware) -> Self {
-        Self {
-            package_id: value.package_id,
-            digest: value.digest,
-            size_bytes: value.size_bytes,
-            package_name: value.package_name,
-            version: value.version,
-            commands: value.commands,
-        }
-    }
-}
-
-#[cfg_attr(feature = "contract", derive(ts_rs::TS))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SoftwareMutationResult {
-    pub software: Option<ActorInstalledSoftware>,
-    pub source: RemotePackageSource,
-    pub config: ConfigSnapshot,
-}
+crate::register_contract_action!(SoftwareInstall);
+crate::register_contract_action!(SoftwareUninstall);
+crate::register_contract_action!(SoftwareList);
 
 impl Handles<SoftwareInstall> for AgentOsActor {
     type Future = BoxFuture<SoftwareMutationResult>;
@@ -99,7 +39,7 @@ impl Handles<SoftwareInstall> for AgentOsActor {
             {
                 crate::preload::observe_software_usage(&source.url, &installed).await;
                 return Ok(SoftwareMutationResult {
-                    software: Some(installed.into()),
+                    software: Some(installed),
                     source: resolved_source,
                     config: current,
                 });
@@ -138,7 +78,7 @@ impl Handles<SoftwareInstall> for AgentOsActor {
             };
             crate::preload::observe_software_usage(&source.url, &installed).await;
             Ok(SoftwareMutationResult {
-                software: Some(installed.into()),
+                software: Some(installed),
                 source: resolved_source,
                 config: next,
             })
@@ -191,7 +131,7 @@ impl Handles<SoftwareUninstall> for AgentOsActor {
                 Err(error) => return Err(error),
             };
             Ok(SoftwareMutationResult {
-                software: removed.map(Into::into),
+                software: removed,
                 source: removed_source,
                 config: next,
             })
@@ -219,13 +159,7 @@ impl Handles<SoftwareList> for AgentOsActor {
     fn handle(self: Arc<Self>, _ctx: Ctx<Self>, _action: SoftwareList) -> Self::Future {
         Box::pin(async move {
             let _permit = self.admit_action()?;
-            Ok(self
-                .runtime
-                .list_software()
-                .await?
-                .into_iter()
-                .map(Into::into)
-                .collect())
+            self.runtime.list_software().await
         })
     }
 }
@@ -312,14 +246,14 @@ mod tests {
 
     #[test]
     fn hosted_software_byte_count_names_its_unit() {
-        let installed = ActorInstalledSoftware::from(InstalledSoftware {
+        let installed = ActorInstalledSoftware {
             package_id: format!("sha256:{}", "a".repeat(64)),
             digest: format!("sha256:{}", "a".repeat(64)),
             size_bytes: 123,
             package_name: "example".into(),
             version: "1".into(),
             commands: Vec::new(),
-        });
+        };
         let encoded = serde_json::to_value(installed).expect("encode hosted software");
         assert_eq!(encoded["sizeBytes"], 123);
         assert!(encoded.get("size").is_none());

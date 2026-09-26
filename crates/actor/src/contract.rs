@@ -4,7 +4,7 @@ use agentos_actor_contract::schema::{
     self, ActorContract, ContractMetadata, EventContract, TypeCollector, TypeScriptShape,
 };
 
-const API_VERSION: &str = "agentos-sdk.dev/v1alpha1";
+const API_VERSION: &str = "https://rivet.dev/agentos/v1alpha1";
 const CONTRACT_MAJOR: u32 = 1;
 const CAPABILITIES: &[&str] = &[
     "config.merge-patch",
@@ -135,7 +135,7 @@ mod tests {
     fn contract_covers_prototype_wire_shapes() {
         let contract = export();
         assert_eq!(contract.actor_name, "agentOS");
-        assert_eq!(contract.api_version, "agentos-sdk.dev/v1alpha1");
+        assert_eq!(contract.api_version, "https://rivet.dev/agentos/v1alpha1");
         assert_eq!(contract.contract_major, 1);
         assert_eq!(contract.contract_hash.len(), "sha256:".len() + 64);
         assert!(contract.capabilities.contains(&"config.merge-patch"));

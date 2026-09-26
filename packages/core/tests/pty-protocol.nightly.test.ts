@@ -18,7 +18,7 @@ const REPO_ROOT = resolve(__dirname, "../../..");
 const AGENTOS_C_ROOT = resolve(REPO_ROOT, "toolchain/c");
 const SIDECAR_BINARY = process.env.AGENTOS_SIDECAR_BIN
 	? resolve(process.env.AGENTOS_SIDECAR_BIN)
-	: resolve(REPO_ROOT, "target/debug/agentos-sidecar");
+	: resolve(REPO_ROOT, "target/debug/agentos-native-sidecar");
 const PTY_PROBE_COMMAND_DIR = resolve(AGENTOS_C_ROOT, "build");
 const PTY_PROBE_BINARY = resolve(PTY_PROBE_COMMAND_DIR, "pty_probe");
 
@@ -73,7 +73,7 @@ function materializePtyProbePackage(): string {
 function ensureWorkspaceSidecarBuilt(): void {
 	if (!existsSync(SIDECAR_BINARY)) {
 		throw new Error(
-			`agentos-sidecar is missing at ${SIDECAR_BINARY}; build the shared CI/test binary before running this suite`,
+			`agentos-native-sidecar is missing at ${SIDECAR_BINARY}; build the shared CI/test binary before running this suite`,
 		);
 	}
 	process.env.AGENTOS_SIDECAR_BIN = SIDECAR_BINARY;

@@ -94,6 +94,8 @@ impl Extension for EchoExtension {
 
             let started = ctx
                 .spawn_process_wire(ExecuteRequest {
+                    retain_output: false,
+
                     process_id: process_id.to_string(),
                     command: None,
                     runtime: Some(GuestRuntimeKind::JavaScript),
@@ -118,6 +120,8 @@ impl Extension for EchoExtension {
             let lifecycle_process_id = "extension-lifecycle-process";
             let lifecycle_started = ctx
                 .spawn_process_wire(ExecuteRequest {
+                    retain_output: false,
+
                     process_id: lifecycle_process_id.to_string(),
                     command: None,
                     runtime: Some(GuestRuntimeKind::JavaScript),
@@ -138,18 +142,16 @@ impl Extension for EchoExtension {
 
             let mut stdout = handoff.stdout;
             let mut exit_code = None;
-            if !response_events.iter().any(|event| {
+            let mut lifecycle_exited = response_events.iter().any(|event| {
                 matches!(
                     &event.payload,
                     EventPayload::ProcessExitedEvent(exited)
                         if exited.process_id == lifecycle_process_id
                 )
-            }) {
-                return Err(VmError::InvalidState(String::from(
-                    "extension session disposal did not return the lifecycle process exit event",
-                )));
-            }
-            while exit_code.is_none() {
+            });
+            // Session disposal signals bound processes; their exits arrive
+            // through the event stream after the executor observes the signal.
+            while exit_code.is_none() || !lifecycle_exited {
                 let event = ctx
                     .poll_event_wire(Duration::from_secs(5))
                     .await?
@@ -158,6 +160,15 @@ impl Extension for EchoExtension {
                             "timed out waiting for extension process event",
                         ))
                     })?;
+                if matches!(
+                    &event.payload,
+                    EventPayload::ProcessExitedEvent(exited)
+                        if exited.process_id == lifecycle_process_id
+                ) {
+                    lifecycle_exited = true;
+                    response_events.push(event);
+                    continue;
+                }
                 match event.payload {
                     EventPayload::ProcessOutputEvent(output)
                         if output.process_id == process_id
@@ -174,8 +185,6 @@ impl Extension for EchoExtension {
                     | EventPayload::ExecutionCompletedEvent(_)
                     | EventPayload::VmLifecycleEvent(_)
                     | EventPayload::StructuredEvent(_)
-                    | EventPayload::ExecutionOutputEvent(_)
-                    | EventPayload::ExecutionCompletedEvent(_)
                     | EventPayload::ExtEnvelope(_) => {}
                 }
             }
@@ -411,4 +420,66 @@ fn duplicate_extension_namespaces_are_rejected() {
         .register_extension(Box::new(EchoExtension))
         .expect_err("duplicate extension namespace should fail");
     assert!(matches!(error, VmError::Conflict(_)));
+}
+
+#[test]
+fn direct_extension_can_cancel_a_pending_host_operation() {
+    struct CancellingExtension;
+    impl Extension for CancellingExtension {
+        fn namespace(&self) -> &str {
+            "test.direct-cancellation"
+        }
+
+        fn handle_request<'a>(
+            &'a self,
+            mut ctx: ExtensionContext,
+            _payload: Vec<u8>,
+        ) -> ExtensionFuture<'a, ExtensionResponse> {
+            Box::pin(async move {
+                let result = tokio::time::timeout(
+                    Duration::from_millis(10),
+                    ctx.poll_event_wire(Duration::from_secs(60)),
+                )
+                .await;
+                assert!(
+                    result.is_err(),
+                    "extension should cancel its pending event poll"
+                );
+                // Dropping the first call must release its host operation,
+                // not keep the next call queued behind the original deadline.
+                assert!(ctx.poll_event_wire(Duration::ZERO).await?.is_none());
+                Ok(ExtensionResponse::new(b"cancelled".to_vec()))
+            })
+        }
+    }
+
+    let mut sidecar = new_sidecar("extension-direct-cancellation");
+    sidecar
+        .register_extension(Box::new(CancellingExtension))
+        .expect("register cancellation extension");
+    let connection_id = authenticate_wire(&mut sidecar, "extension-cancellation-client");
+    let session_id = open_session_wire(&mut sidecar, 2, &connection_id);
+    let runtime =
+        agentos_driver_tokio::TokioDriver::process(&agentos_vm::VmManagerConfig::default().runtime)
+            .expect("process runtime");
+    let result = runtime.block_on(async {
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            sidecar.dispatch_wire(wire_request(
+                3,
+                support::wire_session(&connection_id, &session_id),
+                RequestPayload::ExtEnvelope(ExtEnvelope {
+                    namespace: String::from("test.direct-cancellation"),
+                    payload: Vec::new(),
+                }),
+            )),
+        )
+        .await
+        .expect("extension timeout must interrupt its host wait")
+        .expect("dispatch cancellation extension")
+    });
+    match result.response.payload {
+        ResponsePayload::ExtEnvelope(envelope) => assert_eq!(envelope.payload, b"cancelled"),
+        other => panic!("unexpected cancellation response: {other:?}"),
+    }
 }

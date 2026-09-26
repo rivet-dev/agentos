@@ -32,7 +32,13 @@ jobs:
       - run: cargo build --release --target wasm32-wasip1 -p agentos-benchmark-baseline
       - run: make -C toolchain pr-commands
       - run: node packages/core/scripts/copy-wasm-commands.mjs --require-coreutils
-      - run: pnpm --dir packages/core build
+      # Benchmarks use NodeRuntime and the staged command binaries above; the
+      # Core packaging build also requires .aospkg artifacts that this job does
+      # not build or exercise.
+      - name: Build Core benchmark runtime
+        run: |
+          pnpm --dir packages/core build:protocols
+          pnpm --dir packages/core exec tsc
       - run: pnpm --dir packages/benchmarks bench:check
       - run: pnpm --dir packages/benchmarks bench:gate
         env:

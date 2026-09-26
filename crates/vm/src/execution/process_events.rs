@@ -1039,7 +1039,7 @@ where
 
     /// Transfer channel events one at a time so an admission error cannot drop
     /// later envelopes that were already removed from the bounded channel.
-    fn drain_runtime_process_event_channel_nowait(&mut self) -> Result<bool, VmError> {
+    pub(crate) fn drain_runtime_process_event_channel_nowait(&mut self) -> Result<bool, VmError> {
         let transfer_limit = self.config.runtime.protocol.max_process_events.max(1);
         let mut transferred = 0usize;
         while transferred < transfer_limit {
@@ -1080,6 +1080,9 @@ where
                 if let Err((error, envelope)) = self.try_queue_pending_process_event(envelope) {
                     debug_assert!(self.deferred_process_event_envelope.is_none());
                     self.deferred_process_event_envelope = Some(envelope);
+                    // Retaining a blocked envelope is not forward progress:
+                    // public pollers must wait for capacity rather than spin.
+                    transferred = transferred.saturating_sub(1);
                     self.observe_pending_process_event_depth();
                     tracing::debug!(
                         %error,
@@ -1151,6 +1154,9 @@ where
                     continue;
                 }
                 self.recheck_root_deferred_operations(&vm_id, &process_id, false)?;
+                // This is a hot poll path. Keep the event inline instead of
+                // allocating once per process just to shrink the enum.
+                #[allow(clippy::large_enum_variant)]
                 enum PollResult {
                     Event(Option<PolledExecutionEvent>),
                     RecoverClosed,
@@ -1290,6 +1296,25 @@ where
     /// Apply one already-polled public process event without suspending the
     /// protocol coordinator. Internal RPC events are never valid broker
     /// payloads; they stay on the owned VM event-service path.
+    fn record_ordinary_process_output(
+        &mut self,
+        vm_id: &str,
+        process_id: &str,
+        channel: StreamChannel,
+        chunk: &[u8],
+    ) -> Option<(u64, u64)> {
+        if let Some(mut vm) = self.vms.get_mut(vm_id) {
+            return vm.record_process_output(process_id, channel, chunk);
+        }
+        None
+    }
+
+    fn record_ordinary_process_exit(&mut self, vm_id: &str, process_id: &str, exit_code: i32) {
+        if let Some(mut vm) = self.vms.get_mut(vm_id) {
+            vm.record_process_exit(process_id, exit_code);
+        }
+    }
+
     pub(crate) fn handle_public_execution_event_nowait(
         &mut self,
         vm_id: &str,
@@ -1394,23 +1419,44 @@ where
                     chunk,
                 )
                 .map(|payload| EventFrame::new(ownership, payload))),
-            ActiveExecutionEvent::Stdout(chunk) => Ok(Some(EventFrame::new(
-                ownership,
-                EventPayload::ProcessOutput(ProcessOutputEvent {
-                    process_id: process_id.to_owned(),
-                    channel: StreamChannel::Stdout,
-                    chunk,
-                }),
-            ))),
-            ActiveExecutionEvent::Stderr(chunk) => Ok(Some(EventFrame::new(
-                ownership,
-                EventPayload::ProcessOutput(ProcessOutputEvent {
-                    process_id: process_id.to_owned(),
-                    channel: StreamChannel::Stderr,
-                    chunk,
-                }),
-            ))),
+            ActiveExecutionEvent::Stdout(chunk) => {
+                let replay_identity = self.record_ordinary_process_output(
+                    vm_id,
+                    process_id,
+                    StreamChannel::Stdout,
+                    &chunk,
+                );
+                Ok(Some(EventFrame::new(
+                    ownership,
+                    EventPayload::ProcessOutput(ProcessOutputEvent {
+                        process_id: process_id.to_owned(),
+                        channel: StreamChannel::Stdout,
+                        chunk,
+                        sequence: replay_identity.map(|identity| identity.0),
+                        timestamp_ms: replay_identity.map(|identity| identity.1),
+                    }),
+                )))
+            }
+            ActiveExecutionEvent::Stderr(chunk) => {
+                let replay_identity = self.record_ordinary_process_output(
+                    vm_id,
+                    process_id,
+                    StreamChannel::Stderr,
+                    &chunk,
+                );
+                Ok(Some(EventFrame::new(
+                    ownership,
+                    EventPayload::ProcessOutput(ProcessOutputEvent {
+                        process_id: process_id.to_owned(),
+                        channel: StreamChannel::Stderr,
+                        chunk,
+                        sequence: replay_identity.map(|identity| identity.0),
+                        timestamp_ms: replay_identity.map(|identity| identity.1),
+                    }),
+                )))
+            }
             ActiveExecutionEvent::Exited(exit_code) => {
+                self.record_ordinary_process_exit(vm_id, process_id, exit_code);
                 record_execute_response_to_exit_milestone(
                     "execute_response_to_exit_event_handle",
                     vm_id,
@@ -1504,7 +1550,7 @@ where
                         if let Some(event) = process.lease_pending_execution_event() {
                             ProcessPollResult::Event(Box::new(Some(event)))
                         } else {
-                            match process.poll_execution_event(Duration::ZERO).await {
+                            match process.try_poll_execution_event() {
                                 Ok(event) => ProcessPollResult::Event(Box::new(event)),
                                 Err(VmError::ExecutionEventChannelClosed { .. }) => {
                                     ProcessPollResult::RecoverClosedChannel
@@ -2212,12 +2258,20 @@ where
                     crate::executor::backend::OutputStream::Stdout => StreamChannel::Stdout,
                     crate::executor::backend::OutputStream::Stderr => StreamChannel::Stderr,
                 };
+                let replay_identity = self.record_ordinary_process_output(
+                    vm_id,
+                    process_id,
+                    channel.clone(),
+                    bytes.as_slice(),
+                );
                 Ok(Some(EventFrame::new(
                     ownership,
                     EventPayload::ProcessOutput(ProcessOutputEvent {
                         process_id: process_id.to_owned(),
                         channel,
                         chunk: bytes.into_vec(),
+                        sequence: replay_identity.map(|identity| identity.0),
+                        timestamp_ms: replay_identity.map(|identity| identity.1),
                     }),
                 )))
             }
@@ -2235,22 +2289,42 @@ where
                 "ENOSYS",
                 "execution backend emitted an unsupported common event",
             )),
-            ActiveExecutionEvent::Stdout(chunk) => Ok(Some(EventFrame::new(
-                ownership,
-                EventPayload::ProcessOutput(ProcessOutputEvent {
-                    process_id: process_id.to_owned(),
-                    channel: StreamChannel::Stdout,
-                    chunk,
-                }),
-            ))),
-            ActiveExecutionEvent::Stderr(chunk) => Ok(Some(EventFrame::new(
-                ownership,
-                EventPayload::ProcessOutput(ProcessOutputEvent {
-                    process_id: process_id.to_owned(),
-                    channel: StreamChannel::Stderr,
-                    chunk,
-                }),
-            ))),
+            ActiveExecutionEvent::Stdout(chunk) => {
+                let replay_identity = self.record_ordinary_process_output(
+                    vm_id,
+                    process_id,
+                    StreamChannel::Stdout,
+                    &chunk,
+                );
+                Ok(Some(EventFrame::new(
+                    ownership,
+                    EventPayload::ProcessOutput(ProcessOutputEvent {
+                        process_id: process_id.to_owned(),
+                        channel: StreamChannel::Stdout,
+                        chunk,
+                        sequence: replay_identity.map(|identity| identity.0),
+                        timestamp_ms: replay_identity.map(|identity| identity.1),
+                    }),
+                )))
+            }
+            ActiveExecutionEvent::Stderr(chunk) => {
+                let replay_identity = self.record_ordinary_process_output(
+                    vm_id,
+                    process_id,
+                    StreamChannel::Stderr,
+                    &chunk,
+                );
+                Ok(Some(EventFrame::new(
+                    ownership,
+                    EventPayload::ProcessOutput(ProcessOutputEvent {
+                        process_id: process_id.to_owned(),
+                        channel: StreamChannel::Stderr,
+                        chunk,
+                        sequence: replay_identity.map(|identity| identity.0),
+                        timestamp_ms: replay_identity.map(|identity| identity.1),
+                    }),
+                )))
+            }
             ActiveExecutionEvent::HostRpcRequest(request) => {
                 self.handle_javascript_sync_rpc_request(vm_id, process_id, request)
                     .await?;
@@ -2273,7 +2347,7 @@ where
                 signal,
                 registration,
             } => {
-                let Some(mut vm) = self.vms.get_mut(vm_id) else {
+                let Some(vm) = self.vms.get_mut(vm_id) else {
                     return Ok(None);
                 };
                 let Some(process) = vm.active_processes.get(process_id) else {
@@ -2283,6 +2357,7 @@ where
                 Ok(None)
             }
             ActiveExecutionEvent::Exited(exit_code) => {
+                self.record_ordinary_process_exit(vm_id, process_id, exit_code);
                 record_execute_response_to_exit_milestone(
                     "execute_response_to_exit_event_handle",
                     vm_id,
@@ -2721,9 +2796,9 @@ mod process_event_channel_tests {
             .try_send(envelope(2))
             .expect("queue later envelope");
 
-        assert!(sidecar
+        assert!(!sidecar
             .drain_runtime_process_event_channel_nowait()
-            .expect("temporary saturation must not close the protocol"));
+            .expect("temporary saturation must not close the protocol or report progress"));
         assert!(sidecar.deferred_process_event_envelope.is_some());
         assert_eq!(sidecar.pending_process_events.len(), 2);
         assert_eq!(

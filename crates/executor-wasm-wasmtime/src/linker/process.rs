@@ -622,8 +622,10 @@ async fn exec(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val], by_fd
         return ERRNO_FAULT;
     };
     let close_fds = close_bytes
-        .chunks_exact(4)
-        .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|bytes| u32::from_le_bytes(*bytes))
         .collect::<Vec<_>>();
     let executable_fd = if by_fd {
         let Ok(fd) = i32_arg(params, 0) else {
@@ -1573,8 +1575,10 @@ async fn send_rights(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]
         return ERRNO_FAULT;
     }
     let right_fds = rights_bytes
-        .chunks_exact(4)
-        .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|bytes| u32::from_le_bytes(*bytes))
         .collect::<Vec<_>>();
     let snapshot = match fd_snapshot(caller).await {
         Ok(snapshot) => snapshot,

@@ -937,6 +937,7 @@ impl ActiveProcess {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(super) async fn poll_execution_event(
         &mut self,
         timeout: Duration,
@@ -3019,6 +3020,7 @@ impl ActiveExecution {
             .await
     }
 
+    #[cfg(test)]
     pub(crate) async fn poll_event_with_host(
         &mut self,
         identity: ProcessRuntimeIdentity,
@@ -3166,6 +3168,10 @@ impl ActiveExecution {
 impl ExecutionBackend for ActiveExecution {
     fn kind(&self) -> ExecutionBackendKind {
         self.backend().kind()
+    }
+
+    fn synchronous_fd_read_policy(&self) -> crate::executor::backend::SynchronousFdReadPolicy {
+        self.backend().synchronous_fd_read_policy()
     }
 
     fn synchronous_fd_write_policy(&self) -> crate::executor::backend::SynchronousFdWritePolicy {
@@ -4186,7 +4192,7 @@ pub(super) fn collect_socket_port_state(
     process: &ActiveProcess,
     tcp_guest_to_host: &mut BTreeMap<(SocketFamily, u16), u16>,
     http_loopback_targets: &mut BTreeMap<(SocketFamily, u16), HttpLoopbackTarget>,
-    http2_loopback_targets: &mut BTreeMap<(SocketFamily, u16), JavascriptHttp2LoopbackTarget>,
+    http2_loopback_targets: &mut BTreeMap<(SocketFamily, u16), Http2LoopbackTarget>,
     udp_guest_to_host: &mut BTreeMap<(SocketFamily, u16), u16>,
     udp_host_to_guest: &mut BTreeMap<(SocketFamily, u16), u16>,
     used_tcp_ports: &mut BTreeMap<SocketFamily, BTreeSet<u16>>,
@@ -4248,7 +4254,7 @@ pub(super) fn collect_socket_port_state(
                     .insert(server.guest_local_addr.port());
                 http2_loopback_targets.insert(
                     (family, server.guest_local_addr.port()),
-                    JavascriptHttp2LoopbackTarget {
+                    Http2LoopbackTarget {
                         shared: Arc::clone(&process.http2.shared),
                         server_id: *server_id,
                         runtime_context: process.runtime_context.clone(),

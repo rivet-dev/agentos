@@ -377,7 +377,8 @@ pub enum FilesystemOperation {
     },
     StdinRead {
         max_bytes: BoundedUsize,
-        timeout_ms: u64,
+        /// None waits for readiness until the execution session is cancelled.
+        timeout_ms: Option<u64>,
     },
     StdioWrite {
         fd: u32,

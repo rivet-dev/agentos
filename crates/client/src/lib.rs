@@ -49,8 +49,16 @@ pub mod actor_internals {
         vm: &crate::AgentOs,
         before: &crate::AgentOsConfig,
         after: &crate::AgentOsConfig,
+        before_restart_identity: Vec<String>,
+        after_restart_identity: Vec<String>,
     ) -> Result<bool, crate::ClientError> {
-        vm.vm_config_equivalent(before, after).await
+        vm.vm_config_equivalent(
+            before,
+            after,
+            before_restart_identity,
+            after_restart_identity,
+        )
+        .await
     }
 }
 
@@ -118,7 +126,7 @@ pub use config::{
 pub use process::{
     ExecOptions, ExecResult, ProcessExit, ProcessInfo, ProcessOutput, ProcessOutputEvent,
     ProcessOutputReplay, ProcessStatus, ProcessStream, ProcessTreeNode, SpawnHandle, SpawnOptions,
-    SpawnStdio, SpawnedProcessInfo, StdinInput, TimingMitigation,
+    SpawnStdio, SpawnedProcessInfo, StandaloneWasmBackend, StdinInput, TimingMitigation,
 };
 
 pub use net::{HttpRequest, HttpResponse, HttpStreamChunk, HttpStreamHead};

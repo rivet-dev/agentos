@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "apiVersion": "agentos-sdk.dev/v1alpha1",
+  "apiVersion": "https://rivet.dev/agentos/v1alpha1",
   "contractMajor": 1,
-  "contractHash": "sha256:f0bf3db527ffca7f2377be8e39f5774c063d3d4a66378c320db09338ace040c4",
+  "contractHash": "sha256:c75abb3082728e227826412e1accb719fcfdcfcb124542a2095c89563f092a31",
   "capabilities": [
     "config.merge-patch",
     "network.pull-streaming",
@@ -780,7 +780,7 @@
     },
     {
       "name": "CronLaunchError",
-      "declaration": "type CronLaunchError = { \n/**\n * Uses the same stable error codes as public actor actions.\n */\ncode: string, message: string, };"
+      "declaration": "type CronLaunchError = { code: string, message: string, };"
     },
     {
       "name": "CronList",
@@ -896,11 +896,11 @@
     },
     {
       "name": "HostedFilesystemBackend",
-      "declaration": "type HostedFilesystemBackend = { \"type\": \"actor-sqlite\", namespace: string, };"
+      "declaration": "type HostedFilesystemBackend = { \"type\": \"durable\", namespace: string, };"
     },
     {
       "name": "HostedFilesystemBackendInput",
-      "declaration": "type HostedFilesystemBackendInput = { \"type\": \"actor-sqlite\", namespace: string | null, };"
+      "declaration": "type HostedFilesystemBackendInput = { \"type\": \"durable\", namespace: string | null, };"
     },
     {
       "name": "HostedFilesystemConfig",
@@ -920,11 +920,11 @@
     },
     {
       "name": "HostedRootFilesystem",
-      "declaration": "type HostedRootFilesystem = { \"type\": \"default\" } | { \"type\": \"actor-sqlite\", namespace: string, readOnly: boolean, };"
+      "declaration": "type HostedRootFilesystem = { \"type\": \"default\" } | { \"type\": \"durable\", namespace: string, readOnly: boolean, };"
     },
     {
       "name": "HostedRootFilesystemInput",
-      "declaration": "type HostedRootFilesystemInput = { \"type\": \"default\", } | { \"type\": \"actor-sqlite\", namespace: string | null, readOnly?: boolean, };"
+      "declaration": "type HostedRootFilesystemInput = { \"type\": \"default\", } | { \"type\": \"durable\", namespace: string | null, readOnly?: boolean, };"
     },
     {
       "name": "HttpLimits",

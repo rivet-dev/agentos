@@ -1525,6 +1525,8 @@ process.stdin.once("data", (canonical) => {
             4,
             wire_vm(&connection_id, &session_id, &vm_id),
             RequestPayload::ExecuteRequest(ExecuteRequest {
+                retain_output: false,
+
                 process_id: process_id.to_owned(),
                 command: None,
                 runtime: Some(GuestRuntimeKind::JavaScript),
@@ -2558,7 +2560,7 @@ const asyncEchoResult = await new Promise((resolve, reject) => {
     "node",
     [
       "-e",
-      "let data=''; let settled = false; const fallback = setTimeout(() => { if (!settled) process.exit(19); }, 50); process.stdin.on('data', (chunk) => { data += chunk; }); process.stdin.on('end', () => { settled = true; clearTimeout(fallback); process.exit(data === 'beta-async' ? 0 : 17); });",
+      "let data=''; let settled = false; const fallback = setTimeout(() => { if (!settled) process.exit(19); }, 50); process.stdin.on('data', (chunk) => { data += chunk; }); process.stdin.on('end', () => { settled = true; clearTimeout(fallback); if (data !== 'beta-async') process.stderr.write(JSON.stringify({bytes: Buffer.byteLength(data), hex: Buffer.from(data).toString('hex')})); process.exit(data === 'beta-async' ? 0 : 17); });",
     ],
   );
   const timer = setTimeout(() => {
@@ -2669,6 +2671,8 @@ const child = childProcess.fork("./worker.mjs", ["worker-arg"]);
 const stdout = [];
 const messages = [];
 const errors = [];
+const stderr = [];
+child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
 let sendReturn = null;
 
 child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
@@ -2701,6 +2705,7 @@ const exit = await new Promise((resolve) => {
 clearTimeout(diagnosticTimer);
 
 console.log(JSON.stringify({
+  stderr: Buffer.concat(stderr).toString("utf8"),
   connectedAfterFork: child.connected,
   sendReturn,
   messages,
@@ -2732,7 +2737,11 @@ console.log(JSON.stringify({
         "guest result:\n{pretty_guest}"
     );
     assert_eq!(guest["stdoutBase64"], Value::String(String::new()));
-    assert_eq!(guest["exit"]["code"], Value::from(0));
+    assert_eq!(
+        guest["exit"]["code"],
+        Value::from(0),
+        "guest result:\n{pretty_guest}"
+    );
     assert_eq!(guest["exit"]["signal"], Value::Null);
     assert_eq!(
         guest["messages"][0]["type"],

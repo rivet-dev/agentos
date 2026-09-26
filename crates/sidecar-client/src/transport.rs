@@ -869,6 +869,8 @@ mod tests {
                     process_id: "proc-1".to_string(),
                     channel: wire::StreamChannel::Stdout,
                     chunk: b"hello".to_vec(),
+                    sequence: None,
+                    timestamp_ms: None,
                 }),
             }))
             .await;
@@ -888,6 +890,8 @@ mod tests {
                 process_id,
                 channel: wire::StreamChannel::Stdout,
                 chunk,
+                sequence: None,
+                timestamp_ms: None,
             }) if process_id == "proc-1" && chunk == b"hello".to_vec()
         ));
     }
