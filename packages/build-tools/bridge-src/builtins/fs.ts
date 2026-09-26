@@ -2772,20 +2772,25 @@ var fs = {
   appendFileSync(path, data, options) {
     validateEncodingOption(options);
     const rawPath = normalizePathLike(path);
-    let existing = "";
+    const encoding = typeof options === "string" ? options : options?.encoding;
+    const content = toUint8ArrayChunk(data, encoding);
+    const flag = typeof options === "object" && options?.flag != null ? options.flag : "a";
+    const mode = typeof options === "object" ? options?.mode : void 0;
+    let fd = -1;
     try {
-      existing = fs.existsSync(path) ? fs.readFileSync(path, "utf8") : "";
+      fd = fs.openSync(path, flag, mode);
     } catch (err) {
       throwNormalizedFsBridgeError(err, "open", rawPath);
     }
-    const content = typeof data === "string" ? data : String(data);
     try {
-      fs.writeFileSync(path, existing + content, options);
+      fs.writeFileSync(fd, content);
     } catch (err) {
       if (!err?.code) {
         throw createFsError("EACCES", `EACCES: permission denied, write '${rawPath}'`, "write", rawPath);
       }
       throwNormalizedFsBridgeError(err, "write", rawPath);
+    } finally {
+      fs.closeSync(fd);
     }
   },
   readdirSync(path, options) {
@@ -3872,9 +3877,20 @@ var fs = {
       if (path instanceof FileHandle) {
         return path.appendFile(data, options);
       }
-      const existing = await fsReadFileAsync(path, "utf8").catch((err) => err?.code === "ENOENT" ? "" : Promise.reject(err));
-      const content = typeof data === "string" ? data : String(data);
-      await fsWriteFileAsync(path, existing + content, options);
+      validateEncodingOption(options);
+      const rawPath = normalizePathLike(path);
+      const encoding = typeof options === "string" ? options : options?.encoding;
+      const content = toUint8ArrayChunk(data, encoding);
+      const flag = typeof options === "object" && options?.flag != null ? options.flag : "a";
+      const mode = typeof options === "object" ? options?.mode : void 0;
+      const handle = new FileHandle(fs.openSync(rawPath, flag, mode));
+      try {
+        await handle.writeFile(content);
+      } finally {
+        if (!handle.closed) {
+          await handle.close();
+        }
+      }
     },
     async readdir(path, options) {
       return fsReaddirAsync(path, options);
