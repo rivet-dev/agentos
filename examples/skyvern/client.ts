@@ -21,14 +21,16 @@ await agent.sessions.open({
 	],
 });
 
-const response = await agent.sessions.prompt({
-	content: [
-		{
-			type: "text",
-			text: "Use the Skyvern tools to open https://example.com, click the link on the page, and tell me the title of the page that opens. Close the browser session when you are done.",
-		},
-	],
-});
-console.log(response.message?.content ?? []);
-
-await agent.sessions.delete();
+try {
+	const response = await agent.sessions.prompt({
+		content: [
+			{
+				type: "text",
+				text: "Use the Skyvern tools to open https://example.com, click the link on the page, and tell me the title of the page that opens. Close the browser session when you are done.",
+			},
+		],
+	});
+	console.log(response.message?.content ?? []);
+} finally {
+	await agent.sessions.delete();
+}
