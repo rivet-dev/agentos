@@ -25586,6 +25586,88 @@ console.log(JSON.stringify({
         }
 
         #[test]
+        fn wasm_parent_child_spawn_is_claimed_without_consuming_output() {
+            let mut sidecar = create_test_sidecar();
+            let (connection_id, session_id) =
+                authenticate_and_open_session(&mut sidecar).expect("authenticate sidecar");
+            let vm_id = create_vm(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                PermissionsPolicy::allow_all(),
+            )
+            .expect("create vm");
+
+            let root_kernel_handle = create_kernel_process_handle_for_tests();
+            let mut root = active_process_for_tests(
+                root_kernel_handle.pid(),
+                root_kernel_handle,
+                GuestRuntimeKind::WebAssembly,
+                ActiveExecution::HostFunction(HostFunctionExecution::default()),
+            );
+            let child_kernel_handle = create_kernel_process_handle_for_tests();
+            let mut child = active_process_for_tests(
+                child_kernel_handle.pid(),
+                child_kernel_handle,
+                GuestRuntimeKind::WebAssembly,
+                ActiveExecution::HostFunction(HostFunctionExecution::default()),
+            );
+            child
+                .queue_pending_execution_event(ActiveExecutionEvent::JavascriptSyncRpcRequest(
+                    JavascriptSyncRpcRequest {
+                        raw_bytes_args: std::collections::HashMap::new(),
+                        id: 1,
+                        method: String::from("child_process.spawn"),
+                        args: vec![json!("/bin/ls"), json!([]), json!({})],
+                    },
+                ))
+                .expect("queue nested child spawn");
+            child
+                .queue_pending_execution_event(ActiveExecutionEvent::Stdout(b"pull-owned".to_vec()))
+                .expect("queue child output");
+            root.child_processes.insert(String::from("child-1"), child);
+            sidecar
+                .vms
+                .get_mut(&vm_id)
+                .expect("test vm")
+                .active_processes
+                .insert(String::from("wasm-root"), root);
+
+            let mut javascript_services = Vec::new();
+            sidecar
+                .pump_child_process_events_nowait(
+                    &vm_id,
+                    &mut javascript_services,
+                    &mut Vec::new(),
+                    &mut Vec::new(),
+                    &mut Vec::new(),
+                    8,
+                )
+                .expect("claim nested spawn");
+            assert_eq!(
+                javascript_services.len(),
+                1,
+                "WASM-owned children must still service spawn requests"
+            );
+            assert_eq!(javascript_services[0].request.method, "child_process.spawn");
+            assert_eq!(
+                javascript_services[0].child_path,
+                vec![String::from("child-1")]
+            );
+            let vm = sidecar.vms.get(&vm_id).expect("test vm");
+            let queued = vm
+                .active_processes
+                .get("wasm-root")
+                .and_then(|root| root.child_processes.get("child-1"))
+                .and_then(|child| child.pending_execution_events.front())
+                .expect("WASM child output should remain available to child_process.poll");
+            match queued {
+                ActiveExecutionEvent::Stdout(chunk) => assert_eq!(chunk, b"pull-owned"),
+                other => panic!("expected queued child stdout, got {other:?}"),
+            }
+        }
+
+        #[test]
         fn wasm_parent_child_write_deadline_wakes_after_parent_stops_polling() {
             assert_node_available();
 
