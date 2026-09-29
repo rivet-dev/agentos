@@ -1,6 +1,8 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { decodeAospkgManifest } from "./aospkg.js";
+import { readManifest } from "./manifest.js";
 
 export interface PublishOptions {
 	packageDir: string;
@@ -39,6 +41,39 @@ export function resolveTag(options: Pick<PublishOptions, "tag" | "latest">): str
 		);
 	}
 	return options.tag ?? "dev";
+}
+
+/** Refuse to publish a command package built from an incomplete staging dir. */
+export function validatePublishArtifact(
+	packageDir: string,
+	version: string,
+): void {
+	const manifest = readManifest(packageDir);
+	const required = [
+		...(manifest?.commands ?? []),
+		...Object.keys(manifest?.aliases ?? {}),
+		...(manifest?.stubs ?? []),
+	];
+	if (required.length === 0) return;
+	const artifactPath = join(packageDir, "dist", "package.aospkg");
+	if (!existsSync(artifactPath)) {
+		throw new Error(
+			`${artifactPath} is missing; stage and build before publishing`,
+		);
+	}
+	const packed = decodeAospkgManifest(readFileSync(artifactPath));
+	if (packed.version !== version) {
+		throw new Error(
+			`${artifactPath} has version ${packed.version}, expected ${version}; rebuild before publishing`,
+		);
+	}
+	const present = new Set(packed.commands.map((target) => target.command));
+	const missing = required.filter((command) => !present.has(command));
+	if (missing.length > 0) {
+		throw new Error(
+			`${artifactPath} is missing declared commands: ${missing.join(", ")}; stage the complete command set before publishing`,
+		);
+	}
 }
 
 function findUp(startDir: string, fileName: string): string | undefined {
@@ -92,6 +127,7 @@ export function publish(options: PublishOptions): PublishResult {
 			`${pkg.name} is not built (no dist/index.js in ${packageDir}) — build it first`,
 		);
 	}
+	validatePublishArtifact(packageDir, pkg.version);
 
 	const inPnpmWorkspace =
 		findUp(packageDir, "pnpm-workspace.yaml") !== undefined;

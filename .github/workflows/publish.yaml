@@ -331,6 +331,8 @@ jobs:
         run: |
           pnpm --filter=publish exec tsx src/ci/bin.ts bump-versions \
             --version ${{ needs.context.outputs.version }}
+      - name: Verify published common software
+        run: node scripts/publish/verify-common-software.mjs
       - name: Publish npm packages
         env:
           NODE_AUTH_TOKEN: ""
