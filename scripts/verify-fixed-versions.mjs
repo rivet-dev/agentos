@@ -51,8 +51,7 @@ function isIncludedPackageJson(relPath) {
 	return (
 		(relPath.startsWith("packages/") ||
 			relPath.startsWith("examples/") ||
-			relPath.startsWith("secure-exec/") ||
-			relPath === "website/package.json") &&
+			relPath.startsWith("secure-exec/")) &&
 		relPath.endsWith("/package.json")
 	);
 }

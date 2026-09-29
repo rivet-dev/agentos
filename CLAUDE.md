@@ -104,8 +104,8 @@ add compatibility views, aliases, legacy adoption paths, or dual writes.
   Python). Do NOT reason about guest capabilities from plain-WASI limits (e.g.
   "no shell", "no subprocess spawning", "no process model") — those hold for raw
   WASI Preview 1, not for agentOS. See
-  `website/public/docs/docs/architecture/processes.md` and
-  `posix-syscalls.md`, and `crates/kernel/CLAUDE.md`.
+  `docs/content/docs/architecture/processes.mdx` and
+  `docs/content/docs/architecture/posix-syscalls.mdx`, and `crates/kernel/CLAUDE.md`.
 - The projected `/opt/agentos` filesystem is the source of truth for software
   and agent resolution. Read it live; do not cache package lists captured at VM
   configuration time.
@@ -272,9 +272,11 @@ custom host-syscall imports. Treat that target as **native POSIX**;
 - Runnable docs code must come from real checked example files via
   `<CodeSnippet>`. Inline code is fine only for shell commands, config
   fragments, or non-runnable examples.
-- Docs render in the website repo, not here. Validate a change by type-checking
-  the examples it embeds and previewing with a sibling website checkout as
-  described in `docs/CLAUDE.md`.
+- Validate docs changes with `just docs-check` or `pnpm check-docs` when
+  editing `docs/`, `secure-exec/docs/`, `docs/sidebar.json`,
+  `secure-exec/docs/sidebar.json`, or cross-page links under `/agentos/` and
+  `/secure-exec/`. To preview rendered pages, clone `rivet-dev/website` next
+  to this repo and follow `docs/CLAUDE.md`.
 
 ## Tests
 

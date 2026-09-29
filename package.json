@@ -14,6 +14,7 @@
 		"test:post-python-parity": "pnpm --dir packages/core build && pnpm --dir packages/core exec vitest run tests/agentos-base-filesystem.nightly.test.ts",
 		"test:watch": "pnpm exec turbo watch test --filter='!@rivet-dev/agentos-browser' --filter='!@rivet-dev/agentos-runtime-browser' --filter='!@rivet-dev/agentos-playground'",
 		"check-layout": "node scripts/check-layout.mjs",
+		"check-docs": "node scripts/check-docs.mjs",
 		"check-types": "node scripts/verify-check-types.mjs && pnpm --dir software/codex build:types && pnpm exec turbo check-types --only --concurrency=4 --filter='!@agentos-software/codex' --filter='!@rivet-dev/agentos-browser' --filter='!@rivet-dev/agentos-runtime-browser' --filter='!@rivet-dev/agentos-playground'",
 		"lint": "pnpm biome check .",
 		"fmt": "pnpm biome check --write --diagnostic-level=error .",
