@@ -2487,6 +2487,31 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
+  examples/skyvern:
+    dependencies:
+      '@agentos-software/claude-code':
+        specifier: workspace:*
+        version: link:../../software/claude
+      '@rivet-dev/agentos':
+        specifier: workspace:*
+        version: link:../../packages/agentos
+      '@rivet-dev/agentos-core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      rivetkit:
+        specifier: catalog:rivetkit
+        version: 2.3.10(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(sql.js@1.14.1)(ws@8.21.0(bufferutil@4.1.0))
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.0
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
   examples/software:
     dependencies:
       '@agentos-software/claude-code':

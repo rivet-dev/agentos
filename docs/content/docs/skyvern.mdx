@@ -1,0 +1,97 @@
+---
+title: "Skyvern"
+description: "Let agents in an agentOS VM open pages, click, type, and extract data in a cloud browser through Skyvern's hosted MCP server."
+---
+
+Agents can drive a browser step by step through Skyvern's hosted MCP server. The browser runs in Skyvern Cloud, and the agent controls it with MCP tool calls over HTTPS. The VM never runs a browser.
+
+Use this for interactive work: open a page, click, type, fill a form, and read the result. To fetch a page as markdown or search the web, see [Browser Automation](/agentos/docs/browser).
+
+## Setup
+
+<Steps>
+
+<Step title="Get a Skyvern API key">
+
+Copy an API key from Settings in the [Skyvern dashboard](https://app.skyvern.com/settings). The Claude Code agent also needs a model provider key.
+
+```bash
+export SKYVERN_API_KEY=...
+export ANTHROPIC_API_KEY=sk-ant-...
+```
+
+</Step>
+
+<Step title="Install">
+
+```bash
+npm install @rivet-dev/agentos @agentos-software/claude-code
+```
+
+</Step>
+
+<Step title="Allow network access">
+
+The VM cannot reach the network by default. Allow the model provider and Skyvern's MCP host. Each host needs a `dns://` rule and a `tcp://` rule, as described in [Permissions](/agentos/docs/permissions#allow-only-specific-network-hosts). If you route Claude Code through another provider or `ANTHROPIC_BASE_URL`, allow that host instead of `api.anthropic.com`.
+
+<CodeSnippet file="examples/skyvern/server.ts" />
+
+</Step>
+
+<Step title="Connect the session to Skyvern">
+
+Pass Skyvern's MCP server in `mcpServers` when you open the session. The API key goes in the `x-api-key` header.
+
+<CodeSnippet file="examples/skyvern/client.ts" />
+
+</Step>
+
+<Step title="Run it">
+
+```bash
+# Terminal 1: start the server
+npx tsx server.ts
+
+# Terminal 2: run the client
+npx tsx client.ts
+```
+
+The agent opens a Skyvern browser session, clicks the link on the page, and replies with the title of the page that opens. With the server running, open http://localhost:6420/ui to watch the live transcript.
+
+</Step>
+
+</Steps>
+
+## Tools
+
+The agent picks tools based on the prompt. Common tools:
+
+| Tools | Use |
+|---|---|
+| `skyvern_browser_session_create`, `skyvern_browser_session_close` | Open and close a browser session. |
+| `skyvern_navigate`, `skyvern_click`, `skyvern_type`, `skyvern_select_option` | Control the page with CSS or XPath selectors, natural language, or both. |
+| `skyvern_act` | Run an action described in natural language. |
+| `skyvern_extract`, `skyvern_screenshot` | Return structured JSON from the page, or capture a screenshot. |
+| `skyvern_validate` | Check a condition on the page and return true or false. |
+| `skyvern_login` | Log in with stored credentials, with automatic 2FA. |
+
+The server has more tools, for tabs, iframes, file upload, and workflows. The [Skyvern MCP docs](https://www.skyvern.com/docs/developers/getting-started/mcp) list every tool.
+
+By default the server lists every tool. To list fewer, add an `X-Skyvern-Scope` header with `operate`, `build`, `browser`, or `lean`. A scope changes the tool list only. It does not limit what the API key can do.
+
+## Limits
+
+- **The browser is remote.** It runs in Skyvern Cloud, so it cannot open `localhost` or other addresses that only the VM or your server can reach.
+- **The adapter decides the transport.** This page uses Claude Code, whose adapter accepts `http` MCP servers. Transport support differs between agents. See [MCP servers](/agentos/docs/sessions#mcp-servers).
+- **The key reaches the whole Skyvern organization.** Skyvern has no read-only keys, and it meters usage to the organization that owns the key. Use a separate Skyvern organization for agent work.
+- **The key is stored with the session.** The VM database can store session MCP headers without encryption. See [Persistence](/agentos/docs/persistence).
+- **Tool requests are approved by default.** The default `allow_all` policy answers permission requests automatically. Set `permissionPolicy: "ask"` to review them. See [Approvals](/agentos/docs/approvals).
+- **The first call is slower.** A new browser session takes a few seconds to start.
+
+## Embedded API
+
+Pass the same network policy to `AgentOs.create()` and the same `mcpServers` entry to `vm.sessions.open()`.
+
+<CodeSnippet file="examples/skyvern/embedded.ts" title="embedded.ts" />
+
+Read more in the [embedded API quickstart](/agentos/docs/quickstart-embedded).
