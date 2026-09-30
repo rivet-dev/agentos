@@ -15,7 +15,7 @@ mod launch;
 use self::launch::*;
 pub(crate) use self::launch::{
     execute_owned, host_path_from_runtime_guest_mappings, initial_shadow_sync_inventory,
-    is_protected_agentos_shadow_sync_path,
+    is_protected_agentos_shadow_sync_path, resolve_execution_cwds,
     sanitize_javascript_child_process_internal_bootstrap_env,
     sync_active_process_host_writes_to_kernel, sync_process_host_writes_to_kernel,
 };
