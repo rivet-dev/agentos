@@ -2607,6 +2607,7 @@ where
                 | RequestRoute::GetZombieTimerCount(_)
                 | RequestRoute::ProvidedCommands(_)
                 | RequestRoute::ListMounts(_)
+                | RequestRoute::CompareVmConfig(_)
                 | RequestRoute::GuestFilesystemCall(_)
                 | RequestRoute::GuestKernelCall(_)
                 | RequestRoute::BootstrapRootFilesystem(_)
@@ -2800,6 +2801,12 @@ where
             RequestRoute::ListMounts(payload) => {
                 let future = self.list_mounts(&request, payload);
                 Ok(Some(PreparedRequest::from_vm_command(request, future)))
+            }
+            RequestRoute::CompareVmConfig(payload) => {
+                let result = self.compare_vm_config(&request, payload);
+                Ok(Some(PreparedRequest::from_future(request, async move {
+                    result
+                })))
             }
             RequestRoute::BootstrapRootFilesystem(payload) => {
                 let future = self.bootstrap_root_filesystem(&request, payload.entries);
@@ -3032,9 +3039,7 @@ where
                     })
                 })))
             }
-            RequestRoute::CreateVm(_)
-            | RequestRoute::CompareVmConfig(_)
-            | RequestRoute::DisposeVm(_) => {
+            RequestRoute::CreateVm(_) | RequestRoute::DisposeVm(_) => {
                 unreachable!("VM creation and disposal use dedicated prepared routes")
             }
         }
