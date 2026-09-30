@@ -100,7 +100,10 @@ mod persistence_tests {
 
 const DEFAULT_METADATA_CACHE_ENTRIES: usize = 4096;
 const MAX_METADATA_CACHE_ENTRIES: usize = 1_000_000;
-const METADATA_CHUNK_SIZE: usize = 256 * 1024;
+/// Remote actor SQLite rejects a statement whose bound values exceed 128 KiB.
+/// The other values in a metadata chunk write are at most 272 bytes, so 64 KiB
+/// leaves ample room.
+const METADATA_CHUNK_SIZE: usize = 64 * 1024;
 const DEFAULT_MAX_METADATA_BYTES: usize = 64 * 1024 * 1024;
 const MAX_METADATA_BYTES: usize = 1024 * 1024 * 1024;
 const METADATA_CLEANUP_BATCH_SIZE: i64 = 64;
