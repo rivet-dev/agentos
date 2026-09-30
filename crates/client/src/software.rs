@@ -1563,7 +1563,10 @@ fn validate_package_file_sync(path: &Path, size: u64) -> Result<PackageManifestI
         )));
     }
     for command in &manifest.commands {
-        validate_manifest_component("command", &command.command, MAX_PACKAGE_COMMAND_BYTES)?;
+        // `[` is the POSIX name of `test`. It contains no path separator.
+        if command.command != "[" {
+            validate_manifest_component("command", &command.command, MAX_PACKAGE_COMMAND_BYTES)?;
+        }
         validate_relative_manifest_path("command entry", &command.entry)?;
     }
     if let Some(provides) = &manifest.provides {
@@ -1908,6 +1911,10 @@ mod tests {
     }
 
     fn test_package_with_version(version: &str) -> Vec<u8> {
+        test_package_with(version, "demo")
+    }
+
+    fn test_package_with(version: &str, command_name: &str) -> Vec<u8> {
         let mut builder = tar::Builder::new(Vec::<u8>::new());
         let manifest = format!(r#"{{"name":"demo","version":"{version}"}}"#);
         let mut header = tar::Header::new_gnu();
@@ -1923,7 +1930,7 @@ mod tests {
         header.set_mode(0o755);
         header.set_cksum();
         builder
-            .append_data(&mut header, "bin/demo", &command[..])
+            .append_data(&mut header, format!("bin/{command_name}"), &command[..])
             .unwrap();
         let tar = builder.into_inner().unwrap();
         vfs::package_format::pack::pack_aospkg_from_tar_bytes(&tar)
@@ -2175,6 +2182,30 @@ mod tests {
                     && details.configuration_path.as_deref() == Some("PackageResolverOptions.download_timeout_ms")
                     && details.errno.as_deref() == Some("ETIMEDOUT"))
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn bracket_command_resolves_but_other_bracket_names_are_rejected() {
+        let resolver = PackageResolver::new(PackageResolverOptions::default()).unwrap();
+        for (command, accepted) in [("[", true), ("[x", false), ("]", false)] {
+            let package = tempfile::NamedTempFile::new().unwrap();
+            std::fs::write(package.path(), test_package_with("1.0.0", command)).unwrap();
+            let result = resolver
+                .resolve(PackageSource::Path {
+                    path: package.path().to_string_lossy().into_owned(),
+                    expected_digest: None,
+                })
+                .await;
+            if accepted {
+                let package = result.expect("`[` is a valid command name");
+                assert_eq!(package.manifest.commands, vec![command.to_owned()]);
+            } else {
+                assert!(
+                    matches!(result, Err(ClientError::InvalidPackageFormat(_))),
+                    "{command:?} must be rejected, got {result:?}"
+                );
+            }
         }
     }
 
