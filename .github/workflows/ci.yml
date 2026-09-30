@@ -154,6 +154,7 @@ jobs:
           AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/target/debug/agentos-native-sidecar
         run: |
           cargo test -p agentos-client \
+            --features service-internals \
             --lib \
             --test scaffold \
             --test e2e_smoke \
@@ -163,6 +164,7 @@ jobs:
             --test sidecar_pool_e2e \
             --test cron_e2e \
             --test cron_grammar_e2e \
+            --test vm_config_compare_e2e \
             -- --test-threads=1
       - name: Stage stripped sidecar artifacts
         run: |
