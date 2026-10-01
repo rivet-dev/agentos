@@ -1,21 +1,12 @@
+import { readFileSync } from "node:fs";
 import type { SoftwarePackageRef } from "./agentos-package.js";
 
-const DEFAULT_SOFTWARE = [
-	"coreutils",
-	"sed",
-	"grep",
-	"gawk",
-	"findutils",
-	"diffutils",
-	"tar",
-	"gzip",
-] as const;
-
 /**
- * Default software for a bare `AgentOs.create()`. These immutable `.aospkg`
- * files are vendored into the Core package at build time; runtime resolution
- * never consults npm or scans node_modules. Opt out with
- * `defaultSoftware: false`; add more trusted paths via `software`.
+ * Default software for a bare `AgentOs.create()`. The build stages the list
+ * from `software/default-software.json` and its immutable `.aospkg` files into
+ * the Core package; runtime resolution never consults npm or scans
+ * node_modules. Opt out with `defaultSoftware: false`; add more trusted paths
+ * via `software`.
  */
 export function resolveDefaultSoftware(): SoftwarePackageRef[] {
 	// Published consumers execute this module from dist/, while Vitest executes
@@ -25,8 +16,11 @@ export function resolveDefaultSoftware(): SoftwarePackageRef[] {
 	const artifactDirectory = moduleDirectory.pathname.endsWith("/src/")
 		? new URL("../dist/default-software/", moduleDirectory)
 		: new URL("./default-software/", moduleDirectory);
+	const names: string[] = JSON.parse(
+		readFileSync(new URL("default-software.json", artifactDirectory), "utf8"),
+	);
 
-	return DEFAULT_SOFTWARE.map((name) => ({
+	return names.map((name) => ({
 		packagePath: new URL(`${name}.aospkg`, artifactDirectory).pathname,
 	}));
 }

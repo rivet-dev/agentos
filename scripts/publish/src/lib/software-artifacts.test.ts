@@ -34,6 +34,10 @@ test("stages deterministic digest-addressed .aospkg artifacts", () => {
 		);
 		const bytes = Buffer.from("aospkg fixture");
 		writeFileSync(join(packageDir, "dist", "package.aospkg"), bytes);
+		writeFileSync(
+			join(root, "software", "default-software.json"),
+			JSON.stringify(["example"]),
+		);
 
 		const result = stageSoftwareArtifacts(
 			root,
@@ -58,6 +62,10 @@ test("stages deterministic digest-addressed .aospkg artifacts", () => {
 		);
 		assert.deepEqual(
 			JSON.parse(readFileSync(result.manifestPath, "utf8")),
+			result.manifest,
+		);
+		assert.deepEqual(
+			JSON.parse(readFileSync(result.defaultSoftwarePath, "utf8")),
 			result.manifest,
 		);
 	} finally {
@@ -114,6 +122,37 @@ test("refuses output outside the repository or with an ambiguous name", () => {
 		assert.throws(
 			() => stageSoftwareArtifacts(root, join(root, "packages")),
 			/unsafe/,
+		);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("fails when a default package is not in the software catalog", () => {
+	const root = mkdtempSync(join(tmpdir(), "agentos-software-artifacts-"));
+	try {
+		const packageDir = join(root, "software", "example");
+		mkdirSync(join(packageDir, "dist"), { recursive: true });
+		writeFileSync(
+			join(packageDir, "package.json"),
+			JSON.stringify({ name: "@agentos-software/example", version: "0.0.1" }),
+		);
+		writeFileSync(
+			join(packageDir, "agentos-package.json"),
+			JSON.stringify({ commands: ["example"] }),
+		);
+		writeFileSync(join(packageDir, "dist", "package.aospkg"), "aospkg fixture");
+		writeFileSync(
+			join(root, "software", "default-software.json"),
+			JSON.stringify(["coreutils"]),
+		);
+		assert.throws(
+			() =>
+				stageSoftwareArtifacts(
+					root,
+					join(root, "target", "software-artifacts"),
+				),
+			/default software coreutils is not in the software catalog/,
 		);
 	} finally {
 		rmSync(root, { recursive: true, force: true });

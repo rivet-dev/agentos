@@ -1,26 +1,17 @@
-import { cpSync, mkdirSync, rmSync, statSync } from "node:fs";
+import { cpSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const DEFAULT_SOFTWARE = [
-	"coreutils",
-	"sed",
-	"grep",
-	"gawk",
-	"findutils",
-	"diffutils",
-	"tar",
-	"gzip",
-];
-
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = join(packageRoot, "..", "..");
+const listPath = join(repoRoot, "software", "default-software.json");
 const outputDir = join(packageRoot, "dist", "default-software");
+const defaultSoftware = JSON.parse(readFileSync(listPath, "utf8"));
 
 rmSync(outputDir, { recursive: true, force: true });
 mkdirSync(outputDir, { recursive: true });
 
-for (const name of DEFAULT_SOFTWARE) {
+for (const name of defaultSoftware) {
 	const source = join(repoRoot, "software", name, "dist", "package.aospkg");
 	const size = statSync(source).size;
 	if (size === 0) {
@@ -28,7 +19,10 @@ for (const name of DEFAULT_SOFTWARE) {
 	}
 	cpSync(source, join(outputDir, `${name}.aospkg`));
 }
+// The runtime reads the list from the staged directory, so the published
+// package carries it next to the artifacts.
+cpSync(listPath, join(outputDir, "default-software.json"));
 
 process.stdout.write(
-	`staged ${DEFAULT_SOFTWARE.length} default software artifacts -> ${outputDir}\n`,
+	`staged ${defaultSoftware.length} default software artifacts -> ${outputDir}\n`,
 );

@@ -27,6 +27,9 @@ export interface SoftwareArtifactManifest {
 export interface StageSoftwareArtifactsResult {
 	manifest: SoftwareArtifactManifest;
 	manifestPath: string;
+	/** Manifest entries of the default software, in install order. */
+	defaultSoftware: SoftwareArtifactManifest;
+	defaultSoftwarePath: string;
 	outputDir: string;
 }
 
@@ -129,5 +132,24 @@ export function stageSoftwareArtifacts(
 	const manifest: SoftwareArtifactManifest = { schemaVersion: 1, artifacts };
 	const manifestPath = join(outputDir, "manifest.json");
 	writeFileSync(manifestPath, `${JSON.stringify(manifest, null, "\t")}\n`);
-	return { manifest, manifestPath, outputDir };
+
+	const defaultSoftwareNames: string[] = JSON.parse(
+		readFileSync(join(softwareRoot, "default-software.json"), "utf8"),
+	);
+	const defaultSoftware: SoftwareArtifactManifest = {
+		schemaVersion: 1,
+		artifacts: defaultSoftwareNames.map((name) => {
+			const artifact = artifacts.find((candidate) => candidate.name === name);
+			if (!artifact) {
+				throw new Error(`default software ${name} is not in the software catalog`);
+			}
+			return artifact;
+		}),
+	};
+	const defaultSoftwarePath = join(outputDir, "default-software.json");
+	writeFileSync(
+		defaultSoftwarePath,
+		`${JSON.stringify(defaultSoftware, null, "\t")}\n`,
+	);
+	return { manifest, manifestPath, defaultSoftware, defaultSoftwarePath, outputDir };
 }
