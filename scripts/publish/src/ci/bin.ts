@@ -253,7 +253,7 @@ program
 // ---------------------------------------------------------------------------
 program
 	.command("stage-software")
-	.description("Stage immutable .aospkg files and their manifest")
+	.description("Stage immutable .aospkg files, their manifest, and the default software list")
 	.requiredOption("--output <dir>", "Local artifact directory to replace")
 	.action((opts) => {
 		const repoRoot = findRepoRoot();

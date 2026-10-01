@@ -1,0 +1,10 @@
+[
+	"coreutils",
+	"sed",
+	"grep",
+	"gawk",
+	"findutils",
+	"diffutils",
+	"tar",
+	"gzip"
+]
