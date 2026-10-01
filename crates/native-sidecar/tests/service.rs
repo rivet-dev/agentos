@@ -25595,6 +25595,266 @@ console.log(JSON.stringify({
         }
 
         #[test]
+        fn wasm_parent_services_queued_python_requests_without_consuming_child_output() {
+            assert_wasm_parent_python_service_progress(8, false);
+        }
+
+        #[test]
+        fn wasm_parent_python_services_rearm_after_coalesced_notification() {
+            assert_wasm_parent_python_service_progress(1, false);
+        }
+
+        #[test]
+        fn wasm_parent_mixed_javascript_python_services_make_progress() {
+            assert_wasm_parent_python_service_progress(8, true);
+            assert_wasm_parent_python_service_progress(1, true);
+        }
+
+        fn assert_wasm_parent_python_service_progress(
+            child_quantum: usize,
+            include_javascript: bool,
+        ) {
+            let mut sidecar = create_test_sidecar();
+            sidecar
+                .config
+                .runtime
+                .fairness
+                .capability_quantum_operations = child_quantum;
+            let (connection_id, session_id) =
+                authenticate_and_open_session(&mut sidecar).expect("authenticate sidecar");
+            let vm_id = create_vm(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                PermissionsPolicy::allow_all(),
+            )
+            .expect("create vm");
+            let context = create_python_context_for_vm_test(
+                &sidecar,
+                &vm_id,
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../execution/assets/pyodide"),
+            );
+            let limits = {
+                let vm = sidecar.vms.get(&vm_id).expect("Python test VM");
+                agentos_execution::PythonExecutionLimits {
+                    reactor_work_quantum: Some(vm.limits.reactor.work_quantum),
+                    bridge_call_timeout_ms: Some(
+                        vm.limits
+                            .reactor
+                            .operation_deadline_ms
+                            .saturating_add(1_000),
+                    ),
+                    max_open_fds: vm.kernel.resource_limits().max_open_fds,
+                    ..Default::default()
+                }
+            };
+            let execution = start_python_execution_for_vm_test(
+                &sidecar,
+                &vm_id,
+                StartPythonExecutionRequest {
+                    guest_runtime: Default::default(),
+                    limits,
+                    vm_id: vm_id.clone(),
+                    context_id: context.context_id,
+                    code: String::from("print(42)"),
+                    file_path: None,
+                    env: BTreeMap::new(),
+                    cwd: temp_dir("agentos-wasm-parent-python-rpc"),
+                },
+            )
+            .expect("start Python execution");
+            let root_handle = create_kernel_process_handle_for_tests();
+            let mut root = active_process_for_tests(
+                root_handle.pid(),
+                root_handle,
+                GuestRuntimeKind::WebAssembly,
+                ActiveExecution::HostFunction(HostFunctionExecution::default()),
+            );
+            let child_handle = create_kernel_process_handle_for_tests();
+            let mut child = active_process_for_tests(
+                child_handle.pid(),
+                child_handle,
+                GuestRuntimeKind::Python,
+                ActiveExecution::Python(execution),
+            );
+            let notify = Arc::clone(&sidecar.process_event_notify);
+            child = child.with_event_notify(Arc::clone(&notify));
+            if include_javascript {
+                // This method has an inline handler in the compatibility poll
+                // path. The supervisor must instead claim it as an owned
+                // service, account for it, and continue to the Python request.
+                child
+                    .queue_pending_execution_event(ActiveExecutionEvent::JavascriptSyncRpcRequest(
+                        JavascriptSyncRpcRequest {
+                            id: 3,
+                            method: String::from("process.signal_state"),
+                            args: vec![
+                                Value::from(libc::SIGTERM),
+                                Value::from("ignore"),
+                                Value::from("[]"),
+                                Value::from(0),
+                            ],
+                            raw_bytes_args: Default::default(),
+                        },
+                    ))
+                    .expect("queue JavaScript request before Python requests");
+            }
+            // The WASM parent's poller requeues these events for the supervisor.
+            // Neither request may be stranded behind the WASM-parent guard.
+            child
+                .queue_pending_execution_event(ActiveExecutionEvent::PythonVfsRpcRequest(Box::new(
+                    PythonVfsRpcRequest {
+                        id: 1,
+                        method: PythonVfsRpcMethod::ReadDir,
+                        path: String::from("/"),
+                        destination: None,
+                        target: None,
+                        mode: None,
+                        uid: None,
+                        gid: None,
+                        atime_ms: None,
+                        mtime_ms: None,
+                        content_base64: None,
+                        recursive: false,
+                        url: None,
+                        http_method: None,
+                        headers: BTreeMap::new(),
+                        body_base64: None,
+                        hostname: None,
+                        family: None,
+                        port: None,
+                        socket_id: None,
+                        command: None,
+                        args: Vec::new(),
+                        argv0: None,
+                        cwd: None,
+                        env: BTreeMap::new(),
+                        shell: false,
+                        max_buffer: None,
+                        timeout_ms: None,
+                    },
+                )))
+                .expect("queue Python filesystem request");
+            child
+                .queue_pending_execution_event(ActiveExecutionEvent::PythonSocketConnectCompletion(
+                    Box::new(crate::state::PythonSocketConnectCompletion {
+                        request_id: 2,
+                        result: Err(crate::state::DeferredRpcError {
+                            code: String::from("ECONNREFUSED"),
+                            message: String::from("test connection refused"),
+                        }),
+                    }),
+                ))
+                .expect("queue Python socket completion");
+            for event in [
+                ActiveExecutionEvent::Stdout(b"42\n".to_vec()),
+                ActiveExecutionEvent::Stderr(b"diagnostic\n".to_vec()),
+                ActiveExecutionEvent::Exited(0),
+            ] {
+                child
+                    .queue_pending_execution_event(event)
+                    .expect("queue shell-owned event");
+            }
+            root.child_processes
+                .insert(String::from("python-child"), child);
+            sidecar
+                .vms
+                .get_mut(&vm_id)
+                .expect("test vm")
+                .active_processes
+                .insert(String::from("wasm-root"), root);
+
+            let mut javascript_services = Vec::new();
+            let mut python_services = Vec::new();
+            let mut socket_completions = Vec::new();
+            let ownership = OwnershipScope::vm(&connection_id, &session_id, &vm_id);
+            let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+            // All producer notifications have coalesced. Each subsequent turn
+            // must be justified by a continuation, not a manual second call.
+            let total_services = 2 + usize::from(include_javascript);
+            let turns = if child_quantum == 1 {
+                total_services
+            } else {
+                1
+            };
+            for _ in 0..turns {
+                assert!(
+                    std::future::Future::poll(Box::pin(notify.notified()).as_mut(), &mut cx)
+                        .is_ready(),
+                    "queued Python requests need a wake-up before each turn"
+                );
+                let turn = sidecar
+                    .pump_process_events_nowait(&ownership, 8)
+                    .expect("pump Python child requests");
+                assert_eq!(
+                    turn.javascript_services.len()
+                        + turn.python_services.len()
+                        + turn.python_socket_completions.len(),
+                    if child_quantum == 1 {
+                        1
+                    } else {
+                        total_services
+                    },
+                    "claim queued services up to the fairness limit"
+                );
+                assert!(turn.child_bridge_services.is_empty());
+                javascript_services.extend(turn.javascript_services);
+                python_services.extend(turn.python_services);
+                socket_completions.extend(turn.python_socket_completions);
+            }
+            assert_eq!(javascript_services.len(), usize::from(include_javascript));
+            if include_javascript {
+                assert_eq!(javascript_services[0].request.id, 3);
+                assert_eq!(
+                    javascript_services[0].request.method,
+                    "process.signal_state"
+                );
+                assert_eq!(javascript_services[0].child_path, ["python-child"]);
+            }
+            assert_eq!(
+                python_services.len(),
+                1,
+                "supervisor must claim Python VFS request"
+            );
+            assert_eq!(
+                python_services[0].request.method,
+                PythonVfsRpcMethod::ReadDir
+            );
+            assert_eq!(python_services[0].child_path, ["python-child"]);
+            assert_eq!(
+                socket_completions.len(),
+                1,
+                "supervisor must claim Python socket completion"
+            );
+            assert_eq!(socket_completions[0].completion.request_id, 2);
+            // Drain a possible final fairness continuation. Shell-owned output
+            // must neither be consumed nor cause the supervisor to hot-spin.
+            let _ = std::future::Future::poll(Box::pin(notify.notified()).as_mut(), &mut cx);
+            let empty = sidecar
+                .pump_process_events_nowait(&ownership, 8)
+                .expect("shell-output-only follow-up");
+            assert!(!empty.emitted_any);
+            assert!(empty.javascript_services.is_empty());
+            assert!(empty.python_services.is_empty());
+            assert!(empty.python_socket_completions.is_empty());
+            assert!(
+                std::future::Future::poll(Box::pin(notify.notified()).as_mut(), &mut cx)
+                    .is_pending(),
+                "shell-owned output must not rearm the supervisor"
+            );
+            assert!(sidecar.pending_process_events.is_empty());
+            let vm = sidecar.vms.get(&vm_id).expect("test vm");
+            let child = &vm.active_processes["wasm-root"].child_processes["python-child"];
+            let events = &child.pending_execution_events;
+            assert_eq!(events.len(), 3, "shell retains stdout, stderr, and exit");
+            assert!(matches!(&events[0], ActiveExecutionEvent::Stdout(bytes) if bytes == b"42\n"));
+            assert!(
+                matches!(&events[1], ActiveExecutionEvent::Stderr(bytes) if bytes == b"diagnostic\n")
+            );
+            assert!(matches!(&events[2], ActiveExecutionEvent::Exited(0)));
+        }
+
+        #[test]
         fn wasm_parent_child_write_deadline_wakes_after_parent_stops_polling() {
             assert_node_available();
 
