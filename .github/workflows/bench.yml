@@ -20,7 +20,7 @@ jobs:
           node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.91.1
         with:
           targets: wasm32-wasip1
       - uses: dtolnay/rust-toolchain@nightly
