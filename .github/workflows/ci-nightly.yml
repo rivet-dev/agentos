@@ -21,7 +21,7 @@ jobs:
           node-version: 24
       - uses: oven-sh/setup-bun@v2
       - run: corepack enable yarn
-      - uses: dtolnay/rust-toolchain@1.91.1
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
           targets: wasm32-wasip1
