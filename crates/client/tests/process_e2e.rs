@@ -121,6 +121,40 @@ async fn spawn_rejection_and_fast_exit_remain_distinct_for_late_waiters() {
 }
 
 #[tokio::test]
+async fn output_read_right_after_a_failed_spawn_returns_the_launch_error() {
+    if !common::require_sidecar("output_read_right_after_a_failed_spawn_returns_the_launch_error") {
+        return;
+    }
+    let os = common::new_vm().await;
+    let result = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        let launch = os.spawn_process(
+            "agentos-nonexistent-review-command",
+            Vec::new(),
+            SpawnOptions {
+                retain_output: true,
+                ..Default::default()
+            },
+        )?;
+        // Read before the launch has settled: the caller must get the launch error, not a
+        // missing-process error from asking the sidecar before it knows the process.
+        let read = os.read_process_output(launch.pid, None, None, None).await;
+        anyhow::ensure!(
+            matches!(&read, Err(ClientError::Kernel { code, .. }) if code == "ENOENT"),
+            "an output read right after a failed spawn must return the launch error: {read:?}"
+        );
+        Ok::<_, anyhow::Error>(())
+    })
+    .await;
+    tokio::time::timeout(std::time::Duration::from_secs(10), os.shutdown())
+        .await
+        .expect("bounded VM cleanup")
+        .expect("shutdown VM");
+    result
+        .expect("output read finishes within the timeout")
+        .expect("output read returns the launch error");
+}
+
+#[tokio::test]
 async fn exec_argv_timeout_confirms_node_guest_exit() {
     if !common::require_sidecar("exec_argv_timeout_confirms_node_guest_exit") {
         return;
