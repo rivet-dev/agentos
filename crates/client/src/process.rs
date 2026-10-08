@@ -1000,7 +1000,14 @@ impl AgentOs {
         max_events: Option<usize>,
         max_bytes: Option<usize>,
     ) -> std::result::Result<ProcessOutputReplay, ClientError> {
-        let (process_id, retain_output, execution_id, execution_generation) = self
+        let (
+            process_id,
+            retain_output,
+            execution_id,
+            execution_generation,
+            mut started,
+            mut outcome,
+        ) = self
             .inner()
             .processes
             .read(&pid, |_, entry| {
@@ -1009,9 +1016,27 @@ impl AgentOs {
                     entry.retain_output,
                     entry.execution_id.clone(),
                     entry.execution_generation,
+                    entry.kernel_pid.subscribe(),
+                    entry.exit_tx.subscribe(),
                 )
             })
             .ok_or(ClientError::ProcessNotFound(pid))?;
+        // `spawn_process` returns before the sidecar has the process. Wait until the Execute
+        // request lands or fails, so a read never reaches the sidecar before the process exists.
+        loop {
+            if started.borrow().is_some() {
+                break;
+            }
+            match &*outcome.borrow() {
+                ProcessOutcome::Failed { error, .. } => return Err(error.clone()),
+                ProcessOutcome::Exited(_) => break,
+                ProcessOutcome::Pending => {}
+            }
+            tokio::select! {
+                changed = started.changed() => if changed.is_err() { break },
+                changed = outcome.changed() => if changed.is_err() { break },
+            }
+        }
         if !retain_output {
             return Err(ClientError::Sidecar(format!(
                 "process {pid} was not spawned with output retention enabled"
