@@ -936,10 +936,47 @@ where
                                 path
                             ))
                         })?;
-                    vm.kernel
-                        .write_file(&path, bytes)
-                        .map(|()| PythonVfsRpcResponsePayload::Empty)
-                        .map_err(kernel_error)
+                    (|| -> Result<PythonVfsRpcResponsePayload, SidecarError> {
+                        vm.kernel
+                            .write_file(&path, bytes.clone())
+                            .map_err(kernel_error)?;
+                        // Mounts own their writes; do not introduce an extra
+                        // backend realpath/metadata requirement after success.
+                        if is_non_root_mount_path(&vm.kernel, &path) {
+                            return Ok(PythonVfsRpcResponsePayload::Empty);
+                        }
+                        // Python's VFS bridge writes complete file contents to the
+                        // kernel. Keep the root staging copy current too, otherwise
+                        // exit/read-side reconciliation imports API-seeded old bytes.
+                        // Resolve through the trusted VFS after the permitted write:
+                        // aliases must update their target, not replace a symlink,
+                        // and non-root mounts must never leak into the root shadow.
+                        let target = vm
+                            .kernel
+                            .filesystem()
+                            .inner()
+                            .realpath(&path)
+                            .map_err(|error| kernel_error(error.into()))?;
+                        if !is_non_root_mount_path(&vm.kernel, &target) {
+                            // Guest-created files can remain kernel-only. Only
+                            // refresh an existing staging copy, avoiding new host
+                            // directory stubs that would overwrite guest metadata.
+                            let shadow = shadow_host_path_for_guest(&vm.cwd, &target);
+                            match fs::symlink_metadata(&shadow) {
+                                Ok(_) => {
+                                    mirror_guest_file_write_to_shadow(&mut vm, &target, &bytes)?;
+                                    refresh_shadow_inventory_node(&mut vm, &target)?;
+                                }
+                                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                                Err(error) => {
+                                    return Err(SidecarError::Io(format!(
+                                    "failed to inspect Python write shadow for {target}: {error}"
+                                )));
+                                }
+                            }
+                        }
+                        Ok(PythonVfsRpcResponsePayload::Empty)
+                    })()
                 }
                 PythonVfsRpcMethod::Stat => vm
                     .kernel
@@ -1011,18 +1048,30 @@ where
                         Ok(()) => {
                             rename_guest_shadow_path(&mut vm, &path, &destination).and_then(|()| {
                                 forget_shadow_inventory_path(&mut vm, &path);
-                                refresh_shadow_inventory_path(&mut vm, &destination)?;
+                                // A kernel-only temporary file replacing an API-
+                                // seeded destination removes its stale shadow. Do
+                                // not inventory that absent shadow as a deletion
+                                // to apply to the new kernel file on the next read.
+                                if !is_non_root_mount_path(&vm.kernel, &destination) {
+                                    let shadow = shadow_host_path_for_guest(&vm.cwd, &destination);
+                                    match fs::symlink_metadata(&shadow) {
+                                        Ok(_) => refresh_shadow_inventory_path(&mut vm, &destination)?,
+                                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                                            forget_shadow_inventory_path(&mut vm, &destination);
+                                        }
+                                        Err(error) => return Err(SidecarError::Io(format!(
+                                            "failed to inspect Python rename shadow for {destination}: {error}"
+                                        ))),
+                                    }
+                                }
                                 Ok(PythonVfsRpcResponsePayload::Empty)
                             })
                         }
                         Err(error) => Err(error),
                     }
                 }
-                // Kernel-direct (no shadow mirror): guest Python writes/creates
-                // land only in the kernel VFS, so mirroring create/modify ops into
-                // the host-side shadow would leave empty stubs that a later
-                // shadow->kernel sync resurrects over real content. (Delete/rename
-                // still mirror — to *remove* stale wire-written shadow entries.)
+                // Guest-created entries remain kernel-only. Write refreshes
+                // existing shadows with actual bytes, never empty file stubs.
                 PythonVfsRpcMethod::Symlink => {
                     let target = request.target.clone().ok_or_else(|| {
                         SidecarError::InvalidState(format!(
@@ -3539,7 +3588,7 @@ fn materialize_process_shadow_symlink(
             return Err(SidecarError::Io(format!(
                 "failed to inspect process shadow symlink {}: {error}",
                 shadow_path.display()
-            )))
+            )));
         }
     };
     if !metadata.file_type().is_symlink() {
@@ -5084,7 +5133,14 @@ fn mirror_guest_file_write_to_shadow(
         ))
     })?;
 
-    let stat = vm.kernel.lstat(&guest_path).map_err(kernel_error)?;
+    // Trusted bookkeeping after a permitted write must not require an extra
+    // guest fs.stat permission just to preserve the mirrored file's mode.
+    let stat = vm
+        .kernel
+        .filesystem()
+        .inner()
+        .lstat(&guest_path)
+        .map_err(|error| kernel_error(error.into()))?;
     fs::set_permissions(&shadow_path, fs::Permissions::from_mode(stat.mode & 0o7777)).map_err(
         |error| {
             SidecarError::Io(format!(

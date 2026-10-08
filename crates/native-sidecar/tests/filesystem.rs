@@ -1902,6 +1902,280 @@ try {
         guest_filesystem_call(sidecar, connection_id, session_id, vm_id, request_id, write);
     }
 
+    fn execute_python_code(
+        sidecar: &mut agentos_native_sidecar::NativeSidecar<RecordingBridge>,
+        connection_id: &str,
+        session_id: &str,
+        vm_id: &str,
+        request_id: i64,
+        process_id: &str,
+        code: String,
+    ) -> String {
+        let response = sidecar
+            .dispatch_wire_blocking(wire_request(
+                request_id,
+                wire_vm(connection_id, session_id, vm_id),
+                RequestPayload::ExecuteRequest(ExecuteRequest {
+                    process_id: process_id.to_owned(),
+                    command: None,
+                    runtime: Some(GuestRuntimeKind::Python),
+                    entrypoint: Some(code),
+                    args: Vec::new(),
+                    env: HashMap::new(),
+                    cwd: Some(String::from("/workspace")),
+                    wasm_permission_tier: None,
+                    retain_output: false,
+                }),
+            ))
+            .expect("execute Python code");
+        assert!(
+            matches!(
+                response.response.payload,
+                ResponsePayload::ProcessStartedResponse(_)
+            ),
+            "Python did not start: {:?}",
+            response.response.payload
+        );
+        let (stdout, stderr, exit) =
+            drain_process_output(sidecar, connection_id, session_id, vm_id, process_id);
+        assert_eq!(exit, Some(0), "{process_id}: {stderr}");
+        stdout
+    }
+
+    /// Python's VFS bridge must mirror the bytes it writes, not leave an old
+    /// API-created shadow to overwrite them at process exit or on a host read.
+    #[test]
+    fn python_edits_to_host_written_files_survive_shadow_reconciliation() {
+        support::assert_node_available();
+        let mut sidecar = create_test_sidecar();
+        let (connection_id, session_id) = authenticate_and_open_session(&mut sidecar);
+        let cwd = temp_dir("python-api-seeded-cwd");
+        let (vm_id, _) = create_vm_wire(
+            &mut sidecar,
+            3,
+            &connection_id,
+            &session_id,
+            GuestRuntimeKind::Python,
+            &cwd,
+        );
+        let cases = [
+            ("overwrite", "p.write_text('EDITED\\n')", "EDITED\n"),
+            (
+                "read-modify-write",
+                "p.write_text(p.read_text() + 'added\\n')",
+                "original\nadded\n",
+            ),
+            (
+                "replace",
+                "q = p.with_suffix('.tmp'); q.write_text('replaced\\n'); q.replace(p)",
+                "replaced\n",
+            ),
+        ];
+        for (index, (name, mutation, expected)) in cases.into_iter().enumerate() {
+            let id = 20 + index as i64 * 10;
+            let path = format!("/workspace/{name}.txt");
+            host_write_text(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                &vm_id,
+                id,
+                &path,
+                "original\n",
+            );
+            let code = format!(
+                "from pathlib import Path\np = Path({path:?})\n{mutation}\nprint(p.read_text(), end='')"
+            );
+            let stdout = execute_python_code(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                &vm_id,
+                id + 1,
+                &format!("python-{name}"),
+                code,
+            );
+            assert_eq!(stdout, expected, "{name}: Python saw incorrect content");
+            for read in 0..2 {
+                assert_eq!(
+                    guest_read_text(
+                        &mut sidecar,
+                        &connection_id,
+                        &session_id,
+                        &vm_id,
+                        id + 2 + read,
+                        &path
+                    ),
+                    expected,
+                    "{name}: host read lost the Python edit"
+                );
+            }
+            assert_eq!(
+                execute_python_code(
+                    &mut sidecar,
+                    &connection_id,
+                    &session_id,
+                    &vm_id,
+                    id + 4,
+                    &format!("read-{name}"),
+                    format!("from pathlib import Path\nprint(Path({path:?}).read_text(), end='')")
+                ),
+                expected,
+                "{name}: later Python execution lost the edit"
+            );
+        }
+        dispose_vm_and_close_session(&mut sidecar, &connection_id, &session_id, &vm_id);
+    }
+
+    #[test]
+    fn python_shadow_writes_preserve_symlinks_and_mount_boundaries() {
+        support::assert_node_available();
+        let mut sidecar = create_test_sidecar();
+        let (connection_id, session_id) = authenticate_and_open_session(&mut sidecar);
+        let cwd = temp_dir("python-shadow-mount-cwd");
+        let (vm_id, _) = create_vm_wire(
+            &mut sidecar,
+            3,
+            &connection_id,
+            &session_id,
+            GuestRuntimeKind::Python,
+            &cwd,
+        );
+        let marker = format!(
+            "/workspace/marker-{}",
+            cwd.file_name().unwrap().to_string_lossy()
+        );
+        host_write_text(
+            &mut sidecar,
+            &connection_id,
+            &session_id,
+            &vm_id,
+            5,
+            &marker,
+            "marker",
+        );
+        let shadow = locate_shadow_root(&marker);
+        host_write_text(
+            &mut sidecar,
+            &connection_id,
+            &session_id,
+            &vm_id,
+            6,
+            "/workspace/target.txt",
+            "before",
+        );
+        host_write_text(
+            &mut sidecar,
+            &connection_id,
+            &session_id,
+            &vm_id,
+            7,
+            "/mounted/data.txt",
+            "hidden root",
+        );
+        let mount_dir = temp_dir("python-shadow-mount-data");
+        fs::write(mount_dir.join("data.txt"), "mounted before").expect("seed mount");
+        configure_vm_mounts(
+            &mut sidecar,
+            &connection_id,
+            &session_id,
+            &vm_id,
+            vec![MountDescriptor {
+                guest_path: String::from("/mounted"),
+                guest_source: String::from("host_dir"),
+                guest_fstype: String::from("host_dir"),
+                read_only: false,
+                plugin: MountPluginDescriptor {
+                    id: String::from("host_dir"),
+                    config: json!({"hostPath": mount_dir, "readOnly": false}).to_string(),
+                },
+            }],
+        );
+        let mut link = base_guest_filesystem_request(
+            GuestFilesystemOperation::Symlink,
+            "/workspace/alias.txt",
+        );
+        link.target = Some(String::from("/workspace/target.txt"));
+        guest_filesystem_call(&mut sidecar, &connection_id, &session_id, &vm_id, 10, link);
+        execute_python_code(
+            &mut sidecar,
+            &connection_id,
+            &session_id,
+            &vm_id,
+            12,
+            "python-shadow-boundaries",
+            String::from(
+                "from pathlib import Path\nPath('/workspace/alias.txt').write_text('root after')\nPath('/mounted/data.txt').write_text('mounted after')\np = Path('/workspace/new/nested.txt')\np.parent.mkdir(mode=0o700)\np.write_text('new guest file')\n",
+            ),
+        );
+        assert_eq!(
+            guest_read_text(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                &vm_id,
+                13,
+                "/workspace/target.txt"
+            ),
+            "root after"
+        );
+        assert_eq!(
+            guest_read_text(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                &vm_id,
+                14,
+                "/workspace/new/nested.txt"
+            ),
+            "new guest file"
+        );
+        assert!(
+            guest_lstat(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                &vm_id,
+                15,
+                "/workspace/alias.txt"
+            )
+            .is_symbolic_link
+        );
+        assert_eq!(
+            fs::read_to_string(mount_dir.join("data.txt")).unwrap(),
+            "mounted after"
+        );
+        assert!(
+            !shadow.join("workspace/new").exists(),
+            "guest-only directories must not acquire staging stubs"
+        );
+        assert_eq!(
+            fs::read_to_string(shadow.join("mounted/data.txt")).unwrap(),
+            "hidden root",
+            "mounted bytes must not leak into the root shadow"
+        );
+        configure_vm_mounts(
+            &mut sidecar,
+            &connection_id,
+            &session_id,
+            &vm_id,
+            Vec::new(),
+        );
+        assert_eq!(
+            guest_read_text(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                &vm_id,
+                17,
+                "/mounted/data.txt"
+            ),
+            "hidden root"
+        );
+        dispose_vm_and_close_session(&mut sidecar, &connection_id, &session_id, &vm_id);
+        fs::remove_dir_all(mount_dir).expect("remove test mount");
+    }
+
     /// Regression for #1961: a guest process that overwrites, appends to, or
     /// truncates a file the host seeded with `writeFile` must not have its
     /// edit replaced by the host-seeded bytes when the host (or a later
