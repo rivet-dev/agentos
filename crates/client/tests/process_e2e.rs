@@ -155,6 +155,60 @@ async fn output_read_right_after_a_failed_spawn_returns_the_launch_error() {
 }
 
 #[tokio::test]
+async fn concurrent_launches_on_a_fresh_vm_all_run() {
+    if !common::require_sidecar("concurrent_launches_on_a_fresh_vm_all_run") {
+        return;
+    }
+    let Some(os) = common::new_vm_with_commands().await else {
+        if common::allow_local_e2e_skips() {
+            eprintln!(
+                "skipping concurrent_launches_on_a_fresh_vm_all_run: coreutils package absent"
+            );
+            return;
+        }
+        panic!("concurrent_launches_on_a_fresh_vm_all_run: coreutils package absent");
+    };
+    // A fresh VM is cold: the first WebAssembly and Python launches await runtime setup while
+    // the others arrive, so every launch here overlaps another one of the same runtime.
+    let launches: Vec<(&str, Vec<String>)> = (0..3)
+        .map(|index| ("echo", vec![format!("wasm-{index}")]))
+        .chain((0..3).map(|index| {
+            (
+                "python3",
+                vec!["-c".to_owned(), format!("print('python-{index}')")],
+            )
+        }))
+        .collect();
+    let result = tokio::time::timeout(std::time::Duration::from_secs(120), async {
+        let mut handles = Vec::new();
+        for (command, args) in &launches {
+            handles.push(os.spawn_process(command, args.clone(), SpawnOptions::default())?);
+        }
+        let mut outcomes = Vec::new();
+        for ((command, args), handle) in launches.iter().zip(&handles) {
+            outcomes.push((command, args, os.wait_process(handle.pid).await));
+        }
+        let failed: Vec<_> = outcomes
+            .iter()
+            .filter(|(_, _, outcome)| !matches!(outcome, Ok(0)))
+            .collect();
+        anyhow::ensure!(
+            failed.is_empty(),
+            "every concurrent launch must run to exit 0; failed: {failed:?}"
+        );
+        Ok::<_, anyhow::Error>(())
+    })
+    .await;
+    tokio::time::timeout(std::time::Duration::from_secs(10), os.shutdown())
+        .await
+        .expect("bounded VM cleanup")
+        .expect("shutdown VM");
+    result
+        .expect("concurrent launches finish within the timeout")
+        .expect("concurrent launches all run");
+}
+
+#[tokio::test]
 async fn exec_argv_timeout_confirms_node_guest_exit() {
     if !common::require_sidecar("exec_argv_timeout_confirms_node_guest_exit") {
         return;
