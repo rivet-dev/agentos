@@ -1100,6 +1100,10 @@ struct VmExecutionEnginesInner {
     javascript: RefCell<JavascriptExecutionEngine>,
     python: RefCell<PythonExecutionEngine>,
     wasm: RefCell<WasmExecutionEngine>,
+    /// Launches that hold an engine across an await take turns here, so a second launch
+    /// waits instead of failing with an execution conflict.
+    python_launch: tokio::sync::Mutex<()>,
+    wasm_launch: tokio::sync::Mutex<()>,
 }
 
 impl VmExecutionEngines {
@@ -1120,6 +1124,8 @@ impl VmExecutionEngines {
                 javascript: RefCell::new(javascript),
                 python: RefCell::new(python),
                 wasm: RefCell::new(wasm),
+                python_launch: tokio::sync::Mutex::new(()),
+                wasm_launch: tokio::sync::Mutex::new(()),
             }),
         }
     }
@@ -1141,6 +1147,14 @@ impl VmExecutionEngines {
             .python
             .try_borrow_mut()
             .map_err(|_| execution_engine_conflict_error(&self.inner.vm_id, "Python", operation))
+    }
+
+    pub(crate) async fn python_launch_turn(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.inner.python_launch.lock().await
+    }
+
+    pub(crate) async fn wasm_launch_turn(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.inner.wasm_launch.lock().await
     }
 
     pub(crate) fn wasm(

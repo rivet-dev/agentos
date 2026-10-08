@@ -5115,6 +5115,9 @@ where
             // coordinator, so filesystem/kernel commands can still enter this
             // VM and operations in other VMs remain independent.
             drop(vm);
+            // A cold start awaits Pyodide warmup while holding the engine; take turns with
+            // other launches on this VM instead of failing with an execution conflict.
+            let launch_turn = execution_engines.python_launch_turn().await;
             let mut python_engine = execution_engines.python("start Python execution")?;
             let pyodide_dist_path = python_engine
                 .bundled_pyodide_dist_path_for_vm_async(&vm_id, &runtime_context)
@@ -5170,6 +5173,7 @@ where
                 .await
                 .map_err(python_error)?;
             drop(python_engine);
+            drop(launch_turn);
             vm = input
                 .vm
                 .try_borrow_mut("register started Python execution")?;
@@ -5191,6 +5195,10 @@ where
             // WASM import-cache materialization and prewarm are external
             // waits. Release mutable VM state before entering them.
             drop(vm);
+            // A cold start awaits import-cache materialization and prewarm while holding the
+            // engine; take turns with other launches on this VM instead of failing with an
+            // execution conflict.
+            let launch_turn = execution_engines.wasm_launch_turn().await;
             let mut wasm_engine = execution_engines.wasm("start WebAssembly execution")?;
             let context = wasm_engine.create_context(CreateWasmContextRequest {
                 vm_id: vm_id.clone(),
@@ -5213,6 +5221,7 @@ where
                 .await
                 .map_err(wasm_error)?;
             drop(wasm_engine);
+            drop(launch_turn);
             vm = input
                 .vm
                 .try_borrow_mut("register started WebAssembly execution")?;

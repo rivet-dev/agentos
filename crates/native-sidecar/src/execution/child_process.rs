@@ -4907,6 +4907,8 @@ where
                     ActiveExecution::Javascript(execution)
                 }
                 GuestRuntimeKind::WebAssembly => {
+                    // Take turns with other launches on this VM: a cold start awaits while holding the engine.
+                    let launch_turn = execution_engines.wasm_launch_turn().await;
                     let mut wasm_engine =
                         execution_engines.wasm("start WebAssembly child process")?;
                     // These values configure the trusted WASM runner, not
@@ -4947,6 +4949,8 @@ where
                         )
                         .await;
                     wasm_engine.dispose_context(&context_id);
+                    drop(wasm_engine);
+                    drop(launch_turn);
                     let execution = execution_result.map_err(wasm_error)?;
                     ActiveExecution::Wasm(Box::new(execution))
                 }
@@ -6558,6 +6562,8 @@ where
                         let runtime_context = vm.runtime_context.clone();
                         let execution_engines = execution_engines.clone();
                         Box::pin(async move {
+                            // Take turns with other launches on this VM: a cold start awaits while holding the engine.
+                            let _launch_turn = execution_engines.wasm_launch_turn().await;
                             let mut wasm_engine =
                                 execution_engines.wasm("start nested WebAssembly child process")?;
                             let context = wasm_engine.create_context(CreateWasmContextRequest {
@@ -6601,6 +6607,8 @@ where
                         let code = resolved.entrypoint.clone();
                         let cwd = resolved.host_cwd.clone();
                         Box::pin(async move {
+                            // Take turns with other launches on this VM: a cold start awaits while holding the engine.
+                            let _launch_turn = execution_engines.python_launch_turn().await;
                             let mut python_engine =
                                 execution_engines.python("start nested Python child process")?;
                             let pyodide_dist_path = python_engine
