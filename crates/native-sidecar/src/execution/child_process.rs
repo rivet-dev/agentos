@@ -2773,75 +2773,81 @@ where
                 // The standalone WASM runner pulls descendant output through
                 // child_process.poll while implementing waitpid. Keep stream
                 // and exit delivery single-owner, but still claim internal
-                // runtime RPCs from JavaScript children. Otherwise a command
-                // such as `npm test` deadlocks when npm asks the sidecar to
-                // spawn its script shell while the WASM parent is waiting for
-                // npm to exit.
-                let (parent_is_pull_driven_wasm, child_is_javascript, pending_needs_supervisor) = self
+                // runtime RPCs from every child. Otherwise `npm test` deadlocks
+                // when npm asks the sidecar to spawn its script shell while the
+                // WASM parent is waiting for npm to exit, and a Python child or
+                // a nested shell never gets its filesystem or spawn RPCs answered.
+                let (parent_is_pull_driven_wasm, needs_supervisor) = self
                     .vms
                     .get(vm_id)
                     .map(|vm| {
-                        let parent = vm.active_processes
+                        let parent = vm
+                            .active_processes
                             .get(process_id)
                             .and_then(|root| Self::active_process_by_path(root, &parent_path));
-						let child = parent.and_then(|parent| parent.child_processes.get(&child_process_id));
-						(
-							parent.is_some_and(|parent| parent.runtime == GuestRuntimeKind::WebAssembly),
-							child.is_some_and(|child| child.runtime == GuestRuntimeKind::JavaScript),
-							child
-								.and_then(|child| child.pending_execution_events.front())
-								.is_some_and(|event| {
-									matches!(event, ActiveExecutionEvent::JavascriptSyncRpcRequest(request) if javascript_rpc_requires_owned_supervisor(&request.method))
-								}),
-						)
+                        let child =
+                            parent.and_then(|parent| parent.child_processes.get(&child_process_id));
+                        (
+                            parent.is_some_and(|parent| {
+                                parent.runtime == GuestRuntimeKind::WebAssembly
+                            }),
+                            child.is_some_and(|child| {
+                                match child.pending_execution_events.front() {
+                                    Some(ActiveExecutionEvent::JavascriptSyncRpcRequest(
+                                        request,
+                                    )) => javascript_rpc_requires_owned_supervisor(&request.method),
+                                    Some(
+                                        ActiveExecutionEvent::JavascriptSyncRpcCompletion(_)
+                                        | ActiveExecutionEvent::PythonVfsRpcRequest(_)
+                                        | ActiveExecutionEvent::PythonSocketConnectCompletion(_)
+                                        | ActiveExecutionEvent::SignalState { .. },
+                                    ) => true,
+                                    Some(
+                                        ActiveExecutionEvent::Stdout(_)
+                                        | ActiveExecutionEvent::Stderr(_)
+                                        | ActiveExecutionEvent::Exited(_),
+                                    ) => false,
+                                    // The parent's poll queues every supervisor-owned event, but a
+                                    // JavaScript child can also expose one before the parent polls.
+                                    None => child.runtime == GuestRuntimeKind::JavaScript,
+                                }
+                            }),
+                        )
                     })
-                    .unwrap_or((false, false, false));
+                    .unwrap_or((false, false));
                 if parent_is_pull_driven_wasm {
-                    if child_is_javascript
-                        && self.vms.get(vm_id).is_some_and(|vm| {
-                            vm.active_processes
-                                .get(process_id)
-                                .and_then(|root| Self::active_process_by_path(root, &parent_path))
-                                .and_then(|parent| parent.child_processes.get(&child_process_id))
-                                .is_some_and(|child| !child.pending_execution_events.is_empty())
-                        })
-                        && !pending_needs_supervisor
-                    {
+                    if !needs_supervisor {
                         continue;
                     }
-                    if child_is_javascript {
-                        let services_before = javascript_services
-                            .len()
-                            .saturating_add(python_services.len())
-                            .saturating_add(python_socket_completions.len());
-                        let claimed = match self.poll_descendant_javascript_child_process_nowait(
-                            vm_id,
-                            process_id,
-                            &parent_path,
-                            &child_process_id,
-                            true,
-                            javascript_services,
-                            python_services,
-                            python_socket_completions,
-                            None,
-                        ) {
-                            Ok(event) => event,
-                            Err(error) if is_javascript_child_process_gone_error(&error) => {
-                                continue
-                            }
-                            Err(error) => return Err(error),
-                        };
-                        drop(claimed.reservation);
-                        let services_after = javascript_services
-                            .len()
-                            .saturating_add(python_services.len())
-                            .saturating_add(python_socket_completions.len());
-                        if services_after > services_before {
-                            emitted_any = true;
-                            emitted_this_round = true;
-                            work += 1;
-                            child_work[candidate_index] += 1;
-                        }
+                    let services_before = javascript_services
+                        .len()
+                        .saturating_add(python_services.len())
+                        .saturating_add(python_socket_completions.len());
+                    let claimed = match self.poll_descendant_javascript_child_process_nowait(
+                        vm_id,
+                        process_id,
+                        &parent_path,
+                        &child_process_id,
+                        true,
+                        javascript_services,
+                        python_services,
+                        python_socket_completions,
+                        None,
+                    ) {
+                        Ok(event) => event,
+                        Err(error) if is_javascript_child_process_gone_error(&error) => continue,
+                        Err(error) => return Err(error),
+                    };
+                    drop(claimed.reservation);
+                    let services_after = javascript_services
+                        .len()
+                        .saturating_add(python_services.len())
+                        .saturating_add(python_socket_completions.len());
+                    if services_after > services_before {
+                        emitted_any = true;
+                        emitted_this_round = true;
+                        work += 1;
+                        child_work[candidate_index] += 1;
                     }
                     continue;
                 }

@@ -406,3 +406,59 @@ async fn process_surface_exec_spawn_and_snapshot() {
 
     os.shutdown().await.expect("shutdown");
 }
+
+#[tokio::test]
+async fn shell_children_of_every_runtime_run_to_completion() {
+    if !common::require_sidecar("shell_children_of_every_runtime_run_to_completion") {
+        return;
+    }
+    let Some(os) = common::new_vm_with_commands().await else {
+        if common::allow_local_e2e_skips() {
+            eprintln!(
+                "skipping shell_children_of_every_runtime_run_to_completion: coreutils package absent"
+            );
+            return;
+        }
+        panic!("shell_children_of_every_runtime_run_to_completion: coreutils package absent");
+    };
+    // The shell waits on each child before it runs the next line, so every line of output
+    // proves the previous child ran, reported its exit status, and let the shell continue.
+    let script = [
+        r#"python3 -c "print(6*7)""#,
+        r#"echo 'print(1+1)' | python3 -"#,
+        r#"python3 -c "raise ValueError" 2>/dev/null; echo "python-exit-$?""#,
+        "echo nested > /tmp/nested.txt",
+        r#"sh -c "cat /tmp/nested.txt""#,
+    ]
+    .join("\n");
+    let result = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        let handle = os.spawn_process(
+            "sh",
+            vec!["-c".to_owned(), script],
+            SpawnOptions {
+                retain_output: true,
+                ..Default::default()
+            },
+        )?;
+        let exit_code = os.wait_process(handle.pid).await?;
+        let stdout = os
+            .read_process_output(handle.pid, None, None, None)
+            .await?
+            .events
+            .into_iter()
+            .filter(|event| event.stream == agentos_client::ProcessStream::Stdout)
+            .flat_map(|event| event.data)
+            .collect::<Vec<_>>();
+        Ok::<_, anyhow::Error>((exit_code, String::from_utf8_lossy(&stdout).into_owned()))
+    })
+    .await;
+    tokio::time::timeout(std::time::Duration::from_secs(10), os.shutdown())
+        .await
+        .expect("bounded VM cleanup")
+        .expect("shutdown VM");
+    let (exit_code, stdout) = result
+        .expect("the shell and its children finish within the timeout")
+        .expect("the shell runs");
+    assert_eq!(stdout, "42\n2\npython-exit-1\nnested\n");
+    assert_eq!(exit_code, 0);
+}
