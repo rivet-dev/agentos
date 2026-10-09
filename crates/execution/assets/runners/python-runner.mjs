@@ -2325,10 +2325,12 @@ function installPythonVfsSitePackages(pyodide) {
 // so a finder unpacks the bundled wheel and its bundled dependencies
 // synchronously the first time the guest imports one of its top-level modules.
 // Extension modules then load through the regular dlopen path on import.
+//
+// Returns a predicate that tells whether a distribution is bundled.
 function installPythonBundledPackages(pyodide, bundledDir) {
   const api = pyodide?._api;
   if (typeof pyodide?.runPython !== 'function' || !api?.lockfile_packages) {
-    return;
+    return () => false;
   }
 
   const bundledFiles = new Set(readdirSync(bundledDir));
@@ -2397,6 +2399,9 @@ del _agentos_install_bundled_finder
   } finally {
     pyodide.globals.delete('__agentos_unpack_for_import');
   }
+
+  return (distributionName) =>
+    bundledWheelPath(api.lockfile_packages[normalizePythonPackageName(distributionName)]) !== null;
 }
 
 // `pip` / `python -m pip`: emulate the common pip CLI via Pyodide's micropip,
@@ -2404,11 +2409,13 @@ del _agentos_install_bundled_finder
 // governed by the VM network policy, never an ambient host fetch). Installed
 // packages are copied into the persistent VFS site-packages so they survive the
 // per-process interpreter and can be imported by a later `python` invocation.
-async function runPythonPip(pyodide) {
+// Bundled packages are importable in every process, so they are not copied.
+async function runPythonPip(pyodide, isBundledPackage) {
   pyodide.globals.set('__agentos_vfs_site', PYTHON_VFS_SITE_PACKAGES);
+  pyodide.globals.set('__agentos_is_bundled_package', isBundledPackage);
   try {
     await pyodide.runPythonAsync(`
-import os, shutil, site, sys
+import importlib.metadata, os, shutil, site, sys
 _agentos_pip_args = sys.argv[1:]
 if _agentos_pip_args and _agentos_pip_args[0] == "install":
     import micropip
@@ -2427,7 +2434,13 @@ if _agentos_pip_args and _agentos_pip_args[0] == "install":
     # the VFS-backed site-packages so it survives this process.
     os.makedirs(__agentos_vfs_site, exist_ok=True)
     _agentos_after = set(os.listdir(_agentos_sp)) if os.path.isdir(_agentos_sp) else set()
-    for _agentos_name in sorted(_agentos_after - _agentos_before):
+    _agentos_bundled = {
+        _agentos_file.parts[0]
+        for _agentos_dist in importlib.metadata.distributions(path=[_agentos_sp])
+        if __agentos_is_bundled_package(_agentos_dist.name)
+        for _agentos_file in _agentos_dist.files or ()
+    }
+    for _agentos_name in sorted(_agentos_after - _agentos_before - _agentos_bundled):
         _agentos_src = os.path.join(_agentos_sp, _agentos_name)
         _agentos_dst = os.path.join(__agentos_vfs_site, _agentos_name)
         if os.path.isdir(_agentos_src):
@@ -2448,6 +2461,7 @@ else:
   } finally {
     try {
       pyodide.globals.delete('__agentos_vfs_site');
+      pyodide.globals.delete('__agentos_is_bundled_package');
     } catch (error) {
       writeStream(
         process.stderr,
@@ -2564,7 +2578,7 @@ try {
   installPythonWorkspaceFs(pyodide, pythonVfsRpcBridge);
   installPythonVfsSitePackages(pyodide);
   installPythonGuestLoaderHooks();
-  installPythonBundledPackages(pyodide, indexPath);
+  const isBundledPackage = installPythonBundledPackages(pyodide, indexPath);
   if (typeof pyodide?.loadPackage === 'function') {
     emitWarmupStage('before-load-micropip');
     await pyodide.loadPackage(['micropip']);
@@ -2595,7 +2609,7 @@ try {
     source,
   });
   if (moduleName === 'pip') {
-    await runPythonPip(pyodide);
+    await runPythonPip(pyodide, isBundledPackage);
   } else if (moduleName) {
     pyodide.globals.set('__agentos_module', moduleName);
     try {

@@ -3387,6 +3387,46 @@ fn python_command_pip_fails_when_a_pyodide_package_cannot_load() {
     );
 }
 
+fn python_command_pip_installs_bundled_pandas_offline() {
+    assert_node_available();
+    let mut sidecar = new_sidecar("python-cli-pip-bundled");
+    let cwd = temp_dir("python-cli-pip-bundled-cwd");
+    let connection_id = authenticate_wire(&mut sidecar, "conn-python");
+    let session_id = open_session_wire(&mut sidecar, 2, &connection_id);
+    let (vm_id, _) = create_vm_wire(
+        &mut sidecar,
+        3,
+        &connection_id,
+        &session_id,
+        GuestRuntimeKind::Python,
+        &cwd,
+    );
+
+    execute_python_cli(
+        &mut sidecar,
+        4,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "proc-py-pip-pandas",
+        "pip",
+        &["install", "pandas"],
+    );
+    let (stdout, stderr, exit_code) = collect_process_output_with_timeout(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "proc-py-pip-pandas",
+        Duration::from_secs(60),
+    );
+    assert_eq!(exit_code, 0, "stdout: {stdout}\nstderr: {stderr}");
+    assert!(
+        stdout.contains("Successfully installed pandas"),
+        "stdout: {stdout}\nstderr: {stderr}"
+    );
+}
+
 fn python_command_runs_inline_code() {
     assert_node_available();
     let mut sidecar = new_sidecar("python-cli-inline");
@@ -3975,6 +4015,7 @@ fn python_cli_suite() {
     python_command_runs_as_nested_child_process();
     python_command_pip_installs_via_micropip();
     python_command_pip_fails_when_a_pyodide_package_cannot_load();
+    python_command_pip_installs_bundled_pandas_offline();
 }
 
 #[test]
@@ -4080,6 +4121,7 @@ mod python_split {
         python_command_runs_as_nested_child_process,
         python_command_pip_installs_via_micropip,
         python_command_pip_fails_when_a_pyodide_package_cannot_load,
+        python_command_pip_installs_bundled_pandas_offline,
         python_reads_and_writes_arbitrary_vm_paths,
         python_pip_installs_persist_across_invocations,
     );
