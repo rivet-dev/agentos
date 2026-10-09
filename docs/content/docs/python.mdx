@@ -70,6 +70,12 @@ Installs modify the VM-wide filesystem, so a package installed once is importabl
 by every later execution in that VM, in any language. Only one npm/Python
 mutation runs at a time per VM; a concurrent install fails with `execution_busy`.
 
+pandas, numpy, python-dateutil, pytz, six, and click are bundled. They import
+without an install step and need no network. Other packages download over the
+network, so the VM needs a [network grant](/agentos/docs/permissions) for their
+host: Pyodide builds of compiled packages such as Pillow come from
+`cdn.jsdelivr.net`, and pure-Python wheels come from PyPI.
+
 ## Background processes and web servers
 
 `spawn*` starts a long-lived process and returns a `pid`. From there you get

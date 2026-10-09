@@ -2638,11 +2638,11 @@ sys.stdin.read()
     );
 }
 
-fn python_runtime_imports_bundled_numpy_without_network() {
+fn python_runtime_imports_bundled_packages_on_first_import() {
     assert_node_available();
 
-    let mut sidecar = new_sidecar("python-numpy-package");
-    let cwd = temp_dir("python-numpy-package-cwd");
+    let mut sidecar = new_sidecar("python-bundled-packages");
+    let cwd = temp_dir("python-bundled-packages-cwd");
     let connection_id = authenticate_wire(&mut sidecar, "conn-python");
     let session_id = open_session_wire(&mut sidecar, 2, &connection_id);
     let (vm_id, _) = create_vm_wire(
@@ -2654,18 +2654,14 @@ fn python_runtime_imports_bundled_numpy_without_network() {
         &cwd,
     );
 
-    execute_inline_python_with_env(
+    execute_inline_python(
         &mut sidecar,
         4,
         &connection_id,
         &session_id,
         &vm_id,
-        "proc-python-numpy",
-        "import numpy\nprint(numpy.__version__)",
-        HashMap::from([(
-            String::from("AGENTOS_PYTHON_PRELOAD_PACKAGES"),
-            String::from("[\"numpy\"]"),
-        )]),
+        "proc-python-bundled-packages",
+        "import pandas\nimport numpy\nprint(pandas.__version__, numpy.__version__)\nprint(pandas.DataFrame({'a': [1, 2]})['a'].sum())",
     );
 
     let (stdout, stderr, exit_code) = collect_process_output_with_timeout(
@@ -2673,69 +2669,16 @@ fn python_runtime_imports_bundled_numpy_without_network() {
         &connection_id,
         &session_id,
         &vm_id,
-        "proc-python-numpy",
+        "proc-python-bundled-packages",
         Duration::from_secs(30),
     );
 
-    assert_eq!(exit_code, 0);
+    assert_eq!(exit_code, 0, "stderr: {stderr}");
     assert!(
         stderr.is_empty(),
-        "unexpected stderr from bundled numpy import: {stderr}"
+        "unexpected stderr from bundled package import: {stderr}"
     );
-    assert!(
-        stdout.lines().any(|line| line.trim() == "2.2.5"),
-        "expected numpy version in stdout, got: {stdout}"
-    );
-}
-
-fn python_runtime_imports_bundled_pandas_without_network() {
-    assert_node_available();
-
-    let mut sidecar = new_sidecar("python-pandas-package");
-    let cwd = temp_dir("python-pandas-package-cwd");
-    let connection_id = authenticate_wire(&mut sidecar, "conn-python");
-    let session_id = open_session_wire(&mut sidecar, 2, &connection_id);
-    let (vm_id, _) = create_vm_wire(
-        &mut sidecar,
-        3,
-        &connection_id,
-        &session_id,
-        GuestRuntimeKind::Python,
-        &cwd,
-    );
-
-    execute_inline_python_with_env(
-        &mut sidecar,
-        4,
-        &connection_id,
-        &session_id,
-        &vm_id,
-        "proc-python-pandas",
-        "import pandas\nprint(pandas.__version__)",
-        HashMap::from([(
-            String::from("AGENTOS_PYTHON_PRELOAD_PACKAGES"),
-            String::from("[\"pandas\"]"),
-        )]),
-    );
-
-    let (stdout, stderr, exit_code) = collect_process_output_with_timeout(
-        &mut sidecar,
-        &connection_id,
-        &session_id,
-        &vm_id,
-        "proc-python-pandas",
-        Duration::from_secs(30),
-    );
-
-    assert_eq!(exit_code, 0);
-    assert!(
-        stderr.is_empty(),
-        "unexpected stderr from bundled pandas import: {stderr}"
-    );
-    assert!(
-        stdout.lines().any(|line| line.trim() == "2.3.3"),
-        "expected pandas version in stdout, got: {stdout}"
-    );
+    assert_eq!(stdout.trim(), "2.3.3 2.2.5\n3");
 }
 
 fn python_runtime_supports_micropip_package_installation() {
@@ -3383,6 +3326,107 @@ fn python_command_pip_installs_via_micropip() {
     );
 }
 
+fn python_command_pip_fails_when_a_pyodide_package_cannot_load() {
+    assert_node_available();
+
+    // The mirror has no wheels, so the Pyodide package Pillow cannot load.
+    let mirror = temp_dir("python-cli-pip-empty-mirror");
+    let (port, server) = spawn_static_file_server(mirror);
+    let mut sidecar = new_sidecar("python-cli-pip-missing");
+    let cwd = temp_dir("python-cli-pip-missing-cwd");
+    let connection_id = authenticate_wire(&mut sidecar, "conn-python");
+    let session_id = open_session_wire(&mut sidecar, 2, &connection_id);
+    let vm_id = create_vm_with_metadata_and_permissions(
+        &mut sidecar,
+        3,
+        &connection_id,
+        &session_id,
+        GuestRuntimeKind::Python,
+        &cwd,
+        HashMap::from([(
+            String::from("env.AGENTOS_LOOPBACK_EXEMPT_PORTS"),
+            serde_json::to_string(&vec![port.to_string()]).expect("serialize exempt ports"),
+        )]),
+        wire_permissions_allow_all(),
+    );
+
+    execute_python_cli_with_env(
+        &mut sidecar,
+        4,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "proc-py-pip-missing",
+        "pip",
+        &["install", "pillow"],
+        HashMap::from([(
+            String::from("AGENTOS_PYODIDE_PACKAGE_BASE_URL"),
+            format!("http://127.0.0.1:{port}/"),
+        )]),
+    );
+
+    let (stdout, stderr, exit_code) = collect_process_output_with_timeout(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "proc-py-pip-missing",
+        Duration::from_secs(90),
+    );
+    let _ = server.join();
+    assert_ne!(exit_code, 0, "stdout: {stdout}\nstderr: {stderr}");
+    assert!(
+        !stdout.contains("Successfully installed"),
+        "stdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "http://127.0.0.1:{port}/pillow-11.3.0-cp313-cp313-pyodide_2025_0_wasm32.whl"
+        )),
+        "expected the configured mirror URL in stderr, got: {stderr}"
+    );
+}
+
+fn python_command_pip_installs_bundled_pandas_offline() {
+    assert_node_available();
+    let mut sidecar = new_sidecar("python-cli-pip-bundled");
+    let cwd = temp_dir("python-cli-pip-bundled-cwd");
+    let connection_id = authenticate_wire(&mut sidecar, "conn-python");
+    let session_id = open_session_wire(&mut sidecar, 2, &connection_id);
+    let (vm_id, _) = create_vm_wire(
+        &mut sidecar,
+        3,
+        &connection_id,
+        &session_id,
+        GuestRuntimeKind::Python,
+        &cwd,
+    );
+
+    execute_python_cli(
+        &mut sidecar,
+        4,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "proc-py-pip-pandas",
+        "pip",
+        &["install", "pandas"],
+    );
+    let (stdout, stderr, exit_code) = collect_process_output_with_timeout(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "proc-py-pip-pandas",
+        Duration::from_secs(60),
+    );
+    assert_eq!(exit_code, 0, "stdout: {stdout}\nstderr: {stderr}");
+    assert!(
+        stdout.contains("Successfully installed pandas"),
+        "stdout: {stdout}\nstderr: {stderr}"
+    );
+}
+
 fn python_command_runs_inline_code() {
     assert_node_available();
     let mut sidecar = new_sidecar("python-cli-inline");
@@ -3889,6 +3933,70 @@ fn python_pip_installs_persist_across_invocations() {
     );
 }
 
+#[test]
+#[ignore = "needs network: downloads Pillow from the Pyodide CDN"]
+fn python_pip_installs_a_pyodide_package_from_the_cdn() {
+    assert_node_available();
+    let mut sidecar = new_sidecar("python-cdn-pip");
+    let cwd = temp_dir("python-cdn-pip-cwd");
+    let connection_id = authenticate_wire(&mut sidecar, "conn-python");
+    let session_id = open_session_wire(&mut sidecar, 2, &connection_id);
+    let vm_id = create_vm_with_metadata_and_permissions(
+        &mut sidecar,
+        3,
+        &connection_id,
+        &session_id,
+        GuestRuntimeKind::Python,
+        &cwd,
+        HashMap::new(),
+        wire_permissions_allow_all(),
+    );
+
+    execute_python_cli(
+        &mut sidecar,
+        4,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "proc-cdn-pip-install",
+        "pip",
+        &["install", "pillow"],
+    );
+    let (stdout1, stderr1, exit1) = collect_process_output_with_timeout(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "proc-cdn-pip-install",
+        Duration::from_secs(120),
+    );
+    assert_eq!(exit1, 0, "stdout: {stdout1}\nstderr: {stderr1}");
+
+    execute_python_cli(
+        &mut sidecar,
+        5,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "proc-cdn-pip-import",
+        "python",
+        &[
+            "-c",
+            "from PIL import Image; print(Image.new('RGB', (3, 2)).size)",
+        ],
+    );
+    let (stdout2, stderr2, exit2) = collect_process_output_with_timeout(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "proc-cdn-pip-import",
+        Duration::from_secs(60),
+    );
+    assert_eq!(exit2, 0, "stdout: {stdout2}\nstderr: {stderr2}");
+    assert_eq!(stdout2.trim(), "(3, 2)", "stderr: {stderr2}");
+}
+
 fn python_rootfs_suite() {
     python_reads_and_writes_arbitrary_vm_paths();
     python_pip_installs_persist_across_invocations();
@@ -3902,6 +4010,8 @@ fn python_cli_suite() {
     python_command_runs_interactive_repl();
     python_command_runs_as_nested_child_process();
     python_command_pip_installs_via_micropip();
+    python_command_pip_fails_when_a_pyodide_package_cannot_load();
+    python_command_pip_installs_bundled_pandas_offline();
 }
 
 #[test]
@@ -3938,8 +4048,7 @@ fn python_suite() {
     python_runtime_supports_interactive_input_prompts_and_multiple_streaming_writes();
     python_runtime_close_stdin_triggers_input_eof_and_empty_read();
     python_runtime_kill_process_terminates_blocked_stdin_reads();
-    python_runtime_imports_bundled_numpy_without_network();
-    python_runtime_imports_bundled_pandas_without_network();
+    python_runtime_imports_bundled_packages_on_first_import();
     python_runtime_supports_micropip_package_installation();
     python_runtime_micropip_install_respects_network_permissions();
     python_runtime_routes_dns_and_http_through_sidecar_bridge();
@@ -3994,8 +4103,7 @@ mod python_split {
         python_runtime_supports_interactive_input_prompts_and_multiple_streaming_writes,
         python_runtime_close_stdin_triggers_input_eof_and_empty_read,
         python_runtime_kill_process_terminates_blocked_stdin_reads,
-        python_runtime_imports_bundled_numpy_without_network,
-        python_runtime_imports_bundled_pandas_without_network,
+        python_runtime_imports_bundled_packages_on_first_import,
         python_runtime_routes_dns_and_http_through_sidecar_bridge,
         python_runtime_routes_requests_through_sidecar_bridge,
         python_runtime_surfaces_network_permission_errors,
@@ -4008,6 +4116,8 @@ mod python_split {
         python_command_runs_interactive_repl,
         python_command_runs_as_nested_child_process,
         python_command_pip_installs_via_micropip,
+        python_command_pip_fails_when_a_pyodide_package_cannot_load,
+        python_command_pip_installs_bundled_pandas_offline,
         python_reads_and_writes_arbitrary_vm_paths,
         python_pip_installs_persist_across_invocations,
     );

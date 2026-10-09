@@ -30,6 +30,10 @@ const PYODIDE_INDEX_URL_ENV: &str = "AGENTOS_PYODIDE_INDEX_URL";
 const PYODIDE_PACKAGE_BASE_URL_ENV: &str = "AGENTOS_PYODIDE_PACKAGE_BASE_URL";
 const PYODIDE_PACKAGE_CACHE_DIR_ENV: &str = "AGENTOS_PYODIDE_PACKAGE_CACHE_DIR";
 const PYODIDE_GUEST_ROOT: &str = "/__agentos_pyodide";
+// Pyodide's own CDN for the bundled runtime version. Its pyodide-lock.json
+// matches `assets/pyodide/pyodide-lock.json`, so every lockfile package is
+// available there. Update it together with the bundled Pyodide runtime.
+const PYODIDE_DEFAULT_PACKAGE_BASE_URL: &str = "https://cdn.jsdelivr.net/pyodide/v0.29.3/full/";
 const PYODIDE_CACHE_GUEST_ROOT: &str = "/__agentos_pyodide_cache";
 const PYTHON_CODE_ENV: &str = "AGENTOS_PYTHON_CODE";
 const PYTHON_FILE_ENV: &str = "AGENTOS_PYTHON_FILE";
@@ -1554,7 +1558,7 @@ fn build_python_internal_env(
             .env
             .get(PYODIDE_PACKAGE_BASE_URL_ENV)
             .cloned()
-            .unwrap_or_else(|| String::from(PYODIDE_GUEST_ROOT)),
+            .unwrap_or_else(|| String::from(PYODIDE_DEFAULT_PACKAGE_BASE_URL)),
     );
     internal_env.insert(
         PYODIDE_PACKAGE_CACHE_DIR_ENV.to_string(),
@@ -2370,6 +2374,39 @@ fn python_javascript_sync_rpc_action(
                     "__agentOSType": "bytes",
                     "base64": v8_runtime::base64_encode_pub(&bytes),
                 })),
+            }
+        }
+        // The guest `fs.readFileSync(path)` polyfill reads in ranged chunks.
+        "fs.readFileRangeSync" => {
+            let (Some(offset), Some(length)) = (
+                request.args.get(1).and_then(Value::as_u64),
+                request.args.get(2).and_then(Value::as_u64),
+            ) else {
+                return Ok(None);
+            };
+            if length > PYTHON_SYNC_RPC_DATA_BYTES as u64 {
+                return Err(PythonExecutionError::RpcResponse(format!(
+                    "managed fs.readFileRangeSync length {length} exceeds {PYTHON_SYNC_RPC_DATA_BYTES} bytes"
+                )));
+            }
+            let mut file = match fs::File::open(&host_path) {
+                Ok(file) => file,
+                Err(error) => {
+                    return python_sync_rpc_fs_action_error(path, "open", error).map(Some);
+                }
+            };
+            file.seek(SeekFrom::Start(offset))
+                .map_err(PythonExecutionError::PrepareRuntime)?;
+            let mut bytes = Vec::new();
+            file.take(length)
+                .read_to_end(&mut bytes)
+                .map_err(PythonExecutionError::PrepareRuntime)?;
+            if request.raw_bytes_args.contains_key(&usize::MAX) {
+                PythonJavascriptSyncRpcAction::RawSuccess(bytes)
+            } else {
+                PythonJavascriptSyncRpcAction::Success(Value::String(
+                    v8_runtime::base64_encode_pub(&bytes),
+                ))
             }
         }
         "fs.statSync" | "fs.promises.stat" => match fs::metadata(&host_path) {
