@@ -30,6 +30,10 @@ const PYODIDE_INDEX_URL_ENV: &str = "AGENTOS_PYODIDE_INDEX_URL";
 const PYODIDE_PACKAGE_BASE_URL_ENV: &str = "AGENTOS_PYODIDE_PACKAGE_BASE_URL";
 const PYODIDE_PACKAGE_CACHE_DIR_ENV: &str = "AGENTOS_PYODIDE_PACKAGE_CACHE_DIR";
 const PYODIDE_GUEST_ROOT: &str = "/__agentos_pyodide";
+// Pyodide's own CDN for the bundled runtime version. Its pyodide-lock.json
+// matches `assets/pyodide/pyodide-lock.json`, so every lockfile package is
+// available there. Update it together with the bundled Pyodide runtime.
+const PYODIDE_DEFAULT_PACKAGE_BASE_URL: &str = "https://cdn.jsdelivr.net/pyodide/v0.29.3/full/";
 const PYODIDE_CACHE_GUEST_ROOT: &str = "/__agentos_pyodide_cache";
 const PYTHON_CODE_ENV: &str = "AGENTOS_PYTHON_CODE";
 const PYTHON_FILE_ENV: &str = "AGENTOS_PYTHON_FILE";
@@ -1554,7 +1558,7 @@ fn build_python_internal_env(
             .env
             .get(PYODIDE_PACKAGE_BASE_URL_ENV)
             .cloned()
-            .unwrap_or_else(|| String::from(PYODIDE_GUEST_ROOT)),
+            .unwrap_or_else(|| String::from(PYODIDE_DEFAULT_PACKAGE_BASE_URL)),
     );
     internal_env.insert(
         PYODIDE_PACKAGE_CACHE_DIR_ENV.to_string(),

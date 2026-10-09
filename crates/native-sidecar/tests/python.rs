@@ -3952,7 +3952,7 @@ fn python_pip_installs_a_pyodide_package_from_the_cdn() {
         wire_permissions_allow_all(),
     );
 
-    execute_python_cli_with_env(
+    execute_python_cli(
         &mut sidecar,
         4,
         &connection_id,
@@ -3961,10 +3961,6 @@ fn python_pip_installs_a_pyodide_package_from_the_cdn() {
         "proc-cdn-pip-install",
         "pip",
         &["install", "pillow"],
-        HashMap::from([(
-            String::from("AGENTOS_PYODIDE_PACKAGE_BASE_URL"),
-            String::from("https://cdn.jsdelivr.net/pyodide/v0.29.3/full/"),
-        )]),
     );
     let (stdout1, stderr1, exit1) = collect_process_output_with_timeout(
         &mut sidecar,
