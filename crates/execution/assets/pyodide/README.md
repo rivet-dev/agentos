@@ -26,8 +26,9 @@ Bundle size as vendored in this directory:
 The offline wheels need no install step: the first `import` of one of their top-level modules (for example `import pandas`) unpacks the wheel and its bundled dependencies.
 
 Dynamic package installs:
-- `AGENTOS_PYODIDE_PACKAGE_BASE_URL` can override the package base used by Pyodide package resolution when a Python execution needs to install additional wheels from a network-visible host.
-- The bundled `micropip` wheel is still loaded from the local asset directory first so package-manager bootstrap does not depend on external network access.
+- `AGENTOS_PYODIDE_PACKAGE_BASE_URL` is the base URL Pyodide downloads other `pyodide-lock.json` packages from (for example Pillow). Downloaded wheels are cached in the Pyodide package cache.
+- Bundled wheels, including `micropip`, always load from the local asset directory, so package-manager bootstrap and bundled packages do not depend on external network access.
+- `pip install` fails with a non-zero exit when a requested package does not load.
 - `await micropip.install("https://.../package.whl")` goes through the Python runner's bridge-backed fetch path, which means network permissions are enforced by the agentos kernel rather than bypassing it.
 
 Debug timing output:

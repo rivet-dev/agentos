@@ -1504,6 +1504,11 @@ function installPythonKernelRpcShims(pyodide) {
   pyodide.runPython(PYTHON_KERNEL_RPC_SHIMS_SOURCE);
 }
 
+// PEP 503 normalization, which is also how pyodide-lock.json keys packages.
+function normalizePythonPackageName(name) {
+  return String(name).toLowerCase().replace(/[-_.]+/g, '-');
+}
+
 function installPythonMicropipCompat(pyodide) {
   if (typeof pyodide?.registerJsModule !== 'function') {
     return;
@@ -1551,9 +1556,22 @@ function installPythonMicropipCompat(pyodide) {
     lockfile_info: pyodide?._api?.lockfile_info,
     lockfile_packages: pyodide?._api?.lockfile_packages,
   };
+  // Pyodide's loadPackage() logs a package that fails to load and resolves
+  // anyway. Reject instead so micropip.install() does not report success.
+  const loadPackage = async (names) => {
+    const loaded = await pyodide.loadPackage(names);
+    const loadedNames = new Set(Object.keys(pyodide.loadedPackages).map(normalizePythonPackageName));
+    const missing = Array.from(names).filter(
+      (name) => !loadedNames.has(normalizePythonPackageName(name)),
+    );
+    if (missing.length > 0) {
+      throw new Error(`Failed to load Pyodide packages: ${missing.join(', ')}`);
+    }
+    return loaded;
+  };
   pyodide.registerJsModule('agentos_internal_pyodide_js', {
     loadedPackages: pyodide.loadedPackages,
-    loadPackage: pyodide.loadPackage?.bind(pyodide),
+    loadPackage,
     lockfileBaseUrl: pyodide?._api?.config?.packageBaseUrl ?? '',
     _api: pyodideApiCompat,
   });
@@ -2298,28 +2316,49 @@ function installPythonVfsSitePackages(pyodide) {
   }
 }
 
-// Bundled wheels (pandas, numpy, and their dependencies) are importable without
-// an install step. `pyodide.loadPackage()` is async and an import statement
-// cannot wait for it, so this finder unpacks the bundled wheel and its bundled
-// dependencies synchronously the first time the guest imports one of its
-// top-level modules. Extension modules then load through the regular dlopen
-// path on import.
-function installPythonBundledPackageImports(pyodide, bundledDir) {
+// Bundled wheels (micropip, pandas, numpy, and their dependencies) never need
+// the network. Pyodide looks for a lockfile wheel in the package cache and then
+// downloads it from the package base URL, so serve bundled wheels before both.
+//
+// Bundled wheels are also importable without an install step.
+// `pyodide.loadPackage()` is async and an import statement cannot wait for it,
+// so a finder unpacks the bundled wheel and its bundled dependencies
+// synchronously the first time the guest imports one of its top-level modules.
+// Extension modules then load through the regular dlopen path on import.
+function installPythonBundledPackages(pyodide, bundledDir) {
   const api = pyodide?._api;
   if (typeof pyodide?.runPython !== 'function' || !api?.lockfile_packages) {
     return;
   }
 
   const bundledFiles = new Set(readdirSync(bundledDir));
+  const bundledWheelPath = (entry) =>
+    entry && bundledFiles.has(entry.file_name) ? path.join(bundledDir, entry.file_name) : null;
+
+  const { packageManager } = api;
+  const downloadPackage = packageManager.downloadPackage.bind(packageManager);
+  packageManager.downloadPackage = async (pkg, checkIntegrity) => {
+    const wheelPath =
+      pkg.channel === packageManager.defaultChannel
+        ? bundledWheelPath(api.lockfile_packages[pkg.normalizedName])
+        : null;
+    if (wheelPath === null) {
+      return downloadPackage(pkg, checkIntegrity);
+    }
+    const wheel = await readFile(wheelPath);
+    return new Uint8Array(wheel.buffer, wheel.byteOffset, wheel.byteLength);
+  };
+
   const unpackBundledPackage = (key) => {
     const entry = api.lockfile_packages[key];
     if (Object.prototype.hasOwnProperty.call(pyodide.loadedPackages, entry.name)) {
       return true;
     }
-    if (!bundledFiles.has(entry.file_name) || !entry.depends.every(unpackBundledPackage)) {
+    const wheelPath = bundledWheelPath(entry);
+    if (wheelPath === null || !entry.depends.every(unpackBundledPackage)) {
       return false;
     }
-    const wheel = readFileSync(path.join(bundledDir, entry.file_name));
+    const wheel = readFileSync(wheelPath);
     api.package_loader.unpack_buffer.callKwargs({
       buffer: new Uint8Array(wheel.buffer, wheel.byteOffset, wheel.byteLength),
       filename: entry.file_name,
@@ -2379,7 +2418,11 @@ if _agentos_pip_args and _agentos_pip_args[0] == "install":
         sys.exit(1)
     _agentos_sp = site.getsitepackages()[0]
     _agentos_before = set(os.listdir(_agentos_sp)) if os.path.isdir(_agentos_sp) else set()
-    await micropip.install(_agentos_pip_pkgs)
+    try:
+        await micropip.install(_agentos_pip_pkgs)
+    except Exception as _agentos_error:
+        print(f"ERROR: {_agentos_error}", file=sys.stderr)
+        sys.exit(1)
     # Persist whatever micropip extracted into the in-isolate site-packages into
     # the VFS-backed site-packages so it survives this process.
     os.makedirs(__agentos_vfs_site, exist_ok=True)
@@ -2449,10 +2492,7 @@ try {
   emitWarmupStage('startup');
   emitWarmupStage(`python-rpc-bridge:${bridgePythonRpc ? 'on' : 'off'}`);
   const { indexPath, indexUrl } = resolveIndexLocation(requiredEnv(PYODIDE_INDEX_URL_ENV));
-  const bundledPackageBaseUrl = normalizeBaseUrl(indexPath);
-  const packageBaseUrl = normalizeBaseUrl(
-    readRunnerEnv(PYODIDE_PACKAGE_BASE_URL_ENV) ?? bundledPackageBaseUrl,
-  );
+  const packageBaseUrl = normalizeBaseUrl(readRunnerEnv(PYODIDE_PACKAGE_BASE_URL_ENV) ?? indexPath);
   const packageCacheDir = resolvePyodidePackageCacheDir();
   emitWarmupStage(`package-cache-dir:${packageCacheDir}`);
   const prewarmOnly = readRunnerEnv(PYTHON_PREWARM_ONLY_ENV) === '1';
@@ -2495,7 +2535,7 @@ try {
   const pyodide = await loadPyodide({
     indexURL: indexPath,
     lockFileContents,
-    packageBaseUrl: bundledPackageBaseUrl,
+    packageBaseUrl,
     packageCacheDir,
     env: buildPythonRuntimeEnv(),
     stdout: writePyodideStdout,
@@ -2507,7 +2547,6 @@ try {
         indexPath,
         indexUrl,
         packageBaseUrl,
-        bundledPackageBaseUrl,
         packageCacheDir,
         pyodideModuleUrl,
       },
@@ -2525,19 +2564,11 @@ try {
   installPythonWorkspaceFs(pyodide, pythonVfsRpcBridge);
   installPythonVfsSitePackages(pyodide);
   installPythonGuestLoaderHooks();
-  if (pyodide?._api?.config) {
-    pyodide._api.config.packageBaseUrl = bundledPackageBaseUrl;
-    emitWarmupStage(`pyodide-package-base:${pyodide._api.config.packageBaseUrl}`);
-  }
+  installPythonBundledPackages(pyodide, indexPath);
   if (typeof pyodide?.loadPackage === 'function') {
     emitWarmupStage('before-load-micropip');
     await pyodide.loadPackage(['micropip']);
     emitWarmupStage('after-load-micropip');
-  }
-  installPythonBundledPackageImports(pyodide, indexPath);
-  if (pyodide?._api?.config) {
-    pyodide._api.config.packageBaseUrl = packageBaseUrl;
-    emitWarmupStage(`micropip-package-base:${pyodide._api.config.packageBaseUrl}`);
   }
   installPythonMicropipCompat(pyodide);
   installPythonKernelRpcShims(pyodide);

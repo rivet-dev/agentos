@@ -3326,6 +3326,67 @@ fn python_command_pip_installs_via_micropip() {
     );
 }
 
+fn python_command_pip_fails_when_a_pyodide_package_cannot_load() {
+    assert_node_available();
+
+    // The mirror has no wheels, so the Pyodide package Pillow cannot load.
+    let mirror = temp_dir("python-cli-pip-empty-mirror");
+    let (port, server) = spawn_static_file_server(mirror);
+    let mut sidecar = new_sidecar("python-cli-pip-missing");
+    let cwd = temp_dir("python-cli-pip-missing-cwd");
+    let connection_id = authenticate_wire(&mut sidecar, "conn-python");
+    let session_id = open_session_wire(&mut sidecar, 2, &connection_id);
+    let vm_id = create_vm_with_metadata_and_permissions(
+        &mut sidecar,
+        3,
+        &connection_id,
+        &session_id,
+        GuestRuntimeKind::Python,
+        &cwd,
+        HashMap::from([(
+            String::from("env.AGENTOS_LOOPBACK_EXEMPT_PORTS"),
+            serde_json::to_string(&vec![port.to_string()]).expect("serialize exempt ports"),
+        )]),
+        wire_permissions_allow_all(),
+    );
+
+    execute_python_cli_with_env(
+        &mut sidecar,
+        4,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "proc-py-pip-missing",
+        "pip",
+        &["install", "pillow"],
+        HashMap::from([(
+            String::from("AGENTOS_PYODIDE_PACKAGE_BASE_URL"),
+            format!("http://127.0.0.1:{port}/"),
+        )]),
+    );
+
+    let (stdout, stderr, exit_code) = collect_process_output_with_timeout(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "proc-py-pip-missing",
+        Duration::from_secs(90),
+    );
+    let _ = server.join();
+    assert_ne!(exit_code, 0, "stdout: {stdout}\nstderr: {stderr}");
+    assert!(
+        !stdout.contains("Successfully installed"),
+        "stdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "http://127.0.0.1:{port}/pillow-11.3.0-cp313-cp313-pyodide_2025_0_wasm32.whl"
+        )),
+        "expected the configured mirror URL in stderr, got: {stderr}"
+    );
+}
+
 fn python_command_runs_inline_code() {
     assert_node_available();
     let mut sidecar = new_sidecar("python-cli-inline");
@@ -3832,6 +3893,74 @@ fn python_pip_installs_persist_across_invocations() {
     );
 }
 
+#[test]
+#[ignore = "needs network: downloads Pillow from the Pyodide CDN"]
+fn python_pip_installs_a_pyodide_package_from_the_cdn() {
+    assert_node_available();
+    let mut sidecar = new_sidecar("python-cdn-pip");
+    let cwd = temp_dir("python-cdn-pip-cwd");
+    let connection_id = authenticate_wire(&mut sidecar, "conn-python");
+    let session_id = open_session_wire(&mut sidecar, 2, &connection_id);
+    let vm_id = create_vm_with_metadata_and_permissions(
+        &mut sidecar,
+        3,
+        &connection_id,
+        &session_id,
+        GuestRuntimeKind::Python,
+        &cwd,
+        HashMap::new(),
+        wire_permissions_allow_all(),
+    );
+
+    execute_python_cli_with_env(
+        &mut sidecar,
+        4,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "proc-cdn-pip-install",
+        "pip",
+        &["install", "pillow"],
+        HashMap::from([(
+            String::from("AGENTOS_PYODIDE_PACKAGE_BASE_URL"),
+            String::from("https://cdn.jsdelivr.net/pyodide/v0.29.3/full/"),
+        )]),
+    );
+    let (stdout1, stderr1, exit1) = collect_process_output_with_timeout(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "proc-cdn-pip-install",
+        Duration::from_secs(120),
+    );
+    assert_eq!(exit1, 0, "stdout: {stdout1}\nstderr: {stderr1}");
+
+    execute_python_cli(
+        &mut sidecar,
+        5,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "proc-cdn-pip-import",
+        "python",
+        &[
+            "-c",
+            "from PIL import Image; print(Image.new('RGB', (3, 2)).size)",
+        ],
+    );
+    let (stdout2, stderr2, exit2) = collect_process_output_with_timeout(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "proc-cdn-pip-import",
+        Duration::from_secs(60),
+    );
+    assert_eq!(exit2, 0, "stdout: {stdout2}\nstderr: {stderr2}");
+    assert_eq!(stdout2.trim(), "(3, 2)", "stderr: {stderr2}");
+}
+
 fn python_rootfs_suite() {
     python_reads_and_writes_arbitrary_vm_paths();
     python_pip_installs_persist_across_invocations();
@@ -3845,6 +3974,7 @@ fn python_cli_suite() {
     python_command_runs_interactive_repl();
     python_command_runs_as_nested_child_process();
     python_command_pip_installs_via_micropip();
+    python_command_pip_fails_when_a_pyodide_package_cannot_load();
 }
 
 #[test]
@@ -3949,6 +4079,7 @@ mod python_split {
         python_command_runs_interactive_repl,
         python_command_runs_as_nested_child_process,
         python_command_pip_installs_via_micropip,
+        python_command_pip_fails_when_a_pyodide_package_cannot_load,
         python_reads_and_writes_arbitrary_vm_paths,
         python_pip_installs_persist_across_invocations,
     );
