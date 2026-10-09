@@ -1,4 +1,4 @@
-import { closeSync, createReadStream, mkdirSync, readFileSync, readSync, writeSync } from 'node:fs';
+import { closeSync, createReadStream, mkdirSync, readdirSync, readFileSync, readSync, writeSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import * as moduleBuiltin from 'node:module';
 import { performance as realPerformance } from 'node:perf_hooks';
@@ -22,15 +22,12 @@ const PYTHON_PREWARM_ONLY_ENV = 'AGENTOS_PYTHON_PREWARM_ONLY';
 const RETAIN_LANGUAGE_CONTEXT_ENV = 'AGENTOS_RETAIN_LANGUAGE_CONTEXT';
 const PYTHON_WARMUP_DEBUG_ENV = 'AGENTOS_PYTHON_WARMUP_DEBUG';
 const PYTHON_WARMUP_METRICS_PREFIX = '__AGENTOS_PYTHON_WARMUP_METRICS__:';
-const PYTHON_PRELOAD_PACKAGES_ENV = 'AGENTOS_PYTHON_PRELOAD_PACKAGES';
 const PYTHON_VFS_RPC_REQUEST_FD_ENV = 'AGENTOS_PYTHON_VFS_RPC_REQUEST_FD';
 const PYTHON_VFS_RPC_RESPONSE_FD_ENV = 'AGENTOS_PYTHON_VFS_RPC_RESPONSE_FD';
 const FORWARD_KERNEL_STDIN_RPC_ENV = 'AGENTOS_FORWARD_KERNEL_STDIN_RPC';
 const INTERNAL_ENV = globalThis.__agentOSPythonInternalEnv ?? Object.create(null);
 const ALLOW_PROCESS_BINDINGS = readRunnerEnv('AGENTOS_ALLOW_PROCESS_BINDINGS') === '1';
 const STDIN_FD = 0;
-const SUPPORTED_PRELOAD_PACKAGES = ['numpy', 'pandas'];
-const SUPPORTED_PRELOAD_PACKAGE_SET = new Set(SUPPORTED_PRELOAD_PACKAGES);
 const DENIED_BUILTINS = new Set([
   'child_process',
   'cluster',
@@ -415,8 +412,6 @@ function emitPythonStartupMetrics({
   prewarmOnly,
   startupMs,
   loadPyodideMs,
-  packageLoadMs,
-  packageCount,
   source,
 }) {
   if (readRunnerEnv(PYTHON_WARMUP_DEBUG_ENV) !== '1') {
@@ -430,57 +425,9 @@ function emitPythonStartupMetrics({
       prewarmOnly,
       startupMs,
       loadPyodideMs,
-      packageLoadMs,
-      packageCount,
       source,
     })}`,
   );
-}
-
-function parsePreloadPackages(value) {
-  if (value == null || value.trim() === '') {
-    return [];
-  }
-
-  let parsed;
-  try {
-    parsed = JSON.parse(value);
-  } catch (error) {
-    throw new Error(
-      `${PYTHON_PRELOAD_PACKAGES_ENV} must be a JSON array of package names: ${formatError(error)}`,
-    );
-  }
-
-  if (!Array.isArray(parsed)) {
-    throw new Error(`${PYTHON_PRELOAD_PACKAGES_ENV} must be a JSON array of package names`);
-  }
-
-  const packages = [];
-  const seen = new Set();
-
-  for (const entry of parsed) {
-    if (typeof entry !== 'string') {
-      throw new Error(`${PYTHON_PRELOAD_PACKAGES_ENV} entries must be strings`);
-    }
-
-    const name = entry.trim();
-    if (name.length === 0) {
-      throw new Error(`${PYTHON_PRELOAD_PACKAGES_ENV} entries must not be empty`);
-    }
-
-    if (!SUPPORTED_PRELOAD_PACKAGE_SET.has(name)) {
-      throw new Error(
-        `Unsupported bundled Python package "${name}". Available packages: ${SUPPORTED_PRELOAD_PACKAGES.join(', ')}`,
-      );
-    }
-
-    if (!seen.has(name)) {
-      seen.add(name);
-      packages.push(name);
-    }
-  }
-
-  return packages;
 }
 
 function parseOptionalFd(name) {
@@ -2351,6 +2298,68 @@ function installPythonVfsSitePackages(pyodide) {
   }
 }
 
+// Bundled wheels (pandas, numpy, and their dependencies) are importable without
+// an install step. `pyodide.loadPackage()` is async and an import statement
+// cannot wait for it, so this finder unpacks the bundled wheel and its bundled
+// dependencies synchronously the first time the guest imports one of its
+// top-level modules. Extension modules then load through the regular dlopen
+// path on import.
+function installPythonBundledPackageImports(pyodide, bundledDir) {
+  const api = pyodide?._api;
+  if (typeof pyodide?.runPython !== 'function' || !api?.lockfile_packages) {
+    return;
+  }
+
+  const bundledFiles = new Set(readdirSync(bundledDir));
+  const unpackBundledPackage = (key) => {
+    const entry = api.lockfile_packages[key];
+    if (Object.prototype.hasOwnProperty.call(pyodide.loadedPackages, entry.name)) {
+      return true;
+    }
+    if (!bundledFiles.has(entry.file_name) || !entry.depends.every(unpackBundledPackage)) {
+      return false;
+    }
+    const wheel = readFileSync(path.join(bundledDir, entry.file_name));
+    api.package_loader.unpack_buffer.callKwargs({
+      buffer: new Uint8Array(wheel.buffer, wheel.byteOffset, wheel.byteLength),
+      filename: entry.file_name,
+      extract_dir: api.package_loader.get_install_dir(entry.install_dir),
+      metadata: new Map([
+        ['INSTALLER', 'pyodide.loadPackage'],
+        ['PYODIDE_SOURCE', 'pyodide'],
+      ]),
+    });
+    pyodide.loadedPackages[entry.name] = 'default channel';
+    return true;
+  };
+  const unpackForImport = (importName) => {
+    const key = api._import_name_to_package_name.get(importName);
+    return key !== undefined && unpackBundledPackage(key);
+  };
+
+  pyodide.globals.set('__agentos_unpack_for_import', unpackForImport);
+  try {
+    pyodide.runPython(`
+def _agentos_install_bundled_finder(unpack_for_import):
+    import importlib, importlib.machinery, sys
+
+    class AgentOsBundledPackageFinder:
+        def find_spec(self, fullname, path=None, target=None):
+            if path is not None or not unpack_for_import(fullname):
+                return None
+            importlib.invalidate_caches()
+            return importlib.machinery.PathFinder.find_spec(fullname)
+
+    sys.meta_path.append(AgentOsBundledPackageFinder())
+
+_agentos_install_bundled_finder(__agentos_unpack_for_import)
+del _agentos_install_bundled_finder
+`);
+  } finally {
+    pyodide.globals.delete('__agentos_unpack_for_import');
+  }
+}
+
 // `pip` / `python -m pip`: emulate the common pip CLI via Pyodide's micropip,
 // which fetches wheels through the runner's kernel-backed fetch (so egress is
 // governed by the VM network policy, never an ambient host fetch). Installed
@@ -2448,7 +2457,6 @@ try {
   emitWarmupStage(`package-cache-dir:${packageCacheDir}`);
   const prewarmOnly = readRunnerEnv(PYTHON_PREWARM_ONLY_ENV) === '1';
   retainLanguageContext = readRunnerEnv(RETAIN_LANGUAGE_CONTEXT_ENV) === '1';
-  const preloadPackages = parsePreloadPackages(readRunnerEnv(PYTHON_PRELOAD_PACKAGES_ENV));
   const lockFileContents = await readLockFileContents(indexPath, indexUrl).catch((error) => {
     throw wrapPythonStartupError('lock file read', { indexPath, indexUrl }, error);
   });
@@ -2475,8 +2483,6 @@ try {
       prewarmOnly: true,
       startupMs: realPerformance.now() - startupStarted,
       loadPyodideMs: 0,
-      packageLoadMs: 0,
-      packageCount: 0,
       source: 'prewarm',
     });
     process.exitCode = 0;
@@ -2514,7 +2520,6 @@ try {
   restorePyodideShellCompat();
   emitWarmupStage('after-load-pyodide');
   const loadPyodideMs = realPerformance.now() - loadPyodideStarted;
-  let packageLoadMs = 0;
 
   installPythonStdin(pyodide);
   installPythonWorkspaceFs(pyodide, pythonVfsRpcBridge);
@@ -2524,22 +2529,12 @@ try {
     pyodide._api.config.packageBaseUrl = bundledPackageBaseUrl;
     emitWarmupStage(`pyodide-package-base:${pyodide._api.config.packageBaseUrl}`);
   }
-  const canLoadPackages = typeof pyodide?.loadPackage === 'function';
-  if (!canLoadPackages && preloadPackages.length > 0) {
-    throw new Error('Pyodide loadPackage() is required to preload Python packages');
-  }
-  if (canLoadPackages) {
+  if (typeof pyodide?.loadPackage === 'function') {
     emitWarmupStage('before-load-micropip');
     await pyodide.loadPackage(['micropip']);
     emitWarmupStage('after-load-micropip');
-    if (preloadPackages.length > 0) {
-      emitWarmupStage('before-load-preload-packages');
-      const packageLoadStarted = realPerformance.now();
-      await pyodide.loadPackage(preloadPackages);
-      packageLoadMs = realPerformance.now() - packageLoadStarted;
-      emitWarmupStage('after-load-preload-packages');
-    }
   }
+  installPythonBundledPackageImports(pyodide, indexPath);
   if (pyodide?._api?.config) {
     pyodide._api.config.packageBaseUrl = packageBaseUrl;
     emitWarmupStage(`micropip-package-base:${pyodide._api.config.packageBaseUrl}`);
@@ -2566,8 +2561,6 @@ try {
     prewarmOnly: false,
     startupMs: realPerformance.now() - startupStarted,
     loadPyodideMs,
-    packageLoadMs,
-    packageCount: preloadPackages.length,
     source,
   });
   if (moduleName === 'pip') {

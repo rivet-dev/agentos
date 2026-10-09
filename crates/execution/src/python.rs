@@ -2372,6 +2372,39 @@ fn python_javascript_sync_rpc_action(
                 })),
             }
         }
+        // The guest `fs.readFileSync(path)` polyfill reads in ranged chunks.
+        "fs.readFileRangeSync" => {
+            let (Some(offset), Some(length)) = (
+                request.args.get(1).and_then(Value::as_u64),
+                request.args.get(2).and_then(Value::as_u64),
+            ) else {
+                return Ok(None);
+            };
+            if length > PYTHON_SYNC_RPC_DATA_BYTES as u64 {
+                return Err(PythonExecutionError::RpcResponse(format!(
+                    "managed fs.readFileRangeSync length {length} exceeds {PYTHON_SYNC_RPC_DATA_BYTES} bytes"
+                )));
+            }
+            let mut file = match fs::File::open(&host_path) {
+                Ok(file) => file,
+                Err(error) => {
+                    return python_sync_rpc_fs_action_error(path, "open", error).map(Some);
+                }
+            };
+            file.seek(SeekFrom::Start(offset))
+                .map_err(PythonExecutionError::PrepareRuntime)?;
+            let mut bytes = Vec::new();
+            file.take(length)
+                .read_to_end(&mut bytes)
+                .map_err(PythonExecutionError::PrepareRuntime)?;
+            if request.raw_bytes_args.contains_key(&usize::MAX) {
+                PythonJavascriptSyncRpcAction::RawSuccess(bytes)
+            } else {
+                PythonJavascriptSyncRpcAction::Success(Value::String(
+                    v8_runtime::base64_encode_pub(&bytes),
+                ))
+            }
+        }
         "fs.statSync" | "fs.promises.stat" => match fs::metadata(&host_path) {
             Ok(metadata) => {
                 PythonJavascriptSyncRpcAction::Success(python_host_stat_value(&metadata))

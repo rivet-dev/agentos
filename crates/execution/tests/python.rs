@@ -32,8 +32,6 @@ struct PythonStartupMetrics {
     prewarm_only: bool,
     startup_ms: f64,
     load_pyodide_ms: f64,
-    package_load_ms: f64,
-    package_count: usize,
     source: String,
 }
 
@@ -86,14 +84,8 @@ fn parse_startup_metrics(stderr: &str) -> PythonStartupMetrics {
         prewarm_only: parse_boolean_metric(metrics_line, "prewarmOnly"),
         startup_ms: parse_float_metric(metrics_line, "startupMs"),
         load_pyodide_ms: parse_float_metric(metrics_line, "loadPyodideMs"),
-        package_load_ms: parse_float_metric(metrics_line, "packageLoadMs"),
-        package_count: parse_metric_value(metrics_line, "packageCount"),
         source: parse_string_metric(metrics_line, "source"),
     }
-}
-
-fn parse_metric_value(metrics_line: &str, key: &str) -> usize {
-    parse_float_metric(metrics_line, key) as usize
 }
 
 fn parse_float_metric(metrics_line: &str, key: &str) -> f64 {
@@ -455,8 +447,6 @@ export async function loadPyodide() {
     assert!(!first_startup.prewarm_only);
     assert!(first_startup.startup_ms > 0.0);
     assert!(first_startup.load_pyodide_ms > 0.0);
-    assert_eq!(first_startup.package_load_ms, 0.0);
-    assert_eq!(first_startup.package_count, 0);
     assert_eq!(first_startup.source, "inline");
 
     let (_second_stdout, second_stderr, second_exit_code) = run_python_execution(

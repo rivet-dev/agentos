@@ -21,7 +21,7 @@ const NODE_IMPORT_CACHE_SCHEMA_VERSION: &str = "1";
 const NODE_IMPORT_CACHE_LOADER_VERSION: &str = "8";
 // Upstream reached 104 while the reactor branch independently changed bundled
 // assets; use a new generation so no stale materialization survives the merge.
-const NODE_IMPORT_CACHE_ASSET_VERSION: &str = "106";
+const NODE_IMPORT_CACHE_ASSET_VERSION: &str = "107";
 const NODE_IMPORT_CACHE_DIR_PREFIX: &str = "agentos-node-import-cache";
 const DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT: Duration = Duration::from_secs(30);
 const NODE_IMPORT_CACHE_BLOCKING_JOB_RESERVATION_BYTES: usize = 64 * 1024;
@@ -4262,115 +4262,6 @@ print(json.dumps({
             parsed["iso"],
             Value::String(String::from("2024-01-01T00:00:00.123+00:00")),
             "stdout: {stdout}"
-        );
-    }
-
-    #[test]
-    fn materialized_python_runner_preloads_bundled_packages_from_local_disk() {
-        assert_node_available();
-
-        let import_cache = NodeImportCache::default();
-        import_cache
-            .ensure_materialized()
-            .expect("materialize node import cache");
-
-        let pyodide_dir = tempdir().expect("create pyodide fixture dir");
-        write_fixture(
-            &pyodide_dir.path().join("pyodide.mjs"),
-            r#"
-export async function loadPyodide(options) {
-  return {
-    setStdin(_stdin) {},
-    async loadPackage(packages) {
-      options.stdout(`packages:${packages.join(',')}`);
-      options.stderr(`base:${options.packageBaseUrl}`);
-    },
-    async runPythonAsync(code) {
-      options.stdout(`code:${code}`);
-    },
-  };
-}
-"#,
-        );
-        write_fixture(
-            &pyodide_dir.path().join("pyodide-lock.json"),
-            "{\"packages\":[]}\n",
-        );
-
-        let output = run_python_runner_with_env(
-            &import_cache,
-            pyodide_dir.path(),
-            "print('hello')",
-            &[("AGENTOS_PYTHON_PRELOAD_PACKAGES", "[\"numpy\",\"pandas\"]")],
-        );
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let expected_package_base = format!(
-            "base:{}{}",
-            pyodide_dir.path().display(),
-            std::path::MAIN_SEPARATOR
-        );
-
-        assert_eq!(output.status.code(), Some(0));
-        assert_eq!(
-            stdout,
-            "packages:micropip\npackages:numpy,pandas\ncode:print('hello')\n"
-        );
-        assert!(
-            stderr.contains(&expected_package_base),
-            "expected local package base path in stderr, got: {stderr}"
-        );
-    }
-
-    #[test]
-    fn materialized_python_runner_rejects_unknown_preload_packages() {
-        assert_node_available();
-
-        let import_cache = NodeImportCache::default();
-        import_cache
-            .ensure_materialized()
-            .expect("materialize node import cache");
-
-        let pyodide_dir = tempdir().expect("create pyodide fixture dir");
-        write_fixture(
-            &pyodide_dir.path().join("pyodide.mjs"),
-            r#"
-export async function loadPyodide() {
-  return {
-    setStdin(_stdin) {},
-    async loadPackage() {
-      throw new Error('loadPackage should not be called');
-    },
-    async runPythonAsync(_code) {},
-  };
-}
-"#,
-        );
-        write_fixture(
-            &pyodide_dir.path().join("pyodide-lock.json"),
-            "{\"packages\":[]}\n",
-        );
-
-        let output = run_python_runner_with_env(
-            &import_cache,
-            pyodide_dir.path(),
-            "print('hello')",
-            &[("AGENTOS_PYTHON_PRELOAD_PACKAGES", "[\"requests\"]")],
-        );
-        let stderr = String::from_utf8_lossy(&output.stderr);
-
-        assert_eq!(output.status.code(), Some(1));
-        assert!(
-            stderr.contains("Unsupported bundled Python package \"requests\""),
-            "unexpected stderr: {stderr}"
-        );
-        assert!(
-            stderr.contains("Available packages: numpy, pandas"),
-            "unexpected stderr: {stderr}"
-        );
-        assert!(
-            !stderr.contains("loadPackage should not be called"),
-            "runner should validate packages before calling loadPackage: {stderr}"
         );
     }
 
