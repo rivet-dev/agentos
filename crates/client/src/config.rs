@@ -78,6 +78,9 @@ pub struct AgentOsConfig {
     pub permissions: Option<Permissions>,
     /// Operator-tunable VM limits. Default: sidecar/kernel built-ins.
     pub limits: Option<AgentOsLimits>,
+    /// Maximum concurrent SDK execution waits per VM. Defaults to 4096.
+    /// This client-local bound does not change native execution limits.
+    pub max_pending_execution_waits: Option<usize>,
     /// Sidecar placement/config. Default: shared `default` pool.
     pub sidecar: Option<AgentOsSidecarConfig>,
     /// Absolute path to the `agentos-native-sidecar` binary, resolved from the npm
@@ -175,6 +178,11 @@ impl AgentOsConfigBuilder {
 
     pub fn permissions(mut self, permissions: Permissions) -> Self {
         self.config.permissions = Some(permissions);
+        self
+    }
+
+    pub fn max_pending_execution_waits(mut self, limit: usize) -> Self {
+        self.config.max_pending_execution_waits = Some(limit);
         self
     }
 

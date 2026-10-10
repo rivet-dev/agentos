@@ -29,6 +29,14 @@ pub struct ResourceLimitDetails {
 /// Typed error taxonomy for the client SDK.
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum ClientError {
+    /// The owning VM began shutdown before its execution wait settled.
+    #[error("ERR_AGENTOS_VM_DISPOSED")]
+    VmDisposed,
+
+    /// The VM's client-local execution wait capacity is exhausted.
+    #[error("SDK execution wait limit maxPendingExecutionWaits ({limit}) reached; raise AgentOsConfig.max_pending_execution_waits")]
+    ExecutionWaitLimit { limit: usize },
+
     /// A filesystem path was not absolute (did not start with `/`).
     ///
     /// The message text matches the TypeScript `AgentOs` exactly (capital "P"). These strings are
@@ -269,7 +277,9 @@ impl ClientError {
                     format!("{code}: {message}")
                 }
             }
-            ClientError::PathNotAbsolute(_)
+            ClientError::VmDisposed
+            | ClientError::ExecutionWaitLimit { .. }
+            | ClientError::PathNotAbsolute(_)
             | ClientError::PathNotNormalized(_)
             | ClientError::PathReadOnly(_)
             | ClientError::InvalidConfig(_)

@@ -1,14 +1,14 @@
+import type {
+	HostFunction,
+	HostFunctionCollection,
+	HostFunctionCollections,
+} from "@rivet-dev/agentos-runtime-core/host-functions";
 import { z } from "zod/v4";
 import type {
 	AgentOsOptions,
 	LimitWarningHandler,
 	NativeMountConfig,
 } from "./agent-os.js";
-import type {
-	HostFunction,
-	HostFunctionCollection,
-	HostFunctionCollections,
-} from "@rivet-dev/agentos-runtime-core/host-functions";
 
 const stringArray = z.array(z.string());
 const nonNegativeInteger = z.number().int().nonnegative();
@@ -408,6 +408,9 @@ export const agentOsOptionFieldSchemas = {
 	permissions: permissionsSchema.optional(),
 	sidecar: sidecarConfigSchema.optional(),
 	limits: agentOsLimitsSchema.optional(),
+	maxPendingExecutionWaits: positiveInteger
+		.max(Number.MAX_SAFE_INTEGER)
+		.optional(),
 	onLimitWarning: z
 		.custom<LimitWarningHandler>((value) => typeof value === "function", {
 			message: "Expected function",

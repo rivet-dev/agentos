@@ -1,5 +1,18 @@
 // @rivet-dev/agentos
 
+export type {
+	HostFunction,
+	HostFunctionCollection,
+	HostFunctionCollections,
+	HostFunctionExample,
+	HostFunctionSchemas,
+	ResolvedHostFunctions,
+} from "@rivet-dev/agentos-runtime-core/host-functions";
+export {
+	hostFunctionCommandName,
+	hostFunctionDescription,
+	resolveHostFunctions,
+} from "@rivet-dev/agentos-runtime-core/host-functions";
 export {
 	SidecarProcessError,
 	SidecarProcessExited,
@@ -7,7 +20,11 @@ export {
 	type SidecarRejectionDetail,
 	SidecarSilenceTimeout,
 } from "@rivet-dev/agentos-runtime-core/sidecar-errors";
-export { AgentOs, AgentOsSidecar } from "./agent-os.js";
+export {
+	AgentOs,
+	AgentOsExecutionWaitLimit,
+	AgentOsSidecar,
+} from "./agent-os.js";
 export {
 	isPackageDescriptor,
 	OPT_AGENTOS_BIN,
@@ -25,19 +42,6 @@ export {
 	hostDirMount,
 	nodeModulesMount,
 } from "./host-dir-mount.js";
-export type {
-	HostFunction,
-	HostFunctionCollection,
-	HostFunctionCollections,
-	HostFunctionExample,
-	HostFunctionSchemas,
-	ResolvedHostFunctions,
-} from "@rivet-dev/agentos-runtime-core/host-functions";
-export {
-	hostFunctionCommandName,
-	hostFunctionDescription,
-	resolveHostFunctions,
-} from "@rivet-dev/agentos-runtime-core/host-functions";
 export type * from "./language-execution.js";
 export { createSnapshotExport } from "./layers.js";
 export {

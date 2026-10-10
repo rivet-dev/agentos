@@ -29,6 +29,15 @@ Every queue, buffer, timeout, and resource collection has a bounded default.
 Near-capacity conditions emit `vm.limitWarning`; exhausted limits fail
 with a typed error naming the limit and the field used to raise it.
 
+Embedded SDK execution waits have a separate, client-local bound of 4,096
+concurrent waits per VM. Configure `maxPendingExecutionWaits` in TypeScript
+`AgentOsOptions` or `max_pending_execution_waits` in Rust `AgentOsConfig`.
+At 80% capacity, the SDK writes a warning to the host console or stderr.
+Exhausting this bound rejects the call with `AgentOsExecutionWaitLimit` in
+TypeScript or `ClientError::ExecutionWaitLimit` in Rust. The error names the
+option used to raise the bound. Completed, cancelled, and disposed waits
+release their capacity. This option does not change sidecar execution limits.
+
 `limits.reactor.shutdownDeadlineMs` bounds the SQLite close wait and subsequent
 resource drain together. Process termination and filesystem flushing happen
 before this budget. If close exceeds the deadline,

@@ -12,13 +12,6 @@ import type {
 	MountConfigJsonValue,
 	NativeMountPluginDescriptor,
 } from "@rivet-dev/agentos-runtime-core/descriptors";
-import * as executionProtocol from "@rivet-dev/agentos-runtime-core/protocol";
-import type { LivePackageAcquisitionSource } from "@rivet-dev/agentos-runtime-core/request-payloads";
-import { SidecarRejectedError } from "@rivet-dev/agentos-runtime-core/sidecar-errors";
-import type {
-	CreateVmConfig,
-	VmUserConfig,
-} from "@rivet-dev/agentos-runtime-core/vm-config";
 import {
 	type HostFunction,
 	type HostFunctionCollections,
@@ -28,6 +21,13 @@ import {
 	resolveHostFunctions,
 } from "@rivet-dev/agentos-runtime-core/host-functions";
 import { zodToJsonSchema } from "@rivet-dev/agentos-runtime-core/host-functions-zod";
+import * as executionProtocol from "@rivet-dev/agentos-runtime-core/protocol";
+import type { LivePackageAcquisitionSource } from "@rivet-dev/agentos-runtime-core/request-payloads";
+import { SidecarRejectedError } from "@rivet-dev/agentos-runtime-core/sidecar-errors";
+import type {
+	CreateVmConfig,
+	VmUserConfig,
+} from "@rivet-dev/agentos-runtime-core/vm-config";
 import type {
 	CodeEvaluationResult,
 	CodeExecutionResult,
@@ -54,6 +54,12 @@ import type {
 	TypeScriptFileExecutionOptions,
 } from "./language-execution.js";
 import { parseAgentOsOptions } from "./options-schema.js";
+import {
+	type ReplayReadOptions,
+	replayPage,
+	replayPageLimits,
+	replayWirePageLimits,
+} from "./output-replay.js";
 import { buildProcessForest } from "./process-forest.js";
 import type {
 	ConnectTerminalOptions,
@@ -75,12 +81,6 @@ import {
 	resolveSandboxOptions,
 } from "./sandbox.js";
 import { resolvePublishedSidecarBinary } from "./sidecar/binary.js";
-import {
-	replayPage,
-	replayPageLimits,
-	replayWirePageLimits,
-	type ReplayReadOptions,
-} from "./output-replay.js";
 import { findCargoBinary, resolveCargoBinary } from "./sidecar/cargo.js";
 
 export type {
@@ -649,6 +649,8 @@ export interface AgentOsOptions<
 	 * on a slow consumer or a runaway guest before the limit is actually hit.
 	 */
 	onLimitWarning?: LimitWarningHandler;
+	/** Maximum simultaneous SDK execution waits for this VM (default 4096). */
+	maxPendingExecutionWaits?: number;
 }
 
 export interface AgentOsRuntimeAdmin {
@@ -2589,6 +2591,17 @@ function mapExecutionCompletedEvent(
 	};
 }
 
+export class AgentOsExecutionWaitLimit extends Error {
+	readonly limit: number;
+	constructor(limit: number) {
+		super(
+			`SDK execution wait limit maxPendingExecutionWaits (${limit}) reached; raise AgentOsOptions.maxPendingExecutionWaits`,
+		);
+		this.name = "AgentOsExecutionWaitLimit";
+		this.limit = limit;
+	}
+}
+
 export class AgentOs {
 	#kernel: Kernel;
 	readonly sidecar: AgentOsSidecar;
@@ -2619,6 +2632,10 @@ export class AgentOs {
 		}
 	>();
 	private _languageProcessIds = new Map<string, number>();
+	private _disposed = false;
+	private readonly _pendingExecutionWaits = new Set<(error: Error) => void>();
+	private _executionWaitWarningActive = false;
+	private readonly _maxPendingExecutionWaits: number;
 	private _pendingProcessRegistrations = 0;
 	private _executionOutputHandlers = new Map<
 		string,
@@ -2775,7 +2792,9 @@ export class AgentOs {
 		sidecarSession: AuthenticatedSession,
 		sidecarVm: CreatedVm,
 		limitWarningHandler?: LimitWarningHandler,
+		maxPendingExecutionWaits = 4096,
 	) {
+		this._maxPendingExecutionWaits = maxPendingExecutionWaits;
 		this.#kernel = kernel;
 		this.sidecar = sidecar;
 		this._softwareRoots = softwareRoots;
@@ -3116,6 +3135,7 @@ export class AgentOs {
 				vmAdmin.sidecarSession,
 				vmAdmin.sidecarVm,
 				options?.onLimitWarning,
+				options?.maxPendingExecutionWaits,
 			);
 			vm._sidecarLease = sidecarLease;
 			vm._hostFunctions = vmAdmin.hostFunctions;
@@ -3214,10 +3234,12 @@ export class AgentOs {
 		});
 		let response: Awaited<ReturnType<SidecarProcess["sendVmRequest"]>>;
 		try {
-			response = await this._sidecarClient.sendVmRequest(
-				this._sidecarSession,
-				this._sidecarVm,
-				payload,
+			response = await this._untilDisposed(() =>
+				this._sidecarClient.sendVmRequest(
+					this._sidecarSession,
+					this._sidecarVm,
+					payload,
+				),
 			);
 		} catch (error) {
 			unsubscribeOutput();
@@ -3278,7 +3300,7 @@ export class AgentOs {
 			};
 		}
 		try {
-			await completion;
+			await this._untilDisposed(() => completion);
 			return await this._waitExecutionResult(response.response.operationId);
 		} finally {
 			cleanup();
@@ -3957,6 +3979,35 @@ export class AgentOs {
 		return response.response.executions.map(mapExecutionDescriptor);
 	}
 
+	private async _untilDisposed<T>(operation: () => Promise<T>): Promise<T> {
+		if (this._disposed) throw new Error("ERR_AGENTOS_VM_DISPOSED");
+		if (this._pendingExecutionWaits.size >= this._maxPendingExecutionWaits) {
+			throw new AgentOsExecutionWaitLimit(this._maxPendingExecutionWaits);
+		}
+		let rejectDisposed!: (error: Error) => void;
+		const disposed = new Promise<never>((_, reject) => {
+			rejectDisposed = reject;
+		});
+		this._pendingExecutionWaits.add(rejectDisposed);
+		const warningThreshold = Math.ceil(this._maxPendingExecutionWaits * 0.8);
+		if (
+			this._pendingExecutionWaits.size >= warningThreshold &&
+			!this._executionWaitWarningActive
+		) {
+			this._executionWaitWarningActive = true;
+			console.warn(
+				`agentOS SDK execution waits near maxPendingExecutionWaits (${this._pendingExecutionWaits.size}/${this._maxPendingExecutionWaits}); raise AgentOsOptions.maxPendingExecutionWaits`,
+			);
+		}
+		try {
+			return await Promise.race([operation(), disposed]);
+		} finally {
+			this._pendingExecutionWaits.delete(rejectDisposed);
+			if (this._pendingExecutionWaits.size < warningThreshold)
+				this._executionWaitWarningActive = false;
+		}
+	}
+
 	private async _waitExecutionResult(
 		executionId: string,
 	): Promise<MappedExecutionResult> {
@@ -3970,10 +4021,12 @@ export class AgentOs {
 		let response: Awaited<ReturnType<SidecarProcess["sendVmRequest"]>>;
 		try {
 			try {
-				response = await this._sidecarClient.sendVmRequest(
-					this._sidecarSession,
-					this._sidecarVm,
-					{ type: "wait_execution", request: { executionId } },
+				response = await this._untilDisposed(() =>
+					this._sidecarClient.sendVmRequest(
+						this._sidecarSession,
+						this._sidecarVm,
+						{ type: "wait_execution", request: { executionId } },
+					),
 				);
 			} catch (error) {
 				if (
@@ -3982,11 +4035,13 @@ export class AgentOs {
 				) {
 					throw error;
 				}
-				await completion;
-				response = await this._sidecarClient.sendVmRequest(
-					this._sidecarSession,
-					this._sidecarVm,
-					{ type: "wait_execution", request: { executionId } },
+				await this._untilDisposed(() => completion);
+				response = await this._untilDisposed(() =>
+					this._sidecarClient.sendVmRequest(
+						this._sidecarSession,
+						this._sidecarVm,
+						{ type: "wait_execution", request: { executionId } },
+					),
 				);
 			}
 		} finally {
@@ -5244,7 +5299,9 @@ export class AgentOs {
 				// The execution can finish between the local state check and the
 				// signal request. Reconcile its final state and preserve kill/signal's
 				// documented already-exited no-op behavior.
-				await this._waitProcess(pid);
+				// During disposal, the completion drain and native teardown confirm
+				// cleanup. Public result waits have already been rejected.
+				if (!this._disposed) await this._waitProcess(pid);
 			}
 			return;
 		}
@@ -5674,6 +5731,10 @@ export class AgentOs {
 	}
 
 	async dispose(): Promise<void> {
+		this._disposed = true;
+		for (const reject of this._pendingExecutionWaits)
+			reject(new Error("ERR_AGENTOS_VM_DISPOSED"));
+		this._pendingExecutionWaits.clear();
 		this._cronManager.dispose();
 		const errors: unknown[] = [];
 

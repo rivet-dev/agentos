@@ -981,14 +981,28 @@ impl AgentOs {
     /// Await a spawned process's exit code. Unknown-pid lookup errors (synchronously in TS; here the
     /// lookup error is returned before any awaiting begins).
     pub async fn wait_process(&self, pid: u32) -> std::result::Result<i32, ClientError> {
-        let (rx, process_id) = self
+        let (rx, process_id, language_execution) = self
             .inner()
             .processes
             .read(&pid, |_, entry| {
-                (entry.exit_tx.subscribe(), entry.process_id.clone())
+                (
+                    entry.exit_tx.subscribe(),
+                    entry.process_id.clone(),
+                    entry.execution_id.is_some(),
+                )
             })
             .ok_or(ClientError::ProcessNotFound(pid))?;
 
+        if language_execution {
+            if let Some(code) = rx.borrow().exit_code() {
+                return Ok(code);
+            }
+            return self
+                .inner()
+                .execution_waits
+                .until_disposed(wait_for_process_outcome(rx, &process_id))
+                .await;
+        }
         wait_for_process_outcome(rx, &process_id).await
     }
 
