@@ -59,5 +59,9 @@ results already returned to the caller remain usable.
 Wait rejection does not confirm that guest code has stopped. Await VM disposal
 to confirm native cleanup; disposal can still report a teardown error.
 
+A failed TypeScript `dispose()` still releases its shared sidecar lease. The
+host process can exit when no other VM leases are active. Sibling VMs remain
+usable; releasing a lease does not confirm native cleanup.
+
 Read more in the
 [embedded API quickstart](/agentos/docs/quickstart-embedded).

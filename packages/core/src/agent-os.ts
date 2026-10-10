@@ -6281,11 +6281,13 @@ async function leaseAgentOsSidecarVm<TVmAdmin extends InProcessSidecarVmAdmin>(
 				disposed = true;
 				state.activeLeases.delete(leaseRecord!);
 				state.description.activeVmCount = state.activeLeases.size;
-				await client.dispose();
-				// Release this lease's hold; the shared sidecar is unref'd only
-				// once the last hold (across all in-flight + active leases) drops,
-				// so a one-shot host process can then exit on its own.
-				releaseHold();
+				try {
+					await client.dispose();
+				} finally {
+					// Release this lease's hold even when native teardown rejects.
+					// Other active or in-flight leases keep the shared sidecar alive.
+					releaseHold();
+				}
 			},
 		};
 
