@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import type { SidecarProcess } from "../src/sidecar-process.js";
 import {
 	createInMemoryFileSystem,
 	createKernel,
@@ -63,26 +64,22 @@ describe("Kernel.mountFs custom JS VFS", () => {
 		kernel = undefined;
 	});
 
-	test(
-		"routes runtime reads and writes through a plain JS VFS object",
-		async () => {
-			const mounted = createRecordingFilesystem();
-			kernel = createKernel({ filesystem: createInMemoryFileSystem() });
+	test("routes runtime reads and writes through a plain JS VFS object", async () => {
+		const mounted = createRecordingFilesystem();
+		kernel = createKernel({ filesystem: createInMemoryFileSystem() });
 
-			kernel.mountFs("/mnt/custom", mounted.fs);
-			await kernel.writeFile("/mnt/custom/note.txt", "from custom vfs");
+		kernel.mountFs("/mnt/custom", mounted.fs);
+		await kernel.writeFile("/mnt/custom/note.txt", "from custom vfs");
 
-			expect(
-				new TextDecoder().decode(await kernel.readFile("/mnt/custom/note.txt")),
-			).toBe("from custom vfs");
-			expect(mounted.calls).toContain("writeFile:/note.txt");
-			expect(mounted.calls).toContain("readFile:/note.txt");
+		expect(
+			new TextDecoder().decode(await kernel.readFile("/mnt/custom/note.txt")),
+		).toBe("from custom vfs");
+		expect(mounted.calls).toContain("writeFile:/note.txt");
+		expect(mounted.calls).toContain("readFile:/note.txt");
 
-			kernel.unmountFs("/mnt/custom");
-			await expect(kernel.readFile("/mnt/custom/note.txt")).rejects.toThrow();
-		},
-		120_000,
-	);
+		kernel.unmountFs("/mnt/custom");
+		await expect(kernel.readFile("/mnt/custom/note.txt")).rejects.toThrow();
+	}, 120_000);
 
 	test("routes positioned writes through a mounted JS VFS", async () => {
 		const mounted = createRecordingFilesystem();
@@ -101,4 +98,48 @@ describe("Kernel.mountFs custom JS VFS", () => {
 		).toBe("abXYZ");
 		expect(mounted.calls).toContain("pwrite:/db.bin");
 	});
+});
+
+test("disposal unregisters only the shared kernel VM callback", async () => {
+	const sidecar = {
+		authenticateAndOpenSession: vi.fn(async () => ({
+			connectionId: "conn",
+			sessionId: "session",
+		})),
+		createVm: vi
+			.fn()
+			.mockResolvedValueOnce({ vmId: "a" })
+			.mockResolvedValueOnce({ vmId: "b" }),
+		waitForEvent: vi.fn(async () => ({})),
+		onEvent: vi.fn(() => () => {}),
+		setSidecarRequestHandler: vi.fn(),
+		disposeVm: vi.fn(async () => {}),
+		dispose: vi.fn(async () => {}),
+	} as unknown as SidecarProcess;
+	const a = createKernel({
+		filesystem: createInMemoryFileSystem(),
+		sidecar,
+		syncFilesystemOnDispose: false,
+	});
+	const b = createKernel({
+		filesystem: createInMemoryFileSystem(),
+		sidecar,
+		syncFilesystemOnDispose: false,
+	});
+	try {
+		await a.registerHostFunctions({});
+		await b.registerHostFunctions({});
+		await a.dispose();
+		expect(sidecar.setSidecarRequestHandler).toHaveBeenCalledWith(null, "a");
+		expect(sidecar.setSidecarRequestHandler).not.toHaveBeenCalledWith(
+			null,
+			"b",
+		);
+		expect(sidecar.dispose).not.toHaveBeenCalled();
+		await b.dispose();
+		expect(sidecar.setSidecarRequestHandler).toHaveBeenCalledWith(null, "b");
+	} finally {
+		await a.dispose();
+		await b.dispose();
+	}
 });

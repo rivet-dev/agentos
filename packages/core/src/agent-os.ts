@@ -12,13 +12,6 @@ import type {
 	MountConfigJsonValue,
 	NativeMountPluginDescriptor,
 } from "@rivet-dev/agentos-runtime-core/descriptors";
-import * as executionProtocol from "@rivet-dev/agentos-runtime-core/protocol";
-import type { LivePackageAcquisitionSource } from "@rivet-dev/agentos-runtime-core/request-payloads";
-import { SidecarRejectedError } from "@rivet-dev/agentos-runtime-core/sidecar-errors";
-import type {
-	CreateVmConfig,
-	VmUserConfig,
-} from "@rivet-dev/agentos-runtime-core/vm-config";
 import {
 	type HostFunction,
 	type HostFunctionCollections,
@@ -28,6 +21,13 @@ import {
 	resolveHostFunctions,
 } from "@rivet-dev/agentos-runtime-core/host-functions";
 import { zodToJsonSchema } from "@rivet-dev/agentos-runtime-core/host-functions-zod";
+import * as executionProtocol from "@rivet-dev/agentos-runtime-core/protocol";
+import type { LivePackageAcquisitionSource } from "@rivet-dev/agentos-runtime-core/request-payloads";
+import { SidecarRejectedError } from "@rivet-dev/agentos-runtime-core/sidecar-errors";
+import type {
+	CreateVmConfig,
+	VmUserConfig,
+} from "@rivet-dev/agentos-runtime-core/vm-config";
 import type {
 	CodeEvaluationResult,
 	CodeExecutionResult,
@@ -54,6 +54,12 @@ import type {
 	TypeScriptFileExecutionOptions,
 } from "./language-execution.js";
 import { parseAgentOsOptions } from "./options-schema.js";
+import {
+	type ReplayReadOptions,
+	replayPage,
+	replayPageLimits,
+	replayWirePageLimits,
+} from "./output-replay.js";
 import { buildProcessForest } from "./process-forest.js";
 import type {
 	ConnectTerminalOptions,
@@ -75,12 +81,6 @@ import {
 	resolveSandboxOptions,
 } from "./sandbox.js";
 import { resolvePublishedSidecarBinary } from "./sidecar/binary.js";
-import {
-	replayPage,
-	replayPageLimits,
-	replayWirePageLimits,
-	type ReplayReadOptions,
-} from "./output-replay.js";
 import { findCargoBinary, resolveCargoBinary } from "./sidecar/cargo.js";
 
 export type {
@@ -5633,7 +5633,7 @@ export class AgentOs {
 						},
 					};
 			}
-		});
+		}, this._sidecarVm.vmId);
 	}
 
 	// ── Cron ────────────────────────────────────────────────────
@@ -5733,6 +5733,7 @@ export class AgentOs {
 				result.status === "rejected" ? [result.reason] : [],
 			),
 		);
+		this._sidecarClient.setSidecarRequestHandler(null, this._sidecarVm.vmId);
 		if (errors.length === 1) throw errors[0];
 		if (errors.length > 1) {
 			throw new AggregateError(errors, "AgentOS VM disposal failed");

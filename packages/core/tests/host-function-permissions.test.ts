@@ -22,12 +22,13 @@ async function createVmCapturingHandler(
 		.mockImplementation(function (
 			this: NativeSidecarProcessClient,
 			handler: any,
+			vmId?: string,
 		) {
 			if (handler) {
 				captured = handler as CapturedHandler;
 			}
 			// Still install on the real client so the VM behaves normally.
-			return original.call(this, handler);
+			return original.call(this, handler, vmId);
 		});
 	try {
 		const vm = await AgentOs.create(options);
@@ -408,5 +409,58 @@ describe("host-function collection permissions: raw host_callback RPC path", () 
 		expect(response.result).toBeUndefined();
 		expect(typeof response.error).toBe("string");
 		expect(response.error).toMatch(/invalid registry callback/i);
+	});
+});
+
+describe("host functions on a shared sidecar", () => {
+	test("keeps each VM's callbacks after a sibling is disposed or has no host functions", async () => {
+		const sidecar = await AgentOs.createSidecar();
+		const vms: AgentOs[] = [];
+		const permissions = {
+			fs: "allow",
+			childProcess: "allow",
+			hostFunction: "allow",
+		} as const;
+		const invoke = async (vm: AgentOs, id: string) => {
+			const result = await runCommand(vm, "agentos-identity", ["who"]);
+			expect(result.exitCode, result.stderr).toBe(0);
+			expect(JSON.parse(result.stdout)).toEqual({ ok: true, result: { id } });
+		};
+		try {
+			for (const id of ["a", "b", "c"]) {
+				vms.push(
+					await AgentOs.create({
+						sidecar: { kind: "explicit", handle: sidecar },
+						defaultSoftware: false,
+						permissions,
+						hostFunctions: {
+							identity: {
+								who: { inputSchema: z.object({}), execute: () => ({ id }) },
+							},
+						},
+					}),
+				);
+			}
+			await invoke(vms[0], "a");
+			await invoke(vms[1], "b");
+			await invoke(vms[2], "c");
+			await vms[1].dispose();
+			await invoke(vms[0], "a");
+			vms.push(
+				await AgentOs.create({
+					sidecar: { kind: "explicit", handle: sidecar },
+					defaultSoftware: false,
+					permissions,
+				}),
+			);
+			await invoke(vms[0], "a");
+			await invoke(vms[2], "c");
+		} finally {
+			try {
+				await Promise.all(vms.map((vm) => vm.dispose()));
+			} finally {
+				await sidecar.dispose();
+			}
+		}
 	});
 });

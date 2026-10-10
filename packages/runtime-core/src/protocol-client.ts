@@ -33,6 +33,7 @@ import type { LiveRequestPayload } from "./request-payloads.js";
 import {
 	SidecarRejectedError,
 	SidecarSilenceTimeout,
+	SidecarVmRequestHandlerLimit,
 } from "./sidecar-errors.js";
 
 /**
@@ -61,6 +62,8 @@ export interface SidecarProtocolClientOptions {
 	/** Use one bidirectional stdin/stdout transport when the host cannot inherit fd 3. */
 	combinedStdio?: boolean;
 	eventBufferCapacity: number;
+	/** Maximum VM callback dispatchers on this connection (default 4096). */
+	maxVmRequestHandlers?: number;
 	payloadCodec?: ProtocolFramePayloadCodec;
 	stderrText?: () => string;
 	frameError?: (error: Error) => Error;
@@ -97,9 +100,24 @@ export class SidecarProtocolClient {
 		reject: (error: Error) => void;
 		timer: ReturnType<typeof setTimeout> | null;
 	}>();
+	private readonly maxVmRequestHandlers: number;
+	private vmHandlerWarningActive = false;
 	private sidecarRequestHandler: LiveSidecarRequestHandler | null = null;
+	private readonly vmRequestHandlers = new Map<
+		string,
+		LiveSidecarRequestHandler
+	>();
 
 	constructor(options: SidecarProtocolClientOptions) {
+		this.maxVmRequestHandlers = options.maxVmRequestHandlers ?? 4096;
+		if (
+			!Number.isSafeInteger(this.maxVmRequestHandlers) ||
+			this.maxVmRequestHandlers <= 0
+		) {
+			throw new RangeError(
+				"maxVmRequestHandlers must be a positive safe integer",
+			);
+		}
 		this.silenceTimeoutMs =
 			options.silenceTimeoutMs ?? DEFAULT_SIDECAR_SILENCE_TIMEOUT_MS;
 		this.eventBuffer = new SidecarEventBuffer(options.eventBufferCapacity);
@@ -179,8 +197,35 @@ export class SidecarProtocolClient {
 		}
 	}
 
-	setSidecarRequestHandler(handler: LiveSidecarRequestHandler | null): void {
-		this.sidecarRequestHandler = handler;
+	setSidecarRequestHandler(
+		handler: LiveSidecarRequestHandler | null,
+		vmId?: string,
+	): void {
+		if (handler && this.closedError) throw this.closedError;
+		if (vmId !== undefined) {
+			if (handler) {
+				if (
+					!this.vmRequestHandlers.has(vmId) &&
+					this.vmRequestHandlers.size >= this.maxVmRequestHandlers
+				) {
+					throw new SidecarVmRequestHandlerLimit(this.maxVmRequestHandlers);
+				}
+				this.vmRequestHandlers.set(vmId, handler);
+			} else {
+				this.vmRequestHandlers.delete(vmId);
+			}
+			const nearCapacity =
+				this.vmRequestHandlers.size >=
+				Math.ceil(this.maxVmRequestHandlers * 0.8);
+			if (nearCapacity && !this.vmHandlerWarningActive) {
+				console.warn(
+					`agentOS VM callback handlers near maxVmRequestHandlers (${this.vmRequestHandlers.size}/${this.maxVmRequestHandlers}); raise SidecarSpawnOptions.maxVmRequestHandlers`,
+				);
+			}
+			this.vmHandlerWarningActive = nearCapacity;
+		} else {
+			this.sidecarRequestHandler = handler;
+		}
 	}
 
 	onEvent(handler: (event: LiveEventFrame) => void): () => void {
@@ -305,12 +350,14 @@ export class SidecarProtocolClient {
 			}
 		}
 		this.closedError = error;
+		this.vmRequestHandlers.clear();
+		this.sidecarRequestHandler = null;
 		this.stopSilenceWatchdog();
 		this.rejectPending(error);
 	}
 
 	dispose(): void {
-		this.stopSilenceWatchdog();
+		this.failPermanently(new Error("sidecar protocol client disposed"));
 		this.frameTransport.dispose();
 	}
 
@@ -340,7 +387,9 @@ export class SidecarProtocolClient {
 		});
 		const payload = await resolveSidecarRequestFramePayload(
 			request,
-			this.sidecarRequestHandler,
+			request.ownership.scope === "vm"
+				? (this.vmRequestHandlers.get(request.ownership.vm_id) ?? null)
+				: this.sidecarRequestHandler,
 		);
 
 		try {
