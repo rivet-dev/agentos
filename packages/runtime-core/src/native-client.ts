@@ -22,6 +22,7 @@ export interface StdioSidecarProtocolClientSpawnOptions {
 	command?: string;
 	args?: string[];
 	eventBufferCapacity?: number;
+	maxVmRequestHandlers?: number;
 	gracefulExitMs?: number;
 	forceExitMs?: number;
 	disposedErrorMessage?: string;
@@ -44,7 +45,10 @@ type ResolvedStdioSidecarProtocolClientOptions = Required<
 		| "payloadCodec"
 	>
 > &
-	Pick<StdioSidecarProtocolClientSpawnOptions, "silenceTimeoutMs">;
+	Pick<
+		StdioSidecarProtocolClientSpawnOptions,
+		"silenceTimeoutMs" | "maxVmRequestHandlers"
+	>;
 
 export class StdioSidecarProtocolClient implements SidecarProcessTransport {
 	readonly child: StdioSidecarProcess["child"];
@@ -77,6 +81,7 @@ export class StdioSidecarProtocolClient implements SidecarProcessTransport {
 		this.protocolClient = new SidecarProtocolClient({
 			...transportOptions,
 			eventBufferCapacity: options.eventBufferCapacity,
+			maxVmRequestHandlers: options.maxVmRequestHandlers,
 			payloadCodec: options.payloadCodec,
 			silenceTimeoutMs: options.silenceTimeoutMs,
 			// A silent sidecar is dead or wedged; reap the process so it cannot
@@ -125,6 +130,7 @@ export class StdioSidecarProtocolClient implements SidecarProcessTransport {
 			}),
 			{
 				silenceTimeoutMs: options.silenceTimeoutMs,
+				maxVmRequestHandlers: options.maxVmRequestHandlers,
 				eventBufferCapacity:
 					options.eventBufferCapacity ?? DEFAULT_SIDECAR_EVENT_BUFFER_CAPACITY,
 				gracefulExitMs:
@@ -137,8 +143,11 @@ export class StdioSidecarProtocolClient implements SidecarProcessTransport {
 		);
 	}
 
-	setSidecarRequestHandler(handler: LiveSidecarRequestHandler | null): void {
-		this.protocolClient.setSidecarRequestHandler(handler);
+	setSidecarRequestHandler(
+		handler: LiveSidecarRequestHandler | null,
+		vmId?: string,
+	): void {
+		this.protocolClient.setSidecarRequestHandler(handler, vmId);
 	}
 
 	onEvent(handler: (event: LiveEventFrame) => void): () => void {

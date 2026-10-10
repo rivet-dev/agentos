@@ -26,7 +26,10 @@ function makeAgentOs(): {
 } {
 	const noop = () => {};
 	const kernelMock = { dispose: async () => {} };
-	const sidecarClientMock = { onEvent: () => noop };
+	const sidecarClientMock = {
+		onEvent: () => noop,
+		setSidecarRequestHandler: noop,
+	};
 
 	// The constructor is private at the type level but callable at runtime; it
 	// runs the class field initializers (including `_processes = new Map()`).

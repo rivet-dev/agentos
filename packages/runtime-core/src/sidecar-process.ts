@@ -203,6 +203,8 @@ export interface SidecarSpawnOptions {
 	command?: string;
 	args?: string[];
 	eventBufferCapacity?: number;
+	/** Maximum VM callback dispatchers on this connection (default 4096). */
+	maxVmRequestHandlers?: number;
 	gracefulExitMs?: number;
 	forceExitMs?: number;
 	// Migration-only compatibility path for pre-BARE test fixtures.
@@ -220,6 +222,7 @@ export interface ResolvedSidecarSpawnOptions {
 	command?: string;
 	args: string[];
 	eventBufferCapacity: number;
+	maxVmRequestHandlers?: number;
 	gracefulExitMs: number;
 	forceExitMs: number;
 	disposedErrorMessage: string;
@@ -367,6 +370,7 @@ export class SidecarProcess {
 			args: options.args ?? [],
 			cwd: options.cwd,
 			silenceTimeoutMs: options.silenceTimeoutMs,
+			maxVmRequestHandlers: options.maxVmRequestHandlers,
 			eventBufferCapacity:
 				options.eventBufferCapacity ?? DEFAULT_SIDECAR_EVENT_BUFFER_CAPACITY,
 			gracefulExitMs:
@@ -378,8 +382,11 @@ export class SidecarProcess {
 		return SidecarProcess.fromClient(protocolClient);
 	}
 
-	setSidecarRequestHandler(handler: SidecarRequestHandler | null): void {
-		this.protocolClient.setSidecarRequestHandler(handler);
+	setSidecarRequestHandler(
+		handler: SidecarRequestHandler | null,
+		vmId?: string,
+	): void {
+		this.protocolClient.setSidecarRequestHandler(handler, vmId);
 	}
 
 	onEvent(handler: (event: EventFrame) => void): () => void {

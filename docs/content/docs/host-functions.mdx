@@ -110,6 +110,11 @@ Host functions run on the host with full access to the host environment, so do n
 Pass the same host-function collections to `AgentOs.create()`. The function contract and
 generated VM commands are unchanged.
 
+VM-scoped host-function and filesystem-bridge callbacks use the originating
+VM's ownership. Each VM retains its own callback handler on a shared sidecar.
+Callbacks for an unknown or removed VM are rejected. A VM's handler is removed
+after its teardown hooks finish, so disposing one VM preserves its siblings.
+
 <CodeSnippet file="examples/embedded/host-functions.ts" title="hostFunctions.ts" />
 
 Read more in the [embedded API quickstart](/agentos/docs/quickstart-embedded).

@@ -94,3 +94,14 @@ export class SidecarProcessError extends Error {
 		this.stderr = stderr;
 	}
 }
+
+export class SidecarVmRequestHandlerLimit extends Error {
+	readonly limit: number;
+	constructor(limit: number) {
+		super(
+			`VM callback handler limit maxVmRequestHandlers (${limit}) reached; raise SidecarSpawnOptions.maxVmRequestHandlers`,
+		);
+		this.name = "SidecarVmRequestHandlerLimit";
+		this.limit = limit;
+	}
+}

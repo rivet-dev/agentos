@@ -15,6 +15,15 @@ sets the live execution count that triggers a warning, not a rejection.
 These fields are optional in both Rust and TypeScript Core; omission keeps the
 sidecar default.
 
+The TypeScript runtime-core transport retains at most 4,096 VM callback
+handlers per connection. Embedded sidecar users can raise this local bound
+with `SidecarSpawnOptions.maxVmRequestHandlers`; direct protocol clients use
+`SidecarProtocolClientOptions.maxVmRequestHandlers`. The SDK writes a host
+console warning at 80% capacity and rejects a new handler with
+`SidecarVmRequestHandlerLimit` when full. Replacing a handler keeps the same
+slot, and removing it releases capacity. This transport-local option does not
+change the native VM admission or executor policy.
+
 Process and terminal output replay is also sidecar-owned. The defaults retain
 up to 1,024 events or 1 MiB for each opted-in process, return at most 256 events
 or 768 KiB per read, and retain at most 1,024 replay records per VM. Override

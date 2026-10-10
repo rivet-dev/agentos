@@ -1,5 +1,5 @@
 import { Duplex, PassThrough } from "node:stream";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { FrameTransport } from "../src/frame-stream.js";
 import { encodeLengthPrefixedPayload } from "../src/framing.js";
 import { SidecarProtocolClient } from "../src/protocol-client.js";
@@ -11,7 +11,10 @@ import {
 	type LiveSidecarRequestFrame,
 } from "../src/protocol-frames.js";
 import { SIDECAR_PROTOCOL_SCHEMA } from "../src/protocol-schema.js";
-import { SidecarRejectedError } from "../src/sidecar-errors.js";
+import {
+	SidecarRejectedError,
+	SidecarVmRequestHandlerLimit,
+} from "../src/sidecar-errors.js";
 
 const ownership = {
 	scope: "connection" as const,
@@ -141,6 +144,57 @@ function writeIncomingControlFrame(
 }
 
 describe("sidecar protocol client", () => {
+	it("bounds VM callback registrations, warns near capacity, and reuses released slots", () => {
+		const client = new SidecarProtocolClient({
+			frameTransport: new MemoryFrameTransport(),
+			eventBufferCapacity: 2,
+			maxVmRequestHandlers: 5,
+		});
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const handler = async () => ({
+			type: "host_callback_result" as const,
+			invocation_id: "invocation",
+			result: null,
+		});
+		try {
+			for (let i = 0; i < 4; i++)
+				client.setSidecarRequestHandler(handler, `vm-${i}`);
+			expect(warn).toHaveBeenCalledOnce();
+			expect(warn.mock.calls[0][0]).toContain("maxVmRequestHandlers");
+			client.setSidecarRequestHandler(handler, "vm-4");
+			expect(() => client.setSidecarRequestHandler(handler, "vm-5")).toThrow(
+				SidecarVmRequestHandlerLimit,
+			);
+			// Replacing an existing VM does not consume another slot.
+			client.setSidecarRequestHandler(handler, "vm-0");
+			client.setSidecarRequestHandler(null, "vm-1");
+			client.setSidecarRequestHandler(handler, "vm-5");
+		} finally {
+			warn.mockRestore();
+			client.dispose();
+		}
+	});
+
+	it("rejects new callback registrations after normal protocol disposal", () => {
+		const client = new SidecarProtocolClient({
+			frameTransport: new MemoryFrameTransport(),
+			eventBufferCapacity: 2,
+		});
+		client.dispose();
+		expect(() =>
+			client.setSidecarRequestHandler(
+				async () => ({
+					type: "host_callback_result",
+					invocation_id: "invocation",
+					result: null,
+				}),
+				"vm",
+			),
+		).toThrow("sidecar protocol client disposed");
+		// Cleanup remains possible after transport closure.
+		client.setSidecarRequestHandler(null, "vm");
+	});
+
 	it("preserves structured resource-limit rejection metadata", async () => {
 		const frameTransport = new MemoryFrameTransport();
 		const client = new SidecarProtocolClient({
@@ -438,6 +492,163 @@ describe("sidecar protocol client", () => {
 			},
 		});
 		client.dispose();
+	});
+
+	it.each([
+		"host_callback",
+		"js_bridge_call",
+	] as const)("routes %s by VM without borrowing a sibling or global handler", async (type) => {
+		const bridge = type === "js_bridge_call";
+		const frameTransport = new MemoryFrameTransport();
+		const client = new SidecarProtocolClient({
+			frameTransport,
+			eventBufferCapacity: 8,
+			payloadCodec: "json",
+		});
+		const calls: string[] = [];
+		for (const vmId of ["a", "b"]) {
+			client.setSidecarRequestHandler(async (request) => {
+				calls.push(vmId);
+				if (request.payload.type === "js_bridge_call") {
+					return {
+						type: "js_bridge_result",
+						call_id: request.payload.call_id,
+						result: vmId,
+					};
+				}
+				return {
+					type: "host_callback_result",
+					invocation_id: "invoke",
+					result: vmId,
+				};
+			}, vmId);
+		}
+		client.setSidecarRequestHandler(async () => {
+			calls.push("global");
+			return {
+				type: "host_callback_result",
+				invocation_id: "invoke",
+				result: "global",
+			};
+		});
+		const emit = (vmId: string, requestId: number, bridge = false) =>
+			frameTransport.emitFrame({
+				frame_type: "sidecar_request",
+				schema: SIDECAR_PROTOCOL_SCHEMA,
+				request_id: requestId,
+				ownership: {
+					scope: "vm",
+					connection_id: "conn",
+					session_id: "session",
+					vm_id: vmId,
+				},
+				payload: bridge
+					? {
+							type: "js_bridge_call",
+							call_id: "bridge",
+							mount_id: "mount",
+							operation: "read_file",
+							args: [],
+						}
+					: {
+							type: "host_callback",
+							invocation_id: "invoke",
+							callback_key: "tool",
+							input: {},
+							timeout_ms: 1000,
+						},
+			});
+		const response = (id: number) =>
+			frameTransport.writes.find(
+				(frame) => "request_id" in frame && frame.request_id === id,
+			);
+		try {
+			emit("a", -1, bridge);
+			emit("b", -2, bridge);
+			emit("unregistered", -3, bridge);
+			await expect.poll(() => frameTransport.writes.length).toBe(3);
+			expect(calls).toEqual(["a", "b"]);
+			expect(response(-1)).toMatchObject({
+				request_id: -1,
+				ownership: { scope: "vm", vm_id: "a" },
+				payload: { result: "a" },
+			});
+			expect(response(-2)).toMatchObject({
+				request_id: -2,
+				payload: { result: "b" },
+			});
+			expect(response(-3)).toMatchObject({
+				request_id: -3,
+				payload: {
+					error: expect.stringContaining("no sidecar request handler"),
+				},
+			});
+			client.setSidecarRequestHandler(null, "b");
+			client.setSidecarRequestHandler(null, "disabled");
+			emit("b", -4, bridge);
+			emit("a", -5, bridge);
+			await expect.poll(() => frameTransport.writes.length).toBe(5);
+			expect(calls).toEqual(["a", "b", "a"]);
+			expect(response(-4)).toMatchObject({
+				request_id: -4,
+				payload: { error: expect.any(String) },
+			});
+			expect(response(-5)).toMatchObject({
+				request_id: -5,
+				payload: { result: "a" },
+			});
+		} finally {
+			client.dispose();
+		}
+	});
+
+	it.each([
+		"connection",
+		"session",
+	] as const)("keeps the global handler for %s requests", async (scope) => {
+		const frameTransport = new MemoryFrameTransport();
+		const client = new SidecarProtocolClient({
+			frameTransport,
+			eventBufferCapacity: 8,
+			payloadCodec: "json",
+		});
+		client.setSidecarRequestHandler(async () => ({
+			type: "host_callback_result",
+			invocation_id: "invoke",
+			result: "global",
+		}));
+		client.setSidecarRequestHandler(
+			async () => ({
+				type: "host_callback_result",
+				invocation_id: "invoke",
+				result: "vm",
+			}),
+			"a",
+		);
+		try {
+			frameTransport.emitFrame({
+				frame_type: "sidecar_request",
+				schema: SIDECAR_PROTOCOL_SCHEMA,
+				request_id: -1,
+				ownership:
+					scope === "connection"
+						? ownership
+						: { scope, connection_id: "conn", session_id: "session" },
+				payload: {
+					type: "host_callback",
+					invocation_id: "invoke",
+					callback_key: "tool",
+					input: {},
+					timeout_ms: 1000,
+				},
+			});
+			await expect.poll(() => frameTransport.writes.length).toBe(1);
+			expect(frameTransport.writes[0]).toMatchObject({
+				payload: { result: "global" },
+			});
+		} finally {
+			client.dispose();
+		}
 	});
 
 	it("writes typed shutdown control on fd3 without touching fd0", async () => {

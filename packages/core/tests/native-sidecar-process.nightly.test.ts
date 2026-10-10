@@ -5,8 +5,8 @@ import {
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
-	rmSync,
 	realpathSync,
+	rmSync,
 	statSync,
 	symlinkSync,
 	writeFileSync,
@@ -20,10 +20,10 @@ import { createHostDirBackend } from "../src/host-dir-mount.js";
 import {
 	createKernel,
 	createNodeRuntime,
-	NodeFileSystem,
 	createWasmVmRuntime,
+	NodeFileSystem,
 } from "../src/runtime-compat.js";
-import { createInMemoryFileSystem } from "../src/test/runtime.js";
+import { serializePermissionsForSidecar } from "../src/sidecar/permissions.js";
 import {
 	NativeSidecarKernelProxy,
 	NativeSidecarProcessClient,
@@ -34,7 +34,7 @@ import {
 	serializeRootFilesystemForSidecar,
 	toSidecarSignalName,
 } from "../src/sidecar/rpc-client.js";
-import { serializePermissionsForSidecar } from "../src/sidecar/permissions.js";
+import { createInMemoryFileSystem } from "../src/test/runtime.js";
 import {
 	findPackageWithCommand,
 	packageCommandsDir,
@@ -44,9 +44,7 @@ const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const SIDECAR_BINARY = process.env.AGENTOS_SIDECAR_BIN
 	? resolve(process.env.AGENTOS_SIDECAR_BIN)
 	: join(REPO_ROOT, "target/debug/agentos-native-sidecar");
-const REGISTRY_COMMANDS_DIR = packageCommandsDir(
-	findPackageWithCommand("sh"),
-);
+const REGISTRY_COMMANDS_DIR = packageCommandsDir(findPackageWithCommand("sh"));
 const SIGNAL_STATE_CONTROL_PREFIX = "__AGENT_OS_SIGNAL_STATE__:";
 const ALLOW_ALL_VM_PERMISSIONS = {
 	fs: "allow",
@@ -389,7 +387,9 @@ describe("native sidecar process client", () => {
 	});
 
 	test("dispatches BARE sidecar_request frames to the registered handler", async () => {
-		const fixtureRoot = mkdtempSync(join(tmpdir(), "agentos-native-sidecar-request-"));
+		const fixtureRoot = mkdtempSync(
+			join(tmpdir(), "agentos-native-sidecar-request-"),
+		);
 		cleanupPaths.push(fixtureRoot);
 		const capturePath = join(fixtureRoot, "captured-response.json");
 		const driverPath = join(fixtureRoot, "fake-sidecar.mjs");
@@ -459,7 +459,7 @@ describe("native sidecar process client", () => {
 					content: "from-handler",
 				},
 			};
-		});
+		}, "vm-1");
 
 		try {
 			const captured = await waitFor(
@@ -496,7 +496,9 @@ describe("native sidecar process client", () => {
 	});
 
 	test("dispose forcibly terminates a sidecar that ignores stdin closure", async () => {
-		const fixtureRoot = mkdtempSync(join(tmpdir(), "agentos-native-sidecar-dispose-"));
+		const fixtureRoot = mkdtempSync(
+			join(tmpdir(), "agentos-native-sidecar-dispose-"),
+		);
 		cleanupPaths.push(fixtureRoot);
 		const driverPath = join(fixtureRoot, "stuck-sidecar.mjs");
 		writeFileSync(
