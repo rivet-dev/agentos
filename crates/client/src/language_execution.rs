@@ -1,14 +1,77 @@
 //! First-class JavaScript, TypeScript, Python, and shared execution lifecycle.
 
 use std::collections::HashMap;
+use std::future::Future;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use agentos_sidecar_client::wire;
-use tokio::sync::{broadcast, watch};
+use tokio::sync::{broadcast, watch, Semaphore};
 
 use crate::agent_os::AgentOs;
 use crate::agent_os::ProcessEntry;
 use crate::error::{ClientError, ClientResult};
 use crate::process::{ProcessOutput, ProcessRegistryReservation, ProcessStream};
+
+/// VM-local wait admission and cancellation. Permits never queue callers.
+pub(crate) struct ExecutionWaits {
+    permits: Semaphore,
+    disposed: watch::Sender<bool>,
+    warning_active: AtomicBool,
+    limit: usize,
+}
+
+impl ExecutionWaits {
+    pub(crate) fn new(limit: Option<usize>) -> ClientResult<Self> {
+        let limit = limit.unwrap_or(4096);
+        if limit == 0 || limit > Semaphore::MAX_PERMITS || limit as u64 > 9_007_199_254_740_991 {
+            return Err(ClientError::InvalidConfig(String::from(
+                "maxPendingExecutionWaits must be a positive safe integer",
+            )));
+        }
+        Ok(Self {
+            permits: Semaphore::new(limit),
+            disposed: watch::channel(false).0,
+            warning_active: AtomicBool::new(false),
+            limit,
+        })
+    }
+
+    pub(crate) fn dispose(&self) {
+        self.disposed.send_replace(true);
+    }
+
+    pub(crate) async fn until_disposed<T, E: Into<ClientError>>(
+        &self,
+        operation: impl Future<Output = Result<T, E>>,
+    ) -> ClientResult<T> {
+        let mut disposed = self.disposed.subscribe();
+        if *disposed.borrow() {
+            return Err(ClientError::VmDisposed);
+        }
+        let threshold = self.limit - self.limit / 5;
+        if self.limit - self.permits.available_permits() < threshold {
+            self.warning_active.store(false, Ordering::Relaxed);
+        }
+        let permit = self
+            .permits
+            .try_acquire()
+            .map_err(|_| ClientError::ExecutionWaitLimit { limit: self.limit })?;
+        let usage = self.limit - self.permits.available_permits();
+        if usage >= threshold && !self.warning_active.swap(true, Ordering::Relaxed) {
+            eprintln!("agentOS SDK execution waits near maxPendingExecutionWaits ({usage}/{}); raise AgentOsConfig.max_pending_execution_waits", self.limit);
+        }
+        let result = tokio::select! {
+            biased;
+            _ = disposed.changed() => Err(ClientError::VmDisposed),
+            result = operation => result.map_err(Into::into),
+        };
+        drop(permit);
+        if self.limit - self.permits.available_permits() < threshold {
+            self.warning_active.store(false, Ordering::Relaxed);
+        }
+        result
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ContextDescriptor {
@@ -357,8 +420,12 @@ impl AgentOs {
         }
         let mut events = self.transport().subscribe_wire_events();
         let accepted = match self
-            .transport()
-            .request_wire(self.execution_ownership(), payload)
+            .inner()
+            .execution_waits
+            .until_disposed(
+                self.transport()
+                    .request_wire(self.execution_ownership(), payload),
+            )
             .await?
         {
             wire::ResponsePayload::ExecutionAcceptedResponse(response) => response,
@@ -380,7 +447,13 @@ impl AgentOs {
                 })?,
             ));
         }
-        wait_for_completion_event(&mut events, &accepted.operation_id).await?;
+        self.inner()
+            .execution_waits
+            .until_disposed(wait_for_completion_event(
+                &mut events,
+                &accepted.operation_id,
+            ))
+            .await?;
         Ok(ExecutionSubmission::Completed(
             self.wait_execution(&accepted.operation_id).await?,
         ))
@@ -1099,26 +1172,31 @@ impl AgentOs {
     async fn wait_execution(&self, execution_id: &str) -> ClientResult<CodeExecutionResult> {
         let mut events = self.transport().subscribe_wire_events();
         let first = self
-            .transport()
-            .request_wire(
+            .inner()
+            .execution_waits
+            .until_disposed(self.transport().request_wire(
                 self.execution_ownership(),
                 wire::RequestPayload::WaitExecutionRequest(wire::WaitExecutionRequest {
                     execution_id: execution_id.to_owned(),
                 }),
-            )
+            ))
             .await?;
         let response = match first {
             wire::ResponsePayload::RejectedResponse(rejected)
                 if rejected.code == "execution_busy" =>
             {
-                wait_for_completion_event(&mut events, execution_id).await?;
-                self.transport()
-                    .request_wire(
+                self.inner()
+                    .execution_waits
+                    .until_disposed(wait_for_completion_event(&mut events, execution_id))
+                    .await?;
+                self.inner()
+                    .execution_waits
+                    .until_disposed(self.transport().request_wire(
                         self.execution_ownership(),
                         wire::RequestPayload::WaitExecutionRequest(wire::WaitExecutionRequest {
                             execution_id: execution_id.to_owned(),
                         }),
-                    )
+                    ))
                     .await?
             }
             response => response,
@@ -1447,5 +1525,91 @@ fn background_submission(
         ExecutionSubmission::Completed(_) => Err(ClientError::Sidecar(String::from(
             "spawned process unexpectedly returned an attached result",
         ))),
+    }
+}
+
+// These tests exercise private wait admission without exposing a transport-test API.
+// Public lifecycle behavior is covered by tests/lifecycle_e2e.rs.
+#[cfg(test)]
+mod execution_wait_tests {
+    use super::*;
+    use std::time::Duration;
+
+    async fn pending() -> ClientResult<()> {
+        std::future::pending().await
+    }
+
+    #[tokio::test]
+    async fn disposal_rejects_pending_waits_without_polling_new_operations() {
+        let waits = ExecutionWaits::new(None).unwrap();
+        let sibling = ExecutionWaits::new(None).unwrap();
+        let operation = waits.until_disposed(pending());
+        tokio::pin!(operation);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(1), &mut operation)
+                .await
+                .is_err()
+        );
+        waits.dispose();
+        assert!(matches!(operation.await, Err(ClientError::VmDisposed)));
+        let polled = AtomicBool::new(false);
+        let error = waits
+            .until_disposed(async {
+                polled.store(true, Ordering::SeqCst);
+                Ok::<(), ClientError>(())
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), "ERR_AGENTOS_VM_DISPOSED");
+        assert!(!polled.load(Ordering::SeqCst));
+        assert!(sibling
+            .until_disposed(async { Ok::<_, ClientError>(42) })
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn pending_wait_capacity_is_released_on_caller_cancellation() {
+        let waits = ExecutionWaits::new(Some(1)).unwrap();
+        let mut operation = Box::pin(waits.until_disposed(pending()));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(1), operation.as_mut())
+                .await
+                .is_err()
+        );
+        assert!(matches!(
+            waits
+                .until_disposed(async { Ok::<_, ClientError>(()) })
+                .await,
+            Err(ClientError::ExecutionWaitLimit { limit: 1 })
+        ));
+        drop(operation);
+        assert!(waits
+            .until_disposed(async { Ok::<_, ClientError>(()) })
+            .await
+            .is_ok());
+        waits.dispose();
+    }
+
+    #[tokio::test]
+    async fn completed_waits_release_capacity_and_keep_results() {
+        let waits = ExecutionWaits::new(Some(1)).unwrap();
+        let result = waits
+            .until_disposed(async { Ok::<_, ClientError>(42) })
+            .await
+            .unwrap();
+        assert!(waits
+            .until_disposed(async { Ok::<_, ClientError>(()) })
+            .await
+            .is_ok());
+        waits.dispose();
+        assert_eq!(result, 42);
+    }
+
+    #[test]
+    fn validates_wait_capacity_before_vm_creation() {
+        assert!(ExecutionWaits::new(Some(0)).is_err());
+        assert!(ExecutionWaits::new(Some(usize::MAX)).is_err());
+        assert!(ExecutionWaits::new(None).is_ok());
     }
 }

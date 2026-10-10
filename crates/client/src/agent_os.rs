@@ -130,6 +130,7 @@ pub struct AgentOs {
 }
 
 pub(crate) struct AgentOsInner {
+    pub(crate) execution_waits: crate::language_execution::ExecutionWaits,
     // Transport / connection / VM handle.
     pub(crate) transport: Arc<SidecarProcess>,
     pub(crate) connection_id: String,
@@ -251,6 +252,8 @@ impl AgentOs {
     }
 
     async fn create_owned(options: AgentOsConfig) -> Result<AgentOs, ClientError> {
+        let execution_waits =
+            crate::language_execution::ExecutionWaits::new(options.max_pending_execution_waits)?;
         let config = Arc::new(options);
 
         // 1. Resolve the sidecar handle (shared "default" pool unless configured otherwise) and
@@ -661,6 +664,7 @@ impl AgentOs {
             let cron = Arc::new(CronManager::new(driver));
 
             let inner = AgentOsInner {
+                execution_waits,
                 transport,
                 connection_id,
                 session_id,
@@ -960,6 +964,7 @@ impl AgentOs {
             return result.clone();
         }
         self.inner.disposed.store(true, Ordering::SeqCst);
+        self.inner.execution_waits.dispose();
 
         // The `/opt/agentos` projection staging dir is owned + cleaned up by the
         // sidecar on VM dispose, so the client no longer removes it here.

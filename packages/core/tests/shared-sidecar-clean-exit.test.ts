@@ -29,29 +29,38 @@ if (distMissing) {
  * itself, with no `process.exit()` escape hatch.
  */
 describe("shared sidecar clean exit", () => {
-	it.skipIf(distMissing)("a standalone create()+dispose() script exits on its own", () => {
-		const script = resolve(
-			import.meta.dirname,
-			"fixtures/shared-sidecar-clean-exit-script.mjs",
-		);
-		const result = spawnSync(process.execPath, [script], {
-			cwd: resolve(import.meta.dirname, ".."),
-			encoding: "utf8",
-			timeout: 60_000,
-		});
+	it.skipIf(distMissing).each([false, true])(
+		"a standalone script exits after native disposal failure=%s",
+		(nativeDisposeFailure) => {
+			const script = resolve(
+				import.meta.dirname,
+				"fixtures/shared-sidecar-clean-exit-script.mjs",
+			);
+			const result = spawnSync(process.execPath, [script], {
+				cwd: resolve(import.meta.dirname, ".."),
+				encoding: "utf8",
+				env: {
+					...process.env,
+					AGENTOS_TEST_NATIVE_DISPOSE_FAILURE: nativeDisposeFailure ? "1" : "0",
+				},
+				timeout: 60_000,
+			});
 
-		const diag = `exit=${result.status} signal=${result.signal}\nstdout: ${result.stdout ?? ""}\nstderr: ${(result.stderr ?? "").slice(-800)}`;
+			const diag = `exit=${result.status} signal=${result.signal}\nstdout: ${result.stdout ?? ""}\nstderr: ${(result.stderr ?? "").slice(-800)}`;
 
-		// The script logic should complete regardless of the exit behavior.
-		expect(result.stdout ?? "", `script never finished its work.\n${diag}`).toContain(
-			"SCRIPT_DONE",
-		);
-		// The real assertion: the process terminated on its own (was not killed
-		// by the spawn timeout). A hang leaves signal === "SIGTERM".
-		expect(
-			result.signal,
-			`process did not exit on its own within 60s — the shared sidecar kept the event loop alive.\n${diag}`,
-		).toBeNull();
-		expect(result.status, `non-zero exit.\n${diag}`).toBe(0);
-	}, 90_000);
+			// The script logic should complete regardless of the exit behavior.
+			expect(
+				result.stdout ?? "",
+				`script never finished its work.\n${diag}`,
+			).toContain("SCRIPT_DONE");
+			// The real assertion: the process terminated on its own (was not killed
+			// by the spawn timeout). A hang leaves signal === "SIGTERM".
+			expect(
+				result.signal,
+				`process did not exit on its own within 60s — the shared sidecar kept the event loop alive.\n${diag}`,
+			).toBeNull();
+			expect(result.status, `non-zero exit.\n${diag}`).toBe(0);
+		},
+		90_000,
+	);
 });

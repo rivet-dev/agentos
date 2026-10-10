@@ -35,6 +35,7 @@ const VM_OPTION_KEYS = Object.keys({
 	sidecar: true,
 	limits: true,
 	onLimitWarning: true,
+	maxPendingExecutionWaits: true,
 } satisfies Record<keyof VmOptions, true>) as (keyof VmOptions)[];
 
 /**

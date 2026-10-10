@@ -47,3 +47,21 @@ notification was missed.
 Real-terminal replay also reconciles `wait_shell` after a missed exit event or
 an earlier observation failure. TypeScript Core's local prompt terminal does
 not provide replay.
+
+## Embedded API
+
+Starting VM disposal rejects pending execution admission, completion, and
+result waits with `ERR_AGENTOS_VM_DISPOSED`. TypeScript Core uses `dispose`;
+Rust Core uses `shutdown` and returns `ClientError::VmDisposed`. New execution
+waits on that VM also fail. Other VMs on the shared sidecar keep running, and
+results already returned to the caller remain usable.
+
+Wait rejection does not confirm that guest code has stopped. Await VM disposal
+to confirm native cleanup; disposal can still report a teardown error.
+
+A failed TypeScript `dispose()` still releases its shared sidecar lease. The
+host process can exit when no other VM leases are active. Sibling VMs remain
+usable; releasing a lease does not confirm native cleanup.
+
+Read more in the
+[embedded API quickstart](/agentos/docs/quickstart-embedded).

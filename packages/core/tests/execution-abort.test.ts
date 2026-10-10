@@ -39,7 +39,17 @@ type ExecutionAgent = {
 };
 
 function createExecutionAgent() {
-	const agent = Object.create(AgentOs.prototype) as ExecutionAgent;
+	const agent = Reflect.construct(AgentOs, [
+		{},
+		{},
+		[],
+		[],
+		{},
+		{},
+		{ onEvent: () => () => {} },
+		{},
+		{},
+	]) as ExecutionAgent;
 	agent._processes = new Map();
 	agent._languageProcesses = new Map();
 	agent._languageProcessIds = new Map();

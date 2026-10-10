@@ -6,6 +6,22 @@ import {
 } from "../src/sandbox.js";
 
 describe("AgentOsOptions validation", () => {
+	test("bounds client-local execution wait capacity", () => {
+		expect(
+			agentOsOptionsSchema.safeParse({ maxPendingExecutionWaits: 2 }).success,
+		).toBe(true);
+		for (const maxPendingExecutionWaits of [
+			0,
+			-1,
+			1.5,
+			Number.MAX_SAFE_INTEGER + 1,
+		]) {
+			expect(
+				agentOsOptionsSchema.safeParse({ maxPendingExecutionWaits }).success,
+			).toBe(false);
+		}
+	});
+
 	test("accepts a complete initial environment including an explicit empty map", () => {
 		expect(agentOsOptionsSchema.safeParse({ environment: {} }).success).toBe(
 			true,
