@@ -1,4 +1,4 @@
-import type { AgentOsSandboxProvider } from "@rivet-dev/agentos-core";
+import type { AgentOsSandboxProvider } from "@rivet-dev/agentos";
 import type {
 	CloudflareProviderOptions,
 	CloudflareSandboxClient,

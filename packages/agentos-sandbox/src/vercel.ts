@@ -1,4 +1,4 @@
-import type { AgentOsSandboxProvider } from "@rivet-dev/agentos-core";
+import type { AgentOsSandboxProvider } from "@rivet-dev/agentos";
 import type { VercelProviderOptions } from "sandbox-agent/vercel";
 import { vercel as sandboxAgentVercel } from "sandbox-agent/vercel";
 import { sandboxAgentProvider } from "./provider.js";

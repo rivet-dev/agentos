@@ -1,22 +1,14 @@
 ---
-title: "External Sandboxes"
-description: "Mount a full external sandbox into an agentOS VM for workloads that need a real Linux kernel."
+title: "External VMs"
+description: "Attach an external VM provider through trusted embedded Core."
 ---
 
-When a workload needs a full Linux environment, attach an external sandbox to
-a library VM with the `sandbox` option. External sandboxes rely on trusted host
-callbacks and mounts, so they are not available on hosted VMs. agentOS mounts the sandbox filesystem into
-the VM at `/mnt/sandbox` and registers `agentos-sandbox` host functions for
-running commands and listing processes in the sandbox.
+External VM providers expose a trusted host-backed filesystem and process
+bridge. They are supported by `@rivet-dev/agentos`, not by the hosted
+actor.
 
-<CodeSnippet file="examples/quickstart/sandbox/index.ts" />
+<CodeSnippet file="examples/sandbox/client.ts" />
 
-Guest code reads and writes sandbox files the same way it reads local files.
-Providers live in `@rivet-dev/agentos-sandbox`.
-
-The sandbox bridge runs through trusted host callbacks in the embedding
-process, so credentials for the sandbox provider stay on the host.
-
-See [agentOS vs Sandbox](/agentos/docs/versus-sandbox) to decide when a
-workload needs one.
-
+The fixed actor rejects host mounts and provider clients because they would
+cross its security boundary. Use its whitelisted filesystem registry for hosted
+storage.

@@ -261,11 +261,11 @@ done
 
 mkdir -p "$(dirname "$OUTPUT")" "$(dirname "$KEYSIGN_OUTPUT")" \
   "$(dirname "$SK_HELPER_OUTPUT")"
-if command -v wasm-opt >/dev/null 2>&1; then
+if [[ "${AGENTOS_ENABLE_BINARYEN:-0}" == "1" ]]; then
   echo "Optimizing OpenSSH WASM binaries..."
-  wasm-opt -O3 --strip-debug --all-features ssh -o "$OUTPUT_TMP"
-  wasm-opt -O3 --strip-debug --all-features ssh-keysign -o "$KEYSIGN_OUTPUT_TMP"
-  wasm-opt -O3 --strip-debug --all-features ssh-sk-helper -o "$SK_HELPER_OUTPUT_TMP"
+  "${WASM_OPT:-wasm-opt}" -O3 --strip-debug --all-features ssh -o "$OUTPUT_TMP"
+  "${WASM_OPT:-wasm-opt}" -O3 --strip-debug --all-features ssh-keysign -o "$KEYSIGN_OUTPUT_TMP"
+  "${WASM_OPT:-wasm-opt}" -O3 --strip-debug --all-features ssh-sk-helper -o "$SK_HELPER_OUTPUT_TMP"
 else
   cp ssh "$OUTPUT_TMP"
   cp ssh-keysign "$KEYSIGN_OUTPUT_TMP"

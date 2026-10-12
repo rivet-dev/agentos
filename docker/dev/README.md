@@ -27,6 +27,8 @@ just dev-exec 'cargo check --workspace'
 just dev-down               # stop
 ```
 
+The container publishes port 6420 for a RivetKit engine started inside it.
+
 ## Layout
 
 | Path | Backing | Why |
@@ -46,5 +48,7 @@ just dev-down               # stop
 - DNS is pinned to 1.1.1.1/8.8.8.8. Docker Desktop's embedded resolver
   intermittently stops answering, which surfaces as an `EAI_AGAIN` storm during
   install.
-- `AGENTOS_SIDECAR_BIN` points at `/build/target/debug/agentos-native-sidecar`.
-  Rebuild it with `just dev-exec 'cargo build -p agentos-native-sidecar'`.
+- `AGENTOS_SIDECAR_BIN` points at `/build/target/debug/agentos-sidecar`.
+  Rebuild it with `just dev-exec 'cargo build -p agentos-sidecar'`.
+- The container publishes 6420. Free it on the host first if another
+  engine is already bound.

@@ -26,7 +26,7 @@ gh run watch -R rivet-dev/agentos "$run" --exit-status
 3. Install a preview with:
 
 ```bash
-npm install @rivet-dev/agentos-core@<sanitized-branch>
+npm install @rivet-dev/agentos@<sanitized-branch>
 ```
 
 ## Rules

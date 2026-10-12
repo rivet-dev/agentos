@@ -1,4 +1,4 @@
-import { AgentOs } from "@rivet-dev/agentos-core";
+import { AgentOs } from "@rivet-dev/agentos";
 import { z } from "zod";
 
 // The handler runs on the host, so the API key never enters the VM.

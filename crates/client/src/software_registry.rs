@@ -385,7 +385,9 @@ pub async fn resolve_registry_software(
             artifacts.iter().map(|artifact| artifact.name.as_str()),
         );
         let hint = if suggestions.is_empty() {
-            String::from("; browse https://rivet.dev/agentos/docs/registry for available packages")
+            String::from(
+                "; browse https://agentos-sdk.dev/agentos/docs/software for available packages",
+            )
         } else {
             format!(
                 "; did you mean {}?",

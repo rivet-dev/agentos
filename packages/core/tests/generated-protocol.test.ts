@@ -1,4 +1,5 @@
-import * as bare from "@bare-ts/lib";
+import { SIDECAR_PROTOCOL_SCHEMA } from "../src/protocol-schema.js";
+import * as bare from "@rivetkit/bare-ts";
 import { describe, expect, test } from "vitest";
 import {
 	decodeProtocolFrame,
@@ -10,15 +11,14 @@ import {
 	StreamChannel,
 	WasmPermissionTier,
 	writeGuestFilesystemCallRequest,
-} from "@rivet-dev/agentos-runtime-core/protocol";
+} from "../src/generated-protocol.js";
 import {
 	decodeBareProtocolFrame,
 	encodeBareProtocolFrame,
-} from "@rivet-dev/agentos-runtime-core/protocol-frames";
-import { SIDECAR_PROTOCOL_SCHEMA } from "@rivet-dev/agentos-runtime-core/protocol-schema";
+} from "../src/protocol-frames.js";
 
 const GENERATED_AUTH_FRAME_HEX =
-	"00166167656e746f732d6e61746976652d736964656361720b0007000000000000000006636f6e6e2d31000e67656e6572617465642d7465737405746f6b656e0b0001000000";
+	"000f6167656e746f732d736964656361720b0007000000000000000006636f6e6e2d31000e67656e6572617465642d7465737405746f6b656e0b0001000000";
 const PROTOCOL_VERSION = SIDECAR_PROTOCOL_SCHEMA.version;
 
 describe("generated sidecar protocol", () => {
@@ -26,7 +26,7 @@ describe("generated sidecar protocol", () => {
 		const frame: ProtocolFrame = {
 			tag: "RequestFrame",
 			val: {
-				schema: { name: "agentos-native-sidecar", version: PROTOCOL_VERSION },
+				schema: { name: "agentos-sidecar", version: PROTOCOL_VERSION },
 				requestId: 7n,
 				ownership: {
 					tag: "ConnectionOwnership",
@@ -104,7 +104,7 @@ describe("generated sidecar protocol", () => {
 		const generatedConfigureFrame: ProtocolFrame = {
 			tag: "RequestFrame",
 			val: {
-				schema: { name: "agentos-native-sidecar", version: PROTOCOL_VERSION },
+				schema: { name: "agentos-sidecar", version: PROTOCOL_VERSION },
 				requestId: 9n,
 				ownership: {
 					tag: "VmOwnership",
@@ -158,7 +158,7 @@ describe("generated sidecar protocol", () => {
 		};
 		const nativeConfigureFrame = {
 			frame_type: "request",
-			schema: { name: "agentos-native-sidecar", version: PROTOCOL_VERSION },
+			schema: { name: "agentos-sidecar", version: PROTOCOL_VERSION },
 			request_id: 9,
 			ownership: {
 				scope: "vm",
@@ -205,7 +205,7 @@ describe("generated sidecar protocol", () => {
 		const generatedExtFrame: ProtocolFrame = {
 			tag: "RequestFrame",
 			val: {
-				schema: { name: "agentos-native-sidecar", version: PROTOCOL_VERSION },
+				schema: { name: "agentos-sidecar", version: PROTOCOL_VERSION },
 				requestId: 11n,
 				ownership: {
 					tag: "ConnectionOwnership",
@@ -222,7 +222,7 @@ describe("generated sidecar protocol", () => {
 		};
 		const nativeExtFrame = {
 			frame_type: "request",
-			schema: { name: "agentos-native-sidecar", version: PROTOCOL_VERSION },
+			schema: { name: "agentos-sidecar", version: PROTOCOL_VERSION },
 			request_id: 11,
 			ownership: { scope: "connection", connection_id: "conn-1" },
 			payload: {
@@ -243,7 +243,7 @@ describe("generated sidecar protocol", () => {
 		const generatedFrame: ProtocolFrame = {
 			tag: "ResponseFrame",
 			val: {
-				schema: { name: "agentos-native-sidecar", version: PROTOCOL_VERSION },
+				schema: { name: "agentos-sidecar", version: PROTOCOL_VERSION },
 				requestId: 9n,
 				ownership: {
 					tag: "VmOwnership",
@@ -268,7 +268,7 @@ describe("generated sidecar protocol", () => {
 			decodeBareProtocolFrame(encodeProtocolFrame(generatedFrame)),
 		).toEqual({
 			frame_type: "response",
-			schema: { name: "agentos-native-sidecar", version: PROTOCOL_VERSION },
+			schema: { name: "agentos-sidecar", version: PROTOCOL_VERSION },
 			request_id: 9,
 			ownership: {
 				scope: "vm",
@@ -289,7 +289,7 @@ describe("generated sidecar protocol", () => {
 		const generatedFrame: ProtocolFrame = {
 			tag: "EventFrame",
 			val: {
-				schema: { name: "agentos-native-sidecar", version: PROTOCOL_VERSION },
+				schema: { name: "agentos-sidecar", version: PROTOCOL_VERSION },
 				ownership: {
 					tag: "VmOwnership",
 					val: {
@@ -304,6 +304,7 @@ describe("generated sidecar protocol", () => {
 						processId: "process-1",
 						channel: StreamChannel.Stdout,
 						chunk: Buffer.from("first\nsecond\nthird\n"),
+						sequence: null, timestampMs: null,
 					},
 				},
 			},
@@ -315,7 +316,7 @@ describe("generated sidecar protocol", () => {
 
 		expect(decodeBareProtocolFrame(framed.subarray(4))).toEqual({
 			frame_type: "event",
-			schema: { name: "agentos-native-sidecar", version: PROTOCOL_VERSION },
+			schema: { name: "agentos-sidecar", version: PROTOCOL_VERSION },
 			ownership: {
 				scope: "vm",
 				connection_id: "conn-1",
@@ -336,7 +337,7 @@ describe("generated sidecar protocol", () => {
 		const frame: ProtocolFrame = {
 			tag: "RequestFrame",
 			val: {
-				schema: { name: "agentos-native-sidecar", version: PROTOCOL_VERSION },
+				schema: { name: "agentos-sidecar", version: PROTOCOL_VERSION },
 				requestId: 8n,
 				ownership: {
 					tag: "ConnectionOwnership",
@@ -377,7 +378,7 @@ describe("generated sidecar protocol", () => {
 	});
 
 	test("preserves guest filesystem call offsets", () => {
-		const config = bare.Config({});
+		const config = bare.DEFAULT_CONFIG;
 		const bc = new bare.ByteCursor(
 			new Uint8Array(config.initialBufferLength),
 			config,
@@ -417,7 +418,7 @@ function authFrame(): ProtocolFrame {
 	return {
 		tag: "RequestFrame",
 		val: {
-			schema: { name: "agentos-native-sidecar", version: PROTOCOL_VERSION },
+			schema: { name: "agentos-sidecar", version: PROTOCOL_VERSION },
 			requestId: 7n,
 			ownership: {
 				tag: "ConnectionOwnership",
@@ -439,7 +440,7 @@ function authFrame(): ProtocolFrame {
 function authFrameForNative(): unknown {
 	return {
 		frame_type: "request",
-		schema: { name: "agentos-native-sidecar", version: PROTOCOL_VERSION },
+		schema: { name: "agentos-sidecar", version: PROTOCOL_VERSION },
 		request_id: 7,
 		ownership: { scope: "connection", connection_id: "conn-1" },
 		payload: {

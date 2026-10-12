@@ -97,7 +97,7 @@ export type {
 	HostFunctionExample,
 	HostFunctionSchemas,
 	ResolvedHostFunctions,
-} from "@rivet-dev/agentos-runtime-core/host-functions";
+} from "./host-functions.js";
 export type {
 	FilesystemSnapshotExport,
 	LayerHandle,

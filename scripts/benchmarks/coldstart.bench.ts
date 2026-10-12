@@ -33,7 +33,7 @@ import {
 	stats,
 	stopBenchSidecar,
 } from "./bench-utils.js";
-import { AgentOs } from "@rivet-dev/agentos-core";
+import { AgentOs } from "@rivet-dev/agentos";
 
 const VALID_WORKLOADS = ["echo", "sleep"];
 
@@ -45,7 +45,7 @@ interface Measurement {
 async function measureEcho(): Promise<Measurement> {
 	const t0 = performance.now();
 	const vm = await createBenchVm();
-	const result = await vm.exec(ECHO_COMMAND);
+	const result = await vm.process.exec(ECHO_COMMAND);
 	const ms = performance.now() - t0;
 	if (result.stdout !== EXPECTED_OUTPUT) {
 		throw new Error(`Unexpected output: ${JSON.stringify(result.stdout)}`);
@@ -100,14 +100,14 @@ async function coldRunSnapshot(workloadName: string): Promise<void> {
 	let vm: AgentOs;
 	if (workloadName === "echo") {
 		vm = await createBenchVm();
-		await vm.exec(ECHO_COMMAND);
+		await vm.process.exec(ECHO_COMMAND);
 	} else {
 		const workload = WORKLOADS[workloadName];
 		vm = await workload.createVm();
 		await workload.start(vm);
 	}
 	try {
-		setBenchRootSnapshot(await vm.snapshotRootFilesystem());
+		setBenchRootSnapshot(await vm.filesystem.export({ maxBytes: 128 * 1024 * 1024 }));
 	} finally {
 		await vm.dispose();
 	}

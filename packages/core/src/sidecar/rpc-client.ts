@@ -2,12 +2,12 @@ import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { posix as posixPath } from "node:path";
-import { SidecarRejectedError } from "@rivet-dev/agentos-runtime-core/sidecar-errors";
+import { SidecarRejectedError } from "../sidecar-errors.js";
 import type {
 	RootFilesystemConfig as VmConfigRootFilesystemConfig,
 	RootFilesystemEntry as VmConfigRootFilesystemEntry,
 	RootFilesystemLowerDescriptor as VmConfigRootFilesystemLowerDescriptor,
-} from "@rivet-dev/agentos-runtime-core/vm-config";
+} from "../vm-config.js";
 import type {
 	NativeMountConfig,
 	PlainMountConfig,
@@ -40,7 +40,7 @@ import type {
 	SidecarProcessSnapshotEntry,
 	SidecarSignalHandlerRegistration,
 	SidecarSocketStateEntry,
-} from "./native-process-client.js";
+} from "./process-client.js";
 
 const SYNTHETIC_PID_BASE = 1_000_000;
 const MISSING_EXIT_EVENT_GRACE_MS = 500;
@@ -200,7 +200,7 @@ function logStructuredSidecarEvent(
 }
 
 async function drainTrailingProcessOutputTurn(delayMs = 0): Promise<void> {
-	// Native-sidecar `process_output` events can lag one macrotask behind the
+	// Sidecar `process_output` events can lag one macrotask behind the
 	// terminal `process_exited` notification for very short-lived processes, and
 	// under suite load the sidecar event pump can need a little extra time to
 	// flush delayed output through its listener callbacks.
@@ -415,6 +415,7 @@ interface SocketLookupCacheEntry {
 }
 
 interface TrackedProcessEntry {
+	retainOutput: boolean;
 	pid: number;
 	processId: string;
 	command: string;
@@ -422,7 +423,7 @@ interface TrackedProcessEntry {
 	driver: string;
 	cwd: string;
 	env: Record<string, string>;
-	retainOutput: boolean;
+	wasmBackend: "v8" | "wasmtime" | "wasmtime-threads" | undefined;
 	startTime: number;
 	exitTime: number | null;
 	hostPid: number | null;
@@ -444,7 +445,7 @@ interface TrackedProcessEntry {
 	outputGeneration: number;
 }
 
-interface NativeSidecarKernelProxyOptions {
+interface SidecarKernelProxyOptions {
 	client: SidecarProcess;
 	session: AuthenticatedSession;
 	vm: CreatedVm;
@@ -479,7 +480,7 @@ interface NativeSidecarKernelProxyOptions {
 	ownsClient?: boolean;
 }
 
-export class NativeSidecarKernelProxy {
+export class SidecarKernelProxy {
 	readonly env: Record<string, string>;
 	readonly cwd: string;
 	readonly commands: ReadonlyMap<string, string>;
@@ -533,7 +534,7 @@ export class NativeSidecarKernelProxy {
 	private readonly eventPumpAbortController = new AbortController();
 	private readonly eventPump: Promise<void>;
 
-	constructor(options: NativeSidecarKernelProxyOptions) {
+	constructor(options: SidecarKernelProxyOptions) {
 		this.client = options.client;
 		this.session = options.session;
 		this.vm = options.vm;
@@ -704,7 +705,7 @@ export class NativeSidecarKernelProxy {
 	): Promise<KernelExecResult> {
 		if (!this.commands.has("sh")) {
 			throw new Error(
-				`native sidecar exec requires guest shell command 'sh': ${command}`,
+				`sidecar exec requires guest shell command 'sh': ${command}`,
 			);
 		}
 
@@ -880,7 +881,7 @@ export class NativeSidecarKernelProxy {
 			// grammar belongs to the guest shell, so the bridge never parses it.
 			if (!this.commands.has("sh")) {
 				throw new Error(
-					`native sidecar shell-mode spawn requires guest shell command 'sh': ${command}`,
+					`sidecar shell-mode spawn requires guest shell command 'sh': ${command}`,
 				);
 			}
 			spawnCommand = "sh";
@@ -910,6 +911,7 @@ export class NativeSidecarKernelProxy {
 				...(options?.streamStdin ? { AGENTOS_KEEP_STDIN_OPEN: "1" } : {}),
 			},
 			retainOutput: options?.retainOutput ?? false,
+			wasmBackend: options?.wasmBackend,
 			startTime: Date.now(),
 			exitTime: null,
 			hostPid: null,
@@ -1316,6 +1318,7 @@ export class NativeSidecarKernelProxy {
 										{
 											env: shellEnv,
 											cwd: shellCwd,
+											wasmBackend: options?.wasmBackend,
 											streamStdin: true,
 											onStdout: (chunk) =>
 												emitSyntheticTerminal(textDecoder.decode(chunk)),
@@ -1337,6 +1340,7 @@ export class NativeSidecarKernelProxy {
 								const result = await execCommand(nextCommand, {
 									env: shellEnv,
 									cwd: shellCwd,
+									wasmBackend: options?.wasmBackend,
 								});
 								const sanitizedStdout = sanitizeSyntheticShellText(
 									result.stdout,
@@ -1389,6 +1393,7 @@ export class NativeSidecarKernelProxy {
 				AGENTOS_EXEC_TTY: "1",
 			},
 			cwd: options?.cwd,
+			wasmBackend: options?.wasmBackend,
 			streamStdin: true,
 			retainOutput: true,
 			onStdout: (chunk) => {
@@ -1488,7 +1493,10 @@ export class NativeSidecarKernelProxy {
 			stdin.isTTY && typeof stdin.setRawMode === "function";
 		const onStdinData = (data: Uint8Array | string) => {
 			void shell.write(data).catch((error) => {
-				console.error("[agentos] failed to forward terminal stdin:", error);
+				console.error(
+					"ERR_AGENTOS_TERMINAL_STDIN: failed to forward terminal input",
+					error,
+				);
 			});
 		};
 		const onResize = () => {
@@ -1804,7 +1812,7 @@ export class NativeSidecarKernelProxy {
 			if (this.disposed) {
 				return;
 			}
-			// Re-send boot packages and binding shims. The sidecar preserves
+			// Re-send boot packages and host-function shims. The sidecar preserves
 			// runtime-linked packages independently of this client payload.
 			await this.client.configureVm(this.session, this.vm, {
 				mounts: this.desiredSidecarMounts(),
@@ -1828,7 +1836,7 @@ export class NativeSidecarKernelProxy {
 	}
 
 	private async waitForMountReconfigure(): Promise<void> {
-		if (this.mountReconfigurePromise) {
+		if (this.mountReconfigurePromise !== null) {
 			await this.mountReconfigurePromise;
 		}
 	}
@@ -1931,7 +1939,7 @@ export class NativeSidecarKernelProxy {
 	}
 
 	private async refreshProcessSnapshot(): Promise<void> {
-		if (this.processSnapshotRefresh) {
+		if (this.processSnapshotRefresh !== null) {
 			await this.processSnapshotRefresh;
 			return;
 		}
@@ -2008,6 +2016,7 @@ export class NativeSidecarKernelProxy {
 			env: entry.env,
 			cwd: entry.cwd,
 			retainOutput: entry.retainOutput,
+			wasmBackend: entry.wasmBackend,
 		});
 		entry.hostPid = started.pid;
 		entry.started = true;
@@ -3111,14 +3120,13 @@ export type {
 	SidecarSignalHandlerRegistration,
 	SidecarSocketStateEntry,
 	SidecarSpawnOptions,
-} from "./native-process-client.js";
+} from "./process-client.js";
 export {
-	NativeSidecarProcessClient,
 	SidecarEventBufferOverflow,
 	SidecarProcess,
 	SidecarProcessError,
 	SidecarProcessExited,
-} from "./native-process-client.js";
+} from "./process-client.js";
 
 export type AgentOsSidecarPlacement =
 	| { kind: "shared"; pool?: string }

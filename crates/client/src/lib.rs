@@ -2,14 +2,19 @@
 
 //! # agentos-client
 //!
-//! High-level Rust client SDK for the Agent OS native sidecar. This is a 1:1 port of the TypeScript
+//! High-level Rust client SDK for the Agent OS sidecar. This is a 1:1 port of the TypeScript
 //! `AgentOs` client (`packages/core/src/agent-os.ts`): every public method, option type, return
 //! type, event, and error maps across with identical semantics.
 //!
-//! The client spawns the native `agentos-native-sidecar` binary and speaks the framed BARE
+//! The client spawns the native `agentos-sidecar` binary and speaks the framed BARE
 //! protocol over its stdio (see [`transport`]). It does NOT embed the kernel in-process and does NOT
 //! define a new sidecar wire protocol. The generated agentOS language execution schema surface comes
 //! from `agentos_sidecar_client::wire`.
+//!
+//! Shared sidecar pools are scoped to the caller's Tokio runtime. VMs created in
+//! the same runtime and pool share one child process; independent runtimes use
+//! separate children so shutting down one runtime cannot interrupt another's VMs.
+//! Keep the creating runtime running until its VMs and explicit sidecars are shut down.
 //!
 //! See the companion design docs in `~/.agents/specs/rust-client-sdk/` (ADR-001, spec, reference,
 //! checklist) for the architecture, type-mapping, error taxonomy, and streaming model.
@@ -30,37 +35,12 @@ pub mod software_registry;
 pub mod stream;
 pub mod transport;
 
-/// Same-version managed service integration, deliberately excluded from the
+/// Same-version static actor integration, deliberately excluded from the
 /// default public Core SDK. This keeps config projection/transport access out
-/// of adapters without adding an unmatched public `AgentOs` method.
-#[cfg(feature = "service-internals")]
+/// of the actor without adding an unmatched public AgentOs method.
+#[cfg(feature = "actor-internals")]
 #[doc(hidden)]
-pub mod service_internals {
-    /// Create a VM and install its required package set before returning it to
-    /// a managed service. A failed install tears the partially booted VM down,
-    /// so service adapters do not need to duplicate boot rollback logic.
-    pub async fn create_with_initial_software(
-        options: crate::AgentOsConfig,
-        sources: Vec<crate::PackageSource>,
-    ) -> Result<(crate::AgentOs, Vec<crate::InstalledSoftware>), crate::ClientError> {
-        let vm = crate::AgentOs::create(options).await?;
-        let mut installed = Vec::with_capacity(sources.len());
-        for source in sources {
-            match vm.install_software(source).await {
-                Ok(package) => installed.push(package),
-                Err(error) => {
-                    return match vm.shutdown().await {
-                        Ok(()) => Err(error),
-                        Err(cleanup_error) => Err(crate::ClientError::Sidecar(format!(
-                            "initial software installation failed: {error}; VM cleanup also failed: {cleanup_error}"
-                        ))),
-                    };
-                }
-            }
-        }
-        Ok((vm, installed))
-    }
-
+pub mod actor_internals {
     /// Worker shutdown owns the entire child, including failed VM leases.
     pub async fn shutdown_package_session(
         session: &crate::AgentOsPackageSession,
@@ -127,7 +107,7 @@ pub use language_execution::{
 };
 #[cfg(feature = "sidecar-internals")]
 pub use sidecar::configure_shared_sidecar_package_cache;
-#[cfg(any(feature = "service-internals", feature = "sidecar-internals"))]
+#[cfg(any(feature = "actor-internals", feature = "sidecar-internals"))]
 pub use sidecar::AgentOsPackageSession;
 pub use sidecar::{
     AgentOsSidecar, AgentOsSidecarDescription, AgentOsSidecarPlacement, SidecarState,
@@ -152,7 +132,7 @@ pub use config::{
 pub use process::{
     ExecOptions, ExecResult, ProcessExit, ProcessInfo, ProcessOutput, ProcessOutputEvent,
     ProcessOutputReplay, ProcessStatus, ProcessStream, ProcessTreeNode, SpawnHandle, SpawnOptions,
-    SpawnStdio, SpawnedProcessInfo, StdinInput, TimingMitigation,
+    SpawnStdio, SpawnedProcessInfo, StandaloneWasmBackend, StdinInput, TimingMitigation,
 };
 
 pub use net::{HttpRequest, HttpResponse, HttpStreamChunk, HttpStreamHead};

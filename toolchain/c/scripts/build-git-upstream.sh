@@ -170,9 +170,9 @@ emit() {
   local src="$1"
   local out="$2"
   mkdir -p "$(dirname "$out")"
-  if command -v wasm-opt >/dev/null 2>&1; then
+  if [[ "${AGENTOS_ENABLE_BINARYEN:-0}" == "1" ]]; then
     echo "Optimizing $src WASM binary -> $out..."
-    wasm-opt -O3 --strip-debug --all-features "$src" -o "$out"
+    "${WASM_OPT:-wasm-opt}" -O3 --strip-debug --all-features "$src" -o "$out"
   else
     cp "$src" "$out"
   fi

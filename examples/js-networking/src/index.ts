@@ -15,14 +15,14 @@
  *      loopbackExemptPorts.
  *
  * Run with:
- *   AGENTOS_SIDECAR_BIN=../../../target/debug/agentos-native-sidecar \
+ *   AGENTOS_SIDECAR_BIN=../../../target/debug/agentos-sidecar \
  *     npx tsx src/index.ts
  */
 
 import { createServer as createHttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
 // docs:start vm-network
-import { AgentOs } from "@rivet-dev/agentos-core";
+import { AgentOs } from "@rivet-dev/agentos";
 
 // Guest program: start a loopback HTTP server, then fetch it. Both the listen
 // and the fetch go through the kernel socket table.

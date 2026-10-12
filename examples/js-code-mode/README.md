@@ -8,7 +8,7 @@ directly. This example registers a Zod-validated weather host function, lets a
 generated expression invoke it more than once, and returns one structured
 result.
 
-Binding handlers run in the trusted host. Only validated input and JSON output
+Host-function handlers run in the trusted host. Only validated input and JSON output
 cross the agentOS boundary, so credentials and direct host resources stay out
 of generated code.
 

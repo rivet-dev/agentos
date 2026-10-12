@@ -1,17 +1,17 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SidecarRejectedError } from "@rivet-dev/agentos-runtime-core/sidecar-errors";
+import { SidecarRejectedError } from "../src/sidecar-errors.js";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type {
 	AuthenticatedSession,
 	CreatedVm,
-	NativeSidecarProcessClient,
+	SidecarProcess,
 } from "../src/sidecar/rpc-client.js";
-import { NativeSidecarKernelProxy } from "../src/sidecar/rpc-client.js";
+import { SidecarKernelProxy } from "../src/sidecar/rpc-client.js";
 
-describe("NativeSidecarKernelProxy execute payloads", () => {
-	let proxy: NativeSidecarKernelProxy | null = null;
+describe("SidecarKernelProxy execute payloads", () => {
+	let proxy: SidecarKernelProxy | null = null;
 	let fixtureRoot: string | null = null;
 
 	afterEach(async () => {
@@ -66,7 +66,7 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 			dispose: vi.fn(async () => {
 				stopped = true;
 			}),
-		} as unknown as NativeSidecarProcessClient;
+		} as unknown as SidecarProcess;
 
 		return { client, execute };
 	}
@@ -75,7 +75,7 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 		fixtureRoot = mkdtempSync(join(tmpdir(), "agentos-allowed-builtins-"));
 		const { client, execute } = createMockClient();
 
-		proxy = new NativeSidecarKernelProxy({
+		proxy = new SidecarKernelProxy({
 			client,
 			session: {
 				connectionId: "conn-1",
@@ -118,7 +118,7 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 		fixtureRoot = mkdtempSync(join(tmpdir(), "agentos-shell-exec-"));
 		const { client, execute } = createMockClient();
 
-		proxy = new NativeSidecarKernelProxy({
+		proxy = new SidecarKernelProxy({
 			client,
 			session: {
 				connectionId: "conn-1",
@@ -147,7 +147,7 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 		fixtureRoot = mkdtempSync(join(tmpdir(), "agentos-shell-missing-"));
 		const { client } = createMockClient();
 
-		proxy = new NativeSidecarKernelProxy({
+		proxy = new SidecarKernelProxy({
 			client,
 			session: {
 				connectionId: "conn-1",
@@ -162,7 +162,7 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 		});
 
 		await expect(proxy.exec("node /workspace/entry.mjs")).rejects.toThrow(
-			"native sidecar exec requires guest shell command 'sh'",
+			"sidecar exec requires guest shell command 'sh'",
 		);
 	});
 });

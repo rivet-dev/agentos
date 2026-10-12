@@ -19,6 +19,11 @@
 					"icon": "faForwardFast"
 				},
 				{
+					"title": "Quickstart (Embedded)",
+					"href": "/agentos/docs/quickstart-embedded",
+					"icon": "faForwardFast"
+				},
+				{
 					"title": "agentOS vs Sandbox",
 					"href": "/agentos/docs/versus-sandbox",
 					"icon": "faScaleBalanced"
@@ -81,6 +86,11 @@
 				{
 					"title": "Resource Limits",
 					"href": "/agentos/docs/resource-limits",
+					"icon": "faGauge"
+				},
+				{
+					"title": "Hosted Actor Limits",
+					"href": "/agentos/docs/actor-limits",
 					"icon": "faGauge"
 				}
 			]
@@ -191,6 +201,10 @@
 									"href": "/agentos/docs/architecture/posix-syscalls"
 								},
 								{
+									"title": "Package Architecture",
+									"href": "/agentos/docs/architecture/package-structure"
+								},
+								{
 									"title": "Packages & Command Resolution",
 									"href": "/agentos/docs/architecture/packages-and-command-resolution"
 								},
@@ -227,6 +241,35 @@
 							"href": "/agentos/docs/performance"
 						}
 					]
+				}
+			]
+		}
+	],
+	"integrations": [
+		{
+			"title": "General",
+			"pages": [
+				{
+					"title": "Overview",
+					"href": "/agentos/integrations",
+					"icon": "faSquareInfo"
+				}
+			]
+		},
+		{
+			"title": "Frameworks",
+			"pages": [
+				{
+					"title": "Flue",
+					"href": "/agentos/integrations/flue"
+				},
+				{
+					"title": "Rivet Actors",
+					"href": "/agentos/integrations/rivet-actors"
+				},
+				{
+					"title": "Vercel Eve",
+					"href": "/agentos/integrations/vercel-eve"
 				}
 			]
 		}

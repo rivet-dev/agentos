@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { AgentOs } from "@rivet-dev/agentos-core";
+import { AgentOs } from "@rivet-dev/agentos";
 
 // A trusted .aospkg file on the host, such as one you built with
 // agentos-toolchain or downloaded from the registry.

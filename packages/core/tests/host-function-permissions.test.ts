@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { z } from "zod";
 import { AgentOs } from "../src/index.js";
-import { NativeSidecarProcessClient } from "../src/sidecar/rpc-client.js";
+import { SidecarProcess as SidecarProcessClient } from "../src/sidecar-process.js";
 
 // ---------------------------------------------------------------------------
 // The sidecar owns hostFunction.invoke permission enforcement. These tests
@@ -16,11 +16,11 @@ async function createVmCapturingHandler(
 ): Promise<{ vm: AgentOs; handler: CapturedHandler }> {
 	let captured: CapturedHandler | null = null;
 	const original =
-		NativeSidecarProcessClient.prototype.setSidecarRequestHandler;
+		SidecarProcessClient.prototype.setSidecarRequestHandler;
 	const spy = vi
-		.spyOn(NativeSidecarProcessClient.prototype, "setSidecarRequestHandler")
+		.spyOn(SidecarProcessClient.prototype, "setSidecarRequestHandler")
 		.mockImplementation(function (
-			this: NativeSidecarProcessClient,
+			this: SidecarProcessClient,
 			handler: any,
 		) {
 			if (handler) {

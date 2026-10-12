@@ -41,7 +41,7 @@ const TERMINAL_LIMIT: usize = 1024;
 const DEFAULT_SHELL_COMMAND: &str = "sh";
 
 type ShellOutcome = Option<std::result::Result<i32, ClientError>>;
-type ShellSpawnReadiness = watch::Receiver<Option<std::result::Result<(), ClientError>>>;
+type ShellSpawnReceiver = watch::Receiver<Option<std::result::Result<(), ClientError>>>;
 
 fn publish_shell_outcome(
     sender: &watch::Sender<ShellOutcome>,
@@ -117,6 +117,7 @@ async fn observe_shell_exit(mut receiver: watch::Receiver<ShellOutcome>) -> Shel
 /// Callback-free options for portable `open_shell`.
 #[derive(Default)]
 pub struct OpenShellOptions {
+    pub wasm_backend: Option<crate::process::StandaloneWasmBackend>,
     pub command: Option<String>,
     pub args: Vec<String>,
     pub env: BTreeMap<String, String>,
@@ -438,6 +439,7 @@ impl AgentOs {
             cwd: options.cwd.clone(),
             wasm_permission_tier: None,
             retain_output: true,
+            wasm_backend: options.wasm_backend.map(Into::into),
         };
 
         // Background: subscribe to events first (so no output is missed), issue the spawn, fan
@@ -670,6 +672,7 @@ impl AgentOs {
             cwd: base.cwd.clone(),
             wasm_permission_tier: None,
             retain_output: true,
+            wasm_backend: base.wasm_backend.map(Into::into),
         };
 
         // Subscribe before issuing the spawn so no output is missed.
@@ -1234,7 +1237,7 @@ impl AgentOs {
     fn shell_wire_handle(
         &self,
         shell_id: &str,
-    ) -> std::result::Result<(String, ShellSpawnReadiness), ClientError> {
+    ) -> std::result::Result<(String, ShellSpawnReceiver), ClientError> {
         self.inner()
             .shells
             .read(shell_id, |_, entry| {
@@ -1251,7 +1254,7 @@ impl AgentOs {
 /// Wait until the shell's background `Execute` request has been acked (the readiness gate flips to
 /// ready). A failed launch must not issue follow-up I/O against a nonexistent process.
 async fn wait_for_spawn(
-    mut spawned_rx: ShellSpawnReadiness,
+    mut spawned_rx: tokio::sync::watch::Receiver<Option<std::result::Result<(), ClientError>>>,
 ) -> std::result::Result<(), ClientError> {
     loop {
         if let Some(result) = spawned_rx.borrow_and_update().clone() {

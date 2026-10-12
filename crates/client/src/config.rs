@@ -34,6 +34,10 @@ pub type SidecarSqliteCallback = Arc<
 /// and `packages/core/src/options-schema.ts::agentOsOptionsSchema`.
 #[derive(Default)]
 pub struct AgentOsConfig {
+    /// Selects sidecar-owned VM defaults. Omitted selects the agentOS profile.
+    pub defaults_profile: Option<agentos_vm_config::VmDefaultsProfile>,
+    /// Default engine for standalone WebAssembly processes.
+    pub wasm_backend: Option<crate::process::StandaloneWasmBackend>,
     /// VM-scoped SQLite backend shared by VFS metadata/storage and agentOS
     /// durable state.
     pub database: Option<agentos_vm_config::VmSqliteDescriptor>,
@@ -87,9 +91,9 @@ pub struct AgentOsConfig {
     pub limits: Option<AgentOsLimits>,
     /// Sidecar placement/config. Default: shared `default` pool.
     pub sidecar: Option<AgentOsSidecarConfig>,
-    /// Absolute path to the `agentos-native-sidecar` binary, resolved from the npm
+    /// Absolute path to the `agentos-sidecar` binary, resolved from the npm
     /// package on the TypeScript side. Threaded to `SidecarProcess::spawn`
-    /// instead of relying on the
+    /// (mirroring rivetkit's `engine_binary_path`) instead of relying on the
     /// `AGENTOS_SIDECAR_BIN` env var. `None` falls back to env, then `PATH`.
     pub sidecar_binary_path: Option<String>,
 }
@@ -103,6 +107,11 @@ pub struct AgentOsConfigBuilder {
 impl AgentOsConfigBuilder {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn defaults_profile(mut self, profile: agentos_vm_config::VmDefaultsProfile) -> Self {
+        self.config.defaults_profile = Some(profile);
+        self
     }
 
     pub fn database(mut self, database: agentos_vm_config::VmSqliteDescriptor) -> Self {
@@ -153,6 +162,11 @@ impl AgentOsConfigBuilder {
 
     pub fn allowed_node_builtins(mut self, builtins: Vec<String>) -> Self {
         self.config.allowed_node_builtins = Some(builtins);
+        self
+    }
+
+    pub fn wasm_backend(mut self, backend: crate::process::StandaloneWasmBackend) -> Self {
+        self.config.wasm_backend = Some(backend);
         self
     }
 
@@ -242,7 +256,7 @@ pub enum SoftwareKind {
     /// sidecar's command discovery can resolve guest commands (`echo`, `sh`, `grep`, ...).
     #[default]
     WasmCommands,
-    /// A host-function package. Not mounted as a command directory.
+    /// A host-binding package. Not mounted as a command directory.
     HostFunction,
 }
 
@@ -292,9 +306,9 @@ pub struct SidecarJsBridgeCall {
 
 /// Host-side handler for sidecar `JsBridgeCallRequest` payloads.
 ///
-/// This is Rust-only and intentionally not JSON-serializable. Managed services
-/// use it to bind native sidecar storage to their durable database without
-/// teaching agentOS about the hosting framework.
+/// This is Rust-only and intentionally not JSON-serializable. RivetKit uses it to bind a native
+/// sidecar root filesystem to actor-owned SQLite (`ctx.db_*`) without teaching agentos about
+/// Rivet actors.
 pub type SidecarJsBridgeCallback = Arc<
     dyn Fn(
             SidecarJsBridgeCall,
@@ -601,12 +615,6 @@ pub struct ResourceLimits {
     pub max_readdir_entries: Option<u64>,
     #[serde(
         default,
-        rename = "maxWasmFuel",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub max_wasm_fuel: Option<u64>,
-    #[serde(
-        default,
         rename = "maxWasmMemoryBytes",
         skip_serializing_if = "Option::is_none"
     )]
@@ -876,10 +884,34 @@ pub struct WasmLimits {
     pub runner_heap_limit_mb: Option<u64>,
     #[serde(
         default,
-        rename = "runnerCpuTimeLimitMs",
+        rename = "activeCpuTimeLimitMs",
         skip_serializing_if = "Option::is_none"
     )]
-    pub runner_cpu_time_limit_ms: Option<u64>,
+    pub active_cpu_time_limit_ms: Option<u64>,
+    #[serde(
+        default,
+        rename = "wallClockLimitMs",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub wall_clock_limit_ms: Option<u64>,
+    #[serde(
+        default,
+        rename = "deterministicFuel",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub deterministic_fuel: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxThreads",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_threads: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxConcurrentThreads",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_concurrent_threads: Option<u64>,
 }
 
 #[cfg_attr(feature = "contract", derive(ts_rs::TS))]
@@ -917,6 +949,18 @@ pub struct ProcessLimits {
         skip_serializing_if = "Option::is_none"
     )]
     pub pending_event_bytes: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxPendingChildSyncCount",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_pending_child_sync_count: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxPendingChildSyncBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_pending_child_sync_bytes: Option<u64>,
 }
 
 // ---------------------------------------------------------------------------

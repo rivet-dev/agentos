@@ -571,31 +571,31 @@ impl AgentOs {
                 }
             };
 
-            // 6b. Register host-function collections (if any): forward each definition via `register_host_callbacks`,
+            // 6b. Register host binding kits (if any): forward each binding definition via `register_host_callbacks`,
             //     record the host execute callbacks in the per-VM registry, and install the shared
-            //     host-callback that routes guest host-function calls back to the host by VM.
+            //     host-callback that routes guest binding calls back to the host by VM.
             let resolved_host_functions = resolve_host_functions(&config.host_functions)
                 .map_err(ClientError::InvalidConfig)?;
             if !resolved_host_functions.is_empty() {
                 let mut host_function_map: HashMap<String, ResolvedHostFunction> = HashMap::new();
                 for collection in &resolved_host_functions {
-                    let mut host_functions = HashMap::new();
-                    for host_function in &collection.functions {
-                        host_functions.insert(
-                            host_function.name.clone(),
+                    let mut bindings = HashMap::new();
+                    for binding in &collection.functions {
+                        bindings.insert(
+                            binding.name.clone(),
                             wire::RegisteredHostCallbackDefinition {
-                                description: host_function.description.clone(),
+                                description: binding.description.clone(),
                                 input_schema: json_utf8(
-                                    &host_function.input_schema,
+                                    &binding.input_schema,
                                     "host callback input schema",
                                 )?,
-                                timeout_ms: host_function.timeout_ms,
+                                timeout_ms: binding.timeout_ms,
                                 examples: Vec::new(),
                             },
                         );
                         host_function_map.insert(
-                            format!("{}:{}", collection.name, host_function.name),
-                            host_function.clone(),
+                            format!("{}:{}", collection.name, binding.name),
+                            binding.clone(),
                         );
                     }
                     match transport
@@ -607,7 +607,7 @@ impl AgentOs {
                                     description: String::new(),
                                     command_aliases: vec![format!("agentos-{}", collection.name)],
                                     registry_command_aliases: vec![String::from("agentos")],
-                                    callbacks: host_functions,
+                                    callbacks: bindings,
                                 },
                             ),
                         )
@@ -725,7 +725,7 @@ impl AgentOs {
             let client = AgentOs {
                 inner: Arc::new(inner),
             };
-            // Host functions can read JSON arguments from the guest filesystem. Keep
+            // Host bindings can read JSON arguments from the guest filesystem. Keep
             // a weak VM route for that trusted Core-only callback without exposing
             // any product-specific orchestration protocol.
             let _ = vm_clients().insert(client.inner.vm_id.clone(), Arc::downgrade(&client.inner));
@@ -1156,7 +1156,7 @@ impl AgentOs {
         self.inner.sidecar.clone()
     }
 
-    #[cfg(feature = "service-internals")]
+    #[cfg(feature = "actor-internals")]
     pub(crate) async fn vm_config_equivalent(
         &self,
         before: &AgentOsConfig,
@@ -1239,7 +1239,20 @@ fn serialize_create_vm_config_for_sidecar(
     let (root_filesystem, native_root) =
         serialize_root_filesystem_config_for_sidecar(&config.root_filesystem)?;
     let mut create = vm_config::CreateVmConfig {
-        defaults_profile: Some(vm_config::VmDefaultsProfile::AgentOs),
+        defaults_profile: Some(
+            config
+                .defaults_profile
+                .unwrap_or(vm_config::VmDefaultsProfile::AgentOs),
+        ),
+        wasm_backend: config.wasm_backend.map(|backend| match backend {
+            crate::process::StandaloneWasmBackend::V8 => vm_config::StandaloneWasmBackend::V8,
+            crate::process::StandaloneWasmBackend::Wasmtime => {
+                vm_config::StandaloneWasmBackend::Wasmtime
+            }
+            crate::process::StandaloneWasmBackend::WasmtimeThreads => {
+                vm_config::StandaloneWasmBackend::WasmtimeThreads
+            }
+        }),
         database: config.database.clone(),
         cwd: None,
         env: config.environment.clone(),
@@ -1570,7 +1583,7 @@ fn vm_host_functions() -> &'static SccHashMap<String, Arc<VmHostFunctionRegistry
     VM_HOST_FUNCTIONS.get_or_init(SccHashMap::new)
 }
 
-/// Process-global map of VM id to client state used by trusted host functions
+/// Process-global map of VM id to client state used by trusted host bindings
 /// that read JSON arguments from the guest filesystem. `Weak` prevents the
 /// registry from extending VM lifetime.
 static VM_CLIENTS: OnceCell<SccHashMap<String, Weak<AgentOsInner>>> = OnceCell::new();
@@ -1771,7 +1784,7 @@ async fn run_js_bridge_callback(
     }
 }
 
-/// The transport callback that answers guest host-function invocations by running the matching host function.
+/// The transport callback that answers guest binding invocations by running the matching host binding.
 fn host_callback_callback() -> WireSidecarCallback {
     Arc::new(|payload, ownership| {
         Box::pin(async move {
@@ -2982,20 +2995,17 @@ fn rejected_to_error(rejected: wire::RejectedResponse) -> ClientError {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, HashMap};
-    use std::sync::{Arc, Mutex};
+    use std::collections::BTreeMap;
 
     use super::{
-        run_host_callback, serialize_create_vm_config_for_sidecar,
-        serialize_root_filesystem_config_for_sidecar, try_vm_mutation, vm_host_functions,
-        wire_vm_ownership, AgentOsCreationTask, VmHostFunctionRegistry,
+        serialize_create_vm_config_for_sidecar, serialize_root_filesystem_config_for_sidecar,
+        try_vm_mutation, AgentOsCreationTask,
     };
     use crate::config::{
         AgentOsConfig, AgentOsLimits, FsPermissionRule, FsPermissions, HostFunctionLimits,
         HttpLimits, JsRuntimeLimits, MountPlugin, PatternPermissions, PermissionMode, Permissions,
-        PythonLimits, ResolvedHostFunction, ResolvedHostFunctions, ResourceLimits,
-        RootFilesystemConfig, RootFilesystemKind, RootFilesystemMode, RootLowerInput,
-        RulePermissions, WasmLimits,
+        PythonLimits, ResourceLimits, RootFilesystemConfig, RootFilesystemKind, RootFilesystemMode,
+        RootLowerInput, RulePermissions, WasmLimits,
     };
     use crate::fs::{
         DirEntryType, FilesystemEntry, FilesystemEntryEncoding, FilesystemSnapshotEntries,
@@ -3006,10 +3016,18 @@ mod tests {
         RootFilesystemEntryKind, RootFilesystemLowerDescriptor,
         RootFilesystemMode as ConfigRootFilesystemMode, VmDefaultsProfile,
     };
-    use serde_json::json;
 
     #[tokio::test]
     async fn command_shaped_input_cannot_redirect_an_authorized_host_callback() {
+        use super::{
+            run_host_callback, vm_host_functions, wire_vm_ownership, VmHostFunctionRegistry,
+        };
+        use crate::config::{ResolvedHostFunction, ResolvedHostFunctions};
+        use serde_json::json;
+        use std::{
+            collections::HashMap,
+            sync::{Arc, Mutex},
+        };
         let vm_id = format!("host-callback-test-{}", uuid::Uuid::new_v4());
         let calls = Arc::new(Mutex::new(Vec::new()));
         let allowed_calls = Arc::clone(&calls);
@@ -3175,6 +3193,17 @@ mod tests {
     fn create_vm_omits_permissions_so_sidecar_applies_product_defaults() {
         let config = serialize_create_vm_config_for_sidecar(&AgentOsConfig::default()).unwrap();
         assert_eq!(config.defaults_profile, Some(VmDefaultsProfile::AgentOs));
+        assert_eq!(config.permissions, None);
+    }
+
+    #[test]
+    fn create_vm_can_select_secure_sidecar_defaults() {
+        let config = serialize_create_vm_config_for_sidecar(&AgentOsConfig {
+            defaults_profile: Some(VmDefaultsProfile::Secure),
+            ..AgentOsConfig::default()
+        })
+        .unwrap();
+        assert_eq!(config.defaults_profile, Some(VmDefaultsProfile::Secure));
         assert_eq!(config.permissions, None);
     }
 
@@ -3408,7 +3437,9 @@ mod tests {
                 wasm: Some(WasmLimits {
                     prewarm_timeout_ms: Some(30_000),
                     runner_heap_limit_mb: Some(2_048),
-                    runner_cpu_time_limit_ms: Some(60_000),
+                    active_cpu_time_limit_ms: Some(60_000),
+                    wall_clock_limit_ms: Some(120_000),
+                    deterministic_fuel: Some(1_000_000),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -3472,7 +3503,9 @@ mod tests {
         let wasm = limits.wasm.expect("wasm limits");
         assert_eq!(wasm.prewarm_timeout_ms, Some(30_000));
         assert_eq!(wasm.runner_heap_limit_mb, Some(2_048));
-        assert_eq!(wasm.runner_cpu_time_limit_ms, Some(60_000));
+        assert_eq!(wasm.active_cpu_time_limit_ms, Some(60_000));
+        assert_eq!(wasm.wall_clock_limit_ms, Some(120_000));
+        assert_eq!(wasm.deterministic_fuel, Some(1_000_000));
     }
 
     #[test]

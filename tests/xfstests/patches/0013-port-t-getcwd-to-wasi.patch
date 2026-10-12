@@ -1,0 +1,96 @@
+From: AgentOS xfstests port
+Subject: [PATCH] src: run t_getcwd concurrency through posix_spawn on WASI
+
+WASI has no fork or interval timers. Re-exec the helper in a child mode and
+bound the parent-side getcwd checks so the same rename/getcwd race is exercised
+through AgentOS's real process bridge without inventing syscall semantics.
+
+diff --git a/src/t_getcwd.c b/src/t_getcwd.c
+index e9b5d7fe..847b9548 100644
+--- a/src/t_getcwd.c
++++ b/src/t_getcwd.c
+@@ -11,6 +11,10 @@
+ #define TIMEOUT 5
+ #define BUF_SIZE 256
+ 
++#ifdef __wasi__
++#define AGENTOS_GETCWD_ITERATIONS 50000
++#endif
++
+ static sig_atomic_t end;
+ 
+ int test_getcwd(char *init_cwd)
+@@ -23,9 +27,14 @@ int test_getcwd(char *init_cwd)
+ 			printf("[%u] %s != %s\n", i, init_cwd, cur_cwd);
+ 			return 1;
+ 		}
++#ifdef __wasi__
++		if (++i >= AGENTOS_GETCWD_ITERATIONS)
++			break;
++#else
+ 		if (end)
+ 			break;
+ 		i++;
++#endif
+ 	}
+ 	return 0;
+ }
+@@ -67,6 +76,15 @@ int main(int argc, char *argv[])
+ 	int status;
+ 	int ret = 1;
+ 
++#ifdef __wasi__
++	if (argc == 3 && !strcmp(argv[1], "--agentos-child")) {
++		if (chdir(argv[2]) < 0) {
++			perror("child chdir failed");
++			return 1;
++		}
++		do_rename("t_getcwd_testfile");
++	}
++#endif
+ 	if (argc != 2) {
+ 		printf("Usage: %s <dir>\n", argv[0]);
+ 		exit(1);
+@@ -79,13 +97,28 @@ int main(int argc, char *argv[])
+ 		exit(1);
+ 	}
+ 
++#ifndef __wasi__
+ 	if (signal(SIGALRM, sigproc) == SIG_ERR) {
+ 		perror("signal failed");
+ 		exit(1);
+ 	}
+ 
+ 	alarm(TIMEOUT);
++#endif
+ 
++#ifdef __wasi__
++	{
++		char *child_argv[] = { argv[0], "--agentos-child", init_cwd, NULL };
++		int error = posix_spawnp(&pid, child_argv[0], NULL, NULL,
++					 child_argv, environ);
++		if (error != 0) {
++			errno = error;
++			perror("posix_spawnp failed");
++			exit(1);
++		}
++		sleep(1);
++	}
++#else
+ 	pid = fork();
+ 	if (pid < 0) {
+ 		perror("fork failed");
+@@ -93,10 +126,13 @@ int main(int argc, char *argv[])
+ 	} else if (pid == 0) {
+ 		do_rename("t_getcwd_testfile");
+ 	} else {
++#endif
+ 		ret = test_getcwd(init_cwd);
+ 		kill(pid, SIGTERM);
+ 		waitpid(pid, &status, 0);
++#ifndef __wasi__
+ 	}
++#endif
+ 
+ 	exit(ret);
+ }

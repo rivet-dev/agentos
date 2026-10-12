@@ -1,0 +1,32 @@
+[package]
+name = "agentos-executor-wasm-wasmtime"
+version = "0.0.1"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/rivet-dev/agent-os"
+description = "Wasmtime standalone WebAssembly executor for agentOS"
+
+[features]
+default = []
+threads = []
+
+[lib]
+doctest = false
+
+[dependencies]
+agentos-executor-contract = { path = "../executor-contract", version = "0.0.1" }
+agentos-driver-tokio = { path = "../driver-tokio", version = "0.0.1" }
+agentos-executor-wasm-abi = { path = "../executor-wasm-abi", version = "0.0.1" }
+base64 = "0.22"
+ciborium = "0.2"
+flume = "0.11"
+nix = { version = "0.29", features = ["feature", "process", "signal", "time"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_bytes = "0.11"
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["io-util", "process", "rt", "sync", "time"] }
+wasmtime = { version = "=48.0.3", default-features = false, features = ["async", "cranelift", "gc", "gc-drc", "runtime", "std", "threads"] }
+
+[dev-dependencies]
+wat = "1"

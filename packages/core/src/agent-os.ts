@@ -11,14 +11,8 @@ import type {
 	MountConfigJsonObject,
 	MountConfigJsonValue,
 	NativeMountPluginDescriptor,
-} from "@rivet-dev/agentos-runtime-core/descriptors";
-import * as executionProtocol from "@rivet-dev/agentos-runtime-core/protocol";
-import type { LivePackageAcquisitionSource } from "@rivet-dev/agentos-runtime-core/request-payloads";
-import { SidecarRejectedError } from "@rivet-dev/agentos-runtime-core/sidecar-errors";
-import type {
-	CreateVmConfig,
-	VmUserConfig,
-} from "@rivet-dev/agentos-runtime-core/vm-config";
+} from "./descriptors.js";
+import * as executionProtocol from "./generated-protocol.js";
 import {
 	type HostFunction,
 	type HostFunctionCollections,
@@ -26,8 +20,9 @@ import {
 	hostFunctionDescription,
 	type ResolvedHostFunctions,
 	resolveHostFunctions,
-} from "@rivet-dev/agentos-runtime-core/host-functions";
-import { zodToJsonSchema } from "@rivet-dev/agentos-runtime-core/host-functions-zod";
+} from "./host-functions.js";
+import { zodToJsonSchema } from "./host-functions-zod.js";
+import { handleJsBridgeCall } from "./js-bridge-handler.js";
 import type {
 	CodeEvaluationResult,
 	CodeExecutionResult,
@@ -44,6 +39,7 @@ import type {
 	OutputReplay,
 	ProcessDescriptor,
 	ProcessExit,
+	ProcessOutputEvent,
 	ProcessSpawnOptions,
 	PythonInstallOptions,
 	TypeScriptCheckOptions,
@@ -54,7 +50,14 @@ import type {
 	TypeScriptFileExecutionOptions,
 } from "./language-execution.js";
 import { parseAgentOsOptions } from "./options-schema.js";
+import {
+	type ReplayReadOptions,
+	replayPage,
+	replayPageLimits,
+	replayWirePageLimits,
+} from "./output-replay.js";
 import { buildProcessForest } from "./process-forest.js";
+import type { LivePackageAcquisitionSource } from "./request-payloads.js";
 import type {
 	ConnectTerminalOptions,
 	Kernel,
@@ -75,23 +78,21 @@ import {
 	resolveSandboxOptions,
 } from "./sandbox.js";
 import { resolvePublishedSidecarBinary } from "./sidecar/binary.js";
-import {
-	replayPage,
-	replayPageLimits,
-	replayWirePageLimits,
-	type ReplayReadOptions,
-} from "./output-replay.js";
 import { findCargoBinary, resolveCargoBinary } from "./sidecar/cargo.js";
+import { SidecarRejectedError } from "./sidecar-errors.js";
+import type { CreateVmConfig, VmUserConfig } from "./vm-config.js";
 
 export type {
 	MountConfigJsonObject,
 	MountConfigJsonPrimitive,
 	MountConfigJsonValue,
 	NativeMountPluginDescriptor,
-} from "@rivet-dev/agentos-runtime-core/descriptors";
+} from "./descriptors.js";
 export type { ConnectTerminalOptions } from "./runtime-compat.js";
 
-const VM_DISPOSE_DRAIN_TIMEOUT_MS = 5_000;
+const SHELL_DISPOSE_TIMEOUT_MS = 5_000;
+const PROCESS_REGISTRY_LIMIT = 1024;
+const TERMINAL_LIMIT = 1024;
 
 async function waitForTrackedExitPromises(
 	promises: Promise<unknown>[],
@@ -155,12 +156,11 @@ function headersToRecord(headers: Headers): Record<string, string> {
 }
 
 export interface ProcessOutput {
+	sequence?: number;
+	timestampMs?: number;
 	pid: number;
 	stream: "stdout" | "stderr";
 	data: Uint8Array;
-	/** Sidecar replay identity, absent when output retention is disabled. */
-	sequence?: number;
-	timestampMs?: number;
 }
 
 export interface ShellData {
@@ -265,6 +265,7 @@ export interface InstalledSoftware {
 import {
 	OPT_AGENTOS_ROOT,
 	type PackageDescriptor,
+	type SoftwarePackageRef,
 	tryReadAgentosPackageManifest,
 } from "./agentos-package.js";
 import { getBaseEnvironment } from "./base-filesystem.js";
@@ -298,7 +299,7 @@ import {
 } from "./layers.js";
 import type { SoftwareInput, SoftwareRoot } from "./packages.js";
 import type { PermissionTier } from "./runtime.js";
-import { allowAll, createNodeHostNetworkAdapter } from "./runtime-compat.js";
+import { createNodeHostNetworkAdapter } from "./runtime-compat.js";
 import { serializePermissionsForSidecar } from "./sidecar/permissions.js";
 import {
 	type AgentOsSidecarClient,
@@ -311,8 +312,8 @@ import {
 	type AuthenticatedSession,
 	type CreatedVm,
 	createAgentOsSidecarClient,
-	NativeSidecarKernelProxy,
 	type RootFilesystemEntry,
+	SidecarKernelProxy,
 	type SidecarMountDescriptor,
 	type SidecarPermissionsPolicy,
 	SidecarProcess,
@@ -474,7 +475,7 @@ export type MountConfig =
  * Operator-tunable runtime limits for a VM. Every field is optional; unset fields fall back to
  * built-in defaults that match the runtime's historical hardcoded constants, so behavior is
  * unchanged unless a value is overridden. All values are JSON-serializable integers and are
- * forwarded to the native sidecar in the typed create-VM JSON config. Unknown, negative, or
+ * forwarded to the sidecar in the typed create-VM JSON config. Unknown, negative, or
  * non-integer values are rejected by the sidecar before VM construction.
  */
 export interface AgentOsLimits {
@@ -499,7 +500,6 @@ export interface AgentOsLimits {
 		maxProcessArgvBytes?: number;
 		maxProcessEnvBytes?: number;
 		maxReaddirEntries?: number;
-		maxWasmFuel?: number;
 		maxWasmMemoryBytes?: number;
 		maxWasmStackBytes?: number;
 	};
@@ -558,7 +558,13 @@ export interface AgentOsLimits {
 		syncReadLimitBytes?: number;
 		prewarmTimeoutMs?: number;
 		runnerHeapLimitMb?: number;
-		runnerCpuTimeLimitMs?: number;
+		activeCpuTimeLimitMs?: number;
+		wallClockLimitMs?: number;
+		deterministicFuel?: number;
+		/** Maximum threads, including the initial thread, for the explicit Wasmtime threaded backend. */
+		maxThreads?: number;
+		/** Maximum threads reserved by all concurrent threaded WASM processes in this VM. */
+		maxConcurrentThreads?: number;
 	};
 	/** Completed language-execution retention and live execution warning threshold. */
 	execution?: {
@@ -573,6 +579,8 @@ export interface AgentOsLimits {
 		pendingStdinBytes?: number;
 		pendingEventCount?: number;
 		pendingEventBytes?: number;
+		maxPendingChildSyncCount?: number;
+		maxPendingChildSyncBytes?: number;
 	};
 }
 
@@ -643,9 +651,13 @@ export interface AgentOsOptions<
 	loopbackExemptPorts?: number[];
 	/**
 	 * Allowed Node.js builtins for guest Node processes.
-	 * Defaults to the hardened builtin set used by the native sidecar bridge.
+	 * Defaults to the hardened builtin set used by the sidecar bridge.
 	 */
 	allowedNodeBuiltins?: string[];
+	/** VM-wide default for standalone WASM commands. JavaScript remains on V8. */
+	wasmBackend?: "v8" | "wasmtime" | "wasmtime-threads";
+	/** Sidecar-owned permission defaults. The agentOS profile is used when omitted. */
+	defaultsProfile?: "agent_os" | "secure";
 	/**
 	 * Opt in to a high-resolution monotonic guest clock (microsecond class)
 	 * for guest Node processes. Default `false` keeps the security-oriented
@@ -667,11 +679,10 @@ export interface AgentOsOptions<
 	/** Trusted host functions available to programs inside the VM. */
 	hostFunctions?: HostFunctionCollections<HOST_FUNCTIONS>;
 	/**
-	 * Permission policy for the kernel. By default the guest behaves like a
-	 * sandboxed machine: its virtual filesystem, processes, environment, listeners,
-	 * and loopback networking work. External network access is limited to the
-	 * sidecar-owned agentOS service allowlist. Your policy is merged over that
-	 * default, so an omitted scope keeps it.
+	 * Permission overrides for the sidecar-owned defaults profile. Omitted scopes
+	 * keep that profile's policy. Both profiles allow VM-local networking and
+	 * require an explicit grant for external networking and DNS, including
+	 * model-provider endpoints.
 	 */
 	permissions?: Permissions;
 	/**
@@ -719,6 +730,9 @@ function normalizePackageRef(value: unknown): NormalizedPackageRef | undefined {
 	const record = toRecord(value);
 	if (typeof record.packagePath === "string") {
 		return { path: record.packagePath };
+	}
+	if (typeof record.path === "string") {
+		return { path: record.path };
 	}
 	// Recognizably-legacy shapes fail loudly: silently dropping a software
 	// entry boots a VM with missing packages and no diagnostic.
@@ -808,8 +822,6 @@ function packageResolverWireOptions(
 }
 
 const CLOSED_SHELL_ID_RETENTION_LIMIT = 2048;
-const TERMINAL_LIMIT = 1024;
-const PROCESS_REGISTRY_LIMIT = 1024;
 
 class BoundedSet<T, V = undefined> {
 	readonly limit: number;
@@ -1101,7 +1113,9 @@ const KERNEL_POSIX_BOOTSTRAP_DIR_METADATA: Record<
 	{ mode: string; uid: number; gid: number }
 > = {
 	"/tmp": { mode: "1777", uid: 0, gid: 0 },
-	"/root": { mode: "700", uid: 0, gid: 0 },
+	// Compatibility module mounts live below /root; allow traversal without
+	// allowing the default guest to enumerate the root user's home directory.
+	"/root": { mode: "711", uid: 0, gid: 0 },
 	"/sys": { mode: "555", uid: 0, gid: 0 },
 	"/home/agentos": { mode: "2755", uid: 1000, gid: 1000 },
 	"/workspace": { mode: "755", uid: 1000, gid: 1000 },
@@ -1112,25 +1126,31 @@ const KERNEL_POSIX_BOOTSTRAP_DIR_METADATA: Record<
 };
 
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
-const SIDECAR_BINARY = join(REPO_ROOT, "target/debug/agentos-native-sidecar");
+const SIDECAR_BINARY = join(REPO_ROOT, "target/debug/agentos-sidecar");
 const SIDECAR_BUILD_INPUTS = [
 	join(REPO_ROOT, "Cargo.toml"),
 	join(REPO_ROOT, "Cargo.lock"),
-	join(REPO_ROOT, "crates/bridge"),
-	join(REPO_ROOT, "crates/build-support"),
-	join(REPO_ROOT, "crates/execution"),
-	join(REPO_ROOT, "crates/kernel"),
-	join(REPO_ROOT, "crates/native-sidecar"),
-	join(REPO_ROOT, "crates/native-sidecar-core"),
+	join(REPO_ROOT, "crates/vm-host-interface"),
+	join(REPO_ROOT, "crates/executor-v8-runtime"),
+	join(REPO_ROOT, "crates/executor-contract"),
+	join(REPO_ROOT, "crates/executor-node-v8"),
+	join(REPO_ROOT, "crates/executor-python-v8-pyodide"),
+	join(REPO_ROOT, "crates/executor-wasm-v8"),
+	join(REPO_ROOT, "crates/vm-kernel"),
+	join(REPO_ROOT, "crates/acp-protocol"),
+	join(REPO_ROOT, "crates/sidecar"),
+	join(REPO_ROOT, "crates/vm"),
+	join(REPO_ROOT, "crates/vm/src/core"),
 	join(REPO_ROOT, "crates/sidecar-protocol"),
-	join(REPO_ROOT, "crates/v8-runtime"),
-	join(REPO_ROOT, "crates/vfs"),
+	join(REPO_ROOT, "crates/executor-v8-runtime"),
+	join(REPO_ROOT, "crates/executor-wasm-abi"),
+	join(REPO_ROOT, "crates/vfs-core"),
 	join(REPO_ROOT, "crates/vm-config"),
 	join(REPO_ROOT, "packages/build-tools/bridge-src"),
 	join(REPO_ROOT, "packages/build-tools/package.json"),
 	join(REPO_ROOT, "packages/build-tools/scripts/build-v8-bridge.mjs"),
 	join(REPO_ROOT, "packages/core/fixtures/base-filesystem.json"),
-	join(REPO_ROOT, "packages/runtime-core/fixtures/base-filesystem.json"),
+	join(REPO_ROOT, "packages/core/fixtures/base-filesystem.json"),
 	join(REPO_ROOT, "pnpm-lock.yaml"),
 ] as const;
 let ensuredSidecarBinary: string | null = null;
@@ -1321,7 +1341,7 @@ function convertSidecarRootSnapshotEntries(
 	});
 }
 
-function ensureNativeSidecarBinary(): string {
+function ensureSidecarBinary(): string {
 	// A published install has no in-repo Cargo workspace to build from: resolve
 	// the prebuilt platform binary (or the AGENTOS_SIDECAR_BIN override).
 	if (
@@ -1341,18 +1361,14 @@ function ensureNativeSidecarBinary(): string {
 	if (sidecarBinaryNeedsBuild()) {
 		const cargoBinary = findCargoBinary();
 		if (cargoBinary) {
-			execFileSync(
-				cargoBinary,
-				["build", "-q", "-p", "agentos-native-sidecar"],
-				{
-					cwd: REPO_ROOT,
-					stdio: "pipe",
-				},
-			);
+			execFileSync(cargoBinary, ["build", "-q", "-p", "agentos-sidecar"], {
+				cwd: REPO_ROOT,
+				stdio: "pipe",
+			});
 		} else if (!existsSync(SIDECAR_BINARY)) {
 			execFileSync(
 				resolveCargoBinary(),
-				["build", "-q", "-p", "agentos-native-sidecar"],
+				["build", "-q", "-p", "agentos-sidecar"],
 				{
 					cwd: REPO_ROOT,
 					stdio: "pipe",
@@ -1770,9 +1786,8 @@ async function handleHostCallback(
 		};
 	}
 
-	// The sidecar authorizes this exact callback key before forwarding it. Never
-	// reinterpret direct callback input as a registry command: a valid function
-	// schema may itself accept command-shaped data.
+	// The sidecar checks the `hostFunction` permission scope before it forwards a
+	// host function call, so a call that reaches the host is already permitted.
 
 	const parsed = definition.inputSchema.safeParse(payload.input);
 	if (!parsed.success) {
@@ -1830,182 +1845,6 @@ interface HostCallbackContext {
 	hostFunctions: ResolvedHostFunctions[];
 	hostFunctionMap: ReadonlyMap<string, HostFunction>;
 	readFile(path: string): Promise<Uint8Array>;
-}
-
-interface JsBridgeContext {
-	filesystem: VirtualFileSystem;
-}
-
-function bridgeErrorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
-}
-
-function toBridgeArgs(value: unknown): Record<string, unknown> {
-	if (!value || typeof value !== "object" || Array.isArray(value)) {
-		throw new Error("js_bridge args must be an object");
-	}
-	return value as Record<string, unknown>;
-}
-
-function bridgePath(mountId: string, value: unknown): string {
-	if (!mountId.startsWith("/")) {
-		throw new Error(`Unsupported js_bridge mount id: ${mountId}`);
-	}
-	if (typeof value !== "string") {
-		throw new Error("js_bridge path argument must be a string");
-	}
-	return posixPath.normalize(posixPath.join(mountId, value));
-}
-
-function requireBridgeNumber(value: unknown, field: string): number {
-	if (typeof value !== "number" || !Number.isFinite(value)) {
-		throw new Error(`js_bridge args.${field} must be a number`);
-	}
-	return value;
-}
-
-function decodeBridgeBytes(value: unknown, field: string): Uint8Array {
-	if (typeof value === "string") {
-		return new Uint8Array(Buffer.from(value, "base64"));
-	}
-	if (
-		Array.isArray(value) &&
-		value.every(
-			(entry) => Number.isInteger(entry) && entry >= 0 && entry <= 255,
-		)
-	) {
-		return new Uint8Array(value);
-	}
-	throw new Error(`js_bridge args.${field} must be base64 bytes`);
-}
-
-async function handleJsBridgeCall(
-	request: Extract<SidecarRequestFrame["payload"], { type: "js_bridge_call" }>,
-	context: JsBridgeContext,
-): Promise<SidecarResponsePayload> {
-	try {
-		const args = toBridgeArgs(request.args);
-		const fs = context.filesystem;
-		const path = () => bridgePath(request.mount_id, args.path);
-		let result: unknown;
-
-		switch (request.operation) {
-			case "readFile":
-				result = Buffer.from(await fs.readFile(path())).toString("base64");
-				break;
-			case "readDir":
-				result = await fs.readDir(path());
-				break;
-			case "readDirWithTypes":
-				result = await fs.readDirWithTypes(path());
-				break;
-			case "writeFile":
-				await fs.writeFile(path(), decodeBridgeBytes(args.content, "content"));
-				break;
-			case "createDir":
-				await fs.createDir(path());
-				break;
-			case "mkdir":
-				await fs.mkdir(path(), { recursive: args.recursive !== false });
-				break;
-			case "exists":
-				result = await fs.exists(path());
-				break;
-			case "stat":
-				result = await fs.stat(path());
-				break;
-			case "removeFile":
-				await fs.removeFile(path());
-				break;
-			case "removeDir":
-				await fs.removeDir(path());
-				break;
-			case "rename":
-				await fs.rename(
-					bridgePath(request.mount_id, args.oldPath),
-					bridgePath(request.mount_id, args.newPath),
-				);
-				break;
-			case "realpath":
-				result = await fs.realpath(path());
-				break;
-			case "symlink": {
-				if (typeof args.target !== "string") {
-					throw new Error("js_bridge args.target must be a string");
-				}
-				await fs.symlink(
-					args.target,
-					bridgePath(request.mount_id, args.linkPath),
-				);
-				break;
-			}
-			case "readlink":
-				result = await fs.readlink(path());
-				break;
-			case "lstat":
-				result = await fs.lstat(path());
-				break;
-			case "link":
-				await fs.link(
-					bridgePath(request.mount_id, args.oldPath),
-					bridgePath(request.mount_id, args.newPath),
-				);
-				break;
-			case "chmod":
-				await fs.chmod(path(), requireBridgeNumber(args.mode, "mode"));
-				break;
-			case "chown":
-				await fs.chown(
-					path(),
-					requireBridgeNumber(args.uid, "uid"),
-					requireBridgeNumber(args.gid, "gid"),
-					{ followSymlinks: args.followSymlinks !== false },
-				);
-				break;
-			case "utimes":
-				await fs.utimes(
-					path(),
-					requireBridgeNumber(args.atimeMs, "atimeMs"),
-					requireBridgeNumber(args.mtimeMs, "mtimeMs"),
-				);
-				break;
-			case "truncate":
-				await fs.truncate(path(), requireBridgeNumber(args.length, "length"));
-				break;
-			case "pread":
-				result = Buffer.from(
-					await fs.pread(
-						path(),
-						requireBridgeNumber(args.offset, "offset"),
-						requireBridgeNumber(args.length, "length"),
-					),
-				).toString("base64");
-				break;
-			case "pwrite":
-				await fs.pwrite(
-					path(),
-					requireBridgeNumber(args.offset, "offset"),
-					decodeBridgeBytes(args.content, "content"),
-				);
-				break;
-			default:
-				throw new Error(
-					`Unsupported js_bridge operation: ${request.operation}`,
-				);
-		}
-
-		return {
-			type: "js_bridge_result",
-			call_id: request.call_id,
-			...(result === undefined ? {} : { result }),
-		};
-	} catch (error) {
-		return {
-			type: "js_bridge_result",
-			call_id: request.call_id,
-			error: bridgeErrorMessage(error),
-		};
-	}
 }
 
 function parseHostCommandCallbackInput(
@@ -2732,8 +2571,8 @@ export class AgentOs {
 			exitHandlers: Set<(event: ProcessExit) => void>;
 		}
 	>();
-	private _languageProcessIds = new Map<string, number>();
 	private _pendingProcessRegistrations = 0;
+	private _languageProcessIds = new Map<string, number>();
 	private _executionOutputHandlers = new Map<
 		string,
 		Set<(event: InternalExecutionOutputEvent) => void>
@@ -2785,7 +2624,11 @@ export class AgentOs {
 	readonly process = {
 		exec: this._exec.bind(this),
 		execFile: this._execFile.bind(this),
-		spawn: this._spawnProcess.bind(this),
+		spawn: async (
+			command: string,
+			args: string[] = [],
+			options?: ProcessSpawnOptions,
+		) => this._spawnProcess(command, args, options),
 		get: this._getProcess.bind(this),
 		list: this._listProcesses.bind(this),
 		tree: this._processTree.bind(this),
@@ -2932,14 +2775,12 @@ export class AgentOs {
 		return getSharedAgentOsSidecarInternal(options);
 	}
 
-	static async create(
-		options?: AgentOsOptions,
-		/** @internal Product wrappers select a sidecar-owned default profile here. */
-		defaultsProfile: NonNullable<
-			CreateVmConfig["defaultsProfile"]
-		> = "agent_os",
+	static async create<HOST_FUNCTIONS extends HostFunctionSchemas>(
+		callerOptions?: AgentOsOptions<HOST_FUNCTIONS>,
 	): Promise<AgentOs> {
-		options = parseAgentOsOptions(options);
+		let options: AgentOsOptions | undefined = parseAgentOsOptions(
+			callerOptions as AgentOsOptions | undefined,
+		);
 		// Default software is resolved from immutable `.aospkg` files vendored in
 		// this package. Runtime package resolution never consults npm.
 		const defaultSoftware =
@@ -3023,7 +2864,7 @@ export class AgentOs {
 				options?.rootFilesystem,
 			);
 			let hostFunctionReference = "";
-			let rootBridge: NativeSidecarKernelProxy | null = null;
+			let rootBridge: SidecarKernelProxy | null = null;
 			let kernel: Kernel | null = null;
 			let client: SidecarProcess | null = null;
 			let createdNativeVm: CreatedVm | null = null;
@@ -3056,15 +2897,12 @@ export class AgentOs {
 				client = shared.client;
 				const session = shared.session;
 				nativeSession = session;
-				const hostPermissions = options?.permissions ?? {
-					...allowAll,
-					binding: "allow",
-				};
-				const sidecarPermissions = options?.permissions
-					? serializePermissionsForSidecar(options.permissions)
-					: undefined;
+				const sidecarPermissions = serializePermissionsForSidecar(
+					options?.permissions,
+				);
 				const createVmConfig: CreateVmConfig = {
-					defaultsProfile,
+					defaultsProfile: options?.defaultsProfile ?? "agent_os",
+					wasmBackend: options?.wasmBackend,
 					...(options?.environment !== undefined
 						? { env: { ...options.environment } }
 						: {}),
@@ -3128,6 +2966,17 @@ export class AgentOs {
 						event.ownership.vm_id === nativeVm.vmId,
 					10_000,
 				);
+				if (options?.rootFilesystem?.type !== "native") {
+					// Root bootstrap is a one-way kernel transition. Add any
+					// trusted POSIX directories before configureVm projects
+					// package command stubs and seals a read-only root.
+					await bootstrapLiveBootstrapDirectories(
+						client,
+						session,
+						nativeVm,
+						options?.rootFilesystem,
+					);
+				}
 				const configuredVm = await client.configureVm(session, nativeVm, {
 					mounts: sidecarMounts,
 					permissions: undefined,
@@ -3156,7 +3005,7 @@ export class AgentOs {
 					}
 				}
 
-				rootBridge = new NativeSidecarKernelProxy({
+				rootBridge = new SidecarKernelProxy({
 					client,
 					session,
 					vm: nativeVm,
@@ -3179,14 +3028,6 @@ export class AgentOs {
 					// shared across VMs; disposing this VM must not kill the process.
 					ownsClient: false,
 				});
-				if (options?.rootFilesystem?.type !== "native") {
-					await bootstrapLiveBootstrapDirectories(
-						client,
-						session,
-						nativeVm,
-						options?.rootFilesystem,
-					);
-				}
 
 				kernel = rootBridge as unknown as Kernel;
 				const snapshotClient = client;
@@ -3301,7 +3142,7 @@ export class AgentOs {
 			if (cleanupErrors.length > 0) {
 				throw new AggregateError(
 					[error, ...cleanupErrors],
-					"AgentOS VM creation and cleanup failed",
+					"agentOS VM creation and cleanup failed",
 				);
 			}
 			throw error;
@@ -3519,6 +3360,12 @@ export class AgentOs {
 							error,
 						),
 					);
+			}
+			if (options.signal) {
+				const abort = () => {
+					void this._killProcess(admitted.pid);
+				};
+				options.signal.addEventListener("abort", abort, { once: true });
 			}
 			return (
 				this._languageProcesses.get(admitted.pid)?.descriptor ?? descriptor
@@ -4515,11 +4362,11 @@ export class AgentOs {
 		}
 	}
 
-	private async _spawnProcess(
+	private _spawnProcess(
 		command: string,
 		args: string[] = [],
 		options: ProcessSpawnOptions = {},
-	): Promise<ProcessDescriptor> {
+	): ProcessDescriptor {
 		const releaseRegistrySlot = this._reserveProcessRegistrySlot();
 		const outputHandlers = new Set<(event: ProcessOutput) => void>();
 		const exitHandlers = new Set<(event: ProcessExit) => void>();
@@ -4563,8 +4410,8 @@ export class AgentOs {
 		command: string,
 		args: string[] = [],
 		options?: ProcessSpawnOptions,
-	): Promise<ProcessDescriptor> {
-		return this.process.spawn(command, args, options);
+	): ProcessDescriptor {
+		return this._spawnProcess(command, args, options);
 	}
 
 	/** Write data to a process's stdin. */
@@ -4629,7 +4476,6 @@ export class AgentOs {
 		if (language) {
 			if (language.exit) return language.exit;
 			const result = await this._waitExecutionResult(language.executionId);
-			if (language.exit) return language.exit;
 			const exit: ProcessExit = {
 				pid,
 				outcome:
@@ -4739,9 +4585,9 @@ export class AgentOs {
 	private async _mkdirp(path: string): Promise<void> {
 		this._assertWritableAbsolutePath(path);
 		// `kernel.mkdir` is already recursive (it defaults to recursive=true on both
-		// the native sidecar and compat kernels) and creating an existing directory is
+		// the sidecar and compat kernels) and creating an existing directory is
 		// a no-op, so a single call is sufficient. Do NOT probe each ancestor with
-		// `exists()` first: on the native sidecar every read-side op
+		// `exists()` first: on the sidecar every read-side op
 		// (exists/stat/readFile) triggers a full shadow-tree walk, so a per-component
 		// exists() loop makes `mkdir -p` cost O(components * tree).
 		await this.#kernel.mkdir(path);
@@ -4847,14 +4693,14 @@ export class AgentOs {
 
 	/**
 	 * Mount a filesystem into the running VM. Resolves once the mount has been
-	 * delivered to the native sidecar, so guest code can use it immediately
+	 * delivered to the sidecar, so guest code can use it immediately
 	 * after the returned promise settles; a delivery failure rejects instead of
 	 * leaving the mount silently host-only.
 	 */
 	private async _mountFs(descriptor: DynamicMountDescriptor): Promise<void> {
 		return this._withVmMutation(async () => {
 			this._assertSafeAbsolutePath(descriptor.path);
-			if (!(this.#kernel instanceof NativeSidecarKernelProxy)) {
+			if (!(this.#kernel instanceof SidecarKernelProxy)) {
 				throw new Error("portable dynamic mounts require the native sidecar");
 			}
 			await this.#kernel.mountDescriptor({
@@ -4871,7 +4717,7 @@ export class AgentOs {
 	private async _unmountFs(path: string): Promise<void> {
 		return this._withVmMutation(async () => {
 			this._assertSafeAbsolutePath(path);
-			if (!(this.#kernel instanceof NativeSidecarKernelProxy)) {
+			if (!(this.#kernel instanceof SidecarKernelProxy)) {
 				throw new Error("portable dynamic mounts require the native sidecar");
 			}
 			await this.#kernel.unmountDescriptor(path);
@@ -4879,7 +4725,7 @@ export class AgentOs {
 	}
 
 	private async _listMounts(): Promise<MountInfo[]> {
-		if (!(this.#kernel instanceof NativeSidecarKernelProxy)) return [];
+		if (!(this.#kernel instanceof SidecarKernelProxy)) return [];
 		return this.#kernel.listMounts();
 	}
 
@@ -5372,7 +5218,7 @@ export class AgentOs {
 
 	/** Returns all kernel processes across all active runtimes (WASM and Node). */
 	private _listAllProcesses(): KernelProcessInfo[] {
-		if (this.#kernel instanceof NativeSidecarKernelProxy) {
+		if (this.#kernel instanceof SidecarKernelProxy) {
 			return this.#kernel.snapshotProcesses();
 		}
 		return [...this.#kernel.processes.values()];
@@ -5381,7 +5227,7 @@ export class AgentOs {
 	/** Returns processes organized as a tree using ppid relationships. */
 	private async _processTree(): Promise<ProcessTreeNode[]> {
 		const records =
-			this.#kernel instanceof NativeSidecarKernelProxy
+			this.#kernel instanceof SidecarKernelProxy
 				? this.#kernel.snapshotProcessTopology()
 				: this._listAllProcesses().map((info) => ({
 						info,
@@ -5435,22 +5281,8 @@ export class AgentOs {
 	): Promise<void> {
 		const language = this._languageProcesses.get(pid);
 		if (language) {
-			if (language.exit) return;
 			language.signal = signal;
-			try {
-				await this._signalExecution(language.executionId, signal);
-			} catch (error) {
-				if (
-					!(error instanceof SidecarRejectedError) ||
-					error.detail.code !== "execution_not_running"
-				) {
-					throw error;
-				}
-				// The execution can finish between the local state check and the
-				// signal request. Reconcile its final state and preserve kill/signal's
-				// documented already-exited no-op behavior.
-				await this._waitProcess(pid);
-			}
+			await this._signalExecution(language.executionId, signal);
 			return;
 		}
 		const entry = this._processes.get(pid);
@@ -5537,7 +5369,7 @@ export class AgentOs {
 		}
 		const exitCode = response.response.exitCode;
 		if (exitCode !== null && this._processes.get(pid) === entry) {
-			if (this.#kernel instanceof NativeSidecarKernelProxy) {
+			if (this.#kernel instanceof SidecarKernelProxy) {
 				this.#kernel.reconcileReplayExit(entry.processId, exitCode);
 			}
 			this._recordProcessExit(pid, exitCode);
@@ -5592,7 +5424,7 @@ export class AgentOs {
 				this._sidecarVm,
 				descriptor,
 			);
-			if (this.#kernel instanceof NativeSidecarKernelProxy) {
+			if (this.#kernel instanceof SidecarKernelProxy) {
 				this.#kernel.registerCommandGuestPaths(
 					new Map(
 						commands.projectedCommands.map((command) => [
@@ -5662,7 +5494,7 @@ export class AgentOs {
 				commands: [...packageInfo.commands],
 			};
 			this._installedSoftware.set(installed.packageId, installed);
-			if (this.#kernel instanceof NativeSidecarKernelProxy) {
+			if (this.#kernel instanceof SidecarKernelProxy) {
 				this.#kernel.registerCommandGuestPaths(
 					new Map(
 						result.projected_commands.map((command) => [
@@ -5688,7 +5520,7 @@ export class AgentOs {
 				packageId,
 			);
 			this._installedSoftware.delete(packageId);
-			if (this.#kernel instanceof NativeSidecarKernelProxy) {
+			if (this.#kernel instanceof SidecarKernelProxy) {
 				this.#kernel.unregisterCommandGuestPaths(removedCommands);
 			}
 			return { ...installed, commands: [...installed.commands] };
@@ -5709,16 +5541,6 @@ export class AgentOs {
 			this._sidecarVm,
 		);
 	}
-	/** @deprecated Use `software.link()`. */
-	linkSoftware(descriptor: PackageDescriptor): Promise<void> {
-		return this.software.link(descriptor);
-	}
-
-	/** @deprecated Use `software.list()`. */
-	listSoftware(): Promise<{ packageName: string; commands: string[] }[]> {
-		return this.software.list();
-	}
-
 	private _handleSidecarEvent(
 		event: Parameters<SidecarProcess["onEvent"]>[0] extends (
 			event: infer T,
@@ -5726,8 +5548,6 @@ export class AgentOs {
 			? T
 			: never,
 	): void {
-		// onEvent is process-wide: execution IDs are only unique inside one VM.
-		// Keep sibling VMs' output/completion and warnings on their own handles.
 		if (
 			event.ownership.scope === "vm" &&
 			(event.ownership.connection_id !== this._sidecarSession.connectionId ||
@@ -5834,7 +5654,7 @@ export class AgentOs {
 				fillPercent: toNumber(detail.fillPercent),
 			});
 		} catch (error) {
-			console.error("AgentOS limit-warning handler failed", error);
+			console.error("agentOS limit-warning handler failed", error);
 		}
 	}
 
@@ -5906,44 +5726,19 @@ export class AgentOs {
 
 	async dispose(): Promise<void> {
 		this._cronManager.dispose();
-		const errors: unknown[] = [];
 
 		for (const entry of this._shells.values()) {
 			entry.handle.kill();
 		}
 		const shellExitPromises = [...this._pendingShellExitPromises];
-		const runningLanguageProcesses = [
-			...this._languageProcesses.entries(),
-		].filter(([, process]) => !process.exit);
-		const languageExitPromises = runningLanguageProcesses.map(
-			([, process]) =>
-				new Promise<void>((resolve) => {
-					const handleExit = () => {
-						process.exitHandlers.delete(handleExit);
-						resolve();
-					};
-					process.exitHandlers.add(handleExit);
-				}),
-		);
-		const languageKillResults = await Promise.allSettled(
-			runningLanguageProcesses.map(([pid]) => this._killProcess(pid)),
-		);
-		errors.push(
-			...languageKillResults.flatMap((result) =>
-				result.status === "rejected" ? [result.reason] : [],
-			),
-		);
-		await waitForTrackedExitPromises(
-			[...shellExitPromises, ...languageExitPromises],
-			VM_DISPOSE_DRAIN_TIMEOUT_MS,
-		);
-
 		this._shells.clear();
 		this._processes.clear();
-		this._languageProcesses.clear();
-		this._languageProcessIds.clear();
 		this._executionOutputHandlers.clear();
 		this._executionCompletedHandlers.clear();
+		await waitForTrackedExitPromises(
+			shellExitPromises,
+			SHELL_DISPOSE_TIMEOUT_MS,
+		);
 
 		this._disposeSidecarEventListener();
 		this._disposeSidecarCloseListener();
@@ -5954,6 +5749,7 @@ export class AgentOs {
 			? sidecarLease.dispose()
 			: this.#kernel.dispose();
 		const hooks = this._disposeHooks.splice(0);
+		const errors: unknown[] = [];
 		try {
 			await disposeVm;
 		} catch (error) {
@@ -5967,7 +5763,7 @@ export class AgentOs {
 		);
 		if (errors.length === 1) throw errors[0];
 		if (errors.length > 1) {
-			throw new AggregateError(errors, "AgentOS VM disposal failed");
+			throw new AggregateError(errors, "agentOS VM disposal failed");
 		}
 	}
 }
@@ -6029,7 +5825,7 @@ interface AgentOsSidecarState {
 	activeLeases: Set<AgentOsSidecarLeaseRecord>;
 	sharedPool?: string;
 	/**
-	 * The single native sidecar process shared by every VM leased from this
+	 * The single sidecar process shared by every VM leased from this
 	 * handle. Spawned lazily on first VM creation and reused thereafter so VMs
 	 * are cheap incremental tenants of one process rather than one-process-each.
 	 */
@@ -6178,7 +5974,7 @@ function ensureSharedSidecarNativeProcess(
 		state.nativeProcess = (async () => {
 			const client = SidecarProcess.spawn({
 				cwd: REPO_ROOT,
-				command: ensureNativeSidecarBinary(),
+				command: ensureSidecarBinary(),
 				args: sidecarRuntimeArgs(state.runtime),
 			});
 			// Track the child immediately — BEFORE the handshake await — so a
@@ -6186,14 +5982,14 @@ function ensureSharedSidecarNativeProcess(
 			// the spawned child is untracked, unreapable, and pins the loop).
 			state.sharedChild = sidecarChildHandle(client);
 			if (!state.sharedChild) {
-				// We reached into @rivet-dev/agentos-runtime-core internals to get the child for
+				// We reached into @rivet-dev/agentos internals to get the child for
 				// idle-unref. If that shape ever changes this returns undefined and
 				// the optimization silently stops working (one-shot scripts would
 				// hang again). Make it loud rather than a silent regression.
 				console.warn(
 					"[agentos] could not resolve the shared sidecar child handle; " +
 						"standalone scripts may not exit cleanly after dispose(). " +
-						"This usually means @rivet-dev/agentos-runtime-core internals changed.",
+						"This usually means @rivet-dev/agentos internals changed.",
 				);
 			}
 			// Apply the current hold state to the just-spawned child.

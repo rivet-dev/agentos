@@ -1,11 +1,11 @@
-//! Smoke e2e: the client spawns a real `agentos-native-sidecar`, runs the full create handshake, does a
+//! Smoke e2e: the client spawns a real `agentos-sidecar`, runs the full create handshake, does a
 //! filesystem round-trip through the kernel VFS, and shuts down cleanly.
 //!
 //! Filesystem ops are used (not `exec`) because they go straight through the kernel VFS and do not
 //! require WASM command packages, which are not checked into git.
 //!
 //! Requires the sidecar binary. Resolve order: `AGENTOS_SIDECAR_BIN`, then `CARGO_TARGET_DIR`, else
-//! `<workspace>/target/debug/agentos-native-sidecar`. Build it first: `cargo build -p agentos-native-sidecar`.
+//! `<workspace>/target/debug/agentos-sidecar`. Build it first: `cargo build -p agentos-sidecar`.
 
 use std::path::PathBuf;
 
@@ -29,7 +29,7 @@ fn sidecar_bin() -> PathBuf {
             }
         })
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target"))
-        .join("debug/agentos-native-sidecar")
+        .join("debug/agentos-sidecar")
 }
 
 #[tokio::test]
@@ -37,7 +37,7 @@ async fn smoke_connect_and_filesystem_round_trip() {
     let bin = sidecar_bin();
     assert!(
         bin.exists(),
-        "sidecar binary not found at {} (run: cargo build -p agentos-native-sidecar)",
+        "sidecar binary not found at {} (run: cargo build -p agentos-sidecar)",
         bin.display()
     );
     std::env::set_var("AGENTOS_SIDECAR_BIN", &bin);

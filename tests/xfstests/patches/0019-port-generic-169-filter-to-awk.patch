@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AgentOS Tests <tests@agentos.invalid>
+Date: Fri, 10 Jul 2026 21:08:00 -0700
+Subject: [PATCH] generic/169: use packaged awk on AgentOS
+
+---
+ tests/generic/169 | 14 +++++++++-----
+ 1 file changed, 9 insertions(+), 5 deletions(-)
+
+diff --git a/tests/generic/169 b/tests/generic/169
+index 47bfa08a..1da26073 100755
+--- a/tests/generic/169
++++ b/tests/generic/169
+@@ -11,11 +11,15 @@ _begin_fstest rw metadata auto quick
+ 
+ _show_wrote_and_stat_only()
+ {
+-	# filer out xfs_io bits we are interested in
+-	perl -ne '
+-		if (/^wrote/) { print } ;
+-		if (/^stat\.size/) { print } ;
+-	'
++	# Filter out xfs_io bits we are interested in.
++	if [ "$FSTYP" = "agentos" ]; then
++		awk '/^wrote/ { print } /^stat\.size/ { print }'
++	else
++		perl -ne '
++			if (/^wrote/) { print } ;
++			if (/^stat\.size/) { print } ;
++		'
++	fi
+ }
+ 
+ # Import common functions.
+-- 
+2.43.0

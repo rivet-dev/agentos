@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { AgentOs } from "@rivet-dev/agentos-core";
+import { AgentOs } from "@rivet-dev/agentos";
 
 const vm = await AgentOs.create({
 	// Store the root filesystem in SQLite so files survive VM recreation.

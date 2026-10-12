@@ -3,7 +3,7 @@ import {
 	buildProcessForest,
 	type ProcessForestRecord,
 } from "../src/process-forest.js";
-import { NativeSidecarKernelProxy } from "../src/sidecar/rpc-client.js";
+import { SidecarKernelProxy } from "../src/sidecar/rpc-client.js";
 
 describe("process-tree identity", () => {
 	it("links by raw topology when tracked and guest display PIDs collide", () => {
@@ -62,8 +62,8 @@ describe("process-tree identity", () => {
 		// No VM or event pump is required: exercise the real snapshot adapter with
 		// its bounded host-side registries populated directly.
 		const proxy = Object.create(
-			NativeSidecarKernelProxy.prototype,
-		) as NativeSidecarKernelProxy;
+			SidecarKernelProxy.prototype,
+		) as SidecarKernelProxy;
 		Object.assign(proxy, {
 			client,
 			session: {},

@@ -1,7 +1,7 @@
 import type {
 	AgentOsSandboxClient,
 	AgentOsSandboxProvider,
-} from "@rivet-dev/agentos-core";
+} from "@rivet-dev/agentos";
 import {
 	SandboxAgent,
 	type SandboxProvider as SandboxAgentBackend,

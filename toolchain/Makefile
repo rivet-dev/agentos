@@ -1,9 +1,19 @@
 WASM_TARGET := wasm32-wasip1
 RELEASE_DIR := target/$(WASM_TARGET)/release
 WASI_C_SYSROOT := $(CURDIR)/c/sysroot
-WASI_C_CC := $(CURDIR)/c/vendor/wasi-sdk/bin/clang
+WASI_C_THREADED_SYSROOT := $(CURDIR)/c/sysroot-threads
+WASI_C_CC := $(CURDIR)/c/scripts/wasi-clang.sh
 WASI_C_AR := $(CURDIR)/c/vendor/wasi-sdk/bin/llvm-ar
 WASI_C_LIBDIR := $(WASI_C_SYSROOT)/lib/wasm32-wasi
+BINARYEN_VERSION := 128
+WASM_OPT := $(CURDIR)/.cache/binaryen-version_$(BINARYEN_VERSION)/bin/wasm-opt
+AGENTOS_ENABLE_BINARYEN ?= 0
+export AGENTOS_ENABLE_BINARYEN
+export WASM_OPT
+ifeq ($(AGENTOS_ENABLE_BINARYEN),1)
+export PATH := $(dir $(WASM_OPT)):$(PATH)
+endif
+BINARYEN_PREREQUISITE := $(if $(filter 1,$(AGENTOS_ENABLE_BINARYEN)),wasm-opt-check)
 
 # Standalone binary output directory (configurable)
 COMMANDS_DIR ?= $(RELEASE_DIR)/commands
@@ -14,16 +24,17 @@ PATCHES := $(wildcard std-patches/*.patch)
 PATCH_SCRIPT := scripts/patch-std.sh
 
 # Disable rustc's stock self-contained WASI libraries and explicitly link the
-# command CRT and libc from AgentOS's owned sysroot. Merely putting this libdir
+# command CRT and libc from agentOS's owned sysroot. Merely putting this libdir
 # first in -L is insufficient: rustc selects its bundled libc internally.
 # Include the libc digest in rustc's metadata so Cargo relinks Rust commands
 # whenever the external sysroot is rebuilt; Cargo does not otherwise track
-# archives passed as linker arguments.
-# rustc's link drops libc's `export_name` on `__wasi_signal_trampoline`, so a
-# Rust command that installs a signal handler would never receive the signal.
-# Export it whenever the libc signal code is linked in.
+# archives passed as linker arguments. Hash every owned Rust patch and
+# companion source as well: Cargo cannot see changes copied into vendored
+# sources before a cached build.
 WASI_C_LIBC_DIGEST = $(shell if command -v sha256sum >/dev/null 2>&1; then sha256sum "$(WASI_C_LIBDIR)/libc.a"; elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$(WASI_C_LIBDIR)/libc.a"; else cksum "$(WASI_C_LIBDIR)/libc.a"; fi 2>/dev/null | cut -d ' ' -f1 | cut -c1-16)
-WASI_RUSTFLAGS = -C link-self-contained=no -C link-arg=$(WASI_C_LIBDIR)/crt1-command.o -C link-arg=$(WASI_C_LIBDIR)/libc.a -C link-arg=$(WASI_C_LIBDIR)/libwasi-emulated-pthread.a -C link-arg=-L$(WASI_C_LIBDIR) -C link-arg=--export-if-defined=__wasi_signal_trampoline -C metadata=agentos-libc-$(WASI_C_LIBC_DIGEST) --cfg tokio_unstable
+WASI_RUST_PATCH_INPUTS := $(shell find std-patches -type f \( -name '*.patch' -o -name '*.rs' \) -print 2>/dev/null | LC_ALL=C sort)
+WASI_RUST_STD_PATCH_DIGEST = $(shell cat $(WASI_RUST_PATCH_INPUTS) 2>/dev/null | if command -v sha256sum >/dev/null 2>&1; then sha256sum; elif command -v shasum >/dev/null 2>&1; then shasum -a 256; else cksum; fi | cut -d ' ' -f1 | cut -c1-16)
+WASI_RUSTFLAGS = -C link-arg=--export-if-defined=__wasi_signal_trampoline -C link-self-contained=no -C link-arg=$(WASI_C_LIBDIR)/crt1-command.o -C link-arg=$(WASI_C_LIBDIR)/libc.a -C link-arg=$(WASI_C_LIBDIR)/libwasi-emulated-pthread.a -C link-arg=-L$(WASI_C_LIBDIR) -C metadata=agentos-libc-$(WASI_C_LIBC_DIGEST)-std-$(WASI_RUST_STD_PATCH_DIGEST) --cfg tokio_unstable
 
 # Discover command binary names from colocated package crates plus toolchain
 # helper crates. Keep known slow/heavy commands out of the default software
@@ -41,9 +52,12 @@ TOOLCHAIN_COMMAND_CRATES := $(wildcard crates/commands/*)
 SKIPPED_BULK_COMMANDS := git
 COMMAND_NAMES := $(filter-out $(SKIPPED_BULK_COMMANDS),$(patsubst cmd-%,%,$(notdir $(SOFTWARE_COMMAND_CRATES))) $(notdir $(TOOLCHAIN_COMMAND_CRATES)))
 COMMAND_PACKAGES := $(foreach command,$(COMMAND_NAMES),-p $(call cargo_package_for_command,$(command)))
-COREUTILS_COMMAND_CRATES := $(wildcard ../software/coreutils/native/crates/cmd-*)
-PR_COMMAND_NAMES := $(patsubst cmd-%,%,$(notdir $(COREUTILS_COMMAND_CRATES))) _stubs
+DEFAULT_SOFTWARE := coreutils sed grep gawk findutils diffutils tar gzip
+DEFAULT_SOFTWARE_COMMAND_CRATES := $(foreach package,$(DEFAULT_SOFTWARE),$(wildcard ../software/$(package)/native/crates/cmd-*))
+PR_COMMAND_NAMES := $(sort $(patsubst cmd-%,%,$(notdir $(DEFAULT_SOFTWARE_COMMAND_CRATES))) _stubs)
 PR_COMMAND_PACKAGES := $(foreach command,$(PR_COMMAND_NAMES),-p $(call cargo_package_for_command,$(command)))
+PR_C_COMMANDS := mknod getconf grep
+PR_C_BUILD_TARGETS := $(addprefix build/,$(PR_C_COMMANDS))
 
 # Alias symlinks: link_name:target_binary
 ALIAS_SYMLINKS := \
@@ -63,20 +77,20 @@ STUB_COMMANDS := \
 	pinky who users uptime \
 	stty sync tty
 
-.PHONY: all commands pr-commands wasm wasm-opt-check host test clean patch-std patch-check vendor patch-vendor vendor-patch-check size-report install c-wasm fd-mapping-contract-wasm fd-mapping-contract-native
+.PHONY: all commands pr-commands wasm wasm-opt-check host test clean patch-std patch-check vendor patch-vendor vendor-patch-check size-report install c-wasm fd-mapping-contract-wasm fd-mapping-contract-native sysroot-threads
 
 all: wasm
 
 # Build the fast command set that lands in COMMANDS_DIR: Rust commands except
-# known heavy ones, then the opted-in fast C commands. Heavy commands
+# known heavy/external ones, then the opted-in fast C commands. Heavy commands
 # (git, duckdb, vim) are intentionally excluded
 # from the default software-build gate; `_stubs` is a required Rust input for
 # the generated stub aliases and is built with the default command set.
 commands: wasm
 	$(MAKE) -C c programs install
 
-# PR validation only needs the default coreutils package. Keep the complete
-# registry command build in `commands` for nightly and publish workflows.
+# PR validation builds every command in the eight default software packages.
+# Keep the complete registry command build in `commands` for nightly/publish.
 pr-commands:
 	@test "$(abspath $(COMMANDS_DIR))" = "$(abspath $(RELEASE_DIR)/commands)" || \
 		{ echo "refusing to clean unexpected PR command directory: $(COMMANDS_DIR)"; exit 1; }
@@ -84,13 +98,18 @@ pr-commands:
 	$(MAKE) wasm \
 		COMMAND_NAMES="$(PR_COMMAND_NAMES)" \
 		COMMAND_PACKAGES="$(PR_COMMAND_PACKAGES)"
-	$(MAKE) -C c build/mknod install COMMANDS="mknod"
+	$(MAKE) -C c $(PR_C_BUILD_TARGETS) install COMMANDS="$(PR_C_COMMANDS)"
 
 c/vendor/wasi-sdk/bin/clang:
 	$(MAKE) -C c wasi-sdk
 
 c/sysroot/lib/wasm32-wasi/libc.a:
 	$(MAKE) -C c sysroot
+
+c/sysroot-threads/lib/wasm32-wasi-threads/libc.a:
+	$(MAKE) -C c sysroot-threads
+
+sysroot-threads: c/sysroot-threads/lib/wasm32-wasi-threads/libc.a
 
 # Apply std patches if they exist
 patch-std:
@@ -151,19 +170,18 @@ vendor-patch-check: vendor
 		echo "Warning: scripts/patch-vendor.sh not found or not executable"; \
 	fi
 
-# Ensure wasm-opt is installed (needed for post-build optimization)
+# Install the pinned Binaryen build used for optimization and exception
+# finalization. The previous `cargo install wasm-opt` fallback embedded
+# Binaryen 116, which cannot translate LLVM's legacy exception encoding to the
+# finalized exnref proposal accepted by Wasmtime.
 wasm-opt-check:
-	@if ! command -v wasm-opt >/dev/null 2>&1; then \
-		echo "wasm-opt not found — installing via cargo..."; \
-		cargo install wasm-opt; \
-	else \
-		echo "wasm-opt found: $$(wasm-opt --version)"; \
-	fi
+	@./scripts/ensure-wasm-opt.sh "$(WASM_OPT)"
 
 # Build all standalone command binaries, optimize, strip .wasm extension, create symlinks
-wasm: c/sysroot/lib/wasm32-wasi/libc.a vendor patch-vendor patch-std wasm-opt-check
-	# --cfg tokio_unstable enables the patched Tokio process support used by
-	# process-conformance commands.
+wasm: c/sysroot/lib/wasm32-wasi/libc.a vendor patch-vendor patch-std $(BINARYEN_PREREQUISITE)
+	# --cfg tokio_unstable lifts tokio's wasm `compile_error!` so the patched
+	# tokio process/net modules (std-patches/crates/tokio) compile on wasm32-wasip1.
+	# Needed by codex (tokio::process/net). Harmless for commands not using tokio.
 	CC_wasm32_wasip1="$(WASI_C_CC)" \
 	AR_wasm32_wasip1="$(WASI_C_AR)" \
 	CFLAGS_wasm32_wasip1="--sysroot=$(WASI_C_SYSROOT)" \
@@ -191,7 +209,7 @@ wasm: c/sysroot/lib/wasm32-wasi/libc.a vendor patch-vendor patch-std wasm-opt-ch
 	done
 	@mkdir -p $(COMMANDS_DIR)
 	@set -e; \
-	HAS_OPT=$$(command -v wasm-opt >/dev/null 2>&1 && echo 1 || echo 0); \
+	HAS_OPT=$(AGENTOS_ENABLE_BINARYEN); \
 	if [ "$$HAS_OPT" = "1" ]; then \
 		printf '%s\n' $(COMMAND_NAMES) | \
 			xargs -P $(WASM_OPT_JOBS) -n 1 sh -c ' \
@@ -230,7 +248,7 @@ wasm: c/sysroot/lib/wasm32-wasi/libc.a vendor patch-vendor patch-std wasm-opt-ch
 	if [ "$$HAS_OPT" = "1" ]; then \
 		echo "Optimized: wasm-opt -O3 --strip-debug"; \
 	else \
-		echo "Optimized: none (wasm-opt not found)"; \
+		echo "Optimized: none (AGENTOS_ENABLE_BINARYEN=0)"; \
 	fi
 	@# Create alias symlinks (fall back to copy on platforms without symlink support)
 	@cd $(COMMANDS_DIR) && \
@@ -259,7 +277,7 @@ wasm: c/sysroot/lib/wasm32-wasi/libc.a vendor patch-vendor patch-std wasm-opt-ch
 #   C         the C opt-in set below  (toolchain/c, patched sysroot)
 # `just toolchain-cmd <name>` calls this. `make wasm` builds the fast
 # Rust set; `make -C c programs install` builds/installs the fast C set.
-C_COMMANDS := zip unzip envsubst sqlite3 curl wget grep git duckdb vim ssh ssh-keysign ssh-sk-helper
+C_COMMANDS := zip unzip envsubst sqlite3 curl wget grep git duckdb vim ssh ssh-keysign ssh-sk-helper getconf
 
 .PHONY: cmd/%
 cmd/%:
@@ -282,7 +300,7 @@ cmd/%:
 # Build ONE command binary (cargo package cmd-$(CMD) -> $(COMMANDS_DIR)/$(CMD)).
 # Usage: make wasm-cmd CMD=sh
 .PHONY: wasm-cmd
-wasm-cmd: c/sysroot/lib/wasm32-wasi/libc.a vendor patch-vendor patch-std wasm-opt-check
+wasm-cmd: c/sysroot/lib/wasm32-wasi/libc.a vendor patch-vendor patch-std $(BINARYEN_PREREQUISITE)
 	@test -n "$(CMD)" || { echo "ERROR: pass CMD=<name> (a dir under crates/commands/)"; exit 1; }
 	@crate_dir=$$(find ../software -path "*/native/crates/cmd-$(CMD)" -type d -print -quit); \
 	test -n "$$crate_dir" || test -d "crates/commands/$(CMD)" || { \
@@ -316,7 +334,7 @@ wasm-cmd: c/sysroot/lib/wasm32-wasi/libc.a vendor patch-vendor patch-std wasm-op
 			--bin $$cargo_bin; \
 	fi
 	@mkdir -p $(COMMANDS_DIR)
-	@if command -v wasm-opt >/dev/null 2>&1; then \
+	@if [ "$(AGENTOS_ENABLE_BINARYEN)" = "1" ]; then \
 		wasm-opt -O3 --strip-debug --all-features "$(RELEASE_DIR)/$(CMD).wasm" -o "$(COMMANDS_DIR)/$(CMD)"; \
 	else \
 		cp "$(RELEASE_DIR)/$(CMD).wasm" "$(COMMANDS_DIR)/$(CMD)"; \

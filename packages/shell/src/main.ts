@@ -46,9 +46,9 @@ import vim from "@agentos-software/vim";
 import wget from "@agentos-software/wget";
 import yq from "@agentos-software/yq";
 import zip from "@agentos-software/zip";
-import type { MountConfig, SoftwareInput } from "@rivet-dev/agentos-core";
-import { AgentOs } from "@rivet-dev/agentos-core";
-import { allowAll } from "@rivet-dev/agentos-core/internal/runtime-compat";
+import type { MountConfig, SoftwareInput } from "@rivet-dev/agentos";
+import { AgentOs } from "@rivet-dev/agentos";
+import { allowAll } from "@rivet-dev/agentos/internal/runtime-compat";
 import { Command, Option } from "commander";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));

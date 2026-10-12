@@ -51,6 +51,57 @@ test("allows generated wire imports and wire auth version", () => {
 	});
 });
 
+test("allows agentos-sidecar generated wire imports", () => {
+	withFixture((root) => {
+		writeSidecar(root);
+		write(
+			root,
+			"crates/sidecar/src/acp_extension.rs",
+			[
+				"use agentos_sidecar::wire::{",
+				"\tCloseStdinRequest, EventPayload, ExecuteRequest, GuestFilesystemCallRequest,",
+				"\tGuestFilesystemOperation, GuestRuntimeKind, KillProcessRequest, StreamChannel,",
+				"\tWriteStdinRequest,",
+				"};",
+				"",
+				"fn accepts(events: &[agentos_sidecar::wire::EventFrame]) {",
+				"\tlet _ = events;",
+				"}",
+				"",
+			].join("\n"),
+		);
+
+		assert.deepEqual(checkAgentOsClientProtocolCompat({ root }), []);
+	});
+});
+
+test("rejects agentos-sidecar primitive protocol imports", () => {
+	withFixture((root) => {
+		writeSidecar(root);
+		write(
+			root,
+			"crates/sidecar/src/acp_extension.rs",
+			[
+				"use agentos_sidecar::protocol::{",
+				"\tCloseStdinRequest, EventPayload, ExecuteRequest, GuestFilesystemCallRequest,",
+				"\tGuestFilesystemOperation, GuestRuntimeKind, KillProcessRequest, StreamChannel,",
+				"\tWriteStdinRequest,",
+				"};",
+				"",
+				"fn accepts(events: &[agentos_sidecar::protocol::EventFrame]) {",
+				"\tlet _ = events;",
+				"}",
+				"",
+			].join("\n"),
+		);
+
+		assert.deepEqual(checkAgentOsClientProtocolCompat({ root }), [
+			"crates/sidecar/src/acp_extension.rs:1:5 imports the agentos sidecar compatibility protocol surface; use agentos_sidecar::wire for generated wire types",
+			"crates/sidecar/src/acp_extension.rs:7:22 imports the agentos sidecar compatibility protocol surface; use agentos_sidecar::wire for generated wire types",
+		]);
+	});
+});
+
 test("rejects new agentos-client live protocol imports outside the inventory", () => {
 	withFixture((root) => {
 		writeSidecar(root);
@@ -77,6 +128,51 @@ test("rejects agentos-client test protocol imports", () => {
 
 		assert.deepEqual(checkAgentOsClientProtocolCompat({ root }), [
 			"crates/client/tests/session_e2e.rs:1:5 imports the live protocol compatibility surface; use agentos_client::wire for generated wire types or add this file to the migration inventory with justification",
+		]);
+	});
+});
+
+test("rejects production agentos-sidecar dispatch protocol imports", () => {
+	withFixture((root) => {
+		writeSidecar(root);
+		write(
+			root,
+			"crates/sidecar/src/acp_extension.rs",
+			"use agentos_sidecar::protocol::{EventPayload, RequestFrame, SidecarRequestPayload};\n",
+		);
+
+		assert.deepEqual(checkAgentOsClientProtocolCompat({ root }), [
+			"crates/sidecar/src/acp_extension.rs:1:5 imports the agentos sidecar compatibility protocol surface; use agentos_sidecar::wire for generated wire types",
+		]);
+	});
+});
+
+test("rejects agentos-sidecar test protocol imports", () => {
+	withFixture((root) => {
+		writeSidecar(root);
+		write(
+			root,
+			"crates/sidecar/tests/acp_extension.rs",
+			"use agentos_sidecar::protocol::EventPayload;\n",
+		);
+
+		assert.deepEqual(checkAgentOsClientProtocolCompat({ root }), [
+			"crates/sidecar/tests/acp_extension.rs:1:5 imports the agentos sidecar compatibility protocol surface; use agentos_sidecar::wire for generated wire types",
+		]);
+	});
+});
+
+test("rejects production agentos-sidecar qualified dispatch protocol paths", () => {
+	withFixture((root) => {
+		writeSidecar(root);
+		write(
+			root,
+			"crates/sidecar/src/acp_extension.rs",
+			"fn dispatch() { let _ = agentos_sidecar::protocol::RequestFrame::new; }\n",
+		);
+
+		assert.deepEqual(checkAgentOsClientProtocolCompat({ root }), [
+			"crates/sidecar/src/acp_extension.rs:1:25 imports the agentos sidecar compatibility protocol surface; use agentos_sidecar::wire for generated wire types",
 		]);
 	});
 });

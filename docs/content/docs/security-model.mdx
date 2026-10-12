@@ -8,7 +8,7 @@ skill: true
 agentOS is in beta and is still undergoing security review.
 </Warning>
 
-agentOS runs untrusted guest code on behalf of a trusted host application. Each VM has a
+agentOS runs untrusted guest code on behalf of a trusted client. Each VM has a
 kernel-owned filesystem, process table, socket table, pipes, PTYs, permission
 policy, and language runtimes. Guest JavaScript executes in V8; WASM and Python
 use their managed executors. Guest operations reach the host only through the
@@ -18,48 +18,37 @@ sidecar's policy-enforcing interfaces.
 
 | Component | Trust | Responsibility |
 | --- | --- | --- |
-| Host application | Trusted, except for submitted guest code and data | Chooses configuration, permissions, software sources, host functions, mounts, and credentials |
+| Client | Trusted, except for submitted guest code and data | Chooses configuration, permissions, software URLs, and credentials |
 | Sidecar, kernel, and VFS | Trusted enforcement point | Applies limits and permissions; owns processes, filesystems, sockets, and mounts |
 | Executor | Untrusted | Runs guest JavaScript, Python, WASM, and third-party code |
 
 The security boundary is **sidecar/runtime to executor**. A guest bypassing an
 applied permission, mount boundary, egress rule, or resource limit is in scope.
-A trusted host deliberately choosing a permissive configuration or unsafe
+A trusted client deliberately choosing a permissive configuration or unsafe
 credential is not a runtime escape.
 
-## Host capabilities
+## Hosted actor restrictions
 
-Core runs inside the trusted application process, so the host may explicitly
-give a VM access to host resources: host functions, host-backed mounts, external
-sandboxes, and local software paths. Each of these runs with the host's
-privileges. Expose them deliberately, and never pass guest-controlled values
-into their configuration.
-
-If your application lets untrusted users configure VMs, accept only
-serializable configuration from them and resolve it against your own allowlist
-of mounts and software sources.
-
-## Hosted VM restrictions
-
-The hosted `agentOS` actor accepts only serializable configuration. Its
-filesystem descriptors are resolved through a fixed registry, and software
-installation accepts only remote HTTPS `.aospkg` sources. It cannot receive:
+The static hosted actor accepts only serializable configuration. Its filesystem
+descriptors are resolved through a fixed whitelist, and software installation
+accepts only remote HTTPS `.aospkg` sources. It cannot receive:
 
 - a host filesystem path or host-directory mount;
-- a host function callback, closure, or arbitrary host object;
+- a host-function callback, closure, or arbitrary host object;
 - a custom filesystem or software resolver;
 - an unregistered actor implementation or lifecycle hook.
 
-Use [scoped JWTs](/docs/jwt) to give an untrusted client access to exactly one
-hosted VM.
+Embedded Core runs inside a trusted application process and may explicitly
+configure host functions, host-backed mounts, and local software paths. Those are
+embedded capabilities, not actor capabilities.
 
 ## Isolation guarantees
 
-- Guest processes are kernel-managed and never become host processes.
+- Guest processes are kernel-managed and do not become host processes.
 - Guest sockets pass through the kernel socket table and applied network policy.
 - Trusted VM setup can update mounts and command stubs without relaxing guest
   filesystem permissions, including while a VM is running.
-- Each VM's filesystem, process table, and runtime state are isolated from other VMs.
+- Each actor's filesystem and runtime state are isolated from other actors.
 - Host-backed embedded mounts are confined to the configured root on every
   operation, including symlink and `..` resolution.
 - Resource limits bound process count, descriptors, sockets, filesystem bytes,
@@ -73,13 +62,13 @@ Network access and host capabilities require explicit policy. Filesystem and
 guest process capabilities operate only within the VM-owned namespace. A scope
 can be `"allow"`, `"deny"`, or a rule set that matches the operation and target.
 
-<CodeSnippet file="examples/embedded/permissions.ts" />
+<CodeSnippet file="examples/permissions/server.ts" region="allow-one-host" />
 
 ## Operator responsibilities
 
-- Authenticate and authorize users before they can reach a VM.
-- Keep object-store credentials and package-download settings out of
-  configuration that guest code or untrusted users can read.
+- Authenticate and authorize clients before they receive an actor connection.
+- Keep object-store credentials and operator package-download settings outside
+  actor-readable durable configuration.
 - Choose permissions and resource limits for the workload.
 - Treat software URLs and config as trusted control-plane input, while treating
   the downloaded bytes and executed code as hostile.
