@@ -30,8 +30,8 @@ describe("filesystem symlink deletion", () => {
 		await vm.remove("/tmp/dir-link", { recursive: true });
 
 		await expect(vfs.lstat("/tmp/dir-link")).rejects.toThrow("ENOENT");
-		expect(new TextDecoder().decode(await vm.readFile("/tmp/real-dir/child.txt"))).toBe(
-			"keep me",
-		);
+		expect(
+			new TextDecoder().decode(await vm.readFile("/tmp/real-dir/child.txt")),
+		).toBe("keep me");
 	});
 });

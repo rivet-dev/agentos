@@ -6,7 +6,7 @@ import { transform } from "@bare-ts/tools";
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const buildToolsPackageDir = path.resolve(scriptDir, "..");
 const repoRoot = path.resolve(buildToolsPackageDir, "../..");
-const corePackageDir = path.join(repoRoot, "packages", "runtime-core");
+const corePackageDir = path.join(repoRoot, "packages", "core");
 const schemaPath = path.join(
 	repoRoot,
 	"crates/sidecar-protocol/protocol/agentos_sidecar_v1.bare",
@@ -17,13 +17,32 @@ const schema = await readFile(schemaPath, "utf8");
 let output = transform(schema, { pedantic: false, generator: "ts" });
 output = postProcess(output);
 
-await mkdir(path.dirname(outputPath), { recursive: true });
-await writeFile(outputPath, output);
+if (process.argv.includes("--check")) {
+	let current;
+	try {
+		current = await readFile(outputPath, "utf8");
+	} catch (error) {
+		if (error.code !== "ENOENT") throw error;
+	}
+	if (current !== output) {
+		throw new Error(
+			`Generated artifact is missing or stale: ${path.relative(repoRoot, outputPath)}. Run pnpm --dir packages/build-tools build:protocol.`,
+		);
+	}
+	console.log(`Verified ${path.relative(repoRoot, outputPath)}`);
+} else {
+	await mkdir(path.dirname(outputPath), { recursive: true });
+	await writeFile(outputPath, output);
+}
 
 function postProcess(code) {
+	code = code.replace(/@bare-ts\/lib/g, "@rivetkit/bare-ts");
 	code = code.replace(/^import assert from "assert"\n?/m, "");
 	code = code.replace(/^import assert from "node:assert"\n?/m, "");
 
+	if (code.includes("@bare-ts/lib")) {
+		throw new Error("failed to replace @bare-ts/lib import");
+	}
 	if (code.includes('import assert from "')) {
 		throw new Error("failed to remove generated assert import");
 	}

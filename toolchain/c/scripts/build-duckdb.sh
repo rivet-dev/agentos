@@ -24,9 +24,10 @@ TOOLCHAIN_FILE="$WASI_SDK_DIR/share/cmake/wasi-sdk.cmake"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 : "${PATCH_DIR:=$SCRIPT_DIR/../patches/duckdb}"
 COMMON_FLAGS="-I$OVERLAY_INCLUDE_DIR -D_WASI_EMULATED_PTHREAD -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_PROCESS_CLOCKS"
-COMMON_CXX_FLAGS="$COMMON_FLAGS -DDUCKDB_DISABLE_EXTENSION_LOAD -DSQLITE_NOHAVE_SYSTEM -DSQLITE_OMIT_POPEN -fwasm-exceptions -DWEBDB_FAST_EXCEPTIONS=1"
-CXX_STDLIB_INCLUDE="$SYSROOT_DIR/include/wasm32-wasi/c++/v1"
-RUNTIME_LIB_DIR="$(cd "$(dirname "$SYSROOT_DIR")" && pwd)/build/llvm-runtimes-install/lib"
+COMMON_CXX_FLAGS="$COMMON_FLAGS -DDUCKDB_DISABLE_EXTENSION_LOAD -DSQLITE_NOHAVE_SYSTEM -DSQLITE_OMIT_POPEN -fwasm-exceptions -mllvm -wasm-use-legacy-eh=false -DWEBDB_FAST_EXCEPTIONS=1"
+: "${LLVM_RUNTIME_INSTALL_DIR:?LLVM_RUNTIME_INSTALL_DIR is required}"
+CXX_STDLIB_INCLUDE="$LLVM_RUNTIME_INSTALL_DIR/include/c++/v1"
+RUNTIME_LIB_DIR="$LLVM_RUNTIME_INSTALL_DIR/lib"
 SHIM_BUILD_DIR="$DUCKDB_BUILD_DIR/agentos-shims"
 SHIM_CFLAGS="--target=wasm32-wasip1 --sysroot=$SYSROOT_DIR -isystem $SYSROOT_DIR/include/wasm32-wasi -I$OVERLAY_INCLUDE_DIR -D_GNU_SOURCE"
 SHIM_OBJECTS="$SHIM_BUILD_DIR/fcntl.o $SHIM_BUILD_DIR/mlock.o $SHIM_BUILD_DIR/sched.o"
@@ -60,6 +61,9 @@ if [ -f "$DUCKDB_BUILD_DIR/CMakeCache.txt" ]; then
   elif grep -E '^CMAKE_(C|CXX)_COMPILER_LAUNCHER:.*=.+$' "$DUCKDB_BUILD_DIR/CMakeCache.txt" >/dev/null; then
     echo "removing DuckDB CMake cache with compiler launcher at $DUCKDB_BUILD_DIR" >&2
     rm -rf "$DUCKDB_BUILD_DIR"
+  elif ! grep -Fx "CMAKE_TOOLCHAIN_FILE:FILEPATH=$TOOLCHAIN_FILE" "$DUCKDB_BUILD_DIR/CMakeCache.txt" >/dev/null; then
+    echo "removing DuckDB CMake cache for a different toolchain at $DUCKDB_BUILD_DIR" >&2
+    rm -rf "$DUCKDB_BUILD_DIR"
   fi
 fi
 
@@ -89,8 +93,8 @@ cmake \
   -DCMAKE_CXX_FLAGS="$COMMON_CXX_FLAGS -isystem $CXX_STDLIB_INCLUDE" \
   -DCMAKE_C_COMPILER_LAUNCHER="" \
   -DCMAKE_CXX_COMPILER_LAUNCHER="" \
-  -DCMAKE_EXE_LINKER_FLAGS="$SHIM_OBJECTS -L$RUNTIME_LIB_DIR -fwasm-exceptions -lwasi-emulated-mman -lwasi-emulated-process-clocks" \
-  -DCMAKE_SHARED_LINKER_FLAGS="-L$RUNTIME_LIB_DIR -fwasm-exceptions" \
+  -DCMAKE_EXE_LINKER_FLAGS="--no-wasm-opt $SHIM_OBJECTS -L$RUNTIME_LIB_DIR -fwasm-exceptions -lwasi-emulated-mman -lwasi-emulated-process-clocks" \
+  -DCMAKE_SHARED_LINKER_FLAGS="--no-wasm-opt -L$RUNTIME_LIB_DIR -fwasm-exceptions" \
   -DCMAKE_CXX_STANDARD_LIBRARIES="-lc++ -lc++abi -lunwind -lc" \
   -DBUILD_UNITTESTS=0 \
   -DENABLE_UNITTEST_CPP_TESTS=0 \
@@ -106,4 +110,24 @@ cmake \
   -DOVERRIDE_GIT_DESCRIBE="$DUCKDB_GIT_DESCRIBE"
 
 cmake --build "$DUCKDB_BUILD_DIR" --target shell -j"$(nproc 2>/dev/null || echo 4)"
-cp "$DUCKDB_BUILD_DIR/duckdb" "$DUCKDB_OUTPUT"
+
+# LLVM emits standardized EH directly, including the private C++ runtimes.
+# Binaryen remains an optional post-processing step.
+if [[ "${AGENTOS_ENABLE_BINARYEN:-0}" != "1" ]]; then
+  cp "$DUCKDB_BUILD_DIR/duckdb" "$DUCKDB_OUTPUT"
+  exit 0
+fi
+WASM_OPT="${WASM_OPT:-wasm-opt}"
+if ! command -v "$WASM_OPT" >/dev/null 2>&1; then
+  echo "pinned wasm-opt is required to finalize DuckDB exception instructions" >&2
+  exit 1
+fi
+if ! "$WASM_OPT" --version | grep -Fq "version 128"; then
+  echo "Binaryen 128 is required to finalize DuckDB exception instructions" >&2
+  exit 1
+fi
+"$WASM_OPT" \
+  --enable-exception-handling \
+  --translate-to-exnref \
+  "$DUCKDB_BUILD_DIR/duckdb" \
+  -o "$DUCKDB_OUTPUT"

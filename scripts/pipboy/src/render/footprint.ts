@@ -12,6 +12,10 @@ export function renderFootprint(c: FootprintComparison): string {
 		`### 📦 Packages · fresh \`npm install\` resolve, no lockfile · this PR vs ${ref === "base" ? "base" : "`@latest`"}`,
 		"",
 	];
+	out.push(
+		"> **Native binary provenance:** The sidecar meta package and its platform binaries resolve from the registry's published `@latest`, even when workspace packages were packed from this checkout. These install sizes and budget checks do not measure candidate native binaries. The separate native check measures candidate binaries when it runs.",
+		"",
+	);
 	if (c.latestOverBudget.length > 0) {
 		out.push(
 			`> 🔴 **Registry drift:** ${c.latestOverBudget.map((n) => code(`${n}@latest`)).join(", ")} is already over budget for anyone installing it today. This PR didn't cause it.`,

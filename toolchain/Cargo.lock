@@ -18,13 +18,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
-name = "agentos-awk"
-version = "0.1.0"
-dependencies = [
- "awk-rs",
-]
-
-[[package]]
 name = "agentos-builtins"
 version = "0.1.0"
 dependencies = [
@@ -222,7 +215,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -233,7 +226,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -295,16 +288,6 @@ name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
-
-[[package]]
-name = "awk-rs"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed6041a9be45690d0003e8d2ea488cb0a578104e591944398d96d9b7d9a0fbf9"
-dependencies = [
- "regex",
- "thiserror 1.0.69",
-]
 
 [[package]]
 name = "backtrace"
@@ -475,7 +458,7 @@ dependencies = [
  "rlimit",
  "strum 0.27.2",
  "strum_macros 0.27.2",
- "thiserror 2.0.20",
+ "thiserror",
  "tokio",
  "tracing",
  "uucore 0.4.0",
@@ -511,7 +494,7 @@ dependencies = [
  "strum 0.27.2",
  "strum_macros 0.27.2",
  "terminfo",
- "thiserror 2.0.20",
+ "thiserror",
  "tokio",
  "tracing",
  "uuid",
@@ -533,7 +516,7 @@ dependencies = [
  "nix 0.30.1",
  "nu-ansi-term",
  "reedline",
- "thiserror 2.0.20",
+ "thiserror",
  "tokio",
  "tracing",
 ]
@@ -548,7 +531,7 @@ dependencies = [
  "cached",
  "indenter",
  "peg",
- "thiserror 2.0.20",
+ "thiserror",
  "tracing",
  "utf8-chars",
 ]
@@ -621,7 +604,7 @@ dependencies = [
  "cached_proc_macro_types",
  "hashbrown 0.15.5",
  "once_cell",
- "thiserror 2.0.20",
+ "thiserror",
  "web-time",
 ]
 
@@ -746,13 +729,6 @@ name = "cmd-arch"
 version = "0.1.0"
 dependencies = [
  "uu_arch",
-]
-
-[[package]]
-name = "cmd-awk"
-version = "0.1.0"
-dependencies = [
- "agentos-awk",
 ]
 
 [[package]]
@@ -1594,7 +1570,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1b60b5124979fccd9addd89d8b97a1d6eebb4950694520c75ddd722535ea443f"
 dependencies = [
  "nix 0.31.3",
- "thiserror 2.0.20",
+ "thiserror",
 ]
 
 [[package]]
@@ -1611,7 +1587,7 @@ checksum = "4fe5f465a4f6fee88fad41b85d990f84c835335e85b5d9e6e63e0d06d28cba7c"
 dependencies = [
  "encode_unicode",
  "libc",
- "unicode-width 0.2.2",
+ "unicode-width 0.2.0",
  "windows-sys 0.61.2",
 ]
 
@@ -1894,7 +1870,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c54e03a951783e8b327515db3f2a2fd0e3bed362a96b066f341ce66ed49b4ead"
 dependencies = [
  "data-encoding",
- "syn 2.0.119",
+ "syn 3.0.4",
 ]
 
 [[package]]
@@ -1925,7 +1901,7 @@ version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "10d60334b3b2e7c9d91ef8150abfb6fa4c1c39ebbcf4a81c2e346aad939fee3e"
 dependencies = [
- "thiserror 2.0.20",
+ "thiserror",
 ]
 
 [[package]]
@@ -2035,7 +2011,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2155,7 +2131,7 @@ dependencies = [
  "nix 0.31.3",
  "onig",
  "regex",
- "thiserror 2.0.20",
+ "thiserror",
  "uucore 0.9.0",
  "walkdir",
 ]
@@ -2224,7 +2200,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "54f0d287c53ffd184d04d8677f590f4ac5379785529e5e08b1c8083acdd5c198"
 dependencies = [
  "memchr",
- "thiserror 2.0.20",
+ "thiserror",
 ]
 
 [[package]]
@@ -2976,7 +2952,7 @@ checksum = "9433806cd6b4ec1aba79c021c7e4c58fb4c3b9977c085062e611ac929998fb0c"
 dependencies = [
  "console",
  "portable-atomic",
- "unicode-width 0.2.2",
+ "unicode-width 0.2.0",
  "unit-prefix",
  "web-time",
 ]
@@ -3493,7 +3469,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3626,7 +3602,7 @@ version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ad5fd71b79026fb918650dde6d125000a233764f1c2f1659a1c71118e33ea08f"
 dependencies = [
- "unicode-width 0.2.2",
+ "unicode-width 0.2.0",
 ]
 
 [[package]]
@@ -3793,12 +3769,12 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "platform-info"
-version = "2.1.0"
+version = "2.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9368d62437c8cbb7c31ee37fd8c08a7d390e09a3ff75698a674953f46705ffcb"
+checksum = "7539aeb3fdd8cb4f6a331307cf71a1039cee75e94e8a71725b9484f4a0d9451a"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "winapi",
 ]
 
 [[package]]
@@ -4027,9 +4003,9 @@ dependencies = [
  "strip-ansi-escapes",
  "strum 0.26.3",
  "strum_macros 0.26.4",
- "thiserror 2.0.20",
+ "thiserror",
  "unicode-segmentation",
- "unicode-width 0.2.2",
+ "unicode-width 0.2.0",
 ]
 
 [[package]]
@@ -4148,7 +4124,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4547,7 +4523,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4566,7 +4542,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix 1.1.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4589,31 +4565,11 @@ checksum = "c13547615a44dc9c452a8a534638acdf07120d4b6847c8178705da06306a3057"
 
 [[package]]
 name = "thiserror"
-version = "1.0.69"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
-dependencies = [
- "thiserror-impl 1.0.69",
-]
-
-[[package]]
-name = "thiserror"
 version = "2.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec86235f5fcc2a73650310756d2ac5b138a5780bbbdfae3eeccec992c435ba4f"
 dependencies = [
- "thiserror-impl 2.0.20",
-]
-
-[[package]]
-name = "thiserror-impl"
-version = "1.0.69"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
+ "thiserror-impl",
 ]
 
 [[package]]
@@ -4883,9 +4839,9 @@ checksum = "7dd6e30e90baa6f72411720665d41d89b9a3d039dc45b8faea1ddd07f617f6af"
 
 [[package]]
 name = "unicode-width"
-version = "0.2.2"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
+checksum = "1fc81956842c57dac11422a97c3b8195a1ff727f06e85c84ed2e8aa277c9a0fd"
 
 [[package]]
 name = "unicode-xid"
@@ -5018,7 +4974,7 @@ dependencies = [
  "fluent",
  "memchr",
  "nix 0.30.1",
- "thiserror 2.0.20",
+ "thiserror",
  "uucore 0.7.0",
  "winapi-util",
  "windows-sys 0.61.2",
@@ -5043,7 +4999,7 @@ checksum = "a3a5d93a175bf8993f2e0437228e7b736658f10d642dd7476397259cc6ed6af3"
 dependencies = [
  "clap",
  "fluent",
- "thiserror 2.0.20",
+ "thiserror",
  "uucore 0.7.0",
 ]
 
@@ -5082,7 +5038,7 @@ dependencies = [
  "indicatif",
  "libc",
  "nix 0.30.1",
- "thiserror 2.0.20",
+ "thiserror",
  "uucore 0.7.0",
  "walkdir",
 ]
@@ -5130,7 +5086,7 @@ dependencies = [
  "gcd",
  "libc",
  "nix 0.30.1",
- "thiserror 2.0.20",
+ "thiserror",
  "uucore 0.7.0",
 ]
 
@@ -5175,8 +5131,8 @@ checksum = "9ca8a49c55b0396ae0a5326704130e9706fc09acd6180d795bff1154b60db708"
 dependencies = [
  "clap",
  "fluent",
- "thiserror 2.0.20",
- "unicode-width 0.2.2",
+ "thiserror",
+ "unicode-width 0.2.0",
  "uucore 0.7.0",
 ]
 
@@ -5213,8 +5169,8 @@ checksum = "e133acad1273c60086d190ac76c4caaf6f694b4e2b85276124307d9e639b442c"
 dependencies = [
  "clap",
  "fluent",
- "thiserror 2.0.20",
- "unicode-width 0.2.2",
+ "thiserror",
+ "unicode-width 0.2.0",
  "uucore 0.7.0",
 ]
 
@@ -5226,7 +5182,7 @@ checksum = "8098e158f38287fe1144c3e7337856c6ac6e6f45c9924e75592d45e78dc467e6"
 dependencies = [
  "clap",
  "fluent",
- "unicode-width 0.2.2",
+ "unicode-width 0.2.0",
  "uucore 0.7.0",
 ]
 
@@ -5239,7 +5195,7 @@ dependencies = [
  "clap",
  "fluent",
  "memchr",
- "thiserror 2.0.20",
+ "thiserror",
  "uucore 0.7.0",
 ]
 
@@ -5252,7 +5208,7 @@ dependencies = [
  "clap",
  "fluent",
  "memchr",
- "thiserror 2.0.20",
+ "thiserror",
  "uucore 0.7.0",
 ]
 
@@ -5288,7 +5244,7 @@ checksum = "99cb878e1b6b498aeb55704caa2f764ac0dd61347fd3efc6eff0bda6bf0b9536"
 dependencies = [
  "clap",
  "fluent",
- "thiserror 2.0.20",
+ "thiserror",
  "uucore 0.7.0",
 ]
 
@@ -5318,7 +5274,7 @@ dependencies = [
  "lscolors",
  "rustc-hash",
  "terminal_size",
- "thiserror 2.0.20",
+ "thiserror",
  "uucore 0.7.0",
  "uutils_term_grid",
 ]
@@ -5356,7 +5312,7 @@ dependencies = [
  "fluent",
  "rand 0.9.5",
  "tempfile",
- "thiserror 2.0.20",
+ "thiserror",
  "uucore 0.7.0",
 ]
 
@@ -5372,7 +5328,7 @@ dependencies = [
  "indicatif",
  "libc",
  "rustc-hash",
- "thiserror 2.0.20",
+ "thiserror",
  "uucore 0.7.0",
  "windows-sys 0.61.2",
 ]
@@ -5411,7 +5367,7 @@ dependencies = [
  "clap",
  "fluent",
  "memchr",
- "thiserror 2.0.20",
+ "thiserror",
  "uucore 0.7.0",
 ]
 
@@ -5483,7 +5439,7 @@ dependencies = [
  "clap",
  "fluent",
  "regex",
- "thiserror 2.0.20",
+ "thiserror",
  "uucore 0.7.0",
 ]
 
@@ -5530,7 +5486,7 @@ dependencies = [
  "fluent",
  "indicatif",
  "libc",
- "thiserror 2.0.20",
+ "thiserror",
  "uucore 0.7.0",
  "windows-sys 0.61.2",
 ]
@@ -5558,7 +5514,7 @@ dependencies = [
  "fluent",
  "num-bigint",
  "num-traits",
- "thiserror 2.0.20",
+ "thiserror",
  "uucore 0.7.0",
 ]
 
@@ -5671,7 +5627,7 @@ dependencies = [
  "rayon",
  "self_cell",
  "tempfile",
- "thiserror 2.0.20",
+ "thiserror",
  "uucore 0.7.0",
 ]
 
@@ -5684,7 +5640,7 @@ dependencies = [
  "clap",
  "fluent",
  "memchr",
- "thiserror 2.0.20",
+ "thiserror",
  "uucore 0.7.0",
 ]
 
@@ -5696,7 +5652,7 @@ checksum = "bef4ee0943facf79c267e2ff7fe8869f15b76d9ce4709d2c8117db788bc851c6"
 dependencies = [
  "clap",
  "fluent",
- "thiserror 2.0.20",
+ "thiserror",
  "uucore 0.7.0",
 ]
 
@@ -5724,7 +5680,7 @@ dependencies = [
  "memmap2",
  "regex",
  "tempfile",
- "thiserror 2.0.20",
+ "thiserror",
  "uucore 0.7.0",
 ]
 
@@ -5768,7 +5724,7 @@ dependencies = [
  "jiff",
  "nix 0.30.1",
  "parse_datetime",
- "thiserror 2.0.20",
+ "thiserror",
  "uucore 0.7.0",
  "windows-sys 0.61.2",
 ]
@@ -5808,7 +5764,7 @@ dependencies = [
  "nix 0.30.1",
  "rustc-hash",
  "string-interner",
- "thiserror 2.0.20",
+ "thiserror",
  "uucore 0.7.0",
 ]
 
@@ -5832,7 +5788,7 @@ checksum = "24f324b11a5f7d27f0f0cceb255fc755748b83dba844bd0ff4c6ddbbbc93c3d0"
 dependencies = [
  "clap",
  "fluent",
- "thiserror 2.0.20",
+ "thiserror",
  "uucore 0.7.0",
 ]
 
@@ -5869,8 +5825,8 @@ dependencies = [
  "fluent",
  "libc",
  "nix 0.30.1",
- "thiserror 2.0.20",
- "unicode-width 0.2.2",
+ "thiserror",
+ "unicode-width 0.2.0",
  "uucore 0.7.0",
 ]
 
@@ -5907,7 +5863,7 @@ dependencies = [
  "os_display",
  "phf 0.13.1",
  "procfs",
- "thiserror 2.0.20",
+ "thiserror",
  "unic-langid",
  "uucore_procs 0.4.0",
  "wild",
@@ -5954,7 +5910,7 @@ dependencies = [
  "sha2",
  "sha3",
  "sm3",
- "thiserror 2.0.20",
+ "thiserror",
  "unic-langid",
  "unit-prefix",
  "uucore_procs 0.7.0",
@@ -5982,7 +5938,7 @@ dependencies = [
  "os_display",
  "rustc-hash",
  "rustix 1.1.4",
- "thiserror 2.0.20",
+ "thiserror",
  "unic-langid",
  "uucore_procs 0.9.0",
  "wild",
@@ -6225,7 +6181,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

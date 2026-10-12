@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 use std::time::Duration;
 
 use scc::HashMap as SccHashMap;
@@ -86,7 +86,13 @@ pub(crate) struct ShellEntry {
     pub spawned_tx: watch::Sender<Option<Result<(), ClientError>>>,
     /// Exit-code channel backing `wait_shell` (TS `ShellHandle.wait`). Seeded `None`; the background
     /// event loop publishes a confirmed exit code or a typed observation failure.
-    pub exit_tx: watch::Sender<Option<Result<i32, ClientError>>>,
+    pub exit_tx: watch::Sender<Option<Result<crate::process::ProcessExit, ClientError>>>,
+}
+
+/// Own the task and its observed outcome until actual exit, even after close removes I/O admission.
+pub(crate) struct PendingShellExit {
+    pub task: JoinHandle<()>,
+    pub exit_tx: watch::Sender<Option<Result<crate::process::ProcessExit, ClientError>>>,
 }
 
 #[derive(Clone)]
@@ -94,7 +100,7 @@ pub(crate) struct ClosedShellEntry {
     pub shell_id: String,
     pub process_id: String,
     pub pid: u32,
-    pub result: Result<i32, ClientError>,
+    pub result: Result<crate::process::ProcessExit, ClientError>,
 }
 
 /// A connected terminal process and its output fan-out task.
@@ -168,7 +174,7 @@ pub(crate) struct AgentOsInner {
     // Shell registries.
     pub(crate) shells: SccHashMap<String, ShellEntry>,
     pub(crate) shell_counter: AtomicU64,
-    pub(crate) pending_shell_exits: SccHashMap<u64, JoinHandle<()>>,
+    pub(crate) pending_shell_exits: SccHashMap<String, PendingShellExit>,
     /// Bounded ordered map (cap [`crate::CLOSED_SHELL_EXIT_CODE_RETENTION_LIMIT`]) of exited shells'
     /// exit codes, so `wait_shell` issued after the shell already exited (entry dropped from
     /// `shells`) still resolves with the recorded code — mirrors the TS `_closedShellIds` retention.
@@ -188,7 +194,14 @@ pub(crate) struct AgentOsInner {
     pub(crate) disposed: AtomicBool,
     shutdown_result: tokio::sync::Mutex<Option<Result<(), ClientError>>>,
     vm_disposed: AtomicBool,
+    vm_disposal_started: AtomicBool,
+    #[cfg(test)]
+    disposal_test_request: parking_lot::Mutex<Option<DisposalTestRequest>>,
 }
+
+#[cfg(test)]
+type DisposalTestRequest =
+    Arc<dyn Fn() -> futures::future::BoxFuture<'static, Result<(), ClientError>> + Send + Sync>;
 
 /// Owns VM creation across caller cancellation. Dropping `AgentOs::create` may
 /// stop waiting, but it must not cancel a request after the sidecar may have
@@ -574,31 +587,31 @@ impl AgentOs {
                 }
             };
 
-            // 6b. Register host-function collections (if any): forward each definition via `register_host_callbacks`,
+            // 6b. Register host binding kits (if any): forward each binding definition via `register_host_callbacks`,
             //     record the host execute callbacks in the per-VM registry, and install the shared
-            //     host-callback that routes guest host-function calls back to the host by VM.
+            //     host-callback that routes guest binding calls back to the host by VM.
             let resolved_host_functions = resolve_host_functions(&config.host_functions)
                 .map_err(ClientError::InvalidConfig)?;
             if !resolved_host_functions.is_empty() {
                 let mut host_function_map: HashMap<String, ResolvedHostFunction> = HashMap::new();
                 for collection in &resolved_host_functions {
-                    let mut host_functions = HashMap::new();
-                    for host_function in &collection.functions {
-                        host_functions.insert(
-                            host_function.name.clone(),
+                    let mut bindings = HashMap::new();
+                    for binding in &collection.functions {
+                        bindings.insert(
+                            binding.name.clone(),
                             wire::RegisteredHostCallbackDefinition {
-                                description: host_function.description.clone(),
+                                description: binding.description.clone(),
                                 input_schema: json_utf8(
-                                    &host_function.input_schema,
+                                    &binding.input_schema,
                                     "host callback input schema",
                                 )?,
-                                timeout_ms: host_function.timeout_ms,
+                                timeout_ms: binding.timeout_ms,
                                 examples: Vec::new(),
                             },
                         );
                         host_function_map.insert(
-                            format!("{}:{}", collection.name, host_function.name),
-                            host_function.clone(),
+                            format!("{}:{}", collection.name, binding.name),
+                            binding.clone(),
                         );
                     }
                     match transport
@@ -610,7 +623,7 @@ impl AgentOs {
                                     description: String::new(),
                                     command_aliases: vec![format!("agentos-{}", collection.name)],
                                     registry_command_aliases: vec![String::from("agentos")],
-                                    callbacks: host_functions,
+                                    callbacks: bindings,
                                 },
                             ),
                         )
@@ -724,19 +737,12 @@ impl AgentOs {
                 disposed: AtomicBool::new(false),
                 shutdown_result: tokio::sync::Mutex::new(None),
                 vm_disposed: AtomicBool::new(false),
+                vm_disposal_started: AtomicBool::new(false),
+                #[cfg(test)]
+                disposal_test_request: parking_lot::Mutex::new(None),
             };
 
-            let client = AgentOs {
-                inner: Arc::new(inner),
-            };
-            // Host functions can read JSON arguments from the guest filesystem. Keep
-            // a weak VM route for that trusted Core-only callback without exposing
-            // any product-specific orchestration protocol.
-            let _ = vm_clients().insert(
-                vm_route_key(client.inner.transport.instance_id(), &client.inner.vm_id),
-                Arc::downgrade(&client.inner),
-            );
-            Ok(client)
+            Self::publish_created_vm(inner).await
         }
         .await;
         if result.is_err() {
@@ -758,7 +764,6 @@ impl AgentOs {
                 }
                 let route = vm_route_key(transport.instance_id(), &vm_id);
                 vm_host_functions().remove(&route);
-                vm_clients().remove(&route);
             }
             if let Some(key) = created_session_key {
                 session_js_bridge_callbacks().remove(&key);
@@ -786,7 +791,10 @@ impl AgentOs {
     ///    [`crate::SHELL_DISPOSE_TIMEOUT_MS`])
     /// 5. release the lease (or tear down the transport)
     ///
-    /// Idempotent (guarded by `disposed`).
+    /// Repeated calls preserve settled teardown results, including errors.
+    /// Cancellation before request admission permits retry; cancellation after
+    /// admission cannot safely replay a non-idempotent VM deletion. In that case
+    /// close the explicit sidecar owner to confirm process cleanup.
     /// Dynamically link a software package into the RUNNING VM (parity with the
     /// TS client's `linkSoftware`). Forwarded to the sidecar, which owns the
     /// `/opt/agentos` projection and appends the package to its live staging dir,
@@ -846,6 +854,15 @@ impl AgentOs {
                         advisory: false,
                         timeout_ms: None,
                         max_package_bytes: options.map(|options| options.max_package_bytes),
+                        max_source_url_bytes: options
+                            .map(|options| {
+                                u64::try_from(options.max_source_url_bytes).map_err(|_| {
+                                    ClientError::InvalidPackageSource(
+                                        "max_source_url_bytes exceeds u64 representation".into(),
+                                    )
+                                })
+                            })
+                            .transpose()?,
                         download_timeout_ms: options.map(|options| options.download_timeout_ms),
                         connect_timeout_ms: options.map(|options| options.connect_timeout_ms),
                         max_redirects: options.map(|options| options.max_redirects as u32),
@@ -1020,8 +1037,8 @@ impl AgentOs {
         // 2-5. Best-effort drain tracked shell and terminal tasks before the VM is disposed, bounded
         //      by SHELL_DISPOSE_TIMEOUT_MS so late output cannot race a closed transport.
         let mut exit_tasks = Vec::new();
-        self.inner.pending_shell_exits.retain(|_, task| {
-            exit_tasks.push(std::mem::replace(task, tokio::spawn(async {})));
+        self.inner.pending_shell_exits.retain(|_, pending| {
+            exit_tasks.push(std::mem::replace(&mut pending.task, tokio::spawn(async {})));
             false
         });
 
@@ -1080,30 +1097,33 @@ impl AgentOs {
         // completing secondary cleanup. The transport is shared across
         //      VMs on the same sidecar, so it is only torn down when this was the last VM (matching
         //      the TS lease/shared-sidecar lifecycle); otherwise sibling VMs keep using it.
-        // A VM dies with its sidecar process, so a lost transport leaves nothing to dispose.
-        let mut disposal_result = if self.inner.vm_disposed.load(Ordering::SeqCst)
-            || self.transport().is_disconnected()
-        {
+        // Disconnect alone is not confirmation: reap that generation before releasing VM ownership.
+        let mut disposal_result = if self.inner.vm_disposed.load(Ordering::SeqCst) {
             Ok(())
-        } else {
+        } else if self.transport().is_disconnected() {
             self.transport()
-                .request_wire(
-                    wire::OwnershipScope::VmOwnership(wire::VmOwnership {
-                        connection_id: self.inner.connection_id.clone(),
-                        session_id: self.inner.session_id.clone(),
-                        vm_id: self.inner.vm_id.clone(),
-                    }),
-                    wire::RequestPayload::DisposeVmRequest(wire::DisposeVmRequest {
-                        reason: wire::DisposeReason::Requested,
-                    }),
-                )
+                .terminate_child()
                 .await
                 .map_err(ClientError::from)
-                .and_then(|response| vm_dispose_response(&self.inner.vm_id, response))
+        } else if self.inner.vm_disposal_started.swap(true, Ordering::SeqCst) {
+            // A previous waiter was cancelled after the non-idempotent request
+            // may have reached the sidecar. Preserve the final process owner;
+            // do not guess that retrying an unknown/detached VM is safe.
+            Err(ClientError::Sidecar("ERR_AGENTOS_VM_DISPOSAL_UNCONFIRMED: VM disposal waiter was cancelled; close the owning sidecar to confirm teardown".into()))
+        } else {
+            self.request_vm_disposal().await
         };
-        if disposal_result.is_ok() {
+        if disposal_result.is_err() {
+            *shutdown_result = Some(disposal_result.clone());
+        }
+        let child_exited = self.transport().has_confirmed_child_exit();
+        let confirmed = disposal_result.is_ok() || child_exited;
+        if child_exited {
+            release_transport_callback_routes(self.transport().instance_id());
+        }
+        if confirmed {
             self.inner.vm_disposed.store(true, Ordering::SeqCst);
-            // A failed DisposeVm may need host SQLite callbacks on retry.
+            // Unconfirmed VM cleanup still owns its host callbacks until process teardown.
             // Unregister routes only after the sidecar confirms VM disposal.
             let transport_id = self.inner.transport.instance_id();
             let vm_route = vm_route_key(transport_id, &self.inner.vm_id);
@@ -1113,12 +1133,11 @@ impl AgentOs {
                 &self.inner.session_id,
             );
             let _ = vm_host_functions().remove(&vm_route);
-            let _ = vm_clients().remove(&vm_route);
             let _ = session_js_bridge_callbacks().remove(&session_key);
             let _ = session_sqlite_callbacks().remove(&session_key);
         }
         let sidecar = self.inner.sidecar.clone();
-        let lease = if disposal_result.is_ok() {
+        let lease = if confirmed {
             self.inner.sidecar_lease.lock().take()
         } else {
             None
@@ -1127,10 +1146,40 @@ impl AgentOs {
             retain_shutdown_failure(&mut disposal_result, lease.dispose().await);
         }
         retain_shutdown_failure(&mut disposal_result, sidecar.dispose_if_unused().await);
-        if disposal_result.is_ok() {
-            *shutdown_result = Some(Ok(()));
-        }
+        *shutdown_result = Some(disposal_result.clone());
         disposal_result
+    }
+
+    async fn publish_created_vm(inner: AgentOsInner) -> Result<Self, ClientError> {
+        let owner = inner.sidecar.clone();
+        let _publication = owner.vm_publication_guard().await?;
+        Ok(Self {
+            inner: Arc::new(inner),
+        })
+    }
+
+    async fn request_vm_disposal(&self) -> Result<(), ClientError> {
+        #[cfg(test)]
+        {
+            let injected = self.inner.disposal_test_request.lock().clone();
+            if let Some(request) = injected {
+                return request().await;
+            }
+        }
+        self.transport()
+            .request_wire(
+                wire::OwnershipScope::VmOwnership(wire::VmOwnership {
+                    connection_id: self.inner.connection_id.clone(),
+                    session_id: self.inner.session_id.clone(),
+                    vm_id: self.inner.vm_id.clone(),
+                }),
+                wire::RequestPayload::DisposeVmRequest(wire::DisposeVmRequest {
+                    reason: wire::DisposeReason::Requested,
+                }),
+            )
+            .await
+            .map_err(ClientError::from)
+            .and_then(|response| vm_dispose_response(&self.inner.vm_id, response))
     }
 
     // --- internal accessors used by sibling impl blocks ---
@@ -1165,7 +1214,7 @@ impl AgentOs {
         self.inner.sidecar.clone()
     }
 
-    #[cfg(feature = "service-internals")]
+    #[cfg(feature = "actor-internals")]
     pub(crate) async fn vm_config_equivalent(
         &self,
         before: &AgentOsConfig,
@@ -1248,7 +1297,20 @@ fn serialize_create_vm_config_for_sidecar(
     let (root_filesystem, native_root) =
         serialize_root_filesystem_config_for_sidecar(&config.root_filesystem)?;
     let mut create = vm_config::CreateVmConfig {
-        defaults_profile: Some(vm_config::VmDefaultsProfile::AgentOs),
+        defaults_profile: Some(
+            config
+                .defaults_profile
+                .unwrap_or(vm_config::VmDefaultsProfile::AgentOs),
+        ),
+        wasm_backend: config.wasm_backend.map(|backend| match backend {
+            crate::process::StandaloneWasmBackend::V8 => vm_config::StandaloneWasmBackend::V8,
+            crate::process::StandaloneWasmBackend::Wasmtime => {
+                vm_config::StandaloneWasmBackend::Wasmtime
+            }
+            crate::process::StandaloneWasmBackend::WasmtimeThreads => {
+                vm_config::StandaloneWasmBackend::WasmtimeThreads
+            }
+        }),
         database: config.database.clone(),
         cwd: None,
         env: config.environment.clone(),
@@ -1579,15 +1641,6 @@ fn vm_host_functions() -> &'static SccHashMap<String, Arc<VmHostFunctionRegistry
     VM_HOST_FUNCTIONS.get_or_init(SccHashMap::new)
 }
 
-/// Process-global map of VM id to client state used by trusted host functions
-/// that read JSON arguments from the guest filesystem. `Weak` prevents the
-/// registry from extending VM lifetime.
-static VM_CLIENTS: OnceCell<SccHashMap<String, Weak<AgentOsInner>>> = OnceCell::new();
-
-fn vm_clients() -> &'static SccHashMap<String, Weak<AgentOsInner>> {
-    VM_CLIENTS.get_or_init(SccHashMap::new)
-}
-
 /// Process-global map of sidecar session -> Rust-host js_bridge callback.
 ///
 /// Native root plugins can issue callbacks while `CreateVm` is still in flight, before the client
@@ -1607,6 +1660,16 @@ static SESSION_SQLITE_CALLBACKS: OnceCell<SccHashMap<String, SidecarSqliteCallba
 
 fn session_sqlite_callbacks() -> &'static SccHashMap<String, SidecarSqliteCallback> {
     SESSION_SQLITE_CALLBACKS.get_or_init(SccHashMap::new)
+}
+
+/// Release every VM/session callback owned by a confirmed-dead transport.
+/// Whole-owner teardown must also cover dropped or terminally failed VM handles.
+/// Call only after child reap; a disconnected transport may still need callbacks.
+pub(crate) fn release_transport_callback_routes(transport_id: u64) {
+    let prefix = format!("{transport_id}\0");
+    vm_host_functions().retain(|key, _| !key.starts_with(&prefix));
+    session_js_bridge_callbacks().retain(|key, _| !key.starts_with(&prefix));
+    session_sqlite_callbacks().retain(|key, _| !key.starts_with(&prefix));
 }
 
 // Sidecar processes number connections, sessions, and VMs independently, so the
@@ -1793,7 +1856,7 @@ async fn run_js_bridge_callback(
     }
 }
 
-/// The transport callback that answers guest host-function invocations by running the matching host function.
+/// The transport callback that answers guest binding invocations by running the matching host binding.
 fn host_callback_callback(transport_id: u64) -> WireSidecarCallback {
     Arc::new(move |payload, ownership| {
         Box::pin(async move {
@@ -1873,7 +1936,7 @@ async fn run_host_callback(
                 error: Some(String::from("Invalid registry callback for \"agentos\"")),
             };
         }
-        return match run_host_command_callback(vm_route, registry.as_ref(), command).await {
+        return match run_host_command_callback(registry.as_ref(), command).await {
             Ok(value) => match host_callback_json_result(value) {
                 Ok(result) => wire::HostCallbackResultResponse {
                     invocation_id: request.invocation_id,
@@ -1945,7 +2008,8 @@ struct HostCommandCallbackInput {
     command: String,
     #[serde(default)]
     args: Vec<String>,
-    cwd: String,
+    #[serde(rename = "cwd")]
+    _cwd: String,
 }
 
 fn parse_host_command_callback_input(input: &Value) -> Option<HostCommandCallbackInput> {
@@ -1958,12 +2022,11 @@ fn parse_host_command_callback_input(input: &Value) -> Option<HostCommandCallbac
 }
 
 async fn run_host_command_callback(
-    vm_route: &str,
     registry: &VmHostFunctionRegistry,
     command: HostCommandCallbackInput,
 ) -> Result<Value, String> {
     if command.command == "agentos" {
-        return handle_agentos_registry_command(vm_route, registry, &command).await;
+        return handle_agentos_registry_command(registry, &command).await;
     }
     let Some(collection) = registry
         .host_functions
@@ -1975,11 +2038,10 @@ async fn run_host_command_callback(
             command.command
         ));
     };
-    handle_agentos_host_function_command(vm_route, registry, &command, collection).await
+    handle_agentos_host_function_command(registry, &command, collection).await
 }
 
 async fn handle_agentos_registry_command(
-    vm_route: &str,
     registry: &VmHostFunctionRegistry,
     command: &HostCommandCallbackInput,
 ) -> Result<Value, String> {
@@ -2029,18 +2091,15 @@ async fn handle_agentos_registry_command(
         return describe_host_function_payload(collection, host_function_name);
     }
     invoke_host_function(
-        vm_route,
         registry,
         collection,
         host_function_name,
         command.args.get(2..).unwrap_or_default(),
-        &command.cwd,
     )
     .await
 }
 
 async fn handle_agentos_host_function_command(
-    vm_route: &str,
     registry: &VmHostFunctionRegistry,
     command: &HostCommandCallbackInput,
     collection: &ResolvedHostFunctions,
@@ -2055,23 +2114,19 @@ async fn handle_agentos_host_function_command(
         return describe_host_function_payload(collection, host_function_name);
     }
     invoke_host_function(
-        vm_route,
         registry,
         collection,
         host_function_name,
         command.args.get(1..).unwrap_or_default(),
-        &command.cwd,
     )
     .await
 }
 
 async fn invoke_host_function(
-    vm_route: &str,
     registry: &VmHostFunctionRegistry,
     collection: &ResolvedHostFunctions,
     host_function_name: &str,
     args: &[String],
-    cwd: &str,
 ) -> Result<Value, String> {
     let callback_key = format!("{}:{host_function_name}", collection.name);
     let Some(host_function) = registry.host_function_map.get(&callback_key).cloned() else {
@@ -2085,7 +2140,7 @@ async fn invoke_host_function(
     // The sidecar checks the `hostFunction` permission scope before it forwards a
     // host function call here, for both the collection command and the registry command.
 
-    let input = parse_host_function_input(vm_route, &host_function, args, cwd).await?;
+    let input = parse_host_function_input(&host_function, args).await?;
     validate_host_function_input(&host_function.input_schema, &input)
         .map_err(|error| error.to_string())?;
 
@@ -2101,10 +2156,8 @@ async fn invoke_host_function(
 }
 
 async fn parse_host_function_input(
-    vm_route: &str,
     host_function: &ResolvedHostFunction,
     args: &[String],
-    cwd: &str,
 ) -> Result<Value, String> {
     if args.first().is_some_and(|arg| arg == "--json") {
         let value = args
@@ -2115,25 +2168,9 @@ async fn parse_host_function_input(
     }
 
     if args.first().is_some_and(|arg| arg == "--json-file") {
-        let path = args
-            .get(1)
-            .ok_or_else(|| String::from("Flag --json-file requires a value"))?;
-        let guest_path = normalize_guest_path(if path.starts_with('/') {
-            path.clone()
-        } else {
-            format!("{cwd}/{path}")
-        });
-        let inner = vm_clients()
-            .read(vm_route, |_, weak| weak.clone())
-            .and_then(|weak| weak.upgrade())
-            .ok_or_else(|| String::from("Invalid JSON file: VM is no longer available"))?;
-        let bytes = AgentOs { inner }
-            .read_file(&guest_path)
-            .await
-            .map_err(|error| format!("Invalid JSON file: {error}"))?;
-        let text =
-            String::from_utf8(bytes).map_err(|error| format!("Invalid JSON file: {error}"))?;
-        return serde_json::from_str(&text).map_err(|error| format!("Invalid JSON file: {error}"));
+        return Err(String::from(
+            "EACCES: host function file input requires runtime process authorization",
+        ));
     }
 
     parse_host_function_argv(&host_function.input_schema, args)
@@ -2865,26 +2902,6 @@ fn camel_to_kebab(value: &str) -> String {
     output
 }
 
-fn normalize_guest_path(path: String) -> String {
-    let absolute = path.starts_with('/');
-    let mut parts = Vec::new();
-    for part in path.split('/') {
-        match part {
-            "" | "." => {}
-            ".." => {
-                parts.pop();
-            }
-            _ => parts.push(part),
-        }
-    }
-    let normalized = parts.join("/");
-    if absolute {
-        format!("/{normalized}")
-    } else {
-        normalized
-    }
-}
-
 fn json_object<const N: usize>(entries: [(&str, Value); N]) -> Value {
     Value::Object(Map::from_iter(
         entries
@@ -3006,20 +3023,410 @@ fn rejected_to_error(rejected: wire::RejectedResponse) -> ClientError {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, HashMap};
-    use std::sync::{Arc, Mutex};
+    use super::*;
+
+    async fn injected_disposal_vm() -> (AgentOs, Arc<SidecarProcess>, AgentOsSidecarVmLease) {
+        let transport = SidecarProcess::spawn_with_args(
+            Some("/bin/sh".into()),
+            vec!["-c".into(), "exec sleep 30".into()],
+        )
+        .await
+        .unwrap();
+        let sidecar = Arc::new(AgentOsSidecar::new(
+            "injected",
+            AgentOsSidecarPlacement::Explicit {
+                sidecar_id: "injected".into(),
+            },
+            None,
+            None,
+        ));
+        let mut lease = Some(sidecar.acquire_vm_lease().await.unwrap());
+        let peer = sidecar.acquire_vm_lease().await.unwrap();
+        let connection_id = "connection".into();
+        let session_id = "session".into();
+        let vm_id = "vm".into();
+        let projected_commands = BTreeMap::new();
+        let configured_mounts = Vec::new();
+        let config = Arc::new(AgentOsConfig::default());
+        let cron = Arc::new(CronManager::new(Arc::new(TimerScheduleDriver::new())));
+        let owned_transport = transport.clone();
+        let inner = AgentOsInner {
+            transport,
+            connection_id,
+            session_id,
+            vm_id,
+            projected_commands: parking_lot::Mutex::new(projected_commands),
+            vm_configuration_operation: tokio::sync::Mutex::new(()),
+            installed_software: parking_lot::Mutex::new(BTreeMap::new()),
+            process_registry_lock: parking_lot::Mutex::new(()),
+            pending_process_registrations: AtomicUsize::new(0),
+            processes: SccHashMap::new(),
+            process_counter: AtomicU64::new(1),
+            synthetic_pid_counter: AtomicU64::new(SYNTHETIC_PID_BASE),
+            observed_process_time_lock: parking_lot::Mutex::new(()),
+            observed_process_start_times: SccHashMap::new(),
+            observed_process_exit_times: SccHashMap::new(),
+            shells: SccHashMap::new(),
+            shell_counter: AtomicU64::new(0),
+            pending_shell_exits: SccHashMap::new(),
+            closed_shells: parking_lot::Mutex::new(VecDeque::new()),
+            terminals: SccHashMap::new(),
+            terminal_count: AtomicUsize::new(0),
+            terminal_lifecycle_lock: tokio::sync::Mutex::new(()),
+            cron,
+            config,
+            sidecar: sidecar.clone(),
+            sidecar_lease: parking_lot::Mutex::new(lease.take()),
+            dynamic_mounts: parking_lot::Mutex::new(configured_mounts),
+            disposed: AtomicBool::new(false),
+            shutdown_result: tokio::sync::Mutex::new(None),
+            vm_disposed: AtomicBool::new(false),
+            vm_disposal_started: AtomicBool::new(false),
+            #[cfg(test)]
+            disposal_test_request: parking_lot::Mutex::new(None),
+        };
+        (
+            AgentOs {
+                inner: Arc::new(inner),
+            },
+            owned_transport,
+            peer,
+        )
+    }
+
+    include!("../tests/support/terminal_replay_admission.rs");
+    include!("../tests/support/terminal_pending_exit.rs");
+
+    #[tokio::test]
+    async fn confirmed_owner_exit_releases_routes_after_terminal_vm_failure() {
+        let (vm, transport, peer) = injected_disposal_vm().await;
+        let owner = vm.inner.sidecar.clone();
+        // Attach the real tiny child to its owner; only the VM RPC result is injected.
+        owner.attach_test_transport(transport.clone()).await;
+        let ids = [transport.instance_id(), u64::MAX - transport.instance_id()];
+        let vm_keys = ids.map(|id| vm_route_key(id, "vm"));
+        let session_keys = ids.map(|id| sidecar_session_key(id, "connection", "session"));
+        for i in 0..2 {
+            assert!(vm_host_functions()
+                .insert(
+                    vm_keys[i].clone(),
+                    Arc::new(VmHostFunctionRegistry {
+                        host_functions: Vec::new(),
+                        host_function_map: HashMap::new(),
+                    })
+                )
+                .is_ok());
+            let js: SidecarJsBridgeCallback = Arc::new(|_| Box::pin(async { Ok(None) }));
+            assert!(session_js_bridge_callbacks()
+                .insert(session_keys[i].clone(), js)
+                .is_ok());
+            let sqlite: SidecarSqliteCallback = Arc::new(|_| {
+                Box::pin(async {
+                    Ok(vm_config::VmSqliteCallbackResponse::Error {
+                        message: "synthetic".into(),
+                    })
+                })
+            });
+            assert!(session_sqlite_callbacks()
+                .insert(session_keys[i].clone(), sqlite)
+                .is_ok());
+        }
+        let has_routes = |i: usize| {
+            [
+                vm_host_functions().contains(&vm_keys[i]),
+                session_js_bridge_callbacks().contains(&session_keys[i]),
+                session_sqlite_callbacks().contains(&session_keys[i]),
+            ]
+        };
+        *vm.inner.disposal_test_request.lock() = Some(Arc::new(|| {
+            Box::pin(async {
+                Err(ClientError::Sidecar(
+                    "injected terminal VM teardown failure".into(),
+                ))
+            })
+        }));
+        let first = vm.shutdown().await.unwrap_err().to_string();
+        let retained_before_exit = has_routes(0);
+        // A cancelled owner disposal cannot release callback ownership yet.
+        let connection = owner.connection.lock().await;
+        let cancelled = tokio::time::timeout(Duration::from_millis(10), owner.dispose()).await;
+        let retained_after_cancellation = has_routes(0);
+        drop(connection);
+        tokio::time::timeout(Duration::from_secs(2), owner.dispose())
+            .await
+            .unwrap()
+            .unwrap();
+        let confirmed = transport.has_confirmed_child_exit();
+        // Cleanup must happen at owner teardown, without asking the failed VM again.
+        let retained_after_exit = has_routes(0);
+        let peer_routes = has_routes(1);
+        let second = vm.shutdown().await.unwrap_err().to_string();
+        peer.dispose().await.unwrap();
+        for i in 0..2 {
+            vm_host_functions().remove(&vm_keys[i]);
+            session_js_bridge_callbacks().remove(&session_keys[i]);
+            session_sqlite_callbacks().remove(&session_keys[i]);
+        }
+        assert_eq!(retained_before_exit, [true; 3]);
+        assert!(cancelled.is_err());
+        assert_eq!(retained_after_cancellation, [true; 3]);
+        assert!(confirmed);
+        assert_eq!(first, second, "terminal VM failure must remain unchanged");
+        assert_eq!(
+            peer_routes, [true; 3],
+            "another transport's routes must survive"
+        );
+        assert_eq!(
+            retained_after_exit, [false; 3],
+            "confirmed owner teardown retained dead callback routes"
+        );
+    }
+
+    #[tokio::test]
+    async fn confirmed_nonzero_owner_exit_releases_routes_without_vm_handle() {
+        let owner = AgentOs::create_sidecar(None).await.unwrap();
+        let transport = SidecarProcess::spawn_with_args(
+            Some("/bin/sh".into()),
+            vec!["-c".into(), "exit 17".into()],
+        )
+        .await
+        .unwrap();
+        owner.attach_test_transport(transport.clone()).await;
+        let key = vm_route_key(transport.instance_id(), "dropped-vm");
+        assert!(vm_host_functions()
+            .insert(
+                key.clone(),
+                Arc::new(VmHostFunctionRegistry {
+                    host_functions: Vec::new(),
+                    host_function_map: HashMap::new(),
+                })
+            )
+            .is_ok());
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !transport.is_disconnected() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let first = tokio::time::timeout(Duration::from_secs(2), owner.dispose())
+            .await
+            .unwrap();
+        let retained = vm_host_functions().contains(&key);
+        let second = owner.dispose().await;
+        vm_host_functions().remove(&key);
+        assert!(transport.has_confirmed_child_exit());
+        let first = first.unwrap_err().to_string();
+        assert!(first.contains("17"));
+        assert_eq!(first, second.unwrap_err().to_string());
+        assert!(
+            !retained,
+            "confirmed nonzero exit retained a dropped VM's callback route"
+        );
+    }
+
+    #[tokio::test]
+    async fn disconnected_vm_shutdown_confirms_reap_before_releasing_lease() {
+        let (vm, transport, peer) = injected_disposal_vm().await;
+        let peer_route = vm_route_key(transport.instance_id(), "peer-vm");
+        assert!(vm_host_functions()
+            .insert(
+                peer_route.clone(),
+                Arc::new(VmHostFunctionRegistry {
+                    host_functions: Vec::new(),
+                    host_function_map: HashMap::new(),
+                })
+            )
+            .is_ok());
+        transport.kill_child();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !transport.is_disconnected() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let result = vm.shutdown().await;
+        let confirmed = transport.has_confirmed_child_exit();
+        let peer_route_retained = vm_host_functions().contains(&peer_route);
+        vm_host_functions().remove(&peer_route);
+        let count = vm.inner.sidecar.describe().active_vm_count;
+        tokio::time::timeout(Duration::from_secs(2), transport.terminate_child())
+            .await
+            .unwrap()
+            .unwrap();
+        peer.dispose().await.unwrap();
+        vm.inner.sidecar.dispose().await.unwrap();
+        assert!(result.is_ok());
+        assert!(
+            confirmed,
+            "VM lease cannot release before confirmed child reap"
+        );
+        assert_eq!(count, 1, "peer lease remains independently owned");
+        assert!(
+            !peer_route_retained,
+            "reaped child retained another VM's callback route"
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrent_vm_disposal_callers_observe_one_terminal_failure() {
+        let (vm, transport, peer) = injected_disposal_vm().await;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let seen = calls.clone();
+        *vm.inner.disposal_test_request.lock() = Some(Arc::new(move || {
+            seen.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async {
+                tokio::task::yield_now().await;
+                Err(ClientError::Sidecar("injected terminal failure".into()))
+            })
+        }));
+        let (first, second) = tokio::join!(vm.shutdown(), vm.shutdown());
+        tokio::time::timeout(Duration::from_secs(2), transport.terminate_child())
+            .await
+            .unwrap()
+            .unwrap();
+        peer.dispose().await.unwrap();
+        vm.inner.sidecar.dispose().await.unwrap();
+        assert_eq!(
+            first.unwrap_err().to_string(),
+            second.unwrap_err().to_string()
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn cancellation_before_disposal_request_allows_first_attempt() {
+        let (vm, transport, peer) = injected_disposal_vm().await;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let seen = calls.clone();
+        *vm.inner.disposal_test_request.lock() = Some(Arc::new(move || {
+            seen.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Err(ClientError::Sidecar("injected first attempt".into())) })
+        }));
+        let locked = vm.inner.shutdown_result.lock().await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), vm.shutdown())
+                .await
+                .is_err()
+        );
+        drop(locked);
+        let result = vm.shutdown().await;
+        tokio::time::timeout(Duration::from_secs(2), transport.terminate_child())
+            .await
+            .unwrap()
+            .unwrap();
+        peer.dispose().await.unwrap();
+        vm.inner.sidecar.dispose().await.unwrap();
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("injected first attempt"));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn completed_creation_is_not_published_after_owner_disposal() {
+        // The gate represents the final create/setup response already arriving.
+        // Exercise the actual publication helper; no fake VM implementation.
+        let (vm, transport, peer) = injected_disposal_vm().await;
+        let sidecar = vm.inner.sidecar.clone();
+        let inner = Arc::try_unwrap(vm.inner).ok().unwrap();
+        let (release, gate) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            gate.await.unwrap();
+            AgentOs::publish_created_vm(inner).await
+        });
+        sidecar.dispose().await.unwrap();
+        release.send(()).unwrap();
+        let result = task.await.unwrap();
+        tokio::time::timeout(Duration::from_secs(2), transport.terminate_child())
+            .await
+            .unwrap()
+            .unwrap();
+        peer.dispose().await.unwrap();
+        assert!(
+            result.is_err(),
+            "completed creation must not publish a VM on a disposed owner"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelled_vm_disposal_does_not_replay_unconfirmed_request() {
+        let (vm, transport, peer) = injected_disposal_vm().await;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let seen = calls.clone();
+        *vm.inner.disposal_test_request.lock() = Some(Arc::new(move || {
+            seen.fetch_add(1, Ordering::SeqCst);
+            Box::pin(std::future::pending())
+        }));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), vm.shutdown())
+                .await
+                .is_err()
+        );
+        let result = vm.shutdown().await;
+        tokio::time::timeout(Duration::from_secs(2), transport.terminate_child())
+            .await
+            .unwrap()
+            .unwrap();
+        peer.dispose().await.unwrap();
+        vm.inner.sidecar.dispose().await.unwrap();
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("ERR_AGENTOS_VM_DISPOSAL_UNCONFIRMED"));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn settled_vm_disposal_failure_is_not_replayed() {
+        let (vm, transport, peer) = injected_disposal_vm().await;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let seen = calls.clone();
+        *vm.inner.disposal_test_request.lock() = Some(Arc::new(move || {
+            let first = seen.fetch_add(1, Ordering::SeqCst) == 0;
+            Box::pin(async move {
+                Err(ClientError::Sidecar(
+                    if first {
+                        "injected teardown timeout after detach"
+                    } else {
+                        "unknown VM after replay"
+                    }
+                    .into(),
+                ))
+            })
+        }));
+        let first = vm.shutdown().await.unwrap_err().to_string();
+        let second = vm.shutdown().await.unwrap_err().to_string();
+        let retained = vm.inner.sidecar_lease.lock().is_some();
+        let count = vm.inner.sidecar.describe().active_vm_count;
+        tokio::time::timeout(Duration::from_secs(2), transport.terminate_child())
+            .await
+            .unwrap()
+            .unwrap();
+        peer.dispose().await.unwrap();
+        vm.inner.sidecar.dispose().await.unwrap();
+        assert_eq!(first, second, "retain original terminal failure");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "do not replay non-idempotent disposal"
+        );
+        assert!(retained);
+        assert_eq!(count, 2, "failed VM must preserve its peer lease");
+    }
+    use std::collections::BTreeMap;
 
     use super::{
-        run_host_callback, serialize_create_vm_config_for_sidecar,
-        serialize_root_filesystem_config_for_sidecar, try_vm_mutation, vm_host_functions,
-        AgentOsCreationTask, VmHostFunctionRegistry,
+        serialize_create_vm_config_for_sidecar, serialize_root_filesystem_config_for_sidecar,
+        try_vm_mutation, AgentOsCreationTask,
     };
     use crate::config::{
         AgentOsConfig, AgentOsLimits, FsPermissionRule, FsPermissions, HostFunctionLimits,
         HttpLimits, JsRuntimeLimits, MountPlugin, PatternPermissions, PermissionMode, Permissions,
-        PythonLimits, ResolvedHostFunction, ResolvedHostFunctions, ResourceLimits,
-        RootFilesystemConfig, RootFilesystemKind, RootFilesystemMode, RootLowerInput,
-        RulePermissions, WasmLimits,
+        PythonLimits, ResourceLimits, RootFilesystemConfig, RootFilesystemKind, RootFilesystemMode,
+        RootLowerInput, RulePermissions, WasmLimits,
     };
     use crate::fs::{
         DirEntryType, FilesystemEntry, FilesystemEntryEncoding, FilesystemSnapshotEntries,
@@ -3030,10 +3437,223 @@ mod tests {
         RootFilesystemEntryKind, RootFilesystemLowerDescriptor,
         RootFilesystemMode as ConfigRootFilesystemMode, VmDefaultsProfile,
     };
-    use serde_json::json;
+
+    // Each sidecar starts its identifier counters independently. Keep both the
+    // bootstrap session scope and the later VM scope identical across transports.
+    fn callback_route_test_owners() -> [super::wire::OwnershipScope; 2] {
+        let session_id = format!("callback-route-{}", uuid::Uuid::new_v4());
+        [
+            super::wire_session_ownership("connection-1", &session_id),
+            super::wire_vm_ownership("connection-1", &session_id, "vm-1"),
+        ]
+    }
+
+    struct CallbackRouteTestCleanup([String; 2]);
+
+    impl Drop for CallbackRouteTestCleanup {
+        fn drop(&mut self) {
+            for key in &self.0 {
+                super::session_js_bridge_callbacks().remove(key);
+                super::session_sqlite_callbacks().remove(key);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn callback_routes_isolate_js_mounts_across_transports_and_removal() {
+        use super::{
+            js_bridge_call_callback, session_js_bridge_callbacks, wire, wire_ownership_session_key,
+            SidecarJsBridgeCallback,
+        };
+        use serde_json::json;
+        use std::sync::{Arc, Mutex};
+
+        let owners = callback_route_test_owners();
+        let transports = [901, 902];
+        let keys = transports.map(|id| wire_ownership_session_key(id, &owners[0]).unwrap());
+        let _cleanup = CallbackRouteTestCleanup(keys.clone());
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        for (id, key) in transports.into_iter().zip(&keys) {
+            let calls = Arc::clone(&calls);
+            let callback: SidecarJsBridgeCallback = Arc::new(move |call| {
+                assert_eq!(call.mount_id, "/mnt/shared");
+                assert_eq!(call.operation, "readFile");
+                assert_eq!(call.args, json!({ "path": "/secret.txt" }));
+                calls.lock().unwrap().push(id);
+                Box::pin(async move { Ok(Some(json!({ "owner": id }))) })
+            });
+            assert!(session_js_bridge_callbacks()
+                .insert(key.clone(), callback)
+                .is_ok());
+        }
+        let request = || {
+            wire::SidecarRequestPayload::JsBridgeCallRequest(wire::JsBridgeCallRequest {
+                call_id: "read-1".into(),
+                mount_id: "/mnt/shared".into(),
+                operation: "readFile".into(),
+                args: json!({ "path": "/secret.txt" }).to_string(),
+            })
+        };
+        for owner in &owners {
+            for id in transports {
+                let response = js_bridge_call_callback(id)(request(), owner.clone())
+                    .await
+                    .unwrap();
+                let wire::SidecarResponsePayload::JsBridgeResultResponse(response) = response
+                else {
+                    panic!("expected filesystem callback response");
+                };
+                assert_eq!(response.call_id, "read-1");
+                assert_eq!(response.error, None);
+                assert_eq!(response.result, Some(json!({ "owner": id }).to_string()));
+            }
+        }
+        assert!(session_js_bridge_callbacks().remove(&keys[0]).is_some());
+        for owner in &owners {
+            let response = js_bridge_call_callback(transports[0])(request(), owner.clone())
+                .await
+                .unwrap();
+            let wire::SidecarResponsePayload::JsBridgeResultResponse(response) = response else {
+                panic!("expected filesystem callback rejection");
+            };
+            assert_eq!(response.result, None);
+            assert_eq!(
+                response.error.as_deref(),
+                Some("No js_bridge callback registered for sidecar session")
+            );
+            let response = js_bridge_call_callback(transports[1])(request(), owner.clone())
+                .await
+                .unwrap();
+            let wire::SidecarResponsePayload::JsBridgeResultResponse(response) = response else {
+                panic!("expected surviving filesystem callback response");
+            };
+            assert_eq!(response.error, None);
+            assert_eq!(
+                response.result,
+                Some(json!({ "owner": transports[1] }).to_string())
+            );
+        }
+        assert_eq!(*calls.lock().unwrap(), vec![901, 902, 901, 902, 902, 902]);
+    }
+
+    #[tokio::test]
+    async fn callback_routes_isolate_sqlite_across_transports_and_removal() {
+        use super::{
+            session_sqlite_callbacks, sqlite_callback_callback, vm_config, wire,
+            wire_ownership_session_key, SidecarSqliteCallback,
+        };
+        use std::sync::{Arc, Mutex};
+        use vm_config::{
+            VmSqliteCallbackRequest, VmSqliteCallbackResponse, VmSqliteQueryResult,
+            VmSqliteStatement, VmSqliteValue,
+        };
+
+        let owners = callback_route_test_owners();
+        let transports = [901, 902];
+        let keys = transports.map(|id| wire_ownership_session_key(id, &owners[0]).unwrap());
+        let _cleanup = CallbackRouteTestCleanup(keys.clone());
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let query = VmSqliteCallbackRequest::Query {
+            database: "vm-state".into(),
+            statement: VmSqliteStatement {
+                sql: "SELECT owner FROM synthetic_state".into(),
+                params: Vec::new(),
+                expected_changes: None,
+            },
+        };
+        let answer = |id| VmSqliteCallbackResponse::Query {
+            result: VmSqliteQueryResult {
+                columns: vec!["owner".into()],
+                rows: vec![vec![VmSqliteValue::Integer(id as i64)]],
+                changes: 0,
+                last_insert_row_id: None,
+            },
+        };
+        for (id, key) in transports.into_iter().zip(&keys) {
+            let calls = Arc::clone(&calls);
+            let expected = query.clone();
+            let response = answer(id);
+            let callback: SidecarSqliteCallback = Arc::new(move |request| {
+                assert_eq!(request, expected);
+                calls.lock().unwrap().push(id);
+                let response = response.clone();
+                Box::pin(async move { Ok(response) })
+            });
+            assert!(session_sqlite_callbacks()
+                .insert(key.clone(), callback)
+                .is_ok());
+        }
+        let request = || {
+            wire::SidecarRequestPayload::ExtEnvelope(wire::ExtEnvelope {
+                namespace: vm_config::VM_SQLITE_CALLBACK_NAMESPACE.into(),
+                payload: serde_json::to_vec(&query).unwrap(),
+            })
+        };
+        let decode = |response| {
+            let wire::SidecarResponsePayload::ExtEnvelope(envelope) = response else {
+                panic!("expected SQLite callback envelope");
+            };
+            assert_eq!(envelope.namespace, vm_config::VM_SQLITE_CALLBACK_NAMESPACE);
+            serde_json::from_slice::<VmSqliteCallbackResponse>(&envelope.payload).unwrap()
+        };
+        for owner in &owners {
+            for id in transports {
+                let response = sqlite_callback_callback(id)(request(), owner.clone())
+                    .await
+                    .unwrap();
+                assert_eq!(decode(response), answer(id));
+            }
+        }
+        assert!(session_sqlite_callbacks().remove(&keys[0]).is_some());
+        for owner in &owners {
+            let response = sqlite_callback_callback(transports[0])(request(), owner.clone())
+                .await
+                .unwrap();
+            assert_eq!(
+                decode(response),
+                VmSqliteCallbackResponse::Error {
+                    message: "no SQLite callback registered for sidecar session".into(),
+                }
+            );
+            let response = sqlite_callback_callback(transports[1])(request(), owner.clone())
+                .await
+                .unwrap();
+            assert_eq!(decode(response), answer(transports[1]));
+        }
+        assert_eq!(*calls.lock().unwrap(), vec![901, 902, 901, 902, 902, 902]);
+    }
+
+    #[tokio::test]
+    async fn host_callback_file_input_requires_runtime_process_authorization() {
+        use super::parse_host_function_input;
+        use crate::config::ResolvedHostFunction;
+        use serde_json::json;
+        use std::sync::Arc;
+
+        let function = ResolvedHostFunction {
+            name: "echo".into(),
+            description: String::new(),
+            input_schema: json!({"type": "object"}),
+            timeout_ms: None,
+            execute: Arc::new(|_| panic!("unresolved file input must not execute a host callback")),
+        };
+        let error =
+            parse_host_function_input(&function, &["--json-file".into(), "/tmp/input.json".into()])
+                .await
+                .expect_err("the client cannot authorize a guest-selected filesystem path");
+        assert!(error.contains("EACCES"));
+        assert!(error.contains("runtime process authorization"));
+    }
 
     #[tokio::test]
     async fn command_shaped_input_cannot_redirect_an_authorized_host_callback() {
+        use super::{run_host_callback, vm_host_functions, VmHostFunctionRegistry};
+        use crate::config::{ResolvedHostFunction, ResolvedHostFunctions};
+        use serde_json::json;
+        use std::{
+            collections::HashMap,
+            sync::{Arc, Mutex},
+        };
         let vm_id = format!("host-callback-test-{}", uuid::Uuid::new_v4());
         let calls = Arc::new(Mutex::new(Vec::new()));
         let allowed_calls = Arc::clone(&calls);
@@ -3199,6 +3819,17 @@ mod tests {
     fn create_vm_omits_permissions_so_sidecar_applies_product_defaults() {
         let config = serialize_create_vm_config_for_sidecar(&AgentOsConfig::default()).unwrap();
         assert_eq!(config.defaults_profile, Some(VmDefaultsProfile::AgentOs));
+        assert_eq!(config.permissions, None);
+    }
+
+    #[test]
+    fn create_vm_can_select_secure_sidecar_defaults() {
+        let config = serialize_create_vm_config_for_sidecar(&AgentOsConfig {
+            defaults_profile: Some(VmDefaultsProfile::Secure),
+            ..AgentOsConfig::default()
+        })
+        .unwrap();
+        assert_eq!(config.defaults_profile, Some(VmDefaultsProfile::Secure));
         assert_eq!(config.permissions, None);
     }
 
@@ -3403,6 +4034,8 @@ mod tests {
                 }),
                 http: Some(HttpLimits {
                     max_fetch_response_bytes: Some(1024),
+                    max_chunk_size_line_bytes: Some(32768),
+                    max_pending_response_bytes: Some(524288),
                 }),
                 tls: Some(crate::TlsLimits {
                     max_buffered_bytes: Some(2048),
@@ -3418,6 +4051,7 @@ mod tests {
                     ..Default::default()
                 }),
                 js_runtime: Some(JsRuntimeLimits {
+                    max_readline_history_entries: Some(2048),
                     v8_heap_limit_mb: Some(64),
                     sync_rpc_wait_timeout_ms: Some(2_000),
                     cpu_time_limit_ms: Some(30_000),
@@ -3432,7 +4066,9 @@ mod tests {
                 wasm: Some(WasmLimits {
                     prewarm_timeout_ms: Some(30_000),
                     runner_heap_limit_mb: Some(2_048),
-                    runner_cpu_time_limit_ms: Some(60_000),
+                    active_cpu_time_limit_ms: Some(60_000),
+                    wall_clock_limit_ms: Some(120_000),
+                    deterministic_fuel: Some(1_000_000),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -3441,6 +4077,17 @@ mod tests {
         })
         .expect("serialize create VM config");
         let limits = config.limits.expect("limits config");
+        let http = limits.http.as_ref().unwrap();
+        assert_eq!(http.max_chunk_size_line_bytes, Some(32768));
+        assert_eq!(http.max_pending_response_bytes, Some(524288));
+        assert_eq!(
+            limits
+                .js_runtime
+                .as_ref()
+                .unwrap()
+                .max_readline_history_entries,
+            Some(2048)
+        );
 
         assert_eq!(
             limits.tls.expect("TLS limits").max_buffered_bytes,
@@ -3496,7 +4143,9 @@ mod tests {
         let wasm = limits.wasm.expect("wasm limits");
         assert_eq!(wasm.prewarm_timeout_ms, Some(30_000));
         assert_eq!(wasm.runner_heap_limit_mb, Some(2_048));
-        assert_eq!(wasm.runner_cpu_time_limit_ms, Some(60_000));
+        assert_eq!(wasm.active_cpu_time_limit_ms, Some(60_000));
+        assert_eq!(wasm.wall_clock_limit_ms, Some(120_000));
+        assert_eq!(wasm.deterministic_fuel, Some(1_000_000));
     }
 
     #[test]

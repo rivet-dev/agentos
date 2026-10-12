@@ -173,7 +173,10 @@ async function listen(server: SshServer): Promise<number> {
   return (server.address() as import('node:net').AddressInfo).port;
 }
 
-async function createSshKernel(loopbackExemptPorts: number[]) {
+async function createSshKernel(
+  loopbackExemptPorts: number[],
+  wasmActiveCpuTimeLimitMs?: number,
+) {
   const vfs = createInMemoryFileSystem();
   await (vfs as any).chmod('/', 0o1777);
   await vfs.mkdir('/tmp', { recursive: true });
@@ -182,6 +185,9 @@ async function createSshKernel(loopbackExemptPorts: number[]) {
     filesystem: vfs,
     permissions: allowAll,
     loopbackExemptPorts,
+    ...(wasmActiveCpuTimeLimitMs === undefined
+      ? {}
+      : { limits: { wasm: { activeCpuTimeLimitMs: wasmActiveCpuTimeLimitMs } } }),
     syncFilesystemOnDispose: false,
   });
   await kernel.mount(createWasmVmRuntime({ commandDirs: sshCommandDirs }));
@@ -698,8 +704,33 @@ describeIf(hasSsh, 'ssh command', () => {
       rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('clones and pushes over ssh://', async () => {
-      ({ kernel, vfs, dispose } = await createSshKernel([port]));
+    it('rejects a Git clone when the SSH host key differs from known_hosts', async () => {
+      ({ kernel, vfs, dispose } = await createSshKernel([port], 120_000));
+      const home = await guestHome(kernel);
+      await seedSshDir(
+        kernel,
+        vfs,
+        home,
+        keys.clientKey.private,
+        knownHostsEntry(port, keys.otherHostKey.public),
+      );
+
+      const url = `ssh://${SSH_USER}@127.0.0.1:${port}/origin.git`;
+      const cloned = await kernel.exec(
+        git(`-c core.sshCommand='ssh -o BatchMode=yes -o StrictHostKeyChecking=yes' clone ${url} /tmp/rejected-clone`),
+      );
+      expect(cloned.exitCode).not.toBe(0);
+      expect(cloned.stderr).toMatch(
+        /REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verification failed/i,
+      );
+      expect(await vfs.exists('/tmp/rejected-clone/.git')).toBe(false);
+    }, 300_000);
+
+    it('clones, pushes, and fetches over ssh://', async () => {
+      // This is a functional transport/concurrency test, not the active-CPU
+      // safeguard test. A cold Wasmtime Git + OpenSSH process tree can exceed
+      // the 30s default; limit behavior is covered by wasmtime_safety.rs.
+      ({ kernel, vfs, dispose } = await createSshKernel([port], 120_000));
       const home = await guestHome(kernel);
       await seedSshDir(
         kernel,
@@ -739,6 +770,38 @@ describeIf(hasSsh, 'ssh command', () => {
       );
       expect(originRef.status).toBe(0);
       expect(originRef.stdout.trim()).toMatch(/^[0-9a-f]{40,64}$/);
-    });
+
+      const pushedFile = spawnSync(
+        'git',
+        ['-C', join(repoRoot, 'origin.git'), 'show', 'refs/heads/ssh-push:pushed.txt'],
+        { encoding: 'utf8' },
+      );
+      expect(pushedFile.status).toBe(0);
+      expect(pushedFile.stdout).toBe('pushed over ssh\n');
+
+      // Advance the host-side repository and fetch through the same SSH
+      // transport into the existing guest clone.
+      const worktree = join(repoRoot, 'worktree');
+      runHostGit(['-C', worktree, 'checkout', '-b', 'fetched-branch']);
+      writeFileSync(join(worktree, 'fetched.txt'), 'fetched over ssh\n');
+      runHostGit(['-C', worktree, 'add', 'fetched.txt']);
+      runHostGit([
+        '-C', worktree,
+        '-c', 'user.name=agentos', '-c', 'user.email=agentos@example.invalid',
+        'commit', '-m', 'new remote branch',
+      ]);
+      runHostGit([
+        '-C', worktree, 'push', join(repoRoot, 'origin.git'),
+        'HEAD:refs/heads/fetched-branch',
+      ]);
+
+      const fetched = await kernel.exec(git('-C /tmp/clone fetch origin'));
+      expect(fetched.exitCode, fetched.stderr).toBe(0);
+      const fetchedFile = await run(
+        kernel,
+        git('-C /tmp/clone show refs/remotes/origin/fetched-branch:fetched.txt'),
+      );
+      expect(fetchedFile.stdout).toBe('fetched over ssh\n');
+    }, 300_000);
   });
 });

@@ -22,9 +22,9 @@
 		"README.md"
 	],
 	"scripts": {
-		"build": "tsup src/index.ts src/cli.ts --format esm --dts",
+		"build": "node scripts/build.mjs",
 		"check-types": "tsc --noEmit",
-		"test": "vitest run"
+		"test": "node scripts/test.mjs"
 	},
 	"devDependencies": {
 		"@types/node": "^22.10.2",
@@ -33,6 +33,6 @@
 		"vitest": "^2.1.9"
 	},
 	"dependencies": {
-		"@bare-ts/lib": "^0.4.1"
+		"@rivetkit/bare-ts": "^0.6.2"
 	}
 }

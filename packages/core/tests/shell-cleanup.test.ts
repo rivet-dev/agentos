@@ -16,7 +16,7 @@ interface FakeShellEntry {
 
 interface AgentOsShellCleanupBackdoor {
 	_shells: Map<string, FakeShellEntry>;
-	_pendingShellExitPromises: Set<Promise<void>>;
+	_pendingShellExitPromises: Map<string, Promise<void>>;
 	_disposeSidecarEventListener: () => void;
 }
 
@@ -72,9 +72,9 @@ describe("shell cleanup", () => {
 					() => undefined,
 				);
 				entry.exitPromise = entry.exitPromise.finally(() => {
-					backdoor._pendingShellExitPromises.delete(entry.exitPromise);
+					backdoor._pendingShellExitPromises.delete(shellId);
 				});
-				backdoor._pendingShellExitPromises.add(entry.exitPromise);
+				backdoor._pendingShellExitPromises.set(shellId, entry.exitPromise);
 				backdoor._shells.set(shellId, entry);
 				vm.onShellData(shellId, () => {});
 				for (const handler of dataHandlers) {

@@ -69,6 +69,24 @@ A CI audit fails the build if any limit-shaped constant is not classified and �
 for operator-tunable ones — wired to a config field, so "is everything bounded
 and config-wired?" is verified mechanically rather than by review.
 
+### Node HTTP response parser limits
+
+The Node compatibility bridge applies these fixed parser bounds to each response:
+
+| Limit | Default | Purpose |
+| --- | ---: | --- |
+| Body bytes | 128 MiB | Caps response body storage and streamed body accounting. |
+| Header and trailer bytes | 64 KiB combined | Caps response metadata held by the parser. |
+| Header and trailer fields | 2,000 each | Caps parsed field collections. |
+| Chunk extension bytes | 16 KiB per chunk | Matches native Node's accepted chunk extension boundary. |
+| Chunk size line bytes | 16 KiB + 32 bytes | Allows the extension, size digits, and framing while bounding an incomplete line. |
+| Pending response bytes after backpressure | 256 KiB | Caps parser-owned bytes retained while the Readable consumer is paused. |
+| Stream push chunk bytes | 16 KiB | Limits each push into the Readable stream. |
+
+These bridge bounds are fixed compatibility limits; there is currently no
+per-VM configuration knob to raise them. The parser reports the breached limit
+through the request or response error event.
+
 ## Logging & host visibility
 
 The agentOS sidecar logs to **stderr** (never stdout — stdout is the framed wire

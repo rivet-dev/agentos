@@ -3,12 +3,15 @@
 	"private": true,
 	"version": "0.3.4",
 	"type": "module",
-	"license": "Apache-2.0",
-	"description": "GNU awk text processing for agentos VMs",
+	"license": "GPL-3.0-or-later",
+	"description": "GNU awk text processing for agentOS VMs",
+	"homepage": "https://www.gnu.org/software/gawk/",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
 	"files": [
 		"dist",
+		"share",
+		"README.md",
 		"!dist/package",
 		"!dist/package.tar"
 	],
@@ -19,7 +22,7 @@
 		}
 	},
 	"scripts": {
-		"build": "agentos-toolchain stage --commands-dir ../../toolchain/target/wasm32-wasip1/release/commands --if-missing skip && tsc && agentos-toolchain build",
+		"build": "agentos-toolchain stage --commands-dir ../../toolchain/target/wasm32-wasip1/release/commands --if-missing skip && node scripts/stage-license.mjs && tsc && agentos-toolchain build",
 		"check-types": "tsc --noEmit",
 		"test": "vitest run test/ --exclude '**/*.nightly.test.ts' --passWithNoTests",
 		"test:nightly": "vitest run test/*.nightly.test.ts --passWithNoTests"
@@ -29,7 +32,6 @@
 		"@rivet-dev/agentos-toolchain": "workspace:*",
 		"@types/node": "^22.10.2",
 		"typescript": "^5.9.2",
-		"@rivet-dev/agentos-test-harness": "workspace:*",
 		"vitest": "^2.1.9"
 	}
 }

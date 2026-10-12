@@ -1,0 +1,41 @@
+--- a/libc-top-half/musl/include/sys/ioctl.h
++++ b/libc-top-half/musl/include/sys/ioctl.h
+@@ -12,6 +12,9 @@
+ #include <bits/alltypes.h>
+ #include <bits/ioctl.h>
+ 
++#define TIOCGWINSZ 0x5413
++#define TIOCSWINSZ 0x5414
++
+ #define N_TTY           0
+ #define N_SLIP          1
+ #define N_MOUSE         2
+@@ -121,4 +124,6 @@
+ #else
+ #include <__header_sys_ioctl.h>
++#define TIOCGWINSZ 0x5413
++#define TIOCSWINSZ 0x5414
+ #endif
+ #endif
+--- a/libc-bottom-half/sources/host_terminal_compat.c
++++ b/libc-bottom-half/sources/host_terminal_compat.c
+@@ -26,6 +26,9 @@
+ #ifndef TIOCGWINSZ
+ #define TIOCGWINSZ 0x5413
+ #endif
++#ifndef TIOCSWINSZ
++#define TIOCSWINSZ 0x5414
++#endif
+ #define FIBMAP 1
+ #define FIGETBSZ 2
+ #define FS_IOC_FIEMAP 0xC020660B
+@@ -345,6 +348,9 @@
+     if (request == TIOCGWINSZ) {
+         return tcgetwinsize(fd, (struct winsize *)arg);
+     }
++    if (request == TIOCSWINSZ) {
++        return tcsetwinsize(fd, (const struct winsize *)arg);
++    }
+     if (request == FIGETBSZ) {
+         if (arg == NULL) {
+             errno = EFAULT;

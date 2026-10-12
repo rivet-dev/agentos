@@ -272,15 +272,11 @@ EOF`);
 		test("which resolves virtual PATH commands", async () => {
 			const bash = await vm.exec("which bash");
 			expect(bash.exitCode).toBe(0);
-			expect(bash.stdout.trim()).toMatch(
-				/^\/(?:bin|__agentos\/commands\/\d+)\/bash$/,
-			);
+			expect(bash.stdout.trim()).toBe("/opt/agentos/bin/bash");
 
 			const rg = await vm.exec("which rg");
 			expect(rg.exitCode).toBe(0);
-			expect(rg.stdout.trim()).toMatch(
-				/^\/(?:bin|__agentos\/commands\/\d+)\/rg$/,
-			);
+			expect(rg.stdout.trim()).toBe("/opt/agentos/bin/rg");
 
 			const missing = await vm.exec("which definitely-not-a-command");
 			expect(missing.exitCode).toBeGreaterThan(0);
@@ -820,7 +816,7 @@ server.listen(0, "0.0.0.0", () => {
 					stderr += Buffer.from(data).toString("utf8");
 				},
 			});
-			const exitCode = await vm.waitProcess(pid);
+			const exitCode = (await vm.process.wait(pid)).exitCode;
 			await new Promise<void>((resolve) => {
 				setTimeout(resolve, 0);
 			});
@@ -836,7 +832,7 @@ server.listen(0, "0.0.0.0", () => {
 				expect(r.exitCode).toBe(0);
 				expect(r.stdout).toContain("hello from server");
 			} finally {
-				vm.killProcess(pid);
+				await vm.process.kill(pid);
 			}
 		});
 
@@ -857,23 +853,23 @@ server.listen(0, "0.0.0.0", () => {
 				const json = JSON.parse(r.stdout);
 				expect(json.echo).toBe("test-body");
 			} finally {
-				vm.killProcess(pid);
+				await vm.process.kill(pid);
 			}
 		});
 
 		test("curl exits promptly after a keep-alive response", async () => {
-				const { pid, port } = await startServer(vm, CURL_KEEPALIVE_SCRIPT);
-				try {
-					const startedAt = Date.now();
-					const r = await runCurl(["-s", `http://localhost:${port}/`]);
-					const elapsedMs = Date.now() - startedAt;
-					expect(r.exitCode).toBe(0);
-					expect(r.stdout).toContain("hello from keepalive");
-					expect(r.stderr).not.toContain("i/o error");
-					expect(elapsedMs).toBeLessThan(8000);
-				} finally {
-					vm.killProcess(pid);
-				}
+			const { pid, port } = await startServer(vm, CURL_KEEPALIVE_SCRIPT);
+			try {
+				const startedAt = Date.now();
+				const r = await runCurl(["-s", `http://localhost:${port}/`]);
+				const elapsedMs = Date.now() - startedAt;
+				expect(r.exitCode).toBe(0);
+				expect(r.stdout).toContain("hello from keepalive");
+				expect(r.stderr).not.toContain("i/o error");
+				expect(elapsedMs).toBeLessThan(8000);
+			} finally {
+				await vm.process.kill(pid);
+			}
 		}, 15000);
 	});
 

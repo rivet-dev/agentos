@@ -1,0 +1,12 @@
+--- a/libc-top-half/musl/include/stdlib.h
++++ b/libc-top-half/musl/include/stdlib.h
+@@ -169,8 +169,8 @@
+ int clearenv(void);
+ #ifdef __wasilibc_unmodified_upstream /* WASI has no wait */
+ #define WCOREDUMP(s) ((s) & 0x80)
+ #define WIFCONTINUED(s) ((s) == 0xffff)
+ void *reallocarray (void *, size_t, size_t);
+-void qsort_r (void *, size_t, size_t, int (*)(const void *, const void *, void *), void *);
+ #endif
++void qsort_r (void *, size_t, size_t, int (*)(const void *, const void *, void *), void *);
+ #endif

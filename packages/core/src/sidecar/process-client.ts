@@ -1,0 +1,46 @@
+// Register the sidecar spawn factory (side effect). After the
+// @rivet-dev/agentos SidecarProcess refactor, process spawning is provided
+// by a separately registered factory; importing stdio-client wires it up.
+import "../stdio-client.js";
+
+export type {
+	AuthenticatedSession,
+	CreatedVm,
+	ExtEnvelope,
+	GuestFilesystemStat,
+	RootFilesystemEntry,
+	RootFilesystemLowerDescriptor,
+	SidecarEventSelector,
+	SidecarFsPermissionRule,
+	SidecarLinkPackageResult,
+	SidecarMountDescriptor,
+	SidecarMountPluginDescriptor,
+	SidecarPatternPermissionRule,
+	SidecarPermissionMode,
+	SidecarPermissionScope,
+	SidecarPermissionsPolicy,
+	SidecarProcessSnapshotEntry,
+	SidecarProjectedModuleDescriptor,
+	SidecarRegisteredHostCallbackDefinition,
+	SidecarRegisteredHostCallbackExample,
+	SidecarRequestFrame,
+	SidecarRequestHandler,
+	SidecarRequestPayload,
+	SidecarResponseFrame,
+	SidecarResponsePayload,
+	SidecarRulePermissions,
+	SidecarSessionState,
+	SidecarSignalHandlerRegistration,
+	SidecarSignalState,
+	SidecarSocketStateEntry,
+	SidecarSoftwareDescriptor,
+	SidecarSpawnOptions,
+	SidecarVmConfiguredResponse as SidecarConfigureVmResult,
+	SidecarZombieTimerCount,
+} from "../sidecar-process.js";
+export {
+	SidecarEventBufferOverflow,
+	SidecarProcess,
+	SidecarProcessError,
+	SidecarProcessExited,
+} from "../sidecar-process.js";

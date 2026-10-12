@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { z } from "zod";
 import { AgentOs } from "../src/index.js";
-import { NativeSidecarProcessClient } from "../src/sidecar/rpc-client.js";
+import { SidecarProcess as SidecarProcessClient } from "../src/sidecar-process.js";
 
 // ---------------------------------------------------------------------------
 // The sidecar owns hostFunction.invoke permission enforcement. These tests
@@ -15,12 +15,11 @@ async function createVmCapturingHandler(
 	options: Parameters<typeof AgentOs.create>[0],
 ): Promise<{ vm: AgentOs; handler: CapturedHandler }> {
 	let captured: CapturedHandler | null = null;
-	const original =
-		NativeSidecarProcessClient.prototype.setVmSidecarRequestHandler;
+	const original = SidecarProcessClient.prototype.setVmSidecarRequestHandler;
 	const spy = vi
-		.spyOn(NativeSidecarProcessClient.prototype, "setVmSidecarRequestHandler")
+		.spyOn(SidecarProcessClient.prototype, "setVmSidecarRequestHandler")
 		.mockImplementation(function (
-			this: NativeSidecarProcessClient,
+			this: SidecarProcessClient,
 			vmId: string,
 			handler: any,
 		) {
@@ -379,6 +378,27 @@ describe("host-function collection permissions: raw host_callback RPC path", () 
 		expect(typeof response.error).toBe("string");
 		// Zod validation message (number expected / required), not a thrown crash.
 		expect(response.error).toMatch(/number|expected|required|invalid|nan/i);
+	});
+
+	test("registry callback rejects unresolved file input without using host authority", async () => {
+		const execute = vi.fn(() => ({ sum: 0 }));
+		const created = await createVmCapturingHandler({
+			hostFunctions: { math: { add: { ...mathFunctions.add, execute } } },
+		});
+		vm = created.vm;
+		const readFile = vi.spyOn(vm, "readFile");
+		const response = await created.handler(
+			commandHostCallbackFrame("agentos", [
+				"math",
+				"add",
+				"--json-file",
+				"/tmp/input.json",
+			]),
+		);
+		expect(response.error).toContain("EACCES");
+		expect(response.error).toContain("runtime process authorization");
+		expect(readFile).not.toHaveBeenCalled();
+		expect(execute).not.toHaveBeenCalled();
 	});
 
 	test("registry callback rejects a mismatched command envelope", async () => {

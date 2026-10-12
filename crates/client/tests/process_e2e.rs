@@ -1,4 +1,4 @@
-//! Process e2e against a real `agentos-native-sidecar`.
+//! Process e2e against a real `agentos-sidecar`.
 //!
 //! `exec`/`spawn` require WASM command packages (sh/echo/cat). This suite fails fast by default when
 //! those packages are unavailable; set `AGENT_OS_CLIENT_ALLOW_E2E_SKIPS=1` only for local skip-only
@@ -68,7 +68,7 @@ async fn spawn_rejection_and_fast_exit_remain_distinct_for_late_waiters() {
     }
     let os = common::new_vm().await;
     let result = tokio::time::timeout(std::time::Duration::from_secs(20), async {
-        let rejected = os.spawn_process(
+        let rejected = os.spawn(
             "agentos-nonexistent-review-command",
             Vec::new(),
             SpawnOptions::default(),
@@ -92,7 +92,7 @@ async fn spawn_rejection_and_fast_exit_remain_distinct_for_late_waiters() {
             "late waiters must retain the typed rejection"
         );
 
-        let fast = os.spawn_process(
+        let fast = os.spawn(
             "node",
             vec!["-e".into(), "process.exit(23)".into()],
             SpawnOptions::default(),
@@ -120,94 +120,6 @@ async fn spawn_rejection_and_fast_exit_remain_distinct_for_late_waiters() {
         .expect("process outcome parity");
 }
 
-#[tokio::test]
-async fn output_read_right_after_a_failed_spawn_returns_the_launch_error() {
-    if !common::require_sidecar("output_read_right_after_a_failed_spawn_returns_the_launch_error") {
-        return;
-    }
-    let os = common::new_vm().await;
-    let result = tokio::time::timeout(std::time::Duration::from_secs(20), async {
-        let launch = os.spawn_process(
-            "agentos-nonexistent-review-command",
-            Vec::new(),
-            SpawnOptions {
-                retain_output: true,
-                ..Default::default()
-            },
-        )?;
-        // Read before the launch has settled: the caller must get the launch error, not a
-        // missing-process error from asking the sidecar before it knows the process.
-        let read = os.read_process_output(launch.pid, None, None, None).await;
-        anyhow::ensure!(
-            matches!(&read, Err(ClientError::Kernel { code, .. }) if code == "ENOENT"),
-            "an output read right after a failed spawn must return the launch error: {read:?}"
-        );
-        Ok::<_, anyhow::Error>(())
-    })
-    .await;
-    tokio::time::timeout(std::time::Duration::from_secs(10), os.shutdown())
-        .await
-        .expect("bounded VM cleanup")
-        .expect("shutdown VM");
-    result
-        .expect("output read finishes within the timeout")
-        .expect("output read returns the launch error");
-}
-
-#[tokio::test]
-async fn concurrent_launches_on_a_fresh_vm_all_run() {
-    if !common::require_sidecar("concurrent_launches_on_a_fresh_vm_all_run") {
-        return;
-    }
-    let Some(os) = common::new_vm_with_commands().await else {
-        if common::allow_local_e2e_skips() {
-            eprintln!(
-                "skipping concurrent_launches_on_a_fresh_vm_all_run: coreutils package absent"
-            );
-            return;
-        }
-        panic!("concurrent_launches_on_a_fresh_vm_all_run: coreutils package absent");
-    };
-    // A fresh VM is cold: the first WebAssembly and Python launches await runtime setup while
-    // the others arrive, so every launch here overlaps another one of the same runtime.
-    let launches: Vec<(&str, Vec<String>)> = (0..3)
-        .map(|index| ("echo", vec![format!("wasm-{index}")]))
-        .chain((0..3).map(|index| {
-            (
-                "python3",
-                vec!["-c".to_owned(), format!("print('python-{index}')")],
-            )
-        }))
-        .collect();
-    let result = tokio::time::timeout(std::time::Duration::from_secs(120), async {
-        let mut handles = Vec::new();
-        for (command, args) in &launches {
-            handles.push(os.spawn_process(command, args.clone(), SpawnOptions::default())?);
-        }
-        let mut outcomes = Vec::new();
-        for ((command, args), handle) in launches.iter().zip(&handles) {
-            outcomes.push((command, args, os.wait_process(handle.pid).await));
-        }
-        let failed: Vec<_> = outcomes
-            .iter()
-            .filter(|(_, _, outcome)| !matches!(outcome, Ok(0)))
-            .collect();
-        anyhow::ensure!(
-            failed.is_empty(),
-            "every concurrent launch must run to exit 0; failed: {failed:?}"
-        );
-        Ok::<_, anyhow::Error>(())
-    })
-    .await;
-    tokio::time::timeout(std::time::Duration::from_secs(10), os.shutdown())
-        .await
-        .expect("bounded VM cleanup")
-        .expect("shutdown VM");
-    result
-        .expect("concurrent launches finish within the timeout")
-        .expect("concurrent launches all run");
-}
-
 /// VMs in one process share a sidecar. A guest blocked reading an open stdin must not stall it:
 /// calls on the same VM and on another VM keep answering, and closing the stdin ends the reader.
 #[tokio::test]
@@ -227,7 +139,7 @@ async fn a_guest_waiting_on_stdin_does_not_stall_the_shared_sidecar() {
         panic!("{TEST}: coreutils package absent");
     };
     let result = async {
-        let reader = blocked_vm.spawn_process("cat", Vec::new(), SpawnOptions::default())?;
+        let reader = blocked_vm.spawn("cat", Vec::new(), SpawnOptions::default())?;
         // Give `cat` time to enter its stdin read.
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         for (label, vm) in [("same", &blocked_vm), ("other", &other_vm)] {
@@ -239,7 +151,7 @@ async fn a_guest_waiting_on_stdin_does_not_stall_the_shared_sidecar() {
             .map_err(|_| anyhow::anyhow!("exec on the {label} VM stalled behind a stdin read"))??;
             anyhow::ensure!(probe.stdout == "probe\n", "unexpected probe: {probe:?}");
         }
-        blocked_vm.close_process_stdin_awaited(reader.pid).await?;
+        blocked_vm.close_process_stdin(reader.pid).await?;
         let exit = tokio::time::timeout(
             std::time::Duration::from_secs(3),
             blocked_vm.wait_process(reader.pid),
@@ -334,7 +246,7 @@ async fn stdin_written_after_a_process_exits_fails_with_epipe() {
     }
     let os = common::new_vm().await;
     let result = async {
-        let process = os.spawn_process(
+        let process = os.spawn(
             "node",
             vec!["-e".into(), "process.exit(0)".into()],
             SpawnOptions::default(),
@@ -346,23 +258,14 @@ async fn stdin_written_after_a_process_exits_fails_with_epipe() {
         .await
         .map_err(|_| anyhow::anyhow!("the process did not exit"))??;
         anyhow::ensure!(exit == 0, "the process exited with {exit}");
-        for (variant, late) in [
-            (
-                "awaited",
-                os.write_process_stdin_awaited(process.pid, StdinInput::Text("late\n".into()))
-                    .await,
-            ),
-            (
-                "sync",
-                os.write_process_stdin(process.pid, StdinInput::Text("late\n".into())),
-            ),
-        ] {
-            anyhow::ensure!(
-                matches!(&late, Err(ClientError::Kernel { code, .. }) if code == "EPIPE"),
-                "the {variant} write after exit returned {late:?}, not EPIPE"
-            );
-        }
-        os.close_process_stdin_awaited(process.pid).await?;
+        let late = os
+            .write_process_stdin(process.pid, StdinInput::Text("late\n".into()))
+            .await;
+        anyhow::ensure!(
+            matches!(&late, Err(ClientError::Kernel { code, .. }) if code == "EPIPE"),
+            "write after exit returned {late:?}, not EPIPE"
+        );
+        os.close_process_stdin(process.pid).await?;
         Ok::<_, anyhow::Error>(())
     }
     .await;
@@ -382,7 +285,7 @@ async fn a_process_spawned_without_streamed_stdin_reads_eof() {
     }
     let os = common::new_vm().await;
     let result = async {
-        let reader = os.spawn_process(
+        let reader = os.spawn(
             "node",
             vec![
                 "-e".into(),
@@ -426,7 +329,7 @@ async fn stdin_written_after_it_is_closed_is_rejected() {
         panic!("{TEST}: coreutils package absent");
     };
     let result = async {
-        let process = os.spawn_process(
+        let process = os.spawn(
             "sh",
             vec![
                 "-c".into(),
@@ -445,15 +348,15 @@ async fn stdin_written_after_it_is_closed_is_rejected() {
             read_stdout_until(&mut stdout_rx, &mut stdout, b"ready\n").await,
             "the process never started"
         );
-        os.write_process_stdin_awaited(process.pid, StdinInput::Text("early\n".into()))
+        os.write_process_stdin(process.pid, StdinInput::Text("early\n".into()))
             .await?;
-        os.close_process_stdin_awaited(process.pid).await?;
+        os.close_process_stdin(process.pid).await?;
         anyhow::ensure!(
             read_stdout_until(&mut stdout_rx, &mut stdout, b"closed\n").await,
             "the process never saw EOF on stdin"
         );
         let late = os
-            .write_process_stdin_awaited(process.pid, StdinInput::Text("late\n".into()))
+            .write_process_stdin(process.pid, StdinInput::Text("late\n".into()))
             .await;
         anyhow::ensure!(
             matches!(&late, Err(ClientError::Kernel { code, .. }) if code == "EBADF"),
@@ -589,7 +492,7 @@ async fn spawn_shell_until_ready(
     vm: &agentos_client::AgentOs,
     script: &str,
 ) -> anyhow::Result<u32> {
-    let shell = vm.spawn_process(
+    let shell = vm.spawn(
         "sh",
         vec!["-c".into(), script.into()],
         SpawnOptions {
@@ -686,14 +589,15 @@ async fn process_surface_exec_spawn_and_snapshot() {
     );
     assert!(
         matches!(
-            os.write_process_stdin(MISSING_PID, StdinInput::Text("x".to_string())),
+            os.write_process_stdin(MISSING_PID, StdinInput::Text("x".to_string()))
+                .await,
             Err(ClientError::ProcessNotFound(_))
         ),
         "write_process_stdin(unknown) must return ProcessNotFound"
     );
     assert!(
         matches!(
-            os.close_process_stdin(MISSING_PID),
+            os.close_process_stdin(MISSING_PID).await,
             Err(ClientError::ProcessNotFound(_))
         ),
         "close_process_stdin(unknown) must return ProcessNotFound"
@@ -813,7 +717,7 @@ async fn process_surface_exec_spawn_and_snapshot() {
 
     // --- spawn: pid + stdin write + stdout stream + exit wait -------------------------------------
     let handle = os
-        .spawn_process("cat", Vec::new(), SpawnOptions::default())
+        .spawn("cat", Vec::new(), SpawnOptions::default())
         .expect("spawn cat");
     assert!(
         handle.pid >= 1_000_000,
@@ -843,8 +747,11 @@ async fn process_surface_exec_spawn_and_snapshot() {
 
     // Write to stdin, then close it so `cat` sees EOF and exits.
     os.write_process_stdin(handle.pid, StdinInput::Text("spawned-input".to_string()))
+        .await
         .expect("write stdin");
-    os.close_process_stdin(handle.pid).expect("close stdin");
+    os.close_process_stdin(handle.pid)
+        .await
+        .expect("close stdin");
 
     // Collect the expected stdout bytes. The stdout subscription is a live multi-subscriber stream,
     // so process exit is observed through wait_process rather than channel closure.
@@ -867,13 +774,21 @@ async fn process_surface_exec_spawn_and_snapshot() {
     );
 
     // wait_process resolves with the exit code (cat exits 0 on clean EOF).
-    let exit_code = tokio::time::timeout(
+    let exit_code = match tokio::time::timeout(
         std::time::Duration::from_secs(10),
         os.wait_process(handle.pid),
     )
     .await
-    .expect("wait_process timed out")
-    .expect("wait_process");
+    {
+        Ok(result) => result.expect("wait_process"),
+        Err(error) => {
+            let sdk_process = os.get_process(handle.pid);
+            let kernel_processes = os.all_processes().await;
+            panic!(
+                "wait_process timed out: {error}; sdk_process={sdk_process:?}; kernel_processes={kernel_processes:?}"
+            );
+        }
+    };
     assert_eq!(exit_code, 0, "cat should exit 0 after EOF");
 
     // --- kernel snapshot: all_processes / process_tree -------------------------------------------
@@ -896,6 +811,60 @@ async fn process_surface_exec_spawn_and_snapshot() {
     }
 
     os.shutdown().await.expect("shutdown");
+}
+
+#[tokio::test]
+async fn concurrent_launches_on_a_fresh_vm_all_run() {
+    if !common::require_sidecar("concurrent_launches_on_a_fresh_vm_all_run") {
+        return;
+    }
+    let Some(os) = common::new_vm_with_commands().await else {
+        if common::allow_local_e2e_skips() {
+            eprintln!(
+                "skipping concurrent_launches_on_a_fresh_vm_all_run: coreutils package absent"
+            );
+            return;
+        }
+        panic!("concurrent_launches_on_a_fresh_vm_all_run: coreutils package absent");
+    };
+    // A fresh VM is cold: the first WebAssembly and Python launches await runtime setup while
+    // the others arrive, so every launch here overlaps another one of the same runtime.
+    let launches: Vec<(&str, Vec<String>)> = (0..3)
+        .map(|index| ("echo", vec![format!("wasm-{index}")]))
+        .chain((0..3).map(|index| {
+            (
+                "python3",
+                vec!["-c".to_owned(), format!("print('python-{index}')")],
+            )
+        }))
+        .collect();
+    let result = tokio::time::timeout(std::time::Duration::from_secs(120), async {
+        let mut handles = Vec::new();
+        for (command, args) in &launches {
+            handles.push(os.spawn(command, args.clone(), SpawnOptions::default())?);
+        }
+        let mut outcomes = Vec::new();
+        for ((command, args), handle) in launches.iter().zip(&handles) {
+            outcomes.push((command, args, os.wait_process(handle.pid).await));
+        }
+        let failed: Vec<_> = outcomes
+            .iter()
+            .filter(|(_, _, outcome)| !matches!(outcome, Ok(0)))
+            .collect();
+        anyhow::ensure!(
+            failed.is_empty(),
+            "every concurrent launch must run to exit 0; failed: {failed:?}"
+        );
+        Ok::<_, anyhow::Error>(())
+    })
+    .await;
+    tokio::time::timeout(std::time::Duration::from_secs(10), os.shutdown())
+        .await
+        .expect("bounded VM cleanup")
+        .expect("shutdown VM");
+    result
+        .expect("concurrent launches finish within the timeout")
+        .expect("concurrent launches all run");
 }
 
 #[tokio::test]
@@ -923,7 +892,7 @@ async fn shell_children_of_every_runtime_run_to_completion() {
     ]
     .join("\n");
     let result = tokio::time::timeout(std::time::Duration::from_secs(60), async {
-        let handle = os.spawn_process(
+        let handle = os.spawn(
             "sh",
             vec!["-c".to_owned(), script],
             SpawnOptions {
@@ -952,4 +921,38 @@ async fn shell_children_of_every_runtime_run_to_completion() {
         .expect("the shell runs");
     assert_eq!(stdout, "42\n2\npython-exit-1\nnested\n");
     assert_eq!(exit_code, 0);
+}
+
+#[tokio::test]
+async fn output_read_right_after_a_failed_spawn_returns_the_launch_error() {
+    if !common::require_sidecar("output_read_right_after_a_failed_spawn_returns_the_launch_error") {
+        return;
+    }
+    let os = common::new_vm().await;
+    let result = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        let launch = os.spawn(
+            "agentos-nonexistent-review-command",
+            Vec::new(),
+            SpawnOptions {
+                retain_output: true,
+                ..Default::default()
+            },
+        )?;
+        // Read before the launch has settled: the caller must get the launch error, not a
+        // missing-process error from asking the sidecar before it knows the process.
+        let read = os.read_process_output(launch.pid, None, None, None).await;
+        anyhow::ensure!(
+            matches!(&read, Err(ClientError::Kernel { code, .. }) if code == "ENOENT"),
+            "an output read right after a failed spawn must return the launch error: {read:?}"
+        );
+        Ok::<_, anyhow::Error>(())
+    })
+    .await;
+    tokio::time::timeout(std::time::Duration::from_secs(10), os.shutdown())
+        .await
+        .expect("bounded VM cleanup")
+        .expect("shutdown VM");
+    result
+        .expect("output read finishes within the timeout")
+        .expect("output read returns the launch error");
 }

@@ -24,10 +24,10 @@ use uuid::Uuid;
 
 use agentos_sidecar_client::wire::{self, EventPayload, StreamChannel};
 
-use crate::agent_os::{AgentOs, ClosedShellEntry, ShellEntry, TerminalEntry};
+use crate::agent_os::{AgentOs, ClosedShellEntry, PendingShellExit, ShellEntry, TerminalEntry};
 use crate::error::ClientError;
 use crate::process::{
-    install_output_callback, OutputCallback, ProcessStatus, ProcessStream, StdinInput,
+    install_output_callback, OutputCallback, ProcessExit, ProcessStatus, ProcessStream, StdinInput,
 };
 
 /// Channel capacity for a shell's ordered terminal-data and diagnostic-stderr broadcasts.
@@ -40,12 +40,12 @@ const TERMINAL_LIMIT: usize = 1024;
 /// PTY-backed `sh`).
 const DEFAULT_SHELL_COMMAND: &str = "sh";
 
-type ShellOutcome = Option<std::result::Result<i32, ClientError>>;
-type ShellSpawnReadiness = watch::Receiver<Option<std::result::Result<(), ClientError>>>;
+type ShellOutcome = Option<std::result::Result<ProcessExit, ClientError>>;
+type ShellSpawnReceiver = watch::Receiver<Option<std::result::Result<(), ClientError>>>;
 
 fn publish_shell_outcome(
     sender: &watch::Sender<ShellOutcome>,
-    result: std::result::Result<i32, ClientError>,
+    result: std::result::Result<ProcessExit, ClientError>,
 ) {
     sender.send_if_modified(|outcome| {
         // Neither a late observation failure nor repeated replay may replace a
@@ -117,6 +117,7 @@ async fn observe_shell_exit(mut receiver: watch::Receiver<ShellOutcome>) -> Shel
 /// Callback-free options for portable `open_shell`.
 #[derive(Default)]
 pub struct OpenShellOptions {
+    pub wasm_backend: Option<crate::process::StandaloneWasmBackend>,
     pub command: Option<String>,
     pub args: Vec<String>,
     pub env: BTreeMap<String, String>,
@@ -153,6 +154,7 @@ pub struct ShellData {
 pub struct ShellExit {
     pub shell_id: String,
     pub exit_code: i32,
+    pub exit_signal: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -162,6 +164,8 @@ pub struct TerminalInfo {
     pub pid: u32,
     pub running: bool,
     pub exit_code: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_signal: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -183,6 +187,8 @@ pub struct TerminalSnapshot {
     pub has_more: bool,
     pub truncated: bool,
     pub exit_code: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_signal: Option<u32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -438,6 +444,7 @@ impl AgentOs {
             cwd: options.cwd.clone(),
             wasm_permission_tier: None,
             retain_output: true,
+            wasm_backend: options.wasm_backend.map(Into::into),
         };
 
         // Background: subscribe to events first (so no output is missed), issue the spawn, fan
@@ -447,7 +454,8 @@ impl AgentOs {
         let ownership = self.vm_ownership();
         let route_process_id = process_id.clone();
         let exit_shell_id = shell_id.clone();
-        let exit_key = counter;
+        let exit_key = shell_id.clone();
+        let pending_exit_tx = exit_tx.clone();
         let (start_tx, start_rx) = tokio::sync::oneshot::channel();
         let task_reservation = ShellReservation(self.clone());
         reservation.disarm();
@@ -561,9 +569,20 @@ impl AgentOs {
                                 &exit_shell_id,
                                 &route_process_id,
                                 kernel_pid,
-                                Ok(exited.exit_code),
+                                Ok(ProcessExit {
+                                    pid: kernel_pid,
+                                    exit_code: exited.exit_code,
+                                    exit_signal: exited.exit_signal,
+                                }),
                             );
-                            publish_shell_outcome(&exit_tx, Ok(exited.exit_code));
+                            publish_shell_outcome(
+                                &exit_tx,
+                                Ok(ProcessExit {
+                                    pid: kernel_pid,
+                                    exit_code: exited.exit_code,
+                                    exit_signal: exited.exit_signal,
+                                }),
+                            );
                             break;
                         }
                     }
@@ -584,7 +603,13 @@ impl AgentOs {
             // remove_if takes `&mut V`; the comparison only reads, which is fine.
         });
 
-        let _ = inner.pending_shell_exits.insert(counter, handle);
+        let _ = inner.pending_shell_exits.insert(
+            shell_id.clone(),
+            PendingShellExit {
+                task: handle,
+                exit_tx: pending_exit_tx,
+            },
+        );
         if start_tx.send(()).is_err() {
             tracing::warn!(%shell_id, "terminal task closed before launch");
         }
@@ -597,7 +622,7 @@ impl AgentOs {
         shell_id: &str,
         process_id: &str,
         pid: u32,
-        result: std::result::Result<i32, ClientError>,
+        result: std::result::Result<ProcessExit, ClientError>,
     ) {
         let mut retained = self.inner().closed_shells.lock();
         retain_shell_result(
@@ -621,7 +646,10 @@ impl AgentOs {
             .cloned()
     }
 
-    fn retained_shell_outcome(&self, shell_id: &str) -> std::result::Result<i32, ClientError> {
+    fn retained_shell_outcome(
+        &self,
+        shell_id: &str,
+    ) -> std::result::Result<ProcessExit, ClientError> {
         self.retained_shell_entry(shell_id)
             .map(|entry| entry.result)
             .unwrap_or_else(|| Err(ClientError::ShellNotFound(shell_id.to_owned())))
@@ -670,6 +698,7 @@ impl AgentOs {
             cwd: base.cwd.clone(),
             wasm_permission_tier: None,
             retain_output: true,
+            wasm_backend: base.wasm_backend.map(Into::into),
         };
 
         // Subscribe before issuing the spawn so no output is missed.
@@ -808,7 +837,7 @@ impl AgentOs {
         let mut shells = Vec::new();
         self.inner().shells.scan(|shell_id, entry| {
             let outcome = entry.exit_tx.borrow();
-            let exit_code = outcome
+            let exit = outcome
                 .as_ref()
                 .and_then(|result| result.as_ref().ok())
                 .copied();
@@ -816,7 +845,8 @@ impl AgentOs {
                 shell_id: shell_id.clone(),
                 pid: entry.pid,
                 running: outcome.is_none(),
-                exit_code,
+                exit_code: exit.map(|exit| exit.exit_code),
+                exit_signal: exit.and_then(|exit| exit.exit_signal),
             });
         });
         shells.sort_by(|left, right| left.shell_id.cmp(&right.shell_id));
@@ -845,6 +875,16 @@ impl AgentOs {
     ) -> std::result::Result<TerminalSnapshot, ClientError> {
         let (max_events, max_bytes) =
             crate::output_replay::wire_page_limits(max_events, max_bytes, "terminal.output.read")?;
+        // open_shell publishes its handle before the asynchronous Execute request settles.
+        // Replay reads need the same admission ordering as write, resize, and close.
+        let spawned = self
+            .inner()
+            .shells
+            .read(shell_id, |_, entry| entry.spawned_tx.subscribe());
+        if let Some(spawned) = spawned {
+            wait_for_spawn(spawned).await?;
+        }
+        // Re-read after admission so the snapshot carries the confirmed kernel pid.
         let live = self.inner().shells.read(shell_id, |_, entry| {
             (
                 entry.pid,
@@ -892,19 +932,26 @@ impl AgentOs {
                 )));
             }
         };
-        let exit_code = match page.exit_code {
-            Some(exit_code) => {
-                // Persist before waking live waiters so removal of the live
-                // entry cannot create a gap for a late wait_shell caller.
-                self.retain_shell_outcome(shell_id, &process_id, pid, Ok(exit_code));
-                self.inner().shells.read(shell_id, |_, entry| {
-                    if entry.process_id == process_id {
-                        publish_shell_outcome(&entry.exit_tx, Ok(exit_code));
-                    }
-                });
-                Some(exit_code)
-            }
-            None => retained_exit.transpose()?,
+        let exit = match retained_exit {
+            Some(Ok(exit)) => Some(exit),
+            retained_exit => match page.exit_code {
+                Some(exit_code) => {
+                    let exit = ProcessExit {
+                        pid,
+                        exit_code,
+                        exit_signal: page.exit_signal,
+                    };
+                    // Retain the same pair before waking any live waiter.
+                    self.retain_shell_outcome(shell_id, &process_id, pid, Ok(exit));
+                    self.inner().shells.read(shell_id, |_, entry| {
+                        if entry.process_id == process_id {
+                            publish_shell_outcome(&entry.exit_tx, Ok(exit));
+                        }
+                    });
+                    Some(exit)
+                }
+                None => retained_exit.transpose()?,
+            },
         };
         Ok(TerminalSnapshot {
             shell_id: shell_id.to_owned(),
@@ -925,7 +972,8 @@ impl AgentOs {
             next_cursor: page.next_cursor,
             has_more: page.has_more,
             truncated: page.truncated,
-            exit_code,
+            exit_code: exit.map(|exit| exit.exit_code),
+            exit_signal: exit.and_then(|exit| exit.exit_signal),
         })
     }
 
@@ -1058,17 +1106,20 @@ impl AgentOs {
             .shells
             .read(shell_id, |_, entry| entry.exit_tx.subscribe());
         let Some(mut rx) = rx else {
+            let exit = self.retained_shell_outcome(shell_id)?;
             handler(ShellExit {
                 shell_id: shell_id.to_owned(),
-                exit_code: self.retained_shell_outcome(shell_id)?,
+                exit_code: exit.exit_code,
+                exit_signal: exit.exit_signal,
             });
             return Ok(crate::stream::Subscription::noop());
         };
         if let Some(result) = rx.borrow().clone() {
-            let exit_code = result?;
+            let exit = result?;
             handler(ShellExit {
                 shell_id: shell_id.to_string(),
-                exit_code,
+                exit_code: exit.exit_code,
+                exit_signal: exit.exit_signal,
             });
             return Ok(crate::stream::Subscription::noop());
         }
@@ -1077,9 +1128,10 @@ impl AgentOs {
             while rx.changed().await.is_ok() {
                 if let Some(result) = rx.borrow().clone() {
                     match result {
-                        Ok(exit_code) => handler(ShellExit {
+                        Ok(exit) => handler(ShellExit {
                             shell_id,
-                            exit_code,
+                            exit_code: exit.exit_code,
+                            exit_signal: exit.exit_signal,
                         }),
                         Err(error) => {
                             tracing::warn!(?error, %shell_id, "terminal subscription failed before confirmed exit")
@@ -1157,10 +1209,35 @@ impl AgentOs {
     /// immediately for a shell that already exited within the bounded retention window. Errors with
     /// [`ClientError::ShellNotFound`] for an unknown id.
     pub async fn wait_shell(&self, shell_id: &str) -> std::result::Result<i32, ClientError> {
+        Ok(self.wait_shell_exit(shell_id).await?.exit_code)
+    }
+
+    /// Wait for an atomic observed terminal status, including the actual signal if any.
+    pub async fn wait_shell_exit(
+        &self,
+        shell_id: &str,
+    ) -> std::result::Result<ShellExit, ClientError> {
+        let exit = self.wait_shell_process_exit(shell_id).await?;
+        Ok(ShellExit {
+            shell_id: shell_id.to_owned(),
+            exit_code: exit.exit_code,
+            exit_signal: exit.exit_signal,
+        })
+    }
+
+    async fn wait_shell_process_exit(
+        &self,
+        shell_id: &str,
+    ) -> std::result::Result<ProcessExit, ClientError> {
         let exit_rx = self
             .inner()
             .shells
-            .read(shell_id, |_, entry| entry.exit_tx.subscribe());
+            .read(shell_id, |_, entry| entry.exit_tx.subscribe())
+            .or_else(|| {
+                self.inner()
+                    .pending_shell_exits
+                    .read(shell_id, |_, pending| pending.exit_tx.subscribe())
+            });
         let Some(exit_rx) = exit_rx else {
             // Entry already dropped: fall back to the recorded exit code (TS retention behavior).
             return self.retained_shell_outcome(shell_id);
@@ -1234,7 +1311,7 @@ impl AgentOs {
     fn shell_wire_handle(
         &self,
         shell_id: &str,
-    ) -> std::result::Result<(String, ShellSpawnReadiness), ClientError> {
+    ) -> std::result::Result<(String, ShellSpawnReceiver), ClientError> {
         self.inner()
             .shells
             .read(shell_id, |_, entry| {
@@ -1251,7 +1328,7 @@ impl AgentOs {
 /// Wait until the shell's background `Execute` request has been acked (the readiness gate flips to
 /// ready). A failed launch must not issue follow-up I/O against a nonexistent process.
 async fn wait_for_spawn(
-    mut spawned_rx: ShellSpawnReadiness,
+    mut spawned_rx: tokio::sync::watch::Receiver<Option<std::result::Result<(), ClientError>>>,
 ) -> std::result::Result<(), ClientError> {
     loop {
         if let Some(result) = spawned_rx.borrow_and_update().clone() {
@@ -1280,7 +1357,7 @@ async fn terminal_process_finished(agent: &AgentOs, pid: u32) -> bool {
 mod tests {
     #[tokio::test]
     async fn terminal_replayed_exit_recovers_waiters_and_retention_without_live_exit() {
-        for failed in [false, true] {
+        for (failed, signal) in [(false, None), (false, Some(15)), (true, Some(15))] {
             let failure = ClientError::TerminationFailed {
                 process_id: "terminal-p".into(),
                 reason: "terminal event stream lost its exit".into(),
@@ -1294,6 +1371,11 @@ mod tests {
                 _ = &mut observer => panic!("there is no confirmed terminal exit"),
                 _ = tokio::task::yield_now() => {}
             }
+            let exit = ProcessExit {
+                pid: 42,
+                exit_code: 143,
+                exit_signal: signal,
+            };
             let mut retained = VecDeque::new();
             let entry = |result| ClosedShellEntry {
                 shell_id: "shell-1".into(),
@@ -1312,15 +1394,15 @@ mod tests {
                     _ = tokio::task::yield_now() => {}
                 }
             }
-            retain_shell_result(&mut retained, entry(Ok(17)));
-            publish_shell_outcome(&outcome, Ok(17));
+            retain_shell_result(&mut retained, entry(Ok(exit)));
+            publish_shell_outcome(&outcome, Ok(exit));
             assert_eq!(
                 tokio::time::timeout(std::time::Duration::from_secs(1), &mut waiter)
                     .await
                     .unwrap()
                     .unwrap()
                     .unwrap(),
-                17
+                exit
             );
             assert!(
                 tokio::time::timeout(std::time::Duration::from_secs(1), observer)
@@ -1329,18 +1411,21 @@ mod tests {
                     .is_none()
             );
             let late_waiter = outcome.subscribe();
-            publish_shell_outcome(&outcome, Ok(17));
+            publish_shell_outcome(&outcome, Ok(exit));
             publish_shell_outcome(&outcome, Err(failure.clone()));
-            retain_shell_result(&mut retained, entry(Ok(17)));
+            retain_shell_result(&mut retained, entry(Ok(exit)));
             retain_shell_result(&mut retained, entry(Err(failure)));
             assert!(!late_waiter.has_changed().unwrap());
-            assert_eq!(observe_shell_exit(late_waiter).await.unwrap().unwrap(), 17);
+            assert_eq!(
+                observe_shell_exit(late_waiter).await.unwrap().unwrap(),
+                exit
+            );
             assert_eq!(
                 retained.len(),
                 1,
                 "repeat replay must not consume retention"
             );
-            assert_eq!(*retained[0].result.as_ref().unwrap(), 17);
+            assert_eq!(*retained[0].result.as_ref().unwrap(), exit);
         }
     }
 

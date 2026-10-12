@@ -55,18 +55,45 @@ if (!existsSync(join(source, "defaults.vim"))) {
 	);
 }
 
+function includeRuntimePath(parts) {
+	if (parts.length === 0) return true;
+	if (parts.length === 1 && parts[0].endsWith(".vim")) return true;
+	return (
+		RUNTIME_DIRECTORIES.has(parts[0]) &&
+		!parts.some((segment) => DEVELOPMENT_DIRECTORIES.has(segment))
+	);
+}
+
+// A partial source checkout must fail before replacing the staged runtime.
+// Artifact inputs without Git metadata retain the existing staging path.
+if (
+	resolve(source) === pinnedSource &&
+	existsSync(join(dirname(pinnedSource), ".git"))
+) {
+	const tracked = execFileSync(
+		"git",
+		[
+			"--no-optional-locks", "-C", dirname(pinnedSource),
+			"ls-tree", "-r", "--name-only", "-z", "HEAD", "--", "runtime",
+		],
+		{ encoding: "utf8", timeout: 10_000, maxBuffer: 16 * 1024 * 1024 },
+	).split("\0").filter(Boolean);
+	const missing = tracked.filter((path) =>
+		includeRuntimePath(path.split("/").slice(1)) &&
+		!existsSync(join(dirname(pinnedSource), path)),
+	);
+	if (missing.length > 0) {
+		throw new Error(
+			`stage-runtime: pinned Vim checkout is missing ${missing.length} selected tracked runtime files; restore these paths from the pinned source before staging: ${missing.slice(0, 20).join(", ")}`,
+		);
+	}
+}
+
 rmSync(join(packageRoot, "share"), { recursive: true, force: true });
 mkdirSync(target, { recursive: true });
 cpSync(source, target, {
 	recursive: true,
-	filter: (src) => {
-		const rel = src.slice(source.length).split("/").filter(Boolean);
-		if (rel.length === 0) return true;
-		if (rel.length === 1 && rel[0].endsWith(".vim")) return true;
-		return (
-			RUNTIME_DIRECTORIES.has(rel[0]) &&
-			!rel.some((segment) => DEVELOPMENT_DIRECTORIES.has(segment))
-		);
-	},
+	filter: (src) =>
+		includeRuntimePath(src.slice(source.length).split("/").filter(Boolean)),
 });
 console.log(`stage-runtime: ${source} -> share/vim/vim92`);

@@ -1,4 +1,4 @@
-//! `SidecarTransport`: spawns a native sidecar binary and speaks the existing framed
+//! `SidecarTransport`: spawns a sidecar binary and speaks the existing framed
 //! BARE protocol over its stdio.
 //!
 //! This mirrors the TypeScript `Sidecar`. Generated wire payloads are the native
@@ -37,7 +37,7 @@ const CONTROL_FRAME_QUEUE_CAPACITY: usize = 1024;
 /// Maximum in-flight host-initiated sidecar requests per transport.
 const PENDING_REQUEST_LIMIT: usize = 4096;
 
-/// Env var that overrides the sidecar binary path. Defaults to `agentos-native-sidecar` on `PATH`.
+/// Env var that overrides the sidecar binary path. Defaults to `agentos-sidecar` on `PATH`.
 /// Product clients can pass an explicit binary path to [`SidecarTransport::spawn`].
 const SIDECAR_BIN_ENV: &str = "AGENTOS_SIDECAR_BIN";
 
@@ -85,6 +85,7 @@ pub struct SidecarTransport {
     /// The spawned sidecar process (stdout/stdin taken by the I/O tasks; kept for kill on drop).
     child: parking_lot::Mutex<Option<Child>>,
     child_termination: tokio::sync::Mutex<()>,
+    child_exit: parking_lot::Mutex<Option<Option<i32>>>,
     /// Pending host-initiated requests, keyed by positive `RequestId`.
     pending: SccHashMap<wire::RequestId, oneshot::Sender<wire::ResponsePayload>>,
     pending_request_lock: parking_lot::Mutex<()>,
@@ -110,7 +111,7 @@ pub struct SidecarTransport {
 }
 
 impl SidecarTransport {
-    /// Spawn the native sidecar binary and start the stdio I/O tasks.
+    /// Spawn the sidecar binary and start the stdio I/O tasks.
     ///
     /// Does NOT run the handshake. Product clients drive Authenticate and any follow-up setup using
     /// [`request_wire`](Self::request_wire) once the transport is live.
@@ -127,7 +128,7 @@ impl SidecarTransport {
         {
             let _ = (binary_path, args);
             return Err(TransportError::Sidecar(
-                "the native sidecar response/control transport is unsupported on this platform"
+                "the sidecar response/control transport is unsupported on this platform"
                     .to_string(),
             ));
         }
@@ -190,6 +191,7 @@ impl SidecarTransport {
             instance_id: next_transport_instance_id(),
             child: parking_lot::Mutex::new(Some(child)),
             child_termination: tokio::sync::Mutex::new(()),
+            child_exit: parking_lot::Mutex::new(None),
             pending: SccHashMap::new(),
             pending_request_lock: parking_lot::Mutex::new(()),
             request_counter: AtomicI64::new(1),
@@ -321,6 +323,21 @@ impl SidecarTransport {
         self.disconnected.load(Ordering::SeqCst)
     }
 
+    /// True only after this owner has observed and reaped its child. Transport
+    /// disconnect and a successful kill request are not exit confirmation.
+    pub fn has_confirmed_child_exit(&self) -> bool {
+        self.child_exit.lock().is_some()
+    }
+
+    fn child_exit_result(&self) -> Result<(), TransportError> {
+        match *self.child_exit.lock() {
+            Some(Some(code)) if code != 0 => Err(TransportError::Sidecar(format!(
+                "sidecar exited with code {code}"
+            ))),
+            _ => Ok(()),
+        }
+    }
+
     /// Update the negotiated max frame size after authentication.
     pub fn set_max_frame_bytes(&self, max_frame_bytes: usize) {
         self.max_frame_bytes
@@ -363,7 +380,7 @@ impl SidecarTransport {
     pub async fn terminate_child(&self) -> Result<(), TransportError> {
         let _termination = self.child_termination.lock().await;
         let Some(child) = self.child.lock().take() else {
-            return Ok(());
+            return self.child_exit_result();
         };
         let mut owned = ReapingChild {
             slot: &self.child,
@@ -389,12 +406,13 @@ impl SidecarTransport {
                 }
             }
         }
-        child
+        let status = child
             .wait()
             .await
             .map_err(|error| TransportError::Sidecar(format!("reap sidecar child: {error}")))?;
         owned.child.take();
-        Ok(())
+        *self.child_exit.lock() = Some(status.code());
+        self.child_exit_result()
     }
 
     fn encode_wire_frame(
@@ -755,7 +773,7 @@ async fn run_silence_watchdog(transport: Weak<SidecarTransport>, timeout: std::t
 fn resolve_sidecar_binary_path(binary_path: Option<String>) -> String {
     binary_path
         .or_else(|| std::env::var(SIDECAR_BIN_ENV).ok())
-        .unwrap_or_else(|| "agentos-native-sidecar".to_string())
+        .unwrap_or_else(|| "agentos-sidecar".to_string())
 }
 
 // Child::wait is cancellation-safe, but moving Child out of its owner before
@@ -781,6 +799,40 @@ mod tests {
     use std::time::Duration;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[tokio::test]
+    async fn natural_nonzero_exit_is_reported_after_confirmed_reap() {
+        let transport = test_transport();
+        let mut child = Command::new("sh")
+            .args(["-c", "exit 17"])
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), child.wait())
+            .await
+            .unwrap()
+            .unwrap();
+        transport.child.lock().replace(child);
+        let result = tokio::time::timeout(Duration::from_secs(2), transport.terminate_child())
+            .await
+            .unwrap();
+        assert!(
+            result.is_err(),
+            "confirmed natural exit17 must not become successful disposal"
+        );
+        assert!(result.unwrap_err().to_string().contains("17"));
+        assert!(transport.has_confirmed_child_exit());
+        assert!(transport
+            .terminate_child()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("17"));
+        assert!(
+            transport.child.lock().is_none(),
+            "confirmed-dead child ownership is released even when reporting exit error"
+        );
+    }
 
     #[tokio::test]
     async fn cancelled_reaping_restores_child_ownership_for_confirmed_retry() {
@@ -836,6 +888,7 @@ mod tests {
             instance_id: next_transport_instance_id(),
             child: parking_lot::Mutex::new(None),
             child_termination: tokio::sync::Mutex::new(()),
+            child_exit: parking_lot::Mutex::new(None),
             pending: SccHashMap::new(),
             pending_request_lock: parking_lot::Mutex::new(()),
             request_counter: AtomicI64::new(1),
@@ -867,23 +920,20 @@ mod tests {
     fn binary_path_uses_agentos_env_fallback() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let previous = std::env::var(SIDECAR_BIN_ENV).ok();
-        std::env::set_var(SIDECAR_BIN_ENV, "/tmp/agentos-native-sidecar");
+        std::env::set_var(SIDECAR_BIN_ENV, "/tmp/agentos-sidecar");
 
-        assert_eq!(
-            resolve_sidecar_binary_path(None),
-            "/tmp/agentos-native-sidecar"
-        );
+        assert_eq!(resolve_sidecar_binary_path(None), "/tmp/agentos-sidecar");
 
         restore_env(SIDECAR_BIN_ENV, previous);
     }
 
     #[test]
-    fn binary_path_defaults_to_agentos_native_sidecar() {
+    fn binary_path_defaults_to_agentos_sidecar() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let previous = std::env::var(SIDECAR_BIN_ENV).ok();
         std::env::remove_var(SIDECAR_BIN_ENV);
 
-        assert_eq!(resolve_sidecar_binary_path(None), "agentos-native-sidecar");
+        assert_eq!(resolve_sidecar_binary_path(None), "agentos-sidecar");
 
         restore_env(SIDECAR_BIN_ENV, previous);
     }
@@ -1184,6 +1234,7 @@ mod tests {
             instance_id: next_transport_instance_id(),
             child: parking_lot::Mutex::new(None),
             child_termination: tokio::sync::Mutex::new(()),
+            child_exit: parking_lot::Mutex::new(None),
             pending: SccHashMap::new(),
             pending_request_lock: parking_lot::Mutex::new(()),
             request_counter: AtomicI64::new(1),

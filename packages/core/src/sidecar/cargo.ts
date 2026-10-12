@@ -1,4 +1,11 @@
-import { accessSync, constants as fsConstants, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import {
+	accessSync,
+	existsSync,
+	constants as fsConstants,
+	readdirSync,
+	readFileSync,
+	statSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -49,7 +56,9 @@ type ToolchainCargo = {
 	rustupHome: string;
 };
 
-function getToolchainCargoFromRustupHome(rustupHome: string): ToolchainCargo | null {
+function getToolchainCargoFromRustupHome(
+	rustupHome: string,
+): ToolchainCargo | null {
 	const toolchainsDir = path.join(rustupHome, "toolchains");
 	if (!existsSync(toolchainsDir)) {
 		return null;
@@ -127,7 +136,9 @@ function ensureToolchainEnvironment(toolchainCargo: ToolchainCargo): void {
 		.split(path.delimiter)
 		.filter(Boolean);
 	if (!currentPathEntries.includes(toolchainBin)) {
-		process.env.PATH = [toolchainBin, ...currentPathEntries].join(path.delimiter);
+		process.env.PATH = [toolchainBin, ...currentPathEntries].join(
+			path.delimiter,
+		);
 	}
 	if (!process.env.RUSTUP_HOME) {
 		process.env.RUSTUP_HOME = toolchainCargo.rustupHome;

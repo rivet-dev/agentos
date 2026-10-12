@@ -1,4 +1,4 @@
-import coreutils from "@agentos-software/coreutils";
+import common from "@agentos-software/common";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { z } from "zod";
 import { AgentOs } from "../src/index.js";
@@ -14,7 +14,7 @@ const weatherFunctions = {
 			.object({ city: z.string() })
 			.strict()
 			.describe("Get a forecast"),
-		execute: ({ city }) => ({ city, temperature: 22 }),
+		execute: ({ city }: { city: string }) => ({ city, temperature: 22 }),
 	},
 };
 
@@ -23,7 +23,7 @@ const EXPECTED_ENVELOPE = {
 	result: { city: "Paris", temperature: 22 },
 };
 
-// `process.exec()` runs the command line through the guest shell, which
+// `vm.exec()` runs the command line through the guest shell, which
 // resolves `agentos-weather` through PATH to the `/bin/agentos-weather` stub and
 // spawns that exact path.
 const COMMANDS = [
@@ -33,26 +33,13 @@ const COMMANDS = [
 ];
 
 async function execCapture(vm: AgentOs, command: string) {
-	const decoder = new TextDecoder();
-	let stdout = "";
-	let stderr = "";
-	const result = await vm.process.exec(command, {
-		onStdout: (chunk) => {
-			stdout += decoder.decode(chunk);
-		},
-		onStderr: (chunk) => {
-			stderr += decoder.decode(chunk);
-		},
-	});
-	return { exitCode: result.exitCode, stdout, stderr };
+	return vm.exec(command);
 }
 
 describe.each([
 	{
 		label: "without extra software",
 		options: {
-			defaultSoftware: false,
-			software: [coreutils],
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
@@ -64,8 +51,12 @@ describe.each([
 		},
 	},
 	{
-		label: "with the coreutils software package",
-		options: { defaultSoftware: false, software: [coreutils] },
+		label: "with the common software package",
+		options: { defaultSoftware: false, software: [common] },
+	},
+	{
+		label: "with default and explicit common software",
+		options: { defaultSoftware: true, software: [common] },
 	},
 ] as const)("hostFunction command exec ($label)", ({ options }) => {
 	let vm: AgentOs;
@@ -105,7 +96,12 @@ describe.each([
 		expect(JSON.parse(result.stdout)).toEqual({
 			ok: true,
 			result: {
-				hostFunctions: [{ name: "weather", functions: ["forecast"] }],
+				hostFunctions: [
+					{
+						name: "weather",
+						functions: ["forecast"],
+					},
+				],
 			},
 		});
 	});

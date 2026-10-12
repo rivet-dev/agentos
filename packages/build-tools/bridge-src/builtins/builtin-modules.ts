@@ -12,6 +12,7 @@ import {
 	stringDecoderStdlibModuleNs,
 	urlStdlibModuleNs,
 } from "../prelude.js";
+import { builtinAsyncHooksModule } from "./async-context.js";
 import {
 	BUFFER_CONSTANTS,
 	BUFFER_MAX_LENGTH,
@@ -34,8 +35,19 @@ import {
 } from "./misc-stubs.js";
 import { builtinPerfHooksModule } from "./perf.js";
 import { process_default } from "./process.js";
-import { builtinAsyncHooksModule } from "./async-context.js";
-import { builtinTimersPromisesModule } from "./timers.js";
+import {
+	builtinTimersPromisesModule,
+	clearImmediate,
+	clearInterval,
+	clearTimeout2,
+	setImmediate,
+	setInterval,
+	setTimeout2,
+} from "./timers.js";
+import {
+	builtinReadlineModule,
+	builtinReadlinePromisesModule,
+} from "./readline.js";
 import { builtinV8Module } from "./v8.js";
 import { builtinVmModule } from "./vm.js";
 import { resolveObjectURL, URL2, URLSearchParams } from "./whatwg-url.js";
@@ -75,6 +87,7 @@ class BuiltinModuleRegistry {
 		"punycode",
 		"querystring",
 		"readline",
+		"readline/promises",
 		"repl",
 		"sqlite",
 		"stream",
@@ -100,18 +113,12 @@ class BuiltinModuleRegistry {
 }
 var builtinModules = BuiltinModuleRegistry.builtinModules;
 var builtinTimersModule = {
-	clearImmediate: globalThis.clearImmediate ?? (() => {}),
-	clearInterval: globalThis.clearInterval ?? (() => {}),
-	clearTimeout: globalThis.clearTimeout ?? (() => {}),
-	setImmediate:
-		globalThis.setImmediate ??
-		((callback, ...args) =>
-			globalThis.setTimeout?.(() => callback(...args), 0)),
-	setInterval:
-		globalThis.setInterval ??
-		((callback, delay, ...args) =>
-			globalThis.setTimeout?.(() => callback(...args), delay ?? 0)),
-	setTimeout: globalThis.setTimeout ?? (() => void 0),
+	clearImmediate,
+	clearInterval,
+	clearTimeout: clearTimeout2,
+	setImmediate,
+	setInterval,
+	setTimeout: setTimeout2,
 };
 function unwrapStdlibModule(moduleNamespace) {
 	if (
@@ -532,6 +539,39 @@ defineMissingModuleProperty(
 var builtinStringDecoderStdlibModule = cloneStdlibModule(
 	stringDecoderStdlibModuleNs,
 );
+function normalizeStringDecoderInput(value) {
+	const BufferCtor = builtinBufferStdlibModule?.Buffer;
+	if (
+		typeof BufferCtor !== "function" ||
+		value == null ||
+		BufferCtor.isBuffer(value)
+	) {
+		return value;
+	}
+	if (ArrayBuffer.isView(value)) {
+		return BufferCtor.from(value.buffer, value.byteOffset, value.byteLength);
+	}
+	if (
+		value instanceof ArrayBuffer ||
+		(typeof SharedArrayBuffer !== "undefined" &&
+			value instanceof SharedArrayBuffer)
+	) {
+		return BufferCtor.from(value);
+	}
+	return value;
+}
+const BuiltinStringDecoder = builtinStringDecoderStdlibModule?.StringDecoder;
+if (typeof BuiltinStringDecoder === "function") {
+	for (const method of ["write", "end"]) {
+		const original = BuiltinStringDecoder.prototype?.[method];
+		if (typeof original !== "function") continue;
+		BuiltinStringDecoder.prototype[method] = function stringDecoderMethod(
+			value,
+		) {
+			return original.call(this, normalizeStringDecoderInput(value));
+		};
+	}
+}
 const upstreamUrlStdlibModule = unwrapStdlibModule(upstreamUrlHelpersModule);
 
 function withNodeErrorCode(error, code) {
@@ -587,6 +627,12 @@ function fileURLToPath2(input, options) {
 			),
 			"ERR_INVALID_ARG_TYPE",
 		);
+	}
+	// Guest packages commonly pass already-decoded absolute paths through this
+	// helper. Keep those paths inside the guest namespace instead of asking the
+	// upstream URL parser to reinterpret them as URL strings.
+	if (!options?.windows && typeof input === "string" && input.startsWith("/")) {
+		return input;
 	}
 	try {
 		if (options?.windows) {
@@ -752,195 +798,9 @@ function loadBuiltinModule(request) {
 		case "querystring":
 			return builtinQuerystringStdlibModule;
 		case "readline":
-			return {
-				createInterface(options = {}) {
-					const input = options.input ?? null;
-					const output = options.output ?? null;
-					const listeners = new Map();
-					let closed = false;
-					let ended = false;
-					let lineBuffer = "";
-					const queuedLines = [];
-					let pendingLineResolve = null;
-					const pendingQuestionResolves = [];
-					const textDecoder = new TextDecoder();
-					const emit = (event, ...args) => {
-						const current = listeners.get(event) ?? [];
-						for (const listener of [...current]) {
-							listener(...args);
-						}
-					};
-					const enqueueLine = (line) => {
-						if (pendingQuestionResolves.length > 0) {
-							const resolve = pendingQuestionResolves.shift();
-							resolve(line);
-							return;
-						}
-						if (pendingLineResolve) {
-							const resolve = pendingLineResolve;
-							pendingLineResolve = null;
-							resolve({ done: false, value: line });
-							return;
-						}
-						queuedLines.push(line);
-					};
-					const emitLine = (line) => {
-						emit("line", line);
-						enqueueLine(line);
-					};
-					const flushBufferedLines = () => {
-						let newlineIndex = lineBuffer.indexOf("\n");
-						while (newlineIndex !== -1) {
-							let line = lineBuffer.slice(0, newlineIndex);
-							if (line.endsWith("\r")) {
-								line = line.slice(0, -1);
-							}
-							lineBuffer = lineBuffer.slice(newlineIndex + 1);
-							emitLine(line);
-							newlineIndex = lineBuffer.indexOf("\n");
-						}
-					};
-					const detachInput = () => {
-						if (!input || typeof input.off !== "function") {
-							return;
-						}
-						input.off("data", onData);
-						input.off("end", onEnd);
-					};
-					const onData = (chunk) => {
-						if (closed) {
-							return;
-						}
-						if (typeof chunk === "string") {
-							lineBuffer += chunk;
-						} else if (chunk instanceof Uint8Array) {
-							lineBuffer += textDecoder.decode(chunk, { stream: true });
-						} else if (chunk != null) {
-							lineBuffer += String(chunk);
-						}
-						flushBufferedLines();
-					};
-					const onEnd = () => {
-						if (ended) {
-							return;
-						}
-						ended = true;
-						const trailing = textDecoder.decode();
-						if (trailing) {
-							lineBuffer += trailing;
-						}
-						flushBufferedLines();
-						if (lineBuffer.length > 0) {
-							emitLine(lineBuffer);
-							lineBuffer = "";
-						}
-						api.close();
-					};
-					if (input && typeof input.on === "function") {
-						input.on("data", onData);
-						input.on("end", onEnd);
-						if (typeof input.resume === "function") {
-							input.resume();
-						}
-					}
-					const iterator = {
-						next() {
-							if (queuedLines.length > 0) {
-								return Promise.resolve({
-									done: false,
-									value: queuedLines.shift(),
-								});
-							}
-							if (closed || ended) {
-								return Promise.resolve({ done: true, value: void 0 });
-							}
-							return new Promise((resolve) => {
-								pendingLineResolve = resolve;
-							});
-						},
-						return() {
-							api.close();
-							return Promise.resolve({ done: true, value: void 0 });
-						},
-						[Symbol.asyncIterator]() {
-							return this;
-						},
-					};
-					const api = {
-						addListener(event, listener) {
-							return this.on(event, listener);
-						},
-						on(event, listener) {
-							const current = listeners.get(event) ?? [];
-							current.push(listener);
-							listeners.set(event, current);
-							return this;
-						},
-						once(event, listener) {
-							const wrapped = (...args) => {
-								this.off(event, wrapped);
-								listener(...args);
-							};
-							return this.on(event, wrapped);
-						},
-						off(event, listener) {
-							const current = listeners.get(event) ?? [];
-							listeners.set(
-								event,
-								current.filter((candidate) => candidate !== listener),
-							);
-							return this;
-						},
-						removeListener(event, listener) {
-							return this.off(event, listener);
-						},
-						close() {
-							if (closed) {
-								return;
-							}
-							closed = true;
-							detachInput();
-							while (pendingQuestionResolves.length > 0) {
-								const resolve = pendingQuestionResolves.shift();
-								resolve("");
-							}
-							if (pendingLineResolve) {
-								const resolve = pendingLineResolve;
-								pendingLineResolve = null;
-								resolve({ done: true, value: void 0 });
-							}
-							emit("close");
-						},
-						question(prompt, callback) {
-							if (output && typeof output.write === "function" && prompt) {
-								output.write(String(prompt));
-							}
-							const readAnswer = () => {
-								if (queuedLines.length > 0) {
-									return Promise.resolve(queuedLines.shift());
-								}
-								if (closed || ended) {
-									return Promise.resolve("");
-								}
-								return new Promise((resolve) => {
-									pendingQuestionResolves.push(resolve);
-								});
-							};
-							if (typeof callback === "function") {
-								void readAnswer().then((answer) => {
-									callback(answer);
-								});
-								return;
-							}
-							return readAnswer();
-						},
-						[Symbol.asyncIterator]() {
-							return iterator;
-						},
-					};
-					return api;
-				},
-			};
+			return builtinReadlineModule;
+		case "readline/promises":
+			return builtinReadlinePromisesModule;
 		case "repl":
 			throw createAccessDeniedBuiltinError(request);
 		case "stream":

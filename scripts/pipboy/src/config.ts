@@ -25,7 +25,7 @@ export const GATED_PLATFORM = PLATFORMS[0];
  * publish step injects the per-platform sidecar binaries, which a workspace
  * pack can't reproduce. The `native` check measures those binaries.
  */
-export const REGISTRY_PINNED = ["@rivet-dev/agentos-runtime-sidecar"];
+export const REGISTRY_PINNED = ["@rivet-dev/agentos-sidecar"];
 
 export interface AssetSeed {
 	/** Published package whose `latest` tarball carries the built assets. */
@@ -60,9 +60,7 @@ export const ASSET_SEEDS: ReadonlyArray<AssetSeed> = [
  * on 2026-10-20 plus 20% headroom. Each includes the 144 MB sidecar binary.
  */
 export const BUDGETS: Record<string, number> = {
-	"@rivet-dev/agentos-core": 550 * 1024 ** 2,
-	"@rivet-dev/agentos-posix": 305 * 1024 ** 2,
-	"@rivet-dev/agentos-runtime-core": 305 * 1024 ** 2,
+	"@rivet-dev/agentos": 550 * 1024 ** 2,
 	"@rivet-dev/agentos-sandbox": 600 * 1024 ** 2,
 };
 

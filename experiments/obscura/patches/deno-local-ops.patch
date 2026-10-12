@@ -1,0 +1,13 @@
+--- a/runtime/op_driver/futures_unordered_driver.rs
++++ b/runtime/op_driver/futures_unordered_driver.rs
+@@ -9,8 +9,8 @@
+ use crate::PromiseId;
+ use bit_set::BitSet;
+ use deno_error::JsErrorClass;
+-use deno_unsync::spawn;
+-use deno_unsync::JoinHandle;
++use tokio::task::spawn_local as spawn;
++use tokio::task::JoinHandle;
+ use deno_unsync::UnsyncWaker;
+ use futures::future::poll_fn;
+ use futures::stream::FuturesUnordered;

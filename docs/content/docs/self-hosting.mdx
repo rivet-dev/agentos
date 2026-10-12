@@ -15,7 +15,7 @@ it needs neither.
 |---|---|---|
 | **Runs** | As a durable instance on Rivet Cloud or a [self-hosted](/agentos/docs/self-hosting) Docker image | Embedded inside your process as a library |
 | **Lifecycle** | Durable, sleeps when idle unless a process is running; see [actor lifecycle](/actors/docs/lifecycle) | Ephemeral, runs until `dispose()` or process exit |
-| **Package** | `@rivet-dev/agentos`, or plain HTTP | `@rivet-dev/agentos-core` |
+| **Package** | `@rivet-dev/agentos`, or plain HTTP | `@rivet-dev/agentos` |
 | **VM identity** | A durable VM you create by key and reach by ID | A handle your process owns until `dispose()` |
 | **Configuration** | Stored with the VM and versioned | Passed to `AgentOs.create()` |
 | **Clients** | Your backend, or browsers with a scoped JWT | Your backend |
@@ -59,3 +59,66 @@ Everything in the [hosted quickstart](/agentos/docs/quickstart-hosted) and the
 [Hosted HTTP API](/agentos/docs/hosted-api) works the same way. Use
 `http://localhost:6420`, or wherever your control plane is reachable, as the
 base URL instead of `https://api.rivet.dev`.
+
+## Preload validation policy
+
+Hosted workers accept one `--preload-policy-json` option before startup. Omitted
+fields keep these defaults:
+
+| Field | Default |
+|---|---:|
+| `maxUrlBytes` | 4096 |
+| `maxProcessIdBytes` | 128 |
+| `maxSupportedFormats` | 8 |
+| `maxObservationWindowMs` | 86400000 |
+| `maxObservationClockSkewMs` | 300000 |
+| `maxUsageCountPerObservation` | 1000000 |
+| `maxCandidateScore` | 1000000000000 |
+| `maxStateBytes` | 16777216 |
+| `maxArtifactBytes` | 68719476736 |
+
+For example, `--preload-policy-json='{"maxUrlBytes":8192}'` permits longer
+package source URLs. All capacities must be positive; `maxObservationClockSkewMs`
+may be zero to reject future observations. Correct peer clocks before increasing
+clock tolerance. Changing `maxCandidateScore` changes ranking saturation, not a
+memory allowance. `maxArtifactBytes` bounds declared artifact metadata; download
+and process-cache budgets remain separate.
+
+Configure the same policy on producer and coordinator workers. In Rust hosts,
+call `configure_preload_validation_policy` before preload, registry startup or
+hosted configuration validation. The first use freezes the policy for that
+process; identical configuration is idempotent and different later values fail.
+There is no live policy update.
+
+The existing process flags still control startup, plan-read and action timeouts,
+flush interval, plan bytes/entries, warming concurrency and buffered observations.
+Coordinator `config.maxPlanEntries`, `maxPlanBytes`, `maxCandidates`,
+`maxTrackedProcesses`, `maxBatchObservations`, `maxConcurrentActions` and
+`planTtlMs` apply when that coordinator is created. Restarting a worker or
+resending creation settings does not update an existing coordinator. This does
+not provide a coordinator deletion or live configuration API.
+
+An oversized saved row fails before JSON decoding; an oversized proposed update
+fails before writing. Rejection preserves the saved row. Restore the matching
+worker policy or investigate retained data rather than deleting the coordinator.
+Optional warming/observation failures are logged; required package acquisition
+still returns its failure to the caller.
+
+For direct library acquisition, `PackageResolverOptions.max_source_url_bytes`
+(Rust) and `packageResolver.maxSourceUrlBytes` (TypeScript) expose the same source
+URL byte budget, defaulting to 4096 when omitted. Hosted preload projects
+`maxUrlBytes` into this option. URL schemes, digest validation, redirect handling,
+download byte limits and timeouts keep their existing behavior; this source URL
+setting does not introduce a redirect-target length policy.
+
+The shipped registry uses `--actor-budgets-json`'s
+`transport.maxMessageBytes` for both VM actor and preload coordinator messages
+(default 1 MiB). Raising preload validation or coordinator collection budgets
+does not raise this transport ceiling. Large lists or plans may still fail
+transport admission. `maxStateBytes` controls a local saved SQL row, not the
+size of an allowed action; transport and durable-row budgets are independent.
+
+## Embedded API
+
+Embedded Core runs without the hosted worker or control plane. Read more in the
+[embedded API quickstart](/agentos/docs/quickstart-embedded).

@@ -15,19 +15,10 @@ import type { AgentOs } from "../src/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "../../..");
-const AGENTOS_C_ROOT = resolve(
-	REPO_ROOT,
-	"toolchain/c",
-);
+const AGENTOS_C_ROOT = resolve(REPO_ROOT, "toolchain/c");
 const WASM_PROBE_BINARY = resolve(AGENTOS_C_ROOT, "build/fs_probe");
-const NATIVE_PROBE_BINARY = resolve(
-	AGENTOS_C_ROOT,
-	"build/native/fs_probe",
-);
-const PATCHED_LIBC = resolve(
-	AGENTOS_C_ROOT,
-	"sysroot/lib/wasm32-wasi/libc.a",
-);
+const NATIVE_PROBE_BINARY = resolve(AGENTOS_C_ROOT, "build/native/fs_probe");
+const PATCHED_LIBC = resolve(AGENTOS_C_ROOT, "sysroot/lib/wasm32-wasi/libc.a");
 const PATCHED_ERRNO = resolve(
 	AGENTOS_C_ROOT,
 	"sysroot/include/wasm32-wasi/errno.h",
@@ -35,15 +26,14 @@ const PATCHED_ERRNO = resolve(
 const SIDECAR_BINARY = resolve(
 	REPO_ROOT,
 	process.env.CARGO_TARGET_DIR ?? "target",
-	"debug/agentos-native-sidecar",
+	"debug/agentos-sidecar",
 );
-const HAS_PATCHED_SYSROOT = existsSync(PATCHED_LIBC) && existsSync(PATCHED_ERRNO);
+const HAS_PATCHED_SYSROOT =
+	existsSync(PATCHED_LIBC) && existsSync(PATCHED_ERRNO);
 
 function hasCommand(command: string): boolean {
 	try {
-		return (
-			spawnSync(command, ["--version"], { encoding: "utf8" }).status === 0
-		);
+		return spawnSync(command, ["--version"], { encoding: "utf8" }).status === 0;
 	} catch {
 		return false;
 	}
@@ -96,18 +86,10 @@ function ensureFsProbeBuilt(): void {
 			label: "failed to build patched wasi-libc sysroot",
 		});
 	}
-	runChecked(
-		"make",
-		[
-			"build/native/fs_probe",
-			"build/fs_probe",
-			"WASM_CFLAGS=--target=wasm32-wasi --sysroot=sysroot -O2 -flto -I include/",
-		],
-		{
-			cwd: AGENTOS_C_ROOT,
-			label: "failed to build fs_probe parity fixtures",
-		},
-	);
+	runChecked("make", ["build/native/fs_probe", "build/fs_probe"], {
+		cwd: AGENTOS_C_ROOT,
+		label: "failed to build fs_probe parity fixtures",
+	});
 }
 
 function ensureWorkspaceSidecarBuilt(): void {
@@ -121,9 +103,9 @@ function ensureWorkspaceSidecarBuilt(): void {
 		process.env.AGENTOS_WASM_SNAPSHOT_RUNNER = "off";
 		return;
 	}
-	runChecked("cargo", ["build", "-q", "-p", "agentos-native-sidecar"], {
+	runChecked("cargo", ["build", "--locked", "-q", "-p", "agentos-sidecar"], {
 		cwd: REPO_ROOT,
-		label: "failed to build workspace agentos-native-sidecar",
+		label: "failed to build workspace agentos-sidecar",
 	});
 	process.env.AGENTOS_SIDECAR_BIN = SIDECAR_BINARY;
 	process.env.AGENTOS_WASM_SNAPSHOT_RUNNER = "off";
@@ -213,9 +195,8 @@ describe.skipIf(!CAN_RUN)("filesystem native parity", () => {
 			cols: 120,
 			rows: 40,
 		}));
-		unsubscribeShellData = vm.onShellData(shellId, (data) => {
-			rawOutput +=
-				typeof data === "string" ? data : Buffer.from(data).toString("utf8");
+		unsubscribeShellData = vm.onShellData(shellId, (event) => {
+			rawOutput += Buffer.from(event.data).toString("utf8");
 		});
 
 		const status = await vm.waitShell(shellId);

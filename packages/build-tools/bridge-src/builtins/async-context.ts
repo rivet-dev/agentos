@@ -19,7 +19,8 @@ type AsyncContextFrame = Map<object, unknown> | undefined;
 const kAsyncContextFrame = Symbol("kAsyncContextFrame");
 
 const engineGlobals = globalThis as unknown as Record<string, unknown>;
-const getAsyncContextFrame = engineGlobals.__agentOsGetAsyncContext as () => AsyncContextFrame;
+const getAsyncContextFrame =
+	engineGlobals.__agentOsGetAsyncContext as () => AsyncContextFrame;
 const setAsyncContextFrame = engineGlobals.__agentOsSetAsyncContext as (
 	frame: AsyncContextFrame,
 ) => void;
@@ -69,7 +70,10 @@ class AsyncResource {
 		this[kAsyncContextFrame] = getAsyncContextFrame();
 	}
 	static bind(fn, type = undefined, thisArg = undefined) {
-		return new AsyncResource(type || fn.name || "bound-anonymous-fn").bind(fn, thisArg);
+		return new AsyncResource(type || fn.name || "bound-anonymous-fn").bind(
+			fn,
+			thisArg,
+		);
 	}
 	bind(fn, thisArg = undefined) {
 		if (typeof fn !== "function") {

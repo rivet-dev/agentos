@@ -161,5 +161,5 @@ await shutdown();
 Need Python? Use the [agentOS Python execution API](https://rivet.dev/agentos/docs/python), which has the same `execute` and `evaluate` shape.
 
 For processes, filesystem access, and agent sessions, use
-[`@rivet-dev/agentos-core`](https://rivet.dev/agentos) directly. Read the [documentation](https://rivet.dev/secure-exec/docs), or browse the examples in
+[`@rivet-dev/agentos`](https://rivet.dev/agentos) directly. Read the [documentation](https://rivet.dev/secure-exec/docs), or browse the examples in
 [`secure-exec/examples`](https://github.com/rivet-dev/agentos/tree/main/secure-exec/examples).

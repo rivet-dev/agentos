@@ -1,6 +1,6 @@
 // Nightly: requires a non-core registry command.
 import { existsSync } from "node:fs";
-import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,6 +12,7 @@ import {
 } from "@rivet-dev/agentos-test-harness";
 import type { Kernel } from "@rivet-dev/agentos-test-harness";
 import { afterEach, expect, it } from "vitest";
+import { AgentOs, createSnapshotExport } from "../../../packages/core/src/index.js";
 
 const VIM_COMMAND_DIR = fileURLToPath(new URL("../bin", import.meta.url));
 const VIM_RUNTIME_DIR = fileURLToPath(
@@ -36,9 +37,7 @@ async function createTestVFS(): Promise<NodeFileSystem> {
 		"/project/edit.vim",
 		"set nomore\nedit /project/input.txt\n%s/beta/delta/\nwrite\nquitall!\n",
 	);
-	await cp(VIM_RUNTIME_DIR, join(tempRoot, "usr/local/share/vim/vim92"), {
-		recursive: true,
-	});
+	await mkdir(join(tempRoot, "usr/local/share/vim"), { recursive: true });
 	return new NodeFileSystem({ root: tempRoot });
 }
 
@@ -57,6 +56,11 @@ describeIf(hasVimPackage, "vim command", { timeout: 60_000 }, () => {
 	async function mountFixture(): Promise<void> {
 		const vfs = await createTestVFS();
 		kernel = createKernel({ filesystem: vfs });
+		kernel.mountFs(
+			"/usr/local/share/vim/vim92",
+			new NodeFileSystem({ root: VIM_RUNTIME_DIR }),
+			{ readOnly: true },
+		);
 		await kernel.mount(createWasmVmRuntime({ commandDirs: [VIM_COMMAND_DIR] }));
 	}
 
@@ -112,5 +116,51 @@ describeIf(hasVimPackage, "vim command", { timeout: 60_000 }, () => {
 			"utf8",
 		);
 		expect(edited).toBe("alpha\ndelta\ngamma\n");
+	});
+});
+
+const VIM_AOSPKG = fileURLToPath(new URL("../dist/package.aospkg", import.meta.url));
+
+describeIf(existsSync(VIM_AOSPKG), "vim packed runtime", { timeout: 60_000 }, () => {
+	it("loads packaged autoload and import scripts through the public SDK", async () => {
+		const sidecar = await AgentOs.createSidecar();
+		let vm: AgentOs | undefined;
+		try {
+			vm = await AgentOs.create({
+				defaultSoftware: false,
+				sidecar: { kind: "explicit", handle: sidecar },
+				software: [{ packagePath: VIM_AOSPKG }],
+				permissions: { fs: "allow", process: "allow", childProcess: "allow" },
+				rootFilesystem: {
+					lowers: [createSnapshotExport([
+						{ path: "/project", type: "directory", mode: "0755", uid: 1000, gid: 1000 },
+						{
+							path: "/project/runtime-contract.vim", type: "file", mode: "0644", uid: 1000, gid: 1000,
+							content: [
+								"vim9script",
+								"import autoload 'dist/json.vim'",
+								"import 'dist/vimhighlight.vim'",
+								"var formatted = json.Format({'answer': 42})",
+								"writefile(split(formatted, \"\\n\"), '/project/formatted.json')",
+								"writefile(['runtime-ready'], '/project/runtime-ready.txt')",
+							].join("\n") + "\n",
+						},
+					])],
+				},
+			});
+			const result = await vm.process.execFile(
+				"vim", ["-Nu", "NONE", "-n", "-es", "-V1", "-S", "/project/runtime-contract.vim", "-c", "qa!"],
+				{ env: { TERM: "xterm" }, timeoutMs: 45_000,
+					output: { capture: "all", maxBufferedBytes: 64 * 1024 } },
+			);
+			expect(result.exitCode, result.stderr || result.stdout).toBe(0);
+			expect(JSON.parse(Buffer.from(await vm.filesystem.readFile("/project/formatted.json")).toString("utf8")))
+				.toEqual({ answer: 42 });
+			expect(Buffer.from(await vm.filesystem.readFile("/project/runtime-ready.txt")).toString("utf8"))
+				.toBe("runtime-ready\n");
+		} finally {
+			try { await vm?.dispose(); }
+			finally { await sidecar.dispose(); }
+		}
 	});
 });

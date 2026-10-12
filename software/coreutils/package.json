@@ -3,7 +3,7 @@
 	"private": true,
 	"version": "0.3.4",
 	"type": "module",
-	"license": "Apache-2.0",
+	"license": "Apache-2.0 AND GPL-3.0-or-later",
 	"description": "GNU coreutils for agentos VMs (sh, cat, ls, cp, sort, and 80+ commands)",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
@@ -30,7 +30,6 @@
 		"@rivet-dev/agentos-toolchain": "workspace:*",
 		"@types/node": "^22.10.2",
 		"typescript": "^5.9.2",
-		"@rivet-dev/agentos-test-harness": "workspace:*",
 		"vitest": "^2.1.9"
 	}
 }

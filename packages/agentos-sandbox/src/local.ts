@@ -1,4 +1,4 @@
-import type { AgentOsSandboxProvider } from "@rivet-dev/agentos-core";
+import type { AgentOsSandboxProvider } from "@rivet-dev/agentos";
 import type { LocalProviderOptions } from "sandbox-agent/local";
 import { local as sandboxAgentLocal } from "sandbox-agent/local";
 import { sandboxAgentProvider } from "./provider.js";

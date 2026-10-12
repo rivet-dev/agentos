@@ -1,7 +1,19 @@
 import eventsStdlibModule, * as eventsStdlibModuleNs from "node:events";
 import { exposeCustomGlobal } from "../global-exposure.js";
-import { Event } from "../polyfills/index.js";
 import { process2 } from "./process.js";
+
+// Capture the owner from the separately bundled event/abort prelude, then scrub.
+const eventAbortBootstrap = globalThis as Record<string, unknown>;
+const addProtectedEventListener =
+	eventAbortBootstrap.__agentOsAddProtectedEventListener as (
+		target: unknown,
+		type: string,
+		listener: (event: unknown) => void,
+		options: { once: boolean },
+	) => void;
+if (typeof addProtectedEventListener !== "function")
+	throw new Error("Missing event/abort prelude protected listener owner");
+delete eventAbortBootstrap.__agentOsAddProtectedEventListener;
 
 const EventEmitter =
 	eventsStdlibModuleNs.EventEmitter ??
@@ -134,14 +146,13 @@ function addAbortListener(signal, listener) {
 	if (typeof listener !== "function") {
 		throw new TypeError("listener must be a function");
 	}
-	const wrapped = () =>
-		listener(
-			typeof Event === "function" ? new Event("abort") : { type: "abort" },
-		);
+	const wrapped = function (event) {
+		return Reflect.apply(listener, this, [event]);
+	};
 	if (signal.aborted) {
-		queueMicrotask(wrapped);
+		queueMicrotask(() => Reflect.apply(listener, undefined, []));
 	} else {
-		signal.addEventListener("abort", wrapped, { once: true });
+		addProtectedEventListener(signal, "abort", wrapped, { once: true });
 	}
 	const dispose = () => signal.removeEventListener("abort", wrapped);
 	return {

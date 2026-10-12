@@ -5,21 +5,23 @@ skill: true
 ---
 
 Measure the exact workload and hardware used in production. VM startup includes
-Core configuration, filesystem bootstrap, software projection, and the first
-execution.
+Core configuration, filesystem bootstrap, required software reconciliation,
+and the first execution. Hosted startup additionally includes actor resolution.
 
 ## Cold-start phases
 
 Record these phases separately:
 
-1. sidecar process startup, or reuse of a shared sidecar;
-2. software acquisition;
-3. Core and filesystem boot;
-4. first guest instruction.
+1. actor resolution and process startup;
+2. required software acquisition;
+3. optional preload warming;
+4. Core and filesystem boot;
+5. first guest instruction.
 
-Software passed at boot must be available before the VM is ready. The sidecar's
-content-addressed package cache should make a digest hit visible as a separate
-metric from a network download.
+Required software must finish before readiness. Optional preload work has a
+strict startup deadline and may time out without making the actor unhealthy.
+The process-local content-addressed cache should make a digest hit visible as a
+separate metric from a network download.
 
 ## Memory per VM
 
@@ -50,8 +52,8 @@ For a focused run, build first and select the minimal sleep/command workload:
 
 ```sh
 pnpm build
-cargo build --release -p agentos-native-sidecar
-export AGENTOS_SIDECAR_BIN="$PWD/target/release/agentos-native-sidecar"
+cargo build --release -p agentos-sidecar
+export AGENTOS_SIDECAR_BIN="$PWD/target/release/agentos-sidecar"
 
 pnpm exec tsx scripts/benchmarks/coldstart.bench.ts \
   --workload=sleep --iterations=2000

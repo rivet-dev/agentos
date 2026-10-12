@@ -66,7 +66,7 @@
 		"test": "vitest run"
 	},
 	"dependencies": {
-		"@rivet-dev/agentos-core": "workspace:*",
+		"@rivet-dev/agentos": "workspace:*",
 		"dockerode": "^4.0.9",
 		"get-port": "^7.1.0",
 		"sandbox-agent": "^0.4.2"

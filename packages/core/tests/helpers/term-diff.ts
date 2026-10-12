@@ -14,10 +14,7 @@ export interface Grid {
  * divergence is a real difference in the escape sequences the two vims emit —
  * not an artifact of two different terminal parsers.
  */
-function snapshot(
-	term: InstanceType<typeof Terminal>,
-	rows: number,
-): Grid {
+function snapshot(term: InstanceType<typeof Terminal>, rows: number): Grid {
 	const buf = term.buffer.active;
 	const out: string[] = [];
 	for (let y = 0; y < rows; y++) {
@@ -134,7 +131,10 @@ export function diffGrids(
 			lines.push(`    wasm:   ${JSON.stringify(b)}`);
 		}
 	}
-	if (reference.cursor.x !== candidate.cursor.x || reference.cursor.y !== candidate.cursor.y) {
+	if (
+		reference.cursor.x !== candidate.cursor.x ||
+		reference.cursor.y !== candidate.cursor.y
+	) {
 		equal = false;
 		lines.push(
 			`  cursor: native (${reference.cursor.x},${reference.cursor.y}) vs wasm (${candidate.cursor.x},${candidate.cursor.y})`,

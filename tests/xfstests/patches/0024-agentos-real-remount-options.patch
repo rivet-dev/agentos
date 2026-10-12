@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AgentOS Tests <tests@agentos.invalid>
+Date: Wed, 15 Jul 2026 03:00:00 -0700
+Subject: [PATCH] fstests: apply AgentOS scratch remount options
+
+---
+ common/rc | 24 +++++++++++++++++++++++-
+ 1 file changed, 23 insertions(+), 1 deletion(-)
+
+diff --git a/common/rc b/common/rc
+index b35c47f1..89ef8608 100644
+--- a/common/rc
++++ b/common/rc
+@@ -443,9 +443,31 @@ _supports_filetype()
+ _try_scratch_mount()
+ {
+ 	local mount_ret
+ 	if [ "$FSTYP" = "agentos" ]; then
+ 		mkdir -p "$SCRATCH_MNT"
+-		return 0
++		local agentos_opts=""
++		while [ $# -gt 0 ]; do
++			case "$1" in
++			-o)
++				shift
++				agentos_opts="$1"
++				;;
++			-o*) agentos_opts="${1#-o}" ;;
++			esac
++			shift
++		done
++		[ -z "$agentos_opts" ] && return 0
++		local agentos_mount_prog="${MOUNT_PROG:-$(command -v mount)}"
++		if [ -z "$agentos_mount_prog" ]; then
++			echo "AgentOS mount command is unavailable" >&2
++			return 127
++		fi
++		case ",$agentos_opts," in
++		*,remount,*) ;;
++		*) agentos_opts="remount,$agentos_opts" ;;
++		esac
++		"$agentos_mount_prog" -t agentos -o "$agentos_opts" "$SCRATCH_DEV" "$SCRATCH_MNT"
++		return $?
+ 	fi
+ 
+ 	if [ "$FSTYP" == "overlay" ]; then
+-- 
+2.39.5

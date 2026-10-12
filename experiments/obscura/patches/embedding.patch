@@ -1,0 +1,647 @@
+diff --git a/crates/obscura-js/Cargo.toml b/crates/obscura-js/Cargo.toml
+index c9350fb..38a21d4 100644
+--- a/crates/obscura-js/Cargo.toml
++++ b/crates/obscura-js/Cargo.toml
+@@ -17,12 +17,12 @@ stealth = ["obscura-net/stealth"]
+ render = ["dep:obscura-render", "obscura-render/paint"]
+ 
+ [build-dependencies]
+-deno_core = "0.412"
++deno_core = "=0.336.0"
+ 
+ [dependencies]
+ obscura-dom = { workspace = true }
+ obscura-net = { workspace = true }
+-deno_core = "0.412"
++deno_core = "=0.336.0"
+ tokio = { workspace = true }
+ serde = { workspace = true }
+ serde_json = { workspace = true }
+@@ -36,7 +36,7 @@ thiserror = { workspace = true }
+ anyhow = { workspace = true }
+ reqwest = { workspace = true }
+ html5ever = { workspace = true }
+-deno_error = "0.7"
++deno_error = "0.5"
+ base64 = { workspace = true }
+ sha1 = "0.10"
+ sha2 = "0.10"
+diff --git a/crates/obscura-js/src/module_loader.rs b/crates/obscura-js/src/module_loader.rs
+index 6a82e48..5f4d8c6 100644
+--- a/crates/obscura-js/src/module_loader.rs
++++ b/crates/obscura-js/src/module_loader.rs
+@@ -4,8 +4,6 @@ use std::rc::{Rc, Weak};
+ use std::sync::Arc;
+ 
+ use deno_core::error::ModuleLoaderError;
+-use deno_core::ModuleLoadOptions;
+-use deno_core::ModuleLoadReferrer;
+ use deno_core::ModuleLoadResponse;
+ use deno_core::ModuleLoader;
+ use deno_core::ModuleSource;
+@@ -149,7 +147,7 @@ impl ObscuraModuleLoader {
+ }
+ 
+ fn io_err(msg: String) -> ModuleLoaderError {
+-    JsErrorBox::from_err(std::io::Error::new(std::io::ErrorKind::Other, msg))
++    JsErrorBox::from_err(std::io::Error::new(std::io::ErrorKind::Other, msg)).into()
+ }
+ 
+ impl ModuleLoader for ObscuraModuleLoader {
+@@ -189,8 +187,9 @@ impl ModuleLoader for ObscuraModuleLoader {
+     fn load(
+         &self,
+         module_specifier: &ModuleSpecifier,
+-        maybe_referrer: Option<&ModuleLoadReferrer>,
+-        options: ModuleLoadOptions,
++        maybe_referrer: Option<&ModuleSpecifier>,
++        is_dyn_import: bool,
++        _requested_module_type: deno_core::RequestedModuleType,
+     ) -> ModuleLoadResponse {
+         let url = module_specifier.to_string();
+         // Module-graph CORS and same-origin credentials are relative to the
+@@ -201,7 +200,7 @@ impl ModuleLoader for ObscuraModuleLoader {
+         let document_url = ModuleSpecifier::parse(&self.base_url)
+             .unwrap_or_else(|_| module_specifier.clone());
+         let referrer = maybe_referrer
+-            .map(|referrer| referrer.specifier.clone())
++            .cloned()
+             .unwrap_or_else(|| document_url.clone());
+         // Capture the loader's proxy here so the async closure below owns a
+         // plain Option<String> rather than borrowing &self across an `await`.
+@@ -213,7 +212,7 @@ impl ModuleLoader for ObscuraModuleLoader {
+         // runtime between deno_core accepting the load and first polling it.
+         // Keeping the guard inside the future makes cancellation/navigation
+         // decrement the count through Drop as well as success and failure.
+-        let is_dyn_import = options.is_dynamic_import;
++        
+         let activity_guard = is_dyn_import.then(|| activity.begin());
+         let page_network = match self.page_state.as_ref() {
+             Some(weak) => (|| {
+diff --git a/crates/obscura-js/src/ops.rs b/crates/obscura-js/src/ops.rs
+index 7b6a21b..1bd2aa1 100644
+--- a/crates/obscura-js/src/ops.rs
++++ b/crates/obscura-js/src/ops.rs
+@@ -766,8 +766,8 @@ fn op_fetch_cancel_handle(state: &mut OpState) -> u32 {
+ // Private signal state survives realm crossings without public prototype
+ // forgeries or a native Global handle that would keep dead signals alive.
+ #[op2]
+-fn op_abort_signal_state<'s, 'i>(
+-    scope: &mut v8::PinScope<'s, 'i>,
++fn op_abort_signal_state<'s>(
++    scope: &mut v8::HandleScope<'s>,
+     value: v8::Local<'s, v8::Value>,
+     initial: v8::Local<'s, v8::Value>,
+ ) -> v8::Local<'s, v8::Value> {
+@@ -822,7 +822,7 @@ impl Resource for FetchBodyResource {
+     }
+ }
+ 
+-#[op2]
++#[op2(async)]
+ #[buffer]
+ async fn op_fetch_body(
+     state: Rc<RefCell<OpState>>,
+@@ -1047,7 +1047,7 @@ pub fn frame_state(op_state: &OpState, frame_id: u32) -> SharedState {
+ ///
+ /// A page with no frames pays only an `is_empty` check: looking up the current
+ /// context is not free, and `op_dom` is the hottest op in the system.
+-pub fn realm_state(scope: &mut v8::PinScope, op_state: &OpState) -> SharedState {
++pub fn realm_state(scope: &mut v8::HandleScope, op_state: &OpState) -> SharedState {
+     let page = || op_state.borrow::<SharedState>().clone();
+     let registry = match op_state.try_borrow::<Rc<RefCell<RealmStates>>>() {
+         Some(registry) => registry.clone(),
+@@ -3005,8 +3005,8 @@ pub(crate) fn record_uncaught_exception(
+ }
+ 
+ #[op2(nofast)]
+-fn op_report_browser_exception<'s, 'i>(
+-    scope: &mut v8::PinScope<'s, 'i>,
++fn op_report_browser_exception<'s>(
++    scope: &mut v8::HandleScope<'s>,
+     state: &OpState,
+     error: v8::Local<'s, v8::Value>,
+     frame_id: u32,
+@@ -3546,7 +3546,7 @@ fn intercept_fulfill_response(
+     })
+ }
+ 
+-#[op2]
++#[op2(async)]
+ #[string]
+ async fn op_fetch_url(
+     state: Rc<RefCell<OpState>>,
+@@ -3892,7 +3892,7 @@ async fn fetch_url_inner(
+                 unsafe_header_names.join(","),
+             );
+         }
+-        let preflight = preflight_request.send().await.map_err(|e| {
++        let preflight = http_client.as_ref().ok_or_else(|| deno_error::JsErrorBox::generic("ERR_AGENTOS_OBSCURA_HOST_REQUIRED"))?.send_request(preflight_request).await.map_err(|e| {
+                 deno_error::JsErrorBox::generic(format!("CORS preflight failed: {}", e))
+             })?;
+ 
+@@ -4062,7 +4062,7 @@ async fn fetch_url_inner(
+                 counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                 PageInFlightGuard(counter.clone())
+             });
+-            req.send().await.map_err(|error| deno_error::JsErrorBox::generic(error.to_string()))?
++            http_client.as_ref().ok_or_else(|| deno_error::JsErrorBox::generic("ERR_AGENTOS_OBSCURA_HOST_REQUIRED"))?.send_request(req).await.map_err(|error| deno_error::JsErrorBox::generic(error.to_string()))?
+         };
+ 
+         if credentials_allowed {
+@@ -5729,7 +5729,7 @@ fn validate_fetch_url(url: &url::Url, allow_private_network: bool) -> Result<(),
+ 
+ #[op2]
+ #[string]
+-fn op_get_cookies(scope: &mut v8::PinScope, state: &OpState) -> String {
++fn op_get_cookies(scope: &mut v8::HandleScope, state: &OpState) -> String {
+     let gs = realm_state(scope, state);
+     let gs = gs.borrow();
+     let jar = match &gs.cookie_jar {
+@@ -5744,7 +5744,7 @@ fn op_get_cookies(scope: &mut v8::PinScope, state: &OpState) -> String {
+ }
+ 
+ #[op2(fast)]
+-fn op_set_cookie(scope: &mut v8::PinScope, state: &OpState, #[string] cookie_str: &str) {
++fn op_set_cookie(scope: &mut v8::HandleScope, state: &OpState, #[string] cookie_str: &str) {
+     let gs = realm_state(scope, state);
+     let gs = gs.borrow();
+     let jar = match &gs.cookie_jar {
+@@ -5769,7 +5769,7 @@ pub struct SessionHistory {
+ /// this realm has none.
+ #[op2]
+ #[string]
+-fn op_session_history(scope: &mut v8::PinScope, state: &OpState) -> String {
++fn op_session_history(scope: &mut v8::HandleScope, state: &OpState) -> String {
+     let gs = realm_state(scope, state);
+     let gs = gs.borrow();
+     let history = &gs.session_history;
+@@ -5779,7 +5779,7 @@ fn op_session_history(scope: &mut v8::PinScope, state: &OpState) -> String {
+ /// Queue a traversal to another document's session history entry. Returns
+ /// false when the index is out of range.
+ #[op2(fast)]
+-fn op_history_traverse(scope: &mut v8::PinScope, state: &OpState, index: u32) -> bool {
++fn op_history_traverse(scope: &mut v8::HandleScope, state: &OpState, index: u32) -> bool {
+     let gs = realm_state(scope, state);
+     let mut gs = gs.borrow_mut();
+     let index = index as usize;
+@@ -5795,7 +5795,7 @@ fn op_history_traverse(scope: &mut v8::PinScope, state: &OpState, index: u32) ->
+ // navigation against the calling realm keeps it inside that frame.
+ #[op2(fast)]
+ fn op_navigate(
+-    scope: &mut v8::PinScope,
++    scope: &mut v8::HandleScope,
+     state: &OpState,
+     #[string] url: &str,
+     #[string] method: &str,
+@@ -5837,7 +5837,7 @@ fn frame_message_queue_byte_limit() -> usize {
+ // handshake actually depends on.
+ #[op2(fast)]
+ fn op_post_frame_message(
+-    scope: &mut v8::PinScope,
++    scope: &mut v8::HandleScope,
+     state: &OpState,
+     target_frame_id: u32,
+     #[string] target_origin: &str,
+@@ -5890,7 +5890,7 @@ fn op_post_frame_message(
+ /// and a snapshot-restored realm has none. This resolves an ordinary promise
+ /// instead, and V8 reports the frame as the microtask context, so the ops a
+ /// timer callback makes still find the frame's own document.
+-#[op2]
++#[op2(async)]
+ async fn op_sleep(state: Rc<RefCell<OpState>>, #[number] millis: u64, frame_id: Option<u32>) -> bool {
+     let sleep = tokio::time::sleep(std::time::Duration::from_millis(millis));
+     let frame_id = frame_id.unwrap_or(0);
+@@ -5913,7 +5913,7 @@ const MAX_PENDING_FRAME_BYTES: usize = 32 * 1024 * 1024;
+ // id means the bounded native queue refused the document.
+ #[op2(fast)]
+ fn op_frame_document_ready(
+-    scope: &mut v8::PinScope,
++    scope: &mut v8::HandleScope,
+     state: &OpState,
+     #[string] url: &str,
+     #[string] html: &str,
+@@ -5961,19 +5961,23 @@ fn op_frame_document_ready(
+ 
+ // deno_core owns the context-state and module-map slots. Store traced V8 values
+ // after them, not Global handles that would keep the context alive after detach.
+-const DOCUMENT_MEMBERS_SLOT: i32 = deno_core::MODULE_MAP_SLOT_INDEX + 1;
+-const DOCUMENT_OWNER_SLOT: i32 = DOCUMENT_MEMBERS_SLOT + 1;
++
+ 
+ #[op2(nofast)]
+ fn op_register_document_realm(
+-    scope: &mut v8::PinScope,
++    scope: &mut v8::HandleScope,
+     members: v8::Local<v8::Object>,
+     frame_id: u32,
+ ) {
+     if let Some(context) = members.get_creation_context(scope) {
+-        context.set_embedder_data(DOCUMENT_MEMBERS_SLOT, members.into());
++        let global = context.global(scope);
++        let members_key = v8::String::new(scope, "obscura.document.members").unwrap();
++        let members_key = v8::Private::for_api(scope, Some(members_key));
++        global.set_private(scope, members_key, members.into());
+         let id = v8::Integer::new_from_unsigned(scope, frame_id);
+-        context.set_embedder_data(DOCUMENT_OWNER_SLOT, id.into());
++        let owner_key = v8::String::new(scope, "obscura.document.owner").unwrap();
++        let owner_key = v8::Private::for_api(scope, Some(owner_key));
++        global.set_private(scope, owner_key, id.into());
+         if context != scope.get_current_context() {
+             // Frame contexts own no Rust typed slots. Discard the empty annex
+             // created by these setters while the isolate is alive (#1161).
+@@ -5988,17 +5992,22 @@ fn op_register_document_realm(
+ /// Resolve a borrowed document member from the receiver's creation realm, not
+ /// its public prototype, which a membrane is allowed to replace.
+ #[op2]
+-fn op_document_realm_member<'s, 'i>(
+-    scope: &mut v8::PinScope<'s, 'i>,
++fn op_document_realm_member<'s>(
++    scope: &mut v8::HandleScope<'s>,
+     receiver: v8::Local<'s, v8::Object>,
+     #[string] name: &str,
+     caller_frame_id: u32,
+ ) -> v8::Local<'s, v8::Value> {
+     let member = (|| {
+         let context = receiver.get_creation_context(scope)?;
+-        let owner = context.get_embedder_data(scope, DOCUMENT_OWNER_SLOT)?.uint32_value(scope)?;
++        let global = context.global(scope);
++        let owner_key = v8::String::new(scope, "obscura.document.owner")?;
++        let owner_key = v8::Private::for_api(scope, Some(owner_key));
++        let owner = global.get_private(scope, owner_key)?.uint32_value(scope)?;
+         if owner == caller_frame_id { return None; }
+-        let members = context.get_embedder_data(scope, DOCUMENT_MEMBERS_SLOT)?.to_object(scope)?;
++        let members_key = v8::String::new(scope, "obscura.document.members")?;
++        let members_key = v8::Private::for_api(scope, Some(members_key));
++        let members = global.get_private(scope, members_key)?.to_object(scope)?;
+         let key = v8::String::new(scope, name)?;
+         let value = members.get(scope, key.into())?;
+         value.is_function().then_some(value)
+@@ -6016,7 +6025,7 @@ pub fn max_live_frames() -> usize {
+ /// An initial about:blank needs its own realm before the next JS statement.
+ #[op2(nofast)]
+ fn op_initial_frame(
+-    scope: &mut v8::PinScope,
++    scope: &mut v8::HandleScope,
+     state: &OpState,
+     parent_frame_id: u32,
+     initialize: v8::Local<v8::Function>,
+@@ -6107,7 +6116,7 @@ fn op_async_runtime_available() -> bool {
+ fn op_posted_task(
+     state: &OpState,
+     frame_id: u32,
+-    #[scoped] callback: v8::Global<v8::Function>,
++    #[global] callback: v8::Global<v8::Function>,
+ ) -> f64 {
+     let Some(owner) = posted_task_owner(state, frame_id) else {
+         return INVALID_POSTED_TASK_GENERATION;
+@@ -6126,7 +6135,7 @@ fn op_posted_task(
+             }
+             PostedTaskOwnerStatus::Generation(generation) => generation as f64,
+         };
+-        v8::tc_scope!(let scope, scope);
++        let scope = &mut v8::TryCatch::new(scope);
+         let callback = v8::Local::new(scope, callback);
+         let receiver = v8::undefined(scope).into();
+         let current_generation = v8::Number::new(scope, current_generation);
+@@ -7743,7 +7752,7 @@ fn finish_async_image_metadata(
+ /// navigation/URL/profile share one fetch, and completion revalidates both the
+ /// document identity and responsive candidate before exposing lifecycle state.
+ #[cfg(feature = "render")]
+-#[op2]
++#[op2(async)]
+ #[string]
+ async fn op_load_image_metadata(state: Rc<RefCell<OpState>>, nid: u32) -> String {
+     let shared = {
+diff --git a/crates/obscura-js/src/runtime.rs b/crates/obscura-js/src/runtime.rs
+index b7c574a..51af4c3 100644
+--- a/crates/obscura-js/src/runtime.rs
++++ b/crates/obscura-js/src/runtime.rs
+@@ -282,12 +282,13 @@ pub struct ObscuraJsRuntime {
+     // Keep the runtime last: custom `Drop` enters its isolate, then every
+     // V8-backed field above is released before `OwnedIsolate` performs the
+     // matching exit and disposes the isolate.
++    realm_states: Rc<RefCell<crate::ops::RealmStates>>,
+     js_runtime: JsRuntime,
+ }
+ 
+ /// Renders a caught V8 exception as a message for realm evaluation errors.
+ fn exception_text(
+-    scope: &mut v8::PinnedRef<'_, v8::TryCatch<'_, '_, v8::HandleScope<'_>>>,
++    scope: &mut v8::TryCatch<'_, v8::HandleScope<'_>>,
+ ) -> String {
+     match scope.exception() {
+         Some(exception) => exception.to_rust_string_lossy(scope),
+@@ -538,7 +539,9 @@ impl ObscuraJsRuntime {
+ 
+     /// Read native isolate statistics without evaluating scripts or forcing GC.
+     pub fn heap_statistics(&mut self) -> v8::HeapStatistics {
+-        self.runtime().v8_isolate().get_heap_statistics()
++        let mut stats = v8::HeapStatistics::default();
++        self.runtime().v8_isolate().get_heap_statistics(&mut stats);
++        stats
+     }
+ 
+     /// Run a full collection only when an automation client explicitly asks.
+@@ -584,7 +587,7 @@ impl ObscuraJsRuntime {
+ 
+         // Build the isolate under the process-wide creation lock so two
+         // connection threads never construct isolates concurrently (#430).
+-        let (runtime, isolate_handle, heap_limit_state) = {
++        let (mut runtime, isolate_handle, heap_limit_state) = {
+             // Keep the guard alive for the whole construction: deno_core
+             // captures the current tokio handle at `JsRuntime::new` time and
+             // aborts if a V8 delayed task is posted without one.
+@@ -636,7 +639,9 @@ impl ObscuraJsRuntime {
+             (runtime, isolate_handle, heap_limit_state)
+         };
+ 
++        let realm_states = runtime.op_state().borrow().borrow::<Rc<RefCell<crate::ops::RealmStates>>>().clone();
+         let mut instance = ObscuraJsRuntime {
++            realm_states,
+             state,
+             object_store: HashMap::new(),
+             evaluation_recipes: HashMap::new(),
+@@ -687,7 +692,7 @@ impl ObscuraJsRuntime {
+         let context = {
+             let mut entered = self.runtime();
+             let isolate = entered.v8_isolate();
+-            deno_core::v8::scope!(let scope, isolate);
++            let scope = &mut v8::HandleScope::new(isolate);
+             let context = deno_core::v8::Context::from_snapshot(
+                 scope,
+                 1,
+@@ -717,7 +722,7 @@ impl ObscuraJsRuntime {
+         let main = self.runtime().main_context();
+         let mut entered = self.runtime();
+         let isolate = entered.v8_isolate();
+-        v8::scope!(let scope, isolate);
++        let scope = &mut v8::HandleScope::new(isolate);
+         let context = v8::Local::new(scope, main);
+         let scope = &mut v8::ContextScope::new(scope, context);
+ 
+@@ -750,7 +755,7 @@ impl ObscuraJsRuntime {
+         let main = self.runtime().main_context();
+         let mut entered = self.runtime();
+         let isolate = entered.v8_isolate();
+-        v8::scope!(let scope, isolate);
++        let scope = &mut v8::HandleScope::new(isolate);
+         let context = v8::Local::new(scope, main);
+         let scope = &mut v8::ContextScope::new(scope, context);
+         let Some(key) = v8::String::new(scope, "__obscura_test_ops") else {
+@@ -789,7 +794,7 @@ impl ObscuraJsRuntime {
+         let main = self.runtime().main_context();
+         let mut entered = self.runtime();
+         let isolate = entered.v8_isolate();
+-        v8::scope!(let scope, isolate);
++        let scope = &mut v8::HandleScope::new(isolate);
+         let main_ctx = v8::Local::new(scope, main);
+         let realm_ctx = v8::Local::new(scope, realm);
+         // SAFETY: these slots on the main context are `Rc::into_raw` pointers
+@@ -819,7 +824,7 @@ impl ObscuraJsRuntime {
+         };
+         let mut entered = self.runtime();
+         let isolate = entered.v8_isolate();
+-        v8::scope!(let scope, isolate);
++        let scope = &mut v8::HandleScope::new(isolate);
+         let context = v8::Local::new(scope, realm);
+         let scope = &mut v8::ContextScope::new(scope, context);
+ 
+@@ -884,10 +889,10 @@ impl ObscuraJsRuntime {
+ 
+         let mut entered = self.runtime();
+         let isolate = entered.v8_isolate();
+-        v8::scope!(let scope, isolate);
++        let scope = &mut v8::HandleScope::new(isolate);
+         let context = v8::Local::new(scope, realm);
+         let scope = &mut v8::ContextScope::new(scope, context);
+-        v8::tc_scope!(let tc_scope, scope);
++        let tc_scope = &mut v8::TryCatch::new(scope);
+ 
+         let code = v8::String::new(tc_scope, source).ok_or("source too large")?;
+         let script = match v8::Script::compile(tc_scope, code, None) {
+@@ -926,7 +931,7 @@ impl ObscuraJsRuntime {
+         let main = self.runtime().main_context();
+         let mut entered = self.runtime();
+         let isolate = entered.v8_isolate();
+-        v8::scope!(let scope, isolate);
++        let scope = &mut v8::HandleScope::new(isolate);
+ 
+         let main_context = v8::Local::new(scope, main);
+         let mut carried = Vec::new();
+@@ -1000,7 +1005,7 @@ impl ObscuraJsRuntime {
+         let main = self.runtime().main_context();
+         let mut entered = self.runtime();
+         let isolate = entered.v8_isolate();
+-        v8::scope!(let scope, isolate);
++        let scope = &mut v8::HandleScope::new(isolate);
+         let main = v8::Local::new(scope, main);
+         let realm = v8::Local::new(scope, realm);
+         let token = main.get_security_token(scope);
+@@ -1026,7 +1031,7 @@ impl ObscuraJsRuntime {
+         let main = self.runtime().main_context();
+         let mut entered = self.runtime();
+         let isolate = entered.v8_isolate();
+-        v8::scope!(let scope, isolate);
++        let scope = &mut v8::HandleScope::new(isolate);
+ 
+         // Read the frame's globals first, then install them in the page realm.
+         // Both contexts belong to this isolate, so the handles stay valid
+@@ -1082,12 +1087,7 @@ impl ObscuraJsRuntime {
+ 
+     /// The table ops consult to find the calling realm's document.
+     pub(crate) fn realm_states(&self) -> Rc<RefCell<crate::ops::RealmStates>> {
+-        // `op_state` is a plain Rust-side table; no V8 access, no guard.
+-        self.js_runtime
+-            .op_state()
+-            .borrow()
+-            .borrow::<Rc<RefCell<crate::ops::RealmStates>>>()
+-            .clone()
++        self.realm_states.clone()
+     }
+ 
+     /// Frame documents fetched by any realm that still need one of their own.
+@@ -3176,11 +3176,11 @@ impl ObscuraJsRuntime {
+         // &'static str. Browser script URLs are runtime data, and V8 uses this
+         // origin as import()'s referrer, so compile in the runtime's main
+         // context directly instead of substituting the fixed "<script>" name.
+-        let result: Result<(), (String, Option<Box<deno_core::error::JsError>>)> = (|| {
++        let result: Result<(), (String, Option<deno_core::error::JsError>)> = (|| {
+             let mut entered = self.runtime();
+             let context = entered.main_context();
+             let isolate = entered.v8_isolate();
+-            v8::scope!(let scope, isolate);
++            let scope = &mut v8::HandleScope::new(isolate);
+             let context = v8::Local::new(scope, context);
+             let scope = &mut v8::ContextScope::new(scope, context);
+             let source = deno_core::v8::String::new(scope, source)
+@@ -3200,7 +3200,7 @@ impl ObscuraJsRuntime {
+                 false,
+                 None,
+             );
+-            v8::tc_scope!(let tc_scope, scope);
++            let tc_scope = &mut v8::TryCatch::new(scope);
+             let mut compilation = match cached.as_deref() {
+                 Some(bytes) => v8::script_compiler::Source::new_with_cached_data(
+                     source, Some(&origin), v8::script_compiler::CachedData::new(bytes)),
+@@ -4218,7 +4218,7 @@ impl ObscuraJsRuntime {
+     ) -> Result<serde_json::Value, String> {
+         let mut entered = self.runtime();
+         let context = entered.main_context();
+-        v8::scope_with_context!(scope, entered.v8_isolate(), context);
++        let scope = &mut v8::HandleScope::with_context(entered.v8_isolate(), context);
+         let local = deno_core::v8::Local::new(scope, result);
+ 
+         if local.is_undefined() || local.is_null() {
+@@ -4300,7 +4300,7 @@ impl ObscuraJsRuntime {
+         let primitive = {
+             let mut entered = self.runtime();
+             let context = entered.main_context();
+-            v8::scope_with_context!(scope, entered.v8_isolate(), context);
++            let scope = &mut v8::HandleScope::with_context(entered.v8_isolate(), context);
+             let value = deno_core::v8::Local::new(scope, &result);
+             if value.is_undefined() {
+                 Some(("undefined", None))
+@@ -5074,13 +5074,13 @@ mod tests {
+         {
+             let mut entered = rt.runtime();
+             let context = entered.main_context();
+-            v8::scope_with_context!(scope, entered.v8_isolate(), context);
++            let scope = &mut v8::HandleScope::with_context(entered.v8_isolate(), context);
+             scope.get_current_context().set_slot(Rc::new(String::from("main context state")));
+         }
+         rt.evaluate("__obscura_test_ops.op_register_document_realm({}, 123)").unwrap();
+         let mut entered = rt.runtime();
+         let context = entered.main_context();
+-        v8::scope_with_context!(scope, entered.v8_isolate(), context);
++        let scope = &mut v8::HandleScope::with_context(entered.v8_isolate(), context);
+         assert_eq!(scope.get_current_context().get_slot::<String>().as_deref().map(String::as_str),
+             Some("main context state"));
+     }
+diff --git a/crates/obscura-net/src/client.rs b/crates/obscura-net/src/client.rs
+index b4db284..6d7f1f7 100644
+--- a/crates/obscura-net/src/client.rs
++++ b/crates/obscura-net/src/client.rs
+@@ -697,20 +697,16 @@ pub(crate) fn validate_url(url: &Url, allow_private_network: bool) -> Result<(),
+ }
+ 
+ pub(crate) async fn fetch_file_url(
++    host: Option<&Arc<dyn crate::host::BrowserHost>>,
+     url: &Url,
+     max_response_bytes: usize,
+ ) -> Result<Response, ObscuraNetError> {
+     let path = url
+         .to_file_path()
+         .map_err(|_| ObscuraNetError::Network("Invalid file URL".to_string()))?;
+-    if let Ok(metadata) = tokio::fs::metadata(&path).await {
+-        if metadata.len() > max_response_bytes as u64 {
+-            return Err(response_too_large(url, max_response_bytes));
+-        }
+-    }
+-    let body = tokio::fs::read(&path)
+-        .await
+-        .map_err(|e| ObscuraNetError::Network(format!("Failed to read file: {}", e)))?;
++    let host = host.ok_or_else(|| ObscuraNetError::Network("ERR_AGENTOS_OBSCURA_HOST_REQUIRED: native file access is disabled".into()))?;
++    let body = host.read_file(&path, max_response_bytes).await?;
++
+     if body.len() > max_response_bytes {
+         return Err(response_too_large(url, max_response_bytes));
+     }
+@@ -835,6 +831,7 @@ async fn read_reqwest_body_limited(
+ }
+ 
+ pub struct ObscuraHttpClient {
++    host: Option<Arc<dyn crate::host::BrowserHost>>,
+     client: tokio::sync::OnceCell<Client>,
+     proxy_url: Option<String>,
+     pub cookie_jar: Arc<CookieJar>,
+@@ -1030,6 +1027,18 @@ fn chrome_client_hints(ua: &str) -> (String, String) {
+ }
+ 
+ impl ObscuraHttpClient {
++    pub fn with_host(cookie_jar: Arc<CookieJar>, host: Arc<dyn crate::host::BrowserHost>) -> Self {
++        let mut client = Self::with_full_options(cookie_jar, None, true);
++        client.host = Some(host);
++        client
++    }
++
++    pub async fn send_request(&self, request: reqwest::RequestBuilder) -> Result<reqwest::Response, ObscuraNetError> {
++        let host = self.host.as_ref().ok_or_else(|| ObscuraNetError::Network("ERR_AGENTOS_OBSCURA_HOST_REQUIRED: native transport is disabled".into()))?;
++        let request = request.build().map_err(|error| ObscuraNetError::Network(error.to_string()))?;
++        host.request(request).await
++    }
++
+     pub fn new() -> Self {
+         Self::with_cookie_jar(Arc::new(CookieJar::new()))
+     }
+@@ -1048,6 +1057,7 @@ impl ObscuraHttpClient {
+         allow_private_network: bool,
+     ) -> Self {
+         ObscuraHttpClient {
++            host: None,
+             client: tokio::sync::OnceCell::new(),
+             proxy_url: proxy_url.map(|s| s.to_string()),
+             cookie_jar,
+@@ -1067,32 +1077,8 @@ impl ObscuraHttpClient {
+ 
+     async fn get_client(&self) -> &Client {
+         self.client.get_or_init(|| async {
+-            let mut builder = Client::builder()
+-                .redirect(Policy::none())
+-                .timeout(self.timeout)
+-                .danger_accept_invalid_certs(false)
+-                // Read a folded header line (obs-fold) as browsers do instead of
+-                // failing the response.
+-                .http1_allow_obsolete_multiline_headers_in_responses(true)
+-                // SSRF guard: reject hostnames that resolve to a private/loopback IP.
+-                .dns_resolver(Arc::new(SsrfGuardResolver::new(self.allow_private_network)))
+-;
+-
+-            if std::env::var_os("SSL_CERT_FILE").is_some()
+-                || std::env::var_os("SSL_CERT_DIR").is_some()
+-            {
+-                for certificate in configured_root_certificates() {
+-                    builder = builder.add_root_certificate(certificate.clone());
+-                }
+-            }
+-
+-            if let Some(ref proxy) = self.proxy_url {
+-                if let Ok(p) = reqwest::Proxy::all(proxy.as_str()) {
+-                    builder = builder.proxy(p);
+-                }
+-            }
+-
+-            builder.build().expect("failed to build HTTP client")
++            Client::builder().no_proxy().redirect(Policy::none()).build()
++                .expect("request builder initialization")
+         }).await
+     }
+ 
+@@ -1383,7 +1369,7 @@ impl ObscuraHttpClient {
+         validate_request_mode(&request, url)?;
+ 
+         if url.scheme() == "file" {
+-            return fetch_file_url(url, request.max_response_bytes).await;
++            return fetch_file_url(self.host.as_ref(), url, request.max_response_bytes).await;
+         }
+ 
+         let mut method = initial_method;
+@@ -1575,7 +1561,7 @@ impl ObscuraHttpClient {
+             }
+ 
+             let in_flight = InFlightGuard::new(&self.in_flight);
+-            let resp = req_builder.send().await.map_err(|e| {
++            let resp = self.send_request(req_builder).await.map_err(|e| {
+                 ObscuraNetError::Network(format!("{}: {}", current_url, error_chain(&e)))
+             })?;
+ 
+diff --git a/crates/obscura-net/src/lib.rs b/crates/obscura-net/src/lib.rs
+index 75661e5..bf238b9 100644
+--- a/crates/obscura-net/src/lib.rs
++++ b/crates/obscura-net/src/lib.rs
+@@ -29,3 +29,5 @@ pub use wreq_client::{
+ 
+ mod operator_hint;
+ pub use operator_hint::private_network_error_hint;
++
++pub mod host;

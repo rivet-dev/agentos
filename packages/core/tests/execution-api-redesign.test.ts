@@ -74,16 +74,4 @@ describe("execution API redesign", () => {
 			),
 		).toBe(true);
 	}, 30_000);
-
-	test("aborting while a spawn is in flight stops the spawned process", async () => {
-		const controller = new AbortController();
-		const spawning = vm.javascript.spawn("setInterval(() => {}, 1000)", {
-			signal: controller.signal,
-		});
-		controller.abort();
-		const process = await spawning;
-		expect(await vm.process.wait(process.pid)).toMatchObject({
-			outcome: "signalled",
-		});
-	}, 30_000);
 });

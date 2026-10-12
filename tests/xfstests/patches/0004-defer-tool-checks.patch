@@ -1,0 +1,60 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AgentOS Tests <tests@agentos.invalid>
+Date: Thu, 9 Jul 2026 15:59:19 -0700
+Subject: [PATCH 4/4] fstests: defer agentos test-local tool checks
+
+---
+ common/config | 16 ++++++++--------
+ 1 file changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/common/config b/common/config
+index c6caffcd..843daf7e 100644
+--- a/common/config
++++ b/common/config
+@@ -111,22 +111,22 @@ set_mkfs_prog_path_with_opts()
+ }
+ 
+ export MKFS_PROG="$(type -P mkfs)"
+-[ "$MKFS_PROG" = "" ] && _fatal "mkfs not found"
++[ "$FSTYP" != "agentos" -a "$MKFS_PROG" = "" ] && _fatal "mkfs not found"
+ 
+ export MOUNT_PROG="$(type -P mount)"
+-[ "$MOUNT_PROG" = "" ] && _fatal "mount not found"
++[ "$FSTYP" != "agentos" -a "$MOUNT_PROG" = "" ] && _fatal "mount not found"
+ 
+ export UMOUNT_PROG="$(type -P umount)"
+-[ "$UMOUNT_PROG" = "" ] && _fatal "umount not found"
++[ "$FSTYP" != "agentos" -a "$UMOUNT_PROG" = "" ] && _fatal "umount not found"
+ 
+ export FSSTRESS_PROG="$here/ltp/fsstress"
+-[ ! -x $FSSTRESS_PROG ] && _fatal "fsstress not found or executable"
++[ "$FSTYP" != "agentos" -a ! -x "$FSSTRESS_PROG" ] && _fatal "fsstress not found or executable"
+ 
+ export FSX_PROG="$here/ltp/fsx"
+-[ ! -x $FSX_PROG ] && _fatal "fsx not found or executable"
++[ "$FSTYP" != "agentos" -a ! -x "$FSX_PROG" ] && _fatal "fsx not found or executable"
+ 
+ export PERL_PROG="$(type -P perl)"
+-[ "$PERL_PROG" = "" ] && _fatal "perl not found"
++[ "$FSTYP" != "agentos" -a "$PERL_PROG" = "" ] && _fatal "perl not found"
+ 
+ export AWK_PROG="$(type -P awk)"
+ [ "$AWK_PROG" = "" ] && _fatal "awk not found"
+@@ -135,7 +135,7 @@ export SED_PROG="$(type -P sed)"
+ [ "$SED_PROG" = "" ] && _fatal "sed not found"
+ 
+ export BC_PROG="$(type -P bc)"
+-[ "$BC_PROG" = "" ] && _fatal "bc not found"
++[ "$FSTYP" != "agentos" -a "$BC_PROG" = "" ] && _fatal "bc not found"
+ 
+ export PS_ALL_FLAGS="-ef"
+ 
+@@ -144,7 +144,7 @@ export DF_PROG="$(type -P df)"
+ export DF_PROG="$DF_PROG -T -P"	# Linux
+ 
+ export XFS_IO_PROG="$(type -P xfs_io)"
+-[ "$XFS_IO_PROG" = "" ] && _fatal "xfs_io not found"
++[ "$FSTYP" != "agentos" -a "$XFS_IO_PROG" = "" ] && _fatal "xfs_io not found"
+ 
+ export MKSWAP_PROG="$(type -P mkswap)"
+ # mkswap from util-linux v2.17.2 or older needs "-f" option to force to erase

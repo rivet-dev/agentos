@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>real pi TUI on browser PTY</title>
+		<link rel="stylesheet" href="/node_modules/@xterm/xterm/css/xterm.css" />
+		<style>
+			html, body { margin: 0; height: 100%; background: #101214; color: #e8edf2; }
+			#status { position: absolute; top: 8px; right: 12px; z-index: 1; font: 12px sans-serif; }
+			#terminal { width: 100vw; height: 100vh; padding: 12px; box-sizing: border-box; }
+			.xterm { height: 100%; }
+		</style>
+	</head>
+	<body>
+		<div id="status">loading</div>
+		<div id="terminal"></div>
+		<script type="module" src="/pi-tui.bundle.js"></script>
+	</body>
+</html>

@@ -6,19 +6,14 @@ import {
 	posix as posixPath,
 	resolve as resolveHostPath,
 } from "node:path";
+import { setImmediate } from "node:timers";
 import { fileURLToPath } from "node:url";
 import type {
 	MountConfigJsonObject,
 	MountConfigJsonValue,
 	NativeMountPluginDescriptor,
-} from "@rivet-dev/agentos-runtime-core/descriptors";
-import * as executionProtocol from "@rivet-dev/agentos-runtime-core/protocol";
-import type { LivePackageAcquisitionSource } from "@rivet-dev/agentos-runtime-core/request-payloads";
-import { SidecarRejectedError } from "@rivet-dev/agentos-runtime-core/sidecar-errors";
-import type {
-	CreateVmConfig,
-	VmUserConfig,
-} from "@rivet-dev/agentos-runtime-core/vm-config";
+} from "./descriptors.js";
+import * as executionProtocol from "./generated-protocol.js";
 import {
 	type HostFunction,
 	type HostFunctionCollections,
@@ -26,8 +21,9 @@ import {
 	hostFunctionDescription,
 	type ResolvedHostFunctions,
 	resolveHostFunctions,
-} from "@rivet-dev/agentos-runtime-core/host-functions";
-import { zodToJsonSchema } from "@rivet-dev/agentos-runtime-core/host-functions-zod";
+} from "./host-functions.js";
+import { zodToJsonSchema } from "./host-functions-zod.js";
+import { handleJsBridgeCall } from "./js-bridge-handler.js";
 import type {
 	CodeEvaluationResult,
 	CodeExecutionResult,
@@ -44,6 +40,7 @@ import type {
 	OutputReplay,
 	ProcessDescriptor,
 	ProcessExit,
+	ProcessOutputEvent,
 	ProcessSpawnOptions,
 	PythonInstallOptions,
 	TypeScriptCheckOptions,
@@ -54,7 +51,14 @@ import type {
 	TypeScriptFileExecutionOptions,
 } from "./language-execution.js";
 import { parseAgentOsOptions } from "./options-schema.js";
+import {
+	type ReplayReadOptions,
+	replayPage,
+	replayPageLimits,
+	replayWirePageLimits,
+} from "./output-replay.js";
 import { buildProcessForest } from "./process-forest.js";
+import type { LivePackageAcquisitionSource } from "./request-payloads.js";
 import type {
 	ConnectTerminalOptions,
 	Kernel,
@@ -75,23 +79,21 @@ import {
 	resolveSandboxOptions,
 } from "./sandbox.js";
 import { resolvePublishedSidecarBinary } from "./sidecar/binary.js";
-import {
-	replayPage,
-	replayPageLimits,
-	replayWirePageLimits,
-	type ReplayReadOptions,
-} from "./output-replay.js";
 import { findCargoBinary, resolveCargoBinary } from "./sidecar/cargo.js";
+import { SidecarRejectedError } from "./sidecar-errors.js";
+import type { CreateVmConfig, VmUserConfig } from "./vm-config.js";
 
 export type {
 	MountConfigJsonObject,
 	MountConfigJsonPrimitive,
 	MountConfigJsonValue,
 	NativeMountPluginDescriptor,
-} from "@rivet-dev/agentos-runtime-core/descriptors";
+} from "./descriptors.js";
 export type { ConnectTerminalOptions } from "./runtime-compat.js";
 
-const VM_DISPOSE_DRAIN_TIMEOUT_MS = 5_000;
+const SHELL_DISPOSE_TIMEOUT_MS = 5_000;
+const PROCESS_REGISTRY_LIMIT = 1024;
+const TERMINAL_LIMIT = 1024;
 
 async function waitForTrackedExitPromises(
 	promises: Promise<unknown>[],
@@ -155,12 +157,11 @@ function headersToRecord(headers: Headers): Record<string, string> {
 }
 
 export interface ProcessOutput {
+	sequence?: number;
+	timestampMs?: number;
 	pid: number;
 	stream: "stdout" | "stderr";
 	data: Uint8Array;
-	/** Sidecar replay identity, absent when output retention is disabled. */
-	sequence?: number;
-	timestampMs?: number;
 }
 
 export interface ShellData {
@@ -169,6 +170,7 @@ export interface ShellData {
 }
 
 export interface ShellExit {
+	exitSignal?: number;
 	shellId: string;
 	exitCode: number;
 }
@@ -238,6 +240,8 @@ export type SoftwarePackageSource =
  * host. Omitted fields use the sidecar defaults.
  */
 export interface PackageResolverOptions {
+	/** Raw source URL byte budget; default 4096. Redirect policy is independent. */
+	maxSourceUrlBytes?: number;
 	/** Maximum `.aospkg` size in bytes. */
 	maxPackageBytes?: number;
 	/** Whole-download timeout in milliseconds. */
@@ -265,6 +269,7 @@ export interface InstalledSoftware {
 import {
 	OPT_AGENTOS_ROOT,
 	type PackageDescriptor,
+	type SoftwarePackageRef,
 	tryReadAgentosPackageManifest,
 } from "./agentos-package.js";
 import { getBaseEnvironment } from "./base-filesystem.js";
@@ -298,7 +303,7 @@ import {
 } from "./layers.js";
 import type { SoftwareInput, SoftwareRoot } from "./packages.js";
 import type { PermissionTier } from "./runtime.js";
-import { allowAll, createNodeHostNetworkAdapter } from "./runtime-compat.js";
+import { createNodeHostNetworkAdapter } from "./runtime-compat.js";
 import { serializePermissionsForSidecar } from "./sidecar/permissions.js";
 import {
 	type AgentOsSidecarClient,
@@ -311,8 +316,8 @@ import {
 	type AuthenticatedSession,
 	type CreatedVm,
 	createAgentOsSidecarClient,
-	NativeSidecarKernelProxy,
 	type RootFilesystemEntry,
+	SidecarKernelProxy,
 	type SidecarMountDescriptor,
 	type SidecarPermissionsPolicy,
 	SidecarProcess,
@@ -320,6 +325,7 @@ import {
 	type SidecarRequestFrame,
 	type SidecarResponsePayload,
 	serializeRootFilesystemForSidecar,
+	toSidecarSignalName,
 } from "./sidecar/rpc-client.js";
 import {
 	resolveRegistrySoftware,
@@ -399,7 +405,7 @@ interface ShellEntry {
 	dataHandlers: Set<(event: ShellData) => void>;
 	stderrHandlers: Set<(event: ShellData) => void>;
 	exitHandlers: Set<(event: ShellExit) => void>;
-	exitPromise: Promise<number>;
+	exitPromise: Promise<ShellExit>;
 }
 
 export type RootLowerInput =
@@ -474,7 +480,7 @@ export type MountConfig =
  * Operator-tunable runtime limits for a VM. Every field is optional; unset fields fall back to
  * built-in defaults that match the runtime's historical hardcoded constants, so behavior is
  * unchanged unless a value is overridden. All values are JSON-serializable integers and are
- * forwarded to the native sidecar in the typed create-VM JSON config. Unknown, negative, or
+ * forwarded to the sidecar in the typed create-VM JSON config. Unknown, negative, or
  * non-integer values are rejected by the sidecar before VM construction.
  */
 export interface AgentOsLimits {
@@ -499,7 +505,6 @@ export interface AgentOsLimits {
 		maxProcessArgvBytes?: number;
 		maxProcessEnvBytes?: number;
 		maxReaddirEntries?: number;
-		maxWasmFuel?: number;
 		maxWasmMemoryBytes?: number;
 		maxWasmStackBytes?: number;
 	};
@@ -507,6 +512,8 @@ export interface AgentOsLimits {
 	http?: {
 		/** Cap on `vm.httpRequest()` buffered response bodies. Must be <= the sidecar wire frame cap. */
 		maxFetchResponseBytes?: number;
+		maxChunkSizeLineBytes?: number;
+		maxPendingResponseBytes?: number;
 	};
 	/** TLS plaintext buffering limits. */
 	tls?: {
@@ -534,6 +541,7 @@ export interface AgentOsLimits {
 	};
 	/** Guest JavaScript runtime buffering limits. */
 	jsRuntime?: {
+		maxReadlineHistoryEntries?: number;
 		v8HeapLimitMb?: number;
 		syncRpcWaitTimeoutMs?: number;
 		cpuTimeLimitMs?: number;
@@ -558,7 +566,13 @@ export interface AgentOsLimits {
 		syncReadLimitBytes?: number;
 		prewarmTimeoutMs?: number;
 		runnerHeapLimitMb?: number;
-		runnerCpuTimeLimitMs?: number;
+		activeCpuTimeLimitMs?: number;
+		wallClockLimitMs?: number;
+		deterministicFuel?: number;
+		/** Maximum threads, including the initial thread, for the explicit Wasmtime threaded backend. */
+		maxThreads?: number;
+		/** Maximum threads reserved by all concurrent threaded WASM processes in this VM. */
+		maxConcurrentThreads?: number;
 	};
 	/** Completed language-execution retention and live execution warning threshold. */
 	execution?: {
@@ -573,6 +587,8 @@ export interface AgentOsLimits {
 		pendingStdinBytes?: number;
 		pendingEventCount?: number;
 		pendingEventBytes?: number;
+		maxPendingChildSyncCount?: number;
+		maxPendingChildSyncBytes?: number;
 	};
 }
 
@@ -643,9 +659,13 @@ export interface AgentOsOptions<
 	loopbackExemptPorts?: number[];
 	/**
 	 * Allowed Node.js builtins for guest Node processes.
-	 * Defaults to the hardened builtin set used by the native sidecar bridge.
+	 * Defaults to the hardened builtin set used by the sidecar bridge.
 	 */
 	allowedNodeBuiltins?: string[];
+	/** VM-wide default for standalone WASM commands. JavaScript remains on V8. */
+	wasmBackend?: "v8" | "wasmtime" | "wasmtime-threads";
+	/** Sidecar-owned permission defaults. The agentOS profile is used when omitted. */
+	defaultsProfile?: "agent_os" | "secure";
 	/**
 	 * Opt in to a high-resolution monotonic guest clock (microsecond class)
 	 * for guest Node processes. Default `false` keeps the security-oriented
@@ -667,11 +687,10 @@ export interface AgentOsOptions<
 	/** Trusted host functions available to programs inside the VM. */
 	hostFunctions?: HostFunctionCollections<HOST_FUNCTIONS>;
 	/**
-	 * Permission policy for the kernel. By default the guest behaves like a
-	 * sandboxed machine: its virtual filesystem, processes, environment, listeners,
-	 * and loopback networking work. External network access is limited to the
-	 * sidecar-owned agentOS service allowlist. Your policy is merged over that
-	 * default, so an omitted scope keeps it.
+	 * Permission overrides for the sidecar-owned defaults profile. Omitted scopes
+	 * keep that profile's policy. Both profiles allow VM-local networking and
+	 * require an explicit grant for external networking and DNS, including
+	 * model-provider endpoints.
 	 */
 	permissions?: Permissions;
 	/**
@@ -719,6 +738,9 @@ function normalizePackageRef(value: unknown): NormalizedPackageRef | undefined {
 	const record = toRecord(value);
 	if (typeof record.packagePath === "string") {
 		return { path: record.packagePath };
+	}
+	if (typeof record.path === "string") {
+		return { path: record.path };
 	}
 	// Recognizably-legacy shapes fail loudly: silently dropping a software
 	// entry boots a VM with missing packages and no diagnostic.
@@ -782,6 +804,7 @@ function packageResolverWireOptions(
 	options: PackageResolverOptions | undefined,
 ): {
 	max_package_bytes?: bigint;
+	max_source_url_bytes?: bigint;
 	download_timeout_ms?: bigint;
 	connect_timeout_ms?: bigint;
 	max_redirects?: number;
@@ -791,6 +814,9 @@ function packageResolverWireOptions(
 	return {
 		...(options.maxPackageBytes !== undefined
 			? { max_package_bytes: BigInt(options.maxPackageBytes) }
+			: {}),
+		...(options.maxSourceUrlBytes !== undefined
+			? { max_source_url_bytes: BigInt(options.maxSourceUrlBytes) }
 			: {}),
 		...(options.downloadTimeoutMs !== undefined
 			? { download_timeout_ms: BigInt(options.downloadTimeoutMs) }
@@ -808,8 +834,6 @@ function packageResolverWireOptions(
 }
 
 const CLOSED_SHELL_ID_RETENTION_LIMIT = 2048;
-const TERMINAL_LIMIT = 1024;
-const PROCESS_REGISTRY_LIMIT = 1024;
 
 class BoundedSet<T, V = undefined> {
 	readonly limit: number;
@@ -1049,88 +1073,32 @@ function getGoogleDriveMountPluginConfig(
 	return googleDriveConfig;
 }
 
-const KERNEL_POSIX_BOOTSTRAP_DIRS = [
-	"/dev",
-	"/proc",
-	"/tmp",
-	"/bin",
-	"/lib",
-	"/sbin",
-	"/boot",
-	"/etc",
-	"/root",
-	"/run",
-	"/srv",
-	"/sys",
-	"/opt",
-	"/mnt",
-	"/media",
-	"/home",
-	"/home/agentos",
-	"/workspace",
-	"/usr",
-	"/usr/bin",
-	"/usr/games",
-	"/usr/include",
-	"/usr/lib",
-	"/usr/libexec",
-	"/usr/man",
-	"/usr/local",
-	"/usr/local/bin",
-	"/usr/sbin",
-	"/usr/share",
-	"/usr/share/man",
-	"/var",
-	"/var/cache",
-	"/var/empty",
-	"/var/lib",
-	"/var/lock",
-	"/var/log",
-	"/var/run",
-	"/var/spool",
-	"/var/tmp",
-	"/etc/agentos",
-] as const;
-
-// Standard POSIX metadata for the bootstrap dirs whose mode/owner is NOT the
-// default (`755`, root:root). Replicated as a constant so building the no-base
-// bootstrap layer needs no `base-filesystem.json` read — when a base IS present
-// the sidecar's embedded base layer is authoritative and these are never emitted.
-const KERNEL_POSIX_BOOTSTRAP_DIR_METADATA: Record<
-	string,
-	{ mode: string; uid: number; gid: number }
-> = {
-	"/tmp": { mode: "1777", uid: 0, gid: 0 },
-	"/root": { mode: "700", uid: 0, gid: 0 },
-	"/sys": { mode: "555", uid: 0, gid: 0 },
-	"/home/agentos": { mode: "2755", uid: 1000, gid: 1000 },
-	"/workspace": { mode: "755", uid: 1000, gid: 1000 },
-	"/var/empty": { mode: "555", uid: 0, gid: 0 },
-	"/var/lock": { mode: "777", uid: 0, gid: 0 },
-	"/var/run": { mode: "777", uid: 0, gid: 0 },
-	"/var/tmp": { mode: "1777", uid: 0, gid: 0 },
-};
-
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
-const SIDECAR_BINARY = join(REPO_ROOT, "target/debug/agentos-native-sidecar");
+const SIDECAR_BINARY = join(REPO_ROOT, "target/debug/agentos-sidecar");
 const SIDECAR_BUILD_INPUTS = [
 	join(REPO_ROOT, "Cargo.toml"),
 	join(REPO_ROOT, "Cargo.lock"),
-	join(REPO_ROOT, "crates/bridge"),
-	join(REPO_ROOT, "crates/build-support"),
-	join(REPO_ROOT, "crates/execution"),
-	join(REPO_ROOT, "crates/kernel"),
-	join(REPO_ROOT, "crates/native-sidecar"),
-	join(REPO_ROOT, "crates/native-sidecar-core"),
+	join(REPO_ROOT, "crates/vm-host-interface"),
+	join(REPO_ROOT, "crates/executor-v8-runtime"),
+	join(REPO_ROOT, "crates/executor-contract"),
+	join(REPO_ROOT, "crates/executor-node-v8"),
+	join(REPO_ROOT, "crates/executor-python-v8-pyodide"),
+	join(REPO_ROOT, "crates/executor-wasm-v8"),
+	join(REPO_ROOT, "crates/vm-kernel"),
+	join(REPO_ROOT, "crates/acp-protocol"),
+	join(REPO_ROOT, "crates/sidecar"),
+	join(REPO_ROOT, "crates/vm"),
+	join(REPO_ROOT, "crates/vm/src/core"),
 	join(REPO_ROOT, "crates/sidecar-protocol"),
-	join(REPO_ROOT, "crates/v8-runtime"),
-	join(REPO_ROOT, "crates/vfs"),
+	join(REPO_ROOT, "crates/executor-v8-runtime"),
+	join(REPO_ROOT, "crates/executor-wasm-abi"),
+	join(REPO_ROOT, "crates/vfs-core"),
 	join(REPO_ROOT, "crates/vm-config"),
 	join(REPO_ROOT, "packages/build-tools/bridge-src"),
 	join(REPO_ROOT, "packages/build-tools/package.json"),
 	join(REPO_ROOT, "packages/build-tools/scripts/build-v8-bridge.mjs"),
 	join(REPO_ROOT, "packages/core/fixtures/base-filesystem.json"),
-	join(REPO_ROOT, "packages/runtime-core/fixtures/base-filesystem.json"),
+	join(REPO_ROOT, "packages/core/fixtures/base-filesystem.json"),
 	join(REPO_ROOT, "pnpm-lock.yaml"),
 ] as const;
 let ensuredSidecarBinary: string | null = null;
@@ -1152,128 +1120,18 @@ function collectConfiguredLowerPaths(
 	return paths;
 }
 
-function findBootstrapSeedEntry(
-	config: RootFilesystemConfig | undefined,
-	path: string,
-): FilesystemEntry | undefined {
-	for (const lower of config?.type === "native" ? [] : (config?.lowers ?? [])) {
-		if (lower.kind !== "snapshot-export") {
-			continue;
-		}
-		const entry = lower.source.filesystem.entries.find(
-			(candidate) => candidate.path === path,
-		);
-		if (entry) {
-			return entry;
-		}
-	}
-
-	// No base-filesystem JSON read: standard non-default dir metadata comes from
-	// the constant table. When a base layer IS present these dirs are never
-	// emitted (see createKernelBootstrapLower), so this only seeds the no-base case.
-	const meta = KERNEL_POSIX_BOOTSTRAP_DIR_METADATA[path];
-	return meta ? { path, type: "directory", ...meta } : undefined;
-}
-
 function createKernelBootstrapLower(
 	config: RootFilesystemConfig | undefined,
 	extraEntries: FilesystemEntry[] = [],
 ): RootSnapshotExport | null {
-	if (config?.type === "native") {
-		return null;
-	}
-	const includesBundledBaseLayer = !(config?.disableDefaultBaseLayer ?? false);
+	if (config?.type === "native") return null;
 	const existingPaths = collectConfiguredLowerPaths(config);
-	const entries: FilesystemEntry[] = [
-		{
-			path: "/",
-			type: "directory",
-			mode: "755",
-			uid: 0,
-			gid: 0,
-		},
-	];
-
-	// Only run the FS bootstrap (creating the POSIX dir tree) when there is NO
-	// base layer. When the bundled base IS present, the sidecar's embedded base
-	// layer already provides every POSIX dir with the correct mode/owner, so we
-	// emit nothing here and never read its filesystem table.
-	if (!includesBundledBaseLayer) {
-		for (const dir of KERNEL_POSIX_BOOTSTRAP_DIRS) {
-			if (existingPaths.has(dir)) {
-				continue;
-			}
-			const seed = findBootstrapSeedEntry(config, dir);
-			entries.push({
-				path: dir,
-				type: "directory",
-				mode: seed?.type === "directory" ? seed.mode : "755",
-				uid: seed?.uid ?? 0,
-				gid: seed?.gid ?? 0,
-			});
-		}
-	}
-
-	if (!includesBundledBaseLayer && !existingPaths.has("/usr/bin/env")) {
-		entries.push({
-			path: "/usr/bin/env",
-			type: "file",
-			mode: "644",
-			uid: 0,
-			gid: 0,
-			content: "AA==",
-			encoding: "base64",
-		});
-	}
-
-	for (const entry of sortFilesystemEntries(extraEntries)) {
-		if (existingPaths.has(entry.path)) {
-			continue;
-		}
-		entries.push(entry);
-	}
-
-	return entries.length > 1 ? createSnapshotExport(entries) : null;
-}
-
-function buildLiveBootstrapDirectoryEntries(
-	existingPaths: ReadonlySet<string>,
-	config: RootFilesystemConfig | undefined,
-): RootFilesystemEntry[] {
-	const entries: RootFilesystemEntry[] = [];
-	for (const dir of KERNEL_POSIX_BOOTSTRAP_DIRS) {
-		if (existingPaths.has(dir)) {
-			continue;
-		}
-		const seed = findBootstrapSeedEntry(config, dir);
-		entries.push({
-			path: dir,
-			kind: "directory",
-			mode: Number.parseInt(seed?.type === "directory" ? seed.mode : "755", 8),
-			uid: seed?.uid ?? 0,
-			gid: seed?.gid ?? 0,
-			executable: true,
-		});
-	}
-	return entries;
-}
-
-async function bootstrapLiveBootstrapDirectories(
-	client: SidecarProcess,
-	session: AuthenticatedSession,
-	vm: CreatedVm,
-	config: RootFilesystemConfig | undefined,
-): Promise<void> {
-	const existingPaths = new Set(
-		(
-			await client.snapshotRootFilesystem(session, vm, Number.MAX_SAFE_INTEGER)
-		).map((entry) => entry.path),
+	// Only explicit caller entries are serialized here. Directory defaults and
+	// the no-base environment sentinel belong to sidecar root construction.
+	const entries = sortFilesystemEntries(extraEntries).filter(
+		(entry) => !existingPaths.has(entry.path),
 	);
-	const entries = buildLiveBootstrapDirectoryEntries(existingPaths, config);
-	if (entries.length === 0) {
-		return;
-	}
-	await client.bootstrapRootFilesystem(session, vm, entries);
+	return entries.length > 0 ? createSnapshotExport(entries) : null;
 }
 
 function toSnapshotModeString(
@@ -1321,7 +1179,7 @@ function convertSidecarRootSnapshotEntries(
 	});
 }
 
-function ensureNativeSidecarBinary(): string {
+function ensureSidecarBinary(): string {
 	// A published install has no in-repo Cargo workspace to build from: resolve
 	// the prebuilt platform binary (or the AGENTOS_SIDECAR_BIN override).
 	if (
@@ -1341,18 +1199,14 @@ function ensureNativeSidecarBinary(): string {
 	if (sidecarBinaryNeedsBuild()) {
 		const cargoBinary = findCargoBinary();
 		if (cargoBinary) {
-			execFileSync(
-				cargoBinary,
-				["build", "-q", "-p", "agentos-native-sidecar"],
-				{
-					cwd: REPO_ROOT,
-					stdio: "pipe",
-				},
-			);
+			execFileSync(cargoBinary, ["build", "-q", "-p", "agentos-sidecar"], {
+				cwd: REPO_ROOT,
+				stdio: "pipe",
+			});
 		} else if (!existsSync(SIDECAR_BINARY)) {
 			execFileSync(
 				resolveCargoBinary(),
-				["build", "-q", "-p", "agentos-native-sidecar"],
+				["build", "-q", "-p", "agentos-sidecar"],
 				{
 					cwd: REPO_ROOT,
 					stdio: "pipe",
@@ -1770,9 +1624,8 @@ async function handleHostCallback(
 		};
 	}
 
-	// The sidecar authorizes this exact callback key before forwarding it. Never
-	// reinterpret direct callback input as a registry command: a valid function
-	// schema may itself accept command-shaped data.
+	// The sidecar checks the `hostFunction` permission scope before it forwards a
+	// host function call, so a call that reaches the host is already permitted.
 
 	const parsed = definition.inputSchema.safeParse(payload.input);
 	if (!parsed.success) {
@@ -1829,183 +1682,6 @@ interface HostCommandCallbackInput {
 interface HostCallbackContext {
 	hostFunctions: ResolvedHostFunctions[];
 	hostFunctionMap: ReadonlyMap<string, HostFunction>;
-	readFile(path: string): Promise<Uint8Array>;
-}
-
-interface JsBridgeContext {
-	filesystem: VirtualFileSystem;
-}
-
-function bridgeErrorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
-}
-
-function toBridgeArgs(value: unknown): Record<string, unknown> {
-	if (!value || typeof value !== "object" || Array.isArray(value)) {
-		throw new Error("js_bridge args must be an object");
-	}
-	return value as Record<string, unknown>;
-}
-
-function bridgePath(mountId: string, value: unknown): string {
-	if (!mountId.startsWith("/")) {
-		throw new Error(`Unsupported js_bridge mount id: ${mountId}`);
-	}
-	if (typeof value !== "string") {
-		throw new Error("js_bridge path argument must be a string");
-	}
-	return posixPath.normalize(posixPath.join(mountId, value));
-}
-
-function requireBridgeNumber(value: unknown, field: string): number {
-	if (typeof value !== "number" || !Number.isFinite(value)) {
-		throw new Error(`js_bridge args.${field} must be a number`);
-	}
-	return value;
-}
-
-function decodeBridgeBytes(value: unknown, field: string): Uint8Array {
-	if (typeof value === "string") {
-		return new Uint8Array(Buffer.from(value, "base64"));
-	}
-	if (
-		Array.isArray(value) &&
-		value.every(
-			(entry) => Number.isInteger(entry) && entry >= 0 && entry <= 255,
-		)
-	) {
-		return new Uint8Array(value);
-	}
-	throw new Error(`js_bridge args.${field} must be base64 bytes`);
-}
-
-async function handleJsBridgeCall(
-	request: Extract<SidecarRequestFrame["payload"], { type: "js_bridge_call" }>,
-	context: JsBridgeContext,
-): Promise<SidecarResponsePayload> {
-	try {
-		const args = toBridgeArgs(request.args);
-		const fs = context.filesystem;
-		const path = () => bridgePath(request.mount_id, args.path);
-		let result: unknown;
-
-		switch (request.operation) {
-			case "readFile":
-				result = Buffer.from(await fs.readFile(path())).toString("base64");
-				break;
-			case "readDir":
-				result = await fs.readDir(path());
-				break;
-			case "readDirWithTypes":
-				result = await fs.readDirWithTypes(path());
-				break;
-			case "writeFile":
-				await fs.writeFile(path(), decodeBridgeBytes(args.content, "content"));
-				break;
-			case "createDir":
-				await fs.createDir(path());
-				break;
-			case "mkdir":
-				await fs.mkdir(path(), { recursive: args.recursive !== false });
-				break;
-			case "exists":
-				result = await fs.exists(path());
-				break;
-			case "stat":
-				result = await fs.stat(path());
-				break;
-			case "removeFile":
-				await fs.removeFile(path());
-				break;
-			case "removeDir":
-				await fs.removeDir(path());
-				break;
-			case "rename":
-				await fs.rename(
-					bridgePath(request.mount_id, args.oldPath),
-					bridgePath(request.mount_id, args.newPath),
-				);
-				break;
-			case "realpath":
-				result = await fs.realpath(path());
-				break;
-			case "symlink": {
-				if (typeof args.target !== "string") {
-					throw new Error("js_bridge args.target must be a string");
-				}
-				await fs.symlink(
-					args.target,
-					bridgePath(request.mount_id, args.linkPath),
-				);
-				break;
-			}
-			case "readlink":
-				result = await fs.readlink(path());
-				break;
-			case "lstat":
-				result = await fs.lstat(path());
-				break;
-			case "link":
-				await fs.link(
-					bridgePath(request.mount_id, args.oldPath),
-					bridgePath(request.mount_id, args.newPath),
-				);
-				break;
-			case "chmod":
-				await fs.chmod(path(), requireBridgeNumber(args.mode, "mode"));
-				break;
-			case "chown":
-				await fs.chown(
-					path(),
-					requireBridgeNumber(args.uid, "uid"),
-					requireBridgeNumber(args.gid, "gid"),
-					{ followSymlinks: args.followSymlinks !== false },
-				);
-				break;
-			case "utimes":
-				await fs.utimes(
-					path(),
-					requireBridgeNumber(args.atimeMs, "atimeMs"),
-					requireBridgeNumber(args.mtimeMs, "mtimeMs"),
-				);
-				break;
-			case "truncate":
-				await fs.truncate(path(), requireBridgeNumber(args.length, "length"));
-				break;
-			case "pread":
-				result = Buffer.from(
-					await fs.pread(
-						path(),
-						requireBridgeNumber(args.offset, "offset"),
-						requireBridgeNumber(args.length, "length"),
-					),
-				).toString("base64");
-				break;
-			case "pwrite":
-				await fs.pwrite(
-					path(),
-					requireBridgeNumber(args.offset, "offset"),
-					decodeBridgeBytes(args.content, "content"),
-				);
-				break;
-			default:
-				throw new Error(
-					`Unsupported js_bridge operation: ${request.operation}`,
-				);
-		}
-
-		return {
-			type: "js_bridge_result",
-			call_id: request.call_id,
-			...(result === undefined ? {} : { result }),
-		};
-	} catch (error) {
-		return {
-			type: "js_bridge_result",
-			call_id: request.call_id,
-			error: bridgeErrorMessage(error),
-		};
-	}
 }
 
 function parseHostCommandCallbackInput(
@@ -2087,8 +1763,6 @@ async function handleAgentOsRegistryCommand(
 		args: [functionName, ...functionArgs].filter(
 			(value): value is string => typeof value === "string",
 		),
-		cwd: command.cwd,
-		context,
 	});
 }
 
@@ -2113,8 +1787,6 @@ async function handleAgentOsHostFunctionCommand(
 		args: [helpOrFirstArg, ...rest].filter(
 			(value): value is string => typeof value === "string",
 		),
-		cwd: command.cwd,
-		context,
 	});
 }
 
@@ -2122,14 +1794,10 @@ async function invokeHostFunction({
 	hostFunctionCollection,
 	functionName,
 	args,
-	cwd,
-	context,
 }: {
 	hostFunctionCollection: ResolvedHostFunctions;
 	functionName: string;
 	args: string[];
-	cwd: string;
-	context: HostCallbackContext;
 }): Promise<unknown> {
 	const definition = hostFunctionCollection.functions[functionName];
 	if (!definition) {
@@ -2140,12 +1808,7 @@ async function invokeHostFunction({
 	// The sidecar checks the `hostFunction` permission scope for registry commands
 	// before forwarding them, the same as for collection commands.
 	const callbackKey = `${hostFunctionCollection.name}:${functionName}`;
-	const input = await parseHostFunctionInput(
-		definition,
-		args,
-		cwd,
-		context.readFile,
-	);
+	const input = await parseHostFunctionInput(definition, args);
 	return executeHostFunction(definition, callbackKey, input);
 }
 
@@ -2181,8 +1844,6 @@ async function executeHostFunction(
 async function parseHostFunctionInput(
 	definition: HostFunction,
 	args: string[],
-	cwd: string,
-	readFile: (path: string) => Promise<Uint8Array>,
 ): Promise<unknown> {
 	if (args[0] === "--json") {
 		const value = args[1];
@@ -2192,15 +1853,9 @@ async function parseHostFunctionInput(
 		return JSON.parse(value);
 	}
 	if (args[0] === "--json-file") {
-		const value = args[1];
-		if (value === undefined) {
-			throw new Error("Flag --json-file requires a value");
-		}
-		const guestPath = value.startsWith("/")
-			? posixPath.normalize(value)
-			: posixPath.normalize(`${cwd}/${value}`);
-		const text = new TextDecoder().decode(await readFile(guestPath));
-		return JSON.parse(text);
+		throw new Error(
+			"EACCES: host function file input requires runtime process authorization",
+		);
 	}
 	return parseHostFunctionArgv(
 		hostFunctionToSidecarDefinition(definition).inputSchema,
@@ -2444,9 +2099,13 @@ function executionBytes(
 	data: string | Uint8Array | undefined,
 ): ArrayBuffer | null {
 	if (data === undefined) return null;
+	// Buffer.slice() retains the original backing store. Own exactly the
+	// supplied view so bytes outside it cannot cross the execution boundary.
 	const bytes =
-		typeof data === "string" ? new TextEncoder().encode(data) : data;
-	return bytes.slice().buffer;
+		typeof data === "string"
+			? new TextEncoder().encode(data)
+			: new Uint8Array(data);
+	return bytes.buffer;
 }
 
 function processExecutionOptions(
@@ -2578,6 +2237,7 @@ function mapExecutionResult(
 ): MappedExecutionResult {
 	const base = {
 		...(result.exitCode !== null ? { exitCode: result.exitCode } : {}),
+		...(result.exitSignal != null ? { exitSignal: result.exitSignal } : {}),
 		...(result.stdout !== null
 			? { stdout: new TextDecoder().decode(result.stdout) }
 			: {}),
@@ -2654,6 +2314,7 @@ interface InternalExecutionOutputEvent {
 }
 
 interface InternalExecutionCompletedEvent {
+	exitSignal?: number;
 	executionId: string;
 	generation: number;
 	outcome: CodeExecutionResult["outcome"];
@@ -2699,6 +2360,7 @@ function mapExecutionCompletedEvent(
 		generation: safeProtocolNumber(event.generation, "execution generation"),
 		outcome: mapExecutionOutcome(event.outcome),
 		...(event.exitCode !== null ? { exitCode: event.exitCode } : {}),
+		...(event.exitSignal != null ? { exitSignal: event.exitSignal } : {}),
 		...(event.error ? { error: mapExecutionError(event.error) } : {}),
 	};
 }
@@ -2715,7 +2377,6 @@ export class AgentOs {
 			startedAtMs: number;
 			retainEvents: boolean;
 			processId?: string;
-			signal?: ExecutionSignal;
 			exit?: ProcessExit;
 			outputHandlers: Set<(event: ProcessOutput) => void>;
 			exitHandlers: Set<(event: ProcessExit) => void>;
@@ -2726,14 +2387,13 @@ export class AgentOs {
 		{
 			executionId: string;
 			descriptor: ProcessDescriptor;
-			signal?: ExecutionSignal;
 			exit?: ProcessExit;
 			outputHandlers: Set<(event: ProcessOutput) => void>;
 			exitHandlers: Set<(event: ProcessExit) => void>;
 		}
 	>();
-	private _languageProcessIds = new Map<string, number>();
 	private _pendingProcessRegistrations = 0;
+	private _languageProcessIds = new Map<string, number>();
 	private _executionOutputHandlers = new Map<
 		string,
 		Set<(event: InternalExecutionOutputEvent) => void>
@@ -2748,13 +2408,13 @@ export class AgentOs {
 	private _shells = new Map<string, ShellEntry>();
 	// Value is the recorded exit code (undefined until/unless the exit
 	// resolves) so waitShell can still report it after the entry is dropped.
-	private _closedShellIds = new BoundedSet<string, number>(
+	private _closedShellIds = new BoundedSet<string, ShellExit>(
 		CLOSED_SHELL_ID_RETENTION_LIMIT,
 	);
 	private _closedShellErrors = new BoundedSet<string, unknown>(
 		CLOSED_SHELL_ID_RETENTION_LIMIT,
 	);
-	private _pendingShellExitPromises = new Set<Promise<number>>();
+	private _pendingShellExitPromises = new Map<string, Promise<ShellExit>>();
 	private _shellCounter = 0;
 	private _softwareRoots: SoftwareRoot[];
 	private readonly _installedSoftware = new Map<string, InstalledSoftware>();
@@ -2768,6 +2428,7 @@ export class AgentOs {
 	private _env: Record<string, string>;
 	private _rootFilesystem: VirtualFileSystem;
 	private _sidecarLease: AgentOsSidecarVmLease<AgentOsVmAdmin> | null = null;
+	private _disposalPromise: Promise<void> | null = null;
 	private readonly _sidecarClient: SidecarProcess;
 	private readonly _sidecarSession: AuthenticatedSession;
 	private readonly _sidecarVm: CreatedVm;
@@ -2785,7 +2446,11 @@ export class AgentOs {
 	readonly process = {
 		exec: this._exec.bind(this),
 		execFile: this._execFile.bind(this),
-		spawn: this._spawnProcess.bind(this),
+		spawn: async (
+			command: string,
+			args: string[] = [],
+			options?: ProcessSpawnOptions,
+		) => this._spawnProcess(command, args, options),
 		get: this._getProcess.bind(this),
 		list: this._listProcesses.bind(this),
 		tree: this._processTree.bind(this),
@@ -2844,6 +2509,7 @@ export class AgentOs {
 		write: this._writeTerminal.bind(this),
 		resize: this._resizeTerminal.bind(this),
 		wait: this._waitTerminal.bind(this),
+		waitExit: this._waitTerminalExit.bind(this),
 		close: this._closeTerminal.bind(this),
 	};
 
@@ -2932,14 +2598,12 @@ export class AgentOs {
 		return getSharedAgentOsSidecarInternal(options);
 	}
 
-	static async create(
-		options?: AgentOsOptions,
-		/** @internal Product wrappers select a sidecar-owned default profile here. */
-		defaultsProfile: NonNullable<
-			CreateVmConfig["defaultsProfile"]
-		> = "agent_os",
+	static async create<HOST_FUNCTIONS extends HostFunctionSchemas>(
+		callerOptions?: AgentOsOptions<HOST_FUNCTIONS>,
 	): Promise<AgentOs> {
-		options = parseAgentOsOptions(options);
+		let options: AgentOsOptions | undefined = parseAgentOsOptions(
+			callerOptions as AgentOsOptions | undefined,
+		);
 		// Default software is resolved from immutable `.aospkg` files vendored in
 		// this package. Runtime package resolution never consults npm.
 		const defaultSoftware =
@@ -3007,9 +2671,19 @@ export class AgentOs {
 
 		// Resolve the sidecar handle before starting an external sandbox so option
 		// validation failures cannot leak provider resources.
-		const sidecar = resolveAgentOsSidecar(options?.sidecar);
-		options = await resolveSandboxOptions(options);
-		const sandboxDisposeHooks = getSandboxDisposeHooks(options);
+		const sidecar = await resolveAgentOsSidecar(options?.sidecar);
+		// Provider setup can yield before the VM lease takes its own hold. Keep
+		// this selected generation alive throughout that admission window.
+		const sidecarState = getSidecarState(sidecar);
+		acquireSharedSidecarHold(sidecarState);
+		let sandboxDisposeHooks: ReturnType<typeof getSandboxDisposeHooks>;
+		try {
+			options = await resolveSandboxOptions(options);
+			sandboxDisposeHooks = getSandboxDisposeHooks(options);
+		} catch (error) {
+			releaseSharedSidecarHold(sidecarState);
+			throw error;
+		}
 		const hostFunctions = resolvedHostFunctions;
 
 		const createVmAdmin = async (): Promise<AgentOsVmAdmin> => {
@@ -3023,7 +2697,7 @@ export class AgentOs {
 				options?.rootFilesystem,
 			);
 			let hostFunctionReference = "";
-			let rootBridge: NativeSidecarKernelProxy | null = null;
+			let rootBridge: SidecarKernelProxy | null = null;
 			let kernel: Kernel | null = null;
 			let client: SidecarProcess | null = null;
 			let createdNativeVm: CreatedVm | null = null;
@@ -3060,15 +2734,12 @@ export class AgentOs {
 				client = shared.client;
 				const session = shared.session;
 				nativeSession = session;
-				const hostPermissions = options?.permissions ?? {
-					...allowAll,
-					binding: "allow",
-				};
-				const sidecarPermissions = options?.permissions
-					? serializePermissionsForSidecar(options.permissions)
-					: undefined;
+				const sidecarPermissions = serializePermissionsForSidecar(
+					options?.permissions,
+				);
 				const createVmConfig: CreateVmConfig = {
-					defaultsProfile,
+					defaultsProfile: options?.defaultsProfile ?? "agent_os",
+					wasmBackend: options?.wasmBackend,
 					...(options?.environment !== undefined
 						? { env: { ...options.environment } }
 						: {}),
@@ -3132,6 +2803,7 @@ export class AgentOs {
 						event.ownership.vm_id === nativeVm.vmId,
 					10_000,
 				);
+
 				const configuredVm = await client.configureVm(session, nativeVm, {
 					mounts: sidecarMounts,
 					permissions: undefined,
@@ -3160,7 +2832,7 @@ export class AgentOs {
 					}
 				}
 
-				rootBridge = new NativeSidecarKernelProxy({
+				rootBridge = new SidecarKernelProxy({
 					client,
 					session,
 					vm: nativeVm,
@@ -3183,14 +2855,6 @@ export class AgentOs {
 					// shared across VMs; disposing this VM must not kill the process.
 					ownsClient: false,
 				});
-				if (options?.rootFilesystem?.type !== "native") {
-					await bootstrapLiveBootstrapDirectories(
-						client,
-						session,
-						nativeVm,
-						options?.rootFilesystem,
-					);
-				}
 
 				kernel = rootBridge as unknown as Kernel;
 				const snapshotClient = client;
@@ -3222,13 +2886,13 @@ export class AgentOs {
 					async dispose() {
 						if (kernel) {
 							const currentKernel = kernel;
-							kernel = null;
 							await currentKernel.dispose();
+							kernel = null;
 						}
 						if (rootBridge) {
 							const currentRootBridge = rootBridge;
-							rootBridge = null;
 							await currentRootBridge.dispose();
+							rootBridge = null;
 							return;
 						}
 						await cleanup();
@@ -3238,15 +2902,30 @@ export class AgentOs {
 				// The native process is shared and owned by the sidecar handle, so
 				// never dispose the client here — only tear down this VM's resources.
 				if (kernel) {
-					await kernel.dispose().catch(() => {});
+					await kernel.dispose().catch((cleanupError) => {
+						console.error(
+							"[agentOS] kernel cleanup failed after VM creation failed",
+							cleanupError,
+						);
+					});
 				}
 				if (rootBridge) {
-					await rootBridge.dispose().catch(() => {});
+					await rootBridge.dispose().catch((cleanupError) => {
+						console.error(
+							"[agentOS] root bridge cleanup failed after VM creation failed",
+							cleanupError,
+						);
+					});
 				} else {
 					if (createdNativeVm && nativeSession && client) {
 						await client
 							.disposeVm(nativeSession, createdNativeVm)
-							.catch(() => {});
+							.catch((cleanupError) => {
+								console.error(
+									"[agentOS] native VM cleanup failed after VM creation failed",
+									cleanupError,
+								);
+							});
 					}
 					await cleanup();
 				}
@@ -3305,10 +2984,14 @@ export class AgentOs {
 			if (cleanupErrors.length > 0) {
 				throw new AggregateError(
 					[error, ...cleanupErrors],
-					"AgentOS VM creation and cleanup failed",
+					"agentOS VM creation and cleanup failed",
 				);
 			}
 			throw error;
+		} finally {
+			// A successful lease now owns its own hold; failed admission has
+			// finished its cleanup before releasing this reservation.
+			releaseSharedSidecarHold(sidecarState);
 		}
 
 		// Registry and URL entries install through the same sidecar path as
@@ -3523,6 +3206,12 @@ export class AgentOs {
 							error,
 						),
 					);
+			}
+			if (options.signal) {
+				const abort = () => {
+					void this._killProcess(admitted.pid);
+				};
+				options.signal.addEventListener("abort", abort, { once: true });
 			}
 			return (
 				this._languageProcesses.get(admitted.pid)?.descriptor ?? descriptor
@@ -4390,7 +4079,6 @@ export class AgentOs {
 			startedAtMs: Date.now(),
 			retainEvents,
 			processId: proc.processId,
-			signal: undefined as ExecutionSignal | undefined,
 			exit: undefined as ProcessExit | undefined,
 			outputHandlers,
 			exitHandlers,
@@ -4405,7 +4093,7 @@ export class AgentOs {
 		void proc
 			.wait()
 			.then((code) => {
-				this._recordProcessExit(proc.pid, code);
+				this._recordProcessExit(proc.pid, code, proc.exitSignal ?? null, proc);
 			})
 			.catch((error) => {
 				// A failed wait is not an exit event. Explicit process.wait calls retain
@@ -4424,14 +4112,21 @@ export class AgentOs {
 		};
 	}
 
-	private _recordProcessExit(pid: number, exitCode: number): void {
+	private _recordProcessExit(
+		pid: number,
+		exitCode: number,
+		exitSignal: number | null,
+		expectedProcess: ManagedProcess,
+	): void {
 		const entry = this._processes.get(pid);
-		if (!entry || entry.exit) return;
+		if (!entry || entry.proc !== expectedProcess || entry.exit) return;
 		const exit: ProcessExit = {
 			pid,
 			exitCode,
-			outcome: entry.signal ? "signalled" : "exited",
-			...(entry.signal ? { signal: entry.signal } : {}),
+			outcome: exitSignal !== null ? "signalled" : "exited",
+			...(exitSignal !== null
+				? { exitSignal, signal: toSidecarSignalName(exitSignal) }
+				: {}),
 		};
 		entry.exit = exit;
 		for (const handler of entry.exitHandlers) {
@@ -4519,11 +4214,11 @@ export class AgentOs {
 		}
 	}
 
-	private async _spawnProcess(
+	private _spawnProcess(
 		command: string,
 		args: string[] = [],
 		options: ProcessSpawnOptions = {},
-	): Promise<ProcessDescriptor> {
+	): ProcessDescriptor {
 		const releaseRegistrySlot = this._reserveProcessRegistrySlot();
 		const outputHandlers = new Set<(event: ProcessOutput) => void>();
 		const exitHandlers = new Set<(event: ProcessExit) => void>();
@@ -4567,8 +4262,8 @@ export class AgentOs {
 		command: string,
 		args: string[] = [],
 		options?: ProcessSpawnOptions,
-	): Promise<ProcessDescriptor> {
-		return this.process.spawn(command, args, options);
+	): ProcessDescriptor {
+		return this._spawnProcess(command, args, options);
 	}
 
 	/** Write data to a process's stdin. */
@@ -4634,19 +4329,40 @@ export class AgentOs {
 			if (language.exit) return language.exit;
 			const result = await this._waitExecutionResult(language.executionId);
 			if (language.exit) return language.exit;
+			if (result.exitCode === undefined) {
+				throw Object.assign(
+					new Error(
+						`termination_failed: background execution ${language.executionId} completed without an exit status`,
+					),
+					{
+						code: "termination_failed",
+						executionId: language.executionId,
+					},
+				);
+			}
 			const exit: ProcessExit = {
 				pid,
 				outcome:
 					result.outcome === "timed_out"
 						? "timed_out"
-						: result.outcome === "cancelled"
+						: result.exitSignal !== undefined
 							? "signalled"
 							: "exited",
 				...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
-				...(language.signal ? { signal: language.signal } : {}),
+				...(result.exitSignal !== undefined
+					? {
+							exitSignal: result.exitSignal,
+							signal: toSidecarSignalName(result.exitSignal),
+						}
+					: {}),
 			};
 			language.exit = exit;
-			language.descriptor = { ...language.descriptor, state: "exited" };
+			language.descriptor = {
+				...language.descriptor,
+				state: "exited",
+				exitCode: exit.exitCode,
+				exitSignal: exit.exitSignal,
+			};
 			for (const handler of language.exitHandlers) handler(exit);
 			return exit;
 		}
@@ -4654,11 +4370,18 @@ export class AgentOs {
 		if (!entry) throw new Error(`Process not found: ${pid}`);
 		if (entry.exit) return entry.exit;
 		const exitCode = await entry.proc.wait();
+		const exitSignal = entry.proc.exitSignal ?? null;
+		this._recordProcessExit(pid, exitCode, exitSignal, entry.proc);
+		// Disposal can retire the registry before the owned process confirms exit.
+		// Return that process's observed pair without re-inserting it or touching a replacement.
 		return (
 			entry.exit ?? {
 				pid,
-				outcome: "exited",
 				exitCode,
+				outcome: exitSignal !== null ? "signalled" : "exited",
+				...(exitSignal !== null
+					? { exitSignal, signal: toSidecarSignalName(exitSignal) }
+					: {}),
 			}
 		);
 	}
@@ -4743,9 +4466,9 @@ export class AgentOs {
 	private async _mkdirp(path: string): Promise<void> {
 		this._assertWritableAbsolutePath(path);
 		// `kernel.mkdir` is already recursive (it defaults to recursive=true on both
-		// the native sidecar and compat kernels) and creating an existing directory is
+		// the sidecar and compat kernels) and creating an existing directory is
 		// a no-op, so a single call is sufficient. Do NOT probe each ancestor with
-		// `exists()` first: on the native sidecar every read-side op
+		// `exists()` first: on the sidecar every read-side op
 		// (exists/stat/readFile) triggers a full shadow-tree walk, so a per-component
 		// exists() loop makes `mkdir -p` cost O(components * tree).
 		await this.#kernel.mkdir(path);
@@ -4851,14 +4574,14 @@ export class AgentOs {
 
 	/**
 	 * Mount a filesystem into the running VM. Resolves once the mount has been
-	 * delivered to the native sidecar, so guest code can use it immediately
+	 * delivered to the sidecar, so guest code can use it immediately
 	 * after the returned promise settles; a delivery failure rejects instead of
 	 * leaving the mount silently host-only.
 	 */
 	private async _mountFs(descriptor: DynamicMountDescriptor): Promise<void> {
 		return this._withVmMutation(async () => {
 			this._assertSafeAbsolutePath(descriptor.path);
-			if (!(this.#kernel instanceof NativeSidecarKernelProxy)) {
+			if (!(this.#kernel instanceof SidecarKernelProxy)) {
 				throw new Error("portable dynamic mounts require the native sidecar");
 			}
 			await this.#kernel.mountDescriptor({
@@ -4875,7 +4598,7 @@ export class AgentOs {
 	private async _unmountFs(path: string): Promise<void> {
 		return this._withVmMutation(async () => {
 			this._assertSafeAbsolutePath(path);
-			if (!(this.#kernel instanceof NativeSidecarKernelProxy)) {
+			if (!(this.#kernel instanceof SidecarKernelProxy)) {
 				throw new Error("portable dynamic mounts require the native sidecar");
 			}
 			await this.#kernel.unmountDescriptor(path);
@@ -4883,7 +4606,7 @@ export class AgentOs {
 	}
 
 	private async _listMounts(): Promise<MountInfo[]> {
-		if (!(this.#kernel instanceof NativeSidecarKernelProxy)) return [];
+		if (!(this.#kernel instanceof SidecarKernelProxy)) return [];
 		return this.#kernel.listMounts();
 	}
 
@@ -5182,23 +4905,30 @@ export class AgentOs {
 			dataHandlers,
 			stderrHandlers,
 			exitHandlers,
-			exitPromise: Promise.resolve(0),
+			exitPromise: Promise.resolve({ shellId, exitCode: 0 }),
 		};
 		const exitPromise = handle.wait();
-		const finalize = (exitCode?: number) => {
-			this._pendingShellExitPromises.delete(entry.exitPromise);
+		const finalize = (exit?: ShellExit) => {
+			this._pendingShellExitPromises.delete(shellId);
 			if (this._shells.get(shellId) === entry) {
 				this._shells.delete(shellId);
 			}
 			// Record the exit code even when closeShell already dropped the
 			// entry, so a waitShell issued after exit still resolves with it.
-			this._closedShellIds.add(shellId, exitCode);
+			this._closedShellIds.add(shellId, exit);
 		};
 		entry.exitPromise = exitPromise.then(
 			(exitCode) => {
-				finalize(exitCode);
-				for (const handler of exitHandlers) handler({ shellId, exitCode });
-				return exitCode;
+				const exit: ShellExit = {
+					shellId,
+					exitCode,
+					...(handle.exitSignal != null
+						? { exitSignal: handle.exitSignal }
+						: {}),
+				};
+				finalize(exit);
+				for (const handler of exitHandlers) handler(exit);
+				return exit;
 			},
 			(error) => {
 				this._closedShellErrors.add(shellId, error);
@@ -5213,7 +4943,7 @@ export class AgentOs {
 				error,
 			});
 		});
-		this._pendingShellExitPromises.add(entry.exitPromise);
+		this._pendingShellExitPromises.set(shellId, entry.exitPromise);
 		this._shells.set(shellId, entry);
 		return { shellId };
 	}
@@ -5267,9 +4997,9 @@ export class AgentOs {
 	): () => void {
 		const entry = this._shells.get(shellId);
 		if (!entry) {
-			const exitCode = this._closedShellIds.get(shellId);
-			if (exitCode !== undefined) {
-				handler({ shellId, exitCode });
+			const exit = this._closedShellIds.get(shellId);
+			if (exit !== undefined) {
+				handler(exit);
 				return () => {};
 			}
 			throw new Error(`Shell not found: ${shellId}`);
@@ -5290,14 +5020,21 @@ export class AgentOs {
 	 * immediately for a shell that has already exited (within the closed-shell
 	 * retention window).
 	 */
-	private _waitTerminal(shellId: string): Promise<number> {
+	private async _waitTerminal(shellId: string): Promise<number> {
+		return (await this._waitTerminalExit(shellId)).exitCode;
+	}
+
+	private _waitTerminalExit(shellId: string): Promise<ShellExit> {
 		const entry = this._shells.get(shellId);
 		if (!entry) {
+			// Close removes I/O admission before the process necessarily exits.
+			const pending = this._pendingShellExitPromises.get(shellId);
+			if (pending) return pending;
 			if (this._closedShellErrors.has(shellId)) {
 				return Promise.reject(this._closedShellErrors.get(shellId));
 			}
-			const exitCode = this._closedShellIds.get(shellId);
-			if (exitCode !== undefined) return Promise.resolve(exitCode);
+			const exit = this._closedShellIds.get(shellId);
+			if (exit !== undefined) return Promise.resolve(exit);
 			throw new Error(`Shell not found: ${shellId}`);
 		}
 		return entry.exitPromise;
@@ -5367,6 +5104,8 @@ export class AgentOs {
 					pid: proc.pid,
 					command,
 					state: exit || proc.exitCode !== null ? "exited" : "running",
+					...(proc.exitCode !== null ? { exitCode: proc.exitCode } : {}),
+					...(proc.exitSignal != null ? { exitSignal: proc.exitSignal } : {}),
 					startedAtMs,
 				}),
 			),
@@ -5374,10 +5113,35 @@ export class AgentOs {
 		];
 	}
 
+	private _trackedProcessTopology() {
+		return new Map(
+			[...this._processes.values()].flatMap((entry) =>
+				entry.processId
+					? [
+							[
+								entry.processId,
+								{
+									processId: entry.processId,
+									pid: entry.proc.pid,
+									command: entry.command,
+									args: entry.args,
+									startTime: entry.startedAtMs,
+									exitCode: entry.exit?.exitCode ?? entry.proc.exitCode,
+									exitSignal: entry.exit
+										? (entry.exit.exitSignal ?? null)
+										: (entry.proc.exitSignal ?? null),
+								},
+							] as const,
+						]
+					: [],
+			),
+		);
+	}
+
 	/** Returns all kernel processes across all active runtimes (WASM and Node). */
 	private _listAllProcesses(): KernelProcessInfo[] {
-		if (this.#kernel instanceof NativeSidecarKernelProxy) {
-			return this.#kernel.snapshotProcesses();
+		if (this.#kernel instanceof SidecarKernelProxy) {
+			return this.#kernel.snapshotProcesses(this._trackedProcessTopology());
 		}
 		return [...this.#kernel.processes.values()];
 	}
@@ -5385,8 +5149,10 @@ export class AgentOs {
 	/** Returns processes organized as a tree using ppid relationships. */
 	private async _processTree(): Promise<ProcessTreeNode[]> {
 		const records =
-			this.#kernel instanceof NativeSidecarKernelProxy
-				? this.#kernel.snapshotProcessTopology()
+			this.#kernel instanceof SidecarKernelProxy
+				? await this.#kernel.currentProcessTopology(
+						this._trackedProcessTopology(),
+					)
 				: this._listAllProcesses().map((info) => ({
 						info,
 						key: `kernel:${info.pid}`,
@@ -5399,6 +5165,8 @@ export class AgentOs {
 				ppid: proc.ppid,
 				command: proc.command,
 				state: proc.status,
+				...(proc.exitCode !== null ? { exitCode: proc.exitCode } : {}),
+				...(proc.exitSignal != null ? { exitSignal: proc.exitSignal } : {}),
 				startedAtMs: proc.startTime,
 				children,
 			}),
@@ -5429,6 +5197,12 @@ export class AgentOs {
 			pid: entry.proc.pid,
 			command: entry.command,
 			state: entry.exit || entry.proc.exitCode !== null ? "exited" : "running",
+			...(entry.proc.exitCode !== null
+				? { exitCode: entry.proc.exitCode }
+				: {}),
+			...(entry.proc.exitSignal != null
+				? { exitSignal: entry.proc.exitSignal }
+				: {}),
 			startedAtMs: entry.startedAtMs,
 		};
 	}
@@ -5439,22 +5213,7 @@ export class AgentOs {
 	): Promise<void> {
 		const language = this._languageProcesses.get(pid);
 		if (language) {
-			if (language.exit) return;
-			language.signal = signal;
-			try {
-				await this._signalExecution(language.executionId, signal);
-			} catch (error) {
-				if (
-					!(error instanceof SidecarRejectedError) ||
-					error.detail.code !== "execution_not_running"
-				) {
-					throw error;
-				}
-				// The execution can finish between the local state check and the
-				// signal request. Reconcile its final state and preserve kill/signal's
-				// documented already-exited no-op behavior.
-				await this._waitProcess(pid);
-			}
+			await this._signalExecution(language.executionId, signal);
 			return;
 		}
 		const entry = this._processes.get(pid);
@@ -5462,7 +5221,6 @@ export class AgentOs {
 			throw new Error(`Process not found: ${pid}`);
 		}
 		if (entry.proc.exitCode !== null) return;
-		entry.signal = signal;
 		const number = signal === "SIGKILL" ? 9 : signal === "SIGINT" ? 2 : 15;
 		entry.proc.kill(number);
 	}
@@ -5508,7 +5266,11 @@ export class AgentOs {
 				page.truncated ? (options.after ?? -1) + 1 : undefined,
 				page.hasMore,
 			);
-			return { ...replay, exitCode: language.exit?.exitCode ?? null };
+			return {
+				...replay,
+				exitCode: language.exit?.exitCode ?? null,
+				exitSignal: language.exit?.exitSignal ?? null,
+			};
 		}
 		const entry = this._processes.get(pid);
 		if (!entry) throw new Error(`Process not found: ${pid}`);
@@ -5541,14 +5303,26 @@ export class AgentOs {
 		}
 		const exitCode = response.response.exitCode;
 		if (exitCode !== null && this._processes.get(pid) === entry) {
-			if (this.#kernel instanceof NativeSidecarKernelProxy) {
-				this.#kernel.reconcileReplayExit(entry.processId, exitCode);
+			if (this.#kernel instanceof SidecarKernelProxy) {
+				this.#kernel.reconcileReplayExit(
+					entry.processId,
+					exitCode,
+					response.response.exitSignal,
+				);
 			}
-			this._recordProcessExit(pid, exitCode);
+			this._recordProcessExit(
+				pid,
+				exitCode,
+				response.response.exitSignal ?? null,
+				entry.proc,
+			);
 		}
 		return {
 			pid,
-			exitCode,
+			exitCode: entry.exit?.exitCode ?? exitCode,
+			exitSignal: entry.exit
+				? (entry.exit.exitSignal ?? null)
+				: response.response.exitSignal,
 			events: response.response.events.map((event) => ({
 				pid,
 				sequence: safeProtocolNumber(event.sequence, "process output sequence"),
@@ -5596,7 +5370,7 @@ export class AgentOs {
 				this._sidecarVm,
 				descriptor,
 			);
-			if (this.#kernel instanceof NativeSidecarKernelProxy) {
+			if (this.#kernel instanceof SidecarKernelProxy) {
 				this.#kernel.registerCommandGuestPaths(
 					new Map(
 						commands.projectedCommands.map((command) => [
@@ -5666,7 +5440,7 @@ export class AgentOs {
 				commands: [...packageInfo.commands],
 			};
 			this._installedSoftware.set(installed.packageId, installed);
-			if (this.#kernel instanceof NativeSidecarKernelProxy) {
+			if (this.#kernel instanceof SidecarKernelProxy) {
 				this.#kernel.registerCommandGuestPaths(
 					new Map(
 						result.projected_commands.map((command) => [
@@ -5692,7 +5466,7 @@ export class AgentOs {
 				packageId,
 			);
 			this._installedSoftware.delete(packageId);
-			if (this.#kernel instanceof NativeSidecarKernelProxy) {
+			if (this.#kernel instanceof SidecarKernelProxy) {
 				this.#kernel.unregisterCommandGuestPaths(removedCommands);
 			}
 			return { ...installed, commands: [...installed.commands] };
@@ -5713,16 +5487,6 @@ export class AgentOs {
 			this._sidecarVm,
 		);
 	}
-	/** @deprecated Use `software.link()`. */
-	linkSoftware(descriptor: PackageDescriptor): Promise<void> {
-		return this.software.link(descriptor);
-	}
-
-	/** @deprecated Use `software.list()`. */
-	listSoftware(): Promise<{ packageName: string; commands: string[] }[]> {
-		return this.software.list();
-	}
-
 	private _handleSidecarEvent(
 		event: Parameters<SidecarProcess["onEvent"]>[0] extends (
 			event: infer T,
@@ -5730,8 +5494,6 @@ export class AgentOs {
 			? T
 			: never,
 	): void {
-		// onEvent is process-wide: execution IDs are only unique inside one VM.
-		// Keep sibling VMs' output/completion and warnings on their own handles.
 		if (
 			event.ownership.scope === "vm" &&
 			(event.ownership.connection_id !== this._sidecarSession.connectionId ||
@@ -5777,22 +5539,32 @@ export class AgentOs {
 			const pid = this._languageProcessIds.get(completed.executionId);
 			if (pid !== undefined) {
 				const process = this._languageProcesses.get(pid);
-				if (process && !process.exit) {
+				if (process && !process.exit && completed.exitCode !== undefined) {
 					const exit: ProcessExit = {
 						pid,
 						outcome:
 							completed.outcome === "timed_out"
 								? "timed_out"
-								: completed.outcome === "cancelled"
+								: completed.exitSignal !== undefined
 									? "signalled"
 									: "exited",
 						...(completed.exitCode !== undefined
 							? { exitCode: completed.exitCode }
 							: {}),
-						...(process.signal ? { signal: process.signal } : {}),
+						...(completed.exitSignal !== undefined
+							? {
+									exitSignal: completed.exitSignal,
+									signal: toSidecarSignalName(completed.exitSignal),
+								}
+							: {}),
 					};
 					process.exit = exit;
-					process.descriptor = { ...process.descriptor, state: "exited" };
+					process.descriptor = {
+						...process.descriptor,
+						state: "exited",
+						exitCode: exit.exitCode,
+						exitSignal: exit.exitSignal,
+					};
 					for (const handler of process.exitHandlers) {
 						try {
 							handler(exit);
@@ -5838,7 +5610,7 @@ export class AgentOs {
 				fillPercent: toNumber(detail.fillPercent),
 			});
 		} catch (error) {
-			console.error("AgentOS limit-warning handler failed", error);
+			console.error("agentOS limit-warning handler failed", error);
 		}
 	}
 
@@ -5846,7 +5618,6 @@ export class AgentOs {
 		const context: HostCallbackContext = {
 			hostFunctions: this._hostFunctions,
 			hostFunctionMap: buildHostFunctionMap(this._hostFunctions),
-			readFile: (path) => this.readFile(path),
 		};
 		const vmId = this._sidecarVm.vmId;
 		this._sidecarClient.setVmSidecarRequestHandler(vmId, (request) => {
@@ -5909,58 +5680,41 @@ export class AgentOs {
 		this._cronManager.onEvent(handler);
 	}
 
-	async dispose(): Promise<void> {
+	dispose(): Promise<void> {
+		this._disposalPromise ??= Promise.resolve().then(() =>
+			this._disposeInternal(),
+		);
+		return this._disposalPromise;
+	}
+
+	private async _disposeInternal(): Promise<void> {
 		this._cronManager.dispose();
-		const errors: unknown[] = [];
 
 		for (const entry of this._shells.values()) {
 			entry.handle.kill();
 		}
-		const shellExitPromises = [...this._pendingShellExitPromises];
-		const runningLanguageProcesses = [
-			...this._languageProcesses.entries(),
-		].filter(([, process]) => !process.exit);
-		const languageExitPromises = runningLanguageProcesses.map(
-			([, process]) =>
-				new Promise<void>((resolve) => {
-					const handleExit = () => {
-						process.exitHandlers.delete(handleExit);
-						resolve();
-					};
-					process.exitHandlers.add(handleExit);
-				}),
-		);
-		const languageKillResults = await Promise.allSettled(
-			runningLanguageProcesses.map(([pid]) => this._killProcess(pid)),
-		);
-		errors.push(
-			...languageKillResults.flatMap((result) =>
-				result.status === "rejected" ? [result.reason] : [],
-			),
-		);
-		await waitForTrackedExitPromises(
-			[...shellExitPromises, ...languageExitPromises],
-			VM_DISPOSE_DRAIN_TIMEOUT_MS,
-		);
-
+		const shellExitPromises = [...this._pendingShellExitPromises.values()];
 		this._shells.clear();
 		this._processes.clear();
-		this._languageProcesses.clear();
-		this._languageProcessIds.clear();
 		this._executionOutputHandlers.clear();
 		this._executionCompletedHandlers.clear();
+		await waitForTrackedExitPromises(
+			shellExitPromises,
+			SHELL_DISPOSE_TIMEOUT_MS,
+		);
 
 		this._disposeSidecarEventListener();
 		this._disposeSidecarCloseListener();
 
 		const sidecarLease = this._sidecarLease;
-		this._sidecarLease = null;
 		const disposeVm = sidecarLease
 			? sidecarLease.dispose()
 			: this.#kernel.dispose();
 		const hooks = this._disposeHooks.splice(0);
+		const errors: unknown[] = [];
 		try {
 			await disposeVm;
+			if (this._sidecarLease === sidecarLease) this._sidecarLease = null;
 		} catch (error) {
 			errors.push(error);
 		}
@@ -5972,7 +5726,7 @@ export class AgentOs {
 		);
 		if (errors.length === 1) throw errors[0];
 		if (errors.length > 1) {
-			throw new AggregateError(errors, "AgentOS VM disposal failed");
+			throw new AggregateError(errors, "agentOS VM disposal failed");
 		}
 	}
 }
@@ -5991,9 +5745,9 @@ export function getAgentOsKernel(vm: AgentOs): Kernel {
 	return getAgentOsRuntimeAdmin(vm).kernel;
 }
 
-function resolveAgentOsSidecar(
+async function resolveAgentOsSidecar(
 	config: AgentOsSidecarConfig | undefined,
-): AgentOsSidecar {
+): Promise<AgentOsSidecar> {
 	if (!config || config.kind === "shared") {
 		return getSharedAgentOsSidecarInternal(
 			config?.kind === "shared"
@@ -6020,7 +5774,9 @@ interface InProcessSidecarTransport<TVmAdmin extends InProcessSidecarVmAdmin>
 }
 
 interface AgentOsSidecarLeaseRecord {
+	creating?: boolean;
 	dispose(): Promise<void>;
+	releaseAfterOwnerExit?(): void;
 }
 
 interface SharedSidecarNativeProcess {
@@ -6032,13 +5788,20 @@ interface AgentOsSidecarState {
 	description: AgentOsSidecarDescription;
 	runtime: AgentOsSidecarRuntimeConfig;
 	activeLeases: Set<AgentOsSidecarLeaseRecord>;
+	disposePromise?: Promise<void>;
+	naturalExitAttempted?: boolean;
+	naturalExitDisposal?: Promise<void>;
+	nativeFailure?: { error: unknown; reported: boolean };
 	sharedPool?: string;
 	/**
-	 * The single native sidecar process shared by every VM leased from this
+	 * The single sidecar process shared by every VM leased from this
 	 * handle. Spawned lazily on first VM creation and reused thereafter so VMs
 	 * are cheap incremental tenants of one process rather than one-process-each.
 	 */
 	nativeProcess?: Promise<SharedSidecarNativeProcess>;
+	nativeClient?: SidecarProcess;
+	/** True only while the native disposer owns graceful exit and escalation. */
+	nativeDisposalActive?: boolean;
 	/**
 	 * The shared sidecar's child process + stdio, cached for synchronous
 	 * ref/unref. Unref'd when no VM leases are active so a one-shot host process
@@ -6065,6 +5828,8 @@ interface RefCountableHandle {
 }
 
 interface SidecarEventLoopHandle extends RefCountableHandle {
+	exitCode?: number | null;
+	signalCode?: string | null;
 	stdin?: RefCountableHandle | null;
 	stdout?: RefCountableHandle | null;
 	stderr?: RefCountableHandle | null;
@@ -6073,25 +5838,81 @@ interface SidecarEventLoopHandle extends RefCountableHandle {
 }
 
 let sidecarProcessExitHookInstalled = false;
+let sidecarNaturalExitCleanupScheduled = false;
+
+function canRetireIdleSharedSidecar(state: AgentOsSidecarState): boolean {
+	return (
+		state.nativeProcess !== undefined &&
+		state.activeLeases.size === 0 &&
+		(state.eventLoopHolds ?? 0) === 0 &&
+		!state.naturalExitAttempted &&
+		state.disposePromise === undefined
+	);
+}
+
+function retireIdleSharedSidecars(): void {
+	sidecarNaturalExitCleanupScheduled = false;
+	for (const sidecar of sharedSidecars.values()) {
+		const state = getSidecarState(sidecar);
+		if (!canRetireIdleSharedSidecar(state)) continue;
+		state.naturalExitAttempted = true;
+		// A promise alone cannot keep Node alive. Hold the real child and all
+		// transport lanes until disposal observes its exit, including failures.
+		acquireSharedSidecarHold(state);
+		const retirement = sidecar.dispose().finally(() => {
+			releaseSharedSidecarHold(state);
+		});
+		state.naturalExitDisposal = retirement;
+		void retirement.then(
+			() => {
+				state.naturalExitDisposal = undefined;
+			},
+			(error: unknown) => {
+				state.naturalExitDisposal = undefined;
+				// Retain an unconfirmed owner for explicit acquisition/disposal to
+				// retry, but never loop automatically on another beforeExit event.
+				state.nativeFailure ??= { error, reported: true };
+				console.error(
+					"[agentOS] shared sidecar cleanup failed during host exit",
+					state.description.sidecarId,
+					error,
+				);
+				if (!process.exitCode || process.exitCode === "0") process.exitCode = 1;
+			},
+		);
+	}
+}
 
 /**
- * Install a one-time, synchronous `process.on("exit")` hook that SIGKILLs any
- * pooled shared sidecar child. Once a one-shot host process is allowed to exit
- * (its sidecar handles are unref'd at 0 leases), this reaps the sidecar
- * immediately instead of waiting for its stdin-EOF grace window — no orphan, no
- * delay. We deliberately do NOT install SIGINT/SIGTERM handlers: a library
- * should not hijack the host's signal handling. SIGINT still reaches the sidecar
- * via the process group, and SIGTERM-driven exit still closes its stdin.
+ * Normal event-loop exhaustion drains idle pooled children and waits for exit.
+ * Explicit process.exit() bypasses beforeExit; its synchronous fallback can
+ * only signal children, not wait for them. Preserve the host's signal handlers.
  */
 function ensureSidecarProcessExitCleanup(): void {
 	if (sidecarProcessExitHookInstalled) return;
 	sidecarProcessExitHookInstalled = true;
+	process.on("beforeExit", () => {
+		if (
+			sidecarNaturalExitCleanupScheduled ||
+			![...sharedSidecars.values()].some((sidecar) =>
+				canRetireIdleSharedSidecar(getSidecarState(sidecar)),
+			)
+		)
+			return;
+		sidecarNaturalExitCleanupScheduled = true;
+		// Let all user beforeExit listeners and their promise continuations
+		// reserve VM creation before deciding which generations are still idle.
+		setImmediate(retireIdleSharedSidecars);
+	});
 	process.on("exit", () => {
 		for (const sidecar of sharedSidecars.values()) {
 			try {
 				sidecarStates.get(sidecar)?.sharedChild?.kill?.("SIGKILL");
-			} catch {
-				// best-effort reap; the process is exiting regardless
+			} catch (error) {
+				console.error(
+					"[agentOS] could not signal sidecar during host exit",
+					error,
+				);
 			}
 		}
 	});
@@ -6113,8 +5934,8 @@ function sidecarChildHandle(
  * Apply the current hold state to the shared sidecar's child + stdio: ref them
  * while ≥1 hold is live so in-flight VM work keeps the host process alive; unref
  * them at 0 so a one-shot script exits on its own after `dispose()`. The sidecar
- * process itself stays running (reusable) and self-exits on stdin EOF when the
- * host finally goes away. Best-effort: never let ref/unref break VM lifecycle.
+ * process stays reusable until the host event loop drains, when beforeExit
+ * retires it. Best-effort: never let ref/unref break VM lifecycle.
  */
 function applySharedSidecarHold(state: AgentOsSidecarState): void {
 	const child = state.sharedChild;
@@ -6183,22 +6004,23 @@ function ensureSharedSidecarNativeProcess(
 		state.nativeProcess = (async () => {
 			const client = SidecarProcess.spawn({
 				cwd: REPO_ROOT,
-				command: ensureNativeSidecarBinary(),
+				command: ensureSidecarBinary(),
 				args: sidecarRuntimeArgs(state.runtime),
 			});
 			// Track the child immediately — BEFORE the handshake await — so a
 			// failed `authenticateAndOpenSession()` can still reap it (otherwise
 			// the spawned child is untracked, unreapable, and pins the loop).
+			state.nativeClient = client;
 			state.sharedChild = sidecarChildHandle(client);
 			if (!state.sharedChild) {
-				// We reached into @rivet-dev/agentos-runtime-core internals to get the child for
+				// We reached into @rivet-dev/agentos internals to get the child for
 				// idle-unref. If that shape ever changes this returns undefined and
 				// the optimization silently stops working (one-shot scripts would
 				// hang again). Make it loud rather than a silent regression.
 				console.warn(
 					"[agentos] could not resolve the shared sidecar child handle; " +
 						"standalone scripts may not exit cleanly after dispose(). " +
-						"This usually means @rivet-dev/agentos-runtime-core internals changed.",
+						"This usually means @rivet-dev/agentos internals changed.",
 				);
 			}
 			// Apply the current hold state to the just-spawned child.
@@ -6207,27 +6029,25 @@ function ensureSharedSidecarNativeProcess(
 				const session = await client.authenticateAndOpenSession();
 				// A transport that fails for good (process exit, silence watchdog,
 				// event buffer overflow, undecodable frame) leaves the VMs out of
-				// reach. Stop the process, as the Rust client does, and report the
-				// handle disposed so a shared pool spawns a fresh sidecar.
+				// reach. Fence admission and retain the failed owner. A later shared
+				// acquisition drains it before replacing the pool generation.
 				const child = state.sharedChild;
-				client.onClose(() => {
-					child?.kill?.("SIGKILL");
-					if (state.description.state === "ready") {
-						state.description.state = "disposed";
+				client.onClose((error) => {
+					if (!state.nativeDisposalActive) {
+						state.nativeFailure ??= { error, reported: false };
+						state.description.state = "disposing";
+						child?.kill?.("SIGKILL");
 					}
+					// Intentional disposal also closes the protocol. Its owner is
+					// already waiting for graceful exit and owns any forced fallback.
 				});
 				return { client, session };
 			} catch (error) {
-				// Spawn/handshake failed: reap the child, drop the cached handle,
-				// and CLEAR the rejected promise so the next create() retries
-				// instead of permanently wedging on a rejected `nativeProcess`.
-				try {
-					state.sharedChild?.kill?.("SIGKILL");
-				} catch {
-					// already gone
-				}
-				state.sharedChild = undefined;
-				state.nativeProcess = undefined;
+				// Authentication failure is not proof of child exit. Preserve the
+				// spawned client so explicit disposal can drain and reap it even
+				// though the session promise rejected.
+				state.nativeFailure ??= { error, reported: false };
+				state.description.state = "disposing";
 				throw error;
 			}
 		})();
@@ -6243,20 +6063,30 @@ async function disposeSharedSidecarNativeProcess(
 	if (!pending) {
 		return;
 	}
-	state.nativeProcess = undefined;
-	// The cached child is now dead; drop it (symmetric with the assignment in
-	// ensureSharedSidecarNativeProcess). We deliberately do NOT zero
-	// `eventLoopHolds` here: this runs only from `AgentOsSidecar.dispose()`, which
-	// has already set the handle to `disposing` (so no new lease can acquire) and
-	// drained `activeLeases`; the disposed handle's state is then abandoned. Force-
-	// zeroing a shared counter could clobber a hold on a freshly re-acquired
-	// process generation, so it is left to the balanced acquire/release pairs.
-	state.sharedChild = undefined;
+	const child = state.sharedChild;
 	try {
-		const { client } = await pending;
+		const client = state.nativeClient ?? (await pending).client;
+		state.nativeDisposalActive = true;
 		await client.dispose();
-	} catch {
-		// Process may have already exited; nothing to reclaim.
+	} catch (error) {
+		// A reported shutdown/nonzero-exit error does not imply cleanup failed.
+		// Node records these fields only after the child has exited. Without
+		// that evidence retain the owner so explicit disposal can be retried.
+		if (child?.exitCode != null || child?.signalCode != null) {
+			if (state.nativeProcess === pending) {
+				state.nativeProcess = undefined;
+				state.nativeClient = undefined;
+				state.sharedChild = undefined;
+			}
+		}
+		throw error;
+	} finally {
+		state.nativeDisposalActive = false;
+	}
+	if (state.nativeProcess === pending) {
+		state.nativeProcess = undefined;
+		state.nativeClient = undefined;
+		state.sharedChild = undefined;
 	}
 }
 
@@ -6285,32 +6115,72 @@ export class AgentOsSidecar {
 		return cloneSidecarDescription(state.description);
 	}
 
-	async dispose(): Promise<void> {
+	dispose(): Promise<void> {
 		const state = getSidecarState(this);
-		if (state.description.state === "disposed") {
-			return;
-		}
-
+		if (state.disposePromise !== undefined) return state.disposePromise;
+		if (
+			state.description.state === "disposed" &&
+			!state.nativeProcess &&
+			state.activeLeases.size === 0
+		)
+			return Promise.resolve();
 		state.description.state = "disposing";
-		const errors: Error[] = [];
-		for (const lease of [...state.activeLeases]) {
-			try {
-				await lease.dispose();
-			} catch (error) {
-				errors.push(error instanceof Error ? error : new Error(String(error)));
-			}
-		}
-		state.activeLeases.clear();
-		state.description.activeVmCount = 0;
-		// Tear down the shared native process after all leased VMs are gone.
-		await disposeSharedSidecarNativeProcess(state);
-		state.description.state = "disposed";
-		if (state.sharedPool && sharedSidecars.get(state.sharedPool) === this) {
-			sharedSidecars.delete(state.sharedPool);
-		}
-		if (errors.length > 0) {
-			throw new Error(errors.map((error) => error.message).join("; "));
-		}
+		// Publish the shared attempt before invoking any user-owned lease cleanup.
+		state.disposePromise = Promise.resolve()
+			.then(async () => {
+				const errors: unknown[] = [];
+				if ([...state.activeLeases].some((lease) => lease.creating)) {
+					throw Object.assign(
+						new Error(
+							"agentOS sidecar VM creation is pending; retain this owner and retry disposal after creation settles",
+						),
+						{ code: "ERR_AGENTOS_SIDECAR_CREATION_PENDING" },
+					);
+				}
+				for (const lease of [...state.activeLeases]) {
+					try {
+						await lease.dispose();
+						state.activeLeases.delete(lease);
+					} catch (error) {
+						// A lease may have removed itself before its cleanup rejected.
+						// The sidecar remains the final owner until teardown succeeds.
+						state.activeLeases.add(lease);
+						errors.push(error);
+					}
+				}
+				state.description.activeVmCount = state.activeLeases.size;
+				// Explicit process teardown is the final cleanup boundary even when a
+				// VM's own teardown failed (for example a quarantined generation).
+				const hadNativeOwner = state.nativeProcess !== undefined;
+				try {
+					await disposeSharedSidecarNativeProcess(state);
+				} catch (error) {
+					errors.push(error);
+				}
+				if (hadNativeOwner && !state.nativeProcess) {
+					for (const lease of state.activeLeases)
+						lease.releaseAfterOwnerExit?.();
+					state.activeLeases.clear();
+					state.description.activeVmCount = 0;
+				}
+				if (state.activeLeases.size === 0 && !state.nativeProcess) {
+					state.description.state = "disposed";
+					if (
+						state.sharedPool &&
+						sharedSidecars.get(state.sharedPool) === this
+					) {
+						sharedSidecars.delete(state.sharedPool);
+					}
+				}
+				if (errors.length === 1) throw errors[0];
+				if (errors.length > 1)
+					throw new AggregateError(errors, "agentOS sidecar disposal failed");
+			})
+			.finally(() => {
+				if (state.description.state !== "disposed")
+					state.disposePromise = undefined;
+			});
+		return state.disposePromise;
 	}
 }
 
@@ -6338,7 +6208,6 @@ function createAgentOsSidecarInternal(
  */
 export async function __disposeAllSharedSidecarsForTesting(): Promise<void> {
 	const sidecars = Array.from(sharedSidecars.values());
-	sharedSidecars.clear();
 	const errors: Error[] = [];
 	for (const sidecar of sidecars) {
 		try {
@@ -6354,21 +6223,64 @@ export async function __disposeAllSharedSidecarsForTesting(): Promise<void> {
 	}
 }
 
-function getSharedAgentOsSidecarInternal(
+async function getSharedAgentOsSidecarInternal(
 	options: AgentOsSharedSidecarOptions = {},
-): AgentOsSidecar {
+): Promise<AgentOsSidecar> {
 	const pool = options.pool ?? "default";
-	const existing = sharedSidecars.get(pool);
-	if (existing && existing.describe().state !== "disposed") {
+	const validateRuntime = (sidecar: AgentOsSidecar): void => {
 		if (options.runtime !== undefined) {
 			const requested = normalizeSidecarRuntimeConfig(options.runtime);
-			const configured = getSidecarState(existing).runtime;
+			const configured = getSidecarState(sidecar).runtime;
 			if (!sidecarRuntimeConfigsEqual(requested, configured)) {
 				throw new Error(
 					`Shared sidecar pool ${JSON.stringify(pool)} already exists with different runtime settings`,
 				);
 			}
 		}
+	};
+	let existing = sharedSidecars.get(pool);
+	if (existing) {
+		const retirement = getSidecarState(existing).naturalExitDisposal;
+		if (retirement) {
+			validateRuntime(existing);
+			await retirement;
+			// User work can revive the host during shutdown. Join retirement,
+			// then acquire the current generation rather than a disposing owner.
+			existing = sharedSidecars.get(pool);
+		}
+	}
+	if (existing && existing.describe().state !== "disposed") {
+		validateRuntime(existing);
+		const state = getSidecarState(existing);
+		const failure = state.nativeFailure;
+		if (failure) {
+			const errors: unknown[] = [failure.error];
+			try {
+				await existing.dispose();
+			} catch (error) {
+				// Failed teardown is only recoverable once the old owner confirms
+				// it released the process and leases. Keep unconfirmed owners pooled.
+				if (
+					state.description.state !== "disposed" ||
+					state.nativeProcess !== undefined
+				)
+					throw error;
+				errors.push(error);
+			}
+			if (!failure.reported) {
+				failure.reported = true;
+				console.error(
+					"[agentOS] failed shared sidecar was disposed before replacement",
+					...errors,
+				);
+			}
+			// Another acquisition may already have replaced this generation while
+			// we joined its cleanup. Never overwrite that new owner.
+			existing = sharedSidecars.get(pool);
+		}
+	}
+	if (existing && existing.describe().state !== "disposed") {
+		validateRuntime(existing);
 		return existing;
 	}
 
@@ -6444,7 +6356,26 @@ async function leaseAgentOsSidecarVm<TVmAdmin extends InProcessSidecarVmAdmin>(
 	};
 
 	let disposed = false;
-	let leaseRecord: AgentOsSidecarLeaseRecord | undefined;
+	let disposePromise: Promise<void> | undefined;
+	const disposeLease = (): Promise<void> => {
+		if (disposePromise !== undefined) return disposePromise;
+		if (disposed) return Promise.resolve();
+		disposePromise = Promise.resolve().then(async () => {
+			await client.dispose();
+			disposed = true;
+			state.activeLeases.delete(leaseRecord);
+			state.description.activeVmCount = state.activeLeases.size;
+			releaseHold();
+		});
+		return disposePromise;
+	};
+	const leaseRecord: AgentOsSidecarLeaseRecord = {
+		creating: true,
+		dispose: disposeLease,
+		releaseAfterOwnerExit: releaseHold,
+	};
+	state.activeLeases.add(leaseRecord);
+	state.description.activeVmCount = state.activeLeases.size;
 
 	try {
 		const session = await client.createOwnershipSession({
@@ -6456,35 +6387,22 @@ async function leaseAgentOsSidecarVm<TVmAdmin extends InProcessSidecarVmAdmin>(
 			throw new Error(`Sidecar VM admin was not registered for ${vm.vmId}`);
 		}
 
-		const lease: AgentOsSidecarVmLease<TVmAdmin> = {
-			sidecar,
-			session,
-			vm,
-			admin,
-			async dispose() {
-				if (disposed) {
-					return;
-				}
-				disposed = true;
-				state.activeLeases.delete(leaseRecord!);
-				state.description.activeVmCount = state.activeLeases.size;
-				await client.dispose();
-				// Release this lease's hold; the shared sidecar is unref'd only
-				// once the last hold (across all in-flight + active leases) drops,
-				// so a one-shot host process can then exit on its own.
-				releaseHold();
-			},
-		};
-
-		leaseRecord = {
-			dispose: () => lease.dispose(),
-		};
-		state.activeLeases.add(leaseRecord);
-		state.description.activeVmCount = state.activeLeases.size;
-		return lease;
+		if (state.description.state !== "ready") {
+			throw new Error("agentOS sidecar disposal began during VM creation");
+		}
+		leaseRecord.creating = false;
+		return { sidecar, session, vm, admin, dispose: disposeLease };
 	} catch (error) {
-		await client.dispose().catch(() => {});
-		releaseHold();
+		try {
+			await disposeLease();
+		} catch (cleanupError) {
+			throw new AggregateError(
+				[error, cleanupError],
+				"agentOS VM creation and cleanup failed; sidecar owner retained",
+			);
+		} finally {
+			leaseRecord.creating = false;
+		}
 		throw error;
 	}
 }
@@ -6497,20 +6415,26 @@ async function createInProcessSidecarTransport<
 ): Promise<InProcessSidecarTransport<TVmAdmin>> {
 	const vmAdmins = new Map<string, TVmAdmin>();
 	let disposed = false;
+	let disposePromise: Promise<void> | undefined;
+	const adminDisposals = new Map<string, Promise<void>>();
 
-	async function disposeVmAdmin(vmId: string): Promise<void> {
+	function disposeVmAdmin(vmId: string): Promise<void> {
+		const pending = adminDisposals.get(vmId);
+		if (pending) return pending;
 		const admin = vmAdmins.get(vmId);
-		if (!admin) {
-			return;
-		}
-
-		vmAdmins.delete(vmId);
-		await admin.dispose();
+		if (!admin) return Promise.resolve();
+		const attempt = Promise.resolve().then(async () => {
+			await admin.dispose();
+			vmAdmins.delete(vmId);
+			adminDisposals.delete(vmId);
+		});
+		adminDisposals.set(vmId, attempt);
+		return attempt;
 	}
 
 	return {
 		async createVm(vmBootstrap) {
-			if (disposed) {
+			if (disposed || disposePromise !== undefined) {
 				throw new Error(
 					`Cannot create VM ${vmBootstrap.vmId} for disposed sidecar session ${sessionBootstrap.sessionId}`,
 				);
@@ -6524,26 +6448,23 @@ async function createInProcessSidecarTransport<
 			await disposeVmAdmin(vmId);
 		},
 
-		async dispose() {
-			if (disposed) {
-				return;
-			}
-			disposed = true;
-
-			const errors: Error[] = [];
-			for (const vmId of [...vmAdmins.keys()]) {
-				try {
-					await disposeVmAdmin(vmId);
-				} catch (error) {
-					errors.push(
-						error instanceof Error ? error : new Error(String(error)),
-					);
+		dispose() {
+			if (disposePromise !== undefined) return disposePromise;
+			disposePromise = Promise.resolve().then(async () => {
+				const errors: unknown[] = [];
+				for (const vmId of [...vmAdmins.keys()]) {
+					try {
+						await disposeVmAdmin(vmId);
+					} catch (error) {
+						errors.push(error);
+					}
 				}
-			}
-
-			if (errors.length > 0) {
-				throw new Error(errors.map((error) => error.message).join("; "));
-			}
+				if (errors.length === 1) throw errors[0];
+				if (errors.length > 1)
+					throw new AggregateError(errors, "agentOS VM admin disposal failed");
+				disposed = true;
+			});
+			return disposePromise;
 		},
 
 		getVmAdmin(vmId) {

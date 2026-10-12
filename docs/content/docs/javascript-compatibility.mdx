@@ -25,7 +25,7 @@ or implemented in the isolate is denied.</Note>
 | Module | Backed by |
 | --- | --- |
 | `fs`, `fs/promises` | VM filesystem: fds, streams, metadata, symlinks, polling watchers. |
-| `child_process` | VM process table. `spawn`, `exec`, `execFile`, sync variants. |
+| `child_process` | VM process table. `spawn`, `exec`, `execFile`, sync variants. Explicit `uid` and `gid` use guest credentials: root can drop privileges; unauthorized changes fail with `EPERM`. Direct commands check execute and directory-search permissions with the child identity; interpreter inputs such as `node script.js` require read permission. |
 | `net`, `dgram` | VM TCP, Unix-socket, and UDP tables. |
 | `dns`, `dns/promises` | VM DNS resolver. |
 | `http`, `https`, `http2`, `tls` | VM socket/TLS paths: clients, servers, pooling. |

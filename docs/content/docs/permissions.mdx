@@ -1,63 +1,28 @@
 ---
 title: "Permissions"
-description: "Constrain untrusted guest filesystem, process, network, environment, and host function access."
+description: "Constrain untrusted guest filesystem, process, and network access."
 ---
 
-Pass a permission tree when creating the VM. The trusted sidecar enforces it
-for every guest operation. Hosted VMs take the same serializable tree in their
-creation config or a later complete `v1.config.set` replacement.
+Pass a serializable permission tree in creation config or a later complete
+`config.set` replacement. The trusted sidecar enforces it for every guest
+operation.
 
-<CodeSnippet file="examples/embedded/permissions.ts" title="Library" />
+Both defaults profiles allow VM-local networking. External networking and DNS,
+including model-provider endpoints, require an explicit permission grant.
+Omitted permission scopes retain their sidecar-owned defaults.
 
-The tree has one scope per capability: `fs`, `network`, `childProcess`,
-`process`, `env`, and `hostFunction`. A scope can be `"allow"`, `"deny"`, or a
-rule set with a `default` mode and `rules` that match operations and target
-patterns.
+The permission tree has `fs`, `network`, `childProcess`, `process`, and `env`
+scopes. Each scope accepts `"allow"`, `"deny"`, or a rule set. The library also
+supports a `hostFunction` scope for callbacks supplied by the embedding
+process. The hosted actor does not accept host functions.
 
-Your policy is merged over the default, so an omitted scope keeps its default.
-By default the guest behaves like a sandboxed machine: its virtual filesystem,
-processes, environment, listeners, and loopback networking work, and outbound
-network access is limited to the sidecar's default allowlist. Library host
-functions are governed by the `hostFunction` scope.
+`network: "deny"` blocks traffic crossing the VM boundary, including DNS, while
+allowing guest listeners and guest loopback. A custom network rule set replaces
+the whole network scope; include local listen and loopback rules if they should
+remain allowed.
 
-## Network
+## Embedded API
 
-`network: "deny"` denies traffic that crosses the VM boundary and keeps
-networking inside the VM working, like a container with no published ports.
+<CodeSnippet file="examples/embedded/permissions.ts" />
 
-| Traffic | `network: "deny"` |
-| --- | --- |
-| Guest `listen()` on TCP or Unix sockets | Allowed |
-| Guest connections to its own listeners over `127.0.0.1`, `localhost`, `::1`, or Unix sockets | Allowed |
-| Host requests to guest servers with `fetch`, `httpRequest`, or previews | Allowed |
-| DNS lookups | Denied |
-| TCP connections and HTTP requests to any non-loopback address | Denied |
-| The default allowlist of model provider endpoints | Denied |
-
-Guest listeners are never bound on the host, and guest loopback never reaches a
-host loopback service unless that host port is listed in `loopbackExemptPorts`.
-`network: "deny"` does not change either rule.
-
-`"deny"` is shorthand for this rule set. A rule set replaces the whole network
-scope, so a custom rule set that should keep listeners and loopback working
-must include these rules. Omit them to deny VM-local networking too.
-
-```json
-{
-  "network": {
-    "default": "deny",
-    "rules": [
-      { "mode": "allow", "operations": ["listen"], "patterns": ["tcp://**", "unix:**"] },
-      {
-        "mode": "allow",
-        "operations": ["http"],
-        "patterns": ["tcp://127.0.0.1:*", "tcp://localhost:*", "tcp://::1:*", "unix:**"]
-      }
-    ]
-  }
-}
-```
-
-See the [Security Model](/agentos/docs/security-model) for the trust boundary
-these policies enforce.
-
+Read more in the [embedded API quickstart](/agentos/docs/quickstart-embedded).

@@ -1,10 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/index.js";
 
-function sleep(ms: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 describe("flat shell API", () => {
 	let vm: AgentOs;
 
@@ -29,8 +25,8 @@ describe("flat shell API", () => {
 		});
 
 		const chunks: string[] = [];
-		vm.onShellData(shellId, (data) => {
-			chunks.push(new TextDecoder().decode(data));
+		vm.onShellData(shellId, (event) => {
+			chunks.push(new TextDecoder().decode(event.data));
 		});
 
 		vm.writeShell(shellId, "hello-flat-shell\n");
@@ -48,13 +44,17 @@ describe("flat shell API", () => {
 		const { shellId } = vm.openShell();
 
 		const chunks: string[] = [];
-		vm.onShellData(shellId, (data) => {
-			chunks.push(new TextDecoder().decode(data));
+		vm.onShellData(shellId, (event) => {
+			chunks.push(new TextDecoder().decode(event.data));
 		});
 
-		await sleep(100);
-		vm.writeShell(shellId, "abc");
-		await sleep(100);
+		await expect
+			.poll(() => chunks.join(""), { timeout: 5_000 })
+			.toContain("sh-0.4$ ");
+		await vm.writeShell(shellId, "abc");
+		await expect
+			.poll(() => chunks.join(""), { timeout: 5_000 })
+			.toContain("abc");
 
 		vm.closeShell(shellId);
 

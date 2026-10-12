@@ -1,0 +1,57 @@
+Preserve the source of shell stdio duplication when launching external commands.
+
+Brush tracks `1>&2` as OpenFile::Stderr at child fd 1, but its OpenFile to
+Stdio conversion turns every standard stream into Stdio::inherit(), which
+means "inherit this same-numbered child fd". Clone the selected open file into
+an owned descriptor before std::process::Command loses that source identity.
+The default same-numbered streams still use ordinary inheritance.
+
+--- a/src/commands.rs
++++ b/src/commands.rs
+@@ -122,6 +122,19 @@ impl CommandArg {
+     }
+ }
+ 
++fn redirected_stdio(open_file: OpenFile) -> Result<Stdio, error::Error> {
++    #[cfg(any(unix, target_os = "wasi"))]
++    {
++        // A Stdio::inherit() value has no source-fd identity. The owned clone
++        // preserves cross-fd redirections such as 1>&2 and ordered fd swaps.
++        return Ok(std::fs::File::from(open_file.into_owned_fd()?).into());
++    }
++    #[cfg(not(any(unix, target_os = "wasi")))]
++    {
++        Ok(open_file.into())
++    }
++}
++
+ /// Composes a `std::process::Command` to execute the given command. Appropriately
+ /// configures the command name and arguments, redirections, injected file
+ /// descriptors, environment variables, etc.
+@@ -186,7 +199,7 @@ pub fn compose_std_command<S: AsRef<OsStr>>(
+     match context.try_fd(OpenFiles::STDIN_FD) {
+         Some(OpenFile::Stdin(_)) | None => (),
+         Some(stdin_file) => {
+-            let as_stdio: Stdio = stdin_file.into();
++            let as_stdio = redirected_stdio(stdin_file)?;
+             cmd.stdin(as_stdio);
+         }
+     }
+@@ -195,7 +208,7 @@ pub fn compose_std_command<S: AsRef<OsStr>>(
+     match context.try_fd(OpenFiles::STDOUT_FD) {
+         Some(OpenFile::Stdout(_)) | None => (),
+         Some(stdout_file) => {
+-            let as_stdio: Stdio = stdout_file.into();
++            let as_stdio = redirected_stdio(stdout_file)?;
+             cmd.stdout(as_stdio);
+         }
+     }
+@@ -204,7 +217,7 @@ pub fn compose_std_command<S: AsRef<OsStr>>(
+     match context.try_fd(OpenFiles::STDERR_FD) {
+         Some(OpenFile::Stderr(_)) | None => {}
+         Some(stderr_file) => {
+-            let as_stdio: Stdio = stderr_file.into();
++            let as_stdio = redirected_stdio(stderr_file)?;
+             cmd.stderr(as_stdio);
+         }
+     }

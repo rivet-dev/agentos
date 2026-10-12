@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Agent OS in the browser — converged wasm sidecar demo</title>
+		<style>
+			:root {
+				color-scheme: light;
+				--bg: #f7f7f5;
+				--fg: #1a1a1a;
+				--muted: #6b6b6b;
+				--ok: #1a7f37;
+				--accent: #2563eb;
+				--card: #ffffff;
+				--border: #e4e4e1;
+				--code: #0f1117;
+			}
+			* { box-sizing: border-box; }
+			body {
+				margin: 0;
+				font-family: ui-sans-serif, system-ui, -apple-system, "Manrope", sans-serif;
+				background: var(--bg);
+				color: var(--fg);
+				line-height: 1.5;
+			}
+			main { max-width: 820px; margin: 0 auto; padding: 48px 24px 80px; }
+			h1 { font-size: 28px; margin: 0 0 4px; }
+			.sub { color: var(--muted); margin: 0 0 28px; }
+			.card {
+				background: var(--card);
+				border: 1px solid var(--border);
+				border-radius: 12px;
+				padding: 20px 22px;
+				margin: 18px 0;
+			}
+			.row { display: flex; align-items: center; gap: 10px; }
+			button {
+				font: inherit;
+				font-weight: 600;
+				background: var(--accent);
+				color: white;
+				border: 0;
+				border-radius: 8px;
+				padding: 10px 18px;
+				cursor: pointer;
+			}
+			button:disabled { opacity: 0.5; cursor: default; }
+			.pill {
+				font-size: 13px;
+				font-weight: 600;
+				padding: 3px 10px;
+				border-radius: 999px;
+				background: #eee;
+				color: var(--muted);
+			}
+			.pill.ok { background: #e6f4ea; color: var(--ok); }
+			ol.steps { margin: 0; padding-left: 20px; }
+			ol.steps li { margin: 6px 0; }
+			ol.steps li .what { color: var(--muted); }
+			pre {
+				background: var(--code);
+				color: #e6e6e6;
+				border-radius: 10px;
+				padding: 16px 18px;
+				overflow: auto;
+				font-family: "JetBrains Mono", ui-monospace, monospace;
+				font-size: 13px;
+				margin: 12px 0 0;
+			}
+			.note { font-size: 14px; color: var(--muted); }
+			code { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 0.92em; }
+			a { color: var(--accent); }
+		</style>
+	</head>
+	<body>
+		<main>
+			<h1>Agent OS in the browser</h1>
+			<p class="sub">
+				The Agent OS sidecar, compiled to WebAssembly, booting and answering a
+				real ACP wire request inside this page — the same Rust kernel that runs
+				natively, now in the browser.
+			</p>
+
+			<div class="card">
+				<div class="row" style="justify-content: space-between">
+					<div class="row">
+						<button id="run">Run demo</button>
+						<span id="status" class="pill">idle</span>
+					</div>
+					<span id="sidecar" class="note"></span>
+				</div>
+				<ol class="steps" id="steps" style="margin-top: 18px"></ol>
+			</div>
+
+			<div class="card">
+				<strong>Transcript</strong>
+				<pre id="out">click “Run demo”…</pre>
+			</div>
+
+			<p class="note">
+				What this proves: the converged <code>agentos-sidecar-browser</code> wasm
+				module decodes a BARE wire frame, runs the authenticate handshake, routes
+				an ACP <code>get_session_state</code> request through
+				<code>BrowserAcpExtension → AcpCore</code> (the host-free engine shared
+				with the native sidecar), and returns a real ACP response — all in-page,
+				with the wasm kernel as the sole enforcement point.
+			</p>
+			<p class="note">
+				Running a full agent (e.g. <code>pi</code>) end-to-end in the browser
+				additionally requires the browser agent-process executor (worker stdio
+				wiring) and host network egress; both are tracked as out-of-scope for the
+				current browser-convergence milestone. See <code>DEMO.md</code>.
+			</p>
+		</main>
+
+		<script type="module">
+			import "/acp-codec.bundle.js";
+			import init, {
+				AgentOsBrowserSidecarWasm,
+			} from "/wasm/agentos_sidecar_browser.js";
+
+			const statusEl = document.getElementById("status");
+			const stepsEl = document.getElementById("steps");
+			const outEl = document.getElementById("out");
+			const sidecarEl = document.getElementById("sidecar");
+			const runBtn = document.getElementById("run");
+
+			function setStatus(text, ok) {
+				statusEl.textContent = text;
+				statusEl.className = ok ? "pill ok" : "pill";
+			}
+			function step(what, detail) {
+				const li = document.createElement("li");
+				li.innerHTML = `<span class="what">${what}</span>${detail ? ` — ${detail}` : ""}`;
+				stepsEl.appendChild(li);
+			}
+
+			runBtn.addEventListener("click", async () => {
+				runBtn.disabled = true;
+				stepsEl.innerHTML = "";
+				outEl.textContent = "";
+				setStatus("booting…");
+
+				try {
+					await init("/wasm/agentos_sidecar_browser_bg.wasm");
+					const sidecar = new AgentOsBrowserSidecarWasm(null);
+					sidecarEl.textContent = `sidecarId: ${sidecar.sidecarId}`;
+					step("Booted the agentos wasm sidecar in this browser tab");
+
+					const transcript = [];
+					const pushFrame = (frame) => {
+						const response = sidecar.pushFrame(frame);
+						if (!(response instanceof Uint8Array)) {
+							throw new Error("wasm sidecar returned no response frame");
+						}
+						return response;
+					};
+
+					setStatus("running ACP round-trip…");
+					const result = window.__acpHarness.runGetSessionStateRoundTrip(pushFrame);
+
+					step(
+						"Authenticated over the BARE wire protocol",
+						`response: <code>${result.authResp.payloadType}</code>`,
+					);
+					step(
+						"Sent ACP <code>get_session_state</code> for a missing session",
+						`payload: <code>${result.acpResp.payloadType}</code>`,
+					);
+					step(
+						"AcpCore answered with a real ACP response",
+						`<code>${result.acpResp.acpTag}</code>: “${result.acpResp.acpMessage ?? ""}”`,
+					);
+
+					outEl.textContent = JSON.stringify(result, null, 2);
+					setStatus("done", true);
+				} catch (error) {
+					setStatus("error");
+					outEl.textContent = String(error?.stack ?? error);
+				} finally {
+					runBtn.disabled = false;
+				}
+			});
+		</script>
+	</body>
+</html>

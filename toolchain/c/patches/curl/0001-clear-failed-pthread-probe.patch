@@ -1,0 +1,26 @@
+Clear the pthread flag when the fallback pthread_create link probe fails.
+Keep successful pthread detection and the independent atomic capability probe
+unchanged. Update both Autoconf input and the release-generated configure.
+
+--- a/configure.ac
++++ b/configure.ac
+@@ -4338,7 +4338,8 @@
+         esac
+         AC_CHECK_LIB(pthread, pthread_create,
+                      [HAVE_THREADS_POSIX=1],
+-                     [ CFLAGS="$save_CFLAGS"])
++                     [ CFLAGS="$save_CFLAGS"
++                       PTHREAD=])
+       fi
+   ])
+   if test "$HAVE_THREADS_POSIX" = "1"; then
+--- a/configure
++++ b/configure
+@@ -48002,6 +48002,7 @@
+   HAVE_THREADS_POSIX=1
+ else $as_nop
+    CFLAGS="$save_CFLAGS"
++                       PTHREAD=
+ fi
+ 
+       fi

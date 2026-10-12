@@ -15,7 +15,8 @@ var NODE_CUSTOM_GLOBAL_INVENTORY = [
 	{
 		name: "__agentOsRequireEsmSync",
 		classification: "hardened",
-		rationale: "V8-owned synchronous ESM loader used by Node-compatible require().",
+		rationale:
+			"V8-owned synchronous ESM loader used by Node-compatible require().",
 	},
 	{
 		name: "process.cpuUsage",
@@ -303,6 +304,11 @@ var NODE_CUSTOM_GLOBAL_INVENTORY = [
 		rationale: "Host process signal-listener state bridge reference.",
 	},
 	{
+		name: "_processSignalEnd",
+		classification: "hardened",
+		rationale: "Host process signal-delivery completion bridge reference.",
+	},
+	{
 		name: "_processTakeSignal",
 		classification: "hardened",
 		rationale: "Host process pending-signal drain bridge reference.",
@@ -342,6 +348,42 @@ var NODE_CUSTOM_GLOBAL_INVENTORY = [
 			"Active-handle lifecycle hook controls runtime completion semantics.",
 	},
 	{
+		name: "__agentOsAddProtectedEventListener",
+		classification: "hardened",
+		rationale:
+			"Event/abort prelude owner captured and removed before guest execution; no public registration option.",
+	},
+	{
+		name: "__agentOsReportTerminalCallback",
+		classification: "hardened",
+		rationale:
+			"Native terminal callback owner captured and removed during bridge bootstrap; no host RPC.",
+	},
+	{
+		name: "__runtimeResetProcessExitState",
+		classification: "hardened",
+		rationale:
+			"Runtime-owned per-call exit state reset; no host RPC or configuration reset.",
+	},
+	{
+		name: "_dispatchUncaughtException",
+		classification: "hardened",
+		rationale:
+			"Runtime-owned user entrypoint evaluation exception delivery; this callback never invokes a host RPC.",
+	},
+	{
+		name: "_dispatchPromiseRejection",
+		classification: "hardened",
+		rationale:
+			"Runtime-owned Promise event delivery; this callback never invokes a host RPC.",
+	},
+	{
+		name: "_retireStdinOperation",
+		classification: "hardened",
+		rationale:
+			"Retires operation-owned stdin reads while preserving the retained stream.",
+	},
+	{
 		name: "_releaseLeftoverHandles",
 		classification: "hardened",
 		rationale:
@@ -351,6 +393,12 @@ var NODE_CUSTOM_GLOBAL_INVENTORY = [
 		name: "_getActiveHandles",
 		classification: "hardened",
 		rationale: "Bridge debug hook should not be replaced by sandbox code.",
+	},
+	{
+		name: "_processExitRequested",
+		classification: "hardened",
+		rationale:
+			"Process-exit state controls runtime completion and must not be replaced by guest code.",
 	},
 	{
 		name: "_childProcessDispatch",
@@ -902,6 +950,16 @@ var NODE_CUSTOM_GLOBAL_INVENTORY = [
 		rationale: "Host filesystem bridge reference.",
 	},
 	{
+		name: "fs.fchmodSync",
+		classification: "hardened",
+		rationale: "Host file-descriptor metadata bridge reference.",
+	},
+	{
+		name: "fs.fchownSync",
+		classification: "hardened",
+		rationale: "Host file-descriptor metadata bridge reference.",
+	},
+	{
 		name: "fs.futimesSync",
 		classification: "hardened",
 		rationale: "Host filesystem bridge reference.",
@@ -955,6 +1013,16 @@ var NODE_CUSTOM_GLOBAL_INVENTORY = [
 		name: "fs.fstatSync",
 		classification: "hardened",
 		rationale: "Host file-descriptor stat bridge reference.",
+	},
+	{
+		name: "fs.ftruncateSync",
+		classification: "hardened",
+		rationale: "Host file-descriptor truncate bridge reference.",
+	},
+	{
+		name: "fs.fsyncSync",
+		classification: "hardened",
+		rationale: "Host file-descriptor sync bridge reference.",
 	},
 	{
 		name: "_fs",
@@ -1223,7 +1291,8 @@ var NODE_CUSTOM_GLOBAL_INVENTORY = [
 	{
 		name: "_netSocketWriteSyncRaw",
 		classification: "hardened",
-		rationale: "Host synchronous net socket write bridge reference for WASM guests.",
+		rationale:
+			"Host synchronous net socket write bridge reference for WASM guests.",
 	},
 	{
 		name: "_netSocketEndRaw",
@@ -1481,6 +1550,12 @@ var NODE_CUSTOM_GLOBAL_INVENTORY = [
 			"Host kernel TTY size bridge reference for WASM terminal commands.",
 	},
 	{
+		name: "_kernelTtyNameRaw",
+		classification: "hardened",
+		rationale:
+			"Host kernel TTY name bridge reference for WASM terminal commands.",
+	},
+	{
 		name: "_kernelStdioWriteRaw",
 		classification: "hardened",
 		rationale: "Host kernel stdio write bridge reference.",
@@ -1664,7 +1739,7 @@ function exposeInstallCompatibleHardenedGlobal(name, value) {
 	Object.defineProperty(globalThis, name, {
 		get: () => value,
 		// Some Node packages install web globals by assignment. Accept the write
-		// without replacing AgentOS's policy-enforcing implementation.
+		// without replacing agentOS's policy-enforcing implementation.
 		set: () => {},
 		configurable: true,
 		enumerable: true,

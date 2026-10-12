@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { existsSync, statSync } from "node:fs";
 import { basename, resolve } from "node:path";
-import { build } from "./build.js";
 import { packAospkgFromTar } from "./aospkg.js";
+import { build } from "./build.js";
 import { pack } from "./pack.js";
 import { stage } from "./stage.js";
 

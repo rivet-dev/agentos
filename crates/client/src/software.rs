@@ -176,6 +176,9 @@ pub enum PackageSource {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageResolverOptions {
+    /// Raw source URL byte budget, including cached-source admission. Redirect
+    /// joining retains its separate existing header/redirect/shape checks.
+    pub max_source_url_bytes: usize,
     pub max_package_bytes: u64,
     pub download_timeout_ms: u64,
     pub connect_timeout_ms: u64,
@@ -189,6 +192,7 @@ impl Default for PackageResolverOptions {
     fn default() -> Self {
         Self {
             max_package_bytes: DEFAULT_MAX_PACKAGE_BYTES,
+            max_source_url_bytes: MAX_PACKAGE_URL_BYTES,
             download_timeout_ms: DEFAULT_PACKAGE_DOWNLOAD_TIMEOUT_MS,
             connect_timeout_ms: DEFAULT_PACKAGE_CONNECT_TIMEOUT_MS,
             max_redirects: DEFAULT_PACKAGE_REDIRECT_LIMIT,
@@ -199,6 +203,12 @@ impl Default for PackageResolverOptions {
 
 impl PackageResolverOptions {
     pub(crate) fn validate(&self) -> Result<(), ClientError> {
+        if self.max_source_url_bytes == 0 {
+            return Err(ClientError::InvalidPackageSource(
+                "PackageResolverOptions.max_source_url_bytes must be positive".into(),
+            ));
+        }
+
         if self.max_package_bytes == 0 {
             return Err(ClientError::InvalidPackageSource(String::from(
                 "max_package_bytes must be greater than zero",
@@ -398,6 +408,21 @@ impl ProcessPackageCacheRoot {
         match self {
             Self::Temporary(root) => root.path(),
             Self::Persistent { path, .. } => path,
+        }
+    }
+}
+
+impl Drop for ProcessPackageCacheRoot {
+    fn drop(&mut self) {
+        if let Self::Persistent { path, _lock } = self {
+            // Closing only our descriptor leaves flock held by a forked child
+            // until its CLOEXEC descriptor closes. Release ownership explicitly.
+            if let Err(error) = fs2::FileExt::unlock(_lock) {
+                eprintln!(
+                    "ERR_AGENTOS_PACKAGE_CACHE_UNLOCK: could not release cache lock at {}: {error}",
+                    path.display()
+                );
+            }
         }
     }
 }
@@ -1094,12 +1119,25 @@ pub struct PackageResolver {
 
 /// Validate source syntax without initializing the process package cache.
 pub fn validate_package_source(source: &PackageSource) -> Result<(), ClientError> {
+    validate_package_source_with_options(source, &PackageResolverOptions::default())
+}
+
+/// Shared syntax/digest validator with the caller's trusted resolver policy.
+pub fn validate_package_source_with_options(
+    source: &PackageSource,
+    options: &PackageResolverOptions,
+) -> Result<(), ClientError> {
+    options.validate()?;
     match source {
         PackageSource::Url {
             url,
             expected_digest,
         } => {
-            parse_package_url(url)?;
+            if options.max_source_url_bytes == MAX_PACKAGE_URL_BYTES {
+                parse_package_url(url)?;
+            } else {
+                parse_package_url_with_limit(url, options.max_source_url_bytes)?;
+            }
             normalize_expected_digest(expected_digest.as_deref())?;
         }
         PackageSource::Path {
@@ -1151,11 +1189,17 @@ impl PackageResolver {
         if let PackageSource::Url { url, .. } = &source {
             // A shared cache hit is not permission to use a source rejected by
             // this resolver's policy (including cached loopback artifacts).
-            self.validate_url_addresses(&parse_package_url(url)?)
-                .await?;
+            self.validate_url_addresses(&parse_package_url_with_limit(
+                url,
+                self.options.max_source_url_bytes,
+            )?)
+            .await?;
         }
         let source_key = match &source {
-            PackageSource::Url { url, .. } => format!("url:{}", parse_package_url(url)?.as_str()),
+            PackageSource::Url { url, .. } => format!(
+                "url:{}",
+                parse_package_url_with_limit(url, self.options.max_source_url_bytes)?.as_str()
+            ),
             PackageSource::Path { path, .. } => format!("path:{path}"),
         };
         let expected_digest = match &source {
@@ -1227,9 +1271,11 @@ impl PackageResolver {
     /// Validate source syntax and digest form without opening a path, resolving
     /// DNS, or starting a download.
     pub fn validate_source(&self, source: &PackageSource) -> Result<(), ClientError> {
-        validate_package_source(source)?;
+        validate_package_source_with_options(source, &self.options)?;
         if let PackageSource::Url { url, .. } = source {
-            if parse_package_url(url)?.scheme() == "http" && !self.options.allow_insecure_local_http
+            if parse_package_url_with_limit(url, self.options.max_source_url_bytes)?.scheme()
+                == "http"
+                && !self.options.allow_insecure_local_http
             {
                 return Err(ClientError::InvalidPackageSource(String::from(
                     "plain HTTP packages require allow_insecure_local_http and a loopback address",
@@ -1279,7 +1325,7 @@ impl PackageResolver {
         expected_digest: Option<&str>,
     ) -> Result<VerifiedPackage, ClientError> {
         normalize_expected_digest(expected_digest)?;
-        let mut url = parse_package_url(raw_url)?;
+        let mut url = parse_package_url_with_limit(raw_url, self.options.max_source_url_bytes)?;
         let mut redirect_count = 0usize;
 
         let response = loop {
@@ -1656,9 +1702,18 @@ fn validate_absolute_manifest_path(name: &str, value: &str) -> Result<(), Client
 }
 
 fn parse_package_url(raw: &str) -> Result<Url, ClientError> {
-    if raw.is_empty() || raw.len() > MAX_PACKAGE_URL_BYTES {
+    parse_package_url_with_limit(raw, MAX_PACKAGE_URL_BYTES)
+}
+
+fn parse_package_url_with_limit(raw: &str, maximum: usize) -> Result<Url, ClientError> {
+    if maximum == 0 || raw.is_empty() {
+        return Err(ClientError::InvalidPackageSource(
+            "package source URL and max_source_url_bytes must be nonempty/positive".into(),
+        ));
+    }
+    if raw.len() > maximum {
         return Err(ClientError::InvalidPackageSource(format!(
-            "package URL must contain 1..={MAX_PACKAGE_URL_BYTES} bytes"
+            "limit_exceeded: PackageResolverOptions.max_source_url_bytes observed={} maximum={maximum}; raise max_source_url_bytes (hosted preloadPolicy.maxUrlBytes) or shorten the source URL", raw.len()
         )));
     }
     let url = Url::parse(raw)
@@ -2023,6 +2078,28 @@ mod tests {
         drop(first);
         let recovered = ProcessPackageCache::new(options).unwrap();
         assert!(!staging.exists());
+        drop(recovered);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn persistent_cache_owner_drop_releases_lock_with_inherited_description() {
+        let root = tempfile::tempdir().unwrap();
+        let mut options = test_cache_options();
+        options.root = Some(root.path().to_path_buf());
+        let first = ProcessPackageCache::new(options.clone()).unwrap();
+        // dup shares the same open description as fork inheritance. A child
+        // can hold this description briefly before exec closes its CLOEXEC fd.
+        let inherited = match &first.root {
+            ProcessPackageCacheRoot::Persistent { _lock, .. } => _lock.try_clone().unwrap(),
+            ProcessPackageCacheRoot::Temporary(_) => unreachable!(),
+        };
+        drop(first);
+        let recovered = ProcessPackageCache::new(options.clone())
+            .expect("dropping the cache owner must release its lock before child exec");
+        // Closing the stale inherited description must not unlock a new owner.
+        drop(inherited);
+        assert!(ProcessPackageCache::new(options).is_err());
         drop(recovered);
     }
 

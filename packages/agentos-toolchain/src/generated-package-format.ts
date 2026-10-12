@@ -1,5 +1,5 @@
 // @generated - run pnpm --dir packages/build-tools build:package-format
-import * as bare from "@bare-ts/lib"
+import * as bare from "@rivetkit/bare-ts"
 
 const DEFAULT_CONFIG = /* @__PURE__ */ bare.Config({})
 

@@ -37,19 +37,22 @@ describe("command execution", () => {
 
 	test("exec with cwd sets working directory", async () => {
 		await vm.mkdir("/tmp/testdir");
-		const result = await vm.exec("printf found > marker.txt && cat marker.txt", {
-			cwd: "/tmp/testdir",
-		});
+		const result = await vm.exec(
+			"printf found > marker.txt && cat marker.txt",
+			{
+				cwd: "/tmp/testdir",
+			},
+		);
 		expect(result.exitCode).toBe(0);
 		expect(result.stdout).toContain("found");
 	});
 
 	test("spawn and interact with process", async () => {
 		const { pid } = vm.spawn("cat", []);
-		vm.writeProcessStdin(pid, "hello from stdin\n");
-		vm.closeProcessStdin(pid);
-		const exitCode = await vm.waitProcess(pid);
-		expect(exitCode).toBe(0);
+		await vm.process.writeStdin(pid, "hello from stdin\n");
+		await vm.process.closeStdin(pid);
+		const exit = await vm.process.wait(pid);
+		expect(exit.exitCode).toBe(0);
 	});
 
 	test("exec node script", async () => {
@@ -59,15 +62,11 @@ describe("command execution", () => {
 		expect(result.stdout).toContain("node-output");
 	});
 
-	test(
-		"exec shell pipeline",
-		async () => {
-			for (let attempt = 0; attempt < 5; attempt += 1) {
-				const result = await vm.exec("echo hello | cat");
-				expect(result.exitCode, result.stderr || result.stdout).toBe(0);
-				expect(result.stdout).toContain("hello");
-			}
-		},
-		120_000,
-	);
+	test("exec shell pipeline", async () => {
+		for (let attempt = 0; attempt < 5; attempt += 1) {
+			const result = await vm.exec("echo hello | cat");
+			expect(result.exitCode, result.stderr || result.stdout).toBe(0);
+			expect(result.stdout).toContain("hello");
+		}
+	}, 120_000);
 });

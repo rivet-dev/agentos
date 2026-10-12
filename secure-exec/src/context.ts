@@ -6,7 +6,7 @@ import type {
 	JavaScriptEvaluationOptions,
 	JavaScriptExecutionOptions,
 	JsonValue,
-} from "@rivet-dev/agentos-core";
+} from "@rivet-dev/agentos";
 
 /**
  * Retained JavaScript state in a VM: variables and imports survive between

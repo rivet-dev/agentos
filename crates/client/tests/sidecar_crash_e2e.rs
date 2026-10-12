@@ -21,7 +21,7 @@ async fn a_pool_recovers_after_its_sidecar_process_dies() {
         .await
         .expect("write before the crash");
     let running = orphan
-        .spawn_process(
+        .spawn(
             "node",
             vec![
                 "-e".into(),

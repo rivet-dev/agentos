@@ -63,6 +63,110 @@ describe("AgentOsOptions validation", () => {
 		).toThrow(/filesystem/);
 	});
 
+	test("accepts the distinct WASM CPU fields and rejects removed aliases", () => {
+		expect(
+			agentOsOptionsSchema.safeParse({
+				limits: {
+					wasm: {
+						activeCpuTimeLimitMs: 30_000,
+						wallClockLimitMs: 45_000,
+						deterministicFuel: 1_000_000,
+					},
+				},
+			}).success,
+		).toBe(true);
+		expect(() =>
+			agentOsOptionsSchema.parse({
+				limits: { resources: { maxWasmFuel: 1 } },
+			}),
+		).toThrow(/maxWasmFuel/);
+		expect(() =>
+			agentOsOptionsSchema.parse({
+				limits: { wasm: { runnerCpuTimeLimitMs: 1 } },
+			}),
+		).toThrow(/runnerCpuTimeLimitMs/);
+	});
+
+	test("accepts distinct per-process and per-VM WASM thread limits", () => {
+		expect(
+			agentOsOptionsSchema.safeParse({
+				limits: {
+					wasm: { maxThreads: 8, maxConcurrentThreads: 32 },
+				},
+			}).success,
+		).toBe(true);
+		expect(
+			agentOsOptionsSchema.safeParse({
+				limits: { wasm: { maxConcurrentThreads: 0 } },
+			}).success,
+		).toBe(false);
+	});
+
+	test("accepts only supported VM-wide standalone WASM backends", () => {
+		for (const wasmBackend of ["v8", "wasmtime", "wasmtime-threads"] as const) {
+			expect(agentOsOptionsSchema.safeParse({ wasmBackend }).success).toBe(
+				true,
+			);
+		}
+		expect(
+			agentOsOptionsSchema.safeParse({ wasmBackend: "automatic" }).success,
+		).toBe(false);
+	});
+
+	test("accepts only sidecar-owned VM defaults profiles", () => {
+		for (const defaultsProfile of ["agent_os", "secure"] as const) {
+			expect(agentOsOptionsSchema.safeParse({ defaultsProfile }).success).toBe(
+				true,
+			);
+		}
+		expect(
+			agentOsOptionsSchema.safeParse({ defaultsProfile: "custom" }).success,
+		).toBe(false);
+	});
+
+	test("bounds and materializes Linux account records", () => {
+		const exactPasswdRecord = {
+			uid: 0,
+			gid: 0,
+			username: "u",
+			homedir: "/",
+			shell: "/",
+			gecos: "x".repeat(4083),
+		};
+		expect(
+			agentOsOptionsSchema.safeParse({ user: exactPasswdRecord }).success,
+		).toBe(true);
+		expect(
+			agentOsOptionsSchema.safeParse({
+				user: { ...exactPasswdRecord, gecos: "😀".repeat(1021) },
+			}).success,
+		).toBe(false);
+		expect(
+			agentOsOptionsSchema.safeParse({
+				user: {
+					uid: 0,
+					gid: 0,
+					username: "root",
+					supplementaryGids: [44],
+					groups: [{ gid: 99, name: "group44", members: [] }],
+				},
+			}).success,
+		).toBe(false);
+		expect(
+			agentOsOptionsSchema.safeParse({
+				user: {
+					groups: [
+						{
+							gid: 7,
+							name: "g",
+							members: Array.from({ length: 257 }, (_, index) => `m${index}`),
+						},
+					],
+				},
+			}).success,
+		).toBe(false);
+	});
+
 	test("rejects create option factories on the one-shot core constructor", () => {
 		expect(() =>
 			agentOsOptionsSchema.parse({
@@ -282,4 +386,28 @@ describe("AgentOsOptions validation", () => {
 			} as never),
 		).rejects.toThrow(/sandbox\.basePath has been removed/);
 	});
+});
+
+test("bridge VM budgets accept positive safe overrides without widening other schemas", () => {
+	const limits = {
+		http: { maxChunkSizeLineBytes: 32768, maxPendingResponseBytes: 524288 },
+		jsRuntime: { maxReadlineHistoryEntries: 2048 },
+	};
+	expect(agentOsOptionsSchema.parse({ limits }).limits).toEqual(limits);
+	for (const [group, key] of [
+		["http", "maxChunkSizeLineBytes"],
+		["http", "maxPendingResponseBytes"],
+		["jsRuntime", "maxReadlineHistoryEntries"],
+	]) {
+		for (const value of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])
+			expect(
+				agentOsOptionsSchema.safeParse({
+					limits: { [group]: { [key]: value } },
+				}).success,
+			).toBe(false);
+	}
+	expect(
+		agentOsOptionsSchema.safeParse({ limits: { http: { notABudget: 1 } } })
+			.success,
+	).toBe(false);
 });

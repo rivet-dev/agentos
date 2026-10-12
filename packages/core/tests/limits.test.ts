@@ -19,14 +19,16 @@ describe("AgentOs limits", () => {
 			},
 		});
 
-		const result = await vm.execArgv("node", [
-			"-e",
-			"console.log('should not run')",
-			"this-argument-is-too-long",
-		]).then(
-			(value) => ({ type: "result" as const, value }),
-			(error) => ({ type: "error" as const, error }),
-		);
+		const result = await vm
+			.execArgv("node", [
+				"-e",
+				"console.log('should not run')",
+				"this-argument-is-too-long",
+			])
+			.then(
+				(value) => ({ type: "result" as const, value }),
+				(error) => ({ type: "error" as const, error }),
+			);
 
 		if (result.type === "result") {
 			expect(result.value.exitCode).not.toBe(0);
@@ -35,7 +37,9 @@ describe("AgentOs limits", () => {
 			);
 		} else {
 			expect(result.error).toBeInstanceOf(Error);
-			expect(String(result.error.message)).toMatch(/argv|argument|limit|too large/i);
+			expect(String(result.error.message)).toMatch(
+				/argv|argument|limit|too large/i,
+			);
 		}
 	});
 });
