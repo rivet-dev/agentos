@@ -1,9 +1,10 @@
 // Networking: start a server inside the VM and fetch from it.
 //
 // vm.network.httpRequest() routes HTTP requests to services running inside the VM.
-// Public preview URLs are provided by a hosting service, not embedded Core.
+// Note: Preview URLs (network.preview.create) are only available in the
+// RivetKit actor wrapper, not in the embedded API. See the actor examples for that.
 
-import { AgentOs } from "@rivet-dev/agentos-core";
+import { AgentOs } from "@rivet-dev/agentos";
 
 function settleWithin(promise: Promise<unknown>, ms: number): Promise<void> {
 	return Promise.race([

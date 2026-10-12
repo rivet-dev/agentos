@@ -2,7 +2,7 @@ import {
 	AgentOs,
 	type AgentOsOptions,
 	type HostFunctionSchemas,
-} from "@rivet-dev/agentos-core";
+} from "@rivet-dev/agentos";
 import { type Context, createContext } from "./context.js";
 
 /**
@@ -20,6 +20,8 @@ export type VmOptions<
 const VM_OPTION_KEYS = Object.keys({
 	user: true,
 	environment: true,
+	wasmBackend: true,
+	defaultsProfile: true,
 	software: true,
 	defaultSoftware: true,
 	softwareRegistry: true,
@@ -60,9 +62,7 @@ export interface Vm extends AsyncDisposable {
 export async function createVm<HOST_FUNCTIONS extends HostFunctionSchemas>(
 	options: VmOptions<HOST_FUNCTIONS> = {},
 ): Promise<Vm> {
-	// Keep the policy itself sidecar-owned; secure-exec selects the stricter
-	// profile instead of copying its network rules into this wrapper.
-	const vm = await AgentOs.create(options, "secure");
+	const vm = await AgentOs.create({ defaultsProfile: "secure", ...options });
 	const { npm, ...javascript } = vm.javascript;
 	const dispose = () => vm.dispose();
 	return {

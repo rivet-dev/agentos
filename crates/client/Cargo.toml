@@ -4,13 +4,13 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "High-level Rust client SDK for the Agent OS native sidecar (1:1 port of the TypeScript AgentOs client)"
+description = "High-level Rust client SDK for the agentOS sidecar"
 
 [features]
 default = []
 contract = ["dep:ts-rs"]
-# Private integration surface for same-version managed service adapters, not Core SDK methods.
-service-internals = []
+# Private integration surface for the same-version static Rust actor, not Core SDK methods.
+actor-internals = []
 # Transitional cache access; remove when the resolver moves out of this crate.
 sidecar-internals = []
 
@@ -18,7 +18,7 @@ sidecar-internals = []
 # Reuse the agentos BARE wire schema + IPC transport. No new wire types are defined here.
 agentos-sidecar-client = { workspace = true }
 agentos-vm-config = { workspace = true }
-agentos-bridge = { workspace = true }
+agentos-vm-host-interface = { workspace = true }
 
 anyhow = "1"
 async-trait = "0.1"

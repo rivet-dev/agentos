@@ -25,49 +25,99 @@ or implemented in the isolate is denied.</Note>
 | Module | Backed by |
 | --- | --- |
 | `fs`, `fs/promises` | VM filesystem: fds, streams, metadata, symlinks, polling watchers. |
-| `child_process` | VM process table. `spawn`, `exec`, `execFile`, sync variants. |
+| `child_process` | VM process table. `spawn`, `exec`, `execFile`, sync variants. Explicit `uid` and `gid` use guest credentials: root can drop privileges; unauthorized changes fail with `EPERM`. Direct commands check execute and directory-search permissions with the child identity; interpreter inputs such as `node script.js` require read permission. |
 | `net`, `dgram` | VM TCP, Unix-socket, and UDP tables. |
 | `dns`, `dns/promises` | VM DNS resolver. |
 | `http`, `https`, `http2`, `tls` | VM socket/TLS paths: clients, servers, pooling. |
 | `os` | VM-scoped platform, arch, hostname, CPU, memory, user. |
-| `crypto` | Entropy, hashes, HMAC, ciphers, scrypt, UUIDs, WebCrypto. |
+| `crypto` | Entropy, hashes, HMAC, ciphers, scrypt, UUIDs, WebCrypto, bounded unbiased integers with `randomInt`, and constant-time byte comparison with `timingSafeEqual`, including genuine cross-realm buffers and byte views. |
 | `process` | VM env, cwd, signals, timers, stdio, umask. |
 | `module` | `createRequire`, builtin resolution, basic `Module` compat. |
 | `console` | Bounded formatting, guest stdout/stderr. |
 | `readline`, `sqlite`, `tty` | VM-backed compatibility surfaces. |
 | `timers`, `timers/promises` | Timeout, interval, immediate, promise variants. |
-| `stream/web`, `stream/consumers`, `stream/promises` | Web Streams + stream helpers. |
+| `stream/web`, `stream/consumers`, `stream/promises` | Web Streams and stream helpers. Queuing strategies, readers, writers and controllers share their constructor identity with the corresponding globals. |
 
 - Network builtins obey the VM [permission policy](/agentos/docs/permissions).
 - Network access is **denied until granted** by the VM creator.
 
+Unix datagram socketpairs drop empty messages in the latest qualified native
+comparison. A correction retaining empty message records and charging bounded
+queue metadata awaits native qualification. UDP readiness and ignored-stdin EOF
+have separate controls.
+
 ## In-isolate builtins
 
-- Full: `path`, `buffer`, `events`, `stream`, `util`, `assert`, `url`,
+- Full: `path`, `buffer`, `events`, `stream`, `util`, `assert`,
   `querystring`, `string_decoder`, `zlib`, `punycode`, `constants`, `sys`.
   Default and named ESM imports supported.
+- URL: `url` exposes WHATWG constructors and legacy helpers. Formatting a
+  WHATWG URL currently loses credentials and ignores formatting options in the
+  latest qualified native runtime. An owning formatter correction has Node
+  source controls; rebuilt guest qualification remains pending.
 - Async context: `AsyncLocalStorage` and `AsyncResource` in `async_hooks`
   behave as in Node.js, including across native `await`, promises, timers, and
   callbacks from sockets, servers, child processes, and signals. Overlapping
   calls do not see each other's store.
+- Contexts: `vm` supports `createContext`, `isContext`, `Script`, and the
+  `runInContext`, `runInNewContext`, and `runInThisContext` methods. Context
+  objects and their returned globals share property updates. Getter failures
+  preserve the original thrown value; this intentionally differs from Node.js
+  24, which can suppress those failures. Errors retain their actual filename,
+  line, and column information. `compileFunction` and `measureMemory` remain
+  unsupported, and `Script.createCachedData()` returns an empty buffer.
 - Feature-detection shims: `createHook` and the async ID functions in
-  `async_hooks`, `diagnostics_channel`, `perf_hooks`, `worker_threads`, `vm`,
+  `async_hooks`, `diagnostics_channel`, `perf_hooks`, `worker_threads`,
   `v8`. `worker_threads` does **not** create real worker threads.
-- `v8.serialize`, `v8.deserialize`, `v8.Serializer`, and `v8.Deserializer` use
-  JSON, not the V8 wire format. They accept only JSON-safe values: plain
-  objects, dense arrays, strings, finite numbers, booleans, and `null`. Other
-  values, such as `Map`, `Date`, `BigInt`, `undefined`, typed arrays, and shared
-  or circular references, throw an error with code `ERR_NOT_IMPLEMENTED`.
+
+`v8.serialize`, `deserialize`, `Serializer`, and `Deserializer` use a JSON
+compatibility format, not native V8 serialization. Supported data consists of
+strings, booleans, `null`, finite numbers other than negative zero, dense arrays,
+and plain objects with enumerable string-keyed data properties. Unsupported
+values fail with `ERR_NOT_IMPLEMENTED`: for example `Map`, `Date`, bigint,
+undefined, typed arrays, shared/circular references, enumerable accessors,
+enumerable `toJSON` functions, enumerable symbol properties, and arrays with extra enumerable fields.
+Descriptor traversal does not invoke source property accessors or `toJSON`;
+proxy meta-operation traps can still execute. Non-enumerable object fields
+are omitted. Invalid or native V8 buffers are not accepted by `deserialize`.
+CJS and ESM use the same implementation. `getHeapStatistics()` reads live
+statistics for the current V8 isolate, with byte-valued sizes and integer
+counters. These values are not process RSS or whole-sidecar memory usage.
+`getHeapSpaceStatistics`, `getHeapCodeStatistics`, `getCppHeapStatistics`, and
+heap-snapshot helpers remain compatibility placeholders; they do not provide
+real measurements or snapshots.
 
 ## Denied builtins
 
 `cluster`, `domain`, `inspector`, `repl`, `trace_events`, `wasi`.
+
+Fork IPC remains experimental. Its transport uses a dedicated kernel descriptor,
+bounded frames and notifier-driven readiness. Message, error and disconnect
+callbacks and ordinary stdin/stdout lifetime still require native qualification;
+compiling the transport alone does not establish Node compatibility. Older builds
+multiplex control frames through standard streams and couple stdin EOF to IPC.
+The latest native comparison still exposes an ignored-stdin EOF mismatch.
+Its kernel correction requires rebuilt qualification; message isolation alone
+does not establish correct fd0 EOF behavior.
 
 ## Global APIs
 
 - Modern web globals: `fetch`, `Headers`, `Request`, `Response`,
   `TextEncoder`/`TextDecoder`, `Buffer`, URL APIs, `Blob`, `File`, `FormData`,
   abort APIs, `structuredClone`, `performance`, WebAssembly.
+- `CompressionStream` and `DecompressionStream` support `gzip`, `deflate` and
+  `deflate-raw` through the guest zlib implementation. Readers pause compressed
+  output when their queue fills. Cancellation and abort propagate shutdown to both
+  Web stream endpoints, including reasonless cancellation.
+  Invalid writes and genuine cross-realm buffer input have additional source
+  corrections awaiting native qualification. The same applies to shadowed
+  view metadata in `timingSafeEqual`, callback-style `TestContext.after`, and
+  `randomInt` callback arguments and validation order.
+- Global `Performance` and `node:perf_hooks.Performance` describe the same
+  runtime-owned clock and User Timing instance. Direct construction is illegal.
+  `toJSON()` serializes the VM clock's `timeOrigin`; native process timing and
+  event-loop utilization fields are not included. Performance EventTarget
+  methods and resource timing records remain unsupported.
 - `fetch()` uses VM sockets and follows the same policy as `http`/`net`.
 - `Uint8Array` has `toHex`, `toBase64`, `fromHex`, `fromBase64`, `setFromHex`,
   and `setFromBase64`, with the `alphabet`, `omitPadding`, and
@@ -75,12 +125,14 @@ or implemented in the isolate is denied.</Note>
 
 ## `node:sqlite`
 
-- `new DatabaseSync(path)` uses a file in the VM filesystem.
-- `ATTACH DATABASE` and `VACUUM INTO` accept only `:memory:` and the empty
-  temporary name. Other targets fail with an authorization error, including
-  paths in the VM.
-- `PRAGMA writable_schema` has no effect. Pragmas that change process-wide SQLite
-  state, such as `hard_heap_limit`, fail with an authorization error.
+- `new DatabaseSync(path)` opens a database in the VM filesystem.
+- SQL `ATTACH DATABASE` and `VACUUM INTO` targets accept only the literal
+  `:memory:` or an empty temporary name. Other filenames, URIs, parameters,
+  and expressions fail with an authorization error, including paths in the VM.
+  Plain `VACUUM` continues to work.
+- `PRAGMA writable_schema` has no effect. Process-wide SQLite pragmas
+  (`data_store_directory`, `hard_heap_limit`, `soft_heap_limit`, and
+  `temp_store_directory`) fail with an authorization error.
 
 ## Modules and output
 
@@ -89,7 +141,11 @@ or implemented in the isolate is denied.</Note>
 - Console/stream output flows through the bounded process-output path — see
   [Processes & Shells](/agentos/docs/processes).
 
+## Embedded API
+
 <CodeSnippet file="examples/js-runtime-platform/src/index.ts" />
 
 Back to the [JavaScript guide](/agentos/docs/javascript) for TypeScript, packages,
 files, processes, networking, host functions, permissions, and limits.
+
+Read more in the [embedded API quickstart](/agentos/docs/quickstart-embedded).

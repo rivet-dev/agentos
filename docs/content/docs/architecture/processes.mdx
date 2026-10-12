@@ -7,20 +7,20 @@ skill: true
 <Note>These internal architecture docs are mostly generated and maintained by LLMs, then reviewed by humans. They are intentionally verbose; use your preferred LLM to ask focused questions about the architecture as needed.</Note>
 
 This page is an internals deep-dive on the kernel's **process model**: the data
-structures and syscall paths behind every guest process. For the host-facing
-API (`process.exec`, `process.spawn`, `terminal.open`, lifecycle, the process tree), see
-[Processes & Shells](/agentos/docs/processes). For the surrounding component and trust
+structures and syscall paths behind every guest process. For the client-facing
+hosted API (`process.run`, `process.spawn`, `terminal.open`, lifecycle, the process tree), see
+[Processes & Shell](/agentos/docs/processes). For the surrounding component and trust
 model, see [Architecture](/agentos/docs/architecture).
 
 Two invariants frame everything below:
 
-- **No real host process is ever spawned for guest work.** Every guest process is an entry in a kernel-owned virtual process table, not an OS process. Guest JavaScript runs in V8 isolates; guest commands like `sh` and coreutils run as WebAssembly. Neither is `node` or a host binary.
+- **Guest PIDs are virtual.** Every guest process is an entry in a kernel-owned process table. Guest JavaScript runs in V8 isolates; commands like `sh` and coreutils run as WebAssembly inside V8. Neither is a host process.
 - **Every process operation is a syscall into the kernel.** Spawning, waiting, signaling, reading stdout, and resizing a PTY all cross from the untrusted executor into the sidecar-owned kernel, which services them against virtualized resources.
 
 ## The virtual process table
 
 Each VM owns one process table. It is the authority for what is "running"
-inside that VM; nothing in it corresponds to a host PID.
+inside that VM; its PIDs are independent of host PIDs.
 
 - **Per-VM and isolated.** Two VMs have two independent tables. A PID in one VM is meaningless in another, and processes are never visible across the VM boundary.
 - **Holds every guest process,** not only the ones a client started explicitly. A `process.spawn` from the client, a child spawned by guest `node:child_process`, and the processes behind a shell pipeline are all table entries. This is why `process.tree` can show more than what the client launched.
@@ -31,22 +31,22 @@ inside that VM; nothing in it corresponds to a host PID.
 
 ## How a spawn is serviced
 
-A spawn, whether it originates from a host `spawn`/`exec` call or from guest
+A spawn, whether it originates from a client `spawn`/`run` call or from guest
 `node:child_process`, follows one path through the kernel:
 
-1. **The request crosses into the kernel.** A host call arrives over the sidecar protocol; a guest call arrives as a syscall from the executor. Either way the kernel, not the caller, performs the work.
+1. **The request crosses into the kernel.** A client call arrives over the wire protocol; a guest call arrives as a syscall from the executor. Either way the kernel, not the caller, performs the work.
 2. **Permission check.** The kernel applies the VM's configured permission policy before doing anything. The policy is trusted input; the guest making the request is not.
 3. **Resolve the program.** The command is resolved against the VM's virtual filesystem (PATH lookup over the VFS), not the host. The resolved program decides the driver: a JavaScript entrypoint runs in a V8 isolate; a `.wasm` program (including `sh` and coreutils) runs on the WASM runtime.
 4. **Allocate the table entry.** The kernel assigns a virtual PID, records the command, arguments, environment, working directory, and parent PID, and links stdio endpoints (see below).
-5. **Start execution.** The driver begins running the program. For a one-shot `exec`, output and exit status are collected for the call's result; for `spawn`, the process remains available for explicit waiting and output replay.
-6. **Reap and record exit.** When the program finishes, the kernel records the exit code on the table entry and marks it exited, which is what `process.wait` resolves against and what `onProcessExit` reports.
+5. **Start execution.** The driver begins running the program. For a one-shot `run`, output and exit status are collected for the call's result; for `spawn`, the process remains available for explicit waiting and output replay.
+6. **Reap and record exit.** When the program finishes, the kernel records the exit code on the table entry and marks it exited, which is what `process.wait` resolves against and what the `process.exit` event reports.
 
 Signals (`process.signal`) are the same shape: a request into the kernel, which
 applies it to the virtualized process rather than to any host process.
 
 ## Process image replacement
 
-Guest `execve` is distinct from the host's one-shot `process.exec` API. It
+Guest `execve` is distinct from the hosted one-shot `process.run` API. It
 replaces the current process image in place, following Linux process semantics:
 
 - the virtual PID, parent, process group, session, working directory, pending signals, blocked-signal mask, stdio, and non-`FD_CLOEXEC` descriptors survive;
@@ -56,10 +56,10 @@ replaces the current process image in place, following Linux process semantics:
 - caught signal handlers reset to their defaults, while ignored dispositions remain ignored.
 
 For a WASM-to-WASM replacement, the sidecar commits the kernel state first and
-the executor then swaps the module in place. This keeps runner-local pipe,
-socket, and duplicated-descriptor state attached to the same process instead of
-silently recreating it. `waitpid` reports an exit code and a terminating signal
-as separate values, so a normal `exit(137)` is not confused with `SIGKILL`.
+the executor then loads the new module. The virtual PID, kernel-owned pipes,
+sockets, and duplicated descriptors remain attached to the same guest process. `waitpid`
+reports an exit code and a terminating signal as separate values, so a normal
+`exit(137)` is not confused with `SIGKILL`.
 
 ## Stdio bridging
 
@@ -67,8 +67,8 @@ Standard streams are kernel-owned objects, not host file descriptors. Each
 process entry has stdin, stdout, and stderr endpoints that the kernel wires up
 when the entry is created.
 
-- **Capture vs. stream.** `process.exec` returns bounded stdout and stderr after the process exits. For `process.spawn`, `onProcessOutput` delivers live output and, when output retention is enabled, `process.readOutput` pages through bounded replay; `onProcessExit` signals completion. Replay uses a sidecar-owned retention and cursor implementation, so `maxEvents`, `maxBytes`, truncation, and progress behavior are identical across Rust Core and TypeScript Core. Events are low-latency hints; replay is the authoritative recovery path.
-- **Writable stdin.** `process.writeStdin` pushes bytes into the process's stdin endpoint; `process.closeStdin` closes the write side so programs that read to EOF (like `cat`) can finish. None of this touches a real pipe on the host.
+- **Capture vs. stream.** `process.run` returns bounded stdout and stderr after the process exits. For `process.spawn`, the hosted actor exposes `process.output` events with generation-scoped process handles and bounded `process.output.read` replay; `process.exit` signals completion. Process and terminal replay use the same Core-owned retention and cursor implementation, so `maxEvents`, `maxBytes`, truncation, and progress behavior are identical.
+- **Writable stdin.** `process.stdin.write` pushes bytes into the process's stdin endpoint; `process.stdin.close` closes the write side so programs that read to EOF (like `cat`) can finish. None of this touches a real pipe on the host.
 - **Pipes between processes.** Shell pipelines (`a | b`) connect one process's stdout endpoint to the next process's stdin endpoint through kernel-owned pipes. The pipe is a virtual object in the kernel, so a pipeline behaves like Linux without any host IPC.
 
 Because these endpoints are kernel objects, the same bridging works identically
@@ -81,9 +81,9 @@ An interactive shell needs a terminal, not just piped stdio: line editing, job
 control signals, and window size all depend on a PTY. The kernel provides
 virtual PTY devices for this.
 
-- **A shell is a process plus a PTY.** `terminal.open` allocates a kernel PTY and starts a shell process attached to it, returning a `shellId`. The PTY is a virtualized terminal device, never a host `/dev/pts` entry.
-- **Bidirectional terminal I/O.** `terminal.write` feeds keystrokes into the PTY master side; output arrives through `onShellData`. This carries terminal control sequences, so full-screen TUIs behave correctly.
-- **Resize is a terminal operation.** `terminal.resize` updates the PTY's window size (columns and rows), which the kernel propagates to the foreground process the way a real terminal resize would, so programs relying on `TIOCGWINSZ`-style sizing redraw correctly.
+- **A shell is a process plus a PTY.** `terminal.open` allocates a kernel PTY and starts a shell process attached to it, returning a generation-scoped terminal handle. The PTY is a virtualized terminal device, never a host `/dev/pts` entry.
+- **Bidirectional terminal I/O.** `terminal.stdin.write` feeds keystrokes into the PTY master side; output is available through `terminal.output` events and `terminal.output.read` replay. This carries terminal control sequences, so full-screen TUIs behave correctly.
+- **Resize is a terminal operation.** `terminal.pty.resize` updates the PTY's window size (columns and rows), which the kernel propagates to the foreground process the way a real terminal resize would, so programs relying on `TIOCGWINSZ`-style sizing redraw correctly.
 - **Teardown.** `terminal.close` tears down the PTY and the attached shell process. An open shell keeps the VM active, the same way an open PTY keeps a session alive on a real system.
 
 ## WASM sh and coreutils on the process model

@@ -29,6 +29,34 @@ Exec is the JavaScript, TypeScript, and Python execution surface of agentOS.
   builds, CI, publication, or behavioral-parity requirements without a
   separately approved design.
 
+## VM, Driver, And Executor Crate Boundaries
+
+- The locked native packages are `agentos-vm`, `agentos-driver-tokio`,
+  `agentos-executor-contract`, and one feature-gated crate per concrete
+  execution engine.
+- Keep the kernel and executor contract independent of Tokio and concrete
+  engines. Keep each engine in a separate feature-gated crate.
+- The sidecar is the native composition root: it constructs the Tokio driver,
+  registers enabled executors, creates the VM manager, and owns transport and
+  ACP extensions. `agentos-vm` is also supported as an embedded Rust library
+  with no sidecar, client, or executors.
+- `agentos-vm` with default features disabled must retain only the kernel and
+  in-memory VFS composition. Persistent filesystems/SQLite/S3, package/tar
+  filesystems and schema generation, Tokio, protocol adapters, ARS, JavaScript
+  tooling, crypto/TLS, WASM ABI support, and concrete executors must be optional
+  and absent from that dependency graph.
+- Keep capability dependencies attached to their owning features:
+  `javascript-tooling` is selected by `node-v8`, and `wasm-api` is selected
+  only by `wasm-v8` or `wasm-wasmtime`. Persistent VFS backends and crypto must
+  never become unconditional dependencies of the embedded VM.
+- New `agentos-vm` dependencies are optional unless the executor-free kernel
+  directly requires them. Validate changes with
+  `node scripts/check-embedded-vm-dependencies.mjs` and keep the checked
+  `agentos-example-embedded-vm` binary under the configured size ceiling.
+- Browser implementation remains out of scope. See
+  [Package Architecture](docs/content/docs/architecture/package-structure.mdx)
+  for the package graph, responsibilities, and rationale.
+
 ## Security Model
 
 Trust model:
@@ -104,12 +132,12 @@ add compatibility views, aliases, legacy adoption paths, or dual writes.
   Python). Do NOT reason about guest capabilities from plain-WASI limits (e.g.
   "no shell", "no subprocess spawning", "no process model") — those hold for raw
   WASI Preview 1, not for agentOS. See
-  `website/public/docs/docs/architecture/processes.md` and
-  `posix-syscalls.md`, and `crates/kernel/CLAUDE.md`.
+  `docs/content/docs/architecture/processes.mdx` and
+  `docs/content/docs/architecture/posix-syscalls.mdx`, and `crates/vm-kernel/CLAUDE.md`.
 - The projected `/opt/agentos` filesystem is the source of truth for software
   and command resolution. Read it live; do not cache package lists captured at VM
   configuration time.
-- Packages are packed `.aospkg` files (`crates/vfs/package-format/v2.bare`:
+- Packages are packed `.aospkg` files (`crates/vfs-core/package-format/v2.bare`:
   header + vbare manifest + mount index + mount tar) projected under
   `/opt/agentos/pkgs/<name>/<version>`; commands are linked under
   `/opt/agentos/bin/`. The vbare chunk1 manifest is the only runtime manifest —
@@ -131,7 +159,7 @@ add compatibility views, aliases, legacy adoption paths, or dual writes.
   wire fields meaning "use the sidecar default"; clients should send overrides
   only when the caller explicitly supplied them.
 - WASM command binaries and every toolchain build output are generated
-  artifacts. Never commit `packages/runtime-core/commands/`, `software/*/bin/`,
+  artifacts. Never commit `packages/core/commands/`, `software/*/bin/`,
   `toolchain/vendor/`, `toolchain/c/{build,vendor,libs,sysroot,.cache}/`, or
   `toolchain/std-patches/wasi-libc-overrides/*.o`. A fresh checkout intentionally
   contains source and patches only. Rebuild and stage the complete default tool
@@ -220,7 +248,7 @@ custom host-syscall imports. Treat that target as **native POSIX**;
   dormant reference code; browser entrypoints and support remain disabled until
   a separate design is approved.
 - The architecture and migration contract are specified in
-  `docs/design/unified-sidecar-runtime.md`.
+  `docs/content/docs/architecture/javascript-executor.mdx`.
 
 ## Publishing
 
@@ -232,12 +260,11 @@ custom host-syscall imports. Treat that target as **native POSIX**;
   execution is exposed through `@rivet-dev/agentos`; do not publish separate
   language packages, compatibility artifacts, or language subpaths. The one
   exception is `secure-exec`, a small function-style facade over
-  `@rivet-dev/agentos-core` that exposes `secure-exec/typescript`. Its
+  `@rivet-dev/agentos` that exposes `secure-exec/typescript`. Its
   top-level functions are one-shot conveniences, and `createVm()` returns the
   agentOS VM's own namespaces; keep it a thin forwarding layer.
-- The release workflow must build and stage the native sidecar binaries,
-  runtime-sidecar binaries, registry WASM commands, and pyodide assets before
-  publish.
+- The release workflow must build and stage the single `agentos-sidecar`
+  binary family, registry WASM commands, and pyodide assets before publish.
 - For an urgent release, use `just release-fast --patch` (or pass
   `--profile debug` to `just release`). This still rebuilds every release
   artifact, but publishes larger, unoptimized debug native binaries.

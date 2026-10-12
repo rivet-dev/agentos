@@ -1,8 +1,8 @@
-//! Shared e2e helpers: resolve/point at the real `agentos-native-sidecar` binary and build VMs.
+//! Shared e2e helpers: resolve/point at the real `agentos-sidecar` binary and build VMs.
 //!
 //! Resolve order for the binary: `AGENTOS_SIDECAR_BIN`, then `CARGO_TARGET_DIR`, else
-//! `<workspace>/target/debug/agentos-native-sidecar`.
-//! Build it first with `cargo build -p agentos-native-sidecar`.
+//! `<workspace>/target/debug/agentos-sidecar`.
+//! Build it first with `cargo build -p agentos-sidecar`.
 
 #![allow(dead_code)]
 
@@ -16,6 +16,17 @@ use agentos_client::config::{
 use agentos_client::AgentOs;
 
 static INIT: Once = Once::new();
+
+fn test_wasm_backend() -> Option<agentos_client::StandaloneWasmBackend> {
+    match std::env::var("AGENTOS_TEST_WASM_BACKEND").as_deref() {
+        Ok("v8") => Some(agentos_client::StandaloneWasmBackend::V8),
+        Ok("wasmtime") => Some(agentos_client::StandaloneWasmBackend::Wasmtime),
+        Ok(value) => {
+            panic!("AGENTOS_TEST_WASM_BACKEND must be \"v8\" or \"wasmtime\", got {value:?}")
+        }
+        Err(_) => None,
+    }
+}
 
 fn test_node_modules_dir() -> PathBuf {
     std::env::var_os("AGENTOS_TEST_NODE_MODULES_DIR")
@@ -38,7 +49,7 @@ pub fn ensure_sidecar_env() {
                     }
                 })
                 .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target"));
-            let bin = target_dir.join("debug/agentos-native-sidecar");
+            let bin = target_dir.join("debug/agentos-sidecar");
             // `std::env::set_var` is `unsafe` in the Rust 2024 edition (process-global mutation that
             // can race other threads reading the environment). This runs once, single-threaded, under
             // `Once::call_once` before any VM is created. The `allow` keeps it warning-free on the
@@ -75,7 +86,7 @@ pub fn require_sidecar(test_name: &str) -> bool {
         eprintln!("skipping {message}");
         false
     } else {
-        panic!("{message}; build it with `cargo build -p agentos-native-sidecar` or set AGENT_OS_CLIENT_ALLOW_E2E_SKIPS=1 for local skip-only runs");
+        panic!("{message}; build it with `cargo build -p agentos-sidecar` or set AGENT_OS_CLIENT_ALLOW_E2E_SKIPS=1 for local skip-only runs");
     }
 }
 
@@ -93,6 +104,7 @@ pub async fn new_vm_with_sidecar_pool(pool: impl Into<String>) -> AgentOs {
         sidecar: Some(AgentOsSidecarConfig::Shared {
             pool: Some(pool.into()),
         }),
+        wasm_backend: test_wasm_backend(),
         ..Default::default()
     })
     .await
@@ -131,6 +143,7 @@ async fn new_vm_with_config(
         loopback_exempt_ports,
         mounts: all_mounts,
         permissions,
+        wasm_backend: test_wasm_backend(),
         ..Default::default()
     })
     .await
@@ -230,6 +243,7 @@ pub async fn new_vm_with_commands() -> Option<AgentOs> {
         packages: vec![PackageRef {
             path: package_dir.to_string_lossy().into_owned(),
         }],
+        wasm_backend: test_wasm_backend(),
         ..Default::default()
     };
     Some(

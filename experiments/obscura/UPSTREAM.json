@@ -1,0 +1,12 @@
+{
+  "repository": "https://github.com/h4ckf0r0day/obscura",
+  "revision": "2bda71a557247bd2d6fabf01fa66eb4b07dcb2e8",
+  "license": "Apache-2.0",
+  "status": "experimental embedding port; not a registered VM command",
+  "archive_sha256": "3c813e78b710bdae5928e57d424cebe45efd8cba0f62de02176b833d2ef91255",
+  "deno_core": {
+    "version": "0.336.0",
+    "archive_sha256": "fdd50476c4325d5fa52bb906804a1e35b127d2a1dcf674e3447b53dcf25525bf",
+    "license": "MIT"
+  }
+}

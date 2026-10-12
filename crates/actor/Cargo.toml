@@ -1,0 +1,43 @@
+[package]
+name = "agentos-actor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Static Rust RivetKit actor for the hosted agentOS API"
+
+[features]
+default = []
+contract = ["agentos-actor-contract/contract", "agentos-client/contract", "dep:ts-rs"]
+
+[dependencies]
+agentos-actor-contract = { workspace = true }
+agentos-preload = { workspace = true }
+agentos-client = { workspace = true, features = ["actor-internals"] }
+agentos-vm-config = { workspace = true }
+agentos-sidecar-client = { workspace = true }
+anyhow = "1"
+async-trait = "0.1"
+base64 = "0.22"
+ciborium = "0.2"
+futures = "0.3"
+hex = "0.4"
+http = "1"
+inventory = "0.3"
+rivetkit = "=3.0.7"
+rivetkit-core = "=3.0.7"
+rivet-error = "=3.0.7"
+serde = { version = "1", features = ["derive"] }
+serde_bytes = "0.11"
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["sync", "time"] }
+tracing = "0.1"
+ts-rs = { version = "10.1", features = ["no-serde-warnings", "serde-compat", "serde-json-impl"], optional = true }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+tempfile = "3"

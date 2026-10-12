@@ -5,11 +5,11 @@ export type {
 	AgentOsSandboxOptions as SandboxOptions,
 	AgentOsSandboxProvider as SandboxProvider,
 	AgentOsSandboxProviderOptions as SandboxProviderOptions,
-} from "@rivet-dev/agentos-core";
-export type { SandboxHostFunctionsOptions } from "./host-functions.js";
-export { createSandboxHostFunctions } from "./host-functions.js";
+} from "@rivet-dev/agentos";
 export type { DockerProviderOptions } from "./docker.js";
 export { docker } from "./docker.js";
+export type { SandboxHostFunctionsOptions } from "./host-functions.js";
+export { createSandboxHostFunctions } from "./host-functions.js";
 export type {
 	SandboxFsOptions,
 	SandboxMountPluginConfig,

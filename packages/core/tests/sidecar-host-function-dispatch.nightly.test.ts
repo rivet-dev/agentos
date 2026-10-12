@@ -17,22 +17,7 @@ const mathFunctions = {
 };
 
 async function runCommand(vm: AgentOs, command: string, args: string[]) {
-	const stdoutChunks: string[] = [];
-	const stderrChunks: string[] = [];
-	const { pid } = vm.spawn(command, args, {
-		onStdout: (chunk) => {
-			stdoutChunks.push(new TextDecoder().decode(chunk));
-		},
-		onStderr: (chunk) => {
-			stderrChunks.push(new TextDecoder().decode(chunk));
-		},
-	});
-
-	return {
-		exitCode: await vm.waitProcess(pid),
-		stdout: stdoutChunks.join(""),
-		stderr: stderrChunks.join(""),
-	};
+	return vm.process.execFile(command, args, { output: { capture: "all" } });
 }
 
 describe("native sidecar hostFunction dispatch", () => {
@@ -99,6 +84,100 @@ describe("native sidecar hostFunction dispatch", () => {
 			ok: true,
 			result: { sum: 5 },
 		});
+	});
+
+	test("external shell commands preserve duplicated stdio and redirection order", async () => {
+		const cases = [
+			{
+				command: "echo shell-check | cat 1>&2",
+				stdout: "",
+				stderr: "shell-check\n",
+			},
+			{
+				command: "printf O 3>&1 1>&2 2>&3 3>&-",
+				stdout: "",
+				stderr: "O",
+			},
+			{
+				command: "sh -c 'printf O; printf E >&2' 3>&1 2>&3 3>&-",
+				stdout: "OE",
+				stderr: "",
+			},
+			{
+				command: "sh -c 'printf O; printf E >&2' 3>&1 1>&2 2>&3",
+				stdout: "E",
+				stderr: "O",
+			},
+			{
+				command: "printf O | cat 3>&1 1>&2 2>&3 3>&-",
+				stdout: "",
+				stderr: "O",
+			},
+			{
+				command: "sh -c 'printf O; printf E >&2' 2>&1",
+				stdout: "OE",
+				stderr: "",
+			},
+			{
+				command: "sh -c 'printf O; printf E >&2' 1>&2 2>&1",
+				stdout: "",
+				stderr: "OE",
+			},
+			{
+				command: "sh -c 'printf O; printf E >&2' 3>&1 1>&2 2>&3 3>&-",
+				stdout: "E",
+				stderr: "O",
+			},
+		];
+		for (const { command, stdout, stderr } of cases) {
+			const result = await vm.process.exec(command, {
+				output: { capture: "all" },
+			});
+			expect(result.exitCode, `${command}: ${JSON.stringify(result)}`).toBe(0);
+			expect(result.stdout, command).toBe(stdout);
+			expect(result.stderr, command).toBe(stderr);
+		}
+	});
+
+	test("host-function output reaches composed shell commands with restricted environment access", async () => {
+		await vm.dispose();
+		vm = await AgentOs.create({
+			software: [common],
+			hostFunctions: { math: mathFunctions },
+			permissions: {
+				fs: "allow",
+				childProcess: "allow",
+				process: "allow",
+				hostFunction: "allow",
+				network: "deny",
+				env: "deny",
+			},
+		});
+		const command = 'agentos-math add --json \'{"a":2,"b":3}\'';
+		const options = {
+			cwd: "/",
+			timeoutMs: 10_000,
+			output: { capture: "all" as const },
+		};
+		const direct = await vm.process.exec(command, options);
+		expect(direct.exitCode, JSON.stringify(direct)).toBe(0);
+		expect(JSON.parse(direct.stdout)).toEqual({ ok: true, result: { sum: 5 } });
+		for (const composed of [
+			`${command} | wc -c`,
+			`${command} > /tmp/host-function-output.json; wc -c < /tmp/host-function-output.json`,
+		]) {
+			const result = await vm.process.exec(composed, options);
+			expect(result.exitCode, JSON.stringify(result)).toBe(0);
+			expect(Number(result.stdout.trim())).toBe(
+				new TextEncoder().encode(direct.stdout).length,
+			);
+		}
+		const substitution = await vm.process.exec(
+			`value="$(${command})"; printf '[%s]\\n' "$value"`,
+			options,
+		);
+		expect(substitution.exitCode, JSON.stringify(substitution)).toBe(0);
+		expect(substitution.stdout).toBe(`[${direct.stdout.trim()}]\n`);
 	});
 
 	test("invalid hostFunction input exits non-zero and writes the error to stderr", async () => {

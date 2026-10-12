@@ -36,7 +36,7 @@
 		"test": "vitest run"
 	},
 	"dependencies": {
-		"@rivet-dev/agentos-core": "workspace:*"
+		"@rivet-dev/agentos": "workspace:*"
 	},
 	"devDependencies": {
 		"@types/node": "^22.10.2",

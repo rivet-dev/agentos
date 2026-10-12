@@ -735,6 +735,14 @@ impl AgentOs {
 
         let request_bytes = self.transport().max_frame_bytes();
         let max_entries = self.transport().max_write_files_entries();
+        if max_entries == 0 {
+            for (index, _) in pending {
+                results[index].success = false;
+                results[index].error =
+                    Some("write-files limits were not negotiated by this connection".into());
+            }
+            return results;
+        }
         let mut pending = pending.into_iter().peekable();
         while pending.peek().is_some() {
             let mut indexes = Vec::new();

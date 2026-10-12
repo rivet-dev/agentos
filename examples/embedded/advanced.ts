@@ -1,4 +1,4 @@
-import { AgentOs } from "@rivet-dev/agentos-core";
+import { AgentOs } from "@rivet-dev/agentos";
 
 // An embedded application can use one dedicated sidecar process for multiple VMs.
 const sidecar = await AgentOs.createSidecar();

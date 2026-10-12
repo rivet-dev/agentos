@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { SidecarKernelProxy } from "../src/sidecar/rpc-client.js";
 import { createInMemoryFileSystem } from "../src/test/runtime.js";
-import { NativeSidecarKernelProxy } from "../src/sidecar/rpc-client.js";
 
 // Regression coverage for post-boot mountFs delivery to the native sidecar:
 //   1. `configure_vm` replaces boot configuration, so mount changes must resend
-//      boot packages, their projection root, and binding shims. Runtime-linked
+//      boot packages, their projection root, and host-function shims. Runtime-linked
 //      packages are retained by the sidecar, not mirrored by this client.
 //   2. mountFs used to be fire-and-forget with a swallowed rejection, so a
 //      failed reconfigure left the mount silently host-only and callers had no
@@ -23,6 +23,7 @@ const bootPackages = [
 	},
 ];
 const bootBindingShims = ["agentos", "agentos-demo"];
+const bootRuntimeCommands = ["node", "npm", "python"];
 
 function createStubClient(options?: { failConfigureVm?: boolean }) {
 	const configureCalls: Array<Record<string, unknown>> = [];
@@ -74,8 +75,8 @@ function createProxy(client: unknown) {
 		commandGuestPaths: new Map<string, string>(),
 		ownsClient: true,
 	};
-	return new NativeSidecarKernelProxy(
-		options as ConstructorParameters<typeof NativeSidecarKernelProxy>[0],
+	return new SidecarKernelProxy(
+		options as ConstructorParameters<typeof SidecarKernelProxy>[0],
 	);
 }
 
@@ -99,7 +100,9 @@ describe("post-boot mount reconfiguration", () => {
 		expect(configureCalls).toHaveLength(2);
 		expect(configureCalls[1].mounts).toEqual([]);
 		expect(configureCalls[1].packages).toEqual(bootPackages);
-		expect(configureCalls[1].hostFunctionShimCommands).toEqual(bootBindingShims);
+		expect(configureCalls[1].hostFunctionShimCommands).toEqual(
+			bootBindingShims,
+		);
 
 		await proxy.dispose();
 	});
@@ -143,4 +146,42 @@ describe("post-boot mount reconfiguration", () => {
 
 		await proxy.dispose();
 	});
+});
+
+it("write-files preserves local mount routing and protected-root errors in input order", async () => {
+	const { client } = createStubClient();
+	const batches: string[][] = [];
+	Object.assign(client, {
+		async writeFiles(
+			_session: unknown,
+			_vm: unknown,
+			entries: ReadonlyArray<{ path: string; content: string | Uint8Array }>,
+		) {
+			batches.push(entries.map((entry) => entry.path));
+			return entries.map(() => null);
+		},
+	});
+	const proxy = createProxy(client);
+	const local = createInMemoryFileSystem();
+	try {
+		await proxy.mountFs("/mnt/local", local);
+		const errors = await proxy.writeFiles([
+			{ path: "/tmp/one", content: "one" },
+			{ path: "/mnt/local/deep/file", content: "local" },
+			{ path: "/etc/agentos/readonly", content: "blocked" },
+			{ path: "/tmp/two", content: "two" },
+		]);
+		expect(errors).toEqual([
+			null,
+			null,
+			expect.stringContaining("EROFS"),
+			null,
+		]);
+		expect(batches).toEqual([["/tmp/one"], ["/tmp/two"]]);
+		expect(new TextDecoder().decode(await local.readFile("/deep/file"))).toBe(
+			"local",
+		);
+	} finally {
+		await proxy.dispose();
+	}
 });

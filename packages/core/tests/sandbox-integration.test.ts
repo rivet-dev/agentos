@@ -76,9 +76,7 @@ describe("sandbox quickstart truth test", () => {
 		const hostFunctions = createSandboxHostFunctions({
 			client: sandbox.client,
 		});
-		const runCommandResponse = (await hostFunctions.hostFunctions[
-			"run-command"
-		].execute({
+		const runCommandResponse = (await hostFunctions.runCommand.execute({
 			command: "echo",
 			args: ["hello from sandbox"],
 		})) as {
@@ -90,9 +88,7 @@ describe("sandbox quickstart truth test", () => {
 		expect(runCommandResponse.stderr).toBe("");
 		expect(runCommandResponse.stdout.trim()).toBe("hello from sandbox");
 
-		const createdProcess = (await hostFunctions.hostFunctions[
-			"create-process"
-		].execute({
+		const createdProcess = (await hostFunctions.createProcess.execute({
 			command: "sleep",
 			args: ["60"],
 		})) as {
@@ -101,9 +97,9 @@ describe("sandbox quickstart truth test", () => {
 		};
 		expect(createdProcess.status).toBe("running");
 
-		const listProcessesResponse = (await hostFunctions.hostFunctions[
-			"list-processes"
-		].execute({})) as {
+		const listProcessesResponse = (await hostFunctions.listProcesses.execute(
+			{},
+		)) as {
 			processes: Array<{
 				command: string;
 				args?: string[];
@@ -119,7 +115,7 @@ describe("sandbox quickstart truth test", () => {
 			),
 		).toBe(true);
 
-		await hostFunctions.hostFunctions["kill-process"].execute({
+		await hostFunctions.killProcess.execute({
 			id: createdProcess.id,
 		});
 	}, 150_000);

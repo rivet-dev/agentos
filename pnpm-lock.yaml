@@ -4,8 +4,18 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+catalogs:
+  rivetkit:
+    rivetkit:
+      specifier: 3.0.7
+      version: 3.0.7
+
 overrides:
-  '@rivet-dev/agentos-core': workspace:*
+  '@rivet-dev/agentos': workspace:*
+  '@effect/platform-node@4.0.5>@effect/platform-node-shared': 4.0.5
+  '@rivetkit/rivetkit-wasm': 3.0.7
+
+pnpmfileChecksum: sha256-SEnUwm6AFeob5DIJB/q7nwJGPinO5RVveyVjDzNYuIM=
 
 importers:
 
@@ -20,18 +30,12 @@ importers:
       '@biomejs/biome':
         specifier: ^2.3
         version: 2.4.10
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:packages/core
-      '@rivet-dev/agentos-runtime-core':
-        specifier: workspace:*
-        version: link:packages/runtime-core
       '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
-        version: link:test-harness
-      '@rivet-dev/agentos-vm-test-harness':
-        specifier: workspace:*
-        version: link:packages/vm-test-harness
+        version: link:packages/test-harness
       '@types/node':
         specifier: ^22.19.15
         version: 22.19.15
@@ -56,7 +60,7 @@ importers:
 
   examples/embedded:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
       '@rivet-dev/agentos-sandbox':
@@ -85,9 +89,25 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
+  examples/hosted:
+    dependencies:
+      '@rivet-dev/agentos':
+        specifier: workspace:*
+        version: link:../../packages/core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
   examples/js-ai-agent-code-exec:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -103,7 +123,7 @@ importers:
 
   examples/js-child-processes:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -119,7 +139,7 @@ importers:
 
   examples/js-code-mode:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
       zod:
@@ -138,7 +158,7 @@ importers:
 
   examples/js-dev-servers:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -154,7 +174,7 @@ importers:
 
   examples/js-filesystem:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -170,7 +190,7 @@ importers:
 
   examples/js-module-loading:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -186,7 +206,7 @@ importers:
 
   examples/js-networking:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -202,7 +222,7 @@ importers:
 
   examples/js-networking-wasm:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -218,7 +238,7 @@ importers:
 
   examples/js-output-capture:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -234,7 +254,7 @@ importers:
 
   examples/js-permissions:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -250,7 +270,7 @@ importers:
 
   examples/js-plugin-systems:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -266,7 +286,7 @@ importers:
 
   examples/js-process-isolation:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -282,7 +302,7 @@ importers:
 
   examples/js-quickstart:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -298,7 +318,7 @@ importers:
 
   examples/js-resource-limits:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -314,7 +334,7 @@ importers:
 
   examples/js-runtime-platform:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -330,7 +350,7 @@ importers:
 
   examples/js-sdk-overview:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -346,7 +366,7 @@ importers:
 
   examples/js-typescript:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
       typescript:
@@ -362,7 +382,7 @@ importers:
 
   examples/js-virtual-filesystem:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -378,7 +398,7 @@ importers:
 
   examples/python-quickstart:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -394,7 +414,7 @@ importers:
 
   examples/python-sdk-overview:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -410,7 +430,7 @@ importers:
 
   examples/quickstart:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
       '@rivet-dev/agentos-sandbox':
@@ -441,7 +461,7 @@ importers:
 
   examples/quickstart/bash:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/core
       '@rivet-dev/agentos-sandbox':
@@ -472,7 +492,7 @@ importers:
 
   examples/quickstart/cron:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/core
       '@rivet-dev/agentos-sandbox':
@@ -503,7 +523,7 @@ importers:
 
   examples/quickstart/filesystem:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/core
       '@rivet-dev/agentos-sandbox':
@@ -534,7 +554,7 @@ importers:
 
   examples/quickstart/git:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/core
       '@rivet-dev/agentos-sandbox':
@@ -565,7 +585,7 @@ importers:
 
   examples/quickstart/hello-world:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/core
       '@rivet-dev/agentos-sandbox':
@@ -596,7 +616,7 @@ importers:
 
   examples/quickstart/host-functions:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/core
       zod:
@@ -615,7 +635,7 @@ importers:
 
   examples/quickstart/network:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/core
       '@rivet-dev/agentos-sandbox':
@@ -646,7 +666,7 @@ importers:
 
   examples/quickstart/nodejs:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/core
       '@rivet-dev/agentos-sandbox':
@@ -677,7 +697,7 @@ importers:
 
   examples/quickstart/processes:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/core
       '@rivet-dev/agentos-sandbox':
@@ -708,7 +728,7 @@ importers:
 
   examples/quickstart/python:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/core
     devDependencies:
@@ -724,7 +744,7 @@ importers:
 
   examples/quickstart/s3-filesystem:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/core
       '@rivet-dev/agentos-sandbox':
@@ -755,7 +775,7 @@ importers:
 
   examples/quickstart/sandbox:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/core
       '@rivet-dev/agentos-sandbox':
@@ -784,9 +804,15 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
+  packages/agentos-bindgen:
+    devDependencies:
+      '@biomejs/biome':
+        specifier: ^2.3
+        version: 2.4.10
+
   packages/agentos-sandbox:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../core
       dockerode:
@@ -814,22 +840,38 @@ importers:
 
   packages/agentos-toolchain:
     dependencies:
-      '@bare-ts/lib':
-        specifier: ^0.4.1
-        version: 0.4.1
+      '@rivetkit/bare-ts':
+        specifier: ^0.6.2
+        version: 0.6.2
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
       tsup:
         specifier: ^8.3.5
-        version: 8.5.1(@microsoft/api-extractor@7.43.0(@types/node@22.19.15))(jiti@2.7.0)(postcss@8.5.22)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0)
+        version: 8.5.1(@microsoft/api-extractor@7.43.0(@types/node@22.19.15))(jiti@2.7.0)(postcss@8.5.22)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.1)
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
       vitest:
         specifier: ^2.1.9
         version: 2.1.9(@types/node@22.19.15)(lightningcss@1.33.0)
+
+  packages/benchmarks:
+    dependencies:
+      '@rivet-dev/agentos':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
 
   packages/build-tools:
     dependencies:
@@ -866,12 +908,12 @@ importers:
 
   packages/core:
     dependencies:
-      '@rivet-dev/agentos-runtime-core':
+      '@rivet-dev/agentos-sidecar':
         specifier: workspace:*
-        version: link:../runtime-core
-      '@rivet-dev/agentos-runtime-sidecar':
-        specifier: workspace:*
-        version: link:../runtime-sidecar
+        version: link:../sidecar
+      '@rivetkit/bare-ts':
+        specifier: ^0.6.2
+        version: 0.6.2
       '@xterm/headless':
         specifier: ^6.0.0
         version: 6.0.0
@@ -881,10 +923,25 @@ importers:
       long-timeout:
         specifier: ^0.1.1
         version: 0.1.1
+      rivetkit:
+        specifier: catalog:rivetkit
+        version: 3.0.7(ws@8.20.0(bufferutil@4.1.0))
       zod:
         specifier: ^4.1.11
         version: 4.3.6
+      zod-to-json-schema:
+        specifier: ^3.25.2
+        version: 3.25.2(zod@4.3.6)
     devDependencies:
+      '@effect/platform-node':
+        specifier: 4.0.5
+        version: 4.0.5(bufferutil@4.1.0)(effect@4.0.5)(redis@6.3.1(@opentelemetry/api@1.9.0))
+      effect:
+        specifier: 4.0.5
+        version: 4.0.5
+      esbuild:
+        specifier: 0.27.4
+        version: 0.27.4
       '@agentos-software/common':
         specifier: workspace:*
         version: link:../../software/common
@@ -948,6 +1005,9 @@ importers:
       '@bare-ts/lib':
         specifier: ^0.4.1
         version: 0.4.1
+      '@bare-ts/tools':
+        specifier: 0.15.0
+        version: 0.15.0(@bare-ts/lib@0.4.1)
       '@browserbasehq/browse-cli':
         specifier: 0.5.0
         version: 0.5.0(@cfworker/json-schema@4.1.1)(@opentelemetry/api@1.9.0)(bufferutil@4.1.0)(deepmerge@4.3.1)(zod@4.3.6)
@@ -957,9 +1017,6 @@ importers:
       '@browserbasehq/sdk':
         specifier: 2.10.0
         version: 2.10.0
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
@@ -996,110 +1053,6 @@ importers:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
-
-  packages/posix:
-    dependencies:
-      '@rivet-dev/agentos-runtime-core':
-        specifier: workspace:*
-        version: link:../runtime-core
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      '@xterm/headless':
-        specifier: ^6.0.0
-        version: 6.0.0
-      minimatch:
-        specifier: ^10.2.4
-        version: 10.2.5
-      typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
-      vitest:
-        specifier: ^2.1.8
-        version: 2.1.9(@types/node@22.19.15)(lightningcss@1.33.0)
-
-  packages/runtime-benchmarks:
-    dependencies:
-      '@rivet-dev/agentos-core':
-        specifier: workspace:*
-        version: link:../core
-      '@rivet-dev/agentos-runtime-core':
-        specifier: workspace:*
-        version: link:../runtime-core
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      tsx:
-        specifier: ^4.19.2
-        version: 4.21.0
-      typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
-
-  packages/runtime-browser:
-    dependencies:
-      '@noble/ciphers':
-        specifier: ^2.2.0
-        version: 2.2.0
-      '@noble/hashes':
-        specifier: ^2.2.0
-        version: 2.2.0
-      '@rivet-dev/agentos-runtime-core':
-        specifier: workspace:*
-        version: link:../runtime-core
-      sucrase:
-        specifier: ^3.35.0
-        version: 3.35.1
-    devDependencies:
-      '@playwright/test':
-        specifier: ^1.54.2
-        version: 1.59.1
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
-      vitest:
-        specifier: ^2.1.8
-        version: 2.1.9(@types/node@22.19.15)(lightningcss@1.33.0)
-
-  packages/runtime-core:
-    dependencies:
-      '@bare-ts/lib':
-        specifier: ^0.4.1
-        version: 0.4.1
-      '@rivet-dev/agentos-runtime-sidecar':
-        specifier: workspace:*
-        version: link:../runtime-sidecar
-      zod:
-        specifier: ^4.1.11
-        version: 4.3.6
-      zod-to-json-schema:
-        specifier: ^3.25.2
-        version: 3.25.2(zod@4.3.6)
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
-      vitest:
-        specifier: ^2.1.8
-        version: 2.1.9(@types/node@22.19.15)(lightningcss@1.33.0)
-
-  packages/runtime-sidecar: {}
-
-  packages/runtime-sidecar/npm/darwin-arm64: {}
-
-  packages/runtime-sidecar/npm/darwin-x64: {}
-
-  packages/runtime-sidecar/npm/linux-arm64-gnu: {}
-
-  packages/runtime-sidecar/npm/linux-x64-gnu: {}
 
   packages/shell:
     dependencies:
@@ -1169,7 +1122,7 @@ importers:
       '@agentos-software/zip':
         specifier: workspace:*
         version: link:../../software/zip
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../core
       commander:
@@ -1189,30 +1142,27 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.19.15)(lightningcss@1.33.0)
 
-  packages/typescript:
+  packages/sidecar: {}
+
+  packages/sidecar/npm/darwin-arm64: {}
+
+  packages/sidecar/npm/darwin-x64: {}
+
+  packages/sidecar/npm/linux-arm64-gnu: {}
+
+  packages/sidecar/npm/linux-x64-gnu: {}
+
+  packages/test-harness:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../core
-      typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      vitest:
-        specifier: ^2.1.8
-        version: 2.1.9(@types/node@22.19.15)(lightningcss@1.33.0)
-
-  packages/vm-test-harness:
-    dependencies:
-      '@rivet-dev/agentos-runtime-core':
-        specifier: workspace:*
-        version: link:../runtime-core
       '@xterm/headless':
         specifier: ^6.0.0
         version: 6.0.0
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.15)(lightningcss@1.33.0)
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -1220,15 +1170,12 @@ importers:
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
-      vitest:
-        specifier: ^2.1.9
-        version: 2.1.9(@types/node@22.19.15)(lightningcss@1.33.0)
 
   scripts/pipboy:
     dependencies:
       '@effect/platform-node':
         specifier: 4.0.5
-        version: 4.0.5(bufferutil@4.1.0)(effect@4.0.5)(redis@6.3.0(@opentelemetry/api@1.9.0))
+        version: 4.0.5(bufferutil@4.1.0)(effect@4.0.5)(redis@6.3.1(@opentelemetry/api@1.9.0))
       effect:
         specifier: 4.0.5
         version: 4.0.5
@@ -1282,7 +1229,7 @@ importers:
 
   secure-exec:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../packages/core
     devDependencies:
@@ -1299,14 +1246,247 @@ importers:
         specifier: ^4.1.11
         version: 4.3.6
 
+  secure-exec/examples/ai-agent:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/benchmark:
+    dependencies:
+      quickjs-emscripten:
+        specifier: ^0.32.0
+        version: 0.32.0
+      run:
+        specifier: ^2.1.4
+        version: 2.1.4(typescript@5.9.3)
+      secure-exec:
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/code-mode:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../..
+      zod:
+        specifier: ^4.1.11
+        version: 4.3.6
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/contexts:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/dev-server:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/host-functions:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../..
+      zod:
+        specifier: ^4.1.11
+        version: 4.3.6
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/limits:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/mounts:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/npm:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/permissions:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/plugins:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/quickstart:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/typescript:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/vm:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
   software/acl:
     devDependencies:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1325,9 +1505,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1350,9 +1527,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1377,13 +1551,19 @@ importers:
       '@agentos-software/git':
         specifier: workspace:*
         version: link:../git
+      '@agentos-software/ssh':
+        specifier: workspace:*
+        version: link:../ssh
     devDependencies:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
+      '@rivet-dev/agentos':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
-        version: link:../../test-harness
+        version: link:../../packages/test-harness
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
@@ -1424,9 +1604,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
@@ -1442,9 +1619,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1463,9 +1637,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1484,9 +1655,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1505,9 +1673,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1526,9 +1691,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1592,6 +1754,9 @@ importers:
       '@agentos-software/sqlite3':
         specifier: workspace:*
         version: link:../sqlite3
+      '@agentos-software/ssh':
+        specifier: workspace:*
+        version: link:../ssh
       '@agentos-software/tar':
         specifier: workspace:*
         version: link:../tar
@@ -1617,9 +1782,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
@@ -1635,9 +1797,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1656,9 +1815,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1677,9 +1833,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1698,9 +1851,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1719,9 +1869,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1740,9 +1887,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1761,9 +1905,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1782,9 +1923,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1803,9 +1941,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1824,9 +1959,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1845,9 +1977,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1866,9 +1995,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1887,9 +2013,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1914,9 +2037,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1935,9 +2055,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1956,9 +2073,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1977,9 +2091,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1998,9 +2109,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -2019,9 +2127,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -2040,9 +2145,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -2061,9 +2163,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -2076,19 +2175,6 @@ importers:
       vitest:
         specifier: ^2.1.9
         version: 2.1.9(@types/node@22.19.15)(lightningcss@1.33.0)
-
-  test-harness:
-    dependencies:
-      '@rivet-dev/agentos-vm-test-harness':
-        specifier: workspace:*
-        version: link:../packages/vm-test-harness
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      typescript:
-        specifier: ^5.9.2
-        version: 5.9.3
 
 packages:
 
@@ -2234,6 +2320,11 @@ packages:
   '@anthropic-ai/sdk@0.39.0':
     resolution: {integrity: sha512-eMyDIPRZbt1CCLErRCi3exlAvNkBtRe+kW5vvJyef93PmNr/clstYgHhtvmkxN82nlKgzyGPCyGxrm0JQ1ZIdg==}
 
+  '@asteasolutions/zod-to-openapi@9.1.0':
+    resolution: {integrity: sha512-pLMeRgRYS7/vZIgAAkOe2P6+XGTifR1MT9pqDoxZ11EmcJJ+DPmdPqLN8ZZF4U8R9KHCCQCS9c2wtuE8wSrfkw==}
+    peerDependencies:
+      zod: ^4.0.0
+
   '@aws-crypto/crc32@5.2.0':
     resolution: {integrity: sha512-nLbCWqQNgUiwwtFsen1AdzAtvuLRsQS8rYgMuxCrdKf9kOssamGLuPwyTY9wyYblNr9+1XM8v6zoDTPPSIeANg==}
     engines: {node: '>=16.0.0'}
@@ -2352,6 +2443,36 @@ packages:
         optional: true
       puppeteer-core:
         optional: true
+
+  '@cbor-extract/cbor-extract-darwin-arm64@2.2.3':
+    resolution: {integrity: sha512-qpUy9Yoisi6a7QHOVa+AlnqfN7eVstSRhpLwiLnwi6i3SNLkM5D2Z7MXl4LC5nUGA77mZEt479cPH3u8GD163Q==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@cbor-extract/cbor-extract-darwin-x64@2.2.3':
+    resolution: {integrity: sha512-6bZbK7dyKn8BUNmG3UfzSnM4L/OzJ8xGAtBHYycprl+bgvtZmZoQC7CucWXuF/oHJP5skzqkqFr6BLSSGIkoWw==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@cbor-extract/cbor-extract-linux-arm64@2.2.3':
+    resolution: {integrity: sha512-QAuFuQkOw0cm4MNc+QwxH9aiMxmrczESnVEu33B8m2Du9fBuH/1AvJfmO8YajpeWLoHqt2iUG3d1/gIWAKY8IQ==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@cbor-extract/cbor-extract-linux-arm@2.2.3':
+    resolution: {integrity: sha512-joCovTc7uEYCL9XxdAJJpGIH7Vvc31Fi7vh3HnlY5zgkLSU/64WxYl5iUi/puE21qT3bmxMfOZEZUbnqVKeJTQ==}
+    cpu: [arm]
+    os: [linux]
+
+  '@cbor-extract/cbor-extract-linux-x64@2.2.3':
+    resolution: {integrity: sha512-IQMPVLulOvFv9Had7J1idJyfQzsFamDVdjH37qW7suHI7mgO4w1Oo3MisL7AjnWARxo0/ZmEEQ3i81WA7y34Ug==}
+    cpu: [x64]
+    os: [linux]
+
+  '@cbor-extract/cbor-extract-win32-x64@2.2.3':
+    resolution: {integrity: sha512-fGFfq6F3l0GCoKOZeyjjm3q+NHO7jo8ILtQ93U3rYJOgG2BGLS/QmBdoFLNEsoWPjyxAS8svWhTyo73MTDawog==}
+    cpu: [x64]
+    os: [win32]
 
   '@cfworker/json-schema@4.1.1':
     resolution: {integrity: sha512-gAmrUZSGtKc3AiBL71iNWxDsyUC5uMaKKGdvzYsBoTW/xi42JQHl7eKV2OYzCUqvc+D2RCcf7EXY2iCyFIk6og==}
@@ -2857,9 +2978,37 @@ packages:
     peerDependencies:
       hono: ^4
 
+  '@hono/zod-openapi@1.6.3':
+    resolution: {integrity: sha512-VYR82Y60plu8g3pN60OUXMVKpmxh3R04Qs++3DY9vtwZ9/sA/BRY0PcRIR+Z37/3itWtM7pYwT9bKiH9JhqV6Q==}
+    engines: {node: '>=16.0.0'}
+    peerDependencies:
+      hono: '>=4.10.0'
+      zod: ^4.0.0
+
+  '@hono/zod-validator@0.9.1':
+    resolution: {integrity: sha512-iiv6w0qrIc0arfvCtUqBWsvl4fXjzaTcQcCJTTtCnkawF9HHGE+KjEl0ox3gQJ6rKZEgE3mLExlQCF72M+mNuw==}
+    peerDependencies:
+      hono: '>=4.11.2'
+      zod: ^3.25.0 || ^4.0.0
+
   '@isaacs/cliui@8.0.2':
     resolution: {integrity: sha512-O8jcjabXaleOG9DQ0+ARXWZBTfnP4WNAqzuiJK7ll44AmxGKv/J2M4TPjxjY3znBCfvBXFzucm1twdyFybFqEA==}
     engines: {node: '>=12'}
+
+  '@jitl/quickjs-ffi-types@0.32.0':
+    resolution: {integrity: sha512-v9T+GQpmk43VDJ7d72sf0Nexhk+ArvtUihW27dy7lqAl0zBObFKtSBBIm5RBjwIhE8VwsPPm9PNuvPvNqLWUEg==}
+
+  '@jitl/quickjs-wasmfile-debug-asyncify@0.32.0':
+    resolution: {integrity: sha512-EX8zbXwGqCgAE764M+qvkHtyXDi/FUoMBea0JnES7vCM3P7a2+EOZOjGv85wtZ2sJhI1oJ+nekmqpOODFDY+hw==}
+
+  '@jitl/quickjs-wasmfile-debug-sync@0.32.0':
+    resolution: {integrity: sha512-LeYWrPGC1uNCTBWvibo3ZLJj0CSVNYUXvJpXMCmuQ5Sap2cCACc3uvGvYV4homHHBAzfw5akoTqMMS4YFRtw+Q==}
+
+  '@jitl/quickjs-wasmfile-release-asyncify@0.32.0':
+    resolution: {integrity: sha512-3oSwPfja12ICz4aIblB58cuY8JlEq5Txt8Cut4VLo+LH47QN+mzCnSgnbB03hWzg1LBcc+VyyI9UOag7a1NF+Q==}
+
+  '@jitl/quickjs-wasmfile-release-sync@0.32.0':
+    resolution: {integrity: sha512-BKNDI/TPBfGlLNGYpLrhcDGXmIk4xHm4MRAisOBnOzpXVn9HZWsfmMAc9WMBrAHjvvds6HOikKeaOBKdPdpVrg==}
 
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
@@ -2910,10 +3059,6 @@ packages:
       '@cfworker/json-schema':
         optional: true
 
-  '@noble/ciphers@2.2.0':
-    resolution: {integrity: sha512-Z6pjIZ/8IJcCGzb2S/0Px5J81yij85xASuk1teLNeg75bfT07MV3a/O2Mtn1I2se43k3lkVEcFaR10N4cgQcZA==}
-    engines: {node: '>= 20.19.0'}
-
   '@noble/hashes@2.2.0':
     resolution: {integrity: sha512-IYqDGiTXab6FniAgnSdZwgWbomxpy9FtYvLKs7wCUs2a8RkITG+DFGO1DM9cr+E3/RgADRpFjrKVaJ1z6sjtEg==}
     engines: {node: '>= 20.19.0'}
@@ -2938,11 +3083,6 @@ packages:
   '@pkgjs/parseargs@0.11.0':
     resolution: {integrity: sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg==}
     engines: {node: '>=14'}
-
-  '@playwright/test@1.59.1':
-    resolution: {integrity: sha512-PG6q63nQg5c9rIi4/Z5lR5IVF7yU5MqmKaPOe0HSc0O2cX1fPi96sUQu5j7eo4gKCkB2AnNGoWt7y4/Xx3Kcqg==}
-    engines: {node: '>=18'}
-    hasBin: true
 
   '@protobufjs/aspromise@1.1.2':
     resolution: {integrity: sha512-j+gKExEuLmKwvz3OgROXtrJ2UG2x8Ch2YZUxahh+s1F2HZ+wAceUNLkvy6zKCPVRkU++ZWQrdxsUeQXmcg4uoQ==}
@@ -2979,14 +3119,14 @@ packages:
     engines: {node: '>=18'}
     hasBin: true
 
-  '@redis/bloom@6.3.0':
-    resolution: {integrity: sha512-NQ5poYpZr0jv6zazN1cy6JY5kIipKFZ3R9GTL4kOUTX3a9YAfY29U8bsE4lWhVQEM+G4V0BXVC57mubIdDijeA==}
+  '@redis/bloom@6.3.1':
+    resolution: {integrity: sha512-dpF9j2yJDoPzSCaZn0MSB3xzmnXQVJeTSAWJcQVcgbmluwhpFeemmII0cF1t+WYfoVS+shEFq79+MmUItgzJLg==}
     engines: {node: '>= 20.0.0'}
     peerDependencies:
-      '@redis/client': ^6.3.0
+      '@redis/client': ^6.3.1
 
-  '@redis/client@6.3.0':
-    resolution: {integrity: sha512-fHrjwGCBvAANGi+TuRuwKi83sIOzgHr8eh+Uf48w3fSX7Hhrz174NrWqfJhAC2vnN0d/tfaZpdr6+o6JC3QHwg==}
+  '@redis/client@6.3.1':
+    resolution: {integrity: sha512-masbfVKULdoAofwddepZxRhWa4w6zvBHn6TRn90TRPrRkVIlGCur3pFqwWaCbMxtYI9twepkz63e/T/tEH8GjA==}
     engines: {node: '>= 20.0.0'}
     peerDependencies:
       '@node-rs/xxhash': ^1.1.0
@@ -2997,23 +3137,158 @@ packages:
       '@opentelemetry/api':
         optional: true
 
-  '@redis/json@6.3.0':
-    resolution: {integrity: sha512-yt6vRfPBXtW/3qm53cF81TSQpLMjWdW4/2E9WQ2GgbvsKkuCKCFQIcMiKlil1ZMnezK+IQuS795xKU5psbaegw==}
+  '@redis/json@6.3.1':
+    resolution: {integrity: sha512-fMz4kUwJzEftcU9EMaqsjZcUwzpTQLOYRqhQsAD6uKvZWeamblK13ZhgO5SzVSZVk31jmwLeTRpU5GAl5egfUw==}
     engines: {node: '>= 20.0.0'}
     peerDependencies:
-      '@redis/client': ^6.3.0
+      '@redis/client': ^6.3.1
 
-  '@redis/search@6.3.0':
-    resolution: {integrity: sha512-RPXAZmKjZZG7Tm7m1w9keFdXzbL91PiSHQBfQRe9xwW40jNsTRbG0FwhIz4QlHPU4gKDAsCy8IQHj4yZl4H9rw==}
+  '@redis/search@6.3.1':
+    resolution: {integrity: sha512-T67pvPUpW82VrZLvihO8O2DFMC7eY2oMAzMzapCbiPZn7mdWqHMEIlohYim12gIawT5kn6qT/Cvmm4WulKB+kQ==}
     engines: {node: '>= 20.0.0'}
     peerDependencies:
-      '@redis/client': ^6.3.0
+      '@redis/client': ^6.3.1
 
-  '@redis/time-series@6.3.0':
-    resolution: {integrity: sha512-+fJOB8mN1z5WRakCJNh5lVdz1KqvHGSOistsKeitD24QsCtPwyRQXWC0iq6T/i/ubLE/YcguZqPm8F598MKk4A==}
+  '@redis/time-series@6.3.1':
+    resolution: {integrity: sha512-MNDgrm+i63M/1a+XA+HcDsScwt4uBh/fGGJ84swTQZTFK5K5wMmxdlTRa4ZgmNJzjxMaszW/ipPScMUGV3aAMg==}
     engines: {node: '>= 20.0.0'}
     peerDependencies:
-      '@redis/client': ^6.3.0
+      '@redis/client': ^6.3.1
+
+  '@rivet-dev/services-darwin-arm64@0.2.5':
+    resolution: {integrity: sha512-/hsHiBrZ810CajMlvGzTYrReGyZi7oMK1LlAI4siFDp3EAmZJt0Ou/S+Kgfsz6H9U1z6fFfztXIpyEAMhK8iUA==}
+    engines: {node: '>=20'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@rivet-dev/services-darwin-x64@0.2.5':
+    resolution: {integrity: sha512-pbGlsYbDSZ6qqddSEITVq5LjS2KTB5k9E9iBo+OzRV9Yhr/C3EqBbJpeCpMYtn0yOnMuw1SbUAwjDYaSdGKJ2g==}
+    engines: {node: '>=20'}
+    cpu: [x64]
+    os: [darwin]
+
+  '@rivet-dev/services-linux-arm64-gnu@0.2.5':
+    resolution: {integrity: sha512-enoMQJZh8xHjtnkpxYYPsl2GUvWwHcR/0eg6UTqcbZEHwgVcexdTlrkuXQNZvtZGDkHaTgkOm+wcPdwqWd16IQ==}
+    engines: {node: '>=20'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@rivet-dev/services-linux-x64-gnu@0.2.5':
+    resolution: {integrity: sha512-TvLGQWjlvhnt2vuTzU6/NgVzYW9/ilahYRRP/3HS8Sg3GEA/613lmrPtsaFyjWgk1MIBdpgn0sl2vhtlRw7dew==}
+    engines: {node: '>=20'}
+    cpu: [x64]
+    os: [linux]
+
+  '@rivet-dev/services-win32-x64@0.2.5':
+    resolution: {integrity: sha512-yNxds5Pdk8w2pwfIgcd+lDaYRvF5qGYZvTUXHH1knk6gecm5UsaGrSCHwqxFKrAGMPEcRWpQ2NbQNdOojYNmDw==}
+    engines: {node: '>=20'}
+    cpu: [x64]
+    os: [win32]
+
+  '@rivet-dev/services@0.2.5':
+    resolution: {integrity: sha512-RKraXpp6T05qC/+v1NwqWmedkjcD9mkPc3AgzGlNdPWKKhZabTIuEprVpW5a1Qca2v3b2cRwUVXvij7IW02JBw==}
+    engines: {node: '>=20'}
+    hasBin: true
+
+  '@rivetkit/bare-ts@0.6.2':
+    resolution: {integrity: sha512-3qndQUQXLdwafMEqfhz24hUtDPcsf1Bu3q52Kb8MqeH8JUh3h6R4HYW3ZJXiQsLcyYyFM68PuIwlLRlg1xDEpg==}
+    engines: {node: ^14.18.0 || >=16.0.0}
+
+  '@rivetkit/engine-api-full@3.0.7':
+    resolution: {integrity: sha512-WubEvWvjOoNC+o2Xs9Qd6Hn00lnJae1Li8ZM+oMxaWlWDt3pqiYqZ5Fcit7Pbz7Hrp4to/V09KCfsDgTS9PJiQ==}
+
+  '@rivetkit/engine-cli-darwin-arm64@3.0.7':
+    resolution: {integrity: sha512-YxFpZZ0myQRy6TzpyWNEuV3b8V6YyrGTNbhk6nXY4jLPHpu1NPRmxiEkccG+cLk7DgFxXJcDvXfbQc1jq67mHQ==}
+    engines: {node: '>= 20.0.0'}
+    cpu: [arm64]
+    os: [darwin]
+    hasBin: true
+
+  '@rivetkit/engine-cli-darwin-x64@3.0.7':
+    resolution: {integrity: sha512-xECL/XBSEXBCFNleYH9v2jYS5VMXOBrUzyVOjtmYv0n9biphckV3v/+uSFwJ4ICpB7eMYTzQwf306gy/vPCvnA==}
+    engines: {node: '>= 20.0.0'}
+    cpu: [x64]
+    os: [darwin]
+    hasBin: true
+
+  '@rivetkit/engine-cli-linux-arm64-musl@3.0.7':
+    resolution: {integrity: sha512-kGc90vSB4bNkHy8+0A8GENEqymUk90UJiun+ttImgwByMk6kNRmS5/7eyT+ugQ1+Sm67jq/wJBM3Nln5Whsy9Q==}
+    engines: {node: '>= 20.0.0'}
+    cpu: [arm64]
+    os: [linux]
+    hasBin: true
+
+  '@rivetkit/engine-cli-linux-x64-musl@3.0.7':
+    resolution: {integrity: sha512-SJh7l6VLtmYd8wzOzEQBm7OrVRgLzvEPOv+H90SlGNtBRd36slDi9c017Sl169syP+/xeABDHr3Vily4gDd3rw==}
+    engines: {node: '>= 20.0.0'}
+    cpu: [x64]
+    os: [linux]
+    hasBin: true
+
+  '@rivetkit/engine-cli@3.0.7':
+    resolution: {integrity: sha512-kjH+SBPoChk6ZmzongGdyzpq07WapGQhZly51lkXCN7O4MLVesBLO4KYNG5k2wa4ui1UWpomeYgT7HcyK0VByA==}
+    engines: {node: '>= 20.0.0'}
+
+  '@rivetkit/engine-envoy-protocol@3.0.7':
+    resolution: {integrity: sha512-/MWzoNPiM/gDouLmfRxdv1U3nZrnAZ0lMeNkcmVVJqAeN4gaFqw9fk3MrryFvkul24FUw3VuNZPHlAX8iv7Spw==}
+
+  '@rivetkit/on-change@6.0.1':
+    resolution: {integrity: sha512-QBN/KRBXLJdCgN4gBTL3XAc/zKm58atSnieXWMOyFSPmo6F1/yIVV/LTRdvAktfCttrGx7W6c32i/lwqCHWnsQ==}
+    engines: {node: '>=20'}
+
+  '@rivetkit/rivetkit-napi-darwin-arm64@3.0.7':
+    resolution: {integrity: sha512-y1mestlPwPC+ZJ2Za3D7RfaBs7x3Fa76Khu1SPHUgc78W5mn3NWMWKSB8Fgtud2kjj/ZF/JJTlnn8f1L/NVl3g==}
+    engines: {node: '>= 20.0.0'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@rivetkit/rivetkit-napi-darwin-x64@3.0.7':
+    resolution: {integrity: sha512-pz70OkOn1N7T8uL1zgUnfz5ngp7D+XUbSmjgcWXL3b53r59nW/otEn8g6HoCgHhkOsz5HrSX0giVu6rXNurpag==}
+    engines: {node: '>= 20.0.0'}
+    cpu: [x64]
+    os: [darwin]
+
+  '@rivetkit/rivetkit-napi-linux-arm64-gnu@3.0.7':
+    resolution: {integrity: sha512-fAinPg5r9vaspSciOrfe0B26LrCwFuvtfJ8UA4TP9MmTo4Aok6SgoduA3Z90MpcUrV9hCWQhw9+nrUbH6VU07g==}
+    engines: {node: '>= 20.0.0'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@rivetkit/rivetkit-napi-linux-arm64-musl@3.0.7':
+    resolution: {integrity: sha512-qKWBQHDIf8tVqZu6Z88ugEdMdWW3TxWl1c+4sGaCc+HHKq9uc5D2lBqonidIqioAbeuuZ8U3Ipj5zndqHlUsRQ==}
+    engines: {node: '>= 20.0.0'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@rivetkit/rivetkit-napi-linux-x64-gnu@3.0.7':
+    resolution: {integrity: sha512-QpYmnbpsv39AbWR7f9P70RorqXgVg9sxH2d7Xt5EivtSOj0dSTfCzfnRBZ1RKJXB3983wqWeqFKZKklP6nlHXw==}
+    engines: {node: '>= 20.0.0'}
+    cpu: [x64]
+    os: [linux]
+
+  '@rivetkit/rivetkit-napi-linux-x64-musl@3.0.7':
+    resolution: {integrity: sha512-/viJJ+ZBSGLTFkgTqcWu4esQN1WCACed5iFEwObsh3yItvruhttemTaQeMW83seLgrMeV/9XN83mj2ZBW+kjgg==}
+    engines: {node: '>= 20.0.0'}
+    cpu: [x64]
+    os: [linux]
+
+  '@rivetkit/rivetkit-napi@3.0.7':
+    resolution: {integrity: sha512-V6Gay2ZktZqVXh+hbQJGvBah72ynE1ax2pjCAm7hofOSJk2L7fLzSk3YshoE7DVNA6EbuibTulJ3staU1EhRKQ==}
+    engines: {node: '>= 20.0.0'}
+
+  '@rivetkit/rivetkit-wasm@3.0.7':
+    resolution: {integrity: sha512-I4yB/jvb+i4K6QtcesahxDE7KuzCOUpBgTh9lchqCkWcpzdOKbOOxmrD+RcpwLeEc0HxIQ4ZT5U8ZbWmkbgSbA==}
+
+  '@rivetkit/traces@3.0.7':
+    resolution: {integrity: sha512-Ui16LA2l3RzNQlBARRnO65vhZGFmmrSM/HptFdS0ZecN75L/t8yoGUyQcIoRWx7/GoZAGgrCpUnsXlfBLkC0Lg==}
+    engines: {node: '>=18.0.0'}
+
+  '@rivetkit/virtual-websocket@3.0.7':
+    resolution: {integrity: sha512-xHcTXM/ls4+dHxECe09EyvT7hTCQ5sKbs6hdVuJaUUJGWeaq/aFNrW+lndV5ATbZ60StSkcfcTKNu5fgz3TIsw==}
+
+  '@rivetkit/workflow-engine@3.0.7':
+    resolution: {integrity: sha512-wF4a+/C8uqIVykyqTKrdBw5kk7p1n2foLxFt8HTx31ut+TxXdXEgml8oJKdvdehie1RwM9Ar8wh/lN8b8PPI1g==}
+    engines: {node: '>=18.0.0'}
 
   '@rollup/rollup-android-arm-eabi@4.60.1':
     resolution: {integrity: sha512-d6FinEBLdIiK+1uACUttJKfgZREXrF0Qc2SmLII7W2AD8FfiZ9Wjd+rD/iRuf5s5dWrr1GgwXCvPqOuDquOowA==}
@@ -3296,6 +3571,9 @@ packages:
 
   '@types/retry@0.12.0':
     resolution: {integrity: sha512-wWKOClTTiizcZhXnPY4wikVAwmdYHp8q6DmC+EJUzAMsycb7HB32Kh9RN4+0gExjmPmZSAQjgURXIGATPegAvA==}
+
+  '@types/retry@0.12.2':
+    resolution: {integrity: sha512-XISRgDJ2Tc5q4TRqvgJtzsRkFYNJzZrhTdtMoGVBttwzzQJkPnS3WWTFc7kuDRoPtPakl+T+OfdEUjYJj7Jbow==}
 
   '@types/semver@7.7.1':
     resolution: {integrity: sha512-FmgJfu+MOcQ370SD0ev7EI8TlCAfKYU+B4m5T3yXc1CiRN94g/SZPtsCkk506aUDtlMnFZvasDwHHUcZUEaYuA==}
@@ -3701,6 +3979,13 @@ packages:
     resolution: {integrity: sha512-Gmy6FhYlCY7uOElZUSbxo2UCDH8owEk996gkbrpsgGtrJLM3J7jGxl9Ic7Qwwj4ivOE5AWZWRMecDdF7hqGjFA==}
     engines: {node: '>=10'}
 
+  cbor-extract@2.2.3:
+    resolution: {integrity: sha512-zTOCEYwiQDChj5DV/sUqccv3jhdZqbhymztwcrW2LncIG2fPPkb1ceK5rmr0bdtxzJCXoWzZ95shA+uaSH8cKw==}
+    hasBin: true
+
+  cbor-x@1.6.9:
+    resolution: {integrity: sha512-TCT9XHLb4iPGQ99fpQjcTRncbus6cXHvSD/RY+bPrDACBCJKiQLmAM6r7/BgQcI5i+8h4gwp4vjfb6S6T8bPGw==}
+
   chai@5.3.3:
     resolution: {integrity: sha512-4zNhdJD/iOjSH0A05ea+Ke6MU5mmpQcbQsSOkgdaUMJ9zTlDTD/GYlwohmIE2u0gaxHYiVHEn1Fw9mZ/ktJWgw==}
     engines: {node: '>=18'}
@@ -3970,6 +4255,98 @@ packages:
     resolution: {integrity: sha512-uBq4egWHTcTt33a72vpSG0z3HnPuIl6NqYcTrKEg2azoEyl2hpW0zqlxysq2pK9HlDIHyHyakeYaYnSAwd8bow==}
     engines: {node: '>=12'}
 
+  drizzle-orm@0.45.2:
+    resolution: {integrity: sha512-kY0BSaTNYWnoDMVoyY8uxmyHjpJW1geOmBMdSSicKo9CIIWkSxMIj2rkeSR51b8KAPB7m+qysjuHme5nKP+E5Q==}
+    peerDependencies:
+      '@aws-sdk/client-rds-data': '>=3'
+      '@cloudflare/workers-types': '>=4'
+      '@electric-sql/pglite': '>=0.2.0'
+      '@libsql/client': '>=0.10.0'
+      '@libsql/client-wasm': '>=0.10.0'
+      '@neondatabase/serverless': '>=0.10.0'
+      '@op-engineering/op-sqlite': '>=2'
+      '@opentelemetry/api': ^1.4.1
+      '@planetscale/database': '>=1.13'
+      '@prisma/client': '*'
+      '@tidbcloud/serverless': '*'
+      '@types/better-sqlite3': '*'
+      '@types/pg': '*'
+      '@types/sql.js': '*'
+      '@upstash/redis': '>=1.34.7'
+      '@vercel/postgres': '>=0.8.0'
+      '@xata.io/client': '*'
+      better-sqlite3: '>=7'
+      bun-types: '*'
+      expo-sqlite: '>=14.0.0'
+      gel: '>=2'
+      knex: '*'
+      kysely: '*'
+      mysql2: '>=2'
+      pg: '>=8'
+      postgres: '>=3'
+      prisma: '*'
+      sql.js: '>=1'
+      sqlite3: '>=5'
+    peerDependenciesMeta:
+      '@aws-sdk/client-rds-data':
+        optional: true
+      '@cloudflare/workers-types':
+        optional: true
+      '@electric-sql/pglite':
+        optional: true
+      '@libsql/client':
+        optional: true
+      '@libsql/client-wasm':
+        optional: true
+      '@neondatabase/serverless':
+        optional: true
+      '@op-engineering/op-sqlite':
+        optional: true
+      '@opentelemetry/api':
+        optional: true
+      '@planetscale/database':
+        optional: true
+      '@prisma/client':
+        optional: true
+      '@tidbcloud/serverless':
+        optional: true
+      '@types/better-sqlite3':
+        optional: true
+      '@types/pg':
+        optional: true
+      '@types/sql.js':
+        optional: true
+      '@upstash/redis':
+        optional: true
+      '@vercel/postgres':
+        optional: true
+      '@xata.io/client':
+        optional: true
+      better-sqlite3:
+        optional: true
+      bun-types:
+        optional: true
+      expo-sqlite:
+        optional: true
+      gel:
+        optional: true
+      knex:
+        optional: true
+      kysely:
+        optional: true
+      mysql2:
+        optional: true
+      pg:
+        optional: true
+      postgres:
+        optional: true
+      prisma:
+        optional: true
+      sql.js:
+        optional: true
+      sqlite3:
+        optional: true
+
   dunder-proto@1.0.1:
     resolution: {integrity: sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==}
     engines: {node: '>= 0.4'}
@@ -4156,6 +4533,9 @@ packages:
 
   fd-slicer@1.1.0:
     resolution: {integrity: sha512-cE1qsB/VwyQozZ+q1dGxR8LBYNZeofhEdUNGSMbQD3Gw2lAzX9Zb3uIU6Ebc/Fmyjo9AWWfnn0AUCHqtevs/8g==}
+
+  fdb-tuple@1.0.0:
+    resolution: {integrity: sha512-8jSvKPCYCgTpi9Pt87qlfTk6griyMx4Gk3Xv31Dp72Qp8b6XgIyFsMm8KzPmFJ9iJ8K4pGvRxvOS8D0XGnrkjw==}
 
   fdir@6.5.0:
     resolution: {integrity: sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg==}
@@ -4403,6 +4783,9 @@ packages:
   inherits@2.0.4:
     resolution: {integrity: sha512-k/vGaX4/Yla3WzyMCvTQOXYeIHvqOKtnqBduzTHpzpQZzAskKMhZ2K+EnBiSM9zGSoIFeMpXKxa4dYeZIQqewQ==}
 
+  invariant@2.2.4:
+    resolution: {integrity: sha512-phJfQVBuaJM5raOpJjSfkiD6BpbCE4Ns//LaXl6wGYtUBY83nWS6Rf9tXm2e8VaK60JEjYldbPif/A2B1C2gNA==}
+
   ip-address@10.1.0:
     resolution: {integrity: sha512-XXADHxXmvT9+CRxhXg56LJovE+bmWnEWB78LB83VZTprKTmaC5QfruXocxzTZ2Kl0DNwKuBdlIhjL8LeY8Sf8Q==}
     engines: {node: '>= 12'}
@@ -4439,6 +4822,10 @@ packages:
   is-nan@1.3.2:
     resolution: {integrity: sha512-E+zBKpQ2t6MEo1VsonYmluk9NxGrbzpeeLC2xIViuO2EjU2xsXsBPwTr3Ykv9l08UYEVEdWeRZNouaZqF6RN0w==}
     engines: {node: '>= 0.4'}
+
+  is-network-error@1.3.2:
+    resolution: {integrity: sha512-PhBY86zaxNZUuWP6h13Vu5oFe0XY6/UlKzQnYFELzGVHygP3MxmvTfYSG7GN3aIab/iWudSMgjSnG9Dq+nHrgA==}
+    engines: {node: '>=16'}
 
   is-promise@4.0.0:
     resolution: {integrity: sha512-hvpoI6korhJMnej285dSg6nu1+e6uxs7zG3BYAm5byqDsgJNWwxzM6z6iZiAgQR4TJ30JmBTOwqZUw3WlyH3AQ==}
@@ -4498,8 +4885,14 @@ packages:
     resolution: {integrity: sha512-34wB/Y7MW7bzjKRjUKTa46I2Z7eV62Rkhva+KkopW7Qvv/OSWBqvkSY7vusOPrNuZcUG3tApvdVgNB8POj3SPw==}
     engines: {node: '>=10'}
 
+  js-base64@3.9.6:
+    resolution: {integrity: sha512-LjkzbLtU6Lx6fjXMYGEACEB7rdtqZtxkBe9aS1ZpDNUyWgUivw3yBEIhQ37OVygJYRt+C+9e9fVT8PpFzH2Hww==}
+
   js-tiktoken@1.0.21:
     resolution: {integrity: sha512-biOj/6M5qdgx5TKjDnFT1ymSpM5tbd3ylwDtrQvFQSu0Z7bBYko2dF+W/aUkXUPuk6IVpRxk/3Q2sHOzGlS36g==}
+
+  js-tokens@4.0.0:
+    resolution: {integrity: sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==}
 
   js-tokens@9.0.1:
     resolution: {integrity: sha512-mxa9E9ITFOt0ban3j6L5MpjwegGz6lBQmM1IJkWeBZGcMxto50+eWdjC/52xDbS2vy0k7vIMK0Fe2wfL9OQSpQ==}
@@ -4669,6 +5062,10 @@ packages:
   long@5.3.2:
     resolution: {integrity: sha512-mNAgZ1GmyNhD7AuqnTG3/VQ26o760+ZYBPKjPvugO8+nLbYfX6TVpJPseBvopbdY+qpZ/lKUnmEc1LeZYS3QAA==}
 
+  loose-envify@1.4.0:
+    resolution: {integrity: sha512-lyuxPGr/Wfhrlem2CL/UcnUc1zcqKAImBDzukY7Y5F/yQiNdko6+fRLevlw1HgMySw7f611UIY408EtxRSoK3Q==}
+    hasBin: true
+
   loupe@3.2.1:
     resolution: {integrity: sha512-CdzqowRJCeLU72bHvWqwRBBlLcMEtIvGrlvef74kMnV2AolS9Y8xUv1I0U/MNAWMhBlKIoyuEgoJ0t/bbwHbLQ==}
 
@@ -4811,6 +5208,10 @@ packages:
   node-fetch@3.3.2:
     resolution: {integrity: sha512-dRB78srN/l6gqWulah9SrxeYnxeddIG30+GOqK/9OlLVyLg3HPnr6SqOWTWOXKRwC2eGYCkZ59NNuSgvSrpgOA==}
     engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
+
+  node-gyp-build-optional-packages@5.1.1:
+    resolution: {integrity: sha512-+P72GAjVAbTxjjwUmwjVrqrdZROD4nf8KgpBoDxqXXTiYZZt/ud60dE5yvCSr9lRO8e8yv6kgJIC0K0PfZFVQw==}
+    hasBin: true
 
   node-gyp-build@4.8.4:
     resolution: {integrity: sha512-LA4ZjwlnUblHVgq0oBF3Jl/6h/Nvs5fzBLwdEF4nuxnFdsfajde4WfxtJr3CaiH+F6ewcIB/q4jQ4UzPyid+CQ==}
@@ -4962,6 +5363,9 @@ packages:
       zod:
         optional: true
 
+  openapi3-ts@4.6.2:
+    resolution: {integrity: sha512-gyyil3DweqhXiEhTqtAs9wwRLfWHmetwhI4kmM5Rn0d6gtmK863Ki7qqbQnp9+Wwlqoe3B1LFWj7kMp5ctE4rQ==}
+
   os-browserify@0.3.0:
     resolution: {integrity: sha512-gjcpUc3clBf9+210TRaDWbf+rZZZEshZ+DlXMRCeAjp0xhTrnQsKHypIy1J3d5hKdUzj69t708EHtU8P6bUn0A==}
 
@@ -4988,6 +5392,10 @@ packages:
   p-retry@4.6.2:
     resolution: {integrity: sha512-312Id396EbJdvRONlngUx0NydfrIQ5lsYu0znKVUzVvArzEIt08V1qhtyESbGVd1FGX7UKtiFp5uwKZdM8wIuQ==}
     engines: {node: '>=8'}
+
+  p-retry@6.2.1:
+    resolution: {integrity: sha512-hEt02O4hUct5wtwg4H4KcWgDdm+l1bOaEy/hWzd8xtXB9BqxTWBBhb+2ImAtH4Cv4rPjV76xN3Zumqk3k3AhhQ==}
+    engines: {node: '>=16.17'}
 
   p-timeout@3.2.0:
     resolution: {integrity: sha512-rhIwUycgwwKcP9yTOOFK/AKsAopjjCakVqLHePO3CC6Mir1Z99xT+R63jZxAT5lFZLa2inS5h+ZS2GvR99/FBg==}
@@ -5201,6 +5609,13 @@ packages:
   quick-format-unescaped@4.0.4:
     resolution: {integrity: sha512-tYC1Q1hgyRuHgloV/YXs2w15unPVh8qfu/qCTfhTYamaw7fyhumKa2yGpdSo87vY32rIclj+4fWYQXUMs9EHvg==}
 
+  quickjs-emscripten-core@0.32.0:
+    resolution: {integrity: sha512-QFnPfjFey8EqknSrSxe1hZrf1/8z7/6s1QzGOmKo6++02r7QRRX7ZoyNaZh7JuVjWsVW87KnQrbZqnHkOAzUyg==}
+
+  quickjs-emscripten@0.32.0:
+    resolution: {integrity: sha512-So0Sqw869y/S2oE3Nuc0uT3Dhqgvsj8FSrwBdsuTosVsG8ME5/OcudU1GxsrIFdFABgy17GHnTVO9TYV/bLQcA==}
+    engines: {node: '>=16.0.0'}
+
   randombytes@2.1.0:
     resolution: {integrity: sha512-vYl3iOX+4CKUWuxGi9Ukhie6fsqXqS9FE2Zaic4tNFD2N2QQaXOMFbuKK4QmDHC0JO6B1Zp41J0LpT0oR68amQ==}
 
@@ -5237,8 +5652,8 @@ packages:
     resolution: {integrity: sha512-57frrGM/OCTLqLOAh0mhVA9VBMHd+9U7Zb2THMGdBUoZVOtGbJzjxsYGDJ3A9AYYCP4hn6y1TVbaOfzWtm5GFg==}
     engines: {node: '>= 12.13.0'}
 
-  redis@6.3.0:
-    resolution: {integrity: sha512-XFQbPie1lGpKeUZ8ySYY43yLnQy/iIQtHNvIr/1XdaABpb96rUSdm3Mfl+98FEVbv9ZJIzINMno5s0Nh8E5LEw==}
+  redis@6.3.1:
+    resolution: {integrity: sha512-mV96ZKxQ4CGn3SyEGaY0Lb9YA443mdVey3c+mdr0NAUaBxiOZGoYCWX8PoM55kictSOmxlJRtZJxIsmZm3jL+w==}
     engines: {node: '>= 20.0.0'}
 
   require-directory@2.1.1:
@@ -5272,6 +5687,21 @@ packages:
     resolution: {integrity: sha512-5Di9UC0+8h1L6ZD2d7awM7E/T4uA1fJRlx6zk/NvdCCVEoAnFqvHmCuNeIKoCeIixBX/q8uM+6ycDvF8woqosA==}
     engines: {node: '>= 0.8'}
 
+  rivetkit@3.0.7:
+    resolution: {integrity: sha512-pR49yDn7iGHCPGjHrLW9U3CIIlOtKHto2TIRiUe4liQiROte9vbYlIoLYrW3fxjMP3AD6T1i76ii2PzI3kYoag==}
+    engines: {node: '>=22.0.0'}
+    peerDependencies:
+      drizzle-kit: ^0.31.2
+      eventsource: ^4.0.0
+      ws: ^8.0.0
+    peerDependenciesMeta:
+      drizzle-kit:
+        optional: true
+      eventsource:
+        optional: true
+      ws:
+        optional: true
+
   rollup@4.60.1:
     resolution: {integrity: sha512-VmtB2rFU/GroZ4oL8+ZqXgSA38O6GR8KSIvWmEFv63pQ0G6KaBH9s07PO8XTXP4vI+3UJUEypOfjkGfmSBBR0w==}
     engines: {node: '>=18.0.0', npm: '>=8.0.0'}
@@ -5280,6 +5710,15 @@ packages:
   router@2.2.0:
     resolution: {integrity: sha512-nLTrUKm2UyiL7rlhapu/Zl45FwNgkZGaCpZbIHajDYgwlJCOzLSk+cIPAnsEqV955GjILJnKbdQC1nVPz+gAYQ==}
     engines: {node: '>= 18'}
+
+  run@2.1.4:
+    resolution: {integrity: sha512-Rd8W2wO0LWdwlNbqKJm/o0WpQ/VQ42KRR6MUgnaujjjVOdS0o3bTMZ9dCjWCQAeuIj6jhG58WkqkeGz0cvOIrA==}
+    engines: {node: '>=20.19.0'}
+    peerDependencies:
+      typescript: '>=5.1.6 <7'
+    peerDependenciesMeta:
+      typescript:
+        optional: true
 
   safe-buffer@5.1.2:
     resolution: {integrity: sha512-Gd2UZBJDkXlY7GbJxfsE8/nvKkUEU1G38c1siN6QP6a9PT9MmHB8GnpscSmMJSoF8LOIrt8ud/wPtojys4G6+g==}
@@ -5732,6 +6171,10 @@ packages:
   uri-js@4.4.1:
     resolution: {integrity: sha512-7rKUyy33Q1yc98pQ1DAmLtwX109F7TIfWlW1Ydo8Wl1ii1SeHieeh0HHfPeL2fMXK6z0s8ecKs9frCuLJvndBg==}
 
+  url-join@5.2.0:
+    resolution: {integrity: sha512-/tMVQdp/2eE90fGb6npbd2nLHH8jamzLLeZhLEKTz4Rc38wO5AeEuIhoWroWWfQJS50ZzL4Xod9JER/pJWTTEQ==}
+    engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
+
   url@0.11.4:
     resolution: {integrity: sha512-oCwdVC7mTuWiPyjLUz/COz5TLk6wgp0RCsN+wHZ2Ekneac9w8uuV0njcbbie2ME+Vs+d6duwmYuR3HgQXs1fOg==}
     engines: {node: '>= 0.4'}
@@ -5754,6 +6197,10 @@ packages:
     resolution: {integrity: sha512-vIYxrBCC/N/K+Js3qSN88go7kIfNPssr/hHCesKCQNAjmgvYS2oqr69kIufEG+O4+PfezOH4EbIeHCfFov8ZgQ==}
     hasBin: true
 
+  uuid@12.0.1:
+    resolution: {integrity: sha512-9obBF8sMIHJWNQaO6IGOG8giGa/jUpKX34bz6o4whVs8M0WAvhID2tNxYp6A2XEBJPuZSX8wsS/6TEKfIDc+nw==}
+    hasBin: true
+
   validator@13.15.35:
     resolution: {integrity: sha512-TQ5pAGhd5whStmqWvYF4OjQROlmv9SMFVt37qoCBdqRffuuklWYQlCNnEs2ZaIBD1kZRNnikiZOS1eqgkar0iw==}
     engines: {node: '>= 0.10'}
@@ -5761,6 +6208,10 @@ packages:
   vary@1.1.2:
     resolution: {integrity: sha512-BNGbWLfd0eUPabhkXUVm0j8uuvREyTh5ovRa/dyow/BqAbZJyC+5fU+IzQOzmAKzYqYRAISoRhdQr3eIZ/PXqg==}
     engines: {node: '>= 0.8'}
+
+  vbare@0.0.4:
+    resolution: {integrity: sha512-QsxSVw76NqYUWYPVcQmOnQPX8buIVjgn+yqldTHlWISulBTB9TJ9rnzZceDu+GZmycOtzsmuPbPN1YNxvK12fg==}
+    engines: {node: '>=18.0.0'}
 
   vite-node@2.1.9:
     resolution: {integrity: sha512-AM9aQ/IPrW/6ENLQg3AGY4K1N2TGZdR5e4gu/MmmR2xR3Ll1+dib+nook92g4TV3PXVyeyxdWwtaCAiUL0hMxA==}
@@ -5972,8 +6423,8 @@ packages:
   yallist@4.0.0:
     resolution: {integrity: sha512-3wdGidZyq5PB084XLES5TpOSRA3wjXAlIWMhum2kRcv/41Sn2emQ0dycQW4uZXLejwKvg6EsvbdlVL+FYEct7A==}
 
-  yaml@2.9.0:
-    resolution: {integrity: sha512-2AvhNX3mb8zd6Zy7INTtSpl1F15HW6Wnqj0srWlkKLcpYl/gMIMJiyuGq2KeI2YFxUPjdlB+3Lc10seMLtL4cA==}
+  yaml@2.9.1:
+    resolution: {integrity: sha512-3NxN8+78OdzbT7C/WjGsyfPAtJaN3FNDsWxv7Y7mcDsT/oOmgW8BpyQQFFBnvZE3j9Y2Sdz1ULFLezL7Eb2yFw==}
     engines: {node: '>= 14.6'}
     hasBin: true
 
@@ -6205,6 +6656,11 @@ snapshots:
     transitivePeerDependencies:
       - encoding
 
+  '@asteasolutions/zod-to-openapi@9.1.0(zod@4.3.6)':
+    dependencies:
+      openapi3-ts: 4.6.2
+      zod: 4.3.6
+
   '@aws-crypto/crc32@5.2.0':
     dependencies:
       '@aws-crypto/util': 5.2.0
@@ -6426,6 +6882,24 @@ snapshots:
       - supports-color
       - utf-8-validate
 
+  '@cbor-extract/cbor-extract-darwin-arm64@2.2.3':
+    optional: true
+
+  '@cbor-extract/cbor-extract-darwin-x64@2.2.3':
+    optional: true
+
+  '@cbor-extract/cbor-extract-linux-arm64@2.2.3':
+    optional: true
+
+  '@cbor-extract/cbor-extract-linux-arm@2.2.3':
+    optional: true
+
+  '@cbor-extract/cbor-extract-linux-x64@2.2.3':
+    optional: true
+
+  '@cbor-extract/cbor-extract-win32-x64@2.2.3':
+    optional: true
+
   '@cfworker/json-schema@4.1.1': {}
 
   '@effect/platform-node-shared@4.0.5(bufferutil@4.1.0)(effect@4.0.5)':
@@ -6437,11 +6911,11 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@effect/platform-node@4.0.5(bufferutil@4.1.0)(effect@4.0.5)(redis@6.3.0(@opentelemetry/api@1.9.0))':
+  '@effect/platform-node@4.0.5(bufferutil@4.1.0)(effect@4.0.5)(redis@6.3.1(@opentelemetry/api@1.9.0))':
     dependencies:
       '@effect/platform-node-shared': 4.0.5(bufferutil@4.1.0)(effect@4.0.5)
       effect: 4.0.5
-      redis: 6.3.0(@opentelemetry/api@1.9.0)
+      redis: 6.3.1(@opentelemetry/api@1.9.0)
       undici: 8.12.3
     transitivePeerDependencies:
       - bufferutil
@@ -6712,6 +7186,19 @@ snapshots:
     dependencies:
       hono: 4.12.9
 
+  '@hono/zod-openapi@1.6.3(hono@4.12.9)(zod@4.3.6)':
+    dependencies:
+      '@asteasolutions/zod-to-openapi': 9.1.0(zod@4.3.6)
+      '@hono/zod-validator': 0.9.1(hono@4.12.9)(zod@4.3.6)
+      hono: 4.12.9
+      openapi3-ts: 4.6.2
+      zod: 4.3.6
+
+  '@hono/zod-validator@0.9.1(hono@4.12.9)(zod@4.3.6)':
+    dependencies:
+      hono: 4.12.9
+      zod: 4.3.6
+
   '@isaacs/cliui@8.0.2':
     dependencies:
       string-width: 5.1.2
@@ -6720,6 +7207,24 @@ snapshots:
       strip-ansi-cjs: strip-ansi@6.0.1
       wrap-ansi: 8.1.0
       wrap-ansi-cjs: wrap-ansi@7.0.0
+
+  '@jitl/quickjs-ffi-types@0.32.0': {}
+
+  '@jitl/quickjs-wasmfile-debug-asyncify@0.32.0':
+    dependencies:
+      '@jitl/quickjs-ffi-types': 0.32.0
+
+  '@jitl/quickjs-wasmfile-debug-sync@0.32.0':
+    dependencies:
+      '@jitl/quickjs-ffi-types': 0.32.0
+
+  '@jitl/quickjs-wasmfile-release-asyncify@0.32.0':
+    dependencies:
+      '@jitl/quickjs-ffi-types': 0.32.0
+
+  '@jitl/quickjs-wasmfile-release-sync@0.32.0':
+    dependencies:
+      '@jitl/quickjs-ffi-types': 0.32.0
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
@@ -6831,9 +7336,8 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@noble/ciphers@2.2.0': {}
-
-  '@noble/hashes@2.2.0': {}
+  '@noble/hashes@2.2.0':
+    optional: true
 
   '@oclif/core@4.11.14':
     dependencies:
@@ -6870,10 +7374,6 @@ snapshots:
 
   '@pkgjs/parseargs@0.11.0':
     optional: true
-
-  '@playwright/test@1.59.1':
-    dependencies:
-      playwright: 1.59.1
 
   '@protobufjs/aspromise@1.1.2': {}
 
@@ -6915,25 +7415,135 @@ snapshots:
       - supports-color
     optional: true
 
-  '@redis/bloom@6.3.0(@redis/client@6.3.0(@opentelemetry/api@1.9.0))':
+  '@redis/bloom@6.3.1(@redis/client@6.3.1(@opentelemetry/api@1.9.0))':
     dependencies:
-      '@redis/client': 6.3.0(@opentelemetry/api@1.9.0)
+      '@redis/client': 6.3.1(@opentelemetry/api@1.9.0)
 
-  '@redis/client@6.3.0(@opentelemetry/api@1.9.0)':
+  '@redis/client@6.3.1(@opentelemetry/api@1.9.0)':
     optionalDependencies:
       '@opentelemetry/api': 1.9.0
 
-  '@redis/json@6.3.0(@redis/client@6.3.0(@opentelemetry/api@1.9.0))':
+  '@redis/json@6.3.1(@redis/client@6.3.1(@opentelemetry/api@1.9.0))':
     dependencies:
-      '@redis/client': 6.3.0(@opentelemetry/api@1.9.0)
+      '@redis/client': 6.3.1(@opentelemetry/api@1.9.0)
 
-  '@redis/search@6.3.0(@redis/client@6.3.0(@opentelemetry/api@1.9.0))':
+  '@redis/search@6.3.1(@redis/client@6.3.1(@opentelemetry/api@1.9.0))':
     dependencies:
-      '@redis/client': 6.3.0(@opentelemetry/api@1.9.0)
+      '@redis/client': 6.3.1(@opentelemetry/api@1.9.0)
 
-  '@redis/time-series@6.3.0(@redis/client@6.3.0(@opentelemetry/api@1.9.0))':
+  '@redis/time-series@6.3.1(@redis/client@6.3.1(@opentelemetry/api@1.9.0))':
     dependencies:
-      '@redis/client': 6.3.0(@opentelemetry/api@1.9.0)
+      '@redis/client': 6.3.1(@opentelemetry/api@1.9.0)
+
+  '@rivet-dev/services-darwin-arm64@0.2.5':
+    optional: true
+
+  '@rivet-dev/services-darwin-x64@0.2.5':
+    optional: true
+
+  '@rivet-dev/services-linux-arm64-gnu@0.2.5':
+    optional: true
+
+  '@rivet-dev/services-linux-x64-gnu@0.2.5':
+    optional: true
+
+  '@rivet-dev/services-win32-x64@0.2.5':
+    optional: true
+
+  '@rivet-dev/services@0.2.5':
+    optionalDependencies:
+      '@rivet-dev/services-darwin-arm64': 0.2.5
+      '@rivet-dev/services-darwin-x64': 0.2.5
+      '@rivet-dev/services-linux-arm64-gnu': 0.2.5
+      '@rivet-dev/services-linux-x64-gnu': 0.2.5
+      '@rivet-dev/services-win32-x64': 0.2.5
+    optional: true
+
+  '@rivetkit/bare-ts@0.6.2': {}
+
+  '@rivetkit/engine-api-full@3.0.7':
+    dependencies:
+      form-data: 4.0.5
+      js-base64: 3.9.6
+      node-fetch: 2.7.0
+      qs: 6.15.0
+      readable-stream: 4.7.0
+      url-join: 5.2.0
+    transitivePeerDependencies:
+      - encoding
+
+  '@rivetkit/engine-cli-darwin-arm64@3.0.7':
+    optional: true
+
+  '@rivetkit/engine-cli-darwin-x64@3.0.7':
+    optional: true
+
+  '@rivetkit/engine-cli-linux-arm64-musl@3.0.7':
+    optional: true
+
+  '@rivetkit/engine-cli-linux-x64-musl@3.0.7':
+    optional: true
+
+  '@rivetkit/engine-cli@3.0.7':
+    optionalDependencies:
+      '@rivetkit/engine-cli-darwin-arm64': 3.0.7
+      '@rivetkit/engine-cli-darwin-x64': 3.0.7
+      '@rivetkit/engine-cli-linux-arm64-musl': 3.0.7
+      '@rivetkit/engine-cli-linux-x64-musl': 3.0.7
+
+  '@rivetkit/engine-envoy-protocol@3.0.7':
+    dependencies:
+      '@rivetkit/bare-ts': 0.6.2
+
+  '@rivetkit/on-change@6.0.1': {}
+
+  '@rivetkit/rivetkit-napi-darwin-arm64@3.0.7':
+    optional: true
+
+  '@rivetkit/rivetkit-napi-darwin-x64@3.0.7':
+    optional: true
+
+  '@rivetkit/rivetkit-napi-linux-arm64-gnu@3.0.7':
+    optional: true
+
+  '@rivetkit/rivetkit-napi-linux-arm64-musl@3.0.7':
+    optional: true
+
+  '@rivetkit/rivetkit-napi-linux-x64-gnu@3.0.7':
+    optional: true
+
+  '@rivetkit/rivetkit-napi-linux-x64-musl@3.0.7':
+    optional: true
+
+  '@rivetkit/rivetkit-napi@3.0.7':
+    dependencies:
+      '@rivetkit/engine-envoy-protocol': 3.0.7
+    optionalDependencies:
+      '@rivetkit/rivetkit-napi-darwin-arm64': 3.0.7
+      '@rivetkit/rivetkit-napi-darwin-x64': 3.0.7
+      '@rivetkit/rivetkit-napi-linux-arm64-gnu': 3.0.7
+      '@rivetkit/rivetkit-napi-linux-arm64-musl': 3.0.7
+      '@rivetkit/rivetkit-napi-linux-x64-gnu': 3.0.7
+      '@rivetkit/rivetkit-napi-linux-x64-musl': 3.0.7
+
+  '@rivetkit/rivetkit-wasm@3.0.7': {}
+
+  '@rivetkit/traces@3.0.7':
+    dependencies:
+      '@rivetkit/bare-ts': 0.6.2
+      cbor-x: 1.6.9
+      fdb-tuple: 1.0.0
+      vbare: 0.0.4
+
+  '@rivetkit/virtual-websocket@3.0.7': {}
+
+  '@rivetkit/workflow-engine@3.0.7':
+    dependencies:
+      '@rivetkit/bare-ts': 0.6.2
+      cbor-x: 1.6.9
+      fdb-tuple: 1.0.0
+      pino: 9.14.0
+      vbare: 0.0.4
 
   '@rollup/rollup-android-arm-eabi@4.60.1':
     optional: true
@@ -7184,6 +7794,8 @@ snapshots:
       undici-types: 7.18.2
 
   '@types/retry@0.12.0': {}
+
+  '@types/retry@0.12.2': {}
 
   '@types/semver@7.7.1': {}
 
@@ -7682,6 +8294,22 @@ snapshots:
 
   camelcase@6.3.0: {}
 
+  cbor-extract@2.2.3:
+    dependencies:
+      node-gyp-build-optional-packages: 5.1.1
+    optionalDependencies:
+      '@cbor-extract/cbor-extract-darwin-arm64': 2.2.3
+      '@cbor-extract/cbor-extract-darwin-x64': 2.2.3
+      '@cbor-extract/cbor-extract-linux-arm': 2.2.3
+      '@cbor-extract/cbor-extract-linux-arm64': 2.2.3
+      '@cbor-extract/cbor-extract-linux-x64': 2.2.3
+      '@cbor-extract/cbor-extract-win32-x64': 2.2.3
+    optional: true
+
+  cbor-x@1.6.9:
+    optionalDependencies:
+      cbor-extract: 2.2.3
+
   chai@5.3.3:
     dependencies:
       assertion-error: 2.0.1
@@ -7976,6 +8604,10 @@ snapshots:
 
   dotenv@16.6.1: {}
 
+  drizzle-orm@0.45.2(@opentelemetry/api@1.9.0):
+    optionalDependencies:
+      '@opentelemetry/api': 1.9.0
+
   dunder-proto@1.0.1:
     dependencies:
       call-bind-apply-helpers: 1.0.2
@@ -8257,6 +8889,8 @@ snapshots:
       pend: 1.2.0
     optional: true
 
+  fdb-tuple@1.0.0: {}
+
   fdir@6.5.0(picomatch@4.0.4):
     optionalDependencies:
       picomatch: 4.0.4
@@ -8537,6 +9171,10 @@ snapshots:
 
   inherits@2.0.4: {}
 
+  invariant@2.2.4:
+    dependencies:
+      loose-envify: 1.4.0
+
   ip-address@10.1.0: {}
 
   ipaddr.js@1.9.1: {}
@@ -8568,6 +9206,8 @@ snapshots:
     dependencies:
       call-bind: 1.0.9
       define-properties: 1.2.1
+
+  is-network-error@1.3.2: {}
 
   is-promise@4.0.0: {}
 
@@ -8620,9 +9260,13 @@ snapshots:
 
   joycon@3.1.1: {}
 
+  js-base64@3.9.6: {}
+
   js-tiktoken@1.0.21:
     dependencies:
       base64-js: 1.5.1
+
+  js-tokens@4.0.0: {}
 
   js-tokens@9.0.1: {}
 
@@ -8770,6 +9414,10 @@ snapshots:
 
   long@5.3.2: {}
 
+  loose-envify@1.4.0:
+    dependencies:
+      js-tokens: 4.0.0
+
   loupe@3.2.1: {}
 
   lru-cache@10.4.3: {}
@@ -8890,6 +9538,11 @@ snapshots:
       data-uri-to-buffer: 4.0.1
       fetch-blob: 3.2.0
       formdata-polyfill: 4.0.10
+
+  node-gyp-build-optional-packages@5.1.1:
+    dependencies:
+      detect-libc: 2.1.2
+    optional: true
 
   node-gyp-build@4.8.4:
     optional: true
@@ -9031,6 +9684,10 @@ snapshots:
     transitivePeerDependencies:
       - encoding
 
+  openapi3-ts@4.6.2:
+    dependencies:
+      yaml: 2.9.1
+
   os-browserify@0.3.0: {}
 
   os-paths@4.4.0:
@@ -9054,6 +9711,12 @@ snapshots:
   p-retry@4.6.2:
     dependencies:
       '@types/retry': 0.12.0
+      retry: 0.13.1
+
+  p-retry@6.2.1:
+    dependencies:
+      '@types/retry': 0.12.2
+      is-network-error: 1.3.2
       retry: 0.13.1
 
   p-timeout@3.2.0:
@@ -9199,24 +9862,26 @@ snapshots:
       mlly: 1.8.2
       pathe: 2.0.3
 
-  playwright-core@1.59.1: {}
+  playwright-core@1.59.1:
+    optional: true
 
   playwright@1.59.1:
     dependencies:
       playwright-core: 1.59.1
     optionalDependencies:
       fsevents: 2.3.2
+    optional: true
 
   possible-typed-array-names@1.1.0: {}
 
-  postcss-load-config@6.0.1(jiti@2.7.0)(postcss@8.5.22)(tsx@4.21.0)(yaml@2.9.0):
+  postcss-load-config@6.0.1(jiti@2.7.0)(postcss@8.5.22)(tsx@4.21.0)(yaml@2.9.1):
     dependencies:
       lilconfig: 3.1.3
     optionalDependencies:
       jiti: 2.7.0
       postcss: 8.5.22
       tsx: 4.21.0
-      yaml: 2.9.0
+      yaml: 2.9.1
 
   postcss@8.5.22:
     dependencies:
@@ -9312,6 +9977,18 @@ snapshots:
 
   quick-format-unescaped@4.0.4: {}
 
+  quickjs-emscripten-core@0.32.0:
+    dependencies:
+      '@jitl/quickjs-ffi-types': 0.32.0
+
+  quickjs-emscripten@0.32.0:
+    dependencies:
+      '@jitl/quickjs-wasmfile-debug-asyncify': 0.32.0
+      '@jitl/quickjs-wasmfile-debug-sync': 0.32.0
+      '@jitl/quickjs-wasmfile-release-asyncify': 0.32.0
+      '@jitl/quickjs-wasmfile-release-sync': 0.32.0
+      quickjs-emscripten-core: 0.32.0
+
   randombytes@2.1.0:
     dependencies:
       safe-buffer: 5.2.1
@@ -9362,13 +10039,13 @@ snapshots:
 
   real-require@0.2.0: {}
 
-  redis@6.3.0(@opentelemetry/api@1.9.0):
+  redis@6.3.1(@opentelemetry/api@1.9.0):
     dependencies:
-      '@redis/bloom': 6.3.0(@redis/client@6.3.0(@opentelemetry/api@1.9.0))
-      '@redis/client': 6.3.0(@opentelemetry/api@1.9.0)
-      '@redis/json': 6.3.0(@redis/client@6.3.0(@opentelemetry/api@1.9.0))
-      '@redis/search': 6.3.0(@redis/client@6.3.0(@opentelemetry/api@1.9.0))
-      '@redis/time-series': 6.3.0(@redis/client@6.3.0(@opentelemetry/api@1.9.0))
+      '@redis/bloom': 6.3.1(@redis/client@6.3.1(@opentelemetry/api@1.9.0))
+      '@redis/client': 6.3.1(@opentelemetry/api@1.9.0)
+      '@redis/json': 6.3.1(@redis/client@6.3.1(@opentelemetry/api@1.9.0))
+      '@redis/search': 6.3.1(@redis/client@6.3.1(@opentelemetry/api@1.9.0))
+      '@redis/time-series': 6.3.1(@redis/client@6.3.1(@opentelemetry/api@1.9.0))
     transitivePeerDependencies:
       - '@node-rs/xxhash'
       - '@opentelemetry/api'
@@ -9399,6 +10076,63 @@ snapshots:
     dependencies:
       hash-base: 3.1.2
       inherits: 2.0.4
+
+  rivetkit@3.0.7(ws@8.20.0(bufferutil@4.1.0)):
+    dependencies:
+      '@hono/zod-openapi': 1.6.3(hono@4.12.9)(zod@4.3.6)
+      '@opentelemetry/api': 1.9.0
+      '@rivetkit/bare-ts': 0.6.2
+      '@rivetkit/engine-api-full': 3.0.7
+      '@rivetkit/engine-cli': 3.0.7
+      '@rivetkit/engine-envoy-protocol': 3.0.7
+      '@rivetkit/on-change': 6.0.1
+      '@rivetkit/rivetkit-napi': 3.0.7
+      '@rivetkit/rivetkit-wasm': 3.0.7
+      '@rivetkit/traces': 3.0.7
+      '@rivetkit/virtual-websocket': 3.0.7
+      '@rivetkit/workflow-engine': 3.0.7
+      cbor-x: 1.6.9
+      drizzle-orm: 0.45.2(@opentelemetry/api@1.9.0)
+      hono: 4.12.9
+      invariant: 2.2.4
+      p-retry: 6.2.1
+      pino: 9.14.0
+      uuid: 12.0.1
+      vbare: 0.0.4
+      zod: 4.3.6
+    optionalDependencies:
+      '@rivet-dev/services': 0.2.5
+      ws: 8.20.0(bufferutil@4.1.0)
+    transitivePeerDependencies:
+      - '@aws-sdk/client-rds-data'
+      - '@cloudflare/workers-types'
+      - '@electric-sql/pglite'
+      - '@libsql/client'
+      - '@libsql/client-wasm'
+      - '@neondatabase/serverless'
+      - '@op-engineering/op-sqlite'
+      - '@planetscale/database'
+      - '@prisma/client'
+      - '@tidbcloud/serverless'
+      - '@types/better-sqlite3'
+      - '@types/pg'
+      - '@types/sql.js'
+      - '@upstash/redis'
+      - '@vercel/postgres'
+      - '@xata.io/client'
+      - better-sqlite3
+      - bun-types
+      - encoding
+      - expo-sqlite
+      - gel
+      - knex
+      - kysely
+      - mysql2
+      - pg
+      - postgres
+      - prisma
+      - sql.js
+      - sqlite3
 
   rollup@4.60.1:
     dependencies:
@@ -9440,6 +10174,10 @@ snapshots:
       path-to-regexp: 8.4.1
     transitivePeerDependencies:
       - supports-color
+
+  run@2.1.4(typescript@5.9.3):
+    optionalDependencies:
+      typescript: 5.9.3
 
   safe-buffer@5.1.2: {}
 
@@ -9835,7 +10573,7 @@ snapshots:
   tslib@2.8.1:
     optional: true
 
-  tsup@8.5.1(@microsoft/api-extractor@7.43.0(@types/node@22.19.15))(jiti@2.7.0)(postcss@8.5.22)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0):
+  tsup@8.5.1(@microsoft/api-extractor@7.43.0(@types/node@22.19.15))(jiti@2.7.0)(postcss@8.5.22)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.1):
     dependencies:
       bundle-require: 5.1.0(esbuild@0.27.4)
       cac: 6.7.14
@@ -9846,7 +10584,7 @@ snapshots:
       fix-dts-default-cjs-exports: 1.0.1
       joycon: 3.1.1
       picocolors: 1.1.1
-      postcss-load-config: 6.0.1(jiti@2.7.0)(postcss@8.5.22)(tsx@4.21.0)(yaml@2.9.0)
+      postcss-load-config: 6.0.1(jiti@2.7.0)(postcss@8.5.22)(tsx@4.21.0)(yaml@2.9.1)
       resolve-from: 5.0.0
       rollup: 4.60.1
       source-map: 0.7.6
@@ -9934,6 +10672,8 @@ snapshots:
       punycode: 2.3.1
     optional: true
 
+  url-join@5.2.0: {}
+
   url@0.11.4:
     dependencies:
       punycode: 1.4.1
@@ -9956,10 +10696,14 @@ snapshots:
 
   uuid@11.1.1: {}
 
+  uuid@12.0.1: {}
+
   validator@13.15.35:
     optional: true
 
   vary@1.1.2: {}
+
+  vbare@0.0.4: {}
 
   vite-node@2.1.9(@types/node@22.19.15)(lightningcss@1.33.0):
     dependencies:
@@ -10170,8 +10914,7 @@ snapshots:
   yallist@4.0.0:
     optional: true
 
-  yaml@2.9.0:
-    optional: true
+  yaml@2.9.1: {}
 
   yargs-parser@21.1.1: {}
 

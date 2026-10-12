@@ -1,4 +1,4 @@
-//! `SidecarTransport`: spawns a native sidecar binary and speaks the existing framed
+//! `SidecarTransport`: spawns a sidecar binary and speaks the existing framed
 //! BARE protocol over its stdio.
 //!
 //! This mirrors the TypeScript `Sidecar`. Generated wire payloads are the native
@@ -37,7 +37,7 @@ const CONTROL_FRAME_QUEUE_CAPACITY: usize = 1024;
 /// Maximum in-flight host-initiated sidecar requests per transport.
 const PENDING_REQUEST_LIMIT: usize = 4096;
 
-/// Env var that overrides the sidecar binary path. Defaults to `agentos-native-sidecar` on `PATH`.
+/// Env var that overrides the sidecar binary path. Defaults to `agentos-sidecar` on `PATH`.
 /// Product clients can pass an explicit binary path to [`SidecarTransport::spawn`].
 const SIDECAR_BIN_ENV: &str = "AGENTOS_SIDECAR_BIN";
 
@@ -45,8 +45,8 @@ const SIDECAR_BIN_ENV: &str = "AGENTOS_SIDECAR_BIN";
 #[cfg(unix)]
 const CONTROL_FD: std::os::fd::RawFd = 3;
 
-/// How long the host tolerates TOTAL inbound silence (no responses, events, sidecar requests, or
-/// heartbeats) before declaring the sidecar dead. The sidecar heartbeats every 10s from a dedicated
+/// How much eligible observed inbound silence (no responses, events, sidecar requests, or
+/// heartbeats) the host counts before confirming sidecar expiry. The sidecar heartbeats every 10s from a dedicated
 /// thread even while busy, so this allows two missed beats plus margin; it bounds "sidecar is dead
 /// or wedged", never "this request is slow" — individual requests have no deadline of their own.
 /// Fixed protocol constant paired with the sidecar heartbeat cadence; mirrors the TS client.
@@ -59,6 +59,90 @@ const EVENT_DRAIN_GRACE: std::time::Duration = std::time::Duration::from_secs(2)
 
 type EventSenderSlot =
     parking_lot::Mutex<Option<broadcast::Sender<(wire::OwnershipScope, wire::EventPayload)>>>;
+
+/// Count only elapsed time observed while this host can schedule watchdog checks.
+/// Policy methods consume supplied observed time. Callers lock before reading
+/// the clock; no I/O or callbacks occur under the reset gate.
+struct SilenceWatchdog {
+    observed_at: std::time::Instant,
+    counted: std::time::Duration,
+    phase: SilenceWatchdogPhase,
+}
+
+enum SilenceWatchdogPhase {
+    /// Accept complete frames and charge at most one interval per tick. A tick
+    /// reaching the window enters Confirming; inbound activity resets the count.
+    Observing,
+    /// Exactly one fixed scheduling deferral is outstanding. Its opaque local
+    /// identity is supplied by the executor; inbound activity invalidates it.
+    /// A matching confirmation closes; a stale confirmation has no effect.
+    Confirming { token: Arc<()> },
+    /// No future reset or confirmation can reopen this transport. Cleanup runs
+    /// outside the reset gate after disconnected has also been published.
+    Closed,
+}
+
+impl SilenceWatchdog {
+    fn new(now: std::time::Instant) -> Self {
+        Self {
+            observed_at: now,
+            counted: std::time::Duration::ZERO,
+            phase: SilenceWatchdogPhase::Observing,
+        }
+    }
+
+    fn inbound(&mut self, now: std::time::Instant) -> bool {
+        if matches!(self.phase, SilenceWatchdogPhase::Closed) {
+            return false;
+        }
+        let cancelled = matches!(self.phase, SilenceWatchdogPhase::Confirming { .. });
+        self.observed_at = self.observed_at.max(now);
+        self.counted = std::time::Duration::ZERO;
+        self.phase = SilenceWatchdogPhase::Observing;
+        cancelled
+    }
+
+    fn tick(
+        &mut self,
+        now: std::time::Instant,
+        interval: std::time::Duration,
+        timeout: std::time::Duration,
+        token: Arc<()>,
+    ) -> Option<Arc<()>> {
+        if !matches!(self.phase, SilenceWatchdogPhase::Observing) {
+            return None;
+        }
+        let elapsed = now
+            .saturating_duration_since(self.observed_at)
+            .min(interval);
+        self.observed_at = self.observed_at.max(now);
+        self.counted = self.counted.saturating_add(elapsed);
+        if self.counted < timeout {
+            return None;
+        }
+        self.phase = SilenceWatchdogPhase::Confirming {
+            token: Arc::clone(&token),
+        };
+        Some(token)
+    }
+
+    fn is_current(&self, token: &Arc<()>) -> bool {
+        matches!(&self.phase, SilenceWatchdogPhase::Confirming { token: current }
+            if Arc::ptr_eq(current, token))
+    }
+
+    fn confirm(&mut self, token: &Arc<()>) -> bool {
+        if !self.is_current(token) {
+            return false;
+        }
+        self.phase = SilenceWatchdogPhase::Closed;
+        true
+    }
+
+    fn close(&mut self) {
+        self.phase = SilenceWatchdogPhase::Closed;
+    }
+}
 
 /// A registered callback that answers a sidecar-initiated request using generated wire types.
 pub type WireSidecarCallback = Arc<
@@ -85,6 +169,7 @@ pub struct SidecarTransport {
     /// The spawned sidecar process (stdout/stdin taken by the I/O tasks; kept for kill on drop).
     child: parking_lot::Mutex<Option<Child>>,
     child_termination: tokio::sync::Mutex<()>,
+    child_exit: parking_lot::Mutex<Option<Option<i32>>>,
     /// Pending host-initiated requests, keyed by positive `RequestId`.
     pending: SccHashMap<wire::RequestId, oneshot::Sender<wire::ResponsePayload>>,
     pending_request_lock: parking_lot::Mutex<()>,
@@ -92,8 +177,8 @@ pub struct SidecarTransport {
     request_counter: AtomicI64,
     /// Negotiated max frame size.
     max_frame_bytes: AtomicUsize,
-    /// Most entries per write-files request, from the authenticate handshake. One entry per
-    /// request until the handshake sets it.
+    /// Most entries per write-files request, from the authenticate handshake.
+    /// Zero means negotiation is incomplete, so write-files requests fail closed.
     max_write_files_entries: AtomicUsize,
     /// Structured-event fan-out for `Event` frames. Dropped once the event lane ends (or
     /// `EVENT_DRAIN_GRACE` after a disconnect), so every subscriber sees `RecvError::Closed`
@@ -105,15 +190,16 @@ pub struct SidecarTransport {
     request_writer_tx: mpsc::Sender<Vec<u8>>,
     /// Outbound callback/control response frames. The writer drains this before regular requests.
     control_writer_tx: mpsc::Sender<Vec<u8>>,
-    /// Silence the watchdog has counted since the reader last received any inbound frame.
-    counted_silence: parking_lot::Mutex<std::time::Duration>,
+    /// Reset and final expiry commit share this gate; no cleanup effects run under it.
+    silence_watchdog: parking_lot::Mutex<SilenceWatchdog>,
+    silence_changed: Arc<tokio::sync::Notify>,
     /// Set once the transport loses its sidecar: an inbound lane ended or broke protocol, or the
     /// silence watchdog killed the child. No request can succeed after this.
     disconnected: AtomicBool,
 }
 
 impl SidecarTransport {
-    /// Spawn the native sidecar binary and start the stdio I/O tasks.
+    /// Spawn the sidecar binary and start the stdio I/O tasks.
     ///
     /// Does NOT run the handshake. Product clients drive Authenticate and any follow-up setup using
     /// [`request_wire`](Self::request_wire) once the transport is live.
@@ -130,7 +216,7 @@ impl SidecarTransport {
         {
             let _ = (binary_path, args);
             return Err(TransportError::Sidecar(
-                "the native sidecar response/control transport is unsupported on this platform"
+                "the sidecar response/control transport is unsupported on this platform"
                     .to_string(),
             ));
         }
@@ -193,16 +279,20 @@ impl SidecarTransport {
             instance_id: next_transport_instance_id(),
             child: parking_lot::Mutex::new(Some(child)),
             child_termination: tokio::sync::Mutex::new(()),
+            child_exit: parking_lot::Mutex::new(None),
             pending: SccHashMap::new(),
             pending_request_lock: parking_lot::Mutex::new(()),
             request_counter: AtomicI64::new(1),
             max_frame_bytes: AtomicUsize::new(wire::DEFAULT_MAX_FRAME_BYTES),
-            max_write_files_entries: AtomicUsize::new(1),
+            max_write_files_entries: AtomicUsize::new(0),
             event_tx: Arc::new(parking_lot::Mutex::new(Some(event_tx))),
             callbacks: SccHashMap::new(),
             request_writer_tx,
             control_writer_tx,
-            counted_silence: parking_lot::Mutex::new(std::time::Duration::ZERO),
+            silence_watchdog: parking_lot::Mutex::new(SilenceWatchdog::new(
+                std::time::Instant::now(),
+            )),
+            silence_changed: Arc::new(tokio::sync::Notify::new()),
             disconnected: AtomicBool::new(false),
         });
 
@@ -325,6 +415,21 @@ impl SidecarTransport {
         self.disconnected.load(Ordering::SeqCst)
     }
 
+    /// True only after this owner has observed and reaped its child. Transport
+    /// disconnect and a successful kill request are not exit confirmation.
+    pub fn has_confirmed_child_exit(&self) -> bool {
+        self.child_exit.lock().is_some()
+    }
+
+    fn child_exit_result(&self) -> Result<(), TransportError> {
+        match *self.child_exit.lock() {
+            Some(Some(code)) if code != 0 => Err(TransportError::Sidecar(format!(
+                "sidecar exited with code {code}"
+            ))),
+            _ => Ok(()),
+        }
+    }
+
     /// Update the negotiated max frame size after authentication.
     pub fn set_max_frame_bytes(&self, max_frame_bytes: usize) {
         self.max_frame_bytes
@@ -336,10 +441,27 @@ impl SidecarTransport {
         self.max_write_files_entries.load(Ordering::Relaxed)
     }
 
-    /// Update the negotiated write-files entry limit after authentication.
-    pub fn set_max_write_files_entries(&self, max_entries: usize) {
+    /// Record positive wire-advertised connection limits. Do not substitute
+    /// client policy defaults for missing/zero capabilities.
+    pub fn set_write_files_limits(
+        &self,
+        max_frame_bytes: usize,
+        max_entries: usize,
+    ) -> Result<(), TransportError> {
+        if max_frame_bytes == 0
+            || max_frame_bytes > u32::MAX as usize
+            || max_entries == 0
+            || max_entries > u32::MAX as usize
+        {
+            return Err(TransportError::Sidecar(
+                "invalid authenticated write-files limits: positive u32 capabilities are required"
+                    .into(),
+            ));
+        }
+        self.set_max_frame_bytes(max_frame_bytes);
         self.max_write_files_entries
-            .store(max_entries.max(1), Ordering::SeqCst);
+            .store(max_entries, Ordering::SeqCst);
+        Ok(())
     }
 
     /// Request graceful process termination through the physically independent
@@ -378,7 +500,7 @@ impl SidecarTransport {
     pub async fn terminate_child(&self) -> Result<(), TransportError> {
         let _termination = self.child_termination.lock().await;
         let Some(child) = self.child.lock().take() else {
-            return Ok(());
+            return self.child_exit_result();
         };
         let mut owned = ReapingChild {
             slot: &self.child,
@@ -404,12 +526,13 @@ impl SidecarTransport {
                 }
             }
         }
-        child
+        let status = child
             .wait()
             .await
             .map_err(|error| TransportError::Sidecar(format!("reap sidecar child: {error}")))?;
         owned.child.take();
-        Ok(())
+        *self.child_exit.lock() = Some(status.code());
+        self.child_exit_result()
     }
 
     fn encode_wire_frame(
@@ -515,7 +638,29 @@ impl SidecarTransport {
     }
 
     fn disconnect(&self) {
-        self.disconnected.store(true, Ordering::SeqCst);
+        let first = {
+            let mut silence = self.silence_watchdog.lock();
+            silence.close();
+            !self.disconnected.swap(true, Ordering::SeqCst)
+        };
+        self.silence_changed.notify_waiters();
+        if first {
+            self.finish_disconnect();
+        }
+    }
+
+    fn note_inbound(&self) {
+        let cancelled = self
+            .silence_watchdog
+            .lock()
+            .inbound(std::time::Instant::now());
+        if cancelled {
+            self.silence_changed.notify_waiters();
+        }
+    }
+
+    /// Called only after the one final disconnected transition has been published.
+    fn finish_disconnect(&self) {
         self.kill_child();
         self.fail_all_pending();
         // The event lane closes the event stream once it drains what the sidecar already wrote,
@@ -721,7 +866,7 @@ where
         }
         // Any complete inbound frame proves the sidecar is alive; the silence
         // watchdog counts from here.
-        *transport.counted_silence.lock() = std::time::Duration::ZERO;
+        transport.note_inbound();
 
         let codec = WireFrameCodec::new(max_frame_bytes);
         match codec.decode(&frame_bytes) {
@@ -744,46 +889,88 @@ fn frame_length_exceeds_limit(length: usize, max_frame_bytes: usize) -> bool {
     length > max_frame_bytes
 }
 
-/// Kill the sidecar and fail all in-flight requests once the transport has seen no inbound frames
-/// (not even heartbeats) for `timeout`. A silent sidecar is dead or wedged, not busy: a busy
-/// sidecar still heartbeats every 10s from a dedicated thread. Exits when the transport drops.
-///
-/// Each tick counts at most one check interval. While the host runtime or process is stalled,
-/// frames wait unread in the pipe, and on wake this task can run before the readers do. That time
-/// says nothing about the sidecar. Every tick still counts, so a silent sidecar is detected after a
-/// fixed number of ticks however long the host stalls between them.
+/// Charge capped observed intervals, then allow one fresh timer and scheduler
+/// yield for the existing readers. This is a bounded operational scheduling
+/// deferral, NOT proof that Tokio's readiness cache or the OS pipe is empty.
+/// A host-wide stall can delay all tasks; the bound is not a hard wall clock.
 async fn run_silence_watchdog(transport: Weak<SidecarTransport>, timeout: std::time::Duration) {
     let check_interval = (timeout / 4).min(std::time::Duration::from_secs(1));
-    let mut last_tick_at = std::time::Instant::now();
     loop {
         tokio::time::sleep(check_interval).await;
-        let Some(transport) = transport.upgrade() else {
+        let Some(owner) = transport.upgrade() else {
             return;
         };
-        let now = std::time::Instant::now();
-        let counted_tick = now.duration_since(last_tick_at).min(check_interval);
-        last_tick_at = now;
-        let silence = {
-            let mut counted_silence = transport.counted_silence.lock();
-            *counted_silence += counted_tick;
-            *counted_silence
-        };
-        if silence < timeout {
-            continue;
+        if owner.is_disconnected() {
+            return;
         }
+        let token = owner.silence_watchdog.lock().tick(
+            std::time::Instant::now(),
+            check_interval,
+            timeout,
+            Arc::new(()),
+        );
+        drop(owner);
+        if let Some(token) = token {
+            if confirm_silence_expiry(transport.clone(), token, check_interval).await {
+                return;
+            }
+        }
+    }
+}
+
+async fn confirm_silence_expiry(
+    transport: Weak<SidecarTransport>,
+    token: Arc<()>,
+    check_interval: std::time::Duration,
+) -> bool {
+    let Some(owner) = transport.upgrade() else {
+        return true;
+    };
+    let changed = Arc::clone(&owner.silence_changed);
+    drop(owner);
+    let cancelled = changed.notified();
+    tokio::pin!(cancelled);
+    // Register before checking authority so reset cannot be missed between them.
+    cancelled.as_mut().enable();
+    let Some(owner) = transport.upgrade() else {
+        return true;
+    };
+    if owner.is_disconnected() || !owner.silence_watchdog.lock().is_current(&token) {
+        return owner.is_disconnected();
+    }
+    drop(owner);
+    tokio::select! {
+        _ = tokio::time::sleep(check_interval) => {},
+        _ = &mut cancelled => {
+            return transport.upgrade().is_none_or(|owner| owner.is_disconnected());
+        }
+    }
+    tokio::task::yield_now().await;
+    let Some(owner) = transport.upgrade() else {
+        return true;
+    };
+    let (committed, silence) = {
+        let mut state = owner.silence_watchdog.lock();
+        let committed = state.confirm(&token);
+        if committed {
+            owner.disconnected.store(true, Ordering::SeqCst);
+        }
+        (committed, state.counted)
+    };
+    if committed {
         tracing::error!(
             silence_ms = silence.as_millis() as u64,
-            "sidecar unresponsive: no protocol frames or heartbeats; killing sidecar",
+            "sidecar unresponsive: no protocol frames or heartbeats; killing sidecar"
         );
-        transport.disconnect();
-        return;
+        owner.finish_disconnect();
     }
+    committed || owner.is_disconnected()
 }
 
 fn resolve_sidecar_binary_path(binary_path: Option<String>) -> String {
     binary_path
         .or_else(|| std::env::var(SIDECAR_BIN_ENV).ok())
-        .unwrap_or_else(|| "agentos-native-sidecar".to_string())
+        .unwrap_or_else(|| "agentos-sidecar".to_string())
 }
 
 // Child::wait is cancellation-safe, but moving Child out of its owner before
@@ -809,6 +996,40 @@ mod tests {
     use std::time::Duration;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[tokio::test]
+    async fn natural_nonzero_exit_is_reported_after_confirmed_reap() {
+        let transport = test_transport();
+        let mut child = Command::new("sh")
+            .args(["-c", "exit 17"])
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), child.wait())
+            .await
+            .unwrap()
+            .unwrap();
+        transport.child.lock().replace(child);
+        let result = tokio::time::timeout(Duration::from_secs(2), transport.terminate_child())
+            .await
+            .unwrap();
+        assert!(
+            result.is_err(),
+            "confirmed natural exit17 must not become successful disposal"
+        );
+        assert!(result.unwrap_err().to_string().contains("17"));
+        assert!(transport.has_confirmed_child_exit());
+        assert!(transport
+            .terminate_child()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("17"));
+        assert!(
+            transport.child.lock().is_none(),
+            "confirmed-dead child ownership is released even when reporting exit error"
+        );
+    }
 
     #[tokio::test]
     async fn cancelled_reaping_restores_child_ownership_for_confirmed_retry() {
@@ -864,16 +1085,20 @@ mod tests {
             instance_id: next_transport_instance_id(),
             child: parking_lot::Mutex::new(None),
             child_termination: tokio::sync::Mutex::new(()),
+            child_exit: parking_lot::Mutex::new(None),
             pending: SccHashMap::new(),
             pending_request_lock: parking_lot::Mutex::new(()),
             request_counter: AtomicI64::new(1),
             max_frame_bytes: AtomicUsize::new(wire::DEFAULT_MAX_FRAME_BYTES),
-            max_write_files_entries: AtomicUsize::new(1),
+            max_write_files_entries: AtomicUsize::new(0),
             event_tx: Arc::new(parking_lot::Mutex::new(Some(event_tx))),
             callbacks: SccHashMap::new(),
             request_writer_tx,
             control_writer_tx,
-            counted_silence: parking_lot::Mutex::new(std::time::Duration::ZERO),
+            silence_watchdog: parking_lot::Mutex::new(SilenceWatchdog::new(
+                std::time::Instant::now(),
+            )),
+            silence_changed: Arc::new(tokio::sync::Notify::new()),
             disconnected: AtomicBool::new(false),
         }
     }
@@ -896,23 +1121,20 @@ mod tests {
     fn binary_path_uses_agentos_env_fallback() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let previous = std::env::var(SIDECAR_BIN_ENV).ok();
-        std::env::set_var(SIDECAR_BIN_ENV, "/tmp/agentos-native-sidecar");
+        std::env::set_var(SIDECAR_BIN_ENV, "/tmp/agentos-sidecar");
 
-        assert_eq!(
-            resolve_sidecar_binary_path(None),
-            "/tmp/agentos-native-sidecar"
-        );
+        assert_eq!(resolve_sidecar_binary_path(None), "/tmp/agentos-sidecar");
 
         restore_env(SIDECAR_BIN_ENV, previous);
     }
 
     #[test]
-    fn binary_path_defaults_to_agentos_native_sidecar() {
+    fn binary_path_defaults_to_agentos_sidecar() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let previous = std::env::var(SIDECAR_BIN_ENV).ok();
         std::env::remove_var(SIDECAR_BIN_ENV);
 
-        assert_eq!(resolve_sidecar_binary_path(None), "agentos-native-sidecar");
+        assert_eq!(resolve_sidecar_binary_path(None), "agentos-sidecar");
 
         restore_env(SIDECAR_BIN_ENV, previous);
     }
@@ -1091,7 +1313,9 @@ mod tests {
 
         // No inbound activity at all: the watchdog must reject the pending
         // request (dropped sender -> disconnected error at the caller).
-        rx.await
+        tokio::time::timeout(Duration::from_secs(2), rx)
+            .await
+            .expect("bounded watchdog expiry")
             .expect_err("watchdog should drop the pending sender");
         assert_eq!(pending_request_count(&transport), 0);
     }
@@ -1113,47 +1337,13 @@ mod tests {
         // for well past the silence window; the watchdog must not fire.
         for _ in 0..6 {
             tokio::time::sleep(std::time::Duration::from_millis(40)).await;
-            *transport.counted_silence.lock() = std::time::Duration::ZERO;
+            transport.note_inbound();
             assert!(
                 rx.try_recv().is_err(),
                 "pending request must remain registered while frames arrive"
             );
         }
         assert_eq!(pending_request_count(&transport), 1);
-    }
-
-    #[tokio::test]
-    async fn silence_watchdog_ignores_a_stalled_host_but_still_detects_silence() {
-        let transport = Arc::new(test_transport());
-        let (tx, mut rx) = oneshot::channel();
-        transport
-            .register_pending_request(1, tx)
-            .expect("register pending request");
-
-        let timeout = std::time::Duration::from_millis(200);
-        tokio::spawn(run_silence_watchdog(Arc::downgrade(&transport), timeout));
-        tokio::task::yield_now().await;
-
-        // Block this single-threaded runtime past the window. The stall says
-        // nothing about the sidecar, so the watchdog must not fire on wake.
-        std::thread::sleep(timeout * 3);
-        tokio::time::sleep(std::time::Duration::from_millis(60)).await;
-        assert!(
-            matches!(rx.try_recv(), Err(oneshot::error::TryRecvError::Empty)),
-            "a host stall must not count as sidecar silence"
-        );
-
-        // The sidecar stays silent while the host keeps stalling in bursts longer
-        // than the check interval: the watchdog still fires.
-        for _ in 0..100 {
-            std::thread::sleep(std::time::Duration::from_millis(80));
-            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
-            if matches!(rx.try_recv(), Err(oneshot::error::TryRecvError::Closed)) {
-                assert_eq!(pending_request_count(&transport), 0);
-                return;
-            }
-        }
-        panic!("a silent sidecar must be detected while the host stalls in bursts");
     }
 
     #[tokio::test]
@@ -1247,16 +1437,20 @@ mod tests {
             instance_id: next_transport_instance_id(),
             child: parking_lot::Mutex::new(None),
             child_termination: tokio::sync::Mutex::new(()),
+            child_exit: parking_lot::Mutex::new(None),
             pending: SccHashMap::new(),
             pending_request_lock: parking_lot::Mutex::new(()),
             request_counter: AtomicI64::new(1),
             max_frame_bytes: AtomicUsize::new(wire::DEFAULT_MAX_FRAME_BYTES),
-            max_write_files_entries: AtomicUsize::new(1),
+            max_write_files_entries: AtomicUsize::new(0),
             event_tx: Arc::new(parking_lot::Mutex::new(Some(event_tx))),
             callbacks: SccHashMap::new(),
             request_writer_tx,
             control_writer_tx,
-            counted_silence: parking_lot::Mutex::new(std::time::Duration::ZERO),
+            silence_watchdog: parking_lot::Mutex::new(SilenceWatchdog::new(
+                std::time::Instant::now(),
+            )),
+            silence_changed: Arc::new(tokio::sync::Notify::new()),
             disconnected: AtomicBool::new(false),
         };
 
@@ -1437,5 +1631,336 @@ mod tests {
         writer.await.expect("writer task");
 
         assert_eq!(output, [b'c', b'C']);
+    }
+    #[tokio::test]
+    async fn watchdog_host_stall_does_not_expire_before_readers_run() {
+        use std::future::{poll_fn, Future};
+        use std::task::Poll;
+        let transport = Arc::new(test_transport());
+        let (tx, mut rx) = oneshot::channel();
+        transport.register_pending_request(1, tx).unwrap();
+        let watchdog = run_silence_watchdog(Arc::downgrade(&transport), Duration::from_millis(100));
+        tokio::pin!(watchdog);
+        // Arm the original timer, then poll its expired future before any reader.
+        poll_fn(|cx| {
+            assert!(watchdog.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        std::thread::sleep(Duration::from_millis(150));
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        poll_fn(|cx| {
+            let _ = watchdog.as_mut().poll(cx);
+            Poll::Ready(())
+        })
+        .await;
+        assert!(
+            !transport.is_disconnected(),
+            "host stall is not sidecar silence"
+        );
+        assert!(matches!(
+            rx.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        ));
+        transport.disconnect();
+    }
+
+    #[test]
+    fn watchdog_reset_anchor_and_stale_confirmation_are_fenced() {
+        let base = std::time::Instant::now();
+        let interval = Duration::from_millis(25);
+        let timeout = Duration::from_millis(100);
+        let mut state = SilenceWatchdog::new(base);
+        for ms in [25, 50, 75] {
+            assert!(state
+                .tick(
+                    base + Duration::from_millis(ms),
+                    interval,
+                    timeout,
+                    Arc::new(())
+                )
+                .is_none());
+        }
+        state.inbound(base + Duration::from_millis(99));
+        assert!(state
+            .tick(
+                base + Duration::from_millis(100),
+                interval,
+                timeout,
+                Arc::new(())
+            )
+            .is_none());
+        assert_eq!(state.counted, Duration::from_millis(1));
+        for ms in [125, 150, 175] {
+            assert!(state
+                .tick(
+                    base + Duration::from_millis(ms),
+                    interval,
+                    timeout,
+                    Arc::new(())
+                )
+                .is_none());
+        }
+        let old = state
+            .tick(
+                base + Duration::from_millis(200),
+                interval,
+                timeout,
+                Arc::new(()),
+            )
+            .unwrap();
+        assert!(state
+            .tick(
+                base + Duration::from_millis(225),
+                interval,
+                timeout,
+                Arc::new(())
+            )
+            .is_none());
+        assert!(state.inbound(base + Duration::from_millis(226)));
+        assert!(!state.confirm(&old));
+        for ms in [251, 276, 301] {
+            assert!(state
+                .tick(
+                    base + Duration::from_millis(ms),
+                    interval,
+                    timeout,
+                    Arc::new(())
+                )
+                .is_none());
+        }
+        let current = state
+            .tick(
+                base + Duration::from_millis(326),
+                interval,
+                timeout,
+                Arc::new(()),
+            )
+            .unwrap();
+        assert!(!state.confirm(&old));
+        state.close();
+        assert!(!state.confirm(&current));
+        assert!(!state.inbound(base + Duration::from_millis(327)));
+        assert!(matches!(state.phase, SilenceWatchdogPhase::Closed));
+    }
+
+    fn arm_expiry(transport: &SidecarTransport) -> Arc<()> {
+        let now = std::time::Instant::now();
+        let mut state = transport.silence_watchdog.lock();
+        *state = SilenceWatchdog::new(now - Duration::from_millis(100));
+        for ms in [75, 50, 25] {
+            assert!(state
+                .tick(
+                    now - Duration::from_millis(ms),
+                    Duration::from_millis(25),
+                    Duration::from_millis(100),
+                    Arc::new(())
+                )
+                .is_none());
+        }
+        state
+            .tick(
+                now,
+                Duration::from_millis(25),
+                Duration::from_millis(100),
+                Arc::new(()),
+            )
+            .unwrap()
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn watchdog_ready_pipe_heartbeat_cancels_near_threshold_expiry() {
+        // Both real lanes use the existing reader, including control heartbeats.
+        for lane in [InboundLane::Control, InboundLane::Event] {
+            let transport = Arc::new(test_transport());
+            let (tx, mut rx) = oneshot::channel();
+            transport.register_pending_request(1, tx).unwrap();
+            let (mut writer, reader) = tokio::net::unix::pipe::pipe().unwrap();
+            let frame = wire::ProtocolFrame::EventFrame(wire::EventFrame {
+                schema: wire::protocol_schema(),
+                ownership: wire::OwnershipScope::ConnectionOwnership(wire::ConnectionOwnership {
+                    connection_id: "synthetic-watchdog".into(),
+                }),
+                payload: wire::EventPayload::StructuredEvent(wire::StructuredEvent {
+                    name: if matches!(lane, InboundLane::Control) {
+                        "heartbeat"
+                    } else {
+                        "watchdog_probe"
+                    }
+                    .into(),
+                    detail: std::collections::HashMap::new(),
+                }),
+            });
+            let bytes = WireFrameCodec::new(transport.max_frame_bytes.load(Ordering::Relaxed))
+                .encode(&frame)
+                .unwrap();
+            // Bytes reach the OS before the reader is ever polled; watchdog has
+            // already counted its window. No cached-readiness ack is assumed.
+            writer.write_all(&bytes).await.unwrap();
+            let token = arm_expiry(&transport);
+            let task = tokio::spawn(run_reader(Arc::downgrade(&transport), reader, lane));
+            assert!(!tokio::time::timeout(
+                Duration::from_secs(1),
+                confirm_silence_expiry(
+                    Arc::downgrade(&transport),
+                    token,
+                    Duration::from_millis(25)
+                )
+            )
+            .await
+            .unwrap());
+            assert!(!transport.is_disconnected());
+            assert!(matches!(
+                rx.try_recv(),
+                Err(oneshot::error::TryRecvError::Empty)
+            ));
+            // Normal EOF must also join the exact reader, not detach it.
+            drop(writer);
+            tokio::time::timeout(Duration::from_secs(1), task)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(transport.is_disconnected());
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn watchdog_partial_frame_survives_confirmation_and_eof_cancels() {
+        for split in [2, 6] {
+            let transport = Arc::new(test_transport());
+            let (mut writer, reader) = tokio::net::unix::pipe::pipe().unwrap();
+            let frame = wire::ProtocolFrame::EventFrame(wire::EventFrame {
+                schema: wire::protocol_schema(),
+                ownership: wire::OwnershipScope::ConnectionOwnership(wire::ConnectionOwnership {
+                    connection_id: "synthetic-watchdog".into(),
+                }),
+                payload: wire::EventPayload::StructuredEvent(wire::StructuredEvent {
+                    name: "heartbeat".into(),
+                    detail: std::collections::HashMap::new(),
+                }),
+            });
+            let bytes = WireFrameCodec::new(transport.max_frame_bytes.load(Ordering::Relaxed))
+                .encode(&frame)
+                .unwrap();
+            writer.write_all(&bytes[..split]).await.unwrap();
+            let task = tokio::spawn(run_reader(
+                Arc::downgrade(&transport),
+                reader,
+                InboundLane::Control,
+            ));
+            let token = arm_expiry(&transport);
+            let remainder = async {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                writer.write_all(&bytes[split..]).await.unwrap();
+            };
+            let (closed, ()) = tokio::join!(
+                confirm_silence_expiry(
+                    Arc::downgrade(&transport),
+                    token,
+                    Duration::from_millis(25)
+                ),
+                remainder
+            );
+            assert!(
+                !closed,
+                "full heartbeat must survive partial header/body reads"
+            );
+            assert!(!transport.is_disconnected());
+            let token = arm_expiry(&transport);
+            drop(writer);
+            assert!(tokio::time::timeout(
+                Duration::from_secs(1),
+                confirm_silence_expiry(
+                    Arc::downgrade(&transport),
+                    token,
+                    Duration::from_millis(25)
+                )
+            )
+            .await
+            .unwrap());
+            tokio::time::timeout(Duration::from_secs(1), task)
+                .await
+                .unwrap()
+                .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn watchdog_genuine_silence_expires_during_repeated_host_stalls() {
+        let transport = Arc::new(test_transport());
+        let (tx, mut rx) = oneshot::channel();
+        transport.register_pending_request(1, tx).unwrap();
+        let task = tokio::spawn(run_silence_watchdog(
+            Arc::downgrade(&transport),
+            Duration::from_millis(200),
+        ));
+        tokio::task::yield_now().await;
+        // Fixed finite sleeps, not saturation. Confirmation is armed once and
+        // cannot keep granting new exemptions while this sidecar stays silent.
+        for _ in 0..12 {
+            std::thread::sleep(Duration::from_millis(80));
+            tokio::time::sleep(Duration::from_millis(2)).await;
+            if transport.is_disconnected() {
+                break;
+            }
+        }
+        let outcome = tokio::time::timeout(Duration::from_secs(1), task).await;
+        assert!(transport.is_disconnected());
+        outcome.unwrap().unwrap();
+        assert!(matches!(
+            rx.try_recv(),
+            Err(oneshot::error::TryRecvError::Closed)
+        ));
+        assert_eq!(pending_request_count(&transport), 0);
+    }
+
+    #[tokio::test]
+    async fn watchdog_read_error_cancels_pending_confirmation() {
+        struct BrokenReader;
+        impl AsyncRead for BrokenReader {
+            fn poll_read(
+                self: std::pin::Pin<&mut Self>,
+                _: &mut std::task::Context<'_>,
+                _: &mut tokio::io::ReadBuf<'_>,
+            ) -> std::task::Poll<std::io::Result<()>> {
+                std::task::Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionReset,
+                    "synthetic read error",
+                )))
+            }
+        }
+        let transport = Arc::new(test_transport());
+        let token = arm_expiry(&transport);
+        let reader = tokio::spawn(run_reader(
+            Arc::downgrade(&transport),
+            BrokenReader,
+            InboundLane::Control,
+        ));
+        assert!(tokio::time::timeout(
+            Duration::from_secs(1),
+            confirm_silence_expiry(Arc::downgrade(&transport), token, Duration::from_millis(25))
+        )
+        .await
+        .unwrap());
+        tokio::time::timeout(Duration::from_secs(1), reader)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(transport.is_disconnected());
+    }
+    #[test]
+    fn write_files_negotiation_preserves_advertised_caps_and_rejects_zero() {
+        let transport = test_transport();
+        assert_eq!(transport.max_write_files_entries(), 0);
+        transport.set_write_files_limits(4096, 3).unwrap();
+        assert_eq!(transport.max_frame_bytes(), 4096);
+        assert_eq!(transport.max_write_files_entries(), 3);
+        for (frame, entries) in [(0, 3), (4096, 0)] {
+            assert!(transport.set_write_files_limits(frame, entries).is_err());
+            assert_eq!(transport.max_frame_bytes(), 4096);
+            assert_eq!(transport.max_write_files_entries(), 3);
+        }
     }
 }

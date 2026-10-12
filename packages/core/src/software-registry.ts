@@ -372,7 +372,7 @@ export async function resolveRegistrySoftware(
 			`agentOS registry release "${version}" has no package "${packageName}" (${manifestUrl})` +
 				(suggestions.length > 0
 					? `; did you mean ${suggestions.map((s) => `"${s}"`).join(", ")}?`
-					: "; browse https://rivet.dev/agentos/docs/registry for available packages"),
+					: "; browse https://agentos-sdk.dev/agentos/docs/software for available packages"),
 		);
 	}
 	const url = new URL(artifact.path, manifestUrl);

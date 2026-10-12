@@ -13,7 +13,7 @@ Protocol: argv[1] is a JSON spec:
   }
 Output (stdout): {"snaps": [ {"label": "open", "raw_b64": "..."}, ... ]}
 """
-import os, pty, select, time, fcntl, termios, struct, sys, json, base64
+import os, pty, select, time, fcntl, termios, struct, sys, json, base64, signal
 
 
 def drive(spec):
@@ -25,16 +25,16 @@ def drive(spec):
     # Start from a clean slate so native vim shows "[New]" exactly like the fresh
     # in-VM file — otherwise a leftover host file from a prior run pre-fills the
     # buffer and doubles the typed content.
-    try:
-        if os.path.exists(path):
-            os.unlink(path)
-    except OSError:
-        pass
+    if os.path.exists(path):
+        os.unlink(path)
     pid, fd = pty.fork()
     if pid == 0:
         os.environ["TERM"] = "xterm"
         os.environ["LANG"] = "C.UTF-8"
-        os.execvp(vim, [vim, "-N", "-u", "NONE", "-i", "NONE", "-n"] + extra + [path])
+        # Keep the random temporary directory out of Vim's status line, where
+        # truncation would obscure the basename used by the comparison.
+        os.chdir(os.path.dirname(os.path.abspath(path)))
+        os.execvp(vim, [vim, "-N", "-u", "NONE", "-i", "NONE", "-n"] + extra + [os.path.basename(path)])
         os._exit(1)
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
     out = bytearray()
@@ -52,18 +52,23 @@ def drive(spec):
                     return
                 out.extend(d)
 
-    snaps = []
-    pump(spec.get("openWait", 1.2))
-    snaps.append({"label": "open", "raw_b64": base64.b64encode(bytes(out)).decode()})
-    for step in spec.get("steps", []):
-        os.write(fd, base64.b64decode(step["keys_b64"]))
-        pump(step.get("wait", 0.4))
-        snaps.append({"label": step["label"], "raw_b64": base64.b64encode(bytes(out)).decode()})
     try:
+        snaps = []
+        pump(spec.get("openWait", 1.2))
+        snaps.append({"label": "open", "raw_b64": base64.b64encode(bytes(out)).decode()})
+        for step in spec.get("steps", []):
+            os.write(fd, base64.b64decode(step["keys_b64"]))
+            pump(step.get("wait", 0.4))
+            snaps.append({"label": step["label"], "raw_b64": base64.b64encode(bytes(out)).decode()})
+        return snaps
+    finally:
         os.close(fd)
-    except OSError:
-        pass
-    return snaps
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            # Vim may have exited before the reference driver closes its PTY.
+            pass
+        os.waitpid(pid, 0)
 
 
 def main():

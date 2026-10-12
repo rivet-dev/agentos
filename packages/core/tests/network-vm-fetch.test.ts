@@ -28,7 +28,7 @@ test("httpRequest reaches a guest http.createServer listener", async () => {
 			'  res.end(JSON.stringify({ status: "ok", method: req.method, url: req.url }));',
 			"});",
 			'server.listen(0, "0.0.0.0", () => {',
-			'  console.log(`LISTENING:${server.address().port}`);',
+			"  console.log(`LISTENING:${server.address().port}`);",
 			"});",
 		].join("\n"),
 	);

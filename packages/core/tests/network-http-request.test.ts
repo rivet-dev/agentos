@@ -197,6 +197,48 @@ describe("guest http.request transport", () => {
 		});
 	});
 
+	test("buffers a request body until async server middleware attaches listeners", async () => {
+		vm = await AgentOs.create({
+			permissions: {
+				fs: "allow",
+				network: "allow",
+				childProcess: "allow",
+			},
+		});
+
+		const script = [
+			'const http = require("node:http");',
+			"void (async () => {",
+			"const server = http.createServer((request, response) => {",
+			"  setTimeout(() => {",
+			'    let body = "";',
+			'    request.setEncoding("utf8");',
+			'    request.on("data", (chunk) => { body += chunk; });',
+			'    request.on("end", () => response.end(body));',
+			"  }, 25);",
+			"});",
+			'await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });',
+			"const address = server.address();",
+			'const payload = JSON.stringify({ delayed: true, value: "retained" });',
+			"const response = await fetch(`http://127.0.0.1:${address.port}/delayed-body`, {",
+			'  method: "POST",',
+			'  headers: { "content-type": "application/json" },',
+			"  body: payload,",
+			"});",
+			"console.log(await response.text());",
+			"await new Promise((resolve) => server.close(resolve));",
+			"})().catch((error) => { console.error(error?.stack ?? String(error)); process.exit(1); });",
+		].join("\n");
+
+		const result = await runSpawnedProcess(vm, "node", ["-e", script]);
+
+		expect(result, result.stderr).toMatchObject({
+			exitCode: 0,
+			stdout: '{"delayed":true,"value":"retained"}\n',
+			stderr: "",
+		});
+	});
+
 	test("keeps a same-process event stream open while fetching a control response", async () => {
 		vm = await AgentOs.create({
 			permissions: {

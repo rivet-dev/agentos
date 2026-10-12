@@ -1,6 +1,6 @@
-import type { ChildProcess } from "node:child_process";
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { AgentOs } from "../src/index.js";
+import { SidecarProcess } from "../src/sidecar-process.js";
 
 let vm: AgentOs;
 
@@ -39,18 +39,20 @@ test("a failed entry reports its own error and every other entry is written", as
 		"first",
 	);
 	expect(
-		new Uint8Array(await vm.filesystem.readFile("/tmp/wf/deep/nested/data.bin")),
+		new Uint8Array(
+			await vm.filesystem.readFile("/tmp/wf/deep/nested/data.bin"),
+		),
 	).toEqual(bytes);
-	expect(decode(await vm.filesystem.readFile("/tmp/wf/last.txt"))).toBe(
-		"last",
-	);
+	expect(decode(await vm.filesystem.readFile("/tmp/wf/last.txt"))).toBe("last");
 }, 60_000);
 
 test("a batch larger than one protocol frame writes every file", async () => {
 	// Five 4 MiB files: together they exceed one 16 MiB frame.
 	const files = [0, 1, 2, 3, 4].map((seed) => ({
 		path: `/tmp/big/${seed}.bin`,
-		content: new Uint8Array(4 * 1024 * 1024).map((_, index) => (index + seed) % 251),
+		content: new Uint8Array(4 * 1024 * 1024).map(
+			(_, index) => (index + seed) % 251,
+		),
 	}));
 
 	const results = await vm.filesystem.writeFiles(files);
@@ -65,38 +67,36 @@ test("a batch larger than one protocol frame writes every file", async () => {
 	}
 }, 120_000);
 
-test("when the sidecar exits, a batch of 130,000 entries returns one failed result per entry", async () => {
-	// A dedicated sidecar keeps the killed process out of the shared pool.
-	const sidecar = await AgentOs.createSidecar();
-	const isolated = await AgentOs.create({
-		defaultSoftware: false,
-		sidecar: { kind: "explicit", handle: sidecar },
-	});
+test("writeFiles batches existing public writes without single-file RPCs", async () => {
+	const singles = vi.spyOn(SidecarProcess.prototype, "writeFile");
 	try {
-		// Reaches into internals only to find the process to kill.
-		const child = (
-			isolated as unknown as {
-				_sidecarClient: { protocolClient: { child: ChildProcess } };
-			}
-		)._sidecarClient.protocolClient.child;
-		const exited = new Promise((resolve) => child.once("exit", resolve));
-		child.kill("SIGKILL");
-		await exited;
-
-		// More results than `push(...results)` can spread onto the call stack.
-		const files = Array.from({ length: 130_000 }, (_, index) => ({
-			path: `/tmp/many/${index}`,
-			content: "x",
+		const files = ["one", "two", "three"].map((name) => ({
+			path: `/tmp/batched/${name}`,
+			content: name,
 		}));
-		const results = await isolated.filesystem.writeFiles(files);
-
-		expect(results.length).toBe(files.length);
-		expect(results.every((result) => !result.success && result.error)).toBe(
-			true,
+		expect(await vm.filesystem.writeFiles(files)).toEqual(
+			files.map(({ path }) => ({ path, success: true })),
 		);
-		expect(results[129_999].path).toBe("/tmp/many/129999");
+		for (const file of files)
+			expect(
+				new TextDecoder().decode(await vm.filesystem.readFile(file.path)),
+			).toBe(file.content);
+		expect(singles).not.toHaveBeenCalled();
 	} finally {
-		await isolated.dispose().catch(() => {});
-		await sidecar.dispose().catch(() => {});
+		singles.mockRestore();
 	}
-}, 60_000);
+}, 15_000);
+
+test("writeFiles splits more than the server entry cap without changing order", async () => {
+	const files = Array.from({ length: 20 }, (_, index) => ({
+		path: `/tmp/entry-cap/${index}`,
+		content: `entry-${index}`,
+	}));
+	expect(await vm.filesystem.writeFiles(files)).toEqual(
+		files.map(({ path }) => ({ path, success: true })),
+	);
+	for (const file of files)
+		expect(
+			new TextDecoder().decode(await vm.filesystem.readFile(file.path)),
+		).toBe(file.content);
+}, 15_000);

@@ -1,0 +1,104 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AgentOS Tests <tests@agentos.invalid>
+Date: Thu, 9 Jul 2026 15:58:32 -0700
+Subject: [PATCH 2/4] fstests: stub host-owned agentos mount scaffolding
+
+---
+ common/rc | 24 +++++++++++++++++++++++-
+ 1 file changed, 23 insertions(+), 1 deletion(-)
+
+diff --git a/common/rc b/common/rc
+index 79189e7e..b35c47f1 100644
+--- a/common/rc
++++ b/common/rc
+@@ -443,6 +443,10 @@ _supports_filetype()
+ _try_scratch_mount()
+ {
+ 	local mount_ret
++	if [ "$FSTYP" = "agentos" ]; then
++		mkdir -p "$SCRATCH_MNT"
++		return 0
++	fi
+ 
+ 	if [ "$FSTYP" == "overlay" ]; then
+ 		_overlay_scratch_mount $*
+@@ -519,6 +523,8 @@ _unmount()
+ 
+ _scratch_unmount()
+ {
++	[ "$FSTYP" = "agentos" ] && return 0
++
+ 	case "$FSTYP" in
+ 	overlay)
+ 		_overlay_scratch_unmount
+@@ -697,7 +703,11 @@ _idmapped_mount()
+ 
+ _test_mount()
+ {
+-    local mount_ret
++	local mount_ret
++	if [ "$FSTYP" = "agentos" ]; then
++		mkdir -p "$TEST_DIR"
++		return 0
++	fi
+ 
+     if [ "$FSTYP" == "ceph-fuse" ]; then
+         $CEPH_FUSE_BIN_PATH $TEST_FS_MOUNT_OPTS $TEST_DIR 2> /dev/null
+@@ -718,6 +728,8 @@ _test_mount()
+ 
+ _test_unmount()
+ {
++	[ "$FSTYP" = "agentos" ] && return 0
++
+ 	if [ "$FSTYP" == "overlay" ]; then
+ 		_overlay_test_unmount
+ 	else
+@@ -853,6 +865,8 @@ _metadump_dev() {
+ 
+ _test_mkfs()
+ {
++	[ "$FSTYP" = "agentos" ] && return 0
++
+     case $FSTYP in
+     nfs*)
+ 	# do nothing for nfs
+@@ -911,6 +925,8 @@ _test_mkfs()
+ 
+ _try_mkfs_dev()
+ {
++	[ "$FSTYP" = "agentos" ] && return 0
++
+     case $FSTYP in
+     nfs*)
+ 	# do nothing for nfs
+@@ -993,6 +1009,8 @@ _scratch_cleanup_files()
+ 
+ _scratch_mkfs()
+ {
++	[ "$FSTYP" = "agentos" ] && return 0
++
+ 	local mkfs_cmd=""
+ 	local mkfs_filter=""
+ 	local mkfs_status
+@@ -1266,6 +1284,12 @@ _small_fs_size_mb()
+ # _try_scratch_mkfs_sized <size in bytes> [optional blocksize] [other options]
+ _try_scratch_mkfs_sized()
+ {
++	if [ "$FSTYP" = "agentos" ]; then
++		local fssize=$1
++		mount -o "remount,size=$fssize" "$SCRATCH_MNT"
++		return $?
++	fi
++
+ 	local fssize=$1
+ 	shift
+ 	local blocksize=$1
+@@ -3606,6 +3626,8 @@ _check_generic_filesystem()
+ {
+     local device=$1
++    [ "$FSTYP" = "agentos" ] && return 0
++
+ 
+     # If type is set, we're mounted
+     local type=`_fs_type $device`
+     local ok=1

@@ -1,4 +1,4 @@
-import { AgentOs } from "@rivet-dev/agentos-core";
+import { AgentOs } from "@rivet-dev/agentos";
 
 // The runtime exposes its underlying VM for advanced shell and WASM workflows.
 const runtime = await AgentOs.create({

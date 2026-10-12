@@ -34,6 +34,7 @@
 		"fold",
 		"findmnt",
 		"getent",
+		"getconf",
 		"head",
 		"hostname",
 		"id",
@@ -81,6 +82,7 @@
 		"split",
 		"stat",
 		"stdbuf",
+		"stty",
 		"strings",
 		"sum",
 		"su",
@@ -94,6 +96,7 @@
 		"true",
 		"truncate",
 		"tsort",
+		"tty",
 		"uname",
 		"unexpand",
 		"uniq",
@@ -121,9 +124,7 @@
 		"who",
 		"users",
 		"uptime",
-		"stty",
-		"sync",
-		"tty"
+		"sync"
 	],
 	"registry": {
 		"title": "Coreutils",

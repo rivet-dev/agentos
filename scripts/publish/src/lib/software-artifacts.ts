@@ -1,3 +1,5 @@
+import { decodeAospkgManifest } from "../../../../packages/agentos-toolchain/src/aospkg.js";
+import { decodeMountIndex, TarEntryKind } from "../../../../packages/agentos-toolchain/src/generated-package-format.js";
 import { createHash } from "node:crypto";
 import {
 	cpSync,
@@ -9,7 +11,7 @@ import {
 	statSync,
 	writeFileSync,
 } from "node:fs";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
 
 export interface SoftwareArtifact {
 	name: string;
@@ -64,15 +66,72 @@ function readPackageIdentity(packageJsonPath: string): string {
 	return name;
 }
 
-function isRuntimePackage(manifestPath: string): boolean {
-	const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
-		commands?: unknown;
-		name?: unknown;
-	};
-	return (
-		(Array.isArray(manifest.commands) && manifest.commands.length > 0) ||
-		(typeof manifest.name === "string" && manifest.name.length > 0)
-	);
+interface SoftwarePackageManifest {
+	commands?: string[];
+	aliases?: Record<string, string>;
+	stubs?: string[];
+	name?: string;
+}
+
+function declaredCommands(manifest: SoftwarePackageManifest): string[] {
+	return [
+		...(manifest.commands ?? []),
+		...Object.keys(manifest.aliases ?? {}),
+		...(manifest.stubs ?? []),
+	];
+}
+
+function verifyStagedCommands(packageDir: string, commands: string[]): void {
+	const missing = commands.filter((command) => {
+		if (!command || command === "." || command === ".." || /[/\\\0]/.test(command)) {
+			throw new Error(`invalid declared software command in ${packageDir}: ${command}`);
+		}
+		const path = join(packageDir, "bin", command);
+		return !existsSync(path) || !statSync(path).isFile() || statSync(path).size === 0;
+	});
+	if (missing.length > 0) {
+		throw new Error(
+			`missing staged commands in ${packageDir}: ${missing.join(", ")}; run just tools-rebuild before publishing`,
+		);
+	}
+}
+
+/** Validate the package consumers receive, independently of loose staging files. */
+function verifyPackedCommands(source: string, bytes: Buffer, commands: string[]): void {
+	try {
+		const manifest = decodeAospkgManifest(bytes);
+		const indexStart = 16 + bytes.readUInt32LE(8);
+		const indexLength = bytes.readUInt32LE(12);
+		const payloadStart = indexStart + indexLength;
+		if (indexLength < 2 || payloadStart >= bytes.length || bytes.readUInt16LE(indexStart) !== bytes.readUInt16LE(16)) {
+			throw new Error("invalid .aospkg mount index or payload range");
+		}
+		const index = decodeMountIndex(bytes.subarray(indexStart + 2, payloadStart));
+		const entries = new Map(index.tarEntries.map((entry) => [entry.path, entry]));
+		const targets = new Map(manifest.commands.map((command) => [command.command, command.entry]));
+		const missing = commands.filter((command) => !targets.has(command));
+		if (missing.length > 0) throw new Error(`missing packed commands: ${missing.join(", ")}`);
+		for (const [command, target] of targets) {
+			let path = posix.resolve("/", target);
+			const visited = new Set<string>();
+			while (true) {
+				if (visited.has(path)) throw new Error(`packed command ${command} has a symlink cycle`);
+				visited.add(path);
+				const entry = entries.get(path);
+				if (!entry) throw new Error(`packed command ${command} is missing payload ${path}`);
+				if (entry.kind === TarEntryKind.Symlink && entry.linkTarget !== null) {
+					path = posix.resolve(posix.dirname(path), entry.linkTarget);
+					continue;
+				}
+				if (entry.kind !== TarEntryKind.File || entry.size <= 0n || entry.offset + entry.size > BigInt(bytes.length - payloadStart)) {
+					throw new Error(`packed command ${command} has an empty or invalid payload ${path}`);
+				}
+				break;
+			}
+		}
+	} catch (error) {
+		throw new Error(`invalid software artifact ${source}: ${error instanceof Error ? error.message : String(error)}; rebuild the package before publishing`, { cause: error });
+	}
 }
 
 /**
@@ -99,7 +158,10 @@ export function stageSoftwareArtifacts(
 		if (!entry.isDirectory()) continue;
 		const packageDir = join(softwareRoot, entry.name);
 		const packageManifest = join(packageDir, "agentos-package.json");
-		if (!existsSync(packageManifest) || !isRuntimePackage(packageManifest)) continue;
+		if (!existsSync(packageManifest)) continue;
+		const manifest = JSON.parse(readFileSync(packageManifest, "utf8")) as SoftwarePackageManifest;
+		const commands = declaredCommands(manifest);
+		if (commands.length === 0 && !manifest.name) continue;
 		const name = readPackageIdentity(join(packageDir, "package.json"));
 		if (seen.has(name)) throw new Error(`duplicate registry software name: ${name}`);
 		seen.add(name);
@@ -110,8 +172,10 @@ export function stageSoftwareArtifacts(
 				`missing ${relative(repoRoot, source)}; build the complete software catalog before staging`,
 			);
 		}
+		verifyStagedCommands(packageDir, commands);
 		const bytes = readFileSync(source);
 		if (bytes.length === 0) throw new Error(`software artifact is empty: ${source}`);
+		verifyPackedCommands(source, bytes, commands);
 		const digestHex = createHash("sha256").update(bytes).digest("hex");
 		const artifactPath = `packages/${name}/${digestHex}.aospkg`;
 		const destination = join(outputDir, artifactPath);

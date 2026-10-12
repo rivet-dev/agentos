@@ -17,7 +17,7 @@
  *   npx tsx --expose-gc benchmarks/memory.bench.ts
  */
 
-import type { AgentOs } from "@rivet-dev/agentos-core";
+import type { AgentOs } from "@rivet-dev/agentos";
 import { readFileSync, readdirSync } from "node:fs";
 import {
 	WORKLOADS,
@@ -144,7 +144,7 @@ async function measure(
 		vms.push(vm);
 
 		await sleep(workload.settleMs);
-		workload.verify(vm);
+		await workload.verify(vm);
 		const cur = await sampleMemory();
 
 		const rssDelta = cur.rss - prev.rss;
