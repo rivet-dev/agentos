@@ -16977,6 +16977,9 @@ fs.symlinkSync("file.txt", `${dir}/link-file`);
                 vm.kernel
                     .write_file("/tmp/readdir-raw-dirents/kernel.txt", b"kernel\n".to_vec())
                     .expect("create kernel merge child");
+                vm.kernel
+                    .symlink("kernel.txt", "/tmp/readdir-raw-dirents/kernel-link")
+                    .expect("create kernel symlink");
             }
 
             let (stdout, stderr, exit_code) = run_guest_node_eval(
@@ -16992,7 +16995,9 @@ const dir = "/tmp/readdir-raw-dirents";
 const typed = fs.readdirSync(dir, { withFileTypes: true })
   .map((entry) => ({
     name: entry.name,
+    isFile: entry.isFile(),
     isDirectory: entry.isDirectory(),
+    isSymbolicLink: entry.isSymbolicLink(),
     parentPath: entry.parentPath,
     path: entry.path,
   }))
@@ -17010,6 +17015,7 @@ process.stdout.write(`${JSON.stringify({ plain, typed, empty })}\n`);
                     "dir",
                     "empty",
                     "file.txt",
+                    "kernel-link",
                     "kernel.txt",
                     "link-dir",
                     "link-file"
@@ -17028,7 +17034,14 @@ process.stdout.write(`${JSON.stringify({ plain, typed, empty })}\n`);
             assert_eq!(by_name("empty")["isDirectory"], json!(true));
             assert_eq!(by_name("file.txt")["isDirectory"], json!(false));
             assert_eq!(by_name("kernel.txt")["isDirectory"], json!(false));
-            assert_eq!(by_name("link-dir")["isDirectory"], json!(true));
+            assert_eq!(by_name("kernel-link")["isSymbolicLink"], json!(true));
+            assert_eq!(by_name("kernel-link")["isDirectory"], json!(false));
+            assert_eq!(by_name("kernel-link")["isFile"], json!(false));
+            assert_eq!(by_name("link-dir")["isSymbolicLink"], json!(true));
+            assert_eq!(by_name("link-dir")["isDirectory"], json!(false));
+            assert_eq!(by_name("link-dir")["isFile"], json!(false));
+            assert_eq!(by_name("link-file")["isSymbolicLink"], json!(true));
+            assert_eq!(by_name("link-file")["isFile"], json!(false));
             assert_eq!(by_name("link-file")["isDirectory"], json!(false));
             for entry in typed {
                 assert_eq!(
@@ -17041,6 +17054,44 @@ process.stdout.write(`${JSON.stringify({ plain, typed, empty })}\n`);
                     json!("/tmp/readdir-raw-dirents"),
                     "stdout: {stdout}"
                 );
+            }
+
+            let (stdout, stderr, exit_code) = run_guest_node_eval(
+                &mut sidecar,
+                &vm_id,
+                &connection_id,
+                &session_id,
+                &mut next_request_id,
+                "proc-js-read-readdir-async",
+                r#"
+const fs = require("node:fs");
+fs.promises.readdir("/tmp/readdir-raw-dirents", { withFileTypes: true })
+  .then((entries) => {
+    const typed = entries.map((entry) => ({
+      name: entry.name,
+      isFile: entry.isFile(),
+      isDirectory: entry.isDirectory(),
+      isSymbolicLink: entry.isSymbolicLink(),
+    }));
+    process.stdout.write(`${JSON.stringify({ typed })}\n`);
+  })
+  .catch((error) => {
+    process.stderr.write(`${error}\n`);
+    process.exitCode = 1;
+  });
+"#,
+            );
+            assert_eq!(exit_code, Some(0), "stdout: {stdout}\nstderr: {stderr}");
+            let payload = stdout_json(&stdout);
+            let typed = payload["typed"].as_array().expect("async typed entries");
+            for name in ["link-dir", "link-file", "kernel-link"] {
+                let entry = typed
+                    .iter()
+                    .find(|entry| entry["name"] == json!(name))
+                    .unwrap_or_else(|| panic!("missing async dirent {name}: {typed:?}"));
+                assert_eq!(entry["isSymbolicLink"], json!(true));
+                assert_eq!(entry["isDirectory"], json!(false));
+                assert_eq!(entry["isFile"], json!(false));
             }
         }
 

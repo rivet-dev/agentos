@@ -85,20 +85,22 @@ var Dirent = class {
   path;
   // Deprecated alias for parentPath
   _isDir;
-  constructor(name, isDir, parentPath = "") {
+  _isSymlink;
+  constructor(name, isDir, parentPath = "", isSymlink = false) {
     this.name = name;
     this._isDir = isDir;
+    this._isSymlink = isSymlink;
     this.parentPath = parentPath;
     this.path = parentPath;
   }
   isFile() {
-    return !this._isDir;
+    return !this._isDir && !this._isSymlink;
   }
   isDirectory() {
-    return this._isDir;
+    return this._isDir && !this._isSymlink;
   }
   isSymbolicLink() {
-    return false;
+    return this._isSymlink;
   }
   isBlockDevice() {
     return false;
@@ -2368,10 +2370,10 @@ function normalizeReaddirEntries(entries, dirPath, withFileTypes) {
   }
   return entries.map((entry) => {
     if (typeof entry === "string") {
-      const stat = fs.statSync(joinDirEntryPath(dirPath, entry));
-      return new Dirent(entry, stat.isDirectory(), dirPath);
+      const stat = fs.lstatSync(joinDirEntryPath(dirPath, entry));
+      return new Dirent(entry, stat.isDirectory(), dirPath, stat.isSymbolicLink());
     }
-    return new Dirent(entry.name, entry.isDirectory, dirPath);
+    return new Dirent(entry.name, entry.isDirectory, dirPath, entry.isSymbolicLink === true);
   });
 }
 function decodeRawReaddirEntries(entries, dirPath, withFileTypes) {
@@ -2396,7 +2398,7 @@ function decodeRawReaddirEntries(entries, dirPath, withFileTypes) {
       nameLength
     ).toString("utf8");
     offset += nameLength;
-    decoded.push(withFileTypes ? new Dirent(name, kind === 1, dirPath) : name);
+    decoded.push(withFileTypes ? new Dirent(name, kind === 1, dirPath, kind === 2) : name);
   }
   return decoded;
 }
