@@ -46,8 +46,8 @@ use agentos_execution::{
 };
 use agentos_kernel::kernel::is_internal_unnamed_file_name;
 use agentos_kernel::vfs::{
-    VirtualFileSystem, VirtualStat, VirtualTimeSpec, VirtualUtimeSpec, RENAME_EXCHANGE,
-    RENAME_NOREPLACE,
+    VirtualDirEntry, VirtualFileSystem, VirtualStat, VirtualTimeSpec, VirtualUtimeSpec,
+    RENAME_EXCHANGE, RENAME_NOREPLACE,
 };
 use agentos_native_sidecar_core::{
     decode_guest_filesystem_content, handle_guest_filesystem_call as core_guest_filesystem_call,
@@ -5036,37 +5036,40 @@ fn remove_dest_at(dst_dir: BorrowedFd<'_>, name: &std::ffi::OsStr) -> std::io::R
     }
 }
 
-fn mapped_readdir_entry_is_directory(
-    mapped_host: &MappedRuntimeHostPath,
-    directory: &MappedRuntimeOpenedPath,
-    guest_dir_path: &str,
-    name: &std::ffi::OsStr,
-    kind: crate::plugins::host_dir::confine::EntryKind,
-) -> Option<bool> {
-    match kind {
-        crate::plugins::host_dir::confine::EntryKind::Directory => Some(true),
-        crate::plugins::host_dir::confine::EntryKind::Other => Some(false),
-        // A symlink entry is followed by re-resolving it beneath the same root
-        // (fd-anchored), then classifying the target via `fstat`.
-        crate::plugins::host_dir::confine::EntryKind::Symlink => {
-            let name_str = name.to_str()?;
-            let child = MappedRuntimeHostPath {
-                guest_path: normalize_path(&format!(
-                    "{}/{}",
-                    guest_dir_path.trim_end_matches('/'),
-                    name_str
-                )),
-                host_root: mapped_host.host_root.clone(),
-                host_path: directory.host_path.join(name),
-            };
-            let opened = open_mapped_runtime_beneath(
-                &child,
-                "fs.readdir entry",
-                O_PATH_ANCHOR,
-                Mode::empty(),
-            )
-            .ok()?;
-            opened.handle.metadata().map(|stat| stat.is_directory).ok()
+/// Dirent kind sent to the guest `fs` bridge. Like Node's `readdir`, entries
+/// are typed without following symlinks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum JavascriptDirentKind {
+    File,
+    Directory,
+    Symlink,
+}
+
+impl JavascriptDirentKind {
+    /// libuv `uv_dirent_type_t` values, which the bridge's `Dirent` uses as is.
+    fn wire_code(self) -> u8 {
+        match self {
+            Self::File => 1,
+            Self::Directory => 2,
+            Self::Symlink => 3,
+        }
+    }
+
+    fn from_kernel_entry(entry: &VirtualDirEntry) -> Self {
+        if entry.is_symbolic_link {
+            Self::Symlink
+        } else if entry.is_directory {
+            Self::Directory
+        } else {
+            Self::File
+        }
+    }
+
+    fn from_mapped_entry(kind: crate::plugins::host_dir::confine::EntryKind) -> Self {
+        match kind {
+            crate::plugins::host_dir::confine::EntryKind::Directory => Self::Directory,
+            crate::plugins::host_dir::confine::EntryKind::Symlink => Self::Symlink,
+            crate::plugins::host_dir::confine::EntryKind::Other => Self::File,
         }
     }
 }
@@ -5076,11 +5079,11 @@ pub(crate) fn service_javascript_fs_readdir_entries(
     process: &ActiveProcess,
     kernel_pid: u32,
     path: &str,
-) -> Result<BTreeMap<String, bool>, SidecarError> {
+) -> Result<BTreeMap<String, JavascriptDirentKind>, SidecarError> {
     if let Some(MappedRuntimeHostAccess::Writable(mapped_host)) =
         mapped_runtime_host_path(kernel, process, path, false)
     {
-        let mut typed: BTreeMap<String, bool> = BTreeMap::new();
+        let mut typed: BTreeMap<String, JavascriptDirentKind> = BTreeMap::new();
         match open_mapped_runtime_beneath(
             &mapped_host,
             "fs.readdir",
@@ -5099,18 +5102,10 @@ pub(crate) fn service_javascript_fs_readdir_entries(
                             ))
                         })?;
                 for (name, kind) in entries {
-                    if let Some(is_dir) = mapped_readdir_entry_is_directory(
-                        &mapped_host,
-                        &directory,
-                        path,
-                        &name,
-                        kind,
-                    ) {
-                        let Ok(name) = name.into_string() else {
-                            continue;
-                        };
-                        typed.insert(name, is_dir);
-                    }
+                    let Ok(name) = name.into_string() else {
+                        continue;
+                    };
+                    typed.insert(name, JavascriptDirentKind::from_mapped_entry(kind));
                 }
             }
             // The host dir simply not existing yet is fine — fall through to the
@@ -5127,14 +5122,15 @@ pub(crate) fn service_javascript_fs_readdir_entries(
         match kernel.read_dir_with_types_for_process(EXECUTION_DRIVER_NAME, kernel_pid, path) {
             Ok(entries) => {
                 for entry in entries {
-                    typed.entry(entry.name).or_insert(entry.is_directory);
+                    let kind = JavascriptDirentKind::from_kernel_entry(&entry);
+                    typed.entry(entry.name).or_insert(kind);
                 }
             }
             Err(error) if matches!(error.code(), "ENOENT" | "ENOTDIR") => {}
             Err(error) => return Err(kernel_error(error)),
         }
         for name in mapped_runtime_child_mount_basenames(process, path) {
-            typed.entry(name).or_insert(true);
+            typed.entry(name).or_insert(JavascriptDirentKind::Directory);
         }
         return Ok(typed);
     }
@@ -5144,7 +5140,10 @@ pub(crate) fn service_javascript_fs_readdir_entries(
         .map(|entries| {
             entries
                 .into_iter()
-                .map(|entry| (entry.name, entry.is_directory))
+                .map(|entry| {
+                    let kind = JavascriptDirentKind::from_kernel_entry(&entry);
+                    (entry.name, kind)
+                })
                 .collect()
         })
         .map_err(kernel_error)
@@ -5164,10 +5163,10 @@ pub(crate) fn service_javascript_fs_readdir_raw_sync_rpc(
 }
 
 fn encode_javascript_readdir_raw_payload(
-    entries: BTreeMap<String, bool>,
+    entries: BTreeMap<String, JavascriptDirentKind>,
 ) -> Result<Vec<u8>, SidecarError> {
     let mut payload = Vec::new();
-    for (name, is_dir) in entries
+    for (name, kind) in entries
         .into_iter()
         .filter(|(name, _)| name != "." && name != "..")
     {
@@ -5175,22 +5174,25 @@ fn encode_javascript_readdir_raw_payload(
         let name_len = u32::try_from(name.len()).map_err(|_| {
             SidecarError::InvalidState(String::from("filesystem readdir entry name too long"))
         })?;
-        payload.push(u8::from(is_dir));
+        payload.push(kind.wire_code());
         payload.extend_from_slice(&name_len.to_le_bytes());
         payload.extend_from_slice(&name);
     }
     Ok(payload)
 }
 
-/// Like `javascript_sync_rpc_readdir_value` but carries each entry's
-/// directory-ness as `{name, isDirectory}`. The guest's `normalizeReaddirEntries`
-/// consumes these objects directly for `withFileTypes`, avoiding a per-entry stat
-/// RPC, and extracts `.name` for the plain string form.
-fn javascript_sync_rpc_readdir_typed_value(entries: BTreeMap<String, bool>) -> Value {
+/// Like `javascript_sync_rpc_readdir_value` but carries each entry's Dirent
+/// kind as `{name, kind}`, using the raw payload's kind codes. The guest's
+/// `normalizeReaddirEntries` consumes these objects directly for
+/// `withFileTypes`, avoiding a per-entry stat RPC, and extracts `.name` for the
+/// plain string form.
+fn javascript_sync_rpc_readdir_typed_value(
+    entries: BTreeMap<String, JavascriptDirentKind>,
+) -> Value {
     json!(entries
         .into_iter()
         .filter(|(name, _)| name != "." && name != "..")
-        .map(|(name, is_dir)| json!({ "name": name, "isDirectory": is_dir }))
+        .map(|(name, kind)| json!({ "name": name, "kind": kind.wire_code() }))
         .collect::<Vec<_>>())
 }
 

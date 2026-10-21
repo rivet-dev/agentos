@@ -1,6 +1,7 @@
 import { deferCloseIfChildInheritedFd } from "./child-process.js";
 import { builtinCryptoModule } from "./crypto.js";
 import { _umask } from "./process.js";
+import { builtinPathStdlibModule } from "./builtin-modules.js";
 import { clearTimeout2, setTimeout2 } from "./timers.js";
 import { exposeCustomGlobal } from "../global-exposure.js";
 import { require_buffer } from "../vendor/buffer.js";
@@ -79,26 +80,38 @@ var Stats = class {
     return (this.mode & 61440) === 49152;
   }
 };
+// Dirent types use libuv's `uv_dirent_type_t` numbers, as Node does. The
+// sidecar readdir payload sends the same codes.
+const UV_DIRENT_UNKNOWN = 0;
+const UV_DIRENT_FILE = 1;
+const UV_DIRENT_DIR = 2;
+const UV_DIRENT_LINK = 3;
+function direntTypeFromStats(stats) {
+  if (stats.isFile()) return UV_DIRENT_FILE;
+  if (stats.isDirectory()) return UV_DIRENT_DIR;
+  if (stats.isSymbolicLink()) return UV_DIRENT_LINK;
+  return UV_DIRENT_UNKNOWN;
+}
 var Dirent = class {
   name;
   parentPath;
   path;
   // Deprecated alias for parentPath
-  _isDir;
-  constructor(name, isDir, parentPath = "") {
+  _type;
+  constructor(name, type, parentPath = "") {
     this.name = name;
-    this._isDir = isDir;
+    this._type = type;
     this.parentPath = parentPath;
     this.path = parentPath;
   }
   isFile() {
-    return !this._isDir;
+    return this._type === UV_DIRENT_FILE;
   }
   isDirectory() {
-    return this._isDir;
+    return this._type === UV_DIRENT_DIR;
   }
   isSymbolicLink() {
-    return false;
+    return this._type === UV_DIRENT_LINK;
   }
   isBlockDevice() {
     return false;
@@ -2010,6 +2023,65 @@ function createFsError(code, message, syscall, path) {
   if (path) err.path = path;
   return err;
 }
+// Like Node, `filter(src, dest)` runs before the pair is validated, and a false
+// result skips that path and everything under it.
+function cpFilterSkips(srcPath, destPath, opts) {
+  if (!opts.filter) return false;
+  const shouldCopy = opts.filter(srcPath, destPath);
+  if (typeof shouldCopy?.then === "function") {
+    const error = new TypeError(
+      'Expected boolean to be returned from the "filter" function but got instance of Promise.'
+    );
+    error.code = "ERR_INVALID_RETURN_VALUE";
+    throw error;
+  }
+  return !shouldCopy;
+}
+function copyPathSync(srcPath, destPath, opts) {
+  const srcStat = opts.dereference ? fs.statSync(srcPath) : fs.lstatSync(srcPath);
+  if (srcStat.isSymbolicLink()) {
+    // Node's cp copies a link as a link. Unless `verbatimSymlinks` is set, a
+    // relative target is made absolute against the source link's directory.
+    let target = fs.readlinkSync(srcPath);
+    if (!opts.verbatimSymlinks && !target.startsWith("/")) {
+      target = builtinPathStdlibModule.resolve(builtinPathStdlibModule.dirname(srcPath), target);
+    }
+    fs.symlinkSync(target, destPath);
+  } else if (srcStat.isDirectory()) {
+    fs.mkdirSync(destPath, { recursive: true });
+    for (const entry of fs.readdirSync(srcPath)) {
+      const srcEntry = joinDirEntryPath(srcPath, entry);
+      const destEntry = joinDirEntryPath(destPath, entry);
+      if (!cpFilterSkips(srcEntry, destEntry, opts)) {
+        copyPathSync(srcEntry, destEntry, opts);
+      }
+    }
+  } else {
+    if (opts.errorOnExist && fs.existsSync(destPath)) {
+      throw createFsError(
+        "EEXIST",
+        `EEXIST: file already exists, cp '${srcPath}' -> '${destPath}'`,
+        "cp",
+        destPath
+      );
+    }
+    if (!opts.force && opts.force !== void 0 && fs.existsSync(destPath)) {
+      return;
+    }
+    fs.copyFileSync(srcPath, destPath);
+  }
+}
+function createRmIsDirectoryError(path) {
+  const err = createFsError(
+    "ERR_FS_EISDIR",
+    `Path is a directory: rm returned EISDIR (is a directory) ${path}`,
+    "rm",
+    path
+  );
+  err.name = "SystemError";
+  err.errno = POSIX_ERRNO.EISDIR;
+  return err;
+}
 function bridgeErrorText(err) {
   return String(err?.message ?? err ?? "");
 }
@@ -2160,7 +2232,7 @@ function _globCollect(pattern, options, results) {
       const name = patternBase.split("/").filter(Boolean).pop() ?? patternBase;
       const lastSlash = scanBase.lastIndexOf("/");
       const parent = lastSlash < 0 ? "." : lastSlash === 0 ? "/" : scanBase.slice(0, lastSlash);
-      const entry = new Dirent(name, stat.isDirectory(), parent);
+      const entry = new Dirent(name, direntTypeFromStats(stat), parent);
       if (!_globExcludeDecision(patternBase, entry, options).excluded) {
         addResult(patternBase, options.withFileTypes ? entry : patternBase);
       }
@@ -2368,10 +2440,10 @@ function normalizeReaddirEntries(entries, dirPath, withFileTypes) {
   }
   return entries.map((entry) => {
     if (typeof entry === "string") {
-      const stat = fs.statSync(joinDirEntryPath(dirPath, entry));
-      return new Dirent(entry, stat.isDirectory(), dirPath);
+      const stat = fs.lstatSync(joinDirEntryPath(dirPath, entry));
+      return new Dirent(entry, direntTypeFromStats(stat), dirPath);
     }
-    return new Dirent(entry.name, entry.isDirectory, dirPath);
+    return new Dirent(entry.name, entry.kind, dirPath);
   });
 }
 function decodeRawReaddirEntries(entries, dirPath, withFileTypes) {
@@ -2396,7 +2468,7 @@ function decodeRawReaddirEntries(entries, dirPath, withFileTypes) {
       nameLength
     ).toString("utf8");
     offset += nameLength;
-    decoded.push(withFileTypes ? new Dirent(name, kind === 1, dirPath) : name);
+    decoded.push(withFileTypes ? new Dirent(name, kind, dirPath) : name);
   }
   return decoded;
 }
@@ -2846,7 +2918,7 @@ var fs = {
           }
           fs.rmdirSync(pathStr);
         } else {
-          fs.rmdirSync(pathStr);
+          throw createRmIsDirectoryError(pathStr);
         }
       } else {
         fs.unlinkSync(pathStr);
@@ -2935,40 +3007,20 @@ var fs = {
     const srcPath = toPathString(src);
     const destPath = toPathString(dest);
     const opts = options || {};
-    const srcStat = fs.statSync(srcPath);
-    if (srcStat.isDirectory()) {
-      if (!opts.recursive) {
-        throw createFsError(
-          "ERR_FS_EISDIR",
-          `Path is a directory: cp '${srcPath}'`,
-          "cp",
-          srcPath
-        );
-      }
-      try {
-        fs.mkdirSync(destPath, { recursive: true });
-      } catch {
-      }
-      const entries = fs.readdirSync(srcPath);
-      for (const entry of entries) {
-        const srcEntry = srcPath.endsWith("/") ? srcPath + entry : srcPath + "/" + entry;
-        const destEntry = destPath.endsWith("/") ? destPath + entry : destPath + "/" + entry;
-        fs.cpSync(srcEntry, destEntry, opts);
-      }
-    } else {
-      if (opts.errorOnExist && fs.existsSync(destPath)) {
-        throw createFsError(
-          "EEXIST",
-          `EEXIST: file already exists, cp '${srcPath}' -> '${destPath}'`,
-          "cp",
-          destPath
-        );
-      }
-      if (!opts.force && opts.force !== void 0 && fs.existsSync(destPath)) {
-        return;
-      }
-      fs.copyFileSync(srcPath, destPath);
+    if (cpFilterSkips(srcPath, destPath, opts)) {
+      return;
     }
+    // Like Node, the top-level source check follows a symlink: a dangling
+    // source fails and a linked directory still needs `recursive`.
+    if (fs.statSync(srcPath).isDirectory() && !opts.recursive) {
+      throw createFsError(
+        "ERR_FS_EISDIR",
+        `Path is a directory: cp '${srcPath}'`,
+        "cp",
+        srcPath
+      );
+    }
+    copyPathSync(srcPath, destPath, opts);
   },
   // Temp directory creation
   mkdtempSync(prefix, _options) {
@@ -3424,44 +3476,15 @@ var fs = {
     } else {
       cb = callback;
     }
-    const doRm = () => {
-      try {
-        const stats = fs.lstatSync(path);
-        if (stats.isDirectory()) {
-          if (opts.recursive) {
-            const entries = fs.readdirSync(path);
-            for (const entry of entries) {
-              const entryPath = path.endsWith("/") ? path + entry : path + "/" + entry;
-              const entryStats = fs.lstatSync(entryPath);
-              if (entryStats.isDirectory()) {
-                fs.rmSync(entryPath, { recursive: true });
-              } else {
-                fs.unlinkSync(entryPath);
-              }
-            }
-            fs.rmdirSync(path);
-          } else {
-            fs.rmdirSync(path);
-          }
-        } else {
-          fs.unlinkSync(path);
-        }
-      } catch (e) {
-        if (opts.force && e.code === "ENOENT") {
-          return;
-        }
-        throw e;
-      }
-    };
     if (cb) {
       try {
-        doRm();
+        fs.rmSync(path, opts);
         queueMicrotask(() => cb(null));
       } catch (e) {
         queueMicrotask(() => cb(e));
       }
     } else {
-      doRm();
+      fs.rmSync(path, opts);
       return Promise.resolve();
     }
   },

@@ -17030,7 +17030,8 @@ process.stdout.write(`${JSON.stringify({ plain, typed, empty })}\n`);
             assert_eq!(by_name("empty")["isDirectory"], json!(true));
             assert_eq!(by_name("file.txt")["isDirectory"], json!(false));
             assert_eq!(by_name("kernel.txt")["isDirectory"], json!(false));
-            assert_eq!(by_name("link-dir")["isDirectory"], json!(true));
+            // Like Node, a Dirent describes the link itself, not its target.
+            assert_eq!(by_name("link-dir")["isDirectory"], json!(false));
             assert_eq!(by_name("link-file")["isDirectory"], json!(false));
             for entry in typed {
                 assert_eq!(
