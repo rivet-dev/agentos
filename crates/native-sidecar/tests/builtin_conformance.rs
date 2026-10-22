@@ -2360,6 +2360,70 @@ fn rm_does_not_follow_symlinks_matches_host_node() {
     run_isolated_builtin_conformance_test("fs-rm-symlinks");
 }
 
+// The probe chdirs into a VM-local directory, so relative paths cannot be
+// rescued by the host-mapped harness cwd.
+fn process_chdir_moves_relative_paths_and_children_matches_host_node_impl() {
+    assert_conformance(
+        "process-chdir-cwd",
+        r#"
+import fs from "node:fs";
+import path from "node:path";
+import { execFileSync } from "node:child_process";
+
+const base = fs.realpathSync(fs.mkdtempSync("/tmp/agentos-cwd-"));
+const rel = (target) => path.relative(base, target);
+const childCwd = (options) =>
+  rel(execFileSync("node", ["-e", "process.stdout.write(process.cwd())"], options).toString());
+fs.mkdirSync(path.join(base, "p/sub"), { recursive: true });
+process.chdir(path.join(base, "p"));
+
+fs.mkdirSync("made");
+fs.symlinkSync("made", "link");
+const relativeOps = {
+  entries: fs.readdirSync(process.cwd()).sort(),
+  linkIsSymlink: fs.lstatSync("link").isSymbolicLink(),
+  strayAtRoot: ["made", "link"].filter((name) => fs.existsSync(`/${name}`)),
+};
+fs.unlinkSync("link");
+fs.rmdirSync("made");
+
+process.chdir("sub");
+const cwd = { process: rel(process.cwd()), proc: rel(fs.readlinkSync("/proc/self/cwd")) };
+const child = { inherited: childCwd(), relativeOption: childCwd({ cwd: ".." }) };
+
+const chdirError = (target) => {
+  try {
+    process.chdir(target);
+    return null;
+  } catch (error) {
+    return {
+      code: error.code,
+      syscall: error.syscall,
+      path: rel(error.path),
+      dest: error.dest,
+      message: error.message.replaceAll(base, "<base>"),
+    };
+  }
+};
+fs.writeFileSync("file.txt", "x");
+const errors = {
+  missing: chdirError("missing"),
+  notDirectory: chdirError("file.txt"),
+  cwdAfterFailures: rel(process.cwd()),
+};
+
+process.chdir("/");
+fs.rmSync(base, { recursive: true });
+console.log(JSON.stringify({ relativeOps, cwd, child, errors }));
+"#,
+    );
+}
+
+#[test]
+fn process_chdir_moves_relative_paths_and_children_matches_host_node() {
+    run_isolated_builtin_conformance_test("process-chdir-cwd");
+}
+
 fn console_conformance_matches_host_node() {
     assert_conformance(
         "console",
@@ -5133,6 +5197,9 @@ fn __builtin_conformance_extra_test_runner() {
         "http-server-unref-exit" => unrefd_http_server_does_not_keep_guest_process_alive_impl(),
         "fs-write-file-numeric-fd" => write_file_sync_numeric_fd_matches_host_node_impl(),
         "fs-rm-symlinks" => rm_does_not_follow_symlinks_matches_host_node_impl(),
+        "process-chdir-cwd" => {
+            process_chdir_moves_relative_paths_and_children_matches_host_node_impl()
+        }
         other => panic!("unknown builtin conformance extra test: {other}"),
     }
 }

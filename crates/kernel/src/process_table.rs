@@ -852,6 +852,22 @@ impl ProcessTable {
             .ok_or_else(|| ProcessTableError::no_such_process(pid))
     }
 
+    pub fn get_cwd(&self, pid: u32) -> ProcessResult<String> {
+        self.get(pid)
+            .map(|entry| entry.cwd)
+            .ok_or_else(|| ProcessTableError::no_such_process(pid))
+    }
+
+    pub fn set_cwd(&self, pid: u32, cwd: String) -> ProcessResult<()> {
+        let mut state = self.inner.lock_state();
+        let record = state
+            .entries
+            .get_mut(&pid)
+            .ok_or_else(|| ProcessTableError::no_such_process(pid))?;
+        record.entry.cwd = cwd;
+        Ok(())
+    }
+
     pub fn get_umask(&self, pid: u32) -> ProcessResult<u32> {
         self.get(pid)
             .map(|entry| entry.umask)

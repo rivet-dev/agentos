@@ -1576,8 +1576,13 @@ pub(crate) fn service_javascript_fs_sync_rpc(
     match request.method.as_str() {
         "fs.open" | "fs.openSync" => {
             let phase_start = Instant::now();
-            let path =
-                javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem open path")?;
+            let path = javascript_sync_rpc_path_arg(
+                kernel,
+                process,
+                &request.args,
+                0,
+                "filesystem open path",
+            )?;
             let path = path.as_str();
             let flags = javascript_sync_rpc_arg_u32(&request.args, 1, "filesystem open flags")?;
             let mode =
@@ -1812,8 +1817,13 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 .map_err(kernel_error)
         }
         "fs.openTmpfileSync" => {
-            let directory =
-                javascript_sync_rpc_path_arg(process, &request.args, 0, "unnamed-file directory")?;
+            let directory = javascript_sync_rpc_path_arg(
+                kernel,
+                process,
+                &request.args,
+                0,
+                "unnamed-file directory",
+            )?;
             let flags = javascript_sync_rpc_arg_u32(&request.args, 1, "unnamed-file open flags")?;
             let mode = javascript_sync_rpc_arg_u32(&request.args, 2, "unnamed-file mode")?;
             let linkable =
@@ -1833,6 +1843,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
         "fs.linkFdSync" => {
             let fd = javascript_sync_rpc_arg_u32(&request.args, 0, "unnamed-file fd")?;
             let destination = javascript_sync_rpc_path_arg(
+                kernel,
                 process,
                 &request.args,
                 1,
@@ -1898,6 +1909,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
         }
         "fs.truncateSync" | "fs.truncateForProcessSync" => {
             let path = javascript_sync_rpc_path_arg(
+                kernel,
                 process,
                 &request.args,
                 0,
@@ -2019,8 +2031,13 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 .collect::<Vec<_>>()))
         }
         "fs.chmodForProcessSync" => {
-            let path =
-                javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem chmod path")?;
+            let path = javascript_sync_rpc_path_arg(
+                kernel,
+                process,
+                &request.args,
+                0,
+                "filesystem chmod path",
+            )?;
             let mode = javascript_sync_rpc_arg_u32(&request.args, 1, "filesystem chmod mode")?;
             let mut result =
                 kernel.chmod_for_process(EXECUTION_DRIVER_NAME, kernel_pid, &path, mode);
@@ -2119,6 +2136,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
         }
         "fs.readFileSync" | "fs.promises.readFile" => {
             let path = javascript_sync_rpc_path_arg(
+                kernel,
                 process,
                 &request.args,
                 0,
@@ -2160,6 +2178,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
         }
         "fs.writeFileSync" | "fs.promises.writeFile" => {
             let path = javascript_sync_rpc_path_arg(
+                kernel,
                 process,
                 &request.args,
                 0,
@@ -2209,8 +2228,13 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             Ok(Value::Null)
         }
         "fs.statfsSync" => {
-            let path =
-                javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem statfs path")?;
+            let path = javascript_sync_rpc_path_arg(
+                kernel,
+                process,
+                &request.args,
+                0,
+                "filesystem statfs path",
+            )?;
             let stats = kernel
                 .filesystem_stats_for_process(EXECUTION_DRIVER_NAME, kernel_pid, path.as_str())
                 .map_err(kernel_error)?;
@@ -2223,34 +2247,23 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             }))
         }
         "fs.statSync" | "fs.promises.stat" => {
-            let path =
-                javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem stat path")?;
-            let path = path.as_str();
-            if let Some(mapped_host) = mapped_runtime_host_path_for_read(kernel, process, path) {
-                materialize_mapped_host_path_from_kernel(kernel, kernel_pid, path, &mapped_host)?;
-                let opened = open_mapped_runtime_beneath(
-                    &mapped_host,
-                    "fs.stat",
-                    O_PATH_ANCHOR,
-                    Mode::empty(),
-                )?;
-                let metadata = opened.handle.metadata().map_err(|error| {
-                    SidecarError::Io(format!(
-                        "failed to stat mapped guest path {} -> {}: {error}",
-                        path,
-                        opened.host_path.display()
-                    ))
-                })?;
-                return Ok(metadata.to_value());
-            }
-            kernel
-                .stat_for_process(EXECUTION_DRIVER_NAME, kernel_pid, path)
-                .map(javascript_sync_rpc_stat_value)
-                .map_err(kernel_error)
+            let path = javascript_sync_rpc_path_arg(
+                kernel,
+                process,
+                &request.args,
+                0,
+                "filesystem stat path",
+            )?;
+            javascript_fs_stat_value(kernel, process, kernel_pid, &path)
         }
         "fs.lstatSync" | "fs.promises.lstat" => {
-            let path =
-                javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem lstat path")?;
+            let path = javascript_sync_rpc_path_arg(
+                kernel,
+                process,
+                &request.args,
+                0,
+                "filesystem lstat path",
+            )?;
             let path = path.as_str();
             if let Some(mapped_host) = mapped_runtime_host_path_for_read(kernel, process, path) {
                 materialize_mapped_host_path_from_kernel(kernel, kernel_pid, path, &mapped_host)?;
@@ -2263,15 +2276,25 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 .map_err(kernel_error)
         }
         "fs.readdirSync" | "fs.promises.readdir" => {
-            let path =
-                javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem readdir path")?;
+            let path = javascript_sync_rpc_path_arg(
+                kernel,
+                process,
+                &request.args,
+                0,
+                "filesystem readdir path",
+            )?;
             let path = path.as_str();
             service_javascript_fs_readdir_entries(kernel, process, kernel_pid, path)
                 .map(javascript_sync_rpc_readdir_typed_value)
         }
         "fs.mkdirSync" | "fs.promises.mkdir" => {
-            let path =
-                javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem mkdir path")?;
+            let path = javascript_sync_rpc_path_arg(
+                kernel,
+                process,
+                &request.args,
+                0,
+                "filesystem mkdir path",
+            )?;
             let path = path.as_str();
             let recursive =
                 javascript_sync_rpc_option_bool(&request.args, 1, "recursive").unwrap_or(false);
@@ -2310,8 +2333,13 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 .map_err(kernel_error)
         }
         "fs.mknodSync" => {
-            let path =
-                javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem mknod path")?;
+            let path = javascript_sync_rpc_path_arg(
+                kernel,
+                process,
+                &request.args,
+                0,
+                "filesystem mknod path",
+            )?;
             let mode = javascript_sync_rpc_arg_u32(&request.args, 1, "filesystem mknod mode")?;
             let rdev = javascript_sync_rpc_arg_u64(&request.args, 2, "filesystem mknod device")?;
             kernel
@@ -2320,8 +2348,13 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 .map_err(kernel_error)
         }
         "fs.remountSync" => {
-            let path =
-                javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem remount path")?;
+            let path = javascript_sync_rpc_path_arg(
+                kernel,
+                process,
+                &request.args,
+                0,
+                "filesystem remount path",
+            )?;
             let options = request.args.get(1).and_then(Value::as_str).ok_or_else(|| {
                 SidecarError::InvalidState(String::from(
                     "filesystem remount options must be a string",
@@ -2338,8 +2371,13 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 .map_err(kernel_error)
         }
         "fs.accessSync" | "fs.promises.access" => {
-            let path =
-                javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem access path")?;
+            let path = javascript_sync_rpc_path_arg(
+                kernel,
+                process,
+                &request.args,
+                0,
+                "filesystem access path",
+            )?;
             let path = path.as_str();
             let mode =
                 javascript_sync_rpc_arg_u32_optional(&request.args, 1, "filesystem access mode")?
@@ -2376,6 +2414,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
         }
         "fs.copyFileSync" | "fs.promises.copyFile" => {
             let source = javascript_sync_rpc_path_arg(
+                kernel,
                 process,
                 &request.args,
                 0,
@@ -2383,6 +2422,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             )?;
             let source = source.as_str();
             let destination = javascript_sync_rpc_path_arg(
+                kernel,
                 process,
                 &request.args,
                 1,
@@ -2480,8 +2520,13 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 .map_err(kernel_error)
         }
         "fs.existsSync" => {
-            let path =
-                javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem exists path")?;
+            let path = javascript_sync_rpc_path_arg(
+                kernel,
+                process,
+                &request.args,
+                0,
+                "filesystem exists path",
+            )?;
             let path = path.as_str();
             if let Some(mapped_host) = mapped_runtime_host_path_for_read(kernel, process, path) {
                 materialize_mapped_host_path_from_kernel(kernel, kernel_pid, path, &mapped_host)?;
@@ -2503,6 +2548,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
         }
         "fs.readlinkSync" | "fs.promises.readlink" => {
             let path = javascript_sync_rpc_path_arg(
+                kernel,
                 process,
                 &request.args,
                 0,
@@ -2522,8 +2568,13 @@ pub(crate) fn service_javascript_fs_sync_rpc(
         "fs.symlinkSync" | "fs.promises.symlink" => {
             let target =
                 javascript_sync_rpc_arg_str(&request.args, 0, "filesystem symlink target")?;
-            let link_path =
-                javascript_sync_rpc_path_arg(process, &request.args, 1, "filesystem symlink path")?;
+            let link_path = javascript_sync_rpc_path_arg(
+                kernel,
+                process,
+                &request.args,
+                1,
+                "filesystem symlink path",
+            )?;
             let link_path = link_path.as_str();
             match mapped_runtime_host_path(kernel, process, link_path, true) {
                 Some(MappedRuntimeHostAccess::Writable(mapped_host)) => {
@@ -2551,11 +2602,21 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 .map_err(kernel_error)
         }
         "fs.linkSync" | "fs.promises.link" => {
-            let source =
-                javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem link source")?;
+            let source = javascript_sync_rpc_path_arg(
+                kernel,
+                process,
+                &request.args,
+                0,
+                "filesystem link source",
+            )?;
             let source = source.as_str();
-            let destination =
-                javascript_sync_rpc_path_arg(process, &request.args, 1, "filesystem link path")?;
+            let destination = javascript_sync_rpc_path_arg(
+                kernel,
+                process,
+                &request.args,
+                1,
+                "filesystem link path",
+            )?;
             let destination = destination.as_str();
             kernel
                 .link_for_process(EXECUTION_DRIVER_NAME, kernel_pid, source, destination)
@@ -2564,6 +2625,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
         }
         "fs.renameSync" | "fs.promises.rename" => {
             let source = javascript_sync_rpc_path_arg(
+                kernel,
                 process,
                 &request.args,
                 0,
@@ -2571,6 +2633,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             )?;
             let source = source.as_str();
             let destination = javascript_sync_rpc_path_arg(
+                kernel,
                 process,
                 &request.args,
                 1,
@@ -2600,6 +2663,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
         }
         "fs.renameAt2Sync" => {
             let source = javascript_sync_rpc_path_arg(
+                kernel,
                 process,
                 &request.args,
                 0,
@@ -2607,6 +2671,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             )?;
             let source = source.as_str();
             let destination = javascript_sync_rpc_path_arg(
+                kernel,
                 process,
                 &request.args,
                 1,
@@ -2645,8 +2710,13 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             Ok(Value::Null)
         }
         "fs.rmdirSync" | "fs.promises.rmdir" => {
-            let path =
-                javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem rmdir path")?;
+            let path = javascript_sync_rpc_path_arg(
+                kernel,
+                process,
+                &request.args,
+                0,
+                "filesystem rmdir path",
+            )?;
             let path = path.as_str();
             match mapped_runtime_host_path(kernel, process, path, true) {
                 Some(MappedRuntimeHostAccess::Writable(mapped_host)) => {
@@ -2685,8 +2755,13 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             Ok(Value::Null)
         }
         "fs.unlinkSync" | "fs.promises.unlink" => {
-            let path =
-                javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem unlink path")?;
+            let path = javascript_sync_rpc_path_arg(
+                kernel,
+                process,
+                &request.args,
+                0,
+                "filesystem unlink path",
+            )?;
             let path = path.as_str();
             match mapped_runtime_host_path(kernel, process, path, true) {
                 Some(MappedRuntimeHostAccess::Writable(mapped_host)) => {
@@ -2743,8 +2818,13 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             Ok(Value::Null)
         }
         "fs.chmodSync" | "fs.promises.chmod" => {
-            let path =
-                javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem chmod path")?;
+            let path = javascript_sync_rpc_path_arg(
+                kernel,
+                process,
+                &request.args,
+                0,
+                "filesystem chmod path",
+            )?;
             let path = path.as_str();
             let mode = javascript_sync_rpc_arg_u32(&request.args, 1, "filesystem chmod mode")?;
             match mapped_runtime_host_path(kernel, process, path, true) {
@@ -2789,8 +2869,13 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 .map_err(kernel_error)
         }
         "fs.chownSync" | "fs.promises.chown" | "fs.lchownSync" | "fs.promises.lchown" => {
-            let path =
-                javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem chown path")?;
+            let path = javascript_sync_rpc_path_arg(
+                kernel,
+                process,
+                &request.args,
+                0,
+                "filesystem chown path",
+            )?;
             let path = path.as_str();
             let uid = javascript_sync_rpc_arg_u32(&request.args, 1, "filesystem chown uid")?;
             let gid = javascript_sync_rpc_arg_u32(&request.args, 2, "filesystem chown gid")?;
@@ -2814,6 +2899,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
         }
         "fs.getxattrSync" => {
             let path = javascript_sync_rpc_path_arg(
+                kernel,
                 process,
                 &request.args,
                 0,
@@ -2836,6 +2922,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
         }
         "fs.listxattrSync" => {
             let path = javascript_sync_rpc_path_arg(
+                kernel,
                 process,
                 &request.args,
                 0,
@@ -2856,6 +2943,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
         }
         "fs.setxattrSync" => {
             let path = javascript_sync_rpc_path_arg(
+                kernel,
                 process,
                 &request.args,
                 0,
@@ -2889,6 +2977,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
         }
         "fs.removexattrSync" => {
             let path = javascript_sync_rpc_path_arg(
+                kernel,
                 process,
                 &request.args,
                 0,
@@ -2910,8 +2999,13 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 .map_err(kernel_error)
         }
         "fs.utimesSync" | "fs.promises.utimes" | "fs.lutimesSync" | "fs.promises.lutimes" => {
-            let path =
-                javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem utimes path")?;
+            let path = javascript_sync_rpc_path_arg(
+                kernel,
+                process,
+                &request.args,
+                0,
+                "filesystem utimes path",
+            )?;
             let path = path.as_str();
             let atime = parse_utime_arg(&request.args, 1, "filesystem utimes atime")?;
             let mtime = parse_utime_arg(&request.args, 2, "filesystem utimes mtime")?;
@@ -3082,20 +3176,72 @@ fn kernel_fd_surfaces_stdio_event(
     ))
 }
 
+/// `stat(2)` for a resolved guest path, following symlinks, through the same
+/// host-mapped or kernel route as `fs.statSync`.
+pub(crate) fn javascript_fs_stat_value(
+    kernel: &mut SidecarKernel,
+    process: &ActiveProcess,
+    kernel_pid: u32,
+    path: &str,
+) -> Result<Value, SidecarError> {
+    if let Some(mapped_host) = mapped_runtime_host_path_for_read(kernel, process, path) {
+        materialize_mapped_host_path_from_kernel(kernel, kernel_pid, path, &mapped_host)?;
+        let opened =
+            open_mapped_runtime_beneath(&mapped_host, "fs.stat", O_PATH_ANCHOR, Mode::empty())?;
+        let metadata = opened.handle.metadata().map_err(|error| {
+            SidecarError::Io(format!(
+                "failed to stat mapped guest path {} -> {}: {error}",
+                path,
+                opened.host_path.display()
+            ))
+        })?;
+        return Ok(metadata.to_value());
+    }
+    kernel
+        .stat_for_process(EXECUTION_DRIVER_NAME, kernel_pid, path)
+        .map(javascript_sync_rpc_stat_value)
+        .map_err(kernel_error)
+}
+
 pub(crate) fn javascript_sync_rpc_path_arg(
+    kernel: &SidecarKernel,
     process: &ActiveProcess,
     args: &[Value],
     index: usize,
     label: &str,
 ) -> Result<String, SidecarError> {
     let path = javascript_sync_rpc_arg_str(args, index, label)?;
-    let path = normalize_process_filesystem_rpc_path(process, path);
+    let path = resolve_javascript_process_path(kernel, process, path, label)?;
+    let path = normalize_process_filesystem_rpc_path(process, &path);
     if path.split('/').any(is_internal_unnamed_file_name) {
         return Err(SidecarError::Kernel(format!(
             "ENOENT: no such file or directory: {path}"
         )));
     }
     Ok(path)
+}
+
+/// Starts a relative guest path at the process cwd, as Linux path lookup does.
+/// The cwd comes from the kernel because `process.chdir` moves it after spawn.
+fn resolve_javascript_process_path(
+    kernel: &SidecarKernel,
+    process: &ActiveProcess,
+    path: &str,
+    label: &str,
+) -> Result<String, SidecarError> {
+    if path.is_empty() {
+        return Err(SidecarError::Errno {
+            errno: "ENOENT",
+            message: format!("no such file or directory: empty {label}"),
+        });
+    }
+    if path.starts_with('/') {
+        return Ok(path.to_owned());
+    }
+    let cwd = kernel
+        .cwd(EXECUTION_DRIVER_NAME, process.kernel_pid)
+        .map_err(kernel_error)?;
+    Ok(format!("{}/{}", cwd.trim_end_matches('/'), path))
 }
 
 fn normalize_process_filesystem_rpc_path(process: &ActiveProcess, path: &str) -> String {
@@ -5010,7 +5156,8 @@ pub(crate) fn service_javascript_fs_readdir_raw_sync_rpc(
     kernel_pid: u32,
     request: &JavascriptSyncRpcRequest,
 ) -> Result<Vec<u8>, SidecarError> {
-    let path = javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem readdir path")?;
+    let path =
+        javascript_sync_rpc_path_arg(kernel, process, &request.args, 0, "filesystem readdir path")?;
     let entries =
         service_javascript_fs_readdir_entries(kernel, process, kernel_pid, path.as_str())?;
     encode_javascript_readdir_raw_payload(entries)

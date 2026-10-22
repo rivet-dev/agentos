@@ -2,7 +2,7 @@ import { encodeChildProcessIpcFrame, splitChildProcessIpcFrames } from "./child-
 import { UndiciHeaders, UndiciRequest, UndiciResponse } from "./undici.js";
 import { BUFFER_CONSTANTS, BUFFER_MAX_LENGTH, BUFFER_MAX_STRING_LENGTH } from "./buffer-constants.js";
 import { EventEmitter, once } from "./events.js";
-import { _fs, _processCpuUsage, _processMemoryUsage, _processResourceUsage, _processUmask, _processVersions, decodeBridgeJson, normalizeModeArgument } from "./fs.js";
+import { _processCpuUsage, _processMemoryUsage, _processResourceUsage, _processUmask, _processVersions, bridgeErrorCode, createBridgeSyncFacade, createFsError, normalizeModeArgument } from "./fs.js";
 import { builtinPathStdlibModule } from "./builtin-modules.js";
 import { fetch } from "./network.js";
 import { getRuntimeGid, getRuntimeUid } from "./os.js";
@@ -434,6 +434,13 @@ hrtime.bigint = function() {
 };
 
 var _cwd = config2.cwd;
+// The kernel owns the cwd; `_cwd` caches its answer for `process.cwd()`.
+var _processChdir = createBridgeSyncFacade("process.chdir");
+var CHDIR_ERROR_DESCRIPTIONS = {
+  EACCES: "permission denied",
+  ENOENT: "no such file or directory",
+  ENOTDIR: "not a directory"
+};
 
 var _umask = 18;
 
@@ -608,28 +615,18 @@ var process2 = {
   cwd() {
     return _cwd;
   },
-  chdir(dir) {
-    let statJson;
+  chdir(directory) {
     try {
-      statJson = _fs.stat.applySyncPromise(void 0, [dir]);
-    } catch {
-      const err = new Error(`ENOENT: no such file or directory, chdir '${dir}'`);
-      err.code = "ENOENT";
-      err.errno = -2;
-      err.syscall = "chdir";
-      err.path = dir;
-      throw err;
+      _cwd = _processChdir.applySync(void 0, [directory]);
+    } catch (error) {
+      const code = bridgeErrorCode(error);
+      const description = CHDIR_ERROR_DESCRIPTIONS[code];
+      if (!description) throw error;
+      // Node's uv error shape: `path` is the old cwd, `dest` the argument.
+      const chdirError = createFsError(code, `${code}: ${description}, chdir '${_cwd}' -> '${directory}'`, "chdir", _cwd);
+      chdirError.dest = directory;
+      throw chdirError;
     }
-    const parsed = decodeBridgeJson(statJson);
-    if (!parsed.isDirectory) {
-      const err = new Error(`ENOTDIR: not a directory, chdir '${dir}'`);
-      err.code = "ENOTDIR";
-      err.errno = -20;
-      err.syscall = "chdir";
-      err.path = dir;
-      throw err;
-    }
-    _cwd = dir;
   },
   get exitCode() {
     return _exitCode;

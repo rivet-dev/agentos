@@ -2320,6 +2320,34 @@ pub(super) fn apply_posix_spawn_file_actions(
     ))
 }
 
+/// A child starts in its parent's current directory and resolves a relative
+/// `cwd` option against it, as `chdir` after `fork` does. The parent's
+/// `guest_cwd` is its launch-time host mapping anchor, which `process.chdir`
+/// does not move, so the current directory comes from the kernel.
+fn start_child_in_parent_cwd(
+    vm: &VmState,
+    parent: &ActiveProcess,
+    request: &mut JavascriptChildProcessSpawnRequest,
+) -> Result<(), SidecarError> {
+    let current = vm
+        .kernel
+        .cwd(EXECUTION_DRIVER_NAME, parent.kernel_pid)
+        .map_err(kernel_error)?;
+    match request.options.cwd.as_deref() {
+        Some(cwd) if !cwd.starts_with('/') => {
+            request.options.cwd = Some(normalize_path(&format!(
+                "{}/{cwd}",
+                current.trim_end_matches('/')
+            )));
+        }
+        None if current != normalize_path(&parent.guest_cwd) => {
+            request.options.cwd = Some(current);
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 pub(super) fn resolve_posix_spawn_action_path(cwd: &str, action_path: &str) -> String {
     if action_path.starts_with('/') {
         normalize_path(action_path)
@@ -6029,6 +6057,20 @@ where
             let requested_pgid = spawn_attributes.process_group;
             let current_process_label =
                 NativeSidecar::<B>::child_process_path_label(process_id, current_process_path);
+            {
+                let vm = vms.get(vm_id).ok_or_else(|| missing_vm_error(vm_id))?;
+                let root = vm
+                    .active_processes
+                    .get(process_id)
+                    .ok_or_else(|| missing_process_error(vm_id, process_id))?;
+                let parent = NativeSidecar::<B>::active_process_by_path(root, current_process_path)
+                    .ok_or_else(|| {
+                        SidecarError::InvalidState(format!(
+                            "unknown child process path {current_process_label} during spawn cwd resolution"
+                        ))
+                    })?;
+                start_child_in_parent_cwd(&vm, parent, &mut request)?;
+            }
             let parent_sync_roots = {
                 let vm = vms.get(vm_id).ok_or_else(|| missing_vm_error(vm_id))?;
                 let root = vm

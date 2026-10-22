@@ -1673,6 +1673,27 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         }
     }
 
+    /// The process working directory, which relative path lookup, child
+    /// spawns and `/proc/<pid>/cwd` read.
+    pub fn cwd(&self, requester_driver: &str, pid: u32) -> KernelResult<String> {
+        self.assert_driver_owns(requester_driver, pid)?;
+        Ok(self.processes.get_cwd(pid)?)
+    }
+
+    /// Records a new working directory after the caller has resolved `cwd` to
+    /// an existing directory, as `chdir(2)` does.
+    pub fn set_cwd(&mut self, requester_driver: &str, pid: u32, cwd: &str) -> KernelResult<()> {
+        self.assert_not_terminated()?;
+        self.assert_driver_owns(requester_driver, pid)?;
+        if !cwd.starts_with('/') {
+            return Err(KernelError::new(
+                "EINVAL",
+                format!("process cwd must be absolute, got {cwd:?}"),
+            ));
+        }
+        Ok(self.processes.set_cwd(pid, normalize_path(cwd))?)
+    }
+
     pub fn exists(&self, path: &str) -> KernelResult<bool> {
         self.assert_not_terminated()?;
         self.exists_internal(None, path)

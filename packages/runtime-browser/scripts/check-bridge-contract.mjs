@@ -110,6 +110,7 @@ const browserFacadeContractGlobals = new Set([
 	"fs.openSync",
 	"fs.readSync",
 	"fs.writeSync",
+	"process.chdir",
 	"process.cpuUsage",
 	"process.memoryUsage",
 	"process.resourceUsage",

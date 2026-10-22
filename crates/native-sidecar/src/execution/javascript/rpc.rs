@@ -1,6 +1,7 @@
 use super::super::*;
 use crate::filesystem::{
-    javascript_sync_rpc_path_arg, remove_process_shadow_path, rename_process_shadow_path,
+    javascript_fs_stat_value, javascript_sync_rpc_path_arg, remove_process_shadow_path,
+    rename_process_shadow_path,
 };
 use agentos_kernel::vfs::{VirtualTimeSpec, VirtualUtimeSpec};
 
@@ -641,8 +642,13 @@ where
     }
     if request.raw_bytes_args.contains_key(&usize::MAX) && request.method == "fs.readFileRangeSync"
     {
-        let path =
-            javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem ranged read path")?;
+        let path = javascript_sync_rpc_path_arg(
+            kernel,
+            process,
+            &request.args,
+            0,
+            "filesystem ranged read path",
+        )?;
         let offset =
             javascript_sync_rpc_arg_u64(&request.args, 1, "filesystem ranged read offset")?;
         let length = usize::try_from(javascript_sync_rpc_arg_u64(
@@ -2056,6 +2062,22 @@ where
                 "action": "default",
             }))
         }
+        "process.chdir" => {
+            let path =
+                javascript_sync_rpc_path_arg(kernel, process, &request.args, 0, "chdir path")?;
+            let stat = javascript_fs_stat_value(kernel, process, process.kernel_pid, &path)?;
+            if stat.get("isDirectory") != Some(&Value::Bool(true)) {
+                return Err(SidecarError::Errno {
+                    errno: "ENOTDIR",
+                    message: format!("not a directory: {path}"),
+                });
+            }
+            kernel
+                .set_cwd(EXECUTION_DRIVER_NAME, process.kernel_pid, &path)
+                .and_then(|()| kernel.cwd(EXECUTION_DRIVER_NAME, process.kernel_pid))
+                .map(Value::String)
+                .map_err(kernel_error)
+        }
         "process.umask" => {
             let new_mask = javascript_sync_rpc_arg_u32_optional(&request.args, 0, "process umask")?;
             kernel
@@ -2342,7 +2364,7 @@ fn mirror_process_chmod_to_host(
     request: &JavascriptSyncRpcRequest,
 ) -> Result<(), SidecarError> {
     let guest_path =
-        javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem chmod path")?;
+        javascript_sync_rpc_path_arg(kernel, process, &request.args, 0, "filesystem chmod path")?;
     let guest_path = if guest_path.starts_with('/') {
         normalize_path(&guest_path)
     } else {

@@ -245,6 +245,7 @@
 			],
 			"returnType": "unknown",
 			"names": [
+				"process.chdir",
 				"process.cpuUsage",
 				"process.fcntlLock",
 				"process.flock",

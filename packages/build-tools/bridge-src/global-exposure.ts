@@ -33,6 +33,11 @@ var NODE_CUSTOM_GLOBAL_INVENTORY = [
 		rationale: "Host process resource usage bridge reference.",
 	},
 	{
+		name: "process.chdir",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
 		name: "process.umask",
 		classification: "hardened",
 		rationale: "Kernel-owned guest filesystem and process bridge reference.",
