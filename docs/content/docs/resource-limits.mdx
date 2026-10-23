@@ -60,6 +60,12 @@ a clean stop. Close completion can no longer be confirmed, so the VM stays
 quarantined until the sidecar process restarts, even if local resource counts
 reach zero. Quarantined VMs count toward VM admission capacity.
 
+Socket writes between processes in the same VM share the
+`limits.resources.maxSocketBufferedBytes` budget. When the budget is full, a
+write waits for the reader to drain it, like a Node.js socket write. If the
+reader does not drain it within `limits.reactor.operationDeadlineMs`, the
+write fails with `ETIMEDOUT` and an error that names that limit.
+
 Limits are fixed for the life of a VM. To change them on a hosted VM, update
 the config and call `v1.vm.restart`. In the library, dispose the VM and create
 a new one with the new limits. The hosted actor also has a fixed ten-second

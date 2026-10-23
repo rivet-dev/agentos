@@ -1221,6 +1221,80 @@ fn net_socket_readable_state_tracks_ssh2_writable_shape() {
     run_isolated_builtin_conformance_test("net-socket-readable-state");
 }
 
+fn net_socket_writes_larger_than_socket_buffer_match_host_node_impl() {
+    assert_node_available();
+
+    let cwd = temp_dir("builtin-net-large-socket-write");
+    let entrypoint = cwd.join("entry.mjs");
+    // 6 MiB exceeds the default 4 MiB VM socket buffer budget, so the writer
+    // must wait for the in-VM reader to drain instead of failing.
+    write_fixture(
+        &entrypoint,
+        r#"
+import net from "node:net";
+
+const payload = Buffer.alloc(6 * 1024 * 1024);
+for (let index = 0; index < payload.length; index += 1) payload[index] = index % 251;
+const first = payload.subarray(0, 5 * 1024 * 1024);
+const second = payload.subarray(5 * 1024 * 1024);
+
+const server = net.createServer();
+await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+const received = new Promise((resolve) => {
+  server.once("connection", (socket) => {
+    const chunks = [];
+    socket.on("data", (chunk) => chunks.push(chunk));
+    socket.on("close", () => resolve(Buffer.concat(chunks)));
+  });
+});
+
+const callbacks = [];
+let firstWriteReturned = null;
+let clientError = null;
+const client = net.connect(server.address().port, "127.0.0.1");
+const clientClosed = new Promise((resolve) => client.on("close", resolve));
+client.on("error", (error) => {
+  clientError = error.code ?? error.message;
+});
+client.on("connect", () => {
+  firstWriteReturned = client.write(first, () => callbacks.push("first"));
+  client.write(second, () => callbacks.push("second"));
+  client.end(() => callbacks.push("end"));
+});
+
+const [bytes] = await Promise.all([received, clientClosed]);
+server.close();
+console.log(JSON.stringify({
+  receivedBytes: bytes.length,
+  intact: bytes.equals(payload),
+  callbacks,
+  firstWriteReturned,
+  clientError,
+}));
+"#,
+    );
+
+    let host = run_host_probe(&cwd, &entrypoint);
+    let guest = run_guest_probe_with_config(
+        "net-large-socket-write",
+        &cwd,
+        &entrypoint,
+        HashMap::new(),
+        wire_permissions_allow_all(),
+        &["net", "buffer"],
+    );
+
+    assert_eq!(
+        guest, host,
+        "guest V8 result diverged from host Node for net-large-socket-write"
+    );
+}
+
+#[test]
+fn net_socket_writes_larger_than_socket_buffer_match_host_node() {
+    run_isolated_builtin_conformance_test("net-large-socket-write");
+}
+
 fn readable_on_data_respects_explicit_pause_matches_host_node_impl() {
     assert_conformance(
         "readable-on-data-explicit-pause",
@@ -5115,6 +5189,9 @@ fn __builtin_conformance_extra_test_runner() {
         }
         "child-process-abort-signal" => child_process_abort_reports_sigabrt_impl(),
         "net-socket-readable-state" => net_socket_readable_state_tracks_ssh2_writable_shape_impl(),
+        "net-large-socket-write" => {
+            net_socket_writes_larger_than_socket_buffer_match_host_node_impl()
+        }
         "readable-on-data-explicit-pause" => {
             readable_on_data_respects_explicit_pause_matches_host_node_impl()
         }

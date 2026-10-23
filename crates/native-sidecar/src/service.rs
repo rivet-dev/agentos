@@ -12,7 +12,7 @@ pub(crate) use crate::execution::{
     javascript_sync_rpc_option_u32, kernel_poll_response, kernel_stdin_read_response,
     mark_execute_exit_event_queued, parse_kernel_poll_args, parse_kernel_stdin_read_args,
     parse_signal, record_execute_exit_event_queue_wait, record_execute_phase,
-    sanitize_javascript_child_process_internal_bootstrap_env,
+    route_javascript_net_write_result, sanitize_javascript_child_process_internal_bootstrap_env,
     service_javascript_kernel_fd_write_sync_rpc, service_javascript_sync_rpc,
     JavascriptSyncRpcServiceRequest, LoopbackHttpDispatchRequest,
 };
@@ -4232,6 +4232,13 @@ where
             deferred_kernel_wait_request_for_process(&request, &vm.kernel, process)?
                 .filter(|request| request.method == "process.fd_write")
         };
+        // Snapshot before the write so a release that lands before a parked
+        // write's waiter starts still wakes it.
+        let release_generation = self
+            .vms
+            .get(vm_id)
+            .map(|vm| vm.resources.buffered_bytes_release_generation())
+            .unwrap_or_default();
 
         let response: Result<crate::execution::JavascriptSyncRpcServiceResponse, SidecarError> =
             match request.method.as_str() {
@@ -4695,6 +4702,23 @@ where
                 }
             };
 
+        let response = match self.vms.get_mut(vm_id) {
+            Some(mut vm) if request.method == "net.write" => {
+                match route_javascript_net_write_result(
+                    &mut vm,
+                    vm_id,
+                    process_id,
+                    &[],
+                    &request,
+                    release_generation,
+                    response,
+                )? {
+                    Some(response) => response,
+                    None => return Ok(()),
+                }
+            }
+            _ => response,
+        };
         let response = match response {
             Ok(crate::execution::JavascriptSyncRpcServiceResponse::Deferred {
                 receiver,
@@ -4804,7 +4828,6 @@ where
             );
             return Ok(());
         };
-
         if response.is_ok()
             && matches!(
                 request.method.as_str(),

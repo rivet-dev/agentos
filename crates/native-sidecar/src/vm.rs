@@ -284,6 +284,7 @@ pub(crate) struct PreparedCreateVm<B> {
     bridge: crate::state::SharedBridge<B>,
     dns_resolver: agentos_kernel::dns::SharedDnsResolver,
     sidecar_requests: crate::state::SharedSidecarRequestClient,
+    process_event_sender: tokio::sync::mpsc::Sender<crate::state::ProcessEventEnvelope>,
     process_event_notify: Arc<tokio::sync::Notify>,
     extensions: Vec<Arc<dyn Extension>>,
 }
@@ -466,6 +467,7 @@ where
             bridge: self.bridge.clone(),
             dns_resolver: Arc::clone(&self.dns_resolver),
             sidecar_requests: self.sidecar_requests.clone(),
+            process_event_sender: self.process_event_sender.clone(),
             process_event_notify: Arc::clone(&self.process_event_notify),
             extensions: self.extensions.values().cloned().collect(),
         })
@@ -988,6 +990,8 @@ where
                     vm_runtime_context.clone(),
                     Arc::clone(&self.process_event_notify),
                 ),
+                process_event_sender: self.process_event_sender.clone(),
+                process_event_notify: Arc::clone(&self.process_event_notify),
                 runtime_context: vm_runtime_context,
                 database,
                 capabilities,
@@ -1671,6 +1675,7 @@ where
             bridge,
             dns_resolver,
             sidecar_requests,
+            process_event_sender,
             process_event_notify,
             extensions,
         } = self;
@@ -1901,8 +1906,10 @@ where
                 execution_engines: VmExecutionEngines::new(
                     vm_id.clone(),
                     vm_runtime_context.clone(),
-                    process_event_notify,
+                    Arc::clone(&process_event_notify),
                 ),
+                process_event_sender,
+                process_event_notify,
                 runtime_context: vm_runtime_context,
                 database,
                 capabilities,

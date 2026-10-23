@@ -82,10 +82,10 @@ pub(crate) use self::javascript::{
     javascript_sync_rpc_bytes_value, javascript_sync_rpc_encoding, javascript_sync_rpc_error_code,
     javascript_sync_rpc_may_make_fd_readable, javascript_sync_rpc_may_make_fd_writable,
     javascript_sync_rpc_option_bool, javascript_sync_rpc_option_u32,
-    service_javascript_crypto_sync_rpc, service_javascript_sync_rpc,
-    service_owned_javascript_sync_rpc_request, settle_javascript_sync_rpc_completion,
-    JavascriptSyncRpcServiceRequest, JavascriptSyncRpcServiceResponse, KernelPollFdRequest,
-    LoopbackHttpDispatchRequest,
+    route_javascript_net_write_result, service_javascript_crypto_sync_rpc,
+    service_javascript_sync_rpc, service_owned_javascript_sync_rpc_request,
+    settle_javascript_sync_rpc_completion, JavascriptSyncRpcServiceRequest,
+    JavascriptSyncRpcServiceResponse, KernelPollFdRequest, LoopbackHttpDispatchRequest,
 };
 mod python;
 pub(crate) use self::python::{

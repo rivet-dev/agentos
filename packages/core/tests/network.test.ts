@@ -10,6 +10,30 @@ server.listen(0, "127.0.0.1", () => {
 setTimeout(() => {}, 30000);
 `;
 
+// 6 MiB exceeds the default 4 MiB VM socket buffer budget, so the writer must
+// wait for the in-VM reader to drain instead of failing.
+const LARGE_WRITE_SCRIPT = `
+const net = require("net");
+const payload = Buffer.alloc(6 * 1024 * 1024);
+for (let index = 0; index < payload.length; index += 1) payload[index] = index % 251;
+const finish = (result) => {
+  console.log(JSON.stringify(result));
+  process.exit(0);
+};
+const server = net.createServer((socket) => {
+  const chunks = [];
+  socket.on("data", (chunk) => chunks.push(chunk));
+  socket.on("end", () => {
+    const received = Buffer.concat(chunks);
+    finish({ receivedBytes: received.length, intact: received.equals(payload) });
+  });
+});
+server.listen(0, "127.0.0.1", () => {
+  const client = net.connect(server.address().port, "127.0.0.1", () => client.end(payload));
+  client.on("error", (error) => finish({ clientError: error.code ?? error.message }));
+});
+`;
+
 describe("networking", () => {
 	let vm: AgentOs;
 
@@ -52,4 +76,17 @@ describe("networking", () => {
 
 		await vm.process.kill(pid);
 	});
+
+	test("delivers a socket write larger than the VM socket buffer to an in-VM reader", async () => {
+		const result = await vm.javascript.execute(LARGE_WRITE_SCRIPT, {
+			cwd: "/",
+			output: { capture: "all" },
+		});
+
+		expect(result.stderr).toBe("");
+		expect(JSON.parse(result.stdout.trim())).toEqual({
+			receivedBytes: 6 * 1024 * 1024,
+			intact: true,
+		});
+	}, 30_000);
 });

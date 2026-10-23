@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::metrics::{BufferMetricClass, ResourceMetricClass, RuntimeMetrics};
@@ -174,6 +174,8 @@ struct LedgerInner {
     limits: BTreeMap<ResourceClass, ResourceLimit>,
     state: Mutex<LedgerState>,
     capacity_changed: tokio::sync::Notify,
+    buffered_bytes_released: tokio::sync::Notify,
+    buffered_bytes_release_generation: AtomicU64,
     integrity_failed: AtomicBool,
     metrics: Option<RuntimeMetrics>,
 }
@@ -224,6 +226,8 @@ impl ResourceLedger {
                     counters: BTreeMap::new(),
                 }),
                 capacity_changed: tokio::sync::Notify::new(),
+                buffered_bytes_released: tokio::sync::Notify::new(),
+                buffered_bytes_release_generation: AtomicU64::new(0),
                 integrity_failed: AtomicBool::new(false),
                 metrics,
             }),
@@ -417,6 +421,47 @@ impl ResourceLedger {
         }
     }
 
+    /// Count of buffered-byte releases in this scope and its parent. Take it
+    /// before an admission attempt and pass it to
+    /// [`Self::buffered_bytes_released`].
+    pub fn buffered_bytes_release_generation(&self) -> u64 {
+        let local = self
+            .inner
+            .buffered_bytes_release_generation
+            .load(Ordering::Acquire);
+        self.parent.as_ref().map_or(local, |parent| {
+            local.wrapping_add(parent.buffered_bytes_release_generation())
+        })
+    }
+
+    /// Wait without polling until buffered-byte capacity is released after
+    /// `observed`. Unlike [`Self::capacity_changed`], this wakes every waiter,
+    /// so it cannot steal the single wakeup an admission waiter depends on.
+    pub async fn buffered_bytes_released(&self, observed: u64) {
+        let local = self.inner.buffered_bytes_released.notified();
+        let parent = self
+            .parent
+            .as_ref()
+            .map(|parent| parent.inner.buffered_bytes_released.notified());
+        tokio::pin!(local, parent);
+        // Arm before checking so a release between the check and the await
+        // is not missed.
+        local.as_mut().enable();
+        if let Some(parent) = parent.as_mut().as_pin_mut() {
+            parent.enable();
+        }
+        if self.buffered_bytes_release_generation() != observed {
+            return;
+        }
+        match parent.as_pin_mut() {
+            Some(parent) => tokio::select! {
+                _ = local => {}
+                _ = parent => {}
+            },
+            None => local.await,
+        }
+    }
+
     /// Pause an async source until the requested capacity is available. The
     /// notification is armed before each retry so a concurrent release cannot
     /// be missed between observing the limit and awaiting capacity.
@@ -525,6 +570,13 @@ fn release_allocation(allocation: &Allocation) {
     // `notify_one` retains a permit when no waiter is currently polled, which
     // closes the release-between-retry-and-await race.
     allocation.ledger.capacity_changed.notify_one();
+    if allocation.resource == ResourceClass::BufferedBytes {
+        allocation
+            .ledger
+            .buffered_bytes_release_generation
+            .fetch_add(1, Ordering::Release);
+        allocation.ledger.buffered_bytes_released.notify_waiters();
+    }
 }
 
 fn observe_usage(inner: &LedgerInner, resource: ResourceClass, used: usize) {

@@ -1207,6 +1207,10 @@ pub(crate) struct VmState {
     pub(crate) runtime_context: agentos_runtime::RuntimeContext,
     /// Language runtime context maps owned by this VM generation.
     pub(crate) execution_engines: VmExecutionEngines,
+    /// The sidecar's runtime-completion channel, for waiters that requeue
+    /// parked process work without holding a dispatcher slot.
+    pub(crate) process_event_sender: TokioSender<ProcessEventEnvelope>,
+    pub(crate) process_event_notify: Arc<Notify>,
     /// One resolved SQLite transport shared by every durable VM subsystem.
     pub(crate) database: Option<crate::vm_sqlite::SharedVmSqliteDatabase>,
     /// Common lifecycle/identity registry for native and kernel backends.
@@ -2180,6 +2184,9 @@ pub(crate) struct ActiveProcess {
     /// `None` for a readiness-only wait with no recurring timeout.
     pub(crate) deferred_kernel_wait_rpc: Option<(JavascriptSyncRpcRequest, Option<Instant>)>,
     pub(crate) deferred_child_write_timer: Option<tokio::task::JoinHandle<()>>,
+    /// `net.write` RPCs parked while an in-VM peer drains the VM socket
+    /// buffer, keyed by request ID. Bounded by the pending bridge calls.
+    pub(crate) parked_net_writes: BTreeMap<u64, ParkedNetWrite>,
     /// Per-process module resolution cache, persisted across module sync-RPCs
     /// (`__resolve_module` / `__load_file` / `__module_format` /
     /// `__batch_resolve_modules`) for the lifetime of this process so cold-start
@@ -3607,6 +3614,14 @@ pub(crate) struct PendingJavascriptNetConnectState {
 pub(crate) struct DeferredRpcError {
     pub(crate) code: String,
     pub(crate) message: String,
+}
+
+#[derive(Debug)]
+pub(crate) struct ParkedNetWrite {
+    pub(crate) socket_id: String,
+    pub(crate) deadline: Instant,
+    /// Wakes the waiter when the guest releases the socket.
+    pub(crate) socket_released: Arc<Notify>,
 }
 
 #[derive(Debug)]

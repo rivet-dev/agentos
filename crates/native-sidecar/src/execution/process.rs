@@ -179,6 +179,7 @@ impl ActiveProcess {
             tty_raw_mode_generation: None,
             deferred_kernel_wait_rpc: None,
             deferred_child_write_timer: None,
+            parked_net_writes: BTreeMap::new(),
             module_resolution_cache: agentos_execution::LocalModuleResolutionCache::default(),
         }
     }

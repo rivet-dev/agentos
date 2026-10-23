@@ -1686,15 +1686,18 @@ where
                         .map(|(owner_pid, _)| (process.kernel_pid, owner_pid))
                 });
             if let Some((writer_kernel_pid, owner_pid)) = shared_terminal_writer {
-                return Ok(super::super::child_process::write_shared_terminal(
-                    vm,
-                    writer_kernel_pid,
-                    owner_pid,
-                    &request,
-                )
-                .map(JavascriptSyncRpcServiceResponse::Json));
+                return Ok(Some(
+                    super::super::child_process::write_shared_terminal(
+                        vm,
+                        writer_kernel_pid,
+                        owner_pid,
+                        &request,
+                    )
+                    .map(JavascriptSyncRpcServiceResponse::Json),
+                ));
             }
         }
+        let release_generation = vm.resources.buffered_bytes_release_generation();
         let socket_paths = build_javascript_socket_path_context(vm)?;
         let dns = vm.dns.clone();
         let kernel_readiness = Arc::clone(&vm.kernel_socket_readiness);
@@ -1733,14 +1736,31 @@ where
         let mut context = Context::from_waker(Waker::noop());
         let poll = future.as_mut().poll(&mut context);
         drop(future);
-        match poll {
-            Poll::Ready(response) => Ok(response),
-            Poll::Pending => Err(SidecarError::InvalidState(format!(
-                "ERR_AGENTOS_JAVASCRIPT_RPC_OWNERSHIP: {} suspended inside the generic VM-state dispatcher; route it through an owned service",
-                request.method
-            ))),
+        let response = match poll {
+            Poll::Ready(response) => response,
+            Poll::Pending => {
+                return Err(SidecarError::InvalidState(format!(
+                    "ERR_AGENTOS_JAVASCRIPT_RPC_OWNERSHIP: {} suspended inside the generic VM-state dispatcher; route it through an owned service",
+                    request.method
+                )))
+            }
+        };
+        if request.method != "net.write" {
+            return Ok(Some(response));
         }
+        route_javascript_net_write_result(
+            vm,
+            vm_id,
+            process_id,
+            child_path,
+            &request,
+            release_generation,
+            response,
+        )
     })?;
+    let Some(response) = response else {
+        return Ok(());
+    };
     settle_owned_fetch_sync_rpc::<B>(vm, process_id, child_path, request, response).await
 }
 

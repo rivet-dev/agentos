@@ -4769,6 +4769,33 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         Ok(result)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn socket_read_charged(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        socket_id: SocketId,
+        max_bytes: usize,
+    ) -> KernelResult<Option<crate::socket_table::ChargedSocketRead>> {
+        self.assert_not_terminated()?;
+        self.assert_driver_owns(requester_driver, pid)?;
+        let existing = self
+            .sockets
+            .get(socket_id)
+            .ok_or_else(|| KernelError::new("ENOENT", format!("no such socket {socket_id}")))?;
+        if existing.owner_pid() != pid && existing.owner_pid() != 0 {
+            return Err(KernelError::permission_denied(format!(
+                "process {pid} does not own socket {socket_id}"
+            )));
+        }
+
+        let result = self.sockets.read_charged(socket_id, max_bytes)?;
+        if result.is_some() {
+            self.poll_notifier.notify();
+        }
+        Ok(result)
+    }
+
     pub fn socket_shutdown(
         &mut self,
         requester_driver: &str,

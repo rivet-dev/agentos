@@ -256,6 +256,131 @@ pub(crate) fn deferred_kernel_wait_request_for_process(
     }))
 }
 
+pub(crate) fn javascript_net_write_chunk(
+    request: &JavascriptSyncRpcRequest,
+) -> Result<std::borrow::Cow<'_, [u8]>, SidecarError> {
+    match request.raw_bytes_args.get(&1) {
+        Some(bytes) => Ok(std::borrow::Cow::Borrowed(bytes)),
+        None => javascript_sync_rpc_bytes_arg(&request.args, 1, "net.write chunk")
+            .map(std::borrow::Cow::Owned),
+    }
+}
+
+/// Return the wait bound when a `net.write` EAGAIN means "wait for the peer to
+/// drain", like libuv does. Only in-VM TCP sockets write into the kernel's VM
+/// socket buffer budget, and a chunk larger than the whole budget can never
+/// fit, so its EAGAIN stays final.
+pub(crate) fn kernel_socket_write_wait_deadline(
+    process: &ActiveProcess,
+    max_socket_buffered_bytes: Option<usize>,
+    socket_id: &str,
+    chunk_len: usize,
+) -> Option<Duration> {
+    let socket = process.tcp_sockets.get(socket_id)?;
+    (socket.kernel_socket_id.is_some()
+        && !socket.tls_mode.load(Ordering::SeqCst)
+        && max_socket_buffered_bytes.is_none_or(|limit| chunk_len <= limit))
+    .then_some(socket.reactor_limits.operation_deadline)
+}
+
+/// Route a settled guest `net.write`. When an in-VM TCP socket rejected it
+/// with EAGAIN because the VM socket buffer budget is full, park the request
+/// instead of failing it, like libuv keeps a write queued until the socket is
+/// writable. A waiter requeues the request through the process-event channel
+/// when buffered-byte budget is released, the guest releases the socket, or
+/// `limits.reactor.operationDeadlineMs` passes, so the wait never holds a
+/// dispatcher slot. Returns `None` when parked.
+pub(crate) fn route_javascript_net_write_result(
+    vm: &mut VmState,
+    vm_id: &str,
+    process_id: &str,
+    child_path: &[String],
+    request: &JavascriptSyncRpcRequest,
+    release_generation: u64,
+    response: Result<JavascriptSyncRpcServiceResponse, SidecarError>,
+) -> Result<Option<Result<JavascriptSyncRpcServiceResponse, SidecarError>>, SidecarError> {
+    let buffer_limit = vm.limits.resources.max_socket_buffered_bytes;
+    let resources = Arc::clone(&vm.resources);
+    let runtime = vm.runtime_context.clone();
+    let sender = vm.process_event_sender.clone();
+    let event_notify = Arc::clone(&vm.process_event_notify);
+    let envelope_scope = (vm.connection_id.clone(), vm.session_id.clone());
+    let Some(process) = vm.active_processes.get_mut(process_id).and_then(|root| {
+        child_path.iter().try_fold(root, |process, child_id| {
+            process.child_processes.get_mut(child_id)
+        })
+    }) else {
+        return Ok(Some(response));
+    };
+    let wait = match &response {
+        Err(error) if javascript_sync_rpc_error_code(error) == "EAGAIN" => {
+            let socket_id = javascript_sync_rpc_arg_str(&request.args, 0, "net.write socket id")?;
+            let chunk_len = javascript_net_write_chunk(request)?.len();
+            kernel_socket_write_wait_deadline(process, buffer_limit, socket_id, chunk_len)
+                .map(|operation_deadline| (socket_id, operation_deadline))
+        }
+        _ => None,
+    };
+    let Some((socket_id, operation_deadline)) = wait else {
+        let Some(parked) = process.parked_net_writes.remove(&request.id) else {
+            return Ok(Some(response));
+        };
+        if response.is_err() && !process.tcp_sockets.contains_key(&parked.socket_id) {
+            return Ok(Some(Err(SidecarError::Execution(String::from(
+                "ERR_STREAM_DESTROYED: Cannot call write after a stream was destroyed",
+            )))));
+        }
+        return Ok(Some(response));
+    };
+
+    let now = Instant::now();
+    let parked = process
+        .parked_net_writes
+        .entry(request.id)
+        .or_insert_with(|| crate::state::ParkedNetWrite {
+            socket_id: socket_id.to_owned(),
+            deadline: now + operation_deadline,
+            socket_released: Arc::new(tokio::sync::Notify::new()),
+        });
+    if now >= parked.deadline {
+        process.parked_net_writes.remove(&request.id);
+        return Ok(Some(Err(SidecarError::Execution(format!(
+            "ETIMEDOUT: socket write exceeded {}ms; raise limits.reactor.operationDeadlineMs",
+            operation_deadline.as_millis()
+        )))));
+    }
+    let remaining = parked.deadline - now;
+    let socket_released = Arc::clone(&parked.socket_released);
+    let (connection_id, session_id) = envelope_scope;
+    let envelope = ProcessEventEnvelope {
+        connection_id,
+        session_id,
+        vm_id: vm_id.to_owned(),
+        child_path: child_path.to_vec(),
+        process_id: process_id.to_owned(),
+        event: ActiveExecutionEvent::JavascriptSyncRpcRequest(request.clone()),
+    };
+    let spawned = runtime.spawn(agentos_runtime::TaskClass::Socket, async move {
+        tokio::select! {
+            _ = resources.buffered_bytes_released(release_generation) => {}
+            _ = socket_released.notified() => {}
+            _ = tokio::time::sleep(remaining) => {}
+        }
+        if sender.send(envelope).await.is_err() {
+            eprintln!(
+                "ERR_AGENTOS_PROCESS_EVENT_CHANNEL_CLOSED: parked net.write retry could not be delivered"
+            );
+        } else {
+            event_notify.notify_one();
+        }
+    });
+    if let Err(error) = spawned {
+        process.parked_net_writes.remove(&request.id);
+        return Err(SidecarError::from(error));
+    }
+    Ok(None)
+}
+
 pub(crate) struct JavascriptSyncRpcServiceRequest<'a, B> {
     pub(crate) bridge: &'a SharedBridge<B>,
     pub(crate) vm_id: &'a str,
@@ -4992,6 +5117,7 @@ fn is_guest_errno_segment(segment: &str) -> bool {
 pub(crate) fn javascript_sync_rpc_error_code(error: &SidecarError) -> String {
     let message = error.to_string();
     for code in [
+        "ERR_STREAM_DESTROYED",
         "ERR_SOCKET_BAD_PORT",
         "ERR_SOCKET_DGRAM_IS_CONNECTED",
         "ERR_SOCKET_DGRAM_NOT_CONNECTED",

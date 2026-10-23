@@ -557,13 +557,16 @@ impl ActiveTcpSocket {
             }
             if revents.intersects(POLLIN) {
                 const READ_QUANTUM: usize = 64 * 1024;
-                let mut reservation = self
-                    .resources
-                    .reserve(ResourceClass::BufferedBytes, READ_QUANTUM)
-                    .map_err(SidecarError::from)?;
                 let read_started = Instant::now();
-                let read_result =
-                    kernel.socket_read(EXECUTION_DRIVER_NAME, kernel_pid, socket_id, READ_QUANTUM);
+                // Take over the reservation that charged these bytes in the
+                // kernel buffer. Reserving fresh budget first would fail
+                // forever for a reader draining a full VM socket buffer.
+                let read_result = kernel.socket_read_charged(
+                    EXECUTION_DRIVER_NAME,
+                    kernel_pid,
+                    socket_id,
+                    READ_QUANTUM,
+                );
                 if trace_enabled {
                     NET_TCP_TRACE_COUNTERS.socket_read_kernel_us.fetch_add(
                         duration_micros_u64(read_started.elapsed()),
@@ -571,33 +574,25 @@ impl ActiveTcpSocket {
                     );
                 }
                 return match read_result {
-                    Ok(Some(bytes)) if !bytes.is_empty() => {
+                    Ok(Some(read)) => {
                         if trace_enabled {
                             NET_TCP_TRACE_COUNTERS
                                 .socket_read_data_events
                                 .fetch_add(1, Ordering::Relaxed);
                             NET_TCP_TRACE_COUNTERS.socket_read_bytes.fetch_add(
-                                u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+                                u64::try_from(read.bytes.len()).unwrap_or(u64::MAX),
                                 Ordering::Relaxed,
                             );
                         }
-                        let unused = READ_QUANTUM.saturating_sub(bytes.len());
-                        drop(reservation.split(unused));
+                        let reservation = match read.reservation {
+                            Some(reservation) => reservation,
+                            None => self
+                                .resources
+                                .reserve(ResourceClass::BufferedBytes, read.bytes.len())
+                                .map_err(SidecarError::from)?,
+                        };
                         Ok(Some(JavascriptTcpSocketEvent::Data {
-                            bytes,
-                            reservation: SharedReservation::new(reservation),
-                            source_reservations: Vec::new(),
-                        }))
-                    }
-                    Ok(Some(_)) => {
-                        if trace_enabled {
-                            NET_TCP_TRACE_COUNTERS
-                                .socket_read_data_events
-                                .fetch_add(1, Ordering::Relaxed);
-                        }
-                        drop(reservation.split(READ_QUANTUM));
-                        Ok(Some(JavascriptTcpSocketEvent::Data {
-                            bytes: Vec::new(),
+                            bytes: read.bytes,
                             reservation: SharedReservation::new(reservation),
                             source_reservations: Vec::new(),
                         }))
@@ -1521,6 +1516,13 @@ pub(in crate::execution) fn release_tcp_socket_handle(
     let identity = process
         .capability_readiness_identity(&NativeCapabilityKey::TcpSocket(socket_id.to_owned()));
     unregister_kernel_readiness_target(kernel_readiness, socket.kernel_socket_id, identity);
+    for parked in process
+        .parked_net_writes
+        .values()
+        .filter(|parked| parked.socket_id == socket_id)
+    {
+        parked.socket_released.notify_one();
+    }
     if socket.is_final_description_handle() {
         if let Err(error) = socket.close(kernel, process.kernel_pid) {
             eprintln!("ERR_AGENTOS_TCP_SOCKET_CLOSE: {error}");

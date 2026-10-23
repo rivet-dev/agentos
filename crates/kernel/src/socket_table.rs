@@ -424,6 +424,22 @@ impl ReceivedDatagram {
 #[cfg(not(target_arch = "wasm32"))]
 pub type DatagramReservations = (Reservation, Reservation, Reservation, Reservation);
 
+/// Native sidecar handoff that moves the buffered-byte reservation of stream
+/// bytes with the bytes, so they keep exactly one owner as they leave the
+/// socket buffer. A reader then never needs fresh budget to drain a full
+/// buffer. Standalone callers may keep using `read`.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug)]
+pub struct ChargedSocketRead {
+    pub bytes: Vec<u8>,
+    pub reservation: Option<Reservation>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+type RetainedReadBytes = Option<Reservation>;
+#[cfg(target_arch = "wasm32")]
+type RetainedReadBytes = ();
+
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 pub struct ChargedReceivedDatagram {
@@ -2257,8 +2273,29 @@ impl SocketTable {
     }
 
     pub fn read(&self, socket_id: SocketId, max_bytes: usize) -> SocketResult<Option<Vec<u8>>> {
+        Ok(self
+            .read_inner(socket_id, max_bytes)?
+            .map(|(bytes, _retained)| bytes))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn read_charged(
+        &self,
+        socket_id: SocketId,
+        max_bytes: usize,
+    ) -> SocketResult<Option<ChargedSocketRead>> {
+        Ok(self
+            .read_inner(socket_id, max_bytes)?
+            .map(|(bytes, reservation)| ChargedSocketRead { bytes, reservation }))
+    }
+
+    fn read_inner(
+        &self,
+        socket_id: SocketId,
+        max_bytes: usize,
+    ) -> SocketResult<Option<(Vec<u8>, RetainedReadBytes)>> {
         if max_bytes == 0 {
-            return Ok(Some(Vec::new()));
+            return Ok(Some((Vec::new(), RetainedReadBytes::default())));
         }
 
         let mut table = lock_or_recover(&self.inner.state);
@@ -2299,15 +2336,20 @@ impl SocketTable {
             let connection = record.connection_state.as_mut().ok_or_else(|| {
                 SocketTableError::not_connected(format!("socket {socket_id} is not connected"))
             })?;
-            let result =
-                connection.read_recv(max_bytes, record.spec.socket_type != SocketType::Stream);
+            let Some(bytes) =
+                connection.read_recv(max_bytes, record.spec.socket_type != SocketType::Stream)
+            else {
+                return Ok(None);
+            };
             #[cfg(not(target_arch = "wasm32"))]
-            if self.has_resource_ledger() {
-                if let Some(read) = result.as_ref() {
-                    release_retained_bytes(&mut table, socket_id, read.len())?;
-                }
-            }
-            return Ok(result);
+            let retained = if self.has_resource_ledger() {
+                take_retained_bytes(&mut table, socket_id, bytes.len())?
+            } else {
+                None
+            };
+            #[cfg(target_arch = "wasm32")]
+            let retained = ();
+            return Ok(Some((bytes, retained)));
         }
 
         let peer_open = connection
@@ -2492,13 +2534,13 @@ impl SocketTable {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn release_retained_bytes(
+fn take_retained_bytes(
     table: &mut SocketTableState,
     socket_id: SocketId,
     mut amount: usize,
-) -> SocketResult<()> {
+) -> SocketResult<Option<Reservation>> {
     if amount == 0 {
-        return Ok(());
+        return Ok(None);
     }
     let resources = table
         .retained_resources
@@ -2524,23 +2566,36 @@ fn release_retained_bytes(
             "socket {socket_id} released {amount} buffered bytes but owns only {owned}"
         )));
     }
+    let mut taken: Option<Reservation> = None;
     while amount > 0 {
         let reservation = resources.buffered_bytes.front_mut().ok_or_else(|| {
             SocketTableError::accounting_invariant(format!(
                 "socket {socket_id} released more buffered bytes than it owns"
             ))
         })?;
-        if reservation.amount() <= amount {
+        let piece = if reservation.amount() <= amount {
             amount -= reservation.amount();
-            resources.buffered_bytes.pop_front();
+            resources.buffered_bytes.pop_front().ok_or_else(|| {
+                SocketTableError::accounting_invariant(format!(
+                    "socket {socket_id} lost its buffered-byte reservation"
+                ))
+            })?
         } else {
-            let released = reservation.split(amount).ok_or_else(|| {
+            let piece = reservation.split(amount).ok_or_else(|| {
                 SocketTableError::accounting_invariant(format!(
                     "socket {socket_id} could not split its buffered-byte reservation"
                 ))
             })?;
-            drop(released);
             amount = 0;
+            piece
+        };
+        match taken.as_mut() {
+            Some(taken) => taken.merge(piece).map_err(|_| {
+                SocketTableError::accounting_invariant(format!(
+                    "socket {socket_id} buffered-byte reservations span different ledgers"
+                ))
+            })?,
+            None => taken = Some(piece),
         }
     }
     if resources.buffered_bytes.is_empty()
@@ -2550,7 +2605,7 @@ fn release_retained_bytes(
     {
         table.retained_resources.remove(&socket_id);
     }
-    Ok(())
+    Ok(taken)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -3366,7 +3421,7 @@ mod tests {
         table.write(writer.id(), b"abc").expect("queue bytes");
 
         let mut state = lock_or_recover(&table.inner.state);
-        let error = release_retained_bytes(&mut state, reader.id(), 4)
+        let error = take_retained_bytes(&mut state, reader.id(), 4)
             .expect_err("over-release must fail atomically");
         assert_eq!(error.code(), "EIO");
         assert_eq!(
