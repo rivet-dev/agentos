@@ -99,7 +99,7 @@ Guest networking is confined by three distinct controls plus the loopback-only d
 Guest listeners are reachable only over loopback (`127.0.0.1` / `::1`) inside the VM.
 
 - Binding to `0.0.0.0` or `::` does not widen this: the kernel normalizes the unspecified address down to loopback, so the listener still answers only on loopback.
-- A connection that originates outside the loopback interface and targets a port the VM does not own is refused with `EACCES`, noting the port is not exempt.
+- A guest TCP connection to a loopback port that no VM listener owns fails with `ECONNREFUSED`, as on Linux. A UDP send or connect to such a port fails with `EACCES`. Neither falls through to a host loopback service unless the port is listed in `loopbackExemptPorts`.
 - This confinement is independent of the permission policy. Even with the network allowed, a guest server stays loopback-only unless its port is explicitly exempted.
 
 ### Three stacked controls

@@ -2649,9 +2649,11 @@ fn blocked_dns_resolution_error(
     ))
 }
 
-fn blocked_loopback_connect_error(resource: &str, ip: IpAddr, port: u16) -> SidecarError {
+// Linux refuses a TCP connect when nothing listens on the port, and wait-for-server
+// loops retry only on ECONNREFUSED. The host loopback port stays unreachable either way.
+fn refused_loopback_connect_error(resource: &str, ip: IpAddr, port: u16) -> SidecarError {
     SidecarError::Execution(format!(
-        "EACCES: blocked outbound network access to {resource}: {ip} is loopback ({}) and port {port} is not owned by this VM and is not listed in {LOOPBACK_EXEMPT_PORTS_ENV}",
+        "ECONNREFUSED: connection refused to {resource}: no listener on {ip} ({}) port {port} in this VM; host loopback ports require loopbackExemptPorts",
         loopback_cidr(ip)
     ))
 }
@@ -2685,15 +2687,25 @@ pub(in crate::execution) fn filter_dns_safe_ip_addrs(
     Ok(allowed)
 }
 
+fn blocked_loopback_send_error(resource: &str, ip: IpAddr, port: u16) -> SidecarError {
+    SidecarError::Execution(format!(
+        "EACCES: blocked outbound network access to {resource}: {ip} is loopback ({}) and port {port} is not owned by this VM and is not listed in {LOOPBACK_EXEMPT_PORTS_ENV}",
+        loopback_cidr(ip)
+    ))
+}
+
 fn loopback_connect_allowed(context: &JavascriptSocketPathContext, port: u16) -> bool {
     context.loopback_port_allowed(port)
 }
 
+/// `unowned_loopback_error` answers a loopback target with no VM listener and
+/// no exemption: TCP refuses the connect, UDP keeps the confinement error.
 fn filter_tcp_connect_ip_addrs(
     addresses: Vec<IpAddr>,
     host: &str,
     port: u16,
     context: &JavascriptSocketPathContext,
+    unowned_loopback_error: fn(&str, IpAddr, u16) -> SidecarError,
 ) -> Result<Vec<IpAddr>, SidecarError> {
     let resource = format_tcp_resource(host, port);
     let mut allowed = Vec::new();
@@ -2705,7 +2717,7 @@ fn filter_tcp_connect_ip_addrs(
             continue;
         }
         if is_loopback_ip(ip) && !loopback_connect_allowed(context, port) {
-            blocked.get_or_insert_with(|| blocked_loopback_connect_error(&resource, ip, port));
+            blocked.get_or_insert_with(|| unowned_loopback_error(&resource, ip, port));
             continue;
         }
         allowed.push(ip);
@@ -2754,6 +2766,7 @@ where
         host,
         port,
         context,
+        refused_loopback_connect_error,
     )?;
     bridge.require_resolved_network_access(
         vm_id,
@@ -2929,6 +2942,7 @@ where
         host,
         port,
         context,
+        blocked_loopback_send_error,
     )?;
     bridge.require_resolved_network_access(
         vm_id,
@@ -3761,9 +3775,9 @@ mod ssrf_egress_classifier_tests {
     // egress filter directly (no network I/O, no Node), so they run fast and
     // deterministically. See FAILURES.md#F-005, #F-006, #F-007.
     use super::{
-        filter_dns_ip_addrs, filter_dns_safe_ip_addrs, filter_tcp_connect_ip_addrs, is_loopback_ip,
-        restricted_non_loopback_ip_range, JavascriptSocketFamily, JavascriptSocketPathContext,
-        SidecarError, VmListenPolicy,
+        blocked_loopback_send_error, filter_dns_ip_addrs, filter_dns_safe_ip_addrs,
+        filter_tcp_connect_ip_addrs, is_loopback_ip, restricted_non_loopback_ip_range,
+        JavascriptSocketFamily, JavascriptSocketPathContext, SidecarError, VmListenPolicy,
     };
     use std::collections::{BTreeMap, BTreeSet};
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -3818,13 +3832,24 @@ mod ssrf_egress_classifier_tests {
         let context = socket_policy_context();
         let public = IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34));
         let private = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 7));
-        let mixed_error =
-            filter_tcp_connect_ip_addrs(vec![private, public], "mixed.example", 53, &context)
-                .expect_err("a mixed safe/blocked answer must fail closed as a unit");
+        let mixed_error = filter_tcp_connect_ip_addrs(
+            vec![private, public],
+            "mixed.example",
+            53,
+            &context,
+            blocked_loopback_send_error,
+        )
+        .expect_err("a mixed safe/blocked answer must fail closed as a unit");
         assert!(mixed_error.to_string().starts_with("EACCES:"));
 
-        let error = filter_tcp_connect_ip_addrs(vec![private], "rebound.example", 53, &context)
-            .expect_err("a DNS answer that rebinds entirely into private space is denied");
+        let error = filter_tcp_connect_ip_addrs(
+            vec![private],
+            "rebound.example",
+            53,
+            &context,
+            blocked_loopback_send_error,
+        )
+        .expect_err("a DNS answer that rebinds entirely into private space is denied");
         assert!(error.to_string().starts_with("EACCES:"));
     }
 
@@ -3857,6 +3882,7 @@ mod ssrf_egress_classifier_tests {
                 "127.0.0.1",
                 guest_port,
                 &context,
+                blocked_loopback_send_error,
             )
             .expect("same-VM UDP guest port must pass the loopback ownership gate"),
             vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]
@@ -3867,6 +3893,7 @@ mod ssrf_egress_classifier_tests {
                 "127.0.0.1",
                 guest_port + 1,
                 &context,
+                blocked_loopback_send_error,
             )
             .is_err(),
             "an unrelated loopback port must remain denied"

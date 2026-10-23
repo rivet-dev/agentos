@@ -4546,6 +4546,17 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             return Ok(());
         }
 
+        if spec.socket_type == SocketType::Stream {
+            // Linux refuses a TCP connect when nothing listens on the port.
+            return Err(KernelError::new(
+                "ECONNREFUSED",
+                format!(
+                    "{operation} to {}:{} refused: no listener on this port in this VM; host loopback ports require loopbackExemptPorts",
+                    target_address.host(),
+                    target_address.port()
+                ),
+            ));
+        }
         Err(KernelError::permission_denied(format!(
             "{operation} to {}:{} is not owned by this VM and is not loopback-exempt",
             target_address.host(),

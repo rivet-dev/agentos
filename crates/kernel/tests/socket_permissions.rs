@@ -202,10 +202,10 @@ fn socket_connect_inet_loopback_requires_owned_or_exempt_port() {
             client,
             InetSocketAddress::new("127.0.0.1", 7777),
         )
-        .expect_err("unowned non-exempt loopback port should be denied");
+        .expect_err("unowned non-exempt loopback port should be refused");
 
-    assert_eq!(error.code(), "EPERM");
-    assert!(error.to_string().contains("not loopback-exempt"));
+    assert_eq!(error.code(), "ECONNREFUSED");
+    assert!(error.to_string().contains("loopbackExemptPorts"));
     assert_eq!(kernel.resource_snapshot().socket_connections, 0);
 }
 

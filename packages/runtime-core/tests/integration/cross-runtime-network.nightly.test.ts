@@ -401,7 +401,7 @@ describe('cross-runtime network integration', { timeout: 90_000 }, () => {
         ].join('\n'),
       );
       expect(noExemption.exitCode).toBe(0);
-      expect(noExemption.stdout.trim()).toBe('EACCES');
+      expect(noExemption.stdout.trim()).toBe('ECONNREFUSED');
       expect(seenRequests).toEqual([]);
       await ctx.dispose();
 

@@ -20147,12 +20147,12 @@ process.exit(0);
             );
             assert_eq!(
                 parsed["loopbackConnect"]["code"],
-                Value::String(String::from("EACCES"))
+                Value::String(String::from("ECONNREFUSED"))
             );
             assert!(
                 parsed["loopbackConnect"]["message"]
                     .as_str()
-                    .is_some_and(|message| message.contains(LOOPBACK_EXEMPT_PORTS_ENV)),
+                    .is_some_and(|message| message.contains("loopbackExemptPorts")),
                 "stdout: {stdout}"
             );
 

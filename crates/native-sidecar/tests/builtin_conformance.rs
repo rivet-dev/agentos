@@ -947,6 +947,76 @@ console.log(JSON.stringify(result));
     );
 }
 
+fn loopback_connect_without_vm_listener_is_refused_impl() {
+    assert_node_available();
+
+    // A host service listens on a port the VM does not own and does not exempt.
+    let host_service = TcpListener::bind("127.0.0.1:0").expect("bind host loopback service");
+    host_service
+        .set_nonblocking(true)
+        .expect("set host loopback service nonblocking");
+    let port = host_service
+        .local_addr()
+        .expect("host loopback service address")
+        .port();
+
+    let cwd = temp_dir("builtin-loopback-connect-refused");
+    let entrypoint = cwd.join("entry.mjs");
+    write_fixture(
+        &entrypoint,
+        format!(
+            r#"
+import net from "node:net";
+
+const netConnect = await new Promise((resolve) => {{
+  const socket = net.connect({port}, "127.0.0.1");
+  socket.on("connect", () => {{
+    socket.destroy();
+    resolve({{ connected: true }});
+  }});
+  socket.on("error", (error) => resolve({{ code: error.code ?? null }}));
+}});
+const fetched = await fetch("http://127.0.0.1:{port}/").then(
+  (response) => ({{ status: response.status }}),
+  (error) => ({{ code: (error.cause ?? error).code ?? null }}),
+);
+
+console.log(JSON.stringify({{ netConnect, fetched }}));
+"#
+        ),
+    );
+
+    let guest = run_guest_probe_with_config(
+        "builtin-loopback-connect-refused",
+        &cwd,
+        &entrypoint,
+        HashMap::new(),
+        wire_permissions_allow_all(),
+        &["net"],
+    );
+    match host_service.accept() {
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+        other => panic!("guest loopback reached the non-exempt host service: {other:?}"),
+    }
+    assert_eq!(
+        guest["netConnect"]["code"], "ECONNREFUSED",
+        "guest: {guest}"
+    );
+
+    // With the host service closed, host Node sees the same closed loopback port.
+    drop(host_service);
+    let host = run_host_probe(&cwd, &entrypoint);
+    assert_eq!(
+        guest, host,
+        "guest V8 result diverged from host Node\nhost: {host}\nguest: {guest}"
+    );
+}
+
+#[test]
+fn loopback_connect_without_vm_listener_is_refused() {
+    run_isolated_builtin_conformance_test("loopback-connect-refused");
+}
+
 #[test]
 fn http_request_custom_agent_reuses_keepalive_socket() {
     run_isolated_builtin_conformance_test("http-request-keepalive");
@@ -5098,6 +5168,7 @@ fn __builtin_conformance_extra_test_runner() {
     match test_name.as_str() {
         "http-request-keepalive" => http_request_custom_agent_reuses_keepalive_socket_impl(),
         "http-request-denied" => http_request_denied_egress_returns_permission_error_impl(),
+        "loopback-connect-refused" => loopback_connect_without_vm_listener_is_refused_impl(),
         "child-process-fork-ipc" => child_process_fork_supports_basic_ipc_impl(),
         "http-socket-writes" => http_socket_writes_do_not_silently_drop_data_impl(),
         "buffer-concat-truncation" => buffer_concat_truncation_matches_host_node_impl(),

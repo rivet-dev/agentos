@@ -124,9 +124,11 @@ describe('scalar network "deny"', () => {
 		// External egress is denied by the network policy.
 		expect(result.external.error).toBe("EACCES");
 		// Guest loopback is VM-local, so loopback confinement keeps it from
-		// reaching host loopback services without an explicit exemption.
-		expect(result.hostLoopback.error).toBe("EACCES");
-		expect(result.hostLoopback.message).toContain("not owned by this VM");
+		// reaching host loopback services without an explicit exemption. No VM
+		// listener owns the port, so the guest sees a refused connection, as in a
+		// container with no published ports.
+		expect(result.hostLoopback.error).toBe("ECONNREFUSED");
+		expect(result.hostLoopback.message).toContain("loopbackExemptPorts");
 		expect(hostRequests).toBe(0);
 
 		await vm.process.kill(serverPid);
