@@ -506,6 +506,7 @@ struct SessionAssignment {
     heap_limit_mb: Option<u32>,
     cpu_time_limit_ms: Option<u32>,
     wall_clock_limit_ms: Option<u32>,
+    limit_external_memory: bool,
     rx: Receiver<SessionCommand>,
     shutdown_rx: Receiver<()>,
     ready_rx: Receiver<ReadyWake>,
@@ -1340,6 +1341,7 @@ impl SessionManager {
             heap_limit_mb,
             cpu_time_limit_ms,
             wall_clock_limit_ms,
+            false,
             output_generation,
             warm_hint,
             None,
@@ -1353,6 +1355,7 @@ impl SessionManager {
         heap_limit_mb: Option<u32>,
         cpu_time_limit_ms: Option<u32>,
         wall_clock_limit_ms: Option<u32>,
+        limit_external_memory: bool,
         output_generation: Option<u64>,
         warm_hint: Option<WarmSessionHint>,
         event_tx: Option<RuntimeEventSender>,
@@ -1371,6 +1374,7 @@ impl SessionManager {
             heap_limit_mb,
             cpu_time_limit_ms,
             wall_clock_limit_ms,
+            limit_external_memory,
             output_generation,
             warm_hint,
             event_tx,
@@ -1390,6 +1394,7 @@ impl SessionManager {
         heap_limit_mb: Option<u32>,
         cpu_time_limit_ms: Option<u32>,
         wall_clock_limit_ms: Option<u32>,
+        limit_external_memory: bool,
         output_generation: Option<u64>,
         warm_hint: Option<WarmSessionHint>,
         event_tx: Option<RuntimeEventSender>,
@@ -1431,6 +1436,7 @@ impl SessionManager {
             heap_limit_mb,
             cpu_time_limit_ms,
             wall_clock_limit_ms,
+            limit_external_memory,
             rx,
             shutdown_rx,
             ready_rx,
@@ -2237,6 +2243,7 @@ fn session_thread(
         heap_limit_mb,
         cpu_time_limit_ms,
         wall_clock_limit_ms,
+        limit_external_memory,
         rx,
         shutdown_rx,
         ready_rx,
@@ -2263,6 +2270,7 @@ fn session_thread(
         heap_limit_mb,
         cpu_time_limit_ms,
         wall_clock_limit_ms,
+        limit_external_memory,
         call_id_router,
         shared_call_id,
         snapshot_cache,
@@ -2533,6 +2541,9 @@ fn session_thread(
 
                         let iso = v8_isolate.as_mut().unwrap();
                         iso.cancel_terminate_execution();
+                        if limit_external_memory {
+                            isolate::install_external_memory_guard(iso);
+                        }
 
                         // Language executions set bit 1 to reuse the session's
                         // process-lifetime context. Normal process executions keep

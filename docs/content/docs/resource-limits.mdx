@@ -89,8 +89,16 @@ backs typed arrays, `Buffer`, and `SharedArrayBuffer`. The size is
 fails with `execution_heap_limit_exceeded`. An allocation that goes past the
 `ArrayBuffer` cap throws `RangeError: Array buffer allocation failed`, and the
 sidecar reports the `v8_array_buffer_bytes` limit warning. Other VMs on the
-sidecar keep running in both cases. WebAssembly memory and resizable
-`ArrayBuffer`s are not counted toward either cap.
+sidecar keep running in both cases.
+
+In JavaScript, WebAssembly memory and buffers that hold data from the host,
+such as file contents, have a third cap of the same size. V8 checks it during
+garbage collection. A script that goes past it fails with
+`execution_heap_limit_exceeded`, and the sidecar reports the
+`v8_external_memory_bytes` limit warning. Python keeps its interpreter memory
+in WebAssembly, so this cap does not apply to Python. Shared WebAssembly
+memory, resizable `ArrayBuffer`s, and growable `SharedArrayBuffer`s are not
+counted toward any cap.
 
 ### Sidecar memory
 

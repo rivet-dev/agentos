@@ -184,4 +184,36 @@ describe("code mode execution", () => {
 			value: 2,
 		});
 	}, 30_000);
+
+	test("WebAssembly memory past the heap limit fails only its own script", async () => {
+		// 1 GiB of WebAssembly memory against the default 128 MiB limit.
+		const result = await vm.javascript.evaluate(
+			`(() => {
+				const held = [];
+				for (let i = 0; i < 16; i++) {
+					const memory = new WebAssembly.Memory({ initial: 1024 });
+					new Uint8Array(memory.buffer).fill(1);
+					held.push(memory);
+				}
+				return held.length;
+			})()`,
+			{ timeoutMs: 10_000 },
+		);
+
+		expect(result).toMatchObject({
+			outcome: "failed",
+			error: {
+				code: "execution_heap_limit_exceeded",
+				message: expect.stringContaining("limits.jsRuntime.v8HeapLimitMb"),
+			},
+		});
+		await expect
+			.poll(() => limitWarnings)
+			.toContain("v8_external_memory_bytes");
+		expect(
+			await vm.javascript.evaluate(
+				"new WebAssembly.Memory({ initial: 512 }).buffer.byteLength",
+			),
+		).toMatchObject({ outcome: "succeeded", value: 32 * 1024 * 1024 });
+	}, 30_000);
 });

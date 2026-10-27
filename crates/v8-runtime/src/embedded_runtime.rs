@@ -239,6 +239,7 @@ impl EmbeddedV8Runtime {
                 heap_limit_mb,
                 cpu_time_limit_ms,
                 wall_clock_limit_ms,
+                limit_external_memory,
                 warm_hint,
             } => {
                 let output = self
@@ -260,6 +261,7 @@ impl EmbeddedV8Runtime {
                     heap_limit_mb,
                     cpu_time_limit_ms,
                     wall_clock_limit_ms,
+                    limit_external_memory,
                     output_generation,
                     warm_hint,
                     event_tx,
@@ -310,6 +312,7 @@ impl EmbeddedV8Runtime {
             heap_limit_mb,
             cpu_time_limit_ms,
             wall_clock_limit_ms,
+            limit_external_memory,
             warm_hint,
         } = command
         else {
@@ -337,6 +340,7 @@ impl EmbeddedV8Runtime {
                 heap_limit_mb,
                 cpu_time_limit_ms,
                 wall_clock_limit_ms,
+                limit_external_memory,
                 output_generation,
                 warm_hint,
                 event_tx,
@@ -842,16 +846,19 @@ fn dispatch_runtime_command(
             heap_limit_mb,
             cpu_time_limit_ms,
             wall_clock_limit_ms,
+            limit_external_memory,
             warm_hint,
         } => {
             let mut mgr = session_mgr.lock().expect("session manager lock poisoned");
-            mgr.create_session_with_output_generation(
+            mgr.create_session_with_output_generation_and_sender(
                 session_id,
                 heap_limit_mb,
                 cpu_time_limit_ms,
                 wall_clock_limit_ms,
+                limit_external_memory,
                 None,
                 warm_hint,
+                None,
             )
             .map_err(other_io_error)
         }
@@ -1286,6 +1293,7 @@ mod tests {
                     heap_limit_mb: None,
                     cpu_time_limit_ms: None,
                     wall_clock_limit_ms: None,
+                    limit_external_memory: false,
                     warm_hint: None,
                 },
                 vm_runtime,
@@ -1329,6 +1337,7 @@ mod tests {
                     heap_limit_mb: None,
                     cpu_time_limit_ms: None,
                     wall_clock_limit_ms: None,
+                    limit_external_memory: false,
                     warm_hint: None,
                 })
                 .expect("create session");
@@ -1708,6 +1717,7 @@ mod tests {
                 heap_limit_mb: None,
                 cpu_time_limit_ms: None,
                 wall_clock_limit_ms: None,
+                limit_external_memory: false,
                 warm_hint: None,
             })
             .expect("create first session");
@@ -1744,6 +1754,7 @@ mod tests {
                 heap_limit_mb: None,
                 cpu_time_limit_ms: None,
                 wall_clock_limit_ms: None,
+                limit_external_memory: false,
                 warm_hint: None,
             })
             .expect("create reused session");

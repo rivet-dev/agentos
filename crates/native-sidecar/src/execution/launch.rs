@@ -3073,6 +3073,7 @@ pub(super) fn javascript_execution_limits(vm: &VmState) -> JavascriptExecutionLi
         max_timers: Some(vm.limits.js_runtime.max_timers),
         reactor_work_quantum: vm_reactor_work_quantum(&vm.limits),
         bridge_call_timeout_ms: Some(bridge_call_timeout_ms(&vm.limits)),
+        limit_external_memory: true,
     }
 }
 
