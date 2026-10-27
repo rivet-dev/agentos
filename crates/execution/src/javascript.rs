@@ -463,6 +463,11 @@ pub struct JavascriptExecutionLimits {
     /// Per-call host bridge deadline. Sidecar VMs supply
     /// `limits.reactor.operationDeadlineMs`; zero is invalid.
     pub bridge_call_timeout_ms: Option<u64>,
+    /// Stop the script when WebAssembly memory and host-provided buffers pass
+    /// the heap limit. The sidecar sets this for guest JavaScript only; Python
+    /// and the WASM runner keep their program memory in WebAssembly under their
+    /// own limits.
+    pub limit_external_memory: bool,
 }
 
 /// Per-execution guest-runtime config carried as typed fields rather than
@@ -2417,6 +2422,7 @@ fn register_v8_session<'a, F>(
     heap_limit_mb: u32,
     cpu_time_limit_ms: u32,
     wall_clock_limit_ms: u32,
+    limit_external_memory: bool,
     warm_hint: Option<WarmSessionHint>,
     create_session: F,
 ) -> Result<PendingV8SessionRegistration<'a>, JavascriptExecutionError>
@@ -2433,6 +2439,7 @@ where
         heap_limit_mb: (heap_limit_mb > 0).then_some(heap_limit_mb),
         cpu_time_limit_ms: (cpu_time_limit_ms > 0).then_some(cpu_time_limit_ms),
         wall_clock_limit_ms: (wall_clock_limit_ms > 0).then_some(wall_clock_limit_ms),
+        limit_external_memory,
         warm_hint,
     })
     .map_err(JavascriptExecutionError::Spawn)?;
@@ -2782,6 +2789,7 @@ impl JavascriptExecutionEngine {
             heap_limit_mb,
             cpu_time_limit_ms,
             wall_clock_limit_ms,
+            request.limits.limit_external_memory,
             warm_hint,
             |command| {
                 v8_host.create_session_from_command_with_runtime(
@@ -7584,6 +7592,7 @@ mod tests {
                 max_timers: Some(321),
                 reactor_work_quantum: Some(64),
                 bridge_call_timeout_ms: Some(15_000),
+                limit_external_memory: false,
             },
             wasm_module_bytes: None,
             inline_code: None,
@@ -8000,6 +8009,7 @@ mod tests {
             0,
             0,
             0,
+            false,
             None,
             |_command| {
                 Err(std::io::Error::new(

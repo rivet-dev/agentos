@@ -93,6 +93,7 @@ fn register_and_create_session(
             heap_limit_mb: None,
             cpu_time_limit_ms: None,
             wall_clock_limit_ms: None,
+            limit_external_memory: false,
             warm_hint: None,
         },
         session_runtime,
@@ -116,6 +117,7 @@ fn register_and_create_session_with_cpu_time_limit(
             heap_limit_mb: None,
             cpu_time_limit_ms,
             wall_clock_limit_ms: None,
+            limit_external_memory: false,
             warm_hint: None,
         },
         session_runtime,
@@ -265,6 +267,7 @@ fn assert_create_destroy_reuses_session_ids() -> io::Result<()> {
             heap_limit_mb: None,
             cpu_time_limit_ms: None,
             wall_clock_limit_ms: None,
+            limit_external_memory: false,
             warm_hint: None,
         })
         .expect_err("duplicate sessions should be rejected");
@@ -487,6 +490,7 @@ fn assert_overload_rejects_before_thread_and_recovers_after_release() -> io::Res
             heap_limit_mb: None,
             cpu_time_limit_ms: None,
             wall_clock_limit_ms: None,
+            limit_external_memory: false,
             warm_hint: None,
         })
         .expect_err("executor saturation must reject before spawning another VM thread");
@@ -607,6 +611,7 @@ fn assert_shared_runtime_handles_share_concurrency_quota() -> io::Result<()> {
             heap_limit_mb: None,
             cpu_time_limit_ms: None,
             wall_clock_limit_ms: None,
+            limit_external_memory: false,
             warm_hint: None,
         })
         .expect_err("the shared executor limit must reject a fourth VM before thread creation");

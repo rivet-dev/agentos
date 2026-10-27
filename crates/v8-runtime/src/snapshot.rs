@@ -580,17 +580,13 @@ where
     init_v8_platform();
     crate::isolate::prepare_current_thread();
 
-    // Same heap and ArrayBuffer caps as the fresh-isolate path — a
-    // snapshot-restored isolate is never unbounded.
-    let params = crate::isolate::guest_isolate_params(heap_limit_mb)
-        .snapshot_blob(blob)
-        .external_references(&**external_refs());
-    let mut isolate = crate::isolate::with_isolate_lifecycle_lock(|| v8::Isolate::new(params));
-    crate::isolate::configure_isolate(&mut isolate);
-    // Same OOM guard as the fresh-isolate path: terminate this isolate on heap
-    // exhaustion instead of fatal-aborting the shared process (F-003).
-    crate::isolate::install_heap_limit_guard(&mut isolate);
-    isolate
+    // Same heap and ArrayBuffer caps and OOM guard as the fresh-isolate path, so
+    // a snapshot-restored isolate is never unbounded (F-003).
+    crate::isolate::create_guest_isolate(heap_limit_mb, |params| {
+        params
+            .snapshot_blob(blob)
+            .external_references(&**external_refs())
+    })
 }
 
 pub type SnapshotCacheKey = [u8; 32];

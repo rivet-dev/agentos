@@ -17,6 +17,10 @@ pub enum RuntimeCommand {
         heap_limit_mb: Option<u32>,
         cpu_time_limit_ms: Option<u32>,
         wall_clock_limit_ms: Option<u32>,
+        /// Stop the script when WebAssembly memory and host-provided buffers pass
+        /// the heap limit. Set for guest JavaScript only; Python and the WASM
+        /// runner keep their program memory in WebAssembly under their own limits.
+        limit_external_memory: bool,
         warm_hint: Option<WarmSessionHint>,
     },
     DestroySession {
@@ -187,6 +191,7 @@ impl TryFrom<BinaryFrame> for RuntimeCommand {
                 heap_limit_mb: non_zero_option(heap_limit_mb),
                 cpu_time_limit_ms: non_zero_option(cpu_time_limit_ms),
                 wall_clock_limit_ms: non_zero_option(wall_clock_limit_ms),
+                limit_external_memory: false,
                 warm_hint: None,
             }),
             BinaryFrame::DestroySession { session_id } => {

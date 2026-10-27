@@ -375,10 +375,14 @@ static ARRAY_BUFFER_BUDGET_VTABLE: v8::RustAllocatorVtable<ArrayBufferBudget> =
         drop: budget_drop,
     };
 
-/// Isolate parameters shared by fresh and snapshot-restored guest isolates. The
-/// heap limit in MB (`None` applies `DEFAULT_HEAP_LIMIT_MB`) caps the V8 heap and,
-/// separately, the isolate's ArrayBuffer memory.
-pub(crate) fn guest_isolate_params(heap_limit_mb: Option<u32>) -> v8::CreateParams {
+/// Create a guest isolate, fresh or snapshot-restored (`customize` adds the
+/// snapshot parameters). The heap limit in MB (`None` applies
+/// `DEFAULT_HEAP_LIMIT_MB`) caps the V8 heap and, separately, the isolate's
+/// ArrayBuffer memory.
+pub(crate) fn create_guest_isolate(
+    heap_limit_mb: Option<u32>,
+    customize: impl FnOnce(v8::CreateParams) -> v8::CreateParams,
+) -> v8::OwnedIsolate {
     let limit = heap_limit_mb.unwrap_or(DEFAULT_HEAP_LIMIT_MB);
     let limit_bytes = (limit as usize) * 1024 * 1024;
     let budget = Arc::new(ArrayBufferBudget {
@@ -388,11 +392,22 @@ pub(crate) fn guest_isolate_params(heap_limit_mb: Option<u32>) -> v8::CreatePara
     });
     // Safety: the allocator owns this Arc reference and releases it through
     // `budget_drop`; the vtable expects exactly an `ArrayBufferBudget`.
-    let allocator =
-        unsafe { v8::new_rust_allocator(Arc::into_raw(budget), &ARRAY_BUFFER_BUDGET_VTABLE) };
-    v8::CreateParams::default()
-        .heap_limits(0, limit_bytes)
-        .array_buffer_allocator(allocator.make_shared())
+    let allocator = unsafe {
+        v8::new_rust_allocator(
+            Arc::into_raw(Arc::clone(&budget)),
+            &ARRAY_BUFFER_BUDGET_VTABLE,
+        )
+    };
+    let params = customize(
+        v8::CreateParams::default()
+            .heap_limits(0, limit_bytes)
+            .array_buffer_allocator(allocator.make_shared()),
+    );
+    let mut isolate = with_isolate_lifecycle_lock(|| v8::Isolate::new(params));
+    configure_isolate(&mut isolate);
+    install_heap_limit_guard(&mut isolate);
+    isolate.set_slot(budget);
+    isolate
 }
 
 /// Create a new V8 isolate with an optional heap limit in MB. `None` applies the
@@ -401,11 +416,87 @@ pub(crate) fn guest_isolate_params(heap_limit_mb: Option<u32>) -> v8::CreatePara
 /// than fatal-aborting the shared process.
 pub fn create_isolate(heap_limit_mb: Option<u32>) -> v8::OwnedIsolate {
     prepare_current_thread();
-    let params = guest_isolate_params(heap_limit_mb);
-    let mut isolate = with_isolate_lifecycle_lock(|| v8::Isolate::new(params));
-    configure_isolate(&mut isolate);
-    install_heap_limit_guard(&mut isolate);
-    isolate
+    create_guest_isolate(heap_limit_mb, |params| params)
+}
+
+/// State the external-memory GC check needs for one isolate.
+struct ExternalMemoryGuard {
+    budget: Arc<ArrayBufferBudget>,
+    exceeded: Arc<AtomicBool>,
+    warned: AtomicBool,
+}
+
+/// Isolate slot that marks the external-memory guard as installed.
+struct ExternalMemoryGuardInstalled;
+
+/// Stop guest JavaScript whose memory outside the ArrayBuffer budget passes the
+/// heap limit.
+///
+/// V8 allocates WebAssembly memory through its page allocator, so the
+/// ArrayBuffer budget never sees it, and host-provided buffers are created
+/// outside that budget on purpose. V8 counts both as external memory and
+/// collects garbage as it grows, so a GC prologue check bounds them. Past the
+/// limit the script is terminated and reported as a heap-limit failure.
+///
+/// Install this only for guest JavaScript sessions. Python (Pyodide) and the
+/// WASM runner keep their own program memory in WebAssembly and bound it with
+/// their own limits. Calling it again on the same isolate does nothing.
+pub fn install_external_memory_guard(isolate: &mut v8::OwnedIsolate) {
+    if isolate.get_slot::<ExternalMemoryGuardInstalled>().is_some() {
+        return;
+    }
+    let budget = Arc::clone(
+        isolate
+            .get_slot::<Arc<ArrayBufferBudget>>()
+            .expect("guest isolates carry an ArrayBuffer budget"),
+    );
+    let exceeded = Arc::clone(
+        &isolate
+            .get_slot::<HeapLimitExceeded>()
+            .expect("guest isolates carry a heap-limit guard")
+            .0,
+    );
+    // Leaked like `HeapLimitGuard`: V8 can call the callback until the isolate
+    // is disposed, after its slots are gone.
+    let guard = Box::into_raw(Box::new(ExternalMemoryGuard {
+        budget,
+        exceeded,
+        warned: AtomicBool::new(false),
+    }));
+    isolate.add_gc_prologue_callback(
+        external_memory_gc_callback,
+        guard as *mut c_void,
+        v8::GCType::ALL,
+    );
+    isolate.set_slot(ExternalMemoryGuardInstalled);
+}
+
+extern "C" fn external_memory_gc_callback(
+    isolate: *mut v8::Isolate,
+    _gc_type: v8::GCType,
+    _flags: v8::GCCallbackFlags,
+    data: *mut c_void,
+) {
+    // Safety: `data` is the guard leaked by `install_external_memory_guard`, and
+    // V8 runs GC prologue callbacks on the isolate's own thread.
+    let guard = unsafe { &*(data as *const ExternalMemoryGuard) };
+    let isolate = unsafe { &mut *isolate };
+    let mut statistics = v8::HeapStatistics::default();
+    isolate.get_heap_statistics(&mut statistics);
+    // External memory also holds the non-shared ArrayBuffers the budget already
+    // counts, so only the remainder is checked here.
+    let outside_budget = statistics
+        .external_memory()
+        .saturating_sub(guard.budget.used.load(Ordering::Acquire));
+    let limit = guard.budget.limit;
+    if outside_budget <= limit {
+        return;
+    }
+    isolate.terminate_execution();
+    guard.exceeded.store(true, Ordering::Release);
+    if !guard.warned.swap(true, Ordering::Relaxed) {
+        warn_limit_exhausted(TrackedLimit::V8ExternalMemoryBytes, outside_budget, limit);
+    }
 }
 
 /// Run V8 isolate create/drop work under a process-wide lifecycle lock.

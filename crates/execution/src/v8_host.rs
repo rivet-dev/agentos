@@ -90,6 +90,7 @@ impl V8RuntimeHost {
             heap_limit_mb: non_zero_option(heap_limit_mb),
             cpu_time_limit_ms: non_zero_option(cpu_time_limit_ms),
             wall_clock_limit_ms: non_zero_option(wall_clock_limit_ms),
+            limit_external_memory: false,
             warm_hint,
         })
     }
