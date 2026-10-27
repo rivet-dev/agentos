@@ -580,14 +580,11 @@ where
     init_v8_platform();
     crate::isolate::prepare_current_thread();
 
-    // `None` applies the bounded-by-default cap (`DEFAULT_HEAP_LIMIT_MB`), same as
-    // the fresh-isolate path — a snapshot-restored isolate is never unbounded.
-    let limit = heap_limit_mb.unwrap_or(crate::isolate::DEFAULT_HEAP_LIMIT_MB);
-    let limit_bytes = (limit as usize) * 1024 * 1024;
-    let params = v8::CreateParams::default()
+    // Same heap and ArrayBuffer caps as the fresh-isolate path — a
+    // snapshot-restored isolate is never unbounded.
+    let params = crate::isolate::guest_isolate_params(heap_limit_mb)
         .snapshot_blob(blob)
-        .external_references(&**external_refs())
-        .heap_limits(0, limit_bytes);
+        .external_references(&**external_refs());
     let mut isolate = crate::isolate::with_isolate_lifecycle_lock(|| v8::Isolate::new(params));
     crate::isolate::configure_isolate(&mut isolate);
     // Same OOM guard as the fresh-isolate path: terminate this isolate on heap

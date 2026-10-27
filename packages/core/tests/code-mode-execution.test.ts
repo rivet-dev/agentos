@@ -20,10 +20,12 @@ describe("code mode execution", () => {
 	let callStarts: number[] = [];
 	let inFlight = 0;
 	let maxInFlight = 0;
+	const limitWarnings: string[] = [];
 
 	beforeAll(async () => {
 		vm = await AgentOs.create({
 			permissions: ALLOW_ALL_VM_PERMISSIONS,
+			onLimitWarning: (warning) => limitWarnings.push(warning.limit),
 			hostFunctions: {
 				tools: {
 					wait: {
@@ -115,6 +117,67 @@ describe("code mode execution", () => {
 				code: "execution_heap_limit_exceeded",
 				message: expect.stringContaining("limits.jsRuntime.v8HeapLimitMb"),
 			},
+		});
+		expect(await vm.javascript.evaluate("1 + 1")).toMatchObject({
+			outcome: "succeeded",
+			value: 2,
+		});
+	}, 30_000);
+
+	test("buffer memory past the heap limit fails the allocation, not the VM", async () => {
+		// 1 GiB of typed arrays against the default 128 MiB limit.
+		const result = await vm.javascript.evaluate(
+			`(() => {
+				const held = [];
+				try {
+					for (let i = 0; i < 16; i++) held.push(new Uint8Array(64 * 1024 * 1024).fill(1));
+				} catch (error) {
+					return \`\${error.name}: \${error.message}\`;
+				}
+				return "held 1 GiB";
+			})()`,
+			{ timeoutMs: 10_000 },
+		);
+
+		expect(result).toMatchObject({
+			outcome: "succeeded",
+			value: "RangeError: Array buffer allocation failed",
+		});
+		await expect.poll(() => limitWarnings).toContain("v8_array_buffer_bytes");
+		// The script's buffers are released, so the same VM can allocate again.
+		expect(
+			await vm.javascript.evaluate(
+				"new Uint8Array(64 * 1024 * 1024).fill(1).length",
+			),
+		).toMatchObject({ outcome: "succeeded", value: 64 * 1024 * 1024 });
+	}, 30_000);
+
+	test("reading a file with no buffer memory left fails the read, not the sidecar", async () => {
+		await vm.writeFile(
+			"/tmp/host-bytes.bin",
+			new Uint8Array(1024 * 1024).fill(7),
+		);
+
+		const result = await vm.javascript.evaluate(
+			`(() => {
+				const held = [];
+				for (let size = 16 * 1024 * 1024; size >= 256; size >>= 1) {
+					try {
+						for (;;) held.push(new Uint8Array(size));
+					} catch {}
+				}
+				try {
+					return require("node:fs").readFileSync("/tmp/host-bytes.bin").length;
+				} catch (error) {
+					return \`\${error.name}: \${error.message}\`;
+				}
+			})()`,
+			{ timeoutMs: 20_000 },
+		);
+
+		expect(result).toMatchObject({
+			outcome: "succeeded",
+			value: "RangeError: Array buffer allocation failed",
 		});
 		expect(await vm.javascript.evaluate("1 + 1")).toMatchObject({
 			outcome: "succeeded",

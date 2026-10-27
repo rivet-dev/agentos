@@ -535,23 +535,8 @@ fn cbor_to_v8_inner<'s>(
         ciborium::Value::Text(s) => Ok(v8::String::new(scope, s)
             .ok_or_else(|| "CBOR decode failed to allocate string".to_string())?
             .into()),
-        ciborium::Value::Bytes(b) => {
-            let len = b.len();
-            let ab = v8::ArrayBuffer::new(scope, len);
-            if len > 0 {
-                let bs = ab.get_backing_store();
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        b.as_ptr(),
-                        bs.data().unwrap().as_ptr() as *mut u8,
-                        len,
-                    );
-                }
-            }
-            Ok(v8::Uint8Array::new(scope, ab, 0, len)
-                .ok_or_else(|| "CBOR decode failed to allocate byte array".to_string())?
-                .into())
-        }
+        ciborium::Value::Bytes(b) => raw_bytes_to_uint8array(scope, b)
+            .ok_or_else(|| "CBOR decode failed to allocate byte array".to_string()),
         ciborium::Value::Array(items) => {
             cbor_container_item_count("array", items.len())?;
             let arr = v8::Array::new(scope, items.len() as i32);
@@ -580,14 +565,13 @@ fn raw_bytes_to_uint8array<'s>(
     scope: &mut v8::HandleScope<'s>,
     bytes: &[u8],
 ) -> Option<v8::Local<'s, v8::Value>> {
+    // Host data uses a Rust-owned backing store. `v8::ArrayBuffer::new` draws
+    // from the isolate's ArrayBuffer budget and fatal-aborts the whole process
+    // when that budget is spent, so a guest that fills it could then crash the
+    // sidecar by reading a file.
     let len = bytes.len();
-    let ab = v8::ArrayBuffer::new(scope, len);
-    if len > 0 {
-        let bs = ab.get_backing_store();
-        unsafe {
-            std::ptr::copy_nonoverlapping(bytes.as_ptr(), bs.data()?.as_ptr() as *mut u8, len);
-        }
-    }
+    let backing_store = v8::ArrayBuffer::new_backing_store_from_vec(bytes.to_vec());
+    let ab = v8::ArrayBuffer::with_backing_store(scope, &backing_store.make_shared());
     v8::Uint8Array::new(scope, ab, 0, len).map(Into::into)
 }
 

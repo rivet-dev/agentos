@@ -79,6 +79,19 @@ file content is base64-encoded, so one `writeFile` or `writeFiles` call carries
 at most about 12 MiB of binary data. To move larger files, split them into
 several files or mount a host directory.
 
+### Isolate memory
+
+Each V8 isolate that runs guest JavaScript or Python has two memory caps of the
+same size: one for the V8 heap and one for `ArrayBuffer` memory, which also
+backs typed arrays, `Buffer`, and `SharedArrayBuffer`. The size is
+`limits.jsRuntime.v8HeapLimitMb` for JavaScript (128 MiB by default) and
+`limits.python.maxOldSpaceMb` for Python. A script that goes past the heap cap
+fails with `execution_heap_limit_exceeded`. An allocation that goes past the
+`ArrayBuffer` cap throws `RangeError: Array buffer allocation failed`, and the
+sidecar reports the `v8_array_buffer_bytes` limit warning. Other VMs on the
+sidecar keep running in both cases. WebAssembly memory and resizable
+`ArrayBuffer`s are not counted toward either cap.
+
 ### Sidecar memory
 
 On Linux with glibc, the sidecar returns memory freed by a disposed VM's V8

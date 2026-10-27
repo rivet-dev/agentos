@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex, Once};
 use std::thread;
 
@@ -268,16 +268,140 @@ pub fn install_heap_limit_guard(isolate: &mut v8::OwnedIsolate) {
     isolate.add_near_heap_limit_callback(near_heap_limit_callback, data);
 }
 
+/// Byte budget for one isolate's ArrayBuffer backing stores.
+///
+/// `ArrayBuffer`, typed array, `Buffer`, and `SharedArrayBuffer` memory lives
+/// outside the V8 heap, so `heap_limits` does not bound it. Without a budget one
+/// guest can grow the shared sidecar until the host OOM-kills every VM on it.
+/// Past the budget the allocator returns null; V8 then collects garbage,
+/// retries, and finally throws `RangeError: Array buffer allocation failed`, the
+/// same error Node reports when an allocation fails.
+///
+/// V8 allocates WebAssembly memory and resizable buffers through its page
+/// allocator instead, so this budget does not count them.
+struct ArrayBufferBudget {
+    used: AtomicUsize,
+    limit: usize,
+    warned: AtomicBool,
+}
+
+impl ArrayBufferBudget {
+    fn reserve(&self, len: usize) -> bool {
+        let reserved = self
+            .used
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+                used.checked_add(len).filter(|next| *next <= self.limit)
+            })
+            .is_ok();
+        // V8 retries a refused allocation after each GC, so warn once per
+        // isolate instead of once per attempt.
+        if !reserved && !self.warned.swap(true, Ordering::Relaxed) {
+            warn_limit_exhausted(
+                TrackedLimit::V8ArrayBufferBytes,
+                self.used.load(Ordering::Relaxed).saturating_add(len),
+                self.limit,
+            );
+        }
+        reserved
+    }
+
+    fn release(&self, len: usize) {
+        self.used.fetch_sub(len, Ordering::AcqRel);
+    }
+}
+
+// V8 calls these from the isolate thread and from its GC threads. They must not
+// call back into V8.
+unsafe extern "C" fn budget_allocate(budget: &ArrayBufferBudget, len: usize) -> *mut c_void {
+    if !budget.reserve(len) {
+        return std::ptr::null_mut();
+    }
+    let data = unsafe { libc::calloc(len.max(1), 1) };
+    if data.is_null() {
+        budget.release(len);
+    }
+    data
+}
+
+unsafe extern "C" fn budget_allocate_uninitialized(
+    budget: &ArrayBufferBudget,
+    len: usize,
+) -> *mut c_void {
+    if !budget.reserve(len) {
+        return std::ptr::null_mut();
+    }
+    let data = unsafe { libc::malloc(len.max(1)) };
+    if data.is_null() {
+        budget.release(len);
+    }
+    data
+}
+
+unsafe extern "C" fn budget_free(budget: &ArrayBufferBudget, data: *mut c_void, len: usize) {
+    unsafe { libc::free(data) };
+    budget.release(len);
+}
+
+unsafe extern "C" fn budget_reallocate(
+    budget: &ArrayBufferBudget,
+    data: *mut c_void,
+    old_len: usize,
+    new_len: usize,
+) -> *mut c_void {
+    if new_len > old_len && !budget.reserve(new_len - old_len) {
+        return std::ptr::null_mut();
+    }
+    let resized = unsafe { libc::realloc(data, new_len.max(1)) };
+    if resized.is_null() {
+        if new_len > old_len {
+            budget.release(new_len - old_len);
+        }
+    } else if new_len < old_len {
+        budget.release(old_len - new_len);
+    }
+    resized
+}
+
+unsafe extern "C" fn budget_drop(budget: *const ArrayBufferBudget) {
+    drop(unsafe { Arc::from_raw(budget) });
+}
+
+static ARRAY_BUFFER_BUDGET_VTABLE: v8::RustAllocatorVtable<ArrayBufferBudget> =
+    v8::RustAllocatorVtable {
+        allocate: budget_allocate,
+        allocate_uninitialized: budget_allocate_uninitialized,
+        free: budget_free,
+        reallocate: budget_reallocate,
+        drop: budget_drop,
+    };
+
+/// Isolate parameters shared by fresh and snapshot-restored guest isolates. The
+/// heap limit in MB (`None` applies `DEFAULT_HEAP_LIMIT_MB`) caps the V8 heap and,
+/// separately, the isolate's ArrayBuffer memory.
+pub(crate) fn guest_isolate_params(heap_limit_mb: Option<u32>) -> v8::CreateParams {
+    let limit = heap_limit_mb.unwrap_or(DEFAULT_HEAP_LIMIT_MB);
+    let limit_bytes = (limit as usize) * 1024 * 1024;
+    let budget = Arc::new(ArrayBufferBudget {
+        used: AtomicUsize::new(0),
+        limit: limit_bytes,
+        warned: AtomicBool::new(false),
+    });
+    // Safety: the allocator owns this Arc reference and releases it through
+    // `budget_drop`; the vtable expects exactly an `ArrayBufferBudget`.
+    let allocator =
+        unsafe { v8::new_rust_allocator(Arc::into_raw(budget), &ARRAY_BUFFER_BUDGET_VTABLE) };
+    v8::CreateParams::default()
+        .heap_limits(0, limit_bytes)
+        .array_buffer_allocator(allocator.make_shared())
+}
+
 /// Create a new V8 isolate with an optional heap limit in MB. `None` applies the
 /// bounded-by-default cap (`DEFAULT_HEAP_LIMIT_MB`) — an isolate is NEVER created
 /// with an unbounded heap, so a guest heap bomb terminates its own isolate rather
 /// than fatal-aborting the shared process.
 pub fn create_isolate(heap_limit_mb: Option<u32>) -> v8::OwnedIsolate {
     prepare_current_thread();
-    let limit = heap_limit_mb.unwrap_or(DEFAULT_HEAP_LIMIT_MB);
-    let mut params = v8::CreateParams::default();
-    let limit_bytes = (limit as usize) * 1024 * 1024;
-    params = params.heap_limits(0, limit_bytes);
+    let params = guest_isolate_params(heap_limit_mb);
     let mut isolate = with_isolate_lifecycle_lock(|| v8::Isolate::new(params));
     configure_isolate(&mut isolate);
     install_heap_limit_guard(&mut isolate);
