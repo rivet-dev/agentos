@@ -29,6 +29,8 @@ pub mod fairness;
 pub mod metrics;
 pub mod readiness;
 pub mod supervision;
+#[cfg(test)]
+mod test_support;
 
 pub use supervision::{
     TaskClass, TaskClassSnapshot, TaskOwner, TaskSpawnError, TaskSupervisor, TaskTerminalReason,

@@ -218,19 +218,21 @@ impl CapabilityRegistry {
                 return Err(CapabilityError::RegistryClosed);
             }
         }
-        let capability = self.inner.ledger.reserve(ResourceClass::Capabilities, 1)?;
         // One possible ready-set entry is reserved with every admitted
         // capability. Readiness for a live handle therefore cannot fail after
-        // the backend has already become observable.
-        let ready_handle = self.inner.ledger.reserve(ResourceClass::ReadyHandles, 1)?;
-        let socket = kind
-            .is_socket()
-            .then(|| self.inner.ledger.reserve(ResourceClass::Sockets, 1))
-            .transpose()?;
-        let connection = kind
-            .is_connection()
-            .then(|| self.inner.ledger.reserve(ResourceClass::Connections, 1))
-            .transpose()?;
+        // the backend has already become observable. All counts are admitted
+        // together, so a full scope leaves no partial charge to roll back.
+        let mut requests = vec![
+            (ResourceClass::Capabilities, 1),
+            (ResourceClass::ReadyHandles, 1),
+        ];
+        if kind.is_socket() {
+            requests.push((ResourceClass::Sockets, 1));
+        }
+        if kind.is_connection() {
+            requests.push((ResourceClass::Connections, 1));
+        }
+        let reservations = self.inner.ledger.reserve_all(&requests)?;
         {
             let mut state = self
                 .inner
@@ -248,10 +250,7 @@ impl CapabilityRegistry {
         Ok(PendingCapability {
             registry: Arc::clone(&self.inner),
             kind,
-            reservations: vec![Some(capability), Some(ready_handle), socket, connection]
-                .into_iter()
-                .flatten()
-                .collect(),
+            reservations,
             counted: true,
         })
     }
@@ -629,6 +628,44 @@ mod tests {
         ));
         let registry = CapabilityRegistry::new(7, Arc::clone(&ledger));
         (ledger, registry)
+    }
+
+    #[test]
+    fn socket_waiter_parks_until_a_socket_is_released() {
+        // Capabilities still fit, but the only socket is taken. A partial
+        // admission would release the capability count it took and wake its
+        // own waiter, so the waiter must not charge anything until all fit.
+        let ledger = Arc::new(ResourceLedger::root(
+            "vm-1",
+            [
+                (
+                    ResourceClass::Capabilities,
+                    ResourceLimit::new(2, "runtime.capabilities.maxPerVm"),
+                ),
+                (
+                    ResourceClass::Sockets,
+                    ResourceLimit::new(1, "runtime.resources.maxSockets"),
+                ),
+            ],
+        ));
+        let registry = CapabilityRegistry::new(7, Arc::clone(&ledger));
+        let held = registry
+            .reserve(CapabilityKind::TcpListener)
+            .expect("take the only socket");
+
+        let waiting_registry = registry.clone();
+        let admitted = crate::test_support::assert_parks_until_released(
+            async move {
+                waiting_registry
+                    .reserve_when_available(CapabilityKind::TcpListener)
+                    .await
+            },
+            move || drop(held),
+        )
+        .expect("a released socket admits the waiter");
+
+        drop(admitted);
+        assert!(ledger.is_zero());
     }
 
     #[test]

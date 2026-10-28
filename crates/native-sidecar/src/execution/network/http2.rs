@@ -197,17 +197,14 @@ fn reserve_http2_resources(
     resources: &ResourceLedger,
     reservations: &[(ResourceClass, usize)],
 ) -> Result<Vec<Reservation>, SidecarError> {
-    let mut admitted = Vec::with_capacity(reservations.len());
-    for (resource, amount) in reservations {
-        if *amount != 0 {
-            admitted.push(
-                resources
-                    .reserve(*resource, *amount)
-                    .map_err(|error| SidecarError::Execution(error.to_string()))?,
-            );
-        }
-    }
-    Ok(admitted)
+    let requests: Vec<_> = reservations
+        .iter()
+        .copied()
+        .filter(|&(_, amount)| amount != 0)
+        .collect();
+    resources
+        .reserve_all(&requests)
+        .map_err(|error| SidecarError::Execution(error.to_string()))
 }
 
 fn http2_event_bytes(event: &Http2BridgeEvent) -> usize {

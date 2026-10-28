@@ -242,81 +242,96 @@ impl ResourceLedger {
         resource: ResourceClass,
         amount: usize,
     ) -> Result<Reservation, LimitError> {
-        let mut allocations = Vec::with_capacity(if self.parent.is_some() { 2 } else { 1 });
-        if let Some(parent) = &self.parent {
-            parent.reserve_into(resource, amount, &mut allocations)?;
-        }
-        if let Err(error) = self.reserve_local(resource, amount) {
-            release_allocations(&mut allocations);
-            return Err(error);
-        }
-        if amount != 0 {
-            allocations.push(Allocation {
-                ledger: Arc::clone(&self.inner),
-                resource,
-                amount,
-            });
-        }
-        Ok(Reservation {
-            resource,
-            amount,
-            allocations,
-        })
+        let mut reservations = self.reserve_all(&[(resource, amount)])?;
+        Ok(reservations
+            .pop()
+            .expect("one admission request yields one reservation"))
     }
 
-    fn reserve_into(
+    /// Reserve several resources in every scope as one admission. Either every
+    /// request fits in every scope and all are charged together, or nothing
+    /// changes. A rejected admission never charges, rolls back, or notifies, so
+    /// a waiter cannot wake itself through its own failed attempt.
+    pub fn reserve_all(
         &self,
-        resource: ResourceClass,
-        amount: usize,
-        allocations: &mut Vec<Allocation>,
-    ) -> Result<(), LimitError> {
-        if let Some(parent) = &self.parent {
-            parent.reserve_into(resource, amount, allocations)?;
+        requests: &[(ResourceClass, usize)],
+    ) -> Result<Vec<Reservation>, LimitError> {
+        // Lock root first, so every admission takes ledger locks in one order.
+        let mut scopes = Vec::with_capacity(2);
+        let mut ledger = Some(self);
+        while let Some(current) = ledger {
+            scopes.push(&current.inner);
+            ledger = current.parent.as_deref();
         }
-        if let Err(error) = self.reserve_local(resource, amount) {
-            release_allocations(allocations);
-            return Err(error);
-        }
-        if amount != 0 {
-            allocations.push(Allocation {
-                ledger: Arc::clone(&self.inner),
-                resource,
-                amount,
-            });
-        }
-        Ok(())
-    }
+        scopes.reverse();
+        let mut states: Vec<_> = scopes
+            .iter()
+            .map(|inner| lock_state(inner, "admission"))
+            .collect();
 
-    fn reserve_local(&self, resource: ResourceClass, amount: usize) -> Result<(), LimitError> {
-        if amount == 0 {
-            return Ok(());
+        // A resource can appear more than once in one admission; check its sum.
+        let mut requested = BTreeMap::<ResourceClass, usize>::new();
+        for &(resource, amount) in requests {
+            let total = requested.entry(resource).or_default();
+            *total = total.saturating_add(amount);
         }
-        let mut state = self.inner.state.lock().unwrap_or_else(|poisoned| {
-            eprintln!(
-                "ERR_AGENTOS_RESOURCE_LEDGER_POISONED: recovering scope={} resource={}",
-                self.inner.scope,
-                resource.name()
-            );
-            poisoned.into_inner()
-        });
-        let counter = state.counters.entry(resource).or_default();
-        let requested_total = counter.used.checked_add(amount);
-        if let Some(limit) = self.inner.limits.get(&resource) {
-            if requested_total.is_none_or(|total| total > limit.maximum) {
-                return Err(LimitError {
-                    scope: self.inner.scope.clone(),
-                    resource,
-                    used: counter.used,
-                    requested: amount,
-                    limit: limit.maximum,
-                    config_path: limit.config_path.clone(),
-                });
+        for (inner, state) in scopes.iter().zip(&states) {
+            for (&resource, &amount) in &requested {
+                let Some(limit) = inner.limits.get(&resource) else {
+                    continue;
+                };
+                let used = state
+                    .counters
+                    .get(&resource)
+                    .map_or(0, |counter| counter.used);
+                if used
+                    .checked_add(amount)
+                    .is_none_or(|total| total > limit.maximum)
+                {
+                    return Err(LimitError {
+                        scope: inner.scope.clone(),
+                        resource,
+                        used,
+                        requested: amount,
+                        limit: limit.maximum,
+                        config_path: limit.config_path.clone(),
+                    });
+                }
             }
         }
-        counter.used = requested_total.unwrap_or(usize::MAX);
-        maybe_warn(&self.inner, resource, counter);
-        observe_usage(&self.inner, resource, counter.used);
-        Ok(())
+
+        for (inner, state) in scopes.iter().zip(&mut states) {
+            for &(resource, amount) in requests {
+                if amount == 0 {
+                    continue;
+                }
+                let counter = state.counters.entry(resource).or_default();
+                counter.used = counter.used.saturating_add(amount);
+                maybe_warn(inner, resource, counter);
+                observe_usage(inner, resource, counter.used);
+            }
+        }
+        drop(states);
+
+        Ok(requests
+            .iter()
+            .map(|&(resource, amount)| Reservation {
+                resource,
+                amount,
+                allocations: if amount == 0 {
+                    Vec::new()
+                } else {
+                    scopes
+                        .iter()
+                        .map(|inner| Allocation {
+                            ledger: Arc::clone(inner),
+                            resource,
+                            amount,
+                        })
+                        .collect()
+                },
+            })
+            .collect())
     }
 
     pub fn usage(&self, resource: ResourceClass) -> ResourceUsage {
@@ -463,6 +478,16 @@ struct Allocation {
     ledger: Arc<LedgerInner>,
     resource: ResourceClass,
     amount: usize,
+}
+
+fn lock_state<'a>(inner: &'a LedgerInner, context: &str) -> std::sync::MutexGuard<'a, LedgerState> {
+    inner.state.lock().unwrap_or_else(|poisoned| {
+        eprintln!(
+            "ERR_AGENTOS_RESOURCE_LEDGER_POISONED: recovering {context} scope={}",
+            inner.scope
+        );
+        poisoned.into_inner()
+    })
 }
 
 fn release_allocation(allocation: &Allocation) {
@@ -688,6 +713,76 @@ mod tests {
             ResourceClass::BufferedBytes,
             ResourceLimit::new(maximum, "runtime.resources.maxSocketBufferedBytes"),
         )]
+    }
+
+    #[test]
+    fn waiter_on_full_child_scope_parks_until_capacity_is_released() {
+        let process = Arc::new(ResourceLedger::root("process", limit(10)));
+        let vm = Arc::new(ResourceLedger::child(
+            "vm-1",
+            limit(2),
+            Arc::clone(&process),
+        ));
+        let held = vm
+            .reserve(ResourceClass::BufferedBytes, 2)
+            .expect("fill child");
+
+        let waiting_vm = Arc::clone(&vm);
+        let admitted = crate::test_support::assert_parks_until_released(
+            async move {
+                waiting_vm
+                    .reserve_when_available(ResourceClass::BufferedBytes, 1)
+                    .await
+            },
+            move || drop(held),
+        )
+        .expect("released capacity admits the waiter");
+
+        assert_eq!(process.usage(ResourceClass::BufferedBytes).used, 1);
+        assert_eq!(vm.usage(ResourceClass::BufferedBytes).used, 1);
+        drop(admitted);
+        assert!(process.is_zero() && vm.is_zero());
+    }
+
+    #[test]
+    fn rejected_admission_charges_no_scope() {
+        let limits = [
+            (
+                ResourceClass::BufferedBytes,
+                ResourceLimit::new(10, "runtime.resources.maxSocketBufferedBytes"),
+            ),
+            (
+                ResourceClass::TlsBytes,
+                ResourceLimit::new(10, "runtime.resources.maxTlsBytes"),
+            ),
+        ];
+        let process = Arc::new(ResourceLedger::root("process", limits.clone()));
+        let vm = ResourceLedger::child(
+            "vm-1",
+            [
+                limits[0].clone(),
+                (
+                    ResourceClass::TlsBytes,
+                    ResourceLimit::new(1, "limits.tls.maxBufferedBytes"),
+                ),
+            ],
+            Arc::clone(&process),
+        );
+
+        let error = vm
+            .reserve_all(&[
+                (ResourceClass::BufferedBytes, 4),
+                (ResourceClass::TlsBytes, 4),
+            ])
+            .expect_err("the VM TLS limit rejects the admission");
+
+        assert_eq!(error.scope, "vm-1");
+        assert_eq!(error.resource, ResourceClass::TlsBytes);
+        assert!(
+            process.is_zero(),
+            "the process scope keeps no partial charge"
+        );
+        assert!(vm.is_zero(), "the VM scope keeps no partial charge");
     }
 
     #[test]
