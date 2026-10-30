@@ -2,9 +2,9 @@
 //! pool + internal lease accounting.
 //!
 //! Ported from `packages/core/src/agent-os.ts` (`AgentOsSidecar`). The shared-sidecar pool is a
-//! process-global map (default pool `"default"`).
+//! process-global map scoped to the caller Tokio runtime (default pool `"default"`).
 
-#[cfg(any(feature = "service-internals", feature = "sidecar-internals", test))]
+#[cfg(any(feature = "actor-internals", feature = "sidecar-internals", test))]
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 use std::sync::Arc;
@@ -95,7 +95,7 @@ fn sidecar_spawn_args() -> Result<Vec<String>, ClientError> {
 pub(crate) struct SharedConnection {
     pub(crate) transport: Arc<SidecarProcess>,
     pub(crate) connection_id: String,
-    #[cfg(any(feature = "service-internals", feature = "sidecar-internals", test))]
+    #[cfg(any(feature = "actor-internals", feature = "sidecar-internals", test))]
     package_session_id: Option<String>,
     authenticated: bool,
 }
@@ -175,16 +175,17 @@ pub struct AgentOsSidecarDescription {
     pub active_vm_count: u32,
 }
 
-/// Public transport handle for a (possibly shared) native sidecar process hosting VMs.
+/// Public transport handle for a (possibly shared) sidecar process hosting VMs.
 pub struct AgentOsSidecar {
     pub(crate) sidecar_id: String,
     pub(crate) placement: AgentOsSidecarPlacement,
     pub(crate) shared_pool: Option<String>,
+    runtime_id: Option<tokio::runtime::Id>,
     pub(crate) state: AtomicU8,
     pub(crate) active_vm_count: AtomicU32,
     pub(crate) active_package_sessions: AtomicU32,
     lifecycle: tokio::sync::Mutex<()>,
-    /// Absolute path to the `agentos-native-sidecar` binary, threaded from `AgentOsConfig` when present.
+    /// Absolute path to the `agentos-sidecar` binary, threaded from `AgentOsConfig` when present.
     /// Otherwise `ensure_connection` resolves the Agent OS env fallback and passes an explicit path
     /// to the generic transport.
     pub(crate) sidecar_binary_path: Option<String>,
@@ -208,6 +209,9 @@ impl AgentOsSidecar {
             sidecar_id: sidecar_id.into(),
             placement,
             shared_pool,
+            runtime_id: tokio::runtime::Handle::try_current()
+                .ok()
+                .map(|handle| handle.id()),
             state: AtomicU8::new(SidecarState::Ready.as_u8()),
             active_vm_count: AtomicU32::new(0),
             active_package_sessions: AtomicU32::new(0),
@@ -262,7 +266,7 @@ impl AgentOsSidecar {
         *guard = Some(SharedConnection {
             transport: transport.clone(),
             connection_id: String::new(),
-            #[cfg(any(feature = "service-internals", feature = "sidecar-internals", test))]
+            #[cfg(any(feature = "actor-internals", feature = "sidecar-internals", test))]
             package_session_id: None,
             authenticated: false,
         });
@@ -275,7 +279,7 @@ impl AgentOsSidecar {
                     client_name: "agentos-client".to_string(),
                     auth_token: "agentos-client".to_string(),
                     protocol_version: wire::PROTOCOL_VERSION,
-                    bridge_version: agentos_bridge::bridge_contract().version,
+                    bridge_version: agentos_vm_host_interface::bridge_contract().version,
                 }),
             )
             .await?
@@ -299,7 +303,7 @@ impl AgentOsSidecar {
         *guard = Some(SharedConnection {
             transport: transport.clone(),
             connection_id: authed.connection_id.clone(),
-            #[cfg(any(feature = "service-internals", feature = "sidecar-internals", test))]
+            #[cfg(any(feature = "actor-internals", feature = "sidecar-internals", test))]
             package_session_id: None,
             authenticated: true,
         });
@@ -371,7 +375,7 @@ impl AgentOsSidecar {
     }
 
     /// Open a sidecar-owned package acquisition session before any VM exists.
-    #[cfg(any(feature = "service-internals", feature = "sidecar-internals", test))]
+    #[cfg(any(feature = "actor-internals", feature = "sidecar-internals", test))]
     pub async fn open_package_session(
         self: &Arc<Self>,
     ) -> Result<AgentOsPackageSession, ClientError> {
@@ -444,7 +448,7 @@ impl AgentOsSidecar {
         self.sidecar_binary_path
             .clone()
             .or_else(|| std::env::var(AGENTOS_SIDECAR_BIN_ENV).ok())
-            .unwrap_or_else(|| "agentos-native-sidecar".to_string())
+            .unwrap_or_else(|| "agentos-sidecar".to_string())
     }
 
     /// Snapshot the sidecar's current state. SYNC.
@@ -515,8 +519,9 @@ impl AgentOsSidecar {
         if let Some(pool) = self.shared_pool.as_deref() {
             // Only remove the cached entry if it still points at this exact sidecar instance.
             let self_ptr = self as *const AgentOsSidecar;
-            let _ = shared_sidecars()
-                .remove_if(pool, |cached| std::ptr::eq(Arc::as_ptr(cached), self_ptr));
+            let _ = shared_sidecars().remove_if(&(self.runtime_id, pool.to_owned()), |cached| {
+                std::ptr::eq(Arc::as_ptr(cached), self_ptr)
+            });
         }
 
         Ok(())
@@ -524,7 +529,7 @@ impl AgentOsSidecar {
 }
 
 /// A process-scoped sidecar session for package acquisition without a VM.
-#[cfg(any(feature = "service-internals", feature = "sidecar-internals", test))]
+#[cfg(any(feature = "actor-internals", feature = "sidecar-internals", test))]
 pub struct AgentOsPackageSession {
     sidecar: Arc<AgentOsSidecar>,
     transport: Arc<SidecarProcess>,
@@ -534,7 +539,7 @@ pub struct AgentOsPackageSession {
     lease: AgentOsSidecarVmLease,
 }
 
-#[cfg(any(feature = "service-internals", feature = "sidecar-internals", test))]
+#[cfg(any(feature = "actor-internals", feature = "sidecar-internals", test))]
 impl AgentOsPackageSession {
     pub async fn cache_stats(
         &self,
@@ -652,7 +657,7 @@ impl AgentOsPackageSession {
         self.sidecar.dispose_if_unused().await
     }
 
-    #[cfg(feature = "service-internals")]
+    #[cfg(feature = "actor-internals")]
     pub(crate) async fn shutdown_worker(&self) -> Result<(), ClientError> {
         self.closed.store(true, Ordering::SeqCst);
         self.lease.release();
@@ -715,12 +720,16 @@ impl Drop for AgentOsSidecarVmLease {
     }
 }
 
-/// Process-global shared-sidecar pool, keyed by pool name (default `"default"`).
-static SHARED_SIDECARS: OnceCell<SccHashMap<String, Arc<AgentOsSidecar>>> = OnceCell::new();
+/// Transport I/O belongs to the caller's Tokio reactor. Sharing across runtimes
+/// would abort another runtime's active VMs when the first runtime shuts down.
+/// Keep the cache process-wide and bounded, but include the owning runtime in its key.
+type SharedSidecarKey = (Option<tokio::runtime::Id>, String);
+static SHARED_SIDECARS: OnceCell<SccHashMap<SharedSidecarKey, Arc<AgentOsSidecar>>> =
+    OnceCell::new();
 static SHARED_SIDECAR_POOL_LOCK: OnceCell<parking_lot::Mutex<()>> = OnceCell::new();
 
 /// Access (initializing on first use) the process-global shared-sidecar pool.
-pub(crate) fn shared_sidecars() -> &'static SccHashMap<String, Arc<AgentOsSidecar>> {
+pub(crate) fn shared_sidecars() -> &'static SccHashMap<SharedSidecarKey, Arc<AgentOsSidecar>> {
     SHARED_SIDECARS.get_or_init(SccHashMap::new)
 }
 
@@ -728,7 +737,7 @@ fn shared_sidecar_pool_lock() -> &'static parking_lot::Mutex<()> {
     SHARED_SIDECAR_POOL_LOCK.get_or_init(parking_lot::Mutex::default)
 }
 
-fn shared_sidecar_pool_len(cache: &SccHashMap<String, Arc<AgentOsSidecar>>) -> usize {
+fn shared_sidecar_pool_len(cache: &SccHashMap<SharedSidecarKey, Arc<AgentOsSidecar>>) -> usize {
     let mut len = 0;
     cache.scan(|_, _| {
         len += 1;
@@ -736,7 +745,7 @@ fn shared_sidecar_pool_len(cache: &SccHashMap<String, Arc<AgentOsSidecar>>) -> u
     len
 }
 
-fn prune_disposed_shared_sidecars(cache: &SccHashMap<String, Arc<AgentOsSidecar>>) {
+fn prune_disposed_shared_sidecars(cache: &SccHashMap<SharedSidecarKey, Arc<AgentOsSidecar>>) {
     let mut disposed_pools = Vec::new();
     cache.scan(|pool, sidecar| {
         if sidecar.describe().state == SidecarState::Disposed {
@@ -752,7 +761,7 @@ fn prune_disposed_shared_sidecars(cache: &SccHashMap<String, Arc<AgentOsSidecar>
 
 #[cfg(test)]
 fn ensure_shared_sidecar_pool_capacity(
-    cache: &SccHashMap<String, Arc<AgentOsSidecar>>,
+    cache: &SccHashMap<SharedSidecarKey, Arc<AgentOsSidecar>>,
 ) -> Result<(), ClientError> {
     if shared_sidecar_pool_len(cache) >= SHARED_SIDECAR_POOL_LIMIT {
         return Err(shared_sidecar_pool_limit_error());
@@ -767,7 +776,7 @@ fn shared_sidecar_pool_limit_error() -> ClientError {
 }
 
 impl AgentOs {
-    /// Create an explicit sidecar handle. `sidecar_id` defaults to `agentos-native-sidecar-<uuid>`.
+    /// Create an explicit sidecar handle. `sidecar_id` defaults to `agentos-sidecar-<uuid>`.
     ///
     /// Parity with TypeScript `createAgentOsSidecarInternal`: the explicit handle carries an
     /// `Explicit` placement whose `sidecar_id` echoes the resolved id and has no shared pool.
@@ -775,7 +784,7 @@ impl AgentOs {
         sidecar_id: Option<String>,
     ) -> Result<Arc<AgentOsSidecar>, ClientError> {
         let sidecar_id =
-            sidecar_id.unwrap_or_else(|| format!("agentos-native-sidecar-{}", Uuid::new_v4()));
+            sidecar_id.unwrap_or_else(|| format!("agentos-sidecar-{}", Uuid::new_v4()));
         let placement = AgentOsSidecarPlacement::Explicit {
             sidecar_id: sidecar_id.clone(),
         };
@@ -785,7 +794,7 @@ impl AgentOs {
     }
 
     /// Get (or create) a pooled shared sidecar. Pool defaults to `"default"`. Uses the process-global
-    /// cache.
+    /// cache, partitioned by Tokio runtime so every transport shares its owner reactor lifetime.
     ///
     /// Parity with TypeScript `getSharedAgentOsSidecarInternal`: return the cached sidecar for the
     /// pool when it exists and is not disposed; otherwise build a fresh handle
@@ -797,11 +806,17 @@ impl AgentOs {
         sidecar_binary_path: Option<String>,
     ) -> Result<Arc<AgentOsSidecar>, ClientError> {
         let pool = pool.unwrap_or_else(|| "default".to_string());
+        let runtime_id = tokio::runtime::Handle::try_current()
+            .map_err(|error| {
+                ClientError::Sidecar(format!("shared sidecar requires a Tokio runtime: {error}"))
+            })?
+            .id();
+        let key = (Some(runtime_id), pool.clone());
         let cache = shared_sidecars();
         let _guard = shared_sidecar_pool_lock().lock();
 
         // Fast path: reuse a cached, non-disposed sidecar for this pool.
-        if let Some(existing) = cache.read(&pool, |_, sidecar| sidecar.clone()) {
+        if let Some(existing) = cache.read(&key, |_, sidecar| sidecar.clone()) {
             if existing.describe().state != SidecarState::Disposed {
                 return Ok(existing);
             }
@@ -828,7 +843,7 @@ impl AgentOs {
         // Insert atomically, replacing a stale (disposed) entry but yielding to a live one that a
         // concurrent caller may have just installed.
         let cache_len = shared_sidecar_pool_len(cache);
-        match cache.entry(pool) {
+        match cache.entry(key) {
             scc::hash_map::Entry::Occupied(mut occupied) => {
                 if occupied.get().describe().state == SidecarState::Disposed {
                     *occupied.get_mut() = sidecar.clone();
@@ -962,12 +977,12 @@ mod tests {
     fn sidecar_binary_path_uses_agent_os_env_fallback() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let previous = std::env::var(AGENTOS_SIDECAR_BIN_ENV).ok();
-        std::env::set_var(AGENTOS_SIDECAR_BIN_ENV, "/tmp/agentos-native-sidecar");
+        std::env::set_var(AGENTOS_SIDECAR_BIN_ENV, "/tmp/agentos-sidecar");
         let sidecar = shared("env-test", SidecarState::Ready);
 
         assert_eq!(
             sidecar.resolved_sidecar_binary_path(),
-            "/tmp/agentos-native-sidecar"
+            "/tmp/agentos-sidecar"
         );
 
         restore_env(AGENTOS_SIDECAR_BIN_ENV, previous);
@@ -980,10 +995,7 @@ mod tests {
         std::env::remove_var(AGENTOS_SIDECAR_BIN_ENV);
         let sidecar = shared("default-test", SidecarState::Ready);
 
-        assert_eq!(
-            sidecar.resolved_sidecar_binary_path(),
-            "agentos-native-sidecar"
-        );
+        assert_eq!(sidecar.resolved_sidecar_binary_path(), "agentos-sidecar");
 
         restore_env(AGENTOS_SIDECAR_BIN_ENV, previous);
     }
@@ -998,17 +1010,22 @@ mod tests {
     #[test]
     fn prune_disposed_shared_sidecars_keeps_live_entries() {
         let cache = SccHashMap::new();
-        let _ = cache.insert("live".to_string(), shared("live", SidecarState::Ready));
         let _ = cache.insert(
-            "disposed".to_string(),
+            (None, "live".to_string()),
+            shared("live", SidecarState::Ready),
+        );
+        let _ = cache.insert(
+            (None, "disposed".to_string()),
             shared("disposed", SidecarState::Disposed),
         );
 
         prune_disposed_shared_sidecars(&cache);
 
         assert_eq!(shared_sidecar_pool_len(&cache), 1);
-        assert!(cache.read("live", |_, _| ()).is_some());
-        assert!(cache.read("disposed", |_, _| ()).is_none());
+        assert!(cache.read(&(None, "live".to_string()), |_, _| ()).is_some());
+        assert!(cache
+            .read(&(None, "disposed".to_string()), |_, _| ())
+            .is_none());
     }
 
     #[test]
@@ -1016,7 +1033,7 @@ mod tests {
         let cache = SccHashMap::new();
         for index in 0..SHARED_SIDECAR_POOL_LIMIT {
             let pool = format!("pool-{index}");
-            let _ = cache.insert(pool.clone(), shared(&pool, SidecarState::Ready));
+            let _ = cache.insert((None, pool.clone()), shared(&pool, SidecarState::Ready));
         }
 
         let error =
@@ -1040,7 +1057,7 @@ mod tests {
             } else {
                 SidecarState::Ready
             };
-            let _ = cache.insert(pool.clone(), shared(&pool, state));
+            let _ = cache.insert((None, pool.clone()), shared(&pool, state));
         }
 
         prune_disposed_shared_sidecars(&cache);
@@ -1060,6 +1077,10 @@ mod tests {
             .expect("shared sidecar");
 
         assert_eq!(sidecar.shared_pool.as_deref(), Some(pool.as_str()));
+        let reused = AgentOs::get_shared_sidecar(Some(pool), None)
+            .await
+            .expect("same-runtime sidecar");
+        assert!(Arc::ptr_eq(&sidecar, &reused));
 
         sidecar.dispose().await.expect("dispose shared sidecar");
     }
@@ -1072,22 +1093,24 @@ mod tests {
         let cache = shared_sidecars();
         let _guard = shared_sidecar_pool_lock().lock();
 
-        let _ = cache.insert(pool.clone(), replacement.clone());
+        let _ = cache.insert((None, pool.clone()), replacement.clone());
         old.state
             .store(SidecarState::Disposing.as_u8(), Ordering::SeqCst);
         old.active_vm_count.store(0, Ordering::SeqCst);
         old.state
             .store(SidecarState::Disposed.as_u8(), Ordering::SeqCst);
         let old_ptr = Arc::as_ptr(&old);
-        let _ = cache.remove_if(&pool, |cached| std::ptr::eq(Arc::as_ptr(cached), old_ptr));
+        let _ = cache.remove_if(&(None, pool.clone()), |cached| {
+            std::ptr::eq(Arc::as_ptr(cached), old_ptr)
+        });
 
         let cached = cache
-            .read(&pool, |_, cached| cached.clone())
+            .read(&(None, pool.clone()), |_, cached| cached.clone())
             .expect("replacement should remain cached");
         assert!(Arc::ptr_eq(&cached, &replacement));
 
         let replacement_ptr = Arc::as_ptr(&replacement);
-        let _ = cache.remove_if(&pool, |cached| {
+        let _ = cache.remove_if(&(None, pool.clone()), |cached| {
             std::ptr::eq(Arc::as_ptr(cached), replacement_ptr)
         });
     }

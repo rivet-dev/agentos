@@ -33,6 +33,6 @@
 		"vitest": "^2.1.9"
 	},
 	"dependencies": {
-		"@bare-ts/lib": "^0.4.1"
+		"@rivetkit/bare-ts": "^0.6.2"
 	}
 }

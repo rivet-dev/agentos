@@ -1,4 +1,4 @@
-import { AgentOs } from "@rivet-dev/agentos-core";
+import { AgentOs } from "@rivet-dev/agentos";
 
 const runtimeA = await AgentOs.create();
 const runtimeB = await AgentOs.create();

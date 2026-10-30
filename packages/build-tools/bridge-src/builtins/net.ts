@@ -1282,7 +1282,7 @@ function createAcceptedClientHandle(socketId, info) {
 	};
 }
 
-// Must match the sentinels in crates/native-sidecar/src/execution/mod.rs.
+// Must match the sentinels in crates/vm/src/execution/mod.rs.
 // A mismatched sentinel is NOT a soft failure: every no-data poll response then
 // falls through to base64 decoding and injects the decoded sentinel bytes into
 // the socket stream as phantom data.

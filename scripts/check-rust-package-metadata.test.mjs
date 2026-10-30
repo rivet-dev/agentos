@@ -20,6 +20,13 @@ function pkg(name, manifestPath, targets, overrides = {}) {
 
 const validMetadata = {
 	packages: [
+		pkg("agentos-sidecar-protocol", "crates/sidecar-protocol/Cargo.toml", [
+			{ kind: ["lib"], name: "agentos_sidecar_protocol" },
+		]),
+		pkg("agentos-sidecar", "crates/sidecar/Cargo.toml", [
+			{ kind: ["lib"], name: "agentos_sidecar_wrapper" },
+			{ kind: ["bin"], name: "agentos-sidecar" },
+		]),
 		pkg("agentos-client", "crates/client/Cargo.toml", [
 			{ kind: ["lib"], name: "agentos_client" },
 		]),
@@ -47,5 +54,16 @@ test("rejects non-publishable required Rust packages", () => {
 
 	assert.deepEqual(checkRustPackageMetadata({ root, metadata }), [
 		"agentos-client must remain publishable",
+	]);
+});
+
+test("requires flat crates to use the agentos directory-derived package name", () => {
+	const metadata = structuredClone(validMetadata);
+	const client = metadata.packages.find((item) => item.name === "agentos-client");
+	client.name = "agentos-rust-client";
+
+	assert.deepEqual(checkRustPackageMetadata({ root, metadata }), [
+		"missing Rust package agentos-client",
+		"crates/client/Cargo.toml package name must be agentos-client, found agentos-rust-client",
 	]);
 });

@@ -1,0 +1,39 @@
+Use fstatat instead of changing process cwd in the WASI fssum build, and expose
+the standard SEEK_DATA/SEEK_HOLE constants on non-Linux compiler targets.
+
+diff --git a/src/fssum.c b/src/fssum.c
+index 75f95f31..b0870f19 100644
+--- a/src/fssum.c
++++ b/src/fssum.c
+@@ -32,12 +32,10 @@
+ #define CS_SIZE 16
+ #define CHUNKS	128
+ 
+-#ifdef __linux__
+ #ifndef SEEK_DATA
+ #define SEEK_DATA 3
+ #define SEEK_HOLE 4
+ #endif
+-#endif
+ 
+ /* TODO: add hardlink recognition */
+ 
+@@ -585,14 +583,17 @@ void sum(int dirfd, int level, sum_t *dircs, char *path_prefix, char *path_in)
+ 			if (strncmp(excludes[excl].path, path,
+ 			    excludes[excl].len) == 0)
+ 				goto next;
+ 		}
+-
++#ifdef __wasi__
++		ret = fstatat(dirfd, namelist[i], &st, AT_SYMLINK_NOFOLLOW);
++#else
+ 		ret = fchdir(dirfd);
+ 		if (ret == -1) {
+ 			perror("fchdir");
+ 			exit(-1);
+ 		}
+ 		ret = lstat64(namelist[i], &st);
++#endif
+ 		if (ret) {
+ 			fprintf(stderr, "stat failed for %s/%s: %s\n",
+ 				path_prefix, path, strerror(errno));

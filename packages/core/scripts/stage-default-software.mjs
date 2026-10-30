@@ -6,6 +6,13 @@ const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = join(packageRoot, "..", "..");
 const listPath = join(repoRoot, "software", "default-software.json");
 const outputDir = join(packageRoot, "dist", "default-software");
+// The checks job compiles TypeScript before its parallel WASM producer finishes.
+// Publishing and runtime tests omit this flag and still require all packages.
+if (process.env.AGENTOS_CI_CODE_ONLY_BUILD === "1") {
+	rmSync(outputDir, { recursive: true, force: true });
+	process.stdout.write("skipped default software staging for CI code-only build\n");
+	process.exit(0);
+}
 const defaultSoftware = JSON.parse(readFileSync(listPath, "utf8"));
 
 rmSync(outputDir, { recursive: true, force: true });

@@ -5,7 +5,11 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  '@rivet-dev/agentos-core': workspace:*
+  '@rivet-dev/agentos': workspace:*
+  '@effect/platform-node@4.0.5>@effect/platform-node-shared': 4.0.5
+  '@rivetkit/rivetkit-wasm': 2.3.10
+
+pnpmfileChecksum: sha256-SEnUwm6AFeob5DIJB/q7nwJGPinO5RVveyVjDzNYuIM=
 
 importers:
 
@@ -20,18 +24,12 @@ importers:
       '@biomejs/biome':
         specifier: ^2.3
         version: 2.4.10
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:packages/core
-      '@rivet-dev/agentos-runtime-core':
-        specifier: workspace:*
-        version: link:packages/runtime-core
       '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
-        version: link:test-harness
-      '@rivet-dev/agentos-vm-test-harness':
-        specifier: workspace:*
-        version: link:packages/vm-test-harness
+        version: link:packages/test-harness
       '@types/node':
         specifier: ^22.19.15
         version: 22.19.15
@@ -56,7 +54,7 @@ importers:
 
   examples/embedded:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
       '@rivet-dev/agentos-sandbox':
@@ -87,7 +85,7 @@ importers:
 
   examples/js-ai-agent-code-exec:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -103,7 +101,7 @@ importers:
 
   examples/js-child-processes:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -119,7 +117,7 @@ importers:
 
   examples/js-code-mode:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
       zod:
@@ -138,7 +136,7 @@ importers:
 
   examples/js-dev-servers:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -154,7 +152,7 @@ importers:
 
   examples/js-filesystem:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -170,7 +168,7 @@ importers:
 
   examples/js-module-loading:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -186,7 +184,7 @@ importers:
 
   examples/js-networking:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -202,7 +200,7 @@ importers:
 
   examples/js-networking-wasm:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -218,7 +216,7 @@ importers:
 
   examples/js-output-capture:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -234,7 +232,7 @@ importers:
 
   examples/js-permissions:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -250,7 +248,7 @@ importers:
 
   examples/js-plugin-systems:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -266,7 +264,7 @@ importers:
 
   examples/js-process-isolation:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -282,7 +280,7 @@ importers:
 
   examples/js-quickstart:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -298,7 +296,7 @@ importers:
 
   examples/js-resource-limits:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -314,7 +312,7 @@ importers:
 
   examples/js-runtime-platform:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -330,7 +328,7 @@ importers:
 
   examples/js-sdk-overview:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -346,7 +344,7 @@ importers:
 
   examples/js-typescript:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
       typescript:
@@ -362,7 +360,7 @@ importers:
 
   examples/js-virtual-filesystem:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -378,7 +376,7 @@ importers:
 
   examples/python-quickstart:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -394,7 +392,7 @@ importers:
 
   examples/python-sdk-overview:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
@@ -410,7 +408,7 @@ importers:
 
   examples/quickstart:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/core
       '@rivet-dev/agentos-sandbox':
@@ -441,7 +439,7 @@ importers:
 
   examples/quickstart/bash:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/core
       '@rivet-dev/agentos-sandbox':
@@ -472,7 +470,7 @@ importers:
 
   examples/quickstart/cron:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/core
       '@rivet-dev/agentos-sandbox':
@@ -503,7 +501,7 @@ importers:
 
   examples/quickstart/filesystem:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/core
       '@rivet-dev/agentos-sandbox':
@@ -534,7 +532,7 @@ importers:
 
   examples/quickstart/git:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/core
       '@rivet-dev/agentos-sandbox':
@@ -565,7 +563,7 @@ importers:
 
   examples/quickstart/hello-world:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/core
       '@rivet-dev/agentos-sandbox':
@@ -596,7 +594,7 @@ importers:
 
   examples/quickstart/host-functions:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/core
       zod:
@@ -615,7 +613,7 @@ importers:
 
   examples/quickstart/network:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/core
       '@rivet-dev/agentos-sandbox':
@@ -646,7 +644,7 @@ importers:
 
   examples/quickstart/nodejs:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/core
       '@rivet-dev/agentos-sandbox':
@@ -677,7 +675,7 @@ importers:
 
   examples/quickstart/processes:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/core
       '@rivet-dev/agentos-sandbox':
@@ -708,7 +706,7 @@ importers:
 
   examples/quickstart/python:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/core
     devDependencies:
@@ -724,7 +722,7 @@ importers:
 
   examples/quickstart/s3-filesystem:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/core
       '@rivet-dev/agentos-sandbox':
@@ -755,7 +753,7 @@ importers:
 
   examples/quickstart/sandbox:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/core
       '@rivet-dev/agentos-sandbox':
@@ -786,7 +784,7 @@ importers:
 
   packages/agentos-sandbox:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../core
       dockerode:
@@ -814,9 +812,9 @@ importers:
 
   packages/agentos-toolchain:
     dependencies:
-      '@bare-ts/lib':
-        specifier: ^0.4.1
-        version: 0.4.1
+      '@rivetkit/bare-ts':
+        specifier: ^0.6.2
+        version: 0.6.2
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -830,6 +828,22 @@ importers:
       vitest:
         specifier: ^2.1.9
         version: 2.1.9(@types/node@22.19.15)(lightningcss@1.33.0)
+
+  packages/benchmarks:
+    dependencies:
+      '@rivet-dev/agentos':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
 
   packages/build-tools:
     dependencies:
@@ -866,12 +880,12 @@ importers:
 
   packages/core:
     dependencies:
-      '@rivet-dev/agentos-runtime-core':
+      '@rivet-dev/agentos-sidecar':
         specifier: workspace:*
-        version: link:../runtime-core
-      '@rivet-dev/agentos-runtime-sidecar':
-        specifier: workspace:*
-        version: link:../runtime-sidecar
+        version: link:../sidecar
+      '@rivetkit/bare-ts':
+        specifier: ^0.6.2
+        version: 0.6.2
       '@xterm/headless':
         specifier: ^6.0.0
         version: 6.0.0
@@ -884,6 +898,9 @@ importers:
       zod:
         specifier: ^4.1.11
         version: 4.3.6
+      zod-to-json-schema:
+        specifier: ^3.25.2
+        version: 3.25.2(zod@4.3.6)
     devDependencies:
       '@agentos-software/common':
         specifier: workspace:*
@@ -948,6 +965,9 @@ importers:
       '@bare-ts/lib':
         specifier: ^0.4.1
         version: 0.4.1
+      '@bare-ts/tools':
+        specifier: 0.15.0
+        version: 0.15.0(@bare-ts/lib@0.4.1)
       '@browserbasehq/browse-cli':
         specifier: 0.5.0
         version: 0.5.0(@cfworker/json-schema@4.1.1)(@opentelemetry/api@1.9.0)(bufferutil@4.1.0)(deepmerge@4.3.1)(zod@4.3.6)
@@ -957,9 +977,6 @@ importers:
       '@browserbasehq/sdk':
         specifier: 2.10.0
         version: 2.10.0
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
@@ -996,110 +1013,6 @@ importers:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
-
-  packages/posix:
-    dependencies:
-      '@rivet-dev/agentos-runtime-core':
-        specifier: workspace:*
-        version: link:../runtime-core
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      '@xterm/headless':
-        specifier: ^6.0.0
-        version: 6.0.0
-      minimatch:
-        specifier: ^10.2.4
-        version: 10.2.5
-      typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
-      vitest:
-        specifier: ^2.1.8
-        version: 2.1.9(@types/node@22.19.15)(lightningcss@1.33.0)
-
-  packages/runtime-benchmarks:
-    dependencies:
-      '@rivet-dev/agentos-core':
-        specifier: workspace:*
-        version: link:../core
-      '@rivet-dev/agentos-runtime-core':
-        specifier: workspace:*
-        version: link:../runtime-core
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      tsx:
-        specifier: ^4.19.2
-        version: 4.21.0
-      typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
-
-  packages/runtime-browser:
-    dependencies:
-      '@noble/ciphers':
-        specifier: ^2.2.0
-        version: 2.2.0
-      '@noble/hashes':
-        specifier: ^2.2.0
-        version: 2.2.0
-      '@rivet-dev/agentos-runtime-core':
-        specifier: workspace:*
-        version: link:../runtime-core
-      sucrase:
-        specifier: ^3.35.0
-        version: 3.35.1
-    devDependencies:
-      '@playwright/test':
-        specifier: ^1.54.2
-        version: 1.59.1
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
-      vitest:
-        specifier: ^2.1.8
-        version: 2.1.9(@types/node@22.19.15)(lightningcss@1.33.0)
-
-  packages/runtime-core:
-    dependencies:
-      '@bare-ts/lib':
-        specifier: ^0.4.1
-        version: 0.4.1
-      '@rivet-dev/agentos-runtime-sidecar':
-        specifier: workspace:*
-        version: link:../runtime-sidecar
-      zod:
-        specifier: ^4.1.11
-        version: 4.3.6
-      zod-to-json-schema:
-        specifier: ^3.25.2
-        version: 3.25.2(zod@4.3.6)
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
-      vitest:
-        specifier: ^2.1.8
-        version: 2.1.9(@types/node@22.19.15)(lightningcss@1.33.0)
-
-  packages/runtime-sidecar: {}
-
-  packages/runtime-sidecar/npm/darwin-arm64: {}
-
-  packages/runtime-sidecar/npm/darwin-x64: {}
-
-  packages/runtime-sidecar/npm/linux-arm64-gnu: {}
-
-  packages/runtime-sidecar/npm/linux-x64-gnu: {}
 
   packages/shell:
     dependencies:
@@ -1169,7 +1082,7 @@ importers:
       '@agentos-software/zip':
         specifier: workspace:*
         version: link:../../software/zip
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../core
       commander:
@@ -1189,30 +1102,27 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.19.15)(lightningcss@1.33.0)
 
-  packages/typescript:
+  packages/sidecar: {}
+
+  packages/sidecar/npm/darwin-arm64: {}
+
+  packages/sidecar/npm/darwin-x64: {}
+
+  packages/sidecar/npm/linux-arm64-gnu: {}
+
+  packages/sidecar/npm/linux-x64-gnu: {}
+
+  packages/test-harness:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../core
-      typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      vitest:
-        specifier: ^2.1.8
-        version: 2.1.9(@types/node@22.19.15)(lightningcss@1.33.0)
-
-  packages/vm-test-harness:
-    dependencies:
-      '@rivet-dev/agentos-runtime-core':
-        specifier: workspace:*
-        version: link:../runtime-core
       '@xterm/headless':
         specifier: ^6.0.0
         version: 6.0.0
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.15)(lightningcss@1.33.0)
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -1220,15 +1130,12 @@ importers:
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
-      vitest:
-        specifier: ^2.1.9
-        version: 2.1.9(@types/node@22.19.15)(lightningcss@1.33.0)
 
   scripts/pipboy:
     dependencies:
       '@effect/platform-node':
         specifier: 4.0.5
-        version: 4.0.5(bufferutil@4.1.0)(effect@4.0.5)(redis@6.3.0(@opentelemetry/api@1.9.0))
+        version: 4.0.5(bufferutil@4.1.0)(effect@4.0.5)(redis@6.3.1(@opentelemetry/api@1.9.0))
       effect:
         specifier: 4.0.5
         version: 4.0.5
@@ -1282,7 +1189,7 @@ importers:
 
   secure-exec:
     dependencies:
-      '@rivet-dev/agentos-core':
+      '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../packages/core
     devDependencies:
@@ -1299,14 +1206,247 @@ importers:
         specifier: ^4.1.11
         version: 4.3.6
 
+  secure-exec/examples/ai-agent:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/benchmark:
+    dependencies:
+      quickjs-emscripten:
+        specifier: ^0.32.0
+        version: 0.32.0
+      run:
+        specifier: ^2.1.4
+        version: 2.1.4(typescript@5.9.3)
+      secure-exec:
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/code-mode:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../..
+      zod:
+        specifier: ^4.1.11
+        version: 4.3.6
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/contexts:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/dev-server:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/host-functions:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../..
+      zod:
+        specifier: ^4.1.11
+        version: 4.3.6
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/limits:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/mounts:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/npm:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/permissions:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/plugins:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/quickstart:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/typescript:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  secure-exec/examples/vm:
+    dependencies:
+      secure-exec:
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
   software/acl:
     devDependencies:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1325,9 +1465,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1350,9 +1487,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1381,9 +1515,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
@@ -1424,9 +1555,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
@@ -1442,9 +1570,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1463,9 +1588,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1484,9 +1606,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1505,9 +1624,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1526,9 +1642,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1617,9 +1730,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
@@ -1635,9 +1745,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1656,9 +1763,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1677,9 +1781,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1698,9 +1799,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1719,9 +1817,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1740,9 +1835,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1761,9 +1853,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1782,9 +1871,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1803,9 +1889,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1824,9 +1907,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1845,9 +1925,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1866,9 +1943,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1887,9 +1961,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1914,9 +1985,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1935,9 +2003,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1956,9 +2021,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1977,9 +2039,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -1998,9 +2057,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -2019,9 +2075,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -2040,9 +2093,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -2061,9 +2111,6 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@rivet-dev/agentos-test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
         version: link:../../packages/agentos-toolchain
@@ -2076,19 +2123,6 @@ importers:
       vitest:
         specifier: ^2.1.9
         version: 2.1.9(@types/node@22.19.15)(lightningcss@1.33.0)
-
-  test-harness:
-    dependencies:
-      '@rivet-dev/agentos-vm-test-harness':
-        specifier: workspace:*
-        version: link:../packages/vm-test-harness
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      typescript:
-        specifier: ^5.9.2
-        version: 5.9.3
 
 packages:
 
@@ -2861,6 +2895,21 @@ packages:
     resolution: {integrity: sha512-O8jcjabXaleOG9DQ0+ARXWZBTfnP4WNAqzuiJK7ll44AmxGKv/J2M4TPjxjY3znBCfvBXFzucm1twdyFybFqEA==}
     engines: {node: '>=12'}
 
+  '@jitl/quickjs-ffi-types@0.32.0':
+    resolution: {integrity: sha512-v9T+GQpmk43VDJ7d72sf0Nexhk+ArvtUihW27dy7lqAl0zBObFKtSBBIm5RBjwIhE8VwsPPm9PNuvPvNqLWUEg==}
+
+  '@jitl/quickjs-wasmfile-debug-asyncify@0.32.0':
+    resolution: {integrity: sha512-EX8zbXwGqCgAE764M+qvkHtyXDi/FUoMBea0JnES7vCM3P7a2+EOZOjGv85wtZ2sJhI1oJ+nekmqpOODFDY+hw==}
+
+  '@jitl/quickjs-wasmfile-debug-sync@0.32.0':
+    resolution: {integrity: sha512-LeYWrPGC1uNCTBWvibo3ZLJj0CSVNYUXvJpXMCmuQ5Sap2cCACc3uvGvYV4homHHBAzfw5akoTqMMS4YFRtw+Q==}
+
+  '@jitl/quickjs-wasmfile-release-asyncify@0.32.0':
+    resolution: {integrity: sha512-3oSwPfja12ICz4aIblB58cuY8JlEq5Txt8Cut4VLo+LH47QN+mzCnSgnbB03hWzg1LBcc+VyyI9UOag7a1NF+Q==}
+
+  '@jitl/quickjs-wasmfile-release-sync@0.32.0':
+    resolution: {integrity: sha512-BKNDI/TPBfGlLNGYpLrhcDGXmIk4xHm4MRAisOBnOzpXVn9HZWsfmMAc9WMBrAHjvvds6HOikKeaOBKdPdpVrg==}
+
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
 
@@ -2910,10 +2959,6 @@ packages:
       '@cfworker/json-schema':
         optional: true
 
-  '@noble/ciphers@2.2.0':
-    resolution: {integrity: sha512-Z6pjIZ/8IJcCGzb2S/0Px5J81yij85xASuk1teLNeg75bfT07MV3a/O2Mtn1I2se43k3lkVEcFaR10N4cgQcZA==}
-    engines: {node: '>= 20.19.0'}
-
   '@noble/hashes@2.2.0':
     resolution: {integrity: sha512-IYqDGiTXab6FniAgnSdZwgWbomxpy9FtYvLKs7wCUs2a8RkITG+DFGO1DM9cr+E3/RgADRpFjrKVaJ1z6sjtEg==}
     engines: {node: '>= 20.19.0'}
@@ -2938,11 +2983,6 @@ packages:
   '@pkgjs/parseargs@0.11.0':
     resolution: {integrity: sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg==}
     engines: {node: '>=14'}
-
-  '@playwright/test@1.59.1':
-    resolution: {integrity: sha512-PG6q63nQg5c9rIi4/Z5lR5IVF7yU5MqmKaPOe0HSc0O2cX1fPi96sUQu5j7eo4gKCkB2AnNGoWt7y4/Xx3Kcqg==}
-    engines: {node: '>=18'}
-    hasBin: true
 
   '@protobufjs/aspromise@1.1.2':
     resolution: {integrity: sha512-j+gKExEuLmKwvz3OgROXtrJ2UG2x8Ch2YZUxahh+s1F2HZ+wAceUNLkvy6zKCPVRkU++ZWQrdxsUeQXmcg4uoQ==}
@@ -2979,14 +3019,14 @@ packages:
     engines: {node: '>=18'}
     hasBin: true
 
-  '@redis/bloom@6.3.0':
-    resolution: {integrity: sha512-NQ5poYpZr0jv6zazN1cy6JY5kIipKFZ3R9GTL4kOUTX3a9YAfY29U8bsE4lWhVQEM+G4V0BXVC57mubIdDijeA==}
+  '@redis/bloom@6.3.1':
+    resolution: {integrity: sha512-dpF9j2yJDoPzSCaZn0MSB3xzmnXQVJeTSAWJcQVcgbmluwhpFeemmII0cF1t+WYfoVS+shEFq79+MmUItgzJLg==}
     engines: {node: '>= 20.0.0'}
     peerDependencies:
-      '@redis/client': ^6.3.0
+      '@redis/client': ^6.3.1
 
-  '@redis/client@6.3.0':
-    resolution: {integrity: sha512-fHrjwGCBvAANGi+TuRuwKi83sIOzgHr8eh+Uf48w3fSX7Hhrz174NrWqfJhAC2vnN0d/tfaZpdr6+o6JC3QHwg==}
+  '@redis/client@6.3.1':
+    resolution: {integrity: sha512-masbfVKULdoAofwddepZxRhWa4w6zvBHn6TRn90TRPrRkVIlGCur3pFqwWaCbMxtYI9twepkz63e/T/tEH8GjA==}
     engines: {node: '>= 20.0.0'}
     peerDependencies:
       '@node-rs/xxhash': ^1.1.0
@@ -2997,23 +3037,27 @@ packages:
       '@opentelemetry/api':
         optional: true
 
-  '@redis/json@6.3.0':
-    resolution: {integrity: sha512-yt6vRfPBXtW/3qm53cF81TSQpLMjWdW4/2E9WQ2GgbvsKkuCKCFQIcMiKlil1ZMnezK+IQuS795xKU5psbaegw==}
+  '@redis/json@6.3.1':
+    resolution: {integrity: sha512-fMz4kUwJzEftcU9EMaqsjZcUwzpTQLOYRqhQsAD6uKvZWeamblK13ZhgO5SzVSZVk31jmwLeTRpU5GAl5egfUw==}
     engines: {node: '>= 20.0.0'}
     peerDependencies:
-      '@redis/client': ^6.3.0
+      '@redis/client': ^6.3.1
 
-  '@redis/search@6.3.0':
-    resolution: {integrity: sha512-RPXAZmKjZZG7Tm7m1w9keFdXzbL91PiSHQBfQRe9xwW40jNsTRbG0FwhIz4QlHPU4gKDAsCy8IQHj4yZl4H9rw==}
+  '@redis/search@6.3.1':
+    resolution: {integrity: sha512-T67pvPUpW82VrZLvihO8O2DFMC7eY2oMAzMzapCbiPZn7mdWqHMEIlohYim12gIawT5kn6qT/Cvmm4WulKB+kQ==}
     engines: {node: '>= 20.0.0'}
     peerDependencies:
-      '@redis/client': ^6.3.0
+      '@redis/client': ^6.3.1
 
-  '@redis/time-series@6.3.0':
-    resolution: {integrity: sha512-+fJOB8mN1z5WRakCJNh5lVdz1KqvHGSOistsKeitD24QsCtPwyRQXWC0iq6T/i/ubLE/YcguZqPm8F598MKk4A==}
+  '@redis/time-series@6.3.1':
+    resolution: {integrity: sha512-MNDgrm+i63M/1a+XA+HcDsScwt4uBh/fGGJ84swTQZTFK5K5wMmxdlTRa4ZgmNJzjxMaszW/ipPScMUGV3aAMg==}
     engines: {node: '>= 20.0.0'}
     peerDependencies:
-      '@redis/client': ^6.3.0
+      '@redis/client': ^6.3.1
+
+  '@rivetkit/bare-ts@0.6.2':
+    resolution: {integrity: sha512-3qndQUQXLdwafMEqfhz24hUtDPcsf1Bu3q52Kb8MqeH8JUh3h6R4HYW3ZJXiQsLcyYyFM68PuIwlLRlg1xDEpg==}
+    engines: {node: ^14.18.0 || >=16.0.0}
 
   '@rollup/rollup-android-arm-eabi@4.60.1':
     resolution: {integrity: sha512-d6FinEBLdIiK+1uACUttJKfgZREXrF0Qc2SmLII7W2AD8FfiZ9Wjd+rD/iRuf5s5dWrr1GgwXCvPqOuDquOowA==}
@@ -5201,6 +5245,13 @@ packages:
   quick-format-unescaped@4.0.4:
     resolution: {integrity: sha512-tYC1Q1hgyRuHgloV/YXs2w15unPVh8qfu/qCTfhTYamaw7fyhumKa2yGpdSo87vY32rIclj+4fWYQXUMs9EHvg==}
 
+  quickjs-emscripten-core@0.32.0:
+    resolution: {integrity: sha512-QFnPfjFey8EqknSrSxe1hZrf1/8z7/6s1QzGOmKo6++02r7QRRX7ZoyNaZh7JuVjWsVW87KnQrbZqnHkOAzUyg==}
+
+  quickjs-emscripten@0.32.0:
+    resolution: {integrity: sha512-So0Sqw869y/S2oE3Nuc0uT3Dhqgvsj8FSrwBdsuTosVsG8ME5/OcudU1GxsrIFdFABgy17GHnTVO9TYV/bLQcA==}
+    engines: {node: '>=16.0.0'}
+
   randombytes@2.1.0:
     resolution: {integrity: sha512-vYl3iOX+4CKUWuxGi9Ukhie6fsqXqS9FE2Zaic4tNFD2N2QQaXOMFbuKK4QmDHC0JO6B1Zp41J0LpT0oR68amQ==}
 
@@ -5237,8 +5288,8 @@ packages:
     resolution: {integrity: sha512-57frrGM/OCTLqLOAh0mhVA9VBMHd+9U7Zb2THMGdBUoZVOtGbJzjxsYGDJ3A9AYYCP4hn6y1TVbaOfzWtm5GFg==}
     engines: {node: '>= 12.13.0'}
 
-  redis@6.3.0:
-    resolution: {integrity: sha512-XFQbPie1lGpKeUZ8ySYY43yLnQy/iIQtHNvIr/1XdaABpb96rUSdm3Mfl+98FEVbv9ZJIzINMno5s0Nh8E5LEw==}
+  redis@6.3.1:
+    resolution: {integrity: sha512-mV96ZKxQ4CGn3SyEGaY0Lb9YA443mdVey3c+mdr0NAUaBxiOZGoYCWX8PoM55kictSOmxlJRtZJxIsmZm3jL+w==}
     engines: {node: '>= 20.0.0'}
 
   require-directory@2.1.1:
@@ -5280,6 +5331,15 @@ packages:
   router@2.2.0:
     resolution: {integrity: sha512-nLTrUKm2UyiL7rlhapu/Zl45FwNgkZGaCpZbIHajDYgwlJCOzLSk+cIPAnsEqV955GjILJnKbdQC1nVPz+gAYQ==}
     engines: {node: '>= 18'}
+
+  run@2.1.4:
+    resolution: {integrity: sha512-Rd8W2wO0LWdwlNbqKJm/o0WpQ/VQ42KRR6MUgnaujjjVOdS0o3bTMZ9dCjWCQAeuIj6jhG58WkqkeGz0cvOIrA==}
+    engines: {node: '>=20.19.0'}
+    peerDependencies:
+      typescript: '>=5.1.6 <7'
+    peerDependenciesMeta:
+      typescript:
+        optional: true
 
   safe-buffer@5.1.2:
     resolution: {integrity: sha512-Gd2UZBJDkXlY7GbJxfsE8/nvKkUEU1G38c1siN6QP6a9PT9MmHB8GnpscSmMJSoF8LOIrt8ud/wPtojys4G6+g==}
@@ -6437,11 +6497,11 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@effect/platform-node@4.0.5(bufferutil@4.1.0)(effect@4.0.5)(redis@6.3.0(@opentelemetry/api@1.9.0))':
+  '@effect/platform-node@4.0.5(bufferutil@4.1.0)(effect@4.0.5)(redis@6.3.1(@opentelemetry/api@1.9.0))':
     dependencies:
       '@effect/platform-node-shared': 4.0.5(bufferutil@4.1.0)(effect@4.0.5)
       effect: 4.0.5
-      redis: 6.3.0(@opentelemetry/api@1.9.0)
+      redis: 6.3.1(@opentelemetry/api@1.9.0)
       undici: 8.12.3
     transitivePeerDependencies:
       - bufferutil
@@ -6721,6 +6781,24 @@ snapshots:
       wrap-ansi: 8.1.0
       wrap-ansi-cjs: wrap-ansi@7.0.0
 
+  '@jitl/quickjs-ffi-types@0.32.0': {}
+
+  '@jitl/quickjs-wasmfile-debug-asyncify@0.32.0':
+    dependencies:
+      '@jitl/quickjs-ffi-types': 0.32.0
+
+  '@jitl/quickjs-wasmfile-debug-sync@0.32.0':
+    dependencies:
+      '@jitl/quickjs-ffi-types': 0.32.0
+
+  '@jitl/quickjs-wasmfile-release-asyncify@0.32.0':
+    dependencies:
+      '@jitl/quickjs-ffi-types': 0.32.0
+
+  '@jitl/quickjs-wasmfile-release-sync@0.32.0':
+    dependencies:
+      '@jitl/quickjs-ffi-types': 0.32.0
+
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
       '@jridgewell/sourcemap-codec': 1.5.5
@@ -6831,9 +6909,8 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@noble/ciphers@2.2.0': {}
-
-  '@noble/hashes@2.2.0': {}
+  '@noble/hashes@2.2.0':
+    optional: true
 
   '@oclif/core@4.11.14':
     dependencies:
@@ -6870,10 +6947,6 @@ snapshots:
 
   '@pkgjs/parseargs@0.11.0':
     optional: true
-
-  '@playwright/test@1.59.1':
-    dependencies:
-      playwright: 1.59.1
 
   '@protobufjs/aspromise@1.1.2': {}
 
@@ -6915,25 +6988,27 @@ snapshots:
       - supports-color
     optional: true
 
-  '@redis/bloom@6.3.0(@redis/client@6.3.0(@opentelemetry/api@1.9.0))':
+  '@redis/bloom@6.3.1(@redis/client@6.3.1(@opentelemetry/api@1.9.0))':
     dependencies:
-      '@redis/client': 6.3.0(@opentelemetry/api@1.9.0)
+      '@redis/client': 6.3.1(@opentelemetry/api@1.9.0)
 
-  '@redis/client@6.3.0(@opentelemetry/api@1.9.0)':
+  '@redis/client@6.3.1(@opentelemetry/api@1.9.0)':
     optionalDependencies:
       '@opentelemetry/api': 1.9.0
 
-  '@redis/json@6.3.0(@redis/client@6.3.0(@opentelemetry/api@1.9.0))':
+  '@redis/json@6.3.1(@redis/client@6.3.1(@opentelemetry/api@1.9.0))':
     dependencies:
-      '@redis/client': 6.3.0(@opentelemetry/api@1.9.0)
+      '@redis/client': 6.3.1(@opentelemetry/api@1.9.0)
 
-  '@redis/search@6.3.0(@redis/client@6.3.0(@opentelemetry/api@1.9.0))':
+  '@redis/search@6.3.1(@redis/client@6.3.1(@opentelemetry/api@1.9.0))':
     dependencies:
-      '@redis/client': 6.3.0(@opentelemetry/api@1.9.0)
+      '@redis/client': 6.3.1(@opentelemetry/api@1.9.0)
 
-  '@redis/time-series@6.3.0(@redis/client@6.3.0(@opentelemetry/api@1.9.0))':
+  '@redis/time-series@6.3.1(@redis/client@6.3.1(@opentelemetry/api@1.9.0))':
     dependencies:
-      '@redis/client': 6.3.0(@opentelemetry/api@1.9.0)
+      '@redis/client': 6.3.1(@opentelemetry/api@1.9.0)
+
+  '@rivetkit/bare-ts@0.6.2': {}
 
   '@rollup/rollup-android-arm-eabi@4.60.1':
     optional: true
@@ -9199,13 +9274,15 @@ snapshots:
       mlly: 1.8.2
       pathe: 2.0.3
 
-  playwright-core@1.59.1: {}
+  playwright-core@1.59.1:
+    optional: true
 
   playwright@1.59.1:
     dependencies:
       playwright-core: 1.59.1
     optionalDependencies:
       fsevents: 2.3.2
+    optional: true
 
   possible-typed-array-names@1.1.0: {}
 
@@ -9312,6 +9389,18 @@ snapshots:
 
   quick-format-unescaped@4.0.4: {}
 
+  quickjs-emscripten-core@0.32.0:
+    dependencies:
+      '@jitl/quickjs-ffi-types': 0.32.0
+
+  quickjs-emscripten@0.32.0:
+    dependencies:
+      '@jitl/quickjs-wasmfile-debug-asyncify': 0.32.0
+      '@jitl/quickjs-wasmfile-debug-sync': 0.32.0
+      '@jitl/quickjs-wasmfile-release-asyncify': 0.32.0
+      '@jitl/quickjs-wasmfile-release-sync': 0.32.0
+      quickjs-emscripten-core: 0.32.0
+
   randombytes@2.1.0:
     dependencies:
       safe-buffer: 5.2.1
@@ -9362,13 +9451,13 @@ snapshots:
 
   real-require@0.2.0: {}
 
-  redis@6.3.0(@opentelemetry/api@1.9.0):
+  redis@6.3.1(@opentelemetry/api@1.9.0):
     dependencies:
-      '@redis/bloom': 6.3.0(@redis/client@6.3.0(@opentelemetry/api@1.9.0))
-      '@redis/client': 6.3.0(@opentelemetry/api@1.9.0)
-      '@redis/json': 6.3.0(@redis/client@6.3.0(@opentelemetry/api@1.9.0))
-      '@redis/search': 6.3.0(@redis/client@6.3.0(@opentelemetry/api@1.9.0))
-      '@redis/time-series': 6.3.0(@redis/client@6.3.0(@opentelemetry/api@1.9.0))
+      '@redis/bloom': 6.3.1(@redis/client@6.3.1(@opentelemetry/api@1.9.0))
+      '@redis/client': 6.3.1(@opentelemetry/api@1.9.0)
+      '@redis/json': 6.3.1(@redis/client@6.3.1(@opentelemetry/api@1.9.0))
+      '@redis/search': 6.3.1(@redis/client@6.3.1(@opentelemetry/api@1.9.0))
+      '@redis/time-series': 6.3.1(@redis/client@6.3.1(@opentelemetry/api@1.9.0))
     transitivePeerDependencies:
       - '@node-rs/xxhash'
       - '@opentelemetry/api'
@@ -9440,6 +9529,10 @@ snapshots:
       path-to-regexp: 8.4.1
     transitivePeerDependencies:
       - supports-color
+
+  run@2.1.4(typescript@5.9.3):
+    optionalDependencies:
+      typescript: 5.9.3
 
   safe-buffer@5.1.2: {}
 

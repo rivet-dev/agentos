@@ -10,6 +10,10 @@ services:
     command: ["sleep", "infinity"]
     stdin_open: true
     tty: true
+    ports:
+      # RivetKit engine: actor gateway + /inspector/* + custom-tab assets. The
+      # hosted dashboard runs in the host browser and points at this port.
+      - "6420:6420"
     # Docker Desktop's embedded resolver (192.168.65.7) intermittently stops
     # answering, which surfaces as EAI_AGAIN storms during `pnpm install`.
     dns:
@@ -17,8 +21,13 @@ services:
       - 8.8.8.8
     environment:
       # Unambiguous sidecar resolution; `just dev-bootstrap` builds this path.
-      AGENTOS_SIDECAR_BIN: /build/target/debug/agentos-native-sidecar
+      AGENTOS_SIDECAR_BIN: /build/target/debug/agentos-sidecar
       RUST_BACKTRACE: "1"
+      # RivetKit binds the engine it spawns to loopback, which a published port
+      # cannot reach. This is the supported override for that bind address
+      # (rivetkit's `engineHost`); setting RIVET__GUARD__HOST does not work,
+      # because RivetKit passes its own value to the engine process.
+      RIVET_RUN_ENGINE_HOST: 0.0.0.0
     volumes:
       - ../..:/build:cached
 

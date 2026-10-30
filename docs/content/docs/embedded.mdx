@@ -4,31 +4,41 @@ description: "Embed agentOS Core in a trusted Node.js application."
 skill: true
 ---
 
-`@rivet-dev/agentos-core` runs agentOS VMs inside your Node.js process. Your
-application owns VM identity, persistence, and disposal. Its native sidecar and
-platform package must match the installed agentOS version. If resolution
-reports a missing or mismatched binary, reinstall the packages;
-`AGENTOS_SIDECAR_BIN` can select a custom local build.
+`@rivet-dev/agentos` runs the same VM runtime without Rivet actor
+lifecycle. Your application owns VM identity, persistence, and disposal.
+Its native sidecar and platform package must match the installed agentOS
+version. If resolution reports a missing or mismatched binary, reinstall the
+packages; `AGENTOS_SIDECAR_BIN` can select a custom local build.
 
 <CodeSnippet file="examples/quickstart/hello-world/index.ts" />
 
-## Trusted host capabilities
+## Embedded-only capabilities
 
-Because the embedding process is trusted, Core accepts values that run in or
-read from the host:
+Because the embedding process is trusted, Core can accept values that cannot
+cross the hosted actor boundary:
 
-- [host functions](/agentos/docs/host-functions);
-- host-directory and other [mount plugins](/agentos/docs/filesystem#mounts);
-- [external sandboxes](/agentos/docs/sandboxes);
-- local `.aospkg` paths;
+- host functions;
+- host-directory and callback-backed mount plugins;
+- external VM providers;
+- trusted local `.aospkg` paths;
 - custom schedule drivers and sidecar placement.
 
 <CodeSnippet file="examples/embedded/config-reference.ts" title="config-reference.ts" />
 
-## Sidecar placement
+The hosted actor uses a smaller generated configuration type and a fixed
+filesystem registry. It never serializes callbacks or exposes a host path.
 
-VMs share a pooled sidecar process by default. Create a dedicated sidecar with
-`AgentOs.createSidecar()` and pass it as `sidecar: { kind: "explicit", handle }`
-to isolate a group of VMs or configure process-wide limits.
+The sidecar uses the `agent_os` defaults profile unless `defaultsProfile` is
+`"secure"`. Both profiles permit guest loopback and deny external network and
+DNS access by default, including model-provider endpoints. Explicit
+`permissions` can grant additional access. Secure Exec selects the secure
+profile automatically.
 
-<CodeSnippet file="examples/embedded/advanced.ts" />
+## WASM execution
+
+Published sidecars run standalone WASM commands in V8. No backend selection is
+needed. JavaScript also runs in V8.
+
+## Embedded API
+
+Read more in the [embedded API quickstart](/agentos/docs/quickstart-embedded).

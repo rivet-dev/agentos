@@ -84,12 +84,8 @@ pub struct InlineExecutionOptions {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum JavaScriptModuleFormat {
-    /// Evaluate each call as an independent root ES module. A retained context
-    /// preserves `globalThis`, not the module's lexical scope.
     #[default]
     Module,
-    /// Use script/CommonJS semantics, including REPL-style top-level bindings
-    /// that remain visible to later calls in a retained context.
     CommonJs,
 }
 
@@ -160,10 +156,9 @@ pub struct TypeScriptCheckResult {
     pub diagnostics: Vec<TypeScriptDiagnostic>,
 }
 
-#[allow(clippy::large_enum_variant)] // This private enum avoids an allocation on the synchronous completion path.
 #[derive(Debug, Clone)]
 enum ExecutionSubmission {
-    Completed(CodeExecutionResult),
+    Completed(Box<CodeExecutionResult>),
     Background(wire::ExecutionDescriptor),
 }
 
@@ -381,9 +376,9 @@ impl AgentOs {
             ));
         }
         wait_for_completion_event(&mut events, &accepted.operation_id).await?;
-        Ok(ExecutionSubmission::Completed(
+        Ok(ExecutionSubmission::Completed(Box::new(
             self.wait_execution(&accepted.operation_id).await?,
-        ))
+        )))
     }
 
     pub async fn exec(
@@ -1218,7 +1213,10 @@ fn evaluation_result(submission: ExecutionSubmission) -> ClientResult<CodeEvalua
         .map_err(|error| {
             ClientError::Sidecar(format!("failed to decode evaluation result: {error}"))
         })?;
-    Ok(CodeEvaluationResult { result, value })
+    Ok(CodeEvaluationResult {
+        result: *result,
+        value,
+    })
 }
 
 fn typescript_check_result(result: CodeExecutionResult) -> ClientResult<TypeScriptCheckResult> {
@@ -1322,7 +1320,7 @@ fn typescript_check_result(result: CodeExecutionResult) -> ClientResult<TypeScri
 
 fn completed_submission(submission: ExecutionSubmission) -> ClientResult<CodeExecutionResult> {
     match submission {
-        ExecutionSubmission::Completed(result) => Ok(result),
+        ExecutionSubmission::Completed(result) => Ok(*result),
         ExecutionSubmission::Background(_) => Err(ClientError::Sidecar(String::from(
             "attached operation unexpectedly returned a background process",
         ))),

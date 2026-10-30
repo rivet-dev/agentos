@@ -1,0 +1,22 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AgentOS Tests <tests@agentos.invalid>
+Date: Thu, 9 Jul 2026 15:58:16 -0700
+Subject: [PATCH 1/4] fstests: accept agentos logical mount devices
+
+---
+ common/config | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/common/config b/common/config
+index d5299d5b..c6caffcd 100644
+--- a/common/config
++++ b/common/config
+@@ -610,7 +610,7 @@ _check_device()
+ 	fi
+ 
+ 	case "$FSTYP" in
+-	9p|fuse|tmpfs|virtiofs|afs)
++	agentos|9p|fuse|tmpfs|virtiofs|afs)
+ 		# 9p, fuse, virtiofs and afs mount tags are just plain strings,
+ 		# so anything is allowed tmpfs doesn't use mount source, ignore
+ 		;;

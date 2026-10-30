@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AgentOS Tests <tests@agentos.invalid>
+Date: Fri, 10 Jul 2026 23:30:00 -0700
+Subject: [PATCH] fstests: require fsx at the test that invokes it
+
+The AgentOS bootstrap defers test-local tool checks so missing ports become
+strict per-test notruns. generic/075 invoked fsx without such a gate, turning
+the missing port into misleading result-file errors.
+
+---
+ tests/generic/075 | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/tests/generic/075 b/tests/generic/075
+index ce6f4bc4..04ef5810 100755
+--- a/tests/generic/075
++++ b/tests/generic/075
+@@ -103,5 +103,6 @@ _process_args()
+ 
+ _require_test
++_require_command "$FSX_PROG" fsx
+ 
+ size10=`expr 10 \* 1024 \* 1024`	# 10 megabytes
+ filelen=$size10
+-- 
+2.43.0

@@ -8,17 +8,17 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { CreateVmConfig } from "@rivet-dev/agentos-runtime-core/vm-config";
+import type { CreateVmConfig } from "../src/vm-config.js";
 import { afterEach, describe, expect, test } from "vitest";
 import {
-	NativeSidecarProcessClient,
+	SidecarProcessClient,
 	serializeRootFilesystemForSidecar,
 } from "../src/sidecar/rpc-client.js";
 
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const SIDECAR_BINARY = process.env.AGENTOS_SIDECAR_BIN
 	? resolve(process.env.AGENTOS_SIDECAR_BIN)
-	: join(REPO_ROOT, "target/debug/agentos-native-sidecar");
+	: join(REPO_ROOT, "target/debug/agentos-sidecar");
 
 type JavaScriptVmConfigOptions = Partial<
 	Pick<
@@ -55,7 +55,7 @@ function nodeBuiltinsConfig(...allowedBuiltins: string[]) {
 function ensureSidecarBinaryReady(): void {
 	if (!existsSync(SIDECAR_BINARY)) {
 		throw new Error(
-			`agentos-native-sidecar is missing at ${SIDECAR_BINARY}; build the shared CI/test binary before running this suite`,
+			`agentos-sidecar is missing at ${SIDECAR_BINARY}; build the shared CI/test binary before running this suite`,
 		);
 	}
 }
@@ -94,7 +94,7 @@ describe("native sidecar process client permissions", () => {
 
 	test("writes create-VM config and configure permissions policies", async () => {
 		const fixtureRoot = mkdtempSync(
-			join(tmpdir(), "agentos-native-sidecar-permissions-"),
+			join(tmpdir(), "agentos-sidecar-permissions-"),
 		);
 		cleanupPaths.push(fixtureRoot);
 		const capturePath = join(fixtureRoot, "captured-requests.json");
@@ -104,7 +104,7 @@ describe("native sidecar process client permissions", () => {
 			[
 				"import { writeFileSync } from 'node:fs';",
 				"const capturePath = process.argv[2];",
-				"const schema = { name: 'agentos-native-sidecar', version: 9 };",
+				"const schema = { name: 'agentos-sidecar', version: 10 };",
 				"let stdinBuffer = Buffer.alloc(0);",
 				"const captures = [];",
 				"const writeFrame = (frame) => {",
@@ -175,7 +175,7 @@ describe("native sidecar process client permissions", () => {
 			].join("\n"),
 		);
 
-		const client = NativeSidecarProcessClient.spawn({
+		const client = SidecarProcessClient.spawn({
 			cwd: REPO_ROOT,
 			command: "node",
 			args: [driverPath, capturePath],
@@ -292,7 +292,7 @@ describe("native sidecar process client permissions", () => {
 	test("rejects empty permission rule operations and paths in the native sidecar", async () => {
 		ensureSidecarBinaryReady();
 
-		const client = NativeSidecarProcessClient.spawn({
+		const client = SidecarProcessClient.spawn({
 			cwd: REPO_ROOT,
 			command: SIDECAR_BINARY,
 			args: [],
@@ -351,7 +351,7 @@ describe("native sidecar process client permissions", () => {
 
 	test("inspection RPCs are denied by default and allowed with explicit inspect permissions", async () => {
 		const fixtureRoot = mkdtempSync(
-			join(tmpdir(), "agentos-native-sidecar-inspection-permissions-"),
+			join(tmpdir(), "agentos-sidecar-inspection-permissions-"),
 		);
 		cleanupPaths.push(fixtureRoot);
 		ensureSidecarBinaryReady();
@@ -379,7 +379,7 @@ describe("native sidecar process client permissions", () => {
 			["console.log('idle-ready');", "setInterval(() => {}, 1000);"].join("\n"),
 		);
 
-		const client = NativeSidecarProcessClient.spawn({
+		const client = SidecarProcessClient.spawn({
 			cwd: REPO_ROOT,
 			command: SIDECAR_BINARY,
 			args: [],
@@ -610,12 +610,12 @@ describe("native sidecar process client permissions", () => {
 
 	test("keeps single-star fs permission globs within one path segment", async () => {
 		const fixtureRoot = mkdtempSync(
-			join(tmpdir(), "agentos-native-sidecar-permission-glob-"),
+			join(tmpdir(), "agentos-sidecar-permission-glob-"),
 		);
 		cleanupPaths.push(fixtureRoot);
 		ensureSidecarBinaryReady();
 
-		const client = NativeSidecarProcessClient.spawn({
+		const client = SidecarProcessClient.spawn({
 			cwd: REPO_ROOT,
 			command: SIDECAR_BINARY,
 			args: [],

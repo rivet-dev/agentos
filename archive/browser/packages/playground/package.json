@@ -1,0 +1,26 @@
+{
+  "name": "@rivet-dev/agentos-playground",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm run setup-vendor && pnpm run build:assets",
+    "build:assets": "tsx ./scripts/build-worker.ts",
+    "check": "pnpm run build:assets",
+    "check-types": "tsc --noEmit -p ./tsconfig.json",
+    "dev": "pnpm run setup-vendor && pnpm run build:assets && tsx ./backend/server.ts",
+    "setup-vendor": "tsx ./scripts/setup-vendor.ts",
+    "test": "pnpm exec vitest run ./tests/"
+  },
+  "dependencies": {
+    "@rivet-dev/agentos-core": "workspace:*",
+    "@rivet-dev/agentos-browser": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.15",
+    "esbuild": "^0.27.1",
+    "monaco-editor": "0.52.2",
+    "tsx": "^4.21.0",
+    "typescript": "5.9.3",
+    "vitest": "^2.1.8"
+  }
+}

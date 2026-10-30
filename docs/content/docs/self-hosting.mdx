@@ -15,7 +15,7 @@ it needs neither.
 |---|---|---|
 | **Runs** | As a durable instance on Rivet Cloud or a [self-hosted](/agentos/docs/self-hosting) Docker image | Embedded inside your process as a library |
 | **Lifecycle** | Durable, sleeps when idle unless a process is running; see [actor lifecycle](/actors/docs/lifecycle) | Ephemeral, runs until `dispose()` or process exit |
-| **Package** | `@rivet-dev/agentos`, or plain HTTP | `@rivet-dev/agentos-core` |
+| **Package** | `@rivet-dev/agentos`, or plain HTTP | `@rivet-dev/agentos` |
 | **VM identity** | A durable VM you create by key and reach by ID | A handle your process owns until `dispose()` |
 | **Configuration** | Stored with the VM and versioned | Passed to `AgentOs.create()` |
 | **Clients** | Your backend, or browsers with a scoped JWT | Your backend |

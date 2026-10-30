@@ -1,0 +1,31 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AgentOS Tests <tests@agentos.invalid>
+Date: Thu, 9 Jul 2026 21:22:00 -0700
+Subject: [PATCH 7/7] fstests: bound agentos startup scan
+
+The maximum test-name width only formats progress output. Avoid listing the
+entire multi-filesystem test tree through the guest VFS when AgentOS runs the
+pinned generic suite, whose generic/NNN names have a fixed width.
+
+diff --git a/check b/check
+index 95c35c65..729680e6 100755
+--- a/check
++++ b/check
+@@ -677,8 +677,12 @@ _summary()
+ }
+ 
+ # Figure out the maximum test name length, e.g. "generic/1212" => 12
+-max_test_namelen=$(ls "$SRC_DIR"/*/* | \
+-	awk 'BEGIN {x = 0} /\/[0-9]*$/ {l = length($0) - 6; if (l > x) x = l;} END {print x}')
++if [ "$FSTYP" = "agentos" ]; then
++	max_test_namelen=11
++else
++	max_test_namelen=$(ls "$SRC_DIR"/*/* | \
++		awk 'BEGIN {x = 0} /\/[0-9]*$/ {l = length($0) - 6; if (l > x) x = l;} END {print x}')
++fi
+ 
+ # Can we run systemd scopes?
+ HAVE_SYSTEMD_SCOPES=
+-- 
+2.47.3
+

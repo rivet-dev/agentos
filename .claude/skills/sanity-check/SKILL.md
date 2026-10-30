@@ -5,14 +5,14 @@ description: Run the deferred agentOS VM smoke test from public npm packages. Us
 
 # Sanity Check
 
-This is a full-validation check. Install `@rivet-dev/agentos-core` from npm in
+This is a full-validation check. Install `@rivet-dev/agentos` from npm in
 a fresh temporary project, boot one VM, verify filesystem and process execution,
 then dispose it cleanly.
 
 ## Test program
 
 ```js
-import { AgentOs } from "@rivet-dev/agentos-core";
+import { AgentOs } from "@rivet-dev/agentos";
 
 const vm = await AgentOs.create();
 try {
@@ -31,7 +31,7 @@ try {
 
 - Always use a fresh temporary directory, never the repository.
 - Install from the public npm registry without local links.
-- Report the installed `@rivet-dev/agentos-core` version.
+- Report the installed `@rivet-dev/agentos` version.
 - Use Node.js 22 or newer.
 - Apply a two-minute outer timeout.
 - Remove the temporary directory after completion.

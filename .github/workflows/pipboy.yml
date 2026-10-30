@@ -8,6 +8,7 @@ name: pipboy
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
   push:
     branches: [main]
 
@@ -48,10 +49,10 @@ jobs:
           # changes or the `ci: native-all` label, which is read on the next push.
           NATIVE_ALL: >-
             [
-            {"platform":"linux-x64-gnu","target":"x86_64-unknown-linux-gnu","runner":"ubuntu-latest","dockerfile":"linux-gnu","clang":"","tier":"linux"},
+            {"platform":"linux-x64-gnu","target":"x86_64-unknown-linux-gnu","runner":"${{ github.event_name == 'pull_request' && 'depot-ubuntu-24.04-8' || 'ubuntu-latest' }}","dockerfile":"linux-gnu","clang":"","tier":"linux"},
             {"platform":"linux-arm64-gnu","target":"aarch64-unknown-linux-gnu","runner":"ubuntu-24.04-arm","dockerfile":"linux-gnu","clang":"","tier":"all"},
-            {"platform":"darwin-x64","target":"x86_64-apple-darwin","runner":"ubuntu-latest","dockerfile":"darwin","clang":"x86_64-apple-darwin20.4","tier":"all"},
-            {"platform":"darwin-arm64","target":"aarch64-apple-darwin","runner":"ubuntu-latest","dockerfile":"darwin","clang":"aarch64-apple-darwin20.4","tier":"all"}
+            {"platform":"darwin-x64","target":"x86_64-apple-darwin","runner":"${{ github.event_name == 'pull_request' && 'depot-ubuntu-24.04-8' || 'ubuntu-latest' }}","dockerfile":"darwin","clang":"x86_64-apple-darwin20.4","tier":"all"},
+            {"platform":"darwin-arm64","target":"aarch64-apple-darwin","runner":"${{ github.event_name == 'pull_request' && 'depot-ubuntu-24.04-8' || 'ubuntu-latest' }}","dockerfile":"darwin","clang":"aarch64-apple-darwin20.4","tier":"all"}
             ]
         run: |
           RUST='(\.rs$|(^|/)Cargo\.(toml|lock)$|^deny\.toml$|^rust-toolchain\.toml$|^docker/build/|^scripts/pipboy/|^\.github/workflows/pipboy\.yml$)'
@@ -77,8 +78,11 @@ jobs:
           echo "base_history=$(git rev-list --first-parent -n 200 "$base" | paste -sd, -)" >> "$GITHUB_OUTPUT"
           files="$(git diff --name-only "$base" HEAD)"
           footprint=false
-          if grep -qE '^(packages/|pnpm-(lock|workspace)\.yaml|scripts/pipboy/|scripts/publish/|\.github/workflows/pipboy\.yml)' <<< "$files"; then
+          if grep -qE '^(packages/|pnpm-(lock|workspace)\.yaml|scripts/pipboy/|scripts/publish/|\.github/workflows/pipboy\.yml)' <<< "$files" \
+            && jq -e 'index("ci: full-footprint")' <<< "$LABELS" > /dev/null; then
             footprint=true
+          elif grep -qE '^(packages/|pnpm-(lock|workspace)\.yaml|scripts/pipboy/|scripts/publish/|\.github/workflows/pipboy\.yml)' <<< "$files"; then
+            echo 'Full package footprint is deferred for this PR. Add the `ci: full-footprint` label to build and measure complete source artifacts.' >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "footprint=$footprint" >> "$GITHUB_OUTPUT"
           tool=false
@@ -128,8 +132,9 @@ jobs:
     name: footprint
     needs: changes
     if: needs.changes.outputs.footprint == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Full command and software builds are explicit on PRs and run on main for baselines.
+    runs-on: depot-ubuntu-24.04-8
+    timeout-minutes: 90
     permissions:
       contents: read
       actions: read # download the base tarballs from a main run
@@ -144,10 +149,23 @@ jobs:
           node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@2c76c034f9e32a5d6e2c104dc4df23a22476db04 # nightly
+        with:
+          targets: wasm32-wasip1
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: toolchain -> target
+          key: wasm-commands-${{ hashFiles('toolchain/Cargo.lock') }}
       - run: pnpm install --frozen-lockfile
 
+      - name: Build the complete command corpus from this checkout
+        run: |
+          make -C toolchain commands
+          make -C toolchain cmd/duckdb cmd/vim
+          node packages/core/scripts/copy-wasm-commands.mjs --require
+
       - name: Pack this commit
-        run: pnpm --silent --filter pipboy pipboy pack --out "$RUNNER_TEMP/pr"
+        run: pnpm --silent --filter pipboy pipboy pack --source-assets --out "$RUNNER_TEMP/pr"
 
       - name: Store tarballs as the baseline for later PRs
         if: github.event_name == 'push'
@@ -282,7 +300,7 @@ jobs:
           fi
           docker buildx build -f "docker/build/$DOCKERFILE.Dockerfile" "${args[@]}" -t pipboy-native --load .
           cid="$(docker create pipboy-native)"
-          docker cp "$cid:/artifacts/agentos-native-sidecar" "$RUNNER_TEMP/agentos-native-sidecar"
+          docker cp "$cid:/artifacts/agentos-sidecar" "$RUNNER_TEMP/agentos-native-sidecar"
           docker rm "$cid"
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
       # No pnpm cache: this job runs fork code and doesn't need one.

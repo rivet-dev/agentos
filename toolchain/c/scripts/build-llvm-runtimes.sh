@@ -16,6 +16,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PATCH_DIR="$SCRIPT_DIR/../patches/llvm-project"
 WASI_NM="$WASI_SDK_DIR/bin/llvm-nm"
+WASM_EH_FLAGS="${WASM_EH_FLAGS:--fwasm-exceptions}"
 
 if [ -d "$PATCH_DIR" ]; then
   while IFS= read -r patch_file; do
@@ -37,13 +38,17 @@ cmake \
   -B "$LLVM_RUNTIME_BUILD_DIR" \
   -G "Unix Makefiles" \
   -DUNIX=1 \
+  -DCMAKE_C_COMPILER_LAUNCHER="$SCRIPT_DIR/without-wasm-opt.sh" \
+  -DCMAKE_CXX_COMPILER_LAUNCHER="$SCRIPT_DIR/without-wasm-opt.sh" \
+  -DCMAKE_C_LINKER_LAUNCHER="$SCRIPT_DIR/without-wasm-opt.sh" \
+  -DCMAKE_CXX_LINKER_LAUNCHER="$SCRIPT_DIR/without-wasm-opt.sh" \
   -DCMAKE_TOOLCHAIN_FILE="$WASI_SDK_DIR/share/cmake/wasi-sdk.cmake" \
   -DCMAKE_MODULE_PATH="$SCRIPT_DIR/../cmake" \
   -DWASI_SDK_PREFIX="$WASI_SDK_DIR" \
   -DCMAKE_SYSROOT="$SYSROOT_DIR" \
   -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_C_FLAGS="-fwasm-exceptions -D_WASI_EMULATED_PTHREAD" \
-  -DCMAKE_CXX_FLAGS="-fwasm-exceptions -D_WASI_EMULATED_PTHREAD" \
+  -DCMAKE_C_FLAGS="$WASM_EH_FLAGS -D_WASI_EMULATED_PTHREAD" \
+  -DCMAKE_CXX_FLAGS="$WASM_EH_FLAGS -D_WASI_EMULATED_PTHREAD" \
   -DCMAKE_EXE_LINKER_FLAGS="-lwasi-emulated-pthread" \
   -DCMAKE_SHARED_LINKER_FLAGS="-lwasi-emulated-pthread" \
   -DCMAKE_REQUIRED_FLAGS="-D_WASI_EMULATED_PTHREAD" \
@@ -86,6 +91,11 @@ fi
 if ! grep -q ' T __cxa_allocate_exception$' <<<"$libcxxabi_symbols"; then
   echo "rebuilt libc++abi.a does not export __cxa_allocate_exception" >&2
   exit 1
+fi
+
+# Private consumers link these runtimes without replacing the shared sysroot.
+if [[ "${INSTALL_RUNTIME_IN_SYSROOT:-1}" != "1" ]]; then
+  exit 0
 fi
 
 SYSROOT_LIB="$SYSROOT_DIR/lib/wasm32-wasi"

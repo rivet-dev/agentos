@@ -3,12 +3,26 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+/// VM-wide default engine for standalone WebAssembly process images.
+///
+/// This does not affect JavaScript's `WebAssembly.*` APIs, which always run in
+/// the owning V8 isolate. Individual process launches may override this value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export, export_to = "../../../packages/core/src/generated/")]
+pub enum StandaloneWasmBackend {
+    #[default]
+    V8,
+    Wasmtime,
+    WasmtimeThreads,
+}
+
 /// Selects the sidecar-owned defaults applied when a create field is omitted.
 /// Low-level callers keep the secure profile; agentOS clients select the
 /// product profile instead of copying its environment and permission policy.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+#[ts(export, export_to = "../../../packages/core/src/generated/")]
 pub enum VmDefaultsProfile {
     #[default]
     Secure,
@@ -21,9 +35,12 @@ pub enum VmDefaultsProfile {
 /// public `NodeRuntime.create(...)` option changes the generated VM config.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+#[ts(export, export_to = "../../../packages/core/src/generated/")]
 #[derive(Default)]
 pub struct CreateVmConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub wasm_backend: Option<StandaloneWasmBackend>,
     #[serde(
         default,
         rename = "defaultsProfile",
@@ -211,7 +228,7 @@ fn validate_loopback_exempt_ports(values: &[u16], field: &str) -> Result<(), VmC
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 #[ts(tag = "type", rename_all = "snake_case")]
-#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+#[ts(export, export_to = "../../../packages/core/src/generated/")]
 pub enum VmSqliteDescriptor {
     /// Local SQLite database for trusted embedded callers.
     SqliteFile { path: String },
@@ -311,7 +328,7 @@ fn validate_absolute_host_path(field: &str, path: &str) -> Result<(), VmConfigEr
 /// Initial Linux-style credentials and account record for processes in a VM.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+#[ts(export, export_to = "../../../packages/core/src/generated/")]
 pub struct VmUserConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -342,6 +359,8 @@ pub struct VmUserConfig {
     pub group_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    /// Initial supplementary process credentials. An explicit group record is
+    /// authoritative and is not given extra members from this list.
     pub supplementary_gids: Option<Vec<u32>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -353,7 +372,7 @@ pub struct VmUserConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+#[ts(export, export_to = "../../../packages/core/src/generated/")]
 pub struct VmUserAccountConfig {
     pub uid: u32,
     pub gid: u32,
@@ -364,18 +383,28 @@ pub struct VmUserAccountConfig {
     #[ts(optional)]
     pub gecos: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// Initial process credentials only. These gids do not add the account to
+    /// an explicit `/etc/group` record's member list.
     pub supplementary_gids: Vec<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+#[ts(export, export_to = "../../../packages/core/src/generated/")]
 pub struct VmGroupConfig {
     pub gid: u32,
     pub name: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// Authoritative `/etc/group` membership. Process supplementary gids are
+    /// intentionally not merged into this list.
     pub members: Vec<String>,
 }
+
+// The libc account ABI uses a 4096-byte text buffer and reserves one byte for
+// the terminating NUL. Keep configuration-derived records representable by
+// every executor adapter before they reach the kernel account database.
+const MAX_ACCOUNT_RECORD_BYTES: usize = 4095;
+const MAX_GROUP_MEMBERS: usize = 256;
 
 impl VmUserConfig {
     fn validate(&self) -> Result<(), VmConfigError> {
@@ -391,24 +420,14 @@ impl VmUserConfig {
                 "user.supplementaryGids exceeds limit of {MAX_SUPPLEMENTARY_GIDS}"
             )));
         }
-        for (label, value) in [
-            ("user.username", self.username.as_deref()),
-            ("user.groupName", self.group_name.as_deref()),
-        ] {
-            if value.is_some_and(|value| {
-                value.is_empty()
-                    || value.contains([':', '\n', '\r', '\0'])
-                    || value.chars().any(char::is_whitespace)
-            }) {
-                return Err(VmConfigError::new(format!("{label} is invalid")));
-            }
+        if let Some(username) = self.username.as_deref() {
+            validate_account_name("user.username", username)?;
         }
-        if self
-            .gecos
-            .as_deref()
-            .is_some_and(|value| value.contains([':', '\n', '\r', '\0']))
-        {
-            return Err(VmConfigError::new("user.gecos is invalid"));
+        if let Some(group_name) = self.group_name.as_deref() {
+            validate_account_name("user.groupName", group_name)?;
+        }
+        if let Some(gecos) = self.gecos.as_deref() {
+            validate_account_record_field("user.gecos", gecos)?;
         }
         let accounts = self.accounts.as_deref().unwrap_or_default();
         let groups = self.groups.as_deref().unwrap_or_default();
@@ -426,14 +445,10 @@ impl VmUserConfig {
         let mut account_names = std::collections::BTreeSet::new();
         for account in accounts {
             validate_account_name("user.accounts[].username", &account.username)?;
-            validate_guest_path("user.accounts[].homedir", &account.homedir)?;
-            validate_guest_path("user.accounts[].shell", &account.shell)?;
-            if account
-                .gecos
-                .as_deref()
-                .is_some_and(|value| value.contains([':', '\n', '\r', '\0']))
-            {
-                return Err(VmConfigError::new("user.accounts[].gecos is invalid"));
+            validate_account_path("user.accounts[].homedir", &account.homedir)?;
+            validate_account_path("user.accounts[].shell", &account.shell)?;
+            if let Some(gecos) = account.gecos.as_deref() {
+                validate_account_record_field("user.accounts[].gecos", gecos)?;
             }
             if account.supplementary_gids.len() > MAX_SUPPLEMENTARY_GIDS {
                 return Err(VmConfigError::new(format!(
@@ -452,11 +467,25 @@ impl VmUserConfig {
                     account.username
                 )));
             }
+            validate_passwd_record(
+                "user.accounts[]",
+                &account.username,
+                account.uid,
+                account.gid,
+                account.gecos.as_deref().unwrap_or_default(),
+                &account.homedir,
+                &account.shell,
+            )?;
         }
         let mut group_gids = std::collections::BTreeSet::new();
         let mut group_names = std::collections::BTreeSet::new();
         for group in groups {
             validate_account_name("user.groups[].name", &group.name)?;
+            if group.members.len() > MAX_GROUP_MEMBERS {
+                return Err(VmConfigError::new(format!(
+                    "user.groups[].members exceeds limit of {MAX_GROUP_MEMBERS}"
+                )));
+            }
             for member in &group.members {
                 validate_account_name("user.groups[].members[]", member)?;
             }
@@ -472,23 +501,183 @@ impl VmUserConfig {
                     group.name
                 )));
             }
+            validate_group_record("user.groups[]", &group.name, group.gid, &group.members)?;
         }
-        if let Some(homedir) = self.homedir.as_deref() {
-            validate_guest_path("user.homedir", homedir)?;
-        }
-        if let Some(shell) = self.shell.as_deref() {
-            validate_guest_path("user.shell", shell)?;
-        }
+
+        let username = self.username.as_deref().unwrap_or("agentos");
+        let homedir = self.homedir.as_deref().unwrap_or("/home/agentos");
+        let shell = self.shell.as_deref().unwrap_or("/bin/sh");
+        let gecos = self.gecos.as_deref().unwrap_or_default();
+        validate_account_name("user.username", username)?;
+        validate_account_path("user.homedir", homedir)?;
+        validate_account_path("user.shell", shell)?;
+        validate_passwd_record(
+            "user",
+            username,
+            self.uid.unwrap_or(1000),
+            self.gid.unwrap_or(1000),
+            gecos,
+            homedir,
+            shell,
+        )?;
+        validate_materialized_groups(self, accounts, groups, username)?;
         Ok(())
     }
 }
 
 fn validate_account_name(label: &str, value: &str) -> Result<(), VmConfigError> {
     if value.is_empty()
-        || value.contains([':', '\n', '\r', '\0'])
+        || value.contains([':', ',', '\n', '\r', '\0'])
         || value.chars().any(char::is_whitespace)
     {
         return Err(VmConfigError::new(format!("{label} is invalid")));
+    }
+    validate_account_text_bound(label, value)
+}
+
+fn validate_account_record_field(label: &str, value: &str) -> Result<(), VmConfigError> {
+    if value.contains([':', '\n', '\r', '\0']) {
+        return Err(VmConfigError::new(format!("{label} is invalid")));
+    }
+    validate_account_text_bound(label, value)
+}
+
+fn validate_account_path(label: &str, value: &str) -> Result<(), VmConfigError> {
+    validate_guest_path(label, value)?;
+    validate_account_record_field(label, value)
+}
+
+fn validate_account_text_bound(label: &str, value: &str) -> Result<(), VmConfigError> {
+    if value.len() > MAX_ACCOUNT_RECORD_BYTES {
+        return Err(VmConfigError::new(format!(
+            "{label} exceeds limit of {MAX_ACCOUNT_RECORD_BYTES} UTF-8 bytes"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_passwd_record(
+    label: &str,
+    username: &str,
+    uid: u32,
+    gid: u32,
+    gecos: &str,
+    homedir: &str,
+    shell: &str,
+) -> Result<(), VmConfigError> {
+    let field_bytes = [
+        username.len(),
+        uid.to_string().len(),
+        gid.to_string().len(),
+        gecos.len(),
+        homedir.len(),
+        shell.len(),
+    ];
+    validate_account_record_size(label, field_bytes.into_iter(), 7)
+}
+
+fn validate_group_record(
+    label: &str,
+    name: &str,
+    gid: u32,
+    members: &[String],
+) -> Result<(), VmConfigError> {
+    if members.len() > MAX_GROUP_MEMBERS {
+        return Err(VmConfigError::new(format!(
+            "{label}.members exceeds limit of {MAX_GROUP_MEMBERS}"
+        )));
+    }
+    let member_separators = members.len().saturating_sub(1);
+    validate_account_record_size(
+        label,
+        std::iter::once(name.len())
+            .chain(std::iter::once(gid.to_string().len()))
+            .chain(members.iter().map(|member| member.len())),
+        4 + member_separators,
+    )
+}
+
+fn validate_account_record_size(
+    label: &str,
+    mut field_bytes: impl Iterator<Item = usize>,
+    syntax_bytes: usize,
+) -> Result<(), VmConfigError> {
+    let record_bytes = field_bytes.try_fold(syntax_bytes, usize::checked_add);
+    if record_bytes.is_none_or(|bytes| bytes > MAX_ACCOUNT_RECORD_BYTES) {
+        return Err(VmConfigError::new(format!(
+            "{label} rendered account record exceeds {MAX_ACCOUNT_RECORD_BYTES} bytes (the 4096-byte ABI buffer includes its terminating NUL)"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_materialized_groups(
+    config: &VmUserConfig,
+    accounts: &[VmUserAccountConfig],
+    groups: &[VmGroupConfig],
+    primary_username: &str,
+) -> Result<(), VmConfigError> {
+    let primary_gid = config.gid.unwrap_or(1000);
+    let primary_group_name = config.group_name.as_deref().unwrap_or(primary_username);
+    let mut materialized = groups
+        .iter()
+        .map(|group| (group.gid, (group.name.clone(), group.members.clone())))
+        .collect::<BTreeMap<_, _>>();
+    materialized.entry(primary_gid).or_insert_with(|| {
+        (
+            primary_group_name.to_owned(),
+            vec![primary_username.to_owned()],
+        )
+    });
+    let authoritative_group_gids = materialized
+        .keys()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+
+    let mut effective_accounts = accounts
+        .iter()
+        .map(|account| {
+            (
+                account.uid,
+                (
+                    account.username.as_str(),
+                    account.gid,
+                    account.supplementary_gids.as_slice(),
+                ),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let primary_supplementary_gids = config.supplementary_gids.as_deref().unwrap_or_default();
+    effective_accounts.insert(
+        config.uid.unwrap_or(1000),
+        (primary_username, primary_gid, primary_supplementary_gids),
+    );
+
+    for (_, (username, account_gid, supplementary_gids)) in effective_accounts {
+        for group_gid in std::iter::once(account_gid).chain(supplementary_gids.iter().copied()) {
+            // Credentials and the account database are separate Linux state:
+            // an explicit group record is authoritative and is never mutated
+            // merely because a process carries its gid.
+            if authoritative_group_gids.contains(&group_gid) {
+                continue;
+            }
+            let (_, members) = materialized
+                .entry(group_gid)
+                .or_insert_with(|| (format!("group{group_gid}"), Vec::new()));
+            if !members.iter().any(|member| member == username) {
+                members.push(username.to_owned());
+            }
+        }
+    }
+
+    let mut gids_by_name = BTreeMap::<&str, u32>::new();
+    for (gid, (name, members)) in &materialized {
+        if let Some(previous_gid) = gids_by_name.insert(name, *gid) {
+            return Err(VmConfigError::new(format!(
+                "materialized user group name {name:?} maps to both gid {previous_gid} and gid {gid}; synthesized group names must not collide"
+            )));
+        }
+        validate_group_record("materialized user group", name, *gid, members)?;
     }
     Ok(())
 }
@@ -500,7 +689,7 @@ fn validate_account_name(label: &str, value: &str) -> Result<(), VmConfigError> 
 /// emulation (`platform = node`).
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+#[ts(export, export_to = "../../../packages/core/src/generated/")]
 pub struct JsRuntimeConfig {
     /// Which host environment to emulate for guest JS. Default `node`.
     #[serde(default)]
@@ -553,7 +742,7 @@ impl JsRuntimeConfig {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
-#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+#[ts(export, export_to = "../../../packages/core/src/generated/")]
 #[derive(Default)]
 pub enum JsRuntimePlatform {
     /// Full Node.js host surface (process/Buffer/require, `node:*`, npm
@@ -571,7 +760,7 @@ pub enum JsRuntimePlatform {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
-#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+#[ts(export, export_to = "../../../packages/core/src/generated/")]
 #[derive(Default)]
 pub enum JsModuleResolution {
     /// node_modules ancestor-walk + exports/imports/conditions + realpath. Default.
@@ -585,7 +774,7 @@ pub enum JsModuleResolution {
 
 /// Canonical set of recognized Node builtin module names (without the `node:`
 /// prefix), kept in sync with `normalize_builtin_specifier` in
-/// `crates/execution/src/javascript.rs`. Used to validate
+/// `crates/executor-v8-runtime/src/javascript.rs`. Used to validate
 /// `jsRuntime.allowedBuiltins` entries.
 const KNOWN_NODE_BUILTINS: &[&str] = &[
     "assert",
@@ -649,7 +838,7 @@ fn is_known_node_builtin(name: &str) -> bool {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+#[ts(export, export_to = "../../../packages/core/src/generated/")]
 pub struct RootFilesystemConfig {
     #[serde(default)]
     pub mode: RootFilesystemMode,
@@ -694,7 +883,7 @@ impl RootFilesystemConfig {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
-#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+#[ts(export, export_to = "../../../packages/core/src/generated/")]
 #[derive(Default)]
 pub enum RootFilesystemMode {
     #[default]
@@ -704,7 +893,7 @@ pub enum RootFilesystemMode {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "camelCase")]
-#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+#[ts(export, export_to = "../../../packages/core/src/generated/")]
 pub enum RootFilesystemLowerDescriptor {
     Snapshot {
         #[serde(default)]
@@ -715,7 +904,7 @@ pub enum RootFilesystemLowerDescriptor {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+#[ts(export, export_to = "../../../packages/core/src/generated/")]
 pub struct RootFilesystemEntry {
     pub path: String,
     pub kind: RootFilesystemEntryKind,
@@ -782,7 +971,7 @@ impl RootFilesystemEntry {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
-#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+#[ts(export, export_to = "../../../packages/core/src/generated/")]
 pub enum RootFilesystemEntryKind {
     File,
     Directory,
@@ -791,7 +980,7 @@ pub enum RootFilesystemEntryKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
-#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+#[ts(export, export_to = "../../../packages/core/src/generated/")]
 pub enum RootFilesystemEntryEncoding {
     Utf8,
     Base64,
@@ -799,7 +988,7 @@ pub enum RootFilesystemEntryEncoding {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+#[ts(export, export_to = "../../../packages/core/src/generated/")]
 pub struct NativeRootFilesystemConfig {
     pub plugin: MountPluginDescriptor,
     #[serde(default, rename = "readOnly")]
@@ -817,17 +1006,17 @@ impl NativeRootFilesystemConfig {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+#[ts(export, export_to = "../../../packages/core/src/generated/")]
 pub struct MountPluginDescriptor {
     pub id: String,
     #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
-    #[ts(type = "import(\"@rivet-dev/agentos-runtime-core/descriptors\").MountConfigJsonValue")]
+    #[ts(type = "import(\"../descriptors.js\").MountConfigJsonValue")]
     pub config: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
-#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+#[ts(export, export_to = "../../../packages/core/src/generated/")]
 pub enum PermissionMode {
     Allow,
     Ask,
@@ -836,7 +1025,7 @@ pub enum PermissionMode {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(untagged)]
-#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+#[ts(export, export_to = "../../../packages/core/src/generated/")]
 pub enum FsPermissionScope {
     Mode(PermissionMode),
     Rules(FsPermissionRuleSet),
@@ -844,7 +1033,7 @@ pub enum FsPermissionScope {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(untagged)]
-#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+#[ts(export, export_to = "../../../packages/core/src/generated/")]
 pub enum PatternPermissionScope {
     Mode(PermissionMode),
     Rules(PatternPermissionRuleSet),
@@ -852,7 +1041,7 @@ pub enum PatternPermissionScope {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+#[ts(export, export_to = "../../../packages/core/src/generated/")]
 pub struct FsPermissionRuleSet {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -863,7 +1052,7 @@ pub struct FsPermissionRuleSet {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+#[ts(export, export_to = "../../../packages/core/src/generated/")]
 pub struct PatternPermissionRuleSet {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -874,7 +1063,7 @@ pub struct PatternPermissionRuleSet {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+#[ts(export, export_to = "../../../packages/core/src/generated/")]
 pub struct FsPermissionRule {
     pub mode: PermissionMode,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -885,7 +1074,7 @@ pub struct FsPermissionRule {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+#[ts(export, export_to = "../../../packages/core/src/generated/")]
 pub struct PatternPermissionRule {
     pub mode: PermissionMode,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -896,7 +1085,7 @@ pub struct PatternPermissionRule {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+#[ts(export, export_to = "../../../packages/core/src/generated/")]
 pub struct PermissionsPolicy {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -924,7 +1113,7 @@ pub struct PermissionsPolicy {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+#[ts(export, export_to = "../../../packages/core/src/generated/")]
 pub struct VmLimitsConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -979,6 +1168,50 @@ pub struct VmLimitsConfig {
 
 impl VmLimitsConfig {
     fn validate(&self, max_frame_bytes: usize) -> Result<(), VmConfigError> {
+        if let Some(process) = &self.process {
+            validate_nonzero_options([
+                (
+                    "limits.process.maxSpawnFileActions",
+                    process.max_spawn_file_actions,
+                ),
+                (
+                    "limits.process.maxSpawnFileActionBytes",
+                    process.max_spawn_file_action_bytes,
+                ),
+                (
+                    "limits.process.pendingStdinBytes",
+                    process.pending_stdin_bytes,
+                ),
+                (
+                    "limits.process.pendingEventCount",
+                    process.pending_event_count,
+                ),
+                (
+                    "limits.process.pendingEventBytes",
+                    process.pending_event_bytes,
+                ),
+                (
+                    "limits.process.outputReplayEvents",
+                    process.output_replay_events,
+                ),
+                (
+                    "limits.process.outputReplayBytes",
+                    process.output_replay_bytes,
+                ),
+                (
+                    "limits.process.outputReplayPageEvents",
+                    process.output_replay_page_events,
+                ),
+                (
+                    "limits.process.outputReplayPageBytes",
+                    process.output_replay_page_bytes,
+                ),
+                (
+                    "limits.process.maxOutputReplays",
+                    process.max_output_replays,
+                ),
+            ])?;
+        }
         if let Some(packages) = &self.agentos_packages {
             validate_nonzero_options([("limits.agentosPackages.maxMounts", packages.max_mounts)])?;
         }
@@ -1273,50 +1506,6 @@ impl VmLimitsConfig {
                 }
             }
         }
-        if let Some(process) = &self.process {
-            validate_nonzero_options([
-                (
-                    "limits.process.maxSpawnFileActions",
-                    process.max_spawn_file_actions,
-                ),
-                (
-                    "limits.process.maxSpawnFileActionBytes",
-                    process.max_spawn_file_action_bytes,
-                ),
-                (
-                    "limits.process.pendingStdinBytes",
-                    process.pending_stdin_bytes,
-                ),
-                (
-                    "limits.process.pendingEventCount",
-                    process.pending_event_count,
-                ),
-                (
-                    "limits.process.pendingEventBytes",
-                    process.pending_event_bytes,
-                ),
-                (
-                    "limits.process.outputReplayEvents",
-                    process.output_replay_events,
-                ),
-                (
-                    "limits.process.outputReplayBytes",
-                    process.output_replay_bytes,
-                ),
-                (
-                    "limits.process.outputReplayPageEvents",
-                    process.output_replay_page_events,
-                ),
-                (
-                    "limits.process.outputReplayPageBytes",
-                    process.output_replay_page_bytes,
-                ),
-                (
-                    "limits.process.maxOutputReplays",
-                    process.max_output_replays,
-                ),
-            ])?;
-        }
         Ok(())
     }
 }
@@ -1354,7 +1543,7 @@ macro_rules! limits_struct {
     ($name:ident { $($field:ident),* $(,)? }) => {
         #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
         #[serde(rename_all = "camelCase", deny_unknown_fields)]
-        #[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+        #[ts(export, export_to = "../../../packages/core/src/generated/")]
         pub struct $name {
             $(
                 #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1386,7 +1575,6 @@ limits_struct!(ResourceLimitsConfig {
     max_readdir_entries,
     max_recursive_fs_depth,
     max_recursive_fs_entries,
-    max_wasm_fuel,
     max_wasm_memory_bytes,
     max_wasm_stack_bytes,
 });
@@ -1485,7 +1673,11 @@ limits_struct!(WasmLimitsConfig {
     sync_read_limit_bytes,
     prewarm_timeout_ms,
     runner_heap_limit_mb,
-    runner_cpu_time_limit_ms,
+    active_cpu_time_limit_ms,
+    wall_clock_limit_ms,
+    deterministic_fuel,
+    max_threads,
+    max_concurrent_threads,
 });
 
 limits_struct!(ExecutionLimitsConfig {
@@ -1495,21 +1687,23 @@ limits_struct!(ExecutionLimitsConfig {
 });
 
 limits_struct!(ProcessLimitsConfig {
-    max_spawn_file_actions,
-    max_spawn_file_action_bytes,
-    pending_stdin_bytes,
-    pending_event_count,
-    pending_event_bytes,
     output_replay_events,
     output_replay_bytes,
     output_replay_page_events,
     output_replay_page_bytes,
     max_output_replays,
+    max_spawn_file_actions,
+    max_spawn_file_action_bytes,
+    pending_stdin_bytes,
+    pending_event_count,
+    pending_event_bytes,
+    max_pending_child_sync_count,
+    max_pending_child_sync_bytes,
 });
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+#[ts(export, export_to = "../../../packages/core/src/generated/")]
 pub struct VmDnsConfig {
     #[serde(default, rename = "nameServers", skip_serializing_if = "Vec::is_empty")]
     pub name_servers: Vec<String>,
@@ -1542,7 +1736,7 @@ impl VmDnsConfig {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+#[ts(export, export_to = "../../../packages/core/src/generated/")]
 pub struct VmListenPolicyConfig {
     #[serde(default, rename = "portMin", skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -1704,6 +1898,31 @@ mod tests {
     }
 
     #[test]
+    fn standalone_wasm_backend_round_trips_and_defaults_to_v8() {
+        let omitted: CreateVmConfig =
+            serde_json::from_str(r#"{"env":{},"rootFilesystem":{},"loopbackExemptPorts":[]}"#)
+                .expect("decode omitted backend");
+        assert_eq!(
+            omitted.wasm_backend.unwrap_or_default(),
+            StandaloneWasmBackend::V8
+        );
+
+        for backend in [
+            StandaloneWasmBackend::V8,
+            StandaloneWasmBackend::Wasmtime,
+            StandaloneWasmBackend::WasmtimeThreads,
+        ] {
+            let config = CreateVmConfig {
+                wasm_backend: Some(backend),
+                ..CreateVmConfig::default()
+            };
+            let json = serde_json::to_string(&config).expect("serialize backend");
+            let decoded: CreateVmConfig = serde_json::from_str(&json).expect("decode backend");
+            assert_eq!(decoded.wasm_backend, Some(backend));
+        }
+    }
+
+    #[test]
     fn unknown_fields_are_rejected() {
         let error =
             serde_json::from_str::<CreateVmConfig>(r#"{"rootFilesystem":{},"surprise":true}"#)
@@ -1750,6 +1969,99 @@ mod tests {
             ..CreateVmConfig::default()
         };
         assert!(invalid_name.validate(usize::MAX).is_err());
+    }
+
+    #[test]
+    fn user_config_rejects_materialized_group_name_collisions() {
+        let config = CreateVmConfig {
+            user: Some(VmUserConfig {
+                uid: Some(0),
+                gid: Some(0),
+                username: Some(String::from("root")),
+                supplementary_gids: Some(vec![44]),
+                groups: Some(vec![VmGroupConfig {
+                    gid: 99,
+                    name: String::from("group44"),
+                    members: Vec::new(),
+                }]),
+                ..VmUserConfig::default()
+            }),
+            ..CreateVmConfig::default()
+        };
+
+        let error = config
+            .validate(usize::MAX)
+            .expect_err("synthesized group name collision must fail");
+        assert!(error
+            .to_string()
+            .contains("synthesized group names must not collide"));
+    }
+
+    #[test]
+    fn user_config_bounds_rendered_account_records_and_group_members() {
+        let valid_maximum = CreateVmConfig {
+            user: Some(VmUserConfig {
+                uid: Some(0),
+                gid: Some(0),
+                username: Some(String::from("u")),
+                homedir: Some(String::from("/")),
+                shell: Some(String::from("/")),
+                // `u:x:0:0:<gecos>:/:/` is exactly 4095 bytes.
+                gecos: Some("x".repeat(4083)),
+                groups: Some(vec![VmGroupConfig {
+                    gid: 7,
+                    name: String::from("g"),
+                    members: vec![String::from("m"); MAX_GROUP_MEMBERS],
+                }]),
+                ..VmUserConfig::default()
+            }),
+            ..CreateVmConfig::default()
+        };
+        valid_maximum
+            .validate(usize::MAX)
+            .expect("4095-byte record and 256 group members must fit");
+
+        let oversized_passwd = CreateVmConfig {
+            user: Some(VmUserConfig {
+                uid: Some(0),
+                gid: Some(0),
+                username: Some(String::from("u")),
+                homedir: Some(String::from("/")),
+                shell: Some(String::from("/")),
+                gecos: Some("x".repeat(4084)),
+                ..VmUserConfig::default()
+            }),
+            ..CreateVmConfig::default()
+        };
+        assert!(oversized_passwd.validate(usize::MAX).is_err());
+
+        let oversized_group_record = CreateVmConfig {
+            user: Some(VmUserConfig {
+                groups: Some(vec![VmGroupConfig {
+                    gid: 7,
+                    name: String::from("g"),
+                    members: vec!["a".repeat(2045), "b".repeat(2045)],
+                }]),
+                ..VmUserConfig::default()
+            }),
+            ..CreateVmConfig::default()
+        };
+        assert!(oversized_group_record.validate(usize::MAX).is_err());
+
+        let too_many_members = CreateVmConfig {
+            user: Some(VmUserConfig {
+                groups: Some(vec![VmGroupConfig {
+                    gid: 7,
+                    name: String::from("g"),
+                    members: (0..=MAX_GROUP_MEMBERS)
+                        .map(|index| format!("m{index}"))
+                        .collect(),
+                }]),
+                ..VmUserConfig::default()
+            }),
+            ..CreateVmConfig::default()
+        };
+        assert!(too_many_members.validate(usize::MAX).is_err());
     }
 
     #[test]
@@ -1893,6 +2205,46 @@ mod tests {
                 error.to_string().contains(expected_path),
                 "expected {expected_path} in {error}"
             );
+        }
+    }
+
+    #[test]
+    fn wasm_cpu_fields_round_trip_without_legacy_aliases() {
+        let config: CreateVmConfig = serde_json::from_value(serde_json::json!({
+            "limits": {
+                "wasm": {
+                    "activeCpuTimeLimitMs": 30_000,
+                    "wallClockLimitMs": 45_000,
+                    "deterministicFuel": 1_000_000
+                }
+            }
+        }))
+        .expect("decode WASM CPU fields");
+        let wasm = config
+            .limits
+            .as_ref()
+            .and_then(|limits| limits.wasm.as_ref())
+            .expect("WASM limits");
+        assert_eq!(wasm.active_cpu_time_limit_ms, Some(30_000));
+        assert_eq!(wasm.wall_clock_limit_ms, Some(45_000));
+        assert_eq!(wasm.deterministic_fuel, Some(1_000_000));
+
+        let json = serde_json::to_string(&config).expect("serialize WASM CPU fields");
+        assert!(json.contains("activeCpuTimeLimitMs"));
+        assert!(json.contains("wallClockLimitMs"));
+        assert!(json.contains("deterministicFuel"));
+
+        let removed_fuel_name = ["maxWasm", "Fuel"].concat();
+        let removed_runner_cpu_name = ["runnerCpu", "TimeLimitMs"].concat();
+        for legacy_limits in [
+            serde_json::json!({ "resources": { (removed_fuel_name): 1 } }),
+            serde_json::json!({ "wasm": { (removed_runner_cpu_name): 1 } }),
+        ] {
+            let error = serde_json::from_value::<CreateVmConfig>(serde_json::json!({
+                "limits": legacy_limits
+            }))
+            .expect_err("removed WASM CPU field must be rejected");
+            assert!(error.to_string().contains("unknown field"));
         }
     }
 

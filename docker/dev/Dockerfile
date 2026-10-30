@@ -9,7 +9,7 @@
 # dev binaries only need to run in this container, not on old glibc.
 FROM ubuntu:24.04
 
-ARG RUST_TOOLCHAIN=1.91.1
+ARG RUST_TOOLCHAIN=1.95.0
 ARG NODE_MAJOR=22
 ARG PNPM_VERSION=10.13.1
 ARG JUST_VERSION=1.36.0

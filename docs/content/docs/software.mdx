@@ -1,205 +1,55 @@
 ---
 title: "Software"
-description: "Install immutable .aospkg command packages when a VM is created or while it is running."
+description: "Install immutable .aospkg command packages."
 ---
 
-agentOS software ships as immutable `.aospkg` packages containing real compiled
-tools. Installed packages are projected read-only under
-`/opt/agentos/pkgs/<name>/<version>`, and their commands are linked under
-`/opt/agentos/bin`. Every VM includes a default bundle with `sh`, coreutils, and
-the standard CLI tools programs rely on.
+Software ships as immutable `.aospkg` packages. Installed packages are
+projected read-only under `/opt/agentos/pkgs/<name>/<version>`, with commands
+linked under `/opt/agentos/bin`.
 
-Browse the available packages in the [registry](/agentos/docs/registry).
+The hosted actor accepts an HTTPS package source and an optional exact
+`sha256:<64 lowercase hex>` digest. Embedded Core also accepts a trusted local
+package path or a registry package name. The registry resolves against the
+client's release unless a version is specified.
 
-## Registry packages
+<CodeSnippet file="examples/embedded/software-install.ts" />
 
-Install a registry package by name. In the library, list
-`{ registry: "git" }` in `software` when the VM is created, or call
-`vm.software.install({ type: "registry", name: "git" })` while it is running.
-See the examples under [Install while running](#install-while-running) and
-[Install when the VM is created](#install-when-the-vm-is-created).
+`software.list()` reads the live installed set. `software.uninstall` removes
+one package by its digest-derived `packageId`. Desired package sources live in
+`config.get`, not `software.list`. If the VM is unavailable, `software.list`
+returns `not_ready`; the desired sources remain readable from config.
 
-A name resolves against the software manifest of one agentOS release, and the
-package is installed from its URL with the manifest's digest, so the bytes are
-verified before they are projected. Unknown names, missing releases, unreachable
-manifests, and digest mismatches fail with an error instead of being skipped.
+Software changes apply live when the VM is ready and its desired configuration
+is fully applied. Otherwise they update desired configuration and report
+`restart_required`; call `vm.restart({})` to apply it. Uninstalling a desired
+package does not require a working VM or a fresh download.
 
-- **Version.** By default a name resolves against the release that matches your
-  `@rivet-dev/agentos-core` version, so a client gets the software built with
-  it. Unreleased workspace and preview builds use `latest`. Pin one entry with
-  `{ registry: "git", version: "0.4.2" }` or
-  `{ type: "registry", name: "git", version: "0.4.2" }`, or every entry with
-  `softwareRegistry: { version }`. Pass `"latest"` for the newest release.
-- **Mirrors.** Set `softwareRegistry: { url }` on `AgentOs.create()`, or the
-  `AGENTOS_SOFTWARE_REGISTRY_URL` environment variable, to a copy of the release
-  layout. The default is `https://releases.rivet.dev/agent-os/`. Mirrors must
-  use HTTPS, because the manifest supplies the digests packages are verified
-  against. A plain `http://` mirror is allowed only on a loopback address and
-  also needs `packageResolver: { allowInsecureLocalHttp: true }`, which sets
-  the download limits for registry and URL packages.
-- **Network.** The manifest and package are downloaded by the host process, not
-  by the VM, so the VM's network permissions do not apply to them.
-- **Caching.** Manifests are cached per release for the life of the process,
-  and `latest` is refreshed every five minutes.
+Both mutations return `{ source, software, config }`. `source` identifies the
+configured package, and `config` reports the new revision and state. `software`
+contains resolved or installed metadata, or is `null` when uninstall changes
+only desired configuration. Installed metadata reports package bytes as
+`sizeBytes`; a resolved source in `config.get` uses the same field.
 
-`resolveRegistrySoftware(name, { version })` returns the resolved `url` and
-`digest` without installing anything.
+Packages are cached per process by content digest. URL-to-digest observations
+may avoid a repeat download, but the exact bytes are always verified before
+projection.
 
-### Release manifest
-
-Registry packages are published with each release under
-`https://releases.rivet.dev/agent-os/<version>/software/`, or `latest` for the
-newest release. Its `manifest.json` lists each package's name, digest, size,
-and path relative to the manifest:
-
-```json
-{
-  "schemaVersion": 1,
-  "artifacts": [
-    {
-      "name": "git",
-      "digest": "sha256:<64 lowercase hex>",
-      "size": 17961114,
-      "path": "packages/git/<64 lowercase hex>.aospkg"
-    }
-  ]
-}
-```
-
-Use it when you need raw URLs, such as to mirror packages or to configure a
-hosted VM: resolve `path` against the manifest URL and pass `digest` along.
-Registry software is distributed only as `.aospkg` files from this location, not
-as npm packages. See [Publishing Software](/agentos/docs/custom-software/publishing).
-
-## Default software
-
-Every VM installs a default bundle first: `coreutils` (which provides `sh`),
-`sed`, `grep`, `gawk`, `findutils`, `diffutils`, `tar`, and `gzip`. The bundle
-ships with the library and the hosted runtime, so it needs no download. Pass
-`defaultSoftware: false` to `AgentOs.create()`, or set `"defaultSoftware": false`
-in a hosted VM's `config`, for a bare VM that has only the software you list.
-
-## Install while running
-
-Install a package into a running VM from an HTTPS URL, with an optional exact
-`sha256:<64 lowercase hex>` digest. The library also accepts a registry package
-name and a trusted local path.
-
-<CodeGroup>
-
-```ts Hosted @nocheck
-import { createAgentOsClient } from "@rivet-dev/agentos";
-
-const client = createAgentOsClient({ endpoint: "https://api.rivet.dev" });
-const vm = client.agentOS.getOrCreate(["my-vm"]);
-
-// Hosted install takes a URL and digest. Look the package up in a release
-// manifest; use a release version, or `latest`.
-const base = "https://releases.rivet.dev/agent-os/latest/software/";
-const { artifacts } = await (await fetch(`${base}manifest.json`)).json();
-const ripgrep = artifacts.find((artifact: { name: string }) => artifact.name === "ripgrep");
-
-const installed = await vm.v1.software.install({
-	source: { url: new URL(ripgrep.path, base).href, digest: ripgrep.digest },
-});
-if (installed.config.state === "restart_required") {
-	await vm.v1.vm.restart({});
-}
-
-for (const software of await vm.v1.software.list({})) {
-	console.log(software.packageId, software.commands);
-}
-
-const { packageId } = installed.source;
-if (packageId) await vm.v1.software.uninstall({ packageId });
-```
-
-<CodeSnippet file="examples/embedded/software-install.ts" title="Library" />
-
-</CodeGroup>
-
-On hosted VMs, software is part of the VM's durable configuration, so install
-and uninstall use the same revision checks as `v1.config.patch`. A change
-applies live when the VM is ready and its desired configuration is fully
-applied; otherwise it reports `restart_required`, and `v1.vm.restart` applies
-it. Both mutations return `{ source, software, config }`. `v1.software.list`
-reads the live installed set, and the desired package sources live in
-`v1.config.get`.
-
-In the library, `software.install(source)` returns the installed package's
-`packageId`, `digest`, `sizeBytes`, `packageName`, `version`, and `commands`.
-`software.installed()` lists packages installed through `software.install`, and
-`software.list()` reports every package that provides commands in the VM. Only
-one software or mount mutation runs at a time per VM; a concurrent call fails
-with `invalid_state` instead of queueing.
-
-## Install when the VM is created
-
-<CodeGroup>
-
-```ts Hosted @nocheck
-import { createAgentOsClient } from "@rivet-dev/agentos";
-
-const client = createAgentOsClient({ endpoint: "https://api.rivet.dev" });
-
-// Hosted config takes a URL and digest. Look the package up in a release
-// manifest; use a release version, or `latest`.
-const base = "https://releases.rivet.dev/agent-os/latest/software/";
-const { artifacts } = await (await fetch(`${base}manifest.json`)).json();
-const git = artifacts.find((artifact: { name: string }) => artifact.name === "git");
-
-const vm = client.agentOS.getOrCreate(["my-vm"], {
-	createWithInput: {
-		config: {
-			software: [{ url: new URL(git.path, base).href, digest: git.digest }],
-		},
-	},
-});
-```
-
-<CodeSnippet file="examples/embedded/software.ts" title="Library" />
-
-</CodeGroup>
-
-The library's `software` option accepts trusted local `{ packagePath }` files,
-registry packages by name (`{ registry: "git" }`), and `{ url, digest }`
-artifacts. Registry and URL entries are downloaded and verified on the host
-before `AgentOs.create()` returns, and they appear in `software.installed()`.
-
-Hosted VMs take `{ url, digest }` sources in their `software` config, and
-download and verify them when the VM starts. The hosted client does not resolve
-registry names yet, so look the package up in the
-[release manifest](#release-manifest) as shown above.
-
-## Custom and local packages
-
-A package you build yourself, or any other `.aospkg` file, installs the same way
-as a registry package. See
-[Software Package Definition](/agentos/docs/custom-software/definition) and
-[Building Software](/agentos/docs/custom-software/building-wasm) for how to
-build one.
-
-<CodeSnippet file="examples/embedded/software-local.ts" title="Library" />
-
-The library reads trusted local paths, both in `software` at creation and with
-`software.install({ type: "path", path })` while running. Hosted VMs cannot read
-files from your machine, so upload the `.aospkg` to an HTTPS location you
-control and pass its URL and `sha256:` digest, at creation or with
-`v1.software.install`.
-
-## Verification and caching
-
-Each URL source is downloaded under strict size, time, and redirect limits,
-verified against the expected digest when one is given, and validated before
-it is projected. The verified content digest is the package identity.
-
-Packages are cached by content digest, so VMs that share a worker or sidecar
-reuse one verified copy, and repeat installs of the same bytes skip the
-download. Hosted workers also warm popular packages at startup; see
+The central preload coordinator supplies a low-frequency popularity hint so a
+worker can warm likely packages before its first VM needs them. Required
+packages still determine readiness. Advisory preload timeout or coordinator
+failure only reduces cache hit rate. See
 [Software Installation and Preloading](/agentos/docs/architecture/software-cache).
+
+Registry software is not installed from npm. Releases upload digest-addressed
+`.aospkg` files and a relative-URL manifest to S3-compatible object storage.
+In
+TypeScript, `software.install(source)` and `software.uninstall(packageId)` use
+the same sidecar verification and projection path as Rust's `install_software`
+and `uninstall_software`. `software.installed()` in TypeScript (or
+`installed_software()` in Rust) returns packages installed through that API.
+Legacy `software.link` remains a separate trusted-directory operation.
 
 ## Embedded API
 
-The embedding process is trusted, so `software.install` accepts local package
-paths as well as registry names and URLs. Read more in the
-[embedded API quickstart](/agentos/docs/quickstart-embedded).
+Embedded Core accepts trusted local package paths as well as URLs. Read more in
+the [embedded API quickstart](/agentos/docs/quickstart-embedded).

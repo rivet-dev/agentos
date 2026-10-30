@@ -16,6 +16,7 @@ const legacyWireConstantPattern =
 	/\bagentos_client::protocol::DEFAULT_MAX_FRAME_BYTES\b/g;
 const staleCompatibilityDocPattern =
 	/\blive transport still uses the compatibility protocol surface\b/g;
+const sidecarCompatPattern = /\bagentos_sidecar::protocol\b/g;
 
 function isDir(path) {
 	return existsSync(path) && statSync(path).isDirectory();
@@ -52,11 +53,22 @@ function formatPath(root, path) {
 	return relative(root, path).replaceAll("\\", "/");
 }
 
+function reportSidecarProtocolUse(errors, source, rel, index) {
+	const location = lineAndColumn(source, index);
+	errors.push(
+		`${rel}:${location.line}:${location.column} imports the agentos sidecar compatibility protocol surface; use agentos_sidecar::wire for generated wire types`,
+	);
+}
+
 export function checkAgentOsClientProtocolCompat(options = {}) {
 	const root = resolve(options.root ?? defaultRoot);
 	const clientRoots = [
 		join(root, "crates/client/src"),
 		join(root, "crates/client/tests"),
+	];
+	const agentOsSidecarRoots = [
+		join(root, "crates/sidecar/src"),
+		join(root, "crates/sidecar/tests"),
 	];
 	const errors = [];
 	for (const filePath of clientRoots.flatMap((scanRoot) =>
@@ -86,6 +98,17 @@ export function checkAgentOsClientProtocolCompat(options = {}) {
 					`${rel}:${location.line}:${location.column} imports the live protocol compatibility surface; use agentos_client::wire for generated wire types or add this file to the migration inventory with justification`,
 				);
 			}
+		}
+	}
+
+	for (const filePath of agentOsSidecarRoots.flatMap((scanRoot) =>
+		collectRustFiles(root, scanRoot),
+	)) {
+		const source = readFileSync(filePath, "utf8");
+		const rel = formatPath(root, filePath);
+		sidecarCompatPattern.lastIndex = 0;
+		for (const match of source.matchAll(sidecarCompatPattern)) {
+			reportSidecarProtocolUse(errors, source, rel, match.index ?? 0);
 		}
 	}
 

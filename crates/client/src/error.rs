@@ -29,6 +29,8 @@ pub struct ResourceLimitDetails {
 /// Typed error taxonomy for the client SDK.
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum ClientError {
+    #[error("invalid config: {0}")]
+    InvalidConfig(String),
     /// A filesystem path was not absolute (did not start with `/`).
     ///
     /// The message text matches the TypeScript `AgentOs` exactly (capital "P"). These strings are
@@ -91,10 +93,6 @@ pub enum ClientError {
         message: String,
         details: Box<ResourceLimitDetails>,
     },
-
-    /// A caller-supplied config value was rejected before the VM was created.
-    #[error("invalid config: {0}")]
-    InvalidConfig(String),
 
     /// A cron schedule string could not be parsed/validated.
     #[error("invalid schedule: {0}")]

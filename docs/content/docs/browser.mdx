@@ -3,13 +3,11 @@ title: "Browser Automation"
 description: "Run a packaged browser CLI as ordinary agentOS software."
 ---
 
-Browser automation is ordinary VM software. Install a browser CLI package, such
-as Browserbase from the [registry](/agentos/docs/registry), at boot or with
-`software.install`, then run it like any other command. See
-[Software](/agentos/docs/software).
+Browser automation is ordinary VM software. Build the CLI into an immutable
+`.aospkg`, host it at an HTTPS URL, and include that source in actor creation
+config.
+
+<CodeSnippet file="examples/browserbase/client-direct.ts" />
 
 The guest receives only the credentials explicitly passed to the process
-environment. agentOS does not provide a browser-specific API.
-
-For workloads that need a full local browser, mount an
-[external sandbox](/agentos/docs/sandboxes) and run the browser there.
+environment. The actor does not provide a browser-specific API.

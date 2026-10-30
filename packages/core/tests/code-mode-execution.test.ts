@@ -15,6 +15,11 @@ import { ALLOW_ALL_VM_PERMISSIONS } from "./helpers/permissions.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// These cases intentionally exhaust guest ArrayBuffer/WASM memory. Keep them out of
+// the default suite; run explicitly with AGENTOS_RUN_MEMORY_STRESS_TESTS=1.
+const memoryStressTest =
+	process.env.AGENTOS_RUN_MEMORY_STRESS_TESTS === "1" ? test : test.skip;
+
 describe("code mode execution", () => {
 	let vm: AgentOs;
 	let callStarts: number[] = [];
@@ -124,7 +129,7 @@ describe("code mode execution", () => {
 		});
 	}, 30_000);
 
-	test("buffer memory past the heap limit fails the allocation, not the VM", async () => {
+	memoryStressTest("buffer memory past the heap limit fails the allocation, not the VM", async () => {
 		// 1 GiB of typed arrays against the default 128 MiB limit.
 		const result = await vm.javascript.evaluate(
 			`(() => {
@@ -152,7 +157,7 @@ describe("code mode execution", () => {
 		).toMatchObject({ outcome: "succeeded", value: 64 * 1024 * 1024 });
 	}, 30_000);
 
-	test("reading a file with no buffer memory left fails the read, not the sidecar", async () => {
+	memoryStressTest("reading a file with no buffer memory left fails the read, not the sidecar", async () => {
 		await vm.writeFile(
 			"/tmp/host-bytes.bin",
 			new Uint8Array(1024 * 1024).fill(7),
@@ -161,9 +166,15 @@ describe("code mode execution", () => {
 		const result = await vm.javascript.evaluate(
 			`(() => {
 				const held = [];
+				let allocated = 0;
+				const probeCeiling = 1024 * 1024 * 1024;
 				for (let size = 16 * 1024 * 1024; size >= 256; size >>= 1) {
 					try {
-						for (;;) held.push(new Uint8Array(size));
+						while (allocated + size <= probeCeiling) {
+							held.push(new Uint8Array(size));
+							allocated += size;
+						}
+						return "memory limit did not fire within the bounded probe";
 					} catch {}
 				}
 				try {
@@ -185,7 +196,7 @@ describe("code mode execution", () => {
 		});
 	}, 30_000);
 
-	test("WebAssembly memory past the heap limit fails only its own script", async () => {
+	memoryStressTest("WebAssembly memory past the heap limit fails only its own script", async () => {
 		// 1 GiB of WebAssembly memory against the default 128 MiB limit.
 		const result = await vm.javascript.evaluate(
 			`(() => {

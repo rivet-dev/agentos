@@ -6,7 +6,7 @@ import type {
 	JavaScriptExecutionOptions,
 	JsonValue,
 	LanguageExecutionOptions,
-} from "@rivet-dev/agentos-core";
+} from "@rivet-dev/agentos";
 import { type OneShot, run } from "./runtime.js";
 
 export type {
@@ -27,7 +27,7 @@ export type {
 	ProcessDescriptor,
 	ProcessExit,
 	SidecarRejectionDetail,
-} from "@rivet-dev/agentos-core";
+} from "@rivet-dev/agentos";
 export {
 	createHostDirBackend,
 	hostDirMount,
@@ -38,7 +38,7 @@ export {
 	SidecarProcessExited,
 	SidecarRejectedError,
 	SidecarSilenceTimeout,
-} from "@rivet-dev/agentos-core";
+} from "@rivet-dev/agentos";
 export type { Context } from "./context.js";
 export {
 	createVm,

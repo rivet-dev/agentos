@@ -6,27 +6,19 @@
 		"node": ">=20"
 	},
 	"scripts": {
-		"start": "pnpm exec turbo watch build --filter='!@rivet-dev/agentos-runtime-browser'",
-		"build": "pnpm exec turbo build --filter='!@rivet-dev/agentos-runtime-browser'",
-		"test": "pnpm --dir packages/core build && pnpm exec turbo test --concurrency=1 --filter='!@rivet-dev/agentos-shell' --filter='!@rivet-dev/agentos-runtime-browser'",
-		"test:nightly": "pnpm --dir packages/core build && pnpm exec turbo test:nightly --concurrency=1 --filter='!@rivet-dev/agentos-shell' --filter='!@rivet-dev/agentos-runtime-browser'",
-		"test:post-python-parity": "pnpm --dir packages/core build && pnpm --dir packages/core exec vitest run tests/agentos-base-filesystem.nightly.test.ts",
-		"test:watch": "pnpm exec turbo watch test --filter='!@rivet-dev/agentos-runtime-browser'",
-		"check-layout": "node scripts/check-layout.mjs",
-		"check-types": "node scripts/verify-check-types.mjs && pnpm exec turbo check-types --only --concurrency=4 --filter='!@rivet-dev/agentos-runtime-browser'",
-		"lint": "pnpm biome check .",
-		"fmt": "pnpm biome check --write --diagnostic-level=error .",
-		"shell": "pnpm --filter @rivet-dev/agentos-shell shell",
-		"bench": "bash scripts/benchmarks/run-benchmarks.sh"
+		"start": "pnpm exec turbo watch build",
+		"build": "pnpm exec turbo build",
+		"test": "pnpm exec turbo test --concurrency=1 --filter='!@rivet-dev/agentos-shell'",
+		"test:nightly": "pnpm exec turbo test:nightly --concurrency=1 --filter='!@rivet-dev/agentos-shell'",
+		"test:watch": "pnpm exec turbo watch test",
+		"check-types": "pnpm exec turbo check-types --only --concurrency=4"
 	},
 	"devDependencies": {
 		"@agentos-software/common": "workspace:*",
 		"@agentos-software/ripgrep": "workspace:*",
 		"@biomejs/biome": "^2.3",
-		"@rivet-dev/agentos-core": "workspace:*",
-		"@rivet-dev/agentos-runtime-core": "workspace:*",
+		"@rivet-dev/agentos": "workspace:*",
 		"@rivet-dev/agentos-test-harness": "workspace:*",
-		"@rivet-dev/agentos-vm-test-harness": "workspace:*",
 		"@types/node": "^22.19.15",
 		"jszip": "^3.10.1",
 		"npm": "^11.18.0",
@@ -36,6 +28,12 @@
 		"typescript": "^5.9.2"
 	},
 	"resolutions": {
-		"@rivet-dev/agentos-core": "workspace:*"
+		"@rivet-dev/agentos": "workspace:*"
+	},
+	"pnpm": {
+		"overrides": {
+			"@effect/platform-node@4.0.5>@effect/platform-node-shared": "4.0.5",
+			"@rivetkit/rivetkit-wasm": "2.3.10"
+		}
 	}
 }

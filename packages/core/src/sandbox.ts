@@ -8,7 +8,7 @@ import type {
 import type {
 	HostFunction,
 	HostFunctionCollections,
-} from "@rivet-dev/agentos-runtime-core/host-functions";
+} from "./host-functions.js";
 
 export interface AgentOsSandboxProcessResult {
 	stdout?: string;

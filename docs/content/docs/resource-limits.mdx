@@ -3,123 +3,54 @@ title: "Resource Limits"
 description: "Configure bounded VM, process, JavaScript, Python, and WASM resources."
 ---
 
-Pass a `limits` tree in the VM's configuration. The sidecar applies it when the
-VM starts. Near-limit pressure is reported as the `vm.limitWarning` event on a
-hosted VM, or through `onLimitWarning` in the library.
+Limits are part of the durable actor config and are applied by the sidecar
+during VM creation.
 
-<CodeGroup>
-
-```ts Hosted @nocheck
-import { createAgentOsClient } from "@rivet-dev/agentos";
-
-const client = createAgentOsClient({ endpoint: "https://api.rivet.dev" });
-const vm = client.agentOS.getOrCreate(["my-vm"]);
-
-await vm.v1.config.set({
-	config: {
-		limits: {
-			tls: { maxBufferedBytes: 2048 },
-			execution: { completedTtlMs: 60_000, liveExecutionWarningThreshold: 32 },
-			agentosPackages: { maxMounts: 8192 },
-		},
-	},
-});
-
-// Changed limits apply to the next VM generation.
-await vm.v1.vm.restart({});
-```
-
-<CodeSnippet file="examples/embedded/limits.ts" title="Library" />
-
-</CodeGroup>
+<CodeSnippet file="examples/embedded/limits.ts" />
 
 Use `limits.tls.maxBufferedBytes` to bound TLS plaintext buffering.
 `limits.execution.completedTtlMs` and `limits.execution.maxCompletedExecutions`
 bound retained completed language executions. `limits.execution.liveExecutionWarningThreshold`
 sets the live execution count that triggers a warning, not a rejection.
-These fields are optional; omission keeps the sidecar default.
-
-Process output replay is also sidecar-owned. The defaults retain
-up to 1,024 events or 1 MiB for each opted-in process, return at most 256 events
-or 768 KiB per read, and retain at most 1,024 replay records per VM. Override
-them with `limits.process.outputReplayEvents`, `outputReplayBytes`,
-`outputReplayPageEvents`, `outputReplayPageBytes`, and `maxOutputReplays`.
-Page limits cannot exceed their corresponding retention limits. Omitting a page
-bound in `process.readOutput` uses the VM's configured limit; explicit zero or a
-value above the limit is rejected.
+These fields are optional in both Rust and TypeScript Core; omission keeps the
+sidecar default.
 
 Every queue, buffer, timeout, and resource collection has a bounded default.
-Near-capacity conditions call `onLimitWarning`; exhausted limits fail with a
-typed error naming the limit and the field used to raise it.
+Near-capacity conditions emit `vm.limitWarning`; exhausted limits fail
+with a typed error naming the limit and the field used to raise it.
+
+In the library, `onLimitWarning` receives the same warning. Limits that apply
+to the whole sidecar process, such as `runtime.executor.maxActiveVms`, are set
+on a dedicated sidecar created with `AgentOs.createSidecar()`.
 
 `limits.reactor.shutdownDeadlineMs` bounds the SQLite close wait and subsequent
 resource drain together. Process termination and filesystem flushing happen
 before this budget. If close exceeds the deadline,
 VM shutdown reports a typed `timeout` with the limit name instead of reporting
-a clean stop. Close completion can no longer be confirmed, so the VM stays
-quarantined until the sidecar process restarts, even if local resource counts
-reach zero. Quarantined VMs count toward VM admission capacity.
+a clean stop. Close completion can no longer be confirmed, so the generation
+stays quarantined—even if local resource counts reach zero—until the sidecar
+worker restarts. Quarantined generations count toward VM admission capacity.
+The hosted actor also has a fixed ten-second shutdown wait; raising the sidecar
+deadline does not extend it. The runtime test API has a separate one-second
+disposal wait. Exceeding either client wait reports a timeout, not confirmed
+shutdown; the remote operation may still be running.
 
-Socket writes between processes in the same VM share the
-`limits.resources.maxSocketBufferedBytes` budget. When the budget is full, a
-write waits for the reader to drain it, like a Node.js socket write. If the
-reader does not drain it within `limits.reactor.operationDeadlineMs`, the
-write fails with `ETIMEDOUT` and an error that names that limit.
+The hosted action envelope, filesystem transfer, process replay, network, and
+software-cache ceilings are listed in
+[Hosted Actor Limits](/agentos/docs/actor-limits).
 
-Limits are fixed for the life of a VM. To change them on a hosted VM, update
-the config and call `v1.vm.restart`. In the library, dispose the VM and create
-a new one with the new limits. The hosted actor also has a fixed ten-second
-shutdown wait; raising the sidecar deadline does not extend it.
+Guest JavaScript has a V8 heap cap and a separate cap for `ArrayBuffer` memory.
+Both use `limits.jsRuntime.v8HeapLimitMb`; Python uses
+`limits.python.maxOldSpaceMb`. Exceeding a cap fails the execution and leaves
+other VMs running. The sidecar can keep up to four prestarted V8 isolates;
+`AGENTOS_V8_WARM_ISOLATES=0` disables that pool to reduce idle memory at the
+cost of slower execution starts.
 
-## Sidecar limits
-
-Library VMs share a sidecar process by default. Limits that apply to the whole
-process, such as `runtime.executor.maxActiveVms`, are set when creating a
-dedicated sidecar with `AgentOs.createSidecar()`, as in the example above.
-
-Each library request to the sidecar must fit in one protocol frame. The sidecar
-reports its frame limit (16 MiB) when the client connects, and the limit is not
-configurable. The client rejects a larger request with `SidecarFrameTooLarge`
-before it sends it, so the sidecar and the other VMs on it keep running. Binary
-file content is base64-encoded, so one `writeFile` or `writeFiles` call carries
-at most about 12 MiB of binary data. To move larger files, split them into
-several files or mount a host directory.
-
-### Isolate memory
-
-Each V8 isolate that runs guest JavaScript or Python has two memory caps of the
-same size: one for the V8 heap and one for `ArrayBuffer` memory, which also
-backs typed arrays, `Buffer`, and `SharedArrayBuffer`. The size is
-`limits.jsRuntime.v8HeapLimitMb` for JavaScript (128 MiB by default) and
-`limits.python.maxOldSpaceMb` for Python. A script that goes past the heap cap
-fails with `execution_heap_limit_exceeded`. An allocation that goes past the
-`ArrayBuffer` cap throws `RangeError: Array buffer allocation failed`, and the
-sidecar reports the `v8_array_buffer_bytes` limit warning. Other VMs on the
-sidecar keep running in both cases.
-
-In JavaScript, WebAssembly memory and buffers that hold data from the host,
-such as file contents, have a third cap of the same size. V8 checks it during
-garbage collection. A script that goes past it fails with
-`execution_heap_limit_exceeded`, and the sidecar reports the
-`v8_external_memory_bytes` limit warning. Python keeps its interpreter memory
-in WebAssembly, so this cap does not apply to Python. Shared WebAssembly
-memory, resizable `ArrayBuffer`s, and growable `SharedArrayBuffer`s are not
-counted toward any cap.
-
-### Sidecar memory
-
-On Linux with glibc, the sidecar returns memory freed by a disposed VM's V8
-isolates to the OS shortly after disposal.
-
-The sidecar also keeps a pool of up to four pre-started V8 isolates so that
-JavaScript and Python executions start faster. The pool stays resident while
-the sidecar runs, at about 20 MiB per isolate. To cap it, set
-`AGENTOS_V8_WARM_ISOLATES` to a value from `0` to `4` in the environment that
-starts the sidecar. `0` disables the pool and trades memory for slower
-execution starts.
+Replacing limits normally requires a runtime generation replacement. Graceful
+process draining during replacement is a separately tracked follow-up.
 
 ## Embedded API
 
-Limits apply to VMs created with `AgentOs.create()` and sidecars created with
-`AgentOs.createSidecar()`. Read more in the
+Embedded Core uses the same sidecar and VM resource policies without the actor
+message envelope. Read more in the
 [embedded API quickstart](/agentos/docs/quickstart-embedded).

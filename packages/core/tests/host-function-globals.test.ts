@@ -93,11 +93,24 @@ execFile("node", ["/app/main.mjs"], (error, stdout, stderr) => {
 });`,
 		);
 
+		await vm.writeFile(
+			"/app/grandparent.mjs",
+			`import { execFile } from "node:child_process";
+execFile("node", ["/app/parent.mjs"], (error, stdout, stderr) => {
+    if (error) {
+        console.error(stderr || error.message);
+        process.exit(1);
+    }
+    process.stdout.write(stdout);
+});`,
+		);
+
 		const cases: Array<[string, string, string[]]> = [
 			["process.spawn ESM", "node", ["/app/main.mjs"]],
 			["process.spawn CommonJS", "node", ["/app/main.cjs"]],
 			["process.spawn static import", "node", ["/app/import.mjs"]],
 			["guest child_process", "node", ["/app/parent.mjs"]],
+			["nested guest child_process", "node", ["/app/grandparent.mjs"]],
 		];
 		for (const [label, command, args] of cases) {
 			const result = await runNode(vm, command, args);

@@ -1,4 +1,4 @@
-import { AgentOs } from "@rivet-dev/agentos-core";
+import { AgentOs } from "@rivet-dev/agentos";
 
 // Imagine this expression came from an untrusted model. It executes inside an
 // isolated agentOS VM and can only use capabilities granted to that VM.

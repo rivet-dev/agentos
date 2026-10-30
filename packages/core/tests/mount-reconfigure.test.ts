@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { SidecarKernelProxy } from "../src/sidecar/rpc-client.js";
 import { createInMemoryFileSystem } from "../src/test/runtime.js";
-import { NativeSidecarKernelProxy } from "../src/sidecar/rpc-client.js";
 
 // Regression coverage for post-boot mountFs delivery to the native sidecar:
 //   1. `configure_vm` replaces boot configuration, so mount changes must resend
-//      boot packages, their projection root, and binding shims. Runtime-linked
+//      boot packages, their projection root, and host-function shims. Runtime-linked
 //      packages are retained by the sidecar, not mirrored by this client.
 //   2. mountFs used to be fire-and-forget with a swallowed rejection, so a
 //      failed reconfigure left the mount silently host-only and callers had no
@@ -23,6 +23,7 @@ const bootPackages = [
 	},
 ];
 const bootBindingShims = ["agentos", "agentos-demo"];
+const bootRuntimeCommands = ["node", "npm", "python"];
 
 function createStubClient(options?: { failConfigureVm?: boolean }) {
 	const configureCalls: Array<Record<string, unknown>> = [];
@@ -74,8 +75,8 @@ function createProxy(client: unknown) {
 		commandGuestPaths: new Map<string, string>(),
 		ownsClient: true,
 	};
-	return new NativeSidecarKernelProxy(
-		options as ConstructorParameters<typeof NativeSidecarKernelProxy>[0],
+	return new SidecarKernelProxy(
+		options as ConstructorParameters<typeof SidecarKernelProxy>[0],
 	);
 }
 

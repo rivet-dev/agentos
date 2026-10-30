@@ -1,4 +1,4 @@
-//! Lifecycle e2e against a real `agentos-native-sidecar`: independent VMs, post-shutdown isolation, and
+//! Lifecycle e2e against a real `agentos-sidecar`: independent VMs, post-shutdown isolation, and
 //! idempotent shutdown. No V8/WASM required.
 
 mod common;

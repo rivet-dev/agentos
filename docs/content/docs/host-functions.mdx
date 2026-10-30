@@ -1,16 +1,16 @@
 ---
 title: "Custom Host Functions"
-description: "Expose trusted host functions to guest programs in agentOS VMs as typed CLI commands and JavaScript globals."
+description: "Expose trusted host functions to agentOS coding agents as typed CLI commands, with scoped input, output, and execution behavior."
 skill: true
 ---
 
-Host functions expose JavaScript functions from your process to code running inside the VM. They run as in-process callbacks, so they are available in the library only, not on hosted VMs. Each function is defined with a Zod input schema and becomes an auto-generated CLI command at `/bin/agentos-{name}`, plus an async function that guest JavaScript can call directly.
+Expose trusted host JavaScript functions to embedded VMs as typed commands installed at `/bin/agentos-{name}` and callable from guest scripts. The hosted `agentOS` actor cannot accept callbacks, closures, host objects, or host-function implementations. Put product-specific callbacks in your own trusted application using embedded Core.
 
 ## Getting started
 
-Pass `AgentOs.create({ hostFunctions })` a record of collections. The keys name everything: the collection key becomes the CLI binary `agentos-{name}` and a guest global, and each function key becomes a subcommand. A function needs only an `inputSchema` and an `execute` handler. `.describe()` on the schema becomes the command's help text.
+Pass `AgentOs.create({ hostFunctions })` a record of collections. The keys name everything: the collection key becomes the CLI binary `agentos-{name}` and a guest global, and each function key becomes a subcommand. A function needs only an `inputSchema` and an `execute` handler. `.describe()` on the schema is what the agent reads.
 
-<CodeSnippet file="examples/quickstart/host-functions/index.ts" />
+<CodeSnippet file="examples/embedded/host-functions.ts" />
 
 Each host function can override its `timeout` in milliseconds. The default is 30 seconds and can be changed with `limits.hostFunctions.defaultTimeoutMs`.
 
@@ -28,9 +28,11 @@ Zod schema fields are converted to CLI flags automatically. Field names are conv
 
 Optional fields (via `.optional()`) become optional flags. Required fields are enforced at validation time. Use `.describe()` on Zod fields to generate useful `--help` output, and `.describe()` on the whole schema to describe the function itself.
 
-### Calling host functions from the shell
+### What the agent sees
 
-Guest programs call host functions as shell commands:
+When host functions are registered, CLI shims are installed at `/bin/agentos-{name}` inside the VM. Keep each schema's `.describe()` concise and useful for guest callers.
+
+The agent interacts with host functions as shell commands:
 
 ```bash
 # List all available host-function collections
@@ -66,13 +68,11 @@ Missing required flag: --city
 
 ## Call host functions from JavaScript
 
-Every guest Node process gets each collection as a frozen global, and each
-host function as an async function, so generated code calls your tools like any
-other API. This covers inline `vm.javascript` and `vm.typescript` executions,
-scripts started with `vm.process.spawn("node", ...)` or `vm.process.exec`,
-`node` run from the guest shell, and child processes of guest Node. The globals
-are defined before the entry script and its imports run, so a module can use
-them at its top level. Keys written in camelCase become kebab-case commands and camelCase guest
+Every guest Node process gets each collection as a frozen global and each host
+function as an async function. This includes inline JavaScript and TypeScript,
+scripts started through `process.spawn`, scripts run from the guest shell, and
+child processes of guest Node. The globals exist before the entry script and
+its imports run. Keys written in camelCase become kebab-case commands and camelCase guest
 identifiers, so `orderStore.listOrders` is `agentos-order-store list-orders` on
 the CLI and `orderStore.listOrders(input)` in guest JavaScript.
 
@@ -83,22 +83,17 @@ violation, a thrown error, or a timeout. A collection whose name is already a
 global, such as `process`, is not defined, and a warning is written to stderr.
 The `hostFunction` permission scope applies exactly as it does to the commands.
 
-See [Bash](/agentos/docs/bash#host-functions),
-[Node.js](/agentos/docs/javascript#host-functions), and
-[Python](/agentos/docs/python#host-functions) for calling host functions from
-each language.
-
 ## Security
 
-Host function calls from guest code invoke your `execute()` functions on the host. Your functions run with full access to the host environment, so you can call databases, APIs, and services directly without proxying credentials into the VM. Guest code never sees the credentials, only the function's input and output contract.
-
-Because handlers run with full host access, do not expose functions that could compromise the host without appropriate safeguards. Use the `hostFunction` [permission](/agentos/docs/permissions) scope to restrict which collections guest code may call.
+Host-function calls invoke your `execute()` functions on the host. They can call
+databases and services without giving guest code credentials. Only expose
+operations that the guest is allowed to request, and use the `hostFunction`
+[permission](/agentos/docs/permissions) scope to limit callable collections.
 
 ## Embedded API
 
-Host functions are passed to `AgentOs.create()` and their handlers run in the
-embedding process.
+Use host functions from guest JavaScript through embedded Core:
 
-<CodeSnippet file="examples/embedded/host-functions.ts" title="hostFunctions.ts" />
+<CodeSnippet file="examples/embedded/host-functions-javascript.ts" />
 
 Read more in the [embedded API quickstart](/agentos/docs/quickstart-embedded).

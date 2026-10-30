@@ -1,28 +1,42 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// agentOS-owned crates published to crates.io in dependency order. Crates with
+// AgentOS-owned crates published to crates.io in dependency order. Crates with
 // `publish = false` stay out of this list.
 export const RUST_CRATE_ORDER = [
-	"agentos-build-support",
-	"agentos-bridge",
-	"agentos-runtime",
+	"agentos-rivetkit-ars-client",
+	"agentos-vm-host-interface",
+	"agentos-executor-contract",
+	"agentos-resource-accounting",
+	"agentos-executor-wasm-abi",
+	"agentos-driver-tokio",
 	"agentos-vfs-core",
-	"agentos-vfs",
-	"agentos-kernel",
+	"agentos-vfs-storage",
+	"agentos-vm-kernel",
 	"agentos-vm-config",
 	"agentos-sidecar-protocol",
-	"agentos-v8-runtime",
-	"agentos-execution",
-	"agentos-native-sidecar-core",
+	"agentos-executor-v8-runtime",
+	"agentos-executor-node-v8",
+	"agentos-executor-python-v8-pyodide",
+	"agentos-executor-wasm-v8",
+	"agentos-executor-wasm-wasmtime",
 	"agentos-sidecar-client",
+	"agentos-vm",
 	"agentos-client",
-	"agentos-native-sidecar",
+	"agentos-sidecar",
 ] as const;
 
 export type PublishableRustCrate = (typeof RUST_CRATE_ORDER)[number];
 
 export const RUST_CRATES = RUST_CRATE_ORDER;
+
+// This opt-in executor is kept outside the default Cargo workspace so normal
+// workspace checks do not compile it. It still ships before its optional
+// dependencies in agentos-vm and agentos-sidecar.
+export const STANDALONE_RUST_CRATE_MANIFESTS = {
+	"agentos-executor-wasm-wasmtime":
+		"crates/executor-wasm-wasmtime/Cargo.toml",
+} as const;
 
 function readPackageName(manifestPath: string): string | undefined {
 	const manifest = readFileSync(manifestPath, "utf8");
@@ -43,6 +57,17 @@ export function discoverRustCrates(repoRoot: string): PublishableRustCrate[] {
 		const packageName = readPackageName(join(repoRoot, member, "Cargo.toml"));
 		if (packageName) {
 			workspaceCrates.add(packageName);
+		}
+	}
+	for (const [name, relativePath] of Object.entries(
+		STANDALONE_RUST_CRATE_MANIFESTS,
+	)) {
+		try {
+			if (readPackageName(join(repoRoot, relativePath)) === name) {
+				workspaceCrates.add(name);
+			}
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 		}
 	}
 	return RUST_CRATE_ORDER.filter((crate) => workspaceCrates.has(crate));

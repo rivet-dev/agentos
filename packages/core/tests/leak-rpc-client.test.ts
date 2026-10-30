@@ -1,14 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SidecarRejectedError } from "@rivet-dev/agentos-runtime-core/sidecar-errors";
-import type { SidecarProcessSnapshotEntry } from "../src/sidecar/native-process-client.js";
+import { SidecarRejectedError } from "../src/sidecar-errors.js";
+import type { SidecarProcessSnapshotEntry } from "../src/sidecar/process-client.js";
 import { AgentOs } from "../src/agent-os.js";
 import {
 	type LocalCompatMount,
-	NativeSidecarKernelProxy,
+	SidecarKernelProxy,
 	runManagedProcessToCompletion,
 } from "../src/sidecar/rpc-client.js";
 
-// Regression coverage for the NativeSidecarKernelProxy tracking-collection leaks:
+// Regression coverage for the SidecarKernelProxy tracking-collection leaks:
 //   H6 - trackedProcesses / trackedProcessesById and the onStdout/onStderr
 //        listener Sets were populated at spawn but never released on exit.
 //   M8 - signalStates kept a per-pid entry forever (its sibling signalRefreshes
@@ -114,8 +114,8 @@ function createProxy(client: unknown, localMounts: LocalCompatMount[] = []) {
 		commandGuestPaths: new Map<string, string>(),
 		ownsClient: true,
 	};
-	return new NativeSidecarKernelProxy(
-		options as ConstructorParameters<typeof NativeSidecarKernelProxy>[0],
+	return new SidecarKernelProxy(
+		options as ConstructorParameters<typeof SidecarKernelProxy>[0],
 	);
 }
 
@@ -634,7 +634,7 @@ async function waitFor(predicate: () => boolean, timeoutMs = 500) {
 	}
 }
 
-describe("NativeSidecarKernelProxy tracking-collection cleanup", () => {
+describe("SidecarKernelProxy tracking-collection cleanup", () => {
 	it("forwards initial stdin and closes non-streaming process input", async () => {
 		const stub = createStubClient();
 		const proxy = createProxy(stub.client);

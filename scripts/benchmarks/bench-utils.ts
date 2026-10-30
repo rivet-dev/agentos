@@ -3,8 +3,7 @@ import {
 	type AgentOsOptions,
 	type AgentOsSidecar,
 	type RootSnapshotExport,
-} from "@rivet-dev/agentos-core";
-import { coreutils } from "@agentos-software/common";
+} from "@rivet-dev/agentos";
 import os from "node:os";
 
 // Benchmark parameters. Keep batch sizes minimal for fast iteration.
@@ -83,7 +82,7 @@ export interface Workload {
 	/** Start a long-running process so the Worker thread stays alive. */
 	start: (vm: AgentOs) => Promise<WorkloadObservation | void> | WorkloadObservation | void;
 	/** Verify the expected processes are running. Throws if not. */
-	verify: (vm: AgentOs) => void;
+	verify: (vm: AgentOs) => Promise<void> | void;
 	/** Time to wait after start for the process to fully initialize. */
 	settleMs: number;
 }
@@ -93,14 +92,12 @@ export const WORKLOADS: Record<string, Workload> = {
 		name: "sleep",
 		description: "Minimal VM with idle Node.js process (setTimeout keepalive)",
 		createVm: () => AgentOs.create(benchCreateOptions()),
-		start: (vm) => {
-			vm.spawn("node", ["-e", "setTimeout(() => {}, 999999999)"], {
-				streamStdin: true,
-			});
+		start: async (vm) => {
+			await vm.process.spawn("node", ["-e", "setTimeout(() => {}, 999999999)"]);
 		},
-		verify: (vm) => {
-			const procs = vm.listProcesses();
-			const running = procs.filter((p) => p.running);
+		verify: async (vm) => {
+			const procs = await vm.process.list();
+			const running = procs.filter((p) => p.state === "running");
 			const hasNode = running.some((p) => p.command === "node");
 			if (!hasNode) {
 				throw new Error(
@@ -115,15 +112,10 @@ export const WORKLOADS: Record<string, Workload> = {
 // ── VM creation helpers ─────────────────────────────────────────────
 
 /**
- * Create a fresh agentOS VM with only coreutils (WASM shell + echo).
- * This is the minimal setup needed to run shell commands.
+ * Create a fresh agentOS VM with its default software (WASM shell + echo).
  */
 export async function createBenchVm(): Promise<AgentOs> {
-	return AgentOs.create(
-		benchCreateOptions({
-			software: [coreutils],
-		}),
-	);
+	return AgentOs.create(benchCreateOptions());
 }
 
 // ── Stats and formatting ────────────────────────────────────────────

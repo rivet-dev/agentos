@@ -1,0 +1,8 @@
+#ifndef AGENTOS_XFSTESTS_LINUX_LIMITS_H
+#define AGENTOS_XFSTESTS_LINUX_LIMITS_H
+
+#include <limits.h>
+
+#define XATTR_LIST_MAX 65536
+
+#endif

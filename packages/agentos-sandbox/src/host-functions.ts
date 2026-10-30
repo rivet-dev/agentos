@@ -1,2 +1,2 @@
-export type { AgentOsSandboxClientOptions as SandboxHostFunctionsOptions } from "@rivet-dev/agentos-core";
-export { createSandboxHostFunctions } from "@rivet-dev/agentos-core";
+export type { AgentOsSandboxClientOptions as SandboxHostFunctionsOptions } from "@rivet-dev/agentos";
+export { createSandboxHostFunctions } from "@rivet-dev/agentos";

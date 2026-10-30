@@ -36,7 +36,8 @@
 		"@agentos-software/wget": "workspace:*",
 		"@agentos-software/yq": "workspace:*",
 		"@agentos-software/zip": "workspace:*",
-		"@rivet-dev/agentos-core": "workspace:*",
+		"@rivet-dev/agentos": "workspace:*",
+		"@rivet-dev/agentos": "workspace:*",
 		"commander": "^14.0.2"
 	},
 	"devDependencies": {

@@ -1,18 +1,17 @@
 import type { ChildProcess } from "node:child_process";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { SidecarProcessExited } from "@rivet-dev/agentos-runtime-core/sidecar-client";
+import { SidecarProcessExited } from "../src/sidecar-errors.js";
 import { expect, test } from "vitest";
-import { AgentOs, SidecarFrameTooLarge } from "../src/index.js";
+import { AgentOs, SidecarFrameTooLarge, SidecarProcess } from "../src/index.js";
 import {
-	NativeSidecarProcessClient,
 	serializeRootFilesystemForSidecar,
 } from "../src/sidecar/rpc-client.js";
 
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const SIDECAR_BINARY = process.env.AGENTOS_SIDECAR_BIN
 	? resolve(process.env.AGENTOS_SIDECAR_BIN)
-	: join(REPO_ROOT, "target/debug/agentos-native-sidecar");
+	: join(REPO_ROOT, "target/debug/agentos-sidecar");
 
 // Kills the VM's real sidecar process. This reaches into internals only to find
 // the process; the behavior under test is the public evaluate() result.
@@ -106,7 +105,7 @@ test("a sidecar whose transport fails is stopped, not leaked", async () => {
 
 test("a sidecar outlives more VM create and dispose cycles than its event buffer holds", async () => {
 	const eventBufferCapacity = 8;
-	const client = NativeSidecarProcessClient.spawn({
+	const client = SidecarProcess.spawn({
 		cwd: REPO_ROOT,
 		command: SIDECAR_BINARY,
 		eventBufferCapacity,
