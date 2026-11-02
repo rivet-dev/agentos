@@ -369,20 +369,23 @@ impl AgentOs {
                 }
             };
             let session_id = session.session_id;
-            created_session_key = Some(sidecar_session_key(&connection_id, &session_id));
+            let transport_id = transport.instance_id();
+            let session_key = sidecar_session_key(transport_id, &connection_id, &session_id);
+            created_session_key = Some(session_key.clone());
 
             // 3. Subscribe to events BEFORE CreateVm so the `ready` lifecycle event cannot be missed.
             let mut events = transport.subscribe_wire_events();
             let create_vm_config = serialize_create_vm_config_for_sidecar(&config)?;
             if let Some(callback) = config.sidecar_js_bridge_callback.clone() {
-                let _ = session_js_bridge_callbacks()
-                    .insert(sidecar_session_key(&connection_id, &session_id), callback);
-                transport.register_wire_callback("js_bridge_call", js_bridge_call_callback());
+                let _ = session_js_bridge_callbacks().insert(session_key.clone(), callback);
+                transport.register_wire_callback(
+                    "js_bridge_call",
+                    js_bridge_call_callback(transport_id),
+                );
             }
             if let Some(callback) = config.sidecar_sqlite_callback.clone() {
-                let _ = session_sqlite_callbacks()
-                    .insert(sidecar_session_key(&connection_id, &session_id), callback);
-                transport.register_wire_callback("ext", sqlite_callback_callback());
+                let _ = session_sqlite_callbacks().insert(session_key.clone(), callback);
+                transport.register_wire_callback("ext", sqlite_callback_callback(transport_id));
             }
 
             // 4. Create the VM (session scope).
@@ -673,13 +676,14 @@ impl AgentOs {
                     }
                 }
                 let _ = vm_host_functions().insert(
-                    vm_id.clone(),
+                    vm_route_key(transport_id, &vm_id),
                     Arc::new(VmHostFunctionRegistry {
                         host_functions: resolved_host_functions.clone(),
                         host_function_map,
                     }),
                 );
-                transport.register_wire_callback("host_callback", host_callback_callback());
+                transport
+                    .register_wire_callback("host_callback", host_callback_callback(transport_id));
             }
 
             // 7. Lease this VM on the (possibly shared) sidecar, build cron, and assemble the client.
@@ -728,7 +732,10 @@ impl AgentOs {
             // Host functions can read JSON arguments from the guest filesystem. Keep
             // a weak VM route for that trusted Core-only callback without exposing
             // any product-specific orchestration protocol.
-            let _ = vm_clients().insert(client.inner.vm_id.clone(), Arc::downgrade(&client.inner));
+            let _ = vm_clients().insert(
+                vm_route_key(client.inner.transport.instance_id(), &client.inner.vm_id),
+                Arc::downgrade(&client.inner),
+            );
             Ok(client)
         }
         .await;
@@ -749,8 +756,9 @@ impl AgentOs {
                     cleanup_confirmed = false;
                     tracing::error!(%vm_id, %error, "failed to dispose partially initialized VM; retaining sidecar ownership until explicit worker shutdown");
                 }
-                vm_host_functions().remove(&vm_id);
-                vm_clients().remove(&vm_id);
+                let route = vm_route_key(transport.instance_id(), &vm_id);
+                vm_host_functions().remove(&route);
+                vm_clients().remove(&route);
             }
             if let Some(key) = created_session_key {
                 session_js_bridge_callbacks().remove(&key);
@@ -1097,16 +1105,17 @@ impl AgentOs {
             self.inner.vm_disposed.store(true, Ordering::SeqCst);
             // A failed DisposeVm may need host SQLite callbacks on retry.
             // Unregister routes only after the sidecar confirms VM disposal.
-            let _ = vm_host_functions().remove(&self.inner.vm_id);
-            let _ = vm_clients().remove(&self.inner.vm_id);
-            let _ = session_js_bridge_callbacks().remove(&sidecar_session_key(
+            let transport_id = self.inner.transport.instance_id();
+            let vm_route = vm_route_key(transport_id, &self.inner.vm_id);
+            let session_key = sidecar_session_key(
+                transport_id,
                 &self.inner.connection_id,
                 &self.inner.session_id,
-            ));
-            let _ = session_sqlite_callbacks().remove(&sidecar_session_key(
-                &self.inner.connection_id,
-                &self.inner.session_id,
-            ));
+            );
+            let _ = vm_host_functions().remove(&vm_route);
+            let _ = vm_clients().remove(&vm_route);
+            let _ = session_js_bridge_callbacks().remove(&session_key);
+            let _ = session_sqlite_callbacks().remove(&session_key);
         }
         let sidecar = self.inner.sidecar.clone();
         let lease = if disposal_result.is_ok() {
@@ -1600,17 +1609,28 @@ fn session_sqlite_callbacks() -> &'static SccHashMap<String, SidecarSqliteCallba
     SESSION_SQLITE_CALLBACKS.get_or_init(SccHashMap::new)
 }
 
-fn sidecar_session_key(connection_id: &str, session_id: &str) -> String {
-    format!("{connection_id}\0{session_id}")
+// Sidecar processes number connections, sessions, and VMs independently, so the
+// process-global route maps key on the transport as well as the sidecar's ids.
+fn vm_route_key(transport_id: u64, vm_id: &str) -> String {
+    format!("{transport_id}\0{vm_id}")
 }
 
-fn wire_ownership_session_key(ownership: &wire::OwnershipScope) -> Option<String> {
+fn sidecar_session_key(transport_id: u64, connection_id: &str, session_id: &str) -> String {
+    format!("{transport_id}\0{connection_id}\0{session_id}")
+}
+
+fn wire_ownership_session_key(
+    transport_id: u64,
+    ownership: &wire::OwnershipScope,
+) -> Option<String> {
     match ownership {
         wire::OwnershipScope::SessionOwnership(ownership) => Some(sidecar_session_key(
+            transport_id,
             &ownership.connection_id,
             &ownership.session_id,
         )),
         wire::OwnershipScope::VmOwnership(ownership) => Some(sidecar_session_key(
+            transport_id,
             &ownership.connection_id,
             &ownership.session_id,
         )),
@@ -1618,8 +1638,8 @@ fn wire_ownership_session_key(ownership: &wire::OwnershipScope) -> Option<String
     }
 }
 
-fn js_bridge_call_callback() -> WireSidecarCallback {
-    Arc::new(|payload, ownership| {
+fn js_bridge_call_callback(transport_id: u64) -> WireSidecarCallback {
+    Arc::new(move |payload, ownership| {
         Box::pin(async move {
             let request = match payload {
                 wire::SidecarRequestPayload::JsBridgeCallRequest(request) => request,
@@ -1647,14 +1667,14 @@ fn js_bridge_call_callback() -> WireSidecarCallback {
                 }
             };
             Ok(wire::SidecarResponsePayload::JsBridgeResultResponse(
-                run_js_bridge_callback(&ownership, request).await,
+                run_js_bridge_callback(transport_id, &ownership, request).await,
             ))
         })
     })
 }
 
-fn sqlite_callback_callback() -> WireSidecarCallback {
-    Arc::new(|payload, ownership| {
+fn sqlite_callback_callback(transport_id: u64) -> WireSidecarCallback {
+    Arc::new(move |payload, ownership| {
         Box::pin(async move {
             let envelope = match payload {
                 wire::SidecarRequestPayload::ExtEnvelope(envelope) => envelope,
@@ -1679,9 +1699,10 @@ fn sqlite_callback_callback() -> WireSidecarCallback {
                 &envelope.payload,
             ) {
                 Ok(request) => {
-                    let callback = wire_ownership_session_key(&ownership).and_then(|key| {
-                        session_sqlite_callbacks().read(&key, |_, callback| callback.clone())
-                    });
+                    let callback =
+                        wire_ownership_session_key(transport_id, &ownership).and_then(|key| {
+                            session_sqlite_callbacks().read(&key, |_, callback| callback.clone())
+                        });
                     match callback {
                         Some(callback) => match callback(request).await {
                             Ok(response) => response,
@@ -1713,6 +1734,7 @@ fn sqlite_callback_callback() -> WireSidecarCallback {
 }
 
 async fn run_js_bridge_callback(
+    transport_id: u64,
     ownership: &wire::OwnershipScope,
     request: wire::JsBridgeCallRequest,
 ) -> wire::JsBridgeResultResponse {
@@ -1727,7 +1749,7 @@ async fn run_js_bridge_callback(
             };
         }
     };
-    let callback = wire_ownership_session_key(ownership)
+    let callback = wire_ownership_session_key(transport_id, ownership)
         .and_then(|key| session_js_bridge_callbacks().read(&key, |_, callback| callback.clone()));
     let Some(callback) = callback else {
         return wire::JsBridgeResultResponse {
@@ -1772,8 +1794,8 @@ async fn run_js_bridge_callback(
 }
 
 /// The transport callback that answers guest host-function invocations by running the matching host function.
-fn host_callback_callback() -> WireSidecarCallback {
-    Arc::new(|payload, ownership| {
+fn host_callback_callback(transport_id: u64) -> WireSidecarCallback {
+    Arc::new(move |payload, ownership| {
         Box::pin(async move {
             let request = match payload {
                 wire::SidecarRequestPayload::HostCallbackRequest(request) => request,
@@ -1798,7 +1820,11 @@ fn host_callback_callback() -> WireSidecarCallback {
                 }
             };
             Ok(wire::SidecarResponsePayload::HostCallbackResultResponse(
-                run_host_callback(&ownership, request).await,
+                run_host_callback(
+                    &vm_route_key(transport_id, wire_ownership_vm_id(&ownership).unwrap_or("")),
+                    request,
+                )
+                .await,
             ))
         })
     })
@@ -1807,7 +1833,7 @@ fn host_callback_callback() -> WireSidecarCallback {
 /// Run one host-function invocation against the per-VM host-function registry, honoring the timeout. Mirrors
 /// TS `handleHostCallback` (unknown function, timeout, and error shapes).
 async fn run_host_callback(
-    ownership: &wire::OwnershipScope,
+    vm_route: &str,
     request: wire::HostCallbackRequest,
 ) -> wire::HostCallbackResultResponse {
     let input = match serde_json::from_str::<Value>(&request.input) {
@@ -1820,8 +1846,7 @@ async fn run_host_callback(
             };
         }
     };
-    let vm_id = wire_ownership_vm_id(ownership).unwrap_or("");
-    let registry = vm_host_functions().read(vm_id, |_, registry| registry.clone());
+    let registry = vm_host_functions().read(vm_route, |_, registry| registry.clone());
     let Some(registry) = registry else {
         return wire::HostCallbackResultResponse {
             invocation_id: request.invocation_id,
@@ -1848,7 +1873,7 @@ async fn run_host_callback(
                 error: Some(String::from("Invalid registry callback for \"agentos\"")),
             };
         }
-        return match run_host_command_callback(ownership, registry.as_ref(), command).await {
+        return match run_host_command_callback(vm_route, registry.as_ref(), command).await {
             Ok(value) => match host_callback_json_result(value) {
                 Ok(result) => wire::HostCallbackResultResponse {
                     invocation_id: request.invocation_id,
@@ -1933,12 +1958,12 @@ fn parse_host_command_callback_input(input: &Value) -> Option<HostCommandCallbac
 }
 
 async fn run_host_command_callback(
-    ownership: &wire::OwnershipScope,
+    vm_route: &str,
     registry: &VmHostFunctionRegistry,
     command: HostCommandCallbackInput,
 ) -> Result<Value, String> {
     if command.command == "agentos" {
-        return handle_agentos_registry_command(ownership, registry, &command).await;
+        return handle_agentos_registry_command(vm_route, registry, &command).await;
     }
     let Some(collection) = registry
         .host_functions
@@ -1950,11 +1975,11 @@ async fn run_host_command_callback(
             command.command
         ));
     };
-    handle_agentos_host_function_command(ownership, registry, &command, collection).await
+    handle_agentos_host_function_command(vm_route, registry, &command, collection).await
 }
 
 async fn handle_agentos_registry_command(
-    ownership: &wire::OwnershipScope,
+    vm_route: &str,
     registry: &VmHostFunctionRegistry,
     command: &HostCommandCallbackInput,
 ) -> Result<Value, String> {
@@ -2004,7 +2029,7 @@ async fn handle_agentos_registry_command(
         return describe_host_function_payload(collection, host_function_name);
     }
     invoke_host_function(
-        ownership,
+        vm_route,
         registry,
         collection,
         host_function_name,
@@ -2015,7 +2040,7 @@ async fn handle_agentos_registry_command(
 }
 
 async fn handle_agentos_host_function_command(
-    ownership: &wire::OwnershipScope,
+    vm_route: &str,
     registry: &VmHostFunctionRegistry,
     command: &HostCommandCallbackInput,
     collection: &ResolvedHostFunctions,
@@ -2030,7 +2055,7 @@ async fn handle_agentos_host_function_command(
         return describe_host_function_payload(collection, host_function_name);
     }
     invoke_host_function(
-        ownership,
+        vm_route,
         registry,
         collection,
         host_function_name,
@@ -2041,7 +2066,7 @@ async fn handle_agentos_host_function_command(
 }
 
 async fn invoke_host_function(
-    ownership: &wire::OwnershipScope,
+    vm_route: &str,
     registry: &VmHostFunctionRegistry,
     collection: &ResolvedHostFunctions,
     host_function_name: &str,
@@ -2060,7 +2085,7 @@ async fn invoke_host_function(
     // The sidecar checks the `hostFunction` permission scope before it forwards a
     // host function call here, for both the collection command and the registry command.
 
-    let input = parse_host_function_input(ownership, &host_function, args, cwd).await?;
+    let input = parse_host_function_input(vm_route, &host_function, args, cwd).await?;
     validate_host_function_input(&host_function.input_schema, &input)
         .map_err(|error| error.to_string())?;
 
@@ -2076,7 +2101,7 @@ async fn invoke_host_function(
 }
 
 async fn parse_host_function_input(
-    ownership: &wire::OwnershipScope,
+    vm_route: &str,
     host_function: &ResolvedHostFunction,
     args: &[String],
     cwd: &str,
@@ -2098,9 +2123,8 @@ async fn parse_host_function_input(
         } else {
             format!("{cwd}/{path}")
         });
-        let vm_id = wire_ownership_vm_id(ownership).unwrap_or("");
         let inner = vm_clients()
-            .read(vm_id, |_, weak| weak.clone())
+            .read(vm_route, |_, weak| weak.clone())
             .and_then(|weak| weak.upgrade())
             .ok_or_else(|| String::from("Invalid JSON file: VM is no longer available"))?;
         let bytes = AgentOs { inner }
@@ -2988,7 +3012,7 @@ mod tests {
     use super::{
         run_host_callback, serialize_create_vm_config_for_sidecar,
         serialize_root_filesystem_config_for_sidecar, try_vm_mutation, vm_host_functions,
-        wire_vm_ownership, AgentOsCreationTask, VmHostFunctionRegistry,
+        AgentOsCreationTask, VmHostFunctionRegistry,
     };
     use crate::config::{
         AgentOsConfig, AgentOsLimits, FsPermissionRule, FsPermissions, HostFunctionLimits,
@@ -3050,7 +3074,7 @@ mod tests {
         );
 
         let response = run_host_callback(
-            &wire_vm_ownership("connection", "session", &vm_id),
+            &vm_id,
             super::wire::HostCallbackRequest {
                 invocation_id: String::from("invocation"),
                 callback_key: String::from("math:allowed"),

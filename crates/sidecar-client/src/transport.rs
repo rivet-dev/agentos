@@ -9,7 +9,7 @@
 //! echo the id allocated by the sidecar.
 
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 
 #[cfg(unix)]
@@ -72,9 +72,16 @@ pub type WireSidecarCallback = Arc<
         + Sync,
 >;
 
+fn next_transport_instance_id() -> u64 {
+    static NEXT_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
+    NEXT_INSTANCE_ID.fetch_add(1, Ordering::Relaxed)
+}
+
 /// Owns the spawned sidecar child, the framed BARE stdio I/O tasks, the pending-response map, the
 /// event fan-out, and the callback dispatch table.
 pub struct SidecarTransport {
+    /// Unique in this host process. Sidecar-issued ids repeat across sidecar processes.
+    instance_id: u64,
     /// The spawned sidecar process (stdout/stdin taken by the I/O tasks; kept for kill on drop).
     child: parking_lot::Mutex<Option<Child>>,
     child_termination: tokio::sync::Mutex<()>,
@@ -180,6 +187,7 @@ impl SidecarTransport {
         let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
 
         let transport = Arc::new(Self {
+            instance_id: next_transport_instance_id(),
             child: parking_lot::Mutex::new(Some(child)),
             child_termination: tokio::sync::Mutex::new(()),
             pending: SccHashMap::new(),
@@ -289,6 +297,11 @@ impl SidecarTransport {
             // A lost transport delivers no more events; a receiver without a sender says so.
             None => broadcast::channel(1).1,
         }
+    }
+
+    /// Identify this transport in host-process-wide state.
+    pub fn instance_id(&self) -> u64 {
+        self.instance_id
     }
 
     /// Register a callback that answers a class of sidecar-initiated requests using generated wire
@@ -820,6 +833,7 @@ mod tests {
         let (control_writer_tx, _control_writer_rx) = mpsc::channel(CONTROL_FRAME_QUEUE_CAPACITY);
         let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
         SidecarTransport {
+            instance_id: next_transport_instance_id(),
             child: parking_lot::Mutex::new(None),
             child_termination: tokio::sync::Mutex::new(()),
             pending: SccHashMap::new(),
@@ -1167,6 +1181,7 @@ mod tests {
         let (control_writer_tx, mut control_writer_rx) = mpsc::channel(4);
         let (event_tx, _) = broadcast::channel(4);
         let transport = SidecarTransport {
+            instance_id: next_transport_instance_id(),
             child: parking_lot::Mutex::new(None),
             child_termination: tokio::sync::Mutex::new(()),
             pending: SccHashMap::new(),
