@@ -2957,6 +2957,9 @@ class NativeKernel implements Kernel {
 		try {
 			await this.proxy?.dispose().catch(() => {});
 		} finally {
+			if (this.client && this.vm) {
+				this.client.setVmSidecarRequestHandler(this.vm.vmId, null);
+			}
 			this.proxy = null;
 			this.rootFilesystem = null;
 			this.client = null;
@@ -3096,8 +3099,10 @@ class NativeKernel implements Kernel {
 		// sidecar emits to the matching registered handler and replies with a
 		// host_callback_result frame.
 		if (!this.hostFunctionRequestHandlerInstalled) {
-			this.client.setSidecarRequestHandler((request: SidecarRequestFrame) =>
-				this.dispatchHostFunctionRequest(request),
+			this.client.setVmSidecarRequestHandler(
+				this.vm.vmId,
+				(request: SidecarRequestFrame) =>
+					this.dispatchHostFunctionRequest(request),
 			);
 			this.hostFunctionRequestHandlerInstalled = true;
 		}

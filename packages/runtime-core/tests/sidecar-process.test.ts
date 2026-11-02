@@ -1,9 +1,10 @@
 import { describe, expect, test, vi } from "vitest";
 import type { LiveOwnershipScope } from "../src/ownership.js";
-import type {
-	LiveEventFrame,
-	LiveResponseFrame,
-	LiveSidecarRequestHandler,
+import {
+	type LiveEventFrame,
+	type LiveResponseFrame,
+	type LiveSidecarRequestHandler,
+	resolveSidecarRequestFramePayload,
 } from "../src/protocol-frames.js";
 import { SIDECAR_PROTOCOL_SCHEMA } from "../src/protocol-schema.js";
 import type { LiveRequestPayload } from "../src/request-payloads.js";
@@ -23,6 +24,25 @@ class MemorySidecarTransport implements SidecarProcessTransport {
 
 	setSidecarRequestHandler(handler: LiveSidecarRequestHandler | null): void {
 		this.sidecarRequestHandler = handler;
+	}
+
+	deliverSidecarRequest(ownership: LiveOwnershipScope) {
+		return resolveSidecarRequestFramePayload(
+			{
+				frame_type: "sidecar_request",
+				schema: SIDECAR_PROTOCOL_SCHEMA,
+				request_id: -1,
+				ownership,
+				payload: {
+					type: "host_callback",
+					invocation_id: "invocation",
+					callback_key: "t:who",
+					input: {},
+					timeout_ms: 1000,
+				},
+			},
+			this.sidecarRequestHandler,
+		);
 	}
 
 	onEvent(handler: (event: LiveEventFrame) => void): () => void {
@@ -67,6 +87,47 @@ class MemorySidecarTransport implements SidecarProcessTransport {
 }
 
 describe("sidecar process transport injection", () => {
+	test("answers each sidecar request only from the handler for its owner", async () => {
+		const transport = new MemorySidecarTransport();
+		const process = SidecarProcess.fromClient(transport);
+		const answerAs = (result: string) => async () => ({
+			type: "host_callback_result" as const,
+			invocation_id: "invocation",
+			result,
+		});
+		const connection = { scope: "connection" as const, connection_id: "conn" };
+		const session = {
+			...connection,
+			scope: "session" as const,
+			session_id: "s",
+		};
+		const vm = (vm_id: string) => ({ ...session, scope: "vm" as const, vm_id });
+		process.setSidecarRequestHandler(answerAs("non-vm"));
+		process.setVmSidecarRequestHandler("vm-a", answerAs("a"));
+		process.setVmSidecarRequestHandler("vm-b", answerAs("b"));
+
+		for (const [owner, result] of [
+			[vm("vm-a"), "a"],
+			[vm("vm-b"), "b"],
+			[connection, "non-vm"],
+			[session, "non-vm"],
+		] as const) {
+			await expect(
+				transport.deliverSidecarRequest(owner),
+			).resolves.toMatchObject({ result });
+		}
+
+		// A removed or unknown VM gets an error, never a sibling or non-VM handler.
+		process.setVmSidecarRequestHandler("vm-b", null);
+		for (const vmId of ["vm-b", "vm-unknown"]) {
+			await expect(transport.deliverSidecarRequest(vm(vmId))).resolves.toEqual({
+				type: "host_callback_result",
+				invocation_id: "invocation",
+				error: `no sidecar request handler registered for host_callback in VM ${vmId}`,
+			});
+		}
+	});
+
 	test("acquires metadata without a VM and preserves transport rejection", async () => {
 		const transport = new MemorySidecarTransport();
 		const metadata = {

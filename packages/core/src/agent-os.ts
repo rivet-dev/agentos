@@ -3035,6 +3035,10 @@ export class AgentOs {
 					return;
 				}
 				cleanedUp = true;
+				// Runs after the sidecar disposed the VM, so teardown callbacks work.
+				if (client && createdNativeVm) {
+					client.setVmSidecarRequestHandler(createdNativeVm.vmId, null);
+				}
 			};
 
 			try {
@@ -5844,7 +5848,8 @@ export class AgentOs {
 			hostFunctionMap: buildHostFunctionMap(this._hostFunctions),
 			readFile: (path) => this.readFile(path),
 		};
-		this._sidecarClient.setSidecarRequestHandler((request) => {
+		const vmId = this._sidecarVm.vmId;
+		this._sidecarClient.setVmSidecarRequestHandler(vmId, (request) => {
 			switch (request.payload.type) {
 				case "host_callback":
 					return handleHostCallback(request, context);
