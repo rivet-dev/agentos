@@ -446,7 +446,7 @@ describe("native sidecar process client", () => {
 			command: "node",
 			args: [driverPath, capturePath],
 		});
-		client.setSidecarRequestHandler(async (request) => {
+		client.setVmSidecarRequestHandler("vm-1", async (request) => {
 			expect(request.request_id).toBe(-1);
 			expect(request.payload.type).toBe("js_bridge_call");
 			if (request.payload.type !== "js_bridge_call") {

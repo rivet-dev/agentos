@@ -350,11 +350,29 @@ export class SidecarProcess {
 	private readonly protocolClient: SidecarProcessTransport;
 	/** Set once the transport fails for good; no request can succeed after it. */
 	private lost = false;
+	private nonVmRequestHandler: SidecarRequestHandler | null = null;
+	/** One entry per VM this process admitted, so VM admission bounds its size. */
+	private readonly vmRequestHandlers = new Map<string, SidecarRequestHandler>();
 
 	private constructor(protocolClient: SidecarProcessTransport) {
 		this.protocolClient = protocolClient;
 		protocolClient.onClose(() => {
 			this.lost = true;
+		});
+		protocolClient.setSidecarRequestHandler((request) => {
+			const owner = request.ownership;
+			const handler =
+				owner.scope === "vm"
+					? this.vmRequestHandlers.get(owner.vm_id)
+					: this.nonVmRequestHandler;
+			// Never fall back to another handler: it would run a sibling VM's code.
+			if (!handler) {
+				const scope = owner.scope === "vm" ? `VM ${owner.vm_id}` : owner.scope;
+				throw new Error(
+					`no sidecar request handler registered for ${request.payload.type} in ${scope}`,
+				);
+			}
+			return handler(request);
 		});
 	}
 
@@ -384,8 +402,21 @@ export class SidecarProcess {
 		return SidecarProcess.fromClient(protocolClient);
 	}
 
+	/** Handles requests that have connection or session ownership. */
 	setSidecarRequestHandler(handler: SidecarRequestHandler | null): void {
-		this.protocolClient.setSidecarRequestHandler(handler);
+		this.nonVmRequestHandler = handler;
+	}
+
+	/** Handles requests owned by `vmId`. Pass `null` when the VM is gone. */
+	setVmSidecarRequestHandler(
+		vmId: string,
+		handler: SidecarRequestHandler | null,
+	): void {
+		if (handler) {
+			this.vmRequestHandlers.set(vmId, handler);
+		} else {
+			this.vmRequestHandlers.delete(vmId);
+		}
 	}
 
 	onEvent(handler: (event: EventFrame) => void): () => void {
