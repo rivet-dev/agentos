@@ -1,11 +1,11 @@
 ---
 title: "Self-Hosting (Hosted)"
-description: "Run hosted agentOS VMs on your own infrastructure with the Rivet control plane and the agentOS worker image."
+description: "Run hosted agentOS VMs on your own infrastructure with Rivet Services."
 ---
 
 Self-hosting runs the hosted agentOS API on your own infrastructure instead of
-Rivet Cloud. It needs two processes: the Rivet control plane, and the agentOS
-worker that runs the `agentOS` actor and its VMs. If you only need VMs inside
+Rivet Cloud. It needs two processes: the Rivet control plane, and Rivet
+Services, which runs the `agentOS` actor and its VMs. If you only need VMs inside
 your own Node.js process, use the [library](/agentos/docs/quickstart) instead;
 it needs neither.
 
@@ -25,51 +25,9 @@ it needs neither.
 
 ## Run it
 
-<Steps>
-<Step title="Run the Rivet control plane">
+Hosted agentOS runs on [Rivet Services](/docs/deploy/self-host/nodes/services/), the prebuilt node that hosts Rivet's own Actors. Follow that page to run the control plane and Services, then point your client at your control plane.
 
-<Note>
-The control plane requires an admin token. See [Admin token](/docs/deploy/self-host/control-plane/configuration#admin-token).
-</Note>
-
-```sh
-export RIVET_ADMIN_TOKEN=$(openssl rand -hex 32)
-
-docker run -p 6420:6420 \
-  -e RIVET__AUTH__ADMIN_TOKEN="$RIVET_ADMIN_TOKEN" \
-  rivetdev/engine:next
-```
-
-See the [self-hosting guides](/docs/deploy/) for other ways to run it.
-
-</Step>
-<Step title="Register the agentOS worker pool">
-
-The agentOS worker connects to a pool named `services`:
-
-```sh
-curl -X PUT "http://localhost:6420/runner-configs/services?namespace=default" \
-  -H "Authorization: Bearer $RIVET_ADMIN_TOKEN" \
-  --json '{"datacenters": {"default": {"normal": {}}}}'
-```
-
-</Step>
-<Step title="Run the agentOS worker">
-
-The worker is what actually runs your VMs. It connects to the control plane:
-
-```sh
-docker run \
-  --add-host=host.docker.internal:host-gateway \
-  -e RIVET_ENDPOINT=http://host.docker.internal:6420 \
-  -e RIVET_TOKEN="$RIVET_ADMIN_TOKEN" \
-  rivetdev/services:0.2.0
-```
-
-</Step>
-<Step title="Point your client at it">
-
-Set `RIVET_TOKEN` to the admin token, then create a VM by ID on your control
+Set `RIVET_TOKEN` to your Rivet token, then create a VM by ID on your control
 plane from TypeScript or plain HTTP:
 
 <CodeGroup>
@@ -85,20 +43,17 @@ const vm = client.agentOS.getOrCreate(["my-vm"]);
 
 ```bash HTTP
 curl -X PUT "http://localhost:6420/actors?namespace=default" \
-  -H "Authorization: Bearer $RIVET_ADMIN_TOKEN" \
+  -H "Authorization: Bearer $RIVET_TOKEN" \
   --json '{
     "name": "agentOS",
     "key": "my-vm",
-    "runner_name_selector": "services",
+    "pool": "services",
     "crash_policy": "sleep"
   }'
 # → { "actor": { "actor_id": "…" }, "created": true }
 ```
 
 </CodeGroup>
-
-</Step>
-</Steps>
 
 Everything in the [hosted quickstart](/agentos/docs/quickstart-hosted) and the
 [Hosted HTTP API](/agentos/docs/hosted-api) works the same way. Use
