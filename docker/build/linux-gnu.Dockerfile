@@ -77,6 +77,7 @@ RUN --mount=type=cache,id=${CACHE_SCOPE}-${CACHE_PLATFORM}-${BUILD_PROFILE}-carg
     --mount=type=cache,id=${CACHE_SCOPE}-${CACHE_PLATFORM}-${BUILD_PROFILE}-rusty-v8-agentos-${CACHE_PLATFORM},target=/root/.cargo/.rusty_v8,sharing=locked \
     --mount=type=cache,id=${CACHE_SCOPE}-${CACHE_PLATFORM}-${BUILD_PROFILE}-sccache-agentos-${CACHE_PLATFORM},target=/root/.cache/sccache,sharing=locked \
     set -eux; \
+    pnpm config set store-dir /root/.local/share/pnpm/store; \
     pnpm install --frozen-lockfile --filter '@rivet-dev/agentos-build-tools'; \
     . /sysroot/.env; \
     if ! command -v sccache >/dev/null 2>&1; then \
