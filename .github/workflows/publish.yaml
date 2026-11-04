@@ -161,7 +161,7 @@ jobs:
           image="agentos-linux-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}"
           cid=""
           trap 'test -z "$cid" || docker rm -f "$cid" >/dev/null 2>&1; docker image rm "$image" >/dev/null 2>&1 || true' EXIT
-          cid=$(docker create "$image")
+          cid=$(docker create --label rivet.ci.extraction=true "$image")
           docker cp "$cid:/artifacts/agentos-native-sidecar" "$sidecar_out/agentos-native-sidecar"
           docker rm "$cid"
           test -f "$sidecar_out/agentos-native-sidecar"
@@ -231,7 +231,7 @@ jobs:
           image="agentos-darwin-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}"
           cid=""
           trap 'test -z "$cid" || docker rm -f "$cid" >/dev/null 2>&1; docker image rm "$image" >/dev/null 2>&1 || true' EXIT
-          cid=$(docker create "$image")
+          cid=$(docker create --label rivet.ci.extraction=true "$image")
           docker cp "$cid:/artifacts/agentos-native-sidecar" "$sidecar_out/agentos-native-sidecar"
           docker rm "$cid"
           test -f "$sidecar_out/agentos-native-sidecar"
