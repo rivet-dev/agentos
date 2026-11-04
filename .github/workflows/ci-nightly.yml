@@ -8,13 +8,16 @@ on:
 jobs:
   nightly:
     name: Nightly runtime validation
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.repository == 'rivet-dev/agentos' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && fromJSON('["self-hosted","incus-heavy"]') || 'ubuntu-latest' }}
     env:
       # Cargo validation and the shared sidecar build are explicit below.
       # Do not let TypeScript dependency builds compile a second Rust copy.
       AGENTOS_SKIP_NATIVE_META_BUILD: '1'
     steps:
       - uses: actions/checkout@v4
+      - name: Attach persistent Incus caches
+        if: startsWith(runner.name, 'ci-0')
+        run: bash scripts/ci/incus-cache.sh wasm
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
