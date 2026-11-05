@@ -6243,7 +6243,7 @@ fn run_async_context_stdin_probe(case_name: &str, stdin_read: &str, expected_own
     let entrypoint = cwd.join("entry.mjs");
     write_fixture(
         &entrypoint,
-        &r#"
+        r#"
 import { AsyncLocalStorage } from "node:async_hooks";
 
 const als = new AsyncLocalStorage();
