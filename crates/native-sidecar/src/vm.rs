@@ -75,7 +75,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 const SHADOW_ROOT_BOOTSTRAP_DIRS: &[(&str, u32)] = &[
     ("/dev", 0o755),
@@ -124,16 +124,17 @@ const SHADOW_ROOT_BOOTSTRAP_DIRS: &[(&str, u32)] = &[
     ("/workspace", 0o755),
 ];
 
+fn random_directory_suffix() -> Result<String, openssl::error::ErrorStack> {
+    let mut nonce = [0_u8; 16];
+    rand_bytes(&mut nonce)?;
+    Ok(nonce.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
 fn create_vm_unix_socket_host_dir() -> Result<PathBuf, SidecarError> {
     for _ in 0..32 {
-        let mut nonce = [0_u8; 16];
-        rand_bytes(&mut nonce).map_err(|error| {
+        let suffix = random_directory_suffix().map_err(|error| {
             SidecarError::Io(format!("failed to generate Unix socket namespace: {error}"))
         })?;
-        let suffix = nonce
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
         let path = std::env::temp_dir().join(format!("agentos-uds-{suffix}"));
         let mut builder = fs::DirBuilder::new();
         builder.mode(0o700);
@@ -4574,14 +4575,26 @@ fn resolve_host_path(value: Option<&String>) -> Result<PathBuf, SidecarError> {
 }
 
 fn create_vm_shadow_root(vm_id: &str) -> Result<PathBuf, SidecarError> {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| SidecarError::Io(format!("failed to compute shadow-root nonce: {error}")))?
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!("agentos-native-sidecar-shadow-{vm_id}-{nonce}"));
-    fs::create_dir_all(&root)
-        .map_err(|error| SidecarError::Io(format!("failed to create VM shadow root: {error}")))?;
-    initialize_vm_shadow_root(root)
+    for _ in 0..32 {
+        let suffix = random_directory_suffix().map_err(|error| {
+            SidecarError::Io(format!("failed to generate VM shadow-root name: {error}"))
+        })?;
+        let root =
+            std::env::temp_dir().join(format!("agentos-native-sidecar-shadow-{vm_id}-{suffix}"));
+        match fs::create_dir(&root) {
+            Ok(()) => return initialize_vm_shadow_root(root),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(SidecarError::Io(format!(
+                    "failed to create VM shadow root {}: {error}",
+                    root.display()
+                )))
+            }
+        }
+    }
+    Err(SidecarError::Io(String::from(
+        "failed to allocate a unique VM shadow root after 32 attempts",
+    )))
 }
 
 fn initialize_vm_shadow_root(root: PathBuf) -> Result<PathBuf, SidecarError> {
@@ -5207,7 +5220,7 @@ fn prune_kernel_command_stub(
 mod tests {
     use super::{
         bootstrap_native_root_filesystem, bootstrap_shadow_root, close_vm_capability_admission,
-        create_vm_unix_socket_host_dir, initialize_vm_shadow_root,
+        create_vm_shadow_root, create_vm_unix_socket_host_dir, initialize_vm_shadow_root,
         materialize_shadow_root_snapshot_entries, native_root_plugin_from_config,
         prune_kernel_command_stub, retire_vm_fairness, shadow_path_for_guest, vm_quarantine_reason,
         vm_resource_ledger, wait_for_vm_reconciliation, CA_CERTIFICATES_BUNDLE,
@@ -5245,7 +5258,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Arc;
+    use std::sync::{Arc, Barrier};
     use std::time::Duration;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -6091,6 +6104,44 @@ mod tests {
             assert!(
                 !path.exists(),
                 "removed Unix socket namespace must stay absent"
+            );
+        }
+    }
+
+    #[test]
+    fn create_vm_shadow_root_gives_vms_with_the_same_id_distinct_roots() {
+        for round in 0..20 {
+            let barrier = Arc::new(Barrier::new(16));
+            let threads = (0..16)
+                .map(|_| {
+                    let barrier = Arc::clone(&barrier);
+                    std::thread::spawn(move || {
+                        barrier.wait();
+                        create_vm_shadow_root("vm-1")
+                    })
+                })
+                .collect::<Vec<_>>();
+            let results = threads
+                .into_iter()
+                .map(|thread| thread.join().expect("shadow-root thread should finish"))
+                .collect::<Vec<_>>();
+            let roots = results
+                .iter()
+                .filter_map(|result| result.as_ref().ok())
+                .collect::<BTreeSet<_>>();
+            let cleanup = roots.iter().map(fs::remove_dir_all).collect::<Vec<_>>();
+
+            assert!(
+                results.iter().all(Result::is_ok),
+                "all shadow roots should be created in round {round}: {results:?}"
+            );
+            for result in cleanup {
+                result.expect("each distinct shadow root should be removed");
+            }
+            assert_eq!(
+                roots.len(),
+                16,
+                "VMs with the same ID must have distinct shadow roots in round {round}: {results:?}"
             );
         }
     }
