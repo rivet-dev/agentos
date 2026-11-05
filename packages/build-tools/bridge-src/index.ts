@@ -3,6 +3,7 @@
 
 
 import "./polyfills/index.js";
+import "./builtins/uint8array-encoding.js";
 import "./global-exposure.js";
 import "./builtins/readiness.js";
 import "./transport.js";

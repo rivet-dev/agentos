@@ -64,6 +64,9 @@ or implemented in the isolate is denied.</Note>
   `TextEncoder`/`TextDecoder`, `Buffer`, URL APIs, `Blob`, `File`, `FormData`,
   abort APIs, `structuredClone`, `performance`, WebAssembly.
 - `fetch()` uses VM sockets and follows the same policy as `http`/`net`.
+- `Uint8Array` has `toHex`, `toBase64`, `fromHex`, `fromBase64`, `setFromHex`,
+  and `setFromBase64`, with the `alphabet`, `omitPadding`, and
+  `lastChunkHandling` options.
 
 ## Modules and output
 
