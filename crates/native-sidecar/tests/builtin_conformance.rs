@@ -4306,6 +4306,113 @@ console.log(JSON.stringify({
     );
 }
 
+fn guest_sqlite_cannot_reach_host_files_impl() {
+    let host_dir = temp_dir("guest-sqlite-host-files");
+    let secret_path = host_dir.join("secret.sqlite");
+    {
+        let secret = rusqlite::Connection::open(&secret_path).expect("create host database");
+        secret
+            .execute_batch(
+                "CREATE TABLE secret(value TEXT); INSERT INTO secret VALUES ('host-only')",
+            )
+            .expect("seed host database");
+    }
+    let attach_target = host_dir.join("attach.sqlite");
+    let concat_target = host_dir.join("concat.sqlite");
+    let vacuum_target = host_dir.join("vacuum.sqlite");
+    let concat_vacuum_target = host_dir.join("concat-vacuum.sqlite");
+    let secret = secret_path.display().to_string();
+    let attach = attach_target.display().to_string();
+    let concat = concat_target.display().to_string();
+    let vacuum = vacuum_target.display().to_string();
+    let concat_vacuum = concat_vacuum_target.display().to_string();
+
+    let script = format!(
+        r#"
+import {{ DatabaseSync }} from "node:sqlite";
+const db = new DatabaseSync(":memory:");
+db.exec("CREATE TABLE t(a); INSERT INTO t VALUES (1)");
+const outcome = (run) => {{
+  try {{
+    return {{ value: run() ?? null }};
+  }} catch (error) {{
+    return /not authorized|authorization denied/.test(error.message) ? {{ denied: true }} : {{ error: error.message }};
+  }}
+}};
+const file = new DatabaseSync("/tmp/in-vm.sqlite");
+console.log(JSON.stringify({{
+  readHostFile: outcome(() => {{
+    db.exec("ATTACH DATABASE '{secret}' AS host");
+    return db.prepare("SELECT value FROM host.secret").all();
+  }}),
+  readHostFileUri: outcome(() => db.exec("ATTACH DATABASE 'file:{secret}?mode=ro' AS uri")),
+  createHostFile: outcome(() => db.exec("ATTACH DATABASE '{attach}' AS created; CREATE TABLE created.t(a)")),
+  createHostFileWithExpression: outcome(() => db.exec("ATTACH DATABASE ('{concat}' || '') AS created2; CREATE TABLE created2.t(a)")),
+  vacuumIntoHostFile: outcome(() => db.exec("VACUUM INTO '{vacuum}'")),
+  vacuumIntoHostFileWithExpression: outcome(() => db.exec("VACUUM INTO ('{concat_vacuum}' || '')")),
+  relativePath: outcome(() => db.exec("ATTACH DATABASE 'relative.sqlite' AS relative")),
+  sharedCache: outcome(() => db.exec("ATTACH DATABASE 'file:shared?mode=memory&cache=shared' AS shared")),
+  processWidePragma: outcome(() => db.exec("PRAGMA hard_heap_limit = 1")),
+  writableSchema: outcome(() => {{
+    db.exec("PRAGMA writable_schema = ON");
+    return db.prepare("PRAGMA writable_schema").get().writable_schema;
+  }}),
+  plainVacuum: outcome(() => db.exec("VACUUM")),
+  memoryAttach: outcome(() => {{
+    db.exec("ATTACH DATABASE ':memory:' AS mem; CREATE TABLE mem.t(a); INSERT INTO mem.t VALUES (2)");
+    return db.prepare("SELECT a FROM mem.t").get().a;
+  }}),
+  vmFile: outcome(() => {{
+    file.exec("CREATE TABLE t(a); INSERT INTO t VALUES (3)");
+    return file.prepare("SELECT a FROM t").get().a;
+  }}),
+}}));
+"#
+    );
+
+    let result = run_guest_script("guest-sqlite-host-files", &script);
+    let denied = serde_json::json!({ "denied": true });
+
+    for case in [
+        "readHostFile",
+        "readHostFileUri",
+        "createHostFile",
+        "createHostFileWithExpression",
+        "vacuumIntoHostFile",
+        "vacuumIntoHostFileWithExpression",
+        "relativePath",
+        "sharedCache",
+        "processWidePragma",
+    ] {
+        assert_eq!(result[case], denied, "{case}: {result:#}");
+    }
+    for created in [
+        &attach_target,
+        &concat_target,
+        &vacuum_target,
+        &concat_vacuum_target,
+    ] {
+        assert!(!created.exists(), "guest created host file {created:?}");
+    }
+    assert_eq!(
+        result["writableSchema"]["value"],
+        Value::from(0),
+        "{result:#}"
+    );
+    assert_eq!(result["plainVacuum"]["denied"], Value::Null, "{result:#}");
+    assert_eq!(
+        result["memoryAttach"]["value"],
+        Value::from(2),
+        "{result:#}"
+    );
+    assert_eq!(result["vmFile"]["value"], Value::from(3), "{result:#}");
+}
+
+#[test]
+fn guest_sqlite_cannot_reach_host_files() {
+    run_isolated_builtin_conformance_test("guest-sqlite-host-files");
+}
+
 fn mkdtemp_sync_collision_safe_matches_host_node_impl() {
     let cwd = temp_dir("mkdtemp-sync-collision-safe");
     let entrypoint = cwd.join("entry.mjs");
@@ -6423,6 +6530,7 @@ fn __builtin_conformance_extra_test_runner() {
         "child-process-fork-ipc" => child_process_fork_supports_basic_ipc_impl(),
         "http-socket-writes" => http_socket_writes_do_not_silently_drop_data_impl(),
         "buffer-concat-truncation" => buffer_concat_truncation_matches_host_node_impl(),
+        "guest-sqlite-host-files" => guest_sqlite_cannot_reach_host_files_impl(),
         "mkdtemp-sync-collision-safe" => mkdtemp_sync_collision_safe_matches_host_node_impl(),
         "crypto-basic-fixture" => crypto_basic_fixture_matches_shared_expected_impl(),
         "crypto-extended" => crypto_extended_surface_matches_host_node(),
