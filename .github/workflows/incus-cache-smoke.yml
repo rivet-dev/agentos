@@ -1,0 +1,77 @@
+name: Incus cache validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/incus-heavy-ci]
+    paths:
+      - .github/workflows/incus-cache-smoke.yml
+      - scripts/ci/incus-cache.sh
+
+permissions:
+  contents: read
+
+jobs:
+  cache:
+    name: Cache check (${{ matrix.slot }})
+    strategy:
+      fail-fast: false
+      matrix:
+        slot: [ci-01-runner-01, ci-01-runner-02, ci-02-runner-01, ci-02-runner-02, ci-02-runner-03]
+    runs-on: [self-hosted, incus-heavy, '${{ matrix.slot }}']
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/ci/incus-cache.sh raw
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify raw compiler cache and job lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import fcntl
+          with open('/srv/ci/cache.lock', 'r+') as lock:
+              try:
+                  fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+              except BlockingIOError:
+                  print('Job lock prevents cache collection')
+              else:
+                  raise SystemExit('Job hook failed to hold cache lock')
+          PY
+          cargo init --bin --name cache_probe "$RUNNER_TEMP/cache-probe"
+          export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target/probe"
+          cargo build --manifest-path "$RUNNER_TEMP/cache-probe/Cargo.toml"
+          binary="$CARGO_TARGET_DIR/debug/cache_probe"
+          before=$(stat -c %Y "$binary")
+          sleep 2
+          cargo build --manifest-path "$RUNNER_TEMP/cache-probe/Cargo.toml" -v 2>&1 | tee "$RUNNER_TEMP/warm.log"
+          grep -q 'Fresh cache_probe' "$RUNNER_TEMP/warm.log"
+          test "$before" = "$(stat -c %Y "$binary")"
+          test -L target
+      - name: Verify shared BuildKit layers and mutable caches
+        shell: bash
+        run: |
+          set -euo pipefail
+          context="$RUNNER_TEMP/buildkit-probe"
+          mkdir -p "$context"
+          cat > "$context/Dockerfile" <<'DOCKER'
+          FROM busybox:1.37.0
+          ARG CACHE_ID
+          ARG ITERATION
+          RUN --mount=type=cache,id=${CACHE_ID},target=/cache,sharing=locked \
+              n=$(cat /cache/count 2>/dev/null || echo 0); \
+              n=$((n + 1)); echo "$n" > /cache/count; \
+              test "$n" = "$ITERATION"; echo "$n" > /result
+          DOCKER
+          cache_id="probe-${CI_SLOT}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          for iteration in 1 2; do
+            docker buildx build --builder incus --progress plain \
+              --build-arg CACHE_ID="$cache_id" --build-arg ITERATION="$iteration" "$context"
+          done
+          # A fresh client still sees the daemon's persistent layer cache.
+          docker buildx rm incus
+          docker buildx create --name incus --driver remote "$CI_BUILDKIT_ENDPOINT"
+          docker buildx build --builder incus --progress plain \
+            --build-arg CACHE_ID="$cache_id" --build-arg ITERATION=2 "$context" 2>&1 | tee "$RUNNER_TEMP/docker-warm.log"
+          grep -q CACHED "$RUNNER_TEMP/docker-warm.log"
+          docker buildx du --builder incus
