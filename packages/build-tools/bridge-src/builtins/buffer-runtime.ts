@@ -80,47 +80,4 @@ if (typeof bufferCtorMutable.allocUnsafe === "function" && !bufferCtorMutable.al
 
 var Buffer3 = import_buffer2.Buffer;
 
-function hasStandardsCompliantTypedArrayBase64() {
-  try {
-    if (typeof Uint8Array.fromBase64 !== "function" || typeof Uint8Array.prototype.toBase64 !== "function") {
-      return false;
-    }
-    const encoded = new Uint8Array([251, 255]).toBase64({ alphabet: "base64url", omitPadding: true });
-    const decoded = Uint8Array.fromBase64("-_8", { alphabet: "base64url" });
-    return encoded === "-_8" && decoded.length === 2 && decoded[0] === 251 && decoded[1] === 255;
-  } catch {
-    return false;
-  }
-}
-
-if (!hasStandardsCompliantTypedArrayBase64()) {
-  Object.defineProperty(Uint8Array, "fromBase64", {
-    configurable: true,
-    writable: true,
-    value(value, options = {}) {
-      const alphabet = options?.alphabet ?? "base64";
-      let encoded = String(value);
-      if (alphabet === "base64url") {
-        encoded = encoded.replace(/-/g, "+").replace(/_/g, "/");
-      } else if (alphabet !== "base64") {
-        throw new TypeError(`Unknown alphabet: ${alphabet}`);
-      }
-      return Uint8Array.from(Buffer3.from(encoded, "base64"));
-    }
-  });
-  Object.defineProperty(Uint8Array.prototype, "toBase64", {
-    configurable: true,
-    writable: true,
-    value(options = {}) {
-      const alphabet = options?.alphabet ?? "base64";
-      let encoded = Buffer3.from(this.buffer, this.byteOffset, this.byteLength).toString("base64");
-      if (alphabet === "base64url") {
-        encoded = encoded.replace(/\+/g, "-").replace(/\//g, "_");
-      } else if (alphabet !== "base64") {
-        throw new TypeError(`Unknown alphabet: ${alphabet}`);
-      }
-      return options?.omitPadding ? encoded.replace(/=+$/g, "") : encoded;
-    }
-  });
-}
 export { Buffer3, bufferCtorMutable, bufferPolyfillMutable, bufferProto, import_buffer2 };
