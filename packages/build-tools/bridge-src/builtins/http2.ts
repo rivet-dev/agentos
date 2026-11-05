@@ -1,4 +1,5 @@
 import { exposeCustomGlobal } from "../global-exposure.js";
+import { getAsyncContextFrame, kAsyncContextFrame, runInAsyncContextFrame } from "./async-context.js";
 import { Response } from "./fetch.js";
 import { _fdGetPath, _fs, decodeBridgeJson } from "./fs.js";
 import {
@@ -1565,6 +1566,7 @@ var Http2Session = class extends Http2EventEmitter {
 			JSON.stringify(options ?? {}),
 		]);
 		const stream = new ClientHttp2Stream(streamId, this);
+		stream[kAsyncContextFrame] = getAsyncContextFrame();
 		http2Streams.set(streamId, stream);
 		return stream;
 	}
@@ -1769,6 +1771,7 @@ var Http2Server = class extends Http2EventEmitter {
 				`http2.${this.encrypted ? "createSecureServer" : "createServer"} is not supported in sandbox`,
 			);
 		}
+		this[kAsyncContextFrame] = getAsyncContextFrame();
 		const options = normalizeListenArgs(
 			portOrOptions,
 			hostOrCallback,
@@ -1904,6 +1907,7 @@ function connectHttp2(authorityOrOptions, optionsOrListener, maybeListener) {
 		initialState?.socket ?? void 0,
 		response,
 	);
+	session[kAsyncContextFrame] = getAsyncContextFrame();
 	applyHttp2SessionState(session, initialState);
 	session._beginInitialSettingsAck();
 	session._retain();
@@ -1991,7 +1995,32 @@ function flushPendingHttp2ClientStreamEvents(streamId) {
 	}
 }
 
-function http2Dispatch(
+// Node runs these events in the context of the native handle: listen() for server
+// events, connect() for a client session, request() for a client stream. An
+// accepted stream has no context.
+function http2EventAsyncContextFrame(kind, id) {
+	if (kind.startsWith("serverStream") && kind !== "serverStream") {
+		return undefined;
+	}
+	if (kind.startsWith("server")) {
+		return http2Servers.get(id)?.[kAsyncContextFrame];
+	}
+	if (kind.startsWith("session") || kind === "clientPushStream") {
+		return http2Sessions.get(id)?.[kAsyncContextFrame];
+	}
+	return http2Streams.get(id)?.[kAsyncContextFrame];
+}
+
+function http2Dispatch(kind, id, ...event) {
+	return runInAsyncContextFrame(
+		http2EventAsyncContextFrame(kind, id),
+		deliverHttp2Event,
+		undefined,
+		[kind, id, ...event],
+	);
+}
+
+function deliverHttp2Event(
 	kind,
 	id,
 	data,

@@ -1,4 +1,5 @@
 import { exposeCustomGlobal } from "../global-exposure.js";
+import { getAsyncContextFrame, kAsyncContextFrame } from "./async-context.js";
 import { NetServer, NetSocket, buildSerializedTlsOptions, isTlsSecureContextWrapper, netModule, parseTlsClientHello } from "./net.js";
 
 function createSecureContextWrapper(options) {
@@ -97,6 +98,8 @@ function tlsConnect(...args) {
     }
   );
   socket.servername = upgradeOptions.servername;
+  // Node makes the TLS wrap here, so wrapped events run in this context.
+  socket[kAsyncContextFrame] = getAsyncContextFrame();
   if (socket._connected) {
     socket._upgradeTls(upgradeOptions);
   } else {
@@ -229,6 +232,8 @@ var TLSServer = class {
     return handled;
   }
   async _handleSecureSocket(socket) {
+    // Node makes the TLS wrap here, so its events run in the context of listen().
+    socket[kAsyncContextFrame] = getAsyncContextFrame();
     const clientHello = this._getClientHello(socket);
     const requestedServername = clientHello?.servername;
     if (requestedServername) {

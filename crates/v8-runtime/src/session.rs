@@ -2876,6 +2876,7 @@ fn session_thread(
                             let scope = &mut v8::HandleScope::new(iso);
                             let ctx = v8::Local::new(scope, &exec_context);
                             let scope = &mut v8::ContextScope::new(scope, ctx);
+                            crate::async_context::clear_async_context(scope);
                             let (c, e) = execution::execute_script_with_options(
                                 scope,
                                 Some(&bridge_ctx),
@@ -2889,6 +2890,7 @@ fn session_thread(
                             let scope = &mut v8::HandleScope::new(iso);
                             let ctx = v8::Local::new(scope, &exec_context);
                             let scope = &mut v8::ContextScope::new(scope, ctx);
+                            crate::async_context::clear_async_context(scope);
                             execution::execute_module(
                                 scope,
                                 &bridge_ctx,
@@ -3765,6 +3767,7 @@ fn dispatch_session_command(
     pending: &crate::bridge::PendingPromises,
     ready_broker: &SessionReadiness,
 ) -> EventLoopStatus {
+    crate::async_context::clear_async_context(scope);
     match cmd {
         SessionCommand::Message(frame) => dispatch_event_loop_frame(scope, frame, pending),
         SessionCommand::ReadyBatch(batch) => dispatch_ready_batch(scope, batch, ready_broker),

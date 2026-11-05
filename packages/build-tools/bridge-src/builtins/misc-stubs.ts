@@ -1,5 +1,6 @@
 import { EventEmitter, once } from "./events.js";
 import { process2 } from "./process.js";
+import { _stdin } from "./stdin.js";
 
 function createWorkerThreadsNotImplementedError(feature) {
   const error = new Error(`node:worker_threads ${feature} is not available in the agentos guest runtime`);
@@ -74,7 +75,7 @@ var builtinWorkerThreadsModule = {
 // process.ts in the bundle's module-cycle order.
 function ttyIsatty(fd) {
   if (fd === 0) {
-    return !!process2.stdin?.isTTY;
+    return !!_stdin?.isTTY;
   }
   if (fd === 1) {
     return !!process2.stdout?.isTTY;

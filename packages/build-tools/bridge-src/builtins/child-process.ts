@@ -1,6 +1,7 @@
 import { _fdClose, _fdGetPath, encodeBridgeBytes, fs } from "./fs.js";
 import { normalizeChildProcessSignal } from "./os.js";
 import { exposeCustomGlobal } from "../global-exposure.js";
+import { getAsyncContextFrame, kAsyncContextFrame, runInAsyncContextFrame } from "./async-context.js";
 import { __export } from "../vendor/esbuild-runtime.js";
 
 var child_process_exports = {};
@@ -332,6 +333,14 @@ function redirectSyncOutputToInheritedFd(fd, output) {
 }
 function routeChildProcessEvent(sessionId, type, data) {
   const child = childProcessInstances.get(sessionId);
+  return runInAsyncContextFrame(
+    child?.[kAsyncContextFrame],
+    deliverChildProcessEvent,
+    void 0,
+    [child, sessionId, type, data]
+  );
+}
+function deliverChildProcessEvent(child, sessionId, type, data) {
   if (!child) {
     let events = earlyChildProcessEvents.get(sessionId);
     if (!events) {
@@ -1368,6 +1377,7 @@ function spawn(command, args, options) {
     opts = options || {};
   }
   const child = new ChildProcess();
+  child[kAsyncContextFrame] = getAsyncContextFrame();
   if (opts.__agentOSForkIpc === true) {
     child._ipcEnabled = true;
     child.connected = true;

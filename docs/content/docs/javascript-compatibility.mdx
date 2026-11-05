@@ -46,9 +46,13 @@ or implemented in the isolate is denied.</Note>
 - Full: `path`, `buffer`, `events`, `stream`, `util`, `assert`, `url`,
   `querystring`, `string_decoder`, `zlib`, `punycode`, `constants`, `sys`.
   Default and named ESM imports supported.
-- Feature-detection shims: `async_hooks`, `diagnostics_channel`, `perf_hooks`,
-  `worker_threads`, `vm`, `v8`. `worker_threads` does **not** create real
-  worker threads.
+- Async context: `AsyncLocalStorage` and `AsyncResource` in `async_hooks`
+  behave as in Node.js, including across native `await`, promises, timers, and
+  callbacks from sockets, servers, child processes, and signals. Overlapping
+  calls do not see each other's store.
+- Feature-detection shims: `createHook` and the async ID functions in
+  `async_hooks`, `diagnostics_channel`, `perf_hooks`, `worker_threads`, `vm`,
+  `v8`. `worker_threads` does **not** create real worker threads.
 
 ## Denied builtins
 

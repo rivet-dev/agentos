@@ -2,6 +2,7 @@ import { UndiciClient, undiciRequest } from "./undici.js";
 import { dispatchCustomEmitterListeners } from "./process.js";
 import { setImmediate } from "./timers.js";
 import { exposeCustomGlobal } from "../global-exposure.js";
+import { bindAsyncContextFrame, getAsyncContextFrame, kAsyncContextFrame, runInAsyncContextFrame } from "./async-context.js";
 import { dns } from "./dns.js";
 import { Headers, MAX_HTTP_BODY_BYTES, MAX_HTTP_REQUEST_HEADERS, MAX_HTTP_REQUEST_HEADER_BYTES, Request, Response } from "./fetch.js";
 import { http2Servers, onHttp2Dispatch, pendingHttp2CompatRequests } from "./http2.js";
@@ -386,6 +387,7 @@ var IncomingMessage = class {
 };
 
 var ClientRequest = class {
+  [kAsyncContextFrame] = getAsyncContextFrame();
   _options;
   _callback;
   _listeners = {};
@@ -451,6 +453,11 @@ var ClientRequest = class {
     Promise.resolve().then(() => this._execute());
   }
   _assignSocket(socket, reusedSocket) {
+    // Node moves a pooled handle to the request that takes it.
+    socket[kAsyncContextFrame] = this[kAsyncContextFrame];
+    return runInAsyncContextFrame(this[kAsyncContextFrame], this._assignSocketInOwnerContext, this, [socket, reusedSocket]);
+  }
+  _assignSocketInOwnerContext(socket, reusedSocket) {
     this.socket = socket;
     this.reusedSocket = reusedSocket;
     const trackedSocket = socket;
@@ -811,8 +818,10 @@ var ClientRequest = class {
     this._rawHeaderNames.delete(lowerName);
     this._options.headers = { ...this._headers };
   }
+  // Request events run in the context that made the request, whichever socket,
+  // pooled queue, or caller of destroy() triggers them.
   _emit(event, ...args) {
-    dispatchCustomEmitterListeners(this, this._listeners[event], args);
+    runInAsyncContextFrame(this[kAsyncContextFrame], dispatchCustomEmitterListeners, void 0, [this, this._listeners[event], args]);
   }
   _listenerCount(event) {
     return this._listeners[event]?.length || 0;
@@ -3642,11 +3651,11 @@ var Server = class {
           isServer: true
         });
         tlsSocket.server = this;
-        tlsSocket.once("secure", () => {
+        tlsSocket.once("secure", bindAsyncContextFrame(getAsyncContextFrame(), () => {
           this._emit("secureConnection", tlsSocket);
           this._emit("connection", tlsSocket);
           attachHttpServerSocket(this, tlsSocket);
-        });
+        }));
         tlsSocket.on("error", (error) => {
           this._emit("tlsClientError", error, tlsSocket);
         });
@@ -4196,6 +4205,9 @@ async function dispatchSocketBackedServerRequest(server, requestInput, streamSoc
 }
 
 function attachHttpServerSocket(server, socket) {
+  // Node's HTTP parser resource starts here, in the context of the 'connection'
+  // event, so request events run in the context of listen().
+  const parserAsyncContextFrame = getAsyncContextFrame();
   let buffer = Buffer.alloc(0);
   let dispatchRunning = false;
   let dispatchPending = false;
@@ -4221,7 +4233,7 @@ function attachHttpServerSocket(server, socket) {
       return;
     }
     dispatchRunning = true;
-    void processRequests().finally(() => {
+    void runInAsyncContextFrame(parserAsyncContextFrame, processRequests, undefined, []).finally(() => {
       dispatchRunning = false;
       if (dispatchPending && !detached) {
         dispatchPending = false;

@@ -263,6 +263,7 @@ fn create_snapshot_inner_in_process(
             let sync_bridge_fns = sync_bridge_fns();
             let async_bridge_fns = async_bridge_fns();
             register_stub_bridge_fns(scope, sync_bridge_fns, async_bridge_fns);
+            crate::async_context::install_async_context_globals(scope);
 
             // Inject default config globals for bridge IIFE setup
             inject_snapshot_defaults(scope);

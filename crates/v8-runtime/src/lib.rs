@@ -1,3 +1,4 @@
+pub mod async_context;
 pub mod bridge;
 pub mod embedded_runtime;
 pub mod execution;

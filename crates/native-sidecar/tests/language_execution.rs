@@ -1144,6 +1144,65 @@ fn evaluate_in_context(
 }
 
 #[test]
+fn context_call_does_not_inherit_async_local_storage_store_from_previous_call() {
+    let mut sidecar = new_sidecar("language-execution-als-store");
+    let connection_id = authenticate_wire(&mut sidecar, "als-store-connection");
+    let session_id = open_session_wire(&mut sidecar, 2, &connection_id);
+    let cwd = temp_dir("language-execution-als-store-cwd");
+    let (vm_id, _) = create_vm_wire(
+        &mut sidecar,
+        3,
+        &connection_id,
+        &session_id,
+        wire::GuestRuntimeKind::JavaScript,
+        &cwd,
+    );
+    let ids = (connection_id.as_str(), session_id.as_str(), vm_id.as_str());
+
+    for (context_id, format) in [
+        ("als-store-module", wire::JavaScriptModuleFormat::Module),
+        ("als-store-commonjs", wire::JavaScriptModuleFormat::CommonJs),
+    ] {
+        create_context(&mut sidecar, ids.0, ids.1, ids.2, context_id);
+
+        let first = evaluate_in_context(
+            &mut sidecar,
+            ids,
+            context_id,
+            format.clone(),
+            r#"(() => {
+                const { AsyncLocalStorage } = require("node:async_hooks");
+                globalThis.als = new AsyncLocalStorage();
+                als.enterWith("first call");
+                return als.getStore();
+            })()"#,
+        );
+        assert_eq!(
+            first.evaluation_value.as_deref(),
+            Some(r#""first call""#),
+            "{context_id}: {:?}",
+            first.error
+        );
+
+        let second = evaluate_in_context(
+            &mut sidecar,
+            ids,
+            context_id,
+            format,
+            r#"als.getStore() ?? "no store""#,
+        );
+        assert_eq!(
+            second.evaluation_value.as_deref(),
+            Some(r#""no store""#),
+            "{context_id}: {:?}",
+            second.error
+        );
+    }
+
+    dispose_vm_and_close_session_wire(&mut sidecar, &connection_id, &session_id, &vm_id);
+}
+
+#[test]
 fn context_call_completes_when_its_result_settles_despite_leftover_handles() {
     let mut sidecar = new_sidecar("language-execution-leftover-handles");
     let connection_id = authenticate_wire(&mut sidecar, "leftover-handles-connection");

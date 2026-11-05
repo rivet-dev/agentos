@@ -34,10 +34,8 @@ import {
 } from "./misc-stubs.js";
 import { builtinPerfHooksModule } from "./perf.js";
 import { process_default } from "./process.js";
-import {
-	builtinAsyncHooksModule,
-	builtinTimersPromisesModule,
-} from "./timers.js";
+import { builtinAsyncHooksModule } from "./async-context.js";
+import { builtinTimersPromisesModule } from "./timers.js";
 import { builtinV8Module } from "./v8.js";
 import { builtinVmModule } from "./vm.js";
 import { resolveObjectURL, URL2, URLSearchParams } from "./whatwg-url.js";

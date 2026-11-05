@@ -14,8 +14,9 @@ import { Buffer3 } from "./buffer-runtime.js";
 import { _stderr, _stdout, installBuiltinUtilFormatWithOptions } from "./console.js";
 import { SandboxCrypto, SandboxCryptoKey, SandboxDOMException, SandboxSubtleCrypto, builtinCryptoModule } from "./crypto.js";
 import { installSafeIntlFormatters } from "./misc-stubs.js";
-import { _stdin, _stdinListeners, _stdinOnceListeners, resetLiveStdinState, setStdinDataValue, setStdinEnded, setStdinFlowMode, setStdinPosition, stdinDispatch, syncLiveStdinHandle } from "./stdin.js";
-import { _nextTickQueue, _queueMicrotask, clearImmediate, clearInterval, clearTimeout2, runWithAsyncLocalStorageSnapshot, scheduleNextTickFlush, setImmediate, setInterval, setTimeout2, snapshotAsyncLocalStorageStores, wrapAsyncLocalStorageCallback } from "./timers.js";
+import { _stdin, _stdinListeners, getProcessStdin, _stdinOnceListeners, resetLiveStdinState, setStdinDataValue, setStdinEnded, setStdinFlowMode, setStdinPosition, stdinDispatch, syncLiveStdinHandle } from "./stdin.js";
+import { _nextTickQueue, _queueMicrotask, clearImmediate, clearInterval, clearTimeout2, scheduleNextTickFlush, setImmediate, setInterval, setTimeout2 } from "./timers.js";
+import { getAsyncContextFrame, runInAsyncContextFrame } from "./async-context.js";
 import { _resolveRuntimeTtyConfig } from "./tty-config.js";
 import { loadWebSocketModule } from "../prelude.js";
 
@@ -149,6 +150,8 @@ function _resolveSignal(signal) {
   throw new Error("Unknown signal: " + signal);
 }
 
+var _processSignalFrames = /* @__PURE__ */ new Map();
+
 function _isTrackedProcessSignalEventName(eventName) {
   return typeof eventName === "string" && _trackedProcessSignalEvents.has(eventName);
 }
@@ -273,7 +276,7 @@ function _deliverProcessSignal(signal, action = "default") {
   if (action === "ignore") {
     return true;
   }
-  if (_emit(sigName, sigName)) {
+  if (runInAsyncContextFrame(_processSignalFrames.get(sigName), _emit, undefined, [sigName, sigName])) {
     return true;
   }
   if (_ignoredSelfSignals.has(sigName)) {
@@ -291,7 +294,16 @@ function signalDispatch(eventType, payload) {
   _deliverProcessSignal(signal, action);
 }
 
+// Node starts a signal's handle with the first listener, and the handle keeps
+// that context.
+function _captureProcessSignalFrame(event) {
+  if (_isTrackedProcessSignalEventName(event) && _listenerCountForEvent(event) === 0) {
+    _processSignalFrames.set(event, getAsyncContextFrame());
+  }
+}
+
 function _addListener(event, listener, once = false) {
+  _captureProcessSignalFrame(event);
   const target = once ? _processOnceListeners : _processListeners;
   if (!target[event]) {
     target[event] = [];
@@ -648,10 +660,10 @@ var process2 = {
     return process2.kill(process2.pid, "SIGABRT");
   },
   nextTick(callback, ...args) {
-    const asyncLocalStorageSnapshot = snapshotAsyncLocalStorageStores();
     _nextTickQueue.push({
-      callback: wrapAsyncLocalStorageCallback(callback, asyncLocalStorageSnapshot),
-      args
+      callback,
+      args,
+      asyncContextFrame: getAsyncContextFrame()
     });
     scheduleNextTickFlush();
   },
@@ -790,6 +802,7 @@ var process2 = {
     return _listenerCountForEvent(event);
   },
   prependListener(event, listener) {
+    _captureProcessSignalFrame(event);
     if (!_processListeners[event]) {
       _processListeners[event] = [];
     }
@@ -798,6 +811,7 @@ var process2 = {
     return process2;
   },
   prependOnceListener(event, listener) {
+    _captureProcessSignalFrame(event);
     if (!_processOnceListeners[event]) {
       _processOnceListeners[event] = [];
     }
@@ -826,7 +840,9 @@ var process2 = {
   // Stdio streams
   stdout: _stdout,
   stderr: _stderr,
-  stdin: _stdin,
+  get stdin() {
+    return getProcessStdin();
+  },
   // Process state
   connected: config2.env?.AGENTOS_NODE_IPC === "1",
   // Module info (will be set by createRequire)
@@ -935,7 +951,7 @@ function installProcessIpcBridge() {
   process2.connected = true;
   _syncProcessIpcHandleLiveness();
   let ipcInputBuffer = "";
-  process2.stdin.on("data", (chunk) => {
+  _stdin.on("data", (chunk) => {
     const parsed = splitChildProcessIpcFrames(ipcInputBuffer, chunk);
     ipcInputBuffer = parsed.buffer;
     for (const message of parsed.messages) {
@@ -979,9 +995,9 @@ function applyProcessConfig(nextConfig) {
   process2.connected = nextConfig.env?.AGENTOS_NODE_IPC === "1";
   process2.mainModule = void 0;
   process2._cwd = nextConfig.cwd;
-  process2.stdin.paused = true;
-  process2.stdin.encoding = null;
-  process2.stdin.isRaw = false;
+  _stdin.paused = true;
+  _stdin.encoding = null;
+  _stdin.isRaw = false;
   _processVersionsCache.node = nextConfig.version.replace(/^v/, "");
 }
 
@@ -1121,17 +1137,12 @@ function setupGlobals() {
   g.setImmediate = setImmediate;
   g.clearImmediate = clearImmediate;
   const nativeQueueMicrotask = typeof g.queueMicrotask === "function" ? g.queueMicrotask.bind(g) : _queueMicrotask;
-  g.queueMicrotask = (callback) => {
-    const asyncLocalStorageSnapshot = snapshotAsyncLocalStorageStores();
-    return nativeQueueMicrotask(() =>
-      runWithAsyncLocalStorageSnapshot(
-        asyncLocalStorageSnapshot,
-        callback,
-        g,
-        []
-      )
-    );
-  };
+  g.queueMicrotask = (callback) =>
+    nativeQueueMicrotask(() => {
+      if (typeof callback === "function") {
+        Reflect.apply(callback, g, []);
+      }
+    });
   installWhatwgUrlGlobals(g);
   g.TextEncoder = TextEncoder2;
   g.TextDecoder = TextDecoder;

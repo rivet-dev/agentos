@@ -2,6 +2,7 @@ import { once } from "./events.js";
 import { exposeCustomGlobal, exposeMutableRuntimeStateGlobal } from "../global-exposure.js";
 import { TextDecoder } from "../polyfills/index.js";
 import { import_buffer2 } from "./buffer-runtime.js";
+import { getAsyncContextFrame, runInAsyncContextFrame } from "./async-context.js";
 import { _getStdinIsTTY, isProcessExitError, routeAsyncCallbackError, scheduleAsyncRethrow } from "./process.js";
 
 var _stdinListeners = {};
@@ -15,6 +16,10 @@ var STDIN_HANDLE_ID = "process.stdin";
 var _stdinLiveBuffer = "";
 
 var _stdinLiveStarted = false;
+
+var _stdinAsyncContextFrame = undefined;
+
+var _stdinAsyncContextFrameCaptured = false;
 
 var _stdinLiveHandleRegistered = false;
 
@@ -198,7 +203,7 @@ function ensureLiveStdinStarted() {
     return;
   }
   if (typeof _kernelStdinRead === "undefined") return;
-  void (async () => {
+  void runInAsyncContextFrame(_stdinAsyncContextFrame, async () => {
     try {
       while (!getStdinEnded()) {
         if (typeof _kernelStdinRead === "undefined") {
@@ -224,10 +229,24 @@ function ensureLiveStdinStarted() {
     }
     _stdinLiveBuffer += _stdinLiveDecoder.decode();
     finishLiveStdin();
-  })();
+  }, undefined, []);
+}
+
+// Node makes the stdin handle on the first read of process.stdin, and stdin events
+// keep that context.
+function getProcessStdin() {
+  if (!_stdinAsyncContextFrameCaptured) {
+    _stdinAsyncContextFrameCaptured = true;
+    _stdinAsyncContextFrame = getAsyncContextFrame();
+  }
+  return _stdin;
 }
 
 function stdinDispatch(eventType, payload) {
+  return runInAsyncContextFrame(_stdinAsyncContextFrame, deliverStdinEvent, undefined, [eventType, payload]);
+}
+
+function deliverStdinEvent(eventType, payload) {
   if (eventType === "stdin_end") {
     finishLiveStdin();
     return;
@@ -447,4 +466,4 @@ var _stdin = {
     };
   }
 };
-export { STDIN_HANDLE_ID, _emitStdinData, _getKernelStdin, _getStreamStdin, _stdin, _stdinListeners, _stdinLiveBuffer, _stdinLiveDecoder, _stdinLiveHandleRegistered, _stdinLiveStarted, _stdinLiveTerminalEventsEmitted, _stdinLiveTerminalEventsScheduled, _stdinOnceListeners, configureLiveStdin, emitStdinListeners, ensureLiveStdinStarted, finishLiveStdin, flushLiveStdinBuffer, getStdinData, getStdinEnded, getStdinFlowMode, getStdinPosition, maybeEmitLiveStdinTerminalEvents, resetLiveStdinState, setStdinDataValue, setStdinEnded, setStdinFlowMode, setStdinPosition, stdinDispatch, syncLiveStdinHandle };
+export { getProcessStdin, STDIN_HANDLE_ID, _emitStdinData, _getKernelStdin, _getStreamStdin, _stdin, _stdinListeners, _stdinLiveBuffer, _stdinLiveDecoder, _stdinLiveHandleRegistered, _stdinLiveStarted, _stdinLiveTerminalEventsEmitted, _stdinLiveTerminalEventsScheduled, _stdinOnceListeners, configureLiveStdin, emitStdinListeners, ensureLiveStdinStarted, finishLiveStdin, flushLiveStdinBuffer, getStdinData, getStdinEnded, getStdinFlowMode, getStdinPosition, maybeEmitLiveStdinTerminalEvents, resetLiveStdinState, setStdinDataValue, setStdinEnded, setStdinFlowMode, setStdinPosition, stdinDispatch, syncLiveStdinHandle };
