@@ -1,5 +1,6 @@
 import { once } from "./events.js";
 import { exposeCustomGlobal } from "../global-exposure.js";
+import { getAsyncContextFrame, runInAsyncContextFrame } from "./async-context.js";
 import { bridgeDispatchSync } from "../transport.js";
 import { _exited, isProcessExitError, routeAsyncCallbackError, scheduleAsyncRethrow } from "./process.js";
 
@@ -76,182 +77,23 @@ var builtinTimersPromisesModule = {
   }
 };
 
-var asyncLocalStorageInstances = /* @__PURE__ */ new Set();
-
-function snapshotAsyncLocalStorageStores() {
-  return Array.from(asyncLocalStorageInstances, (storage) => ({
-    storage,
-    hasStore: storage._hasStore === true,
-    store: storage._store
-  }));
-}
-
-function applyAsyncLocalStorageSnapshot(snapshot) {
-  for (const entry of snapshot) {
-    entry.storage._hasStore = entry.hasStore;
-    entry.storage._store = entry.store;
-  }
-}
-
-function runWithAsyncLocalStorageSnapshot(snapshot, callback, thisArg, args) {
-  if (typeof callback !== "function") {
-    return callback;
-  }
-  const previous = snapshotAsyncLocalStorageStores();
-  applyAsyncLocalStorageSnapshot(snapshot);
-  try {
-    return callback.apply(thisArg, args);
-  } finally {
-    applyAsyncLocalStorageSnapshot(previous);
-  }
-}
-
-function wrapAsyncLocalStorageCallback(callback, snapshot) {
-  if (typeof callback !== "function") {
-    return callback;
-  }
-  return function(...args) {
-    try {
-      return runWithAsyncLocalStorageSnapshot(snapshot, callback, this, args);
-    } catch (error) {
-      if (isProcessExitError(error)) {
-        throw error;
-      }
-      throw error;
-    }
-  };
-}
-
-var builtinAsyncHooksModule = {
-  AsyncLocalStorage: class {
-    constructor() {
-      this._hasStore = false;
-      this._store = void 0;
-      asyncLocalStorageInstances.add(this);
-    }
-    disable() {
-      this._hasStore = false;
-      this._store = void 0;
-    }
-    enterWith(store) {
-      this._hasStore = true;
-      this._store = store;
-    }
-    exit(callback, ...args) {
-      const previous = {
-        hasStore: this._hasStore,
-        store: this._store
-      };
-      this._hasStore = false;
-      this._store = void 0;
-      let restoreOnFinally = true;
-      try {
-        const result = callback(...args);
-        if (result && typeof result.then === "function") {
-          restoreOnFinally = false;
-          return Promise.resolve(result).finally(() => {
-            this._hasStore = previous.hasStore;
-            this._store = previous.store;
-          });
-        }
-        return result;
-      } finally {
-        if (restoreOnFinally) {
-          this._hasStore = previous.hasStore;
-          this._store = previous.store;
-        }
-      }
-    }
-    getStore() {
-      return this._hasStore ? this._store : void 0;
-    }
-    run(store, callback, ...args) {
-      const previous = {
-        hasStore: this._hasStore,
-        store: this._store
-      };
-      this._hasStore = true;
-      this._store = store;
-      let restoreOnFinally = true;
-      try {
-        const result = callback(...args);
-        if (result && typeof result.then === "function") {
-          restoreOnFinally = false;
-          return Promise.resolve(result).finally(() => {
-            this._hasStore = previous.hasStore;
-            this._store = previous.store;
-          });
-        }
-        return result;
-      } finally {
-        if (restoreOnFinally) {
-          this._hasStore = previous.hasStore;
-          this._store = previous.store;
-        }
-      }
-    }
-  },
-  AsyncResource: class {
-    constructor(type = "AgentOsAsyncResource") {
-      this.type = type;
-      this._asyncLocalStorageSnapshot = snapshotAsyncLocalStorageStores();
-    }
-    emitBefore() {
-    }
-    emitAfter() {
-    }
-    emitDestroy() {
-    }
-    asyncId() {
-      return 0;
-    }
-    triggerAsyncId() {
-      return 0;
-    }
-    runInAsyncScope(callback, thisArg, ...args) {
-      return runWithAsyncLocalStorageSnapshot(
-        this._asyncLocalStorageSnapshot,
-        callback,
-        thisArg,
-        args
-      );
-    }
-  },
-  createHook() {
-    return {
-      enable() {
-        return this;
-      },
-      disable() {
-        return this;
-      }
-    };
-  },
-  executionAsyncId() {
-    return 0;
-  },
-  triggerAsyncId() {
-    return 0;
-  }
-};
-
-if (!Promise.prototype.__agentOSAsyncLocalStoragePatched) {
+// A rejection handler must not catch process.exit(), which unwinds as a thrown
+// ProcessExitError. A retained context can run the bridge again, so patch once.
+if (!Promise.prototype.__agentOSProcessExitThenPatched) {
   const nativePromiseThen = Promise.prototype.then;
   Promise.prototype.then = function(onFulfilled, onRejected) {
-    const snapshot = snapshotAsyncLocalStorageStores();
-    const wrappedRejected = typeof onRejected === "function" ? (error) => {
-      if (isProcessExitError(error)) {
-        throw error;
-      }
-      return onRejected(error);
-    } : onRejected;
     return nativePromiseThen.call(
       this,
-      wrapAsyncLocalStorageCallback(onFulfilled, snapshot),
-      wrapAsyncLocalStorageCallback(wrappedRejected, snapshot)
+      onFulfilled,
+      typeof onRejected === "function" ? (error) => {
+        if (isProcessExitError(error)) {
+          throw error;
+        }
+        return onRejected(error);
+      } : onRejected
     );
   };
-  Object.defineProperty(Promise.prototype, "__agentOSAsyncLocalStoragePatched", {
+  Object.defineProperty(Promise.prototype, "__agentOSProcessExitThenPatched", {
     value: true,
     configurable: true
   });
@@ -262,8 +104,6 @@ var TIMER_DISPATCH = {
   arm: "kernelTimerArm",
   clear: "kernelTimerClear"
 };
-
-exposeCustomGlobal("_asyncHooksModule", builtinAsyncHooksModule);
 
 var _queueMicrotask = typeof queueMicrotask === "function" ? queueMicrotask : function(fn) {
   Promise.resolve().then(fn);
@@ -391,6 +231,11 @@ function _waitForTimerDrain() {
   });
 }
 
+// An uncaughtException handler runs in the context that threw.
+function routeAsyncCallbackErrorInFrame(frame, error) {
+  return runInAsyncContextFrame(frame, routeAsyncCallbackError, void 0, [error]);
+}
+
 var _nextTickQueue = [];
 
 var _nextTickScheduled = false;
@@ -403,9 +248,9 @@ function flushNextTickQueue() {
       break;
     }
     try {
-      entry.callback(...entry.args);
+      runInAsyncContextFrame(entry.asyncContextFrame, entry.callback, void 0, entry.args);
     } catch (error) {
-      const outcome = routeAsyncCallbackError(error);
+      const outcome = routeAsyncCallbackErrorInFrame(entry.asyncContextFrame, error);
       if (!outcome.handled && outcome.rethrow !== null) {
         _nextTickQueue.length = 0;
         scheduleAsyncRethrow(outcome.rethrow);
@@ -420,15 +265,7 @@ function scheduleNextTickFlush() {
     return;
   }
   _nextTickScheduled = true;
-  const asyncLocalStorageSnapshot = snapshotAsyncLocalStorageStores();
-  _queueMicrotask(() =>
-    runWithAsyncLocalStorageSnapshot(
-      asyncLocalStorageSnapshot,
-      flushNextTickQueue,
-      globalThis,
-      []
-    )
-  );
+  _queueMicrotask(flushNextTickQueue);
 }
 
 function timerDispatch(_eventType, payload) {
@@ -441,9 +278,9 @@ function timerDispatch(_eventType, payload) {
     _timerEntries.delete(timerId);
   }
   try {
-    entry.callback(...entry.args);
+    runInAsyncContextFrame(entry.asyncContextFrame, entry.callback, entry.handle, entry.args);
   } catch (error) {
-    const outcome = routeAsyncCallbackError(error);
+    const outcome = routeAsyncCallbackErrorInFrame(entry.asyncContextFrame, error);
     if (!outcome.handled && outcome.rethrow !== null) {
       throw outcome.rethrow;
     }
@@ -463,10 +300,10 @@ function setTimeout2(callback, delay, ...args) {
   const actualDelay = Math.max(1, normalizeTimerDelay(delay));
   const id = createKernelTimer(actualDelay, false);
   const handle = new TimerHandle(id);
-  const asyncLocalStorageSnapshot = snapshotAsyncLocalStorageStores();
   _timerEntries.set(id, {
     handle,
-    callback: wrapAsyncLocalStorageCallback(callback, asyncLocalStorageSnapshot),
+    callback,
+    asyncContextFrame: getAsyncContextFrame(),
     args,
     repeat: false
   });
@@ -490,10 +327,10 @@ function setInterval(callback, delay, ...args) {
   const actualDelay = Math.max(1, normalizeTimerDelay(delay));
   const id = createKernelTimer(actualDelay, true);
   const handle = new TimerHandle(id);
-  const asyncLocalStorageSnapshot = snapshotAsyncLocalStorageStores();
   _timerEntries.set(id, {
     handle,
-    callback: wrapAsyncLocalStorageCallback(callback, asyncLocalStorageSnapshot),
+    callback,
+    asyncContextFrame: getAsyncContextFrame(),
     args,
     repeat: true
   });
@@ -516,9 +353,9 @@ function _drainImmediates() {
     entry.handle._destroyed = true;
     _immediateEntries.delete(immediateId);
     try {
-      entry.callback(...entry.args);
+      runInAsyncContextFrame(entry.asyncContextFrame, entry.callback, entry.handle, entry.args);
     } catch (error) {
-      const outcome = routeAsyncCallbackError(error);
+      const outcome = routeAsyncCallbackErrorInFrame(entry.asyncContextFrame, error);
       if (!outcome.handled && outcome.rethrow !== null) {
         throw outcome.rethrow;
       }
@@ -543,10 +380,10 @@ exposeCustomGlobal("_waitForTimerDrain", _waitForTimerDrain);
 function setImmediate(callback, ...args) {
   const id = _nextImmediateId--;
   const handle = new TimerHandle(id);
-  const asyncLocalStorageSnapshot = snapshotAsyncLocalStorageStores();
   _immediateEntries.set(id, {
     handle,
-    callback: wrapAsyncLocalStorageCallback(callback, asyncLocalStorageSnapshot),
+    callback,
+    asyncContextFrame: getAsyncContextFrame(),
     args,
     repeat: false
   });
@@ -566,4 +403,4 @@ function clearImmediate(timer) {
   if (id < 0) return;
   clearTimeout2(timer);
 }
-export { TIMER_DISPATCH, TimerHandle, _drainImmediates, _getPendingImmediateCount, _getPendingTimerCount, _immediateEntries, _nextImmediateId, _nextTickQueue, _nextTickScheduled, _queueMicrotask, _timerDrainResolvers, _timerEntries, _waitForTimerDrain, applyAsyncLocalStorageSnapshot, armKernelTimer, asyncLocalStorageInstances, builtinAsyncHooksModule, builtinTimersPromisesModule, checkTimerDrain, clearImmediate, clearInterval, clearTimeout2, createKernelTimer, flushNextTickQueue, getPendingImmediateCount, getPendingTimerDrainCount, getRefedTimerCount, getTimerId, normalizeTimerDelay, runWithAsyncLocalStorageSnapshot, scheduleNextTickFlush, setImmediate, setInterval, setTimeout2, snapshotAsyncLocalStorageStores, timerDispatch, wrapAsyncLocalStorageCallback };
+export { TIMER_DISPATCH, TimerHandle, _drainImmediates, _getPendingImmediateCount, _getPendingTimerCount, _immediateEntries, _nextImmediateId, _nextTickQueue, _nextTickScheduled, _queueMicrotask, _timerDrainResolvers, _timerEntries, _waitForTimerDrain, armKernelTimer, builtinTimersPromisesModule, checkTimerDrain, clearImmediate, clearInterval, clearTimeout2, createKernelTimer, flushNextTickQueue, getPendingImmediateCount, getPendingTimerDrainCount, getRefedTimerCount, getTimerId, normalizeTimerDelay, scheduleNextTickFlush, setImmediate, setInterval, setTimeout2, timerDispatch };

@@ -1,4 +1,5 @@
 import { exposeCustomGlobal } from "../global-exposure.js";
+import { bindAsyncContextFrame, getAsyncContextFrame, kAsyncContextFrame, runInAsyncContextFrame } from "./async-context.js";
 import { streamStdlibModuleNs } from "../prelude.js";
 import {
 	createBadRequestResponseBuffer,
@@ -1765,6 +1766,7 @@ exposeCustomGlobal("_netSocketDispatch", netSocketDispatch);
 const NET_BRIDGE_MAX_RAW_WRITE_BYTES = 256 * 1024;
 
 var NetSocket = class _NetSocket extends CanonicalDuplex {
+	[kAsyncContextFrame] = getAsyncContextFrame();
 	_livenessId = `net-socket:${++nextNetSocketLivenessId}`;
 	_handleRefId = null;
 	_socketId = 0;
@@ -1872,6 +1874,7 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 			callback: cb,
 		} = normalizeConnectArgs(portOrOptions, hostOrCallback, callback);
 		if (cb) this.once("connect", cb);
+		this[kAsyncContextFrame] = getAsyncContextFrame();
 		this.connecting = true;
 		if (path) {
 			delete this.remoteAddress;
@@ -2131,7 +2134,29 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 			this._releaseBridgeSocket();
 		}
 		callback(error);
-		queueMicrotask(() => this._emitSocketClose(Boolean(error)));
+		// Node emits 'close' from the handle, in the context that made it.
+		queueMicrotask(() =>
+			runInAsyncContextFrame(
+				this[kAsyncContextFrame],
+				this._emitSocketClose,
+				this,
+				[Boolean(error)],
+			),
+		);
+	}
+	// Writes can queue and flush together, but each callback belongs to its writer.
+	write(chunk, encodingOrCallback, callback) {
+		const frame = getAsyncContextFrame();
+		if (typeof encodingOrCallback === "function") {
+			return super.write(chunk, bindAsyncContextFrame(frame, encodingOrCallback));
+		}
+		return super.write(
+			chunk,
+			encodingOrCallback,
+			typeof callback === "function"
+				? bindAsyncContextFrame(frame, callback)
+				: callback,
+		);
 	}
 	_queueBridgeWrite(buf, callback, retainInput = false) {
 		if (!this._pendingBridgeWriteChunks) {
@@ -2406,6 +2431,8 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 	}
 	static fromAcceptedHandle(handle, options) {
 		const socket = new _NetSocket({ allowHalfOpen: options?.allowHalfOpen });
+		// Like a native accept, an accepted handle has no context of its own.
+		socket[kAsyncContextFrame] = undefined;
 		socket._socketId = handle.socketId;
 		socket.capabilityId = handle.info?.capabilityId;
 		socket.capabilityGeneration = handle.info?.capabilityGeneration;
@@ -2468,6 +2495,9 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 			this.once("timeout", callback);
 		}
 		this._timeoutMs = nextTimeout;
+		// Activity re-arms the timer from other contexts, but 'timeout' belongs to
+		// the context that called setTimeout().
+		this._timeoutAsyncContextFrame = getAsyncContextFrame();
 		if (nextTimeout === 0) {
 			this._clearTimeoutTimer();
 			return this;
@@ -2628,6 +2658,16 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 		return handled;
 	}
 	_queueReadablePayload(payload) {
+		// Each delivery starts from the owner's context, so a store entered by one
+		// chunk's listener does not reach the next chunk.
+		return runInAsyncContextFrame(
+			this[kAsyncContextFrame],
+			this._queueReadablePayloadInOwnerContext,
+			this,
+			[payload],
+		);
+	}
+	_queueReadablePayloadInOwnerContext(payload) {
 		if (!payload || payload.length === 0) {
 			return;
 		}
@@ -2732,7 +2772,17 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 			this.destroy();
 		}
 	}
-	async _pumpBridgeReads() {
+	_pumpBridgeReads() {
+		// A pump can start from a readiness wake or from whichever context first
+		// wanted data. Socket events belong to the context that made the handle.
+		return runInAsyncContextFrame(
+			this[kAsyncContextFrame],
+			this._pumpBridgeReadsInOwnerContext,
+			this,
+			[],
+		);
+	}
+	async _pumpBridgeReadsInOwnerContext() {
 		if (!this._applicationReadDemand) {
 			countNetBridgeMetric("readPumpSkippedNoDemand");
 			return;
@@ -3287,7 +3337,12 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 			if (this.destroyed) {
 				return;
 			}
-			this._emitNet("timeout");
+			runInAsyncContextFrame(
+				this._timeoutAsyncContextFrame,
+				this._emitNet,
+				this,
+				["timeout"],
+			);
 		}, this._timeoutMs);
 		if (!this._refed && typeof this._timeoutTimer.unref === "function") {
 			this._timeoutTimer.unref();
@@ -3308,6 +3363,7 @@ function netConnect(portOrOptions, hostOrCallback, callback) {
 }
 
 var NetServer = class {
+	[kAsyncContextFrame] = undefined;
 	_listeners = {};
 	_onceListeners = {};
 	_serverId = 0;
@@ -3440,6 +3496,7 @@ var NetServer = class {
 		if (cb) {
 			this.once("listening", cb);
 		}
+		this[kAsyncContextFrame] = getAsyncContextFrame();
 		try {
 			const resultValue = _netServerListenRaw.applySyncPromise(void 0, [
 				{
@@ -3651,7 +3708,15 @@ var NetServer = class {
 			_registerHandle(this._handleRefId, "net server", () => this.close());
 		}
 	}
-	async _pumpAccepts() {
+	_pumpAccepts() {
+		return runInAsyncContextFrame(
+			this[kAsyncContextFrame],
+			this._pumpAcceptsInOwnerContext,
+			this,
+			[],
+		);
+	}
+	async _pumpAcceptsInOwnerContext() {
 		if (typeof _netServerAcceptRaw === "undefined" || this._acceptLoopRunning) {
 			if (this._acceptLoopRunning) {
 				countNetBridgeMetric("acceptLoopAlreadyRunning");
@@ -3741,7 +3806,13 @@ var NetServer = class {
 						accepted.info,
 					);
 					const onConnectionStartUs = traceMetrics ? netBridgeNowUs() : 0;
-					this._handle.onconnection(null, clientHandle);
+					// Each connection starts from the context of listen().
+					runInAsyncContextFrame(
+						this[kAsyncContextFrame],
+						this._handle.onconnection,
+						this._handle,
+						[null, clientHandle],
+					);
 					if (traceMetrics) {
 						countNetBridgeMetric(
 							"acceptOnConnectionUs",

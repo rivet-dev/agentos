@@ -5458,6 +5458,943 @@ fn __builtin_conformance_case_runner() {
     run_named_case(&case_name);
 }
 
+// `node:async_hooks` is not in the default probe allowlist.
+const ASYNC_CONTEXT_PROBE_BUILTINS: &[&str] = &[
+    "async_hooks",
+    "child_process",
+    "dns",
+    "events",
+    "dgram",
+    "fs",
+    "http",
+    "http2",
+    "module",
+    "net",
+    "path",
+    "stream",
+    "timers",
+    "tls",
+    "url",
+    "vm",
+    "zlib",
+];
+
+fn run_async_context_guest_probe(case_name: &str, cwd: &Path, entrypoint: &Path) -> Value {
+    run_guest_probe_with_config(
+        case_name,
+        cwd,
+        entrypoint,
+        HashMap::new(),
+        wire_permissions_allow_all(),
+        ASYNC_CONTEXT_PROBE_BUILTINS,
+    )
+}
+
+fn assert_async_context_conformance(case_name: &str, script: &str) {
+    assert_node_available();
+
+    let cwd = temp_dir(&format!("builtin-conformance-{case_name}"));
+    let entrypoint = cwd.join("entry.mjs");
+    write_fixture(&entrypoint, script);
+
+    let host = run_host_probe(&cwd, &entrypoint);
+    let guest = run_async_context_guest_probe(case_name, &cwd, &entrypoint);
+
+    assert_eq!(
+        guest,
+        host,
+        "guest V8 result diverged from host Node for {case_name}\nhost: {}\nguest: {}",
+        serde_json::to_string_pretty(&host).expect("pretty host JSON"),
+        serde_json::to_string_pretty(&guest).expect("pretty guest JSON")
+    );
+}
+
+fn run_async_context_probe_script(case_name: &str, script: &str) -> Value {
+    assert_node_available();
+
+    let cwd = temp_dir(&format!("builtin-conformance-{case_name}"));
+    let entrypoint = cwd.join("entry.mjs");
+    write_fixture(&entrypoint, script);
+    run_async_context_guest_probe(case_name, &cwd, &entrypoint)
+}
+
+fn async_local_storage_isolates_overlapping_calls_impl() {
+    assert_async_context_conformance(
+        "als-overlapping-calls",
+        r#"
+import { AsyncLocalStorage } from "node:async_hooks";
+import { once } from "node:events";
+import fs from "node:fs/promises";
+import net from "node:net";
+
+const als = new AsyncLocalStorage();
+const wrong = [];
+const expectStore = (expected, step) => {
+  const seen = als.getStore() ?? null;
+  if (seen !== expected) wrong.push({ expected, step, seen });
+};
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const echoServer = net.createServer((socket) => socket.on("data", (chunk) => socket.write(chunk)));
+echoServer.listen(0, "127.0.0.1");
+await once(echoServer, "listening");
+
+async function socketRoundTrip(payload) {
+  const socket = net.connect(echoServer.address().port, "127.0.0.1");
+  await once(socket, "connect");
+  socket.write(payload);
+  const [echoed] = await once(socket, "data");
+  socket.destroy();
+  return String(echoed);
+}
+
+const call = (id, delayMs) =>
+  als.run(id, async () => {
+    expectStore(id, "sync start");
+    await null;
+    expectStore(id, "after microtask");
+    await sleep(delayMs);
+    expectStore(id, "after timer");
+    await new Promise((resolve) => setImmediate(resolve));
+    expectStore(id, "after setImmediate");
+    await new Promise((resolve) => process.nextTick(resolve));
+    expectStore(id, "after nextTick");
+    await new Promise((resolve) => queueMicrotask(resolve));
+    expectStore(id, "after queueMicrotask");
+
+    const file = new URL(`./overlap-${id}.txt`, import.meta.url);
+    await fs.writeFile(file, id);
+    expectStore(id, "after fs write");
+    if ((await fs.readFile(file, "utf8")) !== id) wrong.push({ id, step: "fs content" });
+    expectStore(id, "after fs read");
+
+    if ((await socketRoundTrip(id)) !== id) wrong.push({ id, step: "socket content" });
+    expectStore(id, "after socket round trip");
+
+    // The nested context is parked while the outer one keeps running.
+    const innerId = `${id}/inner`;
+    const inner = als.run(innerId, async () => {
+      await sleep(3);
+      expectStore(innerId, "nested after timer");
+      return als.getStore();
+    });
+    expectStore(id, "outer after nested run returned");
+    await sleep(1);
+    expectStore(id, "outer while nested is parked");
+    if ((await inner) !== innerId) wrong.push({ id, step: "nested result" });
+    expectStore(id, "outer after nested finished");
+    return als.getStore();
+  });
+
+// This context ends while every other call is still parked.
+const shortLived = als.run("short-lived", async () => {
+  await null;
+  expectStore("short-lived", "short-lived");
+  return "ended";
+});
+const ids = Array.from({ length: 40 }, (_, index) => `call-${index}`);
+const calls = ids.map((id, index) => call(id, 1 + ((index * 7) % 23)));
+const callerAfterRun = als.getStore() ?? null;
+// Runs while every call is parked, from a context with no store.
+const callerTimer = await new Promise((resolve) => setTimeout(() => resolve(als.getStore() ?? null), 2));
+const shortLivedResult = await shortLived;
+const callerAfterShortLived = als.getStore() ?? null;
+const returned = await Promise.all(calls);
+echoServer.close();
+
+console.log(JSON.stringify({
+  wrong,
+  everyCallReturnedItsOwnId: returned.every((value, index) => value === ids[index]),
+  callerAfterRun,
+  callerTimer,
+  shortLivedResult,
+  callerAfterShortLived,
+  callerAtEnd: als.getStore() ?? null,
+}));
+"#,
+    );
+}
+
+#[test]
+fn async_local_storage_isolates_overlapping_calls() {
+    run_isolated_builtin_conformance_test("als-overlapping-calls");
+}
+
+fn async_local_storage_api_matches_host_node_impl() {
+    assert_async_context_conformance(
+        "als-api",
+        r#"
+import { AsyncLocalStorage, AsyncResource } from "node:async_hooks";
+import fs from "node:fs";
+import { createRequire } from "node:module";
+import vm from "node:vm";
+
+const require = createRequire(import.meta.url);
+const als = new AsyncLocalStorage();
+const store = () => als.getStore() ?? null;
+const out = {};
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+als.run("sync", () => { out.syncRun = store(); });
+out.afterSyncRun = store();
+try {
+  als.run("throws", () => { throw new Error("boom"); });
+} catch {
+  out.afterRunThrew = store();
+}
+
+als.run("then", () => { Promise.resolve().then(() => sleep(1)).then(() => { out.thenChain = store(); }); });
+await sleep(10);
+
+// A reaction belongs to the context that registered it, not the one that resolved.
+let resolveLate;
+const late = new Promise((resolve) => { resolveLate = resolve; });
+const registered = als.run("registered", () => late.then(store));
+als.run("resolver", () => resolveLate());
+out.reactionContext = await registered;
+
+out.thenable = await als.run("thenable", async () => await { then(resolve) { resolve(store()); } });
+out.asyncGenerator = await als.run("generator", async () => {
+  async function* values() {
+    yield store();
+    await sleep(1);
+    yield store();
+  }
+  const seen = [];
+  for await (const value of values()) seen.push(value);
+  return seen;
+});
+await als.run("interval", () => new Promise((resolve) => {
+  const interval = setInterval(() => {
+    out.interval = store();
+    clearInterval(interval);
+    resolve();
+  }, 1);
+}));
+
+await als.run("outer", async () => {
+  als.enterWith("entered");
+  out.enterWithSync = store();
+  await sleep(1);
+  out.enterWithAfterAwait = store();
+});
+out.afterEnterWith = store();
+
+await als.run("outer", async () => {
+  const inside = als.exit(async () => {
+    const sync = store();
+    await sleep(1);
+    return [sync, store()];
+  });
+  out.afterExitReturned = store();
+  out.insideExit = await inside;
+});
+
+// Stores are per instance, and falsy stores are real stores.
+const second = new AsyncLocalStorage();
+als.run("first", () => second.run(0, () => { out.twoInstances = [store(), second.getStore()]; }));
+
+const disabled = new AsyncLocalStorage();
+await disabled.run("set", async () => {
+  disabled.disable();
+  out.disabledSync = disabled.getStore() ?? null;
+  await null;
+  out.disabledAfterAwait = disabled.getStore() ?? null;
+  disabled.run("again", () => { out.runAfterDisable = disabled.getStore(); });
+});
+
+const resource = als.run("resource", () => new AsyncResource("probe"));
+als.run("caller", () => {
+  out.runInAsyncScope = resource.runInAsyncScope(store);
+  out.afterRunInAsyncScope = store();
+  out.resourceBind = resource.bind(store)();
+  out.resourceBindThis = resource.bind(function () { return this; }, "this-value")();
+  out.staticBind = als.run("static-bind", () => AsyncResource.bind(store))();
+  out.alsBind = als.run("als-bind", () => AsyncLocalStorage.bind(store))();
+  out.snapshot = als.run("snapshot", () => AsyncLocalStorage.snapshot())(store);
+  out.afterBound = store();
+});
+
+// Synchronous re-entry into V8 keeps the caller's store.
+await sleep(1);
+out.vmScript = als.run("vm", () => {
+  vm.runInThisContext("Promise.resolve().then(() => {})");
+  return store();
+});
+fs.writeFileSync(new URL("./dependency.mjs", import.meta.url), "export const value = 1;");
+out.requireEsm = als.run("require-esm", () => {
+  require("./dependency.mjs");
+  return store();
+});
+
+out.final = store();
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn async_local_storage_api_matches_host_node() {
+    run_isolated_builtin_conformance_test("als-api");
+}
+
+fn async_local_storage_runtime_callbacks_match_host_node_impl() {
+    assert_async_context_conformance(
+        "als-runtime-callbacks",
+        r#"
+import { AsyncLocalStorage } from "node:async_hooks";
+import childProcess from "node:child_process";
+import dns from "node:dns";
+import fs from "node:fs";
+import http from "node:http";
+import net from "node:net";
+import { PassThrough, pipeline, Readable } from "node:stream";
+import zlib from "node:zlib";
+
+const als = new AsyncLocalStorage();
+const store = () => als.getStore() ?? null;
+const out = {};
+const fixture = new URL(import.meta.url);
+// A stuck step reports how far the probe got, not a blank timeout.
+setTimeout(() => {
+  console.log(JSON.stringify({ stuckAfter: Object.keys(out).at(-1), out }));
+  process.exit(3);
+}, 8000).unref();
+
+// Socket events run in the context that created the handle, not the context that
+// added the listener. A handle made in a server's accept has no context.
+await new Promise((done) => {
+  const server = als.run("net-server", () => net.createServer((accepted) => {
+    out.netConnection = store();
+    accepted.on("data", () => {
+      out.netAcceptedData = store();
+      accepted.end("pong");
+    });
+  }));
+  als.run("net-listen", () => server.listen(0, "127.0.0.1", () => {
+    out.netListening = store();
+    const client = als.run("net-client", () => net.connect(server.address().port, "127.0.0.1"));
+    als.run("net-listeners", () => {
+      client.on("connect", () => {
+        out.netClientConnect = store();
+        client.write("ping");
+      });
+      client.on("data", () => { out.netClientData = store(); });
+      client.on("close", () => {
+        out.netClientClose = store();
+        server.close();
+        done();
+      });
+    });
+  }));
+});
+
+await new Promise((done) => {
+  const server = als.run("http-server", () => http.createServer((request, response) => {
+    out.httpRequest = store();
+    request.on("end", () => {
+      out.httpRequestEnd = store();
+      response.end("ok");
+    });
+    request.resume();
+  }));
+  als.run("http-listen", () => server.listen(0, "127.0.0.1", () => {
+    als.run("http-client", () => {
+      http.get({ host: "127.0.0.1", port: server.address().port, agent: false }, (response) => {
+        out.httpResponse = store();
+        response.on("data", () => { out.httpResponseData = store(); });
+        response.on("end", () => {
+          out.httpResponseEnd = store();
+          server.close();
+          done();
+        });
+      });
+    });
+  }));
+});
+
+out.fetch = await als.run("fetch", async () => {
+  const server = http.createServer((request, response) => response.end("ok"));
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/`, { headers: { connection: "close" } });
+  await response.text();
+  server.close();
+  return store();
+});
+
+const callback = (name, start) =>
+  als.run(name, () => new Promise((resolve) => start(() => {
+    out[name] = store();
+    resolve();
+  })));
+await callback("fsReadFile", (done) => fs.readFile(fixture, done));
+await callback("fsStat", (done) => fs.stat(fixture, done));
+await callback("zlibGzip", (done) => zlib.gzip("x", done));
+await callback("dnsLookup", (done) => dns.lookup("localhost", done));
+await callback("childExecFile", (done) => childProcess.execFile("node", ["-e", "0"], done));
+await callback("fsReadStream", (done) => {
+  const stream = fs.createReadStream(fixture);
+  stream.on("data", () => { out.fsReadStreamData = store(); });
+  stream.on("close", done);
+});
+await callback("streamPipeline", (done) => pipeline(Readable.from(["x"]), new PassThrough().resume(), done));
+
+await new Promise((done) => {
+  const child = als.run("child", () => childProcess.spawn("node", ["-e", "console.log('x')"]));
+  als.run("child-listeners", () => {
+    child.stdout.on("data", () => { out.childStdout = store(); });
+    child.on("exit", () => { out.childExit = store(); });
+    child.on("close", () => {
+      out.childClose = store();
+      done();
+    });
+  });
+});
+
+await new Promise((done) => {
+  const keepAlive = setInterval(() => {}, 10);
+  als.run("signal", () => process.once("SIGHUP", () => {
+    out.signal = store();
+    clearInterval(keepAlive);
+    done();
+  }));
+  als.run("signal-sender", () => process.kill(process.pid, "SIGHUP"));
+});
+
+// A handler for an uncaught error runs in the context that threw.
+await new Promise((done) => {
+  process.once("uncaughtException", () => {
+    out.uncaughtException = store();
+    done();
+  });
+  als.run("thrower", () => setTimeout(() => { throw new Error("boom"); }, 1));
+});
+
+out.final = store();
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn async_local_storage_runtime_callbacks_match_host_node() {
+    run_isolated_builtin_conformance_test("als-runtime-callbacks");
+}
+
+fn async_local_storage_http2_tls_and_udp_callbacks_match_host_node_impl() {
+    assert_async_context_conformance(
+        "als-http2-tls-udp",
+        r#"
+import { AsyncLocalStorage } from "node:async_hooks";
+import http2 from "node:http2";
+import dgram from "node:dgram";
+import net from "node:net";
+import tls from "node:tls";
+
+const als = new AsyncLocalStorage();
+const s = () => als.getStore() ?? null;
+const out = {};
+setTimeout(() => {
+  console.log(JSON.stringify({ stuckAfter: Object.keys(out).at(-1), out }));
+  process.exit(3);
+}, 8000).unref();
+await new Promise((done) => {
+  const server = als.run("h2-server", () => http2.createServer());
+  server.on("session", () => { out.h2ServerSession = s(); });
+  als.run("h2-on", () => server.on("stream", (stream) => {
+    out.h2ServerStream = s();
+    stream.on("data", () => { out.h2ServerStreamData = s(); });
+    stream.on("end", () => { out.h2ServerStreamEnd = s(); stream.respond({ ":status": 200 }); stream.end("ok"); });
+  }));
+  als.run("h2-listen", () => server.listen(0, "127.0.0.1", () => {
+    out.h2Listening = s();
+    const client = als.run("h2-connect", () => http2.connect(`http://127.0.0.1:${server.address().port}`));
+    client.on("connect", () => { out.h2ClientConnect = s(); });
+    const req = als.run("h2-request", () => client.request({ ":path": "/", ":method": "POST" }));
+    als.run("h2-reg", () => {
+      req.on("response", () => { out.h2Response = s(); });
+      req.on("data", () => { out.h2ResponseData = s(); });
+      req.on("end", () => { out.h2ResponseEnd = s(); });
+      req.on("close", () => { out.h2RequestClose = s(); client.close(); server.close(); done(); });
+    });
+    req.end("body");
+  }));
+});
+const key = `-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgGU2u3Uut27dfKu/J
+PhJQU1d4qsWR2fRhsz6QgMDgkpKhRANCAATPt/xCvp7MGxe3bORLNY5MCZk+/h83
+I20gtTbpL1OEZ8Xs5rhg1yq/v/wMVpihbW46atrd7yikTp+w/KfKsoGS
+-----END PRIVATE KEY-----`;
+const cert = `-----BEGIN CERTIFICATE-----
+MIIBfzCCASWgAwIBAgIUSyBXZ/hpG6jMQau8+4Kf1oEhXAowCgYIKoZIzj0EAwIw
+FDESMBAGA1UEAwwJbG9jYWxob3N0MCAXDTI2MTEwNTA5NTA0OFoYDzIxMjYxMDEy
+MDk1MDQ4WjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwWTATBgcqhkjOPQIBBggqhkjO
+PQMBBwNCAATPt/xCvp7MGxe3bORLNY5MCZk+/h83I20gtTbpL1OEZ8Xs5rhg1yq/
+v/wMVpihbW46atrd7yikTp+w/KfKsoGSo1MwUTAdBgNVHQ4EFgQU5Wk27H2od303
+qSzbKd4GL7eS91YwHwYDVR0jBBgwFoAU5Wk27H2od303qSzbKd4GL7eS91YwDwYD
+VR0TAQH/BAUwAwEB/zAKBggqhkjOPQQDAgNIADBFAiEAuZ1ZxmTLFryq/rGJM7bk
+jdDldJGq33Wr55EsOtZgZ8wCIBJzgvhLdwQ6W7xOXt+7Ec3/8VHa92EZA/yOYKFp
+W95w
+-----END CERTIFICATE-----`;
+await new Promise((done) => {
+  const server = als.run("tls-create", () => tls.createServer({ key, cert }, (socket) => {
+    out.tlsSecureConnection = s();
+    socket.on("data", () => {
+      out.tlsServerData = s();
+      socket.end("y");
+    });
+  }));
+  als.run("tls-listen", () => server.listen(0, "127.0.0.1", () => {
+    const client = als.run("tls-client", () => tls.connect({ port: server.address().port, host: "127.0.0.1", rejectUnauthorized: false }));
+    als.run("tls-listeners", () => {
+      client.on("secureConnect", () => {
+        out.tlsSecureConnect = s();
+        client.write("x");
+      });
+      client.on("data", () => { out.tlsClientData = s(); });
+      client.on("close", () => {
+        out.tlsClientClose = s();
+        server.close();
+        done();
+      });
+    });
+  }));
+});
+// A TLS wrap around an existing socket owns its events from the context that wrapped.
+await new Promise((done) => {
+  const server = tls.createServer({ key, cert }, (socket) => {
+    socket.on("data", () => socket.end("y"));
+    socket.on("error", () => {});
+  });
+  server.listen(0, "127.0.0.1", () => {
+    const raw = als.run("tls-raw", () => net.connect(server.address().port, "127.0.0.1"));
+    raw.once("connect", () => {
+      const wrapped = als.run("tls-wrap", () => tls.connect({ socket: raw, rejectUnauthorized: false }));
+      wrapped.on("secureConnect", () => {
+        out.tlsWrapSecureConnect = s();
+        wrapped.write("x");
+      });
+      wrapped.on("data", () => { out.tlsWrapData = s(); });
+      wrapped.on("close", () => {
+        server.close();
+        done();
+      });
+    });
+  });
+});
+await new Promise((done) => {
+  const sock = als.run("udp", () => dgram.createSocket("udp4"));
+  als.run("udp-reg", () => sock.on("message", () => { out.udpMessage = s(); sock.close(); done(); }));
+  als.run("udp-bind", () => sock.bind(0, "127.0.0.1", () => { out.udpBound = s(); sock.send("x", sock.address().port, "127.0.0.1"); }));
+});
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn async_local_storage_http2_tls_and_udp_callbacks_match_host_node() {
+    run_isolated_builtin_conformance_test("als-http2-tls-udp");
+}
+
+fn async_local_storage_resource_lifecycle_matches_host_node_impl() {
+    assert_async_context_conformance(
+        "als-resource-lifecycle",
+        r#"
+import { AsyncLocalStorage } from "node:async_hooks";
+import net from "node:net"; import http from "node:http"; import cp from "node:child_process";
+const als = new AsyncLocalStorage(); const s = () => als.getStore() ?? null; const out = {};
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+{ const d = new AsyncLocalStorage(); d.run(1, () => { d.disable(); d.exit(() => {}); out.disableThenExit = d.getStore() ?? null; }); }
+{ const d = new AsyncLocalStorage(); d.run(1, () => { d.disable(); d.enterWith(3); out.disableThenEnter = d.getStore() ?? null; }); }
+{ const d = new AsyncLocalStorage(); const p = d.run("other", async () => { await sleep(5); return d.getStore() ?? null; }); d.run(1, () => d.disable()); d.run(9, () => {}); out.disableThenReenableOther = await p; }
+await new Promise((done) => { const keep = setInterval(() => {}, 5); als.run("prep", () => process.prependOnceListener("SIGHUP", () => { out.signalPrependOnce = s(); clearInterval(keep); done(); })); process.kill(process.pid, "SIGHUP"); });
+await new Promise((done) => { const keep = setInterval(() => {}, 5); als.run("prep2", () => process.prependListener("SIGHUP", function f() { process.removeListener("SIGHUP", f); out.signalPrepend = s(); clearInterval(keep); done(); })); process.kill(process.pid, "SIGHUP"); });
+await new Promise((done) => { const keep = setInterval(() => {}, 5); const a = () => {}; als.run("A", () => process.on("SIGHUP", a)); process.removeListener("SIGHUP", a); als.run("B", () => process.once("SIGHUP", () => { out.signalAfterRemove = s(); clearInterval(keep); done(); })); process.kill(process.pid, "SIGHUP"); });
+const server = als.run("srv", () => net.createServer((c) => { c.on("error", () => {}); c.on("data", () => {}); }));
+await new Promise((r) => als.run("listen", () => server.listen(0, "127.0.0.1", r)));
+const port = server.address().port;
+await new Promise((done) => { const c = als.run("client", () => net.connect(port, "127.0.0.1")); c.on("connect", () => { als.run("destroyer", () => c.destroy()); }); c.on("close", () => { out.closeAfterLocalDestroy = s(); done(); }); });
+await new Promise((done) => { const c = als.run("client2", () => net.connect(port, "127.0.0.1")); c.on("error", () => { out.errorAfterDestroyErr = s(); }); c.on("connect", () => { als.run("destroyer2", () => c.destroy(new Error("x"))); }); c.on("close", () => { out.closeAfterDestroyErr = s(); done(); }); });
+await new Promise((done) => { const c = als.run("client3", () => net.connect(port, "127.0.0.1")); c.on("connect", () => { als.run("ender", () => c.end()); }); c.on("finish", () => { out.finishAfterEnd = s(); }); c.on("close", () => { out.closeAfterEnd = s(); done(); }); c.resume(); setTimeout(() => c.destroySoon?.(), 20); });
+await new Promise((done) => { const c = als.run("client4", () => net.connect(port, "127.0.0.1")); als.run("timeout-setter", () => c.setTimeout(5)); c.on("timeout", () => { out.socketTimeout = s(); c.destroy(); }); c.on("close", done); });
+await new Promise((done) => { const c = als.run("client5", () => net.connect(1, "127.0.0.1")); c.on("error", () => { out.connectError = s(); }); c.on("close", () => done()); });
+await new Promise((done) => { als.run("closer", () => server.close(() => { out.serverCloseCallback = s(); done(); })); server.on("close", () => { out.serverCloseEvent = s(); }); });
+await new Promise((done) => { const ch = als.run("child", () => cp.spawn("node", ["-e", "setTimeout(()=>{},5000)"])); ch.on("exit", () => { out.childExitAfterKill = s(); }); ch.on("close", () => { out.childCloseAfterKill = s(); done(); }); setTimeout(() => als.run("killer", () => ch.kill()), 50); });
+await new Promise((done) => { const hs = http.createServer((q, r) => { r.end("ok"); }); hs.listen(0, "127.0.0.1", () => { const rq = als.run("hreq", () => http.get({ host: "127.0.0.1", port: hs.address().port, agent: false })); rq.on("response", (r) => { r.resume(); als.run("hdestroyer", () => rq.destroy()); }); rq.on("close", () => { out.httpCloseAfterDestroy = s(); hs.close(); hs.closeAllConnections?.(); done(); }); }); });
+out.final = s();
+console.log(JSON.stringify(out));
+process.exit(0);
+"#,
+    );
+}
+
+#[test]
+fn async_local_storage_resource_lifecycle_matches_host_node() {
+    run_isolated_builtin_conformance_test("als-resource-lifecycle");
+}
+
+// A store entered at the top level follows the main module's own async work.
+fn async_local_storage_top_level_enter_with_matches_host_node_impl() {
+    assert_async_context_conformance(
+        "als-top-level-enter-with",
+        r#"
+import { AsyncLocalStorage } from "node:async_hooks";
+import net from "node:net";
+
+const als = new AsyncLocalStorage();
+const store = () => als.getStore() ?? null;
+const out = {};
+
+als.enterWith("main");
+await null;
+out.afterAwait = store();
+
+await new Promise((done) => {
+  const server = net.createServer((accepted) => {
+    out.connection = store();
+    accepted.on("data", () => accepted.end());
+    accepted.on("close", () => {
+      server.close();
+      done();
+    });
+  });
+  server.listen(0, "127.0.0.1", () => {
+    const client = net.connect(server.address().port, "127.0.0.1", () => client.end("x"));
+    client.resume();
+  });
+});
+
+await new Promise((resolve) => setTimeout(resolve, 1));
+out.afterTimer = store();
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn async_local_storage_top_level_enter_with_matches_host_node() {
+    run_isolated_builtin_conformance_test("als-top-level-enter-with");
+}
+
+// Pooled sockets, shared sockets, and aborts: a call must never read
+// the store of the call it shares an object with.
+fn async_local_storage_shared_objects_match_host_node_impl() {
+    assert_async_context_conformance(
+        "als-shared-objects",
+        r#"
+import { AsyncLocalStorage } from "node:async_hooks";
+import http from "node:http"; import net from "node:net";
+const als = new AsyncLocalStorage(); const s = () => als.getStore() ?? null; const out = {};
+setTimeout(() => { console.log(JSON.stringify({ stuckAfter: Object.keys(out).at(-1), out })); process.exit(3); }, 8000).unref();
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// A raw responder, because a kept-alive socket needs a server that answers every
+// request on one connection.
+const server = net.createServer((c) => {
+  c.on("error", () => {});
+  c.on("data", () => c.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"));
+});
+await new Promise((r) => server.listen(0, "127.0.0.1", r));
+const port = server.address().port;
+const get = (agent, tag) => new Promise((done) => {
+  const q = http.get({ host: "127.0.0.1", port, agent }, (res) => {
+    out[tag + "Response"] = s(); res.resume(); res.on("end", () => { out[tag + "End"] = s(); done(); });
+  });
+  q.on("socket", () => { out[tag + "Socket"] = s(); });
+});
+// Queued on a pool of one: D waits for C's socket.
+{ const agent = new http.Agent({ maxSockets: 1, keepAlive: true }); await Promise.all([als.run("C", () => get(agent, "queuedC")), als.run("D", () => get(agent, "queuedD"))]); agent.destroy(); }
+// Kept-alive socket reused by a later call.
+{ const agent = new http.Agent({ keepAlive: true }); await als.run("first", () => get(agent, "reuseFirst")); await sleep(5); await als.run("second", () => get(agent, "reuseSecond")); agent.destroy(); }
+// Abort from another context.
+await new Promise((done) => { const q = als.run("hq", () => http.get({ host: "127.0.0.1", port, agent: false })); q.on("error", () => { out.abortError = s(); }); q.on("close", () => { out.abortClose = s(); done(); }); als.run("aborter", () => q.destroy()); });
+await new Promise((done) => {
+  const responder = net.createServer((c) => {
+    c.on("error", () => {});
+    c.once("data", () => c.write("HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nx"));
+  });
+  responder.listen(0, "127.0.0.1", () => {
+    const q = als.run("hq2", () => http.get({ host: "127.0.0.1", port: responder.address().port, agent: false }, (res) => {
+      res.on("error", () => {});
+      res.on("close", () => {
+        out.resClose = s();
+        responder.close();
+        done();
+      });
+      als.run("aborter2", () => q.destroy());
+    }));
+    q.on("error", () => {});
+  });
+});
+// Write callbacks on one socket from two contexts.
+{ const srv = net.createServer((c) => { c.resume(); c.on("error", () => {}); }); await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+  const c = net.connect(srv.address().port, "127.0.0.1"); await new Promise((r) => c.on("connect", r));
+  await Promise.all([als.run("writeA", () => new Promise((r) => c.write("a", () => { out.writeCbA = s(); r(); }))), als.run("writeB", () => new Promise((r) => c.write("b", () => { out.writeCbB = s(); r(); })))]);
+  await sleep(2); await als.run("writeC", () => new Promise((r) => c.write("c", () => { out.writeCbLater = s(); r(); })));
+  await als.run("endD", () => new Promise((r) => c.end("d", () => { out.endCb = s(); r(); }))); c.destroy(); srv.close(); }
+server.close();
+out.final = s();
+console.log(JSON.stringify(out));
+process.exit(0);
+"#,
+    );
+}
+
+#[test]
+fn async_local_storage_shared_objects_match_host_node() {
+    run_isolated_builtin_conformance_test("als-shared-objects");
+}
+
+// Node 24 starts each event from the owner's context. Node 22's hook implementation
+// lets the store bleed into the next event, so this pins the isolated behavior instead
+// of comparing with whichever Node the host runs.
+fn async_local_storage_store_does_not_bleed_between_events_impl() {
+    let result = run_async_context_probe_script(
+        "als-event-bleed",
+        r#"
+// A store entered in one event must not reach the next event on the same resource.
+import { AsyncLocalStorage } from "node:async_hooks"; import net from "node:net";
+const als = new AsyncLocalStorage(); const out = { connections: [], chunksRead: 0, chunksSeeingStore: 0 };
+setTimeout(() => { console.log(JSON.stringify({ stuck: true, out })); process.exit(3); }, 5000).unref();
+const server = net.createServer((c) => { out.connections.push(als.getStore() ?? null); als.enterWith("from-connection"); c.on("error", () => {}); c.resume(); c.on("close", () => { if (--open === 0) server.close(() => done2()); }); });
+let open = 3; let done2; const closed = new Promise((r) => { done2 = r; });
+await new Promise((r) => server.listen(0, "127.0.0.1", r));
+for (let i = 0; i < 3; i++) { const c = net.connect(server.address().port, "127.0.0.1", () => c.end("x")); c.resume(); }
+await closed;
+// One large write arrives as many chunks, so one read pump delivers several in a row.
+await new Promise((done) => {
+  const srv = net.createServer((c) => {
+    c.on("data", () => {
+      out.chunksRead += 1;
+      if (als.getStore() !== undefined) out.chunksSeeingStore += 1;
+      als.enterWith("from-chunk");
+    });
+    c.on("end", () => { c.end(); srv.close(); done(); });
+  });
+  srv.listen(0, "127.0.0.1", () => {
+    const c = net.connect(srv.address().port, "127.0.0.1", () => c.end(Buffer.alloc(4 * 1024 * 1024)));
+    c.resume();
+  });
+});
+out.readManyChunks = out.chunksRead > 2;
+delete out.chunksRead;
+console.log(JSON.stringify(out)); process.exit(0);
+"#,
+    );
+    assert_eq!(
+        result,
+        json!({ "connections": [null, null, null], "chunksSeeingStore": 0, "readManyChunks": true })
+    );
+}
+
+#[test]
+fn async_local_storage_store_does_not_bleed_between_events() {
+    run_isolated_builtin_conformance_test("als-event-bleed");
+}
+
+// The VM reports Node 22, and Node 24 changed these results, so host Node cannot be
+// the reference. Expected values come from `node --no-async-context-frame`, the
+// Node 22 implementation.
+fn async_local_storage_disable_follows_node_22_impl() {
+    let result = run_async_context_probe_script(
+        "als-disable-node-22",
+        r#"
+import { AsyncLocalStorage } from "node:async_hooks";
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const out = {};
+
+const reenabled = new AsyncLocalStorage();
+reenabled.run(1, () => {
+  reenabled.disable();
+  reenabled.run(2, () => {});
+  out.storeReturnsAfterRunReenables = reenabled.getStore() ?? null;
+});
+
+const shared = new AsyncLocalStorage();
+const other = shared.run("other", async () => {
+  await sleep(5);
+  return shared.getStore() ?? null;
+});
+shared.run(1, () => shared.disable());
+out.disableReachesOtherContexts = await other;
+
+console.log(JSON.stringify(out));
+"#,
+    );
+    assert_eq!(
+        result,
+        json!({ "storeReturnsAfterRunReenables": 1, "disableReachesOtherContexts": null })
+    );
+}
+
+#[test]
+fn async_local_storage_disable_follows_node_22() {
+    run_isolated_builtin_conformance_test("als-disable-node-22");
+}
+
+// Host Node cannot share this harness's piped stdin, so this one has fixed
+// expectations taken from host Node 24 (`echo x | node probe.mjs`). Stdin events run
+// in the context of the first read of `process.stdin`.
+fn run_async_context_stdin_probe(case_name: &str, stdin_read: &str, expected_owner: Value) {
+    assert_node_available();
+
+    let cwd = temp_dir(&format!("builtin-{case_name}"));
+    let entrypoint = cwd.join("entry.mjs");
+    write_fixture(
+        &entrypoint,
+        r#"
+import { AsyncLocalStorage } from "node:async_hooks";
+
+const als = new AsyncLocalStorage();
+const store = () => als.getStore() ?? null;
+const out = {};
+
+const overlapping = als.run("overlapping", async () => {
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  return store();
+});
+
+await new Promise((resolve) => {
+  STDIN_READ
+  als.run("stdin-owner", () => {
+    stdin().on("data", () => {
+      out.stdinData = store();
+      stdin().pause();
+      resolve();
+    });
+  });
+  process.stdout.write("__READY__\n");
+});
+out.overlapping = await overlapping;
+out.final = store();
+console.log(JSON.stringify(out));
+"#
+        .replace("STDIN_READ", stdin_read),
+    );
+
+    let mut sidecar = new_sidecar(case_name);
+    let connection_id = authenticate_wire(&mut sidecar, case_name);
+    let session_id = open_session_wire(&mut sidecar, 2, &connection_id);
+    let vm_id = create_vm_with_metadata_and_permissions(
+        &mut sidecar,
+        3,
+        &connection_id,
+        &session_id,
+        GuestRuntimeKind::JavaScript,
+        &cwd,
+        HashMap::from([
+            (
+                String::from("env.AGENTOS_ALLOWED_NODE_BUILTINS"),
+                serde_json::to_string(ASYNC_CONTEXT_PROBE_BUILTINS)
+                    .expect("serialize builtin allowlist"),
+            ),
+            (
+                String::from("env.AGENTOS_KEEP_STDIN_OPEN"),
+                String::from("1"),
+            ),
+        ]),
+        wire_permissions_allow_all(),
+    );
+    execute_wire(
+        &mut sidecar,
+        4,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "proc-als-stdin",
+        GuestRuntimeKind::JavaScript,
+        &entrypoint,
+        Vec::new(),
+    );
+    let ownership = wire_session(&connection_id, &session_id);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    let mut exit_code = None;
+    let mut stdin_sent = false;
+    while exit_code.is_none() {
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for stdin probe\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+        if let Some(event) = sidecar
+            .poll_event_wire_blocking(&ownership, Duration::from_millis(50))
+            .expect("poll stdin probe wire event")
+        {
+            match event.payload {
+                EventPayload::ProcessOutputEvent(output) => match output.channel {
+                    StreamChannel::Stdout => append_probe_output(
+                        &mut stdout,
+                        &output.chunk,
+                        &output.process_id,
+                        "stdout",
+                    ),
+                    StreamChannel::Stderr => append_probe_output(
+                        &mut stderr,
+                        &output.chunk,
+                        &output.process_id,
+                        "stderr",
+                    ),
+                },
+                EventPayload::ProcessExitedEvent(exited) => exit_code = Some(exited.exit_code),
+                _ => {}
+            }
+        }
+        if !stdin_sent && stdout.contains("__READY__\n") {
+            write_process_stdin(
+                &mut sidecar,
+                5,
+                &connection_id,
+                &session_id,
+                &vm_id,
+                "proc-als-stdin",
+                "x\n",
+            );
+            stdin_sent = true;
+        }
+    }
+    dispose_vm_and_close_session_wire(&mut sidecar, &connection_id, &session_id, &vm_id);
+
+    assert_eq!(
+        exit_code,
+        Some(0),
+        "stdin probe failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    let payload: Value = serde_json::from_str(stdout.replace("__READY__\n", "").trim())
+        .expect("parse stdin probe JSON");
+    assert_eq!(
+        payload,
+        json!({ "stdinData": expected_owner, "overlapping": "overlapping", "final": null })
+    );
+}
+
+fn async_local_storage_stdin_keeps_owner_context_impl() {
+    run_async_context_stdin_probe(
+        "als-stdin",
+        "const stdin = () => process.stdin;",
+        json!("stdin-owner"),
+    );
+}
+
+fn async_local_storage_stdin_owner_is_first_read_impl() {
+    run_async_context_stdin_probe(
+        "als-stdin-outer-owner",
+        "const firstRead = process.stdin; const stdin = () => firstRead;",
+        Value::Null,
+    );
+}
+
+#[test]
+fn async_local_storage_stdin_keeps_owner_context() {
+    run_isolated_builtin_conformance_test("als-stdin");
+}
+
+#[test]
+fn async_local_storage_stdin_owner_is_first_read() {
+    run_isolated_builtin_conformance_test("als-stdin-outer-owner");
+}
+
 #[test]
 fn __builtin_conformance_extra_test_runner() {
     let Ok(test_name) = std::env::var("AGENTOS_BUILTIN_CONFORMANCE_EXTRA_TEST") else {
@@ -5465,6 +6402,21 @@ fn __builtin_conformance_extra_test_runner() {
     };
 
     match test_name.as_str() {
+        "als-overlapping-calls" => async_local_storage_isolates_overlapping_calls_impl(),
+        "als-api" => async_local_storage_api_matches_host_node_impl(),
+        "als-runtime-callbacks" => async_local_storage_runtime_callbacks_match_host_node_impl(),
+        "als-http2-tls-udp" => {
+            async_local_storage_http2_tls_and_udp_callbacks_match_host_node_impl()
+        }
+        "als-resource-lifecycle" => async_local_storage_resource_lifecycle_matches_host_node_impl(),
+        "als-disable-node-22" => async_local_storage_disable_follows_node_22_impl(),
+        "als-shared-objects" => async_local_storage_shared_objects_match_host_node_impl(),
+        "als-event-bleed" => async_local_storage_store_does_not_bleed_between_events_impl(),
+        "als-top-level-enter-with" => {
+            async_local_storage_top_level_enter_with_matches_host_node_impl()
+        }
+        "als-stdin" => async_local_storage_stdin_keeps_owner_context_impl(),
+        "als-stdin-outer-owner" => async_local_storage_stdin_owner_is_first_read_impl(),
         "http-request-keepalive" => http_request_custom_agent_reuses_keepalive_socket_impl(),
         "http-request-denied" => http_request_denied_egress_returns_permission_error_impl(),
         "loopback-connect-refused" => loopback_connect_without_vm_listener_is_refused_impl(),

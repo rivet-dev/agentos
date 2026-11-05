@@ -1,94 +1,43 @@
 "use strict";
 
-class AsyncLocalStorage {
-	constructor() {
-		this._enabled = false;
-		this._store = undefined;
-	}
-
-	disable() {
-		this._enabled = false;
-		this._store = undefined;
-	}
-
-	enterWith(store) {
-		this._enabled = true;
-		this._store = store;
-	}
-
-	exit(callback, ...args) {
-		const previousEnabled = this._enabled;
-		const previousStore = this._store;
-		this._enabled = false;
-		this._store = undefined;
-		try {
-			return callback(...args);
-		} finally {
-			this._enabled = previousEnabled;
-			this._store = previousStore;
-		}
-	}
-
-	getStore() {
-		return this._enabled ? this._store : undefined;
-	}
-
-	run(store, callback, ...args) {
-		const previousEnabled = this._enabled;
-		const previousStore = this._store;
-		this._enabled = true;
-		this._store = store;
-		try {
-			return callback(...args);
-		} finally {
-			this._enabled = previousEnabled;
-			this._store = previousStore;
-		}
-	}
+// Undici imports this while the bridge bundle is still bootstrapping, before
+// `_asyncHooksModule` exists. Undici's classes extend AsyncResource at load time,
+// so look up the real module only when an instance is made or used.
+function asyncHooks() {
+	return globalThis._asyncHooksModule;
 }
 
 class AsyncResource {
 	constructor(type = "AgentOsAsyncResource") {
 		this.type = type;
+		this._resource = new (asyncHooks().AsyncResource)(type);
 	}
 
 	bind(fn, thisArg = undefined) {
-		if (typeof fn !== "function") {
-			return fn;
-		}
-		return (...args) => this.runInAsyncScope(fn, thisArg ?? this, ...args);
+		return this._resource.bind(fn, thisArg);
 	}
 
-	emitDestroy() {}
+	emitDestroy() {
+		return this;
+	}
 
 	runInAsyncScope(fn, thisArg, ...args) {
-		return fn.apply(thisArg, args);
+		return this._resource.runInAsyncScope(fn, thisArg, ...args);
 	}
-}
-
-function createHook() {
-	return {
-		enable() {
-			return this;
-		},
-		disable() {
-			return this;
-		},
-	};
-}
-
-function executionAsyncId() {
-	return 0;
-}
-
-function triggerAsyncId() {
-	return 0;
 }
 
 module.exports = {
-	AsyncLocalStorage,
+	get AsyncLocalStorage() {
+		return asyncHooks().AsyncLocalStorage;
+	},
 	AsyncResource,
-	createHook,
-	executionAsyncId,
-	triggerAsyncId,
+	createHook(...args) {
+		return asyncHooks().createHook(...args);
+	},
+	executionAsyncId() {
+		return asyncHooks().executionAsyncId();
+	},
+	triggerAsyncId() {
+		return asyncHooks().triggerAsyncId();
+	},
 };

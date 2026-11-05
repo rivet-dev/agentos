@@ -376,6 +376,7 @@ fn run_bridge_cached(
     bridge_code: &str,
     cache: &mut Option<BridgeCodeCache>,
 ) -> (i32, Option<ExecutionError>) {
+    crate::async_context::install_async_context_globals(scope);
     let tc = &mut v8::TryCatch::new(scope);
 
     let v8_source = match v8::String::new(tc, bridge_code) {

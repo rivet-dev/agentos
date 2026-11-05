@@ -1,4 +1,5 @@
 import { exposeCustomGlobal } from "../global-exposure.js";
+import { getAsyncContextFrame, kAsyncContextFrame, runInAsyncContextFrame } from "./async-context.js";
 import {
 	createErrorWithCode,
 	createInvalidArgTypeError2,
@@ -560,6 +561,7 @@ var DgramSocket = class {
 		if (typeof _dgramSocketCreateRaw === "undefined") {
 			throw new Error("dgram.createSocket is not supported in sandbox");
 		}
+		this[kAsyncContextFrame] = getAsyncContextFrame();
 		const options = normalizeDgramSocketOptions(optionsOrType);
 		this._type = options.type;
 		const result = normalizeDgramBridgeResult(
@@ -1108,7 +1110,15 @@ var DgramSocket = class {
 			});
 		}
 	}
-	async _pumpMessages() {
+	_pumpMessages() {
+		return runInAsyncContextFrame(
+			this[kAsyncContextFrame],
+			this._pumpMessagesInOwnerContext,
+			this,
+			[],
+		);
+	}
+	async _pumpMessagesInOwnerContext() {
 		if (this._receiveLoopRunning || this._closed || !this._bound) {
 			return;
 		}
