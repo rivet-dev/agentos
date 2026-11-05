@@ -102,8 +102,8 @@ pub struct SidecarTransport {
     request_writer_tx: mpsc::Sender<Vec<u8>>,
     /// Outbound callback/control response frames. The writer drains this before regular requests.
     control_writer_tx: mpsc::Sender<Vec<u8>>,
-    /// When the reader last received any inbound frame; the silence watchdog reads it.
-    last_inbound_at: parking_lot::Mutex<std::time::Instant>,
+    /// Silence the watchdog has counted since the reader last received any inbound frame.
+    counted_silence: parking_lot::Mutex<std::time::Duration>,
     /// Set once the transport loses its sidecar: an inbound lane ended or broke protocol, or the
     /// silence watchdog killed the child. No request can succeed after this.
     disconnected: AtomicBool,
@@ -198,7 +198,7 @@ impl SidecarTransport {
             callbacks: SccHashMap::new(),
             request_writer_tx,
             control_writer_tx,
-            last_inbound_at: parking_lot::Mutex::new(std::time::Instant::now()),
+            counted_silence: parking_lot::Mutex::new(std::time::Duration::ZERO),
             disconnected: AtomicBool::new(false),
         });
 
@@ -705,8 +705,8 @@ where
             return;
         }
         // Any complete inbound frame proves the sidecar is alive; the silence
-        // watchdog measures from here.
-        *transport.last_inbound_at.lock() = std::time::Instant::now();
+        // watchdog counts from here.
+        *transport.counted_silence.lock() = std::time::Duration::ZERO;
 
         let codec = WireFrameCodec::new(max_frame_bytes);
         match codec.decode(&frame_bytes) {
@@ -732,14 +732,27 @@ fn frame_length_exceeds_limit(length: usize, max_frame_bytes: usize) -> bool {
 /// Kill the sidecar and fail all in-flight requests once the transport has seen no inbound frames
 /// (not even heartbeats) for `timeout`. A silent sidecar is dead or wedged, not busy: a busy
 /// sidecar still heartbeats every 10s from a dedicated thread. Exits when the transport drops.
+///
+/// Each tick counts at most one check interval. While the host runtime or process is stalled,
+/// frames wait unread in the pipe, and on wake this task can run before the readers do. That time
+/// says nothing about the sidecar. Every tick still counts, so a silent sidecar is detected after a
+/// fixed number of ticks however long the host stalls between them.
 async fn run_silence_watchdog(transport: Weak<SidecarTransport>, timeout: std::time::Duration) {
     let check_interval = (timeout / 4).min(std::time::Duration::from_secs(1));
+    let mut last_tick_at = std::time::Instant::now();
     loop {
         tokio::time::sleep(check_interval).await;
         let Some(transport) = transport.upgrade() else {
             return;
         };
-        let silence = transport.last_inbound_at.lock().elapsed();
+        let now = std::time::Instant::now();
+        let counted_tick = now.duration_since(last_tick_at).min(check_interval);
+        last_tick_at = now;
+        let silence = {
+            let mut counted_silence = transport.counted_silence.lock();
+            *counted_silence += counted_tick;
+            *counted_silence
+        };
         if silence < timeout {
             continue;
         }
@@ -844,7 +857,7 @@ mod tests {
             callbacks: SccHashMap::new(),
             request_writer_tx,
             control_writer_tx,
-            last_inbound_at: parking_lot::Mutex::new(std::time::Instant::now()),
+            counted_silence: parking_lot::Mutex::new(std::time::Duration::ZERO),
             disconnected: AtomicBool::new(false),
         }
     }
@@ -1084,13 +1097,47 @@ mod tests {
         // for well past the silence window; the watchdog must not fire.
         for _ in 0..6 {
             tokio::time::sleep(std::time::Duration::from_millis(40)).await;
-            *transport.last_inbound_at.lock() = std::time::Instant::now();
+            *transport.counted_silence.lock() = std::time::Duration::ZERO;
             assert!(
                 rx.try_recv().is_err(),
                 "pending request must remain registered while frames arrive"
             );
         }
         assert_eq!(pending_request_count(&transport), 1);
+    }
+
+    #[tokio::test]
+    async fn silence_watchdog_ignores_a_stalled_host_but_still_detects_silence() {
+        let transport = Arc::new(test_transport());
+        let (tx, mut rx) = oneshot::channel();
+        transport
+            .register_pending_request(1, tx)
+            .expect("register pending request");
+
+        let timeout = std::time::Duration::from_millis(200);
+        tokio::spawn(run_silence_watchdog(Arc::downgrade(&transport), timeout));
+        tokio::task::yield_now().await;
+
+        // Block this single-threaded runtime past the window. The stall says
+        // nothing about the sidecar, so the watchdog must not fire on wake.
+        std::thread::sleep(timeout * 3);
+        tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+        assert!(
+            matches!(rx.try_recv(), Err(oneshot::error::TryRecvError::Empty)),
+            "a host stall must not count as sidecar silence"
+        );
+
+        // The sidecar stays silent while the host keeps stalling in bursts longer
+        // than the check interval: the watchdog still fires.
+        for _ in 0..100 {
+            std::thread::sleep(std::time::Duration::from_millis(80));
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            if matches!(rx.try_recv(), Err(oneshot::error::TryRecvError::Closed)) {
+                assert_eq!(pending_request_count(&transport), 0);
+                return;
+            }
+        }
+        panic!("a silent sidecar must be detected while the host stalls in bursts");
     }
 
     #[tokio::test]
@@ -1192,7 +1239,7 @@ mod tests {
             callbacks: SccHashMap::new(),
             request_writer_tx,
             control_writer_tx,
-            last_inbound_at: parking_lot::Mutex::new(std::time::Instant::now()),
+            counted_silence: parking_lot::Mutex::new(std::time::Duration::ZERO),
             disconnected: AtomicBool::new(false),
         };
 
