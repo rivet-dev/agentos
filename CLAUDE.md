@@ -251,9 +251,9 @@ custom host-syscall imports. Treat that target as **native POSIX**;
   `secure-exec/docs/` (Secure Exec, with snippets from `secure-exec/examples/`).
   The `secure-exec` npm package itself lives in the same directory
   (`secure-exec/src`, `secure-exec/tests`), not under `packages/`.
-  `.github/workflows/docs-sync.yml` syncs both on merge to `main`. Follow
-  `docs/CLAUDE.md` for page, sidebar, snippet, and writing rules; they apply to
-  both bundles.
+  Follow `docs/CLAUDE.md` for page, sidebar, snippet, and writing rules; they
+  apply to both bundles.
+- After merging changes to `docs/` or `examples/` into `main`, publish them to rivet.dev by following `SYNCING_PRODUCT_DOCS.md` in a checkout of `rivet-dev/website`.
 - Secure Exec docs cover only the `secure-exec` API. Anything the runtime
   already documents (permissions, limits, filesystem, networking, security,
   compatibility, performance) stays a short page that links to the agentOS docs.
