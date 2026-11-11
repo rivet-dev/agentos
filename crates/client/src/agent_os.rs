@@ -3396,6 +3396,10 @@ mod tests {
                 agentos_packages: Some(crate::config::AgentOsPackageLimits {
                     max_mounts: Some(8192),
                 }),
+                reactor: Some(crate::ReactorLimits {
+                    operation_deadline_ms: Some(500),
+                    ..Default::default()
+                }),
                 resources: Some(ResourceLimits {
                     max_processes: Some(7),
                     max_filesystem_bytes: Some(4096),
@@ -3453,6 +3457,13 @@ mod tests {
         assert_eq!(
             limits.agentos_packages.expect("package limits").max_mounts,
             Some(8192)
+        );
+        assert_eq!(
+            limits
+                .reactor
+                .expect("reactor limits")
+                .operation_deadline_ms,
+            Some(500)
         );
         let resources = limits.resources.expect("resource limits");
         assert_eq!(resources.max_processes, Some(7));

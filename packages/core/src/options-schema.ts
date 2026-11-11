@@ -116,6 +116,32 @@ export const agentOsLimitsSchema = z
 			.object({ maxMounts: positiveInteger.optional() })
 			.strict()
 			.optional(),
+		reactor: z
+			.object({
+				maxCapabilities: positiveInteger.optional(),
+				maxReadyHandles: positiveInteger.optional(),
+				maxTasks: positiveInteger.optional(),
+				workQuantum: positiveInteger.optional(),
+				byteQuantum: positiveInteger.optional(),
+				maxHandleCommands: positiveInteger.optional(),
+				maxHandleCommandBytes: positiveInteger.optional(),
+				maxBridgeCalls: positiveInteger.optional(),
+				maxBridgeRequestBytes: positiveInteger.optional(),
+				maxBridgeResponseBytes: positiveInteger.optional(),
+				maxAsyncCompletions: positiveInteger.optional(),
+				maxAsyncCompletionBytes: positiveInteger.optional(),
+				maxBlockingJobs: positiveInteger.optional(),
+				maxBlockingBytes: positiveInteger.optional(),
+				perHandleOperationQuantum: positiveInteger.optional(),
+				acceptQuantum: positiveInteger.optional(),
+				datagramQuantum: positiveInteger.optional(),
+				completionQuantum: positiveInteger.optional(),
+				signalQuantum: positiveInteger.optional(),
+				shutdownDeadlineMs: positiveInteger.optional(),
+				operationDeadlineMs: positiveInteger.optional(),
+			})
+			.strict()
+			.optional(),
 		resources: z
 			.object({
 				cpuCount: positiveInteger.optional(),
