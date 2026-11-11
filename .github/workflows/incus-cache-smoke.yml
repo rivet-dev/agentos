@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        slot: [ci-01-runner-01, ci-01-runner-02, ci-02-runner-01, ci-02-runner-02, ci-02-runner-03]
+        slot: [ci-02-runner-01, ci-02-runner-02, ci-02-runner-03]
     runs-on: [self-hosted, incus-heavy, '${{ matrix.slot }}']
     timeout-minutes: 15
     steps:
