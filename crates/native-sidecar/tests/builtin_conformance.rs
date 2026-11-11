@@ -1820,6 +1820,91 @@ fn vm_optional_surface_is_implemented_or_explicitly_not_implemented() {
     run_isolated_builtin_conformance_test("vm-optional-surface");
 }
 
+fn v8_serialize_rejects_values_json_cannot_keep_impl() {
+    let cwd = temp_dir("builtin-conformance-v8-serialize");
+    let entrypoint = cwd.join("entry.mjs");
+    write_fixture(
+        &entrypoint,
+        r#"
+import { createRequire } from "node:module";
+import * as esmV8 from "node:v8";
+
+const require = createRequire(import.meta.url);
+const cjsV8 = require("node:v8");
+
+const unsupported = {
+  map: new Map([["a", 1]]),
+  date: new Date(0),
+  bigint: 1n,
+  undefinedField: { a: undefined },
+};
+
+function rejections(v8) {
+  const out = {};
+  for (const [name, value] of Object.entries(unsupported)) {
+    for (const [api, run] of [
+      ["serialize", () => v8.serialize(value)],
+      ["Serializer", () => {
+        const serializer = new v8.Serializer();
+        serializer.writeHeader();
+        serializer.writeValue(value);
+        return serializer.releaseBuffer();
+      }],
+    ]) {
+      try {
+        out[`${api}:${name}`] = { returned: v8.deserialize(run()) };
+      } catch (error) {
+        out[`${api}:${name}`] = { code: error.code, message: error.message };
+      }
+    }
+  }
+  return out;
+}
+
+const plain = { s: "x", n: 1.5, b: true, z: null, list: [1, { nested: "y" }] };
+console.log(JSON.stringify({
+  require: rejections(cjsV8),
+  import: rejections(esmV8),
+  roundTrip: esmV8.deserialize(cjsV8.serialize(plain)),
+}));
+"#,
+    );
+
+    let result = run_guest_probe("v8-serialize", &cwd, &entrypoint);
+    for path in ["require", "import"] {
+        for api in ["serialize", "Serializer"] {
+            for (name, type_name) in [
+                ("map", "Map"),
+                ("date", "Date"),
+                ("bigint", "bigint"),
+                ("undefinedField", "undefined"),
+            ] {
+                let outcome = &result[path][format!("{api}:{name}")];
+                assert_eq!(
+                    outcome["code"], "ERR_NOT_IMPLEMENTED",
+                    "{path} {api}({name}) must fail loudly: {result}"
+                );
+                assert!(
+                    outcome["message"]
+                        .as_str()
+                        .is_some_and(|message| message.contains(type_name)),
+                    "{path} {api}({name}) error must name {type_name}: {result}"
+                );
+            }
+        }
+    }
+    assert_eq!(
+        result["roundTrip"],
+        json!({ "s": "x", "n": 1.5, "b": true, "z": null, "list": [1, { "nested": "y" }] }),
+        "JSON-safe values must round-trip: {result}"
+    );
+}
+
+#[test]
+fn v8_serialize_rejects_values_json_cannot_keep() {
+    run_isolated_builtin_conformance_test("v8-serialize");
+}
+
 fn perf_hooks_observer_and_histogram_match_host_node_impl() {
     assert_conformance(
         "perf-hooks-observer",
@@ -6450,6 +6535,7 @@ fn __builtin_conformance_extra_test_runner() {
             vm_optional_surface_is_implemented_or_explicitly_not_implemented_impl()
         }
         "vm-timeout" => vm_timeout_terminates_within_deadline_impl(),
+        "v8-serialize" => v8_serialize_rejects_values_json_cannot_keep_impl(),
         "perf-hooks-observer" => perf_hooks_observer_and_histogram_match_host_node_impl(),
         "process-runtime-stats" => process_runtime_stats_are_live_impl(),
         "os-resource-limits" => os_resource_limits_are_vm_scoped_impl(),
