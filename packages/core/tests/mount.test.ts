@@ -308,6 +308,43 @@ describe("mount integration", () => {
 		).rejects.toThrow("EXDEV");
 	});
 
+	test("a failing host mount callback reaches the guest as EIO", async () => {
+		const base = createInMemoryFileSystem();
+		await base.chmod("/", 0o777);
+		await base.writeFile("/present.txt", "x");
+		const ioFailure = () => {
+			throw new Error("host backend unavailable");
+		};
+		const failing = new Proxy(base, {
+			get(target, prop, receiver) {
+				if (prop === "writeFile" || prop === "pwrite" || prop === "exists") {
+					return ioFailure;
+				}
+				const value = Reflect.get(target, prop, receiver);
+				return typeof value === "function" ? value.bind(target) : value;
+			},
+		}) as VirtualFileSystem;
+		vm = await createMountVm({
+			mounts: [{ path: "/flaky", driver: failing }],
+		});
+		const result = await vm.execArgv("node", [
+			"-e",
+			[
+				'const fs = require("node:fs");',
+				"let write;",
+				'try { fs.writeFileSync("/flaky/out.txt", "data"); write = "ok"; }',
+				"catch (error) { write = { code: error.code, errno: error.errno, syscall: error.syscall }; }",
+				'console.log(JSON.stringify({ write, exists: fs.existsSync("/flaky/present.txt") }));',
+			].join("\n"),
+		]);
+		expect(result.exitCode, result.stderr).toBe(0);
+		expect(JSON.parse(result.stdout.trim())).toEqual({
+			write: { code: "EIO", errno: -5, syscall: "write" },
+			// Node semantics: existsSync never throws; the sidecar logs the EIO.
+			exists: false,
+		});
+	});
+
 	test("readOnly mount blocks writeFile with EROFS", async () => {
 		const mounted = createInMemoryFileSystem();
 		await mounted.chmod("/", 0o777);
