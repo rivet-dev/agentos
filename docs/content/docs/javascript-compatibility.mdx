@@ -53,6 +53,11 @@ or implemented in the isolate is denied.</Note>
 - Feature-detection shims: `createHook` and the async ID functions in
   `async_hooks`, `diagnostics_channel`, `perf_hooks`, `worker_threads`, `vm`,
   `v8`. `worker_threads` does **not** create real worker threads.
+- `v8.serialize`, `v8.deserialize`, `v8.Serializer`, and `v8.Deserializer` use
+  JSON, not the V8 wire format. They accept only JSON-safe values: plain
+  objects, dense arrays, strings, finite numbers, booleans, and `null`. Other
+  values, such as `Map`, `Date`, `BigInt`, `undefined`, typed arrays, and shared
+  or circular references, throw an error with code `ERR_NOT_IMPLEMENTED`.
 
 ## Denied builtins
 
