@@ -11,9 +11,12 @@ jobs:
   bench-gate:
     name: Runtime benchmark gate
     if: github.event_name != 'pull_request' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.repository == 'rivet-dev/agentos' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && fromJSON('["self-hosted","incus-heavy"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
+      - name: Attach persistent Incus caches
+        if: startsWith(runner.name, 'ci-0')
+        run: bash scripts/ci/incus-cache.sh wasm
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:

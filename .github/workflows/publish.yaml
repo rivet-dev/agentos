@@ -82,9 +82,12 @@ jobs:
 
   wasm-commands:
     name: WASM Commands
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.repository == 'rivet-dev/agentos' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && fromJSON('["self-hosted","incus-heavy"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
+      - name: Attach persistent Incus caches
+        if: startsWith(runner.name, 'ci-0')
+        run: bash scripts/ci/incus-cache.sh wasm
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -95,8 +98,9 @@ jobs:
         with:
           targets: wasm32-wasip1
       - uses: Swatinem/rust-cache@v2
+        if: ${{ !startsWith(runner.name, 'ci-0') }}
         with:
-          workspaces: toolchain -> toolchain/target
+          workspaces: toolchain -> target
           cache-workspace-crates: true
           key: wasm-commands-${{ hashFiles('toolchain/Cargo.lock') }}
       - run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos-runtime-core...'
@@ -121,25 +125,32 @@ jobs:
           - platform: linux-arm64-gnu
             runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ github.repository == 'rivet-dev/agentos' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && matrix.platform != 'linux-arm64-gnu' && fromJSON('["self-hosted","incus-heavy"]') || matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+      - name: Attach persistent Incus caches
+        if: startsWith(runner.name, 'ci-0')
+        run: bash scripts/ci/incus-cache.sh docker
       - uses: docker/setup-buildx-action@v3
+        if: ${{ !startsWith(runner.name, 'ci-0') }}
         with:
           name: agentos-${{ matrix.platform }}
       - name: Build linux artifacts
         uses: docker/build-push-action@v6
         with:
+          builder: ${{ env.BUILDX_BUILDER || '' }}
           context: .
           file: docker/build/linux-gnu.Dockerfile
           build-args: |
             TARGET=${{ matrix.target }}
             BUILD_PROFILE=${{ needs.context.outputs.build_profile }}
             CACHE_PLATFORM=${{ matrix.platform }}
+            CACHE_SCOPE=${{ env.CI_SLOT || 'hosted' }}
+            CARGO_BUILD_JOBS=${{ env.CARGO_BUILD_JOBS || '4' }}
             RUST_TOOLCHAIN=${{ env.RUST_TOOLCHAIN }}
             LINUX_GNU_LLVM_VERSION=${{ env.LINUX_GNU_LLVM_VERSION }}
             LINUX_GNU_SYSROOT_TAG=${{ env.LINUX_GNU_SYSROOT_TAG }}
-          tags: agentos-linux-${{ matrix.platform }}
+          tags: agentos-linux-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
           load: true
       - name: Extract linux artifacts
         id: extract
@@ -147,7 +158,10 @@ jobs:
           set -euo pipefail
           sidecar_out="target/sidecar-artifacts/${{ matrix.platform }}"
           mkdir -p "$sidecar_out"
-          cid=$(docker create agentos-linux-${{ matrix.platform }})
+          image="agentos-linux-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}"
+          cid=""
+          trap 'test -z "$cid" || docker rm -f "$cid" >/dev/null 2>&1; docker image rm "$image" >/dev/null 2>&1 || true' EXIT
+          cid=$(docker create --label rivet.ci.extraction=true "$image")
           docker cp "$cid:/artifacts/agentos-native-sidecar" "$sidecar_out/agentos-native-sidecar"
           docker rm "$cid"
           test -f "$sidecar_out/agentos-native-sidecar"
@@ -181,10 +195,14 @@ jobs:
             runner: ubuntu-latest
             target: aarch64-apple-darwin
             clang: aarch64-apple-darwin20.4
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ github.repository == 'rivet-dev/agentos' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && fromJSON('["self-hosted","incus-heavy"]') || matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+      - name: Attach persistent Incus caches
+        if: startsWith(runner.name, 'ci-0')
+        run: bash scripts/ci/incus-cache.sh docker
       - uses: docker/setup-buildx-action@v3
+        if: ${{ !startsWith(runner.name, 'ci-0') }}
         with:
           name: agentos-${{ matrix.platform }}
       - name: Log in to ghcr.io
@@ -192,6 +210,7 @@ jobs:
       - name: Cross-compile via osxcross
         uses: docker/build-push-action@v6
         with:
+          builder: ${{ env.BUILDX_BUILDER || '' }}
           context: .
           file: docker/build/darwin.Dockerfile
           build-args: |
@@ -199,15 +218,20 @@ jobs:
             CLANG=${{ matrix.clang }}
             BUILD_PROFILE=${{ needs.context.outputs.build_profile }}
             CACHE_PLATFORM=${{ matrix.platform }}
+            CACHE_SCOPE=${{ env.CI_SLOT || 'hosted' }}
+            CARGO_BUILD_JOBS=${{ env.CARGO_BUILD_JOBS || '4' }}
             RUST_TOOLCHAIN=${{ env.RUST_TOOLCHAIN }}
-          tags: agentos-darwin-${{ matrix.platform }}
+          tags: agentos-darwin-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
           load: true
       - name: Extract darwin artifacts
         run: |
           set -euo pipefail
           sidecar_out="target/sidecar-artifacts/${{ matrix.platform }}"
           mkdir -p "$sidecar_out"
-          cid=$(docker create agentos-darwin-${{ matrix.platform }})
+          image="agentos-darwin-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}"
+          cid=""
+          trap 'test -z "$cid" || docker rm -f "$cid" >/dev/null 2>&1; docker image rm "$image" >/dev/null 2>&1 || true' EXIT
+          cid=$(docker create --label rivet.ci.extraction=true "$image")
           docker cp "$cid:/artifacts/agentos-native-sidecar" "$sidecar_out/agentos-native-sidecar"
           docker rm "$cid"
           test -f "$sidecar_out/agentos-native-sidecar"
