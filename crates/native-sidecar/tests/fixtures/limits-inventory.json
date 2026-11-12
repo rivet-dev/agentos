@@ -149,6 +149,18 @@
     "rationale": "Fixed verified manifest version-string byte ceiling; no package metadata-size option."
   },
   {
+    "name": "MANIFEST_CACHE_LIMIT",
+    "path": "crates/client/src/software_registry.rs",
+    "class": "policy-deferred",
+    "rationale": "Bounded process-wide manifest cache (32 registry/version pairs, oldest evicted); expose through client configuration if operators need to tune it."
+  },
+  {
+    "name": "MANIFEST_MAX_BYTES",
+    "path": "crates/client/src/software_registry.rs",
+    "class": "policy-deferred",
+    "rationale": "Fixed 8 MiB ceiling on a fetched software-registry manifest; overruns fail with a PackageDownload error naming the limit. Expose through SoftwareRegistryOptions if operators need to tune it."
+  },
+  {
     "name": "MAX_SUPPLEMENTARY_GROUPS",
     "path": "crates/kernel/src/kernel.rs",
     "class": "policy-deferred",
@@ -651,6 +663,12 @@
     "class": "policy",
     "rationale": "V8 IPC frame size; single value feeds BOTH codec sides.",
     "wired": "VmLimits.js_runtime.v8_ipc_max_frame_bytes"
+  },
+  {
+    "name": "FLAG_LIMIT_EXCEEDED",
+    "path": "crates/execution/src/v8_ipc.rs",
+    "class": "invariant",
+    "rationale": "IPC frame flag bit marking a limit-exceeded payload; a wire-format constant, not a bound."
   },
   {
     "name": "DEFAULT_WASM_PREWARM_TIMEOUT_MS",
@@ -2238,6 +2256,12 @@
     "wired": "VmLimits.js_runtime.v8_ipc_max_frame_bytes"
   },
   {
+    "name": "FLAG_LIMIT_EXCEEDED",
+    "path": "crates/v8-runtime/src/ipc_binary.rs",
+    "class": "invariant",
+    "rationale": "Pair of execution/v8_ipc.rs; IPC frame flag bit marking a limit-exceeded payload; a wire-format constant, not a bound."
+  },
+  {
     "name": "DEFAULT_HEAP_LIMIT_MB",
     "path": "crates/v8-runtime/src/isolate.rs",
     "class": "policy",
@@ -2453,5 +2477,17 @@
     "path": "packages/core/src/agent-os.ts",
     "class": "policy-deferred",
     "rationale": "Bounded TypeScript Core terminal registry; expose through client configuration if operators need to tune it."
+  },
+  {
+    "name": "MANIFEST_CACHE_LIMIT",
+    "path": "packages/core/src/software-registry.ts",
+    "class": "policy-deferred",
+    "rationale": "Pair of crates/client/src/software_registry.rs; bounded process-wide manifest cache (32 registry/version pairs, oldest evicted); expose through client configuration if operators need to tune it."
+  },
+  {
+    "name": "MANIFEST_MAX_BYTES",
+    "path": "packages/core/src/software-registry.ts",
+    "class": "policy-deferred",
+    "rationale": "Pair of crates/client/src/software_registry.rs; fixed 8 MiB ceiling on a fetched software-registry manifest; overruns fail with an Error naming the limit. Expose through the software registry options if operators need to tune it."
   }
 ]
