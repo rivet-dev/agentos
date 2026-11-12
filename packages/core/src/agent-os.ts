@@ -480,6 +480,30 @@ export type MountConfig =
 export interface AgentOsLimits {
 	/** Maximum package-owned filesystem leaves projected into one VM. */
 	agentosPackages?: { maxMounts?: number };
+	/** Sidecar reactor queues, work quanta, and deadlines. */
+	reactor?: {
+		maxCapabilities?: number;
+		maxReadyHandles?: number;
+		maxTasks?: number;
+		workQuantum?: number;
+		byteQuantum?: number;
+		maxHandleCommands?: number;
+		maxHandleCommandBytes?: number;
+		maxBridgeCalls?: number;
+		maxBridgeRequestBytes?: number;
+		maxBridgeResponseBytes?: number;
+		maxAsyncCompletions?: number;
+		maxAsyncCompletionBytes?: number;
+		maxBlockingJobs?: number;
+		maxBlockingBytes?: number;
+		perHandleOperationQuantum?: number;
+		acceptQuantum?: number;
+		datagramQuantum?: number;
+		completionQuantum?: number;
+		signalQuantum?: number;
+		shutdownDeadlineMs?: number;
+		operationDeadlineMs?: number;
+	};
 	/** Kernel resource limits (processes, FDs, sockets, filesystem bytes, WASM caps, etc.). */
 	resources?: {
 		cpuCount?: number;

@@ -140,13 +140,13 @@ pub use config::{
     HostFunctionCallback, HostFunctionCollection, HostFunctionCollections, HostFunctionLimits,
     HttpLimits, JsRuntimeLimits, MountConfig, MountPlugin, OverlayMountConfig, PackageRef,
     PatternPermissionRule, PatternPermissions, PermissionMode, Permissions, PluginLimits,
-    PythonLimits, ResourceLimits, RootFilesystemConfig, RootFilesystemKind, RootFilesystemMode,
-    RootLowerInput, RulePermissions, ScheduleCallback, ScheduleDriver, ScheduleEntry,
-    ScheduleHandle, SidecarJsBridgeCall, SidecarJsBridgeCallback, SidecarSqliteCallback,
-    SoftwareInput, SoftwareKind, TimerScheduleDriver, TlsLimits, VmGroupConfig,
-    VmSqliteCallbackRequest, VmSqliteCallbackResponse, VmSqliteDescriptor, VmSqliteQueryResult,
-    VmSqliteStatement, VmSqliteValue, VmUserAccountConfig, VmUserConfig, WasmLimits,
-    VM_SQLITE_CALLBACK_NAMESPACE,
+    PythonLimits, ReactorLimits, ResourceLimits, RootFilesystemConfig, RootFilesystemKind,
+    RootFilesystemMode, RootLowerInput, RulePermissions, ScheduleCallback, ScheduleDriver,
+    ScheduleEntry, ScheduleHandle, SidecarJsBridgeCall, SidecarJsBridgeCallback,
+    SidecarSqliteCallback, SoftwareInput, SoftwareKind, TimerScheduleDriver, TlsLimits,
+    VmGroupConfig, VmSqliteCallbackRequest, VmSqliteCallbackResponse, VmSqliteDescriptor,
+    VmSqliteQueryResult, VmSqliteStatement, VmSqliteValue, VmUserAccountConfig, VmUserConfig,
+    WasmLimits, VM_SQLITE_CALLBACK_NAMESPACE,
 };
 
 pub use process::{

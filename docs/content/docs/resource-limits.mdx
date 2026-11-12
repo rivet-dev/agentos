@@ -66,6 +66,13 @@ write waits for the reader to drain it, like a Node.js socket write. If the
 reader does not drain it within `limits.reactor.operationDeadlineMs`, the
 write fails with `ETIMEDOUT` and an error that names that limit.
 
+`limits.reactor` bounds the sidecar reactor: its queues
+(`maxCapabilities`, `maxReadyHandles`, `maxTasks`, `maxHandleCommands`,
+`maxBridgeCalls`, `maxAsyncCompletions`, `maxBlockingJobs`), their byte
+budgets, its scheduling quanta, `shutdownDeadlineMs`, and
+`operationDeadlineMs` (30 seconds by default), which bounds each host-backed
+operation. Every value must be greater than zero.
+
 Limits are fixed for the life of a VM. To change them on a hosted VM, update
 the config and call `v1.vm.restart`. In the library, dispose the VM and create
 a new one with the new limits. The hosted actor also has a fixed ten-second
