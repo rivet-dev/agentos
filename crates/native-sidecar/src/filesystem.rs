@@ -961,12 +961,25 @@ fn shadow_inventory_entry(
 
 fn forget_shadow_inventory_path(vm: &mut VmState, guest_path: &str) {
     let guest_path = normalize_path(guest_path);
-    vm.shadow_sync_inventory
-        .retain(|path, _| !shadow_inventory_path_is_at_or_below(path, &guest_path));
-}
-
-fn shadow_inventory_path_is_at_or_below(path: &str, prefix: &str) -> bool {
-    path == prefix || (prefix != "/" && path.starts_with(&format!("{prefix}/")))
+    vm.shadow_sync_inventory.remove(&guest_path);
+    if guest_path == "/" {
+        return;
+    }
+    // Keys under `guest_path/` sort next to each other, so a range lookup finds
+    // them without scanning the whole inventory on every write.
+    let prefix = format!("{guest_path}/");
+    let below = vm
+        .shadow_sync_inventory
+        .range::<str, _>((
+            std::ops::Bound::Included(prefix.as_str()),
+            std::ops::Bound::Unbounded,
+        ))
+        .take_while(|(path, _)| path.starts_with(&prefix))
+        .map(|(path, _)| path.clone())
+        .collect::<Vec<_>>();
+    for path in below {
+        vm.shadow_sync_inventory.remove(&path);
+    }
 }
 
 pub(crate) fn handle_python_vfs_rpc_request<B>(
