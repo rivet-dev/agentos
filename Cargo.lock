@@ -274,6 +274,7 @@ dependencies = [
  "rivet-vbare-compiler",
  "serde",
  "serde_bare",
+ "serde_bytes",
  "serde_json",
  "vbare",
 ]

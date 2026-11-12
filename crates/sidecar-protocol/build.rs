@@ -19,6 +19,8 @@ fn main() {
             .expect("failed to generate sidecar protocol from BARE schema");
     }
 
+    encode_data_fields_as_bytes(&out_dir.join("v1_generated.rs"));
+
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed={}", source_schema.display());
 }
@@ -32,4 +34,29 @@ fn copy_if_changed(source: &Path, destination: &Path) -> bool {
     fs::write(destination, contents)
         .unwrap_or_else(|error| panic!("failed to write {}: {error}", destination.display()));
     true
+}
+
+/// The generator emits BARE `data` as a plain `Vec<u8>`, which serde encodes
+/// and decodes one element at a time. `serde_bytes` writes the same BARE bytes
+/// (length prefix + raw bytes) as one block copy, so mark every such field.
+fn encode_data_fields_as_bytes(generated: &Path) {
+    const ATTRIBUTE: &str = "    #[serde(with = \"serde_bytes\")]\n";
+    let source = fs::read_to_string(generated)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", generated.display()));
+    let mut output = String::with_capacity(source.len() + 1024);
+    let mut previous = "";
+    for line in source.lines() {
+        let is_data_field = line.starts_with("    pub ")
+            && (line.ends_with(": Vec<u8>,") || line.ends_with(": Option<Vec<u8>>,"));
+        if is_data_field && previous != ATTRIBUTE.trim_end_matches('\n') {
+            output.push_str(ATTRIBUTE);
+        }
+        output.push_str(line);
+        output.push('\n');
+        previous = line;
+    }
+    if output != source {
+        fs::write(generated, output)
+            .unwrap_or_else(|error| panic!("failed to write {}: {error}", generated.display()));
+    }
 }

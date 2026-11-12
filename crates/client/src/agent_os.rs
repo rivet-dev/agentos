@@ -362,7 +362,8 @@ impl AgentOs {
                 | wire::ResponsePayload::ExecutionDeletedResponse(_)
                 | wire::ResponsePayload::ExecutionIoResponse(_)
                 | wire::ResponsePayload::ExecutionOutputPageResponse(_)
-                | wire::ResponsePayload::ProcessOutputPageResponse(_) => {
+                | wire::ResponsePayload::ProcessOutputPageResponse(_)
+                | wire::ResponsePayload::GuestFilesystemWriteFilesResponse(_) => {
                     return Err(ClientError::Sidecar(
                         "unexpected open_session response".to_string(),
                     ));
@@ -455,7 +456,8 @@ impl AgentOs {
                 | wire::ResponsePayload::ExecutionDeletedResponse(_)
                 | wire::ResponsePayload::ExecutionIoResponse(_)
                 | wire::ResponsePayload::ExecutionOutputPageResponse(_)
-                | wire::ResponsePayload::ProcessOutputPageResponse(_) => {
+                | wire::ResponsePayload::ProcessOutputPageResponse(_)
+                | wire::ResponsePayload::GuestFilesystemWriteFilesResponse(_) => {
                     return Err(ClientError::Sidecar(
                         "unexpected create_vm response".to_string(),
                     ));
@@ -567,7 +569,8 @@ impl AgentOs {
                 | wire::ResponsePayload::ExecutionDeletedResponse(_)
                 | wire::ResponsePayload::ExecutionIoResponse(_)
                 | wire::ResponsePayload::ExecutionOutputPageResponse(_)
-                | wire::ResponsePayload::ProcessOutputPageResponse(_) => {
+                | wire::ResponsePayload::ProcessOutputPageResponse(_)
+                | wire::ResponsePayload::GuestFilesystemWriteFilesResponse(_) => {
                     return Err(ClientError::Sidecar(
                         "unexpected configure_vm response".to_string(),
                     ));
@@ -668,7 +671,8 @@ impl AgentOs {
                         | wire::ResponsePayload::ExecutionDeletedResponse(_)
                         | wire::ResponsePayload::ExecutionIoResponse(_)
                         | wire::ResponsePayload::ExecutionOutputPageResponse(_)
-                        | wire::ResponsePayload::ProcessOutputPageResponse(_) => {
+                        | wire::ResponsePayload::ProcessOutputPageResponse(_)
+                        | wire::ResponsePayload::GuestFilesystemWriteFilesResponse(_) => {
                             return Err(ClientError::Sidecar(
                                 "unexpected register_host_callbacks response".to_string(),
                             ));

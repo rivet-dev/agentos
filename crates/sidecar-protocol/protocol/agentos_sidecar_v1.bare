@@ -442,6 +442,20 @@ type GuestFilesystemCallRequest struct {
   offset: optional<u64>
 }
 
+# Writes many files in one request. For each entry, in order, the sidecar
+# creates missing parent directories (mkdir -p) and then writes the file. A
+# failed entry does not stop later entries. Entry count is bounded by the
+# negotiated AuthenticatedResponse.maxWriteFilesEntries; total size is bounded
+# by the negotiated maxFrameBytes.
+type GuestFilesystemWriteFileEntry struct {
+  path: str
+  content: data
+}
+
+type GuestFilesystemWriteFilesRequest struct {
+  entries: list<GuestFilesystemWriteFileEntry>
+}
+
 type GuestKernelCallRequest struct {
   executionId: str
   operation: str
@@ -884,7 +898,8 @@ type RequestPayload union {
   AcquirePackageRequest |
   InstallPackageRequest |
   GetPackageCacheStatsRequest |
-  ReadProcessOutputRequest
+  ReadProcessOutputRequest |
+  GuestFilesystemWriteFilesRequest
 }
 
 type RequestFrame struct {
@@ -898,6 +913,8 @@ type AuthenticatedResponse struct {
   sidecarId: str
   connectionId: str
   maxFrameBytes: u32
+  # Most entries one GuestFilesystemWriteFilesRequest may carry.
+  maxWriteFilesEntries: u32
 }
 
 type SessionOpenedResponse struct {
@@ -988,6 +1005,21 @@ type GuestFilesystemResultResponse struct {
   stat: optional<GuestFilesystemStat>
   exists: optional<bool>
   target: optional<str>
+}
+
+# Same code and message as the rejection the equivalent single request returns.
+type GuestFilesystemWriteFileError struct {
+  code: str
+  message: str
+}
+
+type GuestFilesystemWriteFileResult struct {
+  error: optional<GuestFilesystemWriteFileError>
+}
+
+# One result per request entry, in request order.
+type GuestFilesystemWriteFilesResponse struct {
+  results: list<GuestFilesystemWriteFileResult>
 }
 
 type GuestKernelResultResponse struct {
@@ -1325,7 +1357,8 @@ type ResponsePayload union {
   PackageAcquiredResponse |
   PackageInstalledResponse |
   PackageCacheStatsResponse |
-  ProcessOutputPageResponse
+  ProcessOutputPageResponse |
+  GuestFilesystemWriteFilesResponse
 }
 
 type ResponseFrame struct {

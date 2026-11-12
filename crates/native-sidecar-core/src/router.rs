@@ -5,12 +5,12 @@ use agentos_sidecar_protocol::protocol::{
     CreateVmRequest, DisposeVmRequest, ExecuteRequest, ExportSnapshotRequest, ExtEnvelope,
     FindBoundUdpRequest, FindListenerRequest, GetPackageCacheStatsRequest,
     GetProcessSnapshotRequest, GetResourceSnapshotRequest, GetSignalStateRequest,
-    GetZombieTimerCountRequest, GuestFilesystemCallRequest, GuestKernelCallRequest,
-    ImportSnapshotRequest, InstallPackageRequest, KillProcessRequest, LinkPackageRequest,
-    ListMountsRequest, OpenSessionRequest, OwnershipScope, ProvidedCommandsRequest,
-    ReadProcessOutputRequest, RegisterHostCallbacksRequest, RequestFrame, RequestPayload,
-    ResizePtyRequest, SealLayerRequest, SnapshotRootFilesystemRequest, UnlinkPackageRequest,
-    VmFetchRequest, WriteStdinRequest,
+    GetZombieTimerCountRequest, GuestFilesystemCallRequest, GuestFilesystemWriteFilesRequest,
+    GuestKernelCallRequest, ImportSnapshotRequest, InstallPackageRequest, KillProcessRequest,
+    LinkPackageRequest, ListMountsRequest, OpenSessionRequest, OwnershipScope,
+    ProvidedCommandsRequest, ReadProcessOutputRequest, RegisterHostCallbacksRequest, RequestFrame,
+    RequestPayload, ResizePtyRequest, SealLayerRequest, SnapshotRootFilesystemRequest,
+    UnlinkPackageRequest, VmFetchRequest, WriteStdinRequest,
 };
 
 pub const UNSUPPORTED_HOST_CALLBACK_DIRECTION_CODE: &str = "unsupported_direction";
@@ -42,6 +42,7 @@ pub enum RequestRoute {
     ExportSnapshot(ExportSnapshotRequest),
     CreateOverlay(CreateOverlayRequest),
     GuestFilesystemCall(GuestFilesystemCallRequest),
+    GuestFilesystemWriteFiles(GuestFilesystemWriteFilesRequest),
     GuestKernelCall(GuestKernelCallRequest),
     SnapshotRootFilesystem(SnapshotRootFilesystemRequest),
     ListMounts(ListMountsRequest),
@@ -90,6 +91,9 @@ pub fn route_request_payload(request: &RequestFrame) -> RequestRoute {
         RequestPayload::ExportSnapshot(payload) => RequestRoute::ExportSnapshot(payload),
         RequestPayload::CreateOverlay(payload) => RequestRoute::CreateOverlay(payload),
         RequestPayload::GuestFilesystemCall(payload) => RequestRoute::GuestFilesystemCall(payload),
+        RequestPayload::GuestFilesystemWriteFiles(payload) => {
+            RequestRoute::GuestFilesystemWriteFiles(payload)
+        }
         RequestPayload::GuestKernelCall(payload) => RequestRoute::GuestKernelCall(payload),
         RequestPayload::SnapshotRootFilesystem(payload) => {
             RequestRoute::SnapshotRootFilesystem(payload)
@@ -170,6 +174,7 @@ pub fn request_dispatch_mode(request: &RequestFrame) -> RequestDispatchMode {
         | RequestPayload::ExportSnapshot(_)
         | RequestPayload::CreateOverlay(_)
         | RequestPayload::GuestFilesystemCall(_)
+        | RequestPayload::GuestFilesystemWriteFiles(_)
         | RequestPayload::GuestKernelCall(_)
         | RequestPayload::SnapshotRootFilesystem(_)
         | RequestPayload::ListMounts(_)

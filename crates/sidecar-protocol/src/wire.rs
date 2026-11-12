@@ -716,6 +716,13 @@ pub const PROTOCOL_VERSION: u16 = 11;
 // entire base-filesystem snapshot, while still bounding a single frame.
 pub const DEFAULT_MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 
+/// Most entries one `GuestFilesystemWriteFilesRequest` may carry. The sidecar
+/// advertises it as `AuthenticatedResponse.max_write_files_entries`; clients
+/// split by that value. Total bytes are bounded by the negotiated `max_frame_bytes`.
+/// A batch runs in one critical section on the shared sidecar task set, so this
+/// stays small: a larger batch would stall every other VM on the sidecar until it ends.
+pub const MAX_GUEST_FILESYSTEM_WRITE_FILES_ENTRIES: usize = 16;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProtocolCodecError {
     TruncatedFrame {

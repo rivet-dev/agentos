@@ -88,6 +88,7 @@ export type LiveResponsePayload =
 			sidecar_id: string;
 			connection_id: string;
 			max_frame_bytes: number;
+			max_write_files_entries: number;
 	  }
 	| {
 			type: "session_opened";
@@ -322,6 +323,10 @@ export type LiveResponsePayload =
 			response: protocol.ProcessOutputPageResponse;
 	  }
 	| {
+			type: "guest_filesystem_write_files_result";
+			response: protocol.GuestFilesystemWriteFilesResponse;
+	  }
+	| {
 			type: "ext_result";
 			envelope: LiveExtEnvelope;
 	  };
@@ -336,6 +341,7 @@ export function fromGeneratedResponsePayload(
 				sidecar_id: payload.val.sidecarId,
 				connection_id: payload.val.connectionId,
 				max_frame_bytes: payload.val.maxFrameBytes,
+				max_write_files_entries: payload.val.maxWriteFilesEntries,
 			};
 		case "SessionOpenedResponse":
 			return {
@@ -749,5 +755,10 @@ export function fromGeneratedResponsePayload(
 			return { type: "execution_output_page", response: payload.val };
 		case "ProcessOutputPageResponse":
 			return { type: "process_output_page", response: payload.val };
+		case "GuestFilesystemWriteFilesResponse":
+			return {
+				type: "guest_filesystem_write_files_result",
+				response: payload.val,
+			};
 	}
 }

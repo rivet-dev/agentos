@@ -142,3 +142,103 @@ async fn filesystem_surface_round_trips() {
 
     os.shutdown().await.expect("shutdown");
 }
+
+/// Parity with TS `filesystem-write-files.test.ts`: a failed entry reports its own error, every other
+/// entry is written, results keep input order, and a batch larger than one frame still writes all.
+#[tokio::test]
+async fn write_files_isolates_failed_entries_and_spans_frames() {
+    if !common::require_sidecar("write_files_isolates_failed_entries_and_spans_frames") {
+        return;
+    }
+    let os = common::new_vm_with_sidecar_pool("fs-write-files").await;
+    let entry = |path: &str, content: FileContent| BatchWriteEntry {
+        path: path.to_string(),
+        content,
+    };
+    let bytes = vec![0u8, 1, 2, 255];
+
+    let results = os
+        .write_files(vec![
+            entry("/tmp/wf/file.txt", FileContent::Text("first".into())),
+            // The parent is the regular file written by the entry above.
+            entry(
+                "/tmp/wf/file.txt/child.txt",
+                FileContent::Text("nope".into()),
+            ),
+            entry(
+                "/tmp/wf/deep/nested/data.bin",
+                FileContent::Bytes(bytes.clone()),
+            ),
+            entry("/proc/not-writable", FileContent::Text("nope".into())),
+            entry("/tmp/wf/last.txt", FileContent::Text("last".into())),
+        ])
+        .await;
+    let outcome: Vec<(&str, bool)> = results
+        .iter()
+        .map(|result| (result.path.as_str(), result.success))
+        .collect();
+    assert_eq!(
+        outcome,
+        vec![
+            ("/tmp/wf/file.txt", true),
+            ("/tmp/wf/file.txt/child.txt", false),
+            ("/tmp/wf/deep/nested/data.bin", true),
+            ("/proc/not-writable", false),
+            ("/tmp/wf/last.txt", true),
+        ]
+    );
+    let child_error = results[1].error.as_deref().expect("child error");
+    assert!(
+        child_error.contains("ENOTDIR") || child_error.contains("EEXIST"),
+        "unexpected error: {child_error}"
+    );
+    assert_eq!(
+        os.read_file("/tmp/wf/file.txt").await.expect("read"),
+        b"first"
+    );
+    assert_eq!(
+        os.read_file("/tmp/wf/deep/nested/data.bin")
+            .await
+            .expect("read"),
+        bytes
+    );
+    assert_eq!(
+        os.read_file("/tmp/wf/last.txt").await.expect("read"),
+        b"last"
+    );
+
+    // Five 4 MiB files: together they exceed one 16 MiB frame.
+    let big: Vec<Vec<u8>> = (0..5u32)
+        .map(|seed| {
+            (0..4 * 1024 * 1024u32)
+                .map(|index| ((index + seed) % 251) as u8)
+                .collect()
+        })
+        .collect();
+    let results = os
+        .write_files(
+            big.iter()
+                .enumerate()
+                .map(|(seed, content)| {
+                    entry(
+                        &format!("/tmp/big/{seed}.bin"),
+                        FileContent::Bytes(content.clone()),
+                    )
+                })
+                .collect(),
+        )
+        .await;
+    assert!(
+        results.iter().all(|result| result.success),
+        "every big file should be written: {results:?}"
+    );
+    for (seed, content) in big.iter().enumerate() {
+        let read = os
+            .read_file(&format!("/tmp/big/{seed}.bin"))
+            .await
+            .expect("read big file");
+        assert!(read == *content, "big file {seed} must round-trip");
+    }
+
+    os.shutdown().await.expect("shutdown");
+}

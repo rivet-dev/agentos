@@ -92,6 +92,9 @@ pub struct SidecarTransport {
     request_counter: AtomicI64,
     /// Negotiated max frame size.
     max_frame_bytes: AtomicUsize,
+    /// Most entries per write-files request, from the authenticate handshake. One entry per
+    /// request until the handshake sets it.
+    max_write_files_entries: AtomicUsize,
     /// Structured-event fan-out for `Event` frames. Dropped once the event lane ends (or
     /// `EVENT_DRAIN_GRACE` after a disconnect), so every subscriber sees `RecvError::Closed`
     /// instead of waiting for an event that cannot come.
@@ -194,6 +197,7 @@ impl SidecarTransport {
             pending_request_lock: parking_lot::Mutex::new(()),
             request_counter: AtomicI64::new(1),
             max_frame_bytes: AtomicUsize::new(wire::DEFAULT_MAX_FRAME_BYTES),
+            max_write_files_entries: AtomicUsize::new(1),
             event_tx: Arc::new(parking_lot::Mutex::new(Some(event_tx))),
             callbacks: SccHashMap::new(),
             request_writer_tx,
@@ -325,6 +329,17 @@ impl SidecarTransport {
     pub fn set_max_frame_bytes(&self, max_frame_bytes: usize) {
         self.max_frame_bytes
             .store(max_frame_bytes, Ordering::SeqCst);
+    }
+
+    /// Most entries one `GuestFilesystemWriteFilesRequest` may carry, as negotiated.
+    pub fn max_write_files_entries(&self) -> usize {
+        self.max_write_files_entries.load(Ordering::Relaxed)
+    }
+
+    /// Update the negotiated write-files entry limit after authentication.
+    pub fn set_max_write_files_entries(&self, max_entries: usize) {
+        self.max_write_files_entries
+            .store(max_entries.max(1), Ordering::SeqCst);
     }
 
     /// Request graceful process termination through the physically independent
@@ -853,6 +868,7 @@ mod tests {
             pending_request_lock: parking_lot::Mutex::new(()),
             request_counter: AtomicI64::new(1),
             max_frame_bytes: AtomicUsize::new(wire::DEFAULT_MAX_FRAME_BYTES),
+            max_write_files_entries: AtomicUsize::new(1),
             event_tx: Arc::new(parking_lot::Mutex::new(Some(event_tx))),
             callbacks: SccHashMap::new(),
             request_writer_tx,
@@ -1235,6 +1251,7 @@ mod tests {
             pending_request_lock: parking_lot::Mutex::new(()),
             request_counter: AtomicI64::new(1),
             max_frame_bytes: AtomicUsize::new(wire::DEFAULT_MAX_FRAME_BYTES),
+            max_write_files_entries: AtomicUsize::new(1),
             event_tx: Arc::new(parking_lot::Mutex::new(Some(event_tx))),
             callbacks: SccHashMap::new(),
             request_writer_tx,

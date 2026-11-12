@@ -69,6 +69,10 @@ const DEFAULT_SIDECAR_EVENT_BUFFER_CAPACITY = 4_096;
 const DEFAULT_SIDECAR_GRACEFUL_EXIT_MS = 5_000;
 const DEFAULT_SIDECAR_FORCE_EXIT_MS = 2_000;
 
+// Room for the frame envelope and per-entry length prefixes.
+const WRITE_FILES_FRAME_OVERHEAD_BYTES = 64 * 1024;
+const WRITE_FILES_ENTRY_OVERHEAD_BYTES = 16;
+
 type OwnershipScope = LiveOwnershipScope;
 
 type GuestRuntimeKind = Extract<
@@ -243,6 +247,10 @@ export function registerSidecarProcessSpawnFactory(
 export interface AuthenticatedSession {
 	connectionId: string;
 	sessionId: string;
+	/** Negotiated in the authenticate handshake. */
+	maxFrameBytes: number;
+	/** Most entries one write-files request may carry, from the handshake. */
+	maxWriteFilesEntries: number;
 }
 
 export interface CreatedVm {
@@ -473,6 +481,8 @@ export class SidecarProcess {
 		return {
 			connectionId: authenticated.payload.connection_id,
 			sessionId: opened.payload.session_id,
+			maxFrameBytes: authenticated.payload.max_frame_bytes,
+			maxWriteFilesEntries: authenticated.payload.max_write_files_entries,
 		};
 	}
 
@@ -1102,6 +1112,83 @@ export class SidecarProcess {
 			content: encoded.content,
 			encoding: encoded.encoding,
 		});
+	}
+
+	/**
+	 * Writes each file after creating its missing parent directories. Returns
+	 * one error message (or `null` on success) per entry, in input order. A
+	 * failed entry does not stop later entries. Sends as few requests as the
+	 * entry-count and frame-size limits from the handshake allow.
+	 */
+	async writeFiles(
+		session: AuthenticatedSession,
+		vm: CreatedVm,
+		entries: ReadonlyArray<{ path: string; content: string | Uint8Array }>,
+	): Promise<Array<string | null>> {
+		const encoder = new TextEncoder();
+		const encoded = entries.map((entry) => ({
+			path: entry.path,
+			content:
+				typeof entry.content === "string"
+					? encoder.encode(entry.content)
+					: entry.content,
+		}));
+		const errors: Array<string | null> = new Array(entries.length).fill(null);
+		const maxEntries = Math.max(1, session.maxWriteFilesEntries);
+		let start = 0;
+		while (start < encoded.length) {
+			let end = start;
+			let bytes = WRITE_FILES_FRAME_OVERHEAD_BYTES;
+			while (
+				end < encoded.length &&
+				end - start < maxEntries
+			) {
+				const entryBytes =
+					Buffer.byteLength(encoded[end].path) +
+					encoded[end].content.byteLength +
+					WRITE_FILES_ENTRY_OVERHEAD_BYTES;
+				if (end > start && bytes + entryBytes > session.maxFrameBytes) {
+					break;
+				}
+				bytes += entryBytes;
+				end += 1;
+			}
+			const chunk = encoded.slice(start, end);
+			try {
+				const response = await this.sendRequest({
+					ownership: {
+						scope: "vm",
+						connection_id: session.connectionId,
+						session_id: session.sessionId,
+						vm_id: vm.vmId,
+					},
+					payload: { type: "guest_filesystem_write_files", entries: chunk },
+				});
+				if (
+					response.payload.type !== "guest_filesystem_write_files_result" ||
+					response.payload.response.results.length !== chunk.length
+				) {
+					throw new Error(
+						`unexpected guest_filesystem_write_files response: ${response.payload.type}`,
+					);
+				}
+				response.payload.response.results.forEach((result, index) => {
+					if (result.error) {
+						const { code, message } = result.error;
+						errors[start + index] = message.startsWith(`${code}:`)
+							? message
+							: `${code}: ${message}`;
+					}
+				});
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				for (let index = start; index < end; index += 1) {
+					errors[index] = message;
+				}
+			}
+			start = end;
+		}
+		return errors;
 	}
 
 	async pwrite(

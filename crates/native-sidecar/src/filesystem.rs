@@ -6,7 +6,9 @@ use crate::execution::{
 };
 use crate::protocol::{
     GuestFilesystemCallRequest, GuestFilesystemOperation, GuestFilesystemResultResponse,
-    GuestRuntimeKind, RequestFrame, ResponsePayload,
+    GuestFilesystemWriteFileError, GuestFilesystemWriteFileResult,
+    GuestFilesystemWriteFilesRequest, GuestFilesystemWriteFilesResponse, GuestRuntimeKind,
+    RejectedResponse, RequestFrame, ResponsePayload, MAX_GUEST_FILESYSTEM_WRITE_FILES_ENTRIES,
 };
 use crate::service::{
     javascript_sync_rpc_arg_str, javascript_sync_rpc_arg_u32, javascript_sync_rpc_arg_u32_optional,
@@ -517,6 +519,115 @@ pub(crate) fn guest_filesystem_call_vm(
         .map_err(native_guest_filesystem_core_error)?;
     mirror_guest_filesystem_shadow_after_call(vm, payload)?;
     Ok(response)
+}
+
+/// Rejects a write-files request that carries more than
+/// [`MAX_GUEST_FILESYSTEM_WRITE_FILES_ENTRIES`] entries, before any entry runs.
+pub(crate) fn guest_filesystem_write_files_limit_rejection(
+    payload: &GuestFilesystemWriteFilesRequest,
+    vm_id: &str,
+) -> Option<RejectedResponse> {
+    let requested = payload.entries.len();
+    if requested <= MAX_GUEST_FILESYSTEM_WRITE_FILES_ENTRIES {
+        return None;
+    }
+    let limit = MAX_GUEST_FILESYSTEM_WRITE_FILES_ENTRIES;
+    Some(RejectedResponse {
+        code: String::from("ERR_AGENTOS_RESOURCE_LIMIT"),
+        message: format!(
+            "ERR_AGENTOS_RESOURCE_LIMIT: scope=request resource=guestFilesystemWriteFilesEntries requested={requested} limit={limit}; send at most {limit} entries per write-files request"
+        ),
+        limit_name: Some(String::from("guestFilesystemWriteFilesEntries")),
+        configured_limit: Some(limit as u64),
+        current_usage: None,
+        requested: Some(requested as u64),
+        unit: Some(String::from("entries")),
+        scope: Some(String::from("request")),
+        vm_id: Some(vm_id.to_owned()),
+        session_generation: None,
+        capability_id: None,
+        operation: Some(String::from("guestFilesystem.writeFiles")),
+        configuration_path: None,
+        retryable: Some(false),
+        errno: Some(String::from("E2BIG")),
+    })
+}
+
+/// Write many files against an already ownership-validated VM in one critical
+/// section. Each entry runs `mkdir -p <parent>` and then writes the file, with
+/// the same checks and errors as the single `mkdir` and `write_file` requests.
+/// A failed entry does not stop later entries; results keep request order.
+pub(crate) fn guest_filesystem_write_files_vm(
+    vm: &mut VmState,
+    payload: GuestFilesystemWriteFilesRequest,
+) -> GuestFilesystemWriteFilesResponse {
+    // A parent created earlier in this batch stays a directory: entries only
+    // write regular files, and writing a file over a directory fails.
+    let mut created_parents = BTreeSet::new();
+    let results = payload
+        .entries
+        .into_iter()
+        .map(|entry| GuestFilesystemWriteFileResult {
+            error: guest_filesystem_write_file_with_parents_vm(
+                vm,
+                &mut created_parents,
+                &entry.path,
+                entry.content,
+            )
+            .err()
+            .map(|error| GuestFilesystemWriteFileError {
+                code: crate::execution::error_code(&error).to_owned(),
+                message: error.to_string(),
+            }),
+        })
+        .collect();
+    GuestFilesystemWriteFilesResponse { results }
+}
+
+fn guest_filesystem_write_file_with_parents_vm(
+    vm: &mut VmState,
+    created_parents: &mut BTreeSet<String>,
+    path: &str,
+    content: Vec<u8>,
+) -> Result<(), SidecarError> {
+    let parent = path.rfind('/').map_or("", |index| &path[..index]);
+    if !parent.is_empty() && !created_parents.contains(parent) {
+        guest_filesystem_call_vm(
+            vm,
+            &GuestFilesystemCallRequest {
+                operation: GuestFilesystemOperation::Mkdir,
+                path: parent.to_owned(),
+                destination_path: None,
+                target: None,
+                content: None,
+                encoding: None,
+                recursive: true,
+                max_depth: None,
+                mode: None,
+                uid: None,
+                gid: None,
+                atime_ms: None,
+                mtime_ms: None,
+                len: None,
+                offset: None,
+            },
+        )?;
+        created_parents.insert(parent.to_owned());
+    }
+    // Same steps as a `WriteFile` call through `guest_filesystem_call_vm`,
+    // without a base64 round trip of the content.
+    vm.kernel
+        .write_file(path, content.clone())
+        .map_err(|error| {
+            native_guest_filesystem_core_error(agentos_native_sidecar_core::SidecarCoreError::new(
+                error.to_string(),
+            ))
+        })?;
+    if !is_non_root_mount_path(&vm.kernel, path) {
+        mirror_guest_file_write_to_shadow(vm, path, &content)?;
+        refresh_shadow_inventory_path(vm, path)?;
+    }
+    Ok(())
 }
 
 fn native_guest_filesystem_core_error(

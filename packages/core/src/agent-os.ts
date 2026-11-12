@@ -4723,6 +4723,35 @@ export class AgentOs {
 	private async _writeFiles(
 		entries: BatchWriteEntry[],
 	): Promise<BatchWriteResult[]> {
+		if (this.#kernel instanceof NativeSidecarKernelProxy) {
+			const results: BatchWriteResult[] = entries.map((entry) => ({
+				path: entry.path,
+				success: true,
+			}));
+			const writable: Array<{ index: number; entry: BatchWriteEntry }> = [];
+			entries.forEach((entry, index) => {
+				try {
+					this._assertWritableAbsolutePath(entry.path);
+					writable.push({ index, entry });
+				} catch (err: unknown) {
+					results[index] = {
+						path: entry.path,
+						success: false,
+						error: err instanceof Error ? err.message : String(err),
+					};
+				}
+			});
+			const errors = await this.#kernel.writeFiles(
+				writable.map(({ entry }) => entry),
+			);
+			errors.forEach((error, position) => {
+				if (error !== null) {
+					const { index, entry } = writable[position];
+					results[index] = { path: entry.path, success: false, error };
+				}
+			});
+			return results;
+		}
 		const results: BatchWriteResult[] = [];
 		for (const entry of entries) {
 			try {

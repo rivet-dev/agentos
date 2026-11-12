@@ -53,6 +53,7 @@ function service(
 				sidecar_id: "s",
 				connection_id: "c",
 				max_frame_bytes: 1024,
+				max_write_files_entries: 4096,
 			};
 		case "open_session":
 			return {

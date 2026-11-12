@@ -11,6 +11,7 @@ describe("response payload conversion", () => {
 					sidecarId: "sidecar",
 					connectionId: "conn",
 					maxFrameBytes: 1024,
+					maxWriteFilesEntries: 4096,
 				},
 			}),
 		).toEqual({
@@ -18,6 +19,7 @@ describe("response payload conversion", () => {
 			sidecar_id: "sidecar",
 			connection_id: "conn",
 			max_frame_bytes: 1024,
+			max_write_files_entries: 4096,
 		});
 
 		expect(
