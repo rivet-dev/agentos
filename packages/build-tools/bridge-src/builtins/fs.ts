@@ -2423,6 +2423,12 @@ function throwNormalizedFsBridgeError(err, syscall, path) {
   if (code === "EACCES") {
     throw createFsError("EACCES", `EACCES: permission denied, ${syscall} '${path}'`, syscall, path);
   }
+  if (code && Object.prototype.hasOwnProperty.call(POSIX_ERRNO, code) && err && typeof err === "object") {
+    err.code = code;
+    err.errno ??= errnoForCode(code);
+    err.syscall ??= syscall;
+    err.path ??= path;
+  }
   throw err;
 }
 function joinDirEntryPath(dirPath, entryName) {

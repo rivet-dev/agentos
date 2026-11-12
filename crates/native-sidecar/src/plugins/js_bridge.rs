@@ -457,32 +457,32 @@ impl VirtualFileSystem for JsBridgeFilesystem {
     }
 
     fn exists(&self, path: &str) -> bool {
-        let Ok(args) = serde_json::to_string(&json!({ "path": path })) else {
-            return false;
-        };
-        self.requests
-            .invoke(
-                self.ownership.clone(),
-                SidecarRequestPayload::JsBridgeCall(JsBridgeCallRequest {
-                    call_id: self.next_call_id(),
-                    mount_id: self.mount_id.clone(),
-                    operation: String::from("exists"),
-                    args,
-                }),
-                JS_BRIDGE_TIMEOUT,
-            )
-            .ok()
-            .and_then(|payload| match payload {
-                SidecarResponsePayload::JsBridgeResult(JsBridgeResultResponse {
-                    result,
-                    error,
-                    ..
-                }) if error.is_none() => result,
-                _ => None,
-            })
-            .and_then(|value| serde_json::from_str::<Value>(&value).ok())
-            .and_then(|value| value.as_bool())
-            .unwrap_or(false)
+        // `VirtualFileSystem::exists` cannot carry an error and Node's
+        // `existsSync` reports any failure as `false`, so a failed host callback
+        // (EIO, timeout) still answers `false`. Log it here so an I/O failure is
+        // not mistaken for a missing file.
+        match self.request_path("exists", path, json!({ "path": path })) {
+            Ok(Some(Value::Bool(exists))) => exists,
+            Ok(other) => {
+                tracing::warn!(
+                    mount_id = %self.mount_id,
+                    path,
+                    payload = ?other,
+                    "js_bridge exists returned a non-boolean payload; reporting false"
+                );
+                false
+            }
+            Err(error) if error.code() == "ENOENT" => false,
+            Err(error) => {
+                tracing::warn!(
+                    mount_id = %self.mount_id,
+                    path,
+                    %error,
+                    "js_bridge exists failed; reporting false to the guest"
+                );
+                false
+            }
+        }
     }
 
     fn stat(&mut self, path: &str) -> VfsResult<VirtualStat> {

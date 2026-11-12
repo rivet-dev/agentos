@@ -83,8 +83,10 @@ fn kernel_path_error(
         eprintln!("[agent-os-fs-error] operation={operation} path={path} error={base}");
     }
     match base {
+        // Keep the errno as the leading segment (Node style: `EIO: msg, op 'path'`);
+        // the V8 bridge derives the guest-visible `error.code` from it.
         SidecarError::Kernel(message) => {
-            SidecarError::Kernel(format!("{operation} {path}: {message}"))
+            SidecarError::Kernel(format!("{message}, {operation} '{path}'"))
         }
         other => other,
     }
