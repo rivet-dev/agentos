@@ -549,6 +549,7 @@ fn response_tracker_rejects_kind_and_ownership_mismatches() {
                 sidecar_id: "sidecar-1".to_string(),
                 connection_id: "conn-1".to_string(),
                 max_frame_bytes: 1024,
+                max_write_files_entries: 4096,
             }),
         )),
         Err(ResponseTrackerError::ResponseKindMismatch {
@@ -617,6 +618,7 @@ fn response_tracker_caps_completed_entries() {
                     sidecar_id: "sidecar-1".to_string(),
                     connection_id: "conn-1".to_string(),
                     max_frame_bytes: 1024,
+                    max_write_files_entries: 4096,
                 }),
             ))
             .expect("accept response");
@@ -815,6 +817,7 @@ fn codec_rejects_request_id_direction_mismatches() {
             sidecar_id: "sidecar-1".to_string(),
             connection_id: "conn-1".to_string(),
             max_frame_bytes: 1024,
+            max_write_files_entries: 4096,
         }),
     ));
     assert_eq!(

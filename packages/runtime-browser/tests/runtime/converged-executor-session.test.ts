@@ -50,6 +50,7 @@ function service(request: LiveRequestPayload): LiveResponsePayload {
 				sidecar_id: "sidecar",
 				connection_id: "conn-1",
 				max_frame_bytes: 1024,
+				max_write_files_entries: 4096,
 			};
 		case "open_session":
 			return {

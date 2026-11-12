@@ -22,6 +22,7 @@ use crate::extension::{
 };
 use crate::filesystem::{
     guest_filesystem_call as filesystem_guest_filesystem_call, guest_filesystem_call_vm,
+    guest_filesystem_write_files_limit_rejection, guest_filesystem_write_files_vm,
 };
 use crate::host_functions::register_host_callbacks;
 use crate::limits::DEFAULT_EXTENSION_OUTPUT_BUFFER_BYTE_LIMIT;
@@ -30,13 +31,13 @@ use crate::process_event_broker::{
 };
 use crate::protocol::{
     CloseStdinRequest, DisposeReason, EventFrame, EventPayload, ExecuteRequest, ExtEnvelope,
-    GuestFilesystemCallRequest, GuestFilesystemResultResponse, JavascriptChildProcessSpawnOptions,
-    JavascriptChildProcessSpawnRequest, KillProcessRequest, OpenSessionRequest, OwnershipScope,
-    ProcessKilledResponse, ProcessStartedResponse, RejectedResponse, RequestFrame, RequestId,
-    RequestPayload, ResponseFrame, ResponsePayload, SidecarRequestFrame, SidecarRequestPayload,
-    SidecarResponseFrame, SidecarResponsePayload, SidecarResponseTracker,
-    SidecarResponseTrackerError, SignalDispositionAction, StdinClosedResponse,
-    StdinWrittenResponse, VmLifecycleState, WriteStdinRequest,
+    GuestFilesystemCallRequest, GuestFilesystemResultResponse, GuestFilesystemWriteFilesRequest,
+    JavascriptChildProcessSpawnOptions, JavascriptChildProcessSpawnRequest, KillProcessRequest,
+    OpenSessionRequest, OwnershipScope, ProcessKilledResponse, ProcessStartedResponse,
+    RejectedResponse, RequestFrame, RequestId, RequestPayload, ResponseFrame, ResponsePayload,
+    SidecarRequestFrame, SidecarRequestPayload, SidecarResponseFrame, SidecarResponsePayload,
+    SidecarResponseTracker, SidecarResponseTrackerError, SignalDispositionAction,
+    StdinClosedResponse, StdinWrittenResponse, VmLifecycleState, WriteStdinRequest,
 };
 use crate::request_operations::OperationCancellationReason;
 use crate::state::{
@@ -2492,6 +2493,9 @@ where
             RequestRoute::GuestFilesystemCall(payload) => {
                 self.guest_filesystem_call(&request, payload).await
             }
+            RequestRoute::GuestFilesystemWriteFiles(payload) => {
+                self.guest_filesystem_write_files(&request, payload)
+            }
             RequestRoute::GuestKernelCall(payload) => {
                 self.guest_kernel_call(&request, payload).await
             }
@@ -2614,6 +2618,7 @@ where
                 | RequestRoute::ListMounts(_)
                 | RequestRoute::CompareVmConfig(_)
                 | RequestRoute::GuestFilesystemCall(_)
+                | RequestRoute::GuestFilesystemWriteFiles(_)
                 | RequestRoute::GuestKernelCall(_)
                 | RequestRoute::BootstrapRootFilesystem(_)
                 | RequestRoute::ConfigureVm(_)
@@ -2960,6 +2965,44 @@ where
                                 &response_request,
                                 ResponsePayload::GuestFilesystemResult(response),
                             ),
+                            events: Vec::new(),
+                        })
+                    },
+                )))
+            }
+            RequestRoute::GuestFilesystemWriteFiles(payload) => {
+                let (connection_id, session_id, vm_id) = match self.vm_scope_for(&request.ownership)
+                {
+                    Ok(scope) => scope,
+                    Err(error) => return Ok(Some(PreparedRequest::failed(request, error))),
+                };
+                if let Err(error) = self.require_owned_vm(&connection_id, &session_id, &vm_id) {
+                    return Ok(Some(PreparedRequest::failed(request, error)));
+                }
+                let limit_rejection =
+                    guest_filesystem_write_files_limit_rejection(&payload, &vm_id);
+                let Some(handle) = self.vms.handle(&vm_id) else {
+                    return Ok(Some(PreparedRequest::failed(
+                        request,
+                        SidecarError::InvalidState(format!(
+                            "VM {vm_id} no longer exists for guest filesystem write files"
+                        )),
+                    )));
+                };
+                let response_request = request.clone();
+                Ok(Some(PreparedRequest::from_vm_command(
+                    request,
+                    async move {
+                        let payload = match limit_rejection {
+                            Some(rejected) => ResponsePayload::Rejected(rejected),
+                            None => ResponsePayload::GuestFilesystemWriteFilesResult(
+                                handle.try_command("guest filesystem write files", |vm| {
+                                    Ok(guest_filesystem_write_files_vm(vm, payload))
+                                })?,
+                            ),
+                        };
+                        Ok(DispatchResult {
+                            response: shared_respond(&response_request, payload),
                             events: Vec::new(),
                         })
                     },
@@ -3870,6 +3913,32 @@ where
         payload: GuestFilesystemCallRequest,
     ) -> Result<DispatchResult, SidecarError> {
         filesystem_guest_filesystem_call(self, request, payload).await
+    }
+
+    fn guest_filesystem_write_files(
+        &mut self,
+        request: &RequestFrame,
+        payload: GuestFilesystemWriteFilesRequest,
+    ) -> Result<DispatchResult, SidecarError> {
+        let (connection_id, session_id, vm_id) = self.vm_scope_for(&request.ownership)?;
+        self.require_owned_vm(&connection_id, &session_id, &vm_id)?;
+        let payload = match guest_filesystem_write_files_limit_rejection(&payload, &vm_id) {
+            Some(rejected) => ResponsePayload::Rejected(rejected),
+            None => {
+                let Some(mut vm) = self.vms.get_mut(&vm_id) else {
+                    return Err(SidecarError::InvalidState(format!(
+                        "VM {vm_id} no longer exists for guest filesystem write files"
+                    )));
+                };
+                ResponsePayload::GuestFilesystemWriteFilesResult(guest_filesystem_write_files_vm(
+                    &mut vm, payload,
+                ))
+            }
+        };
+        Ok(DispatchResult {
+            response: self.respond(request, payload),
+            events: Vec::new(),
+        })
     }
 
     // snapshot_root_filesystem moved to crate::vm
@@ -6240,6 +6309,71 @@ mod prepared_request_tests {
 
     fn cleanup_test_ownership(vm_id: &str) -> OwnershipScope {
         OwnershipScope::vm("vm-handle-test-connection", "vm-handle-test-session", vm_id)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn write_files_over_entry_limit_is_rejected_before_any_write() {
+        let mut sidecar = test_sidecar();
+        let vm_id = create_test_vms(&mut sidecar, 1).await.remove(0);
+        let limit = crate::protocol::MAX_GUEST_FILESYSTEM_WRITE_FILES_ENTRIES;
+        let entries = |count: usize, dir: &str| {
+            (0..count)
+                .map(|index| crate::protocol::GuestFilesystemWriteFileEntry {
+                    path: format!("/tmp/{dir}/{index}.txt"),
+                    content: b"x".to_vec(),
+                })
+                .collect::<Vec<_>>()
+        };
+        async fn send(
+            sidecar: &mut NativeSidecar<LocalBridge>,
+            vm_id: &str,
+            request_id: RequestId,
+            entries: Vec<crate::protocol::GuestFilesystemWriteFileEntry>,
+        ) -> ResponsePayload {
+            let request = RequestFrame::new(
+                request_id,
+                cleanup_test_ownership(vm_id),
+                RequestPayload::GuestFilesystemWriteFiles(
+                    crate::protocol::GuestFilesystemWriteFilesRequest { entries },
+                ),
+            );
+            let prepared = sidecar
+                .prepare_request_wire(wire_request(request))
+                .expect("prepare write files")
+                .expect("write files is detachable");
+            let completed = prepared.execute().await;
+            compat_response(sidecar.complete_request(completed).expect("complete")).payload
+        }
+
+        let ResponsePayload::Rejected(rejected) =
+            send(&mut sidecar, &vm_id, 1, entries(limit + 1, "over")).await
+        else {
+            panic!("expected a limit rejection");
+        };
+        assert_eq!(rejected.code, "ERR_AGENTOS_RESOURCE_LIMIT");
+        assert_eq!(
+            rejected.limit_name.as_deref(),
+            Some("guestFilesystemWriteFilesEntries")
+        );
+        assert_eq!(rejected.configured_limit, Some(limit as u64));
+        assert_eq!(rejected.requested, Some(limit as u64 + 1));
+
+        let ResponsePayload::GuestFilesystemWriteFilesResult(written) =
+            send(&mut sidecar, &vm_id, 2, entries(limit, "at")).await
+        else {
+            panic!("a batch at the limit must be accepted");
+        };
+        assert!(written.results.iter().all(|result| result.error.is_none()));
+
+        let vm = sidecar.vms.handle(&vm_id).unwrap();
+        let mut vm = vm.borrow_mut();
+        assert!(!vm.kernel.exists("/tmp/over/0.txt").expect("exists"));
+        assert_eq!(
+            vm.kernel
+                .read_file(&format!("/tmp/at/{}.txt", limit - 1))
+                .expect("read"),
+            b"x"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

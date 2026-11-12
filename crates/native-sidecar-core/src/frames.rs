@@ -10,7 +10,8 @@ use agentos_sidecar_protocol::protocol::{
     SignalStateResponse, SnapshotExportedResponse, SnapshotImportedResponse, SocketStateEntry,
     StdinClosedResponse, StdinWrittenResponse, StreamChannel, StructuredEvent,
     VmConfiguredResponse, VmCreatedResponse, VmDisposedResponse, VmLifecycleEvent,
-    VmLifecycleState, ZombieTimerCountResponse, PROTOCOL_VERSION,
+    VmLifecycleState, ZombieTimerCountResponse, MAX_GUEST_FILESYSTEM_WRITE_FILES_ENTRIES,
+    PROTOCOL_VERSION,
 };
 use std::collections::HashMap;
 
@@ -92,6 +93,7 @@ pub fn authenticated_response(
             sidecar_id: sidecar_id.into(),
             connection_id,
             max_frame_bytes,
+            max_write_files_entries: MAX_GUEST_FILESYSTEM_WRITE_FILES_ENTRIES as u32,
         }),
     )
 }
@@ -510,6 +512,10 @@ mod tests {
                 assert_eq!(authenticated.sidecar_id, "agentos-test");
                 assert_eq!(authenticated.connection_id, "conn-test");
                 assert_eq!(authenticated.max_frame_bytes, 1024);
+                assert_eq!(
+                    authenticated.max_write_files_entries,
+                    MAX_GUEST_FILESYSTEM_WRITE_FILES_ENTRIES as u32
+                );
             }
             other => panic!("unexpected response payload: {other:?}"),
         }

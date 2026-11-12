@@ -616,6 +616,9 @@ fn to_generated_request_payload(
         RequestPayload::ReadProcessOutput(inner) => {
             generated_protocol::RequestPayload::ReadProcessOutputRequest(inner.clone())
         }
+        RequestPayload::GuestFilesystemWriteFiles(inner) => {
+            generated_protocol::RequestPayload::GuestFilesystemWriteFilesRequest(inner.clone())
+        }
     })
 }
 
@@ -838,6 +841,9 @@ fn from_generated_request_payload(
         generated_protocol::RequestPayload::ReadProcessOutputRequest(inner) => {
             RequestPayload::ReadProcessOutput(inner)
         }
+        generated_protocol::RequestPayload::GuestFilesystemWriteFilesRequest(inner) => {
+            RequestPayload::GuestFilesystemWriteFiles(inner)
+        }
     })
 }
 
@@ -1040,6 +1046,9 @@ fn to_generated_response_payload(
         ResponsePayload::ProcessOutputPage(inner) => {
             generated_protocol::ResponsePayload::ProcessOutputPageResponse(inner.clone())
         }
+        ResponsePayload::GuestFilesystemWriteFilesResult(inner) => {
+            generated_protocol::ResponsePayload::GuestFilesystemWriteFilesResponse(inner.clone())
+        }
     })
 }
 
@@ -1228,6 +1237,9 @@ fn from_generated_response_payload(
         }
         generated_protocol::ResponsePayload::ProcessOutputPageResponse(inner) => {
             ResponsePayload::ProcessOutputPage(inner)
+        }
+        generated_protocol::ResponsePayload::GuestFilesystemWriteFilesResponse(inner) => {
+            ResponsePayload::GuestFilesystemWriteFilesResult(inner)
         }
     })
 }
@@ -1655,6 +1667,7 @@ pub enum RequestPayload {
     ResizeExecutionPty(ResizeExecutionPtyRequest),
     ReadExecutionOutput(ReadExecutionOutputRequest),
     ReadProcessOutput(ReadProcessOutputRequest),
+    GuestFilesystemWriteFiles(GuestFilesystemWriteFilesRequest),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1710,6 +1723,7 @@ pub enum ResponsePayload {
     ExecutionIo(ExecutionIoResponse),
     ExecutionOutputPage(ExecutionOutputPageResponse),
     ProcessOutputPage(ProcessOutputPageResponse),
+    GuestFilesystemWriteFilesResult(GuestFilesystemWriteFilesResponse),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1860,6 +1874,12 @@ pub type WasmPermissionTier = crate::wire::WasmPermissionTier;
 pub type ExecuteRequest = crate::wire::ExecuteRequest;
 pub type ReadProcessOutputRequest = crate::wire::ReadProcessOutputRequest;
 
+pub type GuestFilesystemWriteFileEntry = crate::wire::GuestFilesystemWriteFileEntry;
+
+pub type GuestFilesystemWriteFilesRequest = crate::wire::GuestFilesystemWriteFilesRequest;
+
+pub use crate::wire::MAX_GUEST_FILESYSTEM_WRITE_FILES_ENTRIES;
+
 pub type ExecutionState = crate::wire::ExecutionState;
 pub type ExecutionOutcome = crate::wire::ExecutionOutcome;
 pub type RetainedExecutionLanguage = crate::wire::RetainedExecutionLanguage;
@@ -1992,6 +2012,12 @@ pub type ProcessSnapshotEntry = crate::wire::ProcessSnapshotEntry;
 pub type ProcessSnapshotResponse = crate::wire::ProcessSnapshotResponse;
 pub type ProcessOutputReplayEvent = crate::wire::ProcessOutputReplayEvent;
 pub type ProcessOutputPageResponse = crate::wire::ProcessOutputPageResponse;
+
+pub type GuestFilesystemWriteFileError = crate::wire::GuestFilesystemWriteFileError;
+
+pub type GuestFilesystemWriteFileResult = crate::wire::GuestFilesystemWriteFileResult;
+
+pub type GuestFilesystemWriteFilesResponse = crate::wire::GuestFilesystemWriteFilesResponse;
 
 pub type QueueSnapshotEntry = crate::wire::QueueSnapshotEntry;
 
@@ -2139,6 +2165,7 @@ impl_bare_newtype_union_enum!(
         InstallPackage(InstallPackageRequest) = 68,
         GetPackageCacheStats(GetPackageCacheStatsRequest) = 69,
         ReadProcessOutput(ReadProcessOutputRequest) = 70,
+        GuestFilesystemWriteFiles(GuestFilesystemWriteFilesRequest) = 71,
     }
 );
 
@@ -2198,6 +2225,7 @@ impl_bare_newtype_union_enum!(
         PackageInstalled(PackageInstalledResponse) = 48,
         PackageCacheStats(PackageCacheStatsResponse) = 49,
         ProcessOutputPage(ProcessOutputPageResponse) = 50,
+        GuestFilesystemWriteFilesResult(GuestFilesystemWriteFilesResponse) = 51,
     }
 );
 
@@ -2797,6 +2825,7 @@ enum ExpectedResponseKind {
     ExecutionIo,
     ExecutionOutputPage,
     ProcessOutputPage,
+    GuestFilesystemWriteFilesResult,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2859,6 +2888,7 @@ impl ExpectedResponseKind {
             Self::ExecutionIo => "execution_io",
             Self::ExecutionOutputPage => "execution_output_page",
             Self::ProcessOutputPage => "process_output_page",
+            Self::GuestFilesystemWriteFilesResult => "guest_filesystem_write_files_result",
         }
     }
 
@@ -2960,6 +2990,7 @@ impl RequestPayload {
             | Self::ResizeExecutionPty(_)
             | Self::ReadExecutionOutput(_)
             | Self::ReadProcessOutput(_)
+            | Self::GuestFilesystemWriteFiles(_)
             | Self::HostFilesystemCall(_) => OwnershipRequirement::Vm,
             Self::Ext(_) => OwnershipRequirement::Any,
         }
@@ -3039,6 +3070,9 @@ impl RequestPayload {
             | Self::ResizeExecutionPty(_) => ExpectedResponseKind::ExecutionIo,
             Self::ReadExecutionOutput(_) => ExpectedResponseKind::ExecutionOutputPage,
             Self::ReadProcessOutput(_) => ExpectedResponseKind::ProcessOutputPage,
+            Self::GuestFilesystemWriteFiles(_) => {
+                ExpectedResponseKind::GuestFilesystemWriteFilesResult
+            }
         }
     }
 }
@@ -3108,7 +3142,8 @@ impl ResponsePayload {
             | Self::ExecutionDeleted(_)
             | Self::ExecutionIo(_)
             | Self::ExecutionOutputPage(_)
-            | Self::ProcessOutputPage(_) => OwnershipRequirement::Vm,
+            | Self::ProcessOutputPage(_)
+            | Self::GuestFilesystemWriteFilesResult(_) => OwnershipRequirement::Vm,
             Self::ExtResult(_) => OwnershipRequirement::Any,
         }
     }
@@ -3166,6 +3201,7 @@ impl ResponsePayload {
             Self::ExecutionIo(_) => "execution_io",
             Self::ExecutionOutputPage(_) => "execution_output_page",
             Self::ProcessOutputPage(_) => "process_output_page",
+            Self::GuestFilesystemWriteFilesResult(_) => "guest_filesystem_write_files_result",
         }
     }
 }

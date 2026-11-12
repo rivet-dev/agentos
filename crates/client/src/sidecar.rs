@@ -295,6 +295,7 @@ impl AgentOsSidecar {
         };
         let max_frame = authed.max_frame_bytes as usize;
         transport.set_max_frame_bytes(max_frame);
+        transport.set_max_write_files_entries(authed.max_write_files_entries as usize);
 
         *guard = Some(SharedConnection {
             transport: transport.clone(),

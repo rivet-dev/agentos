@@ -87,10 +87,13 @@ dedicated sidecar with `AgentOs.createSidecar()`, as in the example above.
 Each library request to the sidecar must fit in one protocol frame. The sidecar
 reports its frame limit (16 MiB) when the client connects, and the limit is not
 configurable. The client rejects a larger request with `SidecarFrameTooLarge`
-before it sends it, so the sidecar and the other VMs on it keep running. Binary
-file content is base64-encoded, so one `writeFile` or `writeFiles` call carries
-at most about 12 MiB of binary data. To move larger files, split them into
-several files or mount a host directory.
+before it sends it, so the sidecar and the other VMs on it keep running.
+`writeFile` base64-encodes binary content, so one call carries at most about
+12 MiB of binary data. `writeFiles` sends raw bytes and splits a large batch
+into several requests by the frame limit and the per-request file limit
+(16) that the sidecar reports when the client connects, so only each single file must
+fit in one frame (about 16 MiB). To move larger files, split them into several
+files or mount a host directory.
 
 ### Isolate memory
 

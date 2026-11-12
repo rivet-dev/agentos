@@ -161,6 +161,13 @@ export async function runManagedProcessToCompletion(
 	}
 }
 
+function isProtectedGuestPath(path: string): boolean {
+	const normalizedPath = posixPath.normalize(path);
+	return PROTECTED_READ_ONLY_GUEST_ROOTS.some(
+		(root) => normalizedPath === root || normalizedPath.startsWith(`${root}/`),
+	);
+}
+
 function shouldLogStructuredSidecarEvent(name: string): boolean {
 	const normalized = name.toLowerCase();
 	return (
@@ -1551,6 +1558,64 @@ export class NativeSidecarKernelProxy {
 		);
 	}
 
+	/**
+	 * Writes each file after `mkdir -p` of its parent. Returns one error message
+	 * (or `null`) per entry, in input order; a failed entry does not stop the
+	 * rest. Consecutive entries that the sidecar owns go in one batched request;
+	 * entries under a local mount or a protected root keep the per-entry path.
+	 */
+	async writeFiles(
+		entries: ReadonlyArray<{ path: string; content: string | Uint8Array }>,
+	): Promise<Array<string | null>> {
+		const errors: Array<string | null> = [];
+		let batch: Array<{ path: string; content: string | Uint8Array }> = [];
+		const flush = async () => {
+			if (batch.length === 0) return;
+			const pending = batch;
+			batch = [];
+			try {
+				await this.waitForMountReconfigure();
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				// Loops, not `push(...array)`: a spread of a large batch overflows the stack.
+				for (let index = 0; index < pending.length; index += 1) {
+					errors.push(message);
+				}
+				return;
+			}
+			const results = await this.client.writeFiles(
+				this.session,
+				this.vm,
+				pending,
+			);
+			for (const result of results) {
+				errors.push(result);
+			}
+		};
+		for (const entry of entries) {
+			if (
+				!this.resolveLocalMount(entry.path) &&
+				!isProtectedGuestPath(entry.path)
+			) {
+				batch.push(entry);
+				continue;
+			}
+			await flush();
+			try {
+				const parent = entry.path.substring(0, entry.path.lastIndexOf("/"));
+				if (parent) {
+					await this.mkdir(parent);
+				}
+				await this.writeFile(entry.path, entry.content);
+				errors.push(null);
+			} catch (error) {
+				errors.push(error instanceof Error ? error.message : String(error));
+			}
+		}
+		await flush();
+		return errors;
+	}
+
 	async mkdir(path: string, recursive = true): Promise<void> {
 		return this.dispatchWrite(
 			path,
@@ -2880,11 +2945,8 @@ export class NativeSidecarKernelProxy {
 	}
 
 	private assertGuestPathWritable(path: string): void {
-		const normalizedPath = posixPath.normalize(path);
-		for (const root of PROTECTED_READ_ONLY_GUEST_ROOTS) {
-			if (normalizedPath === root || normalizedPath.startsWith(`${root}/`)) {
-				throw errnoError("EROFS", "read-only file system");
-			}
+		if (isProtectedGuestPath(path)) {
+			throw errnoError("EROFS", "read-only file system");
 		}
 	}
 

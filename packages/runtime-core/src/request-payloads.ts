@@ -181,6 +181,10 @@ export type LiveRequestPayload =
 			payload: ArrayBuffer;
 	  }
 	| {
+			type: "guest_filesystem_write_files";
+			entries: Array<{ path: string; content: Uint8Array }>;
+	  }
+	| {
 			type: "guest_filesystem_call";
 			operation: LiveGuestFilesystemOperation;
 			path: string;
@@ -590,6 +594,16 @@ export function toGeneratedRequestPayload(
 					mtimeMs: toGeneratedOptionalU64(payload.mtime_ms),
 					len: toGeneratedOptionalU64(payload.len),
 					offset: toGeneratedOptionalU64(payload.offset),
+				},
+			};
+		case "guest_filesystem_write_files":
+			return {
+				tag: "GuestFilesystemWriteFilesRequest",
+				val: {
+					entries: payload.entries.map((entry) => ({
+						path: entry.path,
+						content: toExactArrayBuffer(entry.content),
+					})),
 				},
 			};
 		case "guest_kernel_call":

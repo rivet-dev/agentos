@@ -2158,6 +2158,12 @@
     "rationale": "Wire frame-size cap constant in its owning wire module; protocol-level frame invariant, not a per-VM policy limit."
   },
   {
+    "name": "MAX_GUEST_FILESYSTEM_WRITE_FILES_ENTRIES",
+    "path": "crates/sidecar-protocol/src/wire.rs",
+    "class": "invariant",
+    "rationale": "Per-request entry cap for GuestFilesystemWriteFilesRequest; rejected with a typed error and advertised to clients in AuthenticatedResponse so they split larger batches."
+  },
+  {
     "name": "DEFAULT_BRIDGE_RESPONSE_MAX_BYTES",
     "path": "crates/v8-runtime/src/bridge.rs",
     "class": "invariant",
