@@ -79,7 +79,7 @@ export class SidecarProtocolClient {
 	private readonly eventListeners = new Set<(event: LiveEventFrame) => void>();
 	private readonly silenceTimeoutMs: number;
 	private silenceTimer: ReturnType<typeof setInterval> | null = null;
-	private lastInboundAtMs = 0;
+	private countedSilenceMs = 0;
 	private readonly payloadCodec: ProtocolFramePayloadCodec;
 	private readonly stderrText: () => string;
 	private readonly hostFrameFactory = new HostProtocolFrameFactory();
@@ -145,26 +145,36 @@ export class SidecarProtocolClient {
 			);
 		});
 		this.frameTransport.onFrameActivity(() => {
-			this.lastInboundAtMs = performance.now();
+			this.countedSilenceMs = 0;
 		});
 		this.startSilenceWatchdog(options.onSilenceExpired);
 	}
 
 	/**
-	 * Arm the silence watchdog: ANY inbound frame resets the clock (see the
+	 * Arm the silence watchdog: ANY inbound frame resets the count (see the
 	 * `onFrameActivity` tap above), and the sidecar heartbeats every 10s even
 	 * while busy, so sustained silence for the full window means the process
 	 * is dead or wedged — not slow. The check interval is unref'd so an idle
 	 * host process can still exit naturally.
+	 *
+	 * Each tick counts at most one check interval. While the host event loop is
+	 * blocked, frames wait unread in the pipe, and after a stall inside an I/O
+	 * callback Node runs timers before it polls again. That time says nothing
+	 * about the sidecar. Every tick still counts, so a silent sidecar is detected
+	 * after a fixed number of ticks however long the host stalls between them.
 	 */
 	private startSilenceWatchdog(onExpired?: () => void): void {
-		this.lastInboundAtMs = performance.now();
+		this.countedSilenceMs = 0;
 		const checkIntervalMs = Math.max(
 			Math.min(this.silenceTimeoutMs / 4, 1_000),
 			10,
 		);
+		let lastTickAtMs = performance.now();
 		this.silenceTimer = setInterval(() => {
-			const silenceMs = performance.now() - this.lastInboundAtMs;
+			const nowMs = performance.now();
+			this.countedSilenceMs += Math.min(nowMs - lastTickAtMs, checkIntervalMs);
+			lastTickAtMs = nowMs;
+			const silenceMs = this.countedSilenceMs;
 			if (silenceMs < this.silenceTimeoutMs) {
 				return;
 			}
@@ -300,12 +310,17 @@ export class SidecarProtocolClient {
 					timeoutMs === undefined
 						? null
 						: setTimeout(() => {
-								this.eventWaiters.delete(waiter);
-								reject(
-									new Error(
-										`timed out waiting for sidecar event\nstderr:\n${this.stderrText()}`,
-									),
-								);
+								// Poll first: after a host stall this timer runs before the
+								// event that is waiting in the pipe can be read.
+								setImmediate(() => {
+									if (this.eventWaiters.has(waiter)) {
+										waiter.reject(
+											new Error(
+												`timed out waiting for sidecar event\nstderr:\n${this.stderrText()}`,
+											),
+										);
+									}
+								});
 							}, timeoutMs),
 			};
 			if (options?.signal) {
