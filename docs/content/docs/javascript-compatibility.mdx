@@ -73,6 +73,15 @@ or implemented in the isolate is denied.</Note>
   and `setFromBase64`, with the `alphabet`, `omitPadding`, and
   `lastChunkHandling` options.
 
+## `node:sqlite`
+
+- `new DatabaseSync(path)` uses a file in the VM filesystem.
+- `ATTACH DATABASE` and `VACUUM INTO` accept only `:memory:` and the empty
+  temporary name. Other targets fail with an authorization error, including
+  paths in the VM.
+- `PRAGMA writable_schema` has no effect. Pragmas that change process-wide SQLite
+  state, such as `hard_heap_limit`, fail with an authorization error.
+
 ## Modules and output
 
 - ESM and CommonJS both use the VM filesystem and normal `node_modules`

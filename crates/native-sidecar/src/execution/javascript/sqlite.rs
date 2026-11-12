@@ -1,6 +1,42 @@
 use super::super::*;
+use rusqlite::config::DbConfig;
+use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
 
 const SQLITE_JS_SAFE_INTEGER_MAX: i64 = 9_007_199_254_740_991;
+
+// These pragmas change state that every SQLite connection in the sidecar shares,
+// so one VM could change it for all VMs.
+const SQLITE_PROCESS_WIDE_PRAGMAS: [&str; 4] = [
+    "data_store_directory",
+    "hard_heap_limit",
+    "soft_heap_limit",
+    "temp_store_directory",
+];
+
+// The sidecar runs SQLite as a host process, and a filename in SQL is a host
+// path. The guest VFS never sees it, so guest SQL must not name a file.
+fn authorize_guest_sqlite_action(context: AuthContext<'_>) -> Authorization {
+    match context.action {
+        // An empty name is a temporary database. Plain VACUUM attaches one.
+        AuthAction::Attach { filename } if filename.is_empty() || filename == ":memory:" => {
+            Authorization::Allow
+        }
+        AuthAction::Attach { .. } => Authorization::Deny,
+        // SQLite gives no filename when ATTACH or VACUUM INTO uses an expression.
+        AuthAction::Unknown {
+            code: rusqlite::ffi::SQLITE_ATTACH,
+            ..
+        } => Authorization::Deny,
+        AuthAction::Pragma { pragma_name, .. }
+            if SQLITE_PROCESS_WIDE_PRAGMAS
+                .iter()
+                .any(|name| pragma_name.eq_ignore_ascii_case(name)) =>
+        {
+            Authorization::Deny
+        }
+        _ => Authorization::Allow,
+    }
+}
 
 pub(in crate::execution) fn service_javascript_sqlite_sync_rpc(
     kernel: &mut SidecarKernel,
@@ -215,6 +251,12 @@ fn sqlite_open_database(
     if host_path.is_some() && !read_only {
         let _ = connection.pragma_update(None, "journal_mode", "WAL");
     }
+    // Guest SQL must not be able to corrupt the schema of a database that native
+    // SQLite parses inside the sidecar.
+    connection
+        .set_db_config(DbConfig::SQLITE_DBCONFIG_DEFENSIVE, true)
+        .map_err(sqlite_error)?;
+    connection.authorizer(Some(authorize_guest_sqlite_action));
 
     process.sqlite_databases.insert(
         database_id,
