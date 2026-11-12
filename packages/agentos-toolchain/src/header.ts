@@ -50,7 +50,9 @@ export function detectExecutableKind(head: Buffer): ExecutableKind {
 }
 
 export function isNativeKind(kind: ExecutableKind): boolean {
-	return kind === "native-elf" || kind === "native-macho" || kind === "native-pe";
+	return (
+		kind === "native-elf" || kind === "native-macho" || kind === "native-pe"
+	);
 }
 
 /** The interpreter named on a shebang line, taken literally (no PATH search). */

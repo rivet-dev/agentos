@@ -1,0 +1,69 @@
+<!doctype html>
+<html>
+	<head>
+		<meta charset="utf-8" />
+		<title>agentos wasm sidecar — Chromium boot harness</title>
+	</head>
+	<body>
+		<div id="status">loading</div>
+		<script type="module">
+			import init, {
+				AgentOsBrowserSidecarWasm,
+			} from "/wasm/agentos_sidecar_browser.js";
+
+			window.__agentosWasm = {
+				// Boots the converged agentos wasm sidecar in the browser and reports
+				// its identity — proves the wasm sidecar loads and runs in Chromium.
+				async bootId() {
+					await init("/wasm/agentos_sidecar_browser_bg.wasm");
+					const sidecar = new AgentOsBrowserSidecarWasm(null);
+					return sidecar.sidecarId;
+				},
+				// Sends a malformed frame and reports how the sidecar reacts — proves it
+				// actually processes wire frames (not just loads).
+				async pushInvalidFrame() {
+					await init("/wasm/agentos_sidecar_browser_bg.wasm");
+					const sidecar = new AgentOsBrowserSidecarWasm(null);
+					try {
+						const response = sidecar.pushFrame(new Uint8Array([0, 1, 2, 3]));
+						return {
+							threw: false,
+							isBytes: response instanceof Uint8Array,
+							len: response?.length ?? 0,
+						};
+					} catch (error) {
+						return { threw: true, message: String(error?.message ?? error) };
+					}
+				},
+			};
+
+			const status = document.getElementById("status");
+			if (status) status.textContent = "ready";
+		</script>
+		<script type="module">
+			// ACP round-trip harness: bundled codec sets window.__acpHarness.
+			import "/acp-codec.bundle.js";
+			import init, {
+				AgentOsBrowserSidecarWasm,
+			} from "/wasm/agentos_sidecar_browser.js";
+
+			window.__agentosAcp = {
+				// Real ACP request/response round-trip through the wasm sidecar:
+				// authenticate, then an ACP get_session_state for a missing session
+				// (no agent execution needed) -> the ACP extension returns its error.
+				async run() {
+					await init("/wasm/agentos_sidecar_browser_bg.wasm");
+					const sidecar = new AgentOsBrowserSidecarWasm(null);
+					const pushFrame = (frame) => {
+						const response = sidecar.pushFrame(frame);
+						if (!(response instanceof Uint8Array)) {
+							throw new Error("wasm sidecar returned no response frame");
+						}
+						return response;
+					};
+					return window.__acpHarness.runGetSessionStateRoundTrip(pushFrame);
+				},
+			};
+		</script>
+	</body>
+</html>

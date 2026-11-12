@@ -93,11 +93,24 @@ execFile("node", ["/app/main.mjs"], (error, stdout, stderr) => {
 });`,
 		);
 
+		await vm.writeFile(
+			"/app/grandparent.mjs",
+			`import { execFile } from "node:child_process";
+execFile("node", ["/app/parent.mjs"], (error, stdout, stderr) => {
+    if (error) {
+        console.error(stderr || error.message);
+        process.exit(1);
+    }
+    process.stdout.write(stdout);
+});`,
+		);
+
 		const cases: Array<[string, string, string[]]> = [
 			["process.spawn ESM", "node", ["/app/main.mjs"]],
 			["process.spawn CommonJS", "node", ["/app/main.cjs"]],
 			["process.spawn static import", "node", ["/app/import.mjs"]],
 			["guest child_process", "node", ["/app/parent.mjs"]],
+			["nested guest child_process", "node", ["/app/grandparent.mjs"]],
 		];
 		for (const [label, command, args] of cases) {
 			const result = await runNode(vm, command, args);
@@ -141,6 +154,21 @@ execFile("node", ["/app/main.mjs"], (error, stdout, stderr) => {
 			);
 		}
 	}, 60_000);
+
+	test("an inline TypeScript import may share a host-function group name", async () => {
+		vm = await AgentOs.create({
+			permissions: ALLOW_ALL_VM_PERMISSIONS,
+			hostFunctions: { orderStore },
+		});
+		await vm.mkdir("/app", { recursive: true });
+		await vm.writeFile("/app/value.cjs", "exports.orderStore = 42;\n");
+		const result = await vm.typescript.execute(
+			"import { orderStore } from './value.cjs'; console.log(orderStore, typeof globalThis.orderStore.listOrders, Object.isFrozen(globalThis.orderStore));",
+			{ cwd: "/app", timeoutMs: 10_000, output: { capture: "all" } },
+		);
+		expect(result.outcome, JSON.stringify(result)).toBe("succeeded");
+		expect(result.stdout).toBe("42 function true\n");
+	});
 
 	test("the hostFunction permission still applies to the globals", async () => {
 		vm = await AgentOs.create({

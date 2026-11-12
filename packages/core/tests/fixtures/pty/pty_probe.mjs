@@ -9,15 +9,9 @@
 // openShell auto-injects AGENTOS_EXEC_TTY=1 + COLUMNS/LINES; the sidecar opens a
 // PTY and dup2()s the slave onto fd 0/1/2.
 //
-// GUEST-NODE TTY STATUS (the runtime now routes guest-node stdin through the
-// kernel PTY and populates the TTY config from the kernel, so most cells match
-// the wasm-c probe). Remaining honest gaps (asserted-as-broken by the host, NOT
-// faked here):
-//   - SIGINT/SIGQUIT are consumed by the kernel line discipline (no data byte),
-//     but the signal is not yet delivered into the V8 isolate / does not kill it,
-//     so the probe is not torn down the way the wasm-c process is.
-//   - a raw lone-LF stdout write does not flow through OPOST/ONLCR (guest-node
-//     stdout payload-write quirk), so `a\nb` is not rewritten to `a\r\nb`.
+// Both runtimes use the kernel PTY. The Node signal cases install handlers;
+// the corresponding C cases retain default dispositions, so the harness checks
+// caught completion or default termination/stop as appropriate.
 
 // ---- output discipline: synchronous writes to fd 1, explicit \r\n ------------
 
@@ -110,8 +104,7 @@ function readByte() {
 	});
 }
 
-// Attempts a raw-mode toggle, emitting the honest #MODE marker. On guest-node
-// setRawMode throws (isTTY=false) -> `#MODE want=<m> rc=err err=<message>`.
+// Toggle the real terminal mode and report any failure to the harness.
 function setMode(want) {
 	const enable = want === "raw";
 	try {
@@ -190,17 +183,14 @@ async function caseLineBuffering() {
 
 async function caseSigint() {
 	out("#MODE want=cooked rc=0\r\n");
-	// Register the handler that SHOULD fire on ^C. On guest-node it never does
-	// (no SIGINT delivery) — kept so a fixed runtime passes the same probe and so
-	// the absence of #SIG is observable, not faked.
+	// A caught SIGINT must run this handler without leaking ^C into stdin.
 	process.on("SIGINT", () => {
 		out("#SIG name=SIGINT\r\n");
 		finish("sigint");
 	});
 	out("#READY tag=sigint\r\n");
-	// On guest-node ^C arrives as a raw 0x03 DATA byte (no signal). Report the
-	// first chunk we receive (mirrors the contract's first-data semantics) so the
-	// broken delivery is observable; a working runtime fires the handler instead.
+	// Report any incorrectly leaked data byte; a working runtime fires the
+	// handler instead.
 	const buf = await readByte();
 	if (buf.length === 0) {
 		out("#EOF tag=sigint n=0\r\n");
@@ -216,7 +206,7 @@ async function caseSigquit() {
 		finish("sigquit");
 	});
 	out("#READY tag=sigquit\r\n");
-	// The lone 0x1C arrives as a data byte on guest-node (no signal); report it.
+	// A correctly consumed signal must not also arrive as a data byte.
 	const buf = await readByte();
 	if (buf.length === 0) {
 		out("#EOF tag=sigquit n=0\r\n");
@@ -227,8 +217,7 @@ async function caseSigquit() {
 
 async function caseVsusp() {
 	out("#MODE want=cooked rc=0\r\n");
-	// SHOULD fire on ^Z; on guest-node it never does (no SIGTSTP delivery) — kept
-	// so a fixed runtime passes the same probe and the absence of #SIG is honest.
+	// Catch the terminal-generated signal, as the native Node control does.
 	process.on("SIGTSTP", () => {
 		out("#SIG name=SIGTSTP\r\n");
 		finish("vsusp");

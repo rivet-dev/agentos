@@ -29,7 +29,10 @@ import { AgentOs } from "../src/agent-os.js";
 
 const HOME_DIR = "/home/agentos";
 const MARKER_PATH = `${HOME_DIR}/startup-marker.json`;
-const MARKER_CONTENT = JSON.stringify({ origin: "base-image", id: "home-base-image" });
+const MARKER_CONTENT = JSON.stringify({
+	origin: "base-image",
+	id: "home-base-image",
+});
 
 describe("default home dir must not be shadowed by a default mount", () => {
 	let vm: AgentOs | undefined;
@@ -80,7 +83,9 @@ describe("default home dir must not be shadowed by a default mount", () => {
 		// unshadowed root layer rather than a separate default mount.
 		await (vm as AgentOs).writeFile(MARKER_PATH, MARKER_CONTENT);
 
-		const snapshot = await (vm as AgentOs).exportRootFilesystem({ maxBytes: 64 * 1024 * 1024 });
+		const snapshot = await (vm as AgentOs).exportRootFilesystem({
+			maxBytes: 64 * 1024 * 1024,
+		});
 
 		const restored = await AgentOs.create({
 			rootFilesystem: {

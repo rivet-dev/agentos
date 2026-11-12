@@ -1,6 +1,11 @@
 import { exposeCustomGlobal } from "../global-exposure.js";
-import { bindAsyncContextFrame, getAsyncContextFrame, kAsyncContextFrame, runInAsyncContextFrame } from "./async-context.js";
 import { streamStdlibModuleNs } from "../prelude.js";
+import {
+	bindAsyncContextFrame,
+	getAsyncContextFrame,
+	kAsyncContextFrame,
+	runInAsyncContextFrame,
+} from "./async-context.js";
 import {
 	createBadRequestResponseBuffer,
 	createTypeErrorWithCode,
@@ -13,6 +18,7 @@ import {
 	serializeLoopbackResponse,
 } from "./http.js";
 import { http2Dispatch } from "./http2.js";
+import { isFatalExceptionError, isProcessExitError } from "./process.js";
 import {
 	registerCapabilityReadiness,
 	unregisterCapabilityReadiness,
@@ -70,7 +76,11 @@ function isRegisteredNetSocket(socket) {
 }
 
 function queueSocketBridgeReadPump(socket, origin) {
-	if (!socket._applicationReadDemand || socket._bridgeReadPumpQueued) {
+	if (
+		!socket._applicationReadDemand ||
+		socket._tlsUpgrading ||
+		socket._bridgeReadPumpQueued
+	) {
 		countNetBridgeMetric("readPumpQueueCoalesced");
 		return;
 	}
@@ -81,6 +91,7 @@ function queueSocketBridgeReadPump(socket, origin) {
 			!socket.destroyed &&
 			!socket._bridgeReleased &&
 			!socket._closeEmitted &&
+			!socket._tlsUpgrading &&
 			socket._applicationReadDemand &&
 			isRegisteredNetSocket(socket) &&
 			socket._socketId !== 0
@@ -154,7 +165,7 @@ function wakeSocketBridgeReads(socket) {
 		return;
 	}
 	socket._pendingBridgeWake = true;
-	socket._pendingBridgeWakeRetries = 0;
+	if (socket._tlsUpgrading) return;
 	if (socket._bridgeReadLoopRunning) {
 		countNetBridgeMetric("readWakeAlreadyRunning");
 	}
@@ -1067,9 +1078,7 @@ function serializeTlsValue(value) {
 }
 
 function isTlsSecureContextWrapper(value) {
-	return (
-		!!value && typeof value === "object" && "__agentOsTlsContext" in value
-	);
+	return !!value && typeof value === "object" && "__agentOsTlsContext" in value;
 }
 
 function buildSerializedTlsOptions(options, extra) {
@@ -1283,7 +1292,7 @@ function createAcceptedClientHandle(socketId, info) {
 	};
 }
 
-// Must match the sentinels in crates/native-sidecar/src/execution/mod.rs.
+// Must match the sentinels in crates/vm/src/execution/mod.rs.
 // A mismatched sentinel is NOT a soft failure: every no-data poll response then
 // falls through to base64 decoding and injects the decoded sentinel bytes into
 // the socket stream as phantom data.
@@ -1787,7 +1796,6 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 	_bridgeReadRpcInFlight = false;
 	_bridgeReadPumpQueued = false;
 	_pendingBridgeWake = false;
-	_pendingBridgeWakeRetries = 0;
 	_bridgeReadPumpStarted = false;
 	_applicationReadDemand = false;
 	_bridgeReadFirstPumpBenchmarkScheduled = false;
@@ -2148,7 +2156,10 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 	write(chunk, encodingOrCallback, callback) {
 		const frame = getAsyncContextFrame();
 		if (typeof encodingOrCallback === "function") {
-			return super.write(chunk, bindAsyncContextFrame(frame, encodingOrCallback));
+			return super.write(
+				chunk,
+				bindAsyncContextFrame(frame, encodingOrCallback),
+			);
 		}
 		return super.write(
 			chunk,
@@ -2564,7 +2575,9 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 		}
 		this._handleRefId = this._livenessId;
 		if (typeof _registerHandle === "function") {
-			_registerHandle(this._handleRefId, "net socket", (error) => this._destroyReleased(error));
+			_registerHandle(this._handleRefId, "net socket", (error) =>
+				this._destroyReleased(error),
+			);
 		}
 	}
 	address() {
@@ -2773,8 +2786,7 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 		}
 	}
 	_pumpBridgeReads() {
-		// A pump can start from a readiness wake or from whichever context first
-		// wanted data. Socket events belong to the context that made the handle.
+		// Socket events belong to the context that made the handle.
 		return runInAsyncContextFrame(
 			this[kAsyncContextFrame],
 			this._pumpBridgeReadsInOwnerContext,
@@ -2783,6 +2795,7 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 		);
 	}
 	async _pumpBridgeReadsInOwnerContext() {
+		if (this._tlsUpgrading) return;
 		if (!this._applicationReadDemand) {
 			countNetBridgeMetric("readPumpSkippedNoDemand");
 			return;
@@ -2868,6 +2881,7 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 		try {
 			while (
 				this._applicationReadDemand &&
+				!this._tlsUpgrading &&
 				!this._remoteEnded &&
 				!this.destroyed &&
 				!this._bridgeReleased &&
@@ -2906,12 +2920,29 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 				}
 				countNetBridgeMetric("readRawCalls");
 				const readStartUs = traceMetrics ? netBridgeNowUs() : 0;
-				this._bridgeReadRpcInFlight = true;
 				let chunk: string | Uint8Array | null;
 				try {
-					chunk = _netSocketReadRaw.applySync(void 0, [this._socketId]);
-				} finally {
-					this._bridgeReadRpcInFlight = false;
+					this._bridgeReadRpcInFlight = true;
+					try {
+						chunk = _netSocketReadRaw.applySync(void 0, [this._socketId]);
+					} finally {
+						this._bridgeReadRpcInFlight = false;
+					}
+				} catch (error) {
+					if (isProcessExitError(error) || isFatalExceptionError(error)) {
+						throw error;
+					}
+					// applySync may have delivered a reentrant close or EOF.
+					if (
+						!this.destroyed &&
+						!this._bridgeReleased &&
+						!this._remoteEnded &&
+						!this._closeEmitted &&
+						isRegisteredNetSocket(this)
+					) {
+						this.destroy(error);
+					}
+					return;
 				}
 				if (this._remoteEnded) {
 					return;
@@ -2946,19 +2977,18 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 					}
 					if (this._pendingBridgeWake) {
 						this._pendingBridgeWake = false;
-						this._pendingBridgeWakeRetries = 0;
 						countNetBridgeMetric("readPendingWakeImmediateRetries");
 						this._nextReadPumpOrigin = "eventWake";
 						await Promise.resolve();
 						continue;
 					}
+					this._pendingBridgeWake = false;
 					countNetBridgeMetric("readWaitsForWake");
 					return;
 				}
 				if (chunk === NET_BRIDGE_CLOSE_SENTINEL) {
 					countNetBridgeMetric("readCloseEvents");
 					this._pendingBridgeWake = false;
-					this._pendingBridgeWakeRetries = 0;
 					this.destroy();
 					return;
 				}
@@ -2973,7 +3003,6 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 					}
 					countNetBridgeMetric("readEndEvents");
 					this._pendingBridgeWake = false;
-					this._pendingBridgeWakeRetries = 0;
 					this._handleRemoteReadableEnd();
 					return;
 				}
@@ -3046,7 +3075,6 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 					countNetBridgeMetric("readFirstPayloadImmediateDeliveries");
 				}
 				this._pendingBridgeWake = false;
-				this._pendingBridgeWakeRetries = 0;
 				deliveredPayloads++;
 				if (!this._queueReadablePayload(payload)) {
 					return;
@@ -3071,6 +3099,7 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 			if (
 				this._applicationReadDemand &&
 				this._pendingBridgeWake &&
+				!this._tlsUpgrading &&
 				!this.destroyed &&
 				isRegisteredNetSocket(this)
 			) {
@@ -3299,11 +3328,11 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 			if (this.destroyed) {
 				return;
 			}
-			this._tlsUpgrading = false;
 			const tlsError =
 				error instanceof Error ? error : new Error(String(error));
 			this._emitNet("error", tlsError);
 			this.destroy();
+			this._tlsUpgrading = false;
 		};
 		let upgrade: unknown;
 		try {

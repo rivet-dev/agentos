@@ -139,9 +139,9 @@ if [[ ! -f "$BIN" ]]; then
 fi
 
 mkdir -p "$(dirname "$OUTPUT")"
-if command -v wasm-opt >/dev/null 2>&1; then
+if [[ "${AGENTOS_ENABLE_BINARYEN:-0}" == "1" ]]; then
   echo "Optimizing Info-ZIP $TOOL WASM binary..."
-  wasm-opt -O3 --strip-debug --all-features "$BIN" -o "$OUTPUT"
+  "${WASM_OPT:-wasm-opt}" -O3 --strip-debug --all-features "$BIN" -o "$OUTPUT"
 else
   cp "$BIN" "$OUTPUT"
 fi

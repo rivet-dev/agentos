@@ -14,7 +14,11 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { detectExecutableKind, isNativeKind, parseShebangInterpreter } from "../src/header.js";
+import {
+	detectExecutableKind,
+	isNativeKind,
+	parseShebangInterpreter,
+} from "../src/header.js";
 import { findNativeAddons, pack, verifyPackageDir } from "../src/pack.js";
 
 function hasWorkingNpm(): boolean {
@@ -40,11 +44,21 @@ afterEach(() => {
 
 describe("header detection", () => {
 	test("recognizes shebang, wasm, and native magics", () => {
-		expect(detectExecutableKind(Buffer.from("#!/usr/bin/env node\n"))).toBe("shebang");
-		expect(detectExecutableKind(Buffer.from([0x00, 0x61, 0x73, 0x6d]))).toBe("wasm");
-		expect(detectExecutableKind(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))).toBe("native-elf");
-		expect(detectExecutableKind(Buffer.from([0xcf, 0xfa, 0xed, 0xfe]))).toBe("native-macho");
-		expect(detectExecutableKind(Buffer.from([0x4d, 0x5a, 0x90, 0x00]))).toBe("native-pe");
+		expect(detectExecutableKind(Buffer.from("#!/usr/bin/env node\n"))).toBe(
+			"shebang",
+		);
+		expect(detectExecutableKind(Buffer.from([0x00, 0x61, 0x73, 0x6d]))).toBe(
+			"wasm",
+		);
+		expect(detectExecutableKind(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))).toBe(
+			"native-elf",
+		);
+		expect(detectExecutableKind(Buffer.from([0xcf, 0xfa, 0xed, 0xfe]))).toBe(
+			"native-macho",
+		);
+		expect(detectExecutableKind(Buffer.from([0x4d, 0x5a, 0x90, 0x00]))).toBe(
+			"native-pe",
+		);
 		expect(detectExecutableKind(Buffer.from("just text"))).toBe("unknown");
 	});
 
@@ -58,7 +72,9 @@ describe("header detection", () => {
 	test("isNativeKind + shebang interpreter parsing", () => {
 		expect(isNativeKind("native-elf")).toBe(true);
 		expect(isNativeKind("shebang")).toBe(false);
-		expect(parseShebangInterpreter(Buffer.from("#!/usr/bin/env python3\n"))).toBe("/usr/bin/env");
+		expect(
+			parseShebangInterpreter(Buffer.from("#!/usr/bin/env python3\n")),
+		).toBe("/usr/bin/env");
 		expect(parseShebangInterpreter(Buffer.from("not a shebang"))).toBeNull();
 	});
 });
@@ -68,7 +84,10 @@ function handBuiltPackage(name = "pkg", version = "1.0.0"): string {
 	const pkgDir = mkTmp("agentos-pkg-");
 	mkdirSync(join(pkgDir, "bin"), { recursive: true });
 	mkdirSync(join(pkgDir, "node_modules"), { recursive: true });
-	writeFileSync(join(pkgDir, "bin", "tool"), "#!/usr/bin/env node\nconsole.log('ok');\n");
+	writeFileSync(
+		join(pkgDir, "bin", "tool"),
+		"#!/usr/bin/env node\nconsole.log('ok');\n",
+	);
 	chmodSync(join(pkgDir, "bin", "tool"), 0o755);
 	writeFileSync(
 		join(pkgDir, "agentos-package.json"),
@@ -121,7 +140,10 @@ describe("verifyPackageDir", () => {
 
 	test("rejects a native bin command", () => {
 		const pkgDir = handBuiltPackage("native");
-		writeFileSync(join(pkgDir, "bin", "elf"), Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0, 0]));
+		writeFileSync(
+			join(pkgDir, "bin", "elf"),
+			Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0, 0]),
+		);
 		expect(() => verifyPackageDir(pkgDir)).toThrow(/native native-elf/);
 	});
 });
@@ -133,7 +155,10 @@ function makeFixture(name = "hello", version = "1.2.3"): string {
 		JSON.stringify({ name, version, bin: { hello: "bin/hello.js" } }),
 	);
 	mkdirSync(join(src, "bin"), { recursive: true });
-	writeFileSync(join(src, "bin", "hello.js"), "#!/usr/bin/env node\nconsole.log('hi');\n");
+	writeFileSync(
+		join(src, "bin", "hello.js"),
+		"#!/usr/bin/env node\nconsole.log('hi');\n",
+	);
 	chmodSync(join(src, "bin", "hello.js"), 0o644);
 	return src;
 }
@@ -163,17 +188,23 @@ describe.skip("pack (offline, local fixture, needs npm)", () => {
 
 		const extractDir = mkTmp("agentos-extract-");
 		execFileSync("tar", ["-xf", out, "-C", extractDir]);
-		expect(JSON.parse(readFileSync(join(extractDir, "agentos-package.json"), "utf8"))).toMatchObject({
+		expect(
+			JSON.parse(
+				readFileSync(join(extractDir, "agentos-package.json"), "utf8"),
+			),
+		).toMatchObject({
 			name: "hello",
 			version: "1.2.3",
 		});
 		const binLink = join(extractDir, "bin", "hello");
 		expect(lstatSync(binLink).isSymbolicLink()).toBe(true);
 		expect(readlinkSync(binLink)).toContain("node_modules/hello/bin/hello.js");
-		expect(statSync(join(extractDir, "node_modules", "hello", "bin", "hello.js")).mode & 0o777).toBe(0o755);
+		expect(
+			statSync(join(extractDir, "node_modules", "hello", "bin", "hello.js"))
+				.mode & 0o777,
+		).toBe(0o755);
 		expect(() => verifyPackageDir(extractDir)).not.toThrow();
 	});
-
 });
 
 describe("pack optional dependency policy", () => {
@@ -186,14 +217,22 @@ describe("pack optional dependency policy", () => {
 		writeFileSync(join(optional, "index.js"), "export default 'optional';\n");
 
 		const source = makeFixture("omit-optional-fixture", "1.0.0");
-		const packageJson = JSON.parse(readFileSync(join(source, "package.json"), "utf8"));
-		packageJson.optionalDependencies = { "optional-fixture": `file:${optional}` };
+		const packageJson = JSON.parse(
+			readFileSync(join(source, "package.json"), "utf8"),
+		);
+		packageJson.optionalDependencies = {
+			"optional-fixture": `file:${optional}`,
+		};
 		writeFileSync(join(source, "package.json"), JSON.stringify(packageJson));
 
 		const out = join(mkTmp("agentos-omit-optional-out-"), "package");
 		pack({ source, out, omitOptional: true });
 
-		expect(existsSync(join(out, "node_modules", "omit-optional-fixture"))).toBe(true);
-		expect(existsSync(join(out, "node_modules", "optional-fixture"))).toBe(false);
+		expect(existsSync(join(out, "node_modules", "omit-optional-fixture"))).toBe(
+			true,
+		);
+		expect(existsSync(join(out, "node_modules", "optional-fixture"))).toBe(
+			false,
+		);
 	});
 });

@@ -3,6 +3,7 @@ const MAX_EVENT_LISTENERS = 1024;
 const eventState = new WeakMap();
 const customEventDetail = new WeakMap();
 const targetState = new WeakMap();
+const protectedListeners = new WeakSet();
 
 function toDomString(value) {
 	return `${value}`;
@@ -300,6 +301,11 @@ class PatchedEventTarget {
 		state.dispatching = true;
 		try {
 			for (const record of records) {
+				if (
+					state.immediatePropagationStopped &&
+					!protectedListeners.has(record)
+				)
+					continue;
 				if (!listeners.get(state.type)?.includes(record)) continue;
 				if (record.once) {
 					this.removeEventListener(state.type, record.listener, record.capture);
@@ -319,7 +325,6 @@ class PatchedEventTarget {
 				} finally {
 					state.inPassiveListener = false;
 				}
-				if (state.immediatePropagationStopped) break;
 			}
 		} finally {
 			state.currentTarget = null;
@@ -330,11 +335,37 @@ class PatchedEventTarget {
 	}
 }
 
+// Internal registration: no public option or globally discoverable marker.
+function addProtectedEventListener(target, type, listener, options) {
+	const state = targetState.get(target);
+	if (!state)
+		throw withCode(
+			new TypeError(
+				"Protected abort listeners require the runtime EventTarget",
+			),
+			"ERR_INVALID_ARG_TYPE",
+		);
+	PatchedEventTarget.prototype.addEventListener.call(
+		target,
+		type,
+		listener,
+		options,
+	);
+	const capture = normalizeRemoveEventListenerOptions(options);
+	const record = state.listeners
+		.get(toDomString(type))
+		?.find(
+			(record) => record.listener === listener && record.capture === capture,
+		);
+	if (record) protectedListeners.add(record);
+}
+
 var Event = PatchedEvent;
 var CustomEvent = PatchedCustomEvent;
 var EventTarget = PatchedEventTarget;
 
 export {
+	addProtectedEventListener,
 	CustomEvent,
 	Event,
 	EventTarget,

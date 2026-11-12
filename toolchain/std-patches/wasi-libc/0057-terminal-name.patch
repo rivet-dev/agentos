@@ -1,0 +1,51 @@
+--- a/libc-top-half/musl/include/unistd.h
++++ b/libc-top-half/musl/include/unistd.h
+@@ -170,5 +170,3 @@
+-#ifdef __wasilibc_unmodified_upstream /* WASI has no ttyname */
+ char *ttyname(int);
+ int ttyname_r(int, char *, size_t);
+-#endif
+ int isatty(int);
+--- a/libc-bottom-half/sources/host_terminal_compat.c
++++ b/libc-bottom-half/sources/host_terminal_compat.c
+@@ -5,6 +5,7 @@
+ // process-group probes without package-local behavioral forks.
+ 
+ #include <errno.h>
++#include <limits.h>
+ #include <stdarg.h>
+ #include <stdint.h>
+ #include <string.h>
+@@ -44,6 +45,9 @@
+ 
+ WASM_IMPORT("host_tty", "isatty")
+ uint32_t __host_tty_isatty(uint32_t fd);
++
++WASM_IMPORT("host_tty", "get_name")
++uint32_t __host_tty_get_name(uint32_t fd, char *name, uint32_t capacity);
+ 
+ WASM_IMPORT("host_tty", "get_size")
+ uint32_t __host_tty_get_size(uint32_t fd, unsigned short *cols, unsigned short *rows);
+@@ -243,6 +247,22 @@
+         return -1;
+     }
+     return 0;
++}
++
++int ttyname_r(int fd, char *name, size_t size) {
++    if (name == NULL) return EINVAL;
++    if (size == 0 || size > UINT32_MAX) return ERANGE;
++    return (int)__host_tty_get_name((uint32_t)fd, name, (uint32_t)size);
++}
++
++char *ttyname(int fd) {
++    static _Thread_local char name[TTY_NAME_MAX];
++    int rc = ttyname_r(fd, name, sizeof name);
++    if (rc != 0) {
++        errno = rc;
++        return NULL;
++    }
++    return name;
+ }
+ 
+ void cfmakeraw(struct termios *t) {

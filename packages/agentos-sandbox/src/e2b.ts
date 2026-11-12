@@ -1,4 +1,4 @@
-import type { AgentOsSandboxProvider } from "@rivet-dev/agentos-core";
+import type { AgentOsSandboxProvider } from "@rivet-dev/agentos";
 import type { E2BProviderOptions } from "sandbox-agent/e2b";
 import { e2b as sandboxAgentE2b } from "sandbox-agent/e2b";
 import { sandboxAgentProvider } from "./provider.js";

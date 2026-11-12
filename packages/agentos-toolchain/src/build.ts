@@ -1,13 +1,11 @@
-import {
-	execFileSync,
-} from "node:child_process";
+import { execFileSync } from "node:child_process";
 import {
 	chmodSync,
 	cpSync,
 	existsSync,
 	mkdirSync,
-	readFileSync,
 	readdirSync,
+	readFileSync,
 	rmSync,
 	statSync,
 	writeFileSync,

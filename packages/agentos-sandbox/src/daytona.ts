@@ -1,4 +1,4 @@
-import type { AgentOsSandboxProvider } from "@rivet-dev/agentos-core";
+import type { AgentOsSandboxProvider } from "@rivet-dev/agentos";
 import type { DaytonaProviderOptions } from "sandbox-agent/daytona";
 import { daytona as sandboxAgentDaytona } from "sandbox-agent/daytona";
 import { sandboxAgentProvider } from "./provider.js";

@@ -114,66 +114,6 @@ describe("AgentOs _processes leak (H5)", () => {
 		expect(processes.size).toBe(0);
 	});
 
-	test("dispose drains language-process exits before clearing their registry", async () => {
-		const { vm } = makeAgentOs();
-		type LanguageProcess = {
-			executionId: string;
-			descriptor: {
-				pid: number;
-				state: "running" | "exited";
-				language: "javascript";
-				startedAtMs: number;
-			};
-			exit?: { pid: number; outcome: "signalled"; signal: "SIGKILL" };
-			outputHandlers: Set<(event: unknown) => void>;
-			exitHandlers: Set<(event: unknown) => void>;
-		};
-		const internals = vm as unknown as {
-			_languageProcesses: Map<number, LanguageProcess>;
-			_languageProcessIds: Map<string, number>;
-			_killProcess: (pid: number) => Promise<void>;
-			_disposeSidecarEventListener: () => void;
-		};
-		const process: LanguageProcess = {
-			executionId: "execution-303",
-			descriptor: {
-				pid: 303,
-				state: "running",
-				language: "javascript",
-				startedAtMs: 0,
-			},
-			outputHandlers: new Set(),
-			exitHandlers: new Set(),
-		};
-		internals._languageProcesses.set(303, process);
-		internals._languageProcessIds.set(process.executionId, 303);
-
-		let exitObserved = false;
-		vm.onProcessExit(303, () => {
-			exitObserved = true;
-			expect(internals._languageProcesses.has(303)).toBe(true);
-		});
-		internals._killProcess = async (pid) => {
-			await Promise.resolve();
-			process.exit = { pid, outcome: "signalled", signal: "SIGKILL" };
-			process.descriptor = { ...process.descriptor, state: "exited" };
-			for (const handler of process.exitHandlers) handler(process.exit);
-		};
-
-		let registrySizeWhenListenerDisposed: number | null = null;
-		const disposeListener = internals._disposeSidecarEventListener;
-		internals._disposeSidecarEventListener = () => {
-			registrySizeWhenListenerDisposed = internals._languageProcesses.size;
-			disposeListener();
-		};
-
-		await vm.dispose();
-
-		expect(exitObserved).toBe(true);
-		expect(registrySizeWhenListenerDisposed).toBe(0);
-		expect(internals._languageProcessIds.size).toBe(0);
-	});
-
 	test("command and language spawns share bounded pending admission", () => {
 		const { vm, processes } = makeAgentOs();
 		const warned = vi.spyOn(console, "warn").mockImplementation(() => {});

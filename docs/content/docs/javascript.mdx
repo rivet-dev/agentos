@@ -107,6 +107,16 @@ such as an unhandled rejection from a released `fetch`, are written to the same
 stderr and never change the call's result. Finish I/O inside one call, and run
 long-lived servers with `spawn` instead of a context.
 
+If cleanup is interrupted, agentOS preserves the call's result, reports the
+cleanup failure on stderr, and invalidates the context. Later calls fail with
+`ERR_AGENTOS_CONTEXT_INVALIDATED`. Close that context and create a new one before
+running more code.
+
+Each call starts with a fresh process exit status and exit-request state.
+Setting `process.exitCode` or calling `process.exit()` affects that call; later
+calls start normally. Globals, process configuration, and registered event
+listeners remain in the context.
+
 A context runs one call at a time. A call made while another call in the same
 context is still running fails immediately with `execution_busy`. Files, npm,
 Bash, and type checks may pass the same id, but they run in fresh processes and

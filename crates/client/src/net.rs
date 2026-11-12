@@ -232,19 +232,11 @@ impl AgentOs {
                 max_bytes: Some(max_bytes),
             })
             .await?;
-        let payload: VmFetchStreamChunkPayload =
-            serde_json::from_str(&response_json).context("parsing vm_fetch stream chunk")?;
-        ensure_fetch_base64_body_within_limit(
-            &payload.body,
-            usize::try_from(max_bytes).unwrap_or(usize::MAX),
-        )?;
-        let body = BASE64
-            .decode(payload.body.as_bytes())
-            .context("decoding vm_fetch stream chunk")?;
-        Ok(HttpStreamChunk {
-            body,
-            done: payload.done,
-        })
+        decode_fetch_stream_chunk(
+            &response_json,
+            max_bytes as usize,
+            self.fetch_buffer_limit(),
+        )
     }
 
     /// Cancels an existing guest HTTP response stream.
@@ -378,6 +370,51 @@ fn prepare_http_request(request: HttpRequest, buffer_limit: usize) -> Result<Pre
     })
 }
 
+fn decode_fetch_stream_chunk(
+    response_json: &str,
+    max_bytes: usize,
+    buffer_limit: usize,
+) -> Result<HttpStreamChunk> {
+    ensure_fetch_component_within_limit(
+        "fetch stream response json",
+        response_json.len(),
+        buffer_limit,
+    )?;
+    let payload: VmFetchStreamChunkPayload =
+        serde_json::from_str(response_json).context("parsing vm_fetch stream chunk")?;
+    ensure_fetch_component_within_limit(
+        "fetch response body base64",
+        payload.body.len(),
+        buffer_limit,
+    )?;
+    // STANDARD requires canonical padding. Account for it before allocating so a
+    // max_bytes-sized payload is accepted without allocating Base64's upper bound.
+    if !payload.body.len().is_multiple_of(4) {
+        return Err(
+            ClientError::Sidecar(String::from("invalid base64 fetch stream body length")).into(),
+        );
+    }
+    let padding = payload
+        .body
+        .bytes()
+        .rev()
+        .take(2)
+        .take_while(|b| *b == b'=')
+        .count();
+    // Division first keeps this multiplication within usize for every input size.
+    let decoded_len = (payload.body.len() / 4 * 3).saturating_sub(padding);
+    ensure_fetch_component_within_limit("fetch stream response body", decoded_len, max_bytes)?;
+    let mut body = vec![0; decoded_len];
+    let written = BASE64
+        .decode_slice(payload.body.as_bytes(), &mut body)
+        .context("decoding vm_fetch stream chunk")?;
+    body.truncate(written);
+    Ok(HttpStreamChunk {
+        body,
+        done: payload.done,
+    })
+}
+
 fn ensure_fetch_component_within_limit(
     component: &str,
     size: usize,
@@ -421,6 +458,7 @@ fn base64_decoded_upper_bound(encoded_len: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    include!("../tests/support/fetch_stream_bounds.rs");
     use super::{
         base64_decoded_upper_bound, ensure_fetch_base64_body_within_limit,
         ensure_fetch_component_within_limit, ensure_fetch_request_payload_within_limit,

@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
-import { AgentOs, type AgentOsOptions } from "@rivet-dev/agentos-core";
+import { AgentOs, type AgentOsOptions } from "@rivet-dev/agentos";
 
 mkdirSync(".agentos", { recursive: true });
 const options = {

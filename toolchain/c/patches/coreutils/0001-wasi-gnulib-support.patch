@@ -1,0 +1,24 @@
+diff --git a/lib/getlocalename_l-unsafe.c b/lib/getlocalename_l-unsafe.c
+--- a/lib/getlocalename_l-unsafe.c
++++ b/lib/getlocalename_l-unsafe.c
+@@ -659,5 +659,8 @@
+       const char *name = ((struct __locale_t *) locale)->mb_cur_max == 4 ? "C.UTF-8" : "C";
+       return (struct string_with_storage) { name, STORAGE_INDEFINITE };
++#elif defined __wasi__
++      /* The owned wasi-libc currently exposes only the C locale.  */
++      return (struct string_with_storage) { "C", STORAGE_INDEFINITE };
+ #else
+  #error "Please port gnulib getlocalename_l-unsafe.c to your platform! Report this to bug-gnulib."
+ #endif
+diff --git a/lib/mountlist.c b/lib/mountlist.c
+--- a/lib/mountlist.c
++++ b/lib/mountlist.c
+@@ -1244,7 +1244,7 @@
+   }
+ #endif
+ 
+-#if MOUNTED_NOT_PORTED
++#if MOUNTED_NOT_PORTED && !defined __wasi__
+ # error "Please port gnulib mountlist.c to your platform!"
+ #endif
+ 

@@ -4,7 +4,11 @@
 		"module": "NodeNext",
 		"moduleResolution": "NodeNext",
 		"esModuleInterop": true,
-		"noEmit": true
+		"noEmit": true,
+		"baseUrl": ".",
+		"paths": {
+			"@rivet-dev/agentos": ["../../../packages/core/src/index.ts"]
+		}
 	},
 	"include": ["*.ts"],
 	"exclude": ["node_modules", "dist"]

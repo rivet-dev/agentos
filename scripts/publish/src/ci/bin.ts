@@ -30,7 +30,10 @@ import { scoped } from "../lib/logger.js";
 import { publishAll } from "../lib/npm.js";
 import { copyPrefix, uploadDir } from "../lib/r2.js";
 import { stageSoftwareArtifacts } from "../lib/software-artifacts.js";
-import { discoverRustCrates } from "../lib/rust-crates.js";
+import {
+	discoverRustCrates,
+	STANDALONE_RUST_CRATE_MANIFESTS,
+} from "../lib/rust-crates.js";
 import { bumpCargoVersions, bumpPackageJsons } from "../lib/version.js";
 
 const log = scoped("ci");
@@ -223,7 +226,13 @@ program
 			log.info(
 				`dry-running ${crate}; later crates require earlier versions to exist in the crates.io index`,
 			);
-			const args = ["publish", "-p", crate, "--dry-run"];
+			const standaloneManifest =
+				STANDALONE_RUST_CRATE_MANIFESTS[
+					crate as keyof typeof STANDALONE_RUST_CRATE_MANIFESTS
+				];
+			const args = standaloneManifest
+				? ["publish", "--manifest-path", standaloneManifest, "--dry-run"]
+				: ["publish", "-p", crate, "--dry-run"];
 			if (opts.allowDirty) args.push("--allow-dirty");
 			await $({ stdio: "inherit", cwd: repoRoot })`cargo ${args}`;
 			return;
@@ -240,7 +249,13 @@ program
 			}
 
 			log.info(`publishing ${crate}@${version}`);
-			const args = ["publish", "-p", crate];
+			const standaloneManifest =
+				STANDALONE_RUST_CRATE_MANIFESTS[
+					crate as keyof typeof STANDALONE_RUST_CRATE_MANIFESTS
+				];
+			const args = standaloneManifest
+				? ["publish", "--manifest-path", standaloneManifest]
+				: ["publish", "-p", crate];
 			if (opts.allowDirty) args.push("--allow-dirty");
 			await cargoPublishWithRateLimitRetry(repoRoot, args);
 			log.info(`waiting for crates.io to index ${crate}@${version}`);
@@ -253,7 +268,7 @@ program
 // ---------------------------------------------------------------------------
 program
 	.command("stage-software")
-	.description("Stage immutable .aospkg files, their manifest, and the default software list")
+	.description("Stage immutable .aospkg files and their manifest")
 	.requiredOption("--output <dir>", "Local artifact directory to replace")
 	.action((opts) => {
 		const repoRoot = findRepoRoot();

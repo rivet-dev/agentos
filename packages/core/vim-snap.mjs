@@ -1,5 +1,5 @@
-import { AgentOs } from "@rivet-dev/agentos-core";
-import { allowAll } from "@rivet-dev/agentos-core/internal/runtime-compat";
+import { AgentOs } from "@rivet-dev/agentos";
+import { allowAll } from "@rivet-dev/agentos/internal/runtime-compat";
 import assert from "node:assert/strict";
 import { copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

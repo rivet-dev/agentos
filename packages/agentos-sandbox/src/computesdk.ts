@@ -1,4 +1,4 @@
-import type { AgentOsSandboxProvider } from "@rivet-dev/agentos-core";
+import type { AgentOsSandboxProvider } from "@rivet-dev/agentos";
 import type { ComputeSdkProviderOptions } from "sandbox-agent/computesdk";
 import { computesdk as sandboxAgentComputeSdk } from "sandbox-agent/computesdk";
 import { sandboxAgentProvider } from "./provider.js";

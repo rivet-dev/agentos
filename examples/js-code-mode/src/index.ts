@@ -1,5 +1,5 @@
 // docs:start hostFunctions
-import { AgentOs } from "@rivet-dev/agentos-core";
+import { AgentOs } from "@rivet-dev/agentos";
 import { z } from "zod";
 
 const runtime = await AgentOs.create({

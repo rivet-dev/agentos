@@ -1,17 +1,17 @@
 import { execFileSync } from "node:child_process";
 import {
 	chmodSync,
+	closeSync,
 	cpSync,
 	existsSync,
+	lstatSync,
 	mkdirSync,
 	mkdtempSync,
-	lstatSync,
 	openSync,
+	readdirSync,
 	readFileSync,
 	readlinkSync,
 	readSync,
-	closeSync,
-	readdirSync,
 	rmSync,
 	statSync,
 	symlinkSync,
@@ -68,8 +68,14 @@ function npmBinary(): string {
 		process.env.AGENTOS_TOOLCHAIN_NPM,
 		join(dirname(process.execPath), "npm"),
 		"npm",
-	].filter((value): value is string => typeof value === "string" && value.length > 0);
-	return candidates.find((candidate) => candidate === "npm" || existsSync(candidate)) ?? "npm";
+	].filter(
+		(value): value is string => typeof value === "string" && value.length > 0,
+	);
+	return (
+		candidates.find(
+			(candidate) => candidate === "npm" || existsSync(candidate),
+		) ?? "npm"
+	);
 }
 
 function readHead(file: string): Buffer {
@@ -128,7 +134,14 @@ function resolveInstallSpec(source: string, scratch: string): string {
 	mkdirSync(dest, { recursive: true });
 	const out = execFileSync(
 		npmBinary(),
-		["pack", resolve(source), "--pack-destination", dest, "--ignore-scripts", "--silent"],
+		[
+			"pack",
+			resolve(source),
+			"--pack-destination",
+			dest,
+			"--ignore-scripts",
+			"--silent",
+		],
 		{ encoding: "utf8" },
 	);
 	const file = out.trim().split("\n").pop()?.trim();
@@ -147,11 +160,16 @@ function installedPackageName(source: string): string {
 	return at > 0 ? source.slice(0, at) : source;
 }
 
-function readAgentosPackageManifest(source: string): Record<string, unknown> | undefined {
+function readAgentosPackageManifest(
+	source: string,
+): Record<string, unknown> | undefined {
 	if (!(existsSync(source) && statSync(source).isDirectory())) return undefined;
 	const manifestPath = join(source, "agentos-package.json");
 	if (!existsSync(manifestPath)) return undefined;
-	return JSON.parse(readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
+	return JSON.parse(readFileSync(manifestPath, "utf8")) as Record<
+		string,
+		unknown
+	>;
 }
 
 function unscopedName(name: string): string {
@@ -236,7 +254,9 @@ export function verifyPackageDir(packageDir: string): void {
 		throw new Error(
 			`package contains native .node addon(s) that won't load in V8: ${addons
 				.map((a) => relative(packageDir, a))
-				.join(", ")}; re-run with --prune-native to drop them if they are unreachable on the V8 code path`,
+				.join(
+					", ",
+				)}; re-run with --prune-native to drop them if they are unreachable on the V8 code path`,
 		);
 	}
 }
@@ -282,7 +302,7 @@ function createPackageTar(packageDir: string, packageTar: string): void {
  * closure. A bin path like `./node_modules/<dep>/<sub>` is written RELATIVE to the
  * declaring package's root, but a flat (`npm install`) install HOISTS shared deps
  * to the top-level `node_modules`, so the literal nested path may not exist. A
-	 * wrapper package whose `bin` points into its dependencies is the
+ * wrapper package whose `bin` points into its dependencies is the
  * common case. Try the nested path first, then the hoisted top-level copy.
  */
 function resolveBinTarget(
@@ -309,7 +329,11 @@ export function pack(options: PackOptions): PackResult {
 	const { source, out, pruneNative } = options;
 	const tmp = mkdtempSync(join(tmpdir(), "agentos-pack-"));
 	try {
-		npmInstallFlat(resolveInstallSpec(source, tmp), tmp, options.omitOptional ?? false);
+		npmInstallFlat(
+			resolveInstallSpec(source, tmp),
+			tmp,
+			options.omitOptional ?? false,
+		);
 
 		const name = installedPackageName(source);
 		const installedDir = join(tmp, "node_modules", name);
@@ -319,7 +343,9 @@ export function pack(options: PackOptions): PackResult {
 		// npm name. The installed manifest carries the canonical unscoped package
 		// name the sidecar projects.
 		const sourceManifest = readAgentosPackageManifest(installedDir);
-		const pkg = JSON.parse(readFileSync(join(installedDir, "package.json"), "utf8"));
+		const pkg = JSON.parse(
+			readFileSync(join(installedDir, "package.json"), "utf8"),
+		);
 		const version: string = pkg.version;
 		const bins = binEntries(installedDir);
 		const commands = Object.keys(bins);

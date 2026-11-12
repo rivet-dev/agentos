@@ -1856,6 +1856,7 @@ pub type SoftwareDescriptor = crate::wire::SoftwareDescriptor;
 pub type ProjectedModuleDescriptor = crate::wire::ProjectedModuleDescriptor;
 
 pub type WasmPermissionTier = crate::wire::WasmPermissionTier;
+pub type StandaloneWasmBackend = crate::wire::StandaloneWasmBackend;
 
 pub type ExecuteRequest = crate::wire::ExecuteRequest;
 pub type ReadProcessOutputRequest = crate::wire::ReadProcessOutputRequest;
@@ -3380,6 +3381,9 @@ pub struct JavascriptPosixSpawnFileAction {
 #[serde(rename_all = "camelCase")]
 pub struct JavascriptSpawnHostNetFd {
     pub guest_fd: u32,
+    /// Decimal kernel open-file-description identity for managed execution.
+    #[serde(default)]
+    pub description_id: Option<String>,
     #[serde(default)]
     pub close_on_exec: bool,
     #[serde(default)]
@@ -3551,13 +3555,13 @@ pub struct JavascriptNetListenRequest {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct JavascriptDgramCreateSocketRequest {
+pub struct DgramCreateSocketOptions {
     #[serde(rename = "type")]
     pub socket_type: String,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct JavascriptDgramBindRequest {
+pub struct DgramBindOptions {
     #[serde(default)]
     pub address: Option<String>,
     #[serde(default)]
@@ -3565,7 +3569,7 @@ pub struct JavascriptDgramBindRequest {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct JavascriptDgramSendRequest {
+pub struct DgramSendOptions {
     #[serde(default)]
     pub address: Option<String>,
     #[serde(default)]
@@ -3573,7 +3577,7 @@ pub struct JavascriptDgramSendRequest {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct JavascriptDgramConnectRequest {
+pub struct DgramConnectOptions {
     #[serde(default)]
     pub address: Option<String>,
     pub port: u16,

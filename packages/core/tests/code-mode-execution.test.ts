@@ -15,6 +15,11 @@ import { ALLOW_ALL_VM_PERMISSIONS } from "./helpers/permissions.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// These cases intentionally exhaust guest ArrayBuffer/WASM memory. Keep them out of
+// the default suite; run explicitly with AGENTOS_RUN_MEMORY_STRESS_TESTS=1.
+const memoryStressTest =
+	process.env.AGENTOS_RUN_MEMORY_STRESS_TESTS === "1" ? test : test.skip;
+
 describe("code mode execution", () => {
 	let vm: AgentOs;
 	let callStarts: number[] = [];
@@ -124,10 +129,12 @@ describe("code mode execution", () => {
 		});
 	}, 30_000);
 
-	test("buffer memory past the heap limit fails the allocation, not the VM", async () => {
-		// 1 GiB of typed arrays against the default 128 MiB limit.
-		const result = await vm.javascript.evaluate(
-			`(() => {
+	memoryStressTest(
+		"buffer memory past the heap limit fails the allocation, not the VM",
+		async () => {
+			// 1 GiB of typed arrays against the default 128 MiB limit.
+			const result = await vm.javascript.evaluate(
+				`(() => {
 				const held = [];
 				try {
 					for (let i = 0; i < 16; i++) held.push(new Uint8Array(64 * 1024 * 1024).fill(1));
@@ -136,34 +143,44 @@ describe("code mode execution", () => {
 				}
 				return "held 1 GiB";
 			})()`,
-			{ timeoutMs: 10_000 },
-		);
+				{ timeoutMs: 10_000 },
+			);
 
-		expect(result).toMatchObject({
-			outcome: "succeeded",
-			value: "RangeError: Array buffer allocation failed",
-		});
-		await expect.poll(() => limitWarnings).toContain("v8_array_buffer_bytes");
-		// The script's buffers are released, so the same VM can allocate again.
-		expect(
-			await vm.javascript.evaluate(
-				"new Uint8Array(64 * 1024 * 1024).fill(1).length",
-			),
-		).toMatchObject({ outcome: "succeeded", value: 64 * 1024 * 1024 });
-	}, 30_000);
+			expect(result).toMatchObject({
+				outcome: "succeeded",
+				value: "RangeError: Array buffer allocation failed",
+			});
+			await expect.poll(() => limitWarnings).toContain("v8_array_buffer_bytes");
+			// The script's buffers are released, so the same VM can allocate again.
+			expect(
+				await vm.javascript.evaluate(
+					"new Uint8Array(64 * 1024 * 1024).fill(1).length",
+				),
+			).toMatchObject({ outcome: "succeeded", value: 64 * 1024 * 1024 });
+		},
+		30_000,
+	);
 
-	test("reading a file with no buffer memory left fails the read, not the sidecar", async () => {
-		await vm.writeFile(
-			"/tmp/host-bytes.bin",
-			new Uint8Array(1024 * 1024).fill(7),
-		);
+	memoryStressTest(
+		"reading a file with no buffer memory left fails the read, not the sidecar",
+		async () => {
+			await vm.writeFile(
+				"/tmp/host-bytes.bin",
+				new Uint8Array(1024 * 1024).fill(7),
+			);
 
-		const result = await vm.javascript.evaluate(
-			`(() => {
+			const result = await vm.javascript.evaluate(
+				`(() => {
 				const held = [];
+				let allocated = 0;
+				const probeCeiling = 1024 * 1024 * 1024;
 				for (let size = 16 * 1024 * 1024; size >= 256; size >>= 1) {
 					try {
-						for (;;) held.push(new Uint8Array(size));
+						while (allocated + size <= probeCeiling) {
+							held.push(new Uint8Array(size));
+							allocated += size;
+						}
+						return "memory limit did not fire within the bounded probe";
 					} catch {}
 				}
 				try {
@@ -172,23 +189,27 @@ describe("code mode execution", () => {
 					return \`\${error.name}: \${error.message}\`;
 				}
 			})()`,
-			{ timeoutMs: 20_000 },
-		);
+				{ timeoutMs: 20_000 },
+			);
 
-		expect(result).toMatchObject({
-			outcome: "succeeded",
-			value: "RangeError: Array buffer allocation failed",
-		});
-		expect(await vm.javascript.evaluate("1 + 1")).toMatchObject({
-			outcome: "succeeded",
-			value: 2,
-		});
-	}, 30_000);
+			expect(result).toMatchObject({
+				outcome: "succeeded",
+				value: "RangeError: Array buffer allocation failed",
+			});
+			expect(await vm.javascript.evaluate("1 + 1")).toMatchObject({
+				outcome: "succeeded",
+				value: 2,
+			});
+		},
+		30_000,
+	);
 
-	test("WebAssembly memory past the heap limit fails only its own script", async () => {
-		// 1 GiB of WebAssembly memory against the default 128 MiB limit.
-		const result = await vm.javascript.evaluate(
-			`(() => {
+	memoryStressTest(
+		"WebAssembly memory past the heap limit fails only its own script",
+		async () => {
+			// 1 GiB of WebAssembly memory against the default 128 MiB limit.
+			const result = await vm.javascript.evaluate(
+				`(() => {
 				const held = [];
 				for (let i = 0; i < 16; i++) {
 					const memory = new WebAssembly.Memory({ initial: 1024 });
@@ -197,23 +218,25 @@ describe("code mode execution", () => {
 				}
 				return held.length;
 			})()`,
-			{ timeoutMs: 10_000 },
-		);
+				{ timeoutMs: 10_000 },
+			);
 
-		expect(result).toMatchObject({
-			outcome: "failed",
-			error: {
-				code: "execution_heap_limit_exceeded",
-				message: expect.stringContaining("limits.jsRuntime.v8HeapLimitMb"),
-			},
-		});
-		await expect
-			.poll(() => limitWarnings)
-			.toContain("v8_external_memory_bytes");
-		expect(
-			await vm.javascript.evaluate(
-				"new WebAssembly.Memory({ initial: 512 }).buffer.byteLength",
-			),
-		).toMatchObject({ outcome: "succeeded", value: 32 * 1024 * 1024 });
-	}, 30_000);
+			expect(result).toMatchObject({
+				outcome: "failed",
+				error: {
+					code: "execution_heap_limit_exceeded",
+					message: expect.stringContaining("limits.jsRuntime.v8HeapLimitMb"),
+				},
+			});
+			await expect
+				.poll(() => limitWarnings)
+				.toContain("v8_external_memory_bytes");
+			expect(
+				await vm.javascript.evaluate(
+					"new WebAssembly.Memory({ initial: 512 }).buffer.byteLength",
+				),
+			).toMatchObject({ outcome: "succeeded", value: 32 * 1024 * 1024 });
+		},
+		30_000,
+	);
 });

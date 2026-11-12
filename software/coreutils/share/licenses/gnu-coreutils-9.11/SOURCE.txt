@@ -1,0 +1,9 @@
+The stty and tty commands are built from GNU coreutils 9.11.
+
+Upstream source: https://ftp.gnu.org/gnu/coreutils/coreutils-9.11.tar.xz
+SHA-256: 394024eda0a5955217ceda9cd1201e65dc8fa3aa29c2951135a49521d57c3cc3
+License: GNU General Public License version 3 or later (COPYING).
+
+Build recipe: toolchain/c/scripts/build-coreutils-terminal.sh
+Source patch: toolchain/c/patches/coreutils/0001-wasi-gnulib-support.patch
+Owned C library patches: toolchain/std-patches/wasi-libc/

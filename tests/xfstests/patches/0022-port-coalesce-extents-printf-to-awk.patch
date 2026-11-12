@@ -1,0 +1,37 @@
+From: AgentOS <agentos@example.invalid>
+Subject: [PATCH] common/punch: use portable awk printf statement syntax
+
+awk-rs implements the POSIX printf statement form but does not accept printf
+as a parenthesized function call. Keep the filter behavior unchanged while
+using syntax accepted by both awk-rs and conventional awk implementations.
+
+---
+ common/punch | 9 +++------
+ 1 file changed, 3 insertions(+), 6 deletions(-)
+
+diff --git a/common/punch b/common/punch
+index 475080f5..11b5d46f 100644
+--- a/common/punch
++++ b/common/punch
+@@ -74,15 +74,12 @@ _coalesce_extents()
+ 
+ 		if (type != prev_type) {
+ 			if (prev_type != "")
+-				printf("%u]:%s\n", (low * 512 / block_size) - 1,
+-					prev_type);
+-			printf("%u: [%u..", out_count++,
+-				(low * 512) / block_size);
++				printf "%u]:%s\n", (low * 512 / block_size) - 1, prev_type;
++			printf "%u: [%u..", out_count++, (low * 512) / block_size;
+ 			prev_type = type;
+ 		}
+ 	}
+ 	END {
+ 		if (prev_type != "")
+-			printf("%u]:%s\n", ((high + 1) * 512 / block_size) - 1,
+-				prev_type);
++			printf "%u]:%s\n", ((high + 1) * 512 / block_size) - 1, prev_type;
+ 	}'
+ }
+-- 
+2.47.2

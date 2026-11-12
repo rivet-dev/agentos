@@ -30,13 +30,17 @@ use crate::ResourceLimitDetails;
 pub(crate) enum ProcessOutcome {
     Pending,
     Failed { error: ClientError, rejected: bool },
-    Exited(i32),
+    Exited(i32, Option<u32>),
 }
 
 impl ProcessOutcome {
-    pub(crate) fn completion(process_id: &str, exit_code: Option<i32>) -> Self {
+    pub(crate) fn completion(
+        process_id: &str,
+        exit_code: Option<i32>,
+        exit_signal: Option<u32>,
+    ) -> Self {
         match exit_code {
-            Some(code) => Self::Exited(code),
+            Some(code) => Self::Exited(code, exit_signal),
             None => Self::Failed {
                 error: ClientError::TerminationFailed {
                     process_id: process_id.into(),
@@ -49,8 +53,27 @@ impl ProcessOutcome {
 
     fn exit_code(&self) -> Option<i32> {
         match self {
-            Self::Exited(code) => Some(*code),
+            Self::Exited(code, _) => Some(*code),
             _ => None,
+        }
+    }
+
+    fn exit(&self, pid: u32) -> Option<ProcessExit> {
+        match self {
+            Self::Exited(exit_code, exit_signal) => Some(ProcessExit {
+                pid,
+                exit_code: *exit_code,
+                exit_signal: *exit_signal,
+            }),
+            _ => None,
+        }
+    }
+
+    fn wait_exit_result(&self, pid: u32) -> Option<std::result::Result<ProcessExit, ClientError>> {
+        match self {
+            Self::Pending => None,
+            Self::Failed { error, .. } => Some(Err(error.clone())),
+            Self::Exited(..) => Some(Ok(self.exit(pid).expect("confirmed exit"))),
         }
     }
 
@@ -66,7 +89,7 @@ impl ProcessOutcome {
         match self {
             Self::Pending => None,
             Self::Failed { error, .. } => Some(Err(error.clone())),
-            Self::Exited(code) => Some(Ok(*code)),
+            Self::Exited(code, _) => Some(Ok(*code)),
         }
     }
 
@@ -96,12 +119,32 @@ fn stdin_has_no_reader(pid: u32) -> ClientError {
     }
 }
 
+#[cfg(test)]
 async fn wait_for_process_outcome(
     mut rx: watch::Receiver<ProcessOutcome>,
     process_id: &str,
 ) -> std::result::Result<i32, ClientError> {
     loop {
         if let Some(result) = rx.borrow().wait_result() {
+            return result;
+        }
+        if rx.changed().await.is_err() {
+            return Err(ClientError::TerminationFailed {
+                process_id: process_id.into(),
+                reason: "exit observation channel closed before an exit event".into(),
+            });
+        }
+    }
+}
+
+async fn wait_for_process_exit(
+    mut rx: watch::Receiver<ProcessOutcome>,
+    process_id: &str,
+    pid: u32,
+) -> std::result::Result<ProcessExit, ClientError> {
+    loop {
+        // Read code and terminal signal from the same immutable observation.
+        if let Some(result) = rx.borrow().wait_exit_result(pid) {
             return result;
         }
         if rx.changed().await.is_err() {
@@ -121,7 +164,7 @@ async fn next_spawn_event(
 ) -> Option<EventPayload> {
     let mut replay_outcome = outcome.subscribe();
     loop {
-        if matches!(*replay_outcome.borrow(), ProcessOutcome::Exited(_)) {
+        if matches!(*replay_outcome.borrow(), ProcessOutcome::Exited(..)) {
             return None;
         }
         let event = tokio::select! {
@@ -158,8 +201,13 @@ async fn next_spawn_event(
                 }
                 if let EventPayload::ProcessExitedEvent(exited) = &payload {
                     if exited.process_id == process_id {
-                        // send_replace retains fast exits even before anyone calls wait/subscribe.
-                        outcome.send_replace(ProcessOutcome::Exited(exited.exit_code));
+                        // The live and replay lanes retain the same first confirmed pair,
+                        // including when their observations race.
+                        reconcile_confirmed_exit(
+                            outcome,
+                            Some(exited.exit_code),
+                            exited.exit_signal,
+                        );
                     }
                 }
                 return Some(payload);
@@ -203,13 +251,17 @@ pub(crate) fn sidecar_exited_before_exit(process_id: &str) -> ClientError {
     ClientError::SidecarExited(format!("process {process_id} ended with its sidecar"))
 }
 
-fn reconcile_replayed_exit(outcome: &watch::Sender<ProcessOutcome>, exit_code: Option<i32>) {
+fn reconcile_confirmed_exit(
+    outcome: &watch::Sender<ProcessOutcome>,
+    exit_code: Option<i32>,
+    exit_signal: Option<u32>,
+) {
     if let Some(exit_code) = exit_code {
         outcome.send_if_modified(|state| {
-            if matches!(state, ProcessOutcome::Exited(_)) {
+            if matches!(state, ProcessOutcome::Exited(..)) {
                 return false;
             }
-            *state = ProcessOutcome::Exited(exit_code);
+            *state = ProcessOutcome::Exited(exit_code, exit_signal);
             true
         });
     }
@@ -333,7 +385,28 @@ impl Drop for ExecRunCleanup {
 /// `on_stdout`/`on_stderr` mirror the TS `ExecOptions.onStdout`/`onStderr` raw-byte streaming
 /// callbacks. For `exec` they fire for the duration of the call; for `spawn` they are seeded into the
 /// stdout/stderr fan-out at spawn time (matching the TS initial-handler-set behavior).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StandaloneWasmBackend {
+    #[serde(rename = "v8")]
+    V8,
+    #[serde(rename = "wasmtime")]
+    Wasmtime,
+    #[serde(rename = "wasmtime-threads")]
+    WasmtimeThreads,
+}
+
+impl From<StandaloneWasmBackend> for wire::StandaloneWasmBackend {
+    fn from(value: StandaloneWasmBackend) -> Self {
+        match value {
+            StandaloneWasmBackend::V8 => Self::V8,
+            StandaloneWasmBackend::Wasmtime => Self::Wasmtime,
+            StandaloneWasmBackend::WasmtimeThreads => Self::WasmtimeThreads,
+        }
+    }
+}
+
 pub struct ExecOptions {
+    pub wasm_backend: Option<StandaloneWasmBackend>,
     pub env: BTreeMap<String, String>,
     pub cwd: Option<String>,
     pub stdin: Option<StdinInput>,
@@ -349,6 +422,7 @@ pub struct ExecOptions {
 impl Default for ExecOptions {
     fn default() -> Self {
         Self {
+            wasm_backend: None,
             env: BTreeMap::new(),
             cwd: Some(DEFAULT_EXEC_CWD.to_string()),
             stdin: None,
@@ -367,6 +441,7 @@ impl Default for ExecOptions {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecResult {
     pub exit_code: i32,
+    pub exit_signal: Option<u32>,
     pub stdout: String,
     pub stderr: String,
 }
@@ -384,6 +459,7 @@ pub enum SpawnStdio {
 /// Callback-free options for portable `spawn`.
 #[derive(Default)]
 pub struct SpawnOptions {
+    pub wasm_backend: Option<StandaloneWasmBackend>,
     pub env: BTreeMap<String, String>,
     pub cwd: Option<String>,
     pub stdio: Option<SpawnStdio>,
@@ -440,6 +516,13 @@ pub struct ProcessOutputReplay {
     /// Confirmed guest exit, including when the live exit event was missed.
     #[serde(rename = "exitCode")]
     pub exit_code: Option<i32>,
+    /// Observed terminal signal, never the signal requested by a caller.
+    #[serde(
+        default,
+        rename = "exitSignal",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub exit_signal: Option<u32>,
 }
 
 #[cfg_attr(feature = "contract", derive(ts_rs::TS))]
@@ -448,6 +531,13 @@ pub struct ProcessExit {
     pub pid: u32,
     #[serde(rename = "exitCode")]
     pub exit_code: i32,
+    /// Observed terminal signal, never the signal requested by a caller.
+    #[serde(
+        default,
+        rename = "exitSignal",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub exit_signal: Option<u32>,
 }
 
 /// Public JSON info for SDK-spawned processes.
@@ -460,6 +550,13 @@ pub struct SpawnedProcessInfo {
     pub running: bool,
     #[serde(rename = "exitCode")]
     pub exit_code: Option<i32>,
+    /// Observed terminal signal, never the signal requested by a caller.
+    #[serde(
+        default,
+        rename = "exitSignal",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub exit_signal: Option<u32>,
     /// Epoch milliseconds when `spawn` registered the process.
     #[serde(rename = "startedAt")]
     pub started_at: i64,
@@ -502,6 +599,13 @@ pub struct ProcessInfo {
     pub status: ProcessStatus,
     #[serde(rename = "exitCode")]
     pub exit_code: Option<i32>,
+    /// Observed terminal signal, never the signal requested by a caller.
+    #[serde(
+        default,
+        rename = "exitSignal",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub exit_signal: Option<u32>,
     #[serde(rename = "startTime")]
     pub start_time: f64,
     #[serde(rename = "exitTime")]
@@ -588,6 +692,7 @@ impl AgentOs {
                     env,
                     cwd,
                     false,
+                    options.wasm_backend,
                 )
                 .await
         });
@@ -675,7 +780,7 @@ impl AgentOs {
         let mut stderr = Vec::<u8>::new();
         let mut captured_output_bytes = 0usize;
         let mut capture_error: Option<ClientError> = None;
-        let exit_code = loop {
+        let (exit_code, exit_signal) = loop {
             let frame = match timeout_deadline {
                 Some(deadline) => {
                     match tokio::time::timeout_at(deadline, cleanup.events().recv()).await {
@@ -724,7 +829,7 @@ impl AgentOs {
                                             .await?;
                                         cleanup.disarm();
                                         capture_error = Some(error);
-                                        break -1;
+                                        break (-1, None);
                                     }
                                 }
                             }
@@ -746,7 +851,7 @@ impl AgentOs {
                                             .await?;
                                         cleanup.disarm();
                                         capture_error = Some(error);
-                                        break -1;
+                                        break (-1, None);
                                     }
                                 }
                             }
@@ -754,7 +859,7 @@ impl AgentOs {
                     }
                 }
                 EventPayload::ProcessExitedEvent(exited) if exited.process_id == process_id => {
-                    break exited.exit_code;
+                    break (exited.exit_code, exited.exit_signal);
                 }
                 EventPayload::ProcessOutputEvent(_)
                 | EventPayload::ProcessExitedEvent(_)
@@ -774,6 +879,7 @@ impl AgentOs {
 
         Ok(ExecResult {
             exit_code,
+            exit_signal,
             stdout: String::from_utf8_lossy(&stdout).into_owned(),
             stderr: String::from_utf8_lossy(&stderr).into_owned(),
         })
@@ -800,7 +906,7 @@ impl AgentOs {
     /// Spawn a process. SYNC; returns `{ pid }` only. Installs stdout/stderr fan-out over broadcast
     /// channels and wires exit via a background event-pump task. The user-facing `pid` is the
     /// SDK-allocated map key (the wire `process_id` is held inside the [`ProcessEntry`]).
-    pub fn spawn_process(
+    pub fn spawn(
         &self,
         command: &str,
         args: Vec<String>,
@@ -867,67 +973,42 @@ impl AgentOs {
         Ok(SpawnHandle { pid })
     }
 
-    /// Write to a spawned process's stdin. SYNC. Errors with `ProcessNotFound`.
-    pub fn write_process_stdin(
+    /// Write stdin and wait for process startup and the sidecar acknowledgement.
+    pub async fn write_process_stdin(
         &self,
         pid: u32,
         data: StdinInput,
     ) -> std::result::Result<(), ClientError> {
-        let Some(process_id) = self.live_process_id(pid)? else {
+        if self.live_process_id(pid)?.is_none() {
             return Err(stdin_has_no_reader(pid));
-        };
-        let chunk: Vec<u8> = stdin_to_bytes(data);
-        let this = self.clone();
-        tokio::spawn(async move {
-            if let Err(error) = this.write_wire_stdin(&process_id, chunk).await {
-                tracing::warn!(?error, pid, "write_process_stdin failed");
-            }
-        });
-        Ok(())
-    }
-
-    /// Write stdin and wait for the sidecar acknowledgement.
-    pub async fn write_process_stdin_awaited(
-        &self,
-        pid: u32,
-        data: StdinInput,
-    ) -> std::result::Result<(), ClientError> {
-        let Some(process_id) = self.live_process_id(pid)? else {
+        }
+        let process_id = self.wait_for_process_start(pid).await?;
+        if self.live_process_id(pid)?.is_none() {
             return Err(stdin_has_no_reader(pid));
-        };
+        }
         let result = self
             .write_wire_stdin(&process_id, stdin_to_bytes(data))
             .await;
         match result {
-            // The write raced the exit.
             Err(_) if self.live_process_id(pid)?.is_none() => Err(stdin_has_no_reader(pid)),
             result => result,
         }
     }
 
-    /// Close a spawned process's stdin. SYNC. Errors with `ProcessNotFound`.
-    pub fn close_process_stdin(&self, pid: u32) -> std::result::Result<(), ClientError> {
-        let Some(process_id) = self.live_process_id(pid)? else {
+    /// Close stdin and wait for process startup and the sidecar acknowledgement.
+    pub async fn close_process_stdin(&self, pid: u32) -> std::result::Result<(), ClientError> {
+        if self.live_process_id(pid)?.is_none() {
             return Ok(());
-        };
-        let this = self.clone();
-        tokio::spawn(async move {
-            if let Err(error) = this.close_wire_stdin(&process_id).await {
-                tracing::warn!(?error, pid, "close_process_stdin failed");
-            }
-        });
-        Ok(())
-    }
-
-    /// Close stdin and wait for the sidecar acknowledgement.
-    pub async fn close_process_stdin_awaited(
-        &self,
-        pid: u32,
-    ) -> std::result::Result<(), ClientError> {
-        let Some(process_id) = self.live_process_id(pid)? else {
+        }
+        let process_id = self.wait_for_process_start(pid).await?;
+        if self.live_process_id(pid)?.is_none() {
             return Ok(());
-        };
-        self.close_wire_stdin(&process_id).await
+        }
+        let result = self.close_wire_stdin(&process_id).await;
+        match result {
+            Err(_) if self.live_process_id(pid)?.is_none() => Ok(()),
+            result => result,
+        }
     }
 
     /// Subscribe to the unified stdout/stderr event stream for a process.
@@ -975,11 +1056,8 @@ impl AgentOs {
             .ok_or(ClientError::ProcessNotFound(pid))?;
 
         // Already-exited branch: fire immediately + synchronously, return a no-op unsubscribe.
-        if let Some(code) = rx.borrow().exit_code() {
-            handler(ProcessExit {
-                pid,
-                exit_code: code,
-            });
+        if let Some(exit) = rx.borrow().exit(pid) {
+            handler(exit);
             return Ok(Subscription::noop());
         }
 
@@ -994,11 +1072,8 @@ impl AgentOs {
         // returned `Subscription` cancels the waiting task on drop (= unsubscribe).
         let task = tokio::spawn(async move {
             while rx.changed().await.is_ok() {
-                if let Some(code) = rx.borrow().exit_code() {
-                    handler(ProcessExit {
-                        pid,
-                        exit_code: code,
-                    });
+                if let Some(exit) = rx.borrow().exit(pid) {
+                    handler(exit);
                     return;
                 }
                 if rx.borrow().rejected() {
@@ -1012,6 +1087,14 @@ impl AgentOs {
     /// Await a spawned process's exit code. Unknown-pid lookup errors (synchronously in TS; here the
     /// lookup error is returned before any awaiting begins).
     pub async fn wait_process(&self, pid: u32) -> std::result::Result<i32, ClientError> {
+        Ok(self.wait_process_exit(pid).await?.exit_code)
+    }
+
+    /// Await a spawned process's complete, atomically observed terminal status.
+    pub async fn wait_process_exit(
+        &self,
+        pid: u32,
+    ) -> std::result::Result<ProcessExit, ClientError> {
         let (rx, process_id) = self
             .inner()
             .processes
@@ -1020,7 +1103,7 @@ impl AgentOs {
             })
             .ok_or(ClientError::ProcessNotFound(pid))?;
 
-        wait_for_process_outcome(rx, &process_id).await
+        wait_for_process_exit(rx, &process_id, pid).await
     }
 
     /// Read bounded sequenced output retained for a spawned process.
@@ -1060,7 +1143,7 @@ impl AgentOs {
             }
             match &*outcome.borrow() {
                 ProcessOutcome::Failed { error, .. } => return Err(error.clone()),
-                ProcessOutcome::Exited(_) => break,
+                ProcessOutcome::Exited(..) => break,
                 ProcessOutcome::Pending => {}
             }
             tokio::select! {
@@ -1152,13 +1235,15 @@ impl AgentOs {
                 });
             }
             let next_cursor = events.last().map(|event| event.sequence).or(after);
+            let process = self.get_process(pid)?;
             return Ok(ProcessOutputReplay {
                 pid,
                 events,
                 next_cursor,
                 has_more,
                 truncated: page.truncated,
-                exit_code: self.get_process(pid)?.exit_code,
+                exit_code: process.exit_code,
+                exit_signal: process.exit_signal,
             });
         }
         let (max_events, max_bytes) =
@@ -1197,11 +1282,17 @@ impl AgentOs {
         // A retained sidecar exit is stronger evidence than a missed live
         // event. Reconcile wait/get/list and wake the observation task, while
         // avoiding a concurrently reused registry entry.
-        self.inner().processes.read(&pid, |_, entry| {
-            if entry.process_id == process_id {
-                reconcile_replayed_exit(&entry.exit_tx, page.exit_code);
-            }
-        });
+        let observed_exit = self
+            .inner()
+            .processes
+            .read(&pid, |_, entry| {
+                if entry.process_id != process_id {
+                    return None;
+                }
+                reconcile_confirmed_exit(&entry.exit_tx, page.exit_code, page.exit_signal);
+                entry.exit_tx.borrow().exit(pid)
+            })
+            .flatten();
         Ok(ProcessOutputReplay {
             pid,
             events: page
@@ -1221,7 +1312,8 @@ impl AgentOs {
             next_cursor: page.next_cursor,
             has_more: page.has_more,
             truncated: page.truncated,
-            exit_code: page.exit_code,
+            exit_code: observed_exit.map(|exit| exit.exit_code).or(page.exit_code),
+            exit_signal: observed_exit.map_or(page.exit_signal, |exit| exit.exit_signal),
         })
     }
 
@@ -1229,13 +1321,16 @@ impl AgentOs {
     pub fn list_processes(&self) -> Vec<SpawnedProcessInfo> {
         let mut out = Vec::new();
         self.inner().processes.scan(|pid, entry| {
-            let exit_code = entry.exit_tx.borrow().exit_code();
+            let observed = entry.exit_tx.borrow();
+            let exit_code = observed.exit_code();
+            let exit_signal = observed.exit(*pid).and_then(|exit| exit.exit_signal);
             out.push(SpawnedProcessInfo {
                 pid: *pid,
                 command: entry.command.clone(),
                 args: entry.args.clone(),
                 running: exit_code.is_none(),
                 exit_code,
+                exit_signal,
                 started_at: entry.started_at,
             });
         });
@@ -1284,13 +1379,18 @@ impl AgentOs {
         struct Tracked {
             display_pid: u32,
             exit_code: Option<i32>,
+            exit_signal: Option<u32>,
             command: String,
             args: Vec<String>,
         }
         let mut tracked_by_process_id: BTreeMap<String, Tracked> = BTreeMap::new();
         let mut display_pid_by_kernel_pid: BTreeMap<u32, u32> = BTreeMap::new();
         self.inner().processes.scan(|display_pid, entry| {
-            let exit_code = entry.exit_tx.borrow().exit_code();
+            let observed = entry.exit_tx.borrow();
+            let exit_code = observed.exit_code();
+            let exit_signal = observed
+                .exit(*display_pid)
+                .and_then(|exit| exit.exit_signal);
             if let Some(kernel_pid) = *entry.kernel_pid.borrow() {
                 display_pid_by_kernel_pid.insert(kernel_pid, *display_pid);
             }
@@ -1299,6 +1399,7 @@ impl AgentOs {
                 Tracked {
                     display_pid: *display_pid,
                     exit_code,
+                    exit_signal,
                     command: entry.command.clone(),
                     args: entry.args.clone(),
                 },
@@ -1313,8 +1414,29 @@ impl AgentOs {
         // The snapshot may arrive before the ProcessStarted notification updates
         // the kernel-PID watch. Wire process identity is authoritative either way.
         for entry in &snapshot.processes {
-            if let Some(tracked) = tracked_by_process_id.get(&entry.process_id) {
+            if let Some(tracked) = tracked_by_process_id.get_mut(&entry.process_id) {
                 display_pid_by_kernel_pid.insert(entry.pid, tracked.display_pid);
+                if matches!(entry.status, ProcessSnapshotStatus::Exited) {
+                    let observed = self
+                        .inner()
+                        .processes
+                        .read(&tracked.display_pid, |_, process| {
+                            if process.process_id != entry.process_id {
+                                return None;
+                            }
+                            reconcile_confirmed_exit(
+                                &process.exit_tx,
+                                entry.exit_code,
+                                entry.exit_signal,
+                            );
+                            process.exit_tx.borrow().exit(tracked.display_pid)
+                        })
+                        .flatten();
+                    if let Some(observed) = observed {
+                        tracked.exit_code = Some(observed.exit_code);
+                        tracked.exit_signal = observed.exit_signal;
+                    }
+                }
             }
         }
 
@@ -1385,6 +1507,9 @@ impl AgentOs {
                     cwd: entry.cwd,
                     status,
                     exit_code,
+                    exit_signal: tracked
+                        .filter(|t| t.exit_code.is_some())
+                        .map_or(entry.exit_signal, |t| t.exit_signal),
                     start_time,
                     exit_time,
                 },
@@ -1397,7 +1522,11 @@ impl AgentOs {
             if seen_process_ids.contains(&entry.process_id) {
                 return;
             }
-            let exit_code = entry.exit_tx.borrow().exit_code();
+            let observed = entry.exit_tx.borrow();
+            let exit_code = observed.exit_code();
+            let exit_signal = observed
+                .exit(*display_pid)
+                .and_then(|exit| exit.exit_signal);
             let process_key = format!("{}:{}", entry.process_id, display_pid);
             let start_time = self.observed_start_time(&process_key, now_ms);
             let (status, exit_time) = match exit_code {
@@ -1422,6 +1551,7 @@ impl AgentOs {
                     cwd: String::new(),
                     status,
                     exit_code,
+                    exit_signal,
                     start_time,
                     exit_time,
                 },
@@ -1494,13 +1624,16 @@ impl AgentOs {
         self.inner()
             .processes
             .read(&pid, |pid, entry| {
-                let exit_code = entry.exit_tx.borrow().exit_code();
+                let observed = entry.exit_tx.borrow();
+                let exit_code = observed.exit_code();
+                let exit_signal = observed.exit(*pid).and_then(|exit| exit.exit_signal);
                 SpawnedProcessInfo {
                     pid: *pid,
                     command: entry.command.clone(),
                     args: entry.args.clone(),
                     running: exit_code.is_none(),
                     exit_code,
+                    exit_signal,
                     started_at: entry.started_at,
                 }
             })
@@ -1612,7 +1745,54 @@ impl AgentOs {
             .ok_or(ClientError::ProcessNotFound(pid))
     }
 
+    async fn wait_for_process_start(&self, pid: u32) -> std::result::Result<String, ClientError> {
+        let (process_id, mut started, mut outcome) = self
+            .inner()
+            .processes
+            .read(&pid, |_, entry| {
+                (
+                    entry.process_id.clone(),
+                    entry.kernel_pid.subscribe(),
+                    entry.exit_tx.subscribe(),
+                )
+            })
+            .ok_or(ClientError::ProcessNotFound(pid))?;
+        loop {
+            if started.borrow().is_some() {
+                return Ok(process_id);
+            }
+            if let Some(result) = outcome.borrow().wait_result() {
+                return match result {
+                    Err(error) => Err(error),
+                    Ok(_) => Err(ClientError::Kernel {
+                        code: String::from("EPIPE"),
+                        message: format!("process {pid} exited before stdin was available"),
+                    }),
+                };
+            }
+            tokio::select! {
+                result = started.changed() => {
+                    if result.is_err() {
+                        return Err(ClientError::TerminationFailed {
+                            process_id,
+                            reason: String::from("process start observation closed before launch settled"),
+                        });
+                    }
+                }
+                result = outcome.changed() => {
+                    if result.is_err() {
+                        return Err(ClientError::TerminationFailed {
+                            process_id,
+                            reason: String::from("process outcome observation closed before launch settled"),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
     /// Send the `Execute` wire request, mapping a rejection into [`ClientError::Kernel`].
+    #[allow(clippy::too_many_arguments)] // Keep the explicit wire fields together at this transport boundary.
     async fn send_execute(
         &self,
         process_id: &str,
@@ -1621,6 +1801,7 @@ impl AgentOs {
         env: BTreeMap<String, String>,
         cwd: Option<String>,
         retain_output: bool,
+        wasm_backend: Option<StandaloneWasmBackend>,
     ) -> std::result::Result<wire::ProcessStartedResponse, ClientError> {
         let ownership = self.vm_scope();
         let response = self
@@ -1637,6 +1818,7 @@ impl AgentOs {
                     cwd,
                     wasm_permission_tier: None,
                     retain_output,
+                    wasm_backend: wasm_backend.map(Into::into),
                 }),
             )
             .await?;
@@ -1847,14 +2029,19 @@ impl AgentOs {
         exit_tx: watch::Sender<ProcessOutcome>,
         kernel_pid_tx: watch::Sender<Option<u32>>,
     ) {
+        let mut env = options.env.clone();
+        if options.stream_stdin.unwrap_or(true) {
+            env.insert(String::from("AGENTOS_KEEP_STDIN_OPEN"), String::from("1"));
+        }
         match self
             .send_execute(
                 &process_id,
                 Some(command),
                 args,
-                options.env.clone(),
+                env,
                 options.cwd.clone(),
                 options.retain_output,
+                options.wasm_backend,
             )
             .await
         {
@@ -2293,6 +2480,7 @@ mod tests {
                 EventPayload::ProcessExitedEvent(wire::ProcessExitedEvent {
                     process_id: "p".into(),
                     exit_code: 0,
+                    exit_signal: None,
                 }),
             ))
             .unwrap();
@@ -2332,9 +2520,9 @@ mod tests {
                 _ = &mut observation => panic!("no exit has been observed"),
                 _ = tokio::task::yield_now() => {}
             }
-            super::reconcile_replayed_exit(&outcome, None);
+            super::reconcile_confirmed_exit(&outcome, None, None);
             assert_eq!(outcome.borrow().exit_code(), None);
-            super::reconcile_replayed_exit(&outcome, Some(7));
+            super::reconcile_confirmed_exit(&outcome, Some(7), None);
             assert!(
                 tokio::time::timeout(std::time::Duration::from_secs(1), observation)
                     .await
@@ -2349,7 +2537,7 @@ mod tests {
             );
             // Repeated replay does not synthesize another completion notification.
             let receiver = outcome.subscribe();
-            super::reconcile_replayed_exit(&outcome, Some(7));
+            super::reconcile_confirmed_exit(&outcome, Some(7), None);
             assert!(!receiver.has_changed().unwrap());
         }
     }
@@ -2426,10 +2614,10 @@ mod tests {
     #[test]
     fn background_completion_without_status_remains_a_failure() {
         assert_eq!(
-            super::ProcessOutcome::completion("p", Some(0)).exit_code(),
+            super::ProcessOutcome::completion("p", Some(0), None).exit_code(),
             Some(0)
         );
-        let missing = super::ProcessOutcome::completion("p", None);
+        let missing = super::ProcessOutcome::completion("p", None, None);
         assert_eq!(missing.exit_code(), None);
         assert!(matches!(
             missing.wait_result(),
@@ -2447,6 +2635,7 @@ mod tests {
             EventPayload::ProcessExitedEvent(wire::ProcessExitedEvent {
                 process_id: process_id.into(),
                 exit_code: 137,
+                exit_signal: None,
             }),
         )
     }
@@ -2529,6 +2718,7 @@ mod tests {
                 cwd: "/".into(),
                 status: ProcessStatus::Running,
                 exit_code: None,
+                exit_signal: None,
                 start_time: 1.0,
                 exit_time: None,
             },
@@ -2790,5 +2980,70 @@ mod tests {
         assert!(map.read("a", |_, _| ()).is_none());
         assert!(map.read("b", |_, _| ()).is_some());
         assert!(map.read("c", |_, _| ()).is_some());
+    }
+    #[tokio::test]
+    async fn complete_wait_status_keeps_observed_signal_distinct_from_exit_code() {
+        for (code, signal) in [(143, Some(15)), (143, None), (0, None)] {
+            let (outcome, receiver) = watch::channel(super::ProcessOutcome::Pending);
+            let waiter = tokio::spawn(super::wait_for_process_exit(receiver, "wire-process", 7));
+            outcome.send_replace(super::ProcessOutcome::Exited(code, signal));
+            drop(outcome);
+            let exit = waiter.await.unwrap().unwrap();
+            assert_eq!(
+                exit,
+                super::ProcessExit {
+                    pid: 7,
+                    exit_code: code,
+                    exit_signal: signal
+                }
+            );
+            // The value is Copy and remains complete after its registry/watch owner disappears.
+            let copied = exit;
+            assert_eq!(copied.exit_signal, signal);
+        }
+    }
+
+    #[tokio::test]
+    async fn replayed_terminal_reason_wakes_waiters_and_cannot_be_overwritten() {
+        let (outcome, _) = watch::channel(super::ProcessOutcome::Pending);
+        super::reconcile_confirmed_exit(&outcome, Some(143), Some(15));
+        let first = super::wait_for_process_exit(outcome.subscribe(), "p", 7)
+            .await
+            .unwrap();
+        super::reconcile_confirmed_exit(&outcome, Some(0), None);
+        let repeated = super::wait_for_process_exit(outcome.subscribe(), "p", 7)
+            .await
+            .unwrap();
+        assert_eq!(first, repeated);
+        assert_eq!(repeated.exit_signal, Some(15));
+    }
+
+    #[tokio::test]
+    async fn live_exit_event_retains_terminal_reason_for_late_full_status_wait() {
+        let (sender, mut events) = broadcast::channel(2);
+        let (ownership, _) = exec_exit_frame("vm", "p");
+        let (outcome, _) = watch::channel(super::ProcessOutcome::Pending);
+        sender
+            .send((
+                ownership.clone(),
+                EventPayload::ProcessExitedEvent(wire::ProcessExitedEvent {
+                    process_id: "p".into(),
+                    exit_code: 143,
+                    exit_signal: Some(15),
+                }),
+            ))
+            .unwrap();
+        assert!(
+            super::next_spawn_event(&mut events, &ownership, "p", &outcome)
+                .await
+                .is_some()
+        );
+        let observed = super::wait_for_process_exit(outcome.subscribe(), "p", 9)
+            .await
+            .unwrap();
+        assert_eq!(
+            (observed.pid, observed.exit_code, observed.exit_signal),
+            (9, 143, Some(15))
+        );
     }
 }

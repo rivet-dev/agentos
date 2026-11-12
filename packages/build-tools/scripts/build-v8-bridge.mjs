@@ -1,4 +1,5 @@
 import { build } from "esbuild";
+import { withOwnedEsbuild } from "./with-owned-esbuild.mjs";
 import { createRequire } from "node:module";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import stdLibBrowser from "node-stdlib-browser";
@@ -9,6 +10,8 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const packageRoot = path.resolve(scriptDir, "..");
 const workspaceRoot = path.resolve(packageRoot, "..", "..");
 const require = createRequire(import.meta.url);
+
+await withOwnedEsbuild(require.resolve("esbuild"), async () => {
 
 function parseArgs(argv) {
 	const options = {};
@@ -29,25 +32,30 @@ function parseArgs(argv) {
 
 const options = parseArgs(process.argv.slice(2));
 const bridgeEntry = path.join(packageRoot, "bridge-src", "index.ts");
-const bridgeAssetsDir = path.join(workspaceRoot, "crates", "execution", "assets");
+const bridgeAssetsDir = path.join(
+	workspaceRoot,
+	"crates",
+	"executor-v8-runtime",
+	"assets",
+);
 const bridgeSeamSourcefile = path.join(bridgeAssetsDir, "v8-bridge.generated-seam.js");
 const bridgeContract = path.join(
 	workspaceRoot,
 	"crates",
-	"bridge",
-	"bridge-contract.json",
+	"vm-host-interface",
+	"vm-host-interface.json",
 );
 const defaultBridgeOutput = path.join(
 	workspaceRoot,
 	"crates",
-	"execution",
+	"executor-v8-runtime",
 	"assets",
 	"v8-bridge.js",
 );
 const defaultZlibBridgeOutput = path.join(
 	workspaceRoot,
 	"crates",
-	"execution",
+	"executor-v8-runtime",
 	"assets",
 	"v8-bridge-zlib.js",
 );
@@ -67,7 +75,7 @@ const zlibBridgeTempOutput = `${zlibBridgeOutput}${tempSuffix}`;
 const undiciShimDir = path.join(
 	workspaceRoot,
 	"crates",
-	"execution",
+	"executor-v8-runtime",
 	"assets",
 	"undici-shims",
 );
@@ -203,6 +211,8 @@ async function generateBridgeSeamText() {
 	const result = await build({
 		entryPoints: [bridgeEntry],
 		outfile: bridgeSeamSourcefile,
+		// Preserve upstream readline notices through both bundle passes.
+		legalComments: "inline",
 		bundle: true,
 		minify: false,
 		format: "esm",
@@ -222,7 +232,7 @@ async function generateBridgeSeamText() {
 		packages: "external",
 		plugins: [
 			{
-				name: "agentos-bridge-source-externals",
+				name: "agentos-vm-host-interface-source-externals",
 				setup(pluginBuild) {
 					// node: builtins stay as import specifiers.
 					pluginBuild.onResolve({ filter: /^node:/ }, () => ({
@@ -255,7 +265,17 @@ async function validateBridgeContractGlobals(sourceText) {
 		"_unregisterHandle",
 		"_waitForActiveHandles",
 		"_releaseLeftoverHandles",
+		// Bridge-local stdin pump lifecycle hook; it never invokes a host RPC.
+		"_retireStdinOperation",
+		// Bridge-local Promise rejection delivery; no host RPC or permission entry.
+		"_dispatchPromiseRejection",
+		// Bridge-local synchronous guest exception delivery; no host RPC.
+		"_dispatchUncaughtException",
+		"__runtimeResetProcessExitState",
+		"__agentOsReportTerminalCallback",
+		"__agentOsAddProtectedEventListener",
 		"_getActiveHandles",
+		"_processExitRequested",
 		"_childProcessDispatch",
 		"_childProcessModule",
 		"_osModule",
@@ -349,7 +369,7 @@ async function validateBridgeContractGlobals(sourceText) {
 	const errors = [];
 	if (duplicateContractNames.size > 0) {
 		errors.push(
-			`duplicate names in bridge-contract.json: ${[...duplicateContractNames].sort().join(", ")}`,
+			`duplicate names in vm-host-interface.json: ${[...duplicateContractNames].sort().join(", ")}`,
 		);
 	}
 	if (duplicateInventoryNames.size > 0) {
@@ -364,7 +384,7 @@ async function validateBridgeContractGlobals(sourceText) {
 	}
 	if (unexpectedInventoryNames.length > 0) {
 		errors.push(
-			`NODE_CUSTOM_GLOBAL_INVENTORY names missing from bridge-contract.json or the runtime-only allowlist: ${unexpectedInventoryNames.sort().join(", ")}`,
+			`NODE_CUSTOM_GLOBAL_INVENTORY names missing from vm-host-interface.json or the runtime-only allowlist: ${unexpectedInventoryNames.sort().join(", ")}`,
 		);
 	}
 	if (staleRuntimeOnlyNames.length > 0) {
@@ -568,13 +588,14 @@ async function buildEventAbortPrelude() {
 	const eventAbortPreludeResult = await build({
 		stdin: {
 			contents: [
-				'import { Event, CustomEvent, EventTarget } from "agentos-dom-events-polyfill";',
+				'import { Event, CustomEvent, EventTarget, addProtectedEventListener } from "agentos-dom-events-polyfill";',
 				'import { AbortController, AbortSignal } from "agentos-abort-polyfill";',
 				"globalThis.Event = Event;",
 				"globalThis.CustomEvent = CustomEvent;",
 				"globalThis.EventTarget = EventTarget;",
 				"globalThis.AbortSignal = AbortSignal;",
 				"globalThis.AbortController = AbortController;",
+				"globalThis.__agentOsAddProtectedEventListener = addProtectedEventListener;",
 			].join("\n"),
 			resolveDir: bridgeAssetsDir,
 			sourcefile: "v8-bridge-event-abort.entry.js",
@@ -734,6 +755,7 @@ const result = await build({
 	},
 	bundle: true,
 	outfile: bridgeTempOutput,
+	legalComments: "inline",
 	write: true,
 	format: "iife",
 	platform: "browser",
@@ -782,7 +804,7 @@ const zlibResult = await build({
 			"globalThis.__agentOsBuiltinUtilModule = utilModule;",
 			"globalThis.__agentOsBuiltinZlibModule = zlibModule;",
 			"const AgentOSWebSocket = wsModule?.WebSocket ?? wsModule?.default?.WebSocket ?? wsModule?.default ?? wsModule;",
-			'if(typeof AgentOSWebSocket === "function"){Object.defineProperty(globalThis,"WebSocket",{value:AgentOSWebSocket,writable:false,configurable:false,enumerable:true});}',
+			'if(typeof AgentOSWebSocket === "function"){Object.defineProperty(globalThis,"WebSocket",{value:AgentOSWebSocket,writable:true,configurable:true,enumerable:false});}',
 		].join("\n"),
 		resolveDir: bridgeAssetsDir,
 		sourcefile: "v8-bridge-zlib.entry.js",
@@ -855,3 +877,5 @@ await rename(zlibBridgeTempOutput, zlibBridgeOutput);
 console.log(
 	`Built ${path.relative(workspaceRoot, bridgeOutput)} (${result.outputFiles?.[0]?.text?.length ?? "written"} bytes)`,
 );
+
+});

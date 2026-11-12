@@ -27,29 +27,47 @@ function writeJson(root: string, rel: string, value: unknown) {
 	writeFileSync(path, `${JSON.stringify(value, null, "\t")}\n`);
 }
 
-test("discovers the runtime sidecar resolver packages", () => {
+test("discovers Agent OS sidecar resolver packages", () => {
 	const packages = discoverPackages(repoRoot);
 	const names = packages.map((pkg) => pkg.name);
 
-	assert(names.includes("@rivet-dev/agentos-runtime-sidecar-linux-x64-gnu"));
-	assert(names.includes("@rivet-dev/agentos-runtime-sidecar"));
+	const hasAgentOsPackages = names.some((name) =>
+		name.startsWith("@rivet-dev/agentos-"),
+	);
+	if (hasAgentOsPackages) {
+		assert(names.includes("@rivet-dev/agentos-sidecar-linux-x64-gnu"));
+		assert(names.includes("@rivet-dev/agentos-sidecar"));
+		assert(
+			names.indexOf("@rivet-dev/agentos-sidecar-linux-x64-gnu") <
+				names.indexOf("@rivet-dev/agentos-sidecar"),
+		);
+	}
+
+	assert(names.includes("@rivet-dev/agentos-sidecar-linux-x64-gnu"));
+	assert(names.includes("@rivet-dev/agentos-sidecar"));
 	assert(
-		names.indexOf("@rivet-dev/agentos-runtime-sidecar-linux-x64-gnu") <
-			names.indexOf("@rivet-dev/agentos-runtime-sidecar"),
+		names.indexOf("@rivet-dev/agentos-sidecar-linux-x64-gnu") <
+			names.indexOf("@rivet-dev/agentos-sidecar"),
 	);
 });
 
-test("builds the runtime sidecar platform map", () => {
+test("builds platform map for the agent-os sidecar meta package", () => {
 	const packages = discoverPackages(repoRoot);
 	const names = packages.map((pkg) => pkg.name);
 	const metaMap = buildMetaPlatformMap(packages);
 
-	if (names.includes("@rivet-dev/agentos-runtime-sidecar")) {
-		assert.deepEqual(metaMap.get("@rivet-dev/agentos-runtime-sidecar"), [
-			"@rivet-dev/agentos-runtime-sidecar-darwin-arm64",
-			"@rivet-dev/agentos-runtime-sidecar-darwin-x64",
-			"@rivet-dev/agentos-runtime-sidecar-linux-arm64-gnu",
-			"@rivet-dev/agentos-runtime-sidecar-linux-x64-gnu",
+	if (names.includes("@rivet-dev/agentos-sidecar")) {
+		assert.deepEqual(metaMap.get("@rivet-dev/agentos-sidecar"), [
+			"@rivet-dev/agentos-sidecar-darwin-arm64",
+			"@rivet-dev/agentos-sidecar-darwin-x64",
+			"@rivet-dev/agentos-sidecar-linux-arm64-gnu",
+			"@rivet-dev/agentos-sidecar-linux-x64-gnu",
+		]);
+		assert.deepEqual(metaMap.get("@rivet-dev/agentos-sidecar"), [
+			"@rivet-dev/agentos-sidecar-darwin-arm64",
+			"@rivet-dev/agentos-sidecar-darwin-x64",
+			"@rivet-dev/agentos-sidecar-linux-arm64-gnu",
+			"@rivet-dev/agentos-sidecar-linux-x64-gnu",
 		]);
 	}
 });
@@ -59,15 +77,21 @@ test("sanity check passes for the agent-os workspace", () => {
 	const names = new Set(packages.map((pkg) => pkg.name));
 
 	assert.doesNotThrow(() => assertDiscoverySanity(packages));
-	assert(names.has("@rivet-dev/agentos-core"));
+	assert(names.has("@rivet-dev/agentos"));
+	assert(names.has("secure-exec"));
 });
 
-test("never publishes registry software packages to npm", () => {
+test("keeps registry software out of the agentOS npm release", () => {
 	const names = discoverPackages(repoRoot).map((pkg) => pkg.name);
 
+	assert(names.includes("@rivet-dev/agentos"));
+	assert(names.includes("secure-exec"));
 	assert(!names.some((name) => name.startsWith("@agentos-software/")));
 });
 
-test("browser runtime stays explicitly excluded from publication", () => {
-	assert(EXCLUDED.has("@rivet-dev/agentos-runtime-browser"));
+test("archived browser packages are outside publication discovery", () => {
+	const names = discoverPackages(repoRoot).map((pkg) => pkg.name);
+	assert(!names.includes("@rivet-dev/agentos-browser"));
+	assert(!names.includes("@rivet-dev/agentos-runtime-browser"));
+	assert(!names.includes("@rivet-dev/agentos-playground"));
 });

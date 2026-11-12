@@ -1,41 +1,82 @@
+// docs:start quickstart
 import { createAgentOsClient } from "@rivet-dev/agentos";
 
-// Connect to Rivet Cloud. Set RIVET_NAMESPACE and RIVET_TOKEN from your
-// project's dashboard before running this.
-const client = createAgentOsClient({ endpoint: "https://api.rivet.dev" });
+export interface HostedQuickstartOptions {
+	endpoint: string;
+	namespace: string;
+	poolName: string;
+	token: string;
+	key: string;
+}
 
-// Get the VM keyed "my-vm", creating it on first use. Same key, same VM.
-const vm = client.agentOS.getOrCreate(["my-vm"]);
+export async function runHostedQuickstart(options: HostedQuickstartOptions) {
+	const client = createAgentOsClient({
+		endpoint: options.endpoint,
+		namespace: options.namespace,
+		poolName: options.poolName,
+		token: options.token,
+	});
+	try {
+		const vm = client.agentOS.getOrCreate([options.key], {
+			createWithInput: {
+				config: {
+					filesystem: {
+						mounts: [
+							{
+								path: "/workspace",
+								backend: { type: "actor-sqlite" },
+								readOnly: false,
+							},
+						],
+					},
+				},
+			},
+		});
+		await vm.filesystem.writeFile({
+			path: "/workspace/hello.txt",
+			content: "Hello from agentOS!",
+		});
+		const result = await vm.process.run({
+			command: "cat",
+			args: ["/workspace/hello.txt"],
+			options: { captureStdio: true, timeoutMs: 10_000 },
+		});
+		return { vmId: await vm.resolve(), stdout: result.stdout };
+	} finally {
+		await client.dispose();
+	}
+}
+// docs:end quickstart
 
-// Write a file. The VM's filesystem persists while the VM sleeps.
-await vm.v1.filesystem.writeFile({
-	path: "/home/agentos/hello.txt",
-	content: "Hello from agentOS!",
-});
-
-// Run a shell command and capture its output.
-const result = await vm.v1.process.run({
-	command: "cat",
-	args: ["/home/agentos/hello.txt"],
-	options: { captureStdio: true },
-});
-console.log(result.stdout);
-
-// Start a web server inside the VM.
-await vm.v1.filesystem.writeFile({
-	path: "/home/agentos/server.js",
-	content: `require("http")
-	.createServer((req, res) => res.end("Hello from the VM!"))
-	.listen(3000);`,
-});
-await vm.v1.process.spawn({
-	command: "node",
-	args: ["/home/agentos/server.js"],
-});
-
-// Expose the server through a preview URL that expires in one hour.
-const preview = await vm.v1.network.preview.create({
-	port: 3000,
-	ttlMs: 60 * 60 * 1_000,
-});
-console.log(preview.path);
+export async function runHostedPreview(options: HostedQuickstartOptions) {
+	const client = createAgentOsClient({
+		endpoint: options.endpoint,
+		namespace: options.namespace,
+		poolName: options.poolName,
+		token: options.token,
+	});
+	try {
+		const vm = client.agentOS.getOrCreate([options.key]);
+		await vm.filesystem.writeFile({
+			path: "/home/agentos/server.js",
+			content:
+				'require("node:http").createServer((_req, res) => res.end("Hello from the VM!")).listen(3000);',
+		});
+		const spawned = await vm.process.spawn({
+			command: "node",
+			args: ["/home/agentos/server.js"],
+		});
+		try {
+			const preview = await vm.network.preview.create({
+				port: 3000,
+				ttlMs: 60 * 60 * 1_000,
+			});
+			return { process: spawned, path: preview.path };
+		} catch (error) {
+			await vm.process.signal({ process: spawned, signal: "SIGTERM" });
+			throw error;
+		}
+	} finally {
+		await client.dispose();
+	}
+}

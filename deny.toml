@@ -27,6 +27,12 @@ unused-allowed-license = "allow"
 name = "ring"
 allow = ["OpenSSL"]
 
+# The WASI ABI fixture generator uses witx 0.9.1, which pins this wast release.
+[[licenses.exceptions]]
+name = "wast"
+version = "=35.0.2"
+allow = ["Apache-2.0 WITH LLVM-exception"]
+
 # ring 0.16 ships its license only as a file cargo-deny can't detect.
 [[licenses.clarify]]
 name = "ring"

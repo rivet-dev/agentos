@@ -120,6 +120,8 @@ export interface ContextDescriptor {
 }
 
 export interface ProcessDescriptor {
+	exitCode?: number;
+	exitSignal?: number;
 	pid: number;
 	state: "running" | "exited";
 	language?: "javascript" | "python";
@@ -128,10 +130,12 @@ export interface ProcessDescriptor {
 }
 
 export interface ProcessExit {
+	/** Actual terminal signal reported by the sidecar, never a requested signal. */
+	exitSignal?: number;
 	pid: number;
 	outcome: "exited" | "signalled" | "timed_out";
 	exitCode?: number;
-	signal?: ExecutionSignal;
+	signal?: string;
 }
 
 export interface SpawnOptions {
@@ -166,6 +170,7 @@ export interface ExecutionErrorData {
 }
 
 interface CodeExecutionResultBase {
+	exitSignal?: number;
 	exitCode?: number;
 	stdout?: string;
 	stderr?: string;
@@ -236,4 +241,5 @@ export interface OutputReplay<TChunk = Uint8Array> {
 	truncated: boolean;
 	/** Sidecar-confirmed exit, or null while completion is not known. */
 	exitCode: number | null;
+	exitSignal?: number | null;
 }

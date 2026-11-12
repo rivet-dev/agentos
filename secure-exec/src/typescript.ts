@@ -8,13 +8,13 @@ import type {
 	TypeScriptEvaluationOptions,
 	TypeScriptExecutionOptions,
 	TypeScriptFileExecutionOptions,
-} from "@rivet-dev/agentos-core";
+} from "@rivet-dev/agentos";
 import { type OneShot, run } from "./runtime.js";
 
 export type {
 	TypeScriptCheckResult,
 	TypeScriptDiagnostic,
-} from "@rivet-dev/agentos-core";
+} from "@rivet-dev/agentos";
 
 // One-shot conveniences, like the main entry point. On a VM from `createVm()`,
 // use `vm.typescript`.

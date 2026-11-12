@@ -118,18 +118,10 @@ describe("CronManager", () => {
 
 			const jobs = new Map(manager.list().map((job) => [job.id, job]));
 
-			expect(jobs.get("space-date")?.nextRun).toBe(
-				"2026-04-10T14:00:00.000Z",
-			);
-			expect(jobs.get("iso-date")?.nextRun).toBe(
-				"2026-04-10T14:00:00.000Z",
-			);
-			expect(jobs.get("cron-5")?.nextRun).toBe(
-				"2026-04-10T13:01:00.000Z",
-			);
-			expect(jobs.get("cron-6")?.nextRun).toBe(
-				"2026-04-10T13:00:01.000Z",
-			);
+			expect(jobs.get("space-date")?.nextRun).toBe("2026-04-10T14:00:00.000Z");
+			expect(jobs.get("iso-date")?.nextRun).toBe("2026-04-10T14:00:00.000Z");
+			expect(jobs.get("cron-5")?.nextRun).toBe("2026-04-10T13:01:00.000Z");
+			expect(jobs.get("cron-6")?.nextRun).toBe("2026-04-10T13:00:01.000Z");
 		} finally {
 			vi.useRealTimers();
 		}
@@ -429,7 +421,7 @@ describe("CronManager", () => {
 		const errorEvent = events.find((e) => e.type === "cron:error");
 		expect(errorEvent).toBeDefined();
 		expect(errorEvent!.jobId).toBe("j11");
-			expect(errorEvent!.type === "cron:error" && errorEvent!.error).toBe("boom");
+		expect(errorEvent!.type === "cron:error" && errorEvent!.error).toBe("boom");
 
 		// Manager still functional — can schedule new jobs
 		const fn2 = vi.fn();

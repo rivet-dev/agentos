@@ -1,5 +1,9 @@
 import { exposeCustomGlobal } from "../global-exposure.js";
-import { getAsyncContextFrame, kAsyncContextFrame, runInAsyncContextFrame } from "./async-context.js";
+import {
+	getAsyncContextFrame,
+	kAsyncContextFrame,
+	runInAsyncContextFrame,
+} from "./async-context.js";
 import {
 	createErrorWithCode,
 	createInvalidArgTypeError2,

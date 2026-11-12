@@ -8,6 +8,6 @@ publish = false
 libc = "=0.2.189"
 
 [target.'cfg(unix)'.dependencies]
-command-fds = "=0.3.2"
+command-fds = "=0.3.3"
 
 [workspace]

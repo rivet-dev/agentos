@@ -1,10 +1,11 @@
 ---
 title: "Quickstart (Library)"
-description: "Run agentOS VMs directly inside a Node.js application with @rivet-dev/agentos-core."
+description: "Run agentOS VMs directly inside a Node.js application with @rivet-dev/agentos."
 skill: true
 ---
 
-Use agentOS as a library to run VMs inside your own Node.js process. To create
+Use agentOS as a library from your Node.js process. The library starts a local
+sidecar that owns each VM. To create
 durable VMs by ID and control them over HTTP instead, see the
 [hosted quickstart](/agentos/docs/quickstart-hosted).
 
@@ -12,8 +13,9 @@ durable VMs by ID and control them over HTTP instead, see the
 
 |  | [Library](/agentos/docs/quickstart) | [Hosted](/agentos/docs/quickstart-hosted) |
 |---|---|---|
-| **Runs** | Inside your process | Durable instance on Rivet Cloud or [self-hosted](/agentos/docs/self-hosting) |
+| **Runs** | In a local sidecar started by your process | Durable instance on Rivet Cloud or [self-hosted](/agentos/docs/self-hosting) |
 | **Lifecycle** | Runs until `dispose()` or process exit | Sleeps when idle unless a process is running |
+| **Package** | `@rivet-dev/agentos` | `@rivet-dev/agentos` or plain HTTP |
 | **Clients** | Your backend | Your backend, or browsers with a scoped JWT |
 | **Preview URLs** | None | Expiring preview URLs |
 
@@ -23,7 +25,7 @@ durable VMs by ID and control them over HTTP instead, see the
 <Step title="Install the library">
 
 ```bash
-npm install @rivet-dev/agentos-core
+npm install @rivet-dev/agentos
 ```
 
 </Step>
@@ -56,3 +58,8 @@ See [Filesystem](/agentos/docs/filesystem),
 - Install tools from the [software registry](/agentos/docs/software).
 - Run servers and send them requests with
   [Networking & Previews](/agentos/docs/networking).
+
+## Embedded API
+
+The checked example above uses `AgentOs.create()`, the embedded VM API.
+Read more in the [embedded API quickstart](/agentos/docs/quickstart-embedded).

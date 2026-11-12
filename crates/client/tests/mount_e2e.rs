@@ -11,7 +11,7 @@ use uuid::Uuid;
 async fn create_forwards_native_mounts() {
     if !common::sidecar_available() {
         panic!(
-            "create_forwards_native_mounts: sidecar binary is not built; build it with `cargo build -p agentos-native-sidecar`"
+            "create_forwards_native_mounts: sidecar binary is not built; build it with `cargo build -p agentos-sidecar`"
         );
     }
 

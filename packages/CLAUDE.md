@@ -1,8 +1,10 @@
 # agentOS Packages
 
 - Client packages must stay same-version with the sidecar: assert the single protocol version integer, and do not add wire back-compat, runtime negotiation, or converters.
-- Generated client layers return raw generated protocol types. The embedded
-  `AgentOs` facade is publicly exported from `@rivet-dev/agentos-core`.
+- Generated client layers return raw generated protocol types; the `AgentOs`
+  facade is implemented in `@rivet-dev/agentos` and publicly exported from
+  `@rivet-dev/agentos`. User-facing docs and examples must import the public
+  package, not the internal core package.
 - Generic agentos clients must stay application-agnostic and forward only the
   sandbox protocol.
 - agentos packages must never depend on agent-os packages; dependency direction is strictly agent-os to agentos and must be CI-enforced after the split.
@@ -13,7 +15,7 @@
   `node`, `python`, `python -m`, `npm`, or `pip`. Add typed, injection-safe
   helpers for stable intents, not one method per CLI flag; keep `exec`,
   `execArgv`, and `spawn` as the uncommon-command escape hatch.
-- Cron and VM configuration types are Rust-owned after the split; TypeScript packages may re-export or mirror them only in lockstep.
+- Cron and agent configuration types are Rust-owned after the split; TypeScript packages may re-export or mirror them only in lockstep.
 
 ## React UI (dashboard inspector)
 

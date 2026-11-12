@@ -1,4 +1,4 @@
-import { AgentOs } from "@rivet-dev/agentos-core";
+import { AgentOs } from "@rivet-dev/agentos";
 
 const serverSource = `
 import http from "node:http";

@@ -29,29 +29,86 @@ if (distMissing) {
  * itself, with no `process.exit()` escape hatch.
  */
 describe("shared sidecar clean exit", () => {
-	it.skipIf(distMissing)("a standalone create()+dispose() script exits on its own", () => {
-		const script = resolve(
-			import.meta.dirname,
-			"fixtures/shared-sidecar-clean-exit-script.mjs",
-		);
-		const result = spawnSync(process.execPath, [script], {
-			cwd: resolve(import.meta.dirname, ".."),
-			encoding: "utf8",
-			timeout: 60_000,
-		});
+	it.skipIf(distMissing)(
+		"a standalone create()+dispose() script exits on its own",
+		() => {
+			const script = resolve(
+				import.meta.dirname,
+				"fixtures/shared-sidecar-clean-exit-script.mjs",
+			);
+			const result = spawnSync(process.execPath, [script], {
+				cwd: resolve(import.meta.dirname, ".."),
+				encoding: "utf8",
+				timeout: 60_000,
+			});
 
-		const diag = `exit=${result.status} signal=${result.signal}\nstdout: ${result.stdout ?? ""}\nstderr: ${(result.stderr ?? "").slice(-800)}`;
+			const diag = `exit=${result.status} signal=${result.signal}\nstdout: ${result.stdout ?? ""}\nstderr: ${(result.stderr ?? "").slice(-800)}`;
 
-		// The script logic should complete regardless of the exit behavior.
-		expect(result.stdout ?? "", `script never finished its work.\n${diag}`).toContain(
-			"SCRIPT_DONE",
-		);
-		// The real assertion: the process terminated on its own (was not killed
-		// by the spawn timeout). A hang leaves signal === "SIGTERM".
-		expect(
-			result.signal,
-			`process did not exit on its own within 60s — the shared sidecar kept the event loop alive.\n${diag}`,
-		).toBeNull();
-		expect(result.status, `non-zero exit.\n${diag}`).toBe(0);
-	}, 90_000);
+			// The script logic should complete regardless of the exit behavior.
+			expect(
+				result.stdout ?? "",
+				`script never finished its work.\n${diag}`,
+			).toContain("SCRIPT_DONE");
+			// The real assertion: the process terminated on its own (was not killed
+			// by the spawn timeout). A hang leaves signal === "SIGTERM".
+			expect(
+				result.signal,
+				`process did not exit on its own within 60s — the shared sidecar kept the event loop alive.\n${diag}`,
+			).toBeNull();
+			expect(result.status, `non-zero exit.\n${diag}`).toBe(0);
+		},
+		90_000,
+	);
 });
+
+// Linux subreaper asserts the SDK host actually waits for its children; host
+// exit0 alone cannot distinguish reaping from an adopted zombie.
+describe.skipIf(process.platform !== "linux" || distMissing)(
+	"shared sidecar natural exit owns child reaping",
+	() => {
+		it.each([
+			"reuse",
+			"two-pools",
+			"before",
+			"after",
+			"during",
+			"provider-success",
+			"provider-failure",
+		])("reaps every real sidecar with %s host activity", (mode) => {
+			const binary = resolve(
+				process.env.AGENTOS_SIDECAR_BIN ??
+					resolve(import.meta.dirname, "../../../target/debug/agentos-sidecar"),
+			);
+			expect(
+				existsSync(binary),
+				"provide an existing AGENTOS_SIDECAR_BIN; this regression does not invoke Cargo",
+			).toBe(true);
+			const result = spawnSync(
+				"python3",
+				[
+					"-B",
+					resolve(
+						import.meta.dirname,
+						"fixtures/shared-sidecar-natural-exit.py",
+					),
+					process.execPath,
+					DIST_ENTRY,
+					binary,
+					mode,
+				],
+				{ encoding: "utf8", timeout: 90_000, maxBuffer: 1024 * 1024 },
+			);
+			const diagnostics = `status=${result.status} signal=${result.signal} error=${result.error?.message}\n${result.stdout}\n${result.stderr}`;
+			expect(result.error, diagnostics).toBeUndefined();
+			expect(result.signal, diagnostics).toBeNull();
+			expect(result.status, diagnostics).toBe(0);
+			const report = JSON.parse(result.stdout.trim());
+			expect(report.passed, diagnostics).toBe(true);
+			expect(report.errors, diagnostics).toEqual([]);
+			expect(report.adopted, diagnostics).toEqual([]);
+			expect(report.owned.length).toBeGreaterThanOrEqual(
+				mode === "two-pools" ? 2 : 1,
+			);
+		}, 100_000);
+	},
+);

@@ -71,6 +71,9 @@ if [[ -z "$VERSION" || -z "$URL" || -z "$SHA256" || -z "$CACHE_DIR" || -z "$BUIL
   exit 1
 fi
 
+source "$(dirname "${BASH_SOURCE[0]}")/resolve-generation-prefix.sh"
+OPENSSL_PREFIX=$(resolve_generation_prefix "$OPENSSL_PREFIX")
+
 fetch() {
   local url="$1"
   local out="$2"
@@ -261,11 +264,11 @@ done
 
 mkdir -p "$(dirname "$OUTPUT")" "$(dirname "$KEYSIGN_OUTPUT")" \
   "$(dirname "$SK_HELPER_OUTPUT")"
-if command -v wasm-opt >/dev/null 2>&1; then
+if [[ "${AGENTOS_ENABLE_BINARYEN:-0}" == "1" ]]; then
   echo "Optimizing OpenSSH WASM binaries..."
-  wasm-opt -O3 --strip-debug --all-features ssh -o "$OUTPUT_TMP"
-  wasm-opt -O3 --strip-debug --all-features ssh-keysign -o "$KEYSIGN_OUTPUT_TMP"
-  wasm-opt -O3 --strip-debug --all-features ssh-sk-helper -o "$SK_HELPER_OUTPUT_TMP"
+  "${WASM_OPT:-wasm-opt}" -O3 --strip-debug --all-features ssh -o "$OUTPUT_TMP"
+  "${WASM_OPT:-wasm-opt}" -O3 --strip-debug --all-features ssh-keysign -o "$KEYSIGN_OUTPUT_TMP"
+  "${WASM_OPT:-wasm-opt}" -O3 --strip-debug --all-features ssh-sk-helper -o "$SK_HELPER_OUTPUT_TMP"
 else
   cp ssh "$OUTPUT_TMP"
   cp ssh-keysign "$KEYSIGN_OUTPUT_TMP"

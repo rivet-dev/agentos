@@ -1,0 +1,29 @@
+[package]
+name = "agentos-executor-obscura-experiment"
+version = "0.0.1"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[workspace]
+exclude = ["vendor"]
+
+[dependencies]
+agentos-executor-contract = { path = "../../crates/executor-contract" }
+agentos-executor-v8-runtime = { path = "../../crates/executor-v8-runtime", features = ["obscura-embedding"] }
+agentos-driver-tokio = { path = "../../crates/driver-tokio" }
+obscura-browser = { path = "vendor/crates/obscura-browser" }
+obscura-net = { path = "vendor/crates/obscura-net" }
+obscura-js = { path = "vendor/crates/obscura-js" }
+tokio = { version = "1", features = ["sync", "time"] }
+reqwest = { version = "0.12", default-features = false }
+serde_json = "1"
+base64 = "0.22"
+http = "1"
+url = "2"
+v8 = "=130.0.7"
+
+[dev-dependencies]
+
+[patch.crates-io]
+deno_core = { path = "vendor/deno_core" }

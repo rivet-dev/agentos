@@ -1,5 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -8,7 +15,8 @@ import { decodeAospkgManifest, packAospkgFromTarBytes } from "../src/aospkg.js";
 const dirs: string[] = [];
 
 afterEach(() => {
-	for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+	for (const dir of dirs.splice(0))
+		rmSync(dir, { recursive: true, force: true });
 });
 
 function sourceTar(): Buffer {

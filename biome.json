@@ -8,12 +8,24 @@
 			"!packages/browser",
 			"!packages/runtime-browser",
 			"!packages/playground",
-			"!packages/core/src/sidecar/generated-protocol.ts",
 			"!_agentos-sibling",
 			"!/**/node_modules"
 		],
 		"ignoreUnknown": true
 	},
+	"overrides": [
+		{
+			"includes": [
+				"packages/core/src/generated-protocol.ts",
+				"packages/agentos-toolchain/src/generated-package-format.ts",
+				"packages/core/src/generated/**/*.ts",
+				"packages/core/src/sidecar/agentos-acp-protocol.ts"
+			],
+			"formatter": {
+				"enabled": false
+			}
+		}
+	],
 	"vcs": {
 		"enabled": true,
 		"clientKind": "git",

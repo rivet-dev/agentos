@@ -45,6 +45,10 @@ uint32_t __host_fd_recvmsg_rights(uint32_t socket_fd,
     uint32_t flags, uint32_t *ret_received,
     uint32_t *ret_rights_len, uint32_t *ret_msg_flags);
 
+WASM_IMPORT("host_net", "net_recvmsg")
+uint32_t __host_net_recvmsg(uint32_t fd, struct msghdr *message,
+    uint32_t flags, uint32_t *ret_received);
+
 int __agentos_set_cloexec_fd(int fd, int enabled);
 
 static int checked_iov_bytes(const struct iovec *iov, size_t iovlen,
@@ -306,6 +310,9 @@ ssize_t recvmsg(int fd, struct msghdr *message, int flags) {
         errno = EOPNOTSUPP;
         return -1;
     }
+    error = __host_net_recvmsg((uint32_t)fd, message, (uint32_t)flags, &received);
+    if (error == 0) return (ssize_t)received;
+    if (error != (uint32_t)ENOTSOCK) { errno = (int)error; return -1; }
     if (checked_iov_bytes(message->msg_iov, message->msg_iovlen, &total) < 0)
         return -1;
     data = malloc(total == 0 ? 1 : total);
@@ -331,20 +338,34 @@ ssize_t recvmsg(int fd, struct msghdr *message, int flags) {
         &rights_len, &host_message_flags);
     if (error == (uint32_t)ENOTSOCK) {
         ssize_t result;
+        int socket_type = 0;
+        socklen_t socket_type_len = sizeof(socket_type);
+        if (getsockopt(fd, SOL_SOCKET, SO_TYPE, &socket_type, &socket_type_len) < 0) {
+            free(rights);
+            free(data);
+            return -1;
+        }
+        const int datagram = socket_type == SOCK_DGRAM;
+        /* Request full datagram length to report output MSG_TRUNC even when
+         * the caller did not request a full-length return value. Streams keep
+         * their existing receive flags and partial-read semantics. */
+        const int receive_flags = (flags & ~MSG_CMSG_CLOEXEC) |
+            (datagram ? MSG_TRUNC : 0);
         if (message->msg_name != NULL) {
             socklen_t name_length = message->msg_namelen;
-            result = recvfrom(fd, data, total, flags & ~MSG_CMSG_CLOEXEC,
+            result = recvfrom(fd, data, total, receive_flags,
                 message->msg_name,
                 &name_length);
             message->msg_namelen = name_length;
         } else {
-            result = recv(fd, data, total, flags & ~MSG_CMSG_CLOEXEC);
+            result = recv(fd, data, total, receive_flags);
             message->msg_namelen = 0;
         }
         if (result >= 0) {
-            scatter_iov(data, (uint32_t)result, message->msg_iov,
-                message->msg_iovlen);
-            message->msg_flags = 0;
+            const uint32_t copied = (uint64_t)result > total ? total : (uint32_t)result;
+            scatter_iov(data, copied, message->msg_iov, message->msg_iovlen);
+            message->msg_flags = datagram && (uint64_t)result > total ? MSG_TRUNC : 0;
+            if (datagram && (flags & MSG_TRUNC) == 0) result = copied;
             message->msg_controllen = 0;
         }
         free(rights);

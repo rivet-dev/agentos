@@ -1,0 +1,64 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: agentOS Runtime <runtime@agentos.invalid>
+Subject: [PATCH] brush-builtins: publish WASI trap dispositions to the kernel
+
+Keep kernel signal state in sync with Brush trap dispositions so SIG_IGN
+inherits across fork and exec while caught signals use the libc trampoline.
+
+--- a/src/trap.rs
++++ b/src/trap.rs
+@@ -88,6 +88,7 @@
+         signal: TrapSignal,
+     ) -> Result<(), brush_core::Error> {
+         if !context.shell.is_subshell() {
++            sync_host_signal_disposition(signal, false)?;
+             set_trap_disposition(signal, None)?;
+         }
+         context.shell.traps.remove_handlers(signal);
+@@ -101,6 +102,7 @@
+     ) -> Result<(), brush_core::Error> {
+         for signal in signals {
+             if !context.shell.is_subshell() {
++                sync_host_signal_disposition(signal, handler.is_empty())?;
+                 set_trap_disposition(signal, Some(handler))?;
+             }
+             context
+@@ -134,3 +136,38 @@
+ fn set_trap_disposition(_signal: TrapSignal, _handler: Option<&str>) -> Result<(), brush_core::Error> {
+     Ok(())
+ }
++
++#[cfg(target_arch = "wasm32")]
++#[link(wasm_import_module = "host_process")]
++unsafe extern "C" {
++    fn proc_sigaction(signal: u32, action: u32, mask_low: u32, mask_high: u32, flags: u32) -> u32;
++}
++
++#[cfg(target_arch = "wasm32")]
++fn sync_host_signal_disposition(
++    signal: TrapSignal,
++    ignore: bool,
++) -> Result<(), brush_core::Error> {
++    let Ok(signal) = i32::try_from(signal) else {
++        return Ok(());
++    };
++    if signal == 0 {
++        return Ok(());
++    }
++    // The agentOS ABI uses 0 for SIG_DFL and 1 for SIG_IGN. Non-empty handlers
++    // clear any prior kernel ignore before installing the libc trampoline.
++    let status = unsafe { proc_sigaction(signal as u32, u32::from(ignore), 0, 0, 0) };
++    if status == 0 {
++        Ok(())
++    } else {
++        Err(brush_core::ErrorKind::IoError(std::io::Error::from_raw_os_error(status as i32)).into())
++    }
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++fn sync_host_signal_disposition(
++    _signal: TrapSignal,
++    _ignore: bool,
++) -> Result<(), brush_core::Error> {
++    Ok(())
++}

@@ -1,248 +1,82 @@
 ---
 title: "Quickstart (Hosted)"
-description: "Create durable agentOS VMs by ID and control them from the RivetKit client or plain HTTP."
-skill: true
+description: "Connect to a native agentOS worker, resolve a durable VM by key, and run a command."
 ---
 
-Hosted agentOS VMs run as the prebuilt `agentOS` Rivet Actor, on Rivet Cloud or
-on your own Rivet control plane. Create a VM by key, then control it from the
-`@rivet-dev/agentos` client or plain HTTP. To run VMs inside your own Node.js
-process instead, see the [library quickstart](/agentos/docs/quickstart).
+Hosted agentOS runs as the `agentOS` Rivet Actor. Its configuration and files in
+an `actor-sqlite` mount persist when the VM sleeps. Your client can reconnect to the same VM by key or
+ID. To run a VM inside your Node.js process, use the
+[library quickstart](/agentos/docs/quickstart).
 
-## Which one should I use?
+## Connect to a worker
 
-|  | [Library](/agentos/docs/quickstart) | [Hosted](/agentos/docs/quickstart-hosted) |
-|---|---|---|
-| **Runs** | Inside your process | Durable instance on Rivet Cloud or [self-hosted](/agentos/docs/self-hosting) |
-| **Lifecycle** | Runs until `dispose()` or process exit | Sleeps when idle unless a process is running |
-| **Clients** | Your backend | Your backend, or browsers with a scoped JWT |
-| **Preview URLs** | None | Expiring preview URLs |
-
-## Create a VM
-
-<Steps>
-<Step title="Create a project">
-
-Create a project in the [Rivet dashboard](https://dashboard.rivet.dev) and
-choose agentOS as the product. Set `RIVET_NAMESPACE` and `RIVET_TOKEN` from the
-project. To run on your own infrastructure, see
-[Self-Hosting](/agentos/docs/self-hosting).
-
-</Step>
-<Step title="Install the client">
+Build the native worker with the `hosted` feature and start its `actor` entrypoint
+against your Rivet control plane. Keep the worker and SDK at the same agentOS
+version. Configure the endpoint, namespace, and token for your environment; the
+SDK does not provision or deploy the worker.
 
 ```bash
-npm install @rivet-dev/agentos
+cargo build --release -p agentos-sidecar --features hosted
+RIVET_ENDPOINT="$RIVET_ENDPOINT" RIVET_NAMESPACE="$RIVET_NAMESPACE" \
+RIVET_POOL="$RIVET_POOL" RIVET_TOKEN="$RIVET_NODE_TOKEN" \
+  target/release/agentos-sidecar actor
 ```
 
-The client is optional. Every action is also a plain HTTP call.
+Use a matching Rivet 3.0.7 control plane, configure the namespace and node pool,
+and set `RIVET_NODE_TOKEN` to a node JWT issued by your backend. A node credential
+registers the worker; an application credential controls which VMs callers can
+reach. Never send the admin token or the worker token to an end user.
 
-</Step>
-<Step title="Create a VM and use it">
+<CodeSnippet file="examples/hosted/credentials.ts" region="node-credential" />
 
-<CodeGroup>
+The `node` grant permits registration in this namespace. The worker
+also needs the shown actor grants to use its shared preload coordinator. Rotate
+the node credential before expiry and reconnect the worker with its replacement.
 
-```ts TypeScript @nocheck
-import { createAgentOsClient } from "@rivet-dev/agentos";
+## Write a file and run a command
 
-const client = createAgentOsClient({ endpoint: "https://api.rivet.dev" });
+The generated client mirrors the Rust actor registry. Actions are grouped as
+`vm.filesystem`, `vm.process`, and `vm.network`. The key passed to
+`getOrCreate` identifies one durable VM.
 
-// Creates the VM on first use and returns the same VM for the same key.
-const vm = client.agentOS.getOrCreate(["my-vm"]);
+<CodeSnippet file="examples/hosted/quickstart.ts" region="quickstart" />
 
-const result = await vm.v1.process.run({
-	command: "sh",
-	args: ["-c", "echo hello && ls /home/agentos"],
-	options: { captureStdio: true },
-});
-console.log(result.stdout);
+Run the checked example from the repository:
 
-await vm.v1.filesystem.writeFile({
-	path: "/home/agentos/hello.txt",
-	content: "Hello, world!",
-});
-
-// Start a server and expose it through an expiring preview URL.
-await vm.v1.filesystem.writeFile({
-	path: "/home/agentos/server.js",
-	content: `require("node:http").createServer((req, res) => res.end("hello")).listen(3000);`,
-});
-await vm.v1.process.spawn({ command: "node", args: ["/home/agentos/server.js"] });
-const preview = await vm.v1.network.preview.create({ port: 3000, ttlMs: 60 * 60 * 1_000 });
+```bash
+RIVET_ENDPOINT="$RIVET_ENDPOINT" RIVET_NAMESPACE="$RIVET_NAMESPACE" \
+RIVET_POOL="$RIVET_POOL" RIVET_TOKEN="$RIVET_APPLICATION_TOKEN" \
+  pnpm --dir examples/hosted start
 ```
 
-```bash HTTP
-curl -X PUT "https://api.rivet.dev/actors?namespace=$RIVET_NAMESPACE" \
-  -H "Authorization: Bearer $RIVET_TOKEN" \
-  --json '{
-    "name": "agentOS",
-    "key": "my-vm",
-    "runner_name_selector": "services",
-    "crash_policy": "sleep"
-  }'
-# → { "actor": { "actor_id": "…" }, "created": true }
+This backend quickstart needs `actor:create` and `actor_gateway:create/read`
+permissions in its namespace. Resolving an ID does not convert subsequent
+keyed actions into ID-scoped requests. It explicitly persists `/workspace` with
+an `actor-sqlite` mount.
 
-curl "https://api.rivet.dev/gateway/$VM_ID/action/v1.process.run" \
-  -H "x-rivet-token: $VM_TOKEN" \
-  --json '{"args": [{
-    "command": "sh",
-    "args": ["-c", "echo hello && ls /home/agentos"],
-    "options": { "captureStdio": true }
-  }]}'
+## Give a caller access to one VM
 
-curl "https://api.rivet.dev/gateway/$VM_ID/action/v1.process.spawn" \
-  -H "x-rivet-token: $VM_TOKEN" \
-  --json '{"args": [{"command": "node", "args": ["/home/agentos/server.js"]}]}'
+After your backend authenticates a caller and checks ownership of a VM, issue a
+short-lived token for that existing Actor ID. This token grants access to the
+agentOS actions on that VM, not to another VM or VM creation. Application roles
+and ownership decisions remain in your backend; the worker token is separate.
+Rivet 3.0.7 allows 30 s of clock skew after a token's expiry timestamp.
+Account for that allowance when choosing short token lifetimes.
 
-curl "https://api.rivet.dev/gateway/$VM_ID/action/v1.network.preview.create" \
-  -H "x-rivet-token: $VM_TOKEN" \
-  --json '{"args": [{"port": 3000, "ttlMs": 3600000}]}'
-# → { "output": { "path": "/preview/…/", "token": "…", … } }
-```
+<CodeSnippet file="examples/hosted/credentials.ts" region="actor-credential" />
 
-</CodeGroup>
+<CodeSnippet file="examples/hosted/credentials.ts" region="scoped-client" />
 
-Open the preview at `/gateway/$VM_ID@$VM_TOKEN/request` followed by the
-returned `path`. A running server keeps the VM awake.
+Disposing the client closes its connections. It does not destroy the durable VM.
+Hosted configuration accepts remote package URLs and serializable filesystem
+descriptors. Host callbacks, host directory mounts, and local package paths are
+available only to trusted embedded callers.
 
-</Step>
-<Step title="Configure the VM">
+See [the hosted API](/agentos/docs/hosted-api) for action groups and
+[hosted limits](/agentos/docs/actor-limits) for transfer and execution bounds.
 
-Configuration is stored with the VM and versioned. Replace it with
-`v1.config.set`, then restart the VM so filesystem and software changes take
-effect.
+## Embedded API
 
-<CodeGroup>
-
-```ts TypeScript @nocheck
-const vm = client.agentOS.getOrCreate(["my-vm"]);
-
-await vm.v1.config.set({
-	config: {
-		// Keep files across sleep and restarts, and mount durable storage at /data.
-		filesystem: {
-			root: { type: "durable" },
-			mounts: [{ path: "/data", backend: { type: "durable" } }],
-		},
-
-		// Environment variables for guest processes.
-		environment: { NODE_ENV: "production" },
-
-		// Deny network access except to one host.
-		permissions: {
-			network: {
-				default: "deny",
-				rules: [
-					{
-						mode: "allow",
-						operations: ["*"],
-						patterns: ["dns://api.example.com", "tcp://api.example.com:*"],
-					},
-				],
-			},
-		},
-	},
-});
-
-// Filesystem and software changes apply after a restart.
-await vm.v1.vm.restart({});
-```
-
-```bash HTTP
-curl "https://api.rivet.dev/gateway/$VM_ID/action/v1.config.set" \
-  -H "x-rivet-token: $VM_TOKEN" \
-  --json '{"args": [{"config": {
-    "filesystem": {
-      "root": { "type": "durable" },
-      "mounts": [{ "path": "/data", "backend": { "type": "durable" } }]
-    },
-    "environment": { "NODE_ENV": "production" },
-    "permissions": {
-      "network": {
-        "default": "deny",
-        "rules": [{
-          "mode": "allow",
-          "operations": ["*"],
-          "patterns": ["dns://api.example.com", "tcp://api.example.com:*"]
-        }]
-      }
-    }
-  }}]}'
-
-curl "https://api.rivet.dev/gateway/$VM_ID/action/v1.vm.restart" \
-  -H "x-rivet-token: $VM_TOKEN" \
-  --json '{"args": [{}]}'
-```
-
-</CodeGroup>
-
-See [Persistence](/agentos/docs/persistence),
-[Permissions](/agentos/docs/permissions), and the
-[Hosted HTTP API](/agentos/docs/hosted-api) for every config field.
-
-</Step>
-</Steps>
-
-## Give Clients Direct Access With JWTs
-
-Keep your admin token on the backend and issue a JWT scoped to one VM.
-Browsers and other untrusted clients can then call that VM directly, and
-nothing else.
-
-<CodeGroup>
-
-```ts TypeScript @nocheck
-// Backend: issue a token for this VM only
-const vmId = await vm.resolve();
-const response = await fetch("https://api.rivet.dev/auth/tokens", {
-	method: "POST",
-	headers: {
-		Authorization: `Bearer ${process.env.RIVET_TOKEN}`,
-		"Content-Type": "application/json",
-	},
-	body: JSON.stringify({
-		namespace: process.env.RIVET_NAMESPACE,
-		subject: "user-123",
-		duration: 3600,
-		grants: [
-			{ resource: "actor_gateway", target: { id: vmId }, operations: ["read"] },
-		],
-	}),
-});
-const { token } = await response.json();
-
-// Client: call the VM directly
-const userClient = createAgentOsClient({
-	endpoint: "https://api.rivet.dev",
-	namespace: "my-namespace",
-	token,
-});
-const userVm = userClient.getForId("agentOS", vmId);
-```
-
-```bash HTTP
-curl -X POST "https://api.rivet.dev/auth/tokens" \
-  -H "Authorization: Bearer $RIVET_TOKEN" \
-  --json @- <<EOF
-{
-  "namespace": "$RIVET_NAMESPACE",
-  "subject": "user-123",
-  "duration": 3600,
-  "grants": [{
-    "resource": "actor_gateway",
-    "target": { "id": "$VM_ID" },
-    "operations": ["read"]
-  }]
-}
-EOF
-# → { "token": "…", "expires_ts": … }
-```
-
-</CodeGroup>
-
-## Next steps
-
-- See the [Hosted HTTP API](/agentos/docs/hosted-api) for configuration,
-  events, errors, and every action.
-- Install tools from the [software registry](/agentos/docs/software).
-- Schedule commands with [Crons & Schedules](/agentos/docs/cron).
+Use `AgentOs.create()` when your process should own the VM lifecycle and trusted
+host integrations. Read more in the
+[embedded API quickstart](/agentos/docs/quickstart-embedded).

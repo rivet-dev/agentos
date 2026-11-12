@@ -1,4 +1,4 @@
-import { AgentOs } from "@rivet-dev/agentos-core";
+import { AgentOs } from "@rivet-dev/agentos";
 
 // Boots a VM inside this process. It runs until dispose() or process exit.
 const vm = await AgentOs.create();

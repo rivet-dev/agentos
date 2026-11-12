@@ -1,257 +1,64 @@
 ---
-title: "Hosted HTTP API"
-description: "Reference for the hosted agentOS VM API: creating VMs, authentication, actions, configuration, lifecycle, events, and errors."
+title: "Hosted API"
+description: "Use the generated client for the native agentOS actor's actions, events, and durable VM lifecycle."
 ---
 
-Each hosted VM is one instance of the prebuilt `agentOS` Rivet Actor. You
-create it by key, then call its actions over the Rivet gateway. The
-`@rivet-dev/agentos` TypeScript client is generated from the same contract and
-calls the same actions. See the [hosted quickstart](/agentos/docs/quickstart-hosted)
-for a walkthrough.
+`createAgentOsClient` creates a RivetKit client typed from the native Rust
+`agentOS` actor registry. Supply the control-plane endpoint, namespace, and
+credentials for your deployment. The factory loads its hosted transport only
+when called.
 
-## Overview
+<CodeSnippet file="examples/hosted/quickstart.ts" region="quickstart" />
 
-| Field | Value |
-|---|---|
-| **Base URL** | `https://api.rivet.dev`, or your control plane when [self-hosting](/agentos/docs/self-hosting) |
-| **Actor name** | `agentOS` |
-| **Create a VM** | `PUT /actors?namespace={namespace}` |
-| **Call an action** | `POST /gateway/{vm_id}/action/v1.{group}.{action}` |
-| **Request body** | `{ "args": [input] }` |
-| **Response body** | `{ "output": result }` |
-| **Authentication** | `Authorization: Bearer` to create VMs and tokens; `x-rivet-token` for actions |
+## Action groups
 
-## Create a VM
-
-```bash HTTP
-curl -X PUT "https://api.rivet.dev/actors?namespace=$RIVET_NAMESPACE" \
-  -H "Authorization: Bearer $RIVET_TOKEN" \
-  --json '{
-    "name": "agentOS",
-    "key": "my-vm",
-    "runner_name_selector": "services",
-    "crash_policy": "sleep"
-  }'
-# → { "actor": { "actor_id": "…" }, "created": true }
-```
-
-The returned `actor_id` is the VM ID used in every action path. A second request
-with the same key returns the existing VM.
-
-The TypeScript client does the same with `getOrCreate`, and can pass creation
-input on first creation:
-
-```ts TypeScript @nocheck
-import { createAgentOsClient } from "@rivet-dev/agentos";
-
-const client = createAgentOsClient({ endpoint: "https://api.rivet.dev" });
-
-const vm = client.agentOS.getOrCreate(["my-vm"], {
-	createWithInput: { config: { environment: { CI: "true" } } },
-});
-const vmId = await vm.resolve();
-```
-
-## Authentication
-
-Keep your admin token on the backend. To let a browser or other untrusted
-client call one VM directly, issue a JWT scoped to that VM. See
-[JWTs](/docs/jwt).
-
-```bash HTTP
-curl -X POST "https://api.rivet.dev/auth/tokens" \
-  -H "Authorization: Bearer $RIVET_TOKEN" \
-  --json @- <<EOF
-{
-  "namespace": "$RIVET_NAMESPACE",
-  "subject": "user-123",
-  "duration": 3600,
-  "grants": [{
-    "resource": "actor_gateway",
-    "target": { "id": "$VM_ID" },
-    "operations": ["read"]
-  }]
-}
-EOF
-# → { "token": "…", "expires_ts": … }
-```
-
-A client created with that token reaches the VM with
-`client.getForId("agentOS", vmId)`.
-
-## Call an action
-
-Every public action is versioned under `v1`. Send the action's input as the
-single element of `args`. See [Call Action](/docs/api/gateway/call-action) for
-the gateway's routing options.
-
-```bash HTTP
-curl "https://api.rivet.dev/gateway/$VM_ID/action/v1.process.run" \
-  -H "x-rivet-token: $VM_TOKEN" \
-  --json '{"args": [{
-    "command": "sh",
-    "args": ["-c", "echo hello"],
-    "options": { "captureStdio": true }
-  }]}'
-# → { "output": { "status": { "exitCode": 0, … }, "stdout": "hello\n", "stderr": "" } }
-```
-
-In TypeScript, the same call is `vm.v1.process.run({ ... })`.
-
-## Actions
-
-| Group | Actions |
+| Group | Operations |
 | --- | --- |
-| `config` | `get`, `set`, `patch` |
-| `vm` | `status`, `restart` |
-| `filesystem` | `readFile`, `writeFile`, `readFiles`, `writeFiles`, `stat`, `exists`, `mkdir`, `readdir`, `readdirEntries`, `readdirRecursive`, `move`, `remove`, `listMounts`, `export` |
-| `process` | `run`, `spawn`, `get`, `list`, `tree`, `wait`, `signal`, `stdin.write`, `stdin.close`, `pty.resize`, `output.read` |
-| `terminal` | `open`, `list`, `stdin.write`, `pty.resize`, `output.read`, `wait`, `close` |
-| `network` | `fetch`, `fetchStream.start`, `fetchStream.read`, `fetchStream.cancel`, `preview.create`, `preview.expire` |
-| `software` | `install`, `uninstall`, `list` |
-| `cron` | `schedule`, `list`, `cancel` |
-| `contexts` | `create`, `get`, `list`, `reset`, `delete` |
-| `javascript` | `execute`, `evaluate`, `executeFile`, `spawn`, `spawnFile`, `npm.install`, `npm.runScript`, `npm.runPackage` |
-| `typescript` | `execute`, `evaluate`, `executeFile`, `spawn`, `spawnFile`, `check`, `checkProject` |
-| `python` | `execute`, `evaluate`, `executeFile`, `executeModule`, `spawn`, `spawnFile`, `spawnModule`, `install` |
+| `config` | Read, replace, or patch desired configuration with revision checks. |
+| `vm` | Inspect lifecycle state or restart the VM. |
+| `filesystem` | Read, write, list, move, remove, export, and inspect guest files. |
+| `process` | Run or spawn a command, inspect its status, write stdin, signal it, and replay output. |
+| `terminal` | Open a terminal, exchange input/output, resize, wait, and close. |
+| `contexts` | Create, inspect, reset, and delete retained language contexts. |
+| `javascript`, `typescript`, `python` | Execute or evaluate code and manage language packages. |
+| `network` | Fetch from the VM, pull a bounded response stream, and create expiring preview leases. |
+| `software` | Install, uninstall, or list remote registry packages. |
+| `cron` | Schedule, list, and cancel durable commands. |
 
-Process, terminal, context, and network stream handles carry the VM generation,
-for example `{ "generation": 1, "pid": 42 }` for a process. The hosted contract
-has no agent sessions and no shell-string `process.exec`.
+Action names match the registered Rust names, such as `filesystem.writeFile`
+and `process.run`. The generated contract exports `AGENTOS_CONTRACT_HASH` and
+`AGENTOS_API_VERSION` for diagnostics. Internal reserved actions are excluded
+from the public client.
 
-Each capability page shows its hosted actions in the **Hosted** tab of its
-examples:
-[Filesystem](/agentos/docs/filesystem),
-[Processes & Shells](/agentos/docs/processes),
-[Networking & Previews](/agentos/docs/networking),
-[Software](/agentos/docs/software),
-[Crons & Schedules](/agentos/docs/cron), and
-[Resource Limits](/agentos/docs/resource-limits).
+## Ownership and lifecycle
 
-## Configuration
+Process, terminal, and fetch-stream handles include the VM generation. A handle
+from a previous generation fails after restart instead of acting on a new
+resource with the same numeric ID. Configuration responses include desired and
+applied revisions so callers can distinguish a saved change from one requiring
+a restart.
 
-Configuration is stored with the VM and versioned.
+The control plane authorizes actor access. Use a credential scoped to the actor
+and allowed operations when giving a client to an untrusted user. The hosted
+actor independently rejects configuration that could open a host directory,
+execute a host callback, or install a local package path. Guest filesystem,
+process, and network permissions are enforced by the native sidecar.
 
-| Action | Behavior |
-| --- | --- |
-| `v1.config.get` | Returns the durable desired config and its `revision`. |
-| `v1.config.set` | Replaces the complete config. An omitted field selects its default. |
-| `v1.config.patch` | Applies an RFC 7386 JSON Merge Patch to the desired config. |
+## Binary data, errors, and cancellation
 
-Merge Patch recursively merges objects and replaces arrays as complete values.
-Setting a property to `null` removes the override, which selects its default.
-Both mutations accept `expectedRevision` for compare-and-set updates; a stale
-revision fails without changing durable state.
+Keep RivetKit's default binary encoding for file bytes, output replay, and
+network responses. The generated DTOs accept `Uint8Array` and exact integer
+values where the Rust contract requires them. Do not coerce generations,
+revisions, or cursors beyond JavaScript's safe integer range to `number`.
 
-```bash HTTP
-curl "https://api.rivet.dev/gateway/$VM_ID/action/v1.config.patch" \
-  -H "x-rivet-token: $VM_TOKEN" \
-  --json '{"args": [{
-    "expectedRevision": 3,
-    "patch": { "environment": { "DEBUG": "1" } }
-  }]}'
-```
+Action failures carry the server's typed error code. Bounds apply to the full
+encoded action envelope as well as its contents. Split large transfers, set
+execution timeouts, and use the generated process and stream cancellation
+actions. Always dispose the client when finished. See
+[hosted limits](/agentos/docs/actor-limits).
 
-The config contains, among others:
+## Embedded API
 
-| Field | Purpose |
-| --- | --- |
-| `environment` | Environment variables for guest processes. |
-| `filesystem` | Root and mounts from the hosted registry, such as `{ "root": { "type": "durable" } }`. |
-| `software` | Package sources, such as `[{ "url": "https://…/tool.aospkg" }]`. |
-| `preview` | Preview defaults, such as `{ "defaultTtlMs": 30000 }`. |
-| `limits` | [Resource limits](/agentos/docs/resource-limits). |
-
-Creation input is used only when the actor is first created. Calling
-`getOrCreate` with different input for an existing key does not reconfigure
-it.
-
-When a VM is running, the actor compares the resolved creation policies for
-supported runtime fields and applies what it can live. Setting an explicit
-value equal to the active default does not by itself require a restart.
-Software sources, filesystem policy, and fields outside that comparison take
-effect after a restart.
-
-## VM lifecycle
-
-`v1.vm.status` reports the active generation, applied config revision, package
-readiness, lifecycle state, and recent issues. A desired config can be durable
-while the active generation reports that a restart is required.
-
-`v1.vm.restart` stops the active VM, waits for bounded shutdown, and starts a
-new generation from the latest desired config. Handles from an older
-generation fail with `stale_generation`.
-
-The VM sleeps when idle unless a process is running, and starts lazily on the
-first action after it wakes; see [actor lifecycle](/actors/docs/lifecycle). Durable files and configuration survive sleep; running processes,
-terminals, contexts, and open streams do not.
-
-## Events and replay
-
-Clients connected through RivetKit receive live events. Plain HTTP clients use
-the pull actions, which are also the recovery path after a disconnect.
-
-| Resource | Pull action | Events |
-| --- | --- | --- |
-| Process | `v1.process.output.read`, `v1.process.wait` | `process.output`, `process.exit` |
-| Terminal | `v1.terminal.output.read`, `v1.terminal.wait` | `terminal.output`, `terminal.exit` |
-| HTTP response | `v1.network.fetchStream.read` | None |
-| VM | `v1.vm.status` | `vm.booted`, `vm.shutdown`, `vm.limitWarning` |
-| Cron | `v1.cron.list` | `cron.fired` |
-
-Event names are not versioned. `vm.shutdown` carries a `reason` of `"sleep"`,
-`"destroy"`, or `"error"`.
-
-Process and terminal replay use a generation-scoped sequence cursor. Pass the
-last cursor as `after`, and bound each page with `maxEvents` and `maxBytes`.
-Network response streams are pull-based, so each action is bounded and the
-caller owns backpressure.
-
-```ts TypeScript @nocheck
-const conn = vm.connect();
-await conn.ready;
-
-conn.on("process.output", (data) => {
-	console.log(data.process.pid, data.stream, new TextDecoder().decode(data.data));
-});
-conn.on("process.exit", (data) => {
-	console.log(data.process.pid, "exited with code", data.status.exitCode);
-});
-```
-
-## Errors
-
-| Code | Cause |
-| --- | --- |
-| `stale_generation` | A process, terminal, context, or stream handle from before a `v1.vm.restart` was used. |
-| `expired` | A fetch-stream handle expired. |
-| `timeout` | A required package-resolution deadline passed. |
-| `not_found` | A closed terminal's replay was evicted from the bounded retention window. |
-
-Final terminal output and its confirmed exit remain readable after exit within
-the bounded closed-terminal retention window.
-
-## Contract compatibility
-
-The `@rivet-dev/agentos` package exports `AGENTOS_API_VERSION`,
-`AGENTOS_CONTRACT_MAJOR`, `AGENTOS_CONTRACT_HASH`, and `AGENTOS_CAPABILITIES`.
-Rust DTOs and the action registry generate the TypeScript surface.
-
-The contract is currently `agentos-sdk.dev/v1alpha1`, major `1`. The hash covers
-the canonical public actions, events, DTOs, and capabilities. Private cron and
-maintenance actions are excluded from both the client and the hash.
-
-## Inspector
-
-The Rivet Inspector shows a hosted VM's filesystem, processes, terminals,
-software, previews, configuration, status, and limit warnings through the same
-public contract. It can restart the VM but cannot edit host mounts.
-
-Published services binaries and the services container include the Inspector
-tabs. A source or custom deployment can point the service at another built
-copy:
-
-```sh
-AGENTOS_INSPECTOR_TABS_DIR=node_modules/@rivet-dev/agentos/assets/inspector-tabs-app \
-  rivet-services start
-```
+The embedded API exposes trusted callbacks and host-backed mounts in addition
+to guest execution. Read more in the
+[embedded API quickstart](/agentos/docs/quickstart-embedded).

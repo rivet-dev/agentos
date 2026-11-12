@@ -12,9 +12,6 @@ Usage: build-git-upstream.sh \
   --zlib-dir <zlib-source-dir> \
   --zlib-build-dir <zlib-build-dir> \
   --curl-prefix <libcurl-install-prefix> \
-  --mbedtls-libdir <dir> \
-  --brotli-libdir <dir> \
-  --zstd-libdir <dir> \
   --cc <cc> \
   --ar <ar> \
   --ranlib <ranlib> \
@@ -31,9 +28,6 @@ BUILD_DIR=""
 ZLIB_DIR=""
 ZLIB_BUILD_DIR=""
 CURL_PREFIX=""
-MBEDTLS_LIBDIR=""
-BROTLI_LIBDIR=""
-ZSTD_LIBDIR=""
 PATCH_DIR=""
 CC_CMD=""
 AR_CMD=""
@@ -52,9 +46,6 @@ while [[ $# -gt 0 ]]; do
     --zlib-dir) ZLIB_DIR="$2"; shift 2 ;;
     --zlib-build-dir) ZLIB_BUILD_DIR="$2"; shift 2 ;;
     --curl-prefix) CURL_PREFIX="$2"; shift 2 ;;
-    --mbedtls-libdir) MBEDTLS_LIBDIR="$2"; shift 2 ;;
-    --brotli-libdir) BROTLI_LIBDIR="$2"; shift 2 ;;
-    --zstd-libdir) ZSTD_LIBDIR="$2"; shift 2 ;;
     --cc) CC_CMD="$2"; shift 2 ;;
     --ar) AR_CMD="$2"; shift 2 ;;
     --ranlib) RANLIB_CMD="$2"; shift 2 ;;
@@ -65,10 +56,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$VERSION" || -z "$URL" || -z "$CACHE_DIR" || -z "$BUILD_DIR" || -z "$PATCH_DIR" || -z "$ZLIB_DIR" || -z "$ZLIB_BUILD_DIR" || -z "$CURL_PREFIX" || -z "$MBEDTLS_LIBDIR" || -z "$BROTLI_LIBDIR" || -z "$ZSTD_LIBDIR" || -z "$CC_CMD" || -z "$AR_CMD" || -z "$RANLIB_CMD" || -z "$SYSROOT" || -z "$OUTPUT" || -z "$REMOTE_HTTP_OUTPUT" ]]; then
+if [[ -z "$VERSION" || -z "$URL" || -z "$CACHE_DIR" || -z "$BUILD_DIR" || -z "$PATCH_DIR" || -z "$ZLIB_DIR" || -z "$ZLIB_BUILD_DIR" || -z "$CURL_PREFIX" || -z "$CC_CMD" || -z "$AR_CMD" || -z "$RANLIB_CMD" || -z "$SYSROOT" || -z "$OUTPUT" || -z "$REMOTE_HTTP_OUTPUT" ]]; then
   usage >&2
   exit 1
 fi
+
+source "$(dirname "${BASH_SOURCE[0]}")/resolve-generation-prefix.sh"
+CURL_PREFIX=$(resolve_generation_prefix "$CURL_PREFIX")
 
 fetch() {
   local url="$1"
@@ -112,13 +106,11 @@ if [[ -d "$PATCH_DIR" ]]; then
   done
 fi
 
-# libcurl + its TLS/compression backends, linked in-process by git-remote-http.
-# Defining CURL_CFLAGS/CURL_LDFLAGS makes Git's Makefile skip the curl-config
-# probe entirely and use these flags verbatim. Static link order matters:
-# libcurl first, then mbedTLS (tls -> x509 -> crypto), then zlib and the brotli /
-# zstd decoders curl's --compressed path pulls in.
+# Consume the exact static backend linkage installed with this libcurl generation.
 CURL_CFLAGS="-I$CURL_PREFIX/include"
-CURL_LDFLAGS="-L$CURL_PREFIX/lib -lcurl -L$MBEDTLS_LIBDIR -lmbedtls -lmbedx509 -lmbedcrypto -L$ZLIB_BUILD_DIR -lz -L$BROTLI_LIBDIR -lbrotlidec -lbrotlicommon -L$ZSTD_LIBDIR -lzstd"
+CURL_LINK_FILE="$CURL_PREFIX/share/agentos/curl-static-libs"
+[[ -s "$CURL_LINK_FILE" ]] || { echo "Missing libcurl static linkage: $CURL_LINK_FILE" >&2; exit 1; }
+CURL_LDFLAGS="$(cat "$CURL_LINK_FILE")"
 
 echo "Building upstream Git ${VERSION} for wasm32-wasip1 (with in-process libcurl)..."
 # Stack layout: wasm-ld defaults to a 64 KiB stack placed *above* the data
@@ -130,8 +122,13 @@ echo "Building upstream Git ${VERSION} for wasm32-wasip1 (with in-process libcur
 # (glibc-default sized) and --stack-first so any future overflow traps at the
 # faulting frame instead of corrupting the data segment.
 GIT_WASM_STACK_FLAGS="-Wl,-z,stack-size=8388608 -Wl,--stack-first"
+# The package projects commands and Git's standard templates at these stable
+# guest paths. Pin them instead of embedding the build host's HOME.
 make -j"${MAKE_JOBS:-2}" \
   uname_S=WASI \
+  prefix=/opt/agentos \
+  gitexecdir=/opt/agentos/bin \
+  template_dir=/opt/agentos/share/git-core/templates \
   CC="$CC_CMD" \
   HOSTCC="${HOSTCC:-cc}" \
   AR="$AR_CMD" \
@@ -170,9 +167,9 @@ emit() {
   local src="$1"
   local out="$2"
   mkdir -p "$(dirname "$out")"
-  if command -v wasm-opt >/dev/null 2>&1; then
+  if [[ "${AGENTOS_ENABLE_BINARYEN:-0}" == "1" ]]; then
     echo "Optimizing $src WASM binary -> $out..."
-    wasm-opt -O3 --strip-debug --all-features "$src" -o "$out"
+    "${WASM_OPT:-wasm-opt}" -O3 --strip-debug --all-features "$src" -o "$out"
   else
     cp "$src" "$out"
   fi

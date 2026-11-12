@@ -1,0 +1,320 @@
+--- a/awk.h
++++ b/awk.h
+@@ -160,6 +160,13 @@
+ 
+ #if HAVE_UNISTD_H
+ #include <unistd.h>
++#if defined(HAVE_POSIX_SPAWNP) && defined(HAVE_SPAWN_H)
++#include <spawn.h>
++extern int gawk_spawn_exec_status(int);
++extern pid_t gawk_spawn_shell(const char *, int, int, const int *, size_t,
++	const sigset_t *, const sigset_t *);
++#endif
++
+ #endif	/* HAVE_UNISTD_H */
+ 
+ #ifdef VMS
+--- a/io.c
++++ b/io.c
+@@ -24,6 +24,71 @@
+  */
+ 
+ #include "awk.h"
++
++#if defined(HAVE_POSIX_SPAWNP) && defined(HAVE_SPAWN_H)
++/* Classify shell exec errors only; admission/resource failures stay errors. */
++int
++gawk_spawn_exec_status(int error)
++{
++	if (error == ENOENT) return 127;
++	if (error == EACCES || error == ENOEXEC || error == ENOTDIR ||
++	    error == ELOOP || error == ENAMETOOLONG) return 126;
++	return -1;
++}
++
++/* Use the POSIX spawn API for fork-immediately-followed-by-exec operations.
++ * This does not require a copy of the running interpreter's execution stack. */
++pid_t
++gawk_spawn_shell(const char *command, int input_fd, int output_fd,
++	const int *close_fds, size_t close_count,
++	const sigset_t *mask, const sigset_t *defaults)
++{
++	extern char **environ;
++	posix_spawnattr_t attributes;
++	posix_spawn_file_actions_t actions;
++	sigset_t child_defaults;
++	short flags = POSIX_SPAWN_SETSIGDEF;
++	char *argv[] = { (char *) "sh", (char *) "-c", (char *) command, NULL };
++	pid_t pid = -1;
++	int error = posix_spawnattr_init(&attributes);
++	if (error != 0) { errno = error; return -1; }
++	error = posix_spawn_file_actions_init(&actions);
++	if (error != 0) {
++		int cleanup = posix_spawnattr_destroy(&attributes);
++		if (cleanup != 0) warning(_("destroying spawn attributes: %s"), strerror(cleanup));
++		errno = error;
++		return -1;
++	}
++	if (defaults != NULL) child_defaults = *defaults;
++	else sigemptyset(&child_defaults);
++	sigaddset(&child_defaults, SIGPIPE);
++	error = posix_spawnattr_setsigdefault(&attributes, &child_defaults);
++	if (mask != NULL && error == 0) {
++		error = posix_spawnattr_setsigmask(&attributes, mask);
++		flags |= POSIX_SPAWN_SETSIGMASK;
++	}
++	if (error == 0) error = posix_spawnattr_setflags(&attributes, flags);
++	if (error == 0 && input_fd >= 0)
++		error = posix_spawn_file_actions_adddup2(&actions, input_fd, 0);
++	if (error == 0 && output_fd >= 0)
++		error = posix_spawn_file_actions_adddup2(&actions, output_fd, 1);
++	for (size_t i = 0; error == 0 && i < close_count; i++) {
++		if ((close_fds[i] == 0 && input_fd >= 0) ||
++		    (close_fds[i] == 1 && output_fd >= 0)) continue;
++		error = posix_spawn_file_actions_addclose(&actions, close_fds[i]);
++	}
++	if (error == 0)
++		error = posix_spawnp(&pid, "/bin/sh", &actions, &attributes, argv, environ);
++	int cleanup = posix_spawn_file_actions_destroy(&actions);
++	if (cleanup != 0) warning(_("destroying spawn file actions: %s"), strerror(cleanup));
++	cleanup = posix_spawnattr_destroy(&attributes);
++	if (cleanup != 0) warning(_("destroying spawn attributes: %s"), strerror(cleanup));
++	if (error != 0) { errno = error; return -1; }
++	return pid;
++}
++#endif
++
++
+ 
+ #ifdef HAVE_SYS_PARAM_H
+ #undef RE_DUP_MAX	/* avoid spurious conflict w/regex.h */
+@@ -2321,7 +2386,7 @@
+ 				update_ERRNO_int(rp->iop->errcode);
+ 			iop_close(rp->iop);
+ 			rp->iop = NULL;
+-			(void) kill(pid, SIGKILL);
++			if (pid > 0) (void) kill(pid, SIGKILL);
+ 			return false;
+ 		}
+ 
+@@ -2336,7 +2401,7 @@
+ 			iop_close(rp->iop);
+ 			rp->iop = NULL;
+ 			(void) close(master);
+-			(void) kill(pid, SIGKILL);
++			if (pid > 0) (void) kill(pid, SIGKILL);
+ 			if (dup_master > 0)
+ 				(void) close(dup_master);
+ 			return false;
+@@ -2447,6 +2512,18 @@
+ 	}
+ 
+ #else /* NOT __MINGW32__ */
++#if defined(HAVE_POSIX_SPAWNP) && defined(HAVE_SPAWN_H)
++	int close_fds[] = { ptoc[0], ptoc[1], ctop[0], ctop[1] };
++	pid = gawk_spawn_shell(str, ptoc[0], ctop[1], close_fds, 4, NULL, NULL);
++	if (pid < 0 && gawk_spawn_exec_status(errno) < 0) {
++		save_errno = errno;
++		close(ptoc[0]); close(ptoc[1]);
++		close(ctop[0]); close(ctop[1]);
++		errno = save_errno;
++		return false;
++	}
++	if (pid < 0) rp->status = gawk_spawn_exec_status(errno);
++#else
+ 	if ((pid = fork()) < 0) {
+ 		save_errno = errno;
+ 		close(ptoc[0]); close(ptoc[1]);
+@@ -2474,6 +2551,7 @@
+ 		execl("/bin/sh", "sh", "-c", str, NULL);
+ 		_exit(errno == ENOENT ? 127 : 126);
+ 	}
++#endif
+ #endif /* NOT __MINGW32__ */
+ 
+ 	/* parent */
+@@ -2493,7 +2571,7 @@
+ 		(void) close(ctop[1]);
+ 		(void) close(ptoc[0]);
+ 		(void) close(ptoc[1]);
+-		(void) kill(pid, SIGKILL);
++		if (pid > 0) (void) kill(pid, SIGKILL);
+ 
+ 		return false;
+ 	}
+@@ -2507,7 +2585,7 @@
+ 		(void) close(ctop[1]);
+ 		(void) close(ptoc[0]);
+ 		(void) close(ptoc[1]);
+-		(void) kill(pid, SIGKILL);
++		if (pid > 0) (void) kill(pid, SIGKILL);
+ 
+ 		return false;
+ 	}
+@@ -2658,6 +2736,7 @@
+ {
+ 	int p[2];
+ 	int pid;
++	int completed_status = -1;
+ #if defined(__MINGW32__)
+ 	int save_stdout;
+ 	char *qcmd = NULL;
+@@ -2710,6 +2789,10 @@
+ 	close(save_stdout);
+ 
+ #else /* NOT __MINGW32__ */
++#if defined(HAVE_POSIX_SPAWNP) && defined(HAVE_SPAWN_H)
++	pid = gawk_spawn_shell(cmd, -1, p[1], p, 2, NULL, NULL);
++	if (pid < 0) completed_status = gawk_spawn_exec_status(errno);
++#else
+ 	if ((pid = fork()) == 0) {
+ 		if (close(1) == -1)
+ 			fatal(_("close of stdout in child failed: %s"),
+@@ -2722,13 +2805,15 @@
+ 		execl("/bin/sh", "sh", "-c", cmd, NULL);
+ 		_exit(errno == ENOENT ? 127 : 126);
+ 	}
++#endif
+ #endif /* NOT __MINGW32__ */
+ 
+-	if (pid == -1) {
++	if (pid == -1 && completed_status < 0) {
+ 		close(p[0]); close(p[1]);
+ 		fatal(_("cannot create child process for `%s' (fork: %s)"), cmd, strerror(errno));
+ 	}
+ 	rp->pid = pid;
++	if (pid == -1) rp->status = completed_status;
+ #if !defined(__MINGW32__)
+ 	if (close(p[1]) == -1) {
+ 		close(p[0]);
+@@ -4665,6 +4750,7 @@
+ typedef struct write_pipe {
+ 	FILE *fp;
+ 	pid_t pid;
++	int completed_status; /* raw wait status when exec failed before a PID existed */
+ #ifdef PIPE_HASH_SIZE
+ 	struct write_pipe *next;
+ #endif /* PIPE_HASH_SIZE */
+@@ -4678,7 +4764,7 @@
+ /* save_pipe: save a pipe to the hash table */
+ 
+ static void
+-save_pipe(int fd, FILE *fp, pid_t pid)
++save_pipe(int fd, FILE *fp, pid_t pid, int completed_status)
+ {
+ 	write_pipe *bucket = &open_pipes[fd % PIPE_HASH_SIZE];
+ 	write_pipe *wp;
+@@ -4692,6 +4778,7 @@
+ 	}
+ 	wp->fp = fp;
+ 	wp->pid = pid;
++	wp->completed_status = completed_status;
+ }
+ 
+ #endif /* PIPE_HASH_SIZE */
+@@ -4706,6 +4793,7 @@
+ 	return popen(cmd, binmode("w"));
+ #else
+ 	pid_t childpid;
++	int completed_status = -1;
+ 	int pipefds[2];
+ 
+ 	if (pipe(pipefds) < 0)
+@@ -4722,6 +4810,16 @@
+ 		memset(open_pipes, 0, sizeof(write_pipe) * count);
+ 	}
+ 
++#if defined(HAVE_POSIX_SPAWNP) && defined(HAVE_SPAWN_H)
++	childpid = gawk_spawn_shell(cmd, pipefds[0], -1, pipefds, 2, NULL, NULL);
++	if (childpid < 0) completed_status = gawk_spawn_exec_status(errno);
++	if (childpid < 0 && completed_status < 0) {
++		int saved_errno = errno;
++		(void) close(pipefds[0]); (void) close(pipefds[1]);
++		errno = saved_errno;
++		return NULL;
++	}
++#else
+ 	childpid = fork();
+ 	if (childpid == 0) {
+ 		// in the child
+@@ -4739,6 +4837,8 @@
+ 		return NULL;
+ 	}
+ 
++#endif
++
+ 	(void) close(pipefds[0]);	// don't need the read end in the parent
+ 	FILE *fp = fdopen(pipefds[1], binmode("w"));
+ 	if (fp == NULL) {
+@@ -4747,10 +4847,11 @@
+ 	}
+ 
+ #ifdef PIPE_HASH_SIZE
+-	save_pipe(pipefds[1], fp, childpid);
++	save_pipe(pipefds[1], fp, childpid, completed_status < 0 ? -1 : completed_status << 8);
+ #else
+ 	int index = pipefds[1];	// use the write file desciptor.
+ 	open_pipes[index].pid = childpid;
++	open_pipes[index].completed_status = completed_status < 0 ? -1 : completed_status << 8;
+ 	open_pipes[index].fp = fp;
+ #endif /* PIPE_HASH_SIZE */
+ 
+@@ -4788,10 +4889,11 @@
+ 
+ 		(void) fflush(fp);
+ 		(void) fclose(fp);
+-		status = wait_any_block_signals(wp->pid);
++		status = wp->pid == -1 ? wp->completed_status : wait_any_block_signals(wp->pid);
+ 
+ 		wp->fp = NULL;
+ 		wp->pid = 0;
++		wp->completed_status = -1;
+ #ifdef PIPE_HASH_SIZE
+ 		if (parent != NULL) {
+ 			parent->next = wp->next;
+--- a/builtin.c
++++ b/builtin.c
+@@ -3409,6 +3409,13 @@
+ 	qstat = signal(SIGQUIT, SIG_IGN);
+ #endif
+ 
++#if defined(HAVE_POSIX_SPAWNP) && defined(HAVE_SPAWN_H) && defined(HAVE_SIGPROCMASK)
++	sigset_t defaults;
++	sigemptyset(&defaults);
++	if (old_int_action.sa_handler != SIG_IGN) sigaddset(&defaults, SIGINT);
++	if (old_quit_action.sa_handler != SIG_IGN) sigaddset(&defaults, SIGQUIT);
++	childpid = gawk_spawn_shell(command, -1, -1, NULL, 0, &oldset, &defaults);
++#else
+ 	if ((childpid = fork()) == 0) {
+ 		// child
+ 		set_sigpipe_to_default();
+@@ -3425,9 +3432,19 @@
+ 		_exit(errno == ENOENT ? 127 : 126);
+ 
+ 		return 0;	// silence compiler warnings
+-	} else {
++	}
++#endif
++	{
+ 		// parent
+-		status = wait_any(childpid);
++		status = childpid < 0 ? -1 : wait_any(childpid);
++#if defined(HAVE_POSIX_SPAWNP) && defined(HAVE_SPAWN_H) && defined(HAVE_SIGPROCMASK)
++		/* Match the forked child's exec-failure status when spawn reports it. */
++		if (childpid < 0) {
++			int completed_status = gawk_spawn_exec_status(errno);
++			if (completed_status >= 0) status = completed_status << 8;
++		}
++#endif
++		int saved_errno = errno;
+ 
+ 		// in the parent, restore stuff after getting the status
+ #ifdef HAVE_SIGPROCMASK
+@@ -3439,6 +3456,7 @@
+ 		qstat = signal(SIGQUIT, qstat);
+ #endif
+ 
++		errno = saved_errno;
+ 		return status;
+ 	}
+ #endif /* ! (defined(VMS) || defined(__MINGW32__)) */
