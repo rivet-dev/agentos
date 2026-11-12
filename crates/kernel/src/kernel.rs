@@ -675,7 +675,10 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         let permissions = config.permissions.clone();
         let users = UserManager::from_config(config.user);
         let process_table = ProcessTable::with_zombie_ttl(config.zombie_ttl);
-        let process_table_for_pty = process_table.clone();
+        // The PTY manager is reachable from the table's exit callback, so a
+        // strong handle here would form a cycle that keeps every disposed VM's
+        // process, fd, pipe, PTY and socket tables alive.
+        let process_table_for_pty = process_table.downgrade();
         let max_open_fds = config
             .resources
             .max_open_fds
@@ -691,7 +694,9 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         let pipes = PipeManager::with_notifier(poll_notifier.clone());
         let ptys = PtyManager::with_signal_handler_and_notifier(
             Arc::new(move |pgid, signal| {
-                let _ = process_table_for_pty.kill(-(pgid as i32), signal);
+                if let Some(process_table) = process_table_for_pty.upgrade() {
+                    let _ = process_table.kill(-(pgid as i32), signal);
+                }
             }),
             poll_notifier.clone(),
         );
