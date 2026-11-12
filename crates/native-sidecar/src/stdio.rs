@@ -9704,7 +9704,6 @@ export async function loadPyodide() {
 pub(crate) struct LocalBridge {
     started_at: Instant,
     next_timer_id: usize,
-    snapshots: BTreeMap<String, FilesystemSnapshot>,
 }
 
 impl Default for LocalBridge {
@@ -9712,7 +9711,6 @@ impl Default for LocalBridge {
         Self {
             started_at: Instant::now(),
             next_timer_id: 0,
-            snapshots: BTreeMap::new(),
         }
     }
 }
@@ -9883,18 +9881,20 @@ impl PermissionBridge for LocalBridge {
 }
 
 impl PersistenceBridge for LocalBridge {
+    // VM ids come from a per-process counter and are never reused, so a
+    // snapshot flushed at dispose can never be loaded again. Retaining it kept
+    // every disposed VM's root filesystem in memory for the process lifetime.
     fn load_filesystem_state(
         &mut self,
-        request: LoadFilesystemStateRequest,
+        _request: LoadFilesystemStateRequest,
     ) -> Result<Option<FilesystemSnapshot>, Self::Error> {
-        Ok(self.snapshots.get(&request.vm_id).cloned())
+        Ok(None)
     }
 
     fn flush_filesystem_state(
         &mut self,
-        request: FlushFilesystemStateRequest,
+        _request: FlushFilesystemStateRequest,
     ) -> Result<(), Self::Error> {
-        self.snapshots.insert(request.vm_id, request.snapshot);
         Ok(())
     }
 }
