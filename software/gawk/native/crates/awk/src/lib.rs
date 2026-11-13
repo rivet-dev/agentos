@@ -5,6 +5,7 @@
 use std::ffi::OsString;
 use std::io::{self, BufReader};
 
+use awk_rs::ast::{Pattern, Program};
 use awk_rs::{Interpreter, Lexer, Parser};
 
 /// Entry point for awk command.
@@ -106,7 +107,11 @@ fn run_awk(args: &[String]) -> Result<i32, String> {
     let stdout = io::stdout();
     let mut output = stdout.lock();
 
-    let exit_code = if input_files.is_empty() {
+    let exit_code = if !reads_input(&program) {
+        interpreter
+            .run(Vec::<io::Empty>::new(), &mut output)
+            .map_err(|e| format!("{}", e))?
+    } else if input_files.is_empty() {
         // Read from stdin
         let stdin = io::stdin();
         let inputs = vec![BufReader::new(stdin.lock())];
@@ -139,6 +144,16 @@ fn run_awk(args: &[String]) -> Result<i32, String> {
     Ok(exit_code)
 }
 
+/// Whether the program reads its input. POSIX awk exits after a program made only of BEGIN
+/// actions without reading input, so stdin left open by the caller must not block it. awk-rs
+/// never feeds the main input to a plain `getline`, so skipping the input loses nothing.
+fn reads_input(program: &Program) -> bool {
+    !program
+        .rules
+        .iter()
+        .all(|rule| matches!(rule.pattern, Some(Pattern::Begin)))
+}
+
 fn variable_assignment(value: &str) -> Option<(&str, &str)> {
     let (name, value) = value.split_once('=')?;
     let mut chars = name.chars();
@@ -151,7 +166,24 @@ fn variable_assignment(value: &str) -> Option<(&str, &str)> {
 
 #[cfg(test)]
 mod tests {
-    use super::variable_assignment;
+    use super::{reads_input, variable_assignment};
+    use awk_rs::{Lexer, Parser};
+
+    fn parse(source: &str) -> awk_rs::ast::Program {
+        let tokens = Lexer::new(source).tokenize().unwrap();
+        Parser::new(tokens).parse().unwrap()
+    }
+
+    #[test]
+    fn begin_only_programs_do_not_read_input() {
+        assert!(!reads_input(&parse(r#"BEGIN { print "AWK" }"#)));
+        assert!(!reads_input(&parse("BEGIN { x = 1 } BEGIN { print x }")));
+        assert!(reads_input(&parse(
+            r#"BEGIN { print "AWK" } END { print NR }"#
+        )));
+        assert!(reads_input(&parse("{ print $1 }")));
+        assert!(reads_input(&parse("/x/")));
+    }
 
     #[test]
     fn recognizes_operand_variable_assignments() {
