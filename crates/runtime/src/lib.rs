@@ -71,7 +71,10 @@ const DEFAULT_MAX_PROCESS_HTTP2_EVENT_BYTES: usize = 512 * 1024 * 1024;
 const DEFAULT_TASK_POLL_WATCHDOG_MS: u64 = 100;
 const DEFAULT_MAX_TERMINAL_TASK_REPORTS: usize = 4_096;
 const DEFAULT_VM_EXECUTOR_TEARDOWN_TIMEOUT_MS: u64 = 5_000;
-pub const DEFAULT_PROTOCOL_MAX_INGRESS_FRAMES: usize = 128;
+// Holds in-flight plus queued ordinary requests (128 + 256) with headroom, so a
+// burst the request queue can absorb is not rejected at ingress while the
+// router prepares admitted work. Bytes stay bounded by maxIngressBytes.
+pub const DEFAULT_PROTOCOL_MAX_INGRESS_FRAMES: usize = 512;
 pub const DEFAULT_PROTOCOL_MAX_INGRESS_BYTES: usize = 64 * 1024 * 1024;
 pub const DEFAULT_PROTOCOL_MAX_SESSIONS_PER_CONNECTION: usize = 4_096;
 pub const DEFAULT_PROTOCOL_MAX_CONTROL_FRAMES: usize = 1_024;
@@ -80,6 +83,15 @@ pub const DEFAULT_PROTOCOL_MAX_EGRESS_FRAMES: usize = 4_096;
 pub const DEFAULT_PROTOCOL_MAX_EGRESS_BYTES: usize = 256 * 1024 * 1024;
 pub const DEFAULT_PROTOCOL_MAX_IN_FLIGHT_REQUESTS: usize = 128;
 pub const DEFAULT_PROTOCOL_MAX_IN_FLIGHT_REQUEST_BYTES: usize = 64 * 1024 * 1024;
+pub const DEFAULT_PROTOCOL_MAX_IN_FLIGHT_PRIORITY_REQUESTS: usize = 128;
+// Sized so overload surfaces as a typed retryable error within seconds. At the
+// measured VM-create plateau (about 40-50 creates/s on a 16-core host), 256
+// queued creates take about 5 s to drain, so a deeper queue would only hold
+// requests that time out anyway. 5 s is several times the worst p50 of a
+// 32-VM burst (under 1 s) while a 128-VM burst fits in the in-flight lane.
+pub const DEFAULT_PROTOCOL_REQUEST_QUEUE_LIMIT: usize = 256;
+pub const DEFAULT_PROTOCOL_REQUEST_QUEUE_BYTES: usize = 64 * 1024 * 1024;
+pub const DEFAULT_PROTOCOL_REQUEST_QUEUE_DEADLINE_MS: u64 = 5_000;
 pub const DEFAULT_PROTOCOL_MAX_TERMINAL_FRAMES: usize = 128;
 pub const DEFAULT_PROTOCOL_MAX_TERMINAL_BYTES: usize = 8 * 1024 * 1024;
 pub const DEFAULT_PROTOCOL_TERMINAL_FALLBACK_BYTES: usize = 16 * 1024;
@@ -129,12 +141,28 @@ pub struct RuntimeProtocolConfig {
     pub max_control_bytes: usize,
     pub max_egress_frames: usize,
     pub max_egress_bytes: usize,
-    /// Requests admitted for independent execution. The ingress channel is the
-    /// only pre-admission backlog; there is no ordinary request FIFO after it.
+    /// Ordinary requests admitted for independent execution. Requests beyond
+    /// it wait in the sidecar's bounded request queue.
     pub max_in_flight_requests: usize,
     pub max_in_flight_request_bytes: usize,
+    /// Separate admission lane and queue for priority requests: teardown
+    /// (dispose, kill, signal, cancel, delete) and the live-process data plane
+    /// (stdin, PTY resize). Ordinary saturation such as a VM-create flood never
+    /// delays or rejects them.
+    pub max_in_flight_priority_requests: usize,
+    /// Requests the sidecar queues per admission lane while they wait for
+    /// in-flight capacity. A request that finds the queue full is rejected
+    /// with a typed retryable error.
+    pub request_queue_limit: usize,
+    /// Decoded request bytes the sidecar queues per admission lane.
+    pub request_queue_bytes: usize,
+    /// How long a queued request may wait for in-flight capacity before the
+    /// sidecar rejects it with a typed retryable error.
+    pub request_queue_deadline_ms: u64,
     /// Capacity reserved for exactly one terminal response per admitted
-    /// request. `terminal_fallback_bytes` is charged at request admission.
+    /// ordinary request. `terminal_fallback_bytes` is charged at request
+    /// admission. The priority lane reserves its own
+    /// `max_in_flight_priority_requests * terminal_fallback_bytes`.
     pub max_terminal_frames: usize,
     pub max_terminal_bytes: usize,
     pub terminal_fallback_bytes: usize,
@@ -154,6 +182,20 @@ pub struct RuntimeProtocolConfig {
     pub max_completed_responses: usize,
 }
 
+impl RuntimeProtocolConfig {
+    /// Requests admitted at once across the ordinary and priority lanes.
+    pub fn max_admitted_requests(&self) -> usize {
+        self.max_in_flight_requests
+            .saturating_add(self.max_in_flight_priority_requests)
+    }
+
+    /// Control-lane bytes reserved for priority terminal responses.
+    pub fn priority_terminal_bytes(&self) -> Option<usize> {
+        self.max_in_flight_priority_requests
+            .checked_mul(self.terminal_fallback_bytes)
+    }
+}
+
 impl Default for RuntimeProtocolConfig {
     fn default() -> Self {
         Self {
@@ -166,6 +208,10 @@ impl Default for RuntimeProtocolConfig {
             max_egress_bytes: DEFAULT_PROTOCOL_MAX_EGRESS_BYTES,
             max_in_flight_requests: DEFAULT_PROTOCOL_MAX_IN_FLIGHT_REQUESTS,
             max_in_flight_request_bytes: DEFAULT_PROTOCOL_MAX_IN_FLIGHT_REQUEST_BYTES,
+            max_in_flight_priority_requests: DEFAULT_PROTOCOL_MAX_IN_FLIGHT_PRIORITY_REQUESTS,
+            request_queue_limit: DEFAULT_PROTOCOL_REQUEST_QUEUE_LIMIT,
+            request_queue_bytes: DEFAULT_PROTOCOL_REQUEST_QUEUE_BYTES,
+            request_queue_deadline_ms: DEFAULT_PROTOCOL_REQUEST_QUEUE_DEADLINE_MS,
             max_terminal_frames: DEFAULT_PROTOCOL_MAX_TERMINAL_FRAMES,
             max_terminal_bytes: DEFAULT_PROTOCOL_MAX_TERMINAL_BYTES,
             terminal_fallback_bytes: DEFAULT_PROTOCOL_TERMINAL_FALLBACK_BYTES,
@@ -555,6 +601,18 @@ impl RuntimeConfig {
                 self.protocol.max_in_flight_request_bytes,
             ),
             (
+                "runtime.protocol.maxInFlightPriorityRequests",
+                self.protocol.max_in_flight_priority_requests,
+            ),
+            (
+                "runtime.protocol.requestQueueLimit",
+                self.protocol.request_queue_limit,
+            ),
+            (
+                "runtime.protocol.requestQueueBytes",
+                self.protocol.request_queue_bytes,
+            ),
+            (
                 "runtime.protocol.maxTerminalFrames",
                 self.protocol.max_terminal_frames,
             ),
@@ -737,6 +795,21 @@ impl RuntimeConfig {
                 "ERR_AGENTOS_RUNTIME_CONFIG: runtime.protocol.shutdownGraceMs must be greater than zero",
             )));
         }
+        if self.protocol.request_queue_deadline_ms == 0 {
+            return Err(RuntimeBuildError(String::from(
+                "ERR_AGENTOS_RUNTIME_CONFIG: runtime.protocol.requestQueueDeadlineMs must be greater than zero",
+            )));
+        }
+        let queued_ordinary = self
+            .protocol
+            .max_in_flight_requests
+            .saturating_add(self.protocol.request_queue_limit);
+        if self.protocol.max_ingress_frames < queued_ordinary {
+            return Err(RuntimeBuildError(format!(
+                "ERR_AGENTOS_RUNTIME_CONFIG: runtime.protocol.maxIngressFrames ({}) must be >= runtime.protocol.maxInFlightRequests + runtime.protocol.requestQueueLimit ({queued_ordinary}) so a burst the request queue can hold is not rejected at ingress; raise runtime.protocol.maxIngressFrames",
+                self.protocol.max_ingress_frames
+            )));
+        }
         if self.protocol.max_terminal_frames < self.protocol.max_in_flight_requests {
             return Err(RuntimeBuildError(format!(
                 "ERR_AGENTOS_RUNTIME_CONFIG: runtime.protocol.maxTerminalFrames ({}) must be >= runtime.protocol.maxInFlightRequests ({}); raise runtime.protocol.maxTerminalFrames",
@@ -758,14 +831,20 @@ impl RuntimeConfig {
                 self.protocol.max_terminal_bytes, required_terminal_bytes
             )));
         }
+        let priority_terminal_bytes = self.protocol.priority_terminal_bytes().ok_or_else(|| {
+            RuntimeBuildError(String::from(
+                "ERR_AGENTOS_RUNTIME_CONFIG: runtime.protocol.maxInFlightPriorityRequests * runtime.protocol.terminalFallbackBytes overflows usize; lower either value",
+            ))
+        })?;
         let logical_control_frames = self
             .protocol
             .max_terminal_frames
-            .checked_add(self.protocol.max_progress_frames)
+            .checked_add(self.protocol.max_in_flight_priority_requests)
+            .and_then(|value| value.checked_add(self.protocol.max_progress_frames))
             .and_then(|value| value.checked_add(self.protocol.max_rejection_frames))
             .ok_or_else(|| {
                 RuntimeBuildError(String::from(
-                    "ERR_AGENTOS_RUNTIME_CONFIG: protocol logical control frame capacities overflow usize; lower runtime.protocol.maxTerminalFrames, maxProgressFrames, or maxRejectionFrames",
+                    "ERR_AGENTOS_RUNTIME_CONFIG: protocol logical control frame capacities overflow usize; lower runtime.protocol.maxTerminalFrames, maxInFlightPriorityRequests, maxProgressFrames, or maxRejectionFrames",
                 ))
             })?;
         if logical_control_frames > self.protocol.max_control_frames {
@@ -777,7 +856,8 @@ impl RuntimeConfig {
         let logical_control_bytes = self
             .protocol
             .max_terminal_bytes
-            .checked_add(self.protocol.max_progress_bytes)
+            .checked_add(priority_terminal_bytes)
+            .and_then(|value| value.checked_add(self.protocol.max_progress_bytes))
             .and_then(|value| value.checked_add(self.protocol.max_rejection_bytes))
             .ok_or_else(|| {
                 RuntimeBuildError(String::from(
@@ -1859,6 +1939,13 @@ mod tests {
 
         assert_zero_rejected!(max_in_flight_requests, "maxInFlightRequests");
         assert_zero_rejected!(max_in_flight_request_bytes, "maxInFlightRequestBytes");
+        assert_zero_rejected!(
+            max_in_flight_priority_requests,
+            "maxInFlightPriorityRequests"
+        );
+        assert_zero_rejected!(request_queue_limit, "requestQueueLimit");
+        assert_zero_rejected!(request_queue_bytes, "requestQueueBytes");
+        assert_zero_rejected!(request_queue_deadline_ms, "requestQueueDeadlineMs");
         assert_zero_rejected!(max_sessions_per_connection, "maxSessionsPerConnection");
         assert_zero_rejected!(max_terminal_frames, "maxTerminalFrames");
         assert_zero_rejected!(max_terminal_bytes, "maxTerminalBytes");
@@ -1897,6 +1984,15 @@ mod tests {
         assert!(error.to_string().contains("maxInFlightRequests"));
         assert!(error.to_string().contains("raise"));
 
+        let mut ingress = RuntimeConfig::default();
+        ingress.protocol.max_ingress_frames =
+            ingress.protocol.max_in_flight_requests + ingress.protocol.request_queue_limit - 1;
+        let error = ingress
+            .validate()
+            .expect_err("ingress must hold a burst the request queue can absorb");
+        assert!(error.to_string().contains("maxIngressFrames"));
+        assert!(error.to_string().contains("requestQueueLimit"));
+
         let mut terminal_bytes = RuntimeConfig::default();
         let required = terminal_bytes.protocol.max_in_flight_requests
             * terminal_bytes.protocol.terminal_fallback_bytes;
@@ -1910,6 +2006,7 @@ mod tests {
 
         let mut control_frames = RuntimeConfig::default();
         control_frames.protocol.max_control_frames = control_frames.protocol.max_terminal_frames
+            + control_frames.protocol.max_in_flight_priority_requests
             + control_frames.protocol.max_progress_frames
             + control_frames.protocol.max_rejection_frames
             - 1;
@@ -1920,6 +2017,7 @@ mod tests {
 
         let mut control_bytes = RuntimeConfig::default();
         control_bytes.protocol.max_control_bytes = control_bytes.protocol.max_terminal_bytes
+            + control_bytes.protocol.priority_terminal_bytes().unwrap()
             + control_bytes.protocol.max_progress_bytes
             + control_bytes.protocol.max_rejection_bytes
             - 1;

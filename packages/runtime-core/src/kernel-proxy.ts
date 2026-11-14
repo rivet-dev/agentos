@@ -389,6 +389,8 @@ export class NativeSidecarKernelProxy {
 	private zombieTimerCountValue = 0;
 	private zombieTimerCountRefresh: Promise<void> | null = null;
 	private disposed = false;
+	/** The DisposeVm request in flight, or the last one that succeeded. */
+	private vmDisposal: Promise<void> | null = null;
 	private pumpError: Error | null = null;
 	private nextSyntheticPid = SYNTHETIC_PID_BASE;
 	private readonly eventPumpAbortController = new AbortController();
@@ -434,27 +436,35 @@ export class NativeSidecarKernelProxy {
 		}
 	}
 
+	/**
+	 * Send DisposeVm once and share it. A failed attempt is forgotten, so the
+	 * next call sends a new one: a retried dispose() must never report success
+	 * while the VM is still alive.
+	 */
+	private confirmVmDisposal(): Promise<void> {
+		this.vmDisposal ??= this.client
+			.disposeVm(this.session, this.vm)
+			.catch((error: unknown) => {
+				this.vmDisposal = null;
+				throw error;
+			});
+		return this.vmDisposal;
+	}
+
 	async dispose(): Promise<void> {
 		if (this.disposed) {
+			// Teardown already ran; only the sidecar's confirmation can be missing.
+			await this.confirmVmDisposal();
 			return;
 		}
 		this.disposed = true;
 		this.eventPumpAbortController.abort();
 
+		// DisposeVm terminates every live guest process (TERM, then KILL) in the
+		// same request, so there is no signal round trip per process first.
 		const liveProcesses = [...this.trackedProcesses.values()].filter(
 			(entry) => entry.exitCode === null,
 		);
-		const signals = await Promise.allSettled(
-			liveProcesses.map((entry) => this.signalProcess(entry, 15)),
-		);
-		for (const result of signals) {
-			if (result.status === "rejected") {
-				console.error(
-					"agentOS process signal during disposal failed:",
-					result.reason,
-				);
-			}
-		}
 
 		let disposalFailed = false;
 		let disposalError: unknown;
@@ -463,7 +473,7 @@ export class NativeSidecarKernelProxy {
 		try {
 			const deadlineMs = 1000;
 			await Promise.race([
-				this.client.disposeVm(this.session, this.vm).catch((error) => {
+				this.confirmVmDisposal().catch((error) => {
 					if (timedOut) {
 						console.error(
 							"agentOS VM disposal failed after its client deadline:",

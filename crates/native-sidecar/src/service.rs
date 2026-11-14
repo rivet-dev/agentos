@@ -851,6 +851,14 @@ where
         operation(&mut bridge).map_err(|error| SidecarError::Bridge(format!("{error:?}")))
     }
 
+    /// Whether the bridge keeps flushed filesystem snapshots. A poisoned lock
+    /// answers yes so teardown still offers the snapshot, and the flush then
+    /// reports the poisoned lock as its error.
+    pub(crate) fn persists_filesystem_state(&self) -> bool {
+        self.inspect(|bridge| bridge.persists_filesystem_state())
+            .unwrap_or(true)
+    }
+
     fn inspect<T>(&self, operation: impl FnOnce(&mut B) -> T) -> Result<T, SidecarError> {
         let mut bridge = self.inner.lock().map_err(|_| {
             SidecarError::Bridge(String::from("native sidecar bridge lock poisoned"))

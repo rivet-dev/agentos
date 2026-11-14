@@ -534,6 +534,8 @@ export class NativeSidecarKernelProxy {
 	private zombieTimerCountValue = 0;
 	private zombieTimerCountRefresh: Promise<void> | null = null;
 	private disposed = false;
+	/** The DisposeVm request in flight, or the last one that succeeded. */
+	private vmDisposal: Promise<void> | null = null;
 	private pumpError: Error | null = null;
 	private mountReconfigurePromise: Promise<void> | null = null;
 	private nextSyntheticPid = SYNTHETIC_PID_BASE;
@@ -600,8 +602,25 @@ export class NativeSidecarKernelProxy {
 		}
 	}
 
+	/**
+	 * Send DisposeVm once and share it. A failed attempt is forgotten, so the
+	 * next call sends a new one: a retried dispose() must never report success
+	 * while the VM is still alive.
+	 */
+	private confirmVmDisposal(): Promise<void> {
+		this.vmDisposal ??= this.client
+			.disposeVm(this.session, this.vm)
+			.catch((error: unknown) => {
+				this.vmDisposal = null;
+				throw error;
+			});
+		return this.vmDisposal;
+	}
+
 	async dispose(): Promise<void> {
 		if (this.disposed) {
+			// Teardown already ran; only the sidecar's confirmation can be missing.
+			await this.confirmVmDisposal();
 			return;
 		}
 		this.disposed = true;
@@ -623,22 +642,11 @@ export class NativeSidecarKernelProxy {
 				error,
 			);
 		});
-		await Promise.all(
-			liveProcesses
-				.filter((entry) => !entry.launchRejected)
-				.map((entry) =>
-					this.signalProcess(entry, 15).catch((error) => {
-						console.error(
-							`[agentOS] process ${entry.pid} teardown signal failed`,
-							error,
-						);
-					}),
-				),
-		);
-
+		// One request: DisposeVm terminates every live guest process (TERM, then
+		// KILL), so there is no signal round trip per process first.
 		let disposalFailed = false;
 		let disposalError: unknown;
-		await this.client.disposeVm(this.session, this.vm).catch((error) => {
+		await this.confirmVmDisposal().catch((error) => {
 			disposalFailed = true;
 			disposalError = error;
 			console.error(
@@ -948,6 +956,9 @@ export class NativeSidecarKernelProxy {
 					return Promise.reject(stdinHasNoReader(entry.pid));
 				}
 				if (entry.waitError) return Promise.reject(entry.waitError);
+				if (entry.pendingStdin.length >= PROCESS_STDIN_QUEUE_LIMIT) {
+					return Promise.reject(stdinQueueLimitError(entry.pid));
+				}
 				entry.pendingStdin.push(data);
 				return this.flushPendingStdin(entry).catch((error) => {
 					this.handleBackgroundProcessError(entry, error);
@@ -2935,6 +2946,27 @@ function buildCommandMap(
 }
 
 /** Stdin written after its process exited, as a pipe write with no reader on Linux. */
+/** Stdin writes that may wait in one process's queue at once, as in the Rust client. */
+const PROCESS_STDIN_QUEUE_LIMIT = 1024;
+
+function stdinQueueLimitError(pid: number): Error {
+	return Object.assign(
+		new Error(
+			`process ${pid} already has ${PROCESS_STDIN_QUEUE_LIMIT} stdin writes waiting; await earlier writes`,
+		),
+		{
+			code: "ERR_AGENTOS_RESOURCE_LIMIT",
+			limitName: "process_stdin_queue_entries",
+			configuredLimit: PROCESS_STDIN_QUEUE_LIMIT,
+			requested: PROCESS_STDIN_QUEUE_LIMIT + 1,
+			unit: "writes",
+			scope: "process",
+			operation: "process.writeStdin",
+			retryable: true,
+		},
+	);
+}
+
 function stdinHasNoReader(pid: number): KernelError {
 	return new KernelError(
 		"EPIPE",

@@ -4,7 +4,7 @@
 //! protocol router either admits an operation here and starts it independently,
 //! or returns a typed rejection while continuing to route progress traffic.
 
-use crate::wire::{OwnershipScope, RequestId};
+use crate::wire::{OwnershipScope, RequestId, RequestPayload};
 use agentos_runtime::RuntimeProtocolConfig;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -14,11 +14,14 @@ use tokio::sync::Notify;
 
 pub(crate) const IN_FLIGHT_REQUEST_COUNT_PATH: &str = "runtime.protocol.maxInFlightRequests";
 pub(crate) const IN_FLIGHT_REQUEST_BYTES_PATH: &str = "runtime.protocol.maxInFlightRequestBytes";
+pub(crate) const IN_FLIGHT_PRIORITY_REQUEST_COUNT_PATH: &str =
+    "runtime.protocol.maxInFlightPriorityRequests";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RequestOperationLimits {
     pub(crate) max_requests: usize,
     pub(crate) max_request_bytes: usize,
+    pub(crate) max_priority_requests: usize,
 }
 
 impl From<&RuntimeProtocolConfig> for RequestOperationLimits {
@@ -26,6 +29,48 @@ impl From<&RuntimeProtocolConfig> for RequestOperationLimits {
         Self {
             max_requests: config.max_in_flight_requests,
             max_request_bytes: config.max_in_flight_request_bytes,
+            max_priority_requests: config.max_in_flight_priority_requests,
+        }
+    }
+}
+
+/// Which in-flight budget and sidecar request queue an ordinary request uses.
+///
+/// Priority requests act on a VM or process that already exists, finish in
+/// bounded time, and never create resources: teardown (dispose, kill, signal,
+/// cancel, delete) and the live-process data plane (stdin writes and closes,
+/// PTY resizes). They have their own count budget and queue, so a flood of
+/// ordinary work such as VM creation can never delay or reject the request
+/// that frees capacity or drives an already-running process. Their bytes do
+/// not consume the ordinary byte budget.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AdmissionLane {
+    Ordinary,
+    Priority,
+}
+
+impl AdmissionLane {
+    pub(crate) fn for_request(payload: &RequestPayload) -> Self {
+        match payload {
+            RequestPayload::DisposeVmRequest(_)
+            | RequestPayload::KillProcessRequest(_)
+            | RequestPayload::SignalExecutionRequest(_)
+            | RequestPayload::CancelExecutionRequest(_)
+            | RequestPayload::DeleteExecutionRequest(_)
+            | RequestPayload::WriteStdinRequest(_)
+            | RequestPayload::CloseStdinRequest(_)
+            | RequestPayload::ResizePtyRequest(_)
+            | RequestPayload::WriteExecutionStdinRequest(_)
+            | RequestPayload::CloseExecutionStdinRequest(_)
+            | RequestPayload::ResizeExecutionPtyRequest(_) => Self::Priority,
+            _ => Self::Ordinary,
+        }
+    }
+
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Ordinary => "ordinary",
+            Self::Priority => "priority",
         }
     }
 }
@@ -265,6 +310,7 @@ enum OperationClass {
 #[derive(Debug)]
 struct OperationRecord {
     class: OperationClass,
+    lane: AdmissionLane,
     generation: u64,
     metadata: RequestOperationMetadata,
     request_bytes: usize,
@@ -276,12 +322,22 @@ struct OperationRecord {
 struct RegistryState {
     operations: BTreeMap<RequestOperationKey, OperationRecord>,
     in_flight_request_bytes: usize,
+    in_flight_priority_bytes: usize,
     in_flight_progress_bytes: usize,
     next_generation: u64,
     closed: Option<OperationCancellationReason>,
     progress_closed: Option<OperationCancellationReason>,
     closed_connections: BTreeMap<String, OperationCancellationReason>,
     closed_scopes: Vec<(OwnershipScope, OperationCancellationReason)>,
+}
+
+impl RegistryState {
+    fn lane_bytes_mut(&mut self, lane: AdmissionLane) -> &mut usize {
+        match lane {
+            AdmissionLane::Ordinary => &mut self.in_flight_request_bytes,
+            AdmissionLane::Priority => &mut self.in_flight_priority_bytes,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -320,6 +376,10 @@ impl OperationTable {
             "request byte limit must be positive"
         );
         assert!(
+            limits.max_priority_requests > 0,
+            "teardown request count limit must be positive"
+        );
+        assert!(
             progress_limits.max_requests > 0,
             "progress request count limit must be positive"
         );
@@ -334,6 +394,7 @@ impl OperationTable {
                 state: Mutex::new(RegistryState {
                     operations: BTreeMap::new(),
                     in_flight_request_bytes: 0,
+                    in_flight_priority_bytes: 0,
                     in_flight_progress_bytes: 0,
                     next_generation: 1,
                     closed: None,
@@ -362,28 +423,39 @@ impl OperationTable {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn admit(
         &self,
         key: RequestOperationKey,
         metadata: RequestOperationMetadata,
         request_bytes: usize,
     ) -> Result<RequestOperation, RequestAdmissionError> {
-        let mut state = self.lock_state();
-        self.check_admission_locked(&state, &key, &metadata, request_bytes)?;
+        self.admit_in_lane(key, metadata, request_bytes, AdmissionLane::Ordinary)
+    }
 
-        let requested_total = state
-            .in_flight_request_bytes
-            .checked_add(request_bytes)
-            .expect("admission preflight checked the request byte total");
+    pub(crate) fn admit_in_lane(
+        &self,
+        key: RequestOperationKey,
+        metadata: RequestOperationMetadata,
+        request_bytes: usize,
+        lane: AdmissionLane,
+    ) -> Result<RequestOperation, RequestAdmissionError> {
+        let mut state = self.lock_state();
+        self.check_admission_locked(&state, &key, &metadata, request_bytes, lane)?;
+
         let generation = state.next_generation;
         state.next_generation = state.next_generation.wrapping_add(1).max(1);
         let cancellation = OperationCancellation::new();
         let publication = ResponsePublicationGuard::new();
-        state.in_flight_request_bytes = requested_total;
+        let lane_bytes = state.lane_bytes_mut(lane);
+        *lane_bytes = lane_bytes
+            .checked_add(request_bytes)
+            .expect("admission preflight checked the request byte total");
         state.operations.insert(
             key.clone(),
             OperationRecord {
                 class: OperationClass::Ordinary,
+                lane,
                 generation,
                 metadata: metadata.clone(),
                 request_bytes,
@@ -405,6 +477,33 @@ impl OperationTable {
         })
     }
 
+    /// Whether `lane` has a free slot for a request of `request_bytes`. The
+    /// sidecar request queue asks before it takes a waiting request, so a
+    /// request leaves the queue only when its admission can succeed.
+    pub(crate) fn has_lane_capacity(&self, lane: AdmissionLane, request_bytes: usize) -> bool {
+        let state = self.lock_state();
+        let lane_count = state
+            .operations
+            .values()
+            .filter(|record| record.class == OperationClass::Ordinary && record.lane == lane)
+            .count();
+        match lane {
+            AdmissionLane::Priority => lane_count < self.inner.limits.max_priority_requests,
+            AdmissionLane::Ordinary => {
+                lane_count < self.inner.limits.max_requests
+                    && state
+                        .in_flight_request_bytes
+                        .checked_add(request_bytes)
+                        .is_some_and(|total| total <= self.inner.limits.max_request_bytes)
+            }
+        }
+    }
+
+    /// Resolves after an operation is released or the table changes.
+    pub(crate) fn changed(&self) -> tokio::sync::futures::Notified<'_> {
+        self.inner.changed.notified()
+    }
+
     /// Test-only admission probe. Production routing uses [`Self::admit`] once
     /// and releases the resulting operation if output reservation fails.
     #[cfg(test)]
@@ -415,7 +514,13 @@ impl OperationTable {
         request_bytes: usize,
     ) -> Result<(), RequestAdmissionError> {
         let state = self.lock_state();
-        self.check_admission_locked(&state, key, metadata, request_bytes)
+        self.check_admission_locked(
+            &state,
+            key,
+            metadata,
+            request_bytes,
+            AdmissionLane::Ordinary,
+        )
     }
 
     fn check_admission_locked(
@@ -424,6 +529,7 @@ impl OperationTable {
         key: &RequestOperationKey,
         metadata: &RequestOperationMetadata,
         request_bytes: usize,
+        lane: AdmissionLane,
     ) -> Result<(), RequestAdmissionError> {
         let ownership_connection_id = ownership_connection_id(&metadata.ownership);
         if ownership_connection_id != key.connection_id {
@@ -454,11 +560,22 @@ impl OperationTable {
         if state.operations.contains_key(key) {
             return Err(RequestAdmissionError::DuplicateRequest { key: key.clone() });
         }
-        let ordinary_count = state
+        let lane_count = state
             .operations
             .values()
-            .filter(|record| record.class == OperationClass::Ordinary)
+            .filter(|record| record.class == OperationClass::Ordinary && record.lane == lane)
             .count();
+        if lane == AdmissionLane::Priority {
+            if lane_count >= self.inner.limits.max_priority_requests {
+                return Err(RequestAdmissionError::PriorityCountLimit {
+                    current: lane_count,
+                    requested: 1,
+                    limit: self.inner.limits.max_priority_requests,
+                });
+            }
+            return Ok(());
+        }
+        let ordinary_count = lane_count;
         if ordinary_count >= self.inner.limits.max_requests {
             return Err(RequestAdmissionError::CountLimit {
                 current: ordinary_count,
@@ -611,6 +728,7 @@ impl OperationTable {
             .map(|(key, _)| key.clone())
             .collect::<Vec<_>>();
         state.in_flight_request_bytes = 0;
+        state.in_flight_priority_bytes = 0;
         let outcomes = keys
             .into_iter()
             .filter_map(|key| state.operations.remove(&key).map(|record| (key, record)))
@@ -679,24 +797,27 @@ impl OperationTable {
 
     fn release(&self, key: &RequestOperationKey, generation: u64, request_bytes: usize) {
         let mut state = self.lock_state();
-        let should_remove = state.operations.get(key).is_some_and(|record| {
-            record.class == OperationClass::Ordinary && record.generation == generation
-        });
-        if should_remove {
+        let lane = state
+            .operations
+            .get(key)
+            .filter(|record| {
+                record.class == OperationClass::Ordinary && record.generation == generation
+            })
+            .map(|record| record.lane);
+        if let Some(lane) = lane {
             state.operations.remove(key);
-            state.in_flight_request_bytes = state
-                .in_flight_request_bytes
-                .checked_sub(request_bytes)
-                .unwrap_or_else(|| {
-                    tracing::error!(
-                        request_id = key.request_id,
-                        connection_id = %key.connection_id,
-                        request_bytes,
-                        retained_bytes = state.in_flight_request_bytes,
-                        "ERR_AGENTOS_REQUEST_ADMISSION_ACCOUNTING: request byte reservation underflow"
-                    );
-                    0
-                });
+            let lane_bytes = state.lane_bytes_mut(lane);
+            *lane_bytes = lane_bytes.checked_sub(request_bytes).unwrap_or_else(|| {
+                tracing::error!(
+                    request_id = key.request_id,
+                    connection_id = %key.connection_id,
+                    request_bytes,
+                    retained_bytes = *lane_bytes,
+                    ?lane,
+                    "ERR_AGENTOS_REQUEST_ADMISSION_ACCOUNTING: request byte reservation underflow"
+                );
+                0
+            });
             self.inner.changed.notify_waiters();
         }
     }
@@ -881,6 +1002,11 @@ pub(crate) enum RequestAdmissionError {
         requested: usize,
         limit: usize,
     },
+    PriorityCountLimit {
+        current: usize,
+        requested: usize,
+        limit: usize,
+    },
     ByteLimit {
         current: usize,
         requested: usize,
@@ -907,9 +1033,23 @@ pub(crate) enum RequestAdmissionError {
 }
 
 impl RequestAdmissionError {
+    /// Whether the request can be admitted once in-flight work finishes, so it
+    /// should wait in the sidecar request queue instead of being rejected. A
+    /// request larger than the whole byte budget can never be admitted.
+    pub(crate) fn waits_for_capacity(&self) -> bool {
+        match self {
+            Self::CountLimit { .. } | Self::PriorityCountLimit { .. } => true,
+            Self::ByteLimit {
+                requested, limit, ..
+            } => requested <= limit,
+            _ => false,
+        }
+    }
+
     pub(crate) fn code(&self) -> &'static str {
         match self {
             Self::CountLimit { .. } => "ERR_AGENTOS_IN_FLIGHT_REQUEST_LIMIT",
+            Self::PriorityCountLimit { .. } => "ERR_AGENTOS_IN_FLIGHT_PRIORITY_REQUEST_LIMIT",
             Self::ByteLimit { .. } => "ERR_AGENTOS_IN_FLIGHT_REQUEST_BYTE_LIMIT",
             Self::DuplicateRequest { .. } => "ERR_AGENTOS_DUPLICATE_REQUEST_ID",
             Self::RegistryClosed { .. }
@@ -922,6 +1062,7 @@ impl RequestAdmissionError {
     pub(crate) fn configuration_path(&self) -> Option<&'static str> {
         match self {
             Self::CountLimit { .. } => Some(IN_FLIGHT_REQUEST_COUNT_PATH),
+            Self::PriorityCountLimit { .. } => Some(IN_FLIGHT_PRIORITY_REQUEST_COUNT_PATH),
             Self::ByteLimit { .. } => Some(IN_FLIGHT_REQUEST_BYTES_PATH),
             _ => None,
         }
@@ -938,6 +1079,15 @@ impl fmt::Display for RequestAdmissionError {
             } => write!(
                 formatter,
                 "{}: in-flight requests used {current}, requested {requested}, limit {limit}; raise {IN_FLIGHT_REQUEST_COUNT_PATH}",
+                self.code()
+            ),
+            Self::PriorityCountLimit {
+                current,
+                requested,
+                limit,
+            } => write!(
+                formatter,
+                "{}: in-flight priority requests used {current}, requested {requested}, limit {limit}; raise {IN_FLIGHT_PRIORITY_REQUEST_COUNT_PATH}",
                 self.code()
             ),
             Self::ByteLimit {
@@ -1040,6 +1190,7 @@ impl ProgressOperationView {
             RequestOperationLimits {
                 max_requests: limits.max_requests,
                 max_request_bytes: limits.max_request_bytes,
+                max_priority_requests: limits.max_requests,
             },
             limits,
         )
@@ -1111,6 +1262,8 @@ impl ProgressOperationView {
             key.clone(),
             OperationRecord {
                 class: OperationClass::Progress,
+                // Progress requests have their own budget; the lane is unused.
+                lane: AdmissionLane::Ordinary,
                 generation,
                 metadata: RequestOperationMetadata::new(
                     ownership,
@@ -1545,6 +1698,7 @@ mod tests {
         OperationTable::new(RequestOperationLimits {
             max_requests,
             max_request_bytes,
+            max_priority_requests: max_requests,
         })
     }
 
@@ -1883,6 +2037,7 @@ mod tests {
             RequestOperationLimits {
                 max_requests: 2,
                 max_request_bytes: 16,
+                max_priority_requests: 2,
             },
             ProgressRequestLimits {
                 max_requests: 2,
@@ -1918,6 +2073,7 @@ mod tests {
             RequestOperationLimits {
                 max_requests: 4,
                 max_request_bytes: 64,
+                max_priority_requests: 4,
             },
             ProgressRequestLimits {
                 max_requests: 4,

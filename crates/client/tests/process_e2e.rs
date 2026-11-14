@@ -953,3 +953,56 @@ async fn shell_children_of_every_runtime_run_to_completion() {
     assert_eq!(stdout, "42\n2\npython-exit-1\nnested\n");
     assert_eq!(exit_code, 0);
 }
+
+/// Stdin written right after `spawn`, before its `Execute` is acknowledged, reaches the process in
+/// call order. TS queues writes behind the start the same way, so a caller need not await between
+/// starting a process and writing to it.
+#[tokio::test]
+async fn stdin_written_right_after_spawn_arrives_in_order() {
+    const TEST: &str = "stdin_written_right_after_spawn_arrives_in_order";
+    const ITERATIONS: usize = 40;
+    if !common::require_sidecar(TEST) {
+        return;
+    }
+    let os = common::new_vm().await;
+    let result = async {
+        for iteration in 0..ITERATIONS {
+            // The exit status reports what the guest read before EOF.
+            let process = os.spawn_process(
+                "node",
+                vec![
+                    "-e".into(),
+                    "let d = ''; process.stdin.on('data', (c) => (d += c)); \
+                     process.stdin.on('end', () => process.exit(d === 'ab' ? 0 : d === 'ba' ? 2 : d === '' ? 3 : 4))"
+                        .into(),
+                ],
+                SpawnOptions::default(),
+            )?;
+            os.write_process_stdin(process.pid, StdinInput::Text("a".into()))?;
+            os.write_process_stdin(process.pid, StdinInput::Text("b".into()))?;
+            os.close_process_stdin(process.pid)?;
+            let exit = tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                os.wait_process(process.pid),
+            )
+            .await
+            .map_err(|_| anyhow::anyhow!("iteration {iteration}: stdin never reached EOF"))??;
+            anyhow::ensure!(
+                exit == 0,
+                "iteration {iteration}: the process read {} instead of \"ab\"",
+                match exit {
+                    2 => "\"ba\"",
+                    3 => "nothing",
+                    _ => "other bytes",
+                }
+            );
+        }
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+    tokio::time::timeout(std::time::Duration::from_secs(10), os.shutdown())
+        .await
+        .expect("bounded VM cleanup")
+        .expect("shutdown VM");
+    result.unwrap();
+}

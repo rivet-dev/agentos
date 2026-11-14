@@ -13,7 +13,7 @@ use std::sync::atomic::Ordering;
 use anyhow::{Context, Result};
 use scc::HashMap as SccHashMap;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, watch};
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
 use agentos_sidecar_client::wire::{self, EventPayload, ProcessSnapshotStatus, StreamChannel};
@@ -93,6 +93,160 @@ fn stdin_has_no_reader(pid: u32) -> ClientError {
     ClientError::Kernel {
         code: String::from("EPIPE"),
         message: format!("process {pid} has exited, so its stdin has no reader"),
+    }
+}
+
+/// Stdin writes and closes that may wait in one process's queue at once.
+const PROCESS_STDIN_QUEUE_LIMIT: usize = 1024;
+
+type StdinReply = oneshot::Sender<std::result::Result<(), ClientError>>;
+
+pub(crate) enum StdinOp {
+    Write {
+        chunk: Vec<u8>,
+        reply: Option<StdinReply>,
+    },
+    Close {
+        reply: Option<StdinReply>,
+    },
+}
+
+/// One ordered stdin queue per process. Its writer sends each write and
+/// close to the sidecar in call order, and starts only after the process's
+/// `Execute` is acknowledged, like the TS client's `startPromise`.
+#[derive(Clone)]
+pub(crate) struct ProcessStdin {
+    tx: mpsc::Sender<StdinOp>,
+}
+
+impl ProcessStdin {
+    pub(crate) fn channel() -> (Self, mpsc::Receiver<StdinOp>) {
+        let (tx, rx) = mpsc::channel(PROCESS_STDIN_QUEUE_LIMIT);
+        (Self { tx }, rx)
+    }
+
+    fn enqueue(&self, pid: u32, op: StdinOp) -> std::result::Result<(), ClientError> {
+        self.tx.try_send(op).map_err(|error| match error {
+            mpsc::error::TrySendError::Full(_) => stdin_queue_limit_error(pid),
+            // The writer is gone: the process never started or has ended.
+            mpsc::error::TrySendError::Closed(_) => stdin_has_no_reader(pid),
+        })
+    }
+
+    /// Queue an operation and wait until the sidecar answered it.
+    async fn submit(
+        &self,
+        pid: u32,
+        op: impl FnOnce(Option<StdinReply>) -> StdinOp,
+    ) -> std::result::Result<(), ClientError> {
+        let (reply, answered) = oneshot::channel();
+        self.enqueue(pid, op(Some(reply)))?;
+        answered
+            .await
+            .unwrap_or_else(|_| Err(stdin_has_no_reader(pid)))
+    }
+}
+
+fn stdin_queue_limit_error(pid: u32) -> ClientError {
+    ClientError::ResourceLimit {
+        code: String::from("ERR_AGENTOS_RESOURCE_LIMIT"),
+        message: format!(
+            "process {pid} already has {PROCESS_STDIN_QUEUE_LIMIT} stdin writes waiting; await earlier writes"
+        ),
+        details: Box::new(crate::ResourceLimitDetails {
+            limit_name: Some(String::from("process_stdin_queue_entries")),
+            configured_limit: Some(PROCESS_STDIN_QUEUE_LIMIT as u64),
+            requested: Some(PROCESS_STDIN_QUEUE_LIMIT as u64 + 1),
+            unit: Some(String::from("writes")),
+            scope: Some(String::from("process")),
+            operation: Some(String::from("process.writeStdin")),
+            retryable: Some(true),
+            ..Default::default()
+        }),
+    }
+}
+
+/// Drain one process's stdin queue in order. A write without a reply logs its
+/// failure, as the sync API has no caller to return it to.
+pub(crate) async fn run_stdin_writer(
+    transport: std::sync::Arc<crate::transport::SidecarProcess>,
+    ownership: wire::OwnershipScope,
+    pid: u32,
+    process_id: String,
+    mut ops: mpsc::Receiver<StdinOp>,
+) {
+    while let Some(op) = ops.recv().await {
+        let (result, reply, action) = match op {
+            StdinOp::Write { chunk, reply } => (
+                send_wire_stdin(&transport, ownership.clone(), &process_id, chunk).await,
+                reply,
+                "write_process_stdin",
+            ),
+            StdinOp::Close { reply } => (
+                send_wire_close_stdin(&transport, ownership.clone(), &process_id).await,
+                reply,
+                "close_process_stdin",
+            ),
+        };
+        match reply {
+            // A caller that stopped waiting drops its receiver; nothing to report to.
+            Some(reply) => drop(reply.send(result)),
+            None => {
+                if let Err(error) = result {
+                    tracing::warn!(?error, pid, %process_id, "{action} failed");
+                }
+            }
+        }
+    }
+}
+
+async fn send_wire_stdin(
+    transport: &crate::transport::SidecarProcess,
+    ownership: wire::OwnershipScope,
+    process_id: &str,
+    chunk: Vec<u8>,
+) -> std::result::Result<(), ClientError> {
+    let response = transport
+        .request_wire(
+            ownership,
+            wire::RequestPayload::WriteStdinRequest(wire::WriteStdinRequest {
+                process_id: process_id.to_owned(),
+                chunk,
+            }),
+        )
+        .await?;
+    match response {
+        wire::ResponsePayload::StdinWrittenResponse(_) => Ok(()),
+        wire::ResponsePayload::RejectedResponse(rejected) => {
+            Err(ClientError::from_rejection(rejected))
+        }
+        other => Err(ClientError::Sidecar(format!(
+            "write process stdin: unexpected response {other:?}"
+        ))),
+    }
+}
+
+async fn send_wire_close_stdin(
+    transport: &crate::transport::SidecarProcess,
+    ownership: wire::OwnershipScope,
+    process_id: &str,
+) -> std::result::Result<(), ClientError> {
+    let response = transport
+        .request_wire(
+            ownership,
+            wire::RequestPayload::CloseStdinRequest(wire::CloseStdinRequest {
+                process_id: process_id.to_owned(),
+            }),
+        )
+        .await?;
+    match response {
+        wire::ResponsePayload::StdinClosedResponse(_) => Ok(()),
+        wire::ResponsePayload::RejectedResponse(rejected) => {
+            Err(ClientError::from_rejection(rejected))
+        }
+        other => Err(ClientError::Sidecar(format!(
+            "close process stdin: unexpected response {other:?}"
+        ))),
     }
 }
 
@@ -823,6 +977,8 @@ impl AgentOs {
         // Seeded `None`; filled with the kernel pid once the `Execute` response lands so
         // `all_processes`/`process_tree` can remap the kernel snapshot back to this display pid.
         let (kernel_pid_tx, _) = watch::channel::<Option<u32>>(None);
+        // Writes made before the `Execute` response wait here, in call order.
+        let (stdin, stdin_ops) = ProcessStdin::channel();
         let entry = ProcessEntry {
             command: command.to_owned(),
             args: args.clone(),
@@ -837,6 +993,7 @@ impl AgentOs {
             execution_id: None,
             execution_generation: None,
             started_at: epoch_ms_now() as i64,
+            stdin: stdin.clone(),
         };
         // `spawn` is documented as overwriting any prior entry for a freshly allocated pid; the pid
         // is monotonic so a collision is not expected.
@@ -860,6 +1017,8 @@ impl AgentOs {
                 output_tx,
                 exit_tx,
                 kernel_pid_tx,
+                stdin,
+                stdin_ops,
             )
             .await;
         });
@@ -873,17 +1032,16 @@ impl AgentOs {
         pid: u32,
         data: StdinInput,
     ) -> std::result::Result<(), ClientError> {
-        let Some(process_id) = self.live_process_id(pid)? else {
+        let Some(stdin) = self.live_process_stdin(pid)? else {
             return Err(stdin_has_no_reader(pid));
         };
-        let chunk: Vec<u8> = stdin_to_bytes(data);
-        let this = self.clone();
-        tokio::spawn(async move {
-            if let Err(error) = this.write_wire_stdin(&process_id, chunk).await {
-                tracing::warn!(?error, pid, "write_process_stdin failed");
-            }
-        });
-        Ok(())
+        stdin.enqueue(
+            pid,
+            StdinOp::Write {
+                chunk: stdin_to_bytes(data),
+                reply: None,
+            },
+        )
     }
 
     /// Write stdin and wait for the sidecar acknowledgement.
@@ -892,11 +1050,12 @@ impl AgentOs {
         pid: u32,
         data: StdinInput,
     ) -> std::result::Result<(), ClientError> {
-        let Some(process_id) = self.live_process_id(pid)? else {
+        let Some(stdin) = self.live_process_stdin(pid)? else {
             return Err(stdin_has_no_reader(pid));
         };
-        let result = self
-            .write_wire_stdin(&process_id, stdin_to_bytes(data))
+        let chunk = stdin_to_bytes(data);
+        let result = stdin
+            .submit(pid, |reply| StdinOp::Write { chunk, reply })
             .await;
         match result {
             // The write raced the exit.
@@ -907,16 +1066,10 @@ impl AgentOs {
 
     /// Close a spawned process's stdin. SYNC. Errors with `ProcessNotFound`.
     pub fn close_process_stdin(&self, pid: u32) -> std::result::Result<(), ClientError> {
-        let Some(process_id) = self.live_process_id(pid)? else {
+        let Some(stdin) = self.live_process_stdin(pid)? else {
             return Ok(());
         };
-        let this = self.clone();
-        tokio::spawn(async move {
-            if let Err(error) = this.close_wire_stdin(&process_id).await {
-                tracing::warn!(?error, pid, "close_process_stdin failed");
-            }
-        });
-        Ok(())
+        stdin.enqueue(pid, StdinOp::Close { reply: None })
     }
 
     /// Close stdin and wait for the sidecar acknowledgement.
@@ -924,10 +1077,10 @@ impl AgentOs {
         &self,
         pid: u32,
     ) -> std::result::Result<(), ClientError> {
-        let Some(process_id) = self.live_process_id(pid)? else {
+        let Some(stdin) = self.live_process_stdin(pid)? else {
             return Ok(());
         };
-        self.close_wire_stdin(&process_id).await
+        stdin.submit(pid, |reply| StdinOp::Close { reply }).await
     }
 
     /// Subscribe to the unified stdout/stderr event stream for a process.
@@ -1590,6 +1743,23 @@ impl AgentOs {
 
     /// The wire id of a tracked process, or `None` once its exit was observed. Stdin written after
     /// exit has no reader and fails with `EPIPE`; closing it then succeeds, as on Linux.
+    fn live_process_stdin(
+        &self,
+        pid: u32,
+    ) -> std::result::Result<Option<ProcessStdin>, ClientError> {
+        self.inner()
+            .processes
+            .read(&pid, |_, entry| {
+                entry
+                    .exit_tx
+                    .borrow()
+                    .exit_code()
+                    .is_none()
+                    .then(|| entry.stdin.clone())
+            })
+            .ok_or(ClientError::ProcessNotFound(pid))
+    }
+
     fn live_process_id(&self, pid: u32) -> std::result::Result<Option<String>, ClientError> {
         self.inner()
             .processes
@@ -1682,46 +1852,11 @@ impl AgentOs {
         process_id: &str,
         chunk: Vec<u8>,
     ) -> std::result::Result<(), ClientError> {
-        let response = self
-            .transport()
-            .request_wire(
-                self.vm_scope(),
-                wire::RequestPayload::WriteStdinRequest(wire::WriteStdinRequest {
-                    process_id: process_id.to_owned(),
-                    chunk,
-                }),
-            )
-            .await?;
-        match response {
-            wire::ResponsePayload::StdinWrittenResponse(_) => Ok(()),
-            wire::ResponsePayload::RejectedResponse(rejected) => {
-                Err(ClientError::from_rejection(rejected))
-            }
-            other => Err(ClientError::Sidecar(format!(
-                "write process stdin: unexpected response {other:?}"
-            ))),
-        }
+        send_wire_stdin(self.transport(), self.vm_scope(), process_id, chunk).await
     }
 
     async fn close_wire_stdin(&self, process_id: &str) -> std::result::Result<(), ClientError> {
-        let response = self
-            .transport()
-            .request_wire(
-                self.vm_scope(),
-                wire::RequestPayload::CloseStdinRequest(wire::CloseStdinRequest {
-                    process_id: process_id.to_owned(),
-                }),
-            )
-            .await?;
-        match response {
-            wire::ResponsePayload::StdinClosedResponse(_) => Ok(()),
-            wire::ResponsePayload::RejectedResponse(rejected) => {
-                Err(ClientError::from_rejection(rejected))
-            }
-            other => Err(ClientError::Sidecar(format!(
-                "close process stdin: unexpected response {other:?}"
-            ))),
-        }
+        send_wire_close_stdin(self.transport(), self.vm_scope(), process_id).await
     }
 
     async fn signal_wire_process(
@@ -1846,6 +1981,8 @@ impl AgentOs {
         output_tx: broadcast::Sender<ProcessOutput>,
         exit_tx: watch::Sender<ProcessOutcome>,
         kernel_pid_tx: watch::Sender<Option<u32>>,
+        stdin: ProcessStdin,
+        stdin_ops: mpsc::Receiver<StdinOp>,
     ) {
         match self
             .send_execute(
@@ -1864,12 +2001,21 @@ impl AgentOs {
                 if let Some(kernel_pid) = started.pid {
                     kernel_pid_tx.send_replace(Some(kernel_pid));
                 }
-                // Closed after Execute on this task, so the sidecar always knows the process.
+                // The sidecar knows the process now; send queued stdin in order.
+                tokio::spawn(run_stdin_writer(
+                    std::sync::Arc::clone(self.transport()),
+                    self.vm_scope(),
+                    pid,
+                    process_id.clone(),
+                    stdin_ops,
+                ));
+                // Closed behind any writes made before the start, as in TS.
                 if options.stream_stdin == Some(false) {
-                    if let Err(error) = self.close_wire_stdin(&process_id).await {
+                    if let Err(error) = stdin.enqueue(pid, StdinOp::Close { reply: None }) {
                         tracing::warn!(?error, pid, %process_id, "spawn: closing stdin failed");
                     }
                 }
+                drop(stdin);
             }
             Err(error) => {
                 // Launch rejection/transport failure is not a guest exit.
@@ -1884,6 +2030,8 @@ impl AgentOs {
                     timestamp_ms: None,
                 });
                 tracing::error!(?error, pid, %process_id, "spawn: Execute request failed");
+                // No writer starts: queued writes fail, as the process has no stdin.
+                drop(stdin_ops);
                 let failure = ProcessOutcome::launch_failure(&process_id, error);
                 let rejected = failure.rejected();
                 exit_tx.send_replace(failure);
@@ -2616,6 +2764,7 @@ mod tests {
             execution_id: None,
             execution_generation: None,
             started_at: 0,
+            stdin: super::ProcessStdin::channel().0,
         };
         let _ = processes.insert(1, entry);
 
@@ -2682,6 +2831,7 @@ mod tests {
             execution_id: None,
             execution_generation: None,
             started_at: 0,
+            stdin: super::ProcessStdin::channel().0,
         };
 
         assert_eq!(

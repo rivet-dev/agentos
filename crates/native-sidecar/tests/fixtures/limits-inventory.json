@@ -515,6 +515,12 @@
     "rationale": "Bounded SDK fan-out channel capacity used for flow control; not a sidecar VM resource policy."
   },
   {
+    "name": "PROCESS_STDIN_QUEUE_LIMIT",
+    "path": "crates/client/src/process.rs",
+    "class": "policy-deferred",
+    "rationale": "Fixed per-process count of stdin writes and closes the Rust client holds until the execute response arrives."
+  },
+  {
     "name": "SHELL_DATA_CHANNEL_CAPACITY",
     "path": "crates/client/src/shell.rs",
     "class": "invariant",
@@ -2004,6 +2010,39 @@
     "wired": "RuntimeConfig.protocol.max_in_flight_requests"
   },
   {
+    "name": "DEFAULT_PROTOCOL_MAX_IN_FLIGHT_PRIORITY_REQUESTS",
+    "path": "crates/runtime/src/lib.rs",
+    "class": "policy",
+    "rationale": "Default for the priority admission lane (teardown and live-process stdin/PTY), separate from ordinary requests so a VM-create flood cannot delay or strand them.",
+    "wired": "RuntimeConfig.protocol.max_in_flight_priority_requests"
+  },
+  {
+    "name": "DEFAULT_PROTOCOL_REQUEST_QUEUE_LIMIT",
+    "path": "crates/runtime/src/lib.rs",
+    "class": "policy",
+    "rationale": "Default per-lane sidecar request queue bound; requests beyond it get a typed retryable rejection.",
+    "wired": "RuntimeConfig.protocol.request_queue_limit"
+  },
+  {
+    "name": "DEFAULT_PROTOCOL_REQUEST_QUEUE_BYTES",
+    "path": "crates/runtime/src/lib.rs",
+    "class": "policy",
+    "rationale": "Default per-lane bound on decoded request bytes held in the sidecar request queue.",
+    "wired": "RuntimeConfig.protocol.request_queue_bytes"
+  },
+  {
+    "name": "REQUEST_QUEUE_LIMIT_CODE",
+    "path": "crates/native-sidecar/src/stdio/request_queue.rs",
+    "class": "invariant",
+    "rationale": "Error code string for a full sidecar request queue; not a numeric limit."
+  },
+  {
+    "name": "QUEUE_LIMIT_PATH",
+    "path": "crates/native-sidecar/src/stdio/request_queue.rs",
+    "class": "invariant",
+    "rationale": "Diagnostic name of RuntimeConfig.protocol.request_queue_limit for queue errors; not a separate numeric limit."
+  },
+  {
     "name": "DEFAULT_PROTOCOL_MAX_INGRESS_BYTES",
     "path": "crates/runtime/src/lib.rs",
     "class": "policy",
@@ -2107,6 +2146,13 @@
     "class": "policy",
     "rationale": "Default for the configured process-wide runtime admission or lifecycle bound.",
     "wired": "RuntimeConfig.vm_executor_teardown_timeout_ms"
+  },
+  {
+    "name": "DEFAULT_PROTOCOL_REQUEST_QUEUE_DEADLINE_MS",
+    "path": "crates/runtime/src/lib.rs",
+    "class": "policy",
+    "rationale": "Default per-lane wait before a queued request fails with ERR_AGENTOS_REQUEST_QUEUE_TIMEOUT.",
+    "wired": "RuntimeConfig.protocol.request_queue_deadline_ms"
   },
   {
     "name": "MAX_FALLBACK_MESSAGE_BYTES",
@@ -2428,6 +2474,12 @@
     "rationale": "Teardown drain heuristic, not a guest-visible bound."
   },
   {
+    "name": "PROCESS_STDIN_QUEUE_LIMIT",
+    "path": "packages/core/src/sidecar/rpc-client.ts",
+    "class": "policy-deferred",
+    "rationale": "Fixed per-process count of stdin writes and closes the TypeScript client holds until the process launch is confirmed; mirrors the Rust client."
+  },
+  {
     "name": "DEFAULT_WAIT_TIMEOUT_MS",
     "path": "packages/core/src/test/terminal-harness.ts",
     "class": "invariant",
@@ -2465,6 +2517,20 @@
     "class": "policy",
     "rationale": "Default maximum bytes returned by one sidecar-owned replay read.",
     "wired": "VmLimits.process.output_replay_page_bytes"
+  },
+  {
+    "name": "DEFAULT_REACTOR_SHUTDOWN_DEADLINE_MS",
+    "path": "crates/native-sidecar-core/src/limits.rs",
+    "class": "policy",
+    "rationale": "Default bound on VM teardown and SQLite close before the generation is quarantined.",
+    "wired": "VmLimits.reactor.shutdown_deadline_ms"
+  },
+  {
+    "name": "DEFAULT_REACTOR_OPERATION_DEADLINE_MS",
+    "path": "crates/native-sidecar-core/src/limits.rs",
+    "class": "policy",
+    "rationale": "Default bound on one reactor operation before it fails with a typed deadline error.",
+    "wired": "VmLimits.reactor.operation_deadline_ms"
   },
   {
     "name": "MAX_WIRE_PAGE_VALUE",

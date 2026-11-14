@@ -94,6 +94,10 @@ launch or lost exit observation rejects the wait instead of inventing an exit
 code. An observation failure does not prove the guest has stopped; inspect the
 VM or recreate it before assuming it is safe to retry work.
 
+When `dispose()` succeeds, a language process that was still running reports
+an exit by `SIGKILL`. In the TypeScript client, an execution still waiting for
+its result rejects with `ERR_AGENTOS_VM_DISPOSED`.
+
 ## Output events and replay
 
 Process output can be replayed after the fact, even after the process has

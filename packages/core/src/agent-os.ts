@@ -2729,6 +2729,8 @@ export class AgentOs {
 	// No completion event can arrive after the sidecar exits, so its close
 	// rejects every execution still waiting for one.
 	private _pendingCompletionRejects = new Set<(error: Error) => void>();
+	/** Set while dispose() runs; resolves once running processes are settled. */
+	private _vmDisposal: Promise<void> | null = null;
 	private _shells = new Map<string, ShellEntry>();
 	// Value is the recorded exit code (undefined until/unless the exit
 	// resolves) so waitShell can still report it after the entry is dropped.
@@ -3490,14 +3492,14 @@ export class AgentOs {
 			};
 			if (admitted.completed) await reconcileCompletion();
 			else {
-				void admitted.completion
-					.then(reconcileCompletion)
-					.catch((error) =>
-						console.error(
-							"[agentos] failed to reconcile spawned process completion",
-							error,
-						),
+				void admitted.completion.then(reconcileCompletion).catch((error) => {
+					// dispose() settles the exit of every process it terminates.
+					if (this._vmDisposal) return;
+					console.error(
+						"[agentos] failed to reconcile spawned process completion",
+						error,
 					);
+				});
 			}
 			return (
 				this._languageProcesses.get(admitted.pid)?.descriptor ?? descriptor
@@ -4312,6 +4314,36 @@ export class AgentOs {
 		};
 	}
 
+	/**
+	 * Settle every language process after DisposeVm. On success the sidecar
+	 * terminated them, so each reports a signalled exit. On failure their
+	 * termination is unproven, so their waits fail with the disposal error.
+	 */
+	private _settleLanguageProcessesAfterDisposal(failure: Error | null): void {
+		if (!failure) {
+			for (const [pid, process] of this._languageProcesses) {
+				if (process.exit) continue;
+				const exit: ProcessExit = {
+					pid,
+					outcome: "signalled",
+					signal: "SIGKILL",
+				};
+				process.exit = exit;
+				process.descriptor = { ...process.descriptor, state: "exited" };
+				for (const handler of process.exitHandlers) handler(exit);
+			}
+		}
+		const pendingError =
+			failure ??
+			new Error(
+				"ERR_AGENTOS_VM_DISPOSED: the VM was disposed before the execution reported completion",
+			);
+		for (const reject of this._pendingCompletionRejects) reject(pendingError);
+		this._pendingCompletionRejects.clear();
+		this._languageProcesses.clear();
+		this._languageProcessIds.clear();
+	}
+
 	/** A completion signal that rejects if the sidecar exits before it resolves. */
 	private _pendingCompletion(): {
 		completion: Promise<void>;
@@ -4607,7 +4639,18 @@ export class AgentOs {
 		const language = this._languageProcesses.get(pid);
 		if (language) {
 			if (language.exit) return language.exit;
-			const result = await this._waitExecutionResult(language.executionId);
+			let result: MappedExecutionResult;
+			try {
+				result = await this._waitExecutionResult(language.executionId);
+			} catch (error) {
+				// Disposal terminates the process in the sidecar and settles its
+				// exit here, so a wait it interrupts reports that exit.
+				if (this._vmDisposal) {
+					await this._vmDisposal;
+					if (language.exit) return language.exit;
+				}
+				throw error;
+			}
 			if (language.exit) return language.exit;
 			const exit: ProcessExit = {
 				pid,
@@ -5908,58 +5951,44 @@ export class AgentOs {
 	async dispose(): Promise<void> {
 		this._cronManager.dispose();
 		const errors: unknown[] = [];
+		let settleDisposal!: () => void;
+		this._vmDisposal = new Promise<void>((resolve) => {
+			settleDisposal = resolve;
+		});
 
 		for (const entry of this._shells.values()) {
 			entry.handle.kill();
 		}
-		const shellExitPromises = [...this._pendingShellExitPromises];
-		const runningLanguageProcesses = [
-			...this._languageProcesses.entries(),
-		].filter(([, process]) => !process.exit);
-		const languageExitPromises = runningLanguageProcesses.map(
-			([, process]) =>
-				new Promise<void>((resolve) => {
-					const handleExit = () => {
-						process.exitHandlers.delete(handleExit);
-						resolve();
-					};
-					process.exitHandlers.add(handleExit);
-				}),
-		);
-		const languageKillResults = await Promise.allSettled(
-			runningLanguageProcesses.map(([pid]) => this._killProcess(pid)),
-		);
-		errors.push(
-			...languageKillResults.flatMap((result) =>
-				result.status === "rejected" ? [result.reason] : [],
-			),
-		);
 		await waitForTrackedExitPromises(
-			[...shellExitPromises, ...languageExitPromises],
+			[...this._pendingShellExitPromises],
 			VM_DISPOSE_DRAIN_TIMEOUT_MS,
 		);
 
 		this._shells.clear();
 		this._processes.clear();
-		this._languageProcesses.clear();
-		this._languageProcessIds.clear();
 		this._executionOutputHandlers.clear();
 		this._executionCompletedHandlers.clear();
 
 		this._disposeSidecarEventListener();
 		this._disposeSidecarCloseListener();
 
+		// One request tears the VM down: the sidecar's DisposeVm terminates every
+		// process still running in it, so there is no kill per process first.
 		const sidecarLease = this._sidecarLease;
 		this._sidecarLease = null;
 		const disposeVm = sidecarLease
 			? sidecarLease.dispose()
 			: this.#kernel.dispose();
 		const hooks = this._disposeHooks.splice(0);
+		let disposalError: Error | null = null;
 		try {
 			await disposeVm;
 		} catch (error) {
 			errors.push(error);
+			disposalError = error instanceof Error ? error : new Error(String(error));
 		}
+		this._settleLanguageProcessesAfterDisposal(disposalError);
+		settleDisposal();
 		const hookResults = await Promise.allSettled(hooks.map((hook) => hook()));
 		errors.push(
 			...hookResults.flatMap((result) =>

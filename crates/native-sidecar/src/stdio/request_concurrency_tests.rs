@@ -180,12 +180,33 @@ impl ProtocolLoopHarness {
         max_requests: usize,
         max_request_bytes: usize,
     ) -> (Self, ProtocolEngine) {
+        let defaults = agentos_runtime::RuntimeProtocolConfig::default();
+        Self::build_with_queue(
+            state,
+            connections,
+            max_requests,
+            max_request_bytes,
+            defaults.request_queue_limit,
+            defaults.request_queue_deadline_ms,
+        )
+    }
+
+    fn build_with_queue(
+        state: Arc<GatedExtensionState>,
+        connections: &[(&str, &[&str])],
+        max_requests: usize,
+        max_request_bytes: usize,
+        request_queue_limit: usize,
+        request_queue_deadline_ms: u64,
+    ) -> (Self, ProtocolEngine) {
         let config = NativeSidecarConfig::default();
         let runtime = agentos_runtime::SidecarRuntime::process(&config.runtime)
             .expect("process runtime for protocol-loop harness");
         let runtime_context = runtime.context();
         let mut protocol = config.runtime.protocol.clone();
         protocol.shutdown_grace_ms = 25;
+        protocol.request_queue_limit = request_queue_limit;
+        protocol.request_queue_deadline_ms = request_queue_deadline_ms;
 
         let ingress_budget = ProtocolBudget::new(
             ProtocolBudgetConfig {
@@ -232,6 +253,7 @@ impl ProtocolLoopHarness {
         let operations = OperationTable::new(crate::request_operations::RequestOperationLimits {
             max_requests,
             max_request_bytes,
+            max_priority_requests: max_requests,
         });
         let progress_requests = operations.progress_requests();
         let output = Arc::new(ProtocolOutputQueue::new(
@@ -473,7 +495,20 @@ async fn start_protocol_loop_with_vm(
     String,
     String,
 ) {
-    let (harness, engine) = ProtocolLoopHarness::build(state, &[], 8, 16 * 1024);
+    start_protocol_loop_with_vm_and_limit(state, 8).await
+}
+
+async fn start_protocol_loop_with_vm_and_limit(
+    state: Arc<GatedExtensionState>,
+    max_requests: usize,
+) -> (
+    ProtocolLoopHarness,
+    tokio::task::JoinHandle<Result<(), Box<dyn Error>>>,
+    String,
+    String,
+    String,
+) {
+    let (harness, engine) = ProtocolLoopHarness::build(state, &[], max_requests, 16 * 1024);
     let engine_task = tokio::task::spawn_local(run_protocol_engine(engine));
     harness.send_request(
         request_frame(
@@ -1821,7 +1856,7 @@ async fn request_concurrency_real_loop_panic_has_one_terminal_and_frees_admissio
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn request_concurrency_real_loop_reports_count_saturation_path() {
+async fn request_concurrency_real_loop_queues_a_request_beyond_the_count_limit() {
     tokio::task::LocalSet::new()
         .run_until(async {
             let state = Arc::new(GatedExtensionState::default());
@@ -1831,24 +1866,94 @@ async fn request_concurrency_real_loop_reports_count_saturation_path() {
             harness.send_request(extension_request(40, "conn", "session", "block:count"), 1);
             state.gate("count").wait_started().await;
             harness.send_request(extension_request(41, "conn", "session", "overflow"), 1);
-            let rejected = harness.response().await;
-            let ResponsePayload::RejectedResponse(rejection) = rejected.payload else {
-                panic!("count saturation must return typed rejection");
-            };
-            assert_eq!(rejection.code, "ERR_AGENTOS_IN_FLIGHT_REQUEST_LIMIT");
-            assert_eq!(
-                rejection.configuration_path.as_deref(),
-                Some("runtime.protocol.maxInFlightRequests"),
+            assert!(
+                tokio::time::timeout(Duration::from_millis(100), harness.output.recv_control())
+                    .await
+                    .is_err(),
+                "a request beyond the count limit waits instead of being rejected"
             );
             state.gate("count").release();
             assert_eq!(harness.response().await.request_id, 40);
+            let queued = harness.response().await;
+            assert_eq!(queued.request_id, 41);
+            assert_eq!(response_payload(&queued), b"overflow");
             finish_cleanly(&harness, engine_task).await;
         })
         .await;
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn request_concurrency_real_loop_reports_byte_saturation_path() {
+async fn request_concurrency_real_loop_disposes_vm_while_ordinary_lane_is_full() {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let state = Arc::new(GatedExtensionState::default());
+            let (harness, engine_task, connection_id, session_id, vm_id) =
+                start_protocol_loop_with_vm_and_limit(Arc::clone(&state), 1).await;
+            harness.send_request(
+                extension_request(70, &connection_id, &session_id, "block:full"),
+                1,
+            );
+            state.gate("full").wait_started().await;
+
+            harness.send_request(
+                guest_filesystem_request(
+                    71,
+                    &connection_id,
+                    &session_id,
+                    &vm_id,
+                    wire::GuestFilesystemOperation::Exists,
+                    "/",
+                    None,
+                ),
+                1,
+            );
+            // Request 71 waits in the full ordinary lane; the dispose does not.
+            assert!(
+                tokio::time::timeout(Duration::from_millis(100), harness.output.recv_control())
+                    .await
+                    .is_err(),
+                "request 71 waits for the full ordinary lane"
+            );
+            harness.send_request(
+                request_frame(
+                    72,
+                    vm_ownership(&connection_id, &session_id, &vm_id),
+                    RequestPayload::DisposeVmRequest(wire::DisposeVmRequest {
+                        reason: wire::DisposeReason::Requested,
+                    }),
+                ),
+                1,
+            );
+            let disposed = harness.response().await;
+            assert_eq!(disposed.request_id, 72);
+            assert!(
+                matches!(&disposed.payload, ResponsePayload::VmDisposedResponse(response) if response.vm_id == vm_id),
+                "dispose must succeed while ordinary work fills the lane: {:?}",
+                disposed.payload,
+            );
+
+            state.gate("full").release();
+            let mut responses = BTreeMap::new();
+            for _ in 0..2 {
+                let response = harness.response().await;
+                responses.insert(response.request_id, response);
+            }
+            assert!(responses.contains_key(&70), "the blocked request finishes");
+            let queued = responses.remove(&71).expect("the queued request is answered");
+            let ResponsePayload::RejectedResponse(gone) = queued.payload else {
+                panic!("a disposed VM must not serve the request that waited for it");
+            };
+            assert!(
+                !gone.code.starts_with("ERR_AGENTOS_REQUEST_QUEUE"),
+                "the queued request ran and found the VM gone: {gone:?}"
+            );
+            finish_cleanly(&harness, engine_task).await;
+        })
+        .await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn request_concurrency_real_loop_rejects_a_request_larger_than_the_byte_budget() {
     tokio::task::LocalSet::new()
         .run_until(async {
             let state = Arc::new(GatedExtensionState::default());
@@ -1857,10 +1962,11 @@ async fn request_concurrency_real_loop_reports_byte_saturation_path() {
             let engine_task = tokio::task::spawn_local(run_protocol_engine(engine));
             harness.send_request(extension_request(50, "conn", "session", "block:bytes"), 1);
             state.gate("bytes").wait_started().await;
-            harness.send_request(extension_request(51, "conn", "session", "overflow"), 1);
+            // Two bytes can never fit a one-byte budget, so waiting cannot help.
+            harness.send_request(extension_request(51, "conn", "session", "overflow"), 2);
             let rejected = harness.response().await;
             let ResponsePayload::RejectedResponse(rejection) = rejected.payload else {
-                panic!("byte saturation must return typed rejection");
+                panic!("an oversized request must return a typed rejection");
             };
             assert_eq!(rejection.code, "ERR_AGENTOS_IN_FLIGHT_REQUEST_BYTE_LIMIT");
             assert_eq!(
@@ -2228,17 +2334,8 @@ async fn request_concurrency_real_loop_retains_admission_through_backpressured_e
                 "terminal publication alone must not release event-batch admission",
             );
 
+            // The batches still hold both slots, so the third request waits.
             harness.send_request(extension_request(74, "conn", "session", "echo"), 1);
-            let rejection = harness.response().await;
-            assert_eq!(rejection.request_id, 74);
-            let ResponsePayload::RejectedResponse(rejection) = rejection.payload else {
-                panic!("third request must receive bounded admission rejection");
-            };
-            assert_eq!(rejection.code, "ERR_AGENTOS_IN_FLIGHT_REQUEST_LIMIT");
-            assert_eq!(
-                rejection.configuration_path.as_deref(),
-                Some("runtime.protocol.maxInFlightRequests"),
-            );
 
             let mut delivered = BTreeSet::new();
             for _ in 0..filler_count.saturating_add(6) {
@@ -2266,6 +2363,11 @@ async fn request_concurrency_real_loop_retains_admission_through_backpressured_e
                     (String::from("b"), String::from("2")),
                 ]),
                 "each finite batch event must drain exactly once",
+            );
+            assert_eq!(
+                harness.response().await.request_id,
+                74,
+                "the queued request runs once the batches release admission",
             );
             tokio::time::timeout(TEST_TIMEOUT, async {
                 while harness.operations.snapshot().in_flight_requests != 0 {
@@ -2411,6 +2513,113 @@ async fn request_concurrency_real_loop_disconnect_cleans_up_without_leaks() {
             assert_eq!(harness.writer.terminal_budget.usage(), (0, 0));
             assert_eq!(harness.writer.progress_budget.usage(), (0, 0));
             assert_eq!(harness.writer.rejection_budget.usage(), (0, 0));
+        })
+        .await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn request_concurrency_real_loop_rejects_when_the_queue_is_full_and_when_a_request_waits_too_long(
+) {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let state = Arc::new(GatedExtensionState::default());
+            let (harness, engine) = ProtocolLoopHarness::build_with_queue(
+                Arc::clone(&state),
+                &[("conn", &["session"])],
+                1,
+                4096,
+                1,
+                200,
+            );
+            let engine_task = tokio::task::spawn_local(run_protocol_engine(engine));
+            harness.send_request(extension_request(80, "conn", "session", "block:queue"), 1);
+            state.gate("queue").wait_started().await;
+            let queued_at = tokio::time::Instant::now();
+            harness.send_request(extension_request(81, "conn", "session", "waits"), 1);
+            harness.send_request(extension_request(82, "conn", "session", "overflow"), 1);
+
+            let full = harness.response().await;
+            assert_eq!(full.request_id, 82);
+            let ResponsePayload::RejectedResponse(full) = full.payload else {
+                panic!("a request that finds the queue full must be rejected");
+            };
+            assert_eq!(full.code, "ERR_AGENTOS_REQUEST_QUEUE_LIMIT");
+            assert_eq!(full.retryable, Some(true));
+            assert_eq!(full.configured_limit, Some(1));
+            assert_eq!(
+                full.configuration_path.as_deref(),
+                Some("runtime.protocol.requestQueueLimit")
+            );
+
+            let expired = harness.response().await;
+            assert_eq!(expired.request_id, 81);
+            assert!(queued_at.elapsed() >= Duration::from_millis(200));
+            let ResponsePayload::RejectedResponse(expired) = expired.payload else {
+                panic!("a request that waits past the deadline must be rejected");
+            };
+            assert_eq!(expired.code, "ERR_AGENTOS_REQUEST_QUEUE_TIMEOUT");
+            assert_eq!(expired.retryable, Some(true));
+            assert_eq!(
+                expired.configuration_path.as_deref(),
+                Some("runtime.protocol.requestQueueDeadlineMs")
+            );
+
+            state.gate("queue").release();
+            assert_eq!(harness.response().await.request_id, 80);
+            finish_cleanly(&harness, engine_task).await;
+        })
+        .await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn request_concurrency_real_loop_serves_stdin_while_ordinary_work_fills_its_lane_and_queue() {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let state = Arc::new(GatedExtensionState::default());
+            let (harness, engine_task, connection_id, session_id, vm_id) =
+                start_protocol_loop_with_vm_and_limit(Arc::clone(&state), 1).await;
+            harness.send_request(
+                extension_request(90, &connection_id, &session_id, "block:flood"),
+                1,
+            );
+            state.gate("flood").wait_started().await;
+            for request_id in 91..94 {
+                harness.send_request(
+                    extension_request(request_id, &connection_id, &session_id, "queued"),
+                    1,
+                );
+            }
+
+            harness.send_request(
+                request_frame(
+                    95,
+                    vm_ownership(&connection_id, &session_id, &vm_id),
+                    RequestPayload::WriteStdinRequest(wire::WriteStdinRequest {
+                        process_id: String::from("missing-process"),
+                        chunk: b"ping\n".to_vec(),
+                    }),
+                ),
+                1,
+            );
+            let stdin = harness.response().await;
+            assert_eq!(
+                stdin.request_id, 95,
+                "stdin is answered while ordinary work holds its lane"
+            );
+            if let ResponsePayload::RejectedResponse(rejection) = &stdin.payload {
+                assert!(
+                    !rejection.code.starts_with("ERR_AGENTOS_REQUEST_QUEUE"),
+                    "stdin must not wait in the ordinary queue: {rejection:?}"
+                );
+            }
+
+            state.gate("flood").release();
+            let mut served = BTreeSet::new();
+            for _ in 90..94 {
+                served.insert(harness.response().await.request_id);
+            }
+            assert_eq!(served, BTreeSet::from([90, 91, 92, 93]));
+            finish_cleanly(&harness, engine_task).await;
         })
         .await;
 }

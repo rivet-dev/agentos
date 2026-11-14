@@ -254,6 +254,12 @@ pub trait PersistenceBridge: BridgeTypes {
         &mut self,
         request: FlushFilesystemStateRequest,
     ) -> Result<(), Self::Error>;
+
+    /// Whether `flush_filesystem_state` keeps the snapshot it receives. A
+    /// bridge that discards it lets VM teardown skip building one.
+    fn persists_filesystem_state(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

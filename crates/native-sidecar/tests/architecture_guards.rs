@@ -942,7 +942,7 @@ fn protocol_ingress_router_only_registers_and_starts_owned_work() {
         );
     }
     assert!(
-        router.contains("operations.admit(")
+        router.contains("operations.admit_in_lane(")
             && router.contains("progress_requests.admit_owned(")
             && router.contains("schedule_prepared_request("),
         "protocol ingress router must reserve, register, and start independently supervised work"

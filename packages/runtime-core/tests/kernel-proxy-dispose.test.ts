@@ -58,8 +58,15 @@ it("preserves a typed disposal rejection through secondary cleanup without fabri
 	expect(proc.exitCode).toBeNull();
 	expect(client.dispose).toHaveBeenCalledOnce();
 	expect(onDispose).toHaveBeenCalledOnce();
+	// The VM can still be alive, so a retry asks the sidecar again and reports
+	// its answer. It resolves only once the sidecar confirms the disposal.
+	await expect(proxy.dispose()).rejects.toBe(rejection);
+	client.disposeVm.mockResolvedValue(undefined);
 	await expect(proxy.dispose()).resolves.toBeUndefined();
-	expect(client.disposeVm).toHaveBeenCalledOnce();
+	await expect(proxy.dispose()).resolves.toBeUndefined();
+	expect(client.disposeVm).toHaveBeenCalledTimes(3);
+	expect(client.dispose).toHaveBeenCalledOnce();
+	expect(proc.exitCode).toBeNull();
 });
 
 it("rejects explicitly at the existing one-second cap and logs a late failure", async () => {

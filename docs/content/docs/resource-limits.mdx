@@ -95,6 +95,32 @@ into several requests by the frame limit and the per-request file limit
 fit in one frame (about 16 MiB). To move larger files, split them into several
 files or mount a host directory.
 
+The sidecar runs at most 128 requests at once from one client. Priority
+requests have a separate limit of 128: VM dispose, process kill and signal,
+execution cancel and delete, stdin writes and closes, and PTY resizes. A flood
+of other work, such as VM creation, never delays them, so a busy sidecar can
+always dispose a VM or drive a running process. These limits are not
+configurable.
+
+The sidecar queues requests above a limit, in arrival order, with a separate
+queue for priority requests. Up to 256 requests (64 MiB) wait in each queue,
+each for at most 5 seconds. A request that finds the queue full fails with
+`ERR_AGENTOS_REQUEST_QUEUE_LIMIT`, and a request that waits too long fails with
+`ERR_AGENTOS_REQUEST_QUEUE_TIMEOUT`. Both errors are retryable (`EAGAIN`) and
+name the limit in `configuration_path`. The queue size, bytes, and 5-second
+deadline are fixed in the shipped sidecar; no client option changes them. The
+limits are sized so that overload surfaces within seconds: at a typical
+VM-creation rate, a longer queue only holds requests that would time out.
+
+Each client holds up to 1024 stdin writes per process until the process's
+launch is confirmed, so writes made right after `spawn()` arrive in order. A
+write beyond that fails with a retryable `ERR_AGENTOS_RESOURCE_LIMIT`
+(`process_stdin_queue_entries`); await earlier writes before sending more.
+
+`dispose()` is one request: the sidecar stops the VM's running processes
+(`SIGTERM`, then `SIGKILL`) and then removes the VM. If `dispose()` fails, the
+VM can still be alive. Call `dispose()` again to retry.
+
 ### Isolate memory
 
 Each V8 isolate that runs guest JavaScript or Python has two memory caps of the

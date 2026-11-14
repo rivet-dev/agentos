@@ -65,6 +65,8 @@ pub(crate) struct ProcessEntry {
     pub execution_generation: Option<u64>,
     /// Epoch milliseconds captured when `spawn` registered this process (TS `Date.now()`).
     pub started_at: i64,
+    /// Ordered stdin queue; its writer starts once `Execute` is acknowledged.
+    pub stdin: crate::process::ProcessStdin,
 }
 
 /// A PTY-backed shell (TS `_shells` value). Keyed by synthetic `shell-N` id.

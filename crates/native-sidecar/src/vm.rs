@@ -25,7 +25,7 @@ use crate::service::{
     normalize_path, plugin_error, root_filesystem_error, validate_permissions_policy, vfs_error,
 };
 use crate::state::{
-    BridgeError, KernelSocketReadinessEvent, KernelSocketReadinessRegistry,
+    ActiveExecutionEvent, BridgeError, KernelSocketReadinessEvent, KernelSocketReadinessRegistry,
     KernelSocketReadinessTarget, QuarantinedVmGeneration, VmConfiguration, VmDnsConfig,
     VmExecutionEngines, VmHandle, VmListenPolicy, VmPendingByteBudget, VmQuarantineReason,
     VmReconciliationSnapshot, VmState, DISPOSE_VM_SIGKILL_GRACE, DISPOSE_VM_SIGTERM_GRACE,
@@ -1432,7 +1432,9 @@ where
         vm: &mut VmState,
     ) -> Result<(), SidecarError> {
         let mut first_error = None;
-        let snapshot = if vm.kernel.root_filesystem_mut().is_some() {
+        let snapshot = if self.bridge.persists_filesystem_state()
+            && vm.kernel.root_filesystem_mut().is_some()
+        {
             match vm
                 .kernel
                 .snapshot_root_filesystem()
@@ -2131,6 +2133,7 @@ where
 {
     let mut first_error = None;
     let process_ids = vm.active_processes.keys().cloned().collect::<Vec<_>>();
+    let mut exited = BTreeSet::new();
     for process_id in &process_ids {
         if let Err(error) =
             NativeSidecar::<B>::kill_process_in_vm(bridge, vm, vm_id, process_id, "SIGTERM")
@@ -2138,27 +2141,40 @@ where
             record_vm_teardown_error(vm_id, "sigterm", error, &mut first_error);
         }
     }
-    if !process_ids.is_empty() {
-        tokio::time::sleep(DISPOSE_VM_SIGTERM_GRACE).await;
-    }
-    for process_id in &process_ids {
+    wait_for_detached_exits(
+        vm,
+        vm_id,
+        &process_ids,
+        &mut exited,
+        DISPOSE_VM_SIGTERM_GRACE,
+    )
+    .await;
+    for process_id in process_ids.iter().filter(|id| !exited.contains(*id)) {
         if let Err(error) =
             NativeSidecar::<B>::kill_process_in_vm(bridge, vm, vm_id, process_id, "SIGKILL")
         {
             record_vm_teardown_error(vm_id, "sigkill", error, &mut first_error);
         }
     }
-    if !process_ids.is_empty() {
-        tokio::time::sleep(DISPOSE_VM_SIGKILL_GRACE).await;
-    }
+    wait_for_detached_exits(
+        vm,
+        vm_id,
+        &process_ids,
+        &mut exited,
+        DISPOSE_VM_SIGKILL_GRACE,
+    )
+    .await;
 
     let kernel_readiness = Arc::clone(&vm.kernel_socket_readiness);
     let unix_address_registry = Arc::clone(&vm.unix_address_registry);
     let remaining = std::mem::take(&mut vm.active_processes);
-    if !remaining.is_empty() {
+    let unconfirmed = remaining
+        .keys()
+        .filter(|process_id| !exited.contains(*process_id))
+        .count();
+    if unconfirmed != 0 {
         eprintln!(
-            "ERR_AGENTOS_VM_FORCED_PROCESS_FINALIZE: vm_id={vm_id} process_count={}",
-            remaining.len()
+            "ERR_AGENTOS_VM_FORCED_PROCESS_FINALIZE: vm_id={vm_id} process_count={unconfirmed}"
         );
     }
     for (process_id, mut process) in remaining {
@@ -2184,6 +2200,48 @@ where
     first_error.map_or(Ok(()), Err)
 }
 
+/// Wait until each listed process reports its exit, or `grace` passes. The
+/// detached VM has no event pump, so teardown reads the exit itself instead of
+/// sleeping out the whole grace. Other events are dropped with the VM.
+async fn wait_for_detached_exits(
+    vm: &mut VmState,
+    vm_id: &str,
+    process_ids: &[String],
+    exited: &mut BTreeSet<String>,
+    grace: Duration,
+) {
+    let deadline = tokio::time::Instant::now() + grace;
+    for process_id in process_ids {
+        if exited.contains(process_id) {
+            continue;
+        }
+        let Some(process) = vm.active_processes.get_mut(process_id) else {
+            continue;
+        };
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return;
+            }
+            match process.execution.poll_event(remaining).await {
+                Ok(Some(ActiveExecutionEvent::Exited(_))) => {
+                    exited.insert(process_id.clone());
+                    break;
+                }
+                Ok(Some(_)) => {}
+                // Timed out, or an execution kind that cannot be awaited.
+                Ok(None) => break,
+                Err(error) => {
+                    eprintln!(
+                        "ERR_AGENTOS_VM_TEARDOWN_CLEANUP: vm_id={vm_id} process_id={process_id} phase=exit_wait error={error}"
+                    );
+                    break;
+                }
+            }
+        }
+    }
+}
+
 fn finish_vm_teardown_owned<B>(
     bridge: &crate::state::SharedBridge<B>,
     vm_id: &str,
@@ -2194,25 +2252,26 @@ where
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
     let mut first_error = None;
-    let snapshot = if vm.kernel.root_filesystem_mut().is_some() {
-        match vm
-            .kernel
-            .snapshot_root_filesystem()
-            .map_err(kernel_error)
-            .and_then(|snapshot| encode_root_snapshot(&snapshot).map_err(root_filesystem_error))
-        {
-            Ok(bytes) => Some(FilesystemSnapshot {
-                format: String::from(ROOT_FILESYSTEM_SNAPSHOT_FORMAT),
-                bytes,
-            }),
-            Err(error) => {
-                record_vm_teardown_error(vm_id, "snapshot", error, &mut first_error);
-                None
+    let snapshot =
+        if bridge.persists_filesystem_state() && vm.kernel.root_filesystem_mut().is_some() {
+            match vm
+                .kernel
+                .snapshot_root_filesystem()
+                .map_err(kernel_error)
+                .and_then(|snapshot| encode_root_snapshot(&snapshot).map_err(root_filesystem_error))
+            {
+                Ok(bytes) => Some(FilesystemSnapshot {
+                    format: String::from(ROOT_FILESYSTEM_SNAPSHOT_FORMAT),
+                    bytes,
+                }),
+                Err(error) => {
+                    record_vm_teardown_error(vm_id, "snapshot", error, &mut first_error);
+                    None
+                }
             }
-        }
-    } else {
-        None
-    };
+        } else {
+            None
+        };
     if let Err(error) = bridge.emit_lifecycle(vm_id, LifecycleState::Terminated) {
         record_vm_teardown_error(vm_id, "lifecycle", error, &mut first_error);
     }

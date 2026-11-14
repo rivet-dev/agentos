@@ -41,7 +41,9 @@ impl OwnershipCoordinatorLimits {
             max_connections: config.resources.max_connections,
             max_sessions_per_connection: config.protocol.max_sessions_per_connection,
             max_vms_per_session: config.fairness.max_vms,
-            max_operations_per_entity: config.protocol.max_in_flight_requests,
+            // Both admission lanes can target one entity, so a VM saturated by
+            // ordinary work still admits the teardown that releases it.
+            max_operations_per_entity: config.protocol.max_admitted_requests(),
             max_internal_event_operations_per_entity: config.protocol.max_process_events,
         }
     }

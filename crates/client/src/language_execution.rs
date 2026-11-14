@@ -1357,6 +1357,7 @@ fn background_submission(
             let (output_tx, _) = broadcast::channel::<ProcessOutput>(1024);
             let (exit_tx, _) = watch::channel(crate::process::ProcessOutcome::Pending);
             let (kernel_pid_tx, _) = watch::channel(Some(pid));
+            let (stdin, stdin_ops) = crate::process::ProcessStdin::channel();
             let operation_id = descriptor.execution_id.clone();
             let entry = ProcessEntry {
                 command: format!("{language} source"),
@@ -1372,8 +1373,18 @@ fn background_submission(
                 execution_id: Some(operation_id.clone()),
                 execution_generation: Some(descriptor.generation),
                 started_at: descriptor.created_at_ms as i64,
+                stdin: stdin.clone(),
             };
             reservation.commit(pid, entry)?;
+            // The execution is already admitted, so its stdin writer starts now.
+            tokio::spawn(crate::process::run_stdin_writer(
+                std::sync::Arc::clone(client.transport()),
+                client.vm_scope(),
+                pid,
+                process_id.clone(),
+                stdin_ops,
+            ));
+            drop(stdin);
             let ownership = client.vm_scope();
             tokio::spawn(async move {
                 loop {

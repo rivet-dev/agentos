@@ -8,9 +8,9 @@ use crate::ownership_coordinator::{
     CoordinatorOperationPermit, OwnershipCoordinator, OwnershipCoordinatorError, VmDisposal,
 };
 use crate::request_operations::{
-    ForcedRequestOutcome, OperationCancellationReason, OperationTable, ProgressOperationView,
-    ProgressRequest, ProgressRequestAdmissionError, RequestAdmissionError, RequestOperation,
-    RequestOperationKey, RequestOperationMetadata, VmConcurrencyClass,
+    AdmissionLane, ForcedRequestOutcome, OperationCancellationReason, OperationTable,
+    ProgressOperationView, ProgressRequest, ProgressRequestAdmissionError, RequestAdmissionError,
+    RequestOperation, RequestOperationKey, RequestOperationMetadata, VmConcurrencyClass,
 };
 use crate::service::CompletedExtensionRequest;
 use crate::service::{CompletedRequest, PreparedMembershipCommit, PreparedRequest};
@@ -284,6 +284,20 @@ impl ProtocolBudget {
             changed: Arc::new(Notify::new()),
             metrics,
         }
+    }
+
+    /// Whether one more frame of `bytes` fits. Only the router reserves
+    /// terminal frames, so a `true` answer holds until it reserves.
+    fn has_room(&self, bytes: usize) -> bool {
+        let state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.frames < self.config.max_frames
+            && state
+                .bytes
+                .checked_add(bytes)
+                .is_some_and(|total| total <= self.config.max_bytes)
     }
 
     fn reserve(&self, bytes: usize) -> Result<ProtocolReservation, ProtocolLimitError> {
@@ -752,6 +766,10 @@ struct ProtocolFrameWriter {
     codec: WireFrameCodec,
     ordinary_budget: ProtocolBudget,
     terminal_budget: ProtocolBudget,
+    /// Terminal responses for the priority admission lane. Kept apart from
+    /// `terminal_budget` so large ordinary responses cannot leave a dispose,
+    /// kill, or stdin write without a response reservation.
+    priority_terminal_budget: ProtocolBudget,
     progress_budget: ProtocolBudget,
     rejection_budget: ProtocolBudget,
     control_observability_budget: ProtocolBudget,
@@ -796,9 +814,16 @@ impl ProtocolFrameWriter {
         protocol: &agentos_runtime::RuntimeProtocolConfig,
         metrics: agentos_runtime::metrics::RuntimeMetrics,
     ) -> Result<Self, io::Error> {
+        let priority_terminal_bytes = protocol.priority_terminal_bytes().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "ERR_AGENTOS_PROTOCOL_CONFIG: runtime.protocol.maxInFlightPriorityRequests * runtime.protocol.terminalFallbackBytes overflows usize",
+            )
+        })?;
         let control_observability_frames = protocol
             .max_control_frames
             .checked_sub(protocol.max_terminal_frames)
+            .and_then(|value| value.checked_sub(protocol.max_in_flight_priority_requests))
             .and_then(|value| value.checked_sub(protocol.max_progress_frames))
             .and_then(|value| value.checked_sub(protocol.max_rejection_frames))
             .ok_or_else(|| {
@@ -810,6 +835,7 @@ impl ProtocolFrameWriter {
         let control_observability_bytes = protocol
             .max_control_bytes
             .checked_sub(protocol.max_terminal_bytes)
+            .and_then(|value| value.checked_sub(priority_terminal_bytes))
             .and_then(|value| value.checked_sub(protocol.max_progress_bytes))
             .and_then(|value| value.checked_sub(protocol.max_rejection_bytes))
             .ok_or_else(|| {
@@ -850,6 +876,14 @@ impl ProtocolFrameWriter {
                 "runtime.protocol.maxTerminalFrames",
                 "runtime.protocol.maxTerminalBytes",
                 "stdio terminal response egress",
+                control_metric,
+            ),
+            priority_terminal_budget: budget(
+                protocol.max_in_flight_priority_requests,
+                priority_terminal_bytes,
+                "runtime.protocol.maxInFlightPriorityRequests",
+                "runtime.protocol.terminalFallbackBytes",
+                "stdio priority terminal response egress",
                 control_metric,
             ),
             progress_budget: budget(
@@ -1047,6 +1081,18 @@ impl ProtocolFrameWriter {
             .map_err(ProtocolTrySendError::Full)
     }
 
+    fn try_reserve_priority_terminal(
+        &self,
+        maximum_encoded_bytes: usize,
+    ) -> Result<ProtocolReservation, ProtocolTrySendError> {
+        if !self.output.is_open() {
+            return Err(self.disconnected_error());
+        }
+        self.priority_terminal_budget
+            .reserve(maximum_encoded_bytes)
+            .map_err(ProtocolTrySendError::Full)
+    }
+
     fn try_reserve_progress(
         &self,
         maximum_encoded_bytes: usize,
@@ -1154,7 +1200,15 @@ impl ProtocolFrameWriter {
         frame: ProtocolFrame,
     ) -> Result<EncodedProtocolFrame, ProtocolTrySendError> {
         let control = Self::is_control(&frame).map_err(ProtocolTrySendError::Rejected)?;
-        if !control || !Arc::ptr_eq(&reservation.budget.state, &expected_budget.state) {
+        let priority_terminal = class == ProtocolOutputClass::Terminal
+            && Arc::ptr_eq(
+                &reservation.budget.state,
+                &self.priority_terminal_budget.state,
+            );
+        if !control
+            || !(priority_terminal
+                || Arc::ptr_eq(&reservation.budget.state, &expected_budget.state))
+        {
             return Err(ProtocolTrySendError::Rejected(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!(
@@ -1607,7 +1661,7 @@ async fn run_async(
     let (extension_completion_tx, extension_completion_rx) =
         channel::<DetachedExtensionCompletion>(extension_service_capacity);
     let (request_completion_tx, request_completion_rx) =
-        channel::<DetachedRequestCompletion>(protocol.max_in_flight_requests.max(1));
+        channel::<DetachedRequestCompletion>(protocol.max_admitted_requests().max(1));
     let reader_codec = codec.clone();
     let reader_frame_writer = frame_writer.clone();
     let writer_error_tx = write_error_tx.clone();
@@ -1904,6 +1958,7 @@ async fn run_protocol_engine(engine: ProtocolEngine) -> Result<(), Box<dyn Error
     // events stay in their durable source queue instead of becoming untracked
     // overflow.
     let mut pending_owned_process_events = VecDeque::<PreparedExtensionServiceCommand>::new();
+    let mut request_queue = RequestQueue::new(&protocol);
 
     let mut limit_warning_closed = false;
     let mut stdin_closed = false;
@@ -2018,6 +2073,42 @@ async fn run_protocol_engine(engine: ProtocolEngine) -> Result<(), Box<dyn Error
                 ),
             }
         }
+        // Queued requests wait for in-flight capacity. Create the wake futures
+        // first, so a release between this drain and the select below still
+        // wakes the router.
+        let operations_changed = request_operations.changed();
+        let terminal_changed = frame_writer.terminal_budget.changed.notified();
+        let priority_terminal_changed = frame_writer.priority_terminal_budget.changed.notified();
+        tokio::pin!(operations_changed);
+        tokio::pin!(terminal_changed);
+        tokio::pin!(priority_terminal_changed);
+        let queue_more_ready = protocol_try!('protocol, drain_request_queue(
+            &mut request_queue,
+            drain_state.is_some(),
+            &mut sidecar,
+            &extension_services,
+            &request_operations,
+            &progress_requests,
+            &ownership_coordinator,
+            &extension_completion_tx,
+            &request_completion_tx,
+            &mut extension_tasks,
+            &mut request_tasks,
+            &mut output_tasks,
+            &frame_writer,
+            protocol.terminal_fallback_bytes,
+            &mut active_sessions,
+            &mut active_connections,
+        ), "ERR_AGENTOS_REQUEST_QUEUE_ROUTE");
+        let queue_waiting = !request_queue.is_empty();
+        let queue_deadline = request_queue.next_deadline();
+        // Routing an ordinary request can produce one rejection. Pull them only
+        // while rejection egress has room, so a burst the host has not read
+        // yet backpressures ingress instead of failing the transport.
+        let rejection_changed = frame_writer.rejection_budget.changed.notified();
+        tokio::pin!(rejection_changed);
+        let rejection_room = frame_writer.rejection_budget.has_room(REJECTION_ROOM_BYTES);
+
         if drain_state.is_some()
             && request_operations.snapshot().in_flight_requests == 0
             && progress_requests.snapshot().in_flight_requests == 0
@@ -2033,6 +2124,7 @@ async fn run_protocol_engine(engine: ProtocolEngine) -> Result<(), Box<dyn Error
             && pending_owned_process_events.is_empty()
             && stdin_rx.is_empty()
             && stdin_control_rx.is_empty()
+            && !queue_waiting
         {
             break;
         }
@@ -2048,6 +2140,7 @@ async fn run_protocol_engine(engine: ProtocolEngine) -> Result<(), Box<dyn Error
             && output_tasks.is_empty()
             && ordinary_event_tasks.is_empty()
             && pending_owned_process_events.is_empty()
+            && !queue_waiting
         {
             break;
         }
@@ -2267,6 +2360,13 @@ async fn run_protocol_engine(engine: ProtocolEngine) -> Result<(), Box<dyn Error
                     "ERR_AGENTOS_SIDECAR_REQUEST_FLUSH"
                 );
             }
+            // Wake the drain at the top of the loop when capacity frees or the
+            // oldest queued request expires.
+            _ = &mut operations_changed, if queue_waiting => {}
+            _ = &mut terminal_changed, if queue_waiting => {}
+            _ = &mut priority_terminal_changed, if queue_waiting => {}
+            _ = tokio::time::sleep_until(queue_deadline.unwrap_or(drain_deadline)), if queue_deadline.is_some() && rejection_room => {}
+            _ = &mut rejection_changed, if !rejection_room => {}
             maybe_control = stdin_control_rx.recv(), if !control_ingress_closed => {
                 match maybe_control {
                     Some(frame) => {
@@ -2286,6 +2386,7 @@ async fn run_protocol_engine(engine: ProtocolEngine) -> Result<(), Box<dyn Error
                             protocol.terminal_fallback_bytes,
                             &mut active_sessions,
                             &mut active_connections,
+                            &mut request_queue,
                         ), "ERR_AGENTOS_PROTOCOL_CONTROL_ROUTE");
                     }
                     None => {
@@ -2308,7 +2409,10 @@ async fn run_protocol_engine(engine: ProtocolEngine) -> Result<(), Box<dyn Error
                     }
                 }
             }
-            maybe_frame = stdin_rx.recv(), if !stdin_closed => {
+            // More queued ordinary work fits now. Priority ingress above wins
+            // first; queued requests precede new ordinary ingress.
+            _ = std::future::ready(()), if queue_more_ready && rejection_room => {}
+            maybe_frame = stdin_rx.recv(), if !stdin_closed && rejection_room => {
                 match maybe_frame {
                     Some(frame) => {
                         let Some(frame) = protocol_try!('protocol,
@@ -2334,6 +2438,7 @@ async fn run_protocol_engine(engine: ProtocolEngine) -> Result<(), Box<dyn Error
                             protocol.terminal_fallback_bytes,
                             &mut active_sessions,
                             &mut active_connections,
+                            &mut request_queue,
                         ), "ERR_AGENTOS_PROTOCOL_REQUEST_ROUTE");
                     }
                     None => {
@@ -3060,9 +3165,10 @@ async fn finalize_protocol_drain(
     report.control_drained = wait_for_control_output_drain(writer, output_grace).await;
     if !report.control_drained {
         eprintln!(
-            "ERR_AGENTOS_PROTOCOL_CONTROL_DRAIN_TIMEOUT: control output did not drain within {}ms; terminal={:?} progress={:?} rejection={:?} observability={:?}",
+            "ERR_AGENTOS_PROTOCOL_CONTROL_DRAIN_TIMEOUT: control output did not drain within {}ms; terminal={:?} priority_terminal={:?} progress={:?} rejection={:?} observability={:?}",
             output_grace.as_millis(),
             writer.terminal_budget.usage(),
+            writer.priority_terminal_budget.usage(),
             writer.progress_budget.usage(),
             writer.rejection_budget.usage(),
             writer.control_observability_budget.usage(),
@@ -3127,14 +3233,17 @@ async fn wait_for_control_output_drain(writer: &ProtocolFrameWriter, grace: Dura
     let deadline = tokio::time::Instant::now() + grace;
     loop {
         let terminal_changed = writer.terminal_budget.changed.notified();
+        let priority_terminal_changed = writer.priority_terminal_budget.changed.notified();
         let progress_changed = writer.progress_budget.changed.notified();
         let rejection_changed = writer.rejection_budget.changed.notified();
         let observability_changed = writer.control_observability_budget.changed.notified();
         tokio::pin!(terminal_changed);
+        tokio::pin!(priority_terminal_changed);
         tokio::pin!(progress_changed);
         tokio::pin!(rejection_changed);
         tokio::pin!(observability_changed);
         terminal_changed.as_mut().enable();
+        priority_terminal_changed.as_mut().enable();
         progress_changed.as_mut().enable();
         rejection_changed.as_mut().enable();
         observability_changed.as_mut().enable();
@@ -3143,6 +3252,7 @@ async fn wait_for_control_output_drain(writer: &ProtocolFrameWriter, grace: Dura
             return false;
         }
         if writer.terminal_budget.usage().0 == 0
+            && writer.priority_terminal_budget.usage().0 == 0
             && writer.progress_budget.usage().0 == 0
             && writer.rejection_budget.usage().0 == 0
             && writer.control_observability_budget.usage().0 == 0
@@ -3153,6 +3263,7 @@ async fn wait_for_control_output_drain(writer: &ProtocolFrameWriter, grace: Dura
         tokio::select! {
             _ = tokio::time::sleep_until(deadline) => return false,
             _ = terminal_changed.as_mut() => {}
+            _ = priority_terminal_changed.as_mut() => {}
             _ = progress_changed.as_mut() => {}
             _ = rejection_changed.as_mut() => {}
             _ = observability_changed.as_mut() => {}
@@ -3177,18 +3288,275 @@ fn route_protocol_frame(
     terminal_fallback_bytes: usize,
     active_sessions: &mut BTreeSet<SessionScope>,
     active_connections: &mut BTreeSet<String>,
+    request_queue: &mut RequestQueue,
 ) -> Result<(), Box<dyn Error>> {
     let AccountedProtocolFrame {
         frame,
         _reservation: ingress_reservation,
     } = accounted_frame;
+    route_frame(
+        frame,
+        ingress_reservation.bytes,
+        RequestOrigin::Ingress,
+        sidecar,
+        services,
+        operations,
+        progress_requests,
+        ownership_coordinator,
+        completion_tx,
+        request_completion_tx,
+        extension_tasks,
+        request_tasks,
+        output_tasks,
+        write_tx,
+        terminal_fallback_bytes,
+        active_sessions,
+        active_connections,
+        request_queue,
+    )
+}
+
+/// Egress room the router needs before it routes a request that may be
+/// rejected. Typed rejections are well under this.
+const REJECTION_ROOM_BYTES: usize = 16 * 1024;
+
+/// Where a routed request came from. A request that leaves the sidecar
+/// request queue keeps its deadline and its place at the head of its lane.
+#[derive(Clone, Copy)]
+enum RequestOrigin {
+    Ingress,
+    Queue { deadline: tokio::time::Instant },
+}
+
+/// Take queued requests that can be admitted now, oldest first: every
+/// admissible priority request, then at most one ordinary request. Admitting
+/// ordinary work can run a synchronous prepare (a VM create takes
+/// milliseconds), so one per router turn lets priority ingress in between.
+/// Returns whether another ordinary request could be admitted now. Expired
+/// requests get their typed timeout rejection. Once the protocol drains,
+/// admission is closed, so routing each request again sends its typed
+/// shutdown rejection.
+#[allow(clippy::too_many_arguments)]
+fn drain_request_queue(
+    request_queue: &mut RequestQueue,
+    draining: bool,
+    sidecar: &mut NativeSidecar<LocalBridge>,
+    services: &Arc<dyn ExtensionServices>,
+    operations: &OperationTable,
+    progress_requests: &ProgressOperationView,
+    ownership_coordinator: &OwnershipCoordinator,
+    completion_tx: &Sender<DetachedExtensionCompletion>,
+    request_completion_tx: &Sender<DetachedRequestCompletion>,
+    extension_tasks: &mut JoinSet<()>,
+    request_tasks: &mut JoinSet<()>,
+    output_tasks: &mut JoinSet<Result<(), String>>,
+    write_tx: &ProtocolFrameWriter,
+    terminal_fallback_bytes: usize,
+    active_sessions: &mut BTreeSet<SessionScope>,
+    active_connections: &mut BTreeSet<String>,
+) -> Result<bool, Box<dyn Error>> {
+    if request_queue.is_empty() {
+        return Ok(false);
+    }
+    let rejection_room = || write_tx.rejection_budget.has_room(REJECTION_ROOM_BYTES);
+    if draining {
+        for lane in [AdmissionLane::Priority, AdmissionLane::Ordinary] {
+            while rejection_room() {
+                let Some(entry) = request_queue.pop_front(lane, |_| true) else {
+                    break;
+                };
+                let waiting = request_queue.waiting(lane);
+                route_queued_request(
+                    entry,
+                    sidecar,
+                    services,
+                    operations,
+                    progress_requests,
+                    ownership_coordinator,
+                    completion_tx,
+                    request_completion_tx,
+                    extension_tasks,
+                    request_tasks,
+                    output_tasks,
+                    write_tx,
+                    terminal_fallback_bytes,
+                    active_sessions,
+                    active_connections,
+                    request_queue,
+                )?;
+                if request_queue.waiting(lane) > waiting {
+                    break;
+                }
+            }
+        }
+        return Ok(false);
+    }
+    let now = tokio::time::Instant::now();
+    while rejection_room() {
+        let Some((request, rejection)) = request_queue.pop_expired(now) else {
+            break;
+        };
+        publish_queue_rejection(write_tx, request, rejection)?;
+    }
+    let admissible = |request_queue: &RequestQueue, lane: AdmissionLane| {
+        let terminal_budget = match lane {
+            AdmissionLane::Priority => &write_tx.priority_terminal_budget,
+            AdmissionLane::Ordinary => &write_tx.terminal_budget,
+        };
+        request_queue
+            .front_bytes(lane)
+            .is_some_and(|bytes| operations.has_lane_capacity(lane, bytes))
+            && terminal_budget.has_room(terminal_fallback_bytes)
+            && rejection_room()
+    };
+    for lane in [AdmissionLane::Priority, AdmissionLane::Ordinary] {
+        let mut budget = match lane {
+            AdmissionLane::Priority => usize::MAX,
+            AdmissionLane::Ordinary => 1,
+        };
+        while budget > 0 && admissible(request_queue, lane) {
+            budget -= 1;
+            let Some(entry) =
+                request_queue.pop_front(lane, |bytes| operations.has_lane_capacity(lane, bytes))
+            else {
+                break;
+            };
+            let waiting = request_queue.waiting(lane);
+            route_queued_request(
+                entry,
+                sidecar,
+                services,
+                operations,
+                progress_requests,
+                ownership_coordinator,
+                completion_tx,
+                request_completion_tx,
+                extension_tasks,
+                request_tasks,
+                output_tasks,
+                write_tx,
+                terminal_fallback_bytes,
+                active_sessions,
+                active_connections,
+                request_queue,
+            )?;
+            if request_queue.waiting(lane) > waiting {
+                // The request went back to the head of its lane; wait for the
+                // next release instead of retrying it now.
+                return Ok(false);
+            }
+        }
+    }
+    Ok(admissible(request_queue, AdmissionLane::Ordinary))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn route_queued_request(
+    entry: QueuedRequest,
+    sidecar: &mut NativeSidecar<LocalBridge>,
+    services: &Arc<dyn ExtensionServices>,
+    operations: &OperationTable,
+    progress_requests: &ProgressOperationView,
+    ownership_coordinator: &OwnershipCoordinator,
+    completion_tx: &Sender<DetachedExtensionCompletion>,
+    request_completion_tx: &Sender<DetachedRequestCompletion>,
+    extension_tasks: &mut JoinSet<()>,
+    request_tasks: &mut JoinSet<()>,
+    output_tasks: &mut JoinSet<Result<(), String>>,
+    write_tx: &ProtocolFrameWriter,
+    terminal_fallback_bytes: usize,
+    active_sessions: &mut BTreeSet<SessionScope>,
+    active_connections: &mut BTreeSet<String>,
+    request_queue: &mut RequestQueue,
+) -> Result<(), Box<dyn Error>> {
+    route_frame(
+        ProtocolFrame::RequestFrame(entry.request),
+        entry.bytes,
+        RequestOrigin::Queue {
+            deadline: entry.deadline,
+        },
+        sidecar,
+        services,
+        operations,
+        progress_requests,
+        ownership_coordinator,
+        completion_tx,
+        request_completion_tx,
+        extension_tasks,
+        request_tasks,
+        output_tasks,
+        write_tx,
+        terminal_fallback_bytes,
+        active_sessions,
+        active_connections,
+        request_queue,
+    )
+}
+
+/// Queue a request that found its lane full. A request that came from the
+/// queue goes back to the head of its lane with its original deadline.
+fn queue_request(
+    request_queue: &mut RequestQueue,
+    lane: AdmissionLane,
+    request: RequestFrame,
+    request_bytes: usize,
+    origin: RequestOrigin,
+    write_tx: &ProtocolFrameWriter,
+) -> Result<(), Box<dyn Error>> {
+    match origin {
+        RequestOrigin::Queue { deadline } => {
+            request_queue.push_front(lane, request, request_bytes, deadline);
+            Ok(())
+        }
+        RequestOrigin::Ingress => match request_queue.push_back(lane, request, request_bytes) {
+            Ok(()) => Ok(()),
+            Err((request, rejection)) => Ok(publish_queue_rejection(write_tx, request, rejection)?),
+        },
+    }
+}
+
+fn publish_queue_rejection(
+    writer: &ProtocolFrameWriter,
+    request: RequestFrame,
+    rejection: wire::RejectedResponse,
+) -> Result<(), io::Error> {
+    publish_rejection_frame(
+        writer,
+        ProtocolFrame::ResponseFrame(response_frame(
+            request.request_id,
+            request.ownership,
+            ResponsePayload::RejectedResponse(rejection),
+        )),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn route_frame(
+    frame: ProtocolFrame,
+    request_bytes: usize,
+    origin: RequestOrigin,
+    sidecar: &mut NativeSidecar<LocalBridge>,
+    services: &Arc<dyn ExtensionServices>,
+    operations: &OperationTable,
+    progress_requests: &ProgressOperationView,
+    ownership_coordinator: &OwnershipCoordinator,
+    completion_tx: &Sender<DetachedExtensionCompletion>,
+    request_completion_tx: &Sender<DetachedRequestCompletion>,
+    extension_tasks: &mut JoinSet<()>,
+    request_tasks: &mut JoinSet<()>,
+    output_tasks: &mut JoinSet<Result<(), String>>,
+    write_tx: &ProtocolFrameWriter,
+    terminal_fallback_bytes: usize,
+    active_sessions: &mut BTreeSet<SessionScope>,
+    active_connections: &mut BTreeSet<String>,
+    request_queue: &mut RequestQueue,
+) -> Result<(), Box<dyn Error>> {
     match frame {
         ProtocolFrame::RequestFrame(request) => {
             let class = extension_request_class(
                 &ProtocolFrame::RequestFrame(request.clone()),
                 &sidecar.extensions,
             );
-            let request_bytes = ingress_reservation.bytes;
             let (operation, progress_request, output_reservation) = if class
                 == ExtensionRequestClass::Progress
             {
@@ -3232,17 +3600,54 @@ fn route_protocol_frame(
                     ownership_connection_id(&request.ownership),
                     request.request_id,
                 );
-                let operation = match operations.admit(key, metadata, request_bytes) {
+                let lane = AdmissionLane::for_request(&request.payload);
+                if matches!(origin, RequestOrigin::Ingress) && request_queue.has_waiting(lane) {
+                    // Earlier requests in this lane still wait; keep arrival order.
+                    return queue_request(
+                        request_queue,
+                        lane,
+                        request,
+                        request_bytes,
+                        origin,
+                        write_tx,
+                    );
+                }
+                let operation = match operations.admit_in_lane(key, metadata, request_bytes, lane) {
                     Ok(operation) => operation,
+                    Err(error) if error.waits_for_capacity() => {
+                        return queue_request(
+                            request_queue,
+                            lane,
+                            request,
+                            request_bytes,
+                            origin,
+                            write_tx,
+                        );
+                    }
                     Err(error) => {
                         publish_request_admission_rejection(write_tx, request, &error)?;
                         return Ok(());
                     }
                 };
-                let terminal_reservation = match write_tx
-                    .try_reserve_terminal(terminal_fallback_bytes)
-                {
+                let terminal_reservation = match if lane == AdmissionLane::Priority {
+                    write_tx.try_reserve_priority_terminal(terminal_fallback_bytes)
+                } else {
+                    write_tx.try_reserve_terminal(terminal_fallback_bytes)
+                } {
                     Ok(reservation) => reservation,
+                    Err(ProtocolTrySendError::Full(_)) => {
+                        // Earlier responses still hold their reservations; wait
+                        // for them to be written instead of rejecting.
+                        drop(operation);
+                        return queue_request(
+                            request_queue,
+                            lane,
+                            request,
+                            request_bytes,
+                            origin,
+                            write_tx,
+                        );
+                    }
                     Err(error) => {
                         drop(operation);
                         publish_request_rejection(
@@ -4227,6 +4632,19 @@ fn publish_request_admission_rejection(
 ) -> Result<(), io::Error> {
     let (limit_name, configured_limit, current_usage, requested, unit, retryable, errno) =
         match error {
+            RequestAdmissionError::PriorityCountLimit {
+                current,
+                requested,
+                limit,
+            } => (
+                Some(String::from("in-flight priority requests")),
+                Some(u64::try_from(*limit).unwrap_or(u64::MAX)),
+                Some(u64::try_from(*current).unwrap_or(u64::MAX)),
+                Some(u64::try_from(*requested).unwrap_or(u64::MAX)),
+                Some(String::from("requests")),
+                Some(true),
+                Some(String::from("EAGAIN")),
+            ),
             RequestAdmissionError::CountLimit {
                 current,
                 requested,
@@ -4729,7 +5147,15 @@ fn route_decoded_stdin_frame(
         return StdinReaderFlow::Stop;
     }
 
-    if extension_request_class(&frame, extensions) == ExtensionRequestClass::Progress {
+    // Priority requests (teardown, stdin, PTY resize) share the progress lane:
+    // the router reads it before ordinary ingress, and a VM-create flood that
+    // fills ordinary ingress can never reject or delay them.
+    let priority = matches!(
+        &frame,
+        ProtocolFrame::RequestFrame(request)
+            if AdmissionLane::for_request(&request.payload) == AdmissionLane::Priority
+    );
+    if priority || extension_request_class(&frame, extensions) == ExtensionRequestClass::Progress {
         return route_progress_request(
             frame,
             encoded_bytes,
@@ -4741,9 +5167,10 @@ fn route_decoded_stdin_frame(
 
     let reservation = match ingress_budget.reserve(encoded_bytes) {
         Ok(reservation) => reservation,
-        Err(error) => {
-            return reject_stdin_ingress_frame(frame, error, overload_writer);
-        }
+        Err(error) => match wait_for_ingress_room(ingress_budget, encoded_bytes) {
+            Some(reservation) => reservation,
+            None => return reject_stdin_ingress_frame(frame, error, overload_writer),
+        },
     };
     match enqueue_stdin_frame(
         ordinary_sender,
@@ -4815,7 +5242,7 @@ fn route_progress_request(
             let error = ProtocolLimitError {
                 code: "ERR_AGENTOS_PROTOCOL_FRAME_LIMIT",
                 path: progress_budget.config.frame_path,
-                label: "extension progress ingress",
+                label: progress_budget.config.label,
                 used: progress_budget.config.max_frames,
                 requested: 1,
                 limit: progress_budget.config.max_frames,
@@ -4986,6 +5413,45 @@ enum StdinFrameQueueError {
     Closed,
 }
 
+/// Wait on the dedicated reader thread until ordinary ingress has room, so a
+/// request burst backpressures the host's pipe instead of being rejected: a
+/// rejection needs egress the host may not be reading yet. Priority requests
+/// and responses that arrive later on the same pipe wait behind the burst only
+/// while the router is routing it, which never waits on the host. Returns
+/// `None` when the frame can never fit or the caller runs on an async
+/// runtime, which must not block.
+fn wait_for_ingress_room(budget: &ProtocolBudget, bytes: usize) -> Option<ProtocolReservation> {
+    if bytes > budget.config.max_bytes || tokio::runtime::Handle::try_current().is_ok() {
+        return None;
+    }
+    loop {
+        let changed = budget.changed.notified();
+        if let Ok(reservation) = budget.reserve(bytes) {
+            return Some(reservation);
+        }
+        block_on_thread(changed);
+    }
+}
+
+/// Poll `future` to completion on this OS thread, parking between wakes.
+fn block_on_thread<F: std::future::Future>(future: F) -> F::Output {
+    struct ThreadWaker(std::thread::Thread);
+    impl std::task::Wake for ThreadWaker {
+        fn wake(self: Arc<Self>) {
+            self.0.unpark();
+        }
+    }
+    let waker = std::task::Waker::from(Arc::new(ThreadWaker(thread::current())));
+    let mut context = std::task::Context::from_waker(&waker);
+    let mut future = std::pin::pin!(future);
+    loop {
+        if let std::task::Poll::Ready(output) = future.as_mut().poll(&mut context) {
+            return output;
+        }
+        thread::park();
+    }
+}
+
 fn enqueue_stdin_frame(
     sender: &tokio::sync::mpsc::Sender<Result<Option<AccountedProtocolFrame>, String>>,
     frame: Result<Option<AccountedProtocolFrame>, String>,
@@ -5078,6 +5544,10 @@ fn default_compile_cache_root() -> PathBuf {
     std::env::temp_dir().join("agentos-native-sidecar-compile-cache")
 }
 
+#[path = "stdio/request_queue.rs"]
+mod request_queue;
+use request_queue::{QueuedRequest, RequestQueue};
+
 #[cfg(test)]
 #[path = "stdio/request_concurrency_tests.rs"]
 mod request_concurrency_tests;
@@ -5135,7 +5605,7 @@ mod tests {
         let ordinary_capacity = capacity.max(2);
         let control_capacity = capacity
             .max(max_in_flight.saturating_add(3))
-            .max(max_in_flight.saturating_mul(2).saturating_add(1));
+            .max(max_in_flight.saturating_mul(2).saturating_add(2));
         let output = Arc::new(ProtocolOutputQueue::new(
             ordinary_capacity,
             control_capacity,
@@ -5147,6 +5617,7 @@ mod tests {
             max_control_frames: control_capacity,
             max_control_bytes: control_capacity.saturating_mul(maximum_encoded_bytes),
             max_in_flight_requests: max_in_flight,
+            max_in_flight_priority_requests: 1,
             max_terminal_frames: max_in_flight,
             max_terminal_bytes: max_in_flight.saturating_mul(maximum_encoded_bytes),
             terminal_fallback_bytes: maximum_encoded_bytes,
@@ -5860,6 +6331,7 @@ mod tests {
                     1,
                     &mut active_sessions,
                     &mut active_connections,
+                    &mut RequestQueue::new(&agentos_runtime::RuntimeProtocolConfig::default()),
                 )
                 .expect("route staged DisposeVm");
                 assert_eq!(
@@ -6075,6 +6547,7 @@ mod tests {
                     2,
                     &mut active_sessions,
                     &mut active_connections,
+                    &mut RequestQueue::new(&agentos_runtime::RuntimeProtocolConfig::default()),
                 )
                 .expect("route independent request");
 
@@ -6521,6 +6994,7 @@ export async function loadPyodide() {
                     1,
                     &mut active_sessions,
                     &mut active_connections,
+                    &mut RequestQueue::new(&agentos_runtime::RuntimeProtocolConfig::default()),
                 )
                 .expect("route gated independent request");
                 wait_for_started(&started, &started_notify, 1).await;
@@ -6985,6 +7459,7 @@ export async function loadPyodide() {
                     1,
                     &mut active_sessions,
                     &mut active_connections,
+                    &mut RequestQueue::new(&agentos_runtime::RuntimeProtocolConfig::default()),
                 )
                 .expect("route prompt");
                 wait_for_started(&started, &started_notify, 1).await;
@@ -7013,6 +7488,7 @@ export async function loadPyodide() {
                     1,
                     &mut active_sessions,
                     &mut active_connections,
+                    &mut RequestQueue::new(&agentos_runtime::RuntimeProtocolConfig::default()),
                 )
                 .expect("route independent request");
 
@@ -7152,6 +7628,7 @@ export async function loadPyodide() {
                         1,
                         &mut active_sessions,
                         &mut active_connections,
+                        &mut RequestQueue::new(&agentos_runtime::RuntimeProtocolConfig::default()),
                     )
                     .expect("route progress request");
                     if attempt == 0 {
@@ -7355,6 +7832,7 @@ export async function loadPyodide() {
                         1,
                         &mut active_sessions,
                         &mut active_connections,
+                        &mut RequestQueue::new(&agentos_runtime::RuntimeProtocolConfig::default()),
                     )
                     .expect("route concurrent prompt");
                 }
@@ -7383,6 +7861,7 @@ export async function loadPyodide() {
                     1,
                     &mut active_sessions,
                     &mut active_connections,
+                    &mut RequestQueue::new(&agentos_runtime::RuntimeProtocolConfig::default()),
                 )
                 .expect("reject duplicate prompt");
                 let ProtocolFrame::ResponseFrame(duplicate_response) =
@@ -7459,199 +7938,6 @@ export async function loadPyodide() {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn router_reports_count_and_byte_admission_limits_before_terminal_capacity() {
-        let local = tokio::task::LocalSet::new();
-        local
-            .run_until(async {
-                let started = Arc::new(AtomicUsize::new(0));
-                let started_notify = Arc::new(Notify::new());
-                let release = Arc::new(Notify::new());
-                let extension = GatedExtension {
-                    started: Arc::clone(&started),
-                    started_notify: Arc::clone(&started_notify),
-                    release: Arc::clone(&release),
-                };
-                let config = NativeSidecarConfig::default();
-                let runtime = agentos_runtime::SidecarRuntime::process(&config.runtime)
-                    .expect("test runtime");
-                let mut sidecar = NativeSidecar::with_config_extensions_and_runtime(
-                    LocalBridge::default(),
-                    config,
-                    vec![Box::new(extension)],
-                    runtime.context(),
-                )
-                .expect("test sidecar");
-                let ingress_budget = test_protocol_budget(8, 4096, "test request ingress");
-                let (writer, output) = test_frame_writer_with_inflight(8, 1);
-                let (service_tx, _service_rx) = channel(8);
-                let services: Arc<dyn ExtensionServices> = Arc::new(RoutedExtensionServices::new(
-                    service_tx,
-                    Arc::clone(&sidecar.process_event_notify),
-                ));
-                let ownership_coordinator = OwnershipCoordinator::from_runtime_config(
-                    &NativeSidecarConfig::default().runtime,
-                );
-                ownership_coordinator
-                    .register_connection("conn-count")
-                    .expect("register count connection");
-                ownership_coordinator
-                    .register_connection("conn-bytes")
-                    .expect("register byte connection");
-                let (completion_tx, mut completion_rx) = channel(8);
-                let (request_completion_tx, _request_completion_rx) = channel(8);
-                let mut extension_tasks = JoinSet::new();
-                let mut request_tasks = JoinSet::new();
-                let mut output_tasks = JoinSet::new();
-                let mut active_sessions = BTreeSet::new();
-                let mut active_connections = BTreeSet::new();
-
-                let count_protocol = agentos_runtime::RuntimeProtocolConfig {
-                    max_in_flight_requests: 1,
-                    max_in_flight_request_bytes: 8,
-                    ..Default::default()
-                };
-                let count_operations = OperationTable::from_protocol_config(&count_protocol);
-                let count_progress_requests =
-                    ProgressOperationView::from_protocol_config(&count_protocol);
-                for request_id in [30, 31] {
-                    let request = ProtocolFrame::RequestFrame(request_frame(
-                        request_id,
-                        connection_ownership("conn-count"),
-                        RequestPayload::ExtEnvelope(ExtEnvelope {
-                            namespace: String::from("dev.rivet.agentos.test.gated"),
-                            payload: format!("count-{request_id}").into_bytes(),
-                        }),
-                    ));
-                    route_protocol_frame(
-                        test_accounted_frame(request, &ingress_budget),
-                        &mut sidecar,
-                        &services,
-                        &count_operations,
-                        &count_progress_requests,
-                        &ownership_coordinator,
-                        &completion_tx,
-                        &request_completion_tx,
-                        &mut extension_tasks,
-                        &mut request_tasks,
-                        &mut output_tasks,
-                        &writer,
-                        1,
-                        &mut active_sessions,
-                        &mut active_connections,
-                    )
-                    .expect("route count-limited request");
-                    if request_id == 30 {
-                        wait_for_started(&started, &started_notify, 1).await;
-                    }
-                }
-                assert_admission_rejection(
-                    output.recv_control().await.expect("count rejection"),
-                    31,
-                    "ERR_AGENTOS_IN_FLIGHT_REQUEST_LIMIT",
-                    "runtime.protocol.maxInFlightRequests",
-                    1,
-                    1,
-                    "requests",
-                );
-                assert_eq!(count_operations.snapshot().in_flight_requests, 1);
-                release.notify_waiters();
-                let completion = completion_rx.recv().await.expect("count completion");
-                finish_extension_request(
-                    completion,
-                    &sidecar,
-                    &writer,
-                    &mut output_tasks,
-                    &mut active_sessions,
-                    &mut active_connections,
-                )
-                .expect("finish count operation");
-                output_tasks
-                    .join_next()
-                    .await
-                    .expect("count terminal task")
-                    .expect("count terminal join")
-                    .expect("count terminal publish");
-                drop(
-                    output
-                        .recv_control()
-                        .await
-                        .expect("count terminal response"),
-                );
-                assert_eq!(count_operations.snapshot().in_flight_requests, 0);
-
-                let byte_protocol = agentos_runtime::RuntimeProtocolConfig {
-                    max_in_flight_requests: 2,
-                    max_in_flight_request_bytes: 1,
-                    ..Default::default()
-                };
-                let byte_operations = OperationTable::from_protocol_config(&byte_protocol);
-                let byte_progress_requests =
-                    ProgressOperationView::from_protocol_config(&byte_protocol);
-                for request_id in [40, 41] {
-                    let request = ProtocolFrame::RequestFrame(request_frame(
-                        request_id,
-                        connection_ownership("conn-bytes"),
-                        RequestPayload::ExtEnvelope(ExtEnvelope {
-                            namespace: String::from("dev.rivet.agentos.test.gated"),
-                            payload: format!("bytes-{request_id}").into_bytes(),
-                        }),
-                    ));
-                    route_protocol_frame(
-                        test_accounted_frame(request, &ingress_budget),
-                        &mut sidecar,
-                        &services,
-                        &byte_operations,
-                        &byte_progress_requests,
-                        &ownership_coordinator,
-                        &completion_tx,
-                        &request_completion_tx,
-                        &mut extension_tasks,
-                        &mut request_tasks,
-                        &mut output_tasks,
-                        &writer,
-                        1,
-                        &mut active_sessions,
-                        &mut active_connections,
-                    )
-                    .expect("route byte-limited request");
-                    if request_id == 40 {
-                        wait_for_started(&started, &started_notify, 2).await;
-                    }
-                }
-                assert_admission_rejection(
-                    output.recv_control().await.expect("byte rejection"),
-                    41,
-                    "ERR_AGENTOS_IN_FLIGHT_REQUEST_BYTE_LIMIT",
-                    "runtime.protocol.maxInFlightRequestBytes",
-                    1,
-                    1,
-                    "bytes",
-                );
-                assert_eq!(byte_operations.snapshot().in_flight_request_bytes, 1);
-                release.notify_waiters();
-                let completion = completion_rx.recv().await.expect("byte completion");
-                finish_extension_request(
-                    completion,
-                    &sidecar,
-                    &writer,
-                    &mut output_tasks,
-                    &mut active_sessions,
-                    &mut active_connections,
-                )
-                .expect("finish byte operation");
-                output_tasks
-                    .join_next()
-                    .await
-                    .expect("byte terminal task")
-                    .expect("byte terminal join")
-                    .expect("byte terminal publish");
-                drop(output.recv_control().await.expect("byte terminal response"));
-                assert_eq!(byte_operations.snapshot().in_flight_request_bytes, 0);
-            })
-            .await;
-    }
-
-    #[tokio::test(flavor = "current_thread")]
     async fn admitted_terminal_response_survives_full_ordinary_output() {
         let local = tokio::task::LocalSet::new();
         local
@@ -7720,6 +8006,7 @@ export async function loadPyodide() {
                     1,
                     &mut active_sessions,
                     &mut active_connections,
+                    &mut RequestQueue::new(&agentos_runtime::RuntimeProtocolConfig::default()),
                 )
                 .expect("route panicking extension");
                 assert_eq!(operations.snapshot().in_flight_requests, 1);
@@ -7773,34 +8060,6 @@ export async function loadPyodide() {
         WireFrameCodec::new(4096)
             .decode(&frame.bytes)
             .expect("decode test output frame")
-    }
-
-    fn assert_admission_rejection(
-        frame: EncodedProtocolFrame,
-        request_id: RequestId,
-        code: &str,
-        configuration_path: &str,
-        current_usage: u64,
-        configured_limit: u64,
-        unit: &str,
-    ) {
-        let ProtocolFrame::ResponseFrame(response) = decode_test_output(frame) else {
-            panic!("expected rejection response");
-        };
-        assert_eq!(response.request_id, request_id);
-        let ResponsePayload::RejectedResponse(rejection) = response.payload else {
-            panic!("expected typed rejection payload");
-        };
-        assert_eq!(rejection.code, code);
-        assert_eq!(
-            rejection.configuration_path.as_deref(),
-            Some(configuration_path)
-        );
-        assert_eq!(rejection.current_usage, Some(current_usage));
-        assert_eq!(rejection.configured_limit, Some(configured_limit));
-        assert_eq!(rejection.requested, Some(1));
-        assert_eq!(rejection.unit.as_deref(), Some(unit));
-        assert!(rejection.message.contains("raise runtime.protocol"));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -9420,13 +9679,14 @@ export async function loadPyodide() {
     async fn oversized_terminal_uses_reserved_typed_fallback() {
         let codec = WireFrameCodec::new(8192);
         let maximum_encoded_bytes = codec.max_frame_bytes().saturating_add(4);
-        let output = Arc::new(ProtocolOutputQueue::new(4, 4));
+        let output = Arc::new(ProtocolOutputQueue::new(4, 5));
         let protocol = agentos_runtime::RuntimeProtocolConfig {
             max_egress_frames: 4,
             max_egress_bytes: 4 * maximum_encoded_bytes,
-            max_control_frames: 4,
+            max_control_frames: 5,
             max_control_bytes: 4 * maximum_encoded_bytes,
             max_in_flight_requests: 1,
+            max_in_flight_priority_requests: 1,
             max_terminal_frames: 1,
             max_terminal_bytes: 1024,
             terminal_fallback_bytes: 512,
@@ -9896,6 +10156,10 @@ impl PersistenceBridge for LocalBridge {
         _request: FlushFilesystemStateRequest,
     ) -> Result<(), Self::Error> {
         Ok(())
+    }
+
+    fn persists_filesystem_state(&self) -> bool {
+        false
     }
 }
 

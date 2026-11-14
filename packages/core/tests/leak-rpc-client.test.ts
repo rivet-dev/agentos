@@ -195,7 +195,7 @@ it.each([false, true])("replay reconciles a missed exit after observation failur
 	}
 });
 
-it("VM disposal preserves typed rejection after secondary cleanup and remains idempotent", async () => {
+it("VM disposal preserves typed rejection after secondary cleanup and a retry re-sends it", async () => {
 	vi.spyOn(console, "error").mockImplementation(() => {});
 	const stub = createStubClient();
 	const rejection = new SidecarRejectedError(1, {
@@ -227,8 +227,11 @@ it("VM disposal preserves typed rejection after secondary cleanup and remains id
 		signalRefreshes: 0,
 		localMounts: 0,
 	});
+	// The VM may still be alive, so a retry must not report success silently.
+	await expect(proxy.dispose()).rejects.toBe(rejection);
+	disposeVm.mockResolvedValue(undefined);
 	await expect(proxy.dispose()).resolves.toBeUndefined();
-	expect(disposeVm).toHaveBeenCalledOnce();
+	expect(cleanup).toHaveBeenCalledOnce();
 });
 
 it("exec timeout does not mistake a proxy's background failure for termination", async () => {
@@ -461,15 +464,15 @@ it("a sidecar-side VM disposal rejects wait instead of hanging or inventing an e
 	}
 });
 
-it("disposal wakes wait before a stalled teardown signal completes", async () => {
+it("disposal wakes wait before a stalled DisposeVm completes", async () => {
 	vi.useFakeTimers();
 	vi.spyOn(console, "error").mockImplementation(() => {});
 	const stub = createStubClient();
-	let acknowledgeKill!: () => void;
-	stub.client.killProcess = () =>
-		new Promise((resolve) => {
-			acknowledgeKill = resolve;
-		});
+	let acknowledgeDispose!: () => void;
+	const disposeAcknowledged = new Promise<void>((resolve) => {
+		acknowledgeDispose = resolve;
+	});
+	stub.client.disposeVm = () => disposeAcknowledged;
 	const proxy = createProxy(stub.client);
 	const proc = proxy.spawn("node", []);
 	const assertion = expect(proc.wait()).rejects.toThrow(
@@ -481,7 +484,7 @@ it("disposal wakes wait before a stalled teardown signal completes", async () =>
 		await assertion;
 		expect(proc.exitCode).toBeNull();
 	} finally {
-		acknowledgeKill();
+		acknowledgeDispose();
 		await disposal;
 	}
 });
