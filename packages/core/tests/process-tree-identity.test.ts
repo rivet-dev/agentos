@@ -46,7 +46,21 @@ describe("process-tree identity", () => {
 
 	it("preserves an untracked running row and a colliding tracked fallback", async () => {
 		const client = {
-			getProcessSnapshot: async () => [],
+			getProcessSnapshot: async () => [
+				{
+					processId: "root/child",
+					pid: 1_000_000,
+					ppid: 7,
+					pgid: 7,
+					sid: 7,
+					driver: "wasm",
+					command: "guest",
+					args: [],
+					cwd: "/",
+					status: "running",
+					exitCode: null,
+				},
+			],
 		};
 		const tracked = {
 			processId: "tracked-root",
@@ -68,28 +82,12 @@ describe("process-tree identity", () => {
 			client,
 			session: {},
 			vm: {},
-			processSnapshotRefresh: null,
-			sidecarProcessSnapshot: [
-				{
-					processId: "root/child",
-					pid: 1_000_000,
-					ppid: 7,
-					pgid: 7,
-					sid: 7,
-					driver: "wasm",
-					command: "guest",
-					args: [],
-					cwd: "/",
-					status: "running",
-					exitCode: null,
-				},
-			],
 			trackedProcesses: new Map([[tracked.pid, tracked]]),
 			trackedProcessesById: new Map([[tracked.processId, tracked]]),
 			observedProcessStartTimes: new Map(),
 			processes: new Map(),
 		});
-		const records = proxy.snapshotProcessTopology();
+		const records = await proxy.snapshotProcessTopology();
 		expect(records).toHaveLength(2);
 		expect(records.map((record) => record.info.pid)).toEqual([
 			1_000_000, 1_000_000,
@@ -103,6 +101,5 @@ describe("process-tree identity", () => {
 			"tracked:1000000",
 		]);
 		expect(proxy.processes.get(1_000_000)?.command).toBe("tracked");
-		await Promise.resolve();
 	});
 });

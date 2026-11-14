@@ -5427,20 +5427,12 @@ export class AgentOs {
 		];
 	}
 
-	/** Returns all kernel processes across all active runtimes (WASM and Node). */
-	private _listAllProcesses(): KernelProcessInfo[] {
-		if (this.#kernel instanceof NativeSidecarKernelProxy) {
-			return this.#kernel.snapshotProcesses();
-		}
-		return [...this.#kernel.processes.values()];
-	}
-
 	/** Returns processes organized as a tree using ppid relationships. */
 	private async _processTree(): Promise<ProcessTreeNode[]> {
 		const records =
 			this.#kernel instanceof NativeSidecarKernelProxy
-				? this.#kernel.snapshotProcessTopology()
-				: this._listAllProcesses().map((info) => ({
+				? await this.#kernel.snapshotProcessTopology()
+				: [...this.#kernel.processes.values()].map((info) => ({
 						info,
 						key: `kernel:${info.pid}`,
 						parentKey: `kernel:${info.ppid}`,

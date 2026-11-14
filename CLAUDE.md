@@ -104,8 +104,8 @@ add compatibility views, aliases, legacy adoption paths, or dual writes.
   Python). Do NOT reason about guest capabilities from plain-WASI limits (e.g.
   "no shell", "no subprocess spawning", "no process model") — those hold for raw
   WASI Preview 1, not for agentOS. See
-  `website/public/docs/docs/architecture/processes.md` and
-  `posix-syscalls.md`, and `crates/kernel/CLAUDE.md`.
+  `docs/content/docs/architecture/processes.mdx` and
+  `posix-syscalls.mdx`, and `crates/kernel/CLAUDE.md`.
 - The projected `/opt/agentos` filesystem is the source of truth for software
   and command resolution. Read it live; do not cache package lists captured at VM
   configuration time.

@@ -349,37 +349,6 @@ it("deterministic launch rejection releases tracking and exec skips termination 
 	}
 });
 
-it("missing snapshots fail wait but retain tracking for a later real exit", async () => {
-	vi.useFakeTimers();
-	vi.spyOn(console, "error").mockImplementation(() => {});
-	const stub = createStubClient();
-	const proxy = createProxy(stub.client);
-	try {
-		const proc = proxy.spawn("node", []);
-		const assertion = expect(proc.wait()).rejects.toThrow(
-			/^termination_failed:.*disappeared/,
-		);
-		await vi.advanceTimersByTimeAsync(700);
-		await assertion;
-		expect(proc.exitCode).toBeNull();
-		expect(proxy.__trackingSizesForTest().trackedProcesses).toBe(1);
-		expect(vi.getTimerCount()).toBe(0);
-		stub.pushEvent({
-			ownership: { scope: "vm", vm_id: vm.vmId },
-			payload: {
-				type: "process_exited",
-				process_id: `proc-${proc.pid}`,
-				exit_code: 7,
-			},
-		});
-		await vi.advanceTimersByTimeAsync(0);
-		await expect(proc.wait()).resolves.toBe(7);
-		expect(proc.exitCode).toBe(7);
-	} finally {
-		await proxy.dispose();
-	}
-});
-
 it("pump failure rejects wait and further spawn without declaring live processes exited", async () => {
 	vi.spyOn(console, "error").mockImplementation(() => {});
 	const stub = createStubClient();
@@ -472,26 +441,21 @@ it("VM disposal rejects pending wait rather than manufacturing signal exit 143",
 	expect(() => proxy.spawn("node", [])).toThrow(/^not_ready:/);
 });
 
-it("a real exit wakes wait even while the snapshot RPC is stalled", async () => {
-	vi.useFakeTimers();
+it("a sidecar-side VM disposal rejects wait instead of hanging or inventing an exit", async () => {
+	vi.spyOn(console, "error").mockImplementation(() => {});
 	const stub = createStubClient();
-	stub.client.getProcessSnapshot = () => new Promise(() => {});
 	const proxy = createProxy(stub.client);
 	try {
 		const proc = proxy.spawn("node", []);
-		const result = proc.wait();
-		await vi.advanceTimersByTimeAsync(100);
+		const assertion = expect(proc.wait()).rejects.toThrow(
+			/^termination_failed:.*VM disposed before process exit/,
+		);
 		stub.pushEvent({
 			ownership: { scope: "vm", vm_id: vm.vmId },
-			payload: {
-				type: "process_exited",
-				process_id: `proc-${proc.pid}`,
-				exit_code: 23,
-			},
+			payload: { type: "vm_lifecycle", state: "disposed" },
 		});
-		await vi.advanceTimersByTimeAsync(0);
-		await expect(result).resolves.toBe(23);
-		expect(vi.getTimerCount()).toBe(0);
+		await assertion;
+		expect(proc.exitCode).toBeNull();
 	} finally {
 		await proxy.dispose();
 	}
@@ -501,7 +465,6 @@ it("disposal wakes wait before a stalled teardown signal completes", async () =>
 	vi.useFakeTimers();
 	vi.spyOn(console, "error").mockImplementation(() => {});
 	const stub = createStubClient();
-	stub.client.getProcessSnapshot = () => new Promise(() => {});
 	let acknowledgeKill!: () => void;
 	stub.client.killProcess = () =>
 		new Promise((resolve) => {
@@ -520,39 +483,6 @@ it("disposal wakes wait before a stalled teardown signal completes", async () =>
 	} finally {
 		acknowledgeKill();
 		await disposal;
-	}
-});
-
-it("an exited snapshot without an exit code cannot manufacture success", async () => {
-	vi.useFakeTimers();
-	vi.spyOn(console, "error").mockImplementation(() => {});
-	const stub = createStubClient();
-	const proxy = createProxy(stub.client);
-	try {
-		const proc = proxy.spawn("node", []);
-		stub.client.getProcessSnapshot = async () => [
-			{
-				processId: `proc-${proc.pid}`,
-				pid: 42,
-				ppid: 0,
-				pgid: 42,
-				sid: 42,
-				driver: "node",
-				cwd: "/work",
-				command: "node",
-				args: [],
-				status: "exited",
-				exitCode: null,
-			},
-		];
-		const assertion = expect(proc.wait()).rejects.toThrow(
-			/exited snapshot has no exit status/,
-		);
-		await vi.advanceTimersByTimeAsync(100);
-		await assertion;
-		expect(proc.exitCode).toBeNull();
-	} finally {
-		await proxy.dispose();
 	}
 });
 

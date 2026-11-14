@@ -43,7 +43,6 @@ import type {
 } from "./native-process-client.js";
 
 const SYNTHETIC_PID_BASE = 1_000_000;
-const MISSING_EXIT_EVENT_GRACE_MS = 500;
 const PROTECTED_READ_ONLY_GUEST_ROOTS = ["/etc/agentos"] as const;
 const TRAILING_OUTPUT_DRAIN_INTERVAL_MS = 10;
 const TRAILING_OUTPUT_DRAIN_MAX_MS = 250;
@@ -446,8 +445,7 @@ interface TrackedProcessEntry {
 	stdinFlushPromise: Promise<void> | null;
 	pendingCloseStdin: boolean;
 	pendingKillSignal: number | null;
-	waitWithFallbackPromise: Promise<number> | null;
-	hostExitObservedAt: number | null;
+	waitPromise: Promise<number> | null;
 	outputGeneration: number;
 }
 
@@ -527,8 +525,6 @@ export class NativeSidecarKernelProxy {
 	private readonly boundUdpLookups = new Map<string, SocketLookupCacheEntry>();
 	private readonly signalStates = new Map<number, KernelSignalState>();
 	private readonly signalRefreshes = new Map<number, Promise<void>>();
-	private sidecarProcessSnapshot: SidecarProcessSnapshotEntry[] = [];
-	private processSnapshotRefresh: Promise<void> | null = null;
 	private readonly observedProcessStartTimes = new Map<string, number>();
 	private readonly rootView: VirtualFileSystem;
 	private zombieTimerCountValue = 0;
@@ -933,8 +929,7 @@ export class NativeSidecarKernelProxy {
 			stdinFlushPromise: null,
 			pendingCloseStdin: !options?.streamStdin,
 			pendingKillSignal: null,
-			waitWithFallbackPromise: null,
-			hostExitObservedAt: null,
+			waitPromise: null,
 			outputGeneration: 0,
 		};
 		this.trackedProcesses.set(pid, entry);
@@ -1898,13 +1893,13 @@ export class NativeSidecarKernelProxy {
 		}
 	}
 
-	snapshotProcesses(): ProcessInfo[] {
-		return this.snapshotProcessTopology().map((record) => record.info);
-	}
-
 	/** Internal, host-side topology; never part of the guest or public DTO wire. */
-	snapshotProcessTopology(): ProcessForestRecord<ProcessInfo>[] {
-		return this.buildProcessSnapshot();
+	async snapshotProcessTopology(): Promise<ProcessForestRecord<ProcessInfo>[]> {
+		const snapshot = await this.client.getProcessSnapshot(
+			this.session,
+			this.vm,
+		);
+		return this.buildProcessSnapshot(snapshot);
 	}
 
 	findListener(request: {
@@ -1995,26 +1990,6 @@ export class NativeSidecarKernelProxy {
 		}
 	}
 
-	private async refreshProcessSnapshot(): Promise<void> {
-		if (this.processSnapshotRefresh) {
-			await this.processSnapshotRefresh;
-			return;
-		}
-
-		this.processSnapshotRefresh = (async () => {
-			try {
-				this.sidecarProcessSnapshot = await this.client.getProcessSnapshot(
-					this.session,
-					this.vm,
-				);
-			} finally {
-				this.processSnapshotRefresh = null;
-			}
-		})();
-
-		await this.processSnapshotRefresh;
-	}
-
 	private async refreshZombieTimerCount(): Promise<void> {
 		try {
 			const snapshot = await this.client.getZombieTimerCount(
@@ -2078,9 +2053,6 @@ export class NativeSidecarKernelProxy {
 		entry.started = true;
 		entry.wakeWait?.();
 		this.updateTrackedProcessSnapshot(entry);
-		void this.refreshProcessSnapshot().catch((error) => {
-			console.error("[agentOS] post-launch process snapshot failed", error);
-		});
 		// Signal metadata is advisory and must not hold process startup behind a
 		// second sidecar RPC. Very short hostFunction commands can finish while the
 		// original execute response is still in flight; synchronously refreshing
@@ -2120,12 +2092,6 @@ export class NativeSidecarKernelProxy {
 						continue;
 					}
 					entry.outputGeneration += 1;
-					void this.refreshProcessSnapshot().catch((error) => {
-						console.error(
-							"[agentOS] process output snapshot refresh failed",
-							error,
-						);
-					});
 					this.scheduleSignalStateRefresh(entry);
 					const chunk = event.payload.chunk;
 					const listeners =
@@ -2146,11 +2112,26 @@ export class NativeSidecarKernelProxy {
 					if (!entry) {
 						continue;
 					}
-					void this.refreshProcessSnapshot().catch((error) => {
-						console.error("[agentOS] post-exit process snapshot failed", error);
-					});
 					entry.confirmExit(event.payload.exit_code);
 					this.finishProcess(entry, event.payload.exit_code);
+					continue;
+				}
+
+				if (
+					event.payload.type === "vm_lifecycle" &&
+					(event.payload.state === "disposed" ||
+						event.payload.state === "failed")
+				) {
+					// Exit events are the only exit proof. A VM that ended without
+					// one leaves the process status unknown, never exited.
+					const error = new Error(
+						`VM ${event.payload.state} before process exit was observed`,
+					);
+					for (const entry of this.trackedProcesses.values()) {
+						if (entry.exitCode === null) {
+							this.handleBackgroundProcessError(entry, error);
+						}
+					}
 					continue;
 				}
 
@@ -2226,88 +2207,21 @@ export class NativeSidecarKernelProxy {
 		if (entry.waitError) {
 			return Promise.reject(entry.waitError);
 		}
-		if (entry.waitWithFallbackPromise !== null) {
-			return entry.waitWithFallbackPromise;
+		if (entry.waitPromise !== null) {
+			return entry.waitPromise;
 		}
 
-		entry.waitWithFallbackPromise = (async () => {
+		// Exit is event-driven, like the Rust client: the process_exited event,
+		// a typed failure (pump, VM lifecycle, signal), or disposal wakes this.
+		// No timer and no sidecar request is held while the process runs.
+		entry.waitPromise = (async () => {
 			while (entry.exitCode === null && !entry.waitError && !this.disposed) {
-				// One cancellable wake per process, rather than another Promise.race
-				// reaction retained on an unresolved exit promise every 50ms.
 				await new Promise<void>((resolve) => {
-					const timer = setTimeout(() => {
-						entry.wakeWait = null;
-						resolve();
-					}, 50);
 					entry.wakeWait = () => {
-						clearTimeout(timer);
 						entry.wakeWait = null;
 						resolve();
 					};
 				});
-				if (entry.exitCode !== null || entry.waitError || this.disposed) {
-					break;
-				}
-				if (!entry.started) {
-					continue;
-				}
-
-				try {
-					// Metadata cannot hold terminal delivery hostage. Keep a wake armed
-					// while the coalesced snapshot RPC is in flight, too.
-					let wake!: () => void;
-					const terminal = new Promise<void>((resolve) => {
-						wake = resolve;
-						entry.wakeWait = resolve;
-					});
-					try {
-						await Promise.race([this.refreshProcessSnapshot(), terminal]);
-					} finally {
-						if (entry.wakeWait === wake) entry.wakeWait = null;
-					}
-					if (entry.exitCode !== null || entry.waitError || this.disposed)
-						break;
-					const snapshot = this.sidecarProcessSnapshot.find(
-						(candidate) => candidate.processId === entry.processId,
-					);
-					if (snapshot?.status === "exited") {
-						if (snapshot.exitCode === undefined || snapshot.exitCode === null) {
-							this.handleBackgroundProcessError(
-								entry,
-								new Error("exited snapshot has no exit status"),
-							);
-						} else {
-							entry.confirmExit(snapshot.exitCode);
-							this.finishProcess(entry, snapshot.exitCode);
-						}
-						break;
-					}
-					if (snapshot) {
-						entry.hostExitObservedAt = null;
-						continue;
-					}
-
-					// A missing snapshot can mean reaping, lost metadata, or a launch race.
-					// None provides an exit status. Bound the grace period and fail closed.
-					if (!snapshot) {
-						const now = Date.now();
-						if (entry.hostExitObservedAt === null) {
-							entry.hostExitObservedAt = now;
-							continue;
-						}
-						if (now - entry.hostExitObservedAt >= MISSING_EXIT_EVENT_GRACE_MS) {
-							this.handleBackgroundProcessError(
-								entry,
-								new Error(
-									"process disappeared from snapshots without an exit event",
-								),
-							);
-							break;
-						}
-					}
-				} catch (error) {
-					this.handleBackgroundProcessError(entry, error);
-				}
 			}
 
 			if (entry.exitCode !== null) return entry.exitCode;
@@ -2318,10 +2232,10 @@ export class NativeSidecarKernelProxy {
 				)
 			);
 		})().finally(() => {
-			entry.waitWithFallbackPromise = null;
+			entry.waitPromise = null;
 		});
 
-		return entry.waitWithFallbackPromise;
+		return entry.waitPromise;
 	}
 
 	private async signalProcess(
@@ -2793,23 +2707,22 @@ export class NativeSidecarKernelProxy {
 		};
 	}
 
-	private buildProcessSnapshot(): ProcessForestRecord<ProcessInfo>[] {
-		void this.refreshProcessSnapshot().catch((error) => {
-			console.warn("agentOS process snapshot refresh failed", error);
-		});
+	private buildProcessSnapshot(
+		sidecarProcessSnapshot: readonly SidecarProcessSnapshotEntry[],
+	): ProcessForestRecord<ProcessInfo>[] {
 		const records: ProcessForestRecord<ProcessInfo>[] = [];
 		const seenProcessIds = new Set<string>();
 		const trackedKeys = new Set<string>();
 		const displayPidByKernelPid = new Map<number, number>();
 
-		for (const entry of this.sidecarProcessSnapshot) {
+		for (const entry of sidecarProcessSnapshot) {
 			const tracked = this.trackedProcessesById.get(entry.processId);
 			if (tracked) {
 				displayPidByKernelPid.set(entry.pid, tracked.pid);
 			}
 		}
 
-		for (const entry of this.sidecarProcessSnapshot) {
+		for (const entry of sidecarProcessSnapshot) {
 			const tracked = this.trackedProcessesById.get(entry.processId);
 			const displayPid = tracked?.pid ?? entry.pid;
 			const displayPpid = displayPidByKernelPid.get(entry.ppid) ?? entry.ppid;

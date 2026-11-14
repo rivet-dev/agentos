@@ -88,10 +88,11 @@ API, so it can show more than you started. Use the returned handle or `pid`
 rather than reconstructing one from a node; guest children that were not
 launched through the API have no hosted process handle.
 
-A process wait returns an exit only after agentOS observes a guest exit. A
-rejected launch or lost exit observation rejects the wait instead of inventing
-an exit code. An observation failure does not prove the guest has stopped;
-inspect the VM or recreate it before assuming it is safe to retry work.
+`wait()` settles only from the process's exit event, a typed failure, or VM
+disposal. agentOS does not poll process snapshots to detect an exit. A rejected
+launch or lost exit observation rejects the wait instead of inventing an exit
+code. An observation failure does not prove the guest has stopped; inspect the
+VM or recreate it before assuming it is safe to retry work.
 
 ## Output events and replay
 
