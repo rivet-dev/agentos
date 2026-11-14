@@ -710,9 +710,21 @@ impl PythonExecution {
         &mut self,
         request: &JavascriptSyncRpcRequest,
     ) -> Result<bool, PythonExecutionError> {
-        self.inner
-            .try_service_standalone_module_sync_rpc(request)
-            .map_err(map_javascript_error)
+        match self.inner.try_service_standalone_module_sync_rpc(request) {
+            // As for JavaScript sync RPCs: the V8 registry reports a stale
+            // completion only after proving that teardown (for example a
+            // cancel) canceled this exact route, so the reply has no reader.
+            Err(JavascriptExecutionError::RpcResponse(message))
+                if message.contains("ERR_AGENTOS_BRIDGE_STALE_COMPLETION") =>
+            {
+                eprintln!(
+                    "INFO_AGENTOS_STALE_BRIDGE_COMPLETION: Python module sync RPC {}: {message}",
+                    request.id
+                );
+                Ok(true)
+            }
+            other => other.map_err(map_javascript_error),
+        }
     }
 
     /// Service the local stdin bridge for consumers that drive a standalone

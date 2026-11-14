@@ -124,6 +124,13 @@ impl V8RuntimeHost {
         V8_BRIDGE_CODE
     }
 
+    /// The bridge code as one process-wide allocation. Sessions and warm
+    /// workers share it instead of each holding a multi-megabyte copy.
+    pub fn shared_bridge_code() -> Arc<str> {
+        static SHARED: OnceLock<Arc<str>> = OnceLock::new();
+        Arc::clone(SHARED.get_or_init(|| Arc::from(V8_BRIDGE_CODE)))
+    }
+
     /// Pre-build the per-sidecar snapshot for an agent-SDK `userland_code` bundle
     /// into the process-wide cache, so the FIRST session that uses it is already
     /// warm (no cold-build penalty on the session-create path). Blocks until the
@@ -134,15 +141,15 @@ impl V8RuntimeHost {
             return Ok(());
         }
         self.shared.runtime.dispatch(RuntimeCommand::WarmSnapshot {
-            bridge_code: Self::bridge_code().to_owned(),
-            userland_code: userland_code.to_owned(),
+            bridge_code: Self::shared_bridge_code(),
+            userland_code: userland_code.into(),
         })
     }
 
     pub fn pre_warm_workers(&self, userland_code: &str, heap_limit_mb: u32, count: usize) {
         self.shared.runtime.pre_warm_workers(
-            Self::bridge_code().to_owned(),
-            userland_code.to_owned(),
+            Self::shared_bridge_code(),
+            userland_code.into(),
             non_zero_option(heap_limit_mb),
             count,
         );
@@ -152,8 +159,8 @@ impl V8RuntimeHost {
         static DEFAULT_WARM_STARTED: OnceLock<()> = OnceLock::new();
         let _ = DEFAULT_WARM_STARTED.get_or_init(|| {
             self.shared.runtime.pre_warm_workers(
-                V8_BRIDGE_CODE.to_owned(),
-                String::new(),
+                Self::shared_bridge_code(),
+                Arc::from(""),
                 None,
                 warm_worker_count(),
             );
@@ -315,9 +322,9 @@ impl V8SessionHandle {
         &self,
         mode: u8,
         file_path: String,
-        bridge_code: String,
+        bridge_code: Arc<str>,
         post_restore_script: String,
-        userland_code: String,
+        userland_code: Arc<str>,
         high_resolution_time: bool,
         runtime_shim: String,
         user_code: String,
@@ -391,12 +398,12 @@ pub fn pre_warm_agent_snapshot(runtime: &RuntimeContext, userland_code: &str) ->
     if userland_code.is_empty() {
         return Ok(());
     }
-    let userland = userland_code.to_owned();
+    let userland: Arc<str> = userland_code.into();
     let runtime = runtime.clone();
     run_v8_maintenance("agentos-snapshot-prewarm", move || {
         let client = shared_embedded_runtime_client(&runtime)?;
         client.runtime.dispatch(RuntimeCommand::WarmSnapshot {
-            bridge_code: V8_BRIDGE_CODE.to_owned(),
+            bridge_code: V8RuntimeHost::shared_bridge_code(),
             userland_code: userland,
         })
     })

@@ -1848,9 +1848,9 @@ pub struct JavascriptExecution {
 struct PreparedJavascriptExecute {
     mode: u8,
     file_path: String,
-    bridge_code: String,
+    bridge_code: Arc<str>,
     post_restore_script: String,
-    userland_code: String,
+    userland_code: Arc<str>,
     high_resolution_time: bool,
     runtime_shim: String,
     user_code: String,
@@ -1900,9 +1900,9 @@ impl JavascriptExecution {
             .execute(
                 2 | u8::from(module),
                 file_path,
+                Arc::from(""),
                 String::new(),
-                String::new(),
-                String::new(),
+                Arc::from(""),
                 false,
                 String::new(),
                 user_code,
@@ -2771,13 +2771,14 @@ impl JavascriptExecutionEngine {
         let heap_limit_mb = javascript_heap_limit_mb(&request);
         let cpu_time_limit_ms = javascript_cpu_time_limit_ms(&request);
         let wall_clock_limit_ms = javascript_wall_clock_limit_ms(&request);
-        let snapshot_userland_code = request
+        let snapshot_userland_code: Arc<str> = request
             .guest_runtime
             .snapshot_userland_code
-            .clone()
-            .unwrap_or_default();
+            .as_deref()
+            .unwrap_or_default()
+            .into();
         let warm_hint = Some(WarmSessionHint {
-            bridge_code: V8RuntimeHost::bridge_code().to_owned(),
+            bridge_code: V8RuntimeHost::shared_bridge_code(),
             userland_code: snapshot_userland_code.clone(),
             heap_limit_mb: (heap_limit_mb > 0).then_some(heap_limit_mb),
         });
@@ -2979,7 +2980,7 @@ impl JavascriptExecutionEngine {
                 | if retain_context { 2 } else { 0 }
                 | if complete_on_settle { 4 } else { 0 },
             file_path: execution_file_path,
-            bridge_code: V8RuntimeHost::bridge_code().to_owned(),
+            bridge_code: V8RuntimeHost::shared_bridge_code(),
             post_restore_script: request
                 .guest_runtime
                 .prelude_script

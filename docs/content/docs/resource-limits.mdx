@@ -119,11 +119,22 @@ counted toward any cap.
 ### Sidecar memory
 
 On Linux with glibc, the sidecar returns memory freed by a disposed VM's V8
-isolates to the OS shortly after disposal.
+isolates to the OS shortly after disposal. At startup it also sets the glibc
+trim threshold to 1 MiB and the mmap threshold to 4 MiB, so memory freed by
+stopped processes does not stay in per-thread allocator arenas. A
+`MALLOC_TRIM_THRESHOLD_` or `MALLOC_MMAP_THRESHOLD_` value in the sidecar's
+environment replaces the matching setting.
+
+All isolates share one copy of the V8 snapshot and of the runtime's
+JavaScript bridge source. When a guest's event loop has received no work for
+one second, the sidecar runs one memory-reducing garbage collection on its
+isolate. It runs another only when the heap has doubled (by at least 8 MiB)
+since the last one and at least 30 seconds have passed, so a guest that
+serves requests with idle gaps does not pay for a full collection per gap.
 
 The sidecar also keeps a pool of up to four pre-started V8 isolates so that
 JavaScript and Python executions start faster. The pool stays resident while
-the sidecar runs, at about 20 MiB per isolate. To cap it, set
+the sidecar runs, at about 15 MiB per isolate. To cap it, set
 `AGENTOS_V8_WARM_ISOLATES` to a value from `0` to `4` in the environment that
 starts the sidecar. `0` disables the pool and trades memory for slower
 execution starts.

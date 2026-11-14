@@ -571,9 +571,9 @@ fn inject_snapshot_defaults(scope: &mut v8::HandleScope) {
 /// The external references must match those used during snapshot creation
 /// (provided by bridge::external_refs()).
 ///
-/// `blob` must be owned or 'static data — `Vec<u8>`, `Box<[u8]>`, or
-/// `v8::StartupData` all work. The data is copied into the isolate during
-/// creation; V8 does not retain a reference after `Isolate::new()` returns.
+/// `blob` must be owned or 'static data — `Arc<[u8]>`, `Vec<u8>`, `Box<[u8]>`,
+/// or `v8::StartupData` all work. The isolate keeps `blob` alive until it is
+/// disposed, so pass the cache's `Arc<[u8]>` to share one copy across isolates.
 pub fn create_isolate_from_snapshot<B>(blob: B, heap_limit_mb: Option<u32>) -> v8::OwnedIsolate
 where
     B: std::ops::Deref<Target = [u8]> + std::borrow::Borrow<[u8]> + 'static,
@@ -593,9 +593,9 @@ where
 /// A factory for never-run isolates restored from `blob`, for module code
 /// cache entries that must match the session isolate's snapshot.
 pub fn pristine_isolate_factory(
-    blob: Arc<Vec<u8>>,
+    blob: Arc<[u8]>,
 ) -> crate::module_code_cache::PristineIsolateFactory {
-    Arc::new(move || create_isolate_from_snapshot((*blob).clone(), None))
+    Arc::new(move || create_isolate_from_snapshot(Arc::clone(&blob), None))
 }
 
 pub type SnapshotCacheKey = [u8; 32];
@@ -621,15 +621,16 @@ struct CacheInner {
 struct CacheEntry {
     key: SnapshotCacheKey,
     /// Snapshot blob bytes (copied from v8::StartupData).
-    /// Stored as Vec<u8> rather than StartupData because StartupData
-    /// contains raw pointers that are not Send/Sync.
-    blob: Arc<Vec<u8>>,
+    /// Stored as bytes rather than StartupData because StartupData
+    /// contains raw pointers that are not Send/Sync. Isolates restored from
+    /// this entry share these bytes instead of copying them.
+    blob: Arc<[u8]>,
 }
 
 /// Shared state for an in-flight snapshot creation. The creator thread
 /// populates `result` and notifies all waiters via `done`.
 struct InFlightEntry {
-    result: Mutex<Option<Result<Arc<Vec<u8>>, String>>>,
+    result: Mutex<Option<Result<Arc<[u8]>, String>>>,
     done: Condvar,
 }
 
@@ -649,7 +650,7 @@ impl SnapshotCache {
     /// Two-phase locking: the cache mutex is held only for lookups and
     /// inserts, never during snapshot creation. Per-key in-flight tracking
     /// prevents duplicate snapshot creation for the same bridge code.
-    pub fn get_or_create(&self, bridge_code: &str) -> Result<Arc<Vec<u8>>, String> {
+    pub fn get_or_create(&self, bridge_code: &str) -> Result<Arc<[u8]>, String> {
         self.get_or_create_with_userland(bridge_code, None)
     }
 
@@ -659,7 +660,7 @@ impl SnapshotCache {
         &self,
         bridge_code: &str,
         userland_code: Option<&str>,
-    ) -> Option<Arc<Vec<u8>>> {
+    ) -> Option<Arc<[u8]>> {
         let key = snapshot_cache_key(bridge_code, userland_code);
         let mut inner = self.inner.lock().unwrap();
         if let Some(pos) = inner.entries.iter().position(|e| e.key == key) {
@@ -680,7 +681,7 @@ impl SnapshotCache {
         &self,
         bridge_code: &str,
         userland_code: Option<&str>,
-    ) -> Result<Arc<Vec<u8>>, String> {
+    ) -> Result<Arc<[u8]>, String> {
         let key = snapshot_cache_key(bridge_code, userland_code);
 
         // Phase 1: short lock — check cache, check in-flight, or claim creation
@@ -719,7 +720,8 @@ impl SnapshotCache {
         }
 
         // Phase 2: create snapshot without holding the cache lock
-        let creation_result = create_snapshot_inner(bridge_code, userland_code).map(Arc::new);
+        let creation_result =
+            create_snapshot_inner(bridge_code, userland_code).map(Arc::<[u8]>::from);
 
         // Phase 3: short lock — insert result, notify waiters, clean up
         {
@@ -898,10 +900,10 @@ pub fn run_snapshot_consolidated_checks() {
         );
 
         // Verify both are usable
-        let mut iso_a = create_isolate_from_snapshot((*arc_a).clone(), None);
+        let mut iso_a = create_isolate_from_snapshot(Arc::clone(&arc_a), None);
         assert_eq!(eval(&mut iso_a, "1 + 1"), "2");
 
-        let mut iso_b = create_isolate_from_snapshot((*arc_b).clone(), None);
+        let mut iso_b = create_isolate_from_snapshot(Arc::clone(&arc_b), None);
         assert_eq!(eval(&mut iso_b, "2 + 2"), "4");
     }
 
@@ -1426,7 +1428,7 @@ pub fn run_snapshot_consolidated_checks() {
         );
 
         // Verify blob is usable
-        let mut isolate = create_isolate_from_snapshot((*arc1).clone(), None);
+        let mut isolate = create_isolate_from_snapshot(Arc::clone(&arc1), None);
         assert_eq!(eval(&mut isolate, "1 + 1"), "2");
     }
 
