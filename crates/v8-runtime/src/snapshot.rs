@@ -252,7 +252,7 @@ fn create_snapshot_inner_in_process(
     init_v8_platform();
     crate::isolate::prepare_current_thread();
 
-    crate::isolate::with_isolate_lifecycle_lock(|| {
+    {
         let mut isolate = v8::Isolate::snapshot_creator(Some(external_refs()), None);
         let bridge_result = {
             let scope = &mut v8::HandleScope::new(&mut isolate);
@@ -303,7 +303,7 @@ fn create_snapshot_inner_in_process(
         }
 
         Ok(blob.to_vec())
-    })
+    }
 }
 
 fn create_snapshot_in_subprocess(

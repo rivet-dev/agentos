@@ -5239,15 +5239,13 @@ where
             // other launches on this VM instead of failing with an execution conflict.
             let launch_turn = execution_engines.python_launch_turn().await;
             let mut python_engine = execution_engines.python("start Python execution")?;
-            let pyodide_dist_path = python_engine
-                .bundled_pyodide_dist_path_for_vm_async(&vm_id, &runtime_context)
+            let agentos_execution::PyodidePaths {
+                dist: pyodide_dist_path,
+                cache: pyodide_cache_path,
+            } = python_engine
+                .bundled_pyodide_paths_for_vm_async(&vm_id, &runtime_context)
                 .await
                 .map_err(python_error)?;
-            let pyodide_cache_path = pyodide_dist_path
-                .parent()
-                .and_then(Path::parent)
-                .unwrap_or(pyodide_dist_path.as_path())
-                .join("pyodide-package-cache");
             add_runtime_guest_path_mapping(&mut env, PYTHON_PYODIDE_GUEST_ROOT, &pyodide_dist_path);
             add_runtime_guest_path_mapping(
                 &mut env,
@@ -5275,6 +5273,7 @@ where
             let context = python_engine.create_context(CreatePythonContextRequest {
                 vm_id: vm_id.clone(),
                 pyodide_dist_path,
+                pyodide_cache_path: Some(pyodide_cache_path),
             });
             let execution = python_engine
                 .start_execution_with_runtime_async(

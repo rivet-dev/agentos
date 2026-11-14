@@ -3,14 +3,13 @@
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc, Mutex, Once};
+use std::sync::{mpsc, Arc, Once};
 use std::thread;
 
 use crate::ipc::ExecutionError;
 use agentos_bridge::queue_tracker::{warn_limit_exhausted, TrackedLimit};
 
 static V8_INIT: Once = Once::new();
-static V8_ISOLATE_LIFECYCLE: Mutex<()> = Mutex::new(());
 const MAX_UNHANDLED_PROMISE_REJECTIONS: usize = 1024;
 
 unsafe extern "C" {
@@ -403,7 +402,12 @@ pub(crate) fn create_guest_isolate(
             .heap_limits(0, limit_bytes)
             .array_buffer_allocator(allocator.make_shared()),
     );
-    let mut isolate = with_isolate_lifecycle_lock(|| v8::Isolate::new(params));
+    // Isolate create and drop need no process-wide lock: V8's process-wide
+    // WebAssembly code-pointer table is internally synchronized. The crashes once
+    // attributed to overlapping lifecycles came from V8 state bound to a
+    // transient initialization thread and from missing pkey permissions, which
+    // `init_v8_platform` and `prepare_current_thread` fix.
+    let mut isolate = v8::Isolate::new(params);
     configure_isolate(&mut isolate);
     install_heap_limit_guard(&mut isolate);
     isolate.set_slot(budget);
@@ -496,25 +500,6 @@ extern "C" fn external_memory_gc_callback(
     guard.exceeded.store(true, Ordering::Release);
     if !guard.warned.swap(true, Ordering::Relaxed) {
         warn_limit_exhausted(TrackedLimit::V8ExternalMemoryBytes, outside_budget, limit);
-    }
-}
-
-/// Run V8 isolate create/drop work under a process-wide lifecycle lock.
-///
-/// rusty_v8 130.0.7 embeds a V8 13.0-era process-wide WebAssembly code pointer
-/// table. Isolate construction allocates wasm builtin handles from that table and
-/// isolate destruction frees them again, so create/drop must not overlap across
-/// session threads.
-pub fn with_isolate_lifecycle_lock<T>(f: impl FnOnce() -> T) -> T {
-    let _guard = V8_ISOLATE_LIFECYCLE
-        .lock()
-        .expect("V8 isolate lifecycle lock poisoned");
-    f()
-}
-
-pub fn drop_isolate(isolate: Option<v8::OwnedIsolate>) {
-    if let Some(isolate) = isolate {
-        with_isolate_lifecycle_lock(|| drop(isolate));
     }
 }
 

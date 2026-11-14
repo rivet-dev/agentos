@@ -1127,7 +1127,9 @@ impl WasmExecutionEngine {
 
     pub fn create_context(&mut self, request: CreateWasmContextRequest) -> WasmContext {
         self.next_context_id += 1;
-        self.import_caches.entry(request.vm_id.clone()).or_default();
+        self.import_caches
+            .entry(request.vm_id.clone())
+            .or_insert_with(|| NodeImportCache::default().without_pyodide());
         let javascript_context =
             self.javascript_engine
                 .create_context(CreateJavascriptContextRequest {
@@ -1222,7 +1224,10 @@ impl WasmExecutionEngine {
             .cloned()
             .ok_or_else(|| WasmExecutionError::MissingContext(context.context_id.clone()))?;
         {
-            let import_cache = self.import_caches.entry(context.vm_id.clone()).or_default();
+            let import_cache = self
+                .import_caches
+                .entry(context.vm_id.clone())
+                .or_insert_with(|| NodeImportCache::default().without_pyodide());
             import_cache
                 .ensure_materialized_with_timeout_and_runtime(&runtime, prewarm_timeout)
                 .map_err(WasmExecutionError::PrepareWarmPath)?;
@@ -1298,7 +1303,10 @@ impl WasmExecutionEngine {
             .cloned()
             .ok_or_else(|| WasmExecutionError::MissingContext(context.context_id.clone()))?;
         {
-            let import_cache = self.import_caches.entry(context.vm_id.clone()).or_default();
+            let import_cache = self
+                .import_caches
+                .entry(context.vm_id.clone())
+                .or_insert_with(|| NodeImportCache::default().without_pyodide());
             import_cache
                 .ensure_materialized_with_timeout_and_runtime_async(&runtime, prewarm_timeout)
                 .await

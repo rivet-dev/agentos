@@ -5005,14 +5005,12 @@ where
                     } else {
                         python_file_entrypoint(&resolved.entrypoint)
                     };
-                    let pyodide_dist_path = python_engine
-                        .bundled_pyodide_dist_path_for_vm(vm_id)
+                    let agentos_execution::PyodidePaths {
+                        dist: pyodide_dist_path,
+                        cache: pyodide_cache_path,
+                    } = python_engine
+                        .bundled_pyodide_paths_for_vm(vm_id)
                         .map_err(python_error)?;
-                    let pyodide_cache_path = pyodide_dist_path
-                        .parent()
-                        .and_then(Path::parent)
-                        .unwrap_or(pyodide_dist_path.as_path())
-                        .join("pyodide-package-cache");
                     add_runtime_guest_path_mapping(
                         &mut execution_env,
                         PYTHON_PYODIDE_GUEST_ROOT,
@@ -5044,6 +5042,7 @@ where
                     let context = python_engine.create_context(CreatePythonContextRequest {
                         vm_id: vm_id.to_owned(),
                         pyodide_dist_path,
+                        pyodide_cache_path: Some(pyodide_cache_path),
                     });
                     let context_id = context.context_id;
                     let execution_result = python_engine
@@ -5669,14 +5668,12 @@ where
                 } else {
                     python_file_entrypoint(&resolved.entrypoint)
                 };
-                let pyodide_dist_path = python_engine
-                    .bundled_pyodide_dist_path_for_vm(vm_id)
+                let agentos_execution::PyodidePaths {
+                    dist: pyodide_dist_path,
+                    cache: pyodide_cache_path,
+                } = python_engine
+                    .bundled_pyodide_paths_for_vm(vm_id)
                     .map_err(python_error)?;
-                let pyodide_cache_path = pyodide_dist_path
-                    .parent()
-                    .and_then(Path::parent)
-                    .unwrap_or(pyodide_dist_path.as_path())
-                    .join("pyodide-package-cache");
                 add_runtime_guest_path_mapping(
                     &mut execution_env,
                     PYTHON_PYODIDE_GUEST_ROOT,
@@ -5708,6 +5705,7 @@ where
                 let context = python_engine.create_context(CreatePythonContextRequest {
                     vm_id: vm_id.to_owned(),
                     pyodide_dist_path,
+                    pyodide_cache_path: Some(pyodide_cache_path),
                 });
                 let context_id = context.context_id;
                 let replacement_result =
@@ -6665,18 +6663,13 @@ where
                             let _launch_turn = execution_engines.python_launch_turn().await;
                             let mut python_engine =
                                 execution_engines.python("start nested Python child process")?;
-                            let pyodide_dist_path = python_engine
-                                .bundled_pyodide_dist_path_for_vm_async(
-                                    &start_vm_id,
-                                    &runtime_context,
-                                )
+                            let agentos_execution::PyodidePaths {
+                                dist: pyodide_dist_path,
+                                cache: pyodide_cache_path,
+                            } = python_engine
+                                .bundled_pyodide_paths_for_vm_async(&start_vm_id, &runtime_context)
                                 .await
                                 .map_err(python_error)?;
-                            let pyodide_cache_path = pyodide_dist_path
-                                .parent()
-                                .and_then(Path::parent)
-                                .unwrap_or(pyodide_dist_path.as_path())
-                                .join("pyodide-package-cache");
                             add_runtime_guest_path_mapping(
                                 &mut execution_env,
                                 PYTHON_PYODIDE_GUEST_ROOT,
@@ -6709,6 +6702,7 @@ where
                                 python_engine.create_context(CreatePythonContextRequest {
                                     vm_id: start_vm_id.clone(),
                                     pyodide_dist_path,
+                                    pyodide_cache_path: Some(pyodide_cache_path),
                                 });
                             let context_id = context.context_id;
                             let execution_result = python_engine

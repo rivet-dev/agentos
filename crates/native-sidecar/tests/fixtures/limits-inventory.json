@@ -551,13 +551,6 @@
     "rationale": "Dev benchmarking harness only."
   },
   {
-    "name": "DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT_MS",
-    "path": "crates/execution/src/javascript.rs",
-    "class": "policy",
-    "rationale": "Execution-layer Node import-cache materialization fallback; normal VM executions receive the wired sidecar value.",
-    "wired": "VmLimits.js_runtime.import_cache_materialize_timeout_ms"
-  },
-  {
     "name": "DEFAULT_V8_CPU_TIME_LIMIT_MS",
     "path": "crates/execution/src/javascript.rs",
     "class": "policy",
@@ -2585,5 +2578,11 @@
     "path": "crates/v8-runtime/src/module_code_cache.rs",
     "class": "policy-deferred",
     "rationale": "Fixed process-wide count of pristine-isolate module code cache record jobs in flight; a miss while full compiles normally."
+  },
+  {
+    "name": "MAX_RECLAIMED_TEMP_ENTRIES_PER_START",
+    "path": "crates/native-sidecar/src/temp_reclaim.rs",
+    "class": "invariant",
+    "rationale": "Entries one startup sweep of leaked temp roots removes; later starts reclaim the rest."
   }
 ]

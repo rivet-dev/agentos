@@ -529,8 +529,7 @@ struct SessionAssignment {
 #[cfg(not(test))]
 struct PrecreatedIsolate {
     // Keep both V8 owners optional so `Drop` can enforce the required order:
-    // every Global must be released before its isolate, and isolate destruction
-    // must share the process-wide lifecycle lock with isolate creation.
+    // every Global must be released before its isolate.
     isolate: Option<v8::OwnedIsolate>,
     context: Option<v8::Global<v8::Context>>,
     bridge_code: Arc<str>,
@@ -541,7 +540,7 @@ struct PrecreatedIsolate {
 impl Drop for PrecreatedIsolate {
     fn drop(&mut self) {
         drop(self.context.take());
-        isolate::drop_isolate(self.isolate.take());
+        drop(self.isolate.take());
     }
 }
 
@@ -2485,7 +2484,7 @@ fn session_thread(
                             reset_pending_promises(&mut pending);
                             drop(_v8_context.take());
                             context_pristine = false;
-                            isolate::drop_isolate(v8_isolate.take());
+                            drop(v8_isolate.take());
                             from_snapshot = false;
                             isolate_bridge_code = None;
                             isolate_userland_code = None;
@@ -3362,7 +3361,7 @@ fn session_thread(
         crate::module_code_cache::set_session_executor(None);
         crate::module_code_cache::set_session_isolate_factory(None);
         drop(_v8_context.take());
-        isolate::drop_isolate(v8_isolate.take());
+        drop(v8_isolate.take());
     }
 
     // `_slot_permit` releases only after all thread-affine V8 state above has

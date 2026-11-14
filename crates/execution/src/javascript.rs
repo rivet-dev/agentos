@@ -1,7 +1,5 @@
 use crate::common::stable_hash64;
-use crate::node_import_cache::{
-    NodeImportCache, NodeImportCacheCleanup, NODE_IMPORT_CACHE_ASSET_ROOT_ENV,
-};
+use crate::node_import_cache::NODE_IMPORT_CACHE_ASSET_ROOT_ENV;
 use crate::runtime_support::{
     NODE_COMPILE_CACHE_ENV, NODE_DISABLE_COMPILE_CACHE_ENV, NODE_FROZEN_TIME_ENV,
     NODE_SANDBOX_ROOT_ENV,
@@ -152,7 +150,6 @@ fn record_js_phase_stats(
 
 const DEFAULT_V8_CPU_TIME_LIMIT_MS: u32 = 30_000;
 const DEFAULT_V8_WALL_CLOCK_LIMIT_MS: u32 = 0;
-const DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT_MS: u64 = 30_000;
 const NODE_SYNC_RPC_DEFAULT_DATA_BYTES: usize = 4 * 1024 * 1024;
 const NODE_SYNC_RPC_DEFAULT_WAIT_TIMEOUT_MS: u64 = 30_000;
 const NODE_SYNC_RPC_RESPONSE_QUEUE_CAPACITY: usize = 1;
@@ -452,7 +449,8 @@ pub struct JavascriptExecutionLimits {
     /// JavaScript wall-clock backstop in ms. `None` keeps the engine default;
     /// `Some(0)` disables the wall-clock watchdog.
     pub wall_clock_limit_ms: Option<u32>,
-    /// Timeout for materializing the per-VM Node import cache.
+    /// Accepted for wire compatibility; JavaScript executions no longer
+    /// materialize an import cache, so this limit has no effect.
     pub import_cache_materialize_timeout_ms: Option<u64>,
     /// Maximum live JavaScript timers in this execution. `None` keeps the
     /// engine default. The sidecar supplies the VM-scoped configured value.
@@ -1829,7 +1827,6 @@ pub struct JavascriptExecution {
     pending_sync_rpc: Arc<Mutex<Option<PendingSyncRpcState>>>,
     exited: Arc<AtomicBool>,
     kernel_stdin: Arc<LocalKernelStdinBridge>,
-    _import_cache_guard: Arc<NodeImportCacheCleanup>,
     v8_session: V8SessionHandle,
     /// Fully prepared V8 execute request. Cross-runtime execve prepares the
     /// replacement isolate and its bridge before committing kernel process
@@ -2460,7 +2457,6 @@ pub struct JavascriptExecutionEngine {
     next_context_id: usize,
     next_execution_id: usize,
     contexts: BTreeMap<String, JavascriptContext>,
-    import_caches: BTreeMap<String, NodeImportCache>,
     v8_host: Option<V8RuntimeHost>,
     event_notify: Option<Arc<Notify>>,
 }
@@ -2472,7 +2468,6 @@ impl Default for JavascriptExecutionEngine {
             next_context_id: 0,
             next_execution_id: 0,
             contexts: BTreeMap::new(),
-            import_caches: BTreeMap::new(),
             v8_host: None,
             event_notify: None,
         }
@@ -2518,15 +2513,8 @@ impl JavascriptExecutionEngine {
         self.event_notify = notify;
     }
 
-    #[doc(hidden)]
-    pub fn set_import_cache_base_dir(&mut self, vm_id: impl Into<String>, base_dir: PathBuf) {
-        self.import_caches
-            .insert(vm_id.into(), NodeImportCache::new_in(base_dir));
-    }
-
     pub fn create_context(&mut self, request: CreateJavascriptContextRequest) -> JavascriptContext {
         self.next_context_id += 1;
-        self.import_caches.entry(request.vm_id.clone()).or_default();
 
         let context = JavascriptContext {
             context_id: format!("js-ctx-{}", self.next_context_id),
@@ -2741,18 +2729,6 @@ impl JavascriptExecutionEngine {
         }
         let reactor_work_quantum = javascript_reactor_work_quantum(&request, &runtime)?;
         let bridge_call_timeout = javascript_bridge_call_timeout(&request, &runtime)?;
-
-        let phase_start = Instant::now();
-        // Ensure import cache is materialized (still needed for module resolution)
-        let import_cache = self.import_caches.entry(context.vm_id.clone()).or_default();
-        import_cache
-            .ensure_materialized_with_timeout_and_runtime(
-                &process_runtime,
-                javascript_import_cache_materialize_timeout(&request),
-            )
-            .map_err(JavascriptExecutionError::PrepareImportCache)?;
-        let import_cache_guard = import_cache.cleanup_guard();
-        record_js_start_phase("js_start_import_cache", phase_start.elapsed());
 
         self.next_execution_id += 1;
         let execution_id = format!("exec-{}", self.next_execution_id);
@@ -3020,7 +2996,6 @@ impl JavascriptExecutionEngine {
             pending_sync_rpc,
             exited,
             kernel_stdin,
-            _import_cache_guard: import_cache_guard,
             v8_session,
             prepared_execute,
             _event_bridge_task: event_bridge_task,
@@ -3033,32 +3008,6 @@ impl JavascriptExecutionEngine {
 
     pub fn dispose_vm(&mut self, vm_id: &str) {
         self.contexts.retain(|_, context| context.vm_id != vm_id);
-        self.import_caches.remove(vm_id);
-    }
-
-    #[doc(hidden)]
-    #[allow(dead_code)]
-    pub fn materialize_import_cache_for_vm(
-        &mut self,
-        vm_id: &str,
-    ) -> Result<&std::path::Path, std::io::Error> {
-        let runtime = self
-            .runtime
-            .as_ref()
-            .ok_or_else(|| std::io::Error::other(
-                "ERR_AGENTOS_RUNTIME_NOT_INJECTED: JavascriptExecutionEngine requires a process RuntimeContext",
-            ))?;
-        let import_cache = self.import_caches.entry(vm_id.to_owned()).or_default();
-        import_cache.ensure_materialized_with_runtime(runtime)?;
-        Ok(import_cache.cache_path())
-    }
-
-    #[doc(hidden)]
-    #[allow(dead_code)]
-    pub fn import_cache_path_for_vm(&self, vm_id: &str) -> Option<&std::path::Path> {
-        self.import_caches
-            .get(vm_id)
-            .map(NodeImportCache::cache_path)
     }
 }
 
@@ -3116,17 +3065,6 @@ fn javascript_heap_limit_mb(request: &StartJavascriptExecutionRequest) -> u32 {
         .v8_heap_limit_mb
         .filter(|value| *value > 0)
         .unwrap_or(0)
-}
-
-fn javascript_import_cache_materialize_timeout(
-    request: &StartJavascriptExecutionRequest,
-) -> Duration {
-    let timeout_ms = request
-        .limits
-        .import_cache_materialize_timeout_ms
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT_MS);
-    Duration::from_millis(timeout_ms)
 }
 
 fn javascript_max_timers(request: &StartJavascriptExecutionRequest) -> usize {
@@ -7417,11 +7355,6 @@ mod tests {
             500,
             "wall-clock budget must come from the typed wire limit, not env"
         );
-        assert_eq!(
-            javascript_import_cache_materialize_timeout(&request),
-            std::time::Duration::from_millis(125),
-            "import-cache timeout must come from the typed wire limit, not env"
-        );
         assert_eq!(javascript_max_timers(&request), 321);
         assert_eq!(
             javascript_reactor_work_quantum(
@@ -7505,10 +7438,6 @@ mod tests {
             DEFAULT_V8_WALL_CLOCK_LIMIT_MS
         );
         assert_eq!(javascript_max_timers(&request), MAX_TIMERS_PER_EXECUTION);
-        assert_eq!(
-            javascript_import_cache_materialize_timeout(&request),
-            std::time::Duration::from_millis(DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT_MS)
-        );
     }
 
     #[test]

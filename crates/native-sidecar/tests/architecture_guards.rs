@@ -313,6 +313,9 @@ const FS_ALLOW: &[&str] = &[
     "crates/native-sidecar/src/package_projection.rs",
     "crates/native-sidecar/src/stdio.rs",
     "crates/native-sidecar/src/state.rs",
+    // Startup reclaim of temp directories left by exited sidecars, plus this
+    // process's liveness lock. Host-only; touches only sidecar-named entries.
+    "crates/native-sidecar/src/temp_reclaim.rs",
     "crates/native-sidecar/src/vm.rs",
     "crates/native-sidecar/src/service.rs",
     "crates/native-sidecar/src/execution/",
@@ -1291,7 +1294,7 @@ fn top_level_python_start_uses_the_async_runtime_adapter() {
     );
     assert!(
         compact.contains(
-            "python_engine.bundled_pyodide_dist_path_for_vm_async(&vm_id,&runtime_context).await"
+            "python_engine.bundled_pyodide_paths_for_vm_async(&vm_id,&runtime_context).await"
         ),
         "top-level Pyodide cache materialization must not run synchronously before the async Python start"
     );

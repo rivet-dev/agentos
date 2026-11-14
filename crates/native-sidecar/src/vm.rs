@@ -88,7 +88,11 @@ fn create_vm_unix_socket_host_dir() -> Result<PathBuf, SidecarError> {
         let suffix = random_directory_suffix().map_err(|error| {
             SidecarError::Io(format!("failed to generate Unix socket namespace: {error}"))
         })?;
-        let path = std::env::temp_dir().join(format!("agentos-uds-{suffix}"));
+        let path = std::env::temp_dir().join(format!(
+            "{}{}-{suffix}",
+            crate::temp_reclaim::VM_UNIX_SOCKET_DIR_PID_PREFIX,
+            std::process::id()
+        ));
         let mut builder = fs::DirBuilder::new();
         builder.mode(0o700);
         match builder.create(&path) {
@@ -4592,8 +4596,11 @@ fn create_vm_shadow_root(vm_id: &str) -> Result<PathBuf, SidecarError> {
         let suffix = random_directory_suffix().map_err(|error| {
             SidecarError::Io(format!("failed to generate VM shadow-root name: {error}"))
         })?;
-        let root =
-            std::env::temp_dir().join(format!("agentos-native-sidecar-shadow-{vm_id}-{suffix}"));
+        let root = std::env::temp_dir().join(format!(
+            "{}{}-{vm_id}-{suffix}",
+            crate::temp_reclaim::VM_SHADOW_ROOT_PID_PREFIX,
+            std::process::id()
+        ));
         match fs::create_dir(&root) {
             Ok(()) => return initialize_vm_shadow_root(root),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,

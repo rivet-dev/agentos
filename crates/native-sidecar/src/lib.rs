@@ -26,6 +26,7 @@ pub(crate) mod request_operations;
 pub mod service;
 pub(crate) mod state;
 pub mod stdio;
+pub(crate) mod temp_reclaim;
 pub(crate) mod vm;
 pub mod vm_sqlite;
 pub use agentos_sidecar_protocol::{generated_protocol, protocol, wire};

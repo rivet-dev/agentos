@@ -81,6 +81,9 @@ mod request_operations;
 #[allow(dead_code)]
 #[path = "../src/stdio.rs"]
 mod stdio;
+#[allow(dead_code)]
+#[path = "../src/temp_reclaim.rs"]
+mod temp_reclaim;
 
 mod service {
     include!("../src/service.rs");
@@ -1783,6 +1786,7 @@ ykAheWCsAteSEWVc0w==\n\
                 .create_context(CreatePythonContextRequest {
                     vm_id: vm_id.to_owned(),
                     pyodide_dist_path,
+                    pyodide_cache_path: None,
                 });
             context
         }
@@ -7744,104 +7748,6 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     .expect("reap terminal owner");
             }
         }
-        fn dispose_vm_removes_per_vm_javascript_import_cache_directory() {
-            let mut sidecar = create_test_sidecar();
-            let (connection_id, session_id) =
-                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
-            let vm_a = create_vm(
-                &mut sidecar,
-                &connection_id,
-                &session_id,
-                PermissionsPolicy::allow_all(),
-            )
-            .expect("create vm a");
-            let vm_b = create_vm(
-                &mut sidecar,
-                &connection_id,
-                &session_id,
-                PermissionsPolicy::allow_all(),
-            )
-            .expect("create vm b");
-
-            let engines_a = sidecar
-                .vms
-                .get(&vm_a)
-                .expect("vm a")
-                .execution_engines
-                .clone();
-            let engines_b = sidecar
-                .vms
-                .get(&vm_b)
-                .expect("vm b")
-                .execution_engines
-                .clone();
-            let cache_path_a = engines_a
-                .javascript("materialize vm a import cache")
-                .expect("borrow vm a JavaScript engine")
-                .materialize_import_cache_for_vm(&vm_a)
-                .expect("materialize vm a import cache")
-                .to_path_buf();
-            let cache_path_b = engines_b
-                .javascript("materialize vm b import cache")
-                .expect("borrow vm b JavaScript engine")
-                .materialize_import_cache_for_vm(&vm_b)
-                .expect("materialize vm b import cache")
-                .to_path_buf();
-            let cache_root_a = cache_path_a
-                .parent()
-                .expect("vm a cache parent")
-                .to_path_buf();
-            let cache_root_b = cache_path_b
-                .parent()
-                .expect("vm b cache parent")
-                .to_path_buf();
-
-            assert_ne!(cache_root_a, cache_root_b);
-            assert!(cache_root_a.exists(), "vm a cache root should exist");
-            assert!(cache_root_b.exists(), "vm b cache root should exist");
-
-            drop(engines_a);
-
-            sidecar
-                .dispose_vm_internal_blocking(
-                    &connection_id,
-                    &session_id,
-                    &vm_a,
-                    DisposeReason::Requested,
-                )
-                .expect("dispose vm a");
-
-            assert!(
-                !cache_root_a.exists(),
-                "vm a cache root should be removed on dispose"
-            );
-            assert!(
-                cache_root_b.exists(),
-                "vm b cache root should remain until that VM is disposed"
-            );
-            assert_eq!(
-                engines_b
-                    .javascript("inspect vm b import cache")
-                    .expect("borrow vm b JavaScript engine")
-                    .import_cache_path_for_vm(&vm_b),
-                Some(cache_path_b.as_path())
-            );
-
-            drop(engines_b);
-
-            sidecar
-                .dispose_vm_internal_blocking(
-                    &connection_id,
-                    &session_id,
-                    &vm_b,
-                    DisposeReason::Requested,
-                )
-                .expect("dispose vm b");
-            assert!(
-                !cache_root_b.exists(),
-                "vm b cache root should be removed on dispose"
-            );
-        }
         fn execution_dispose_vm_race_skips_stale_process_events_without_panicking() {
             with_panic_counter(|panic_counter| {
                 let mut sidecar = create_test_sidecar();
@@ -12666,16 +12572,6 @@ console.log(JSON.stringify({ status: "ok", summary }));
                 PermissionsPolicy::allow_all(),
             )
             .expect("create vm");
-            let import_cache_root = sidecar.cache_root.join("cross-runtime-exec-import-cache");
-            sidecar
-                .vms
-                .get(&vm_id)
-                .expect("created vm")
-                .execution_engines
-                .javascript("configure cross-runtime import cache")
-                .expect("borrow VM JavaScript engine")
-                .set_import_cache_base_dir(vm_id.clone(), import_cache_root);
-
             let (kernel_handle, host_cwd) = {
                 let mut vm = sidecar.vms.get_mut(&vm_id).expect("created vm");
                 vm.kernel.mkdir("/work", true).expect("create work dir");
@@ -25945,7 +25841,6 @@ try {
             javascript_net_server_accept_returns_timeout_then_pending_connection();
             javascript_kernel_stdin_reads_buffered_input_and_reports_timeout_and_eof();
             javascript_sync_rpc_pty_set_raw_mode_toggles_kernel_tty_discipline();
-            dispose_vm_removes_per_vm_javascript_import_cache_directory();
             execution_dispose_vm_race_skips_stale_process_events_without_panicking();
             execution_javascript_sync_rpc_handler_ignores_stale_vm_and_process_races();
             execution_poll_event_smoke_skips_queued_stale_process_envelopes_after_dispose();

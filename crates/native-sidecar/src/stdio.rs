@@ -1492,12 +1492,22 @@ fn run_with_optional_control_and_runtime(
     if let Err(error) = agentos_execution::v8_host::ensure_runtime_initialized(&runtime_context) {
         eprintln!("embedded V8 runtime init failed at startup: {error}");
     }
+    // A sidecar killed with live VMs cannot remove its temp directories;
+    // reclaim those of exited sidecars without delaying startup.
+    crate::temp_reclaim::start_temp_dir_reclaim(&runtime_context);
     // Extension request futures may use thread-affine VM services and are
     // therefore supervised as local tasks. The LocalSet lets multiple owned
     // extension requests make progress concurrently without making the full
     // NativeSidecar state Send or wrapping it in a global mutex.
     let local = tokio::task::LocalSet::new();
-    runtime.block_on(local.run_until(run_async(extensions, config, runtime_context, control_fd)))
+    let result = runtime.block_on(local.run_until(run_async(
+        extensions,
+        config,
+        runtime_context,
+        control_fd,
+    )));
+    crate::temp_reclaim::remove_process_temp_state();
+    result
 }
 
 async fn run_async(
@@ -6759,6 +6769,7 @@ export async function loadPyodide() {
                         .create_context(agentos_execution::CreatePythonContextRequest {
                             vm_id: vm_id.clone(),
                             pyodide_dist_path: pyodide_dir.clone(),
+                            pyodide_cache_path: None,
                         });
                     engines
                         .python(label)
