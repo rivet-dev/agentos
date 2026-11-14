@@ -2995,7 +2995,7 @@ pub(super) fn prepare_guest_runtime_env(
         })?,
     );
     // The guest JS host platform drives subtractive global scrubbing in the
-    // per-execution runtime shim (see prepend_v8_runtime_shim).
+    // per-execution runtime shim (see build_v8_runtime_shim).
     env.insert(
         String::from("AGENTOS_JS_PLATFORM"),
         js_runtime_platform_env(vm).to_owned(),

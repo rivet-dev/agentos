@@ -6,6 +6,7 @@ pub mod host_call;
 pub mod ipc;
 pub mod ipc_binary;
 pub mod isolate;
+pub mod module_code_cache;
 pub mod native_heap;
 pub mod runtime_protocol;
 pub mod session;

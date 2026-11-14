@@ -1852,6 +1852,7 @@ struct PreparedJavascriptExecute {
     post_restore_script: String,
     userland_code: String,
     high_resolution_time: bool,
+    runtime_shim: String,
     user_code: String,
     wasm_module_bytes: Option<Arc<Vec<u8>>>,
 }
@@ -1903,6 +1904,7 @@ impl JavascriptExecution {
                 String::new(),
                 String::new(),
                 false,
+                String::new(),
                 user_code,
                 None,
             )
@@ -1927,6 +1929,7 @@ impl JavascriptExecution {
                 prepared.post_restore_script,
                 prepared.userland_code,
                 prepared.high_resolution_time,
+                prepared.runtime_shim,
                 prepared.user_code,
                 prepared.wasm_module_bytes,
             )
@@ -2354,8 +2357,10 @@ impl Drop for JavascriptExecution {
         // Closing the V8 producer lets the bridge task drain any terminal
         // warning/result and then finish when its per-session lane closes.
         // Aborting the task first would drop the lane while the session thread
-        // was still completing teardown.
-        let _ = self.v8_session.destroy();
+        // was still completing teardown. Isolate teardown is joined on the
+        // session reaper so dropping an exited process does not stall the
+        // caller (the sidecar service loop) for milliseconds.
+        let _ = self.v8_session.destroy_detached();
     }
 }
 
@@ -2900,8 +2905,7 @@ impl JavascriptExecutionEngine {
         } else {
             build_v8_user_code(&guest_entrypoint, &request.env)
         };
-        let user_code = prepend_v8_runtime_shim(
-            user_code,
+        let runtime_shim = build_v8_runtime_shim(
             &guest_entrypoint,
             &process_argv,
             request.argv0.as_deref(),
@@ -2983,6 +2987,7 @@ impl JavascriptExecutionEngine {
                 .unwrap_or_default(),
             userland_code: snapshot_userland_code,
             high_resolution_time: request.guest_runtime.high_resolution_time,
+            runtime_shim,
             user_code,
             wasm_module_bytes: request.wasm_module_bytes.clone(),
         };
@@ -2997,6 +3002,7 @@ impl JavascriptExecutionEngine {
                     prepared_execute.post_restore_script,
                     prepared_execute.userland_code,
                     prepared_execute.high_resolution_time,
+                    prepared_execute.runtime_shim,
                     prepared_execute.user_code,
                     prepared_execute.wasm_module_bytes,
                 )
@@ -3579,8 +3585,10 @@ fn resolve_v8_entrypoint(cwd: &Path, entrypoint: &str) -> String {
 // Keep each injected process/runtime value explicit at this one serialization
 // boundary; grouping them would duplicate the already-typed guest config.
 #[allow(clippy::too_many_arguments)]
-fn prepend_v8_runtime_shim(
-    user_code: String,
+/// The per-process classic script that sets up `process` (argv, env, identity)
+/// before guest code runs. It travels in the Execute frame's `runtime_shim`
+/// field, separate from the guest's own code.
+fn build_v8_runtime_shim(
     entrypoint: &str,
     argv: &[String],
     argv0: Option<&str>,
@@ -3907,8 +3915,7 @@ fn prepend_v8_runtime_shim(
       ].forEach(__dropGlobal);
     }}
   }}
-}})();
-{user_code}"#
+}})();"#
     )
 }
 

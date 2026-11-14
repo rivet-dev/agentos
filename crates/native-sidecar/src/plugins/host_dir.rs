@@ -10,8 +10,8 @@ use nix::libc;
 // the portable anchor open mode.
 const O_PATH_ANCHOR: OFlag = OFlag::O_RDONLY;
 use agentos_execution::{
-    GuestModuleReader, LocalModuleResolutionCache, ModuleFsReader, ModuleResolveMode,
-    ModuleResolver,
+    GuestModuleReader, LocalModuleResolutionCache, LocalResolvedModuleFormat, ModuleFsReader,
+    ModuleResolveMode, ModuleResolver,
 };
 use agentos_kernel::mount_plugin::{
     FileSystemPluginFactory, OpenFileSystemPluginRequest, PluginError,
@@ -24,6 +24,7 @@ use agentos_kernel::vfs::{
     normalize_path, VfsError, VfsResult, VirtualDirEntry, VirtualFileSystem, VirtualStat,
     VirtualTimeSpec, VirtualUtimeSpec,
 };
+use agentos_v8_runtime::execution::ResolvedModuleFormat;
 use nix::sys::stat::{fchmod, fstat, fstatat, mkdirat, utimensat, Mode, SFlag, UtimensatFlags};
 use nix::sys::time::TimeSpec;
 use nix::unistd::{fchownat, linkat, symlinkat, unlinkat, Gid, Uid, UnlinkatFlags};
@@ -1795,7 +1796,33 @@ impl SessionModuleReader {
 
 impl GuestModuleReader for SessionModuleReader {
     fn read_module_source(&mut self, resolved_guest_path: &str) -> Option<String> {
-        self.reader.read_to_string(resolved_guest_path)
+        // Same `load_file` as the bridge `_loadFile` (builtin wrappers, hashbang
+        // handling), over the mounted reader.
+        let reader: &mut dyn ModuleFsReader = &mut self.reader;
+        ModuleResolver::new(reader, &mut self.cache).load_file(resolved_guest_path)
+    }
+
+    fn module_format(&mut self, resolved_guest_path: &str) -> Option<ResolvedModuleFormat> {
+        // Only formats fixed by the builtin name or the file extension: `.js`
+        // depends on the nearest package.json, which may live outside the
+        // mounts this reader can see.
+        let fixed_by_name = matches!(
+            Path::new(resolved_guest_path)
+                .extension()
+                .and_then(|extension| extension.to_str()),
+            Some("mjs" | "mts" | "cjs" | "cts" | "json")
+        ) || resolved_guest_path.starts_with("node:");
+        if !fixed_by_name {
+            return None;
+        }
+        let reader: &mut dyn ModuleFsReader = &mut self.reader;
+        let format =
+            ModuleResolver::new(reader, &mut self.cache).module_format(resolved_guest_path)?;
+        Some(match format {
+            LocalResolvedModuleFormat::Module => ResolvedModuleFormat::Module,
+            LocalResolvedModuleFormat::Commonjs => ResolvedModuleFormat::Commonjs,
+            LocalResolvedModuleFormat::Json => ResolvedModuleFormat::Json,
+        })
     }
 
     fn resolve_module(&mut self, specifier: &str, referrer: &str) -> Option<String> {

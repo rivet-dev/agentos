@@ -590,6 +590,14 @@ where
     })
 }
 
+/// A factory for never-run isolates restored from `blob`, for module code
+/// cache entries that must match the session isolate's snapshot.
+pub fn pristine_isolate_factory(
+    blob: Arc<Vec<u8>>,
+) -> crate::module_code_cache::PristineIsolateFactory {
+    Arc::new(move || create_isolate_from_snapshot((*blob).clone(), None))
+}
+
 pub type SnapshotCacheKey = [u8; 32];
 
 /// Thread-safe snapshot cache keyed by bridge code digest.
@@ -744,6 +752,32 @@ impl SnapshotCache {
 /// the sha256 of the bridge code (a NUL separator is only added when userland is
 /// present), so existing bridge-only entries keep their historical keys.
 pub fn snapshot_cache_key(bridge_code: &str, userland_code: Option<&str>) -> SnapshotCacheKey {
+    // Every process start keys the warm pool and snapshot cache by this digest,
+    // and the bridge alone is ~2.5 MB. Remember the last input per shape and
+    // reuse its digest when the bytes are equal: a memcmp is ~10x cheaper than
+    // SHA-256, and equality keeps the key exact.
+    type LastKey = Option<(String, Option<String>, SnapshotCacheKey)>;
+    static LAST_KEYS: Mutex<[LastKey; 2]> = Mutex::new([None, None]);
+    let slot = usize::from(userland_code.is_some());
+    if let Ok(last) = LAST_KEYS.lock() {
+        if let Some((bridge, userland, key)) = &last[slot] {
+            if bridge == bridge_code && userland.as_deref() == userland_code {
+                return *key;
+            }
+        }
+    }
+    let key = compute_snapshot_cache_key(bridge_code, userland_code);
+    if let Ok(mut last) = LAST_KEYS.lock() {
+        last[slot] = Some((
+            bridge_code.to_owned(),
+            userland_code.map(str::to_owned),
+            key,
+        ));
+    }
+    key
+}
+
+fn compute_snapshot_cache_key(bridge_code: &str, userland_code: Option<&str>) -> SnapshotCacheKey {
     match userland_code {
         None => {
             let mut hasher = Sha256::new();

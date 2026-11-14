@@ -2200,6 +2200,12 @@
     "rationale": "Test-only session output channel capacity."
   },
   {
+    "name": "SESSION_REAPER_QUEUE_CAPACITY",
+    "path": "crates/v8-runtime/src/embedded_runtime.rs",
+    "class": "invariant",
+    "rationale": "Pending session joins; each holds a V8 executor slot permit, so the executor limit bounds it."
+  },
+  {
     "name": "MAX_CJS_NAMED_EXPORTS",
     "path": "crates/v8-runtime/src/execution.rs",
     "class": "invariant",
@@ -2501,5 +2507,17 @@
     "path": "packages/core/src/software-registry.ts",
     "class": "policy-deferred",
     "rationale": "Pair of crates/client/src/software_registry.rs; fixed 8 MiB ceiling on a fetched software-registry manifest; overruns fail with an Error naming the limit. Expose through the software registry options if operators need to tune it."
+  },
+  {
+    "name": "MAX_MODULE_CODE_CACHE_BYTES",
+    "path": "crates/v8-runtime/src/module_code_cache.rs",
+    "class": "policy-deferred",
+    "rationale": "Fixed process-wide byte ceiling of the shared module bytecode cache; oldest entries are evicted first."
+  },
+  {
+    "name": "MAX_PRISTINE_RECORD_JOBS",
+    "path": "crates/v8-runtime/src/module_code_cache.rs",
+    "class": "policy-deferred",
+    "rationale": "Fixed process-wide count of pristine-isolate module code cache record jobs in flight; a miss while full compiles normally."
   }
 ]

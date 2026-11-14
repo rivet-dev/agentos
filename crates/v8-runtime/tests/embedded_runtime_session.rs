@@ -143,6 +143,7 @@ fn dispatch_execute(
             post_restore_script: String::new(),
             userland_code: String::new(),
             high_resolution_time: false,
+            runtime_shim: String::new(),
             user_code: user_code.to_owned(),
             wasm_module_bytes: None,
         },

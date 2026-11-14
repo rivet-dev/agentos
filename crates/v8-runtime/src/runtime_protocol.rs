@@ -114,6 +114,7 @@ pub enum SessionMessage {
         post_restore_script: String,
         userland_code: String,
         high_resolution_time: bool,
+        runtime_shim: String,
         user_code: String,
         wasm_module_bytes: Option<Arc<Vec<u8>>>,
     },
@@ -212,6 +213,7 @@ impl TryFrom<BinaryFrame> for RuntimeCommand {
                 post_restore_script,
                 userland_code,
                 high_resolution_time,
+                runtime_shim,
                 user_code,
             } => {
                 if mode > 7 {
@@ -229,6 +231,7 @@ impl TryFrom<BinaryFrame> for RuntimeCommand {
                         post_restore_script,
                         userland_code,
                         high_resolution_time,
+                        runtime_shim,
                         user_code,
                         wasm_module_bytes: None,
                     },
@@ -366,6 +369,7 @@ mod tests {
             post_restore_script: String::new(),
             userland_code: String::new(),
             high_resolution_time: false,
+            runtime_shim: String::new(),
             user_code: String::new(),
         })
         .expect_err("unknown execute mode should be rejected");

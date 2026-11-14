@@ -1655,8 +1655,13 @@ fn build_python_runner_module_source(
     let runner_source = fs::read_to_string(import_cache.python_runner_path())
         .map_err(PythonExecutionError::PrepareRuntime)?;
     let runner_source =
-        format!("import * as __agentOSConstantsBinding from 'node:constants';\n{runner_source}");
-    let bootstrap = build_python_runner_bootstrap(internal_env, warmup_metrics);
+        format!("import * as __agentOSConstantsModule from 'node:constants';\n{runner_source}");
+    // The runtime shim's `process.binding("constants")` runs as its own script,
+    // so it reads the constants from a global slot, not this module's scope.
+    let bootstrap = format!(
+        "Object.defineProperty(globalThis, '__agentOSConstantsBinding', {{ value: __agentOSConstantsModule, configurable: true, enumerable: false, writable: false }});\n{}",
+        build_python_runner_bootstrap(internal_env, warmup_metrics)
+    );
     Ok(insert_python_runner_bootstrap(&runner_source, &bootstrap))
 }
 

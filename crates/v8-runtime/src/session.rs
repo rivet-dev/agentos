@@ -2295,6 +2295,10 @@ fn session_thread(
     // Isolate creation is normally deferred to first Execute (when bridge code is
     // known for snapshot cache lookup). A claimed warm worker enters here with
     // the snapshot isolate already created on this same thread.
+    // A session starts with a fresh or a never-run warm isolate, so no guest
+    // code has run in it yet, whatever this thread ran before.
+    crate::module_code_cache::isolate_started();
+    crate::module_code_cache::set_session_executor(Some(runtime.blocking().clone()));
     #[cfg(not(test))]
     let (
         mut v8_isolate,
@@ -2312,6 +2316,25 @@ fn session_thread(
         ),
         None => (None, None, false, None, None),
     };
+    // A claimed warm isolate came from the cached snapshot for its bridge and
+    // userland code; record jobs restore the same one.
+    #[cfg(not(test))]
+    if v8_isolate.is_some() {
+        let blob = isolate_bridge_code.as_deref().and_then(|bridge| {
+            let userland = isolate_userland_code
+                .as_deref()
+                .filter(|code| !code.is_empty());
+            snapshot_cache.try_get_with_userland(bridge, userland)
+        });
+        crate::module_code_cache::set_session_isolate_factory(
+            blob.map(snapshot::pristine_isolate_factory),
+        );
+    }
+    // True while `_v8_context` has never been handed to an execution. A claimed
+    // warm worker built it off the critical path; the first ordinary Execute
+    // takes it instead of deserializing a second context from the snapshot.
+    #[cfg(not(test))]
+    let mut context_pristine = _v8_context.is_some();
 
     #[cfg(not(test))]
     let mut pending = bridge::PendingPromises::new();
@@ -2390,6 +2413,7 @@ fn session_thread(
                     post_restore_script,
                     userland_code,
                     high_resolution_time,
+                    runtime_shim,
                     user_code,
                     wasm_module_bytes,
                 } => {
@@ -2463,6 +2487,7 @@ fn session_thread(
                             // outlive the isolate that created them.
                             reset_pending_promises(&mut pending);
                             drop(_v8_context.take());
+                            context_pristine = false;
                             isolate::drop_isolate(v8_isolate.take());
                             from_snapshot = false;
                             isolate_bridge_code = None;
@@ -2503,6 +2528,9 @@ fn session_thread(
                                     // rusty_v8 0.130's CreateParams::snapshot_blob
                                     // takes owned 'static data, so this copy remains
                                     // per exec until the API can accept cached bytes.
+                                    crate::module_code_cache::set_session_isolate_factory(Some(
+                                        snapshot::pristine_isolate_factory(blob.clone()),
+                                    ));
                                     let snapshot_blob = (*blob).clone();
                                     record_v8_session_phase("blob_clone", phase_start.elapsed());
                                     let phase_start = Instant::now();
@@ -2515,6 +2543,10 @@ fn session_thread(
                                 }
                                 None => {
                                     from_snapshot = false;
+                                    crate::module_code_cache::set_session_isolate_factory(Some(
+                                        Arc::new(|| isolate::create_isolate(None))
+                                            as crate::module_code_cache::PristineIsolateFactory,
+                                    ));
                                     let phase_start = Instant::now();
                                     let isolate = isolate::create_isolate(heap_limit_mb);
                                     record_v8_session_phase("isolate_new", phase_start.elapsed());
@@ -2534,6 +2566,8 @@ fn session_thread(
                                 Some(iso.thread_safe_handle());
                             let ctx = isolate::create_context(&mut iso);
                             _v8_context = Some(ctx);
+                            context_pristine = true;
+                            crate::module_code_cache::isolate_started();
                             v8_isolate = Some(iso);
                             isolate_bridge_code = Some(effective_bridge_code.clone());
                             isolate_userland_code = Some(effective_userland_code.clone());
@@ -2555,10 +2589,16 @@ fn session_thread(
                         // loop drains; leftover handles are released instead.
                         let complete_on_settle = mode & 6 != 0;
                         let exec_context = if retain_context {
+                            context_pristine = false;
                             _v8_context
-                                .as_ref()
-                                .expect("session context exists after isolate creation")
+                                .get_or_insert_with(|| isolate::create_context(iso))
                                 .clone()
+                        } else if context_pristine {
+                            // Never-run context: equivalent to a fresh one, and
+                            // it leaves the session so a later retained Execute
+                            // cannot observe this execution's globals.
+                            context_pristine = false;
+                            _v8_context.take().expect("pristine session context exists")
                         } else {
                             isolate::create_context(iso)
                         };
@@ -2877,11 +2917,18 @@ fn session_thread(
                             let ctx = v8::Local::new(scope, &exec_context);
                             let scope = &mut v8::ContextScope::new(scope, ctx);
                             crate::async_context::clear_async_context(scope);
+                            // A classic script runs the shim and the guest code
+                            // as one script, in that order.
+                            let script_code = if runtime_shim.is_empty() {
+                                std::borrow::Cow::Borrowed(user_code.as_str())
+                            } else {
+                                std::borrow::Cow::Owned(format!("{runtime_shim}\n{user_code}"))
+                            };
                             let (c, e) = execution::execute_script_with_options(
                                 scope,
                                 Some(&bridge_ctx),
                                 bridge_code_for_exec,
-                                &user_code,
+                                &script_code,
                                 file_path_opt,
                                 &mut bridge_cache,
                             );
@@ -2891,10 +2938,11 @@ fn session_thread(
                             let ctx = v8::Local::new(scope, &exec_context);
                             let scope = &mut v8::ContextScope::new(scope, ctx);
                             crate::async_context::clear_async_context(scope);
-                            execution::execute_module(
+                            execution::execute_module_with_runtime_shim(
                                 scope,
                                 &bridge_ctx,
                                 bridge_code_for_exec,
+                                &runtime_shim,
                                 &user_code,
                                 file_path_opt,
                                 &mut bridge_cache,
@@ -3291,7 +3339,14 @@ fn session_thread(
                     }
                     #[cfg(test)]
                     {
-                        let _ = (mode, file_path, bridge_code, post_restore_script, user_code);
+                        let _ = (
+                            mode,
+                            file_path,
+                            bridge_code,
+                            post_restore_script,
+                            runtime_shim,
+                            user_code,
+                        );
                     }
                 }
                 SessionMessage::BridgeResponse(_)
@@ -3315,6 +3370,8 @@ fn session_thread(
         // after their isolate — leaking across session create/destroy churn and
         // violating the V8 lifetime contract.
         reset_pending_promises(&mut pending);
+        crate::module_code_cache::set_session_executor(None);
+        crate::module_code_cache::set_session_isolate_factory(None);
         drop(_v8_context.take());
         isolate::drop_isolate(v8_isolate.take());
     }

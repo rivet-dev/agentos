@@ -46,6 +46,35 @@ Guest V8 execution is deliberately different:
 There is therefore no "Tokio task running a Node.js process." Trusted I/O runs
 as Tokio tasks; untrusted JavaScript runs on a V8 executor thread.
 
+## Process start
+
+Every guest Node process gets its own isolate. Three mechanisms keep that
+cheap without sharing guest state:
+
+- **Warm executors.** The sidecar keeps up to four executor threads with an
+  isolate and a context already restored from the bridge snapshot. A new
+  process claims one and runs in that never-used context.
+- **Module code cache.** When an isolate first compiles an ES module from a
+  read-only host mount or a packed package, before any guest code has run in
+  that isolate, the sidecar compiles every function of the module and keeps
+  the bytecode. The next compile of byte-identical source, in any VM, consumes
+  those bytes instead of parsing again. An isolate in which guest code has run
+  only consumes entries and never records one, because V8 does not check the
+  bytecode inside an entry. Modules a guest can write, inline code, and
+  anything read through the guest filesystem are never cached, so one VM
+  cannot detect from compile timing what another VM loaded. Entries are keyed
+  by the SHA-256 of the exact source text and hold only V8-serialized bytecode
+  (no heap objects). The cache is process-wide, in memory only, and bounded to
+  64 MiB; the oldest entries are evicted first. Modules under 2 KiB are not
+  cached.
+- **Deferred teardown.** An exited process's isolate is destroyed on a single
+  reaper thread, so the exit reaches the client without waiting for heap
+  teardown. The executor keeps its admission slot until teardown finishes.
+
+The per-process `process` setup (argv, env, identity) runs before any guest
+module evaluates, so imported modules see the real `process.argv` and
+`process.env` at their top level, as in Node.
+
 ## One TCP read, end to end
 
 [![Sequence from OS readiness through Tokio, durable readiness, the V8 executor, and the guest JavaScript socket read pump.](/images/architecture/javascript-executor-wakeup-sequence-dark.svg)](/images/architecture/javascript-executor-wakeup-sequence-dark.svg)

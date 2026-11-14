@@ -46,7 +46,11 @@ const SYNTHETIC_PID_BASE = 1_000_000;
 const PROTECTED_READ_ONLY_GUEST_ROOTS = ["/etc/agentos"] as const;
 const TRAILING_OUTPUT_DRAIN_INTERVAL_MS = 10;
 const TRAILING_OUTPUT_DRAIN_MAX_MS = 250;
-const TRAILING_OUTPUT_DRAIN_QUIET_TURNS = 2;
+// The sidecar emits a process's output before its exit on one ordered event
+// lane, and the pump dispatches output listeners synchronously, so one quiet
+// macrotask is enough. Output that does arrive resets the count and waits
+// TRAILING_OUTPUT_DRAIN_INTERVAL_MS per turn, as before.
+const TRAILING_OUTPUT_DRAIN_QUIET_TURNS = 1;
 const EXEC_TERMINATION_CONFIRMATION_MS = 30_000;
 
 // Termination proof must remain observable even after an ordinary wait failed.

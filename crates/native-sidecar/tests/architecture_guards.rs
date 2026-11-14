@@ -1503,6 +1503,10 @@ fn production_threads_match_the_reviewed_topology_manifest() {
             "embedded-v8-writer",
             "crates/v8-runtime/src/embedded_runtime.rs",
         ),
+        (
+            "constant-v8-session-reaper",
+            "crates/v8-runtime/src/embedded_runtime.rs",
+        ),
         ("bounded-v8-warm-worker", "crates/v8-runtime/src/session.rs"),
         (
             "admitted-v8-session-executor",

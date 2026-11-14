@@ -319,6 +319,7 @@ impl V8SessionHandle {
         post_restore_script: String,
         userland_code: String,
         high_resolution_time: bool,
+        runtime_shim: String,
         user_code: String,
         wasm_module_bytes: Option<Arc<Vec<u8>>>,
     ) -> io::Result<()> {
@@ -329,6 +330,7 @@ impl V8SessionHandle {
             post_restore_script,
             userland_code,
             high_resolution_time,
+            runtime_shim,
             user_code,
             wasm_module_bytes,
         )
@@ -352,6 +354,12 @@ impl V8SessionHandle {
     /// Destroy this session in the embedded runtime and remove its receiver.
     pub fn destroy(&self) -> io::Result<()> {
         self.inner.destroy()
+    }
+
+    /// Destroy this session without waiting for its isolate teardown; see
+    /// `EmbeddedV8SessionHandle::destroy_detached`.
+    pub fn destroy_detached(&self) -> io::Result<()> {
+        self.inner.destroy_detached()
     }
 
     pub fn session_id(&self) -> &str {
