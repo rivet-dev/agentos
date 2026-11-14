@@ -2293,6 +2293,12 @@
     "rationale": "Hard process ceiling for warm V8 workers above the operator-selected desired worker count."
   },
   {
+    "name": "PLATFORM_PUMP_MAX_IDLE_WAIT",
+    "path": "crates/v8-runtime/src/session.rs",
+    "class": "invariant",
+    "rationale": "Longest sleep of an idle guest event loop between V8 platform pumps; a latency cap, not a resource bound."
+  },
+  {
     "name": "MAX_SNAPSHOT_BLOB_BYTES",
     "path": "crates/v8-runtime/src/snapshot.rs",
     "class": "invariant",

@@ -3477,6 +3477,7 @@ fn run_event_loop_with_readiness(
         exit,
     } = sources;
     let mut bridge_lane_open = bridge_rx.is_some();
+    let mut platform_pump_wait = PLATFORM_PUMP_MIN_WAIT;
     loop {
         // An out-of-band isolate termination may arrive between event-loop
         // passes. Check the durable abort lane before any V8 API call; querying
@@ -3610,10 +3611,10 @@ fn run_event_loop_with_readiness(
                     }
                 }
             }
-            // All externally driven work must be registered with the blocking
-            // selector. The 1 ms timeout exists only to pump V8 platform work;
-            // it must not become the delivery cadence for direct bridge
-            // responses, readiness, ordinary commands, or abort.
+            // All externally driven work (timers, readiness, commands, bridge
+            // responses, abort) must be registered with the blocking selector.
+            // The timeout exists only to pump V8 platform work; see
+            // `next_platform_pump_wait`.
             let mut selector = Select::new();
             let ordinary_index = selector.recv(rx);
             let ready_index = selector.recv(ready_rx);
@@ -3623,7 +3624,7 @@ fn run_event_loop_with_readiness(
                 None
             };
             let abort_selection = abort_rx.map(|abort| (selector.recv(abort), abort));
-            let recv_result = match selector.select_timeout(Duration::from_millis(1)) {
+            let recv_result = match selector.select_timeout(platform_pump_wait) {
                 Ok(operation) => {
                     let index = operation.index();
                     if index == ordinary_index {
@@ -3678,13 +3679,19 @@ fn run_event_loop_with_readiness(
             // No command received — flush microtasks and re-check direct
             // response and exit conditions.
             scope.perform_microtask_checkpoint();
-            pump_v8_message_loop(scope);
+            let ran_platform_task = pump_v8_message_loop(scope);
+            platform_pump_wait = next_platform_pump_wait(
+                platform_pump_wait,
+                ran_platform_task || scope.has_pending_background_tasks(),
+            );
             // Check if we should exit
             if event_loop_can_exit(scope, pending, exit) {
                 return EventLoopStatus::Completed;
             }
         };
 
+        // Guest JavaScript is about to run and may post V8 platform work.
+        platform_pump_wait = PLATFORM_PUMP_MIN_WAIT;
         let status = dispatch_session_command(scope, cmd, pending, ready_broker);
         if !matches!(status, EventLoopStatus::Completed) {
             return status;
@@ -3998,10 +4005,36 @@ fn drain_guest_immediates(scope: &mut v8::HandleScope) -> EventLoopStatus {
     EventLoopStatus::Completed
 }
 
-fn pump_v8_message_loop(scope: &mut v8::HandleScope) {
+/// Drain runnable V8 foreground tasks. Returns whether any task ran.
+fn pump_v8_message_loop(scope: &mut v8::HandleScope) -> bool {
     let platform = v8::V8::get_current_platform();
+    let mut ran = false;
     while v8::Platform::pump_message_loop(&platform, scope, false) {
+        ran = true;
         scope.perform_microtask_checkpoint();
+    }
+    ran
+}
+
+/// Idle wait between V8 platform pumps when no session event arrives.
+///
+/// The V8 default platform has no hook that wakes this thread when a
+/// background thread posts a foreground task (async Wasm compile completion,
+/// GC finalization, `Atomics.waitAsync` timeouts). The idle wait therefore
+/// keeps a timeout, but a fixed 1 ms tick woke every idle guest ~1,000 times a
+/// second. Poll fast only while V8 reports background work or a pump just ran
+/// a task; otherwise back off exponentially so an idle guest sleeps until a
+/// real event. Every dispatched session event resets the wait to the minimum,
+/// so a task posted by guest code is never delayed by more than the time since
+/// that code last ran (capped at the maximum idle wait).
+const PLATFORM_PUMP_MIN_WAIT: Duration = Duration::from_millis(1);
+const PLATFORM_PUMP_MAX_IDLE_WAIT: Duration = Duration::from_millis(250);
+
+fn next_platform_pump_wait(current: Duration, platform_busy: bool) -> Duration {
+    if platform_busy {
+        PLATFORM_PUMP_MIN_WAIT
+    } else {
+        current.saturating_mul(2).min(PLATFORM_PUMP_MAX_IDLE_WAIT)
     }
 }
 
