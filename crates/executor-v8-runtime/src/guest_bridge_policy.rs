@@ -63,6 +63,7 @@ fn validate(limits: &GuestBridgeLimits) -> Result<(), String> {
             "limits.jsRuntime.maxReadlineHistoryEntries",
             limits.max_readline_history_entries,
         ),
+        ("limits.jsRuntime.maxBlobBytes", limits.max_blob_bytes),
     ] {
         if value == 0 || value as u128 > ((1_u128 << 53) - 1) {
             return Err(format!("{name} must be a positive JavaScript-safe integer"));
@@ -75,11 +76,12 @@ fn limits_from_object(
     scope: &mut v8::HandleScope,
     object: v8::Local<v8::Object>,
 ) -> Result<GuestBridgeLimits, String> {
-    let mut values = [0; 3];
+    let mut values = [0; 4];
     for (index, name) in [
         "maxChunkSizeLineBytes",
         "maxPendingResponseBytes",
         "maxReadlineHistoryEntries",
+        "maxBlobBytes",
     ]
     .into_iter()
     .enumerate()
@@ -108,6 +110,7 @@ fn limits_from_object(
         max_chunk_size_line_bytes: values[0],
         max_pending_response_bytes: values[1],
         max_readline_history_entries: values[2],
+        max_blob_bytes: values[3],
     })
 }
 
@@ -124,6 +127,7 @@ fn invoke(
             "maxReadlineHistoryEntries",
             limits.max_readline_history_entries,
         ),
+        ("maxBlobBytes", limits.max_blob_bytes),
     ] {
         let key = v8::String::new(scope, name).ok_or("bridge policy key allocation failed")?;
         let value = v8::Number::new(scope, value as f64);
@@ -147,7 +151,7 @@ fn invoke(
 }
 
 /// Capture/hide and install BEFORE any snapshot userland. The serialized tuple
-/// contains a V8 function plus exactly three primitives, never a VM id or Global.
+/// contains a V8 function plus exactly four primitives, never a VM id or Global.
 pub(crate) fn capture_installer<'s>(
     scope: &mut v8::HandleScope<'s>,
 ) -> Result<Option<v8::Local<'s, v8::Array>>, String> {
@@ -186,7 +190,7 @@ pub(crate) fn capture_installer<'s>(
     }
     if let (Some(installer), Some(baked)) = (installer, baked) {
         invoke(scope, installer, &baked)?;
-        let data = v8::Array::new(scope, 4);
+        let data = v8::Array::new(scope, 5);
         if data.set_index(scope, 0, installer.into()) != Some(true) {
             return Err("bridge installer tuple failed".into());
         }
@@ -194,6 +198,7 @@ pub(crate) fn capture_installer<'s>(
             baked.max_chunk_size_line_bytes,
             baked.max_pending_response_bytes,
             baked.max_readline_history_entries,
+            baked.max_blob_bytes,
         ]
         .into_iter()
         .enumerate()
@@ -286,7 +291,7 @@ pub(crate) fn install(
         capture_installer(scope)?
     };
     if let Some(data) = installer {
-        if data.length() != 4 {
+        if data.length() != 5 {
             return Err("bridge installer tuple length invalid".into());
         }
         let function = data.get_index(scope, 0).ok_or("bridge installer missing")?;
@@ -297,6 +302,7 @@ pub(crate) fn install(
             "maxChunkSizeLineBytes",
             "maxPendingResponseBytes",
             "maxReadlineHistoryEntries",
+            "maxBlobBytes",
         ]
         .into_iter()
         .enumerate()

@@ -90,8 +90,8 @@ const MAX_HOST_DIR_READ_BYTES: usize = DEFAULT_MAX_PREAD_BYTES;
 ///   * Every real `openat` uses `O_NOFOLLOW`, so a component that is swapped for
 ///     a symlink after we `lstat` it fails closed with `ELOOP` instead of being
 ///     followed. Symlinks are instead expanded manually and re-resolved beneath
-///     the root; absolute symlink targets and absolute components are rejected
-///     as escapes (matching `RESOLVE_BENEATH`).
+///     the root; absolute symlink targets must stay within the same root and restart at
+///     its anchored FD; absolute input components and escaping targets are rejected.
 ///   * Results are used as file descriptors, never as recovered path strings, so
 ///     there is no `/proc/self/fd/N`, `/dev/fd/N`, or `fcntl(F_GETPATH)`
 ///     dependency. The [`Resolved::real_path`] we return is *diagnostic /
@@ -427,8 +427,15 @@ pub(crate) mod confine {
                         }
                         let target = read_link_at(parent, name.as_os_str())?;
                         if target.is_absolute() {
-                            // Absolute symlink target escapes the root.
-                            return Err(Errno::EXDEV);
+                            // An absolute target is usable only in this root's
+                            // namespace. Strip the component-aligned prefix and
+                            // restart from the original root FD: never open the
+                            // absolute host path, even under concurrent renames.
+                            let relative = target.strip_prefix(root).map_err(|_| Errno::EXDEV)?;
+                            dirs.truncate(1);
+                            real_path = root.to_path_buf();
+                            push_path_segments(&mut stack, relative)?;
+                            continue;
                         }
                         // Splice the target's components in front of the
                         // remaining path, to be resolved from the symlink's own
@@ -657,7 +664,9 @@ impl HostDirMountPlugin {
     ) -> Result<Box<dyn MountedFileSystem>, PluginError> {
         let config: HostDirMountConfig = serde_json::from_value(request.config.clone())
             .map_err(|error| PluginError::invalid_input(error.to_string()))?;
-        let filesystem = HostDirFilesystem::new_with_read_limit(&config.host_path, max_read_bytes)?;
+        let mut filesystem =
+            HostDirFilesystem::new_with_read_limit(&config.host_path, max_read_bytes)?;
+        filesystem.guest_root = normalize_path(request.guest_path);
         let mounted = MountedVirtualFileSystem::new(filesystem);
 
         if config.read_only.unwrap_or(false) {
@@ -671,6 +680,7 @@ impl HostDirMountPlugin {
 #[derive(Debug, Clone)]
 pub(crate) struct HostDirFilesystem {
     host_root: PathBuf,
+    guest_root: String,
     host_root_dir: Arc<File>,
     max_read_bytes: Option<usize>,
 }
@@ -702,6 +712,7 @@ impl HostDirFilesystem {
 
         Ok(Self {
             host_root: canonical_root.clone(),
+            guest_root: String::from("/"),
             host_root_dir: Arc::new(
                 File::open(&canonical_root).map_err(|error| io_error_to_vfs("open", "/", error))?,
             ),
@@ -1405,25 +1416,32 @@ impl VirtualFileSystem for HostDirFilesystem {
 
     fn symlink(&mut self, target: &str, link_path: &str) -> VfsResult<()> {
         let (parent_dir, _, name, normalized) = self.split_parent(link_path, true)?;
-        let parent_host_path = self.host_path_for_fd(&parent_dir, &normalized)?;
-        let host_link_path = parent_host_path.join(&name);
-
-        let link_virtual_path = normalize_path(link_path);
-        let target_virtual_path = if target.starts_with('/') {
-            normalize_path(target)
+        // Preserve relative link text. Absolute guest targets are translated
+        // only within this explicitly mounted subtree, never to an ambient host
+        // path. Store a confined host-absolute target so readlink can retain the
+        // guest's absolute-vs-relative distinction across remounts.
+        let physical_target = if target.starts_with('/') {
+            let normalized_target = normalize_path(target);
+            let relative = if self.guest_root == "/" {
+                normalized_target
+            } else if normalized_target == self.guest_root {
+                String::from("/")
+            } else if let Some(relative) =
+                normalized_target.strip_prefix(&format!("{}/", self.guest_root))
+            {
+                format!("/{relative}")
+            } else {
+                return Err(VfsError::access_denied(
+                    "symlink",
+                    link_path,
+                    Some("target leaves the mounted guest subtree"),
+                ));
+            };
+            self.lexical_host_path(&relative)?
         } else {
-            normalize_path(&format!(
-                "{}/{}",
-                virtual_dirname(&link_virtual_path),
-                target
-            ))
+            PathBuf::from(target)
         };
-        let host_target_path = self.lexical_host_path(&target_virtual_path)?;
-        let relative_target = relative_path(
-            host_link_path.parent().unwrap_or(self.host_root.as_path()),
-            &host_target_path,
-        );
-        symlinkat(&relative_target, &parent_dir, name.as_os_str())
+        symlinkat(&physical_target, &parent_dir, name.as_os_str())
             .map_err(|error| io_error_to_vfs("symlink", link_path, nix_to_io(error)))
     }
 
@@ -1436,7 +1454,12 @@ impl VirtualFileSystem for HostDirFilesystem {
             return Ok(link_target.to_string_lossy().into_owned());
         }
         let resolved_target = lexical_normalize_path(&link_target_path);
-        self.host_to_virtual_path(&resolved_target, path)
+        let relative = self.host_to_virtual_path(&resolved_target, path)?;
+        if self.guest_root == "/" {
+            Ok(relative)
+        } else {
+            Ok(format!("{}{}", self.guest_root, relative))
+        }
     }
 
     fn lstat(&self, path: &str) -> VfsResult<VirtualStat> {

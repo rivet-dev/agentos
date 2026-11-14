@@ -25,4 +25,12 @@ remain allowed.
 
 <CodeSnippet file="examples/embedded/permissions.ts" />
 
+The trusted embedded owner can replace the complete policy with
+`vm.configurePermissions(permissions, { loopbackExemptPorts })` in TypeScript,
+or `configure_permissions(permissions, loopback_exempt_ports)` in Rust.
+Omitted scopes return to sidecar defaults. Replacement changes admission for
+new operations; existing authorized streams retain their capabilities.
+Creation-time loopback exemptions remain in force. Supply revocable ports only
+through the later replacement, and pass an empty list to remove those ports.
+
 Read more in the [embedded API quickstart](/agentos/docs/quickstart-embedded).

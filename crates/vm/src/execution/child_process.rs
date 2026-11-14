@@ -4472,10 +4472,12 @@ fn record_child_sync_rollback_for_test(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn admit_child_process_sync_timer(
     runtime: &agentos_driver_tokio::DriverHandle,
     notify: Arc<tokio::sync::Notify>,
     deadline: Instant,
+    mut cancelled: tokio::sync::oneshot::Receiver<()>,
     vm_id: &str,
     root_process_id: &str,
     parent_path: &[&str],
@@ -4493,8 +4495,11 @@ fn admit_child_process_sync_timer(
     let delay = deadline.saturating_duration_since(Instant::now());
     runtime
         .spawn(agentos_driver_tokio::TaskClass::Timer, async move {
-            tokio::time::sleep(delay).await;
-            notify.notify_one();
+            tokio::select! {
+                biased;
+                _ = &mut cancelled => {},
+                _ = tokio::time::sleep(delay) => notify.notify_one(),
+            }
         })
         .map(|_| ())
         .map_err(VmError::from)
@@ -5817,8 +5822,10 @@ where
                     vm.host_cwd.clone()
                 }
             });
-        let mut env = parent_env.clone();
-        env.extend(request.options.env.clone());
+        // ProcessLaunchOptions carries a complete envp, as POSIX spawn/exec do.
+        // A Node caller that omits options.env supplies its current environment
+        // at the bridge; an explicit empty map must never inherit secrets.
+        let mut env = request.options.env.clone();
         // Child JavaScript executions must resolve their own entrypoint/eval state.
         // Reusing the parent's values makes the sidecar load the wrong source file.
         env.remove("AGENTOS_GUEST_ENTRYPOINT");
@@ -7365,7 +7372,7 @@ where
                 Vec::new(),
                 identity.child_process_id.clone(),
             );
-            let (runtime, notify) = handle.try_command("register captured child output", |vm| {
+            let (runtime, notify, deadline_cancelled) = handle.try_command("register captured child output", |vm| {
                 let VmState {
                     kernel,
                     active_processes,
@@ -7399,6 +7406,7 @@ where
                         ),
                     ));
                 }
+                let (deadline_cancel, deadline_cancelled) = tokio::sync::oneshot::channel();
                 process.pending_child_process_sync.insert(
                     identity.child_process_id.clone(),
                     PendingChildProcessSync {
@@ -7412,6 +7420,7 @@ where
                         timed_out: false,
                         max_buffer_exceeded: false,
                         completion,
+                        _deadline_cancel: deadline_cancel,
                         _count_reservation: count_reservation,
                         _bytes_reservation: bytes_reservation,
                     },
@@ -7419,6 +7428,7 @@ where
                 Ok((
                     process.runtime_context.clone(),
                     Arc::clone(&process.process_event_notify),
+                    deadline_cancelled,
                 ))
             })?;
             if let Some(deadline) = deadline {
@@ -7426,6 +7436,7 @@ where
                     &runtime,
                     Arc::clone(&notify),
                     deadline,
+                    deadline_cancelled,
                     &vm_id,
                     &process_id,
                     &[],
@@ -9425,7 +9436,7 @@ where
                 parent_path.clone(),
                 identity.child_process_id.clone(),
             );
-            let (runtime, notify) = handle.try_command("register captured child output", |vm| {
+            let (runtime, notify, deadline_cancelled) = handle.try_command("register captured child output", |vm| {
                 let VmState {
                     kernel,
                     active_processes,
@@ -9461,6 +9472,7 @@ where
                         ),
                     ));
                 }
+                let (deadline_cancel, deadline_cancelled) = tokio::sync::oneshot::channel();
                 process.pending_child_process_sync.insert(
                     identity.child_process_id.clone(),
                     PendingChildProcessSync {
@@ -9474,6 +9486,7 @@ where
                         timed_out: false,
                         max_buffer_exceeded: false,
                         completion,
+                        _deadline_cancel: deadline_cancel,
                         _count_reservation: count_reservation,
                         _bytes_reservation: bytes_reservation,
                     },
@@ -9481,6 +9494,7 @@ where
                 Ok((
                     process.runtime_context.clone(),
                     Arc::clone(&process.process_event_notify),
+                    deadline_cancelled,
                 ))
             })?;
             if let Some(deadline) = deadline {
@@ -9488,6 +9502,7 @@ where
                     &runtime,
                     Arc::clone(&notify),
                     deadline,
+                    deadline_cancelled,
                     &vm_id,
                     &process_id,
                     &parent_path.iter().map(String::as_str).collect::<Vec<_>>(),

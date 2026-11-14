@@ -1,107 +1,19 @@
 import { createBridgeSyncFacade } from "./fs.js";
 
-// This compatibility format is JSON, not the native V8 serialization format.
-function v8UnsupportedValueError(description) {
-	const error = new TypeError(
-		`node:v8 serialize does not support ${description} in agentOS; only JSON-compatible data is supported`,
-	);
-	error.code = "ERR_NOT_IMPLEMENTED";
-	return error;
-}
-
-function encodeV8JsonValue(value, seen) {
-	if (
-		value === null ||
-		typeof value === "string" ||
-		typeof value === "boolean"
-	) {
-		return JSON.stringify(value);
-	}
-	if (typeof value === "number") {
-		if (!Number.isFinite(value) || Object.is(value, -0)) {
-			throw v8UnsupportedValueError("non-finite numbers or -0");
-		}
-		return JSON.stringify(value);
-	}
-	if (typeof value !== "object") {
-		throw v8UnsupportedValueError(typeof value);
-	}
-	if (seen.has(value)) {
-		throw v8UnsupportedValueError("shared or circular references");
-	}
-	seen.add(value);
-	const prototype = Object.getPrototypeOf(value);
-	const array = Array.isArray(value);
-	if (
-		array
-			? prototype !== Array.prototype
-			: prototype !== Object.prototype && prototype !== null
-	) {
-		throw v8UnsupportedValueError("non-plain objects");
-	}
-	const descriptors = Object.getOwnPropertyDescriptors(value);
-	for (const key of Reflect.ownKeys(descriptors)) {
-		if (typeof key === "symbol" && descriptors[key].enumerable) {
-			throw v8UnsupportedValueError("enumerable symbol properties");
-		}
-	}
-	const dataValue = (descriptor) => {
-		if (
-			!descriptor ||
-			!Object.prototype.hasOwnProperty.call(descriptor, "value")
-		) {
-			throw v8UnsupportedValueError("accessor properties or sparse arrays");
-		}
-		return encodeV8JsonValue(descriptor.value, seen);
-	};
-	if (array) {
-		const length = descriptors.length.value;
-		for (const key of Object.keys(descriptors)) {
-			if (!descriptors[key].enumerable) continue;
-			const index = +key;
-			if (
-				!Number.isInteger(index) ||
-				index < 0 ||
-				index >= length ||
-				String(index) !== key
-			) {
-				throw v8UnsupportedValueError(
-					"arrays with extra enumerable properties",
-				);
-			}
-		}
-		const items = [];
-		for (let index = 0; index < length; index += 1) {
-			items.push(dataValue(descriptors[index]));
-		}
-		return `[${items.join(",")}]`;
-	}
-	const entries = [];
-	for (const key of Object.keys(descriptors)) {
-		const descriptor = descriptors[key];
-		if (descriptor.enumerable) {
-			entries.push(`${JSON.stringify(key)}:${dataValue(descriptor)}`);
-		}
-	}
-	return `{${entries.join(",")}}`;
-}
-
+// Keep values on the owning isolate: a JSON/CBOR bridge would lose graph
+// identity, bigint, and typed views before V8's serializer could see them.
+const nativeSerialize = createBridgeSyncFacade("v8.serialize");
+const nativeDeserialize = createBridgeSyncFacade("v8.deserialize");
 function v8Serialize(value) {
-	return Buffer.from(encodeV8JsonValue(value, new Set()), "utf8");
+	return Buffer.from(nativeSerialize.applySyncPromise(void 0, [value]));
 }
-
 function v8Deserialize(value) {
-	const buffer = Buffer.isBuffer(value) ? value : Buffer.from(value ?? []);
-	try {
-		return JSON.parse(buffer.toString("utf8"));
-	} catch (cause) {
-		const error = new TypeError(
-			"node:v8 deserialize in agentOS only reads its JSON compatibility format, not native V8 serialization",
-			{ cause },
-		);
-		error.code = "ERR_NOT_IMPLEMENTED";
+	if (!ArrayBuffer.isView(value)) {
+		const error = new TypeError("The buffer argument must be a TypedArray or DataView");
+		error.code = "ERR_INVALID_ARG_TYPE";
 		throw error;
 	}
+	return nativeDeserialize.applySyncPromise(void 0, [value]);
 }
 
 class V8Serializer {
@@ -118,15 +30,30 @@ class V8Serializer {
 	transferArrayBuffer() {}
 }
 
+const nativeDeserializerOperations = new Map();
+function deserializerOperation(receiver, operation, ...args) {
+ let call = nativeDeserializerOperations.get(operation);
+ if (!call) {
+  const name="v8.deserializer."+operation, bridge=globalThis[name];
+  if(typeof bridge!=="function" && typeof bridge?.applySync!=="function") throw new Error("Native V8 Deserializer bridge is unavailable");
+  call=createBridgeSyncFacade(name);nativeDeserializerOperations.set(operation,call);
+ }
+ return call.applySyncPromise(void 0, [receiver, ...args]);
+}
 class V8Deserializer {
-	constructor(buffer) {
-		this._buffer = buffer;
-	}
-	readHeader() {}
-	readValue() {
-		return v8Deserialize(this._buffer);
-	}
-	transferArrayBuffer() {}
+ constructor(buffer) { deserializerOperation(this, "create", buffer); }
+ readHeader() { return deserializerOperation(this, "readHeader"); }
+ readValue() { return deserializerOperation(this, "readValue"); }
+ readUint32() { return deserializerOperation(this, "readUint32"); }
+ readUint64() { return deserializerOperation(this, "readUint64"); }
+ readDouble() { return deserializerOperation(this, "readDouble"); }
+ readRawBytes(length) { return Buffer.from(deserializerOperation(this, "readRawBytes", length)); }
+ getWireFormatVersion() { return deserializerOperation(this, "getWireFormatVersion"); }
+ transferArrayBuffer(id, buffer) { deserializerOperation(this, "transferArrayBuffer", id, buffer); }
+ _readHostObject() { throw new Error("Unable to deserialize host object"); }
+}
+class V8DefaultDeserializer extends V8Deserializer {
+ _readHostObject() { return deserializerOperation(this, "readHostObject"); }
 }
 
 var nativeV8HeapStatistics = createBridgeSyncFacade("v8.getHeapStatistics");
@@ -180,7 +107,7 @@ var builtinV8Module = {
 	cachedDataVersionTag() {
 		return 0;
 	},
-	DefaultDeserializer: V8Deserializer,
+	DefaultDeserializer: V8DefaultDeserializer,
 	DefaultSerializer: V8Serializer,
 	Deserializer: V8Deserializer,
 	GCProfiler: class GCProfiler {

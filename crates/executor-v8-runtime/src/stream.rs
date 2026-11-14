@@ -1,3 +1,5 @@
+use crate::execution::{ExplicitMicrotaskScope, MicrotaskSuppressionStorage};
+
 // Async event dispatch for child process and HTTP server streams
 
 /// Dispatch a stream event into V8 by calling the registered callback function.
@@ -13,6 +15,10 @@
 /// - "signal" → __agentOsWasmSignalDispatch or _signalDispatch
 /// - "timer" → _timerDispatch
 pub fn dispatch_stream_event(scope: &mut v8::HandleScope, event_type: &str, payload: &[u8]) {
+    let mut storage = std::pin::pin!(MicrotaskSuppressionStorage::new());
+    let mut explicit = ExplicitMicrotaskScope::new(scope, storage.as_mut());
+    let scope = &mut *explicit;
+
     // Look up the dispatch function on the global object
     let context = scope.get_current_context();
     let global = context.global(scope);
@@ -103,6 +109,10 @@ fn dispatch_stream_value(
     event_type: &str,
     payload: v8::Local<v8::Value>,
 ) {
+    let mut storage = std::pin::pin!(MicrotaskSuppressionStorage::new());
+    let mut explicit = ExplicitMicrotaskScope::new(scope, storage.as_mut());
+    let scope = &mut *explicit;
+
     let context = scope.get_current_context();
     let global = context.global(scope);
     let dispatch_names: &[&str] = match event_type {
@@ -145,6 +155,10 @@ pub fn dispatch_readiness(
     capability_generation: u64,
     flags: agentos_driver_tokio::readiness::ReadyFlags,
 ) -> ReadinessDispatch {
+    let mut storage = std::pin::pin!(MicrotaskSuppressionStorage::new());
+    let mut explicit = ExplicitMicrotaskScope::new(scope, storage.as_mut());
+    let scope = &mut *explicit;
+
     let context = scope.get_current_context();
     let global = context.global(scope);
     let Some(key) = v8::String::new(scope, "_agentOSReadyDispatch") else {

@@ -13,6 +13,7 @@ import { exposeCustomGlobal } from "../global-exposure.js";
 // events) capture a frame here and re-enter it when they run.
 
 type AsyncContextFrame = Map<object, unknown> | undefined;
+const sameStore = Object.is;
 
 // The frame a resource's events run in. A symbol keeps it out of guest subclass
 // fields, `Object.keys`, and JSON.
@@ -41,6 +42,9 @@ function frameWithStore(
 	storage: object,
 	store: unknown,
 ): AsyncContextFrame {
+	// Like Node's AsyncLocalStorage.run(), avoid allocating another resource
+	// when the requested store is already active. Frames are immutable.
+	if (sameStore(frame?.get(storage), store)) return frame;
 	const next = new Map(frame);
 	next.set(storage, store);
 	return next;

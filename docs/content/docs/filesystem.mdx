@@ -45,5 +45,5 @@ and fail with a typed limit error.
 ## Embedded API
 
 Embedded Core uses the same in-memory root filesystem and accepts trusted custom
-mounts. Read more in the
+mounts. Use `vm.filesystem.readFileRange(path, offset, length)` (Rust: `read_file_range`) for bounded positional reads without loading the entire file. Each call retains the kernel’s `limits.resources.maxPreadBytes` safeguard. Read more in the
 [embedded API quickstart](/agentos/docs/quickstart-embedded).

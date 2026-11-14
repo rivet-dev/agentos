@@ -34,6 +34,11 @@ import { UndiciClient, undiciRequest } from "./undici.js";
 const MAX_HTTP_CHUNK_EXTENSION_BYTES = 16 * 1024;
 const HTTP_RESPONSE_STREAM_CHUNK_BYTES = 16 * 1024;
 
+// A listener created in socket assignment shares that invocation's context
+// with request-owned callbacks, even when its body is empty. Keep permanent
+// guards outside that scope so transferred sockets cannot retain ClientRequest.
+function ignoreHttpSocketEvent() {}
+
 function createConnResetError(message = "socket hang up") {
 	const error = new Error(message);
 	error.code = "ECONNRESET";
@@ -171,8 +176,16 @@ var ClientRequest = class {
 	_listeners = {};
 	_headers = {};
 	_rawHeaderNames = /* @__PURE__ */ new Map();
-	_body = "";
+	_bodyChunks = [];
 	_bodyBytes = 0;
+	_queuedBodyBytes = 0;
+	_bodyChanged = Promise.withResolvers();
+	_headersFlushed = false;
+	_needBodyDrain = false;
+	_socketFinalized = false;
+	_socketTransferred = false;
+	_trailers = {};
+	_bodySent = false;
 	_ended = false;
 	_agent;
 	_hostKey;
@@ -247,8 +260,8 @@ var ClientRequest = class {
 		const trackedSocket = socket;
 		if (!trackedSocket._agentPermanentListenersInstalled) {
 			trackedSocket._agentPermanentListenersInstalled = true;
-			socket.on("error", () => {});
-			socket.on("end", () => {});
+			socket.on("error", ignoreHttpSocketEvent);
+			socket.on("end", ignoreHttpSocketEvent);
 		}
 		this._socketEndListener = () => {};
 		socket.on("end", this._socketEndListener);
@@ -283,6 +296,23 @@ var ClientRequest = class {
 		this._emit("error", err);
 	}
 	_finalizeSocket(socket, keepSocketAlive) {
+		if (this._socketFinalized) return;
+		this._socketFinalized = true;
+		this.destroyed = true;
+		this._detachSocketRequestListeners(socket);
+		if (this._agent) {
+			this._agent._releaseSocket(
+				this._hostKey,
+				socket,
+				this._options,
+				keepSocketAlive,
+			);
+		} else if (!socket.destroyed) {
+			socket.destroy();
+		}
+		queueMicrotask(() => this._emitClose());
+	}
+	_detachSocketRequestListeners(socket) {
 		if (this._socketEndListener) {
 			socket.off?.("end", this._socketEndListener);
 			socket.removeListener?.("end", this._socketEndListener);
@@ -298,19 +328,8 @@ var ClientRequest = class {
 			socket.removeListener?.("close", this._socketCloseListener);
 			this._socketCloseListener = null;
 		}
-		if (this._agent) {
-			this._agent._releaseSocket(
-				this._hostKey,
-				socket,
-				this._options,
-				keepSocketAlive,
-			);
-		} else if (!socket.destroyed) {
-			socket.destroy();
-		}
 	}
 	async _dispatchWithSocket(socket) {
-		this.headersSent = true;
 		try {
 			const normalizedHeaders = normalizeRequestHeaders(this._options.headers);
 			const requestMethod = String(this._options.method || "GET").toUpperCase();
@@ -322,7 +341,7 @@ var ClientRequest = class {
 			// Bridge-backed sockets already speak kernel-routed byte streams, so route
 			// HTTP requests through the raw serializer instead of undici's dispatcher.
 			if (
-				bridgeBackedSocket ||
+				bridgeBackedSocket || typeof this._options.createConnection === "function" ||
 				socket?._loopbackServer ||
 				isRawSocketRequest(requestMethod, normalizedHeaders) ||
 				this._options.socketPath ||
@@ -358,7 +377,8 @@ var ClientRequest = class {
 			this._options.protocol || "http:",
 		);
 		const dispatcher = getUndiciClientForSocket(socket, this._options);
-		const bodyBuffer = this._body ? Buffer.from(this._body) : Buffer.alloc(0);
+		while (!this._ended && !this.destroyed) await this._bodyChanged.promise;
+		const bodyBuffer = Buffer.concat(this._bodyChunks.map(entry => entry.bytes), this._queuedBodyBytes);
 		const headerPairs = buildRawHttpHeaderPairs(
 			this._headers,
 			this._rawHeaderNames,
@@ -436,24 +456,20 @@ var ClientRequest = class {
 	async _dispatchRawSocketRequest(socket, requestMethod, normalizedHeaders) {
 		const protocol = this._options.protocol || "http:";
 		await waitForSocketReadyForProtocol(socket, protocol);
-		const bodyBuffer = this._body ? Buffer.from(this._body) : Buffer.alloc(0);
-		const headerPairs = buildRawHttpHeaderPairs(
-			this._headers,
-			this._rawHeaderNames,
-		);
-		if (
-			bodyBuffer.length > 0 &&
-			!normalizedHeaders["content-length"] &&
-			!normalizedHeaders["transfer-encoding"]
-		) {
-			headerPairs.push(["Content-Length", String(bodyBuffer.length)]);
+		while (!this._ended && !this._headersFlushed && this._bodyChunks.length === 0 && !this.destroyed) await this._bodyChanged.promise;
+		if (this.destroyed) throw this._destroyError ?? createConnResetError();
+		normalizedHeaders = normalizeRequestHeaders(this._options.headers);
+		const headerPairs = buildRawHttpHeaderPairs(this._headers, this._rawHeaderNames);
+		let chunked = /(?:^|,)\s*chunked\s*(?:,|$)/i.test(normalizedHeaders["transfer-encoding"] ?? "");
+		if (!normalizedHeaders["content-length"] && !normalizedHeaders["transfer-encoding"]) {
+			if (this._ended) {
+				if (this._bodyBytes > 0 || /^(POST|PUT|PATCH)$/i.test(requestMethod)) headerPairs.push(["Content-Length", String(this._bodyBytes)]);
+			} else {
+				chunked = true; headerPairs.push(["Transfer-Encoding", "chunked"]);
+			}
 		}
-		const requestBuffer = serializeRawHttpRequest(
-			requestMethod,
-			this._options.path || "/",
-			headerPairs,
-			bodyBuffer,
-		);
+		const requestBuffer = serializeRawHttpRequest(requestMethod, this._options.path || "/", headerPairs, null);
+		this.headersSent = true;
 		const timeoutMs =
 			typeof this._options.timeout === "number" && this._options.timeout > 0
 				? this._options.timeout
@@ -469,12 +485,9 @@ var ClientRequest = class {
 					this._response = res;
 					res.socket = socket;
 					res.once("end", () => {
-						process.nextTick(() => {
-							this._finalizeSocket(
-								socket,
-								this._agent?.keepAlive === true && !this.aborted,
-							);
-						});
+						void this._waitForBodySent().then(() => process.nextTick(() => {
+							this._finalizeSocket(socket, this._agent?.keepAlive === true && !this.aborted);
+						}));
 					});
 					if (this._callback) this._callback(res);
 					this._emit("response", res);
@@ -482,56 +495,43 @@ var ClientRequest = class {
 						queueMicrotask(() => res.resume());
 					}
 				},
+				(head) => { if (head.status === 100) this._emit("continue"); this._emit("information", {statusCode:head.status,statusMessage:head.statusText,httpVersion:"1.1",headers:head.headers,rawHeaders:head.rawHeaders}); },
 			);
-			socket.write(requestBuffer);
-			await responsePromise;
+			await Promise.all([this._pumpRawRequestBody(socket, requestBuffer, chunked), responsePromise]);
 			return;
 		}
-		const responsePromise = waitForRawHttpResponse(
-			socket,
-			requestMethod,
-			timeoutMs,
-		);
-		socket.write(requestBuffer);
-		const response = await responsePromise;
-		this.finished = true;
-		this._clearTimeout();
-		if (response.status === 101) {
-			const res2 = new IncomingMessage({
-				status: response.status,
-				statusText: response.statusText,
-				headers: response.headers,
-				rawHeaders: response.rawHeaders,
-				body: "",
-				bodyEncoding: "base64",
-				url: this._buildUrl(),
-			});
-			this._response = res2;
-			res2.socket = socket;
-			const head = response.head ?? Buffer.alloc(0);
-			if (this._listenerCount("upgrade") === 0) {
-				socket.destroy();
-				return;
-			}
-			this._emit("upgrade", res2, socket, head);
-			return;
-		}
-		if (requestMethod === "CONNECT") {
-			const res2 = new IncomingMessage({
-				status: response.status,
-				statusText: response.statusText,
-				headers: response.headers,
-				rawHeaders: response.rawHeaders,
-				body: "",
-				bodyEncoding: "base64",
-				url: this._buildUrl(),
-			});
-			this._response = res2;
-			res2.socket = socket;
-			const head = response.head ?? Buffer.alloc(0);
-			this._emit("connect", res2, socket, head);
-			return;
-		}
+        const handoff = (response) => {
+            this.finished = true;
+            this._clearTimeout();
+            const res = new IncomingMessage({
+                status: response.status, statusText: response.statusText,
+                headers: response.headers, rawHeaders: response.rawHeaders,
+                body: "", bodyEncoding: "base64", url: this._buildUrl(),
+            });
+            this._response = res;
+            res.socket = socket;
+            if (response.status === 101 && this._listenerCount("upgrade") === 0) {
+                socket.destroy(); return;
+            }
+			this._socketFinalized = true;
+			this._socketTransferred = true;
+			this._detachSocketRequestListeners(socket);
+			this._unbindAbortSignal();
+			// An upgraded socket belongs to its new protocol, not the HTTP pool.
+			// Release the Agent slot before notifying the protocol owner.
+			socket.emit("agentRemove");
+            // Transfer ownership in the parser's data callback, before another
+            // socket read can commit EOF. A promise continuation attaches the
+            // protocol owner too late when upgrade bytes and FIN arrive together.
+            this._emit(response.status === 101 ? "upgrade" : "connect", res, socket, response.head ?? Buffer.alloc(0));
+			this.destroyed = true;
+			this._emitClose();
+        };
+        const responsePromise = waitForRawHttpResponse(socket, requestMethod, timeoutMs, handoff);
+        const [, response] = await Promise.all([this._pumpRawRequestBody(socket, requestBuffer, chunked), responsePromise]);
+        this.finished = true;
+        this._clearTimeout();
+        if (response.status === 101 || requestMethod === "CONNECT") return;
 		const res = new IncomingMessage({
 			status: response.status,
 			statusText: response.statusText,
@@ -777,39 +777,70 @@ var ClientRequest = class {
 		}
 		this._options.headers = { ...this._headers };
 	}
-	write(data, _encoding, callback) {
-		if (typeof _encoding === "function") callback = _encoding;
-		const addedBytes =
-			typeof Buffer !== "undefined" ? Buffer.byteLength(data) : data.length;
-		if (this._bodyBytes + addedBytes > MAX_HTTP_BODY_BYTES) {
-			throw new Error(
-				"ERR_HTTP_BODY_TOO_LARGE: request body exceeds " +
-					MAX_HTTP_BODY_BYTES +
-					" byte limit",
-			);
+	_notifyBodyChanged() { const changed = this._bodyChanged; this._bodyChanged = Promise.withResolvers(); changed.resolve(); }
+	async _waitForBodySent() { while (!this._bodySent && !this.destroyed) await this._bodyChanged.promise; }
+	get writableLength() { return this._queuedBodyBytes; }
+	write(data, encoding, callback) {
+		if (typeof encoding === "function") { callback = encoding; encoding = undefined; }
+		if (this._ended || this.destroyed) {
+			const error = createErrorWithCode("write after end", "ERR_STREAM_WRITE_AFTER_END");
+			queueMicrotask(() => { callback?.(error); this._emit("error", error); }); return false;
 		}
-		this._body += data;
-		this._bodyBytes += addedBytes;
-		if (typeof callback === "function") queueMicrotask(callback);
+		const bytes = typeof data === "string" ? Buffer.from(data, encoding) : Buffer.from(data);
+		if (this._bodyBytes + bytes.length > MAX_HTTP_BODY_BYTES) throw new Error("ERR_HTTP_BODY_TOO_LARGE: request body exceeds " + MAX_HTTP_BODY_BYTES + " byte limit");
+		this._bodyBytes += bytes.length; this._queuedBodyBytes += bytes.length;
+		this._bodyChunks.push({bytes, callback:typeof callback === "function" ? callback : undefined});
+		this._notifyBodyChanged();
+		if (this._queuedBodyBytes >= 16 * 1024) { this._needBodyDrain = true; return false; }
 		return true;
 	}
 	end(data, encoding, callback) {
-		if (typeof data === "function") {
-			callback = data;
-			data = void 0;
-		} else if (typeof encoding === "function") {
-			callback = encoding;
-			encoding = void 0;
-		}
-		if (data !== void 0 && data !== null) this.write(data, encoding);
+		if (typeof data === "function") { callback = data; data = undefined; }
+		else if (typeof encoding === "function") { callback = encoding; encoding = undefined; }
+		if (data !== undefined && data !== null) this.write(data, encoding);
 		if (typeof callback === "function") this.once("finish", callback);
-		this._ended = true;
-		this.writable = false;
-		this.writableEnded = true;
-		this.writableFinished = true;
-		queueMicrotask(() => this._emit("finish"));
+		this._ended = true; this.writable = false; this.writableEnded = true; this._notifyBodyChanged();
 		return this;
 	}
+	async _pumpRawRequestBody(socket, headers, chunked) {
+		const write = bytes => new Promise((resolve,reject) => socket.write(bytes, error => error ? reject(error) : resolve()));
+		try {
+			await write(headers);
+			for (;;) {
+				// The response can transfer the socket before the header write's
+				// callback runs. A completed HTTP upload has no remaining ownership
+				// to abort; keep real write failures and incomplete uploads fatal.
+				if (this._socketTransferred && this._ended && this._bodyChunks.length === 0
+					&& !chunked && !this.aborted && !this._destroyError) break;
+				if (this.destroyed) throw this._destroyError ?? createConnResetError();
+				const entry = this._bodyChunks.shift();
+				if (!entry) { if (this._ended) break; await this._bodyChanged.promise; continue; }
+				let payload = entry.bytes;
+				if (chunked && payload.length) payload = Buffer.concat([Buffer.from(payload.length.toString(16) + "\r\n"),payload,Buffer.from("\r\n")]);
+				try { if (payload.length) await write(payload); }
+				catch (error) { entry.callback?.(error); throw error; }
+				finally { this._queuedBodyBytes -= entry.bytes.length; }
+				entry.callback?.();
+				if (this._needBodyDrain && this._queuedBodyBytes < 16 * 1024) { this._needBodyDrain = false; this._emit("drain"); }
+			}
+			if (chunked) {
+				const trailers = Object.entries(this._trailers).map(([name,value]) => `${name}: ${value}\r\n`).join("");
+				await write(Buffer.from("0\r\n" + trailers + "\r\n", "latin1"));
+			}
+			this._bodySent = true; this.writableFinished = true; this.finished = true; this._notifyBodyChanged(); this._emit("finish");
+		} catch (error) {
+			for (const entry of this._bodyChunks.splice(0)) { this._queuedBodyBytes -= entry.bytes.length; entry.callback?.(error); }
+			throw error;
+		}
+	}
+	addTrailers(headers) {
+		const next = {...this._trailers};
+		for (const [name,value] of Object.entries(headers)) { validateHeaderName(name); validateHeaderValue(name,value); next[name] = String(value); }
+		const entries = Object.entries(next);
+		if (entries.length > MAX_HTTP_REQUEST_HEADERS || Buffer.byteLength(entries.map(([name,value]) => `${name}: ${value}\r\n`).join(""), "latin1") > MAX_HTTP_REQUEST_HEADER_BYTES) throw new Error("HTTP request trailers exceed the configured header limit");
+		this._trailers = next;
+	}
+
 	abort() {
 		if (this.aborted) {
 			return;
@@ -829,6 +860,7 @@ var ClientRequest = class {
 			return this;
 		}
 		this.destroyed = true;
+		this._notifyBodyChanged();
 		this._clearTimeout();
 		this._unbindAbortSignal();
 		this._loopbackAbort?.();
@@ -893,7 +925,7 @@ var ClientRequest = class {
 	setSocketKeepAlive() {
 		return this;
 	}
-	flushHeaders() {}
+	flushHeaders() { this._headersFlushed = true; this._notifyBodyChanged(); }
 	_emitClose() {
 		if (this._closeEmitted) {
 			return;
@@ -1499,6 +1531,17 @@ var Agent = class _Agent {
 		const activeList = this.sockets[name] ?? (this.sockets[name] = []);
 		activeList.push(socket);
 	}
+	_trackSocketLifecycle(name, socket) {
+		// Keep these listeners outside the request-creation scope: a live pooled
+		// socket must not retain the request captured by its creation callback.
+		const release = () => {
+			socket.removeListener("close", release);
+			socket.removeListener("agentRemove", release);
+			this._removeSocketCompletely(name, socket);
+		};
+		socket.once("close", release);
+		socket.once("agentRemove", release);
+	}
 	_createSocketForRequest(name, request, options) {
 		let settled = false;
 		const finish = (err, socket) => {
@@ -1512,17 +1555,13 @@ var Agent = class _Agent {
 			if (request.destroyed) {
 				this.totalSocketCount += 1;
 				this._activateSocket(name, socket);
-				socket.once("close", () => {
-					this._removeSocketCompletely(name, socket);
-				});
+				this._trackSocketLifecycle(name, socket);
 				request._assignSocket(socket, false);
 				return;
 			}
 			this.totalSocketCount += 1;
 			this._activateSocket(name, socket);
-			socket.once("close", () => {
-				this._removeSocketCompletely(name, socket);
-			});
+			this._trackSocketLifecycle(name, socket);
 			request._assignSocket(socket, false);
 		};
 		const connectionOptions = {
@@ -1933,7 +1972,7 @@ function isSocketReadyForProtocol(socket, protocol) {
 	if (typeof socket._socketId === "number") {
 		return false;
 	}
-	return socket.connecting === false;
+	return socket.connecting !== true && socket.pending !== true;
 }
 
 function waitForSocketReadyForProtocol(socket, protocol) {
@@ -2238,7 +2277,7 @@ function waitForRawHttpResponseHead(socket, timeoutMs) {
 	});
 }
 
-function streamRawHttpResponse(socket, requestMethod, timeoutMs, onHead) {
+function streamRawHttpResponse(socket, requestMethod, timeoutMs, onHead, onInformational) {
 	return new Promise((resolve, reject) => {
 		const { maxPendingResponseBytes: maxPendingBytes, maxChunkSizeLineBytes } =
 			guestBridgeLimits();
@@ -2347,6 +2386,7 @@ function streamRawHttpResponse(socket, requestMethod, timeoutMs, onHead) {
 									"HTTP informational response count exceeds the header limit",
 								);
 							}
+							onInformational?.(head);
 							continue;
 						}
 						if (head.rawHeaders.length / 2 > MAX_HTTP_REQUEST_HEADERS) {
@@ -2588,10 +2628,13 @@ function streamRawHttpResponse(socket, requestMethod, timeoutMs, onHead) {
 		socket.once("error", onError);
 		socket.once("end", onEnd);
 		socket.once("close", onClose);
+		// The previous response may have completed while applying backpressure.
+		// Resume only after this parser owns every transport event.
+		socket.resume();
 	});
 }
 
-function waitForRawHttpResponse(socket, requestMethod, timeoutMs) {
+function waitForRawHttpResponse(socket, requestMethod, timeoutMs, handoff) {
 	return new Promise((resolve, reject) => {
 		let header = null;
 		let bodyBuffer = Buffer.alloc(0);
@@ -2609,7 +2652,11 @@ function waitForRawHttpResponse(socket, requestMethod, timeoutMs) {
 				reject(error);
 				return;
 			}
-			resolve(value);
+            if (value && (value.status === 101 || requestMethod === "CONNECT")) {
+                try { handoff?.(value); }
+                catch (error) { reject(error); return; }
+            }
+            resolve(value);
 		};
 		const cleanup = () => {
 			clearTimeout(timer);
@@ -2788,7 +2835,7 @@ function waitForRawHttpResponse(socket, requestMethod, timeoutMs) {
 }
 
 function hasResponseBody(statusCode, method) {
-	if (method === "HEAD") {
+	if (method === "HEAD" || method === "CONNECT") {
 		return false;
 	}
 	if (
@@ -2913,7 +2960,7 @@ function parseChunkedBody(bodyBuffer, maxBodyBytes = MAX_HTTP_BODY_BYTES) {
 	}
 }
 
-function parseLoopbackRequestBuffer(buffer, server) {
+function parseLoopbackRequestBuffer(buffer, server, headOnly = false) {
 	let requestStart = 0;
 	while (
 		requestStart + 1 < buffer.length &&
@@ -3028,56 +3075,34 @@ function parseLoopbackRequestBuffer(buffer, server) {
 	}
 	const transferEncoding = headers["transfer-encoding"];
 	const contentLength = headers["content-length"];
+	let framing: { kind: string; remaining?: number } = { kind: "length", remaining: 0 };
+	if (transferEncoding !== void 0) {
+		const tokens = splitTransferEncodingTokens(joinHeaderValue(transferEncoding));
+		if (tokens.filter(entry => entry === "chunked").length !== 1 || tokens[tokens.length - 1] !== "chunked" || contentLength !== void 0) {
+			return { kind: "bad-request", closeConnection: true };
+		}
+		framing = { kind: "chunk-size" };
+	} else if (contentLength !== void 0) {
+		const length = parseContentLengthHeader(contentLength);
+		if (length === null || length > MAX_HTTP_BODY_BYTES) return { kind: "bad-request", closeConnection: true };
+		framing = { kind: "length", remaining: length };
+	}
+	if (headOnly) return {
+		kind: "request", bytesConsumed: headerEnd + 4, closeConnection, framing,
+		request: { method: requestMethod, url: requestUrl, headers, rawHeaders },
+	};
 	let requestBody = Buffer.alloc(0);
 	let bytesConsumed = headerEnd + 4;
-	if (transferEncoding !== void 0) {
-		const tokens = splitTransferEncodingTokens(
-			joinHeaderValue(transferEncoding),
-		);
-		const chunkedCount = tokens.filter((entry) => entry === "chunked").length;
-		const hasChunked = chunkedCount > 0;
-		const chunkedIsFinal =
-			hasChunked && tokens[tokens.length - 1] === "chunked";
-		if (
-			!hasChunked ||
-			chunkedCount !== 1 ||
-			!chunkedIsFinal ||
-			contentLength !== void 0
-		) {
-			return {
-				kind: "bad-request",
-				closeConnection: true,
-			};
-		}
+	if (framing.kind === "chunk-size") {
 		const parsedChunked = parseChunkedBody(buffer.subarray(headerEnd + 4));
-		if (parsedChunked === null) {
-			return {
-				kind: "bad-request",
-				closeConnection: true,
-			};
-		}
-		if (!parsedChunked.complete) {
-			return { kind: "incomplete" };
-		}
+		if (parsedChunked === null) return { kind: "bad-request", closeConnection: true };
+		if (!parsedChunked.complete) return { kind: "incomplete" };
 		requestBody = parsedChunked.body;
-		bytesConsumed = headerEnd + 4 + parsedChunked.bytesConsumed;
-	} else if (contentLength !== void 0) {
-		const parsedContentLength = parseContentLengthHeader(contentLength);
-		if (
-			parsedContentLength === null ||
-			parsedContentLength > MAX_HTTP_BODY_BYTES
-		) {
-			return {
-				kind: "bad-request",
-				closeConnection: true,
-			};
-		}
-		const bodyEnd = headerEnd + 4 + parsedContentLength;
-		if (bodyEnd > buffer.length) {
-			return { kind: "incomplete" };
-		}
-		requestBody = buffer.subarray(headerEnd + 4, bodyEnd);
-		bytesConsumed = bodyEnd;
+		bytesConsumed += parsedChunked.bytesConsumed;
+	} else {
+		const end = bytesConsumed + (framing.remaining ?? 0);
+		if (end > buffer.length) return { kind: "incomplete" };
+		requestBody = buffer.subarray(bytesConsumed, end); bytesConsumed = end;
 	}
 	return {
 		kind: "request",
@@ -3171,9 +3196,13 @@ function createBadRequestResponseBuffer() {
 	);
 }
 
+function validateStatusMessage(value) {
+    if(checkInvalidHeaderChar(value))throw createTypeErrorWithCode("Invalid character in statusMessage","ERR_INVALID_CHAR");
+}
+
 function serializeLoopbackResponse(response, request, requestWantsClose) {
 	const statusCode = response.status || 200;
-	const statusText = HTTP_STATUS_TEXT[statusCode] || "OK";
+	const statusText = typeof response.statusText === "string" ? response.statusText : HTTP_STATUS_TEXT[statusCode] || "unknown";
 	const { headers, rawNameMap, order } = serializeRawHeaderPairs(
 		response.rawHeaders,
 		response.headers,
@@ -3325,6 +3354,7 @@ var HTTP_STATUS_TEXT = {
 	403: "Forbidden",
 	404: "Not Found",
 	500: "Internal Server Error",
+	503: "Service Unavailable",
 };
 
 function isLoopbackRequestHost(hostname) {
@@ -3363,6 +3393,7 @@ var ServerIncomingMessage = class {
 	_bodyDelivered = false;
 	_endDelivered = false;
 	_bodyDeliveryScheduled = false;
+	_iteratorReadable;
 	constructor(request) {
 		this.headers = request.headers || {};
 		this.rawHeaders = request.rawHeaders || [];
@@ -3466,6 +3497,55 @@ var ServerIncomingMessage = class {
 		this._scheduleBodyDelivery();
 		return this.rawBody ?? Buffer.alloc(0);
 	}
+	iterator(options) {
+		let iterator;
+		if (!this._iteratorReadable) {
+			const request = this;
+			// This bridge already owns one bounded request body. Let the canonical
+			// Readable own iterator cancellation, EOF and destroyOnReturn semantics
+			// instead of adding another event queue or a polling iterator.
+			const readable = new CanonicalReadable({
+				// The buffered bridge can observe EOF before the caller consumes its
+				// last chunk. Defer normal destruction until next() observes EOF.
+				autoDestroy: false,
+				read() {},
+				destroy(error, callback) {
+					request.off("data", data);
+					request.off("end", end);
+					request.off("error", failed);
+					request.off("close", closed);
+					if (!request.destroyed) request.destroy(error);
+					callback(error);
+				},
+			});
+			iterator = readable.iterator(options);
+			const data = (chunk) => readable.push(chunk);
+			const end = () => readable.push(null);
+			const failed = (error) => readable.destroy(error);
+			const closed = () => {
+				if (!readable.readableEnded && !readable.destroyed) {
+					const error = request.errored ?? new Error("Premature close");
+					if (!error.code) error.code = "ERR_STREAM_PREMATURE_CLOSE";
+					readable.destroy(error);
+				}
+			};
+			this._iteratorReadable = readable;
+			this.on("data", data).on("end", end).on("error", failed).on("close", closed);
+			if (this._endDelivered) readable.push(null);
+		} else {
+			iterator = this._iteratorReadable.iterator(options);
+		}
+		const next = iterator.next.bind(iterator);
+		iterator.next = async (...args) => {
+			const result = await next(...args);
+			if (result.done) this._iteratorReadable.destroy();
+			return result;
+		};
+		return iterator;
+	}
+	[Symbol.asyncIterator]() {
+		return this.iterator();
+	}
 	pipe(dest) {
 		this.on("data", (chunk) => dest.write?.(chunk));
 		this.on("end", () => dest.end?.());
@@ -3553,9 +3633,37 @@ var ServerIncomingMessage = class {
 	}
 };
 
+var StreamingServerIncomingMessage = class extends IncomingMessage {
+	complete = false;
+	aborted = false;
+	_socketClosed = false;
+	trailers = {};
+	rawTrailers = [];
+	socket;
+	connection;
+	constructor(request, read) {
+		super(request, read);
+		const metadata = new ServerIncomingMessage(request);
+		for (const name of ["headers", "rawHeaders", "method", "url", "httpVersion", "httpVersionMajor", "httpVersionMinor"]) this[name] = metadata[name];
+	}
+	_markBodyReady() {}
+	_finishBody() { this.complete = true; this.push(null); }
+	_abort(socketClosed = false) {
+		if (socketClosed) this._socketClosed = true;
+		if (this.aborted || this.complete) return;
+		this.aborted = true; this.emit("aborted"); this.destroy(createConnResetError("aborted"));
+	}
+	_destroy(error, callback) {
+		if (!this.complete && !this._socketClosed && this.socket && !this.socket.destroyed) this.socket.destroy(error);
+		// Like Node IncomingMessage, abort remains visible without turning a
+		// disconnected client into an uncaught server error with no error listener.
+		callback(this.listenerCount("error") ? error : null);
+	}
+};
+
 var ServerResponseBridge = class {
 	statusCode = 200;
-	statusMessage = "OK";
+	statusMessage = void 0;
 	headersSent = false;
 	writable = true;
 	writableFinished = false;
@@ -3619,8 +3727,16 @@ var ServerResponseBridge = class {
 	_emit(event, ...args) {
 		this.emit(event, ...args);
 	}
-	writeHead(statusCode, headers) {
-		if (statusCode >= 100 && statusCode < 200 && statusCode !== 101) {
+    writeHead(statusCode, statusMessageOrHeaders, headers) {
+        const reason = typeof statusMessageOrHeaders === "string" ? statusMessageOrHeaders : this.statusMessage;
+        if(typeof statusMessageOrHeaders !== "string")headers=statusMessageOrHeaders;
+        const statusText=reason === undefined ? HTTP_STATUS_TEXT[statusCode] || "unknown" : String(reason);
+        if(!(statusCode >= 100 && statusCode < 200 && statusCode !== 101)){
+            this.statusCode=statusCode;
+            this.statusMessage=statusText;
+        }
+        validateStatusMessage(statusText);
+        if (statusCode >= 100 && statusCode < 200 && statusCode !== 101) {
 			const informationalHeaders = /* @__PURE__ */ new Map();
 			const informationalRawHeaderNames = /* @__PURE__ */ new Map();
 			if (headers) {
@@ -3677,14 +3793,15 @@ var ServerResponseBridge = class {
 			);
 			this._informational.push({
 				status: statusCode,
-				statusText: HTTP_STATUS_TEXT[statusCode],
+				statusText,
 				headers: normalizedHeaders,
 				rawHeaders,
 			});
 			return this;
 		}
-		this.statusCode = statusCode;
-		if (headers) {
+        this.statusCode = statusCode;
+        this.statusMessage = statusText;
+        if (headers) {
 			if (isFlatHeaderList(headers)) {
 				for (let index = 0; index < headers.length; index += 2) {
 					const key = headers[index];
@@ -4171,9 +4288,12 @@ var ServerResponseBridge = class {
 					: [rawName, serialized];
 			},
 		);
-		return {
-			status: this.statusCode,
-			headers: serializedHeaders,
+        const statusText=this.statusMessage===undefined ? HTTP_STATUS_TEXT[this.statusCode] || "unknown" : String(this.statusMessage);
+        validateStatusMessage(statusText);
+        return {
+            status: this.statusCode,
+            statusText,
+            headers: serializedHeaders,
 			rawHeaders,
 			informational:
 				this._informational.length > 0 ? [...this._informational] : void 0,
@@ -4253,30 +4373,40 @@ var Server = class {
 	_listeners = {};
 	_serverId;
 	_netServer = null;
+	// Accepted HTTP sockets are bounded by the underlying kernel socket quota.
+	// Upgrade transfers ownership to the application and removes this entry.
+	_httpSockets = new Set();
+	_httpIdleSockets = new Set();
 	_refed = true;
 	_listenPromise = null;
 	_address = null;
 	_handleId = null;
 	_hostCloseWaitStarted = false;
 	_activeRequestDispatches = 0;
-	_closePending = false;
+	_closeRequestDrain = null;
 	_closeRunning = false;
 	_closeCallbacks = [];
 	_tlsOptions = null;
 	/** @internal Request listener stored on the instance (replaces serverRequestListeners Map). */
 	_requestListener;
-	constructor(requestListener, tlsOptions = null) {
+	constructor(requestListener, tlsOptions = null, serverOptions = null) {
 		this._serverId = nextServerId++;
 		this._requestListener = (...args) => {
-			const listeners = this._listeners.request;
-			if (!listeners || listeners.length === 0) return void 0;
-			const results = listeners
-				.slice()
-				.map((listener) => listener.call(this, ...args));
+			const previous = this._requestDispatchResults;
+			const results = [];
+			this._requestDispatchResults = results;
+			try { this.emit("request", ...args); }
+			finally { this._requestDispatchResults = previous; }
 			return results.length === 1 ? results[0] : Promise.all(results);
 		};
 		if (requestListener) this.on("request", requestListener);
 		this._tlsOptions = tlsOptions;
+		this._IncomingMessage = serverOptions?.IncomingMessage;
+		this._ServerResponse = serverOptions?.ServerResponse;
+		// Node's connection listener owns parsing even for application-supplied
+		// Duplex streams. The transport remains the caller's socket.
+		this.on("connection", socket => { if (!this._tlsOptions) attachHttpServerSocket(this, socket); });
+		this.on("secureConnection", socket => attachHttpServerSocket(this, socket));
 		serverInstances.set(this._serverId, this);
 	}
 	/** @internal Bridge-visible server ID for loopback self-dispatch. */
@@ -4288,7 +4418,8 @@ var Server = class {
 		const listeners = this._listeners[event];
 		if (!listeners || listeners.length === 0) return;
 		listeners.slice().forEach((listener) => {
-			listener.call(this, ...args);
+			const result = listener.call(this, ...args);
+			if (event === "request") this._requestDispatchResults?.push(result);
 		});
 	}
 	_finishStart(resultJson) {
@@ -4319,12 +4450,11 @@ var Server = class {
 			0,
 			this._activeRequestDispatches - 1,
 		);
-		if (this._closePending && this._activeRequestDispatches === 0) {
-			this._closePending = false;
-			queueMicrotask(() => {
-				this._startClose();
-			});
-		}
+        if (this._activeRequestDispatches === 0) {
+            const drained = this._closeRequestDrain;
+            this._closeRequestDrain = null;
+            drained?.();
+        }
 	}
 	_startHostCloseWait() {
 		this._hostCloseWaitStarted = true;
@@ -4340,6 +4470,8 @@ var Server = class {
 		this._netServer = netServer;
 		if (!this._refed) netServer.unref();
 		netServer.on("connection", (socket) => {
+			this._httpSockets.add(socket);
+			socket.once("close", () => this._httpSockets.delete(socket));
 			if (this._tlsOptions) {
 				this._emit("connection", socket);
 				if (socket.destroyed) return;
@@ -4351,8 +4483,8 @@ var Server = class {
 				tlsSocket.once(
 					"secure",
 					bindAsyncContextFrame(getAsyncContextFrame(), () => {
-						this._emit("secureConnection", tlsSocket);
-						attachHttpServerSocket(this, tlsSocket);
+						this._httpSockets.delete(socket);
+						this.emit("secureConnection", tlsSocket);
 					}),
 				);
 				tlsSocket.on("error", (error) => {
@@ -4360,8 +4492,7 @@ var Server = class {
 				});
 				return;
 			}
-			this._emit("connection", socket);
-			attachHttpServerSocket(this, socket);
+			this.emit("connection", socket);
 		});
 		netServer.on("error", (error) => {
 			this._emit("error", error);
@@ -4425,14 +4556,18 @@ var Server = class {
 		if (cb) {
 			this._closeCallbacks.push(cb);
 		}
-		if (this._activeRequestDispatches > 0) {
-			this._closePending = true;
-			return this;
-		}
-		queueMicrotask(() => {
-			this._startClose();
-		});
+        this._startClose();
 		return this;
+	}
+	closeAllConnections() {
+		for (const socket of this._httpSockets) socket.destroy();
+	}
+	closeIdleConnections() {
+		for (const socket of this._httpIdleSockets) {
+			// Keep queued response bytes ahead of FIN. HTTP upgrades have already
+			// left the parser's sets and remain owned by their application.
+			if (!socket.destroyed && !socket.writableEnded) socket.end();
+		}
 	}
 	_startClose() {
 		if (this._closeRunning) {
@@ -4441,12 +4576,17 @@ var Server = class {
 		this._closeRunning = true;
 		const run = async () => {
 			try {
-				if (this._listenPromise) {
-					await this._listenPromise;
-				}
+                // A listening server must stop accepting before close returns.
+                // Await only an unfinished listen; an unconditional await opens
+                // an extra admission window while an active response drains.
+                if (!this.listening && this._listenPromise) await this._listenPromise;
+                const requestDrain = this._activeRequestDispatches === 0 ? Promise.resolve() :
+                    new Promise(resolve => { this._closeRequestDrain = resolve; });
 				const netServer = this._netServer;
 				if (this.listening && netServer) {
 					debugBridgeNetwork("server close net server", this._serverId);
+                    this.listening = false;
+                    this._address = null;
 					await new Promise((resolve, reject) => {
 						netServer.close((error) => {
 							if (error) {
@@ -4455,8 +4595,10 @@ var Server = class {
 								resolve();
 							}
 						});
+						this.closeIdleConnections();
 					});
 				}
+                await requestDrain;
 				this._netServer = null;
 				this._completeClose();
 				debugBridgeNetwork("server close complete", this._serverId);
@@ -4544,8 +4686,10 @@ var Server = class {
 	}
 };
 
-function ServerCallable(requestListener) {
-	return new Server(requestListener);
+function ServerCallable(optionsOrListener, maybeListener) {
+	const listener = typeof optionsOrListener === "function" ? optionsOrListener : maybeListener;
+	const options = typeof optionsOrListener === "function" ? null : optionsOrListener;
+	return Reflect.construct(Server, [listener, null, options], new.target ?? Server);
 }
 
 ServerCallable.prototype = Server.prototype;
@@ -4877,13 +5021,14 @@ async function dispatchSocketBackedServerRequest(
 	streamSocket,
 	connectionClosed,
 	requestWantsClose = false,
+	streamingIncoming = undefined,
 ) {
 	const request =
 		typeof requestInput === "string" ? JSON.parse(requestInput) : requestInput;
-	const incoming = new ServerIncomingMessage(request);
-	const outgoing = new ServerResponseBridge();
-	incoming.socket = outgoing.socket;
-	incoming.connection = outgoing.socket;
+	const incoming = streamingIncoming ?? new ServerIncomingMessage(request);
+	const outgoing = server._ServerResponse ? new server._ServerResponse(incoming) : new ServerResponseBridge();
+	incoming.socket = streamSocket ?? outgoing.socket;
+	incoming.connection = incoming.socket;
 	// Enable the streaming fast path so a single large `res.end(body)` is written
 	// to the connection socket in slices instead of buffered + serialized whole.
 	if (streamSocket) {
@@ -4944,6 +5089,9 @@ async function dispatchSocketBackedServerRequest(
 }
 
 function attachHttpServerSocket(server, socket) {
+	if (socket.destroyed) return;
+	server._httpSockets.add(socket);
+	server._httpIdleSockets.add(socket);
 	// Node's HTTP parser resource starts here, in the context of the 'connection'
 	// event, so request events run in the context of listen().
 	const parserAsyncContextFrame = getAsyncContextFrame();
@@ -4952,6 +5100,7 @@ function attachHttpServerSocket(server, socket) {
 	let dispatchPending = false;
 	let ended = false;
 	let detached = false;
+	let current = null;
 	let resolveConnectionClosed: () => void;
 	const connectionClosed = new Promise<void>((resolve) => {
 		resolveConnectionClosed = resolve;
@@ -4970,6 +5119,8 @@ function attachHttpServerSocket(server, socket) {
 		socket.removeListener?.("end", onEnd);
 	};
 	const releaseSocket = () => {
+		server._httpSockets.delete(socket);
+		server._httpIdleSockets.delete(socket);
 		detachParser();
 		resolveConnectionClosed();
 		socket.off?.("close", onClose);
@@ -5005,19 +5156,19 @@ function attachHttpServerSocket(server, socket) {
 		}
 	};
 	const onData = (chunk) => {
+		server._httpIdleSockets.delete(socket);
 		const payload = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
 		buffer = buffer.length === 0 ? payload : Buffer.concat([buffer, payload]);
 		scheduleDispatch();
 	};
 	const onEnd = () => {
 		ended = true;
-		if (buffer.length === 0) {
-			finishSocket();
-			return;
-		}
+		if (!current && buffer.length === 0) { finishSocket(); return; }
+		if (current && !current.bodyDone) { badBody(); return; }
 		scheduleDispatch();
 	};
 	const onClose = () => {
+		current?.incoming._abort(true);
 		releaseSocket();
 	};
 	let socketErrorReported = false;
@@ -5033,74 +5184,113 @@ function attachHttpServerSocket(server, socket) {
 		server._emit("clientError", error, socket);
 		if (!handled) socket.destroy(error);
 	};
+	const badBody = () => {
+		if (!socket.destroyed) socket.write(createBadRequestResponseBuffer());
+		current?.incoming._abort(); buffer = Buffer.alloc(0); finishSocket();
+	};
+	const feedBody = () => {
+		const body = current;
+		while (body && !body.bodyDone && !body.paused && !detached) {
+			const framing = body.framing;
+			if (framing.kind === "length" || framing.kind === "chunk-data") {
+				if (framing.remaining === 0) {
+					if (framing.kind === "length") { body.bodyDone = true; body.incoming._finishBody(); return; }
+					body.framing = { kind: "chunk-end" }; continue;
+				}
+				if (!buffer.length) return;
+				const count = Math.min(buffer.length, framing.remaining);
+				const chunk = buffer.subarray(0, count); buffer = buffer.subarray(count); framing.remaining -= count;
+				body.bytes += count;
+				if (body.bytes > MAX_HTTP_BODY_BYTES) { badBody(); return; }
+				if (!body.incoming.push(chunk)) { body.paused = true; socket.pause(); return; }
+				continue;
+			}
+			if (framing.kind === "chunk-end") {
+				if (buffer.length < 2) return;
+				if (buffer[0] !== 13 || buffer[1] !== 10) { badBody(); return; }
+				buffer = buffer.subarray(2); body.framing = { kind: "chunk-size" }; continue;
+			}
+			if (framing.kind === "chunk-size") {
+				const end = buffer.indexOf("\r\n");
+				if (end < 0) { if (buffer.length > MAX_HTTP_REQUEST_HEADER_BYTES) badBody(); return; }
+				const line = buffer.subarray(0, end).toString("latin1").split(";", 1)[0];
+				if (!/^[0-9a-fA-F]+$/.test(line)) { badBody(); return; }
+				const size = Number.parseInt(line, 16);
+				if (!Number.isSafeInteger(size) || size > MAX_HTTP_BODY_BYTES - body.bytes) { badBody(); return; }
+				buffer = buffer.subarray(end + 2);
+				body.framing = size ? { kind: "chunk-data", remaining: size } : { kind: "trailers" }; continue;
+			}
+			const empty = buffer.length >= 2 && buffer[0] === 13 && buffer[1] === 10;
+			const end = empty ? 0 : buffer.indexOf("\r\n\r\n");
+			if (end < 0) { if (buffer.length > MAX_HTTP_REQUEST_HEADER_BYTES) badBody(); return; }
+			if (end > MAX_HTTP_REQUEST_HEADER_BYTES) { badBody(); return; }
+			try {
+				const lines = end ? buffer.subarray(0, end).toString("latin1").split("\r\n") : [];
+				if (lines.length > MAX_HTTP_REQUEST_HEADERS) throw new Error("Too many trailers");
+				for (const line of lines) {
+					const separator = line.indexOf(":");
+					if (separator < 1) throw new Error("Invalid trailer");
+					const name = line.slice(0, separator), value = line.slice(separator + 1).trim();
+					validateHeaderName(name); validateHeaderValue(name, value);
+					body.incoming.rawTrailers.push(name, value); appendNormalizedHeader(body.incoming.trailers, name.toLowerCase(), value);
+				}
+			} catch { badBody(); return; }
+			buffer = buffer.subarray(end + (empty ? 2 : 4)); body.bodyDone = true; body.incoming._finishBody();
+		}
+	};
 	async function processRequests() {
-		let closeAfterDrain = false;
 		while (!detached && !socket.destroyed) {
-			const parsed = parseLoopbackRequestBuffer(buffer, server);
+			if (current) {
+				feedBody();
+				if (current.bodyDone && !current.responseDone) socket.pause();
+				if (!current.bodyDone || !current.responseDone || detached) return;
+				current = null;
+				if (ended && !buffer.length) { finishSocket(); return; }
+			}
+			const parsed = parseLoopbackRequestBuffer(buffer, server, true);
 			if (parsed.kind === "incomplete") {
-				if (ended && buffer.length > 0) {
-					socket.write(createBadRequestResponseBuffer());
-					finishSocket();
+				if (ended && buffer.length) badBody();
+				else if (!buffer.length && !current && !detached && !socket.destroyed) {
+                    // close() reaps sockets idle at the time of the call.
+                    // An active response retains its connection when it finishes.
+                    server._httpIdleSockets.add(socket);
 				}
 				return;
 			}
-			if (parsed.kind === "bad-request") {
-				socket.write(createBadRequestResponseBuffer());
-				finishSocket();
-				buffer = Buffer.alloc(0);
-				return;
-			}
+			if (parsed.kind === "bad-request") { badBody(); return; }
 			buffer = buffer.subarray(parsed.bytesConsumed);
 			if (parsed.upgradeHead) {
 				releaseSocket();
-				const incoming = new ServerIncomingMessage(parsed.request);
-				incoming.socket = socket;
-				incoming.connection = socket;
-				try {
-					server._emit("upgrade", incoming, socket, parsed.upgradeHead);
-				} catch (error) {
-					// EventEmitter listener failures are uncaught in Node. Do not turn an
-					// upgrade-handler exception into a silent socket close or a dangling
-					// handshake merely because request dispatch runs in an async pump.
-					queueMicrotask(() => {
-						throw error;
-					});
-				}
+				const incoming = new ServerIncomingMessage(parsed.request); incoming.socket = socket; incoming.connection = socket;
+				try { server._emit("upgrade", incoming, socket, parsed.upgradeHead); }
+				catch (error) { queueMicrotask(() => { throw error; }); }
 				return;
 			}
-			const result = await dispatchSocketBackedServerRequest(
-				server,
-				parsed.request,
-				socket,
-				connectionClosed,
-				parsed.closeConnection,
-			);
-			if (detached || socket.destroyed) {
-				return;
-			}
-			let mustClose: boolean;
-			if (result.streamedDirectly) {
-				// Response was already streamed straight to the socket by res.end().
-				mustClose = result.closeConnection;
-			} else {
-				const response = JSON.parse(result.responseJson);
-				const serialized = serializeLoopbackResponse(
-					response,
-					parsed.request,
-					parsed.closeConnection,
-				);
-				if (!closeAfterDrain && serialized.payload.length > 0) {
-					socket.write(serialized.payload);
+			const body = { incoming: null, framing: parsed.framing, bytes: 0, paused: false, bodyDone: false, responseDone: false };
+			const read = () => { body.paused = false; socket.resume(); scheduleDispatch(); };
+			if (server._IncomingMessage) {
+				const incoming = new server._IncomingMessage(socket);
+				const metadata = new ServerIncomingMessage(parsed.request);
+				for (const name of ["headers", "rawHeaders", "method", "url", "httpVersion", "httpVersionMajor", "httpVersionMinor"]) incoming[name] = metadata[name];
+				incoming.complete = false; incoming.aborted = false;
+				incoming.trailers = {}; incoming.rawTrailers = [];
+				incoming._onDemand = read; incoming._preloadedBody = null;
+				for (const name of ["_markBodyReady", "_finishBody", "_abort"]) incoming[name] = StreamingServerIncomingMessage.prototype[name];
+				if (incoming._destroy === IncomingMessage.prototype._destroy) incoming._destroy = StreamingServerIncomingMessage.prototype._destroy;
+				body.incoming = incoming;
+			} else body.incoming = new StreamingServerIncomingMessage(parsed.request, read);
+			current = body;
+			void dispatchSocketBackedServerRequest(server, parsed.request, socket, connectionClosed, parsed.closeConnection, body.incoming).then(result => {
+				let close = result.closeConnection;
+				if (!result.streamedDirectly) {
+					const serialized = serializeLoopbackResponse(JSON.parse(result.responseJson), parsed.request, parsed.closeConnection);
+					if (serialized.payload.length) socket.write(serialized.payload);
+					close = serialized.closeConnection;
 				}
-				mustClose = serialized.closeConnection;
-			}
-			if (mustClose) {
-				closeAfterDrain = true;
-				if (buffer.length === 0) {
-					finishSocket();
-					return;
-				}
-			}
+				body.responseDone = true;
+				if (close) finishSocket();
+				else { socket.resume(); if (!body.bodyDone) body.incoming.resume(); scheduleDispatch(); }
+			}).catch(onError);
 		}
 	}
 	socket.on("data", onData);
@@ -5323,7 +5513,7 @@ function onUpgradeSocketEnd(socketId) {
 
 function ServerResponseCallable() {
 	this.statusCode = 200;
-	this.statusMessage = "OK";
+	this.statusMessage = void 0;
 	this.headersSent = false;
 	this.writable = true;
 	this.writableFinished = false;
@@ -5374,16 +5564,7 @@ function ServerResponseCallable() {
 	this.connection = fakeSocket;
 }
 
-ServerResponseCallable.prototype = Object.create(
-	ServerResponseBridge.prototype,
-	{
-		constructor: {
-			value: ServerResponseCallable,
-			writable: true,
-			configurable: true,
-		},
-	},
-);
+ServerResponseCallable.prototype = ServerResponseBridge.prototype;
 
 function createHttpModule(protocol) {
 	const defaultProtocol = protocol === "https" ? "https:" : "http:";
@@ -5502,7 +5683,7 @@ function createHttpModule(protocol) {
 					: maybeListener;
 			const serverOptions =
 				typeof _optionsOrListener === "function" ? null : _optionsOrListener;
-			return new Server(listener, protocol === "https" ? serverOptions : null);
+			return new Server(listener, protocol === "https" ? serverOptions : null, serverOptions);
 		},
 		Agent,
 		globalAgent: moduleAgent,

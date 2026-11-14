@@ -5,6 +5,7 @@ type GuestBridgeLimits = Readonly<{
 	maxChunkSizeLineBytes: number;
 	maxPendingResponseBytes: number;
 	maxReadlineHistoryEntries: number;
+	maxBlobBytes: number;
 }>;
 const freeze = Object.freeze;
 const copy = (value: GuestBridgeLimits): GuestBridgeLimits =>
@@ -12,6 +13,7 @@ const copy = (value: GuestBridgeLimits): GuestBridgeLimits =>
 		maxChunkSizeLineBytes: value.maxChunkSizeLineBytes,
 		maxPendingResponseBytes: value.maxPendingResponseBytes,
 		maxReadlineHistoryEntries: value.maxReadlineHistoryEntries,
+		maxBlobBytes: value.maxBlobBytes,
 	});
 let limits = copy(
 	(

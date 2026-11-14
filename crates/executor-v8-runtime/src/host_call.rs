@@ -1306,6 +1306,7 @@ pub struct BridgeCallContext {
     /// never arm runtime work.
     runtime: Option<agentos_driver_tokio::DriverHandle>,
     bridge_call_timeout: Duration,
+    serialization_limit_bytes: Option<usize>,
 }
 
 pub struct PreparedAsyncBridgeCall {
@@ -1360,6 +1361,7 @@ impl BridgeCallContext {
             pause_control: None,
             runtime: None,
             bridge_call_timeout: DEFAULT_BRIDGE_CALL_TIMEOUT,
+            serialization_limit_bytes: None,
         }
     }
 
@@ -1388,6 +1390,7 @@ impl BridgeCallContext {
             pause_control: None,
             runtime: None,
             bridge_call_timeout: DEFAULT_BRIDGE_CALL_TIMEOUT,
+            serialization_limit_bytes: None,
         }
     }
 
@@ -1415,6 +1418,7 @@ impl BridgeCallContext {
             pause_control: None,
             runtime: None,
             bridge_call_timeout: DEFAULT_BRIDGE_CALL_TIMEOUT,
+            serialization_limit_bytes: None,
         }
     }
 
@@ -1445,7 +1449,16 @@ impl BridgeCallContext {
             pause_control: Some(pause_control),
             runtime: Some(runtime),
             bridge_call_timeout,
+            serialization_limit_bytes: None,
         }
+    }
+
+    pub(crate) fn with_serialization_limit(mut self, limit: Option<usize>) -> Self {
+        self.serialization_limit_bytes = limit;
+        self
+    }
+    pub(crate) fn serialization_limit(&self) -> Option<usize> {
+        self.serialization_limit_bytes
     }
 
     pub(crate) fn runtime_context(&self) -> Option<&agentos_driver_tokio::DriverHandle> {

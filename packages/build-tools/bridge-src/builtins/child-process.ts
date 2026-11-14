@@ -1572,6 +1572,10 @@ function exec(command, options, callback) {
 	});
 	return child;
 }
+function normalizedChildProcessEnvironment(environment) {
+	const selected = environment ?? (typeof process !== "undefined" ? process.env : {});
+	return Object.fromEntries(Object.entries(selected).filter(([,value]) => value !== undefined).map(([name,value]) => [name,String(value)]));
+}
 function validateChildProcessCredentials(options) {
 	for (const name of ["uid", "gid"]) {
 		const value = options[name];
@@ -1603,7 +1607,7 @@ function execSync(command, options) {
 		JSON.stringify([]),
 		JSON.stringify({
 			cwd: effectiveCwd,
-			env: opts.env,
+			env: normalizedChildProcessEnvironment(opts.env),
 			argv0: opts.argv0 == null ? void 0 : String(opts.argv0),
 			uid: opts.uid ?? void 0,
 			gid: opts.gid ?? void 0,
@@ -1739,7 +1743,7 @@ function spawn(command, args, options) {
 					JSON.stringify(argsArray),
 					JSON.stringify({
 						cwd: effectiveCwd,
-						env: opts.env,
+						env: normalizedChildProcessEnvironment(opts.env),
 						argv0: opts.argv0 == null ? void 0 : String(opts.argv0),
 						uid: opts.uid ?? void 0,
 						gid: opts.gid ?? void 0,
@@ -1987,7 +1991,7 @@ function spawnSync(command, args, options) {
 			JSON.stringify(argsArray),
 			JSON.stringify({
 				cwd: effectiveCwd,
-				env: opts.env,
+				env: normalizedChildProcessEnvironment(opts.env),
 				argv0: opts.argv0 == null ? void 0 : String(opts.argv0),
 				uid: opts.uid ?? void 0,
 				gid: opts.gid ?? void 0,
@@ -2234,8 +2238,7 @@ function fork(modulePath, args, options) {
     const stdio=opts.stdio==null?(opts.silent?["pipe","pipe","pipe","ipc"]:["inherit","inherit","inherit","ipc"]):typeof opts.stdio==="string"?[opts.stdio,opts.stdio,opts.stdio,"ipc"]:opts.stdio;
     if(stdio.filter(mode=>mode==="ipc").length!==1)throw Object.assign(new Error("fork requires exactly one IPC stdio entry"),{code:"ERR_CHILD_PROCESS_IPC_REQUIRED"});
 	const env = {
-		...(typeof process !== "undefined" ? process.env : {}),
-		...(opts.env || {}),
+		...normalizedChildProcessEnvironment(opts.env),
 		AGENTOS_NODE_EXEC_ARGV: JSON.stringify(execArgv.map(String)),
 		AGENTOS_NODE_PRELOAD_MODULES: JSON.stringify(preloadModules),
 	};

@@ -520,11 +520,11 @@ export class SidecarKernelProxy {
 	private readonly localMounts: LocalCompatMount[];
 	private readonly baseSidecarMounts: SidecarMountDescriptor[];
 	private readonly dynamicSidecarMounts: SidecarMountDescriptor[] = [];
-	private readonly permissions: SidecarPermissionsPolicy | undefined;
+	private permissions: SidecarPermissionsPolicy | undefined;
 	private readonly commandPermissions:
 		| Parameters<SidecarProcess["configureVm"]>[2]["commandPermissions"]
 		| undefined;
-	private readonly loopbackExemptPorts: number[] | undefined;
+	private loopbackExemptPorts: number[] | undefined;
 	// Boot packages are resent when mounts change. Runtime-linked packages are
 	// retained by the sidecar and are not mirrored in this client.
 	private readonly packages: NonNullable<
@@ -1570,23 +1570,30 @@ export class SidecarKernelProxy {
 		];
 	}
 
-	private reconfigureSidecarMounts(): Promise<void> {
+    configurePermissions(permissions:SidecarPermissionsPolicy,loopbackExemptPorts?:number[]):Promise<void>{
+        return this.reconfigureSidecarMounts(structuredClone(permissions),loopbackExemptPorts?.slice());
+    }
+
+    private reconfigureSidecarMounts(permissionsOverride?:SidecarPermissionsPolicy,portsOverride?:number[]): Promise<void> {
 		const run = async () => {
-			if (this.disposed) {
-				return;
-			}
+            if(this.disposed){
+                if(permissionsOverride)throw Object.assign(new Error("VM is disposed"),{code:"ERR_AGENTOS_VM_DISPOSED"});
+                return;
+            }
 			// Re-send boot packages and host-function shims. The sidecar preserves
 			// runtime-linked packages independently of this client payload.
 			await this.client.configureVm(this.session, this.vm, {
 				mounts: this.desiredSidecarMounts(),
-				permissions: this.permissions,
+				permissions: permissionsOverride ?? this.permissions,
 				commandPermissions: this.commandPermissions,
-				loopbackExemptPorts: this.loopbackExemptPorts,
+				loopbackExemptPorts: portsOverride ?? this.loopbackExemptPorts,
 				packages: this.packages,
 				packagesMountAt: this.packagesMountAt,
 				hostFunctionShimCommands: this.hostFunctionShimCommands,
-			});
-		};
+            });
+            if(permissionsOverride!==undefined)this.permissions=permissionsOverride;
+            if(portsOverride!==undefined)this.loopbackExemptPorts=portsOverride;
+        };
 		const previous = this.mountReconfigurePromise ?? Promise.resolve();
 		const next = previous.then(run, run);
 		const tracked = next.finally(() => {
@@ -2092,6 +2099,18 @@ export class SidecarKernelProxy {
 						}
 					}
 				} catch (error) {
+					// A lifecycle mutation can temporarily close ordinary snapshot
+					// admission. It says nothing about the process's exit status.
+					// Retry only this explicit backpressure on the existing 50ms
+					// observation loop; terminal events and disposal still wake it.
+					if (
+						error instanceof SidecarRejectedError &&
+						error.detail.code === "ERR_AGENTOS_VM_LIFECYCLE_CONFLICT" &&
+						error.detail.retryable === true &&
+						error.detail.errno === "EAGAIN"
+					) {
+						continue;
+					}
 					this.handleBackgroundProcessError(entry, error);
 				}
 			}

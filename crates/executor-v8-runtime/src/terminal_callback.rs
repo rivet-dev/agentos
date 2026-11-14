@@ -167,6 +167,10 @@ pub(crate) fn report_terminal_callback(
     record_terminal(scope, args.get(0), TerminalInput::Callback);
 }
 
+pub(crate) fn record_exception(scope: &mut v8::HandleScope, original: v8::Local<v8::Value>) {
+    record_terminal(scope, original, TerminalInput::Callback);
+}
+
 fn record_terminal(
     scope: &mut v8::HandleScope,
     original: v8::Local<v8::Value>,

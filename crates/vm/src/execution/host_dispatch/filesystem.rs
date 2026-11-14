@@ -178,15 +178,6 @@ fn service_deferred_kernel_read_with_response(
 ) -> Result<(), VmError> {
     let newly_admitted = incoming.is_some();
     if let Some((fd, max_bytes, response, deadline, reply)) = incoming {
-        if process.deferred_kernel_read.is_some() {
-            reply
-                .fail(HostServiceError::new(
-                    "EBUSY",
-                    "process already owns a deferred descriptor read",
-                ))
-                .map_err(VmError::from)?;
-            return Ok(());
-        }
         let identity = reply.identity();
         if identity.generation != generation || identity.pid != process.kernel_pid {
             reply
@@ -206,6 +197,55 @@ fn service_deferred_kernel_read_with_response(
                     max_bytes.get() as u64,
                 ))
                 .map_err(VmError::from)?;
+            return Ok(());
+        }
+        if let Some(pending) = process.deferred_kernel_read.as_ref() {
+            // A parked stdin/pipe read must not prevent a ready regular-file
+            // read. Keep the original wait and its reply identity untouched.
+            let stat = kernel.fd_stat(EXECUTION_DRIVER_NAME, process.kernel_pid, fd);
+            let ready_file = pending.fd != fd
+                && stat.as_ref().is_ok_and(|stat| {
+                    stat.filetype == agentos_vm_kernel::fd_table::FILETYPE_REGULAR_FILE
+                });
+            if ready_file {
+                // Cancellation must be resolved before consuming file bytes.
+                if !reply.claim().map_err(VmError::from)? {
+                    return Ok(());
+                }
+                return match kernel.fd_read_with_timeout_result(
+                    EXECUTION_DRIVER_NAME,
+                    process.kernel_pid,
+                    fd,
+                    max_bytes.get(),
+                    Some(Duration::ZERO),
+                ) {
+                    Ok(data) => {
+                        let value = match response {
+                            DeferredKernelReadResponse::DescriptorBytes => {
+                                host_bytes_value(data.as_deref().unwrap_or_default())
+                            }
+                            DeferredKernelReadResponse::KernelStdin => match data {
+                                Some(bytes) => {
+                                    json!({ "dataBase64": base64::engine::general_purpose::STANDARD.encode(bytes) })
+                                }
+                                None => json!({ "done": true }),
+                            },
+                        };
+                        reply
+                            .succeed(HostCallReply::Json(value))
+                            .map_err(VmError::from)
+                    }
+                    Err(error) => reply.fail(kernel_host_error(error)).map_err(VmError::from),
+                };
+            }
+            let error = match stat {
+                Err(error) => kernel_host_error(error),
+                Ok(_) => HostServiceError::new(
+                    "EBUSY",
+                    "process already owns a deferred descriptor read",
+                ),
+            };
+            reply.fail(error).map_err(VmError::from)?;
             return Ok(());
         }
         if !reply.claim().map_err(VmError::from)? {

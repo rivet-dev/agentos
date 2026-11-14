@@ -68,7 +68,7 @@ import {
 	syncLiveStdinHandle,
 } from "./stdin.js";
 import {
-	_nextTickQueue,
+	enqueueNextTick,
 	_queueMicrotask,
 	clearImmediate,
 	clearInterval,
@@ -81,6 +81,8 @@ import {
 import { _resolveRuntimeTtyConfig } from "./tty-config.js";
 import { UndiciHeaders, UndiciRequest, UndiciResponse } from "./undici.js";
 import { installWhatwgUrlGlobals, URL2 } from "./whatwg-url.js";
+
+const notifyNextTick = createBridgeSyncFacade("process.nextTickScheduled");
 
 function readProcessConfig() {
 	const env =
@@ -104,6 +106,7 @@ function readProcessConfig() {
 			(typeof _processConfig !== "undefined" && _processConfig.cwd) || "/root",
 		env,
 		execArgv,
+		exposeGc: internalEnv.AGENTOS_NODE_EXPOSE_GC === "1",
 		argv: (typeof _processConfig !== "undefined" && _processConfig.argv) || [
 			"node",
 			"script.js",
@@ -745,6 +748,23 @@ hrtime.bigint = () => {
 
 var _cwd = config2.cwd;
 // The kernel owns the cwd; `_cwd` caches its answer for `process.cwd()`.
+const collectGuestGarbage = createBridgeSyncFacade("v8.collectGarbage");
+function installExplicitGarbageCollector(config) {
+	const options = String(config.env.NODE_OPTIONS ?? "").split(/\s+/);
+	const enabled = options.some(option => option === "--expose-gc" || option === "--expose_gc") ||
+		config.execArgv.some(option => option === "--expose-gc" || option === "--expose_gc") ||
+		config.exposeGc;
+	if (!enabled) { delete globalThis.gc; return; }
+	Object.defineProperty(globalThis, "gc", {
+		configurable: true, writable: true, enumerable: true,
+		value: function gc(options) {
+			const collect = () => collectGuestGarbage.applySyncPromise(void 0, []);
+			return options?.execution === "async" ? Promise.resolve().then(collect) : collect();
+		},
+	});
+}
+installExplicitGarbageCollector(config2);
+
 var _processChdir = createBridgeSyncFacade("process.chdir");
 var CHDIR_ERROR_DESCRIPTIONS = {
 	EACCES: "permission denied",
@@ -1012,12 +1032,12 @@ var process2 = {
 		// Natural exit still checkpoints Promise jobs, but never starts a new
 		// nextTick phase, including after a caught exit-listener error.
 		if (_exitEmissionStarted) return;
-		_nextTickQueue.push({
+		enqueueNextTick({
 			callback,
 			args,
 			asyncContextFrame: getAsyncContextFrame(),
 		});
-		scheduleNextTickFlush();
+		scheduleNextTickFlush(() => notifyNextTick.applySync(void 0, []));
 	},
 	hrtime,
 	getuid() {
@@ -1200,8 +1220,10 @@ var process2 = {
 		return process2.listeners(event);
 	},
 	// Stdio streams
-	stdout: _stdout,
-	stderr: _stderr,
+    // Console initialization imports process through the stream graph. Resolve
+    // the streams after that cycle finishes, as stdin already does.
+    get stdout() { return _stdout; },
+    get stderr() { return _stderr; },
 	get stdin() {
 		return getProcessStdin();
 	},
@@ -1388,6 +1410,7 @@ function applyProcessConfig(nextConfig) {
 	process2.argv = nextConfig.argv;
 	process2.argv0 = nextConfig.argv0;
 	process2.env = nextConfig.env;
+	installExplicitGarbageCollector(nextConfig);
 	process2.connected = false;
 	process2.mainModule = void 0;
 	process2._cwd = nextConfig.cwd;

@@ -3,6 +3,7 @@ import {
 	buildProcessForest,
 	type ProcessForestRecord,
 } from "../src/process-forest.js";
+import { SidecarRejectedError } from "../src/sidecar-errors.js";
 import { SidecarKernelProxy } from "../src/sidecar/rpc-client.js";
 
 describe("process-tree identity", () => {
@@ -254,4 +255,118 @@ describe("process-tree identity", () => {
 			"snapshot unavailable",
 		);
 	});
+});
+
+it.each([
+	{
+		code: "ERR_AGENTOS_VM_LIFECYCLE_CONFLICT",
+		retryable: true,
+		errno: "EAGAIN",
+		retry: true,
+	},
+	{
+		code: "ERR_AGENTOS_VM_LIFECYCLE_CONFLICT",
+		retryable: false,
+		errno: "EAGAIN",
+		retry: false,
+	},
+	{
+		code: "ERR_AGENTOS_OTHER_FAILURE",
+		retryable: true,
+		errno: "EAGAIN",
+		retry: false,
+	},
+	{
+		code: "ERR_AGENTOS_VM_LIFECYCLE_CONFLICT",
+		retryable: true,
+		errno: "EIO",
+		retry: false,
+	},
+])("process exit observation retries only explicit lifecycle backpressure ($code,$retryable,$errno)", async ({
+	code,
+	retryable,
+	errno,
+	retry,
+}) => {
+	vi.useFakeTimers();
+	try {
+		const blocked = new SidecarRejectedError(93, {
+			code,
+			message: "VM lifecycle is Active",
+			retryable,
+			errno,
+			operation: "vm.lifecycleAdmission",
+			limit_name: null,
+			configured_limit: null,
+			current_usage: null,
+			requested: 1,
+			unit: "requests",
+			scope: "vm",
+			vm_id: "vm",
+			session_generation: null,
+			capability_id: null,
+			configuration_path: null,
+		});
+		const entry = {
+			pid: 1000000,
+			processId: "owned",
+			started: true,
+			exitCode: null as number | null,
+			waitError: null as unknown,
+			waitWithFallbackPromise: null,
+			wakeWait: null,
+			hostExitObservedAt: null,
+			confirmExit(code: number) {
+				this.exitCode = code;
+			},
+		};
+		const getProcessSnapshot = vi
+			.fn()
+			.mockRejectedValueOnce(blocked)
+			.mockResolvedValue([
+				{
+					processId: "owned",
+					status: "exited",
+					exitCode: 23,
+					exitSignal: null,
+				},
+			]);
+		const finishProcess = vi.fn();
+		const handleBackgroundProcessError = vi.fn((_entry, error) => {
+			entry.waitError = error;
+		});
+		const proxy = Object.assign(Object.create(SidecarKernelProxy.prototype), {
+			disposed: false,
+			disposing: false,
+			client: { getProcessSnapshot },
+			session: {},
+			vm: {},
+			processSnapshotRefresh: null,
+			sidecarProcessSnapshot: [],
+			finishProcess,
+			handleBackgroundProcessError,
+		});
+		const exit = proxy.waitForTrackedProcess(entry);
+		// Attach before advancing timers: the red case is a rejected observation, not an unhandled rejection.
+		const outcome = exit.then(
+			(code: number) => ({ code }),
+			(error: unknown) => ({ error }),
+		);
+		await vi.advanceTimersByTimeAsync(50);
+		if (!retry) {
+			expect(await outcome).toEqual({ error: blocked });
+			expect(handleBackgroundProcessError).toHaveBeenCalledWith(entry, blocked);
+			expect(getProcessSnapshot).toHaveBeenCalledTimes(1);
+			expect(finishProcess).not.toHaveBeenCalled();
+			return;
+		}
+		expect(entry.waitError).toBeNull();
+		expect(handleBackgroundProcessError).not.toHaveBeenCalled();
+		await vi.advanceTimersByTimeAsync(50);
+		expect(await outcome).toEqual({ code: 23 });
+		expect(getProcessSnapshot).toHaveBeenCalledTimes(2);
+		expect(finishProcess).toHaveBeenCalledWith(entry, 23, null);
+	} finally {
+		vi.useRealTimers();
+	}
 });

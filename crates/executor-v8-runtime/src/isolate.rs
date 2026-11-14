@@ -3,12 +3,12 @@
 use std::collections::VecDeque;
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc, Mutex, Once};
+use std::sync::{Arc, Mutex, Once, mpsc};
 use std::thread;
 
 use crate::ipc::ExecutionError;
 use agentos_resource_accounting::queue_tracker::{
-    register_queue, warn_limit_exhausted, QueueGauge, TrackedLimit,
+    QueueGauge, TrackedLimit, register_queue, warn_limit_exhausted,
 };
 
 static V8_INIT: Once = Once::new();
@@ -54,7 +54,10 @@ pub(crate) fn plan_native_terminal_stack() -> Result<NativeTerminalStackPlan, St
     let mut plan = NativeTerminalStackPlan::default();
     let error = unsafe { agentos_v8_plan_terminal_stack(&mut plan) };
     if error != 0 {
-        return Err(format!("ERR_AGENTOS_NATIVE_STACK_RESERVE: cannot reserve terminal stack on this thread: {}; requires supported Linux x86-64 non-ASan stack with room for the guest budget, terminal reserve and OS guard", std::io::Error::from_raw_os_error(error)));
+        return Err(format!(
+            "ERR_AGENTOS_NATIVE_STACK_RESERVE: cannot reserve terminal stack on this thread: {}; requires supported Linux x86-64 non-ASan stack with room for the guest budget, terminal reserve and OS guard",
+            std::io::Error::from_raw_os_error(error)
+        ));
     }
     Ok(plan)
 }
@@ -93,7 +96,10 @@ pub(crate) fn with_terminal_stack_margin<T>(
     let isolate: *mut v8::Isolate = &mut ***scope;
     let error = unsafe { agentos_v8_open_terminal_stack(isolate, &plan) };
     if error != 0 {
-        return Err(format!("ERR_AGENTOS_NATIVE_STACK_RESERVE: terminal barrier has insufficient reserved headroom: {}", std::io::Error::from_raw_os_error(error)));
+        return Err(format!(
+            "ERR_AGENTOS_NATIVE_STACK_RESERVE: terminal barrier has insufficient reserved headroom: {}",
+            std::io::Error::from_raw_os_error(error)
+        ));
     }
     struct Restore {
         isolate: *mut v8::Isolate,
@@ -413,9 +419,14 @@ pub(crate) fn rejection_limit_error() -> ExecutionError {
         MAX_UNHANDLED_PROMISE_REJECTIONS + 1,
         MAX_UNHANDLED_PROMISE_REJECTIONS,
     );
-    ExecutionError { error_type: "Error".into(), message: format!(
-        "ERR_AGENTOS_UNHANDLED_REJECTION_LIMIT: unhandled promise rejection registry exceeded limit of {MAX_UNHANDLED_PROMISE_REJECTIONS} rejections; reduce pending/recursive rejection events; no runtime adjustment is available (rebuild to change the fixed capacity)"),
-        stack: String::new(), code: Some("ERR_AGENTOS_UNHANDLED_REJECTION_LIMIT".into()) }
+    ExecutionError {
+        error_type: "Error".into(),
+        message: format!(
+            "ERR_AGENTOS_UNHANDLED_REJECTION_LIMIT: unhandled promise rejection registry exceeded limit of {MAX_UNHANDLED_PROMISE_REJECTIONS} rejections; reduce pending/recursive rejection events; no runtime adjustment is available (rebuild to change the fixed capacity)"
+        ),
+        stack: String::new(),
+        code: Some("ERR_AGENTOS_UNHANDLED_REJECTION_LIMIT".into()),
+    }
 }
 
 // The fixed private key cannot be read/forged from guest JavaScript. Only a
@@ -1018,6 +1029,43 @@ pub fn install_external_memory_guard(isolate: &mut v8::OwnedIsolate) {
     isolate.set_slot(registration);
 }
 
+/// Admit a local V8-owned allocation before its bytes become visible in V8's
+/// external-memory statistics. The owning isolate cannot interleave another
+/// guest operation before this synchronous allocation is attached or dropped.
+pub(crate) fn admit_external_allocation(
+    isolate: &mut v8::Isolate,
+    bytes: usize,
+) -> Result<(), String> {
+    let budget = isolate
+        .get_slot::<Arc<ArrayBufferBudget>>()
+        .cloned()
+        .ok_or("Uint8Array encoding requires the VM external-memory budget")?;
+    let outside = |isolate: &mut v8::Isolate| {
+        let mut statistics = v8::HeapStatistics::default();
+        isolate.get_heap_statistics(&mut statistics);
+        statistics
+            .external_memory()
+            .saturating_sub(budget.used.load(Ordering::Acquire))
+    };
+    let mut used = outside(isolate);
+    if bytes > budget.limit.saturating_sub(used) {
+        isolate.low_memory_notification();
+        used = outside(isolate);
+    }
+    if bytes > budget.limit.saturating_sub(used) {
+        warn_limit_exhausted(
+            TrackedLimit::V8ExternalMemoryBytes,
+            used.saturating_add(bytes),
+            budget.limit,
+        );
+        return Err(format!(
+            "Uint8Array encoding requires {bytes} external bytes with {used} already used, exceeding {}; raise limits.jsRuntime.v8HeapLimitMb",
+            budget.limit
+        ));
+    }
+    Ok(())
+}
+
 extern "C" fn external_memory_gc_callback(
     isolate: *mut v8::Isolate,
     _gc_type: v8::GCType,
@@ -1217,8 +1265,14 @@ mod memory_budget_tests {
             .load(Ordering::Relaxed);
         isolate.cancel_terminate_execution();
         with_isolate_lifecycle_lock(|| drop(isolate));
-        assert!(reported && warned, "GC callback did not report its limit: rejected={rejected}, terminated={terminated}, reported={reported}, warned={warned}, external_bytes={external_bytes}");
-        assert!(rejected && terminated, "GC callback did not terminate JS: rejected={rejected}, terminated={terminated}, external_bytes={external_bytes}");
+        assert!(
+            reported && warned,
+            "GC callback did not report its limit: rejected={rejected}, terminated={terminated}, reported={reported}, warned={warned}, external_bytes={external_bytes}"
+        );
+        assert!(
+            rejected && terminated,
+            "GC callback did not terminate JS: rejected={rejected}, terminated={terminated}, external_bytes={external_bytes}"
+        );
     }
 
     #[test]

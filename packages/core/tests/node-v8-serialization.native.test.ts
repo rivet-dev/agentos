@@ -7,7 +7,7 @@ const source = readFileSync(
 	"utf8",
 );
 
-test("node:v8 CJS and ESM reject lossy values and preserve JSON-compatible data", async () => {
+test("node:v8 CJS and ESM preserve supported data and reject uncloneable values", async () => {
 	const vm = await AgentOs.create({
 		defaultSoftware: false,
 		allowedNodeBuiltins: ["module", "v8", "buffer"],
@@ -56,13 +56,13 @@ test("node:v8 CJS and ESM reject lossy values and preserve JSON-compatible data"
 			"writeHeapSnapshot",
 		]);
 		expect(actual.esmExportNames).toEqual(actual.exportNames);
-		expect(actual.accessorCalls).toBe(0);
+		expect(actual.accessorCalls).toBe(4);
 		expect(actual.toJsonCalls).toBe(0);
 		for (const api of [actual.cjs, actual.esm]) {
 			expect(Object.keys(api.rejected)).toHaveLength(30);
-			for (const code of Object.values(api.rejected))
-				expect(code).toBe("ERR_NOT_IMPLEMENTED");
-			expect(api.invalid).toBe("ERR_NOT_IMPLEMENTED");
+			for (const [name, code] of Object.entries(api.rejected))
+				expect(code).toBe(name.endsWith(":withToJson") ? "Error" : "RETURNED");
+			expect(api.invalid).toBe("Error");
 			expect(api.roundTrips).toEqual([
 				null,
 				"",
@@ -73,7 +73,7 @@ test("node:v8 CJS and ESM reject lossy values and preserve JSON-compatible data"
 				{ value: 3 },
 			]);
 			expect(api.classRoundTrip).toEqual(api.roundTrips[5]);
-			expect(api.arrayMutationRoundTrip).toEqual([{ value: 1 }, { kept: 2 }]);
+			expect(api.arrayMutationError).toBe("Error");
 		}
 	} catch (error) {
 		errors.push(error);

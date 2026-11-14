@@ -1,6 +1,7 @@
 import {
 	exposeCustomGlobal,
 	exposeInstallCompatibleHardenedGlobal,
+	exposeMutableRuntimeStateGlobal,
 } from "../global-exposure.js";
 import {
 	undiciFormDataModule,
@@ -437,7 +438,10 @@ var Response = class _Response {
 
 exposeCustomGlobal("_upgradeSocketEnd", onUpgradeSocketEnd);
 
-exposeInstallCompatibleHardenedGlobal("fetch", fetch);
+// Node applications replace fetch for instrumentation and mocks. This realm's
+// binding is not the security boundary: saved fetch, undici and node:http all
+// reach the policy-enforcing sidecar networking dispatcher.
+exposeMutableRuntimeStateGlobal("fetch", fetch);
 
 exposeInstallCompatibleHardenedGlobal("Headers", UndiciHeaders);
 

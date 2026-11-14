@@ -215,10 +215,36 @@ impl SocketSpec {
     }
 }
 
+// A TCP connection must not absorb the VM-wide socket budget while its peer
+// awaits another connection (for example remote SQLite durability). Like pipe
+// capacity, this receive window applies backpressure rather than rejecting the
+// application write; stream adapters retry the unacknowledged suffix.
+const TCP_RECV_WINDOW: usize = 64 * 1024;
+
+fn has_tcp_receive_window(spec: SocketSpec) -> bool {
+    spec.socket_type == SocketType::Stream
+        && matches!(spec.domain, SocketDomain::Inet | SocketDomain::Inet6)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SocketOwner {
+    Process(u32),
+    // Trusted VM publications outlive the guest listener's process.
+    Vm,
+}
+impl SocketOwner {
+    const fn pid(self) -> u32 {
+        match self {
+            Self::Process(pid) => pid,
+            Self::Vm => 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SocketRecord {
     id: SocketId,
-    owner_pid: u32,
+    owner: SocketOwner,
     spec: SocketSpec,
     state: SocketState,
     local_address: Option<InetSocketAddress>,
@@ -246,7 +272,15 @@ impl SocketRecord {
     }
 
     pub const fn owner_pid(&self) -> u32 {
-        self.owner_pid
+        self.owner.pid()
+    }
+
+    pub const fn is_vm_owned(&self) -> bool {
+        matches!(self.owner, SocketOwner::Vm)
+    }
+
+    pub const fn allows_process_access(&self, pid: u32) -> bool {
+        matches!(self.owner, SocketOwner::Process(owner) if owner == 0 || owner == pid)
     }
 
     pub const fn spec(&self) -> SocketSpec {
@@ -1118,7 +1152,7 @@ impl SocketTable {
         let socket_id = next_socket_id(&mut table)?;
         let record = SocketRecord {
             id: socket_id,
-            owner_pid,
+            owner: SocketOwner::Process(owner_pid),
             spec,
             state,
             local_address: None,
@@ -1148,31 +1182,48 @@ impl SocketTable {
     }
 
     pub fn reassign_owner(&self, socket_id: SocketId, owner_pid: u32) -> SocketResult<()> {
+        self.reassign_socket_owner(socket_id, SocketOwner::Process(owner_pid))
+    }
+
+    pub fn retain_for_vm(&self, socket_id: SocketId) -> SocketResult<()> {
+        self.reassign_socket_owner(socket_id, SocketOwner::Vm)
+    }
+
+    pub(crate) fn is_vm_owned(&self, socket_id: SocketId) -> SocketResult<bool> {
+        let table = lock_or_recover(&self.inner.state);
+        table
+            .sockets
+            .get(&socket_id)
+            .map(SocketRecord::is_vm_owned)
+            .ok_or_else(|| SocketTableError::not_found(socket_id))
+    }
+
+    fn reassign_socket_owner(&self, socket_id: SocketId, owner: SocketOwner) -> SocketResult<()> {
         let mut table = lock_or_recover(&self.inner.state);
-        let previous_owner = table
+        let previous = table
             .sockets
             .get(&socket_id)
             .ok_or_else(|| SocketTableError::not_found(socket_id))?
-            .owner_pid;
-        if previous_owner == owner_pid {
+            .owner;
+        if previous == owner {
             return Ok(());
         }
-        if let Some(ids) = table.by_owner.get_mut(&previous_owner) {
+        if let Some(ids) = table.by_owner.get_mut(&previous.pid()) {
             ids.remove(&socket_id);
             if ids.is_empty() {
-                table.by_owner.remove(&previous_owner);
+                table.by_owner.remove(&previous.pid());
             }
         }
         table
             .by_owner
-            .entry(owner_pid)
+            .entry(owner.pid())
             .or_default()
             .insert(socket_id);
         table
             .sockets
             .get_mut(&socket_id)
             .expect("socket checked before owner reassignment")
-            .owner_pid = owner_pid;
+            .owner = owner;
         Ok(())
     }
 
@@ -1577,7 +1628,7 @@ impl SocketTable {
             })?;
 
             (
-                record.owner_pid,
+                record.owner_pid(),
                 record.spec,
                 record.local_address.clone(),
                 record.local_unix_path.clone(),
@@ -1616,7 +1667,7 @@ impl SocketTable {
         })?;
         let record = SocketRecord {
             id: socket_id,
-            owner_pid,
+            owner: SocketOwner::Process(owner_pid),
             spec,
             state: SocketState::Connected,
             local_address,
@@ -1768,7 +1819,7 @@ impl SocketTable {
 
                 let accepted = SocketRecord {
                     id: accepted_socket_id,
-                    owner_pid: listener.owner_pid,
+                    owner: listener.owner,
                     spec: listener.spec,
                     state: SocketState::Connected,
                     local_address: listener.local_address.clone(),
@@ -1813,7 +1864,7 @@ impl SocketTable {
                     table.sockets.insert(accepted_socket_id, accepted.clone());
                     table
                         .by_owner
-                        .entry(accepted.owner_pid)
+                        .entry(accepted.owner_pid())
                         .or_default()
                         .insert(accepted_socket_id);
                     Ok(())
@@ -1909,7 +1960,7 @@ impl SocketTable {
 
                 let accepted = SocketRecord {
                     id: accepted_socket_id,
-                    owner_pid: listener.owner_pid,
+                    owner: listener.owner,
                     spec: listener.spec,
                     state: SocketState::Connected,
                     local_address: None,
@@ -1954,7 +2005,7 @@ impl SocketTable {
                     table.sockets.insert(accepted_socket_id, accepted.clone());
                     table
                         .by_owner
-                        .entry(accepted.owner_pid)
+                        .entry(accepted.owner_pid())
                         .or_default()
                         .insert(accepted_socket_id);
                     Ok(())
@@ -2426,7 +2477,10 @@ impl SocketTable {
                         .unwrap_or(true)
                     {
                         events |= POLLERR;
-                    } else {
+                    } else if peer.is_some_and(|peer| {
+                        !has_tcp_receive_window(record.spec)
+                            || peer.buffered_read_bytes() < TCP_RECV_WINDOW
+                    }) {
                         events |= POLLOUT;
                     }
                 }
@@ -2451,7 +2505,7 @@ impl SocketTable {
     }
 
     pub fn write(&self, socket_id: SocketId, data: &[u8]) -> SocketResult<usize> {
-        let readiness = {
+        let (readiness, written) = {
             let mut table = lock_or_recover(&self.inner.state);
             let record = table
                 .sockets
@@ -2478,6 +2532,7 @@ impl SocketTable {
             let peer = table.sockets.get_mut(&peer_socket_id).ok_or_else(|| {
                 SocketTableError::broken_pipe(format!("socket {socket_id} peer is closed"))
             })?;
+            let tcp_window = has_tcp_receive_window(record.spec);
             let peer_connection = peer.connection_state.as_mut().ok_or_else(|| {
                 SocketTableError::broken_pipe(format!("socket {socket_id} peer is closed"))
             })?;
@@ -2487,6 +2542,15 @@ impl SocketTable {
                 )));
             }
 
+            let data = if tcp_window {
+                let available = TCP_RECV_WINDOW.saturating_sub(peer_connection.buffered_len());
+                if available == 0 && !data.is_empty() {
+                    return Err(SocketTableError::would_block("TCP receive window is full"));
+                }
+                &data[..data.len().min(available)]
+            } else {
+                data
+            };
             #[cfg(not(target_arch = "wasm32"))]
             let retained = self.reserve_buffered_bytes(data.len())?;
             let message_oriented = record.spec.socket_type != SocketType::Stream;
@@ -2509,13 +2573,13 @@ impl SocketTable {
                     .buffered_bytes
                     .push_back(retained);
             }
-            (was_empty && (!data.is_empty() || message_oriented)).then_some(SocketReadiness {
+            ((was_empty && (!data.is_empty() || message_oriented)).then_some(SocketReadiness {
                 socket_id: peer_socket_id,
                 kind: SocketReadinessKind::Data,
-            })
+            }), data.len())
         };
         self.emit_readiness(readiness);
-        Ok(data.len())
+        Ok(written)
     }
 
     pub fn send_message(
@@ -2882,6 +2946,25 @@ impl SocketTable {
         Ok(record)
     }
 
+    pub(crate) fn remove_vm_owned(&self) {
+        // Only copy IDs, never buffered payloads, during teardown.
+        let ids: Vec<_> = {
+            let table = lock_or_recover(&self.inner.state);
+            table
+                .by_owner
+                .get(&0)
+                .into_iter()
+                .flatten()
+                .filter(|id| table.sockets.get(id).is_some_and(SocketRecord::is_vm_owned))
+                .copied()
+                .collect()
+        };
+        for id in ids {
+            // Disposal is authoritative; a concurrent trusted close may win.
+            let _ = self.remove(id);
+        }
+    }
+
     pub fn remove_all_for_pid(&self, owner_pid: u32) -> Vec<SocketRecord> {
         let (records, readiness) = {
             let mut table = lock_or_recover(&self.inner.state);
@@ -2892,6 +2975,10 @@ impl SocketTable {
             let records = socket_ids
                 .into_iter()
                 .filter_map(|socket_id| {
+                    if table.sockets.get(&socket_id).is_some_and(SocketRecord::is_vm_owned) {
+                        table.by_owner.entry(0).or_default().insert(socket_id);
+                        return None;
+                    }
                     if let Some(event) = peer_eof_readiness(&table, socket_id) {
                         readiness.push(event);
                     }
@@ -3566,10 +3653,10 @@ fn remove_socket(table: &mut SocketTableState, socket_id: SocketId) -> Option<So
             }
         }
     }
-    if let Some(owner_sockets) = table.by_owner.get_mut(&record.owner_pid) {
+    if let Some(owner_sockets) = table.by_owner.get_mut(&record.owner_pid()) {
         owner_sockets.remove(&socket_id);
         if owner_sockets.is_empty() {
-            table.by_owner.remove(&record.owner_pid);
+            table.by_owner.remove(&record.owner_pid());
         }
     }
     Some(record)

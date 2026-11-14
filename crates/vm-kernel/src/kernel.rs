@@ -898,6 +898,7 @@ fn dispose_kernel_vm_resources<F>(kernel: &mut KernelVm<F>) {
         );
     }
     lock_or_recover(&kernel.driver_pids).clear();
+    kernel.sockets.remove_vm_owned();
     kernel.terminated = true;
 }
 
@@ -2853,6 +2854,27 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         path: &str,
         max_depth: Option<usize>,
     ) -> KernelResult<Vec<RecursiveDirEntry>> {
+        self.read_dir_recursive_internal(None, path, max_depth)
+    }
+
+    /// Recursive enumeration retains the caller's policy and DAC at every directory.
+    pub fn read_dir_recursive_for_process(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        path: &str,
+        max_depth: Option<usize>,
+    ) -> KernelResult<Vec<RecursiveDirEntry>> {
+        self.assert_driver_owns(requester_driver, pid)?;
+        self.read_dir_recursive_internal(Some((requester_driver, pid)), path, max_depth)
+    }
+
+    fn read_dir_recursive_internal(
+        &mut self,
+        caller: Option<(&str, u32)>,
+        path: &str,
+        max_depth: Option<usize>,
+    ) -> KernelResult<Vec<RecursiveDirEntry>> {
         self.assert_not_terminated()?;
         let depth_limit = self.effective_recursive_fs_depth(max_depth)?;
         let caller_limited = max_depth.is_some();
@@ -2861,7 +2883,10 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
 
         while let Some((dir_path, depth)) = queue.pop_front() {
             self.resources.check_recursive_fs_depth(depth)?;
-            let names = self.read_dir_internal(None, &dir_path)?;
+            let names = match caller {
+                Some((driver, pid)) => self.read_dir_for_process(driver, pid, &dir_path)?,
+                None => self.read_dir_internal(None, &dir_path)?,
+            };
             self.resources.check_readdir_entries(names.len())?;
 
             for name in names {
@@ -2869,7 +2894,10 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
                     continue;
                 }
                 let child = join_child_path(&dir_path, &name);
-                let stat = self.lstat_internal(None, &child)?;
+                let stat = match caller {
+                    Some((driver, pid)) => self.lstat_for_process(driver, pid, &child)?,
+                    None => self.lstat_internal(None, &child)?,
+                };
                 let entry = RecursiveDirEntry {
                     path: child.clone(),
                     is_directory: stat.is_directory,
@@ -5714,7 +5742,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             .sockets
             .get(socket_id)
             .ok_or_else(|| KernelError::new("ENOENT", format!("no such socket {socket_id}")))?;
-        if socket.owner_pid() != pid && socket.owner_pid() != 0 {
+        if !socket.allows_process_access(pid) {
             return Err(KernelError::permission_denied(format!(
                 "process {pid} does not own socket {socket_id}"
             )));
@@ -5911,7 +5939,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             .sockets
             .get(socket_id)
             .ok_or_else(|| KernelError::new("ENOENT", format!("no such socket {socket_id}")))?;
-        if socket.owner_pid() != pid && socket.owner_pid() != 0 {
+        if !socket.allows_process_access(pid) {
             return Err(KernelError::permission_denied(format!(
                 "process {pid} does not own socket {socket_id}"
             )));
@@ -6494,6 +6522,95 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         self.sockets.records_for_owner(pid)
     }
 
+    /// Retain a trusted publication's client until its VM handle closes it.
+    /// This is not a guest syscall; guest socket/FD APIs cannot access it.
+    pub fn socket_retain_for_vm(
+        &mut self,
+        driver: &str,
+        pid: u32,
+        id: SocketId,
+    ) -> KernelResult<()> {
+        self.assert_not_terminated()?;
+        self.assert_driver_owns(driver, pid)?;
+        let socket = self
+            .sockets
+            .get(id)
+            .ok_or_else(|| KernelError::new("ENOENT", format!("no such socket {id}")))?;
+        if socket.is_vm_owned()
+            || socket.owner_pid() != pid
+            || socket.spec().socket_type != SocketType::Stream
+            || socket.state() != SocketState::Connected
+        {
+            return Err(KernelError::permission_denied(
+                "only an owned stream can become a VM publication",
+            ));
+        }
+        if lock_or_recover(&self.fd_sockets)
+            .values()
+            .any(|entry| entry.socket_id == id)
+        {
+            return Err(KernelError::permission_denied(
+                "descriptor-tracked sockets cannot become VM publications",
+            ));
+        }
+        self.sockets.retain_for_vm(id)?;
+        Ok(())
+    }
+
+    fn require_vm_socket(&self, id: SocketId) -> KernelResult<()> {
+        if !self.sockets.is_vm_owned(id)? {
+            return Err(KernelError::permission_denied(
+                "socket is not a VM publication",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn vm_socket_read(
+        &mut self,
+        id: SocketId,
+        max_bytes: usize,
+    ) -> KernelResult<Option<Vec<u8>>> {
+        self.assert_not_terminated()?;
+        self.require_vm_socket(id)?;
+        let bytes = self.sockets.read(id, max_bytes)?;
+        if bytes.is_some() {
+            self.poll_notifier.notify();
+        }
+        Ok(bytes)
+    }
+
+    pub fn vm_socket_write(&mut self, id: SocketId, bytes: &[u8]) -> KernelResult<usize> {
+        self.assert_not_terminated()?;
+        self.require_vm_socket(id)?;
+        self.sockets.check_write(id)?;
+        if !self.sockets.has_resource_ledger() {
+            self.resources
+                .check_socket_buffer_growth(&self.resource_snapshot(), bytes.len())?;
+        }
+        let written = self.sockets.write(id, bytes)?;
+        if written > 0 {
+            self.poll_notifier.notify();
+        }
+        Ok(written)
+    }
+
+    pub fn vm_socket_shutdown(&mut self, id: SocketId, how: SocketShutdown) -> KernelResult<()> {
+        self.assert_not_terminated()?;
+        self.require_vm_socket(id)?;
+        self.sockets.shutdown(id, how)?;
+        self.poll_notifier.notify();
+        Ok(())
+    }
+
+    pub fn vm_socket_close(&mut self, id: SocketId) -> KernelResult<()> {
+        // Cleanup is also valid after VM termination has begun.
+        self.require_vm_socket(id)?;
+        self.sockets.remove(id)?;
+        self.poll_notifier.notify();
+        Ok(())
+    }
+
     pub fn socket_bind_inet(
         &mut self,
         requester_driver: &str,
@@ -6507,7 +6624,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             .sockets
             .get(socket_id)
             .ok_or_else(|| KernelError::new("ENOENT", format!("no such socket {socket_id}")))?;
-        if existing.owner_pid() != pid && existing.owner_pid() != 0 {
+        if !existing.allows_process_access(pid) {
             return Err(KernelError::permission_denied(format!(
                 "process {pid} does not own socket {socket_id}"
             )));
@@ -6537,7 +6654,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             .sockets
             .get(socket_id)
             .ok_or_else(|| KernelError::new("ENOENT", format!("no such socket {socket_id}")))?;
-        if existing.owner_pid() != pid && existing.owner_pid() != 0 {
+        if !existing.allows_process_access(pid) {
             return Err(KernelError::permission_denied(format!(
                 "process {pid} does not own socket {socket_id}"
             )));
@@ -6562,7 +6679,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             .sockets
             .get(socket_id)
             .ok_or_else(|| KernelError::new("ENOENT", format!("no such socket {socket_id}")))?;
-        if existing.owner_pid() != pid && existing.owner_pid() != 0 {
+        if !existing.allows_process_access(pid) {
             return Err(KernelError::permission_denied(format!(
                 "process {pid} does not own socket {socket_id}"
             )));
@@ -6593,7 +6710,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         let existing = self.sockets.get(listener_socket_id).ok_or_else(|| {
             KernelError::new("ENOENT", format!("no such socket {listener_socket_id}"))
         })?;
-        if existing.owner_pid() != pid && existing.owner_pid() != 0 {
+        if !existing.allows_process_access(pid) {
             return Err(KernelError::permission_denied(format!(
                 "process {pid} does not own socket {listener_socket_id}"
             )));
@@ -6616,7 +6733,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         let existing = self.sockets.get(listener_socket_id).ok_or_else(|| {
             KernelError::new("ENOENT", format!("no such socket {listener_socket_id}"))
         })?;
-        if existing.owner_pid() != pid && existing.owner_pid() != 0 {
+        if !existing.allows_process_access(pid) {
             return Err(KernelError::permission_denied(format!(
                 "process {pid} does not own socket {listener_socket_id}"
             )));
@@ -6650,7 +6767,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             .sockets
             .get(socket_id)
             .ok_or_else(|| KernelError::new("ENOENT", format!("no such socket {socket_id}")))?;
-        if existing.owner_pid() != pid && existing.owner_pid() != 0 {
+        if !existing.allows_process_access(pid) {
             return Err(KernelError::permission_denied(format!(
                 "process {pid} does not own socket {socket_id}"
             )));
@@ -6693,7 +6810,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             .sockets
             .get(socket_id)
             .ok_or_else(|| KernelError::new("ENOENT", format!("no such socket {socket_id}")))?;
-        if existing.owner_pid() != pid && existing.owner_pid() != 0 {
+        if !existing.allows_process_access(pid) {
             return Err(KernelError::permission_denied(format!(
                 "process {pid} does not own socket {socket_id}"
             )));
@@ -6743,7 +6860,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             .sockets
             .get(socket_id)
             .ok_or_else(|| KernelError::new("ENOENT", format!("no such socket {socket_id}")))?;
-        if existing.owner_pid() != pid && existing.owner_pid() != 0 {
+        if !existing.allows_process_access(pid) {
             return Err(KernelError::permission_denied(format!(
                 "process {pid} does not own socket {socket_id}"
             )));
@@ -6806,7 +6923,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             .sockets
             .get(socket_id)
             .ok_or_else(|| KernelError::new("ENOENT", format!("no such socket {socket_id}")))?;
-        if socket.owner_pid() != pid && socket.owner_pid() != 0 {
+        if !socket.allows_process_access(pid) {
             return Err(KernelError::permission_denied(format!(
                 "process {pid} does not own socket {socket_id}"
             )));
@@ -6862,7 +6979,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             .sockets
             .get(socket_id)
             .ok_or_else(|| KernelError::new("ENOENT", format!("no such socket {socket_id}")))?;
-        if existing.owner_pid() != pid && existing.owner_pid() != 0 {
+        if !existing.allows_process_access(pid) {
             return Err(KernelError::permission_denied(format!(
                 "process {pid} does not own socket {socket_id}"
             )));
@@ -6918,7 +7035,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             .sockets
             .get(socket_id)
             .ok_or_else(|| KernelError::new("ENOENT", format!("no such socket {socket_id}")))?;
-        if existing.owner_pid() != pid && existing.owner_pid() != 0 {
+        if !existing.allows_process_access(pid) {
             return Err(KernelError::permission_denied(format!(
                 "process {pid} does not own socket {socket_id}"
             )));
@@ -6957,7 +7074,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             .sockets
             .get(socket_id)
             .ok_or_else(|| KernelError::new("ENOENT", format!("no such socket {socket_id}")))?;
-        if existing.owner_pid() != pid && existing.owner_pid() != 0 {
+        if !existing.allows_process_access(pid) {
             return Err(KernelError::permission_denied(format!(
                 "process {pid} does not own socket {socket_id}"
             )));
@@ -7006,7 +7123,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             .sockets
             .get(socket_id)
             .ok_or_else(|| KernelError::new("ENOENT", format!("no such socket {socket_id}")))?;
-        if existing.owner_pid() != pid && existing.owner_pid() != 0 {
+        if !existing.allows_process_access(pid) {
             return Err(KernelError::permission_denied(format!(
                 "process {pid} does not own socket {socket_id}"
             )));
@@ -7028,7 +7145,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             .sockets
             .get(socket_id)
             .ok_or_else(|| KernelError::new("ENOENT", format!("no such socket {socket_id}")))?;
-        if existing.owner_pid() != pid && existing.owner_pid() != 0 {
+        if !existing.allows_process_access(pid) {
             return Err(KernelError::permission_denied(format!(
                 "process {pid} does not own socket {socket_id}"
             )));
@@ -7084,7 +7201,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             .sockets
             .get(socket_id)
             .ok_or_else(|| KernelError::new("ENOENT", format!("no such socket {socket_id}")))?;
-        if existing.owner_pid() != pid && existing.owner_pid() != 0 {
+        if !existing.allows_process_access(pid) {
             return Err(KernelError::permission_denied(format!(
                 "process {pid} does not own socket {socket_id}"
             )));
@@ -7111,7 +7228,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             .sockets
             .get(socket_id)
             .ok_or_else(|| KernelError::new("ENOENT", format!("no such socket {socket_id}")))?;
-        if existing.owner_pid() != pid && existing.owner_pid() != 0 {
+        if !existing.allows_process_access(pid) {
             return Err(KernelError::permission_denied(format!(
                 "process {pid} does not own socket {socket_id}"
             )));
@@ -7137,7 +7254,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             .sockets
             .get(socket_id)
             .ok_or_else(|| KernelError::new("ENOENT", format!("no such socket {socket_id}")))?;
-        if existing.owner_pid() != pid && existing.owner_pid() != 0 {
+        if !existing.allows_process_access(pid) {
             return Err(KernelError::permission_denied(format!(
                 "process {pid} does not own socket {socket_id}"
             )));
@@ -7161,7 +7278,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             .sockets
             .get(socket_id)
             .ok_or_else(|| KernelError::new("ENOENT", format!("no such socket {socket_id}")))?;
-        if existing.owner_pid() != pid && existing.owner_pid() != 0 {
+        if !existing.allows_process_access(pid) {
             return Err(KernelError::permission_denied(format!(
                 "process {pid} does not own socket {socket_id}"
             )));
@@ -7186,7 +7303,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             .sockets
             .get(socket_id)
             .ok_or_else(|| KernelError::new("ENOENT", format!("no such socket {socket_id}")))?;
-        if existing.owner_pid() != pid && existing.owner_pid() != 0 {
+        if !existing.allows_process_access(pid) {
             return Err(KernelError::permission_denied(format!(
                 "process {pid} does not own socket {socket_id}"
             )));
@@ -7211,7 +7328,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             .sockets
             .get(socket_id)
             .ok_or_else(|| KernelError::new("ENOENT", format!("no such socket {socket_id}")))?;
-        if existing.owner_pid() != pid && existing.owner_pid() != 0 {
+        if !existing.allows_process_access(pid) {
             return Err(KernelError::permission_denied(format!(
                 "process {pid} does not own socket {socket_id}"
             )));
@@ -7236,7 +7353,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             .sockets
             .get(socket_id)
             .ok_or_else(|| KernelError::new("ENOENT", format!("no such socket {socket_id}")))?;
-        if existing.owner_pid() != pid && existing.owner_pid() != 0 {
+        if !existing.allows_process_access(pid) {
             return Err(KernelError::permission_denied(format!(
                 "process {pid} does not own socket {socket_id}"
             )));
@@ -7267,7 +7384,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             .sockets
             .get(socket_id)
             .ok_or_else(|| KernelError::new("ENOENT", format!("no such socket {socket_id}")))?;
-        if existing.owner_pid() != pid && existing.owner_pid() != 0 {
+        if !existing.allows_process_access(pid) {
             return Err(KernelError::permission_denied(format!(
                 "process {pid} does not own socket {socket_id}"
             )));
@@ -7310,7 +7427,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             .sockets
             .get(socket_id)
             .ok_or_else(|| KernelError::new("ENOENT", format!("no such socket {socket_id}")))?;
-        if existing.owner_pid() != pid && existing.owner_pid() != 0 {
+        if !existing.allows_process_access(pid) {
             return Err(KernelError::permission_denied(format!(
                 "process {pid} does not own socket {socket_id}"
             )));
@@ -7337,7 +7454,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             .sockets
             .get(socket_id)
             .ok_or_else(|| KernelError::new("ENOENT", format!("no such socket {socket_id}")))?;
-        if existing.owner_pid() != pid && existing.owner_pid() != 0 {
+        if !existing.allows_process_access(pid) {
             return Err(KernelError::permission_denied(format!(
                 "process {pid} does not own socket {socket_id}"
             )));
@@ -7363,7 +7480,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             .sockets
             .get(socket_id)
             .ok_or_else(|| KernelError::new("ENOENT", format!("no such socket {socket_id}")))?;
-        if existing.owner_pid() != pid && existing.owner_pid() != 0 {
+        if !existing.allows_process_access(pid) {
             return Err(KernelError::permission_denied(format!(
                 "process {pid} does not own socket {socket_id}"
             )));
@@ -7386,7 +7503,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             .sockets
             .get(socket_id)
             .ok_or_else(|| KernelError::new("ENOENT", format!("no such socket {socket_id}")))?;
-        if existing.owner_pid() != pid && existing.owner_pid() != 0 {
+        if !existing.allows_process_access(pid) {
             return Err(KernelError::permission_denied(format!(
                 "process {pid} does not own socket {socket_id}"
             )));
@@ -10011,7 +10128,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             PollTarget::Socket(socket_id) => {
                 let socket = self.sockets.get(socket_id);
                 if let Some(socket) = socket {
-                    if socket.owner_pid() != pid && socket.owner_pid() != 0 {
+                    if !socket.allows_process_access(pid) {
                         return Err(KernelError::permission_denied(format!(
                             "process {pid} does not own socket {socket_id}"
                         )));
@@ -13778,6 +13895,7 @@ impl<F> Drop for KernelVm<F> {
 mod tests {
     include!("../tests/support/fd_read_eof.rs");
     include!("../tests/support/tcp_traffic_class_ownership.rs");
+    include!("../tests/support/vm_socket_ownership.rs");
     include!("../tests/support/command_projection_quota.rs");
     include!("../tests/support/mount_projection_quota.rs");
     include!("../tests/support/trusted_write_inode.rs");

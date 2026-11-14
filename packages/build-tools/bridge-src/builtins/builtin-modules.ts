@@ -691,6 +691,22 @@ var builtinUrlStdlibModule = cloneStdlibModule(urlStdlibModuleNs);
 const legacyUrlFormat = builtinUrlStdlibModule.format;
 const urlDomainToUnicode = unwrapStdlibModule(punycodeStdlibModuleNs).toUnicode;
 
+function domainToASCII2(domain) {
+	if (arguments.length === 0) {
+		throw withNodeErrorCode(new TypeError('The "domain" argument must be specified'), "ERR_MISSING_ARGS");
+	}
+	// Use the host parser rather than parsing an entire authority, which
+	// would incorrectly accept userinfo or a port as part of a domain.
+	return globalThis.__agentOsDomainToASCII(`${domain}`);
+}
+
+function domainToUnicode2(domain) {
+	if (arguments.length === 0) {
+		throw withNodeErrorCode(new TypeError('The "domain" argument must be specified'), "ERR_MISSING_ARGS");
+	}
+	return urlDomainToUnicode(domainToASCII2(domain));
+}
+
 function urlFormat2(urlObject, options) {
 	if (!(urlObject instanceof URL2)) return legacyUrlFormat(urlObject);
 	let fragment = true;
@@ -746,6 +762,8 @@ function ensureBuiltinUrlStdlibModule() {
 	builtinUrlStdlibModule.fileURLToPath = fileURLToPath2;
 	builtinUrlStdlibModule.pathToFileURL = pathToFileURL2;
 	builtinUrlStdlibModule.format = urlFormat2;
+	builtinUrlStdlibModule.domainToASCII = domainToASCII2;
+	builtinUrlStdlibModule.domainToUnicode = domainToUnicode2;
 	if (
 		builtinUrlStdlibModule?.default &&
 		typeof builtinUrlStdlibModule.default === "object"
@@ -755,6 +773,8 @@ function ensureBuiltinUrlStdlibModule() {
 		builtinUrlStdlibModule.default.fileURLToPath = fileURLToPath2;
 		builtinUrlStdlibModule.default.pathToFileURL = pathToFileURL2;
 		builtinUrlStdlibModule.default.format = urlFormat2;
+		builtinUrlStdlibModule.default.domainToASCII = domainToASCII2;
+		builtinUrlStdlibModule.default.domainToUnicode = domainToUnicode2;
 	}
 	return builtinUrlStdlibModule;
 }

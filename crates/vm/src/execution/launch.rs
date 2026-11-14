@@ -956,6 +956,11 @@ pub(super) fn resolve_special_node_cli_invocation(
                 consumed_option = true;
                 options = rest;
             }
+            [option, rest @ ..] if option == "--expose-gc" || option == "--expose_gc" => {
+                env.insert(String::from("AGENTOS_NODE_EXPOSE_GC"), String::from("1"));
+                consumed_option = true;
+                options = rest;
+            }
             [option, rest @ ..] if option == "--no-warnings" => {
                 consumed_option = true;
                 options = rest;
@@ -2404,6 +2409,7 @@ pub(super) fn prepare_guest_runtime_env(
 pub(super) fn javascript_execution_limits(vm: &VmState) -> JavascriptExecutionLimits {
     JavascriptExecutionLimits {
         v8_heap_limit_mb: vm.limits.js_runtime.v8_heap_limit_mb,
+        v8_serialization_limit_bytes: vm.limits.js_runtime.v8_serialization_limit_bytes,
         sync_rpc_wait_timeout_ms: vm.limits.js_runtime.sync_rpc_wait_timeout_ms,
         cpu_time_limit_ms: Some(vm.limits.js_runtime.cpu_time_limit_ms),
         wall_clock_limit_ms: Some(vm.limits.js_runtime.wall_clock_limit_ms),
@@ -2452,6 +2458,7 @@ pub(super) fn guest_runtime_identity(
             max_chunk_size_line_bytes: vm.limits.http.max_chunk_size_line_bytes,
             max_pending_response_bytes: vm.limits.http.max_pending_response_bytes,
             max_readline_history_entries: vm.limits.js_runtime.max_readline_history_entries,
+            max_blob_bytes: vm.limits.js_runtime.max_blob_bytes.unwrap_or_else(|| agentos_executor_contract::GuestBridgeLimits::default().max_blob_bytes.min(vm.limits.js_runtime.v8_heap_limit_mb.map(|mb| mb as usize * 1024 * 1024).unwrap_or(usize::MAX))),
         },
         kernel_stdio: true,
         kernel_ipc: true,
@@ -5497,7 +5504,11 @@ where
             let execution = match javascript_engine
                 .start_execution_with_module_reader_and_runtime(
                     StartJavascriptExecutionRequest {
-                        guest_runtime: javascript_guest_runtime(&vm, None, None),
+                        guest_runtime: javascript_guest_runtime(
+                            &vm,
+                            Some(u64::from(kernel_pid)),
+                            Some(0),
+                        ),
                         vm_id: vm_id.clone(),
                         context_id: context_id.clone(),
                         argv: std::iter::once(launch_entrypoint.clone())

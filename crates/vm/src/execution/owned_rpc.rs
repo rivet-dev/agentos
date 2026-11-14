@@ -236,6 +236,7 @@ where
             } else {
                 response
             };
+            let deferred = matches!(&response, Ok(HostServiceResponse::Deferred { .. }));
             let response = match response {
                 Ok(HostServiceResponse::Deferred {
                     receiver, timeout, ..
@@ -284,7 +285,59 @@ where
                 })?;
                 notify.notify_one();
             }
-            settle_execution_host_call(&call.reply, response)
+            if deferred {
+                // Deferred connects carry a completion marker. Commit their
+                // process-owned socket/capability before replying to the guest,
+                // using the same settlement path as admitted managed calls.
+                vm.try_command("settle compatibility RPC completion", |vm| {
+                    let generation = vm.generation;
+                    let readiness = Arc::clone(&vm.kernel_socket_readiness);
+                    let unix_addresses = Arc::clone(&vm.unix_address_registry);
+                    let descriptions = Arc::clone(&vm.managed_host_net_descriptions);
+                    let VmState {
+                        kernel,
+                        active_processes,
+                        ..
+                    } = vm;
+                    let root = active_processes
+                        .get_mut(&root_id)
+                        .ok_or_else(|| missing_process_error(&vm_id, &root_id))?;
+                    let refs = path.iter().map(String::as_str).collect::<Vec<_>>();
+                    let process =
+                        Self::active_process_by_path_mut(root, &refs).ok_or_else(|| {
+                            VmError::host(
+                                "ESTALE",
+                                "compatibility RPC caller exited before completion",
+                            )
+                        })?;
+                    let result = match response {
+                        Ok(HostServiceResponse::Json(value)) => Ok(value),
+                        Err(error) => Err(crate::state::DeferredRpcError::from(
+                            host_service_error(&error),
+                        )),
+                        _ => {
+                            return Err(VmError::host(
+                                "ERR_AGENTOS_RPC_OWNERSHIP",
+                                "deferred compatibility RPC produced a non-JSON completion",
+                            ))
+                        }
+                    };
+                    super::process_events::settle_host_call_completion_for_process(
+                        generation,
+                        kernel,
+                        &readiness,
+                        &unix_addresses,
+                        &descriptions,
+                        process,
+                        crate::state::HostCallCompletion {
+                            reply: call.reply.clone(),
+                            result,
+                        },
+                    )
+                })
+            } else {
+                settle_execution_host_call(&call.reply, response)
+            }
         })
     }
 }

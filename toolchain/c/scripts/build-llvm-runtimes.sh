@@ -1,6 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
+BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
+if [[ ! "$BUILD_JOBS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "CARGO_BUILD_JOBS must be a positive integer (default 2)" >&2
+  exit 2
+fi
+
 # Build the libc++/libc++abi/libunwind runtime set ourselves so C++ exception
 # handling matches the same patched WASI/POSIX sysroot DuckDB uses.
 #
@@ -77,7 +83,7 @@ cmake \
   -DLIBUNWIND_ENABLE_STATIC=ON \
   -DCMAKE_INSTALL_PREFIX="$LLVM_RUNTIME_INSTALL_DIR"
 
-cmake --build "$LLVM_RUNTIME_BUILD_DIR" --target install -j"$(nproc 2>/dev/null || echo 4)"
+cmake --build "$LLVM_RUNTIME_BUILD_DIR" --target install -j"$BUILD_JOBS"
 
 # llvm-nm returns a non-zero status for archive members with no symbols, which
 # is expected here for several libunwind objects. Capture output explicitly so

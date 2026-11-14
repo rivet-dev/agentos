@@ -263,6 +263,7 @@ pub fn capture_child(
             timed_out: false,
             max_buffer_exceeded: false,
             completion: PendingChildProcessSyncCompletion::Javascript(tx),
+            _deadline_cancel: oneshot::channel().0,
             _count_reservation: count,
             _bytes_reservation: bytes,
         },

@@ -306,9 +306,13 @@ impl ActiveTcpSocket {
         )?;
         let stream = Arc::new(Mutex::new(stream));
         let pending_read_stream = Arc::new(Mutex::new(Some(read_stream)));
+        // Native peers can outrun the guest between readiness turns. Keep
+        // read-ahead local to this connection so bulk ingress cannot occupy
+        // the VM's aggregate buffer budget while control replies need it.
+        // The shared completion and byte quotas still apply underneath.
         let (sender, events) = async_completion_channel(
             runtime_context.clone(),
-            socket_completion_capacity(reactor_limits),
+            socket_completion_capacity(reactor_limits).min(2),
             tcp_socket_event_retained_bytes,
         );
         let read_event_notify = Arc::new(tokio::sync::Notify::new());
@@ -330,6 +334,7 @@ impl ActiveTcpSocket {
             description_lease: Arc::new(SocketDescriptionLease::default()),
             stream: Some(stream),
             pending_read_stream: Some(pending_read_stream),
+            plain_reader_shutdown: tokio::sync::watch::channel(false).0,
             plain_reader_running: Arc::new(AtomicBool::new(false)),
             plain_reader_stopped: Arc::new(tokio::sync::Notify::new()),
             events: Some(Arc::new(Mutex::new(events))),
@@ -395,6 +400,7 @@ impl ActiveTcpSocket {
             description_lease: Arc::new(SocketDescriptionLease::default()),
             stream: None,
             pending_read_stream: None,
+            plain_reader_shutdown: tokio::sync::watch::channel(false).0,
             plain_reader_running: Arc::new(AtomicBool::new(false)),
             plain_reader_stopped: Arc::new(tokio::sync::Notify::new()),
             events: Some(Arc::new(Mutex::new(events))),
@@ -441,6 +447,7 @@ impl ActiveTcpSocket {
             description_lease: Arc::clone(&self.description_lease),
             stream: self.stream.as_ref().map(Arc::clone),
             pending_read_stream: self.pending_read_stream.as_ref().map(Arc::clone),
+            plain_reader_shutdown: self.plain_reader_shutdown.clone(),
             plain_reader_running: Arc::clone(&self.plain_reader_running),
             plain_reader_stopped: Arc::clone(&self.plain_reader_stopped),
             events: self.events.as_ref().map(Arc::clone),
@@ -748,6 +755,7 @@ impl ActiveTcpSocket {
                 Arc::clone(&self.close_notified),
                 Arc::clone(&self.plain_reader_running),
                 Arc::clone(&self.plain_reader_stopped),
+                self.plain_reader_shutdown.subscribe(),
                 Arc::clone(&self.resources),
                 self.reactor_limits,
                 Arc::clone(&self.fairness_identity),
@@ -1387,6 +1395,7 @@ impl ActiveTcpSocket {
         kernel: &mut SidecarKernel,
         kernel_pid: u32,
     ) -> Result<(), VmError> {
+        self.plain_reader_shutdown.send_replace(true);
         if self.tls_mode.load(Ordering::SeqCst) {
             let native_commands = self
                 .native_tls_commands
@@ -1503,6 +1512,19 @@ pub(in crate::execution) fn close_kernel_socket_idempotent(
     kernel_pid: u32,
     socket_id: SocketId,
 ) -> Result<(), VmError> {
+    // Process teardown can remove the socket before this handle is released.
+    // Check absence before checking ownership of a PID that may already be gone;
+    // an existing socket must still pass the normal ownership checks below.
+    if kernel.socket_get(socket_id).is_none() {
+        return Ok(());
+    }
+    if kernel_pid == 0
+        && kernel
+            .socket_get(socket_id)
+            .is_some_and(|socket| socket.is_vm_owned())
+    {
+        return kernel.vm_socket_close(socket_id).map_err(kernel_error);
+    }
     match kernel.socket_close(EXECUTION_DRIVER_NAME, kernel_pid, socket_id) {
         Ok(()) => Ok(()),
         Err(error) if error.code() == "ENOENT" => Ok(()),
@@ -3357,6 +3379,7 @@ fn spawn_tcp_socket_reader(
     close_notified: Arc<AtomicBool>,
     plain_reader_running: Arc<AtomicBool>,
     plain_reader_stopped: Arc<tokio::sync::Notify>,
+    mut reader_shutdown: tokio::sync::watch::Receiver<bool>,
     resources: Arc<ResourceLedger>,
     limits: ReactorIoLimits,
     fairness_identity: Arc<OnceLock<(u64, u64)>>,
@@ -3541,6 +3564,7 @@ fn spawn_tcp_socket_reader(
             };
             tokio::select! {
                 () = cancellation.admission_closed() => {}
+                _ = reader_shutdown.wait_for(|closed| *closed) => {}
                 () = reader => {}
             }
         })
@@ -4603,6 +4627,7 @@ mod tls_handoff_deadline_tests {
         let close_notified = Arc::new(AtomicBool::new(false));
         let identity = Arc::new(OnceLock::new());
         identity.set((1, generation)).expect("identity");
+        let (_reader_shutdown, reader_shutdown_rx) = tokio::sync::watch::channel(false);
         spawn_tcp_socket_reader(
             runtime.clone(),
             stream.try_clone().expect("clone stream"),
@@ -4617,6 +4642,7 @@ mod tls_handoff_deadline_tests {
             Arc::clone(&close_notified),
             Arc::clone(&running),
             Arc::clone(&stopped),
+            reader_shutdown_rx,
             Arc::clone(&resources),
             limits,
             identity,

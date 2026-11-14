@@ -30,8 +30,8 @@ or implemented in the isolate is denied.</Note>
 | `dns`, `dns/promises` | VM DNS resolver. |
 | `http`, `https`, `http2`, `tls` | VM socket/TLS paths: clients, servers, pooling. |
 | `os` | VM-scoped platform, arch, hostname, CPU, memory, user. |
-| `crypto` | Entropy, hashes, HMAC, ciphers, scrypt, UUIDs, WebCrypto, bounded unbiased integers with `randomInt`, and constant-time byte comparison with `timingSafeEqual`, including genuine cross-realm buffers and byte views. |
-| `process` | VM env, cwd, signals, timers, stdio, umask. |
+| `crypto` | RSA JWK import/export, `KeyObject.from(CryptoKey)`, RSA-OAEP hash and label options, entropy, hashes, HMAC, ciphers, scrypt, UUIDs, WebCrypto, bounded unbiased integers with `randomInt`, and constant-time byte comparison with `timingSafeEqual`, including genuine cross-realm buffers and byte views. |
+| `process` | VM env, cwd, live kernel PID/PPID, signals, timers, stdio, umask. Sequential top-level processes retain their own identities when a VM is reused. |
 | `module` | `createRequire`, builtin resolution, basic `Module` compat. |
 | `console` | Bounded formatting, guest stdout/stderr. |
 | `readline`, `sqlite`, `tty` | VM-backed compatibility surfaces. |
@@ -41,16 +41,49 @@ or implemented in the isolate is denied.</Note>
 - Network builtins obey the VM [permission policy](/agentos/docs/permissions).
 - Network access is **denied until granted** by the VM creator.
 
+HTTP server requests expose `iterator()` and `Symbol.asyncIterator` over their
+bounded request body. Headers dispatch before upload EOF; fixed-length and
+chunked bodies stream with backpressure. `iterator({ destroyOnReturn: false })`
+preserves the request when the consumer returns early; observing EOF completes
+normal cleanup. The parser limits headers to 64 KiB and bodies to 128 MiB.
+`Server.close()` and `Server.closeIdleConnections()` reap idle HTTP keep-alive
+connections and preserve active response bytes through TCP shutdown.
+`Server.closeAllConnections()` closes active and idle HTTP connections;
+upgraded connections remain owned by the application.
+
+Trusted embedded callers can connect to a VM-local TCP listener through
+`vm.network.connect(port)`. Reads and writes remain in the VM socket table;
+this API cannot connect to a host listener. Await each operation in its
+direction and close the handle when finished. Writes split into at most 64 KiB
+messages with backpressure. Rust exposes the same operations through
+`AgentOs::network_connect` and its connection's `read`, `write`, `end` and `close`.
+There are at most 256 published streams per VM. Raw TCP reads have no HTTP
+request deadline; closing the handle or disposing the VM cancels them. A
+published client retains buffered data after its guest server process exits.
+Guest socket and descriptor APIs cannot access that trusted client handle.
+
 Unix datagram socketpairs drop empty messages in the latest qualified native
 comparison. A correction retaining empty message records and charging bounded
 queue metadata awaits native qualification. UDP readiness and ignored-stdin EOF
 have separate controls.
 
+Blob and File construction defaults to a64MiB byte ceiling and1024 parts.
+Trusted VM creators can set `limits.jsRuntime.maxBlobBytes` within the configured
+V8 heap budget. V8 external-memory accounting still applies to every allocated
+buffer. The effective default is lower for a smaller VM heap. Guests cannot
+change this policy; excess bytes fail with `ERR_BLOB_SIZE_LIMIT` before the
+constructor copies the parts.
+
 ## In-isolate builtins
 
 - Full: `path`, `buffer`, `events`, `stream`, `util`, `assert`,
-  `querystring`, `string_decoder`, `zlib`, `punycode`, `constants`, `sys`.
+  `querystring`, `string_decoder`, `punycode`, `constants`, `sys`.
   Default and named ESM imports supported.
+- Compression: `zlib` exposes gzip/deflate and a native Rust Brotli codec within
+  the isolate boundary. Brotli synchronous and callback APIs accept byte input;
+  stream adapters buffer input until finish, with a default 32 MiB bound set by
+  `AGENTOS_BROTLI_MAX_BUFFERED_BYTES`. Output obeys the bridge response limit
+  and `maxOutputLength`. Progressive Brotli flush is unsupported.
 - URL: `url` exposes WHATWG constructors and legacy helpers. Formatting a
   WHATWG URL currently loses credentials and ignores formatting options in the
   latest qualified native runtime. An owning formatter correction has Node
@@ -70,17 +103,23 @@ have separate controls.
   `async_hooks`, `diagnostics_channel`, `perf_hooks`, `worker_threads`,
   `v8`. `worker_threads` does **not** create real worker threads.
 
-`v8.serialize`, `deserialize`, `Serializer`, and `Deserializer` use a JSON
-compatibility format, not native V8 serialization. Supported data consists of
-strings, booleans, `null`, finite numbers other than negative zero, dense arrays,
-and plain objects with enumerable string-keyed data properties. Unsupported
-values fail with `ERR_NOT_IMPLEMENTED`: for example `Map`, `Date`, bigint,
-undefined, typed arrays, shared/circular references, enumerable accessors,
-enumerable `toJSON` functions, enumerable symbol properties, and arrays with extra enumerable fields.
-Descriptor traversal does not invoke source property accessors or `toJSON`;
-proxy meta-operation traps can still execute. Non-enumerable object fields
-are omitted. Invalid or native V8 buffers are not accepted by `deserialize`.
-CJS and ESM use the same implementation. `getHeapStatistics()` reads live
+`v8.serialize` and `deserialize` use the current isolate's native V8 wire
+format. They preserve cyclic/shared graphs, `Map`, `Set`, `Date`, bigint,
+undefined, regular expressions, typed views, and Node Buffers. Typed views
+serialize only their visible bytes, including Buffers backed by a larger pool.
+Compatible Node.js versions can read and write these buffers. Functions,
+symbols, and unsupported host objects still fail to clone. Native V8 semantics
+apply, including invoking enumerable property getters during serialization.
+Serialized input and output are bounded by `limits.reactor.maxBridgeResponseBytes`.
+The former JSON-only compatibility format is no longer accepted; it was not a
+Node.js serialization format. `Deserializer` maintains its cursor and shared
+references across reads, including subclass `_readHostObject` callbacks, raw
+reads, and transferred ArrayBuffers. Retained readers use the existing
+`limits.reactor.maxCapabilities` and `limits.reactor.maxBlockingBytes` budgets.
+The low-level `Serializer` class remains partial.
+`structuredClone` transfers ArrayBuffers only after validating the transfer list and cloning the graph. Duplicate, detached, and unsupported transfer entries fail with `DataCloneError`; failed clones leave their source buffers attached.
+
+CJS and ESM share these implementations. `getHeapStatistics()` reads live
 statistics for the current V8 isolate, with byte-valued sizes and integer
 counters. These values are not process RSS or whole-sidecar memory usage.
 `getHeapSpaceStatistics`, `getHeapCodeStatistics`, `getCppHeapStatistics`, and
@@ -122,10 +161,13 @@ does not establish correct fd0 EOF behavior.
 - `Uint8Array` has `toHex`, `toBase64`, `fromHex`, `fromBase64`, `setFromHex`,
   and `setFromBase64`, with the `alphabet`, `omitPadding`, and
   `lastChunkHandling` options.
+  Encoded results use the VM memory budget; oversized results fail before allocation.
 
 ## `node:sqlite`
 
 - `new DatabaseSync(path)` opens a database in the VM filesystem.
+- JavaScript numbers bind as SQLite REAL values; `bigint` binds as INTEGER.
+  Floating-point parameters and results preserve their IEEE 754 bits.
 - SQL `ATTACH DATABASE` and `VACUUM INTO` targets accept only the literal
   `:memory:` or an empty temporary name. Other filenames, URIs, parameters,
   and expressions fail with an authorization error, including paths in the VM.
@@ -149,3 +191,20 @@ Back to the [JavaScript guide](/agentos/docs/javascript) for TypeScript, package
 files, processes, networking, host functions, permissions, and limits.
 
 Read more in the [embedded API quickstart](/agentos/docs/quickstart-embedded).
+
+Explicit `node --expose-gc` (or `NODE_OPTIONS=--expose-gc`) enables `globalThis.gc()` for that guest process. Collection runs on its owning V8 isolate; it does not collect other VMs or the host heap. `{ execution: "async" }` returns a promise after collection.
+
+Node child processes inherit the calling process environment when `options.env` is omitted. An explicit environment replaces it, including an empty object; `fork()` follows the same rule. VM bootstrap metadata remains separate from guest-visible environment values.
+
+
+Trusted embedded callers can set `createSidecar({runtime:{blocking:{maxQueuedBytes}}})`
+to size the process-wide blocking operation budget. The default remains64MiB,
+and native admission enforces the selected budget. Shared pool users must select
+matching runtime settings. Rust callers use `create_sidecar_with_runtime` or
+`get_shared_sidecar_with_runtime` with `AgentOsSidecarRuntimeConfig`.
+
+
+Composed abort signals propagate even when an ordinary abort listener stops event
+propagation. Unused composed signals can be collected; an observed signal stays
+live while its sources can still abort. EventTarget listener limits and the
+per-call `AbortSignal.any()` input limit remain enforced.

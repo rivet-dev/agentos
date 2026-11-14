@@ -1,6 +1,7 @@
 import { exposeCustomGlobal } from "../global-exposure.js";
 import { require_buffer } from "../vendor/buffer.js";
 import { __toESM } from "../vendor/esbuild-runtime.js";
+import { streamStdlibModuleNs } from "../prelude.js";
 import { builtinPathStdlibModule } from "./builtin-modules.js";
 import { deferCloseIfChildInheritedFd } from "./child-process.js";
 import { builtinCryptoModule } from "./crypto.js";
@@ -563,7 +564,8 @@ var FileHandle = class _FileHandle {
 				error.code = "ERR_FS_FILE_TOO_LARGE";
 				throw error;
 			}
-			await waitForNextTick();
+			// Let timer-driven cancellation run between bounded reads.
+			await new Promise((resolve) => setImmediate(resolve));
 		}
 		const result = import_buffer.Buffer.concat(chunks, totalLength);
 		return encoding ? result.toString(encoding) : result;
@@ -1491,7 +1493,7 @@ function normalizeStreamStartEnd(options) {
 		autoClose: options?.autoClose !== false,
 	};
 }
-var ReadStream = class {
+var FileReadSource = class {
 	constructor(filePath, _options) {
 		this._options = _options;
 		const fdOption = normalizeStreamFd(_options?.fd);
@@ -1519,6 +1521,7 @@ var ReadStream = class {
 			this.fd = fdOption.fd;
 			this.pending = false;
 			this._handleCloseListener = () => {
+				this._detachAbortSignal();
 				if (!this.closed) {
 					this.closed = true;
 					this.destroyed = true;
@@ -1544,9 +1547,8 @@ var ReadStream = class {
 					void this._abort(this._signal?.reason);
 				});
 			} else {
-				this._signal.addEventListener("abort", () => {
-					void this._abort(this._signal?.reason);
-				});
+				this._abortListener = () => { void this._abort(this._signal?.reason); };
+				this._signal.addEventListener("abort", this._abortListener, { once: true });
 			}
 		}
 		if (this.fd === null) {
@@ -1586,6 +1588,11 @@ var ReadStream = class {
 	_streamFs;
 	_signal;
 	_handleCloseListener;
+	_abortListener;
+	_detachAbortSignal() {
+		if (this._abortListener) this._signal.removeEventListener("abort", this._abortListener);
+		this._abortListener = undefined;
+	}
 	_emitOpen(fd) {
 		this.fd = fd;
 		this.pending = false;
@@ -1624,6 +1631,7 @@ var ReadStream = class {
 		});
 	}
 	async _closeUnderlying() {
+		this._detachAbortSignal();
 		if (this._fileHandle) {
 			if (!this._fileHandle.closed) {
 				await this._fileHandle.close();
@@ -1941,6 +1949,68 @@ var ReadStream = class {
 			: content;
 	}
 };
+const CanonicalFileReadable =
+	streamStdlibModuleNs.Readable ?? streamStdlibModuleNs.default?.Readable;
+if (typeof CanonicalFileReadable !== "function") {
+	throw new Error("node:stream did not provide the canonical Readable constructor");
+}
+
+// The source owns guest descriptors and custom fs/FileHandle operations.
+// Canonical Readable owns decoding, iteration, and consumption backpressure.
+var ReadStream = class extends CanonicalFileReadable {
+	constructor(path, options = {}) {
+		options = typeof options === "string" ? { encoding: options } : options ?? {};
+		const state = normalizeStreamStartEnd(options);
+		super({
+			highWaterMark: state.highWaterMark,
+			encoding: options.encoding,
+			autoDestroy: state.autoClose,
+			emitClose: options.emitClose !== false,
+		});
+		const source = this._source = new FileReadSource(path, { ...options, encoding: undefined });
+		source.pause();
+		source.on("open", fd => this.emit("open", fd));
+		source.on("data", chunk => { if (!this.push(chunk)) source.pause(); });
+		source.on("end", () => { this._sourceEnded = true; this.push(null); });
+		source.on("error", error => {
+			if (source.autoClose) this.destroy(error);
+			else this.emit("error", error);
+		});
+		source.on("close", () => {
+			if (!this.destroyed && (!this._sourceEnded || !source.autoClose)) this.destroy();
+		});
+	}
+	_source;
+	_sourceEnded = false;
+	get fd() { return this._source?.fd ?? null; }
+	set fd(value) { this._source.fd = value; }
+	get path() { return this._source?.path; }
+	get pending() { return this._source?.pending ?? true; }
+	get bytesRead() { return this._source?.bytesRead ?? 0; }
+	get start() { return this._source?.start; }
+	get end() { return this._source?.end; }
+	get autoClose() { return this._source?.autoClose ?? true; }
+	set autoClose(value) {
+		this._source.autoClose = Boolean(value);
+		this._readableState.autoDestroy = Boolean(value);
+	}
+	_read() { this._source.resume(); }
+	_destroy(error, callback) {
+		const source = this._source;
+		if (!source || source.closed) { callback(error); return; }
+		source.once("close", () => callback(error));
+		// The outer stream reports errors; the original owner closes its fd.
+		source.destroy();
+	}
+	close(callback) {
+		if (callback) {
+			if (this.closed) queueMicrotask(() => callback(null));
+			else this._source.once("close", () => queueMicrotask(() => callback(null)));
+		}
+		this.destroy();
+	}
+};
+
 var MAX_WRITE_STREAM_BYTES = 16 * 1024 * 1024;
 var WriteStream = class {
 	constructor(filePath, _options) {
@@ -2294,9 +2364,12 @@ var ReadStreamClass = ReadStream;
 var WriteStreamClass = WriteStream;
 var ReadStreamFactory = function ReadStream2(path, options) {
 	validateEncodingOption(options);
-	return new ReadStreamClass(path, options);
+	return Reflect.construct(ReadStreamClass, [path, options], new.target ?? ReadStreamFactory);
 };
 ReadStreamFactory.prototype = ReadStream.prototype;
+Object.setPrototypeOf(ReadStreamFactory, CanonicalFileReadable);
+Object.defineProperty(ReadStreamFactory, "name", { value: "ReadStream", configurable: true });
+Object.defineProperty(ReadStream.prototype, "constructor", { value: ReadStreamFactory, writable: true, configurable: true });
 var WriteStreamFactory = function WriteStream2(path, options) {
 	validateEncodingOption(options);
 	validateWriteStreamStartOption(options ?? {});
@@ -2921,6 +2994,11 @@ function joinDirEntryPath(dirPath, entryName) {
 		? `${dirPath}${entryName}`
 		: `${dirPath}/${entryName}`;
 }
+function createReaddirDirent(name, kind, dirPath) {
+	const slash = name.lastIndexOf("/");
+	return slash < 0 ? new Dirent(name, kind, dirPath)
+		: new Dirent(name.slice(slash + 1), kind, joinDirEntryPath(dirPath, name.slice(0, slash)));
+}
 function normalizeReaddirEntries(entries, dirPath, withFileTypes) {
 	if (!Array.isArray(entries)) {
 		return [];
@@ -2933,9 +3011,9 @@ function normalizeReaddirEntries(entries, dirPath, withFileTypes) {
 	return entries.map((entry) => {
 		if (typeof entry === "string") {
 			const stat = fs.lstatSync(joinDirEntryPath(dirPath, entry));
-			return new Dirent(entry, direntTypeFromStats(stat), dirPath);
+			return createReaddirDirent(entry, direntTypeFromStats(stat), dirPath);
 		}
-		return new Dirent(entry.name, entry.kind, dirPath);
+		return createReaddirDirent(entry.name, entry.kind, dirPath);
 	});
 }
 function decodeRawReaddirEntries(entries, dirPath, withFileTypes) {
@@ -2964,7 +3042,7 @@ function decodeRawReaddirEntries(entries, dirPath, withFileTypes) {
 			nameLength,
 		).toString("utf8");
 		offset += nameLength;
-		decoded.push(withFileTypes ? new Dirent(name, kind, dirPath) : name);
+		decoded.push(withFileTypes ? createReaddirDirent(name, kind, dirPath) : name);
 	}
 	return decoded;
 }
@@ -2975,25 +3053,21 @@ async function fsReadFileAsync(path, options) {
 	}
 
 	const rawPath = normalizePathLike(path);
-	const encoding = typeof options === "string" ? options : options?.encoding;
 	const signal = validateAbortSignal(
 		typeof options === "object" ? options?.signal : void 0,
 	);
 	throwIfAborted(signal);
 	try {
-		if (encoding) {
-			const contents = await _fsAsync.readFile.apply(void 0, [
-				rawPath,
-				encoding,
-			]);
-			throwIfAborted(signal);
-			return contents;
+		// A whole-file bridge response can exceed its byte budget even though
+		// the file fits the VM. The existing FileHandle reader uses bounded
+		// kernel reads, keeps the opened file identity and observes cancellation.
+		const flag = typeof options === "object" ? options?.flag ?? "r" : "r";
+		const handle = new FileHandle(fs.openSync(path, flag));
+		try {
+			return await handle.readFile(options);
+		} finally {
+			await handle.close();
 		}
-		const base64Content = await _fsAsync.readFileBinary.apply(void 0, [
-			rawPath,
-		]);
-		throwIfAborted(signal);
-		return import_buffer.Buffer.from(base64Content, "base64");
 	} catch (err) {
 		if (bridgeErrorCode(err) === "ENOENT") {
 			throw createFsError(
@@ -3021,18 +3095,22 @@ async function fsWriteFileAsync(file, data, options) {
 	}
 	const normalized =
 		typeof options === "string" ? { encoding: options } : options;
+	const largeInput = typeof data === "string"
+		? import_buffer.Buffer.byteLength(data, normalized?.encoding ?? "utf8") > FILE_HANDLE_WRITE_MAX_CHUNK_BYTES
+		: ArrayBuffer.isView(data) && data.byteLength > FILE_HANDLE_WRITE_MAX_CHUNK_BYTES;
 	if (
+		largeInput ||
 		normalized?.flag !== void 0 ||
 		normalized?.mode !== void 0 ||
 		(normalized?.encoding && normalized.encoding !== "utf8") ||
 		normalized?.flush
 	) {
 		const handle = new FileHandle(
-			fs.openSync(file, normalized.flag ?? "w", normalized.mode),
+			fs.openSync(file, normalized?.flag ?? "w", normalized?.mode),
 		);
 		try {
 			await handle.writeFile(data, options);
-			if (normalized.flush) await handle.sync();
+			if (normalized?.flush) await handle.sync();
 		} finally {
 			await handle.close();
 		}
@@ -3070,7 +3148,7 @@ async function fsReaddirAsync(path, options) {
 	validateEncodingOption(options);
 	const rawPath = normalizePathLike(path);
 	try {
-		const entriesJson = await _fsAsync.readDir.apply(void 0, [rawPath]);
+		const entriesJson = await _fsAsync.readDir.apply(void 0, [resolveOperationPath(path), { recursive: options?.recursive === true }]);
 		return normalizeReaddirEntries(
 			decodeBridgeJson(entriesJson),
 			rawPath,
@@ -3424,13 +3502,17 @@ var fs = {
 			if (options?.flush) fs.fsyncSync(fd);
 			return;
 		}
+		const largeInput = typeof data === "string"
+			? import_buffer.Buffer.byteLength(data, options?.encoding ?? "utf8") > FILE_HANDLE_WRITE_MAX_CHUNK_BYTES
+			: ArrayBuffer.isView(data) && data.byteLength > FILE_HANDLE_WRITE_MAX_CHUNK_BYTES;
 		if (
+			largeInput ||
 			options?.flag !== void 0 ||
 			options?.mode !== void 0 ||
 			(options?.encoding && options.encoding !== "utf8") ||
 			options?.flush
 		) {
-			const fd = fs.openSync(file, options.flag ?? "w", options.mode);
+			const fd = fs.openSync(file, options?.flag ?? "w", options?.mode);
 			try {
 				fs.writeFileSync(fd, data, _options);
 			} finally {
@@ -3481,7 +3563,7 @@ var fs = {
 		const pathStr = resolveOperationPath(path);
 		let entries: ReturnType<typeof _fs.readDir.applySyncPromise>;
 		try {
-			entries = _fs.readDir.applySyncPromise(void 0, [pathStr]);
+			entries = _fs.readDir.applySyncPromise(void 0, [pathStr, { recursive: options?.recursive === true }]);
 		} catch (err) {
 			if (bridgeErrorCode(err) === "ENOENT") {
 				throw createFsError(

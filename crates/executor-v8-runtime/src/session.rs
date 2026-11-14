@@ -641,6 +641,7 @@ struct SessionAssignment {
     output_generation: Option<u64>,
     runtime: DriverHandle,
     bridge_call_timeout: Duration,
+    serialization_limit_bytes: Option<usize>,
 }
 
 #[cfg(not(test))]
@@ -1493,6 +1494,7 @@ impl SessionManager {
             self.runtime.clone(),
             ready_batch_handle_limit,
             crate::host_call::DEFAULT_BRIDGE_CALL_TIMEOUT,
+            None,
         )
     }
 
@@ -1513,6 +1515,7 @@ impl SessionManager {
         session_runtime: DriverHandle,
         ready_batch_handle_limit: usize,
         bridge_call_timeout: Duration,
+        serialization_limit_bytes: Option<usize>,
     ) -> Result<(), String> {
         self.reap_finished_quarantines();
         if self.sessions.contains_key(&session_id) {
@@ -1571,6 +1574,7 @@ impl SessionManager {
             output_generation,
             runtime: session_runtime,
             bridge_call_timeout,
+            serialization_limit_bytes,
         };
 
         let join_handle = match self.claim_warm_worker(warm_hint.as_ref(), assignment) {
@@ -2452,6 +2456,7 @@ fn session_thread(
         output_generation,
         runtime,
         bridge_call_timeout,
+        serialization_limit_bytes,
     } = assignment;
     #[cfg(not(test))]
     let execution_task_owner =
@@ -2961,21 +2966,24 @@ fn session_thread(
                         // waiter in the same call-specific registry.
                         let (async_response_tx, async_response_rx) =
                             crossbeam_channel::bounded(bridge::MAX_PENDING_PROMISES);
-                        let bridge_ctx = Rc::new(BridgeCallContext::with_registry(
-                            Box::new(ChannelRuntimeEventSender::new(
-                                event_tx.clone(),
+                        let bridge_ctx = Rc::new(
+                            BridgeCallContext::with_registry(
+                                Box::new(ChannelRuntimeEventSender::new(
+                                    event_tx.clone(),
+                                    output_generation,
+                                )),
+                                session_id.clone(),
                                 output_generation,
-                            )),
-                            session_id.clone(),
-                            output_generation,
-                            Arc::clone(&call_id_router),
-                            Arc::clone(&shared_call_id),
-                            async_response_tx,
-                            abort_rx.clone(),
-                            runtime.clone(),
-                            Arc::clone(&pause_control),
-                            bridge_call_timeout,
-                        ));
+                                Arc::clone(&call_id_router),
+                                Arc::clone(&shared_call_id),
+                                async_response_tx,
+                                abort_rx.clone(),
+                                runtime.clone(),
+                                Arc::clone(&pause_control),
+                                bridge_call_timeout,
+                            )
+                            .with_serialization_limit(serialization_limit_bytes),
+                        );
 
                         // These resolvers and channels belong only to this operation.
                         // Aborted calls cannot leave native resolver handles in the
@@ -3307,6 +3315,16 @@ fn session_thread(
                             }
                         }
                         record_v8_session_phase("user_code_execute", phase_start.elapsed());
+
+                        // A failed retained entry has no nextTick phase to deliver.
+                        // Retire its queued callbacks before handle cleanup performs
+                        // a checkpoint; cleanup may still schedule its own work.
+                        if complete_on_settle && error.is_some() {
+                            let scope = &mut v8::HandleScope::new(iso);
+                            let ctx = v8::Local::new(scope, &exec_context);
+                            let scope = &mut v8::ContextScope::new(scope, ctx);
+                            crate::next_ticks::discard(scope);
+                        }
 
                         // Run event loop while bridge work or async ESM
                         // evaluation is still pending. For ESM modules (mode != 0),
@@ -4062,6 +4080,9 @@ fn event_loop_can_exit(
     pending: &crate::bridge::PendingPromises,
     exit: EventLoopExit,
 ) -> bool {
+    if crate::next_ticks::pending(scope) {
+        return false;
+    }
     let evaluation_settled = !execution::pending_module_evaluation_needs_wait(scope)
         && !execution::pending_script_evaluation_needs_wait(scope);
     match exit {

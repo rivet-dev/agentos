@@ -578,6 +578,17 @@ pub(crate) fn run_bridge_cached(
         };
     }
 
+    if let Err(message) = crate::next_ticks::capture(tc) {
+        return (
+            1,
+            Some(ExecutionError {
+                error_type: "Error".into(),
+                message,
+                stack: String::new(),
+                code: Some("ERR_AGENTOS_NEXT_TICK_BOOTSTRAP".into()),
+            }),
+        );
+    }
     (0, None)
 }
 
@@ -615,7 +626,13 @@ pub fn run_init_script(scope: &mut v8::HandleScope, code: &str) -> (i32, Option<
             };
         }
     };
-    if script.run(tc).is_none() {
+    crate::next_ticks::begin_entry(tc, false);
+    let result = {
+        let mut storage = std::pin::pin!(MicrotaskSuppressionStorage::new());
+        let mut explicit = ExplicitMicrotaskScope::new(tc, storage.as_mut());
+        script.run(&mut explicit)
+    };
+    if result.is_none() {
         return match tc.exception() {
             Some(e) => {
                 let (c, err) = exception_to_result(tc, e);
@@ -624,6 +641,7 @@ pub fn run_init_script(scope: &mut v8::HandleScope, code: &str) -> (i32, Option<
             None => (1, None),
         };
     }
+    crate::owned_microtasks::checkpoint(tc);
     (0, None)
 }
 
@@ -733,6 +751,7 @@ pub fn execute_script_with_options(
         // error. Node delivers uncaughtException before that queued work.
         // Restore the caller policy before routing; the existing checkpoint
         // below still owns successful/consumed completion.
+        crate::next_ticks::begin_entry(tc, false);
         let script_result = {
             let mut suppression_storage = std::pin::pin!(MicrotaskSuppressionStorage::new());
             let mut run_scope = ExplicitMicrotaskScope::new(tc, suppression_storage.as_mut());
@@ -2168,7 +2187,12 @@ pub fn execute_module(
         }
 
         // Evaluate
-        let eval_result = module.evaluate(tc);
+        crate::next_ticks::begin_entry(tc, true);
+        let eval_result = {
+            let mut storage = std::pin::pin!(MicrotaskSuppressionStorage::new());
+            let mut explicit = ExplicitMicrotaskScope::new(tc, storage.as_mut());
+            module.evaluate(&mut explicit)
+        };
         if eval_result.is_none() {
             clear_module_state();
             return match tc.exception() {
@@ -2494,8 +2518,8 @@ fn resolve_or_compile_module<'s>(
             .and_then(|state| state.guest_reader.as_mut())
             .and_then(|reader| reader.read_module_source(&resolved_path))
     });
-    let raw_source = match direct_source {
-        Some(source) => source,
+    let (raw_source, _source_reservation) = match direct_source {
+        Some(source) => (source, None),
         None => load_module_via_ipc(scope, ctx, &resolved_path)?,
     };
     if let Some(t) = t {
@@ -2506,7 +2530,7 @@ fn resolve_or_compile_module<'s>(
     if let Some(t) = t {
         record_mod(3, t.elapsed().as_nanos() as u64);
     }
-    let source_code = build_module_source(scope, &raw_source, &resolved_path, module_format);
+    let source_code = build_module_source(scope, raw_source, &resolved_path, module_format);
 
     let resource = v8::String::new(scope, &resolved_path)?;
     let origin = v8::ScriptOrigin::new(
@@ -3012,49 +3036,99 @@ fn resolve_module_via_ipc(
     }
 }
 
-/// Send _loadFile(resolved_path) via sync-blocking IPC.
+// Source is accumulated outside V8, under the executor byte ledger. Each
+// individual reply still obeys the ordinary bridge response limit.
+const MODULE_SOURCE_CHUNK_BYTES: usize = 64 * 1024;
+const MAX_MODULE_SOURCE_BYTES: usize = 64 * 1024 * 1024;
+
 fn load_module_via_ipc(
     scope: &mut v8::HandleScope,
     ctx: &BridgeCallContext,
     resolved_path: &str,
-) -> Option<String> {
-    // Serialize [resolved_path] as V8 Array
-    let path_v8 = v8::String::new(scope, resolved_path).unwrap();
-    let arr = v8::Array::new(scope, 1);
-    arr.set_index(scope, 0, path_v8.into());
-    let args = match serialize_v8_value(scope, arr.into()) {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            throw_module_error(scope, &format!("_loadFile serialize error: {}", e));
-            return None;
-        }
-    };
-
-    let ipc_result = ctx.sync_call_response("_loadFile", args);
-    match ipc_result {
-        Ok(Some(response)) => match deserialize_v8_value(scope, &response.payload) {
-            Ok(val) => {
-                if val.is_string() {
-                    Some(val.to_rust_string_lossy(scope))
+) -> Option<(String, Option<agentos_resource_accounting::Reservation>)> {
+    use agentos_resource_accounting::ResourceClass;
+    let result = (|| -> Result<_, String> {
+        let resources = ctx
+            .runtime_context()
+            .map(|runtime| runtime.resources().clone());
+        let mut reservation: Option<agentos_resource_accounting::Reservation> = None;
+        let mut source = Vec::<u8>::new();
+        let mut warned = false;
+        loop {
+            if scope.is_execution_terminating() {
+                return Err("module loading interrupted".into());
+            }
+            let path = v8::String::new(scope, resolved_path).ok_or("module path is too large")?;
+            let args = v8::Array::new(scope, 3);
+            args.set_index(scope, 0, path.into());
+            let offset = v8::Number::new(scope, source.len() as f64);
+            args.set_index(scope, 1, offset.into());
+            let length = v8::Number::new(scope, MODULE_SOURCE_CHUNK_BYTES as f64);
+            args.set_index(scope, 2, length.into());
+            let args = serialize_v8_value(scope, args.into()).map_err(|error| error.to_string())?;
+            let response = ctx
+                .sync_call_response_with_max_response_bytes(
+                    "_loadFile",
+                    args,
+                    MODULE_SOURCE_CHUNK_BYTES + 128,
+                )?
+                .ok_or_else(|| format!("Cannot load module '{resolved_path}'"))?;
+            if response.status != 2 || response.payload.len() > MODULE_SOURCE_CHUNK_BYTES {
+                return Err("invalid ranged module-source response".into());
+            }
+            if response.payload.is_empty() {
+                break;
+            }
+            let needed = source
+                .len()
+                .checked_add(response.payload.len())
+                .ok_or("module source size overflow")?;
+            if resources.is_none() && needed > MAX_MODULE_SOURCE_BYTES {
+                return Err(format!("ERR_MODULE_SOURCE_TOO_LARGE: standalone module source exceeds {MAX_MODULE_SOURCE_BYTES} bytes; attach a runtime with configured runtime.blocking.maxQueuedBytes"));
+            }
+            if needed > source.capacity() {
+                // Page growth avoids both uncharged geometric capacity and a
+                // realloc for every small bridge response.
+                let page = if needed < 1024 * 1024 {
+                    4096
                 } else {
-                    throw_module_error(
-                        scope,
-                        &format!("_loadFile returned non-string for '{}'", resolved_path),
-                    );
-                    None
+                    1024 * 1024
+                };
+                let capacity = needed.saturating_add(128).div_ceil(page) * page;
+                if let Some(resources) = &resources {
+                    let extra = resources
+                        .reserve(ResourceClass::ExecutorBytes, capacity - source.capacity())
+                        .map_err(|error| error.to_string())?;
+                    if let Some(reservation) = &mut reservation {
+                        reservation
+                            .merge(extra)
+                            .map_err(|_| "module source accounting failed")?;
+                    } else {
+                        reservation = Some(extra);
+                    }
+                }
+                source
+                    .try_reserve_exact(capacity - source.len())
+                    .map_err(|error| error.to_string())?;
+                // Live-runtime ledger admission already warns against its
+                // configured limits. Only snapshot/test-only contexts need
+                // the fixed fallback warning here.
+                let near_limit = resources.is_none() && capacity >= MAX_MODULE_SOURCE_BYTES * 4 / 5;
+                if near_limit && !warned {
+                    eprintln!("WARN_AGENTOS_MODULE_SOURCE_NEAR_LIMIT: standalone source_capacity={capacity}; attach a runtime with configured runtime.blocking.maxQueuedBytes if required");
+                    warned = true;
                 }
             }
-            Err(e) => {
-                throw_module_error(scope, &format!("_loadFile decode error: {}", e));
-                None
-            }
-        },
-        Ok(None) => {
-            throw_module_error(scope, &format!("Cannot load module '{}'", resolved_path));
-            None
+            source.extend_from_slice(&response.payload);
         }
-        Err(e) => {
-            throw_module_error(scope, &e);
+        let source = String::from_utf8(source)
+            .map_err(|error| format!("module {resolved_path} is not valid UTF-8: {error}"))?;
+        Ok((source, reservation))
+    })();
+    match result {
+        Ok(source) => Some(source),
+        Err(error) => {
+            throw_module_error(scope, &error);
             None
         }
     }
@@ -3148,20 +3222,22 @@ fn strip_leading_shebang(source: &str) -> &str {
 
 fn build_module_source(
     scope: &mut v8::HandleScope,
-    raw_source: &str,
+    raw_source: impl Into<String>,
     resolved_path: &str,
     module_format: Option<ResolvedModuleFormat>,
 ) -> String {
-    let raw_source = strip_leading_shebang(raw_source);
+    let mut raw_source = raw_source.into();
+    let prefix = raw_source.len() - strip_leading_shebang(&raw_source).len();
+    raw_source.drain(..prefix);
     let normalized_path = resolved_path.to_ascii_lowercase();
     if normalized_path.ends_with(".json") || module_format == Some(ResolvedModuleFormat::Json) {
         return build_json_esm_shim(resolved_path);
     }
     if (module_format == Some(ResolvedModuleFormat::Commonjs)
-        && !has_probable_esm_syntax(raw_source))
-        || is_likely_cjs(raw_source, resolved_path, module_format)
+        && !has_probable_esm_syntax(&raw_source))
+        || is_likely_cjs(&raw_source, resolved_path, module_format)
     {
-        return build_cjs_esm_shim(scope, raw_source, resolved_path);
+        return build_cjs_esm_shim(scope, &raw_source, resolved_path);
     }
     add_esm_runtime_prelude(raw_source)
 }
@@ -4044,23 +4120,23 @@ fn source_has_module_exports_object_spread(source: &str) -> bool {
     false
 }
 
-fn add_esm_runtime_prelude(source: &str) -> String {
+fn add_esm_runtime_prelude(source: impl Into<String>) -> String {
+    let mut source = source.into();
     let mut prelude = String::new();
 
     if source.contains("require(")
         && !source.contains("createRequire(import.meta.url)")
         && !source.contains("createRequire(")
-        && !source_declares_identifier(source, "require")
+        && !source_declares_identifier(&source, "require")
     {
         prelude
             .push_str("const require = globalThis._moduleModule.createRequire(import.meta.url);\n");
     }
 
-    if prelude.is_empty() {
-        source.to_owned()
-    } else {
-        format!("{prelude}{source}")
+    if !prelude.is_empty() {
+        source.insert_str(0, &prelude);
     }
+    source
 }
 
 fn source_declares_identifier(source: &str, name: &str) -> bool {
@@ -8413,22 +8489,32 @@ export const file = new File([], "empty.txt");
             .unwrap();
 
             // Individual fallback: _loadFile (call_id=3) returns source
-            let load_result = v8_serialize_str(&mut iso, &ctx, "export const val = 42;");
+            let load_result = b"export const val = 42;".to_vec();
             crate::ipc_binary::write_frame(
                 &mut response_buf,
                 &crate::ipc_binary::BinaryFrame::BridgeResponse {
                     session_id: String::new(),
                     call_id: 3,
-                    status: 0,
+                    status: 2,
                     payload: load_result,
                 },
             )
             .unwrap();
+            // Ranged source loading ends with a raw empty EOF frame.
             crate::ipc_binary::write_frame(
                 &mut response_buf,
                 &crate::ipc_binary::BinaryFrame::BridgeResponse {
                     session_id: String::new(),
                     call_id: 4,
+                    status: 2,
+                    payload: Vec::new(),
+                },
+            ).unwrap();
+            crate::ipc_binary::write_frame(
+                &mut response_buf,
+                &crate::ipc_binary::BinaryFrame::BridgeResponse {
+                    session_id: String::new(),
+                    call_id: 5,
                     status: 0,
                     payload: v8_serialize_str(&mut iso, &ctx, "module"),
                 },
@@ -9171,22 +9257,32 @@ export const file = new File([], "empty.txt");
             )
             .unwrap();
 
-            let load_result = v8_serialize_str(&mut iso, &ctx, "export const value = 42;");
+            let load_result = b"export const value = 42;".to_vec();
             crate::ipc_binary::write_frame(
                 &mut response_buf,
                 &crate::ipc_binary::BinaryFrame::BridgeResponse {
                     session_id: String::new(),
                     call_id: 2,
-                    status: 0,
+                    status: 2,
                     payload: load_result,
                 },
             )
             .unwrap();
+            // Ranged source loading ends with a raw empty EOF frame.
             crate::ipc_binary::write_frame(
                 &mut response_buf,
                 &crate::ipc_binary::BinaryFrame::BridgeResponse {
                     session_id: String::new(),
                     call_id: 3,
+                    status: 2,
+                    payload: Vec::new(),
+                },
+            ).unwrap();
+            crate::ipc_binary::write_frame(
+                &mut response_buf,
+                &crate::ipc_binary::BinaryFrame::BridgeResponse {
+                    session_id: String::new(),
+                    call_id: 4,
                     status: 0,
                     payload: v8_serialize_str(&mut iso, &ctx, "module"),
                 },

@@ -789,6 +789,10 @@ pub struct JsRuntimeLimits {
         skip_serializing_if = "Option::is_none"
     )]
     pub v8_heap_limit_mb: Option<u64>,
+    #[serde(default, rename = "v8SerializationLimitBytes", skip_serializing_if = "Option::is_none")]
+    pub v8_serialization_limit_bytes: Option<u64>,
+    #[serde(default, rename = "maxBlobBytes", skip_serializing_if = "Option::is_none")]
+    pub max_blob_bytes: Option<u64>,
     #[serde(
         default,
         rename = "syncRpcWaitTimeoutMs",

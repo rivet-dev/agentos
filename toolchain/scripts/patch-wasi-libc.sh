@@ -15,6 +15,12 @@
 
 set -euo pipefail
 
+BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
+if [[ ! "$BUILD_JOBS" =~ ^[1-9][0-9]*$ ]]; then
+    echo "CARGO_BUILD_JOBS must be a positive integer (default 2)" >&2
+    exit 2
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WASMCORE_DIR="$(dirname "$SCRIPT_DIR")"
 PATCHES_DIR="$WASMCORE_DIR/std-patches/wasi-libc"
@@ -288,7 +294,7 @@ make -C "$WASI_LIBC_SRC_DIR" \
     SYSROOT="$SYSROOT_DIR" \
     THREAD_MODEL="$THREAD_MODEL" \
     libc \
-    -j"$(nproc 2>/dev/null || echo 4)"
+    -j"$BUILD_JOBS"
 
 # Install CRT startup files (crt1.o etc.) from the vanilla wasi-sdk sysroot.
 # CRT objects are standard startup routines that don't need our patches.

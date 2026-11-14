@@ -207,6 +207,8 @@ bridgeSourceText = bridgeSourceText
 	.replace(/entry\.classification === "hardened"/g, 'entry.c==="h"')
 	.replace(/entry\.classification === "mutable-runtime-state"/g, 'entry.c==="m"');
 
+// The embedded V8 supports ES2022. Keeping class fields native avoids per-instance
+// dictionary/WeakMap allocation from lowering them in either bridge build pass.
 async function generateBridgeSeamText() {
 	const result = await build({
 		entryPoints: [bridgeEntry],
@@ -217,7 +219,7 @@ async function generateBridgeSeamText() {
 		minify: false,
 		format: "esm",
 		platform: "neutral",
-		target: "es2020",
+		target: "es2022",
 		// Keep native class fields (do not lower to __publicField helpers) so the
 		// seam preserves readable `static builtinModules = [...]` etc. that the
 		// downstream text-consumers grep for.
@@ -259,6 +261,8 @@ async function validateBridgeContractGlobals(sourceText) {
 		"_processConfig",
 		"__agentOsHrNowUs",
 		"__agentOsRequireEsmSync",
+		// Pure URL bootstrap parser retained in the isolate; no host RPC.
+		"__agentOsDomainToASCII",
 		"_osConfig",
 		"bridge",
 		"_registerHandle",
@@ -276,6 +280,8 @@ async function validateBridgeContractGlobals(sourceText) {
 		"__agentOsReportTerminalCallback",
 		"__agentOsRequestProcessExit",
 		"__agentOsAddProtectedEventListener",
+		"__agentOsGetEventTargetListeners",
+		"__agentOSNextTickHooks",
 		"_getActiveHandles",
 		"_processExitRequested",
 		"_childProcessDispatch",
@@ -318,6 +324,7 @@ async function validateBridgeContractGlobals(sourceText) {
 		"exports",
 		"__filename",
 		"__dirname",
+		"gc",
 		"fetch",
 		"Headers",
 		"Request",
@@ -492,6 +499,8 @@ async function buildWebStreamsPrelude() {
 				"Object.assign(globalThis, { ByteLengthQueuingStrategy, CountQueuingStrategy, ReadableStreamDefaultReader, ReadableStreamBYOBReader, ReadableStreamBYOBRequest, ReadableStreamDefaultController, ReadableByteStreamController, WritableStreamDefaultWriter, WritableStreamDefaultController, TransformStreamDefaultController });",
 				"globalThis.TextDecoderStream = AgentOSTextDecoderStream;",
 				"globalThis.Blob = AgentOSBlob;",
+				'Object.defineProperty(AgentOSBlob, "name", { value: "Blob", configurable: true });',
+				'Object.defineProperty(AgentOSFile, "name", { value: "File", configurable: true });',
 				"globalThis.File = AgentOSFile;",
 				'if (typeof globalThis.MessagePort === "undefined") {',
 				"  globalThis.MessagePort = class MessagePortStub {",
@@ -534,7 +543,7 @@ async function buildWebStreamsPrelude() {
 		write: false,
 		format: "iife",
 		platform: "browser",
-		target: "es2020",
+		target: "es2022",
 		minify: true,
 		alias,
 		plugins: createUndiciBuildPlugins(),
@@ -560,8 +569,9 @@ async function buildUrlPrelude() {
 	const urlPreludeResult = await build({
 		stdin: {
 			contents: [
-				'import { installWhatwgUrlGlobals } from "agentos-whatwg-url-polyfill";',
+				'import { installWhatwgUrlGlobals, parseDomainASCII } from "agentos-whatwg-url-polyfill";',
 				"installWhatwgUrlGlobals(globalThis);",
+				'Object.defineProperty(globalThis, "__agentOsDomainToASCII", {value: parseDomainASCII, writable: false, configurable: false});',
 				'if (globalThis.SharedArrayBuffer?.__agentOSBootstrapStub === true) {',
 				"  delete globalThis.SharedArrayBuffer;",
 				"}",
@@ -574,7 +584,7 @@ async function buildUrlPrelude() {
 		write: false,
 		format: "iife",
 		platform: "browser",
-		target: "es2020",
+		target: "es2022",
 		minify: true,
 		alias,
 		plugins: createUndiciBuildPlugins(),
@@ -595,7 +605,7 @@ async function buildEventAbortPrelude() {
 	const eventAbortPreludeResult = await build({
 		stdin: {
 			contents: [
-				'import { Event, CustomEvent, EventTarget, addProtectedEventListener } from "agentos-dom-events-polyfill";',
+				'import { Event, CustomEvent, EventTarget, addProtectedEventListener, getEventTargetListeners } from "agentos-dom-events-polyfill";',
 				'import { AbortController, AbortSignal } from "agentos-abort-polyfill";',
 				"globalThis.Event = Event;",
 				"globalThis.CustomEvent = CustomEvent;",
@@ -603,6 +613,7 @@ async function buildEventAbortPrelude() {
 				"globalThis.AbortSignal = AbortSignal;",
 				"globalThis.AbortController = AbortController;",
 				"globalThis.__agentOsAddProtectedEventListener = addProtectedEventListener;",
+				"globalThis.__agentOsGetEventTargetListeners = getEventTargetListeners;",
 			].join("\n"),
 			resolveDir: bridgeAssetsDir,
 			sourcefile: "v8-bridge-event-abort.entry.js",
@@ -612,7 +623,7 @@ async function buildEventAbortPrelude() {
 		write: false,
 		format: "iife",
 		platform: "browser",
-		target: "es2020",
+		target: "es2022",
 		minify: true,
 		alias,
 		plugins: createUndiciBuildPlugins(),
@@ -762,11 +773,12 @@ const result = await build({
 	},
 	bundle: true,
 	outfile: bridgeTempOutput,
+	footer: { js: "//# sourceURL=node:agentos-bridge" },
 	legalComments: "inline",
 	write: true,
 	format: "iife",
 	platform: "browser",
-	target: "es2020",
+	target: "es2022",
 	minify: true,
 	metafile: true,
 	alias: mainBundleAlias,
@@ -793,6 +805,7 @@ const result = await build({
 const zlibResult = await build({
 	stdin: {
 		contents: [
+			`import { installBrotli } from ${JSON.stringify(path.join(undiciShimDir, "brotli.js"))};`,
 			'import * as assertStdlibModuleNs from "node:assert";',
 			'import { Buffer as zlibBuffer } from "node:buffer";',
 			'import * as utilStdlibModuleNs from "node:util";',
@@ -803,6 +816,7 @@ const zlibResult = await build({
 			"const zlibModule = zlibStdlibModuleNs.default ?? zlibStdlibModuleNs;",
 			'const zlibConstants = typeof zlibModule.constants === "object" && zlibModule.constants !== null ? zlibModule.constants : Object.fromEntries(Object.entries(zlibModule).filter(([key, value]) => /^[A-Z0-9_]+$/.test(key) && typeof value === "number"));',
 			'if(typeof zlibModule.constants === "undefined"){zlibModule.constants = zlibConstants;}',
+			"installBrotli(zlibModule, zlibBuffer);",
 			'const normalizeZlibInput = (value) => { if (typeof value === "string" || zlibBuffer.isBuffer(value)) return value; if (value instanceof ArrayBuffer) return zlibBuffer.from(value); if (ArrayBuffer.isView(value)) return zlibBuffer.from(value.buffer, value.byteOffset, value.byteLength); return value; };',
 			'for (const name of ["deflate", "deflateSync", "gzip", "gzipSync", "deflateRaw", "deflateRawSync", "unzip", "unzipSync", "inflate", "inflateSync", "gunzip", "gunzipSync", "inflateRaw", "inflateRawSync"]) { const original = zlibModule[name]; if (typeof original === "function") zlibModule[name] = function(input, ...args) { return original.call(this, normalizeZlibInput(input), ...args); }; }',
 			'if(typeof utilModule.TextEncoder==="undefined"&&typeof globalThis.TextEncoder==="function"){utilModule.TextEncoder=globalThis.TextEncoder;}',

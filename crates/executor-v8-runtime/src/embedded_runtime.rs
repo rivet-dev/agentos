@@ -315,6 +315,23 @@ impl EmbeddedV8Runtime {
         ready_batch_handle_limit: usize,
         bridge_call_timeout: std::time::Duration,
     ) -> io::Result<()> {
+        self.dispatch_create_session_with_runtime_and_serialization_limit(
+            command,
+            session_runtime,
+            ready_batch_handle_limit,
+            bridge_call_timeout,
+            None,
+        )
+    }
+
+    pub fn dispatch_create_session_with_runtime_and_serialization_limit(
+        &self,
+        command: RuntimeCommand,
+        session_runtime: agentos_driver_tokio::DriverHandle,
+        ready_batch_handle_limit: usize,
+        bridge_call_timeout: std::time::Duration,
+        serialization_limit_bytes: Option<usize>,
+    ) -> io::Result<()> {
         let RuntimeCommand::CreateSession {
             session_id,
             heap_limit_mb,
@@ -355,6 +372,7 @@ impl EmbeddedV8Runtime {
                 session_runtime,
                 ready_batch_handle_limit,
                 bridge_call_timeout,
+                serialization_limit_bytes,
             )
             .map_err(other_io_error)
     }

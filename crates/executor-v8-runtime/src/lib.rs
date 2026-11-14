@@ -19,6 +19,11 @@ pub mod isolate;
 #[allow(dead_code, unused_imports)]
 pub mod javascript;
 pub mod native_heap;
+mod node_v8_deserializer;
+mod node_v8_serialization;
+mod uint8array_encoding;
+mod next_ticks;
+mod node_brotli;
 pub(crate) mod owned_microtasks;
 pub mod runtime_protocol;
 pub mod session;

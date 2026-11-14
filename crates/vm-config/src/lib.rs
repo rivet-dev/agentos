@@ -1686,6 +1686,8 @@ limits_struct!(AgentOsPackageLimitsConfig { max_mounts });
 limits_struct!(JsRuntimeLimitsConfig {
     max_readline_history_entries,
     v8_heap_limit_mb,
+    v8_serialization_limit_bytes,
+    max_blob_bytes,
     sync_rpc_wait_timeout_ms,
     cpu_time_limit_ms,
     wall_clock_limit_ms,

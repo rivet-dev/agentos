@@ -173,8 +173,7 @@ pub(crate) fn checkpoint(scope: &mut v8::HandleScope) {
     if crate::terminal_callback::pending(scope) || scope.is_execution_terminating() {
         return;
     }
-    let context = scope.get_current_context();
-    context.get_microtask_queue().perform_checkpoint(scope);
+    crate::next_ticks::checkpoint(scope);
 }
 
 /// All ContextScopes/callbacks have unwound. Never executes a checkpoint or guest
@@ -193,6 +192,8 @@ pub(crate) fn discard_failed_call(isolate: &mut v8::Isolate) {
         for weak in &family.contexts {
             if let Some(context) = weak.to_local(scope) {
                 context.set_microtask_queue(&replacement);
+                let scope = &mut v8::ContextScope::new(scope, context);
+                crate::next_ticks::discard(scope);
             }
         }
     }

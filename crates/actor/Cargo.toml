@@ -39,5 +39,5 @@ uuid = { version = "1", features = ["v4"] }
 [dev-dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
 tokio-util = { version = "0.7", features = ["rt"] }
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.43", features = ["bundled", "fallible_uint"] }
 tempfile = "3"

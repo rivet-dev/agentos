@@ -95,6 +95,8 @@ export class SidecarProtocolClient {
 		| ((error: Error) => Error | undefined)
 		| undefined;
 	private readonly hostFrameFactory = new HostProtocolFrameFactory();
+	private ingressRetryRequests = 0;
+	private ingressRetryBytes = 0;
 	private readonly frameTransport: FrameRpcTransport<
 		LiveResponseFrame | LiveEventFrame | LiveSidecarRequestFrame,
 		LiveRequestFrame | LiveSidecarResponseFrame | LiveControlFrame,
@@ -251,33 +253,53 @@ export class SidecarProtocolClient {
 		ownership: LiveOwnershipScope;
 		payload: LiveRequestPayload;
 	}): Promise<LiveResponseFrame> {
-		if (this.closedError) {
-			throw this.closedError;
-		}
-
-		const request = this.hostFrameFactory.createRequestFrame(input);
-		// No per-request deadline: only the caller knows whether an operation is
-		// legitimately long (a whole agent turn is one request). A dead or
-		// wedged sidecar rejects this via the silence watchdog instead.
-		let response: LiveResponseFrame;
+		if (this.closedError) throw this.closedError;
+		const original = this.hostFrameFactory.createRequestFrame(input);
+		const retainedBytes = encodeProtocolFramePayload(original, this.payloadCodec).byteLength;
+		// Preserve the exact logical request, including binary arguments, while
+		// retrying only a typed refusal issued before ordinary ingress admission.
+		const request = structuredClone(original);
+		let retryReserved = false;
 		try {
-			response = await this.frameTransport.sendFrame(
-				request.request_id,
-				request,
-			);
-		} catch (error) {
-			const fatal = this.failOnFatalWrite(error);
-			if (fatal) throw fatal;
-			throw error;
+			for (let attempt = 0; ; attempt++) {
+				if (this.closedError) throw this.closedError;
+				let response: LiveResponseFrame;
+				try { response = await this.frameTransport.sendFrame(request.request_id, request); }
+				catch (error) {
+					const fatal = this.failOnFatalWrite(error);
+					if (fatal) throw fatal;
+					throw error;
+				}
+				if (response.payload.type !== "rejected") {
+					if (response.payload.type === "authenticated") this.maxFrameBytes = response.payload.max_frame_bytes;
+					return response;
+				}
+				const detail = response.payload;
+				const ingressPressure = detail.code === "ERR_AGENTOS_PROTOCOL_FRAME_LIMIT" || detail.code === "ERR_AGENTOS_PROTOCOL_BYTE_LIMIT";
+				const canRetry = ingressPressure && detail.retryable === true && detail.errno === "EAGAIN"
+					&& detail.operation === "stdio.requestAdmission" && detail.limit_name === "stdio ordinary ingress"
+					&& (detail.configuration_path === "runtime.protocol.maxIngressFrames" || detail.configuration_path === "runtime.protocol.maxIngressBytes")
+					&& detail.requested !== null && detail.configured_limit !== null && detail.requested <= detail.configured_limit;
+				if (!canRetry || attempt >= 32) throw new SidecarRejectedError(request.request_id, detail);
+				if (!retryReserved) {
+					// Admission retries cannot create an unbounded host timer/payload
+					// queue. Exhaustion preserves the original typed refusal.
+					if (this.ingressRetryRequests >= 4096 || retainedBytes > 64 * 1024 * 1024 - this.ingressRetryBytes) throw new SidecarRejectedError(request.request_id, detail);
+					this.ingressRetryRequests++; this.ingressRetryBytes += retainedBytes; retryReserved = true;
+				}
+				await this.waitForIngressRetry(Math.min(2 ** Math.min(attempt + 1, 7), 100) + request.request_id % 17);
+			}
+		} finally {
+			if (retryReserved) { this.ingressRetryRequests--; this.ingressRetryBytes -= retainedBytes; }
 		}
+	}
 
-		if (response.payload.type === "rejected") {
-			throw new SidecarRejectedError(request.request_id, response.payload);
-		}
-		if (response.payload.type === "authenticated") {
-			this.maxFrameBytes = response.payload.max_frame_bytes;
-		}
-		return response;
+	private waitForIngressRetry(milliseconds: number): Promise<void> {
+		return new Promise((resolve, reject) => {
+			let unsubscribe = () => {};
+			const timer = setTimeout(() => { unsubscribe(); resolve(); }, milliseconds);
+			unsubscribe = this.onClose(error => { clearTimeout(timer); unsubscribe(); reject(error); });
+		});
 	}
 
 	async shutdown(reason: string): Promise<void> {
@@ -397,7 +419,7 @@ export class SidecarProtocolClient {
 	}
 
 	dispose(): void {
-		this.stopSilenceWatchdog();
+		this.failPermanently(new Error("sidecar protocol client disposed"));
 		this.frameTransport.dispose();
 	}
 

@@ -52,16 +52,7 @@ function computeRequireResolvePaths(dirname, request) {
 }
 function createRequireResolve(dirname) {
 	const resolve = function (request, _options) {
-		const resolved = _resolveModule.applySyncPromise(void 0, [
-			request,
-			dirname,
-			"require",
-		]);
-		if (resolved === null) {
-			const err = new Error("Cannot find module '" + request + "'");
-			err.code = "MODULE_NOT_FOUND";
-			throw err;
-		}
+		const resolved = Module._resolveFilename(request, { path: dirname }, false, _options);
 		return resolved;
 	};
 	resolve.paths = function (request) {
@@ -343,16 +334,7 @@ function requireFrom(request, parentDir, isMain = false) {
 			}
 		}
 	}
-	const resolved = _resolveModule.applySyncPromise(void 0, [
-		request,
-		parentPath,
-		"require",
-	]);
-	if (resolved === null) {
-		const error = new Error(`Cannot find module '${request}'`);
-		error.code = "MODULE_NOT_FOUND";
-		throw error;
-	}
+	const resolved = Module._resolveFilename(request, { path: parentPath }, isMain);
 	if (Object.prototype.hasOwnProperty.call(_moduleCache, resolved)) {
 		if (isMain) markMainModule(_moduleCache[resolved]);
 		return _moduleCache[resolved].exports;

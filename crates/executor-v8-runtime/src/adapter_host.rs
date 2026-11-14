@@ -108,12 +108,32 @@ impl V8RuntimeHost {
         ready_batch_handle_limit: usize,
         bridge_call_timeout: std::time::Duration,
     ) -> io::Result<()> {
-        self.shared.runtime.dispatch_create_session_with_runtime(
+        self.create_session_from_command_with_runtime_and_serialization_limit(
             command,
-            runtime.clone(),
+            runtime,
             ready_batch_handle_limit,
             bridge_call_timeout,
+            None,
         )
+    }
+
+    pub fn create_session_from_command_with_runtime_and_serialization_limit(
+        &self,
+        command: RuntimeCommand,
+        runtime: &DriverHandle,
+        ready_batch_handle_limit: usize,
+        bridge_call_timeout: std::time::Duration,
+        serialization_limit_bytes: Option<usize>,
+    ) -> io::Result<()> {
+        self.shared
+            .runtime
+            .dispatch_create_session_with_runtime_and_serialization_limit(
+                command,
+                runtime.clone(),
+                ready_batch_handle_limit,
+                bridge_call_timeout,
+                serialization_limit_bytes,
+            )
     }
 
     /// Send a frame to the V8 runtime.

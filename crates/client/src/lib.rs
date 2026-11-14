@@ -118,6 +118,7 @@ pub use sidecar::configure_shared_sidecar_package_cache;
 pub use sidecar::AgentOsPackageSession;
 pub use sidecar::{
     AgentOsSidecar, AgentOsSidecarDescription, AgentOsSidecarPlacement, SidecarState,
+    AgentOsSidecarRuntimeConfig, AgentOsSidecarBlockingConfig, AgentOsSidecarExecutorConfig, AgentOsSidecarProtocolConfig,
 };
 pub use stream::{ByteStream, Subscription};
 
@@ -142,7 +143,9 @@ pub use process::{
     SpawnStdio, SpawnedProcessInfo, StandaloneWasmBackend, StdinInput, TimingMitigation,
 };
 
-pub use net::{HttpRequest, HttpResponse, HttpStreamChunk, HttpStreamHead};
+pub use net::{
+    GuestConnection, GuestConnectionChunk, HttpRequest, HttpResponse, HttpStreamChunk, HttpStreamHead,
+};
 
 pub use software::{
     configure_process_package_cache, process_package_cache_stats, validate_package_source,

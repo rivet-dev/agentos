@@ -49,8 +49,10 @@ function inspect(api) {
 		getPrototypeOf(target) { parent.length = 1; return Reflect.getPrototypeOf(target); },
 	});
 	parent.push(child, { kept: 2 });
-	const arrayMutationRoundTrip = api.deserialize(api.serialize(parent));
-	return { rejected, roundTrips, classRoundTrip: reader.readValue(), invalid, arrayMutationRoundTrip };
+	let arrayMutationError;
+	try { api.deserialize(api.serialize(parent)); arrayMutationError = "RETURNED"; }
+	catch (error) { arrayMutationError = error.code ?? error.name; }
+	return { rejected, roundTrips, classRoundTrip: reader.readValue(), invalid, arrayMutationError };
 }
 console.log(JSON.stringify({
 	cjs: inspect(cjsV8), esm: inspect(esmV8), accessorCalls, toJsonCalls,

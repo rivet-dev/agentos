@@ -791,6 +791,7 @@ pub(crate) fn install_session_bridge_fns(
 ) -> Result<(), String> {
     let scope = &mut v8::TryCatch::new(scope);
     reset_vm_context_registry(scope);
+    crate::next_ticks::capture(scope)?;
     let context = scope.get_current_context();
     let global = context.global(scope);
     for (methods, is_async) in [(sync_methods, false), (async_methods, true)] {
@@ -1492,6 +1493,7 @@ fn remove_vm_context_slot(isolate: &mut v8::Isolate, context_id: u32) {
 /// Release this isolate's context IDs at an explicit execution boundary.
 /// Retained calls do not reset: their contextified objects keep stable IDs.
 fn reset_vm_context_registry(isolate: &mut v8::Isolate) {
+    crate::node_v8_deserializer::reset(isolate);
     if let Some(registry) = isolate.get_slot::<VmContextRegistry>() {
         let mut state = registry.0.borrow_mut();
         state.contexts.clear();
@@ -1502,6 +1504,7 @@ fn reset_vm_context_registry(isolate: &mut v8::Isolate) {
 /// Drop every registry Global while the isolate is alive, before custom queues.
 /// Removing only this slot cannot disturb another isolate on the same thread.
 pub(crate) fn release_vm_context_registry(isolate: &mut v8::Isolate) {
+    crate::node_v8_deserializer::release(isolate);
     if let Some(registry) = isolate.remove_slot::<VmContextRegistry>() {
         registry.0.borrow_mut().contexts.clear();
     }
@@ -1510,18 +1513,21 @@ pub(crate) fn release_vm_context_registry(isolate: &mut v8::Isolate) {
 /// Optional owner for an explicit non-retained registry boundary. The weak
 /// reference cannot keep the registry or its Globals alive after isolate disposal.
 #[must_use = "hold the guard for its explicit registry lifetime"]
-pub struct VmContextRegistryGuard(std::rc::Weak<RefCell<VmContextRegistryState>>);
+pub struct VmContextRegistryGuard {
+    contexts: std::rc::Weak<RefCell<VmContextRegistryState>>,
+    _readers: crate::node_v8_deserializer::RegistryGuard,
+}
 
 impl VmContextRegistryGuard {
     pub fn new(isolate: &mut v8::Isolate) -> Self {
         reset_vm_context_registry(isolate);
-        Self(Rc::downgrade(&vm_context_registry(isolate).0))
+        Self { contexts: Rc::downgrade(&vm_context_registry(isolate).0), _readers: crate::node_v8_deserializer::RegistryGuard::new(isolate) }
     }
 }
 
 impl Drop for VmContextRegistryGuard {
     fn drop(&mut self) {
-        if let Some(registry) = self.0.upgrade() {
+        if let Some(registry) = self.contexts.upgrade() {
             let mut state = registry.borrow_mut();
             state.contexts.clear();
             state.next_id = 1;
@@ -2461,8 +2467,71 @@ fn handle_local_bridge_call<'s>(
     bridge_ctx: &BridgeCallContext,
 ) -> Result<Option<v8::Local<'s, v8::Value>>, String> {
     match method {
+        "process.nextTickScheduled" => {
+            crate::next_ticks::scheduled(scope)?;
+            Ok(Some(v8::undefined(scope).into()))
+        }
         "process.memoryUsage" => Ok(Some(process_memory_usage_value(scope))),
         "v8.getHeapStatistics" => v8_heap_statistics_value(scope).map(Some),
+        "v8.collectGarbage" => {
+            // Collect only this guest isolate. Never ask the host process or another VM to collect.
+            scope.low_memory_notification();
+            Ok(Some(v8::undefined(scope).into()))
+        }
+        "zlib.brotliCompressSync" | "zlib.brotliDecompressSync" => {
+            let runtime = bridge_ctx
+                .runtime_context()
+                .ok_or("Brotli requires the session runtime")?;
+            let limit = runtime
+                .resources()
+                .usage(agentos_driver_tokio::accounting::ResourceClass::BridgeResponseBytes)
+                .limit
+                .ok_or("Brotli requires limits.reactor.maxBridgeResponseBytes")?;
+            crate::node_brotli::transform(
+                scope,
+                args,
+                method == "zlib.brotliDecompressSync",
+                limit,
+                runtime.resources().clone(),
+            )
+            .map(Some)
+        }
+        "v8.deserializer.create"
+        | "v8.deserializer.readHeader"
+        | "v8.deserializer.readValue"
+        | "v8.deserializer.readUint32"
+        | "v8.deserializer.readUint64"
+        | "v8.deserializer.readDouble"
+        | "v8.deserializer.readRawBytes"
+        | "v8.deserializer.getWireFormatVersion"
+        | "v8.deserializer.transferArrayBuffer"
+        | "v8.deserializer.readHostObject" => {
+            let runtime = bridge_ctx.runtime_context().ok_or("V8 Deserializer requires the session runtime")?;
+            let limit = runtime.resources().usage(agentos_driver_tokio::accounting::ResourceClass::BridgeResponseBytes).limit.ok_or("V8 Deserializer requires a response byte limit")?;
+            let (limit, path) = bridge_ctx.serialization_limit().map(|bytes| (bytes, "limits.jsRuntime.v8SerializationLimitBytes")).unwrap_or((limit, "limits.reactor.maxBridgeResponseBytes"));
+            crate::node_v8_deserializer::call(scope, args, method, limit, path, runtime.resources().clone()).map(Some)
+        }
+        "uint8array.encode" => crate::uint8array_encoding::encode(scope, args).map(Some),
+        "v8.serialize" | "v8.deserialize" => {
+            let runtime = bridge_ctx
+                .runtime_context()
+                .ok_or("V8 serialization requires the session runtime")?;
+            let limit = runtime
+                .resources()
+                .usage(agentos_driver_tokio::accounting::ResourceClass::BridgeResponseBytes)
+                .limit
+                .ok_or("V8 serialization requires limits.reactor.maxBridgeResponseBytes")?;
+            let (limit, path) = bridge_ctx
+                .serialization_limit()
+                .map(|bytes| (bytes, "limits.jsRuntime.v8SerializationLimitBytes"))
+                .unwrap_or((limit, "limits.reactor.maxBridgeResponseBytes"));
+            let value = args.get(0);
+            if method == "v8.serialize" {
+                crate::node_v8_serialization::serialize(scope, value, limit, path).map(Some)
+            } else {
+                crate::node_v8_serialization::deserialize(scope, value, limit, path).map(Some)
+            }
+        }
         "process.cpuUsage" => process_cpu_usage_value(scope, args).map(Some),
         "process.resourceUsage" => process_resource_usage_value(scope).map(Some),
         "process.versions" => Ok(Some(process_versions_value(scope))),

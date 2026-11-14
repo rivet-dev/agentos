@@ -175,12 +175,63 @@ pub struct AgentOsSidecarDescription {
     pub active_vm_count: u32,
 }
 
+/// Explicit process-wide sidecar capacities. Omitted values retain native defaults.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentOsSidecarRuntimeConfig {
+    pub blocking: Option<AgentOsSidecarBlockingConfig>,
+    pub executor: Option<AgentOsSidecarExecutorConfig>,
+    pub protocol: Option<AgentOsSidecarProtocolConfig>,
+}
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentOsSidecarBlockingConfig {
+    pub max_queued_bytes: Option<u64>,
+}
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentOsSidecarExecutorConfig {
+    pub max_active_vms: Option<u64>,
+}
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentOsSidecarProtocolConfig {
+    pub max_in_flight_requests: Option<u64>,
+    pub max_terminal_frames: Option<u64>,
+    pub max_terminal_bytes: Option<u64>,
+    pub max_control_frames: Option<u64>,
+    pub max_control_bytes: Option<u64>,
+}
+impl AgentOsSidecarRuntimeConfig {
+    fn spawn_args(&self) -> Result<Vec<String>, ClientError> {
+        let mut args = Vec::new();
+        for (path, flag, value) in [
+            ("runtime.blocking.maxQueuedBytes", "--max-blocking-bytes", self.blocking.as_ref().and_then(|c| c.max_queued_bytes)),
+            ("runtime.executor.maxActiveVms", "--max-active-vms", self.executor.as_ref().and_then(|c| c.max_active_vms)),
+            ("runtime.protocol.maxInFlightRequests", "--max-in-flight-requests", self.protocol.as_ref().and_then(|c| c.max_in_flight_requests)),
+            ("runtime.protocol.maxTerminalFrames", "--max-terminal-frames", self.protocol.as_ref().and_then(|c| c.max_terminal_frames)),
+            ("runtime.protocol.maxTerminalBytes", "--max-terminal-bytes", self.protocol.as_ref().and_then(|c| c.max_terminal_bytes)),
+            ("runtime.protocol.maxControlFrames", "--max-control-frames", self.protocol.as_ref().and_then(|c| c.max_control_frames)),
+            ("runtime.protocol.maxControlBytes", "--max-control-bytes", self.protocol.as_ref().and_then(|c| c.max_control_bytes)),
+        ] {
+            if let Some(value) = value {
+                if value == 0 || value > 9_007_199_254_740_991 || value > usize::MAX as u64 {
+                    return Err(ClientError::Sidecar(format!("{path} must be a positive safe integer")));
+                }
+                args.extend([flag.to_owned(), value.to_string()]);
+            }
+        }
+        Ok(args)
+    }
+}
+
 /// Public transport handle for a (possibly shared) sidecar process hosting VMs.
 pub struct AgentOsSidecar {
     pub(crate) sidecar_id: String,
     pub(crate) placement: AgentOsSidecarPlacement,
     pub(crate) shared_pool: Option<String>,
     runtime_id: Option<tokio::runtime::Id>,
+    runtime_args: Vec<String>,
     pub(crate) state: AtomicU8,
     pub(crate) active_vm_count: AtomicU32,
     pub(crate) active_package_sessions: AtomicU32,
@@ -219,6 +270,7 @@ impl AgentOsSidecar {
         sidecar_binary_path: Option<String>,
     ) -> Self {
         Self {
+            runtime_args: Vec::new(),
             sidecar_id: sidecar_id.into(),
             placement,
             shared_pool,
@@ -269,9 +321,11 @@ impl AgentOsSidecar {
             ));
         }
 
+        let mut args = sidecar_spawn_args()?;
+        args.extend(self.runtime_args.iter().cloned());
         let transport = SidecarProcess::spawn_with_args(
             Some(self.resolved_sidecar_binary_path()),
-            sidecar_spawn_args()?,
+            args,
         )
         .await?;
         // Retain ownership before the authentication await, so errors or
@@ -1039,14 +1093,23 @@ impl AgentOs {
     pub async fn create_sidecar(
         sidecar_id: Option<String>,
     ) -> Result<Arc<AgentOsSidecar>, ClientError> {
+        Self::create_sidecar_with_runtime(sidecar_id, AgentOsSidecarRuntimeConfig::default()).await
+    }
+
+    /// Create a sidecar with explicit native capacities, matching TypeScript `runtime`.
+    pub async fn create_sidecar_with_runtime(
+        sidecar_id: Option<String>,
+        runtime: AgentOsSidecarRuntimeConfig,
+    ) -> Result<Arc<AgentOsSidecar>, ClientError> {
+        let runtime_args = runtime.spawn_args()?;
         let sidecar_id =
             sidecar_id.unwrap_or_else(|| format!("agentos-sidecar-{}", Uuid::new_v4()));
         let placement = AgentOsSidecarPlacement::Explicit {
             sidecar_id: sidecar_id.clone(),
         };
-        Ok(Arc::new(AgentOsSidecar::new(
-            sidecar_id, placement, None, None,
-        )))
+        let mut sidecar = AgentOsSidecar::new(sidecar_id, placement, None, None);
+        sidecar.runtime_args = runtime_args;
+        Ok(Arc::new(sidecar))
     }
 
     /// Get (or create) a pooled shared sidecar. Pool defaults to `"default"`. Uses the process-global
@@ -1061,6 +1124,16 @@ impl AgentOs {
         pool: Option<String>,
         sidecar_binary_path: Option<String>,
     ) -> Result<Arc<AgentOsSidecar>, ClientError> {
+        Self::get_shared_sidecar_with_runtime(pool, sidecar_binary_path, AgentOsSidecarRuntimeConfig::default()).await
+    }
+
+    /// Reuse a pool only when its explicit process capacities match.
+    pub async fn get_shared_sidecar_with_runtime(
+        pool: Option<String>,
+        sidecar_binary_path: Option<String>,
+        runtime: AgentOsSidecarRuntimeConfig,
+    ) -> Result<Arc<AgentOsSidecar>, ClientError> {
+        let runtime_args = runtime.spawn_args()?;
         let pool = pool.unwrap_or_else(|| "default".to_string());
         let runtime_id = tokio::runtime::Handle::try_current()
             .map_err(|error| {
@@ -1090,6 +1163,9 @@ impl AgentOs {
         // Fast path: reuse a cached, non-disposed sidecar for this pool.
         if let Some(existing) = cache.read(&key, |_, sidecar| sidecar.clone()) {
             if existing.describe().state != SidecarState::Disposed {
+                if existing.runtime_args != runtime_args {
+                    return Err(ClientError::Sidecar("shared sidecar runtime configuration differs from its existing owner".into()));
+                }
                 return Ok(existing);
             }
         }
@@ -1103,14 +1179,16 @@ impl AgentOs {
         } else {
             Some(pool.clone())
         };
-        let sidecar = Arc::new(AgentOsSidecar::new(
+        let mut sidecar = AgentOsSidecar::new(
             format!("agentos-shared-sidecar:{pool}"),
             AgentOsSidecarPlacement::Shared {
                 pool: placement_pool,
             },
             Some(pool.clone()),
             sidecar_binary_path,
-        ));
+        );
+        sidecar.runtime_args = runtime_args;
+        let sidecar = Arc::new(sidecar);
 
         // Insert atomically, replacing a stale (disposed) entry but yielding to a live one that a
         // concurrent caller may have just installed.
@@ -1122,6 +1200,8 @@ impl AgentOs {
                     _admission.register(runtime_id, sidecar.clone())?;
                     *occupied.get_mut() = sidecar.clone();
                     Ok(sidecar)
+                } else if occupied.get().runtime_args != sidecar.runtime_args {
+                    Err(ClientError::Sidecar("shared sidecar runtime configuration differs from its existing owner".into()))
                 } else {
                     Ok(occupied.get().clone())
                 }
@@ -1142,6 +1222,26 @@ impl AgentOs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn runtime_capacities_preserve_defaults_and_pool_ownership() {
+        assert!(AgentOsSidecarRuntimeConfig::default().spawn_args().unwrap().is_empty());
+        let config = AgentOsSidecarRuntimeConfig {
+            blocking: Some(AgentOsSidecarBlockingConfig { max_queued_bytes: Some(268435456) }),
+            ..Default::default()
+        };
+        assert_eq!(config.spawn_args().unwrap(), ["--max-blocking-bytes", "268435456"]);
+        for value in [0, 9_007_199_254_740_992] {
+            let invalid = AgentOsSidecarRuntimeConfig { blocking: Some(AgentOsSidecarBlockingConfig { max_queued_bytes: Some(value) }), ..Default::default() };
+            assert!(invalid.spawn_args().is_err());
+        }
+        let pool = Some(format!("runtime-capacity-{}", Uuid::new_v4()));
+        let owner = AgentOs::get_shared_sidecar_with_runtime(pool.clone(), None, config.clone()).await.unwrap();
+        let reused = AgentOs::get_shared_sidecar_with_runtime(pool.clone(), None, config).await.unwrap();
+        assert!(Arc::ptr_eq(&owner, &reused));
+        assert!(AgentOs::get_shared_sidecar(pool, None).await.is_err());
+        owner.dispose().await.unwrap();
+    }
+
     use std::sync::Mutex;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());

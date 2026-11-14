@@ -345,6 +345,16 @@ export interface AgentOsCreateSidecarOptions {
 
 /** Process-wide runtime settings applied when the native sidecar starts. */
 export interface AgentOsSidecarRuntimeConfig {
+	/** Process-wide budget for admitted blocking operation bytes. */
+	blocking?: { maxQueuedBytes?: number };
+	/** Enforced protocol admission and terminal-response reservations. Defaults remain unchanged. */
+	protocol?: {
+		maxInFlightRequests?: number;
+		maxTerminalFrames?: number;
+		maxTerminalBytes?: number;
+		maxControlFrames?: number;
+		maxControlBytes?: number;
+	};
 	executor?: {
 		/** Optional ceiling for concurrent V8 executors. Omit to leave admission uncapped. */
 		maxActiveVms?: number;
@@ -546,6 +556,10 @@ export interface AgentOsLimits {
 	jsRuntime?: {
 		maxReadlineHistoryEntries?: number;
 		v8HeapLimitMb?: number;
+        /** Local node:v8 operation cap; omitted preserves the bridge-size cap. */
+        v8SerializationLimitBytes?: number;
+        /** Per-Blob/File byte ceiling. Defaults to64MiB; cannot exceed the configured V8 heap. */
+        maxBlobBytes?: number;
 		syncRpcWaitTimeoutMs?: number;
 		cpuTimeLimitMs?: number;
 		wallClockLimitMs?: number;
@@ -2518,6 +2532,7 @@ export class AgentOs {
 
 	readonly filesystem = {
 		readFile: this._readFile.bind(this),
+		readFileRange: this._readFileRange.bind(this),
 		writeFile: this._writeFile.bind(this),
 		readFiles: this._readFiles.bind(this),
 		writeFiles: this._writeFiles.bind(this),
@@ -2535,8 +2550,25 @@ export class AgentOs {
 		listMounts: this._listMounts.bind(this),
 	};
 
+    /** Replace the trusted owner's complete permission policy. Omitted scopes
+     * resolve to sidecar defaults, as with initial configuration. This changes
+     * future admission; existing authorized streams retain their capabilities.
+     * Creation-time loopback exemptions remain part of the VM configuration.
+     */
+    async configurePermissions(permissions:Permissions,options:{loopbackExemptPorts?:number[]}={}):Promise<void>{
+        return this._withVmMutation(async()=>{
+        if(!(this.#kernel instanceof SidecarKernelProxy))throw Object.assign(new Error("permission reconfiguration requires the native Core runtime"),{code:"ENOTSUP"});
+        const ports=options.loopbackExemptPorts;
+        if(ports&&(ports.length>65535||ports.some(port=>!Number.isInteger(port)||port<1||port>65535)))throw new RangeError("loopbackExemptPorts must contain at most65535 ports from1 through65535");
+        const policy=serializePermissionsForSidecar(permissions);
+        if(!policy)throw new TypeError("configurePermissions requires a permission policy");
+        await this.#kernel.configurePermissions(policy,ports);
+        });
+    }
+
 	readonly network = {
 		httpRequest: this._httpRequest.bind(this),
+		connect: this._connectGuest.bind(this),
 	};
 
 	readonly software = {
@@ -4409,6 +4441,15 @@ export class AgentOs {
 		return (this.#kernel as unknown as { vfs: VirtualFileSystem }).vfs;
 	}
 
+    /** One bounded positional read. Kernel pread quotas still govern length. */
+    private async _readFileRange(path:string,offset:number,length:number):Promise<Uint8Array>{
+        this._assertSafeAbsolutePath(path);
+        if(!Number.isSafeInteger(offset)||offset<0||!Number.isSafeInteger(length)||length<0){
+            throw new RangeError("readFileRange offset and length must be non-negative safe integers");
+        }
+        return this._vfs().pread(path,offset,length);
+    }
+
 	private async _readFile(path: string): Promise<Uint8Array> {
 		this._assertSafeAbsolutePath(path);
 		return this.#kernel.readFile(path);
@@ -4821,6 +4862,37 @@ export class AgentOs {
 			statusText: responsePayload.statusText ?? "",
 			headers,
 		});
+	}
+
+	/** Connect a trusted client to a TCP listener inside this VM, never host loopback. */
+	private async _connectGuest(port: number): Promise<{
+		read(maxBytes?: number): Promise<{ body: Uint8Array; done: boolean }>;
+		write(bytes: Uint8Array): Promise<void>;
+		end(): Promise<void>;
+		close(): Promise<void>;
+	}> {
+		const call = async (operation: "socket-open" | "socket-read" | "socket-write" | "socket-end" | "socket-close", fields: { streamId?: string; bodyBase64?: string; maxBytes?: number } = {}) => JSON.parse(
+			await this._sidecarClient.vmFetch(this._sidecarSession, this._sidecarVm, {
+				port, method: "GET", path: "/", headersJson: "{}", streamOperation: operation, ...fields,
+			}),
+		);
+		const { streamId } = await call("socket-open") as { streamId: string };
+		return {
+			async read(maxBytes = 65536) {
+				const result = await call("socket-read", { streamId, maxBytes }) as { body: string; done: boolean };
+				return { body: new Uint8Array(Buffer.from(result.body, "base64")), done: result.done };
+			},
+			async write(bytes) {
+				for (let offset = 0; offset < bytes.byteLength;) {
+					const bodyBase64 = Buffer.from(bytes.subarray(offset, offset + 65536)).toString("base64");
+					const { written } = await call("socket-write", { streamId, bodyBase64 }) as { written: number };
+					if (written <= 0 || written > Math.min(65536, bytes.byteLength - offset)) throw new Error("Invalid guest connection write acknowledgement");
+					offset += written;
+				}
+			},
+			async end() { await call("socket-end", { streamId }); },
+			async close() { await call("socket-close", { streamId }); },
+		};
 	}
 
 	async fetchStreamStart(
@@ -6326,31 +6398,43 @@ async function getSharedAgentOsSidecarInternal(
 	return sidecar;
 }
 
-function normalizeSidecarRuntimeConfig(
-	runtime: AgentOsSidecarRuntimeConfig | undefined,
-): AgentOsSidecarRuntimeConfig {
-	const maxActiveVms = runtime?.executor?.maxActiveVms;
-	if (maxActiveVms === undefined) return {};
-	if (!Number.isSafeInteger(maxActiveVms) || maxActiveVms <= 0) {
-		throw new Error(
-			"runtime.executor.maxActiveVms must be a positive safe integer",
-		);
+function normalizeSidecarRuntimeConfig(runtime: AgentOsSidecarRuntimeConfig | undefined): AgentOsSidecarRuntimeConfig {
+	const result: AgentOsSidecarRuntimeConfig = {};
+	const checked = (value: number, path: string) => {
+		if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${path} must be a positive safe integer`);
+		return value;
+	};
+	if (runtime?.blocking?.maxQueuedBytes !== undefined) result.blocking = {maxQueuedBytes:checked(runtime.blocking.maxQueuedBytes,"runtime.blocking.maxQueuedBytes")};
+	if (runtime?.executor?.maxActiveVms !== undefined) result.executor = {maxActiveVms:checked(runtime.executor.maxActiveVms,"runtime.executor.maxActiveVms")};
+	for (const field of ["maxInFlightRequests", "maxTerminalFrames", "maxTerminalBytes", "maxControlFrames", "maxControlBytes"] as const) {
+		const value = runtime?.protocol?.[field];
+		if (value !== undefined) {
+			result.protocol ??= {};
+			result.protocol[field] = checked(value, `runtime.protocol.${field}`);
+		}
 	}
-	return { executor: { maxActiveVms } };
+	return result;
 }
 
-function sidecarRuntimeConfigsEqual(
-	left: AgentOsSidecarRuntimeConfig,
-	right: AgentOsSidecarRuntimeConfig,
-): boolean {
-	return left.executor?.maxActiveVms === right.executor?.maxActiveVms;
+function sidecarRuntimeConfigsEqual(left: AgentOsSidecarRuntimeConfig, right: AgentOsSidecarRuntimeConfig): boolean {
+	return left.blocking?.maxQueuedBytes === right.blocking?.maxQueuedBytes &&
+		left.executor?.maxActiveVms === right.executor?.maxActiveVms &&
+		left.protocol?.maxInFlightRequests === right.protocol?.maxInFlightRequests &&
+		left.protocol?.maxTerminalFrames === right.protocol?.maxTerminalFrames &&
+		left.protocol?.maxTerminalBytes === right.protocol?.maxTerminalBytes &&
+		left.protocol?.maxControlFrames === right.protocol?.maxControlFrames &&
+		left.protocol?.maxControlBytes === right.protocol?.maxControlBytes;
 }
 
 function sidecarRuntimeArgs(runtime: AgentOsSidecarRuntimeConfig): string[] {
-	const maxActiveVms = runtime.executor?.maxActiveVms;
-	return maxActiveVms === undefined
-		? []
-		: ["--max-active-vms", String(maxActiveVms)];
+	const args: string[] = [];
+	if (runtime.blocking?.maxQueuedBytes !== undefined) args.push("--max-blocking-bytes", String(runtime.blocking.maxQueuedBytes));
+	if (runtime.executor?.maxActiveVms !== undefined) args.push("--max-active-vms", String(runtime.executor.maxActiveVms));
+	for (const [field, flag] of [["maxInFlightRequests", "--max-in-flight-requests"], ["maxTerminalFrames", "--max-terminal-frames"], ["maxTerminalBytes", "--max-terminal-bytes"], ["maxControlFrames", "--max-control-frames"], ["maxControlBytes", "--max-control-bytes"]] as const) {
+		const value = runtime.protocol?.[field];
+		if (value !== undefined) args.push(flag, String(value));
+	}
+	return args;
 }
 
 async function leaseAgentOsSidecarVm<TVmAdmin extends InProcessSidecarVmAdmin>(

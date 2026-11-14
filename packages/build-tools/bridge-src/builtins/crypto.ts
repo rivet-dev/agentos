@@ -36,13 +36,48 @@ function createNodeTypeError2(message, code) {
 	return error;
 }
 
+const DOM_EXCEPTION_LEGACY = [
+	["IndexSizeError", "INDEX_SIZE_ERR", 1],
+	["DOMStringSizeError", "DOMSTRING_SIZE_ERR", 2],
+	["HierarchyRequestError", "HIERARCHY_REQUEST_ERR", 3],
+	["WrongDocumentError", "WRONG_DOCUMENT_ERR", 4],
+	["InvalidCharacterError", "INVALID_CHARACTER_ERR", 5],
+	["NoDataAllowedError", "NO_DATA_ALLOWED_ERR", 6],
+	["NoModificationAllowedError", "NO_MODIFICATION_ALLOWED_ERR", 7],
+	["NotFoundError", "NOT_FOUND_ERR", 8],
+	["NotSupportedError", "NOT_SUPPORTED_ERR", 9],
+	["InUseAttributeError", "INUSE_ATTRIBUTE_ERR", 10],
+	["InvalidStateError", "INVALID_STATE_ERR", 11],
+	["SyntaxError", "SYNTAX_ERR", 12],
+	["InvalidModificationError", "INVALID_MODIFICATION_ERR", 13],
+	["NamespaceError", "NAMESPACE_ERR", 14],
+	["InvalidAccessError", "INVALID_ACCESS_ERR", 15],
+	["ValidationError", "VALIDATION_ERR", 16],
+	["TypeMismatchError", "TYPE_MISMATCH_ERR", 17],
+	["SecurityError", "SECURITY_ERR", 18],
+	["NetworkError", "NETWORK_ERR", 19],
+	["AbortError", "ABORT_ERR", 20],
+	["URLMismatchError", "URL_MISMATCH_ERR", 21],
+	["QuotaExceededError", "QUOTA_EXCEEDED_ERR", 22],
+	["TimeoutError", "TIMEOUT_ERR", 23],
+	["InvalidNodeTypeError", "INVALID_NODE_TYPE_ERR", 24],
+	["DataCloneError", "DATA_CLONE_ERR", 25],
+];
+// Obsolete codes remain constants without corresponding modern exception names.
+const DOM_EXCEPTION_CODES = new Map(DOM_EXCEPTION_LEGACY.filter(([, , code]) => ![2, 6, 16].includes(code)).map(([name, , code]) => [name, code]));
+
 class SandboxDOMException extends Error {
 	constructor(message = "", name = "Error") {
 		super(message);
 		this.name = String(name);
-		this.code = 0;
 	}
+	get code() { return DOM_EXCEPTION_CODES.get(this.name) ?? 0; }
 }
+for (const [, name, code] of DOM_EXCEPTION_LEGACY) {
+	Object.defineProperty(SandboxDOMException, name, { value: code, enumerable: true });
+	Object.defineProperty(SandboxDOMException.prototype, name, { value: code, enumerable: true });
+}
+Object.defineProperty(SandboxDOMException.prototype, Symbol.toStringTag, { value: "DOMException", configurable: true });
 
 function createDomLikeError(name, code, message) {
 	const error = new Error(message);
@@ -217,6 +252,7 @@ Object.defineProperty(SandboxCryptoKey, Symbol.hasInstance, {
 });
 
 function createCryptoKey(keyData) {
+	if (Array.isArray(keyData.algorithm?.publicExponent)) keyData = { ...keyData, algorithm: { ...keyData.algorithm, publicExponent: Uint8Array.from(keyData.algorithm.publicExponent) } };
 	const globalCryptoKey = globalThis.CryptoKey;
 	if (
 		typeof globalCryptoKey === "function" &&
@@ -242,7 +278,11 @@ function subtleCall(request) {
 	if (typeof _cryptoSubtle === "undefined") {
 		throw new Error("crypto.subtle is not supported in sandbox");
 	}
-	return _cryptoSubtle.applySync(void 0, [JSON.stringify(request)]);
+	try { return _cryptoSubtle.applySync(void 0, [JSON.stringify(request)]); }
+	catch (error) {
+		if (["DataError", "SyntaxError", "NotSupportedError", "InvalidAccessError"].includes(error?.code)) throw new SandboxDOMException(error.message, error.code);
+		throw error;
+	}
 }
 
 var SandboxSubtleCrypto = class {
@@ -529,10 +569,43 @@ var cryptoPolyfill = cryptoPolyfillInstance;
 
 var MAX_CRYPTO_HASH_UPDATE_BYTES = 1024 * 1024;
 
-function createBuiltinHash(algorithm) {
-	const chunks = [];
+function createBuiltinHash(algorithm, initialChunks = []) {
+	// update() snapshots its input. Copies can share those immutable byte
+	// snapshots, while keeping independent arrays and finalization state.
+	const chunks = initialChunks.slice();
+	let finalized = false;
+	const assertActive = () => {
+		if (finalized) {
+			const error = new Error("Digest already called");
+			error.code = "ERR_CRYPTO_HASH_FINALIZED";
+			throw error;
+		}
+	};
 	return {
+		copy(options = undefined) {
+			assertActive();
+			const length = options?.outputLength;
+			if (length !== undefined) {
+				if (typeof length !== "number") {
+					throw createNodeTypeError2('The "options.outputLength" property must be of type number', "ERR_INVALID_ARG_TYPE");
+				}
+				if (!Number.isInteger(length) || length < 0 || length > 0xffffffff) {
+					const error = new RangeError('The "options.outputLength" property must be an unsigned 32-bit integer');
+					error.code = "ERR_OUT_OF_RANGE";
+					throw error;
+				}
+				// The currently supported algorithms have fixed digest lengths.
+				// Ask the same native codec, rather than duplicating its aliases.
+				if (length !== createBuiltinHash(algorithm).digest().byteLength) {
+					const error = new Error("not XOF or invalid length");
+					error.code = "ERR_OSSL_EVP_NOT_XOF_OR_INVALID_LENGTH";
+					throw error;
+				}
+			}
+			return createBuiltinHash(algorithm, chunks);
+		},
 		update(data, encoding) {
+			assertActive();
 			const buffer =
 				typeof data === "string"
 					? import_buffer2.Buffer.from(data, encoding || "utf8")
@@ -541,11 +614,14 @@ function createBuiltinHash(algorithm) {
 			return this;
 		},
 		digest(encoding) {
+			assertActive();
+			finalized = true;
 			if (typeof _cryptoHashDigest === "undefined") {
 				throwUnsupportedCryptoApi("createHash");
 			}
 			const input =
 				chunks.length === 1 ? chunks[0] : import_buffer2.Buffer.concat(chunks);
+			chunks.length = 0;
 			if (
 				typeof _cryptoHashCreate !== "undefined" &&
 				typeof _cryptoHashUpdate !== "undefined" &&
@@ -850,6 +926,11 @@ function decodeGeneratedCryptoValue(value) {
 }
 
 class BuiltinKeyObject {
+	static from(key) {
+		if (!(key instanceof SandboxCryptoKey)) throw createNodeTypeError2('The "key" argument must be a CryptoKey', "ERR_INVALID_ARG_TYPE");
+		return createBuiltinKeyObject(key._keyData);
+	}
+
 	type;
 	asymmetricKeyType;
 	asymmetricKeyDetails;

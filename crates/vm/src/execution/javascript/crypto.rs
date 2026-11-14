@@ -387,6 +387,8 @@ struct JavascriptSerializedSandboxKeyObject {
 struct JavascriptDirectKeyInput {
     key: JavascriptCryptoKeyMaterial,
     padding: Option<Padding>,
+    oaep_hash: Option<String>,
+    oaep_label: Option<Vec<u8>>,
 }
 
 fn service_javascript_crypto_cipheriv_sync_rpc(request: &HostRpcRequest) -> Result<Value, VmError> {
@@ -516,9 +518,11 @@ fn service_javascript_crypto_verify_sync_rpc(request: &HostRpcRequest) -> Result
     verifier
         .update(&data)
         .map_err(javascript_crypto_openssl_error)?;
-    Ok(json!(verifier
-        .verify(&signature)
-        .map_err(javascript_crypto_openssl_error)?))
+    Ok(json!(
+        verifier
+            .verify(&signature)
+            .map_err(javascript_crypto_openssl_error)?
+    ))
 }
 
 fn service_javascript_crypto_asymmetric_op_sync_rpc(
@@ -538,15 +542,47 @@ fn service_javascript_crypto_asymmetric_op_sync_rpc(
     };
     let key_input =
         javascript_crypto_parse_direct_key_input(key_json, expect_kind, "crypto.asymmetricOp key")?;
-    let padding = key_input.padding.unwrap_or(Padding::PKCS1);
+    let padding =
+        key_input
+            .padding
+            .unwrap_or(if matches!(operation, "publicEncrypt" | "privateDecrypt") {
+                Padding::PKCS1_OAEP
+            } else {
+                Padding::PKCS1
+            });
     let mut output = vec![0_u8; javascript_crypto_rsa_output_size(&key_input.key)?];
     let written = match (operation, key_input.key) {
         ("publicEncrypt", JavascriptCryptoKeyMaterial::Public(key))
         | ("publicDecrypt", JavascriptCryptoKeyMaterial::Public(key)) => {
             let rsa = key.rsa().map_err(javascript_crypto_openssl_error)?;
             if operation == "publicEncrypt" {
-                rsa.public_encrypt(&data, &mut output, padding)
-                    .map_err(javascript_crypto_openssl_error)?
+                if padding == Padding::PKCS1_OAEP {
+                    let mut encrypt = openssl::encrypt::Encrypter::new(&key)
+                        .map_err(javascript_crypto_openssl_error)?;
+                    encrypt
+                        .set_rsa_padding(padding)
+                        .map_err(javascript_crypto_openssl_error)?;
+                    let hash = javascript_crypto_message_digest_from_name(
+                        key_input.oaep_hash.as_deref().unwrap_or("sha1"),
+                    )?;
+                    encrypt
+                        .set_rsa_oaep_md(hash)
+                        .map_err(javascript_crypto_openssl_error)?;
+                    encrypt
+                        .set_rsa_mgf1_md(hash)
+                        .map_err(javascript_crypto_openssl_error)?;
+                    if let Some(label) = &key_input.oaep_label {
+                        encrypt
+                            .set_rsa_oaep_label(label)
+                            .map_err(javascript_crypto_openssl_error)?;
+                    }
+                    encrypt
+                        .encrypt(&data, &mut output)
+                        .map_err(javascript_crypto_openssl_error)?
+                } else {
+                    rsa.public_encrypt(&data, &mut output, padding)
+                        .map_err(javascript_crypto_openssl_error)?
+                }
             } else {
                 rsa.public_decrypt(&data, &mut output, padding)
                     .map_err(javascript_crypto_openssl_error)?
@@ -559,8 +595,33 @@ fn service_javascript_crypto_asymmetric_op_sync_rpc(
                 rsa.private_encrypt(&data, &mut output, padding)
                     .map_err(javascript_crypto_openssl_error)?
             } else {
-                rsa.private_decrypt(&data, &mut output, padding)
-                    .map_err(javascript_crypto_openssl_error)?
+                if padding == Padding::PKCS1_OAEP {
+                    let mut decrypt = openssl::encrypt::Decrypter::new(&key)
+                        .map_err(javascript_crypto_openssl_error)?;
+                    decrypt
+                        .set_rsa_padding(padding)
+                        .map_err(javascript_crypto_openssl_error)?;
+                    let hash = javascript_crypto_message_digest_from_name(
+                        key_input.oaep_hash.as_deref().unwrap_or("sha1"),
+                    )?;
+                    decrypt
+                        .set_rsa_oaep_md(hash)
+                        .map_err(javascript_crypto_openssl_error)?;
+                    decrypt
+                        .set_rsa_mgf1_md(hash)
+                        .map_err(javascript_crypto_openssl_error)?;
+                    if let Some(label) = &key_input.oaep_label {
+                        decrypt
+                            .set_rsa_oaep_label(label)
+                            .map_err(javascript_crypto_openssl_error)?;
+                    }
+                    decrypt
+                        .decrypt(&data, &mut output)
+                        .map_err(javascript_crypto_openssl_error)?
+                } else {
+                    rsa.private_decrypt(&data, &mut output, padding)
+                        .map_err(javascript_crypto_openssl_error)?
+                }
             }
         }
         _ => {
@@ -1052,6 +1113,96 @@ fn service_javascript_crypto_subtle_sync_rpc(request: &HostRpcRequest) -> Result
                 .ok_or_else(|| {
                     VmError::InvalidState(String::from("crypto.subtle.importKey missing format"))
                 })?;
+            if format == "jwk" {
+                let jwk = parsed
+                    .get("keyData")
+                    .ok_or_else(|| VmError::host("DataError", "JWK keyData is required"))?;
+                let algorithm = parsed
+                    .get("algorithm")
+                    .ok_or_else(|| VmError::host("DataError", "JWK algorithm is required"))?;
+                let name =
+                    javascript_crypto_subtle_algorithm_name(algorithm, "crypto.subtle.importKey")?;
+                if !matches!(name, "RSA-OAEP" | "RSA-PSS" | "RSASSA-PKCS1-v1_5") {
+                    return Err(VmError::host(
+                        "NotSupportedError",
+                        "JWK import currently supports RSA algorithms",
+                    ));
+                }
+                let material = javascript_crypto_parse_jwk(jwk, None, "crypto.subtle.importKey")?;
+                let mut key = javascript_crypto_serialize_sandbox_key_object(&material)?;
+                let extractable = parsed
+                    .get("extractable")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                if extractable && jwk.get("ext").and_then(Value::as_bool) == Some(false) {
+                    return Err(VmError::host("DataError", "JWK ext forbids extraction"));
+                }
+                let usages = parsed
+                    .get("usages")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| VmError::host("SyntaxError", "RSA key usages are required"))?;
+                let private = matches!(material, JavascriptCryptoKeyMaterial::Private(_));
+                let allowed: &[&str] = match (name, private) {
+                    ("RSA-OAEP", true) => &["decrypt", "unwrapKey"],
+                    ("RSA-OAEP", false) => &["encrypt", "wrapKey"],
+                    (_, true) => &["sign"],
+                    (_, false) => &["verify"],
+                };
+                if usages
+                    .iter()
+                    .any(|v| v.as_str().is_none_or(|usage| !allowed.contains(&usage)))
+                    || (private && usages.is_empty())
+                {
+                    return Err(VmError::host(
+                        "SyntaxError",
+                        "RSA key usages do not match its type and algorithm",
+                    ));
+                }
+                if let Some(ops) = jwk.get("key_ops").and_then(Value::as_array) {
+                    if usages.iter().any(|usage| !ops.contains(usage)) {
+                        return Err(VmError::host(
+                            "DataError",
+                            "JWK key_ops does not permit requested usages",
+                        ));
+                    }
+                }
+                let hash_value = algorithm
+                    .get("hash")
+                    .ok_or_else(|| VmError::host("TypeError", "RSA import requires hash"))?;
+                let hash = javascript_crypto_subtle_algorithm_name(hash_value, "RSA import hash")?
+                    .to_ascii_uppercase();
+                if !matches!(hash.as_str(), "SHA-1" | "SHA-256" | "SHA-384" | "SHA-512") {
+                    return Err(VmError::host(
+                        "NotSupportedError",
+                        "RSA import hash is not supported",
+                    ));
+                }
+                if let Some(use_) = jwk.get("use").and_then(Value::as_str) {
+                    if use_ != if name == "RSA-OAEP" { "enc" } else { "sig" } {
+                        return Err(VmError::host(
+                            "DataError",
+                            "JWK use does not match the algorithm",
+                        ));
+                    }
+                }
+                let n = jwk.get("n").and_then(Value::as_str).unwrap_or_default();
+                let modulus = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(n)
+                    .map_err(|_| VmError::host("DataError", "Invalid RSA modulus"))?;
+                let exponent = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(jwk.get("e").and_then(Value::as_str).unwrap_or_default())
+                    .map_err(|_| VmError::host("DataError", "Invalid RSA exponent"))?;
+                let bits = modulus.len() * 8
+                    - modulus
+                        .first()
+                        .map_or(0, |byte| byte.leading_zeros() as usize);
+                key["algorithm"] = json!({"name":name, "hash":{"name":hash}, "modulusLength":bits, "publicExponent":exponent});
+                key["extractable"] = Value::Bool(extractable);
+                key["usages"] = Value::Array(usages.clone());
+                return serde_json::to_string(&json!({"key":key}))
+                    .map(Value::String)
+                    .map_err(|e| VmError::InvalidState(e.to_string()));
+            }
             if format != "raw" {
                 return Err(VmError::InvalidState(format!(
                     "Unsupported import format: {format}"
@@ -1475,6 +1626,14 @@ fn javascript_crypto_parse_direct_key_input(
     Ok(JavascriptDirectKeyInput {
         key: javascript_crypto_parse_key_material_value(&parsed, expected, label)?,
         padding,
+        oaep_hash: parsed
+            .get("oaepHash")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        oaep_label: parsed
+            .get("oaepLabel")
+            .map(|value| javascript_crypto_decode_bridge_buffer(value, label))
+            .transpose()?,
     })
 }
 
@@ -1522,9 +1681,7 @@ fn javascript_crypto_parse_key_source(
         }
         Value::Object(_) => {
             if format == Some("jwk") {
-                return Err(VmError::InvalidState(format!(
-                    "{label} jwk inputs are not supported yet"
-                )));
+                return javascript_crypto_parse_jwk(source, expected, label);
             }
             Err(VmError::InvalidState(format!(
                 "{label} has an unsupported key shape"
@@ -1534,6 +1691,99 @@ fn javascript_crypto_parse_key_source(
             "{label} has an unsupported key value"
         ))),
     }
+}
+
+fn javascript_crypto_parse_jwk(
+    value: &Value,
+    expected: Option<&str>,
+    label: &str,
+) -> Result<JavascriptCryptoKeyMaterial, VmError> {
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let integer = |name: &str| -> Result<BigNum, VmError> {
+        let text = value.get(name).and_then(Value::as_str).ok_or_else(|| {
+            VmError::host("ERR_CRYPTO_INVALID_JWK", format!("{label}: missing {name}"))
+        })?;
+        let bytes = URL_SAFE_NO_PAD.decode(text).map_err(|_| {
+            VmError::host("ERR_CRYPTO_INVALID_JWK", format!("{label}: invalid {name}"))
+        })?;
+        if bytes.is_empty() {
+            return Err(VmError::host(
+                "ERR_CRYPTO_INVALID_JWK",
+                format!("{label}: empty {name}"),
+            ));
+        }
+        BigNum::from_slice(&bytes).map_err(javascript_crypto_openssl_error)
+    };
+    if value.get("kty").and_then(Value::as_str) != Some("RSA") {
+        return Err(VmError::host(
+            "ERR_CRYPTO_INVALID_JWK",
+            format!("{label}: expected an RSA JWK"),
+        ));
+    }
+    if expected == Some("private") || (expected.is_none() && value.get("d").is_some()) {
+        let rsa = Rsa::from_private_components(
+            integer("n")?,
+            integer("e")?,
+            integer("d")?,
+            integer("p")?,
+            integer("q")?,
+            integer("dp")?,
+            integer("dq")?,
+            integer("qi")?,
+        )
+        .map_err(javascript_crypto_openssl_error)?;
+        if !rsa.check_key().map_err(javascript_crypto_openssl_error)? {
+            return Err(VmError::host(
+                "ERR_CRYPTO_INVALID_JWK",
+                "RSA private components are inconsistent",
+            ));
+        }
+        PKey::from_rsa(rsa)
+            .map(JavascriptCryptoKeyMaterial::Private)
+            .map_err(javascript_crypto_openssl_error)
+    } else {
+        let rsa = Rsa::from_public_components(integer("n")?, integer("e")?)
+            .map_err(javascript_crypto_openssl_error)?;
+        PKey::from_rsa(rsa)
+            .map(JavascriptCryptoKeyMaterial::Public)
+            .map_err(javascript_crypto_openssl_error)
+    }
+}
+
+fn javascript_crypto_key_jwk(key: &JavascriptCryptoKeyMaterial) -> Result<Option<Value>, VmError> {
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let encode = |number: &openssl::bn::BigNumRef| URL_SAFE_NO_PAD.encode(number.to_vec());
+    Ok(match key {
+        JavascriptCryptoKeyMaterial::Public(key) if key.id() == PKeyId::RSA => {
+            let rsa = key.rsa().map_err(javascript_crypto_openssl_error)?;
+            Some(json!({"kty":"RSA", "n":encode(rsa.n()), "e":encode(rsa.e())}))
+        }
+        JavascriptCryptoKeyMaterial::Private(key) if key.id() == PKeyId::RSA => {
+            let rsa = key.rsa().map_err(javascript_crypto_openssl_error)?;
+            let mut value =
+                json!({"kty":"RSA", "n":encode(rsa.n()), "e":encode(rsa.e()), "d":encode(rsa.d())});
+            for (name, component) in [
+                ("p", rsa.p()),
+                ("q", rsa.q()),
+                ("dp", rsa.dmp1()),
+                ("dq", rsa.dmq1()),
+                ("qi", rsa.iqmp()),
+            ] {
+                let component = component.ok_or_else(|| {
+                    VmError::host(
+                        "ERR_CRYPTO_INVALID_JWK",
+                        "RSA private JWK requires CRT components",
+                    )
+                })?;
+                value[name] = Value::String(encode(component));
+            }
+            Some(value)
+        }
+        JavascriptCryptoKeyMaterial::Secret(bytes) => {
+            Some(json!({"kty":"oct", "k":URL_SAFE_NO_PAD.encode(bytes)}))
+        }
+        _ => None,
+    })
 }
 
 fn javascript_crypto_parse_key_from_pem(
@@ -1726,6 +1976,7 @@ fn javascript_crypto_decode_bridge_buffer(value: &Value, label: &str) -> Result<
 fn javascript_crypto_serialize_sandbox_key_object(
     key: &JavascriptCryptoKeyMaterial,
 ) -> Result<Value, VmError> {
+    let jwk = javascript_crypto_key_jwk(key)?;
     let serialized = match key {
         JavascriptCryptoKeyMaterial::Private(key) => JavascriptSerializedSandboxKeyObject {
             kind: String::from("private"),
@@ -1741,7 +1992,7 @@ fn javascript_crypto_serialize_sandbox_key_object(
             raw: None,
             asymmetric_key_type: javascript_crypto_pkey_type_name(key.id()),
             asymmetric_key_details: None,
-            jwk: None,
+            jwk: jwk.clone(),
         },
         JavascriptCryptoKeyMaterial::Public(key) => JavascriptSerializedSandboxKeyObject {
             kind: String::from("public"),
@@ -1757,7 +2008,7 @@ fn javascript_crypto_serialize_sandbox_key_object(
             raw: None,
             asymmetric_key_type: javascript_crypto_pkey_type_name(key.id()),
             asymmetric_key_details: None,
-            jwk: None,
+            jwk: jwk.clone(),
         },
         JavascriptCryptoKeyMaterial::Secret(raw) => JavascriptSerializedSandboxKeyObject {
             kind: String::from("secret"),
@@ -1765,7 +2016,7 @@ fn javascript_crypto_serialize_sandbox_key_object(
             raw: Some(base64::engine::general_purpose::STANDARD.encode(raw)),
             asymmetric_key_type: None,
             asymmetric_key_details: None,
-            jwk: None,
+            jwk: jwk.clone(),
         },
     };
     serde_json::to_value(serialized)
@@ -2362,5 +2613,30 @@ fn javascript_crypto_aead_tag_len(_algorithm: &str) -> usize {
 }
 
 fn javascript_crypto_openssl_error(error: openssl::error::ErrorStack) -> VmError {
-    VmError::Execution(format!("crypto operation failed: {error}"))
+    let reason = error
+        .errors()
+        .last()
+        .and_then(|entry| entry.reason())
+        .unwrap_or("operation failed");
+    let reason = reason
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    let library = match error.errors().last().and_then(|entry| entry.library()) {
+        Some("rsa routines") => "RSA_",
+        Some("Provider routines") => "PROV_",
+        Some("digital envelope routines") => "EVP_",
+        Some("bignum routines") => "BN_",
+        _ => "",
+    };
+    VmError::host(
+        format!("ERR_OSSL_{library}{reason}"),
+        format!("crypto operation failed: {error}"),
+    )
 }

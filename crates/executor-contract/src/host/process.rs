@@ -138,6 +138,7 @@ pub struct ProcessLaunchOptions {
     #[serde(default)]
     pub gid: Option<i32>,
     #[serde(default)]
+    /// Complete child envp. Language adapters resolve omitted-environment inheritance.
     pub env: BTreeMap<String, String>,
     #[serde(rename = "internalBootstrapEnv", default)]
     pub internal_bootstrap_env: BTreeMap<String, String>,

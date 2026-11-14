@@ -16,7 +16,7 @@ s3 = ["dep:aws-sdk-s3"]
 async-trait = "0.1"
 aws-sdk-s3 = { version = "1", default-features = false, features = ["default-https-client", "http-1x", "rt-tokio", "sigv4a"], optional = true }
 base64 = "0.22"
-rusqlite = { version = "0.32", features = ["bundled"], optional = true }
+rusqlite = { version = "0.43", features = ["bundled", "fallible_uint"], optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 agentos-vfs-core = { workspace = true, default-features = false }

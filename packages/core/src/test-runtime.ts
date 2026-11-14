@@ -516,7 +516,7 @@ export interface Kernel extends KernelInterface {
 		headersJson: string;
 		body?: string;
 		bodyBase64?: string;
-		streamOperation?: "start" | "read" | "cancel";
+		streamOperation?: "start" | "read" | "cancel" | "socket-open" | "socket-read" | "socket-write" | "socket-end" | "socket-close";
 		streamId?: string;
 		maxBytes?: number;
 	}): Promise<string>;
@@ -3200,7 +3200,7 @@ class NativeKernel implements Kernel {
 		headersJson: string;
 		body?: string;
 		bodyBase64?: string;
-		streamOperation?: "start" | "read" | "cancel";
+		streamOperation?: "start" | "read" | "cancel" | "socket-open" | "socket-read" | "socket-write" | "socket-end" | "socket-close";
 		streamId?: string;
 		maxBytes?: number;
 	}): Promise<string> {

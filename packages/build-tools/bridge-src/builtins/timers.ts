@@ -185,8 +185,13 @@ var TimerHandle = class {
 	_id;
 	_destroyed;
 	_refed;
+	_kernelId;
+	_entry;
+	_firing = false;
+	_cleared = false;
 	constructor(id) {
 		this._id = id;
+		this._kernelId = id;
 		this._destroyed = false;
 		this._refed = true;
 	}
@@ -202,17 +207,44 @@ var TimerHandle = class {
 		return this._refed;
 	}
 	refresh() {
-		if (!this._destroyed && _timerEntries.has(this._id)) {
-			armKernelTimer(this._id);
+		if (this._cleared || !this._entry) return this;
+		if (!this._destroyed) {
+			try {
+				armKernelTimer(this._kernelId);
+				return this;
+			} catch (error) {
+				// A native expiry can precede delivery of its JS callback.
+				if (!`${error?.code ?? ""} ${error?.message ?? ""}`.includes("ERR_AGENTOS_JAVASCRIPT_TIMER_UNKNOWN")) throw error;
+			}
 		}
+		const id = createKernelTimer(this._entry.delay, this._entry.repeat);
+		try {
+			armKernelTimer(id);
+		} catch (error) {
+			try { bridgeDispatchSync(TIMER_DISPATCH.clear, id); }
+			catch (cleanupError) { throw new AggregateError([error, cleanupError], "Timer admission failed"); }
+			throw error;
+		}
+		_timerEntries.delete(this._kernelId);
+		_timerHandles.delete(this._id);
+		this._kernelId = id;
+		if (!this._firing) this._id = id;
+		this._destroyed = false;
+		_timerEntries.set(id, this._entry);
+		_timerHandles.set(this._id, this);
 		return this;
 	}
+	close() { clearTimeout2(this); return this; }
+	[Symbol.dispose]() { clearTimeout2(this); }
 	[Symbol.toPrimitive]() {
 		return this._id;
 	}
 };
 
 var _timerEntries = /* @__PURE__ */ new Map();
+// Live public identities only; fired callbacks retain their own handle.
+var _timerHandles = new Map();
+var _firingTimer = void 0;
 
 var _immediateEntries = /* @__PURE__ */ new Map();
 
@@ -277,14 +309,17 @@ function routeAsyncCallbackErrorInFrame(frame, error) {
 	]);
 }
 
-var _nextTickQueue = [];
+const nextTickState = {queue: []};
+const nextTickPush = Function.call.bind(Array.prototype.push);
+const nextTickShift = Function.call.bind(Array.prototype.shift);
+function enqueueNextTick(entry) { nextTickPush(nextTickState.queue, entry); }
 
 var _nextTickScheduled = false;
 
 function flushNextTickQueue() {
 	_nextTickScheduled = false;
-	while (_nextTickQueue.length > 0) {
-		const entry = _nextTickQueue.shift();
+	while (nextTickState.queue.length > 0) {
+		const entry = nextTickShift(nextTickState.queue);
 		if (!entry) {
 			break;
 		}
@@ -301,20 +336,18 @@ function flushNextTickQueue() {
 				error,
 			);
 			if (!outcome.handled) {
-				_nextTickQueue.length = 0;
+				nextTickState.queue.length = 0;
 				scheduleAsyncRethrow(outcome.rethrow);
 			}
-			return;
-		}
-	}
+            return nextTickState.queue.length;
+        }
+    }
+    return nextTickState.queue.length;
 }
 
-function scheduleNextTickFlush() {
-	if (_nextTickScheduled) {
-		return;
-	}
-	_nextTickScheduled = true;
-	_queueMicrotask(flushNextTickQueue);
+function scheduleNextTickFlush(notify) {
+    _nextTickScheduled = true;
+    notify();
 }
 
 function timerDispatch(_eventType, payload) {
@@ -326,7 +359,11 @@ function timerDispatch(_eventType, payload) {
 	if (!entry.repeat) {
 		entry.handle._destroyed = true;
 		_timerEntries.delete(timerId);
+		_timerHandles.delete(entry.handle._id);
 	}
+	const previousFiring = _firingTimer;
+	_firingTimer = entry.handle;
+	entry.handle._firing = true;
 	try {
 		runInAsyncContextFrame(
 			entry.asyncContextFrame,
@@ -343,6 +380,9 @@ function timerDispatch(_eventType, payload) {
 			throw outcome.rethrow;
 		}
 		return;
+	} finally {
+		entry.handle._firing = false;
+		_firingTimer = previousFiring;
 	}
 	if (typeof _exited !== "undefined" && _exited) {
 		checkTimerDrain();
@@ -354,46 +394,44 @@ function timerDispatch(_eventType, payload) {
 	checkTimerDrain();
 }
 
-function setTimeout2(callback, delay, ...args) {
+function createTimer(callback, delay, args, repeat) {
 	const actualDelay = Math.max(1, normalizeTimerDelay(delay));
-	const id = createKernelTimer(actualDelay, false);
+	const id = createKernelTimer(actualDelay, repeat);
+	try { armKernelTimer(id); }
+	catch (error) {
+		try { bridgeDispatchSync(TIMER_DISPATCH.clear, id); }
+		catch (cleanupError) { throw new AggregateError([error, cleanupError], "Timer admission failed"); }
+		throw error;
+	}
 	const handle = new TimerHandle(id);
-	_timerEntries.set(id, {
-		handle,
-		callback,
-		asyncContextFrame: getAsyncContextFrame(),
-		args,
-		repeat: false,
-	});
-	armKernelTimer(id);
+	const entry = { handle, callback, asyncContextFrame: getAsyncContextFrame(), args, repeat, delay: actualDelay };
+	handle._entry = entry;
+	_timerEntries.set(id, entry);
+	_timerHandles.set(id, handle);
 	return handle;
+}
+
+function setTimeout2(callback, delay, ...args) {
+	return createTimer(callback, delay, args, false);
 }
 
 function clearTimeout2(timer) {
 	const id = getTimerId(timer);
 	if (id === void 0) return;
-	const entry = _timerEntries.get(id);
-	if (entry) {
-		entry.handle._destroyed = true;
-		_timerEntries.delete(id);
+	const handle = timer instanceof TimerHandle ? timer : _timerHandles.get(id) ?? (_firingTimer?._id === id ? _firingTimer : void 0);
+	if (handle) {
+		bridgeDispatchSync(TIMER_DISPATCH.clear, handle._kernelId);
+		handle._destroyed = true;
+		handle._cleared = true;
+		handle._entry = void 0;
+		_timerEntries.delete(handle._kernelId);
+		_timerHandles.delete(handle._id);
 	}
-	bridgeDispatchSync(TIMER_DISPATCH.clear, id);
 	checkTimerDrain();
 }
 
 function setInterval(callback, delay, ...args) {
-	const actualDelay = Math.max(1, normalizeTimerDelay(delay));
-	const id = createKernelTimer(actualDelay, true);
-	const handle = new TimerHandle(id);
-	_timerEntries.set(id, {
-		handle,
-		callback,
-		asyncContextFrame: getAsyncContextFrame(),
-		args,
-		repeat: true,
-	});
-	armKernelTimer(id);
-	return handle;
+	return createTimer(callback, delay, args, true);
 }
 
 function clearInterval(timer) {
@@ -476,7 +514,7 @@ export {
 	_getPendingTimerCount,
 	_immediateEntries,
 	_nextImmediateId,
-	_nextTickQueue,
+	enqueueNextTick,
 	_nextTickScheduled,
 	_queueMicrotask,
 	_timerDrainResolvers,
@@ -503,3 +541,5 @@ export {
 	TimerHandle,
 	timerDispatch,
 };
+
+exposeCustomGlobal("__agentOSNextTickHooks", Object.freeze({flush:flushNextTickQueue,state:nextTickState}));

@@ -270,7 +270,7 @@ export type LiveRequestPayload =
 			headers_json: string;
 			body?: string;
 			body_base64?: string;
-			stream_operation?: "start" | "read" | "cancel";
+			stream_operation?: "start" | "read" | "cancel" | "socket-open" | "socket-read" | "socket-write" | "socket-end" | "socket-close";
 			stream_id?: string;
 			max_bytes?: number;
 	  }

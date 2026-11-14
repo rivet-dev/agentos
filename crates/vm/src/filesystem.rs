@@ -1184,8 +1184,10 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 "filesystem readdir path",
             )?;
             let path = path.as_str();
-            service_javascript_fs_readdir_entries(kernel, process, kernel_pid, path)
-                .map(javascript_sync_rpc_readdir_typed_value)
+            service_javascript_fs_readdir_requested_entries(
+                kernel, process, kernel_pid, path, request,
+            )
+            .map(javascript_sync_rpc_readdir_typed_value)
         }
         "fs.mkdirSync" | "fs.promises.mkdir" => {
             let path = javascript_sync_rpc_path_arg(
@@ -1862,6 +1864,48 @@ pub(crate) fn service_javascript_fs_readdir_entries(
         .map_err(kernel_error)
 }
 
+fn service_javascript_fs_readdir_requested_entries(
+    kernel: &mut SidecarKernel,
+    process: &ActiveProcess,
+    kernel_pid: u32,
+    path: &str,
+    request: &HostRpcRequest,
+) -> Result<BTreeMap<String, JavascriptDirentKind>, VmError> {
+    if !javascript_sync_rpc_option_bool(&request.args, 1, "recursive").unwrap_or(false) {
+        return service_javascript_fs_readdir_entries(kernel, process, kernel_pid, path);
+    }
+    let root = normalize_path(path);
+    let prefix = if root == "/" {
+        root
+    } else {
+        format!("{root}/")
+    };
+    kernel
+        .read_dir_recursive_for_process(EXECUTION_DRIVER_NAME, kernel_pid, path, None)
+        .map_err(kernel_error)?
+        .into_iter()
+        .map(|entry| {
+            let name = entry
+                .path
+                .strip_prefix(&prefix)
+                .ok_or_else(|| {
+                    VmError::InvalidState(
+                        "recursive readdir returned a path outside its root".into(),
+                    )
+                })?
+                .to_owned();
+            let kind = if entry.is_symbolic_link {
+                JavascriptDirentKind::Symlink
+            } else if entry.is_directory {
+                JavascriptDirentKind::Directory
+            } else {
+                JavascriptDirentKind::File
+            };
+            Ok((name, kind))
+        })
+        .collect()
+}
+
 pub(crate) fn service_javascript_fs_readdir_raw_sync_rpc(
     kernel: &mut SidecarKernel,
     process: &ActiveProcess,
@@ -1870,8 +1914,13 @@ pub(crate) fn service_javascript_fs_readdir_raw_sync_rpc(
 ) -> Result<Vec<u8>, VmError> {
     let path =
         javascript_sync_rpc_path_arg(kernel, process, &request.args, 0, "filesystem readdir path")?;
-    let entries =
-        service_javascript_fs_readdir_entries(kernel, process, kernel_pid, path.as_str())?;
+    let entries = service_javascript_fs_readdir_requested_entries(
+        kernel,
+        process,
+        kernel_pid,
+        path.as_str(),
+        request,
+    )?;
     encode_javascript_readdir_raw_payload(entries)
 }
 

@@ -1729,6 +1729,50 @@ where
         record_sync_rpc(request.method.as_str());
     }
     validate_guest_network_capability_alias(process, request)?;
+    if request.raw_bytes_args.contains_key(&usize::MAX)
+        && matches!(
+            request.method.as_str(),
+            "__load_file" | "_loadFile" | "_loadFileSync"
+        )
+        && request.args.len() == 3
+    {
+        let requested_path = javascript_sync_rpc_arg_str(&request.args, 0, "module source path")?;
+        let offset = javascript_sync_rpc_arg_u64(&request.args, 1, "module source offset")?;
+        let length = javascript_sync_rpc_arg_u64(&request.args, 2, "module source length")?;
+        if length > 64 * 1024 {
+            return Err(VmError::host(
+                "E2BIG",
+                "module source chunks must not exceed 65536 bytes",
+            ));
+        }
+        // Builtins are resolver-generated guest source, not filesystem paths.
+        // Keep the same resolver as ordinary loads when a failed/oversized
+        // prefetch makes the executor request an individual builtin in chunks.
+        if requested_path.starts_with("node:") {
+            let source = service_javascript_module_sync_rpc(kernel, process, request)?;
+            let source = source
+                .as_str()
+                .ok_or_else(|| VmError::host("ENOENT", "builtin module source is unavailable"))?;
+            let bytes = source.as_bytes();
+            let start = usize::try_from(offset)
+                .unwrap_or(usize::MAX)
+                .min(bytes.len());
+            let end = start.saturating_add(length as usize).min(bytes.len());
+            return Ok(HostServiceResponse::Raw(bytes[start..end].to_vec()));
+        }
+        let path =
+            javascript_sync_rpc_path_arg(kernel, process, &request.args, 0, "module source path")?;
+        let bytes = kernel
+            .pread_file_for_process(
+                EXECUTION_DRIVER_NAME,
+                process.kernel_pid,
+                &path,
+                offset,
+                length as usize,
+            )
+            .map_err(kernel_error)?;
+        return Ok(HostServiceResponse::Raw(bytes));
+    }
     if request.raw_bytes_args.contains_key(&usize::MAX) && request.method == "fs.readSync" {
         let kernel_pid = process.kernel_pid;
         let bytes = service_javascript_fs_read_sync_rpc(kernel, process, kernel_pid, request)?;
@@ -1983,9 +2027,19 @@ where
         | "sqlite.open"
         | "sqlite.close"
         | "sqlite.exec"
+        | "sqlite.queryChunked"
+        | "sqlite.statement.runChunked"
+        | "sqlite.statement.getChunked"
+        | "sqlite.statement.allChunked"
+        | "sqlite.transfer.begin"
+        | "sqlite.transfer.append"
+        | "sqlite.transfer.cancel"
+        | "sqlite.transfer.read"
+        | "sqlite.transfer.release"
         | "sqlite.query"
         | "sqlite.prepare"
         | "sqlite.location"
+        | "sqlite.isTransaction"
         | "sqlite.checkpoint"
         | "sqlite.statement.run"
         | "sqlite.statement.get"

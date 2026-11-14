@@ -1846,7 +1846,7 @@ export class SidecarProcess {
 			headersJson: string;
 			body?: string;
 			bodyBase64?: string;
-			streamOperation?: "start" | "read" | "cancel";
+			streamOperation?: "start" | "read" | "cancel" | "socket-open" | "socket-read" | "socket-write" | "socket-end" | "socket-close";
 			streamId?: string;
 			maxBytes?: number;
 		},

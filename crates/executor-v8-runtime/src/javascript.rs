@@ -491,6 +491,8 @@ pub struct JavascriptContext {
 pub struct JavascriptExecutionLimits {
     /// V8 heap cap in MB. `None`/`Some(0)` keeps the engine default heap.
     pub v8_heap_limit_mb: Option<u32>,
+    /// Optional local serialization cap, independent of RPC payloads.
+    pub v8_serialization_limit_bytes: Option<usize>,
     /// Sync-RPC blocking-wait ceiling in ms. `None` keeps the engine default.
     pub sync_rpc_wait_timeout_ms: Option<u64>,
     /// Active JavaScript CPU-time budget in ms. `None` keeps the engine default;
@@ -3018,6 +3020,45 @@ impl JavascriptExecution {
         ) {
             return Ok(false);
         }
+        if matches!(
+            request.method.as_str(),
+            "__load_file" | "_loadFile" | "_loadFileSync"
+        ) && request.args.len() == 3
+        {
+            let result = (|| -> Result<Vec<u8>, HostServiceError> {
+                let offset = request.args[1]
+                    .as_u64()
+                    .and_then(|value| usize::try_from(value).ok())
+                    .ok_or_else(|| {
+                        HostServiceError::new("EINVAL", "invalid module source offset")
+                    })?;
+                let length = request.args[2]
+                    .as_u64()
+                    .filter(|length| *length <= 64 * 1024)
+                    .ok_or_else(|| {
+                        HostServiceError::new("E2BIG", "invalid module source chunk length")
+                    })? as usize;
+                let mut guard = self
+                    .module_resolution
+                    .lock()
+                    .map_err(|_| HostServiceError::new("EIO", "module resolver lock poisoned"))?;
+                let (translator, cache) = &mut *guard;
+                let mut resolver = ModuleResolver::new(translator, cache);
+                let source = resolver
+                    .load_file(request.args[0].as_str().unwrap_or(""))?
+                    .ok_or_else(|| HostServiceError::new("ENOENT", "module source is missing"))?;
+                let bytes = source.as_bytes();
+                let start = offset.min(bytes.len());
+                Ok(bytes[start..start.saturating_add(length).min(bytes.len())].to_vec())
+            })();
+            match result {
+                Ok(bytes) => self.respond_sync_rpc_raw_success(request.id, bytes)?,
+                Err(error) => self
+                    .sync_rpc_responder()
+                    .respond_host_error(request.id, error)?,
+            }
+            return Ok(true);
+        }
         let result: Result<Value, HostServiceError> = {
             let mut guard = self.module_resolution.lock().map_err(|_| {
                 JavascriptExecutionError::RpcResponse(String::from(
@@ -3891,11 +3932,12 @@ impl JavascriptExecutionEngine {
             request.limits.limit_external_memory,
             warm_hint,
             |command| {
-                v8_host.create_session_from_command_with_runtime(
+                v8_host.create_session_from_command_with_runtime_and_serialization_limit(
                     command,
                     &runtime,
                     reactor_work_quantum,
                     bridge_call_timeout,
+                    request.limits.v8_serialization_limit_bytes,
                 )
             },
         )?;
@@ -4998,11 +5040,34 @@ fn build_v8_runtime_init_script(
   }}
 
   if (typeof globalThis.require === "function") {{
-    let preloadModules = [];
-    try {{
-      const parsed = JSON.parse(nextEnv.AGENTOS_NODE_PRELOAD_MODULES || "[]");
-      if (Array.isArray(parsed)) preloadModules = parsed.map(String);
-    }} catch (_e) {{}}
+    // NODE_OPTIONS preloads execute inside the same guest before its entrypoint.
+    const optionWords = [];
+    let word = "", quoted = false, started = false;
+    const nodeOptions = String(nextEnv.NODE_OPTIONS || "");
+    for (let i = 0; i < nodeOptions.length; i++) {{
+      const ch = nodeOptions[i];
+      if (ch === '"') {{ quoted = !quoted; started = true; }}
+      else if (ch === "\\" && quoted && i + 1 < nodeOptions.length) {{ word += nodeOptions[++i]; started = true; }}
+      else if (/\s/.test(ch) && !quoted) {{
+        if (started) optionWords.push(word);
+        word = ""; started = false;
+      }} else {{ word += ch; started = true; }}
+    }}
+    if (quoted) throw Object.assign(new Error("Unterminated quote in NODE_OPTIONS"), {{code:"ERR_INVALID_ARG_VALUE"}});
+    if (started) optionWords.push(word);
+    const preloadModules = [];
+    for (let i = 0; i < optionWords.length; i++) {{
+      const option = optionWords[i];
+      if (option === "--require" || option === "-r") {{
+        if (++i === optionWords.length) throw Object.assign(new Error("NODE_OPTIONS --require requires an argument"), {{code:"ERR_INVALID_ARG_VALUE"}});
+        preloadModules.push(optionWords[i]);
+      }} else if (option.startsWith("--require=")) preloadModules.push(option.slice(10));
+    }}
+    const parsedPreloads = JSON.parse(nextEnv.AGENTOS_NODE_PRELOAD_MODULES || "[]");
+    if (!Array.isArray(parsedPreloads) || parsedPreloads.some(value => typeof value !== "string")) {{
+      throw Object.assign(new Error("Invalid guest preload list"), {{code:"ERR_INVALID_ARG_VALUE"}});
+    }}
+    preloadModules.push(...parsedPreloads);
     const preloadBase =
       nextCwd === "/"
         ? "/__agentos_preload__.js"
@@ -5361,7 +5426,8 @@ fn spawn_v8_event_bridge(
                                 }
                             }
                         }
-                        if method == "_fsReadRaw" || method == "_fsReadFileRangeRaw" {
+                        if method == "_fsReadRaw" || method == "_fsReadFileRangeRaw"
+                            || (matches!(method.as_str(), "_loadFile" | "_loadFileSync") && args.len() == 3) {
                             raw_bytes_args.insert(usize::MAX, Vec::new());
                         }
                         record_sync_bridge_phase(
@@ -5775,6 +5841,11 @@ impl LocalBridgeState {
                 ))
             }
             "_loadFile" | "_loadFileSync" => {
+                // Ranged source reads must retain their binary wire shape and
+                // go through the owning kernel (or standalone source reader).
+                if args.len() == 3 {
+                    return None;
+                }
                 let source =
                     match self.load_file(args.first().and_then(Value::as_str).unwrap_or("")) {
                         Ok(source) => source,
@@ -9181,6 +9252,7 @@ mod tests {
             env,
             cwd: std::path::PathBuf::from("/tmp"),
             limits: JavascriptExecutionLimits {
+                v8_serialization_limit_bytes: None,
                 v8_heap_limit_mb: Some(64),
                 sync_rpc_wait_timeout_ms: Some(2_000),
                 cpu_time_limit_ms: Some(750),

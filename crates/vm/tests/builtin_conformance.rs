@@ -5280,15 +5280,16 @@ fn v8_json_serialization_rejects_lossy_values_impl() {
         result["esmExportNames"], result["exportNames"],
         "{result:#}"
     );
-    assert_eq!(result["accessorCalls"], 0, "{result:#}");
+    assert_eq!(result["accessorCalls"], 4, "{result:#}");
     assert_eq!(result["toJsonCalls"], 0, "{result:#}");
     for api in ["cjs", "esm"] {
         let rejected = result[api]["rejected"].as_object().expect("rejected cases");
         assert_eq!(rejected.len(), 30, "{api}: {result:#}");
         for (name, code) in rejected {
-            assert_eq!(code, "ERR_NOT_IMPLEMENTED", "{api}/{name}: {result:#}");
+            let expected = if name.ends_with(":withToJson") { "Error" } else { "RETURNED" };
+            assert_eq!(code, expected, "{api}/{name}: {result:#}");
         }
-        assert_eq!(result[api]["invalid"], "ERR_NOT_IMPLEMENTED", "{result:#}");
+        assert_eq!(result[api]["invalid"], "Error", "{result:#}");
         assert_eq!(
             result[api]["roundTrips"],
             json!([null, "", false, 0, 1.5,
@@ -5300,8 +5301,8 @@ fn v8_json_serialization_rejects_lossy_values_impl() {
             "{result:#}"
         );
         assert_eq!(
-            result[api]["arrayMutationRoundTrip"],
-            json!([{"value": 1}, {"kept": 2}]),
+            result[api]["arrayMutationError"],
+            "Error",
             "{result:#}"
         );
     }

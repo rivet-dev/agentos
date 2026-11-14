@@ -191,6 +191,7 @@ pub(crate) struct AgentOsInner {
     pub(crate) sidecar: Arc<AgentOsSidecar>,
     pub(crate) sidecar_lease: parking_lot::Mutex<Option<AgentOsSidecarVmLease>>,
     pub(crate) dynamic_mounts: parking_lot::Mutex<Vec<wire::MountDescriptor>>,
+    pub(crate) configured_loopback_exempt_ports: parking_lot::Mutex<Vec<u16>>,
     pub(crate) disposed: AtomicBool,
     shutdown_result: tokio::sync::Mutex<Option<Result<(), ClientError>>>,
     vm_disposed: AtomicBool,
@@ -710,6 +711,7 @@ impl AgentOs {
                 .unwrap_or_else(|| Arc::new(TimerScheduleDriver::new()));
             let cron = Arc::new(CronManager::new(driver));
 
+            let loopback_exempt_ports = config.loopback_exempt_ports.clone();
             let inner = AgentOsInner {
                 transport,
                 connection_id,
@@ -738,6 +740,7 @@ impl AgentOs {
                 sidecar: sidecar.clone(),
                 sidecar_lease: parking_lot::Mutex::new(lease.take()),
                 dynamic_mounts: parking_lot::Mutex::new(configured_mounts),
+                configured_loopback_exempt_ports: parking_lot::Mutex::new(loopback_exempt_ports),
                 disposed: AtomicBool::new(false),
                 shutdown_result: tokio::sync::Mutex::new(None),
                 vm_disposed: AtomicBool::new(false),
@@ -1504,7 +1507,9 @@ fn serialize_limits_config_for_sidecar(
     })
 }
 
-fn permissions_policy_config(config: &AgentOsConfig) -> Option<vm_config::PermissionsPolicy> {
+pub(crate) fn permissions_policy_config(
+    config: &AgentOsConfig,
+) -> Option<vm_config::PermissionsPolicy> {
     config
         .permissions
         .as_ref()
@@ -3054,6 +3059,7 @@ mod tests {
         let config = Arc::new(AgentOsConfig::default());
         let cron = Arc::new(CronManager::new(Arc::new(TimerScheduleDriver::new())));
         let owned_transport = transport.clone();
+        let loopback_exempt_ports = config.loopback_exempt_ports.clone();
         let inner = AgentOsInner {
             transport,
             connection_id,
@@ -3082,6 +3088,7 @@ mod tests {
             sidecar: sidecar.clone(),
             sidecar_lease: parking_lot::Mutex::new(lease.take()),
             dynamic_mounts: parking_lot::Mutex::new(configured_mounts),
+            configured_loopback_exempt_ports: parking_lot::Mutex::new(loopback_exempt_ports),
             disposed: AtomicBool::new(false),
             shutdown_result: tokio::sync::Mutex::new(None),
             vm_disposed: AtomicBool::new(false),
@@ -4061,6 +4068,8 @@ mod tests {
                 js_runtime: Some(JsRuntimeLimits {
                     max_readline_history_entries: Some(2048),
                     v8_heap_limit_mb: Some(64),
+                    v8_serialization_limit_bytes: Some(16 * 1024 * 1024),
+                    max_blob_bytes: Some(32 * 1024 * 1024),
                     sync_rpc_wait_timeout_ms: Some(2_000),
                     cpu_time_limit_ms: Some(30_000),
                     wall_clock_limit_ms: Some(0),
@@ -4147,6 +4156,8 @@ mod tests {
             Some(64)
         );
         let js_runtime = limits.js_runtime.expect("js runtime limits");
+        assert_eq!(js_runtime.max_blob_bytes, Some(32 * 1024 * 1024));
+        assert_eq!(js_runtime.v8_serialization_limit_bytes, Some(16 * 1024 * 1024));
         assert_eq!(js_runtime.sync_rpc_wait_timeout_ms, Some(2_000));
         assert_eq!(js_runtime.cpu_time_limit_ms, Some(30_000));
         assert_eq!(js_runtime.wall_clock_limit_ms, Some(0));

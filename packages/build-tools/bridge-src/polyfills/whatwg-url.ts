@@ -1,6 +1,8 @@
 import {
 	URL as UpstreamURL,
 	URLSearchParams as UpstreamURLSearchParams,
+	basicURLParse,
+	serializeHost,
 } from "whatwg-url";
 
 const kBlobUrlStore = /* @__PURE__ */ Symbol.for("agentOs.blobUrlStore");
@@ -86,6 +88,12 @@ Object.defineProperties(URL2, {
 	},
 });
 
+function parseDomainASCII(domain: string): string {
+	const url = basicURLParse("http://domain.invalid/");
+	const parsed = basicURLParse(domain, { url, stateOverride: "hostname" });
+	return parsed ? serializeHost(parsed.host) : "";
+}
+
 function installWhatwgUrlGlobals(target = globalThis) {
 	Object.defineProperty(target, "URL", {
 		value: URL2,
@@ -110,6 +118,7 @@ export {
 	kBlobUrlStore,
 	MAX_BLOB_URLS,
 	nextBlobUrlId,
+	parseDomainASCII,
 	resolveObjectURL,
 	URL2,
 	URLSearchParams,

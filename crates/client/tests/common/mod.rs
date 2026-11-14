@@ -86,7 +86,9 @@ pub fn require_sidecar(test_name: &str) -> bool {
         eprintln!("skipping {message}");
         false
     } else {
-        panic!("{message}; build it with `cargo build -p agentos-sidecar` or set AGENT_OS_CLIENT_ALLOW_E2E_SKIPS=1 for local skip-only runs");
+        panic!(
+            "{message}; build it with `cargo build -p agentos-sidecar` or set AGENT_OS_CLIENT_ALLOW_E2E_SKIPS=1 for local skip-only runs"
+        );
     }
 }
 
@@ -272,6 +274,8 @@ pub async fn require_wasm_commands(os: &AgentOs, test_name: &str) -> bool {
         eprintln!("skipping {message}");
         false
     } else {
-        panic!("{message}; run the toolchain command build or set AGENT_OS_CLIENT_ALLOW_E2E_SKIPS=1 for local skip-only runs");
+        panic!(
+            "{message}; run the toolchain command build or set AGENT_OS_CLIENT_ALLOW_E2E_SKIPS=1 for local skip-only runs"
+        );
     }
 }

@@ -296,6 +296,10 @@ pub struct JsRuntimeLimits {
     /// `JavascriptExecutionLimits.v8_heap_limit_mb` on the execution request
     /// (no longer the `AGENTOS_V8_HEAP_LIMIT_MB` env knob).
     pub v8_heap_limit_mb: Option<u32>,
+    /// Optional local V8 serialization cap. Omitted preserves the bridge-size cap.
+    pub v8_serialization_limit_bytes: Option<usize>,
+    /// Maximum retained bytes in one Blob or File; V8 memory accounting also applies.
+    pub max_blob_bytes: Option<usize>,
     /// Sync-RPC blocking-wait ceiling in ms. `None` keeps the engine default.
     pub sync_rpc_wait_timeout_ms: Option<u64>,
     /// Active JavaScript CPU-time budget in ms. `0` disables the CPU watchdog.
@@ -459,6 +463,8 @@ impl Default for JsRuntimeLimits {
             // Workers-style 128 MiB heap cap by default. Operators can raise or
             // clear this through trusted VM config when a VM needs more room.
             v8_heap_limit_mb: Some(DEFAULT_V8_HEAP_LIMIT_MB),
+            v8_serialization_limit_bytes: None,
+            max_blob_bytes: None,
             sync_rpc_wait_timeout_ms: None,
             cpu_time_limit_ms: DEFAULT_V8_CPU_TIME_LIMIT_MS,
             wall_clock_limit_ms: DEFAULT_V8_WALL_CLOCK_LIMIT_MS,
@@ -640,11 +646,20 @@ pub fn vm_limits_from_config(
             "limits.jsRuntime.maxReadlineHistoryEntries",
         )?;
 
+        if let Some(value) = js_runtime.max_blob_bytes {
+            limits.js_runtime.max_blob_bytes = Some(usize::try_from(value).map_err(|_| integer_too_large("limits.jsRuntime.maxBlobBytes", value))?);
+        }
         if let Some(value) = js_runtime.v8_heap_limit_mb {
             limits.js_runtime.v8_heap_limit_mb = Some(
                 u32::try_from(value)
                     .map_err(|_| integer_too_large("limits.jsRuntime.v8HeapLimitMb", value))?,
             );
+        }
+        if let Some(value) = js_runtime.v8_serialization_limit_bytes {
+            limits.js_runtime.v8_serialization_limit_bytes =
+                Some(usize::try_from(value).map_err(|_| {
+                    integer_too_large("limits.jsRuntime.v8SerializationLimitBytes", value)
+                })?);
         }
         if let Some(value) = js_runtime.cpu_time_limit_ms {
             limits.js_runtime.cpu_time_limit_ms = u32::try_from(value)
@@ -1793,6 +1808,21 @@ pub fn validate_vm_limits(
         return Err(SidecarCoreError::new(
             "limits.python.vfs_rpc_timeout_ms must be greater than zero".to_string(),
         ));
+    }
+    if let Some(bytes) = limits.js_runtime.max_blob_bytes {
+        if bytes == 0 || bytes as u128 > ((1_u128 << 53) - 1) || limits.js_runtime.v8_heap_limit_mb.is_some_and(|mb| bytes as u64 > u64::from(mb) * 1024 * 1024) {
+            return Err(SidecarCoreError::new("limits.jsRuntime.maxBlobBytes must be positive and no larger than the configured V8 heap"));
+        }
+    }
+    if let Some(bytes) = limits.js_runtime.v8_serialization_limit_bytes {
+        if bytes == 0
+            || limits
+                .js_runtime
+                .v8_heap_limit_mb
+                .is_some_and(|mb| bytes as u64 > u64::from(mb) * 1024 * 1024)
+        {
+            return Err(SidecarCoreError::new("limits.jsRuntime.v8SerializationLimitBytes must be positive and no larger than the configured V8 heap"));
+        }
     }
     if let Some(0) = limits.js_runtime.v8_heap_limit_mb {
         return Err(SidecarCoreError::new(

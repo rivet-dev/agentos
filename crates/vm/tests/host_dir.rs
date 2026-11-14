@@ -80,6 +80,70 @@ mod host_dir {
         }
 
         #[test]
+        fn guest_absolute_symlink_keeps_its_target_on_a_remapped_host_mount() {
+            let host = temp_dir("host-dir-guest-absolute-link");
+            fs::write(host.join("file.txt"), b"inside").unwrap();
+            let config = json!({"hostPath": host, "readOnly": false});
+            let backend = HostDirMountPlugin
+                .open(OpenFileSystemPluginRequest {
+                    vm_id: "symlink-control",
+                    guest_path: "/mapped",
+                    read_only: false,
+                    config: &config,
+                    context: &(),
+                })
+                .unwrap();
+            let mut mounts = MountTable::new(agentos_vm_kernel::vfs::MemoryFileSystem::new());
+            mounts
+                .mount_boxed("/mapped", backend, MountOptions::new("host_dir"))
+                .unwrap();
+            mounts
+                .symlink("/mapped/file.txt", "/mapped/absolute")
+                .unwrap();
+            assert_eq!(mounts.read_text_file("/mapped/absolute").unwrap(), "inside");
+            assert_eq!(
+                mounts.read_link("/mapped/absolute").unwrap(),
+                "/mapped/file.txt"
+            );
+            mounts.symlink("file.txt", "/mapped/relative").unwrap();
+            assert_eq!(mounts.read_link("/mapped/relative").unwrap(), "file.txt");
+            assert_eq!(mounts.read_text_file("/mapped/relative").unwrap(), "inside");
+            fs::remove_dir_all(host).unwrap();
+        }
+
+        #[test]
+        fn host_absolute_link_cannot_resolve_outside_its_anchored_root() {
+            let host = temp_dir("host-dir-absolute-confined");
+            let outside = temp_dir("host-dir-absolute-outside");
+            fs::write(host.join("file.txt"), b"inside").unwrap();
+            fs::write(outside.join("private.txt"), b"outside").unwrap();
+            std::os::unix::fs::symlink(host.join("file.txt"), host.join("inside")).unwrap();
+            std::os::unix::fs::symlink(outside.join("private.txt"), host.join("outside")).unwrap();
+            std::os::unix::fs::symlink(
+                host.join("../")
+                    .join(outside.file_name().unwrap())
+                    .join("private.txt"),
+                host.join("parent"),
+            )
+            .unwrap();
+            let mut filesystem = HostDirFilesystem::new(&host).unwrap();
+            assert_eq!(filesystem.read_text_file("/inside").unwrap(), "inside");
+            for link in ["/outside", "/parent"] {
+                assert_eq!(filesystem.read_file(link).unwrap_err().code(), "EACCES");
+                assert_eq!(
+                    filesystem
+                        .write_file(link, b"changed".to_vec())
+                        .unwrap_err()
+                        .code(),
+                    "EACCES"
+                );
+            }
+            assert_eq!(fs::read(outside.join("private.txt")).unwrap(), b"outside");
+            fs::remove_dir_all(host).unwrap();
+            fs::remove_dir_all(outside).unwrap();
+        }
+
+        #[test]
         fn filesystem_pwrite_updates_in_place_and_zero_fills_gaps() {
             let host_dir = temp_dir("agentos-host-dir-plugin-pwrite");
             fs::write(host_dir.join("data.txt"), b"abcdef").expect("seed host file");

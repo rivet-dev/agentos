@@ -14,23 +14,40 @@ fn parse_runtime_config(
 ) -> Result<agentos_driver_tokio::DriverConfig, String> {
     let mut config = agentos_driver_tokio::DriverConfig::default();
     while let Some(argument) = args.next() {
-        let value = if argument == "--max-active-vms" {
-            args.next()
-                .ok_or_else(|| String::from("--max-active-vms requires a positive integer"))?
-        } else if let Some(value) = argument.strip_prefix("--max-active-vms=") {
-            value.to_owned()
-        } else {
+        let (name, inline) = argument
+            .split_once('=')
+            .map_or((argument.as_str(), None), |(name, value)| {
+                (name, Some(value))
+            });
+        if !matches!(
+            name,
+            "--max-blocking-bytes"
+                | "--max-active-vms"
+                | "--max-in-flight-requests"
+                | "--max-terminal-frames"
+                | "--max-terminal-bytes"
+                | "--max-control-frames"
+                | "--max-control-bytes"
+        ) {
             return Err(format!("unknown agentOS sidecar argument: {argument}"));
-        };
-        let maximum = value.parse::<usize>().map_err(|_| {
-            format!("--max-active-vms must be a positive integer, received {value:?}")
-        })?;
-        if maximum == 0 {
-            return Err(String::from(
-                "--max-active-vms must be greater than zero when configured",
-            ));
         }
-        config.max_active_vm_executors = maximum;
+        let value = match inline {
+            Some(value) => value.to_owned(),
+            None => args
+                .next()
+                .ok_or_else(|| format!("{name} requires a positive integer"))?,
+        };
+        let maximum = parse_positive_option::<usize>(name, &value)?;
+        match name {
+            "--max-blocking-bytes" => config.max_blocking_job_bytes = maximum,
+            "--max-active-vms" => config.max_active_vm_executors = maximum,
+            "--max-in-flight-requests" => config.protocol.max_in_flight_requests = maximum,
+            "--max-terminal-frames" => config.protocol.max_terminal_frames = maximum,
+            "--max-terminal-bytes" => config.protocol.max_terminal_bytes = maximum,
+            "--max-control-frames" => config.protocol.max_control_frames = maximum,
+            "--max-control-bytes" => config.protocol.max_control_bytes = maximum,
+            _ => unreachable!("runtime option was validated above"),
+        }
     }
     config.validate().map_err(|error| error.to_string())?;
     Ok(config)
@@ -61,7 +78,16 @@ fn parse_sidecar_options(
                 .next()
                 .ok_or_else(|| format!("{name} requires a value"))?,
         };
-        if name == "--max-active-vms" {
+        if matches!(
+            name,
+            "--max-blocking-bytes"
+                | "--max-active-vms"
+                | "--max-in-flight-requests"
+                | "--max-terminal-frames"
+                | "--max-terminal-bytes"
+                | "--max-control-frames"
+                | "--max-control-bytes"
+        ) {
             runtime_args.extend([name.to_owned(), value]);
             continue;
         }
@@ -288,6 +314,50 @@ fn init_tracing() {
 #[cfg(test)]
 mod tests {
     use super::{parse_runtime_config, parse_sidecar_options};
+
+    #[test]
+    fn protocol_capacity_preserves_terminal_response_reservations() {
+        let default = parse_runtime_config(std::iter::empty()).expect("default config");
+        assert_eq!(default.protocol.max_in_flight_requests, 128);
+        let error = parse_runtime_config(["--max-in-flight-requests=512".to_owned()].into_iter())
+            .expect_err("response credits remain enforced");
+        assert!(error.contains("maxTerminalFrames"));
+        let (configured, cache) = parse_sidecar_options(
+            [
+                "--max-in-flight-requests=512",
+                "--max-terminal-frames=512",
+                "--max-terminal-bytes=8388608",
+            ]
+            .map(str::to_owned)
+            .into_iter(),
+        )
+        .expect("explicit complete budget");
+        assert_eq!(configured.protocol.max_in_flight_requests, 512);
+        assert_eq!(configured.protocol.max_terminal_frames, 512);
+        assert!(cache.is_none());
+        let expanded = parse_runtime_config([
+            "--max-in-flight-requests=1024", "--max-terminal-frames=1024",
+            "--max-terminal-bytes=16777216", "--max-control-frames=2048",
+            "--max-control-bytes=67108864",
+        ].map(str::to_owned).into_iter()).expect("explicit physical control budget");
+        assert_eq!(expanded.protocol.max_control_frames, 2048);
+        assert_eq!(expanded.protocol.max_in_flight_requests, 1024);
+        assert!(
+            parse_runtime_config(["--max-in-flight-requests=0".to_owned()].into_iter()).is_err()
+        );
+    }
+
+    #[test]
+    fn blocking_byte_budget_is_explicit_and_enforced() {
+        let default = parse_runtime_config(std::iter::empty()).unwrap();
+        assert_eq!(default.max_blocking_job_bytes, 64 * 1024 * 1024);
+        let (configured, cache) = parse_sidecar_options([
+            "--max-blocking-bytes=268435456", "--package-cache-max-entries=4",
+        ].map(str::to_owned).into_iter()).unwrap();
+        assert_eq!(configured.max_blocking_job_bytes, 256 * 1024 * 1024);
+        assert_eq!(cache.unwrap().max_entries, 4);
+        assert!(parse_runtime_config(["--max-blocking-bytes=0".into()].into_iter()).is_err());
+    }
 
     #[test]
     fn runtime_executor_limit_is_bounded_by_default_and_configurable() {

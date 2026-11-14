@@ -1,6 +1,8 @@
 use super::super::*;
 use crate::executor::host::{BoundedString, HttpHeader};
 
+mod guest_connection;
+
 const HTTP_LOOPBACK_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const VM_FETCH_STREAM_CHUNK_MAX_BYTES: usize = 64 * 1024;
 const VM_FETCH_STREAM_COUNT_LIMIT: usize = 256;
@@ -665,13 +667,30 @@ impl OwnedKernelFetchSocket {
         body_mode: VmFetchBodyMode,
         peer_closed: bool,
         max_response_bytes: usize,
+        raw_connection: bool,
     ) -> VmFetchStreamState {
-        self.unregister_readiness();
+        let read_readiness = if raw_connection {
+            Some(crate::state::VmFetchReadinessRegistration {
+                registry: self.kernel_readiness.clone(),
+                socket_id: self.socket_id,
+                identity: self
+                    .identity()
+                    .expect("armed socket retains capability identity"),
+                notify: Arc::clone(&self.readiness_notify),
+            })
+        } else {
+            self.unregister_readiness();
+            None
+        };
         self.armed = false;
         VmFetchStreamState {
+            raw_connection,
+            read_pending: false,
+            write_pending: false,
             target_process_id,
             kernel_pid: self.kernel_pid,
             socket_id: self.socket_id,
+            read_readiness,
             _capability: self
                 .capability
                 .take()
@@ -718,6 +737,7 @@ fn open_owned_kernel_fetch_socket(
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
         &request_bytes,
         enforce_stream_limit,
+        false,
     )
 }
 
@@ -727,15 +747,17 @@ fn open_owned_kernel_http_socket(
     address: SocketAddr,
     request_bytes: &[u8],
     enforce_stream_limit: bool,
+    vm_owned: bool,
 ) -> Result<OwnedKernelFetchSocket, VmError> {
     let handle = vm.clone();
     let readiness_notify = Arc::new(tokio::sync::Notify::new());
     let notify = Arc::clone(&readiness_notify);
     vm.try_command("open owned VM fetch socket", move |vm| {
-        if enforce_stream_limit && vm.vm_fetch_streams.len() >= VM_FETCH_STREAM_COUNT_LIMIT {
+        let fetch_stream_count = vm.vm_fetch_streams.values().filter(|stream| !stream.raw_connection).count();
+        if enforce_stream_limit && fetch_stream_count >= VM_FETCH_STREAM_COUNT_LIMIT {
             return Err(VmError::Execution(format!(
                 "ERR_AGENTOS_VM_FETCH_STREAM_LIMIT: VM has {} open fetch streams; close or cancel a stream before opening another (limit {})",
-                vm.vm_fetch_streams.len(),
+                fetch_stream_count,
                 VM_FETCH_STREAM_COUNT_LIMIT
             )));
         }
@@ -805,6 +827,15 @@ fn open_owned_kernel_http_socket(
             return Err(error);
         }
 
+        let kernel_pid = if vm_owned {
+            if let Err(error) = vm.kernel.socket_retain_for_vm(EXECUTION_DRIVER_NAME, kernel_pid, socket_id) {
+                if let Err(cleanup) = close_kernel_socket_idempotent(&mut vm.kernel, kernel_pid, socket_id) {
+                    eprintln!("ERR_AGENTOS_VM_FETCH_SOCKET_CLEANUP: ownership transfer rollback failed: {cleanup}");
+                }
+                return Err(kernel_error(error));
+            }
+            0
+        } else { kernel_pid };
         let kernel_readiness = Arc::clone(&vm.kernel_socket_readiness);
         let target = KernelSocketReadinessTarget {
             session: None,
@@ -1227,7 +1258,7 @@ pub(in crate::execution) async fn dispatch_owned_kernel_http_request(
             ))
         })??;
     let operation = async {
-        let socket = open_owned_kernel_http_socket(vm, process_id, address, &[], false)?;
+        let socket = open_owned_kernel_http_socket(vm, process_id, address, &[], false, false)?;
         let tls = if request.url.scheme() == "https" {
             let endpoint = vm.try_read("get owned HTTP TLS endpoint", |vm| {
                 let peer = vm
@@ -1554,6 +1585,7 @@ async fn start_owned_kernel_http_fetch_stream(
         body_mode,
         peer_closed,
         max_response_bytes,
+        false,
     );
     decode_stream_body(&mut state)?;
     let stream_id = vm.try_command("register owned VM fetch stream", |vm| {
@@ -1898,6 +1930,9 @@ pub(in crate::execution) async fn dispatch_owned_vm_fetch(
     payload: VmFetchRequest,
 ) -> Result<String, VmError> {
     let stream_operation = payload.stream_operation.as_deref();
+    if stream_operation.is_some_and(|operation| operation.starts_with("socket-")) {
+        return guest_connection::dispatch(&vm, payload).await;
+    }
     if matches!(stream_operation, Some("read" | "cancel")) {
         let stream_id = payload.stream_id.as_deref().ok_or_else(|| {
             VmError::InvalidState(String::from(

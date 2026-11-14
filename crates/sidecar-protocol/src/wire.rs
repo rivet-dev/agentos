@@ -234,6 +234,70 @@ fn legacy_root_entry_config(
     }
 }
 
+/// Convert the canonical configuration policy into the existing BARE scope
+/// unions. The trusted client uses this for live permission replacement.
+pub fn permissions_policy_config_to_wire(
+    policy: agentos_vm_config::PermissionsPolicy,
+) -> PermissionsPolicy {
+    fn mode(value: agentos_vm_config::PermissionMode) -> PermissionMode {
+        match value {
+            agentos_vm_config::PermissionMode::Allow => PermissionMode::Allow,
+            agentos_vm_config::PermissionMode::Deny => PermissionMode::Deny,
+            agentos_vm_config::PermissionMode::Ask => PermissionMode::Ask,
+        }
+    }
+    fn pattern(value: agentos_vm_config::PatternPermissionScope) -> PatternPermissionScope {
+        match value {
+            agentos_vm_config::PatternPermissionScope::Mode(value) => {
+                PatternPermissionScope::PermissionMode(mode(value))
+            }
+            agentos_vm_config::PatternPermissionScope::Rules(value) => {
+                PatternPermissionScope::PatternPermissionRuleSet(PatternPermissionRuleSet {
+                    default: value.default.map(mode),
+                    rules: value
+                        .rules
+                        .into_iter()
+                        .map(|rule| PatternPermissionRule {
+                            mode: mode(rule.mode),
+                            operations: rule.operations,
+                            patterns: rule.patterns,
+                        })
+                        .collect(),
+                })
+            }
+        }
+    }
+    fn fs(value: agentos_vm_config::FsPermissionScope) -> FsPermissionScope {
+        match value {
+            agentos_vm_config::FsPermissionScope::Mode(value) => {
+                FsPermissionScope::PermissionMode(mode(value))
+            }
+            agentos_vm_config::FsPermissionScope::Rules(value) => {
+                FsPermissionScope::FsPermissionRuleSet(FsPermissionRuleSet {
+                    default: value.default.map(mode),
+                    rules: value
+                        .rules
+                        .into_iter()
+                        .map(|rule| FsPermissionRule {
+                            mode: mode(rule.mode),
+                            operations: rule.operations,
+                            paths: rule.paths,
+                        })
+                        .collect(),
+                })
+            }
+        }
+    }
+    PermissionsPolicy {
+        fs: policy.fs.map(fs),
+        network: policy.network.map(pattern),
+        child_process: policy.child_process.map(pattern),
+        process: policy.process.map(pattern),
+        env: policy.env.map(pattern),
+        host_function: policy.host_function.map(pattern),
+    }
+}
+
 pub fn permissions_policy_config_from_wire(
     permissions: crate::generated_protocol::v1::PermissionsPolicy,
 ) -> agentos_vm_config::PermissionsPolicy {
@@ -494,6 +558,11 @@ fn legacy_limits_config(
             "limits.js_runtime.max_readline_history_entries",
         ),
         v8_heap_limit_mb: legacy_u64(metadata, "limits.js_runtime.v8_heap_limit_mb"),
+        v8_serialization_limit_bytes: legacy_u64(
+            metadata,
+            "limits.js_runtime.v8_serialization_limit_bytes",
+        ),
+        max_blob_bytes: legacy_u64(metadata, "limits.js_runtime.max_blob_bytes"),
         sync_rpc_wait_timeout_ms: legacy_u64(
             metadata,
             "limits.js_runtime.sync_rpc_wait_timeout_ms",
@@ -665,6 +734,8 @@ fn legacy_has_plugin_limits(config: &agentos_vm_config::PluginLimitsConfig) -> b
 fn legacy_has_js_runtime_limits(config: &agentos_vm_config::JsRuntimeLimitsConfig) -> bool {
     config.max_readline_history_entries.is_some()
         || config.v8_heap_limit_mb.is_some()
+        || config.v8_serialization_limit_bytes.is_some()
+        || config.max_blob_bytes.is_some()
         || config.sync_rpc_wait_timeout_ms.is_some()
         || config.cpu_time_limit_ms.is_some()
         || config.wall_clock_limit_ms.is_some()

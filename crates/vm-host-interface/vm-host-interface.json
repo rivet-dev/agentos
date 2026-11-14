@@ -50,9 +50,11 @@
 		{
 			"convention": "syncPromise",
 			"argumentTypes": [
-				"path: string"
+				"path: string",
+				"offset?: number",
+				"maxBytes?: number"
 			],
-			"returnType": "string | null",
+			"returnType": "string | Uint8Array | null",
 			"names": [
 				"_loadFile",
 				"_loadFileSync"
@@ -258,6 +260,7 @@
 			"names": [
 				"process.chdir",
 				"process.cpuUsage",
+				"process.nextTickScheduled",
 				"process.fcntlLock",
 				"process.flock",
 				"process.getegid",
@@ -275,6 +278,22 @@
 				"process.getuid",
 				"process.memoryUsage",
 				"v8.getHeapStatistics",
+				"v8.collectGarbage",
+				"uint8array.encode",
+				"v8.serialize",
+				"v8.deserialize",
+				"v8.deserializer.create",
+				"v8.deserializer.readHeader",
+				"v8.deserializer.readValue",
+				"v8.deserializer.readUint32",
+				"v8.deserializer.readUint64",
+				"v8.deserializer.readDouble",
+				"v8.deserializer.readRawBytes",
+				"v8.deserializer.getWireFormatVersion",
+				"v8.deserializer.transferArrayBuffer",
+				"v8.deserializer.readHostObject",
+				"zlib.brotliCompressSync",
+				"zlib.brotliDecompressSync",
 				"process.resourceUsage",
 				"process.setegid",
 				"process.seteuid",
@@ -355,6 +374,7 @@
 				"_sqliteDatabaseQueryRaw",
 				"_sqliteDatabasePrepareRaw",
 				"_sqliteDatabaseLocationRaw",
+				"_sqliteDatabaseIsTransactionRaw",
 				"_sqliteDatabaseCheckpointRaw",
 				"_sqliteStatementRunRaw",
 				"_sqliteStatementGetRaw",
@@ -372,7 +392,16 @@
 				"_kernelFlockRaw",
 				"_kernelTtySizeRaw",
 				"_kernelTtyNameRaw",
-				"_ptySetRawMode"
+				"_ptySetRawMode",
+				"_sqliteTransferBeginRaw",
+				"_sqliteTransferAppendRaw",
+				"_sqliteTransferCancelRaw",
+				"_sqliteTransferReadRaw",
+				"_sqliteTransferReleaseRaw",
+				"_sqliteStatementRunChunkedRaw",
+				"_sqliteStatementGetChunkedRaw",
+				"_sqliteStatementAllChunkedRaw",
+				"_sqliteDatabaseQueryChunkedRaw"
 			]
 		},
 		{
@@ -503,7 +532,16 @@
 		"_kernelStdinReadRaw": 1048576,
 		"_kernelStdinRead": 1048576,
 		"_processIpcReadRaw": 131072,
-		"_processIpcPoll": 1048576
+		"_processIpcPoll": 1048576,
+		"_sqliteTransferBeginRaw": 65536,
+		"_sqliteTransferAppendRaw": 65536,
+		"_sqliteTransferCancelRaw": 65536,
+		"_sqliteTransferReadRaw": 131072,
+		"_sqliteTransferReleaseRaw": 65536,
+		"_sqliteStatementRunChunkedRaw": 1048576,
+		"_sqliteStatementGetChunkedRaw": 1048576,
+		"_sqliteStatementAllChunkedRaw": 1048576,
+		"_sqliteDatabaseQueryChunkedRaw": 1048576
 	},
 	"dispatch": {
 		"_batchResolveModules": {
@@ -1310,6 +1348,10 @@
 			"method": "sqlite.location",
 			"translateArgs": false
 		},
+		"_sqliteDatabaseIsTransactionRaw": {
+			"method": "sqlite.isTransaction",
+			"translateArgs": false
+		},
 		"_sqliteDatabaseOpenRaw": {
 			"method": "sqlite.open",
 			"translateArgs": false
@@ -1456,6 +1498,42 @@
 		},
 		"_processIpcPoll": {
 			"method": "process.ipc_poll",
+			"translateArgs": false
+		},
+		"_sqliteTransferBeginRaw": {
+			"method": "sqlite.transfer.begin",
+			"translateArgs": false
+		},
+		"_sqliteTransferAppendRaw": {
+			"method": "sqlite.transfer.append",
+			"translateArgs": false
+		},
+		"_sqliteTransferCancelRaw": {
+			"method": "sqlite.transfer.cancel",
+			"translateArgs": false
+		},
+		"_sqliteTransferReadRaw": {
+			"method": "sqlite.transfer.read",
+			"translateArgs": false
+		},
+		"_sqliteTransferReleaseRaw": {
+			"method": "sqlite.transfer.release",
+			"translateArgs": false
+		},
+		"_sqliteStatementRunChunkedRaw": {
+			"method": "sqlite.statement.runChunked",
+			"translateArgs": false
+		},
+		"_sqliteStatementGetChunkedRaw": {
+			"method": "sqlite.statement.getChunked",
+			"translateArgs": false
+		},
+		"_sqliteStatementAllChunkedRaw": {
+			"method": "sqlite.statement.allChunked",
+			"translateArgs": false
+		},
+		"_sqliteDatabaseQueryChunkedRaw": {
+			"method": "sqlite.queryChunked",
 			"translateArgs": false
 		}
 	}

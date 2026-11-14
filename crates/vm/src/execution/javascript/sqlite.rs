@@ -1,3 +1,4 @@
+mod transfer;
 use super::super::*;
 
 use rusqlite::config::DbConfig;
@@ -42,6 +43,9 @@ pub(in crate::execution) fn service_javascript_sqlite_sync_rpc(
     process: &mut ActiveProcess,
     request: &HostRpcRequest,
 ) -> Result<Value, VmError> {
+    if request.method.starts_with("sqlite.transfer.") {
+        return transfer::method(process, request);
+    }
     match request.method.as_str() {
         "sqlite.constants" => Ok(json!({})),
         "sqlite.open" => sqlite_open_database(kernel, process, request),
@@ -52,7 +56,7 @@ pub(in crate::execution) fn service_javascript_sqlite_sync_rpc(
             Ok(Value::Null)
         }
         "sqlite.exec" => sqlite_exec_database(kernel, process, request),
-        "sqlite.query" => sqlite_query_database(kernel, process, request),
+        "sqlite.query" | "sqlite.queryChunked" => sqlite_query_database(kernel, process, request),
         "sqlite.prepare" => sqlite_prepare_statement(process, request),
         "sqlite.location" => {
             let database_id =
@@ -64,6 +68,13 @@ pub(in crate::execution) fn service_javascript_sqlite_sync_rpc(
                 .map(|path| Value::String(path.clone()))
                 .unwrap_or(Value::Null))
         }
+        "sqlite.isTransaction" => {
+            let id =
+                javascript_sync_rpc_arg_u64(&request.args, 0, "sqlite.isTransaction database id")?;
+            Ok(json!(
+                !sqlite_database(process, id)?.connection.is_autocommit()
+            ))
+        }
         "sqlite.checkpoint" => {
             let database_id =
                 javascript_sync_rpc_arg_u64(&request.args, 0, "sqlite.checkpoint database id")?;
@@ -72,9 +83,13 @@ pub(in crate::execution) fn service_javascript_sqlite_sync_rpc(
             sqlite_sync_database(kernel, kernel_pid, database, false)?;
             Ok(Value::Null)
         }
-        "sqlite.statement.run" => sqlite_run_statement(kernel, process, request),
-        "sqlite.statement.get" => sqlite_get_statement(kernel, process, request),
-        "sqlite.statement.all" | "sqlite.statement.iterate" => {
+        "sqlite.statement.run" | "sqlite.statement.runChunked" => {
+            sqlite_run_statement(kernel, process, request)
+        }
+        "sqlite.statement.get" | "sqlite.statement.getChunked" => {
+            sqlite_get_statement(kernel, process, request)
+        }
+        "sqlite.statement.all" | "sqlite.statement.iterate" | "sqlite.statement.allChunked" => {
             sqlite_all_statement(kernel, process, request)
         }
         "sqlite.statement.columns" => sqlite_statement_columns(process, request),
@@ -236,7 +251,7 @@ fn sqlite_open_database(
         flags |= SqliteOpenFlags::SQLITE_OPEN_CREATE;
     }
 
-    let connection = SqliteConnection::open_with_flags(&target, flags).map_err(|error| {
+    let mut connection = SqliteConnection::open_with_flags(&target, flags).map_err(|error| {
         VmError::InvalidState(format!(
             "sqlite database open failed for {}: {error}",
             vm_path.unwrap_or(":memory:")
@@ -257,29 +272,36 @@ fn sqlite_open_database(
     connection
         .set_db_config(DbConfig::SQLITE_DBCONFIG_DEFENSIVE, true)
         .map_err(sqlite_error)?;
-    connection.authorizer(Some(authorize_guest_sqlite_action));
+    connection
+        .authorizer(Some(authorize_guest_sqlite_action))
+        .map_err(sqlite_error)?;
 
-    process.sqlite_databases.insert(
-        database_id,
-        ActiveSqliteDatabase {
-            connection,
-            host_path,
-            vm_path: vm_path.map(String::from),
-            dirty: false,
-            transaction_depth: 0,
-            read_only,
-        },
-    );
+    let mut database = ActiveSqliteDatabase {
+        next_transfer_generation: 0,
+        input_transfer: None,
+        output_transfer: None,
+        connection,
+        host_path,
+        vm_path: vm_path.map(String::from),
+        dirty: !read_only && vm_path.is_some(),
+        transaction_depth: 0,
+        read_only,
+    };
+    // Opening a writable file must enforce VFS permissions now, not on close.
+    // Committed bytes must also be visible to ordinary guest filesystem reads.
+    sqlite_sync_database(kernel, process.kernel_pid, &mut database, false)?;
+    process.sqlite_databases.insert(database_id, database);
     Ok(json!(database_id))
 }
 
 fn sqlite_exec_database(
-    _kernel: &mut SidecarKernel,
+    kernel: &mut SidecarKernel,
     process: &mut ActiveProcess,
     request: &HostRpcRequest,
 ) -> Result<Value, VmError> {
     let database_id = javascript_sync_rpc_arg_u64(&request.args, 0, "sqlite.exec database id")?;
     let sql = javascript_sync_rpc_arg_str(&request.args, 1, "sqlite.exec sql")?;
+    let kernel_pid = process.kernel_pid;
     let database = sqlite_database_mut(process, database_id)?;
     let before = database.connection.total_changes();
     database
@@ -287,35 +309,103 @@ fn sqlite_exec_database(
         .execute_batch(sql)
         .map_err(sqlite_error)?;
     mark_sqlite_mutation(database, sql);
-    Ok(json!(database
-        .connection
-        .total_changes()
-        .saturating_sub(before)))
+    // exec accepts a script: later statements can mutate even when the first
+    // statement is read-only, and schema changes do not increment total_changes.
+    database.dirty = true;
+    sqlite_sync_database(kernel, kernel_pid, database, false)?;
+    Ok(json!(
+        database.connection.total_changes().saturating_sub(before)
+    ))
 }
 
 fn sqlite_query_database(
-    _kernel: &mut SidecarKernel,
+    kernel: &mut SidecarKernel,
     process: &mut ActiveProcess,
     request: &HostRpcRequest,
 ) -> Result<Value, VmError> {
     let database_id = javascript_sync_rpc_arg_u64(&request.args, 0, "sqlite.query database id")?;
     let sql = javascript_sync_rpc_arg_str(&request.args, 1, "sqlite.query sql")?;
-    let params = request.args.get(2);
     let options = request.args.get(3);
     let return_arrays = sqlite_option_bool(options, "returnArrays").unwrap_or(false);
     let read_bigints = sqlite_option_bool(options, "readBigInts").unwrap_or(false);
+    let params = transfer::parameters(process, database_id, request, 2, 4)?;
+    let runtime = process.runtime_context.clone();
+    let result_limit = process.limits.sqlite.max_result_bytes;
+    let kernel_pid = process.kernel_pid;
     let database = sqlite_database_mut(process, database_id)?;
-    let rows = sqlite_query_rows(
+    database.output_transfer = None;
+    let rows = transfer::query_rows(
         &mut database.connection,
         sql,
-        params,
+        params.value(),
         return_arrays,
         read_bigints,
         true,
         false,
-    )?;
-    mark_sqlite_mutation(database, sql);
-    Ok(rows)
+        runtime,
+        result_limit,
+        false,
+    );
+    let rows = publish_sqlite_query_result(kernel, kernel_pid, database, sql, rows)?;
+    transfer::reply(
+        process,
+        database_id,
+        rows,
+        request.method.ends_with("Chunked"),
+    )
+}
+
+// Use SQLite's own parser through rusqlite's safe API. Prefixes end only at
+// semicolons, so parameter expansion never makes a partial parameter look like
+// the complete statement. Once SQLite recognizes the first statement, every
+// later prefix produces that same statement. Binary search avoids a quadratic
+// prepare loop for long triggers and quoted/commented semicolons.
+fn sqlite_statement_source(connection: &SqliteConnection, sql: &str) -> Result<String, VmError> {
+    if sql.as_bytes().contains(&0) {
+        return Err(VmError::host(
+            "ERR_INVALID_ARG_VALUE",
+            "SQL cannot contain a NUL byte",
+        ));
+    }
+    use rusqlite::fallible_iterator::FallibleIterator as _;
+    // Batch::next prepares only the first statement, matching Node even when
+    // later SQL is invalid. Connection::prepare rejects tails in rusqlite 0.43.
+    let first_statement = |source: &str| rusqlite::Batch::new(connection, source).next();
+    let expected = first_statement(sql)
+        .map_err(sqlite_error)?
+        .ok_or_else(|| VmError::host("ERR_INVALID_ARG_VALUE", "SQL contains no statement"))?;
+    let expanded = expected
+        .expanded_sql()
+        .ok_or_else(|| VmError::host("ERR_INVALID_ARG_VALUE", "SQL contains no statement"))?;
+    let count = sql.bytes().filter(|byte| *byte == b';').count();
+    let end_at = |index| {
+        sql.match_indices(';')
+            .nth(index)
+            .map(|(offset, _)| offset + 1)
+            .unwrap_or(sql.len())
+    };
+    let mut low = 0;
+    let mut high = count;
+    while low < high {
+        let middle = low + (high - low) / 2;
+        // Incomplete quoted strings/comments/trigger bodies are expected parse
+        // misses here. Errors preparing the actual request propagated above.
+        let same = first_statement(&sql[..end_at(middle)]).is_ok_and(|candidate| {
+            candidate.is_some_and(|candidate| {
+                candidate.parameter_count() == expected.parameter_count()
+                    && (1..=expected.parameter_count()).all(|index| {
+                        candidate.parameter_name(index) == expected.parameter_name(index)
+                    })
+                    && candidate.expanded_sql().as_deref() == Some(expanded.as_str())
+            })
+        });
+        if same {
+            high = middle;
+        } else {
+            low = middle + 1;
+        }
+    }
+    Ok(sql[..end_at(low)].to_owned())
 }
 
 fn sqlite_prepare_statement(
@@ -325,32 +415,37 @@ fn sqlite_prepare_statement(
     ensure_per_process_state_handle_capacity(process.sqlite_statements.len(), "sqlite statement")?;
     let database_id = javascript_sync_rpc_arg_u64(&request.args, 0, "sqlite.prepare database id")?;
     let sql = javascript_sync_rpc_arg_str(&request.args, 1, "sqlite.prepare sql")?;
-    sqlite_database(process, database_id)?;
+    let database = sqlite_database(process, database_id)?;
+    let source_sql = sqlite_statement_source(&database.connection, sql)?;
+    // The guest already owns the original SQL. Return only the first statement's
+    // UTF-16 length, avoiding an unbounded echo in the small metadata reply.
+    let source_sql_length = source_sql.encode_utf16().count();
     process.next_sqlite_statement_id += 1;
     let statement_id = process.next_sqlite_statement_id;
     process.sqlite_statements.insert(
         statement_id,
         ActiveSqliteStatement {
             database_id,
-            sql: sql.to_owned(),
+            sql: source_sql,
             return_arrays: false,
             read_bigints: false,
             allow_bare_named_parameters: false,
             allow_unknown_named_parameters: false,
         },
     );
-    Ok(json!(statement_id))
+    Ok(json!({"statementId":statement_id,"sourceSQLLength":source_sql_length}))
 }
 
 fn sqlite_run_statement(
-    _kernel: &mut SidecarKernel,
+    kernel: &mut SidecarKernel,
     process: &mut ActiveProcess,
     request: &HostRpcRequest,
 ) -> Result<Value, VmError> {
     let statement_id =
         javascript_sync_rpc_arg_u64(&request.args, 0, "sqlite.statement.run statement id")?;
-    let params = request.args.get(1);
     let statement_state = sqlite_statement(process, statement_id)?.clone();
+    let params = transfer::parameters(process, statement_state.database_id, request, 1, 2)?;
+    let kernel_pid = process.kernel_pid;
     let database = sqlite_database_mut(process, statement_state.database_id)?;
     let before = database.connection.total_changes();
     {
@@ -360,7 +455,7 @@ fn sqlite_run_statement(
             .map_err(sqlite_error)?;
         bind_sqlite_parameters(
             &mut statement,
-            params,
+            params.value(),
             statement_state.allow_bare_named_parameters,
             statement_state.allow_unknown_named_parameters,
         )?;
@@ -369,6 +464,7 @@ fn sqlite_run_statement(
     let changes = database.connection.total_changes().saturating_sub(before);
     let last_insert_rowid = database.connection.last_insert_rowid();
     mark_sqlite_mutation(database, &statement_state.sql);
+    sqlite_sync_database(kernel, kernel_pid, database, false)?;
     let result = json!({
         "changes": changes,
         "lastInsertRowid": encode_sqlite_integer(last_insert_rowid, true),
@@ -377,52 +473,75 @@ fn sqlite_run_statement(
 }
 
 fn sqlite_get_statement(
-    _kernel: &mut SidecarKernel,
+    kernel: &mut SidecarKernel,
     process: &mut ActiveProcess,
     request: &HostRpcRequest,
 ) -> Result<Value, VmError> {
     let statement_id =
         javascript_sync_rpc_arg_u64(&request.args, 0, "sqlite.statement.get statement id")?;
-    let params = request.args.get(1);
     let statement_state = sqlite_statement(process, statement_id)?.clone();
+    let params = transfer::parameters(process, statement_state.database_id, request, 1, 2)?;
+    let runtime = process.runtime_context.clone();
+    let result_limit = process.limits.sqlite.max_result_bytes;
+    let kernel_pid = process.kernel_pid;
     let database = sqlite_database_mut(process, statement_state.database_id)?;
-    let rows = sqlite_query_rows(
+    database.output_transfer = None;
+    let rows = transfer::query_rows(
         &mut database.connection,
         &statement_state.sql,
-        params,
+        params.value(),
         statement_state.return_arrays,
         statement_state.read_bigints,
         statement_state.allow_bare_named_parameters,
         statement_state.allow_unknown_named_parameters,
-    )?;
-    mark_sqlite_mutation(database, &statement_state.sql);
-    Ok(rows
-        .as_array()
-        .and_then(|rows| rows.first().cloned())
-        .unwrap_or(Value::Null))
+        runtime,
+        result_limit,
+        true,
+    );
+    let rows =
+        publish_sqlite_query_result(kernel, kernel_pid, database, &statement_state.sql, rows)?;
+    transfer::reply(
+        process,
+        statement_state.database_id,
+        rows,
+        request.method.ends_with("Chunked"),
+    )
 }
 
 fn sqlite_all_statement(
-    _kernel: &mut SidecarKernel,
+    kernel: &mut SidecarKernel,
     process: &mut ActiveProcess,
     request: &HostRpcRequest,
 ) -> Result<Value, VmError> {
     let statement_id =
         javascript_sync_rpc_arg_u64(&request.args, 0, "sqlite.statement.all statement id")?;
-    let params = request.args.get(1);
     let statement_state = sqlite_statement(process, statement_id)?.clone();
+    let params = transfer::parameters(process, statement_state.database_id, request, 1, 2)?;
+    let runtime = process.runtime_context.clone();
+    let result_limit = process.limits.sqlite.max_result_bytes;
+    let kernel_pid = process.kernel_pid;
     let database = sqlite_database_mut(process, statement_state.database_id)?;
-    let rows = sqlite_query_rows(
+    database.output_transfer = None;
+    let rows = transfer::query_rows(
         &mut database.connection,
         &statement_state.sql,
-        params,
+        params.value(),
         statement_state.return_arrays,
         statement_state.read_bigints,
         statement_state.allow_bare_named_parameters,
         statement_state.allow_unknown_named_parameters,
-    )?;
-    mark_sqlite_mutation(database, &statement_state.sql);
-    Ok(rows)
+        runtime,
+        result_limit,
+        false,
+    );
+    let rows =
+        publish_sqlite_query_result(kernel, kernel_pid, database, &statement_state.sql, rows)?;
+    transfer::reply(
+        process,
+        statement_state.database_id,
+        rows,
+        request.method.ends_with("Chunked"),
+    )
 }
 
 fn sqlite_statement_columns(
@@ -440,90 +559,9 @@ fn sqlite_statement_columns(
     Ok(Value::Array(
         statement
             .column_names()
-            .iter()
             .map(|name| json!({ "name": name }))
             .collect(),
     ))
-}
-
-fn sqlite_query_rows(
-    connection: &mut SqliteConnection,
-    sql: &str,
-    params: Option<&Value>,
-    return_arrays: bool,
-    read_bigints: bool,
-    allow_bare_named_parameters: bool,
-    allow_unknown_named_parameters: bool,
-) -> Result<Value, VmError> {
-    let mut statement = connection.prepare(sql).map_err(sqlite_error)?;
-    let column_names = statement
-        .column_names()
-        .iter()
-        .map(|name| (*name).to_owned())
-        .collect::<Vec<_>>();
-    let column_count = statement.column_count();
-    bind_sqlite_parameters(
-        &mut statement,
-        params,
-        allow_bare_named_parameters,
-        allow_unknown_named_parameters,
-    )?;
-    let mut rows = statement.raw_query();
-    let mut encoded_rows = Vec::new();
-    while let Some(row) = rows.next().map_err(sqlite_error)? {
-        encoded_rows.push(encode_sqlite_row(
-            row,
-            &column_names,
-            column_count,
-            return_arrays,
-            read_bigints,
-        )?);
-    }
-    Ok(Value::Array(encoded_rows))
-}
-
-fn encode_sqlite_row(
-    row: &rusqlite::Row<'_>,
-    column_names: &[String],
-    column_count: usize,
-    return_arrays: bool,
-    read_bigints: bool,
-) -> Result<Value, VmError> {
-    if return_arrays {
-        let mut values = Vec::with_capacity(column_count);
-        for index in 0..column_count {
-            values.push(encode_sqlite_value_ref(
-                row.get_ref(index).map_err(sqlite_error)?,
-                read_bigints,
-            )?);
-        }
-        return Ok(Value::Array(values));
-    }
-
-    let mut object = Map::with_capacity(column_count);
-    for (index, name) in column_names.iter().enumerate() {
-        object.insert(
-            name.clone(),
-            encode_sqlite_value_ref(row.get_ref(index).map_err(sqlite_error)?, read_bigints)?,
-        );
-    }
-    Ok(Value::Object(object))
-}
-
-fn encode_sqlite_value_ref(
-    value: SqliteValueRef<'_>,
-    read_bigints: bool,
-) -> Result<Value, VmError> {
-    Ok(match value {
-        SqliteValueRef::Null => Value::Null,
-        SqliteValueRef::Integer(number) => encode_sqlite_integer(number, read_bigints),
-        SqliteValueRef::Real(number) => json!(number),
-        SqliteValueRef::Text(text) => Value::String(String::from_utf8_lossy(text).into_owned()),
-        SqliteValueRef::Blob(bytes) => json!({
-            "__agentosSqliteType": "uint8array",
-            "value": base64::engine::general_purpose::STANDARD.encode(bytes),
-        }),
-    })
 }
 
 fn encode_sqlite_integer(number: i64, read_bigints: bool) -> Value {
@@ -631,6 +669,21 @@ fn decode_sqlite_parameter(value: &Value) -> Result<rusqlite::types::Value, VmEr
             )));
         }
         Value::Object(map) => match map.get("__agentosSqliteType").and_then(Value::as_str) {
+            Some("double") => {
+                let text = map
+                    .get("value")
+                    .and_then(Value::as_str)
+                    .filter(|text| text.len() == 16)
+                    .ok_or_else(|| {
+                        VmError::InvalidState(String::from(
+                            "sqlite double parameter missing 64-bit hexadecimal value",
+                        ))
+                    })?;
+                let bits = u64::from_str_radix(text, 16).map_err(|error| {
+                    VmError::InvalidState(format!("invalid sqlite double parameter: {error}"))
+                })?;
+                rusqlite::types::Value::Real(f64::from_bits(bits))
+            }
             Some("bigint") => rusqlite::types::Value::Integer(
                 map.get("value")
                     .and_then(Value::as_str)
@@ -750,6 +803,30 @@ pub(in crate::execution) fn ensure_per_process_state_handle_capacity(
     Ok(())
 }
 
+// Result admission can fail after SQLite has committed a RETURNING statement.
+// Persist the connection's real state before propagating that original refusal.
+fn publish_sqlite_query_result<T>(
+    kernel: &mut SidecarKernel,
+    kernel_pid: u32,
+    database: &mut ActiveSqliteDatabase,
+    sql: &str,
+    result: Result<T, VmError>,
+) -> Result<T, VmError> {
+    mark_sqlite_mutation(database, sql);
+    let publication = sqlite_sync_database(kernel, kernel_pid, database, false);
+    match (result, publication) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+        (Err(error), Err(publication_error)) => {
+            // Keep the typed operation error and expose the independent failure;
+            // dirty stays set so a later authorized operation can retry publication.
+            tracing::error!(%error, %publication_error, "SQLite committed mutation publication failed after query refusal");
+            Err(error)
+        }
+    }
+}
+
 fn sqlite_sync_database(
     kernel: &mut SidecarKernel,
     kernel_pid: u32,
@@ -765,10 +842,17 @@ fn sqlite_sync_database(
         return Ok(());
     }
 
-    database
+    let (busy, wal_pages, checkpointed): (i64, i64, i64) = database
         .connection
-        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+        .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
         .map_err(sqlite_error)?;
+    // A completed checkpoint, including a non-WAL database (-1 page counts),
+    // leaves the main file self-contained. SQLite operations in this VM are
+    // serialized; no guest mutation can race this read. A busy reader retains
+    // the existing online-backup path for committed pages still held in WAL.
+    let needs_backup = busy != 0 || (wal_pages >= 0 && checkpointed < wal_pages);
     let host_path = database.host_path.as_ref().expect("sqlite host path");
     match fs::metadata(host_path) {
         Ok(_) => {}
@@ -786,33 +870,36 @@ fn sqlite_sync_database(
     // and session rows from the WAL. SQLite's online backup API includes committed
     // WAL pages without invalidating live statements.
     let snapshot_path = PathBuf::from(format!("{}.snapshot", host_path.display()));
-    if snapshot_path.exists() {
-        fs::remove_file(&snapshot_path).map_err(|error| {
-            VmError::Io(format!(
-                "failed to remove stale sqlite snapshot {}: {error}",
-                snapshot_path.display()
-            ))
-        })?;
+    if needs_backup {
+        if snapshot_path.exists() {
+            fs::remove_file(&snapshot_path).map_err(|error| {
+                VmError::Io(format!(
+                    "failed to remove stale sqlite snapshot {}: {error}",
+                    snapshot_path.display()
+                ))
+            })?;
+        }
+        let mut snapshot = SqliteConnection::open(&snapshot_path).map_err(sqlite_error)?;
+        {
+            let backup =
+                SqliteBackup::new(&database.connection, &mut snapshot).map_err(sqlite_error)?;
+            backup
+                .run_to_completion(256, Duration::from_millis(1), None)
+                .map_err(sqlite_error)?;
+        }
+        drop(snapshot);
     }
-    let mut snapshot = SqliteConnection::open(&snapshot_path).map_err(sqlite_error)?;
-    {
-        let backup =
-            SqliteBackup::new(&database.connection, &mut snapshot).map_err(sqlite_error)?;
-        backup
-            .run_to_completion(256, Duration::from_millis(1), None)
-            .map_err(sqlite_error)?;
-    }
-    drop(snapshot);
     let vm_path = database.vm_path.as_deref().expect("sqlite vm path");
     if process_exited {
         ensure_vm_parent_dir_unchecked(kernel, vm_path)?;
     } else {
         ensure_vm_parent_dir(kernel, kernel_pid, vm_path)?;
     }
-    let contents = fs::read(&snapshot_path).map_err(|error| {
+    let source_path = if needs_backup { &snapshot_path } else { host_path };
+    let contents = fs::read(source_path).map_err(|error| {
         VmError::Io(format!(
-            "failed to read sqlite snapshot {}: {error}",
-            snapshot_path.display()
+            "failed to read committed sqlite image {}: {error}",
+            source_path.display()
         ))
     })?;
     if process_exited {
@@ -826,12 +913,14 @@ fn sqlite_sync_database(
             .write_file_for_process(EXECUTION_DRIVER_NAME, kernel_pid, vm_path, contents, None)
             .map_err(kernel_error)?;
     }
-    fs::remove_file(&snapshot_path).map_err(|error| {
-        VmError::Io(format!(
-            "failed to remove sqlite snapshot {}: {error}",
-            snapshot_path.display()
-        ))
-    })?;
+    if needs_backup {
+        fs::remove_file(&snapshot_path).map_err(|error| {
+            VmError::Io(format!(
+                "failed to remove sqlite snapshot {}: {error}",
+                snapshot_path.display()
+            ))
+        })?;
+    }
     database.dirty = false;
     Ok(())
 }
@@ -951,36 +1040,15 @@ fn sqlite_statement_mut(
 }
 
 fn mark_sqlite_mutation(database: &mut ActiveSqliteDatabase, sql: &str) {
-    let normalized = sql.trim_start().to_ascii_lowercase();
-    if normalized.starts_with("begin") || normalized.starts_with("savepoint") {
-        database.dirty = true;
-        database.transaction_depth += 1;
-        return;
-    }
-    if normalized.starts_with("commit") || normalized.starts_with("release savepoint") {
-        database.dirty = true;
-        database.transaction_depth = database.transaction_depth.saturating_sub(1);
-        return;
-    }
-    if normalized.starts_with("rollback") && !normalized.starts_with("rollback to") {
-        database.dirty = true;
-        database.transaction_depth = database.transaction_depth.saturating_sub(1);
-        return;
-    }
-    if normalized.starts_with("insert")
-        || normalized.starts_with("update")
-        || normalized.starts_with("delete")
-        || normalized.starts_with("replace")
-        || normalized.starts_with("create")
-        || normalized.starts_with("alter")
-        || normalized.starts_with("drop")
-        || normalized.starts_with("vacuum")
-        || normalized.starts_with("reindex")
-        || normalized.starts_with("analyze")
-        || normalized.starts_with("attach")
-        || normalized.starts_with("detach")
-        || normalized.starts_with("pragma")
-    {
+    // SQLite owns transaction state, including scripts, comments and savepoints.
+    // Prefix counting loses COMMITs inside scripts and RELEASE without SAVEPOINT.
+    database.transaction_depth = usize::from(!database.connection.is_autocommit());
+    let readonly = database
+        .connection
+        .prepare(sql)
+        .map(|statement| statement.readonly())
+        .unwrap_or(false);
+    if !readonly {
         database.dirty = true;
     }
 }
@@ -998,5 +1066,55 @@ fn sqlite_option_u64(options: Option<&Value>, key: &str) -> Option<u64> {
 }
 
 fn sqlite_error(error: rusqlite::Error) -> VmError {
-    VmError::InvalidState(format!("sqlite error: {error}"))
+    let (sqlite, message) = match &error {
+        rusqlite::Error::SqliteFailure(code, message) => (code, message.clone()),
+        rusqlite::Error::SqlInputError { error, msg, .. } => (error, Some(msg.clone())),
+        _ => return VmError::host("ERR_SQLITE_ERROR", error.to_string()),
+    };
+    let description = sqlite_result_description(sqlite.extended_code);
+    VmError::Host(
+        crate::executor::backend::HostServiceError::new(
+            "ERR_SQLITE_ERROR",
+            message.unwrap_or_else(|| description.to_owned()),
+        )
+        .with_details(json!({ "errcode": sqlite.extended_code, "errstr": description })),
+    )
+}
+
+// sqlite3_errstr's stable result descriptions. Keep this pure so the VM crate
+// retains forbid(unsafe_code); bundled SQLite owns the extended numeric codes.
+fn sqlite_result_description(code: i32) -> &'static str {
+    match code {
+        rusqlite::ffi::SQLITE_ABORT_ROLLBACK => "abort due to ROLLBACK",
+        rusqlite::ffi::SQLITE_ROW => "another row available",
+        rusqlite::ffi::SQLITE_DONE => "no more rows available",
+        _ => match code & 0xff {
+            0 => "not an error",
+            1 => "SQL logic error",
+            3 => "access permission denied",
+            4 => "query aborted",
+            5 => "database is locked",
+            6 => "database table is locked",
+            7 => "out of memory",
+            8 => "attempt to write a readonly database",
+            9 => "interrupted",
+            10 => "disk I/O error",
+            11 => "database disk image is malformed",
+            12 => "unknown operation",
+            13 => "database or disk is full",
+            14 => "unable to open database file",
+            15 => "locking protocol",
+            17 => "database schema has changed",
+            18 => "string or blob too big",
+            19 => "constraint failed",
+            20 => "datatype mismatch",
+            21 => "bad parameter or other API misuse",
+            23 => "authorization denied",
+            25 => "column index out of range",
+            26 => "file is not a database",
+            27 => "notification message",
+            28 => "warning message",
+            _ => "unknown error",
+        },
+    }
 }

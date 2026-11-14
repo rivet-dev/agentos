@@ -6,6 +6,47 @@ import { Buffer } from "node:buffer";
 const baseStreamModule = streamNs.default ?? streamDefault ?? {};
 const baseFinished = streamNs.finished ?? baseStreamModule.finished;
 const baseReadable = streamNs.Readable ?? baseStreamModule.Readable;
+const baseWritable = streamNs.Writable ?? baseStreamModule.Writable;
+
+// readable-stream's Node adapter loads native internal/webstreams helpers.
+// Use the runtime's Web Stream readers and writers at this owning boundary.
+baseReadable.fromWeb = (stream, options = {}) => {
+	if (!stream || typeof stream.getReader !== "function") throw new TypeError("Expected a ReadableStream");
+	const reader = stream.getReader();
+	let reading = false, released = false;
+	const release = () => { if (!released) { released = true; reader.releaseLock(); } };
+	return new baseReadable({
+		...options,
+		read() {
+			if (reading || released) return;
+			reading = true;
+			void reader.read().then(({ value, done }) => {
+				reading = false;
+				if (this.destroyed) return;
+				if (done) { release(); this.push(null); }
+				else this.push(value);
+			}, error => { reading = false; this.destroy(error); });
+		},
+		destroy(error, callback) {
+			if (released) { callback(error); return; }
+			void reader.cancel(error).then(() => { release(); callback(error); }, failure => { release(); callback(error ?? failure); });
+		},
+	});
+};
+baseWritable.fromWeb = (stream, options = {}) => {
+	if (!stream || typeof stream.getWriter !== "function") throw new TypeError("Expected a WritableStream");
+	const writer = stream.getWriter(); let released = false;
+	const release = () => { if (!released) { released = true; writer.releaseLock(); } };
+	return new baseWritable({
+		...options,
+		write(chunk, _encoding, callback) { void writer.write(chunk).then(() => callback(), callback); },
+		final(callback) { void writer.close().then(() => { release(); callback(); }, callback); },
+		destroy(error, callback) {
+			if (released) { callback(error); return; }
+			void writer.abort(error).then(() => { release(); callback(error); }, failure => { release(); callback(error ?? failure); });
+		},
+	});
+};
 
 if (
 	typeof baseReadable?.prototype?.push === "function" &&

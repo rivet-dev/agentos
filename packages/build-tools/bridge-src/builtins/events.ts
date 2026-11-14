@@ -14,6 +14,9 @@ const addProtectedEventListener =
 if (typeof addProtectedEventListener !== "function")
 	throw new Error("Missing event/abort prelude protected listener owner");
 delete eventAbortBootstrap.__agentOsAddProtectedEventListener;
+const getEventTargetListeners = eventAbortBootstrap.__agentOsGetEventTargetListeners as (target: unknown, type: unknown) => unknown[] | undefined;
+if (typeof getEventTargetListeners !== "function") throw new Error("Missing event listener prelude owner");
+delete eventAbortBootstrap.__agentOsGetEventTargetListeners;
 
 const EventEmitter =
 	eventsStdlibModuleNs.EventEmitter ??
@@ -104,7 +107,9 @@ function getEventListeners(emitter, eventName) {
 	if (typeof emitter?.listeners === "function") {
 		return emitter.listeners(eventName);
 	}
-	throw new TypeError("The emitter argument must expose listeners()");
+	const listeners = getEventTargetListeners(emitter, eventName);
+	if (listeners !== undefined) return listeners;
+	throw new TypeError("The emitter argument must be an EventEmitter or EventTarget");
 }
 
 function getMaxListeners(emitter) {

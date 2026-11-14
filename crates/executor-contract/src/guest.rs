@@ -62,6 +62,7 @@ pub struct GuestBridgeLimits {
     pub max_chunk_size_line_bytes: usize,
     pub max_pending_response_bytes: usize,
     pub max_readline_history_entries: usize,
+    pub max_blob_bytes: usize,
 }
 
 impl Default for GuestBridgeLimits {
@@ -70,6 +71,7 @@ impl Default for GuestBridgeLimits {
             max_chunk_size_line_bytes: 16 * 1024 + 32,
             max_pending_response_bytes: 256 * 1024,
             max_readline_history_entries: 1024,
+            max_blob_bytes: 64 * 1024 * 1024,
         }
     }
 }

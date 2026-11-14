@@ -824,6 +824,10 @@ async fn run_worker_image(
     };
     let mut child = tokio::process::Command::new(&executable)
         .arg(WORKER_MODE_ARGUMENT)
+        // Expose the actual guest image's argv on its real executor process.
+        // Startup and every exec replacement still receive all authority and
+        // guest inputs through the framed kernel protocol below.
+        .args(&request.argv)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())

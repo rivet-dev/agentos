@@ -79,7 +79,7 @@ aws-config = "1"
 aws-credential-types = "1"
 aws-sdk-s3 = { version = "1", default-features = false, features = ["default-https-client", "http-1x", "rt-tokio", "sigv4a"] }
 command-fds = "0.3"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.43", features = ["bundled", "fallible_uint"] }
 serde = { version = "1.0", features = ["derive"] }
 tempfile = "3"
 tokio = { version = "1", features = ["io-util", "net"] }

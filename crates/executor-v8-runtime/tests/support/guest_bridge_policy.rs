@@ -14,12 +14,16 @@ fn check_history(scope: &mut v8::HandleScope, raised: bool) {
         r#"(() => {
         const require = __agentOsGuestCreateRequire('/entry.js');
         const readline = require('readline');
-        const {PassThrough} = require('stream');
-        const input = new PassThrough(), output = new PassThrough();
+        const {EventEmitter}=require('events');
+        // Policy construction needs an inert stream: a flowing Readable would
+        // schedule a native nextTick before this snapshot has a live bridge.
+        class IdleInput extends EventEmitter {resume(){return this;}pause(){return this;}destroy(){this.removeAllListeners();}}
+        const input = new IdleInput(), output = new IdleInput();
+        output.write=()=>true;
         try {
             const rl = readline.createInterface({input,output,terminal:true,historySize:1025});
             rl.close(); return 'accepted';
-        } catch (error) { return error.code; }
+        } catch (error) { return error.code === 'ERR_OUT_OF_RANGE' ? error.code : error.stack; }
         finally { input.destroy(); output.destroy(); }
     })()"#,
     );
@@ -175,8 +179,9 @@ pub(crate) fn owner_controls() {
             if(typeof __agentOSBridgeLimitInstaller !== 'undefined') throw Error('installer visible to snapshot userland');
             if(typeof __agentOSBridgeLimits !== 'undefined') throw Error('policy placeholder visible to snapshot userland');
             const require=__agentOsGuestCreateRequire('/entry.js');
-            const {{PassThrough}}=require('stream');
-            globalThis.__prebuiltInput=new PassThrough();globalThis.__prebuiltOutput=new PassThrough();
+            
+            const {{EventEmitter}}=require('events');class IdleInput extends EventEmitter {{resume(){{return this;}}pause(){{return this;}}destroy(){{this.removeAllListeners();}}}}
+            globalThis.__prebuiltInput=new IdleInput();globalThis.__prebuiltOutput=new IdleInput();__prebuiltOutput.write=()=>true;
             globalThis.__prebuiltHistory=require('readline').createInterface({{input:__prebuiltInput,output:__prebuiltOutput,terminal:true,historySize:{requested},history:Array.from({{length:{requested}}},(_,i)=>String(i))}});
             globalThis.__prebuiltAgent=new (require('http').Agent)({{maxSockets:1}});
             globalThis.__fakeInstallerCalls=0;

@@ -116,9 +116,9 @@ function contextHandleReleasedError(description) {
 function _releaseLeftoverHandles() {
 	retireStdinOperation();
 	const released = [];
-	for (const [id, entry] of Array.from(_timerEntries)) {
+	for (const entry of Array.from(_timerEntries.values())) {
 		if (!entry.handle._refed) continue;
-		clearTimeout2(id);
+		clearTimeout2(entry.handle);
 		released.push(entry.repeat ? "setInterval" : "setTimeout");
 	}
 	for (const [id, entry] of Array.from(_immediateEntries)) {

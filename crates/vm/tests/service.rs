@@ -2,6 +2,10 @@ pub trait VmManagerHost: agentos_vm_host_interface::VmHost {}
 impl<T> VmManagerHost for T where T: agentos_vm_host_interface::VmHost {}
 pub use agentos_vm::{ExecutorKind, ExecutorRegistry};
 
+#[cfg(feature = "test-support")]
+#[path = "../src/test_support.rs"]
+mod test_support;
+
 #[path = "support/service_core.rs"]
 mod core;
 
@@ -1991,6 +1995,9 @@ ykAheWCsAteSEWVc0w==\n\
                     process.sqlite_databases.insert(
                         index as u64,
                         ActiveSqliteDatabase {
+                            next_transfer_generation: 0,
+                            input_transfer: None,
+                            output_transfer: None,
                             connection: rusqlite::Connection::open_in_memory()
                                 .expect("open in-memory sqlite"),
                             host_path: None,
@@ -2029,6 +2036,9 @@ ykAheWCsAteSEWVc0w==\n\
                 process.sqlite_databases.insert(
                     1,
                     ActiveSqliteDatabase {
+                        next_transfer_generation: 0,
+                        input_transfer: None,
+                        output_transfer: None,
                         connection: rusqlite::Connection::open_in_memory()
                             .expect("open in-memory sqlite"),
                         host_path: None,
@@ -20078,7 +20088,7 @@ await new Promise(() => {});
             .expect("create sqlite table");
             assert_eq!(created, json!(0));
 
-            let statement_id = call_javascript_sync_rpc(
+            let prepared = call_javascript_sync_rpc(
                 &mut sidecar,
                 &vm_id,
                 process_id,
@@ -20092,9 +20102,9 @@ await new Promise(() => {});
                     ],
                 },
             )
-            .expect("prepare sqlite insert")
-            .as_u64()
-            .expect("statement id");
+            .expect("prepare sqlite insert");
+            assert_eq!(prepared["sourceSQLLength"], json!("INSERT INTO items(id, payload) VALUES (?, ?)".encode_utf16().count()));
+            let statement_id = prepared["statementId"].as_u64().expect("statement id");
 
             let insert = call_javascript_sync_rpc(
                 &mut sidecar,

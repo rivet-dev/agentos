@@ -57,9 +57,12 @@ Hosted actions are grouped under:
 - `filesystem`
 - `process` and `terminal`
 - `contexts`, `javascript`, `typescript`, and `python`
-- `network.fetch`, `network.fetchStream`, and `network.preview`
+- `network.fetch`, `network.fetchStream`, `network.connect`, and `network.preview`
 - `software`
 - `cron`
+
+Embedded Core also exposes `configurePermissions` (Rust: `configure_permissions`)
+for trusted owners to replace a VM permission policy; see the permissions guide.
 
 The hosted actor accepts only serializable, whitelisted filesystem descriptors.
 It never accepts host mounts, host paths, JavaScript VFS objects, callbacks, or
