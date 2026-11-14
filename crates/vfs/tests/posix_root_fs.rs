@@ -834,3 +834,60 @@ fn read_only_root_locks_after_bootstrap_but_preserves_boot_entries() {
         .expect_err("readonly root should reject new writes");
     assert_eq!(error.code(), "EROFS");
 }
+
+#[test]
+fn renaming_a_base_layer_directory_keeps_all_of_its_entries() {
+    // `/home/agentos-extra` and `/var/extra` put the directory in both the
+    // upper and the base layer, like the sidecar's standard directories do.
+    let mut root = RootFileSystem::from_descriptor(RootFilesystemDescriptor {
+        bootstrap_entries: vec![
+            FilesystemEntry::directory("/home/agentos-extra"),
+            FilesystemEntry::directory("/var/extra"),
+        ],
+        ..RootFilesystemDescriptor::default()
+    })
+    .expect("create default root");
+    root.finish_bootstrap();
+    for directory in ["/var", "/home", "/usr/share", "/etc"] {
+        let mut before = root.read_dir(directory).expect("list before rename");
+        before.sort();
+        let renamed = format!("{directory}-renamed");
+        root.rename(directory, &renamed)
+            .expect("rename base directory");
+        let mut after = root.read_dir(&renamed).expect("list after rename");
+        after.sort();
+        assert_eq!(after, before, "{directory} keeps its entries");
+        assert!(!root.exists(directory), "{directory} is gone");
+    }
+}
+
+#[test]
+fn renaming_in_one_root_leaves_another_root_unchanged() {
+    let mut first = RootFileSystem::from_descriptor(RootFilesystemDescriptor::default())
+        .expect("create first root");
+    let mut second = RootFileSystem::from_descriptor(RootFilesystemDescriptor::default())
+        .expect("create second root");
+    let mut before = second.read_dir("/var").expect("list second /var");
+    before.sort();
+    first
+        .rename("/var", "/var-renamed")
+        .expect("rename in first root");
+    let mut after = second.read_dir("/var").expect("list second /var again");
+    after.sort();
+    assert_eq!(after, before);
+}
+
+#[test]
+fn changing_a_base_layer_directory_metadata_keeps_its_entries() {
+    let mut root = RootFileSystem::from_descriptor(RootFilesystemDescriptor::default())
+        .expect("create default root");
+    let mut before = root.read_dir("/var").expect("list /var");
+    before.sort();
+    root.chmod("/var", 0o750).expect("chmod /var");
+    root.chown("/var", 0, 0).expect("chown /var");
+    root.utimes("/var", 1_000, 2_000).expect("utimes /var");
+    let mut after = root.read_dir("/var").expect("list /var again");
+    after.sort();
+    assert_eq!(after, before);
+    assert_eq!(root.stat("/var").expect("stat /var").mode & 0o7777, 0o750);
+}

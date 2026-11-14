@@ -8332,6 +8332,85 @@ mod prepared_request_tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn unlinking_reconfigured_boot_package_removes_only_its_projection() {
+        let package_dir = tempfile::tempdir().expect("package fixture directory");
+        std::fs::create_dir_all(package_dir.path().join("bin")).unwrap();
+        std::fs::write(
+            package_dir.path().join("agentos-package.json"),
+            r#"{"name":"boot-unlink-test","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        std::fs::write(package_dir.path().join("bin/boot-command"), b"command").unwrap();
+
+        let mut sidecar = test_sidecar();
+        let vm_id = create_test_vms(&mut sidecar, 1).await.remove(0);
+        let ownership = cleanup_test_ownership(&vm_id);
+        let package = crate::protocol::PackageDescriptor {
+            path: package_dir.path().to_string_lossy().into_owned(),
+        };
+        let package_id = format!("path:{}", package.path);
+        let configure = crate::protocol::ConfigureVmRequest {
+            mounts: Vec::new(),
+            software: Vec::new(),
+            permissions: None,
+            module_access_cwd: None,
+            instructions: Vec::new(),
+            projected_modules: Vec::new(),
+            command_permissions: Default::default(),
+            loopback_exempt_ports: Vec::new(),
+            packages: vec![package],
+            packages_mount_at: String::from("/opt/agentos"),
+            bootstrap_commands: Vec::new(),
+            host_function_shim_commands: Vec::new(),
+        };
+        // The second configure finds the projection's mountpoints already in
+        // place; unlink must still treat them as the package's own.
+        for request_id in [240, 241] {
+            let request = RequestFrame::new(
+                request_id,
+                ownership.clone(),
+                RequestPayload::ConfigureVm(configure.clone()),
+            );
+            sidecar
+                .configure_vm(&request, configure.clone())
+                .await
+                .expect("configure boot package");
+        }
+        let package_root = "/opt/agentos/pkgs/boot-unlink-test/1.0.0";
+        let command_path = "/opt/agentos/bin/boot-command";
+        let guest_file = "/opt/agentos/bin/guest-tool";
+        {
+            let mut vm = sidecar.vms.get_mut(&vm_id).unwrap();
+            assert!(vm.kernel.exists_for_operator(package_root).unwrap());
+            assert!(vm.kernel.exists_for_operator(command_path).unwrap());
+            vm.kernel
+                .write_file(guest_file, b"guest".to_vec())
+                .expect("guest installs its own command");
+        }
+
+        let unlink = crate::protocol::UnlinkPackageRequest {
+            package_id: package_id.clone(),
+        };
+        let request = RequestFrame::new(
+            242,
+            ownership,
+            RequestPayload::UnlinkPackage(unlink.clone()),
+        );
+        sidecar
+            .unlink_package(&request, unlink)
+            .await
+            .expect("unlink boot package");
+
+        let vm = sidecar.vms.get(&vm_id).unwrap();
+        assert!(!vm.kernel.exists_for_operator(package_root).unwrap());
+        assert!(!vm.kernel.exists_for_operator(command_path).unwrap());
+        assert!(
+            vm.kernel.exists_for_operator(guest_file).unwrap(),
+            "guest files beside the projection survive unlink"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn pinned_boot_package_retains_custom_projection_root_and_provides() {
         let package_dir = tempfile::tempdir().unwrap();
         let manifest = r#"{"name":"custom-root-test","version":"1.0.0","provides":{"env":{"PACKAGE_RETAINED":"yes"},"files":[{"source":"share/config","target":"/etc/custom-package"}]}}"#;

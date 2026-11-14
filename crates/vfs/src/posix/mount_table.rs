@@ -2633,6 +2633,9 @@ fn check_usage_limits(
 }
 
 fn normalize_path(path: &str) -> String {
+    if super::vfs::is_normalized_path(path) {
+        return path.to_owned();
+    }
     let mut segments = Vec::new();
     for component in Path::new(path).components() {
         match component {

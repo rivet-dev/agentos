@@ -77,53 +77,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-const SHADOW_ROOT_BOOTSTRAP_DIRS: &[(&str, u32)] = &[
-    ("/dev", 0o755),
-    ("/proc", 0o755),
-    ("/tmp", 0o1777),
-    ("/bin", 0o755),
-    ("/lib", 0o755),
-    ("/sbin", 0o755),
-    ("/boot", 0o755),
-    ("/etc", 0o755),
-    ("/root", 0o700),
-    ("/run", 0o755),
-    ("/srv", 0o755),
-    ("/sys", 0o555),
-    ("/opt", 0o755),
-    ("/mnt", 0o755),
-    ("/media", 0o755),
-    ("/home", 0o755),
-    ("/home/agentos", 0o2755),
-    ("/usr", 0o755),
-    ("/usr/bin", 0o755),
-    ("/usr/games", 0o755),
-    ("/usr/include", 0o755),
-    ("/usr/lib", 0o755),
-    ("/usr/libexec", 0o755),
-    ("/usr/man", 0o755),
-    ("/usr/local", 0o755),
-    ("/usr/local/bin", 0o755),
-    ("/usr/sbin", 0o755),
-    ("/usr/share", 0o755),
-    ("/usr/share/man", 0o755),
-    ("/var", 0o755),
-    ("/var/cache", 0o755),
-    ("/var/empty", 0o555),
-    ("/var/lib", 0o755),
-    ("/var/lock", 0o777),
-    ("/var/log", 0o755),
-    ("/var/run", 0o777),
-    ("/var/spool", 0o755),
-    ("/var/tmp", 0o1777),
-    ("/etc/agentos", 0o755),
-    // Non-Alpine default agent working directory (also present in the base
-    // filesystem snapshot); scaffold it here so it exists even when the
-    // default base layer is disabled. It is the default cwd and mount root,
-    // kept separate from $HOME (/home/agentos).
-    ("/workspace", 0o755),
-];
-
 fn random_directory_suffix() -> Result<String, openssl::error::ErrorStack> {
     let mut nonce = [0_u8; 16];
     rand_bytes(&mut nonce)?;
@@ -2501,20 +2454,6 @@ where
                     .collect(),
             );
         }
-        let existing_created_mountpoints = vm.package_created_mountpoints.clone();
-        let mut created_mountpoints = BTreeMap::new();
-        for (package_id, paths) in &package_mountpoint_paths {
-            let existing = existing_created_mountpoints.get(package_id);
-            let mut created = BTreeSet::new();
-            for path in paths {
-                if existing.is_some_and(|paths| paths.contains(path))
-                    || !vm.kernel.exists_for_operator(path).map_err(kernel_error)?
-                {
-                    created.insert(path.clone());
-                }
-            }
-            created_mountpoints.insert(package_id.clone(), created);
-        }
         let mut next_guest_env = vm.base_guest_env.clone();
         apply_package_provides_env(
             &mut next_guest_env,
@@ -2533,7 +2472,24 @@ where
             database: vm.database.clone(),
             max_pread_bytes: vm.kernel.resource_limits().max_pread_bytes,
         };
-        reconcile_mounts(&mount_plugins, vm, &effective_mounts, mount_context)?;
+        let newly_created_mountpoints =
+            reconcile_mounts(&mount_plugins, vm, &effective_mounts, mount_context)?;
+        // A package owns a mountpoint it created now or in an earlier configure.
+        let created_mountpoints = package_mountpoint_paths
+            .iter()
+            .map(|(package_id, paths)| {
+                let earlier = vm.package_created_mountpoints.get(package_id);
+                let created = paths
+                    .iter()
+                    .filter(|path| {
+                        newly_created_mountpoints.contains(*path)
+                            || earlier.is_some_and(|earlier| earlier.contains(*path))
+                    })
+                    .cloned()
+                    .collect::<BTreeSet<_>>();
+                (package_id.clone(), created)
+            })
+            .collect::<BTreeMap<_, _>>();
         vm.guest_env = next_guest_env;
 
         vm.command_guest_paths = discover_command_guest_paths(&mut vm.kernel)?;
@@ -3591,14 +3547,11 @@ fn bootstrap_native_root_filesystem(
     filesystem: &mut dyn MountedFileSystem,
     descriptor: &RootFilesystemDescriptor,
 ) -> Result<(), SidecarError> {
-    for (guest_path, mode) in SHADOW_ROOT_BOOTSTRAP_DIRS {
+    for &(guest_path, mode, uid, gid) in agentos_native_sidecar_core::root_fs::STANDARD_DIRECTORIES
+    {
         filesystem.mkdir(guest_path, true).map_err(vfs_error)?;
-        let (uid, gid) = match *guest_path {
-            "/home/agentos" | "/workspace" => (1000, 1000),
-            _ => (0, 0),
-        };
         filesystem.chown(guest_path, uid, gid).map_err(vfs_error)?;
-        filesystem.chmod(guest_path, *mode).map_err(vfs_error)?;
+        filesystem.chmod(guest_path, mode).map_err(vfs_error)?;
     }
 
     seed_native_ca_certificates_bundle(filesystem)?;
@@ -3742,12 +3695,13 @@ fn reconcile_mounts<B>(
     vm: &mut VmState,
     mounts: &[crate::protocol::MountDescriptor],
     context: MountPluginContext<B>,
-) -> Result<(), SidecarError>
+) -> Result<BTreeSet<String>, SidecarError>
 where
     B: NativeSidecarBridge + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
     // Parse and validate the entire desired set before changing the live view.
+    // Returns the mountpoint directories this call had to create.
     let prepared = prepare_mount_descriptors(mount_plugins, mounts)?;
     let mut existing_mounts = vm.configuration.mounts.clone();
     existing_mounts.sort_by_key(|mount| std::cmp::Reverse(mount_path_depth(&mount.guest_path)));
@@ -3810,7 +3764,7 @@ where
     for mount in &mounted {
         emit_mount_audit_event(&context, mount, "security.mount.mounted");
     }
-    Ok(())
+    Ok(created_mountpoints)
 }
 
 fn rollback_mount_reconciliation<B>(
@@ -4628,7 +4582,7 @@ fn initialize_vm_shadow_root(root: PathBuf) -> Result<PathBuf, SidecarError> {
 }
 
 fn bootstrap_shadow_root(root: &Path) -> Result<(), SidecarError> {
-    for (guest_path, mode) in SHADOW_ROOT_BOOTSTRAP_DIRS {
+    for &(guest_path, mode, ..) in agentos_native_sidecar_core::root_fs::STANDARD_DIRECTORIES {
         let host_path = shadow_path_for_guest(root, guest_path);
         fs::create_dir_all(&host_path).map_err(|error| {
             SidecarError::Io(format!(
@@ -4636,7 +4590,7 @@ fn bootstrap_shadow_root(root: &Path) -> Result<(), SidecarError> {
                 host_path.display()
             ))
         })?;
-        fs::set_permissions(&host_path, fs::Permissions::from_mode(*mode)).map_err(|error| {
+        fs::set_permissions(&host_path, fs::Permissions::from_mode(mode)).map_err(|error| {
             SidecarError::Io(format!(
                 "failed to set shadow directory mode {mode:o} on {}: {error}",
                 host_path.display()

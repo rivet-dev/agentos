@@ -266,10 +266,25 @@ impl RootFileSystem {
         }
 
         for entry in sort_entries(entries.to_vec()) {
-            if is_kernel_reserved_bootstrap_path(&entry.path) {
-                continue;
+            match kernel_reserved_bootstrap_path(&entry.path) {
+                // The kernel serves `/dev`, `/proc`, and `/sys` itself. The
+                // root keeps their mountpoint directories, so `readdir("/")`
+                // lists them, but never content beneath them: a seeded
+                // `/dev/null` file must not shadow the kernel's device.
+                Some(KernelReservedPath::Mountpoint)
+                    if entry.kind != FilesystemEntryKind::Directory =>
+                {
+                    return Err(RootFilesystemError::new(format!(
+                        "root filesystem bootstrap entry {} must be a directory: \
+                         the kernel mounts its own filesystem there",
+                        entry.path
+                    )));
+                }
+                Some(KernelReservedPath::Beneath) => continue,
+                Some(KernelReservedPath::Mountpoint) | None => {
+                    apply_entry(&mut self.overlay, &entry)?;
+                }
             }
-            apply_entry(&mut self.overlay, &entry)?;
         }
         Ok(())
     }
@@ -1104,9 +1119,20 @@ fn snapshot_path(
     Ok(())
 }
 
-fn is_kernel_reserved_bootstrap_path(path: &str) -> bool {
+enum KernelReservedPath {
+    /// The directory the kernel mounts its filesystem on, such as `/dev`.
+    Mountpoint,
+    /// A path inside a kernel-served tree, such as `/dev/null`.
+    Beneath,
+}
+
+fn kernel_reserved_bootstrap_path(path: &str) -> Option<KernelReservedPath> {
     let normalized = normalize_path(path);
     KERNEL_RESERVED_BOOTSTRAP_PATH_PREFIXES
         .iter()
-        .any(|prefix| normalized == *prefix || normalized.starts_with(&format!("{prefix}/")))
+        .find_map(|prefix| match normalized.strip_prefix(prefix) {
+            Some("") => Some(KernelReservedPath::Mountpoint),
+            Some(rest) if rest.starts_with('/') => Some(KernelReservedPath::Beneath),
+            _ => None,
+        })
 }

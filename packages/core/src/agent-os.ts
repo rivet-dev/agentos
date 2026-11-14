@@ -1260,46 +1260,6 @@ function createKernelBootstrapLower(
 	return entries.length > 1 ? createSnapshotExport(entries) : null;
 }
 
-function buildLiveBootstrapDirectoryEntries(
-	existingPaths: ReadonlySet<string>,
-	config: RootFilesystemConfig | undefined,
-): RootFilesystemEntry[] {
-	const entries: RootFilesystemEntry[] = [];
-	for (const dir of KERNEL_POSIX_BOOTSTRAP_DIRS) {
-		if (existingPaths.has(dir)) {
-			continue;
-		}
-		const seed = findBootstrapSeedEntry(config, dir);
-		entries.push({
-			path: dir,
-			kind: "directory",
-			mode: Number.parseInt(seed?.type === "directory" ? seed.mode : "755", 8),
-			uid: seed?.uid ?? 0,
-			gid: seed?.gid ?? 0,
-			executable: true,
-		});
-	}
-	return entries;
-}
-
-async function bootstrapLiveBootstrapDirectories(
-	client: SidecarProcess,
-	session: AuthenticatedSession,
-	vm: CreatedVm,
-	config: RootFilesystemConfig | undefined,
-): Promise<void> {
-	const existingPaths = new Set(
-		(
-			await client.snapshotRootFilesystem(session, vm, Number.MAX_SAFE_INTEGER)
-		).map((entry) => entry.path),
-	);
-	const entries = buildLiveBootstrapDirectoryEntries(existingPaths, config);
-	if (entries.length === 0) {
-		return;
-	}
-	await client.bootstrapRootFilesystem(session, vm, entries);
-}
-
 function toSnapshotModeString(
 	mode: number | undefined,
 	kind: RootFilesystemEntry["kind"],
@@ -3207,15 +3167,6 @@ export class AgentOs {
 					// shared across VMs; disposing this VM must not kill the process.
 					ownsClient: false,
 				});
-				if (options?.rootFilesystem?.type !== "native") {
-					await bootstrapLiveBootstrapDirectories(
-						client,
-						session,
-						nativeVm,
-						options?.rootFilesystem,
-					);
-				}
-
 				kernel = rootBridge as unknown as Kernel;
 				const snapshotClient = client;
 
