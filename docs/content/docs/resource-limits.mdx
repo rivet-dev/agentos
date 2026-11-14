@@ -173,6 +173,14 @@ the sidecar runs, at about 15 MiB per isolate. To cap it, set
 starts the sidecar. `0` disables the pool and trades memory for slower
 execution starts.
 
+The sidecar stores built V8 snapshots on disk so a new sidecar process does
+not rebuild them: at most 16 files under `$XDG_CACHE_HOME/agentos/v8-snapshots`
+(or `~/.cache/agentos/v8-snapshots`). Set `AGENTOS_V8_SNAPSHOT_CACHE_DIR` to
+another directory, or to `off`, in the environment that starts the sidecar.
+Script sources that snapshot-restored isolates share are kept for the life of
+the sidecar, bounded to 64 MiB of copies; past that, new snapshots fail with
+`ERR_AGENTOS_V8_SHARED_SOURCE_LIMIT` and processes load normally.
+
 ## Embedded API
 
 Limits apply to VMs created with `AgentOs.create()` and sidecars created with

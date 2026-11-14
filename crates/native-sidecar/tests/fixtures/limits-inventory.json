@@ -406,6 +406,12 @@
     "rationale": "Fixed loopback exemption list count before deduplication; no per-VM list-size setting."
   },
   {
+    "name": "MAX_VM_SNAPSHOT_ENTRYPOINTS",
+    "path": "crates/vm-config/src/lib.rs",
+    "class": "policy-deferred",
+    "rationale": "Fixed bound on jsRuntime.snapshotEntrypoints validated at VM creation; no per-VM override."
+  },
+  {
     "name": "CHILD_PROCESS_EXIT_DRAIN_MAX_MS",
     "path": "packages/build-tools/bridge-src/builtins/child-process.ts",
     "class": "policy-deferred",
@@ -2584,5 +2590,53 @@
     "path": "crates/native-sidecar/src/temp_reclaim.rs",
     "class": "invariant",
     "rationale": "Entries one startup sweep of leaked temp roots removes; later starts reclaim the rest."
+  },
+  {
+    "name": "MAX_MODULE_SNAPSHOT_GRAPH_MODULES",
+    "path": "crates/v8-runtime/src/module_snapshot.rs",
+    "class": "invariant",
+    "rationale": "Sanity bound on modules in a client-declared snapshot entrypoint graph; trusted-config artifact guard, not guest input."
+  },
+  {
+    "name": "MAX_MODULE_SNAPSHOT_GRAPH_SOURCE_BYTES",
+    "path": "crates/v8-runtime/src/module_snapshot.rs",
+    "class": "invariant",
+    "rationale": "Sanity bound on source bytes in a client-declared snapshot entrypoint graph; matches the userland snapshot code bound."
+  },
+  {
+    "name": "MAX_REGISTERED_MODULE_GRAPHS",
+    "path": "crates/v8-runtime/src/module_snapshot.rs",
+    "class": "invariant",
+    "rationale": "Process ceiling on discovered module graphs kept for snapshot builds and validation; oldest is dropped first."
+  },
+  {
+    "name": "MAX_VERIFIED_SOURCE_IDENTITIES",
+    "path": "crates/v8-runtime/src/module_snapshot.rs",
+    "class": "invariant",
+    "rationale": "Process ceiling on remembered host file identities that skip re-reading snapshot module sources; cleared when exceeded."
+  },
+  {
+    "name": "MAX_VALIDATED_GRAPH_FINGERPRINTS",
+    "path": "crates/v8-runtime/src/module_snapshot.rs",
+    "class": "invariant",
+    "rationale": "Validated module-graph fingerprints remembered per process; the map clears when full, so a miss only costs one full revalidation."
+  },
+  {
+    "name": "MAX_SHARED_SOURCE_BYTES",
+    "path": "crates/v8-runtime/src/shared_source.rs",
+    "class": "invariant",
+    "rationale": "Process bound on script source bytes copied to be shared by snapshot-restored isolates; sources no snapshot or isolate uses are freed oldest first, and only sources still in use past it fail the snapshot with a typed error (processes then load normally)."
+  },
+  {
+    "name": "MAX_SNAPSHOT_CACHE_FILES",
+    "path": "crates/v8-runtime/src/snapshot_disk_cache.rs",
+    "class": "invariant",
+    "rationale": "Bound on cached V8 snapshot blobs kept on disk per cache directory; least recently used are evicted."
+  },
+  {
+    "name": "MAX_MODULE_SNAPSHOT_JOBS",
+    "path": "crates/execution/src/v8_host.rs",
+    "class": "invariant",
+    "rationale": "Process ceiling on remembered module snapshot discovery/build jobs (in flight or recently failed)."
   }
 ]

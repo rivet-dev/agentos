@@ -67,6 +67,28 @@ cheap without sharing guest state:
   (no heap objects). The cache is process-wide, in memory only, and bounded to
   64 MiB; the oldest entries are evicted first. Modules under 2 KiB are not
   cached.
+- **Persisted bridge snapshot.** Building the bridge snapshot takes a helper
+  process ~400 ms. The sidecar stores each built snapshot blob under
+  `$XDG_CACHE_HOME/agentos/v8-snapshots` (or `~/.cache/...`), so later sidecar
+  processes load it instead. Files are keyed by a fingerprint of the V8 runtime
+  sources and the bridge, checked with SHA-256 on load, and bounded to 16
+  files. Set `AGENTOS_V8_SNAPSHOT_CACHE_DIR` to another directory, or to `off`
+  to disable it.
+- **Shared sources.** V8 keeps a script's source text for lazy compilation and
+  `Function#toString`. A snapshot compiles the bridge and large userland
+  sources from process-lifetime external strings, whose addresses are in the
+  isolate's external reference table. Every restored isolate then points at
+  the one copy instead of deserializing its own. Isolates also share the
+  snapshot blob instead of copying it.
+- **Module snapshots.** For a `snapshotEntrypoints` entry, the sidecar
+  evaluates the entry's static import graph once in the snapshot helper, with
+  stub bridge functions, and attaches the evaluated module records to the
+  snapshot context. A restored context hands them to the module loader, so an
+  import of one of their paths returns the evaluated instance. Before each
+  launch the sidecar checks the graph against the VM: the entry source, each
+  module file (by host inode, size, mtime, and ctime, then by SHA-256 when they
+  changed), and each import edge. A mismatch starts a rediscovery in the
+  background and the process loads normally.
 - **Deferred teardown.** An exited process's isolate is destroyed on a single
   reaper thread, so the exit reaches the client without waiting for heap
   teardown. The executor keeps its admission slot until teardown finishes.

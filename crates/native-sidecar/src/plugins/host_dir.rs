@@ -1728,6 +1728,28 @@ impl HostDirModuleReader {
         Some(Self { mounts: entries })
     }
 
+    /// Host identity of the file behind `guest_path` on a host-dir mount: host
+    /// root, device, inode, size, mtime, and ctime. Any write or replacement changes
+    /// it. `None` for packed package mounts and missing files.
+    pub(crate) fn source_identity(&mut self, guest_path: &str) -> Option<String> {
+        let (index, relative) = self.mount_index_for(guest_path)?;
+        let ModuleMountBackend::Host(filesystem) = &mut self.mounts[index].filesystem else {
+            return None;
+        };
+        let stat = filesystem.stat(&relative).ok()?;
+        Some(format!(
+            "{}\0{relative}\0{}\0{}\0{}\0{}.{}\0{}.{}",
+            filesystem.host_root.display(),
+            stat.dev,
+            stat.ino,
+            stat.size,
+            stat.mtime_ms,
+            stat.mtime_nsec,
+            stat.ctime_ms,
+            stat.ctime_nsec
+        ))
+    }
+
     /// Find the index of the most-specific mount containing `guest_path` and the
     /// corresponding mount-relative virtual path.
     fn mount_index_for(&self, guest_path: &str) -> Option<(usize, String)> {
@@ -1831,6 +1853,14 @@ impl GuestModuleReader for SessionModuleReader {
         let reader: &mut dyn ModuleFsReader = &mut self.reader;
         let mut resolver = ModuleResolver::new(reader, &mut self.cache);
         resolver.resolve_module(specifier, referrer, ModuleResolveMode::Import)
+    }
+
+    fn boxed_clone(&self) -> Option<Box<dyn GuestModuleReader>> {
+        Some(Box::new(Self::new(self.reader.clone())))
+    }
+
+    fn source_identity(&mut self, resolved_guest_path: &str) -> Option<String> {
+        self.reader.source_identity(resolved_guest_path)
     }
 }
 

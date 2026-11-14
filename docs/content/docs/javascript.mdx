@@ -207,6 +207,53 @@ await vm.v1.process.signal({ process: server, signal: "SIGTERM" });
 
 Spawned processes always start with fresh state, so they take no `contextId`.
 
+## Start processes from a snapshot
+
+A runtime that every process imports, such as a framework bundle, can cost tens
+of milliseconds to import in each new process. Name its entry module in
+`snapshotEntrypoints`, and a guest `node <entry>` process starts with every
+module the entry imports already evaluated.
+
+<CodeSnippet file="examples/embedded/snapshot-entrypoints.ts" title="Library" />
+
+The sidecar finds the entry's static imports, evaluates them once in a separate
+helper process, and stores the result as a V8 startup snapshot. Processes boot
+from it after it is built, in this VM and in any other VM that mounts the same
+files. Each process gets its own copy of the module state; nothing that one
+process changes is visible to another.
+
+The snapshot holds compiled bytecode for every function of the graph and of the
+Node.js bridge, so a process's first call runs without compiling code. This makes
+the snapshot larger than its source and adds to each process's boot, not to its
+calls.
+
+Requirements:
+
+- Every imported module must be an ES module (`.mjs`, or a `node:` builtin) on
+  a read-only `host_dir` mount. The entry itself is evaluated per process.
+- The VM must use the default Node surface: no `allowedNodeBuiltins`, module
+  resolution, or platform restriction. Otherwise processes load normally.
+- At most 8 entrypoints per VM, 1,024 modules and 32 MiB of source per graph.
+
+What changes for the imported modules:
+
+- Their top-level code runs once, when the snapshot is built, not in each
+  process. Read per-process state such as `process.argv`, `process.env`,
+  `process.cwd()`, the time, and random values inside functions, not at module
+  top level. A top-level read sees placeholder values.
+- Top-level code cannot use the host bridge (file, network, or timer calls),
+  `WebAssembly`, or top-level `await` of such work. The snapshot build then
+  fails, the sidecar logs `ERR_AGENTOS_MODULE_SNAPSHOT_GRAPH` with the module and
+  reason to stderr, and processes keep loading normally.
+- A module that defines a builtin that V8 adds when it restores a context (a
+  polyfill) keeps its own value where it captured it; later global lookups see
+  V8's builtin.
+
+Keep the entry thin: a short module that imports the runtime and starts it.
+Each process checks that the entry and every imported file still match what
+the snapshot was built from, so a changed file takes effect on the next
+process, and a new snapshot builds in the background.
+
 ## A full Linux environment underneath
 
 There is a real Linux environment behind all of this, shared by every language.

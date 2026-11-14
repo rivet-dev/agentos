@@ -66,16 +66,24 @@ fn configured_cbor_codec_enabled() -> bool {
 /// Must be identical at snapshot creation and restore time.
 pub fn external_refs() -> &'static v8::ExternalReferences {
     static REFS: OnceLock<v8::ExternalReferences> = OnceLock::new();
-    REFS.get_or_init(|| {
-        v8::ExternalReferences::new(&[
-            v8::ExternalReference {
-                function: sync_bridge_callback.map_fn_to(),
-            },
-            v8::ExternalReference {
-                function: async_bridge_callback.map_fn_to(),
-            },
-        ])
-    })
+    REFS.get_or_init(|| v8::ExternalReferences::new(&base_external_references()))
+}
+
+/// Native callbacks a snapshot heap can reference. Snapshots with shared
+/// sources append their source constants after these.
+pub(crate) fn base_external_references() -> Vec<v8::ExternalReference<'static>> {
+    vec![
+        v8::ExternalReference {
+            function: sync_bridge_callback.map_fn_to(),
+        },
+        v8::ExternalReference {
+            function: async_bridge_callback.map_fn_to(),
+        },
+        // `import.meta.resolve` of a module evaluated into a snapshot.
+        v8::ExternalReference {
+            function: crate::execution::import_meta_resolve_callback.map_fn_to(),
+        },
+    ]
 }
 
 // Minimal delegate for V8 ValueSerializer — throws DataCloneError as a V8 exception

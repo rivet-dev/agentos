@@ -1278,12 +1278,14 @@ fn serialize_create_vm_config_for_sidecar(
         // keep their engine defaults (full Node emulation), matching prior
         // behavior where Agent OS only ever constrained the builtin allow-list.
         js_runtime: (config.allowed_node_builtins.is_some()
-            || config.high_resolution_time.is_some())
+            || config.high_resolution_time.is_some()
+            || config.snapshot_entrypoints.is_some())
         .then(|| vm_config::JsRuntimeConfig {
             platform: vm_config::JsRuntimePlatform::default(),
             module_resolution: vm_config::JsModuleResolution::default(),
             allowed_builtins: config.allowed_node_builtins.clone(),
             high_resolution_time: config.high_resolution_time,
+            snapshot_entrypoints: config.snapshot_entrypoints.clone(),
         }),
         bootstrap_commands: None,
     };

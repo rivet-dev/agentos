@@ -26,6 +26,7 @@ tracing = "0.1"
 [build-dependencies]
 agentos-build-support = { workspace = true }
 cc = "1"
+sha2 = "0.10"
 
 [[test]]
 name = "snapshot"

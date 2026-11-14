@@ -1,13 +1,13 @@
 // V8 startup snapshots: fast isolate creation from pre-compiled bridge code
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Condvar, Mutex};
 
 use sha2::{Digest, Sha256};
 
-use crate::bridge::{external_refs, register_stub_bridge_fns};
+use crate::bridge::register_stub_bridge_fns;
 use crate::isolate::init_v8_platform;
 use crate::session::{async_bridge_fns, sync_bridge_fns};
 
@@ -92,6 +92,13 @@ const SNAPSHOT_USERLAND_PREP: &str = r#"
             globalThis.require = globalThis.__agentOsGuestCreateRequire("/root/index.js");
         } catch (e) {}
     }
+})();
+"#;
+
+/// Runs before userland of either kind. ES module graphs get only this part:
+/// a module process has no global `require`.
+const SNAPSHOT_VERSIONS_PREP: &str = r#"
+(function () {
     // `process.versions` is a bridge-backed lazy getter: it derives `.node` from the
     // per-session `config2.version` and merges a host bridge call. During snapshot
     // creation the bridge fns are stubs AND the default `_processConfig` has no
@@ -138,10 +145,8 @@ fn run_snapshot_script(
     eager_compile: bool,
 ) -> Result<(), String> {
     let try_catch = &mut v8::TryCatch::new(scope);
-    let source = match v8::String::new(try_catch, code) {
-        Some(source) => source,
-        None => return Err(format!("failed to create V8 string for {label}")),
-    };
+    let source = crate::shared_source::snapshot_source_string(try_catch, code)
+        .map_err(|error| format!("failed to create V8 string for {label}: {error}"))?;
     // NOTE(perf, measured 2026-07-02): EagerCompile moves cost into the snapshot
     // blob: user_code_execute dropped 8.9ms -> 7.9ms on the wasm-runner floor,
     // but isolate_new rose 4.0ms -> 7.4ms when isolate creation was still
@@ -228,36 +233,227 @@ pub fn create_snapshot_with_userland(
     create_snapshot_inner(bridge_code, Some(userland_code))
 }
 
+/// Builtin objects whose own properties V8 may extend when it restores a
+/// context: flag-gated shipping features are installed on restore, not while
+/// a snapshot is created. Returns them in a fixed order.
+const RESTORE_BUILTIN_ROOTS: &str = r#"(() => {
+    const iteratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]()));
+    const asyncIteratorPrototype = Object.getPrototypeOf(
+        Object.getPrototypeOf(Object.getPrototypeOf((async function* () {})())));
+    const typedArray = Object.getPrototypeOf(Uint8Array);
+    return [
+        globalThis, Object, Object.prototype, Function.prototype, Array, Array.prototype,
+        String, String.prototype, Number, Number.prototype, BigInt, Boolean.prototype, Math,
+        JSON, Reflect, Symbol, Symbol.prototype, Promise, Promise.prototype, Map,
+        Map.prototype, Set, Set.prototype, WeakMap.prototype, WeakSet.prototype,
+        WeakRef.prototype, RegExp, RegExp.prototype, Error, Error.prototype, ArrayBuffer,
+        ArrayBuffer.prototype, DataView.prototype, typedArray, typedArray.prototype,
+        Uint8Array, Uint8Array.prototype, Date, Date.prototype, Atomics, Intl,
+        iteratorPrototype, asyncIteratorPrototype,
+    ];
+})()"#;
+
+fn builtin_roots<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Array>, String> {
+    let source = v8::String::new(scope, RESTORE_BUILTIN_ROOTS).expect("static script");
+    v8::Script::compile(scope, source, None)
+        .and_then(|script| script.run(scope))
+        .and_then(|value| v8::Local::<v8::Array>::try_from(value).ok())
+        .ok_or_else(|| String::from("failed to enumerate builtin objects"))
+}
+
+fn own_string_keys(
+    scope: &mut v8::HandleScope,
+    roots: v8::Local<v8::Array>,
+) -> Vec<HashSet<String>> {
+    (0..roots.length())
+        .map(|index| {
+            let mut names = HashSet::new();
+            let Some(object) = roots
+                .get_index(scope, index)
+                .and_then(|value| v8::Local::<v8::Object>::try_from(value).ok())
+            else {
+                return names;
+            };
+            let args = v8::GetPropertyNamesArgsBuilder::new()
+                .mode(v8::KeyCollectionMode::OwnOnly)
+                .property_filter(v8::PropertyFilter::SKIP_SYMBOLS)
+                .index_filter(v8::IndexFilter::SkipIndices)
+                .key_conversion(v8::KeyConversionMode::ConvertToString)
+                .build();
+            if let Some(keys) = object.get_property_names(scope, args) {
+                for key_index in 0..keys.length() {
+                    if let Some(key) = keys.get_index(scope, key_index) {
+                        names.insert(key.to_rust_string_lossy(scope));
+                    }
+                }
+            }
+            names
+        })
+        .collect()
+}
+
+/// Own property names of the builtin roots in a context V8 created normally,
+/// which matches what a restored snapshot context gets.
+fn builtin_property_names_of_restored_context() -> Result<Vec<HashSet<String>>, String> {
+    let mut isolate = Some(crate::isolate::create_isolate(None));
+    let names = {
+        let isolate = isolate.as_mut().expect("probe isolate");
+        let scope = &mut v8::HandleScope::new(isolate);
+        let context = v8::Context::new(scope, Default::default());
+        let scope = &mut v8::ContextScope::new(scope, context);
+        builtin_roots(scope).map(|roots| own_string_keys(scope, roots))
+    };
+    drop(isolate.take());
+    names
+}
+
+/// The builtin roots of this snapshot creator context and, per root, the
+/// names V8 adds on restore that it lacks. Call before any script runs, so a
+/// script that replaces a global does not change which objects are checked.
+fn restore_only_builtin_names(
+    scope: &mut v8::HandleScope,
+    restored: &[HashSet<String>],
+) -> Result<(v8::Global<v8::Array>, Vec<HashSet<String>>), String> {
+    let roots = builtin_roots(scope)?;
+    let created = own_string_keys(scope, roots);
+    let names = restored
+        .iter()
+        .zip(created.iter())
+        .map(|(restored, created)| restored.difference(created).cloned().collect())
+        .collect();
+    Ok((v8::Global::new(scope, roots), names))
+}
+
+/// Delete userland definitions of names V8 installs on restore. Restoring
+/// would otherwise add the native builtin next to the existing property, which
+/// V8 treats as a fatal name collision. Code that captured the userland value
+/// keeps it; later lookups get the native builtin, as in a process where the
+/// builtin existed before userland ran.
+fn remove_restore_only_builtins(
+    scope: &mut v8::HandleScope,
+    roots: &v8::Global<v8::Array>,
+    names: &[HashSet<String>],
+) -> Result<(), String> {
+    let roots = v8::Local::new(scope, roots);
+    for (index, names) in names.iter().enumerate() {
+        let Some(object) = roots
+            .get_index(scope, index as u32)
+            .and_then(|value| v8::Local::<v8::Object>::try_from(value).ok())
+        else {
+            continue;
+        };
+        let mut sorted: Vec<&String> = names.iter().collect();
+        sorted.sort();
+        for name in sorted {
+            let key = v8::String::new(scope, name).expect("property name");
+            if object.has_own_property(scope, key.into()) != Some(true) {
+                continue;
+            }
+            if object.delete(scope, key.into()) != Some(true) {
+                return Err(format!(
+                    "{}: userland defined {name} as a non-configurable builtin property; V8 installs its own {name} when it restores a snapshot",
+                    crate::module_snapshot::MODULE_SNAPSHOT_GRAPH_ERROR_CODE
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Userland evaluated after the bridge in a snapshot.
+enum SnapshotUserland {
+    /// An IIFE bundle (agent SDK, wasm runner).
+    Script(String),
+    /// A guest ES module graph (`jsRuntime.snapshotEntrypoints`).
+    ModuleGraph(crate::module_snapshot::ModuleSnapshotGraph),
+}
+
+impl SnapshotUserland {
+    fn sources(&self) -> Vec<&str> {
+        match self {
+            Self::Script(code) => vec![code.as_str()],
+            Self::ModuleGraph(graph) => graph
+                .modules
+                .iter()
+                .map(|module| module.source.as_str())
+                .collect(),
+        }
+    }
+}
+
+/// Helper request payload for the userland part.
+fn userland_helper_payload(userland_code: &str) -> Result<Vec<u8>, String> {
+    if crate::module_snapshot::is_module_graph_token(userland_code) {
+        let graph =
+            crate::module_snapshot::module_graph_for_token(userland_code).ok_or_else(|| {
+                format!(
+                    "{}: the module graph for this snapshot is no longer registered",
+                    crate::module_snapshot::MODULE_SNAPSHOT_GRAPH_ERROR_CODE
+                )
+            })?;
+        return Ok(graph.encode());
+    }
+    validate_userland_code_size(userland_code)?;
+    Ok(userland_code.as_bytes().to_vec())
+}
+
+fn parse_userland_helper_payload(bytes: Vec<u8>) -> Result<SnapshotUserland, String> {
+    if bytes.starts_with(crate::module_snapshot::MODULE_GRAPH_MAGIC) {
+        return crate::module_snapshot::ModuleSnapshotGraph::decode(&bytes)
+            .map(SnapshotUserland::ModuleGraph);
+    }
+    let code = String::from_utf8(bytes)
+        .map_err(|error| format!("snapshot helper userland is not UTF-8: {error}"))?;
+    validate_userland_code_size(&code)?;
+    Ok(SnapshotUserland::Script(code))
+}
+
 fn create_snapshot_inner(
     bridge_code: &str,
     userland_code: Option<&str>,
 ) -> Result<Vec<u8>, String> {
     validate_bridge_code_size(bridge_code)?;
-    if let Some(userland_code) = userland_code {
-        validate_userland_code_size(userland_code)?;
-    }
+    let userland = userland_code.map(userland_helper_payload).transpose()?;
 
-    create_snapshot_in_subprocess(bridge_code, userland_code)
+    create_snapshot_in_subprocess(bridge_code, userland.as_deref())
 }
 
 fn create_snapshot_inner_in_process(
     bridge_code: &str,
-    userland_code: Option<&str>,
+    userland: Option<SnapshotUserland>,
 ) -> Result<Vec<u8>, String> {
     validate_bridge_code_size(bridge_code)?;
-    if let Some(userland_code) = userland_code {
-        validate_userland_code_size(userland_code)?;
-    }
 
     init_v8_platform();
     crate::isolate::prepare_current_thread();
 
+    let userland_sources = userland
+        .as_ref()
+        .map(SnapshotUserland::sources)
+        .unwrap_or_default();
+    let sources = snapshot_sources(bridge_code, &userland_sources)?;
+    // SAFETY: `sources` owns the table and outlives the creator isolate, which
+    // `create_blob` consumes before this function returns.
+    let refs: &'static v8::ExternalReferences =
+        unsafe { &*(sources.refs() as *const v8::ExternalReferences) };
+    // Builtins V8 adds to a context only when it restores one; userland must
+    // not leave its own definitions of them in the snapshot.
+    let restored_names = match userland {
+        Some(_) => Some(builtin_property_names_of_restored_context()?),
+        None => None,
+    };
     {
-        let mut isolate = v8::Isolate::snapshot_creator(Some(external_refs()), None);
+        let mut isolate = v8::Isolate::snapshot_creator(Some(refs), None);
         let bridge_result = {
             let scope = &mut v8::HandleScope::new(&mut isolate);
             let context = v8::Context::new(scope, Default::default());
             let scope = &mut v8::ContextScope::new(scope, context);
+            // Errors are returned after `create_blob`: a snapshot creator must
+            // not be dropped without it.
+            let restore_only_names = restored_names
+                .as_ref()
+                .map(|restored| restore_only_builtin_names(scope, restored))
+                .transpose();
 
             // Register stub bridge functions so the IIFE can reference them.
             let sync_bridge_fns = sync_bridge_fns();
@@ -272,18 +468,43 @@ fn create_snapshot_inner_in_process(
             // Then, if present, run the userland (agent-SDK) IIFE in the SAME context so
             // its evaluated graph is captured alongside the bridge.
             let result = (|| -> Result<(), String> {
-                run_snapshot_script(scope, bridge_code, "bridge code", false)?;
-                if let Some(userland_code) = userland_code {
+                let restore_only_names = restore_only_names.as_ref().map_err(Clone::clone)?;
+                // A module snapshot boots an entrypoint that serves requests at once, so its
+                // bridge compiles eagerly too and the first request runs no lazy compile. Plain
+                // bridge snapshots stay lazy (see `run_snapshot_script`).
+                let eager_bridge = matches!(userland, Some(SnapshotUserland::ModuleGraph(_)));
+                run_snapshot_script(scope, bridge_code, "bridge code", eager_bridge)?;
+                if let Some(userland) = &userland {
                     // Some bridge-backed globals (e.g. `process.versions`) are lazy
                     // getters that dispatch a host bridge call on first access. During
                     // snapshot creation the bridge fns are stubs, so an agent SDK that
                     // reads them at module-init would fail. Freeze them to static values
                     // first; per-session config is still injected post-restore.
-                    run_snapshot_script(scope, SNAPSHOT_USERLAND_PREP, "userland prep", false)?;
-                    run_snapshot_script(scope, userland_code, "userland code", true)?;
+                    run_snapshot_script(scope, SNAPSHOT_VERSIONS_PREP, "userland prep", false)?;
+                    match userland {
+                        SnapshotUserland::Script(code) => {
+                            run_snapshot_script(
+                                scope,
+                                SNAPSHOT_USERLAND_PREP,
+                                "userland prep",
+                                false,
+                            )?;
+                            run_snapshot_script(scope, code, "userland code", true)?;
+                        }
+                        SnapshotUserland::ModuleGraph(graph) => {
+                            crate::module_snapshot::evaluate_module_graph_for_snapshot(
+                                scope, graph,
+                            )?;
+                        }
+                    }
+                }
+                if let Some((roots, names)) = restore_only_names {
+                    remove_restore_only_builtins(scope, roots, names)?;
                 }
                 Ok(())
             })();
+            // No Global may outlive the creator scope into `create_blob`.
+            drop(restore_only_names);
 
             scope.set_default_context(context);
             result
@@ -308,7 +529,7 @@ fn create_snapshot_inner_in_process(
 
 fn create_snapshot_in_subprocess(
     bridge_code: &str,
-    userland_code: Option<&str>,
+    userland_code: Option<&[u8]>,
 ) -> Result<Vec<u8>, String> {
     let current_exe =
         std::env::current_exe().map_err(|error| format!("snapshot helper path: {error}"))?;
@@ -345,7 +566,7 @@ fn create_snapshot_in_subprocess(
 fn write_snapshot_helper_request(
     writer: &mut impl Write,
     bridge_code: &str,
-    userland_code: Option<&str>,
+    userland_code: Option<&[u8]>,
 ) -> Result<(), String> {
     writer
         .write_all(SNAPSHOT_HELPER_MAGIC)
@@ -362,7 +583,7 @@ fn write_snapshot_helper_request(
         .map_err(|error| format!("write snapshot helper bridge code: {error}"))?;
     if let Some(userland_code) = userland_code {
         writer
-            .write_all(userland_code.as_bytes())
+            .write_all(userland_code)
             .map_err(|error| format!("write snapshot helper userland code: {error}"))?;
     }
     Ok(())
@@ -415,8 +636,9 @@ fn run_snapshot_helper_from_stdio() -> i32 {
     }
 
     let result = (|| -> Result<Vec<u8>, String> {
-        let (bridge_code, userland_code) = parse_snapshot_helper_request(&input)?;
-        create_snapshot_inner_in_process(&bridge_code, userland_code.as_deref())
+        let (bridge_code, userland) = parse_snapshot_helper_request(&input)?;
+        let userland = userland.map(parse_userland_helper_payload).transpose()?;
+        create_snapshot_inner_in_process(&bridge_code, userland)
     })();
 
     match result {
@@ -437,7 +659,7 @@ fn run_snapshot_helper_from_stdio() -> i32 {
     }
 }
 
-fn parse_snapshot_helper_request(input: &[u8]) -> Result<(String, Option<String>), String> {
+fn parse_snapshot_helper_request(input: &[u8]) -> Result<(String, Option<Vec<u8>>), String> {
     let Some(rest) = input.strip_prefix(SNAPSHOT_HELPER_MAGIC) else {
         return Err(String::from("snapshot helper request missing magic"));
     };
@@ -471,10 +693,7 @@ fn parse_snapshot_helper_request(input: &[u8]) -> Result<(String, Option<String>
                 rest.len()
             ));
         }
-        Some(
-            String::from_utf8(rest.to_vec())
-                .map_err(|error| format!("snapshot helper userland is not UTF-8: {error}"))?,
-        )
+        Some(rest.to_vec())
     };
     let bridge_code = String::from_utf8(bridge_bytes.to_vec())
         .map_err(|error| format!("snapshot helper bridge is not UTF-8: {error}"))?;
@@ -566,17 +785,69 @@ fn inject_snapshot_defaults(scope: &mut v8::HandleScope) {
     global.define_own_property(scope, oc_key.into(), oc_val, attr2);
 }
 
-/// Create a V8 isolate restored from a snapshot blob.
-///
-/// The external references must match those used during snapshot creation
-/// (provided by bridge::external_refs()).
-///
-/// `blob` must be owned or 'static data — `Arc<[u8]>`, `Vec<u8>`, `Box<[u8]>`,
-/// or `v8::StartupData` all work. The isolate keeps `blob` alive until it is
-/// disposed, so pass the cache's `Arc<[u8]>` to share one copy across isolates.
+/// External references of a snapshot: the native callbacks plus every
+/// shareable source it compiles (the bridge, then userland sources in order).
+/// The helper and the restoring sidecar derive the same table from the same
+/// content.
+fn snapshot_sources(
+    bridge_code: &str,
+    userland_sources: &[&str],
+) -> Result<Arc<crate::shared_source::SnapshotSources>, String> {
+    let shareable: Vec<&str> = std::iter::once(bridge_code)
+        .chain(userland_sources.iter().copied())
+        .filter(|source| crate::shared_source::is_shareable(source))
+        .collect();
+    crate::shared_source::snapshot_sources(&shareable).map(Arc::new)
+}
+
+/// The external reference table of a snapshot, owned by its isolate. It
+/// also holds the snapshot's shared sources, so every isolate restored from
+/// the snapshot keeps the source text it reads alive.
+struct RestoreRefs(Arc<crate::shared_source::SnapshotSources>);
+
+impl std::ops::Deref for RestoreRefs {
+    type Target = [isize];
+    fn deref(&self) -> &Self::Target {
+        self.0.refs()
+    }
+}
+
+impl std::borrow::Borrow<[isize]> for RestoreRefs {
+    fn borrow(&self) -> &[isize] {
+        self.0.refs()
+    }
+}
+
+/// Create a V8 isolate restored from a snapshot blob whose external
+/// references are the base table (`bridge::external_refs()`). Only valid for a
+/// snapshot without shared sources (every source under
+/// `shared_source::MIN_SHARED_SOURCE_BYTES`); everything else restores through
+/// [`create_isolate_from_cached_snapshot`].
+#[cfg(any(test, feature = "test-support"))]
 pub fn create_isolate_from_snapshot<B>(blob: B, heap_limit_mb: Option<u32>) -> v8::OwnedIsolate
 where
     B: std::ops::Deref<Target = [u8]> + std::borrow::Borrow<[u8]> + 'static,
+{
+    create_isolate_with_refs(blob, &**crate::bridge::external_refs(), heap_limit_mb)
+}
+
+/// Create a V8 isolate restored from a cached snapshot, sharing its bytes and
+/// its shared sources with every other isolate restored from it.
+pub fn create_isolate_from_cached_snapshot(
+    blob: &SnapshotBlob,
+    heap_limit_mb: Option<u32>,
+) -> v8::OwnedIsolate {
+    create_isolate_with_refs(
+        Arc::clone(&blob.bytes),
+        RestoreRefs(Arc::clone(&blob.sources)),
+        heap_limit_mb,
+    )
+}
+
+fn create_isolate_with_refs<B, R>(blob: B, refs: R, heap_limit_mb: Option<u32>) -> v8::OwnedIsolate
+where
+    B: std::ops::Deref<Target = [u8]> + std::borrow::Borrow<[u8]> + 'static,
+    R: std::ops::Deref<Target = [isize]> + std::borrow::Borrow<[isize]> + 'static,
 {
     init_v8_platform();
     crate::isolate::prepare_current_thread();
@@ -584,21 +855,44 @@ where
     // Same heap and ArrayBuffer caps and OOM guard as the fresh-isolate path, so
     // a snapshot-restored isolate is never unbounded (F-003).
     crate::isolate::create_guest_isolate(heap_limit_mb, |params| {
-        params
-            .snapshot_blob(blob)
-            .external_references(&**external_refs())
+        params.snapshot_blob(blob).external_references(refs)
     })
 }
 
 /// A factory for never-run isolates restored from `blob`, for module code
 /// cache entries that must match the session isolate's snapshot.
 pub fn pristine_isolate_factory(
-    blob: Arc<[u8]>,
+    blob: SnapshotBlob,
 ) -> crate::module_code_cache::PristineIsolateFactory {
-    Arc::new(move || create_isolate_from_snapshot(Arc::clone(&blob), None))
+    Arc::new(move || create_isolate_from_cached_snapshot(&blob, None))
 }
 
 pub type SnapshotCacheKey = [u8; 32];
+
+/// A cached snapshot. rusty_v8 keeps the blob alive for each isolate's
+/// lifetime, so isolates share one allocation instead of a blob-sized copy
+/// each.
+#[derive(Clone)]
+pub struct SnapshotBlob {
+    bytes: Arc<[u8]>,
+    /// Shared sources and reference table; freed sources are never in use.
+    sources: Arc<crate::shared_source::SnapshotSources>,
+}
+
+impl SnapshotBlob {
+    /// Whether both handles share one blob allocation.
+    pub fn ptr_eq(left: &Self, right: &Self) -> bool {
+        Arc::ptr_eq(&left.bytes, &right.bytes)
+    }
+}
+
+impl std::ops::Deref for SnapshotBlob {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        &self.bytes
+    }
+}
 
 /// Thread-safe snapshot cache keyed by bridge code digest.
 ///
@@ -621,16 +915,15 @@ struct CacheInner {
 struct CacheEntry {
     key: SnapshotCacheKey,
     /// Snapshot blob bytes (copied from v8::StartupData).
-    /// Stored as bytes rather than StartupData because StartupData
-    /// contains raw pointers that are not Send/Sync. Isolates restored from
-    /// this entry share these bytes instead of copying them.
-    blob: Arc<[u8]>,
+    /// Stored as Vec<u8> rather than StartupData because StartupData
+    /// contains raw pointers that are not Send/Sync.
+    blob: SnapshotBlob,
 }
 
 /// Shared state for an in-flight snapshot creation. The creator thread
 /// populates `result` and notifies all waiters via `done`.
 struct InFlightEntry {
-    result: Mutex<Option<Result<Arc<[u8]>, String>>>,
+    result: Mutex<Option<Result<SnapshotBlob, String>>>,
     done: Condvar,
 }
 
@@ -650,7 +943,7 @@ impl SnapshotCache {
     /// Two-phase locking: the cache mutex is held only for lookups and
     /// inserts, never during snapshot creation. Per-key in-flight tracking
     /// prevents duplicate snapshot creation for the same bridge code.
-    pub fn get_or_create(&self, bridge_code: &str) -> Result<Arc<[u8]>, String> {
+    pub fn get_or_create(&self, bridge_code: &str) -> Result<SnapshotBlob, String> {
         self.get_or_create_with_userland(bridge_code, None)
     }
 
@@ -660,12 +953,12 @@ impl SnapshotCache {
         &self,
         bridge_code: &str,
         userland_code: Option<&str>,
-    ) -> Option<Arc<[u8]>> {
+    ) -> Option<SnapshotBlob> {
         let key = snapshot_cache_key(bridge_code, userland_code);
         let mut inner = self.inner.lock().unwrap();
         if let Some(pos) = inner.entries.iter().position(|e| e.key == key) {
             let entry = inner.entries.remove(pos);
-            let blob = Arc::clone(&entry.blob);
+            let blob = entry.blob.clone();
             inner.entries.push(entry);
             Some(blob)
         } else {
@@ -681,7 +974,7 @@ impl SnapshotCache {
         &self,
         bridge_code: &str,
         userland_code: Option<&str>,
-    ) -> Result<Arc<[u8]>, String> {
+    ) -> Result<SnapshotBlob, String> {
         let key = snapshot_cache_key(bridge_code, userland_code);
 
         // Phase 1: short lock — check cache, check in-flight, or claim creation
@@ -691,7 +984,7 @@ impl SnapshotCache {
             // Cache hit — move to end (most recently used)
             if let Some(pos) = inner.entries.iter().position(|e| e.key == key) {
                 let entry = inner.entries.remove(pos);
-                let blob = Arc::clone(&entry.blob);
+                let blob = entry.blob.clone();
                 inner.entries.push(entry);
                 return Ok(blob);
             }
@@ -720,8 +1013,7 @@ impl SnapshotCache {
         }
 
         // Phase 2: create snapshot without holding the cache lock
-        let creation_result =
-            create_snapshot_inner(bridge_code, userland_code).map(Arc::<[u8]>::from);
+        let creation_result = load_or_create_snapshot(&key, bridge_code, userland_code);
 
         // Phase 3: short lock — insert result, notify waiters, clean up
         {
@@ -734,7 +1026,7 @@ impl SnapshotCache {
                 }
                 inner.entries.push(CacheEntry {
                     key,
-                    blob: Arc::clone(arc),
+                    blob: arc.clone(),
                 });
             }
 
@@ -748,6 +1040,46 @@ impl SnapshotCache {
 
         creation_result
     }
+}
+
+/// Build a snapshot, or load the blob a previous sidecar process stored.
+fn load_or_create_snapshot(
+    key: &SnapshotCacheKey,
+    bridge_code: &str,
+    userland_code: Option<&str>,
+) -> Result<SnapshotBlob, String> {
+    let graph = userland_code
+        .filter(|code| crate::module_snapshot::is_module_graph_token(code))
+        .map(|token| {
+            crate::module_snapshot::module_graph_for_token(token).ok_or_else(|| {
+                format!(
+                    "{}: the module graph for this snapshot is no longer registered",
+                    crate::module_snapshot::MODULE_SNAPSHOT_GRAPH_ERROR_CODE
+                )
+            })
+        })
+        .transpose()?;
+    let userland_sources: Vec<&str> = match (&graph, userland_code) {
+        (Some(graph), _) => graph
+            .modules
+            .iter()
+            .map(|module| module.source.as_str())
+            .collect(),
+        (None, Some(code)) => vec![code],
+        (None, None) => Vec::new(),
+    };
+    let sources = snapshot_sources(bridge_code, &userland_sources)?;
+    let disk_dir = crate::snapshot_disk_cache::cache_dir();
+    if let Some(dir) = &disk_dir {
+        if let Some(bytes) = crate::snapshot_disk_cache::load(dir, key, MAX_SNAPSHOT_BLOB_BYTES) {
+            return Ok(SnapshotBlob { bytes, sources });
+        }
+    }
+    let bytes: Arc<[u8]> = Arc::from(create_snapshot_inner(bridge_code, userland_code)?);
+    if let Some(dir) = &disk_dir {
+        crate::snapshot_disk_cache::store(dir, key, &bytes);
+    }
+    Ok(SnapshotBlob { bytes, sources })
 }
 
 /// Cache key over bridge + optional userland code. With no userland this is just
@@ -815,7 +1147,7 @@ pub fn run_snapshot_consolidated_checks() {
     // Running it in the shared unit-test binary still triggers a V8 teardown
     // SIGSEGV after the test completes.
     init_v8_platform();
-    let _ = external_refs();
+    let _ = crate::bridge::external_refs();
 
     // --- Part 1: Snapshot creation returns non-empty blob ---
     {
@@ -879,7 +1211,7 @@ pub fn run_snapshot_consolidated_checks() {
 
         // Same Arc (same pointer) — cache hit, not a new snapshot
         assert!(
-            Arc::ptr_eq(&arc1, &arc2),
+            SnapshotBlob::ptr_eq(&arc1, &arc2),
             "cache hit should return same Arc"
         );
     }
@@ -895,15 +1227,15 @@ pub fn run_snapshot_consolidated_checks() {
 
         // Different bridge code → different Arc
         assert!(
-            !Arc::ptr_eq(&arc_a, &arc_b),
+            !SnapshotBlob::ptr_eq(&arc_a, &arc_b),
             "different code should produce different Arc"
         );
 
         // Verify both are usable
-        let mut iso_a = create_isolate_from_snapshot(Arc::clone(&arc_a), None);
+        let mut iso_a = create_isolate_from_cached_snapshot(&arc_a, None);
         assert_eq!(eval(&mut iso_a, "1 + 1"), "2");
 
-        let mut iso_b = create_isolate_from_snapshot(Arc::clone(&arc_b), None);
+        let mut iso_b = create_isolate_from_cached_snapshot(&arc_b, None);
         assert_eq!(eval(&mut iso_b, "2 + 2"), "4");
     }
 
@@ -923,7 +1255,7 @@ pub fn run_snapshot_consolidated_checks() {
         // code_1 should be evicted — re-requesting it should return a new Arc
         let arc_1_new = cache.get_or_create(code_1).expect("re-create 1");
         assert!(
-            !Arc::ptr_eq(&arc_1, &arc_1_new),
+            !SnapshotBlob::ptr_eq(&arc_1, &arc_1_new),
             "evicted entry should produce a new Arc on re-creation"
         );
 
@@ -952,14 +1284,14 @@ pub fn run_snapshot_consolidated_checks() {
         for _ in 0..num_threads {
             let cache = Arc::clone(&cache);
             let barrier = Arc::clone(&barrier);
-            let first = Arc::clone(&first);
+            let first = first.clone();
             let same_count = Arc::clone(&same_count);
             let code = bridge_code.to_string();
 
             handles.push(std::thread::spawn(move || {
                 barrier.wait();
                 let arc = cache.get_or_create(&code).expect("concurrent get");
-                if Arc::ptr_eq(&arc, &first) {
+                if SnapshotBlob::ptr_eq(&arc, &first) {
                     same_count.fetch_add(1, Ordering::Relaxed);
                 }
             }));
@@ -1178,7 +1510,8 @@ pub fn run_snapshot_consolidated_checks() {
     {
         use crate::bridge::register_stub_bridge_fns;
 
-        let mut snapshot_isolate = v8::Isolate::snapshot_creator(Some(external_refs()), None);
+        let mut snapshot_isolate =
+            v8::Isolate::snapshot_creator(Some(crate::bridge::external_refs()), None);
         {
             let scope = &mut v8::HandleScope::new(&mut snapshot_isolate);
             let context = v8::Context::new(scope, Default::default());
@@ -1423,12 +1756,12 @@ pub fn run_snapshot_consolidated_checks() {
         let arc1 = cache.get_or_create(code).expect("first get_or_create");
         let arc2 = cache.get_or_create(code).expect("second get_or_create");
         assert!(
-            Arc::ptr_eq(&arc1, &arc2),
+            SnapshotBlob::ptr_eq(&arc1, &arc2),
             "cache hit should return same Arc"
         );
 
         // Verify blob is usable
-        let mut isolate = create_isolate_from_snapshot(Arc::clone(&arc1), None);
+        let mut isolate = create_isolate_from_cached_snapshot(&arc1, None);
         assert_eq!(eval(&mut isolate, "1 + 1"), "2");
     }
 
@@ -1613,8 +1946,12 @@ pub fn run_snapshot_consolidated_checks() {
             "\n",
             include_str!(concat!(env!("OUT_DIR"), "/v8-bridge-zlib.js"))
         );
-        let blob = create_snapshot(bridge_code).expect("snapshot creation");
-        let mut isolate = create_isolate_from_snapshot(blob, None);
+        // The real bridge is large enough to be a shared source, so restore
+        // through the cache, which carries the matching reference table.
+        let blob = SnapshotCache::new(1)
+            .get_or_create(bridge_code)
+            .expect("snapshot creation");
+        let mut isolate = create_isolate_from_cached_snapshot(&blob, None);
 
         let scope = &mut v8::HandleScope::new(&mut isolate);
         let context = v8::Context::new(scope, Default::default());
@@ -1699,7 +2036,7 @@ pub fn run_snapshot_consolidated_checks() {
             let arc1 = cache.get_or_create(code).unwrap();
             let arc2 = cache.get_or_create(code).unwrap();
             assert!(
-                Arc::ptr_eq(&arc1, &arc2),
+                SnapshotBlob::ptr_eq(&arc1, &arc2),
                 "should be cache hit after creation"
             );
         }
@@ -1856,7 +2193,7 @@ pub fn run_snapshot_consolidated_checks() {
                 .get_or_create_with_userland(bridge_code, Some(userland))
                 .expect("userland cache hit");
             assert!(
-                Arc::ptr_eq(&a, &b),
+                SnapshotBlob::ptr_eq(&a, &b),
                 "identical userland should hit the cache"
             );
 
@@ -1865,7 +2202,7 @@ pub fn run_snapshot_consolidated_checks() {
                 .get_or_create_with_userland(bridge_code, Some(userland2))
                 .expect("changed userland create");
             assert!(
-                !Arc::ptr_eq(&a, &c),
+                !SnapshotBlob::ptr_eq(&a, &c),
                 "changed userland (dep-graph change) should rebuild"
             );
         }

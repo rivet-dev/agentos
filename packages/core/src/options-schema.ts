@@ -425,6 +425,7 @@ export const agentOsOptionFieldSchemas = {
 	loopbackExemptPorts: z.array(z.number().int().min(0).max(65535)).optional(),
 	allowedNodeBuiltins: stringArray.optional(),
 	highResolutionTime: z.boolean().optional(),
+	snapshotEntrypoints: stringArray.optional(),
 	database: z
 		.object({
 			type: z.literal("sqlite_file"),

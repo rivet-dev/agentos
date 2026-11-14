@@ -3126,6 +3126,12 @@ pub(super) fn guest_runtime_identity(
             .as_ref()
             .is_some_and(|cfg| cfg.high_resolution_time.unwrap_or(false)),
         snapshot_userland_code: None,
+        snapshot_entrypoints: vm
+            .configuration
+            .js_runtime
+            .as_ref()
+            .and_then(|cfg| cfg.snapshot_entrypoints.clone())
+            .unwrap_or_default(),
         prelude_script: None,
     }
 }

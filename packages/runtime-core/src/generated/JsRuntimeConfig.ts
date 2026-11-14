@@ -29,4 +29,11 @@ allowedBuiltins?: Array<string>,
  * Opt in to a high-resolution monotonic guest clock. Default false keeps
  * the security-oriented 1ms timer resolution.
  */
-highResolutionTime?: boolean, };
+highResolutionTime?: boolean, 
+/**
+ * Absolute guest paths of ES module entrypoints whose static imports are
+ * evaluated once into a V8 startup snapshot. A guest `node <entry>`
+ * process for one of them starts with those modules already evaluated.
+ * Every imported module must be an ES module on a read-only host mount.
+ */
+snapshotEntrypoints?: Array<string>, };

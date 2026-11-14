@@ -678,6 +678,17 @@ export interface AgentOsOptions<
 	 * profiling workloads.
 	 */
 	highResolutionTime?: boolean;
+	/**
+	 * Guest entrypoints that boot from a V8 startup snapshot. For a guest
+	 * `node <entry>` process whose entry is listed, every module the entry
+	 * statically imports is evaluated once per sidecar, not once per process.
+	 * Imported modules must be ES modules on a read-only host mount. Module
+	 * top-level code then runs at snapshot time, so it must not capture
+	 * per-process state such as `process.argv`, `process.env`, the time, or
+	 * random values. See the module snapshots section of the JavaScript
+	 * executor docs.
+	 */
+	snapshotEntrypoints?: string[];
 	/** Durable SQLite storage for VM-owned filesystem and runtime state. */
 	database?: VmSqliteConfig;
 	/** Root filesystem configuration. Defaults to an overlay with the bundled base snapshot as its deepest lower. */
@@ -3088,7 +3099,8 @@ export class AgentOs {
 					// emulation), matching the prior behavior where Agent OS only
 					// constrained the builtin allow-list.
 					...(options?.allowedNodeBuiltins !== undefined ||
-					options?.highResolutionTime !== undefined
+					options?.highResolutionTime !== undefined ||
+					options?.snapshotEntrypoints !== undefined
 						? {
 								jsRuntime: {
 									platform: "node" as const,
@@ -3098,6 +3110,9 @@ export class AgentOs {
 										: {}),
 									...(options?.highResolutionTime !== undefined
 										? { highResolutionTime: options.highResolutionTime }
+										: {}),
+									...(options?.snapshotEntrypoints !== undefined
+										? { snapshotEntrypoints: options.snapshotEntrypoints }
 										: {}),
 								},
 							}

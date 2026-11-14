@@ -71,6 +71,9 @@ pub struct AgentOsConfig {
     /// Opt in to a high-resolution monotonic clock for guest JavaScript.
     /// `None` selects the hardened millisecond-resolution default.
     pub high_resolution_time: Option<bool>,
+    /// Guest entrypoints that boot from a V8 startup snapshot with their
+    /// static imports already evaluated (= TS `snapshotEntrypoints`).
+    pub snapshot_entrypoints: Option<Vec<String>>,
     /// Root filesystem configuration. Default: overlay + bundled base snapshot.
     pub root_filesystem: RootFilesystemConfig,
     /// Additional mounts.
@@ -168,6 +171,11 @@ impl AgentOsConfigBuilder {
 
     pub fn high_resolution_time(mut self, enabled: bool) -> Self {
         self.config.high_resolution_time = Some(enabled);
+        self
+    }
+
+    pub fn snapshot_entrypoints(mut self, entrypoints: Vec<String>) -> Self {
+        self.config.snapshot_entrypoints = Some(entrypoints);
         self
     }
 

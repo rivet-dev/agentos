@@ -520,6 +520,10 @@ pub struct GuestRuntimeConfig {
     /// keeps the bridge-only snapshot (unchanged behavior). The runtime caches the
     /// snapshot process-wide keyed by sha256(bridge_code + this bundle).
     pub snapshot_userland_code: Option<String>,
+    /// Guest entrypoint paths from `jsRuntime.snapshotEntrypoints`. A guest
+    /// `node <entry>` process for one of them boots from a V8 snapshot with the
+    /// entry's static imports already evaluated.
+    pub snapshot_entrypoints: Vec<String>,
     /// Optional sidecar-owned classic script evaluated in the execution's
     /// context before the entrypoint, including before an ES module entrypoint
     /// links its static imports. The sidecar uses it to define VM-wide guest
@@ -2706,7 +2710,7 @@ impl JavascriptExecutionEngine {
         &mut self,
         request: StartJavascriptExecutionRequest,
         module_reader: Option<Box<dyn ModuleFsReader + Send>>,
-        guest_reader: Option<Box<dyn agentos_v8_runtime::execution::GuestModuleReader>>,
+        mut guest_reader: Option<Box<dyn agentos_v8_runtime::execution::GuestModuleReader>>,
         runtime: RuntimeContext,
         defer_execute: bool,
     ) -> Result<JavascriptExecution, JavascriptExecutionError> {
@@ -2747,12 +2751,21 @@ impl JavascriptExecutionEngine {
         let heap_limit_mb = javascript_heap_limit_mb(&request);
         let cpu_time_limit_ms = javascript_cpu_time_limit_ms(&request);
         let wall_clock_limit_ms = javascript_wall_clock_limit_ms(&request);
-        let snapshot_userland_code: Arc<str> = request
-            .guest_runtime
-            .snapshot_userland_code
-            .as_deref()
-            .unwrap_or_default()
-            .into();
+        let phase_start_snapshot = Instant::now();
+        let snapshot_userland_code: Arc<str> =
+            match request.guest_runtime.snapshot_userland_code.as_deref() {
+                Some(code) => code.into(),
+                None => module_snapshot_for_launch(
+                    v8_host,
+                    &runtime,
+                    &request,
+                    guest_reader.as_deref_mut(),
+                    heap_limit_mb,
+                )
+                .unwrap_or_default()
+                .into(),
+            };
+        record_js_start_phase("js_start_module_snapshot", phase_start_snapshot.elapsed());
         let warm_hint = Some(WarmSessionHint {
             bridge_code: V8RuntimeHost::shared_bridge_code(),
             userland_code: snapshot_userland_code.clone(),
@@ -3260,6 +3273,56 @@ fn build_v8_user_code(entrypoint: &str, env: &BTreeMap<String, String>) -> Strin
             entrypoint
         )
     }
+}
+
+/// The module snapshot token for a guest `node <entry>` launch whose entry the
+/// VM named in `jsRuntime.snapshotEntrypoints`, or `None` to load normally.
+///
+/// Snapshot modules are evaluated against the default Node surface, so a VM
+/// that restricts builtins, module resolution, or the platform, and language
+/// executions that retain their context, never use one.
+fn module_snapshot_for_launch(
+    v8_host: &V8RuntimeHost,
+    runtime: &RuntimeContext,
+    request: &StartJavascriptExecutionRequest,
+    reader: Option<&mut (dyn agentos_v8_runtime::execution::GuestModuleReader + 'static)>,
+    heap_limit_mb: u32,
+) -> Option<String> {
+    let entrypoints = &request.guest_runtime.snapshot_entrypoints;
+    if entrypoints.is_empty() {
+        return None;
+    }
+    let entry = request
+        .env
+        .get(NODE_GUEST_ENTRYPOINT_ENV)
+        .filter(|entry| entrypoints.iter().any(|candidate| candidate == *entry))?;
+    let env_flag = |key: &str| {
+        request
+            .env
+            .get(key)
+            .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+    };
+    if request.env.contains_key("AGENTOS_JS_BUILTIN_ALLOWLIST")
+        || request.env.contains_key("AGENTOS_JS_MODULE_RESOLUTION")
+        || request
+            .env
+            .get("AGENTOS_JS_PLATFORM")
+            .is_some_and(|platform| platform != "node")
+        || env_flag(NODE_RETAIN_CONTEXT_ENV)
+        || env_flag(NODE_COMPLETE_ON_SETTLE_ENV)
+    {
+        return None;
+    }
+    let reader = reader?;
+    if reader.module_format(entry)
+        != Some(agentos_v8_runtime::execution::ResolvedModuleFormat::Module)
+    {
+        return None;
+    }
+    // The entry must come from a read-only host mount too, so guest code can
+    // neither change it nor make the sidecar discover new graphs.
+    let source = strip_javascript_hashbang(&reader.read_module_source(entry)?);
+    v8_host.select_module_snapshot(runtime, entry, &source, reader, heap_limit_mb)
 }
 
 fn host_entrypoint_uses_module_mode(entrypoint: &Path) -> bool {

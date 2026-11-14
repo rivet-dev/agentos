@@ -922,7 +922,7 @@ fn precreate_warm_isolate(
     // guest code until they receive a slot-owning SessionAssignment. Building
     // one must not wait for every active session to exit: long-lived parents
     // need the pool to replenish while short-lived child commands come and go.
-    let mut isolate = snapshot::create_isolate_from_snapshot(snapshot_blob, heap_limit_mb);
+    let mut isolate = snapshot::create_isolate_from_cached_snapshot(&snapshot_blob, heap_limit_mb);
     isolate.set_host_import_module_dynamically_callback(execution::dynamic_import_callback);
     isolate.set_host_initialize_import_meta_object_callback(execution::import_meta_object_callback);
     let context = isolate::create_context(&mut isolate);
@@ -2535,8 +2535,10 @@ fn session_thread(
                                     crate::module_code_cache::set_session_isolate_factory(Some(
                                         snapshot::pristine_isolate_factory(blob.clone()),
                                     ));
-                                    let isolate =
-                                        snapshot::create_isolate_from_snapshot(blob, heap_limit_mb);
+                                    let isolate = snapshot::create_isolate_from_cached_snapshot(
+                                        &blob,
+                                        heap_limit_mb,
+                                    );
                                     record_v8_session_phase("isolate_new", phase_start.elapsed());
                                     isolate
                                 }

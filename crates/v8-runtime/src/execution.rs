@@ -950,6 +950,20 @@ pub trait GuestModuleReader: Send {
         let _ = resolved_guest_path;
         None
     }
+
+    /// A reader over the same mounts with a fresh cache, for background module
+    /// snapshot discovery. `None` disables module snapshots for this reader.
+    fn boxed_clone(&self) -> Option<Box<dyn GuestModuleReader>> {
+        None
+    }
+
+    /// An identity of the host file behind a resolved guest path that changes
+    /// whenever its content can change (host root, inode, size, mtime, ctime).
+    /// `None` when unknown; callers then read the content.
+    fn source_identity(&mut self, resolved_guest_path: &str) -> Option<String> {
+        let _ = resolved_guest_path;
+        None
+    }
 }
 
 /// True when the session reader serves `path` (so it lies in a read-only host
@@ -1386,6 +1400,27 @@ pub fn execute_module_with_runtime_shim(
         if code != 0 {
             clear_module_state();
             return (code, None, err);
+        }
+    }
+
+    // A context restored from a module snapshot carries the graph modules,
+    // already evaluated. Importing one of their paths returns that instance.
+    if let Some(modules) = crate::module_snapshot::take_snapshot_modules(scope) {
+        for (path, global) in modules {
+            let module = v8::Local::new(scope, &global);
+            if !cache_resolved_module(module, global, path, None) {
+                clear_module_state();
+                return (
+                    1,
+                    None,
+                    Some(ExecutionError {
+                        error_type: "Error".into(),
+                        message: "module resolution cache limit exceeded".into(),
+                        stack: String::new(),
+                        code: None,
+                    }),
+                );
+            }
         }
     }
 
@@ -1894,7 +1929,7 @@ fn cache_resolved_module(
     })
 }
 
-fn import_meta_resolve_callback(
+pub(crate) fn import_meta_resolve_callback(
     scope: &mut v8::HandleScope,
     args: v8::FunctionCallbackArguments,
     mut rv: v8::ReturnValue,
@@ -1983,18 +2018,41 @@ pub extern "C" fn import_meta_object_callback(
     });
 
     if let Some((referrer, url)) = module_location {
-        let key = v8::String::new(scope, "url").unwrap();
-        let value = v8::String::new(scope, &url).unwrap();
-        meta.set(scope, key.into(), value.into());
+        set_import_meta_url_and_resolve(scope, meta, &referrer, &url);
+    }
+}
 
-        let data = v8::String::new(scope, &referrer).unwrap();
-        let template = v8::FunctionTemplate::builder(import_meta_resolve_callback)
-            .data(data.into())
-            .build(scope);
-        if let Some(resolve) = template.get_function(scope) {
-            let key = v8::String::new(scope, "resolve").unwrap();
-            meta.set(scope, key.into(), resolve.into());
-        }
+/// Set `import.meta.url` and `import.meta.resolve` for a module at `path`.
+pub(crate) fn set_import_meta_fields(
+    scope: &mut v8::HandleScope,
+    meta: v8::Local<v8::Object>,
+    path: &str,
+) {
+    let url = if path.starts_with('/') {
+        format!("file://{path}")
+    } else {
+        path.to_owned()
+    };
+    set_import_meta_url_and_resolve(scope, meta, path, &url);
+}
+
+fn set_import_meta_url_and_resolve(
+    scope: &mut v8::HandleScope,
+    meta: v8::Local<v8::Object>,
+    referrer: &str,
+    url: &str,
+) {
+    let key = v8::String::new(scope, "url").unwrap();
+    let value = v8::String::new(scope, url).unwrap();
+    meta.set(scope, key.into(), value.into());
+
+    let data = v8::String::new(scope, referrer).unwrap();
+    let template = v8::FunctionTemplate::builder(import_meta_resolve_callback)
+        .data(data.into())
+        .build(scope);
+    if let Some(resolve) = template.get_function(scope) {
+        let key = v8::String::new(scope, "resolve").unwrap();
+        meta.set(scope, key.into(), resolve.into());
     }
 }
 
@@ -2473,6 +2531,25 @@ fn build_module_source(
         return build_cjs_esm_shim(scope, raw_source, resolved_path);
     }
     add_esm_runtime_prelude(raw_source)
+}
+
+/// The source `build_module_source` compiles for an ES module, or `None` when
+/// it would compile a JSON or CommonJS shim instead.
+pub(crate) fn esm_module_source_for_snapshot(
+    raw_source: &str,
+    resolved_path: &str,
+    module_format: Option<ResolvedModuleFormat>,
+) -> Option<String> {
+    let raw_source = strip_leading_shebang(raw_source);
+    if resolved_path.to_ascii_lowercase().ends_with(".json")
+        || module_format == Some(ResolvedModuleFormat::Json)
+        || (module_format == Some(ResolvedModuleFormat::Commonjs)
+            && !has_probable_esm_syntax(raw_source))
+        || is_likely_cjs(raw_source, resolved_path, module_format)
+    {
+        return None;
+    }
+    Some(add_esm_runtime_prelude(raw_source))
 }
 
 fn build_json_esm_shim(resolved_path: &str) -> String {
