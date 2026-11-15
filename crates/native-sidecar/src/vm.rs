@@ -1609,6 +1609,276 @@ where
     Ok(())
 }
 
+/// Reservation charged to the VM ledger for one control-plane blocking job.
+const CONTROL_PLANE_BLOCKING_JOB_RESERVATION_BYTES: usize = 64 * 1024;
+
+/// Run synchronous VM lifecycle work (create bootstrap, dispose cleanup) on
+/// the process's fixed blocking executor instead of the protocol router.
+///
+/// At most half of the blocking workers run control-plane jobs at once.
+/// A create flood then waits here, outside the shared queue, instead of
+/// queueing ahead of guest filesystem work that uses the same workers.
+async fn run_control_plane_blocking<T, F>(
+    runtime: &agentos_runtime::RuntimeContext,
+    operation: &'static str,
+    job: F,
+) -> Result<T, SidecarError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    static CONTROL_PLANE_PERMITS: std::sync::OnceLock<tokio::sync::Semaphore> =
+        std::sync::OnceLock::new();
+    let permits = CONTROL_PLANE_PERMITS.get_or_init(|| {
+        tokio::sync::Semaphore::new((runtime.blocking().worker_count() / 2).max(1))
+    });
+    let _permit = permits.acquire().await.map_err(|error| {
+        SidecarError::InvalidState(format!(
+            "ERR_AGENTOS_CONTROL_PLANE_ADMISSION: {operation} could not wait for a blocking worker: {error}"
+        ))
+    })?;
+    runtime
+        .blocking()
+        .run(CONTROL_PLANE_BLOCKING_JOB_RESERVATION_BYTES, job)
+        .await
+        .map_err(|error| {
+            SidecarError::Execution(format!(
+                "ERR_AGENTOS_CONTROL_PLANE_BLOCKING: {operation} could not run on the blocking executor: {error}"
+            ))
+        })
+}
+
+/// Owned, `Send` input for the synchronous part of VM creation.
+struct VmBuildInput<B> {
+    connection_id: String,
+    session_id: String,
+    vm_id: String,
+    create_config: vm_config::CreateVmConfig,
+    root_filesystem: RootFilesystemDescriptor,
+    permissions_policy: agentos_vm_config::PermissionsPolicy,
+    resource_limits: ResourceLimits,
+    max_reactor_capabilities: usize,
+    runtime_context: agentos_runtime::RuntimeContext,
+    dns: VmDnsConfig,
+    dns_resolver: agentos_kernel::dns::SharedDnsResolver,
+    loopback_exempt_ports: BTreeSet<u16>,
+    bridge: crate::state::SharedBridge<B>,
+    sidecar_requests: crate::state::SharedSidecarRequestClient,
+    database: Option<crate::vm_sqlite::SharedVmSqliteDatabase>,
+    vm_resources: Arc<ResourceLedger>,
+}
+
+struct VmBuildOutput {
+    cwd: PathBuf,
+    guest_cwd: String,
+    host_cwd: PathBuf,
+    guest_env: BTreeMap<String, String>,
+    loaded_snapshot: Option<FilesystemSnapshot>,
+    kernel: crate::state::SidecarKernel,
+    kernel_socket_readiness: KernelSocketReadinessRegistry,
+    command_guest_paths: BTreeMap<String, String>,
+    shadow_sync_inventory: BTreeMap<String, crate::state::ShadowSyncInventoryEntry>,
+    unix_socket_host_dir: PathBuf,
+}
+
+/// Synchronous VM bootstrap: shadow root, root mount table, kernel, and
+/// command discovery. Removes the shadow root again if any step fails.
+fn build_vm_kernel<B>(input: VmBuildInput<B>) -> Result<VmBuildOutput, SidecarError>
+where
+    B: NativeSidecarBridge + Send + 'static,
+    BridgeError<B>: fmt::Debug + Send + Sync + 'static,
+{
+    let cwd = create_vm_shadow_root(&input.vm_id)?;
+    let result = build_vm_kernel_in(input, cwd.clone());
+    if result.is_err() {
+        cleanup_path(&cwd, "failed VM create shadow root");
+    }
+    result
+}
+
+fn build_vm_kernel_in<B>(
+    input: VmBuildInput<B>,
+    cwd: PathBuf,
+) -> Result<VmBuildOutput, SidecarError>
+where
+    B: NativeSidecarBridge + Send + 'static,
+    BridgeError<B>: fmt::Debug + Send + Sync + 'static,
+{
+    let VmBuildInput {
+        connection_id,
+        session_id,
+        vm_id,
+        create_config,
+        root_filesystem,
+        permissions_policy,
+        resource_limits,
+        max_reactor_capabilities,
+        runtime_context,
+        dns,
+        dns_resolver,
+        loopback_exempt_ports,
+        bridge,
+        sidecar_requests,
+        database,
+        vm_resources,
+    } = input;
+    let (guest_cwd, host_cwd) = resolve_vm_cwds(create_config.cwd.as_ref(), &cwd)?;
+    fs::create_dir_all(&host_cwd)
+        .map_err(|error| SidecarError::Io(format!("failed to create VM cwd: {error}")))?;
+    bridge.set_vm_permissions(&vm_id, &permissions_policy)?;
+    let permissions = bridge_permissions(bridge.clone(), &vm_id);
+    let configured_env = create_vm_environment(&create_config)?;
+    let mut guest_env = filter_env(&vm_id, &configured_env, &permissions);
+    // Trusted bootstrap uses operator-only kernel paths; guest permission
+    // enforcement remains active throughout creation.
+    let native_root = native_root_plugin_from_config(create_config.native_root.as_ref())?;
+    let loaded_snapshot = if native_root.is_some() {
+        None
+    } else {
+        bridge.with_mut(|bridge| {
+            bridge.load_filesystem_state(LoadFilesystemStateRequest {
+                vm_id: vm_id.clone(),
+            })
+        })?
+    };
+    if native_root.is_none() {
+        materialize_shadow_root_snapshot_entries(
+            &cwd,
+            &root_filesystem,
+            loaded_snapshot.as_ref(),
+            &resource_limits,
+        )?;
+    }
+
+    let mut config = KernelVmConfig::new(vm_id.clone());
+    config.cwd = guest_cwd.clone();
+    config.env = guest_env.clone();
+    if let Some(user) = create_config.user.as_ref() {
+        config.user = agentos_kernel::user::UserConfig {
+            uid: user.uid,
+            gid: user.gid,
+            euid: user.euid,
+            egid: user.egid,
+            username: user.username.clone(),
+            homedir: user.homedir.clone(),
+            shell: user.shell.clone(),
+            gecos: user.gecos.clone(),
+            group_name: user.group_name.clone(),
+            supplementary_gids: user.supplementary_gids.clone().unwrap_or_default(),
+            accounts: user
+                .accounts
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .map(|account| agentos_kernel::user::UserAccount {
+                    uid: account.uid,
+                    gid: account.gid,
+                    username: account.username.clone(),
+                    homedir: account.homedir.clone(),
+                    shell: account.shell.clone(),
+                    gecos: account.gecos.clone().unwrap_or_default(),
+                    supplementary_gids: account.supplementary_gids.clone(),
+                })
+                .collect(),
+            groups: user
+                .groups
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .map(|group| agentos_kernel::user::GroupRecord {
+                    gid: group.gid,
+                    name: group.name.clone(),
+                    members: group.members.clone(),
+                })
+                .collect(),
+        };
+    }
+    config.permissions = permissions;
+    config.dns = agentos_kernel::dns::DnsConfig {
+        name_servers: dns.name_servers.clone(),
+        overrides: dns.overrides.clone(),
+    };
+    config.dns_resolver = dns_resolver;
+    config.loopback_exempt_ports = loopback_exempt_ports;
+    let mount_plugins = build_mount_plugin_registry::<B>()?;
+    let root_mount_table = if let Some(native_root) = native_root.as_ref() {
+        build_native_root_mount_table(
+            &mount_plugins,
+            native_root,
+            &root_filesystem,
+            MountPluginContext {
+                bridge: bridge.clone(),
+                runtime_context: runtime_context.clone(),
+                connection_id: connection_id.clone(),
+                session_id: session_id.clone(),
+                vm_id: vm_id.clone(),
+                sidecar_requests,
+                database: database.clone(),
+                max_pread_bytes: resource_limits.max_pread_bytes,
+            },
+        )?
+    } else {
+        agentos_native_sidecar_core::build_root_mount_table_with_loaded_snapshot(
+            &create_config.root_filesystem,
+            loaded_snapshot.as_ref(),
+            &resource_limits,
+        )
+        .map_err(|error| SidecarError::InvalidState(error.to_string()))?
+    };
+    config.resources = resource_limits;
+    let mut kernel = KernelVm::new(root_mount_table, config);
+    kernel
+        .set_socket_resource_ledger(Arc::clone(&vm_resources))
+        .map_err(kernel_error)?;
+    let kernel_socket_readiness: KernelSocketReadinessRegistry = Arc::new(
+        crate::state::KernelSocketReadinessRegistryState::new(max_reactor_capabilities),
+    );
+    let readiness_targets = Arc::clone(&kernel_socket_readiness);
+    kernel.set_socket_readiness_sink(Some(move |readiness: SocketReadiness| {
+        for target in readiness_targets.targets(readiness.socket_id) {
+            send_kernel_socket_readiness_event(target, readiness);
+        }
+    }));
+    let command_guest_paths = discover_command_guest_paths(&mut kernel)?;
+    refresh_guest_command_path_env(&mut guest_env, &command_guest_paths);
+    let mut execution_commands = default_execution_commands(create_config.defaults_profile());
+    if let Some(bootstrap_commands) = &create_config.bootstrap_commands {
+        execution_commands.extend(bootstrap_commands.iter().cloned());
+    }
+    execution_commands.extend(command_guest_paths.keys().cloned());
+    kernel
+        .register_driver_for_operator(CommandDriver::new(
+            EXECUTION_DRIVER_NAME,
+            execution_commands,
+        ))
+        .map_err(kernel_error)?;
+    if let Some(root) = kernel.root_filesystem_mut() {
+        root.finish_bootstrap();
+    }
+    bridge.set_vm_permissions(&vm_id, &permissions_policy)?;
+    bridge.emit_lifecycle(&vm_id, LifecycleState::Starting)?;
+    bridge.emit_lifecycle(&vm_id, LifecycleState::Ready)?;
+    bridge.emit_log(
+        &vm_id,
+        format!("created VM {vm_id} for session {session_id}"),
+    )?;
+
+    let shadow_sync_inventory = crate::execution::initial_shadow_sync_inventory(&cwd)?;
+    let unix_socket_host_dir = create_vm_unix_socket_host_dir()?;
+    Ok(VmBuildOutput {
+        cwd,
+        guest_cwd,
+        host_cwd,
+        guest_env,
+        loaded_snapshot,
+        kernel,
+        kernel_socket_readiness,
+        command_guest_paths,
+        shadow_sync_inventory,
+        unix_socket_host_dir,
+    })
+}
+
 impl<B> PreparedCreateVm<B>
 where
     B: NativeSidecarBridge + Send + 'static,
@@ -1639,15 +1909,9 @@ where
             process_event_notify,
             extensions,
         } = self;
-        let cwd = create_vm_shadow_root(&vm_id)?;
         let cleanup_bridge = bridge.clone();
         let cleanup_vm_id = vm_id.clone();
-        let cleanup_cwd = cwd.clone();
         let result = async move {
-            let (guest_cwd, host_cwd) = resolve_vm_cwds(create_config.cwd.as_ref(), &cwd)?;
-            fs::create_dir_all(&host_cwd)
-                .map_err(|error| SidecarError::Io(format!("failed to create VM cwd: {error}")))?;
-            let resource_limits = limits.resources.clone();
             let database = match create_config.database.as_ref() {
                 Some(descriptor) => {
                     let database = crate::vm_sqlite::resolve_vm_sqlite(
@@ -1689,150 +1953,48 @@ where
                 }
                 None => None,
             };
+            let defaults_profile = create_config.defaults_profile();
+            let js_runtime = create_config.js_runtime.clone();
+            let root_filesystem_mode = protocol_root_filesystem_mode(root_filesystem.mode);
+            // Filesystem bootstrap and kernel construction are synchronous
+            // and take milliseconds per VM. They run on the bounded blocking
+            // executor so the protocol router keeps serving live VMs' stdin,
+            // events, and bridge replies meanwhile. Only thread-affine state
+            // (`VmState`, execution engines) is assembled back on the router.
+            let build = VmBuildInput {
+                connection_id: connection_id.clone(),
+                session_id: session_id.clone(),
+                vm_id: vm_id.clone(),
+                create_config,
+                root_filesystem,
+                permissions_policy: permissions_policy.clone(),
+                resource_limits: limits.resources.clone(),
+                max_reactor_capabilities: limits.reactor.max_capabilities,
+                runtime_context: vm_runtime_context.clone(),
+                dns: dns.clone(),
+                dns_resolver,
+                loopback_exempt_ports: create_loopback_exempt_ports.clone(),
+                bridge: bridge.clone(),
+                sidecar_requests,
+                database: database.clone(),
+                vm_resources: Arc::clone(&vm_resources),
+            };
+            let VmBuildOutput {
+                cwd,
+                guest_cwd,
+                host_cwd,
+                guest_env,
+                loaded_snapshot,
+                kernel,
+                kernel_socket_readiness,
+                command_guest_paths,
+                shadow_sync_inventory,
+                unix_socket_host_dir,
+            } = run_control_plane_blocking(&vm_runtime_context, "CreateVm", move || {
+                build_vm_kernel(build)
+            })
+            .await??;
             let capabilities = CapabilityRegistry::new(vm_generation, Arc::clone(&vm_resources));
-            bridge.set_vm_permissions(&vm_id, &permissions_policy)?;
-            let permissions = bridge_permissions(bridge.clone(), &vm_id);
-            let configured_env = create_vm_environment(&create_config)?;
-            let mut guest_env = filter_env(&vm_id, &configured_env, &permissions);
-        // Trusted bootstrap uses operator-only kernel paths; guest permission
-        // enforcement remains active throughout creation.
-            let native_root = native_root_plugin_from_config(create_config.native_root.as_ref())?;
-            let loaded_snapshot = if native_root.is_some() {
-                None
-            } else {
-                bridge.with_mut(|bridge| {
-                    bridge.load_filesystem_state(LoadFilesystemStateRequest {
-                        vm_id: vm_id.clone(),
-                    })
-                })?
-            };
-            if native_root.is_none() {
-                materialize_shadow_root_snapshot_entries(
-                    &cwd,
-                    &root_filesystem,
-                    loaded_snapshot.as_ref(),
-                    &resource_limits,
-                )?;
-            }
-
-            let mut config = KernelVmConfig::new(vm_id.clone());
-            config.cwd = guest_cwd.clone();
-            config.env = guest_env.clone();
-            if let Some(user) = create_config.user.as_ref() {
-                config.user = agentos_kernel::user::UserConfig {
-                    uid: user.uid,
-                    gid: user.gid,
-                    euid: user.euid,
-                    egid: user.egid,
-                    username: user.username.clone(),
-                    homedir: user.homedir.clone(),
-                    shell: user.shell.clone(),
-                    gecos: user.gecos.clone(),
-                    group_name: user.group_name.clone(),
-                    supplementary_gids: user.supplementary_gids.clone().unwrap_or_default(),
-                    accounts: user
-                        .accounts
-                        .as_deref()
-                        .unwrap_or_default()
-                        .iter()
-                        .map(|account| agentos_kernel::user::UserAccount {
-                            uid: account.uid,
-                            gid: account.gid,
-                            username: account.username.clone(),
-                            homedir: account.homedir.clone(),
-                            shell: account.shell.clone(),
-                            gecos: account.gecos.clone().unwrap_or_default(),
-                            supplementary_gids: account.supplementary_gids.clone(),
-                        })
-                        .collect(),
-                    groups: user
-                        .groups
-                        .as_deref()
-                        .unwrap_or_default()
-                        .iter()
-                        .map(|group| agentos_kernel::user::GroupRecord {
-                            gid: group.gid,
-                            name: group.name.clone(),
-                            members: group.members.clone(),
-                        })
-                        .collect(),
-                };
-            }
-            config.permissions = permissions;
-            config.dns = agentos_kernel::dns::DnsConfig {
-                name_servers: dns.name_servers.clone(),
-                overrides: dns.overrides.clone(),
-            };
-            config.dns_resolver = dns_resolver;
-            config.loopback_exempt_ports = create_loopback_exempt_ports.clone();
-            let mount_plugins = build_mount_plugin_registry::<B>()?;
-            let root_mount_table = if let Some(native_root) = native_root.as_ref() {
-                build_native_root_mount_table(
-                    &mount_plugins,
-                    native_root,
-                    &root_filesystem,
-                    MountPluginContext {
-                        bridge: bridge.clone(),
-                        runtime_context: vm_runtime_context.clone(),
-                        connection_id: connection_id.clone(),
-                        session_id: session_id.clone(),
-                        vm_id: vm_id.clone(),
-                        sidecar_requests,
-                        database: database.clone(),
-                        max_pread_bytes: resource_limits.max_pread_bytes,
-                    },
-                )?
-            } else {
-                agentos_native_sidecar_core::build_root_mount_table_with_loaded_snapshot(
-                    &create_config.root_filesystem,
-                    loaded_snapshot.as_ref(),
-                    &resource_limits,
-                )
-                .map_err(|error| SidecarError::InvalidState(error.to_string()))?
-            };
-            config.resources = resource_limits;
-            let mut kernel = KernelVm::new(root_mount_table, config);
-            kernel
-                .set_socket_resource_ledger(Arc::clone(&vm_resources))
-                .map_err(kernel_error)?;
-            let kernel_socket_readiness: KernelSocketReadinessRegistry = Arc::new(
-                crate::state::KernelSocketReadinessRegistryState::new(
-                    limits.reactor.max_capabilities,
-                ),
-            );
-            let readiness_targets = Arc::clone(&kernel_socket_readiness);
-            kernel.set_socket_readiness_sink(Some(move |readiness: SocketReadiness| {
-                for target in readiness_targets.targets(readiness.socket_id) {
-                    send_kernel_socket_readiness_event(target, readiness);
-                }
-            }));
-            let command_guest_paths = discover_command_guest_paths(&mut kernel)?;
-            refresh_guest_command_path_env(&mut guest_env, &command_guest_paths);
-            let mut execution_commands =
-                default_execution_commands(create_config.defaults_profile());
-            if let Some(bootstrap_commands) = &create_config.bootstrap_commands {
-                execution_commands.extend(bootstrap_commands.iter().cloned());
-            }
-            execution_commands.extend(command_guest_paths.keys().cloned());
-            kernel
-                .register_driver_for_operator(CommandDriver::new(
-                    EXECUTION_DRIVER_NAME,
-                    execution_commands,
-                ))
-                .map_err(kernel_error)?;
-            if let Some(root) = kernel.root_filesystem_mut() {
-                root.finish_bootstrap();
-            }
-            bridge.set_vm_permissions(&vm_id, &permissions_policy)?;
-            bridge.emit_lifecycle(&vm_id, LifecycleState::Starting)?;
-            bridge.emit_lifecycle(&vm_id, LifecycleState::Ready)?;
-            bridge.emit_log(
-                &vm_id,
-                format!("created VM {vm_id} for session {session_id}"),
-            )?;
-
-            let shadow_sync_inventory = crate::execution::initial_shadow_sync_inventory(&cwd)?;
-            let unix_socket_host_dir = create_vm_unix_socket_host_dir()?;
             let pending_stdin_bytes_budget = VmPendingByteBudget::new(
                 limits.process.pending_stdin_bytes,
                 agentos_bridge::queue_tracker::TrackedLimit::PendingKernelStdinBytes,
@@ -1879,7 +2041,7 @@ where
                 base_guest_env: guest_env.clone(),
                 guest_env,
                 requested_runtime: payload.runtime,
-                root_filesystem_mode: protocol_root_filesystem_mode(root_filesystem.mode),
+                root_filesystem_mode,
                 guest_cwd,
                 cwd,
                 host_cwd,
@@ -1888,9 +2050,9 @@ where
                 host_net_transfer_descriptions: Arc::new(Mutex::new(BTreeMap::new())),
                 loaded_snapshot,
                 configuration: VmConfiguration {
-                    defaults_profile: create_config.defaults_profile(),
+                    defaults_profile,
                     permissions: permissions_policy,
-                    js_runtime: create_config.js_runtime.clone(),
+                    js_runtime,
                     ..VmConfiguration::default()
                 },
                 layers: VmLayerStore::default(),
@@ -1939,7 +2101,6 @@ where
         }
         .await;
         if result.is_err() {
-            cleanup_path(&cleanup_cwd, "failed VM create shadow root");
             if let Err(error) = cleanup_bridge.clear_vm_permissions(&cleanup_vm_id) {
                 eprintln!(
                     "ERR_AGENTOS_VM_CREATE_CLEANUP: vm_id={cleanup_vm_id} phase=permission_reset error={error}"
@@ -2007,7 +2168,45 @@ where
                 "ERR_AGENTOS_VM_TEARDOWN_CLEANUP: vm_id={vm_id} phase=mount_shutdown error={error}"
             );
         }
-        let mut teardown_result = finish_vm_teardown_owned(&bridge, &vm_id, &mut self.vm);
+        // The final root snapshot, its encoding, and the kernel teardown are
+        // synchronous and scale with the VM's filesystem. Run them, and the
+        // kernel's drop, off the protocol router.
+        // If the executor refuses the job, the kernel is still in `slot` and
+        // is torn down here instead, so teardown is never skipped.
+        let slot = Arc::new(Mutex::new(Some(self.vm.kernel)));
+        let job_slot = Arc::clone(&slot);
+        let teardown_bridge = bridge.clone();
+        let teardown_vm_id = vm_id.clone();
+        let offloaded =
+            run_control_plane_blocking(&self.vm.runtime_context, "DisposeVm", move || {
+                let kernel = job_slot
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .take();
+                kernel.map(|mut kernel| {
+                    finish_vm_teardown_owned(&teardown_bridge, &teardown_vm_id, &mut kernel)
+                })
+            })
+            .await;
+        let unstarted = slot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        let mut teardown_result = match (offloaded, unstarted) {
+            (Ok(Some(result)), _) => result,
+            (offloaded, Some(mut kernel)) => {
+                if let Err(error) = offloaded {
+                    eprintln!(
+                        "ERR_AGENTOS_VM_TEARDOWN_INLINE: vm_id={vm_id} tearing down on the router: {error}"
+                    );
+                }
+                finish_vm_teardown_owned(&bridge, &vm_id, &mut kernel)
+            }
+            (Ok(None), None) => Err(SidecarError::InvalidState(format!(
+                "ERR_AGENTOS_VM_TEARDOWN_KERNEL_MISSING: vm_id={vm_id} kernel was taken twice"
+            ))),
+            (Err(error), None) => Err(error),
+        };
         let shutdown_deadline = Duration::from_millis(self.vm.limits.reactor.shutdown_deadline_ms);
         let teardown_deadline = tokio::time::Instant::now() + shutdown_deadline;
         let mut sqlite_close_timed_out = false;
@@ -2030,21 +2229,39 @@ where
             }
         }
 
+        // Removing the shadow root takes time proportional to the files the
+        // VM wrote. Do it off the router, before VM admission closes.
+        let mut host_paths = vec![(self.vm.cwd.clone(), "disposed VM shadow root")];
+        if let Some(staging_root) = self.vm.packages_staging_root.take() {
+            host_paths.push((staging_root, "disposed VM package staging root"));
+        }
+        host_paths.push((
+            self.vm.unix_socket_host_dir.clone(),
+            "disposed VM Unix socket namespace",
+        ));
+        let job_paths = host_paths.clone();
+        if let Err(error) =
+            run_control_plane_blocking(&self.vm.runtime_context, "DisposeVm", move || {
+                for (path, label) in &job_paths {
+                    cleanup_path(path, label);
+                }
+            })
+            .await
+        {
+            eprintln!(
+                "ERR_AGENTOS_VM_TEARDOWN_INLINE: vm_id={vm_id} removing host paths on the router: {error}"
+            );
+            for (path, label) in &host_paths {
+                cleanup_path(path, label);
+            }
+        }
+
         self.vm.runtime_context.close_admission();
         let fairness_retirement_result =
             retire_vm_fairness(&self.vm.runtime_context, self.vm.generation);
         if let Err(error) = fairness_retirement_result.as_ref() {
             eprintln!("ERR_AGENTOS_VM_FAIRNESS_RETIRE: vm_id={vm_id} error={error}");
         }
-
-        cleanup_path(&self.vm.cwd, "disposed VM shadow root");
-        if let Some(staging_root) = self.vm.packages_staging_root.take() {
-            cleanup_path(&staging_root, "disposed VM package staging root");
-        }
-        cleanup_path(
-            &self.vm.unix_socket_host_dir,
-            "disposed VM Unix socket namespace",
-        );
 
         let (reconciliation, reconciliation_timed_out) = wait_for_vm_reconciliation(
             self.vm.resources.as_ref(),
@@ -2065,7 +2282,8 @@ where
             let teardown_deadline_expired = matches!(&reason, VmQuarantineReason::TeardownDeadline);
             let mut diagnostic = quarantine_diagnostic(
                 &vm_id,
-                &self.vm,
+                self.vm.generation,
+                self.vm.limits.reactor.shutdown_deadline_ms,
                 reconciliation,
                 reason.clone(),
                 capability_admission_error.as_deref(),
@@ -2249,37 +2467,35 @@ async fn wait_for_detached_exits(
 fn finish_vm_teardown_owned<B>(
     bridge: &crate::state::SharedBridge<B>,
     vm_id: &str,
-    vm: &mut VmState,
+    kernel: &mut crate::state::SidecarKernel,
 ) -> Result<(), SidecarError>
 where
     B: NativeSidecarBridge + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
     let mut first_error = None;
-    let snapshot =
-        if bridge.persists_filesystem_state() && vm.kernel.root_filesystem_mut().is_some() {
-            match vm
-                .kernel
-                .snapshot_root_filesystem()
-                .map_err(kernel_error)
-                .and_then(|snapshot| encode_root_snapshot(&snapshot).map_err(root_filesystem_error))
-            {
-                Ok(bytes) => Some(FilesystemSnapshot {
-                    format: String::from(ROOT_FILESYSTEM_SNAPSHOT_FORMAT),
-                    bytes,
-                }),
-                Err(error) => {
-                    record_vm_teardown_error(vm_id, "snapshot", error, &mut first_error);
-                    None
-                }
+    let snapshot = if bridge.persists_filesystem_state() && kernel.root_filesystem_mut().is_some() {
+        match kernel
+            .snapshot_root_filesystem()
+            .map_err(kernel_error)
+            .and_then(|snapshot| encode_root_snapshot(&snapshot).map_err(root_filesystem_error))
+        {
+            Ok(bytes) => Some(FilesystemSnapshot {
+                format: String::from(ROOT_FILESYSTEM_SNAPSHOT_FORMAT),
+                bytes,
+            }),
+            Err(error) => {
+                record_vm_teardown_error(vm_id, "snapshot", error, &mut first_error);
+                None
             }
-        } else {
-            None
-        };
+        }
+    } else {
+        None
+    };
     if let Err(error) = bridge.emit_lifecycle(vm_id, LifecycleState::Terminated) {
         record_vm_teardown_error(vm_id, "lifecycle", error, &mut first_error);
     }
-    if let Err(error) = vm.kernel.dispose().map_err(kernel_error) {
+    if let Err(error) = kernel.dispose().map_err(kernel_error) {
         record_vm_teardown_error(vm_id, "kernel", error, &mut first_error);
     }
     if let Some(snapshot) = snapshot {
@@ -2300,7 +2516,8 @@ where
 
 fn quarantine_diagnostic(
     vm_id: &str,
-    vm: &VmState,
+    generation: u64,
+    shutdown_deadline_ms: u64,
     reconciliation: VmReconciliationSnapshot,
     reason: VmQuarantineReason,
     capability_admission_error: Option<&str>,
@@ -2309,24 +2526,24 @@ fn quarantine_diagnostic(
     match reason {
         VmQuarantineReason::TeardownDeadline => format!(
             "ERR_AGENTOS_VM_TEARDOWN_DEADLINE: vm_id={vm_id} generation={} active_tasks={} outstanding_capabilities={} ledger_zero={} deadline_ms={}; raise limits.reactor.shutdownDeadlineMs",
-            vm.generation,
+            generation,
             reconciliation.active_tasks,
             reconciliation.outstanding_capabilities,
             reconciliation.ledger_zero,
-            vm.limits.reactor.shutdown_deadline_ms
+            shutdown_deadline_ms
         ),
         VmQuarantineReason::ResourceIntegrity => format!(
             "ERR_AGENTOS_VM_RESOURCE_INTEGRITY: vm_id={vm_id} generation={} accounting integrity failed; generation cannot be reaped",
-            vm.generation
+            generation
         ),
         VmQuarantineReason::CapabilityRegistryIntegrity => format!(
             "ERR_AGENTOS_VM_CAPABILITY_INTEGRITY: vm_id={vm_id} generation={} capability admission could not be closed; generation cannot be reaped; error={}",
-            vm.generation,
+            generation,
             capability_admission_error.unwrap_or("unknown")
         ),
         VmQuarantineReason::FairnessIntegrity => format!(
             "ERR_AGENTOS_VM_FAIRNESS_INTEGRITY: vm_id={vm_id} generation={} fairness membership could not be retired; generation cannot be reaped; error={}",
-            vm.generation,
+            generation,
             fairness_retirement_error
                 .map(ToString::to_string)
                 .unwrap_or_else(|| String::from("unknown"))

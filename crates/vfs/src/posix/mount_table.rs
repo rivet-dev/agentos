@@ -11,7 +11,7 @@ use web_time::{SystemTime, UNIX_EPOCH};
 
 const MAX_REALPATH_SYMLINKS: usize = 40;
 
-pub trait MountedFileSystem: Any {
+pub trait MountedFileSystem: Any + Send {
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn read_file(&mut self, path: &str) -> VfsResult<Vec<u8>>;
@@ -327,7 +327,7 @@ impl<F> MountedVirtualFileSystem<F> {
 
 impl<F> MountedFileSystem for MountedVirtualFileSystem<F>
 where
-    F: VirtualFileSystem + 'static,
+    F: VirtualFileSystem + Send + 'static,
 {
     fn as_any(&self) -> &dyn Any {
         self
@@ -1195,7 +1195,7 @@ pub struct MountTable {
 }
 
 impl MountTable {
-    pub fn new(root_fs: impl VirtualFileSystem + 'static) -> Self {
+    pub fn new(root_fs: impl VirtualFileSystem + Send + 'static) -> Self {
         Self {
             mounts: vec![MountRegistration {
                 path: String::from("/"),
@@ -1242,7 +1242,7 @@ impl MountTable {
     pub fn mount(
         &mut self,
         path: &str,
-        filesystem: impl VirtualFileSystem + 'static,
+        filesystem: impl VirtualFileSystem + Send + 'static,
         options: MountOptions,
     ) -> VfsResult<()> {
         self.mount_boxed(

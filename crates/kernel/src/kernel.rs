@@ -8671,7 +8671,7 @@ impl KernelVm<MountTable> {
     pub fn mount_filesystem(
         &mut self,
         path: &str,
-        filesystem: impl VirtualFileSystem + 'static,
+        filesystem: impl VirtualFileSystem + Send + 'static,
         options: MountOptions,
     ) -> KernelResult<()> {
         self.assert_not_terminated()?;
