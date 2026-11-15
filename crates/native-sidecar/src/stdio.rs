@@ -1027,6 +1027,41 @@ impl ProtocolFrameWriter {
         self.enqueue(class, control, encoded)
     }
 
+    /// Publishes an ordinary event frame if the ordinary output budget has
+    /// room now. Returns the frame unpublished when the budget is full, so the
+    /// caller can wait for capacity without losing it.
+    fn try_publish_event(
+        &self,
+        frame: wire::EventFrame,
+    ) -> Result<Option<wire::EventFrame>, io::Error> {
+        if !self.output.is_open() {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                self.disconnected_error().to_string(),
+            ));
+        }
+        let frame = ProtocolFrame::EventFrame(frame);
+        let control = Self::is_control(&frame)?;
+        let bytes = self.encoded_bytes(&frame)?;
+        let budget = self.budget_for(ProtocolOutputClass::Ordinary, control)?;
+        let Ok(reservation) = budget.reserve(bytes.len()) else {
+            let ProtocolFrame::EventFrame(frame) = frame else {
+                unreachable!("the frame was built as an event frame above");
+            };
+            return Ok(Some(frame));
+        };
+        self.enqueue(
+            ProtocolOutputClass::Ordinary,
+            control,
+            EncodedProtocolFrame {
+                bytes,
+                _reservation: reservation,
+            },
+        )
+        .map_err(|error| io::Error::other(error.to_string()))?;
+        Ok(None)
+    }
+
     async fn publish(
         &self,
         class: ProtocolOutputClass,
@@ -2577,19 +2612,43 @@ async fn run_protocol_engine(engine: ProtocolEngine) -> Result<(), Box<dyn Error
                     );
                     continue 'protocol;
                 };
-                for session in active_sessions.iter().cloned().collect::<Vec<_>>() {
-                    let frame = protocol_try!('protocol,
-                        sidecar
-                            .poll_event_nowait(&session.compat_ownership_scope())
-                            .and_then(|event| {
-                                event
-                                    .map(wire::event_frame_from_compat)
-                                    .transpose()
-                                    .map_err(wire_protocol_error)
-                            }),
-                        "ERR_AGENTOS_EVENT_PUMP"
-                    );
-                    if let Some(frame) = frame {
+                // Publish every ready event this turn, up to one fairness
+                // quantum, while the ordinary output budget has room. Only a
+                // frame that must wait for budget becomes the single durable
+                // output task. One frame per loop turn starved exits and
+                // output behind busy turns during bursts.
+                let quantum = sidecar.config.runtime.fairness.vm_quantum_operations.max(1);
+                let sessions = active_sessions.iter().cloned().collect::<Vec<_>>();
+                let mut published = 0usize;
+                let mut waiting = false;
+                'drain: while published < quantum {
+                    let mut polled_any = false;
+                    for session in &sessions {
+                        let frame = protocol_try!('protocol,
+                            sidecar
+                                .poll_event_nowait(&session.compat_ownership_scope())
+                                .and_then(|event| {
+                                    event
+                                        .map(wire::event_frame_from_compat)
+                                        .transpose()
+                                        .map_err(wire_protocol_error)
+                                }),
+                            "ERR_AGENTOS_EVENT_PUMP"
+                        );
+                        let Some(frame) = frame else {
+                            continue;
+                        };
+                        polled_any = true;
+                        let Some(frame) = protocol_try!('protocol,
+                            frame_writer.try_publish_event(frame),
+                            "ERR_AGENTOS_EVENT_OUTPUT"
+                        ) else {
+                            published += 1;
+                            if published >= quantum {
+                                break 'drain;
+                            }
+                            continue;
+                        };
                         let scheduled = schedule_durable_event_frame(
                             &frame_writer,
                             &mut ordinary_event_tasks,
@@ -2599,8 +2658,19 @@ async fn run_protocol_engine(engine: ProtocolEngine) -> Result<(), Box<dyn Error
                             scheduled,
                             "event output task must be empty while the event-ready branch is enabled"
                         );
+                        waiting = true;
+                        break 'drain;
+                    }
+                    if !polled_any {
                         break;
                     }
+                }
+                if published >= quantum && !waiting {
+                    // More events may be ready; continue after other arms run.
+                    protocol_try!('protocol,
+                        rearm_event_ready(&event_ready_tx),
+                        "ERR_AGENTOS_EVENT_READY_WAKE"
+                    );
                 }
                 protocol_try!('protocol,
                     flush_sidecar_requests(&mut sidecar, &frame_writer, &mut output_tasks),
