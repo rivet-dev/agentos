@@ -661,6 +661,17 @@ impl ProtocolOutputQueue {
         }
     }
 
+    /// Non-blocking ordinary read, for single-threaded tests that run the
+    /// engine on the same thread.
+    #[cfg(test)]
+    fn try_recv_ordinary(&self) -> Option<EncodedProtocolFrame> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .ordinary
+            .pop_front()
+    }
+
     fn recv_combined(&self) -> Option<EncodedProtocolFrame> {
         let mut state = self.state.lock().unwrap_or_else(|poisoned| {
             eprintln!("ERR_AGENTOS_PROTOCOL_OUTPUT_QUEUE_POISONED: recovering output queue");
@@ -1977,6 +1988,10 @@ async fn run_protocol_engine(engine: ProtocolEngine) -> Result<(), Box<dyn Error
         })
         .collect::<BTreeSet<_>>();
     let mut active_connections = sidecar.connections.keys().cloned().collect::<BTreeSet<_>>();
+    // Last session each pump served. The next turn starts after it, so every
+    // busy session gets a turn when more are busy than one turn covers.
+    let mut event_drain_last: Option<SessionScope> = None;
+    let mut process_pump_last: Option<SessionScope> = None;
     let mut extension_service_tasks = JoinSet::<()>::new();
     let mut progress_service_tasks = JoinSet::<()>::new();
     let mut extension_tasks = JoinSet::<()>::new();
@@ -2618,7 +2633,7 @@ async fn run_protocol_engine(engine: ProtocolEngine) -> Result<(), Box<dyn Error
                 // output task. One frame per loop turn starved exits and
                 // output behind busy turns during bursts.
                 let quantum = sidecar.config.runtime.fairness.vm_quantum_operations.max(1);
-                let sessions = active_sessions.iter().cloned().collect::<Vec<_>>();
+                let sessions = sessions_after(&active_sessions, event_drain_last.as_ref());
                 let mut published = 0usize;
                 let mut waiting = false;
                 'drain: while published < quantum {
@@ -2639,6 +2654,7 @@ async fn run_protocol_engine(engine: ProtocolEngine) -> Result<(), Box<dyn Error
                             continue;
                         };
                         polled_any = true;
+                        event_drain_last = Some(session.clone());
                         let Some(frame) = protocol_try!('protocol,
                             frame_writer.try_publish_event(frame),
                             "ERR_AGENTOS_EVENT_OUTPUT"
@@ -2679,12 +2695,13 @@ async fn run_protocol_engine(engine: ProtocolEngine) -> Result<(), Box<dyn Error
             }
             _ = process_event_notify.notified(), if pending_owned_process_events.len() < owned_process_event_capacity => {
                 let mut routed_process_event_progress = false;
-                for session in active_sessions.iter().cloned().collect::<Vec<_>>() {
+                for session in sessions_after(&active_sessions, process_pump_last.as_ref()) {
                     let remaining_claims = owned_process_event_capacity
                         .saturating_sub(pending_owned_process_events.len());
                     if remaining_claims == 0 {
                         break;
                     }
+                    process_pump_last = Some(session.clone());
                     let turn = protocol_try!('protocol,
                         sidecar.pump_process_events_nowait(
                             &session.compat_ownership_scope(),
@@ -10357,6 +10374,22 @@ impl ExecutionBridge for LocalBridge {
         _request: PollExecutionEventRequest,
     ) -> Result<Option<ExecutionEvent>, Self::Error> {
         Ok(None)
+    }
+}
+
+/// Active sessions in order, starting after `last` and wrapping around.
+fn sessions_after(
+    active: &BTreeSet<SessionScope>,
+    last: Option<&SessionScope>,
+) -> Vec<SessionScope> {
+    use std::ops::Bound::{Excluded, Unbounded};
+    match last {
+        Some(last) => active
+            .range::<SessionScope, _>((Excluded(last), Unbounded))
+            .chain(active.range::<SessionScope, _>(..=last))
+            .cloned()
+            .collect(),
+        None => active.iter().cloned().collect(),
     }
 }
 

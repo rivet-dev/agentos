@@ -438,6 +438,26 @@ impl ProtocolLoopHarness {
     }
 }
 
+impl ProtocolLoopHarness {
+    /// Next ordinary output frame, yielding to the engine until one exists.
+    async fn next_ordinary_frame(&self) -> ProtocolFrame {
+        let encoded = tokio::time::timeout(TEST_TIMEOUT, async {
+            loop {
+                if let Some(encoded) = self.output.try_recv_ordinary() {
+                    return encoded;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("protocol engine produced an ordinary frame before deadline");
+        self.writer
+            .codec
+            .decode(&encoded.bytes)
+            .expect("decode ordinary protocol-loop output")
+    }
+}
+
 fn extension_request(
     request_id: RequestId,
     connection_id: &str,
@@ -2678,6 +2698,121 @@ async fn request_concurrency_real_loop_answers_another_vms_call_during_a_create_
             assert!(
                 creates_before <= 2,
                 "another VM's call waited behind {creates_before} of {BURST} VM creates"
+            );
+            finish_cleanly(&harness, engine_task).await;
+        })
+        .await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn request_concurrency_real_loop_publishes_a_late_sessions_event_while_earlier_sessions_stay_busy(
+) {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let state = Arc::new(GatedExtensionState::default());
+            let connection_id = "conn-event-rotation";
+            // Sorted order is the order the router visits sessions.
+            let session_ids = ["session-a-busy", "session-b-busy", "session-c-late"];
+            let (harness, mut engine) = ProtocolLoopHarness::build(
+                state,
+                &[(connection_id, &session_ids[..])],
+                4,
+                16 * 1024,
+            );
+            // One event per router turn: more sessions are busy than a turn covers.
+            engine.sidecar.config.runtime.fairness.vm_quantum_operations = 1;
+            engine.sidecar.connections.insert(
+                connection_id.to_owned(),
+                crate::state::ConnectionState {
+                    auth_token: String::new(),
+                    sessions: session_ids.iter().map(|id| (*id).to_owned()).collect(),
+                },
+            );
+            let process_event_notify = Arc::clone(&engine.sidecar.process_event_notify);
+            let mut producers = Vec::new();
+            for (index, session_id) in session_ids.iter().enumerate() {
+                engine.sidecar.sessions.insert(
+                    (*session_id).to_owned(),
+                    crate::state::SessionState {
+                        connection_id: connection_id.to_owned(),
+                        placement: wire::SidecarPlacement::SidecarPlacementShared(
+                            wire::SidecarPlacementShared { pool: None },
+                        ),
+                        metadata: BTreeMap::new(),
+                        vm_ids: BTreeSet::new(),
+                    },
+                );
+                let create = crate::protocol::CreateVmRequest::legacy_test_config(
+                    crate::protocol::GuestRuntimeKind::JavaScript,
+                    Default::default(),
+                    Default::default(),
+                    Some(crate::protocol::PermissionsPolicy::allow_all()),
+                );
+                let create_request = crate::protocol::RequestFrame::new(
+                    740 + index as RequestId,
+                    crate::protocol::OwnershipScope::session(connection_id, *session_id),
+                    crate::protocol::RequestPayload::CreateVm(create.clone()),
+                );
+                let dispatch = engine
+                    .sidecar
+                    .create_vm(&create_request, create)
+                    .await
+                    .expect("create event-rotation VM");
+                let crate::protocol::ResponsePayload::VmCreated(created) =
+                    dispatch.response.payload
+                else {
+                    panic!("expected event-rotation VM creation response");
+                };
+                harness
+                    .ownership_coordinator
+                    .connection(connection_id)
+                    .and_then(|connection| connection.session(session_id))
+                    .and_then(|session| session.open_vm(created.vm_id.clone()))
+                    .expect("register event-rotation VM ownership");
+                let mut vm = engine
+                    .sidecar
+                    .vms
+                    .get_mut(&created.vm_id)
+                    .expect("event-rotation VM");
+                let process_id = format!("{session_id}-process");
+                let (process, producer) = protocol_loop_host_function_process(
+                    &mut vm,
+                    &process_id,
+                    None,
+                    Arc::clone(&process_event_notify),
+                );
+                vm.active_processes.insert(process_id, process);
+                producers.push(producer);
+            }
+
+            const BUSY_EVENTS: usize = 20;
+            for producer in &producers[..2] {
+                for _ in 0..BUSY_EVENTS {
+                    queue_protocol_loop_host_function_event(
+                        producer,
+                        crate::state::ActiveExecutionEvent::Stdout(b"busy".to_vec()),
+                    );
+                }
+            }
+            queue_protocol_loop_host_function_event(
+                &producers[2],
+                crate::state::ActiveExecutionEvent::Stdout(b"late".to_vec()),
+            );
+
+            let engine_task = tokio::task::spawn_local(run_protocol_engine(engine));
+            let mut events_before = 0;
+            loop {
+                let ProtocolFrame::EventFrame(event) = harness.next_ordinary_frame().await else {
+                    continue;
+                };
+                if format!("{event:?}").contains("session-c-late-process") {
+                    break;
+                }
+                events_before += 1;
+            }
+            assert!(
+                events_before <= session_ids.len(),
+                "the late session's event waited behind {events_before} events from busier sessions"
             );
             finish_cleanly(&harness, engine_task).await;
         })
