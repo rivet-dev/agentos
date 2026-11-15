@@ -25,7 +25,7 @@ impl Drop for PendingExecutionEventReservation {
 }
 
 #[derive(Debug)]
-pub(super) struct PolledExecutionEvent {
+pub(crate) struct PolledExecutionEvent {
     pub(super) event: ActiveExecutionEvent,
     pub(super) reservation: Option<PendingExecutionEventReservation>,
 }
@@ -116,6 +116,7 @@ impl ActiveProcess {
             process_event_capacity,
             wasm_flock_fds: BTreeMap::new(),
             pending_execution_events: VecDeque::new(),
+            paused_execution_event: None,
             pending_execution_event_bytes: 0,
             pending_execution_event_count_limit: pending_event_count_limit,
             pending_execution_event_bytes_limit: pending_event_bytes_limit,
@@ -280,6 +281,9 @@ impl ActiveProcess {
     }
 
     pub(super) fn lease_pending_execution_event(&mut self) -> Option<PolledExecutionEvent> {
+        if let Some(paused) = self.paused_execution_event.take() {
+            return Some(paused);
+        }
         let event = self.pending_execution_events.pop_front()?;
         let event_bytes = event.retained_bytes();
         self.pending_execution_event_bytes = self
@@ -309,6 +313,30 @@ impl ActiveProcess {
         polled: PolledExecutionEvent,
     ) -> Result<(), SidecarError> {
         self.queue_polled_execution_event(polled, true)
+    }
+
+    /// Puts back the event just leased, which the shared process-event queue
+    /// had no room for, so the process waits like a writer on a full pipe. It
+    /// is held outside the queue's limits (it is the one write in flight) and
+    /// leased again first. Unlike a requeue, it does not wake the pump: a wake
+    /// here would make a paused pump spin. A consumer releasing queue capacity
+    /// wakes it instead.
+    pub(super) fn restore_paused_execution_event(
+        &mut self,
+        polled: PolledExecutionEvent,
+    ) -> Result<(), SidecarError> {
+        if self.paused_execution_event.is_some() {
+            return Err(SidecarError::InvalidState(String::from(
+                "a paused process event was restored while another was still paused",
+            )));
+        }
+        self.paused_execution_event = Some(polled);
+        Ok(())
+    }
+
+    /// Whether events wait for the shared queue: queued or paused.
+    pub(crate) fn has_queued_execution_events(&self) -> bool {
+        self.paused_execution_event.is_some() || !self.pending_execution_events.is_empty()
     }
 
     pub(super) fn queue_pending_polled_execution_event(
@@ -816,6 +844,7 @@ impl Drop for ActiveProcess {
         self.vm_pending_event_bytes_budget
             .release(self.pending_execution_event_bytes);
         self.pending_execution_events.clear();
+        self.paused_execution_event = None;
         self.pending_execution_event_bytes = 0;
         self.pending_execution_event_count_gauge.observe_depth(0);
         self.pending_execution_event_bytes_gauge.observe_depth(0);

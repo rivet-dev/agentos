@@ -125,6 +125,60 @@ pub(crate) const MAX_OUTBOUND_SIDECAR_REQUESTS: usize =
 #[allow(dead_code)]
 pub(crate) const MAX_COMPLETED_SIDECAR_RESPONSES: usize =
     agentos_runtime::DEFAULT_PROTOCOL_MAX_COMPLETED_RESPONSES;
+/// Outcome of offering an event to the shared process-event queue.
+#[derive(Debug)]
+pub(crate) enum ProcessEventOffer {
+    Queued,
+    /// No room now. The caller keeps the envelope (or the rest of a split
+    /// write) at its source.
+    Paused(Box<ProcessEventEnvelope>),
+}
+
+/// The part of `runtime.protocol.maxProcessEvents` that stdout and stderr may
+/// fill. The remaining eighth is reserved so exits and other control events
+/// always find room while guests stream output.
+pub(crate) fn process_output_event_pool(max_process_events: usize) -> usize {
+    max_process_events
+        .saturating_sub((max_process_events / 8).max(1))
+        .max(1)
+}
+
+/// Splits an output event after `payload_limit` bytes. The envelope keeps the
+/// head; the returned envelope carries the rest for the same process.
+fn split_process_output_event(
+    envelope: &mut ProcessEventEnvelope,
+    payload_limit: usize,
+) -> ProcessEventEnvelope {
+    let rest = match &mut envelope.event {
+        ActiveExecutionEvent::Stdout(chunk) => {
+            ActiveExecutionEvent::Stdout(chunk.split_off(payload_limit))
+        }
+        ActiveExecutionEvent::Stderr(chunk) => {
+            ActiveExecutionEvent::Stderr(chunk.split_off(payload_limit))
+        }
+        _ => unreachable!("only stdout and stderr events are split"),
+    };
+    ProcessEventEnvelope {
+        connection_id: envelope.connection_id.clone(),
+        session_id: envelope.session_id.clone(),
+        vm_id: envelope.vm_id.clone(),
+        child_path: envelope.child_path.clone(),
+        process_id: envelope.process_id.clone(),
+        event: rest,
+    }
+}
+
+/// Undoes `split_process_output_event` when the head could not be queued.
+fn join_process_output_event(head: &mut ProcessEventEnvelope, rest: ProcessEventEnvelope) {
+    match (&mut head.event, rest.event) {
+        (ActiveExecutionEvent::Stdout(head), ActiveExecutionEvent::Stdout(rest))
+        | (ActiveExecutionEvent::Stderr(head), ActiveExecutionEvent::Stderr(rest)) => {
+            head.extend_from_slice(&rest);
+        }
+        _ => unreachable!("a split event keeps its stream"),
+    }
+}
+
 pub(crate) fn process_event_queue_overflow_error(limit: usize) -> SidecarError {
     SidecarError::InvalidState(format!(
         "ERR_AGENTOS_PROCESS_EVENT_LIMIT: process event queue exceeded {limit} pending events; raise runtime.protocol.maxProcessEvents"
@@ -1265,15 +1319,11 @@ fn ownership_matches_process_event(
     }
 }
 
-fn public_process_event_matches_ownership<B>(
-    sidecar: &NativeSidecar<B>,
+fn public_process_event_matches_ownership(
+    broker: &ProcessEventBroker,
     ownership: &OwnershipScope,
     event: &ProcessEventEnvelope,
-) -> bool
-where
-    B: NativeSidecarBridge + Send + 'static,
-    BridgeError<B>: fmt::Debug + Send + Sync + 'static,
-{
+) -> bool {
     if !ownership_matches_process_event(ownership, event) {
         return false;
     }
@@ -1294,7 +1344,7 @@ where
             return false;
         }
     };
-    match sidecar.process_event_broker.target_is_claimed(&target) {
+    match broker.target_is_claimed(&target) {
         Ok(true) => return false,
         Ok(false) => {}
         Err(error) => {
@@ -1411,7 +1461,10 @@ pub struct NativeSidecar<B> {
     /// One receiver envelope whose temporary public-queue admission failed.
     /// It is retried before reading the channel, preserving exact FIFO order.
     pub(crate) deferred_process_event_envelope: Option<ProcessEventEnvelope>,
-    pub(crate) pending_process_events: VecDeque<ProcessEventEnvelope>,
+    pub(crate) pending_process_events: crate::pending_process_events::PendingProcessEvents,
+    /// Rotates which VM the process-event pump visits first, so capacity a
+    /// drain frees is not always claimed by the same VM.
+    pub(crate) process_event_pump_rotation: usize,
     pub(crate) pending_sidecar_responses: SidecarResponseTracker,
     pub(crate) outbound_sidecar_requests: VecDeque<SidecarRequestFrame>,
     pub(crate) completed_sidecar_responses: BTreeMap<RequestId, SidecarResponseFrame>,
@@ -1538,6 +1591,9 @@ where
         let (process_event_sender, process_event_receiver) =
             channel(protocol_limits.max_process_events);
         let process_event_notify = Arc::new(tokio::sync::Notify::new());
+        let pending_process_events = crate::pending_process_events::PendingProcessEvents::new(
+            Arc::clone(&process_event_notify),
+        );
         let (process_event_broker, process_event_ingress, process_event_broker_driver) =
             ProcessEventBroker::new(&config.runtime).map_err(|error| {
                 SidecarError::InvalidState(format!(
@@ -1574,7 +1630,8 @@ where
             kernel_reaper_task: None,
             kernel_reaper_deadline: None,
             deferred_process_event_envelope: None,
-            pending_process_events: VecDeque::new(),
+            pending_process_events,
+            process_event_pump_rotation: 0,
             pending_sidecar_responses: SidecarResponseTracker::default(),
             outbound_sidecar_requests: VecDeque::new(),
             completed_sidecar_responses: BTreeMap::new(),
@@ -2187,38 +2244,43 @@ where
     /// the exact broker waiter.
     pub(crate) fn route_claimed_pending_process_events(&mut self) -> Result<usize, SidecarError> {
         let mut routed = 0usize;
-        let mut index = 0usize;
-        while index < self.pending_process_events.len() {
-            let claimed = {
-                let envelope = &self.pending_process_events[index];
-                let target = ProcessEventTarget::new(
-                    envelope.connection_id.clone(),
-                    envelope.session_id.clone(),
-                    envelope.vm_id.clone(),
-                    envelope.process_id.clone(),
-                )
-                .map_err(|error| SidecarError::InvalidState(error.to_string()))?;
-                self.process_event_broker
-                    .target_is_claimed(&target)
-                    .map_err(|error| SidecarError::InvalidState(error.to_string()))?
-            };
-            if !claimed {
-                index += 1;
-                continue;
-            }
-            let envelope = self
-                .pending_process_events
-                .remove(index)
-                .expect("claimed pending process event index");
-            match self.process_event_ingress.try_publish(envelope) {
-                Ok(()) => routed = routed.saturating_add(1),
-                Err(failure) => {
-                    self.pending_process_events.insert(index, failure.envelope);
-                    self.observe_pending_process_event_depth();
-                    return match failure.error {
-                        ProcessEventBrokerError::Limit { .. } => Ok(routed),
-                        error => Err(SidecarError::InvalidState(error.to_string())),
-                    };
+        for vm_id in self.pending_process_events.vm_ids() {
+            let mut index = 0usize;
+            while let Some(envelope) = self.pending_process_events.vm_get(&vm_id, index) {
+                let claimed = {
+                    let target = ProcessEventTarget::new(
+                        envelope.connection_id.clone(),
+                        envelope.session_id.clone(),
+                        envelope.vm_id.clone(),
+                        envelope.process_id.clone(),
+                    )
+                    .map_err(|error| SidecarError::InvalidState(error.to_string()))?;
+                    self.process_event_broker
+                        .target_is_claimed(&target)
+                        .map_err(|error| SidecarError::InvalidState(error.to_string()))?
+                };
+                if !claimed {
+                    index += 1;
+                    continue;
+                }
+                let envelope = self
+                    .pending_process_events
+                    .vm_remove(&vm_id, index)
+                    .expect("claimed pending process event index");
+                match self.process_event_ingress.try_publish(envelope) {
+                    Ok(()) => routed = routed.saturating_add(1),
+                    Err(failure) => {
+                        self.pending_process_events
+                            .vm_insert(index, failure.envelope);
+                        self.observe_pending_process_event_depth();
+                        if routed > 0 {
+                            self.rearm_deferred_process_event_after_capacity_release();
+                        }
+                        return match failure.error {
+                            ProcessEventBrokerError::Limit { .. } => Ok(routed),
+                            error => Err(SidecarError::InvalidState(error.to_string())),
+                        };
+                    }
                 }
             }
         }
@@ -2254,50 +2316,144 @@ where
             )
     }
 
+    fn pending_process_event_depth(&self) -> usize {
+        self.pending_process_events
+            .len()
+            .saturating_add(usize::from(self.deferred_process_event_envelope.is_some()))
+    }
+
+    /// Hard bounds for any event entering the shared queue: the global
+    /// `runtime.protocol.maxProcessEvents` and the VM's own
+    /// `limits.process.pendingEventCount`/`pendingEventBytes`.
     pub(crate) fn check_pending_process_event_capacity(
         &self,
         envelope: &ProcessEventEnvelope,
     ) -> Result<(), SidecarError> {
         self.validate_process_event_envelope_locator(envelope)?;
         let global_limit = self.config.runtime.protocol.max_process_events;
-        if self
-            .pending_process_events
-            .len()
-            .saturating_add(usize::from(self.deferred_process_event_envelope.is_some()))
-            >= global_limit
-        {
+        if self.pending_process_event_depth() >= global_limit {
             return Err(process_event_queue_overflow_error(global_limit));
         }
-        let limits = self
-            .vms
-            .get(&envelope.vm_id)
-            .map(|vm| vm.limits.process.clone())
-            .unwrap_or_default();
-        let mut vm_count = 0usize;
-        let mut vm_bytes = 0usize;
-        for pending in self
-            .pending_process_events
-            .iter()
-            .chain(self.deferred_process_event_envelope.iter())
-            .filter(|pending| pending.vm_id == envelope.vm_id)
+        let (count_limit, bytes_limit) = self.vm_process_event_limits(&envelope.vm_id);
+        let mut pending = self.pending_process_events.vm(&envelope.vm_id);
+        if let Some(deferred) = self
+            .deferred_process_event_envelope
+            .as_ref()
+            .filter(|deferred| deferred.vm_id == envelope.vm_id)
         {
-            vm_count = vm_count.saturating_add(1);
-            vm_bytes = vm_bytes.saturating_add(pending.retained_bytes());
+            pending.events += 1;
+            pending.bytes = pending.bytes.saturating_add(deferred.retained_bytes());
         }
-        if vm_count >= limits.pending_event_count {
+        if pending.events >= count_limit {
             return Err(SidecarError::InvalidState(format!(
-                "VM {} process event queue exceeded {} events (limits.process.pendingEventCount)",
-                envelope.vm_id, limits.pending_event_count
+                "ERR_AGENTOS_PROCESS_EVENT_LIMIT: VM {} process event queue exceeded {} events; raise limits.process.pendingEventCount",
+                envelope.vm_id, count_limit
             )));
         }
-        let next_bytes = vm_bytes.saturating_add(envelope.retained_bytes());
-        if next_bytes > limits.pending_event_bytes {
+        let next_bytes = pending.bytes.saturating_add(envelope.retained_bytes());
+        if next_bytes > bytes_limit {
             return Err(SidecarError::InvalidState(format!(
-                "VM {} process event queue exceeded {} retained bytes (limits.process.pendingEventBytes)",
-                envelope.vm_id, limits.pending_event_bytes
+                "ERR_AGENTOS_PROCESS_EVENT_LIMIT: VM {} process event queue exceeded {} retained bytes; raise limits.process.pendingEventBytes",
+                envelope.vm_id, bytes_limit
             )));
         }
         Ok(())
+    }
+
+    /// The VM's own `limits.process.pendingEventCount`/`pendingEventBytes`.
+    fn vm_process_event_limits(&self, vm_id: &str) -> (usize, usize) {
+        self.vms
+            .get(vm_id)
+            .map(|vm| {
+                (
+                    vm.limits.process.pending_event_count,
+                    vm.limits.process.pending_event_bytes,
+                )
+            })
+            .unwrap_or_else(|| {
+                let defaults = agentos_native_sidecar_core::limits::ProcessLimits::default();
+                (defaults.pending_event_count, defaults.pending_event_bytes)
+            })
+    }
+
+    /// Whether the shared queue has room for one more stdout or stderr
+    /// event. Output may use at most the output pool: the queue minus a
+    /// reserve kept for exits and other control events.
+    fn process_output_event_has_room(&self, envelope: &ProcessEventEnvelope) -> bool {
+        !crate::pending_process_events::is_output_event(&envelope.event)
+            || self.pending_process_events.output_events()
+                < process_output_event_pool(self.config.runtime.protocol.max_process_events)
+    }
+
+    /// Admission for producers that can wait. When the queue has no room for
+    /// this event, the envelope comes back as `Paused`: the caller keeps it at
+    /// its source, which pauses that guest's output like a full pipe, and the
+    /// next capacity release wakes the pump to retry. Only an invalid envelope
+    /// is an error; a full queue never fails the transport.
+    pub(crate) fn offer_pending_process_event(
+        &mut self,
+        mut envelope: ProcessEventEnvelope,
+    ) -> Result<ProcessEventOffer, SidecarError> {
+        self.validate_process_event_envelope_locator(&envelope)?;
+        let (_, bytes_limit) = self.vm_process_event_limits(&envelope.vm_id);
+        let retained = envelope.retained_bytes();
+        if retained <= bytes_limit {
+            return Ok(self.offer_fitting_process_event(envelope, true));
+        }
+        let payload_limit = match &envelope.event {
+            ActiveExecutionEvent::Stdout(chunk) | ActiveExecutionEvent::Stderr(chunk) => {
+                bytes_limit.saturating_sub(retained - chunk.len())
+            }
+            _ => 0,
+        };
+        if payload_limit == 0 {
+            // Not data, or the VM's byte budget is smaller than one event's
+            // fixed size: it can never fit. Deliver it over the byte budget
+            // (the global bound still holds) so an exit is never dropped or
+            // starved, and report the limit.
+            eprintln!(
+                "ERR_AGENTOS_PROCESS_EVENT_LIMIT: VM {} process {} event retains {retained} bytes, more than limits.process.pendingEventBytes ({bytes_limit}); delivering it over the limit; raise limits.process.pendingEventBytes",
+                envelope.vm_id, envelope.process_id
+            );
+            return Ok(self.offer_fitting_process_event(envelope, false));
+        }
+        // Like one large write to a full pipe: queue the part that fits and
+        // keep the rest at its source until the host drains the queue.
+        let rest = split_process_output_event(&mut envelope, payload_limit);
+        Ok(match self.offer_fitting_process_event(envelope, true) {
+            ProcessEventOffer::Queued => {
+                self.pending_process_events.pause_producer();
+                ProcessEventOffer::Paused(Box::new(rest))
+            }
+            ProcessEventOffer::Paused(mut head) => {
+                join_process_output_event(&mut head, rest);
+                ProcessEventOffer::Paused(head)
+            }
+        })
+    }
+
+    fn offer_fitting_process_event(
+        &mut self,
+        envelope: ProcessEventEnvelope,
+        enforce_vm_bytes: bool,
+    ) -> ProcessEventOffer {
+        let has_room = if enforce_vm_bytes {
+            self.check_pending_process_event_capacity(&envelope).is_ok()
+        } else {
+            let (count_limit, _) = self.vm_process_event_limits(&envelope.vm_id);
+            self.pending_process_event_depth() < self.config.runtime.protocol.max_process_events
+                && self.pending_process_events.vm(&envelope.vm_id).events < count_limit
+        };
+        if !has_room || !self.process_output_event_has_room(&envelope) {
+            self.pending_process_events.pause_producer();
+            return ProcessEventOffer::Paused(Box::new(envelope));
+        }
+        if matches!(&envelope.event, ActiveExecutionEvent::Exited(_)) {
+            mark_execute_exit_event_queued(&envelope.vm_id, &envelope.process_id);
+        }
+        self.pending_process_events.push_back(envelope);
+        self.observe_pending_process_event_depth();
+        ProcessEventOffer::Queued
     }
 
     pub(crate) fn validate_process_event_envelope_locator(
@@ -2336,12 +2492,11 @@ where
         self.pending_process_events_gauge
             .observe_depth(self.pending_process_events.len());
         self.pending_process_event_bytes_gauge.observe_depth(
-            self.pending_process_events
-                .iter()
-                .chain(self.deferred_process_event_envelope.iter())
-                .fold(0usize, |bytes, event| {
-                    bytes.saturating_add(event.retained_bytes())
-                }),
+            self.pending_process_events.bytes().saturating_add(
+                self.deferred_process_event_envelope
+                    .as_ref()
+                    .map_or(0, ProcessEventEnvelope::retained_bytes),
+            ),
         );
     }
 
@@ -2352,6 +2507,7 @@ where
         if self.deferred_process_event_envelope.is_some() {
             self.process_event_notify.notify_one();
         }
+        self.pending_process_events.wake_paused_producer();
     }
 
     pub fn dispatch_blocking(
@@ -3295,14 +3451,11 @@ where
             // Register before probing durable queues so a producer racing the
             // probe cannot lose its edge between the empty check and await.
             let notified = process_event_notify.notified();
-            if let Some(index) = self
+            let broker = &self.process_event_broker;
+            if let Some(envelope) = self
                 .pending_process_events
-                .iter()
-                .position(|event| public_process_event_matches_ownership(self, ownership, event))
+                .take_next(|event| public_process_event_matches_ownership(broker, ownership, event))
             {
-                let Some(envelope) = self.pending_process_events.remove(index) else {
-                    continue;
-                };
                 self.observe_pending_process_event_depth();
                 self.rearm_deferred_process_event_after_capacity_release();
                 if let Some(frame) = self.handle_process_event_envelope(envelope).await? {
@@ -3328,12 +3481,12 @@ where
                 let mut queued = Vec::new();
                 loop {
                     if queued.len() >= pending_capacity {
-                        if receiver.is_empty() {
-                            break;
+                        // A full shared queue pauses the bounded receiver
+                        // channel; the next capacity release retries it.
+                        if !receiver.is_empty() {
+                            self.pending_process_events.pause_producer();
                         }
-                        return Err(process_event_queue_overflow_error(
-                            self.config.runtime.protocol.max_process_events,
-                        ));
+                        break;
                     }
                     match receiver.try_recv() {
                         Ok(envelope) => queued.push(envelope),
@@ -3347,7 +3500,11 @@ where
             let mut matching_envelope = None;
             for envelope in queued_envelopes {
                 if matching_envelope.is_none()
-                    && public_process_event_matches_ownership(self, ownership, &envelope)
+                    && public_process_event_matches_ownership(
+                        &self.process_event_broker,
+                        ownership,
+                        &envelope,
+                    )
                 {
                     matching_envelope = Some(envelope);
                 } else {
@@ -3381,14 +3538,11 @@ where
         ownership: &OwnershipScope,
     ) -> Result<Option<EventFrame>, SidecarError> {
         loop {
-            if let Some(index) = self
+            let broker = &self.process_event_broker;
+            if let Some(envelope) = self
                 .pending_process_events
-                .iter()
-                .position(|event| public_process_event_matches_ownership(self, ownership, event))
+                .take_next(|event| public_process_event_matches_ownership(broker, ownership, event))
             {
-                let Some(envelope) = self.pending_process_events.remove(index) else {
-                    continue;
-                };
                 self.observe_pending_process_event_depth();
                 self.rearm_deferred_process_event_after_capacity_release();
                 if let Some(frame) = self.handle_public_process_event_envelope_nowait(envelope)? {
@@ -3405,12 +3559,12 @@ where
                 let mut queued = Vec::new();
                 loop {
                     if queued.len() >= pending_capacity {
-                        if receiver.is_empty() {
-                            break;
+                        // A full shared queue pauses the bounded receiver
+                        // channel; the next capacity release retries it.
+                        if !receiver.is_empty() {
+                            self.pending_process_events.pause_producer();
                         }
-                        return Err(process_event_queue_overflow_error(
-                            self.config.runtime.protocol.max_process_events,
-                        ));
+                        break;
                     }
                     match receiver.try_recv() {
                         Ok(envelope) => queued.push(envelope),
@@ -3423,7 +3577,11 @@ where
             let mut matching = None;
             for envelope in queued_envelopes {
                 if matching.is_none()
-                    && public_process_event_matches_ownership(self, ownership, &envelope)
+                    && public_process_event_matches_ownership(
+                        &self.process_event_broker,
+                        ownership,
+                        &envelope,
+                    )
                 {
                     matching = Some(envelope);
                 } else {
@@ -3498,20 +3656,15 @@ where
                 &vm_id,
                 &process_id,
             );
-            let mut trailing = Vec::new();
-            let mut deferred = VecDeque::new();
             let phase_start = Instant::now();
-            while let Some(pending) = self.pending_process_events.pop_front() {
-                if pending.vm_id == vm_id
-                    && pending.process_id == process_id
-                    && !matches!(pending.event, ActiveExecutionEvent::Exited(_))
-                {
-                    trailing.push(pending.event);
-                } else {
-                    deferred.push_back(pending);
-                }
-            }
-            self.pending_process_events = deferred;
+            let mut trailing = self
+                .pending_process_events
+                .take_process_events(&vm_id, &process_id, |pending| {
+                    !matches!(pending.event, ActiveExecutionEvent::Exited(_))
+                })
+                .into_iter()
+                .map(|pending| pending.event)
+                .collect::<Vec<_>>();
             self.observe_pending_process_event_depth();
             self.rearm_deferred_process_event_after_capacity_release();
             record_execute_phase("process_exit_trailing_pending_scan", phase_start.elapsed());
@@ -3615,19 +3768,14 @@ where
                 &vm_id,
                 &process_id,
             );
-            let mut trailing = Vec::new();
-            let mut deferred = VecDeque::new();
-            while let Some(pending) = self.pending_process_events.pop_front() {
-                if pending.vm_id == vm_id
-                    && pending.process_id == process_id
-                    && !matches!(pending.event, ActiveExecutionEvent::Exited(_))
-                {
-                    trailing.push(pending.event);
-                } else {
-                    deferred.push_back(pending);
-                }
-            }
-            self.pending_process_events = deferred;
+            let mut trailing = self
+                .pending_process_events
+                .take_process_events(&vm_id, &process_id, |pending| {
+                    !matches!(pending.event, ActiveExecutionEvent::Exited(_))
+                })
+                .into_iter()
+                .map(|pending| pending.event)
+                .collect::<Vec<_>>();
             self.observe_pending_process_event_depth();
             self.rearm_deferred_process_event_after_capacity_release();
             if !trailing.is_empty() {
@@ -5143,15 +5291,13 @@ where
         vm_id: &str,
         process_id: &str,
     ) -> Result<Option<ProcessEventEnvelope>, SidecarError> {
-        if let Some(index) = self
+        if let Some(envelope) = self
             .pending_process_events
-            .iter()
-            .position(|event| event.vm_id == vm_id && event.process_id == process_id)
+            .take_from_vm(vm_id, |event| event.process_id == process_id)
         {
-            let envelope = self.pending_process_events.remove(index);
             self.observe_pending_process_event_depth();
             self.rearm_deferred_process_event_after_capacity_release();
-            return Ok(envelope);
+            return Ok(Some(envelope));
         }
 
         let mut matching_envelope = None;

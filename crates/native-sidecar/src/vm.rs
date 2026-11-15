@@ -587,8 +587,8 @@ where
             }
         }
         self.pending_process_events
-            .iter()
-            .filter(|envelope| envelope.vm_id == vm_id && envelope.child_path.is_empty())
+            .vm_iter(vm_id)
+            .filter(|envelope| envelope.child_path.is_empty())
             .filter_map(|envelope| match envelope.event {
                 ActiveExecutionEvent::Exited(code) => Some((envelope.process_id.clone(), code)),
                 _ => None,

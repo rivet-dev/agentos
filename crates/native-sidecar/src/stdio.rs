@@ -2074,6 +2074,9 @@ async fn run_protocol_engine(engine: ProtocolEngine) -> Result<(), Box<dyn Error
         );
     }
     'protocol: loop {
+        // Output tasks run on this thread's LocalSet. Yield once the turn
+        // budget is spent so a continuously ready arm cannot starve them.
+        tokio::task::consume_budget().await;
         // Tokio's JoinSet retains completed entries until they are reaped. Do
         // this before biased ingress selection so continuously-ready input
         // cannot grow bookkeeping without bound or starve progress-service

@@ -73,6 +73,9 @@ mod extension_services;
 #[path = "../src/ownership_coordinator.rs"]
 mod ownership_coordinator;
 #[allow(dead_code)]
+#[path = "../src/pending_process_events.rs"]
+mod pending_process_events;
+#[allow(dead_code)]
 #[path = "../src/process_event_broker.rs"]
 mod process_event_broker;
 #[allow(dead_code)]
