@@ -2362,6 +2362,25 @@
     "rationale": "Build-time artifact sanity guard on first-party assets, not guest input."
   },
   {
+    "name": "DEFAULT_SNAPSHOT_HELPER_TIMEOUT_MS",
+    "path": "crates/v8-runtime/src/snapshot.rs",
+    "class": "policy",
+    "wired": "sidecar process environment AGENTOS_V8_SNAPSHOT_HELPER_TIMEOUT_MS",
+    "rationale": "Wall-clock deadline of one snapshot helper run; past it the helper is killed with ERR_AGENTOS_V8_SNAPSHOT_HELPER_TIMEOUT and processes load normally."
+  },
+  {
+    "name": "SNAPSHOT_HELPER_HEAP_LIMIT_MB",
+    "path": "crates/v8-runtime/src/snapshot.rs",
+    "class": "invariant",
+    "rationale": "V8 heap and ArrayBuffer cap of the snapshot creator in the disposable helper process; sized for the 32 MiB graph and userland source bounds."
+  },
+  {
+    "name": "MAX_SNAPSHOT_HELPER_STDERR_BYTES",
+    "path": "crates/v8-runtime/src/snapshot.rs",
+    "class": "invariant",
+    "rationale": "Helper stderr kept for an error message; the rest is drained and dropped."
+  },
+  {
     "name": "MAX_V8_USERLAND_CODE_BYTES",
     "path": "crates/v8-runtime/src/snapshot.rs",
     "class": "invariant",

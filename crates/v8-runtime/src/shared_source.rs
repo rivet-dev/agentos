@@ -315,8 +315,10 @@ pub(crate) fn snapshot_sources(sources: &[&str]) -> Result<SnapshotSources, Stri
 }
 
 /// A V8 string for script `source`: shared when it is shareable, a heap copy
-/// otherwise. Only snapshot creation should compile from shared strings; the
-/// resource must be in the creator's external reference table.
+/// otherwise. Only snapshot creation, which runs in the short-lived helper
+/// process, may compile from shared strings: the resource must be in the
+/// creator's external reference table, and it is pinned for the life of the
+/// process. Code in the sidecar process must use a plain `v8::String`.
 pub(crate) fn snapshot_source_string<'s>(
     scope: &mut v8::HandleScope<'s, ()>,
     source: &str,

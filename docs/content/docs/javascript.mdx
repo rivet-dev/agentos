@@ -238,13 +238,23 @@ Requirements:
 What changes for the imported modules:
 
 - Their top-level code runs once, when the snapshot is built, not in each
-  process. Read per-process state such as `process.argv`, `process.env`,
-  `process.cwd()`, the time, and random values inside functions, not at module
-  top level. A top-level read sees placeholder values.
-- Top-level code cannot use the host bridge (file, network, or timer calls),
-  `WebAssembly`, or top-level `await` of such work. The snapshot build then
-  fails, the sidecar logs `ERR_AGENTOS_MODULE_SNAPSHOT_GRAPH` with the module and
-  reason to stderr, and processes keep loading normally.
+  process. Read per-process state such as `process.argv`, `process.env`, and
+  `process.cwd()` inside functions, not at module top level. A top-level read
+  sees placeholder values.
+- Top-level code cannot read the time or random values (`Math.random()`,
+  `Date.now()`, `Date()`, `new Date()`, `performance.now()`, `process.hrtime()`,
+  `process.uptime()`, `crypto` randomness), because every process that boots
+  from the snapshot would share them. It also cannot use the host bridge (file,
+  network, or timer calls), `WebAssembly`, or top-level `await` of such work.
+  The snapshot build then fails, the sidecar logs
+  `ERR_AGENTOS_MODULE_SNAPSHOT_GRAPH` with the module and reason to stderr, and
+  processes keep loading normally.
+- `performance.timeOrigin` is per process, and top-level code can check it.
+  A top-level copy of its value, though, holds the time the snapshot was built.
+- Top-level code that does not finish within 30 seconds stops the build with
+  `ERR_AGENTOS_V8_SNAPSHOT_HELPER_TIMEOUT`, and processes keep loading normally.
+  Set `AGENTOS_V8_SNAPSHOT_HELPER_TIMEOUT_MS` in the environment that starts the
+  sidecar to change the limit.
 - A module that defines a builtin that V8 adds when it restores a context (a
   polyfill) keeps its own value where it captured it; later global lookups see
   V8's builtin.

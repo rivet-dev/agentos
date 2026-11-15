@@ -374,16 +374,10 @@ static ARRAY_BUFFER_BUDGET_VTABLE: v8::RustAllocatorVtable<ArrayBufferBudget> =
         drop: budget_drop,
     };
 
-/// Create a guest isolate, fresh or snapshot-restored (`customize` adds the
-/// snapshot parameters). The heap limit in MB (`None` applies
-/// `DEFAULT_HEAP_LIMIT_MB`) caps the V8 heap and, separately, the isolate's
-/// ArrayBuffer memory.
-pub(crate) fn create_guest_isolate(
-    heap_limit_mb: Option<u32>,
-    customize: impl FnOnce(v8::CreateParams) -> v8::CreateParams,
-) -> v8::OwnedIsolate {
-    let limit = heap_limit_mb.unwrap_or(DEFAULT_HEAP_LIMIT_MB);
-    let limit_bytes = (limit as usize) * 1024 * 1024;
+/// Create params whose V8 heap and, separately, ArrayBuffer memory are each
+/// capped at `limit_mb`.
+fn budgeted_create_params(limit_mb: u32) -> (v8::CreateParams, Arc<ArrayBufferBudget>) {
+    let limit_bytes = (limit_mb as usize) * 1024 * 1024;
     let budget = Arc::new(ArrayBufferBudget {
         used: AtomicUsize::new(0),
         limit: limit_bytes,
@@ -397,11 +391,28 @@ pub(crate) fn create_guest_isolate(
             &ARRAY_BUFFER_BUDGET_VTABLE,
         )
     };
-    let params = customize(
-        v8::CreateParams::default()
-            .heap_limits(0, limit_bytes)
-            .array_buffer_allocator(allocator.make_shared()),
-    );
+    let params = v8::CreateParams::default()
+        .heap_limits(0, limit_bytes)
+        .array_buffer_allocator(allocator.make_shared());
+    (params, budget)
+}
+
+/// Bounded create params for an isolate that is not a guest session isolate,
+/// such as the snapshot creator in the helper process.
+pub(crate) fn bounded_create_params(limit_mb: u32) -> v8::CreateParams {
+    budgeted_create_params(limit_mb).0
+}
+
+/// Create a guest isolate, fresh or snapshot-restored (`customize` adds the
+/// snapshot parameters). The heap limit in MB (`None` applies
+/// `DEFAULT_HEAP_LIMIT_MB`) caps the V8 heap and, separately, the isolate's
+/// ArrayBuffer memory.
+pub(crate) fn create_guest_isolate(
+    heap_limit_mb: Option<u32>,
+    customize: impl FnOnce(v8::CreateParams) -> v8::CreateParams,
+) -> v8::OwnedIsolate {
+    let (params, budget) = budgeted_create_params(heap_limit_mb.unwrap_or(DEFAULT_HEAP_LIMIT_MB));
+    let params = customize(params);
     // Isolate create and drop need no process-wide lock: V8's process-wide
     // WebAssembly code-pointer table is internally synchronized. The crashes once
     // attributed to overlapping lifecycles came from V8 state bound to a

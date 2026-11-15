@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { AgentOs } from "../src/index.js";
+import { EVALUATED_IN, type EvaluatedIn, runNode, waitForSnapshotBoot } from "./helpers/module-snapshot.js";
 
 // A process reuses a module snapshot only while the snapshot's imports still
 // resolve to the same files. These host changes alter what an import resolves
@@ -20,38 +21,13 @@ function writePackage(dir: string, files: Record<string, string>): void {
 	}
 }
 
-async function runEntry(): Promise<{ version: string; token: number }> {
-	let stdout = "";
-	let stderr = "";
-	const { pid } = await vm.process.spawn("node", [ENTRY], {
-		onStdout: (chunk) => {
-			stdout += Buffer.from(chunk).toString();
-		},
-		onStderr: (chunk) => {
-			stderr += Buffer.from(chunk).toString();
-		},
-	});
-	const exit = await vm.process.wait(pid);
-	expect({ exitCode: exit.exitCode, stderr }).toEqual({ exitCode: 0, stderr: "" });
-	return JSON.parse(stdout);
-}
+const runEntry = () => runNode<{ version: string } & EvaluatedIn>(vm, ENTRY);
 
-// Once two processes report the same import-time token, they booted from the
-// snapshot that the first launch builds in the background.
-async function waitForSnapshot(): Promise<void> {
-	const deadline = Date.now() + 30_000;
-	let previous = (await runEntry()).token;
-	while (Date.now() < deadline) {
-		await new Promise((resolve) => setTimeout(resolve, 200));
-		const next = (await runEntry()).token;
-		if (next === previous) return;
-		previous = next;
-	}
-	throw new Error("guest processes never booted from the module snapshot");
-}
+const waitForSnapshot = (version: string) =>
+	waitForSnapshotBoot(runEntry, (report) => report.version === version);
 
 const depModule = (version: string) =>
-	`export const version = ${JSON.stringify(version)};\nexport const token = Math.random();\n`;
+	`export const version = ${JSON.stringify(version)};\n${EVALUATED_IN}`;
 
 beforeAll(async () => {
 	hostDir = mkdtempSync(join(tmpdir(), "agentos-module-snapshot-resolution-"));
@@ -62,7 +38,7 @@ beforeAll(async () => {
 	});
 	writePackage(join(hostDir, "src"), {
 		"entry.mjs":
-			'import { version, token } from "dep";\nprocess.stdout.write(JSON.stringify({ version, token }));\n',
+			'import { version, evaluatedIn } from "dep";\nprocess.stdout.write(JSON.stringify({ version, evaluatedIn }));\n',
 	});
 	vm = await AgentOs.create({
 		permissions: { network: "deny" },
@@ -83,8 +59,7 @@ afterAll(async () => {
 });
 
 test("an import that resolves to another file after a host change loads that file", async () => {
-	await waitForSnapshot();
-	expect((await runEntry()).version).toBe("exports-a");
+	await waitForSnapshot("exports-a");
 
 	// Same files, new package.json `exports` target.
 	writeFileSync(
@@ -92,7 +67,7 @@ test("an import that resolves to another file after a host change loads that fil
 		JSON.stringify({ name: "dep", type: "module", exports: "./b.mjs" }),
 	);
 	expect((await runEntry()).version).toBe("exports-b");
-	await waitForSnapshot();
+	await waitForSnapshot("exports-b");
 
 	// A closer node_modules now shadows the package.
 	writePackage(join(hostDir, "src", "node_modules", "dep"), {

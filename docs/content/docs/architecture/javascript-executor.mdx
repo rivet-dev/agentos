@@ -88,7 +88,12 @@ cheap without sharing guest state:
   launch the sidecar checks the graph against the VM: the entry source, each
   module file (by host inode, size, mtime, and ctime, then by SHA-256 when they
   changed), and each import edge. A mismatch starts a rediscovery in the
-  background and the process loads normally.
+  background and the process loads normally. Discovery parses the graph in
+  the sidecar from heap copies of the sources, so only built snapshots hold
+  shared sources. While the graph evaluates, time and random sources throw,
+  so no per-process value is frozen into the snapshot. The helper runs under
+  a wall-clock deadline, a CPU-time cap, and a 1 GiB heap cap, so guest
+  top-level code cannot hold a blocking worker or the snapshot build lock.
 - **Deferred teardown.** An exited process's isolate is destroyed on a single
   reaper thread, so the exit reaches the client without waiting for heap
   teardown. The executor keeps its admission slot until teardown finishes.

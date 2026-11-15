@@ -680,15 +680,25 @@ fn with_parse_scope<T>(
     result
 }
 
+/// Compile one graph module. Only the snapshot creator (`for_snapshot`) compiles
+/// from a shared source: that source must be in the creator's external
+/// reference table, and the helper process that holds it exits after the
+/// build. Discovery runs in the sidecar, so it compiles from a heap copy that
+/// its parse isolate frees, and lazily: it only reads import requests.
 fn compile_snapshot_module<'s>(
     scope: &mut v8::HandleScope<'s>,
     path: &str,
     source: &str,
+    for_snapshot: bool,
 ) -> Result<v8::Local<'s, v8::Module>, String> {
     let tc = &mut v8::TryCatch::new(scope);
-    // Shared with every restored isolate when the snapshot is created.
-    let v8_source = crate::shared_source::snapshot_source_string(tc, source)
-        .map_err(|error| graph_error(format!("{path}: {error}")))?;
+    let v8_source = if for_snapshot {
+        crate::shared_source::snapshot_source_string(tc, source)
+            .map_err(|error| graph_error(format!("{path}: {error}")))?
+    } else {
+        v8::String::new(tc, source)
+            .ok_or_else(|| graph_error(format!("{path} is too large for V8")))?
+    };
     let resource = v8::String::new(tc, path)
         .ok_or_else(|| graph_error(format!("{path} is too large for V8")))?;
     let origin = v8::ScriptOrigin::new(
@@ -707,10 +717,15 @@ fn compile_snapshot_module<'s>(
     let mut compiled = v8::script_compiler::Source::new(v8_source, Some(&origin));
     // Eager: the snapshot keeps every function's bytecode, so a booted entrypoint runs its
     // first request without lazy compiles. The cost is a larger blob, paid at isolate boot.
+    let options = if for_snapshot {
+        v8::script_compiler::CompileOptions::EagerCompile
+    } else {
+        v8::script_compiler::CompileOptions::NoCompileOptions
+    };
     match v8::script_compiler::compile_module2(
         tc,
         &mut compiled,
-        v8::script_compiler::CompileOptions::EagerCompile,
+        options,
         v8::script_compiler::NoCacheReason::NoReason,
     ) {
         Some(module) => Ok(v8::Local::new(tc, module)),
@@ -729,7 +744,9 @@ fn module_specifiers(
     path: &str,
     source: &str,
 ) -> Result<Vec<String>, String> {
-    let module = compile_snapshot_module(scope, path, source)?;
+    // Each module's source and record become garbage once its requests are read.
+    let scope = &mut v8::HandleScope::new(scope);
+    let module = compile_snapshot_module(scope, path, source, false)?;
     let requests = module.get_module_requests();
     let mut specifiers = Vec::with_capacity(requests.length());
     for index in 0..requests.length() {
@@ -830,34 +847,130 @@ fn build_dynamic_import_callback<'a>(
     Some(resolver.get_promise(scope))
 }
 
-/// V8 creates a snapshot context without `WebAssembly` and installs it when it
-/// restores the context. While the graph evaluates, a top-level read of
-/// `WebAssembly` fails with a clear message instead of seeing `undefined`
-/// (which feature detection would bake into the snapshot). The guard is
-/// removed again so the restored context gets V8's own. `Error` must not be
+/// Guards installed while the graph evaluates. The script returns the function
+/// that removes them, which the build calls once evaluation ends.
+///
+/// - Time and randomness (`Math.random`, `Date.now`, `Date()`, `new Date()`,
+///   `performance.now`, `process.hrtime`, `process.uptime`) throw. A value read
+///   at module top level would be frozen into the snapshot and shared by every
+///   process, in every VM, that boots from it. The build then fails and those
+///   processes load the graph normally. Crypto randomness needs the host
+///   bridge, which is a stub here, so it throws already.
+/// - V8 creates a snapshot context without `WebAssembly` and installs it when
+///   it restores the context. A top-level read of `WebAssembly` throws instead
+///   of seeing `undefined` (which feature detection would bake in), and the
+///   guard is deleted again so the restored context gets V8's own.
+///
+/// A guarded function that the graph captured keeps working after the build:
+/// it calls the original once the guards are removed. `Error` must not be
 /// touched: V8 also adds `Error.stackTraceLimit` on restore.
-const SNAPSHOT_BUILD_ENTER: &str = r#"
-Object.defineProperty(globalThis, "WebAssembly", {
-    configurable: true,
-    enumerable: false,
-    get() {
-        throw new Error(
-            "ERR_AGENTOS_MODULE_SNAPSHOT_GRAPH: WebAssembly is not available while a module snapshot is built; read it inside a function, not at module top level"
-        );
-    },
-});
-"#;
-const SNAPSHOT_BUILD_EXIT: &str = r#"
-delete globalThis.WebAssembly;
-"#;
+const SNAPSHOT_BUILD_GUARDS: &str = r#"(() => {
+    let building = true;
+    const unavailable = (what) => new Error(
+        "ERR_AGENTOS_MODULE_SNAPSHOT_GRAPH: " + what + " is not available while a module snapshot is built: " +
+        "its value would be shared by every process that boots from the snapshot; call it inside a function, not at module top level"
+    );
+    const undo = [];
+    const replace = (owner, key, descriptor) => {
+        const previous = Object.getOwnPropertyDescriptor(owner, key);
+        Object.defineProperty(owner, key, descriptor);
+        undo.push(() => previous ? Object.defineProperty(owner, key, previous) : delete owner[key]);
+    };
+    const guardMethod = (object, key, label) => {
+        let owner = object;
+        while (owner && !Object.prototype.hasOwnProperty.call(owner, key)) {
+            owner = Object.getPrototypeOf(owner);
+        }
+        if (!owner) return;
+        const descriptor = Object.getOwnPropertyDescriptor(owner, key);
+        const original = descriptor.value;
+        if (typeof original !== "function" || !descriptor.configurable) return;
+        const guarded = { [key](...args) {
+            if (building) throw unavailable(label);
+            return Reflect.apply(original, this, args);
+        } }[key];
+        for (const name of Reflect.ownKeys(original)) {
+            if (name !== "length" && name !== "name" && name !== "prototype") {
+                Object.defineProperty(guarded, name, Object.getOwnPropertyDescriptor(original, name));
+            }
+        }
+        replace(owner, key, { ...descriptor, value: guarded });
+    };
 
-fn run_build_script(scope: &mut v8::HandleScope, code: &str, label: &str) -> Result<(), String> {
+    guardMethod(Math, "random", "Math.random()");
+    guardMethod(Date, "now", "Date.now()");
+    // A `performance` getter that throws here keeps the clock out of the
+    // snapshot by itself, so there is nothing to guard then.
+    let perf;
+    try { perf = globalThis.performance; } catch { perf = undefined; }
+    if (typeof perf === "object" && perf) {
+        guardMethod(perf, "now", "performance.now()");
+    }
+    if (typeof process === "object" && process) {
+        if (typeof process.hrtime === "function") {
+            guardMethod(process.hrtime, "bigint", "process.hrtime.bigint()");
+        }
+        guardMethod(process, "hrtime", "process.hrtime()");
+        guardMethod(process, "uptime", "process.uptime()");
+    }
+    const OriginalDate = Date;
+    const GuardedDate = new Proxy(OriginalDate, {
+        apply(target, receiver, args) {
+            if (building) throw unavailable("Date()");
+            return Reflect.apply(target, receiver, args);
+        },
+        construct(target, args, newTarget) {
+            if (building && args.length === 0) throw unavailable("new Date()");
+            return Reflect.construct(target, args, newTarget);
+        },
+    });
+    replace(globalThis, "Date", {
+        ...Object.getOwnPropertyDescriptor(globalThis, "Date"),
+        value: GuardedDate,
+    });
+    Object.defineProperty(globalThis, "WebAssembly", {
+        configurable: true,
+        enumerable: false,
+        get() {
+            throw new Error(
+                "ERR_AGENTOS_MODULE_SNAPSHOT_GRAPH: WebAssembly is not available while a module snapshot is built; read it inside a function, not at module top level"
+            );
+        },
+    });
+
+    return () => {
+        building = false;
+        while (undo.length > 0) undo.pop()();
+        delete globalThis.WebAssembly;
+    };
+})()"#;
+
+/// Install [`SNAPSHOT_BUILD_GUARDS`] and return the function that removes them.
+fn install_build_guards(scope: &mut v8::HandleScope) -> Result<v8::Global<v8::Function>, String> {
     let tc = &mut v8::TryCatch::new(scope);
-    let source = v8::String::new(tc, code).expect("static script");
-    let script = v8::Script::compile(tc, source, None);
-    if script.and_then(|script| script.run(tc)).is_none() {
+    let source = v8::String::new(tc, SNAPSHOT_BUILD_GUARDS).expect("static script");
+    let remove = v8::Script::compile(tc, source, None)
+        .and_then(|script| script.run(tc))
+        .and_then(|value| v8::Local::<v8::Function>::try_from(value).ok());
+    match remove {
+        Some(remove) => Ok(v8::Global::new(tc, remove)),
+        None => {
+            let message = exception_text(tc, "did not return its teardown");
+            Err(graph_error(format!("module snapshot setup: {message}")))
+        }
+    }
+}
+
+fn remove_build_guards(
+    scope: &mut v8::HandleScope,
+    remove: v8::Global<v8::Function>,
+) -> Result<(), String> {
+    let tc = &mut v8::TryCatch::new(scope);
+    let remove = v8::Local::new(tc, remove);
+    let receiver = v8::undefined(tc).into();
+    if remove.call(tc, receiver, &[]).is_none() {
         let message = exception_text(tc, "failed");
-        return Err(graph_error(format!("{label}: {message}")));
+        return Err(graph_error(format!("module snapshot teardown: {message}")));
     }
     Ok(())
 }
@@ -873,7 +986,7 @@ pub(crate) fn evaluate_module_graph_for_snapshot(
 
     let mut modules = Vec::with_capacity(graph.modules.len());
     for module in &graph.modules {
-        let compiled = compile_snapshot_module(scope, &module.path, &module.source)?;
+        let compiled = compile_snapshot_module(scope, &module.path, &module.source, true)?;
         modules.push(v8::Global::new(scope, compiled));
     }
     BUILD_STATE.with(|cell| {
@@ -883,9 +996,13 @@ pub(crate) fn evaluate_module_graph_for_snapshot(
             paths: graph.modules.iter().map(|m| m.path.clone()).collect(),
         });
     });
-    let result = run_build_script(scope, SNAPSHOT_BUILD_ENTER, "module snapshot setup")
-        .and_then(|()| evaluate_roots(scope, graph, &modules));
-    let teardown = run_build_script(scope, SNAPSHOT_BUILD_EXIT, "module snapshot teardown");
+    let (result, teardown) = match install_build_guards(scope) {
+        Ok(remove) => (
+            evaluate_roots(scope, graph, &modules),
+            remove_build_guards(scope, remove),
+        ),
+        Err(error) => (Err(error), Ok(())),
+    };
     // No Global may stay alive into `create_blob`.
     BUILD_STATE.with(|cell| *cell.borrow_mut() = None);
     result.and(teardown)?;

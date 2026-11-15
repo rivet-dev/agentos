@@ -177,9 +177,16 @@ The sidecar stores built V8 snapshots on disk so a new sidecar process does
 not rebuild them: at most 16 files under `$XDG_CACHE_HOME/agentos/v8-snapshots`
 (or `~/.cache/agentos/v8-snapshots`). Set `AGENTOS_V8_SNAPSHOT_CACHE_DIR` to
 another directory, or to `off`, in the environment that starts the sidecar.
-Script sources that snapshot-restored isolates share are kept for the life of
-the sidecar, bounded to 64 MiB of copies; past that, new snapshots fail with
-`ERR_AGENTOS_V8_SHARED_SOURCE_LIMIT` and processes load normally.
+Script sources that snapshot-restored isolates share are kept while a cached
+snapshot or a live isolate uses them, bounded to 64 MiB of copies. Unused
+sources are freed first; when the sources in use leave no room, a new snapshot
+fails with `ERR_AGENTOS_V8_SHARED_SOURCE_LIMIT` and processes load normally.
+
+A helper process builds each snapshot. It is killed after 30 seconds
+(`ERR_AGENTOS_V8_SNAPSHOT_HELPER_TIMEOUT`, and processes load normally), its V8
+heap and its ArrayBuffer memory are each capped at 1 GiB, and its CPU time is
+capped at the timeout. Set `AGENTOS_V8_SNAPSHOT_HELPER_TIMEOUT_MS` in the
+environment that starts the sidecar to change the timeout.
 
 ## Embedded API
 

@@ -443,7 +443,8 @@ fn create_snapshot_inner_in_process(
         None => None,
     };
     {
-        let mut isolate = v8::Isolate::snapshot_creator(Some(refs), None);
+        let params = crate::isolate::bounded_create_params(SNAPSHOT_HELPER_HEAP_LIMIT_MB);
+        let mut isolate = v8::Isolate::snapshot_creator(Some(refs), Some(params));
         let bridge_result = {
             let scope = &mut v8::HandleScope::new(&mut isolate);
             let context = v8::Context::new(scope, Default::default());
@@ -527,66 +528,316 @@ fn create_snapshot_inner_in_process(
     }
 }
 
+/// Wall-clock deadline for one snapshot helper run. Graph modules are guest
+/// code, so a top-level loop that never ends must not hold a blocking worker
+/// (and the V8 maintenance lock) forever. A bridge snapshot takes ~0.4 s.
+pub const DEFAULT_SNAPSHOT_HELPER_TIMEOUT_MS: u64 = 30_000;
+pub const SNAPSHOT_HELPER_TIMEOUT_ENV: &str = "AGENTOS_V8_SNAPSHOT_HELPER_TIMEOUT_MS";
+pub const SNAPSHOT_HELPER_TIMEOUT_ERROR_CODE: &str = "ERR_AGENTOS_V8_SNAPSHOT_HELPER_TIMEOUT";
+pub const SNAPSHOT_HELPER_FAILED_ERROR_CODE: &str = "ERR_AGENTOS_V8_SNAPSHOT_HELPER_FAILED";
+/// V8 heap cap of the snapshot creator isolate, and separately of its
+/// ArrayBuffer memory. Past it the helper process dies, not the sidecar.
+const SNAPSHOT_HELPER_HEAP_LIMIT_MB: u32 = 1024;
+/// Helper stderr kept for an error message; the rest is drained and dropped.
+const MAX_SNAPSHOT_HELPER_STDERR_BYTES: usize = 64 * 1024;
+
+fn snapshot_helper_timeout() -> Result<std::time::Duration, String> {
+    let millis = match std::env::var(SNAPSHOT_HELPER_TIMEOUT_ENV) {
+        Err(_) => DEFAULT_SNAPSHOT_HELPER_TIMEOUT_MS,
+        Ok(value) => value.trim().parse::<u64>().ok().filter(|ms| *ms > 0).ok_or_else(|| {
+            format!(
+                "{SNAPSHOT_HELPER_TIMEOUT_ERROR_CODE}: {SNAPSHOT_HELPER_TIMEOUT_ENV} must be a positive number of milliseconds, got {value:?}"
+            )
+        })?,
+    };
+    Ok(std::time::Duration::from_millis(millis))
+}
+
+#[cfg(unix)]
 fn create_snapshot_in_subprocess(
     bridge_code: &str,
     userland_code: Option<&[u8]>,
 ) -> Result<Vec<u8>, String> {
+    use std::os::unix::process::CommandExt;
+
+    let timeout = snapshot_helper_timeout()?;
     let current_exe =
         std::env::current_exe().map_err(|error| format!("snapshot helper path: {error}"))?;
-    let mut child = Command::new(current_exe)
+    // CPU-time backstop for a helper whose parent died before the deadline.
+    let cpu_seconds = timeout.as_secs().saturating_add(2) as libc::rlim_t;
+    let mut command = Command::new(current_exe);
+    command
         .env(SNAPSHOT_HELPER_ENV, "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    // SAFETY: the hook only makes async-signal-safe syscalls.
+    unsafe {
+        command.pre_exec(move || {
+            limit_snapshot_helper(cpu_seconds);
+            Ok(())
+        });
+    }
+    let started = std::time::Instant::now();
+    let mut child = command
         .spawn()
         .map_err(|error| format!("spawn snapshot helper: {error}"))?;
 
-    {
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| String::from("snapshot helper stdin unavailable"))?;
-        write_snapshot_helper_request(&mut stdin, bridge_code, userland_code)?;
+    let header = snapshot_helper_request_header(bridge_code, userland_code);
+    let request = [
+        header.as_slice(),
+        bridge_code.as_bytes(),
+        userland_code.unwrap_or_default(),
+    ];
+    let output = match run_snapshot_helper(&mut child, request, started + timeout) {
+        Ok(output) => output,
+        Err(error) => {
+            // SIGKILL, then reap: the helper never outlives a failed run.
+            if let Err(kill_error) = child.kill() {
+                eprintln!(
+                    "{SNAPSHOT_HELPER_FAILED_ERROR_CODE}: kill snapshot helper: {kill_error}"
+                );
+            }
+            if let Err(wait_error) = child.wait() {
+                eprintln!("{SNAPSHOT_HELPER_FAILED_ERROR_CODE}: reap killed snapshot helper: {wait_error}");
+            }
+            return Err(match error {
+                HelperRunError::Timeout => format!(
+                    "{SNAPSHOT_HELPER_TIMEOUT_ERROR_CODE}: snapshot helper did not finish within {} ms and was killed (module top-level code that never finishes cannot be snapshotted); raise {SNAPSHOT_HELPER_TIMEOUT_ENV} in the sidecar's environment",
+                    timeout.as_millis()
+                ),
+                HelperRunError::Failed(message) => {
+                    format!("{SNAPSHOT_HELPER_FAILED_ERROR_CODE}: {message}")
+                }
+            });
+        }
+    };
+    let elapsed = started.elapsed();
+    if elapsed > timeout / 4 * 3 {
+        eprintln!(
+            "warning: snapshot helper took {} ms, near its {} ms limit; raise {SNAPSHOT_HELPER_TIMEOUT_ENV} in the sidecar's environment",
+            elapsed.as_millis(),
+            timeout.as_millis()
+        );
     }
-
-    let output = child
-        .wait_with_output()
-        .map_err(|error| format!("wait for snapshot helper: {error}"))?;
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!(
-            "snapshot helper exited with status {}: {}",
-            output.status, stderr
+            "{SNAPSHOT_HELPER_FAILED_ERROR_CODE}: snapshot helper exited with status {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
         ));
     }
 
     parse_snapshot_helper_response(&output.stdout, &output.stderr)
 }
 
-fn write_snapshot_helper_request(
-    writer: &mut impl Write,
-    bridge_code: &str,
-    userland_code: Option<&[u8]>,
-) -> Result<(), String> {
-    writer
-        .write_all(SNAPSHOT_HELPER_MAGIC)
-        .map_err(|error| format!("write snapshot helper magic: {error}"))?;
-    write_u64(writer, bridge_code.len() as u64)?;
-    write_u64(
-        writer,
-        userland_code
-            .map(|code| code.len() as u64)
-            .unwrap_or(SNAPSHOT_HELPER_NONE_LEN),
-    )?;
-    writer
-        .write_all(bridge_code.as_bytes())
-        .map_err(|error| format!("write snapshot helper bridge code: {error}"))?;
-    if let Some(userland_code) = userland_code {
-        writer
-            .write_all(userland_code)
-            .map_err(|error| format!("write snapshot helper userland code: {error}"))?;
+#[cfg(not(unix))]
+fn create_snapshot_in_subprocess(
+    _bridge_code: &str,
+    _userland_code: Option<&[u8]>,
+) -> Result<Vec<u8>, String> {
+    Err(format!(
+        "{SNAPSHOT_HELPER_FAILED_ERROR_CODE}: the snapshot helper needs a Unix host"
+    ))
+}
+
+/// Runs in the forked helper before exec: no core dumps, a CPU-time cap, and
+/// (on Linux) SIGKILL when the spawning thread exits.
+#[cfg(unix)]
+fn limit_snapshot_helper(cpu_seconds: libc::rlim_t) {
+    let cpu = libc::rlimit {
+        rlim_cur: cpu_seconds,
+        rlim_max: cpu_seconds,
+    };
+    let core = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: plain syscalls on valid stack values. A failure leaves the
+    // wall-clock deadline in force, which bounds the helper by itself.
+    unsafe {
+        libc::setrlimit(libc::RLIMIT_CPU, &cpu);
+        libc::setrlimit(libc::RLIMIT_CORE, &core);
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL as libc::c_ulong);
+    }
+}
+
+struct HelperOutput {
+    status: std::process::ExitStatus,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+enum HelperRunError {
+    Timeout,
+    Failed(String),
+}
+
+/// Write `request` to the helper and collect its output until it exits or
+/// `deadline` passes. One `poll` loop serves all three pipes, so a helper that
+/// stops reading or never exits cannot block the caller past the deadline.
+#[cfg(unix)]
+fn run_snapshot_helper(
+    child: &mut std::process::Child,
+    request: [&[u8]; 3],
+    deadline: std::time::Instant,
+) -> Result<HelperOutput, HelperRunError> {
+    use std::os::fd::AsRawFd;
+
+    let failed = |what: &str, error: std::io::Error| {
+        HelperRunError::Failed(format!("snapshot helper {what}: {error}"))
+    };
+    let mut stdin = child.stdin.take();
+    let mut stdout = child.stdout.take().ok_or_else(|| {
+        HelperRunError::Failed(String::from("snapshot helper stdout unavailable"))
+    })?;
+    let mut stderr = child.stderr.take().ok_or_else(|| {
+        HelperRunError::Failed(String::from("snapshot helper stderr unavailable"))
+    })?;
+    if let Some(stdin) = &stdin {
+        set_nonblocking(stdin.as_raw_fd()).map_err(|error| failed("stdin", error))?;
+    }
+    let max_stdout = MAX_SNAPSHOT_BLOB_BYTES + SNAPSHOT_HELPER_ERR.len() + 8;
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let (mut out_open, mut err_open) = (true, true);
+    let (mut part, mut offset) = (0usize, 0usize);
+    let mut buffer = vec![0u8; 64 * 1024];
+
+    while out_open || err_open {
+        let now = std::time::Instant::now();
+        if now >= deadline {
+            return Err(HelperRunError::Timeout);
+        }
+        let wait_ms = (deadline - now).as_millis().clamp(1, i32::MAX as u128) as libc::c_int;
+        let fd_or_closed = |open: bool, fd: libc::c_int| if open { fd } else { -1 };
+        let mut fds = [
+            libc::pollfd {
+                fd: stdin.as_ref().map_or(-1, |stdin| stdin.as_raw_fd()),
+                events: libc::POLLOUT,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: fd_or_closed(out_open, stdout.as_raw_fd()),
+                events: libc::POLLIN,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: fd_or_closed(err_open, stderr.as_raw_fd()),
+                events: libc::POLLIN,
+                revents: 0,
+            },
+        ];
+        // SAFETY: `fds` is a valid array of three pollfd structs.
+        if unsafe { libc::poll(fds.as_mut_ptr(), 3, wait_ms) } < 0 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(failed("poll", error));
+        }
+        if fds[0].revents != 0 {
+            let mut close_stdin = false;
+            if let Some(pipe) = stdin.as_mut() {
+                loop {
+                    while part < request.len() && offset == request[part].len() {
+                        part += 1;
+                        offset = 0;
+                    }
+                    if part == request.len() {
+                        // Closing stdin ends the request.
+                        close_stdin = true;
+                        break;
+                    }
+                    match pipe.write(&request[part][offset..]) {
+                        Ok(written) => offset += written,
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                        Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                        // The helper exited early; its status says why.
+                        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {
+                            close_stdin = true;
+                            break;
+                        }
+                        Err(error) => return Err(failed("stdin", error)),
+                    }
+                }
+            }
+            if close_stdin {
+                stdin = None;
+            }
+        }
+        if fds[1].revents != 0 {
+            out_open = drain_helper_pipe(&mut stdout, &mut buffer, &mut out, max_stdout, false)
+                .map_err(|error| failed("stdout", error))?;
+        }
+        if fds[2].revents != 0 {
+            err_open = drain_helper_pipe(
+                &mut stderr,
+                &mut buffer,
+                &mut err,
+                MAX_SNAPSHOT_HELPER_STDERR_BYTES,
+                true,
+            )
+            .map_err(|error| failed("stderr", error))?;
+        }
+    }
+    drop(stdin);
+    // Both output pipes closed: the helper is exiting.
+    let status = child.wait().map_err(|error| failed("wait", error))?;
+    Ok(HelperOutput {
+        status,
+        stdout: out,
+        stderr: err,
+    })
+}
+
+/// Read what one readable pipe holds. Returns whether it is still open. Past
+/// `cap`, truncate (`keep_prefix`) or fail.
+#[cfg(unix)]
+fn drain_helper_pipe(
+    pipe: &mut impl Read,
+    buffer: &mut [u8],
+    sink: &mut Vec<u8>,
+    cap: usize,
+    keep_prefix: bool,
+) -> std::io::Result<bool> {
+    match pipe.read(buffer) {
+        Ok(0) => Ok(false),
+        Ok(read) => {
+            if sink.len() + read > cap {
+                if !keep_prefix {
+                    return Err(std::io::Error::other(format!("output exceeds {cap} bytes")));
+                }
+                sink.extend_from_slice(&buffer[..cap.saturating_sub(sink.len())]);
+            } else {
+                sink.extend_from_slice(&buffer[..read]);
+            }
+            Ok(true)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::Interrupted => Ok(true),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(unix)]
+fn set_nonblocking(fd: libc::c_int) -> std::io::Result<()> {
+    // SAFETY: fcntl on a pipe fd this process owns.
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+        return Err(std::io::Error::last_os_error());
     }
     Ok(())
+}
+
+fn snapshot_helper_request_header(bridge_code: &str, userland_code: Option<&[u8]>) -> Vec<u8> {
+    let mut header = Vec::with_capacity(SNAPSHOT_HELPER_MAGIC.len() + 16);
+    header.extend_from_slice(SNAPSHOT_HELPER_MAGIC);
+    header.extend_from_slice(&(bridge_code.len() as u64).to_le_bytes());
+    let userland_len = userland_code
+        .map(|code| code.len() as u64)
+        .unwrap_or(SNAPSHOT_HELPER_NONE_LEN);
+    header.extend_from_slice(&userland_len.to_le_bytes());
+    header
 }
 
 fn parse_snapshot_helper_response(stdout: &[u8], stderr: &[u8]) -> Result<Vec<u8>, String> {
@@ -714,10 +965,6 @@ fn write_snapshot_helper_error(message: String) -> std::io::Result<()> {
     write_u64_io(&mut stdout, message.len() as u64)?;
     stdout.write_all(message.as_bytes())?;
     stdout.flush()
-}
-
-fn write_u64(writer: &mut impl Write, value: u64) -> Result<(), String> {
-    write_u64_io(writer, value).map_err(|error| format!("write snapshot helper length: {error}"))
 }
 
 fn write_u64_io(writer: &mut impl Write, value: u64) -> std::io::Result<()> {
