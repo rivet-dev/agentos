@@ -971,6 +971,25 @@ where
         })
     }
 
+    /// The V8 runtime reports a host-requested termination as this stderr
+    /// line. For a process the sidecar signalled, it is not guest output.
+    fn is_signal_termination_stderr(
+        &self,
+        vm_id: &str,
+        process_id: &str,
+        event: &ActiveExecutionEvent,
+    ) -> bool {
+        matches!(
+            event,
+            ActiveExecutionEvent::Stderr(chunk)
+                if chunk.as_slice() == super::child_process::SYNTHETIC_V8_TERMINATION_STDERR
+        ) && self.vms.get(vm_id).is_some_and(|vm| {
+            vm.active_processes
+                .get(process_id)
+                .is_some_and(|process| process.exit_signal.is_some())
+        })
+    }
+
     /// Answers the cursor-position queries in a terminal's output and returns
     /// the event with the output clients receive, which leaves them out, or
     /// `None` when nothing is left. A terminal's stdout and stderr are one
@@ -1052,6 +1071,10 @@ where
         };
         if !active {
             log_stale_process_event(&self.bridge, vm_id, process_id, "public event dispatch");
+            return Ok(None);
+        }
+        if self.is_signal_termination_stderr(vm_id, process_id, &event) {
+            // A killed process writes nothing; its exit event carries the signal.
             return Ok(None);
         }
         let ownership = OwnershipScope::vm(&connection_id, &session_id, vm_id);
@@ -1599,6 +1622,10 @@ where
         };
         if !active {
             log_stale_process_event(&self.bridge, vm_id, process_id, "execution event dispatch");
+            return Ok(None);
+        }
+        if self.is_signal_termination_stderr(vm_id, process_id, &event) {
+            // A killed process writes nothing; its exit event carries the signal.
             return Ok(None);
         }
         let ownership = OwnershipScope::vm(&connection_id, &session_id, vm_id);

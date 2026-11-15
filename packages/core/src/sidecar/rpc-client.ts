@@ -2257,12 +2257,20 @@ export class NativeSidecarKernelProxy {
 		entry: TrackedProcessEntry,
 		signal: number,
 	): Promise<void> {
-		await this.client.killProcess(
-			this.session,
-			this.vm,
-			entry.processId,
-			toSidecarSignalName(signal),
-		);
+		try {
+			await this.client.killProcess(
+				this.session,
+				this.vm,
+				entry.processId,
+				toSidecarSignalName(signal),
+			);
+		} catch (error) {
+			// The sidecar already finished this process, so the signal has
+			// nothing to stop; its exit event is on the way, as kill() on an
+			// exiting process succeeds on Linux.
+			if (isNoSuchProcessError(error)) return;
+			throw error;
+		}
 	}
 
 	private flushPendingStdin(entry: TrackedProcessEntry): Promise<void> {
@@ -2292,10 +2300,14 @@ export class NativeSidecarKernelProxy {
 				}
 			})
 			.catch((error) => {
+				// No such process: the sidecar already finished it and its exit
+				// event is on the way, so the writer gets EPIPE like a write to
+				// a dead reader's pipe, and the wait still reports the exit.
 				if (
-					entry.exitCode !== null &&
-					(isNoSuchProcessError(error) || isUnknownVmError(error))
+					isNoSuchProcessError(error) ||
+					(entry.exitCode !== null && isUnknownVmError(error))
 				) {
+					entry.pendingStdin.length = 0;
 					throw stdinHasNoReader(entry.pid);
 				}
 				throw guestStdinError(error) ?? error;
@@ -2328,8 +2340,8 @@ export class NativeSidecarKernelProxy {
 			await this.client.closeStdin(this.session, this.vm, entry.processId);
 		} catch (error) {
 			if (
-				entry.exitCode !== null &&
-				(isNoSuchProcessError(error) || isUnknownVmError(error))
+				isNoSuchProcessError(error) ||
+				(entry.exitCode !== null && isUnknownVmError(error))
 			) {
 				return;
 			}
@@ -2346,7 +2358,13 @@ export class NativeSidecarKernelProxy {
 		if (isRefusedStdinWrite(error)) return;
 		if (entry.exitCode !== null) {
 			// An I/O failure after exit must never rewrite the guest's real status.
-			if (!isNoSuchProcessError(error) && !isUnknownVmError(error)) {
+			// A request the caller's own disposal cancelled after the exit is not
+			// a failure either: the process it targeted is already gone.
+			if (
+				!isNoSuchProcessError(error) &&
+				!isUnknownVmError(error) &&
+				!(this.disposed && isCancelledRequestError(error))
+			) {
 				this.emitBackgroundProcessError(entry, error);
 			}
 			return;
@@ -3009,6 +3027,14 @@ function isNoSuchProcessError(error: unknown): boolean {
 		error.message.includes("ESRCH") ||
 		message.includes("no such process") ||
 		message.includes("has no active process")
+	);
+}
+
+function isCancelledRequestError(error: unknown): boolean {
+	return (
+		error instanceof Error &&
+		(error.message.includes("ERR_AGENTOS_REQUEST_CANCELLED") ||
+			error.message.includes("ERR_AGENTOS_COORDINATOR_CANCELLED"))
 	);
 }
 

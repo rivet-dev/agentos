@@ -2108,11 +2108,22 @@ fn handle_late_session_message(
             payload,
         }) => {
             // Timer and socket-readiness events are wake hints, not data.
-            // `stdin_end` is likewise an idempotent teardown notification. All
-            // three can race execution completion by design and carry no data
-            // to recover, so classify them as expected stale control events
-            // instead of writing a false error into the guest's stderr.
-            if event_type == "timer" || event_type == "net_socket" || event_type == "stdin_end" {
+            // `stdin_end` is likewise an idempotent teardown notification. They
+            // race execution completion by design and carry no data to
+            // recover, so classify them as expected stale control events
+            // instead of writing a false error into the guest's stderr. Stdin
+            // bytes that reach a finished execution are discarded, as Linux
+            // discards a pipe's unread bytes when its reader exits.
+            if matches!(event_type.as_str(), "timer" | "net_socket" | "stdin_end") {
+                return;
+            }
+            if event_type == "stdin" {
+                tracing::debug!(
+                    code = LATE_STREAM_EVENT_ERROR_CODE,
+                    session_id,
+                    payload_len = payload.len(),
+                    "dropping stdin after execution completed"
+                );
                 return;
             }
             send_late_message_warning(
@@ -2126,12 +2137,12 @@ fn handle_late_session_message(
                 ),
             )
         }
-        SessionMessage::TerminateExecution => send_late_message_warning(
-            event_tx,
+        // Termination is idempotent; a kill that races the execution's own
+        // completion has nothing left to stop, like kill() on an exited process.
+        SessionMessage::TerminateExecution => tracing::debug!(
+            code = LATE_TERMINATE_EXECUTION_ERROR_CODE,
             session_id,
-            output_generation,
-            LATE_TERMINATE_EXECUTION_ERROR_CODE,
-            String::from("dropping TerminateExecution after execution completed"),
+            "dropping TerminateExecution after execution completed"
         ),
         SessionMessage::InjectGlobals { .. } | SessionMessage::Execute { .. } => {}
     }
@@ -4644,41 +4655,26 @@ mod tests {
     }
 
     #[test]
-    fn late_terminate_execution_is_logged_instead_of_silently_dropped() {
-        let (mut mgr, rx) = test_manager_with_events(1);
-        mgr.create_session("late-terminate".into(), None, None, None)
-            .expect("create session");
-
-        mgr.send_to_session("late-terminate", SessionMessage::TerminateExecution)
-            .expect("send late terminate");
-
-        expect_late_message_warning(
-            &rx,
-            "late-terminate",
-            LATE_TERMINATE_EXECUTION_ERROR_CODE,
-            "TerminateExecution",
-        );
-
-        mgr.destroy_session("late-terminate")
-            .expect("destroy session");
-    }
-
-    #[test]
-    fn late_stdin_end_is_an_expected_stale_control_event() {
+    fn late_stdin_and_terminate_are_expected_stale_control_events() {
         let (event_tx, event_rx) = crossbeam_channel::unbounded();
-        handle_late_session_message(
-            &RuntimeEventSender::from(event_tx),
-            "completed-session",
-            Some(7),
+        let event_tx = RuntimeEventSender::from(event_tx);
+        for message in [
             SessionMessage::StreamEvent(StreamEvent {
                 event_type: String::from("stdin_end"),
                 payload: Vec::new(),
             }),
-        );
+            SessionMessage::StreamEvent(StreamEvent {
+                event_type: String::from("stdin"),
+                payload: vec![0x61],
+            }),
+            SessionMessage::TerminateExecution,
+        ] {
+            handle_late_session_message(&event_tx, "completed-session", Some(7), message);
+        }
 
         assert!(
             event_rx.try_recv().is_err(),
-            "an idempotent stdin EOF racing process exit must not become guest stderr"
+            "stdin and a kill racing process exit must not become guest stderr"
         );
     }
 

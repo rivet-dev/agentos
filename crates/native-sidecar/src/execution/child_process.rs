@@ -1,6 +1,6 @@
 use super::*;
 
-const SYNTHETIC_V8_TERMINATION_STDERR: &[u8] = b"Error: Execution terminated\n";
+pub(super) const SYNTHETIC_V8_TERMINATION_STDERR: &[u8] = b"Error: Execution terminated\n";
 
 type OwnedChildExecutionStart =
     Pin<Box<dyn Future<Output = Result<ActiveExecution, SidecarError>> + 'static>>;
