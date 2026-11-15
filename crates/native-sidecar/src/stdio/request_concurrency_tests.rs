@@ -546,20 +546,7 @@ async fn start_protocol_loop_with_vm_and_limit(
         panic!("expected session-opened response");
     };
     let session_id = opened.session_id;
-    let vm_config: agentos_vm_config::CreateVmConfig =
-        serde_json::from_value(serde_json::json!({ "permissions": { "fs": "allow" } }))
-            .expect("build filesystem-enabled VM config");
-    harness.send_request(
-        request_frame(
-            3,
-            session_ownership(&connection_id, &session_id),
-            RequestPayload::CreateVmRequest(wire::CreateVmRequest {
-                runtime: wire::GuestRuntimeKind::JavaScript,
-                config: serde_json::to_string(&vm_config).expect("serialize test VM config"),
-            }),
-        ),
-        1,
-    );
+    harness.send_request(create_vm_request(3, &connection_id, &session_id), 1);
     let created = harness.response().await;
     let ResponsePayload::VmCreatedResponse(created) = created.payload else {
         panic!("expected VM-created response");
@@ -570,6 +557,20 @@ async fn start_protocol_loop_with_vm_and_limit(
         connection_id,
         session_id,
         created.vm_id,
+    )
+}
+
+fn create_vm_request(request_id: RequestId, connection_id: &str, session_id: &str) -> RequestFrame {
+    let vm_config: agentos_vm_config::CreateVmConfig =
+        serde_json::from_value(serde_json::json!({ "permissions": { "fs": "allow" } }))
+            .expect("build filesystem-enabled VM config");
+    request_frame(
+        request_id,
+        session_ownership(connection_id, session_id),
+        RequestPayload::CreateVmRequest(wire::CreateVmRequest {
+            runtime: wire::GuestRuntimeKind::JavaScript,
+            config: serde_json::to_string(&vm_config).expect("serialize test VM config"),
+        }),
     )
 }
 
@@ -2619,6 +2620,65 @@ async fn request_concurrency_real_loop_serves_stdin_while_ordinary_work_fills_it
                 served.insert(harness.response().await.request_id);
             }
             assert_eq!(served, BTreeSet::from([90, 91, 92, 93]));
+            finish_cleanly(&harness, engine_task).await;
+        })
+        .await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn request_concurrency_real_loop_answers_another_vms_call_during_a_create_burst() {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let state = Arc::new(GatedExtensionState::default());
+            let (harness, engine_task, connection_id, session_id, vm_id) =
+                start_protocol_loop_with_vm_and_limit(Arc::clone(&state), 2).await;
+            const BURST: RequestId = 12;
+            for request_id in 100..100 + BURST {
+                harness.send_request(
+                    create_vm_request(request_id, &connection_id, &session_id),
+                    1,
+                );
+            }
+            harness.send_request(
+                guest_filesystem_request(
+                    200,
+                    &connection_id,
+                    &session_id,
+                    &vm_id,
+                    wire::GuestFilesystemOperation::Exists,
+                    "/",
+                    None,
+                ),
+                1,
+            );
+
+            let mut creates_before = 0;
+            let mut created = Vec::new();
+            let mut call = None;
+            while created.len() < BURST as usize || call.is_none() {
+                let response = harness.response().await;
+                if response.request_id == 200 {
+                    call = Some(response);
+                    continue;
+                }
+                let ResponsePayload::VmCreatedResponse(vm) = response.payload else {
+                    panic!("a burst create must succeed: {:?}", response.payload);
+                };
+                if call.is_none() {
+                    creates_before += 1;
+                }
+                created.push(vm.vm_id);
+            }
+            let call = call.expect("the other VM's call is answered");
+            assert!(
+                !matches!(call.payload, ResponsePayload::RejectedResponse(_)),
+                "the other VM's call must succeed during the burst: {:?}",
+                call.payload
+            );
+            assert!(
+                creates_before <= 2,
+                "another VM's call waited behind {creates_before} of {BURST} VM creates"
+            );
             finish_cleanly(&harness, engine_task).await;
         })
         .await;

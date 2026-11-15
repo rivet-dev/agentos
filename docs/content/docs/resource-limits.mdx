@@ -99,8 +99,11 @@ The sidecar runs at most 128 requests at once from one client. Priority
 requests have a separate limit of 128: VM dispose, process kill and signal,
 execution cancel and delete, stdin writes and closes, and PTY resizes. A flood
 of other work, such as VM creation, never delays them, so a busy sidecar can
-always dispose a VM or drive a running process. These limits are not
-configurable.
+always dispose a VM or drive a running process. VM creates use at most 64 of
+the 128 slots and wait in their own queue, so a burst of creates cannot delay
+other VMs' calls. A create above that cap waits in its queue, where the queue
+limits below apply (`ERR_AGENTOS_IN_FLIGHT_CREATE_REQUEST_LIMIT` names the cap
+internally and is not returned to callers). These limits are not configurable.
 
 The sidecar queues requests above a limit, in arrival order, with a separate
 queue for priority requests. Up to 256 requests (64 MiB) wait in each queue,

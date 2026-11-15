@@ -3409,10 +3409,11 @@ enum RequestOrigin {
 }
 
 /// Take queued requests that can be admitted now, oldest first: every
-/// admissible priority request, then at most one ordinary request. Admitting
-/// ordinary work can run a synchronous prepare (a VM create takes
-/// milliseconds), so one per router turn lets priority ingress in between.
-/// Returns whether another ordinary request could be admitted now. Expired
+/// admissible priority request, then at most one ordinary request and one VM
+/// create. Admitting ordinary work can run a synchronous prepare (a VM create
+/// takes milliseconds), so one per router turn lets priority ingress in
+/// between. Returns whether another ordinary or create request could be
+/// admitted now. Expired
 /// requests get their typed timeout rejection. Once the protocol drains,
 /// admission is closed, so routing each request again sends its typed
 /// shutdown rejection.
@@ -3440,7 +3441,7 @@ fn drain_request_queue(
     }
     let rejection_room = || write_tx.rejection_budget.has_room(REJECTION_ROOM_BYTES);
     if draining {
-        for lane in [AdmissionLane::Priority, AdmissionLane::Ordinary] {
+        for lane in AdmissionLane::DRAIN_ORDER {
             while rejection_room() {
                 let Some(entry) = request_queue.pop_front(lane, |_| true) else {
                     break;
@@ -3481,7 +3482,7 @@ fn drain_request_queue(
     let admissible = |request_queue: &RequestQueue, lane: AdmissionLane| {
         let terminal_budget = match lane {
             AdmissionLane::Priority => &write_tx.priority_terminal_budget,
-            AdmissionLane::Ordinary => &write_tx.terminal_budget,
+            AdmissionLane::Ordinary | AdmissionLane::Create => &write_tx.terminal_budget,
         };
         request_queue
             .front_bytes(lane)
@@ -3489,10 +3490,12 @@ fn drain_request_queue(
             && terminal_budget.has_room(terminal_fallback_bytes)
             && rejection_room()
     };
-    for lane in [AdmissionLane::Priority, AdmissionLane::Ordinary] {
+    for lane in AdmissionLane::DRAIN_ORDER {
+        // Ordinary and create admission each can run a synchronous prepare,
+        // so each takes one request per turn; they alternate under load.
         let mut budget = match lane {
             AdmissionLane::Priority => usize::MAX,
-            AdmissionLane::Ordinary => 1,
+            AdmissionLane::Ordinary | AdmissionLane::Create => 1,
         };
         while budget > 0 && admissible(request_queue, lane) {
             budget -= 1;
@@ -3527,7 +3530,8 @@ fn drain_request_queue(
             }
         }
     }
-    Ok(admissible(request_queue, AdmissionLane::Ordinary))
+    Ok(admissible(request_queue, AdmissionLane::Ordinary)
+        || admissible(request_queue, AdmissionLane::Create))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4718,6 +4722,19 @@ fn publish_request_admission_rejection(
                 limit,
             } => (
                 Some(String::from("in-flight priority requests")),
+                Some(u64::try_from(*limit).unwrap_or(u64::MAX)),
+                Some(u64::try_from(*current).unwrap_or(u64::MAX)),
+                Some(u64::try_from(*requested).unwrap_or(u64::MAX)),
+                Some(String::from("requests")),
+                Some(true),
+                Some(String::from("EAGAIN")),
+            ),
+            RequestAdmissionError::CreateCountLimit {
+                current,
+                requested,
+                limit,
+            } => (
+                Some(String::from("in-flight VM create requests")),
                 Some(u64::try_from(*limit).unwrap_or(u64::MAX)),
                 Some(u64::try_from(*current).unwrap_or(u64::MAX)),
                 Some(u64::try_from(*requested).unwrap_or(u64::MAX)),

@@ -5,8 +5,9 @@
 //! rejected. Clients send every request directly and never queue: one
 //! implementation owns the lanes, the bounds, and the deadline.
 //!
-//! Each lane has its own queue, so a flood of ordinary work such as VM
-//! creation never delays a priority request (teardown, stdin, PTY resize).
+//! Each lane has its own queue, so a flood of ordinary work never delays a
+//! priority request (teardown, stdin, PTY resize), and a burst of VM creates
+//! never queues ahead of other VMs' ordinary calls.
 //! A full queue or an expired deadline rejects the request with a typed,
 //! retryable error that names the limit to raise.
 
@@ -42,6 +43,7 @@ pub(super) struct RequestQueue {
     max_bytes: usize,
     deadline: Duration,
     ordinary: LaneQueue,
+    create: LaneQueue,
     priority: LaneQueue,
 }
 
@@ -52,6 +54,7 @@ impl RequestQueue {
             max_bytes: protocol.request_queue_bytes,
             deadline: Duration::from_millis(protocol.request_queue_deadline_ms),
             ordinary: LaneQueue::default(),
+            create: LaneQueue::default(),
             priority: LaneQueue::default(),
         }
     }
@@ -59,6 +62,7 @@ impl RequestQueue {
     fn lane(&self, lane: AdmissionLane) -> &LaneQueue {
         match lane {
             AdmissionLane::Ordinary => &self.ordinary,
+            AdmissionLane::Create => &self.create,
             AdmissionLane::Priority => &self.priority,
         }
     }
@@ -66,12 +70,15 @@ impl RequestQueue {
     fn lane_mut(&mut self, lane: AdmissionLane) -> &mut LaneQueue {
         match lane {
             AdmissionLane::Ordinary => &mut self.ordinary,
+            AdmissionLane::Create => &mut self.create,
             AdmissionLane::Priority => &mut self.priority,
         }
     }
 
     pub(super) fn is_empty(&self) -> bool {
-        self.ordinary.entries.is_empty() && self.priority.entries.is_empty()
+        self.ordinary.entries.is_empty()
+            && self.create.entries.is_empty()
+            && self.priority.entries.is_empty()
     }
 
     /// Whether earlier requests in `lane` still wait. A new request must then
@@ -202,14 +209,12 @@ impl RequestQueue {
         now: Instant,
     ) -> Option<(RequestFrame, wire::RejectedResponse)> {
         let deadline_ms = u64::try_from(self.deadline.as_millis()).unwrap_or(u64::MAX);
-        let lane = [AdmissionLane::Priority, AdmissionLane::Ordinary]
-            .into_iter()
-            .find(|lane| {
-                self.lane(*lane)
-                    .entries
-                    .front()
-                    .is_some_and(|entry| entry.deadline <= now)
-            })?;
+        let lane = AdmissionLane::DRAIN_ORDER.into_iter().find(|lane| {
+            self.lane(*lane)
+                .entries
+                .front()
+                .is_some_and(|entry| entry.deadline <= now)
+        })?;
         let queue = self.lane_mut(lane);
         let entry = queue.entries.pop_front()?;
         queue.bytes = queue.bytes.saturating_sub(entry.bytes);
@@ -234,7 +239,7 @@ impl RequestQueue {
     /// When the oldest queued request expires. Lanes are FIFO with one
     /// deadline, so only lane heads matter.
     pub(super) fn next_deadline(&self) -> Option<Instant> {
-        [&self.priority, &self.ordinary]
+        [&self.priority, &self.ordinary, &self.create]
             .into_iter()
             .filter_map(|queue| queue.entries.front().map(|entry| entry.deadline))
             .min()

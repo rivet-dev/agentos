@@ -43,9 +43,14 @@ impl From<&RuntimeProtocolConfig> for RequestOperationLimits {
 /// ordinary work such as VM creation can never delay or reject the request
 /// that frees capacity or drives an already-running process. Their bytes do
 /// not consume the ordinary byte budget.
+///
+/// VM creates have their own queue and use at most half of the ordinary count
+/// budget. A create burst then cannot fill the ordinary lane, and other VMs'
+/// calls (execute, filesystem) keep the other half.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AdmissionLane {
     Ordinary,
+    Create,
     Priority,
 }
 
@@ -63,16 +68,26 @@ impl AdmissionLane {
             | RequestPayload::WriteExecutionStdinRequest(_)
             | RequestPayload::CloseExecutionStdinRequest(_)
             | RequestPayload::ResizeExecutionPtyRequest(_) => Self::Priority,
+            RequestPayload::CreateVmRequest(_) => Self::Create,
             _ => Self::Ordinary,
         }
     }
 
+    /// Order in which the router drains queued requests each turn.
+    pub(crate) const DRAIN_ORDER: [Self; 3] = [Self::Priority, Self::Ordinary, Self::Create];
+
     pub(crate) fn name(self) -> &'static str {
         match self {
             Self::Ordinary => "ordinary",
+            Self::Create => "create",
             Self::Priority => "priority",
         }
     }
+}
+
+/// Count limit for in-flight VM creates: half the ordinary budget.
+fn create_request_limit(max_requests: usize) -> usize {
+    (max_requests / 2).max(1)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -334,9 +349,24 @@ struct RegistryState {
 impl RegistryState {
     fn lane_bytes_mut(&mut self, lane: AdmissionLane) -> &mut usize {
         match lane {
-            AdmissionLane::Ordinary => &mut self.in_flight_request_bytes,
+            AdmissionLane::Ordinary | AdmissionLane::Create => &mut self.in_flight_request_bytes,
             AdmissionLane::Priority => &mut self.in_flight_priority_bytes,
         }
+    }
+
+    /// In-flight ordinary-class requests in `lane`. Creates also count toward
+    /// the ordinary lane, so `maxInFlightRequests` stays the total bound.
+    fn lane_count(&self, lane: AdmissionLane) -> usize {
+        self.operations
+            .values()
+            .filter(|record| {
+                record.class == OperationClass::Ordinary
+                    && match lane {
+                        AdmissionLane::Ordinary => record.lane != AdmissionLane::Priority,
+                        lane => record.lane == lane,
+                    }
+            })
+            .count()
     }
 }
 
@@ -482,19 +512,22 @@ impl OperationTable {
     /// request leaves the queue only when its admission can succeed.
     pub(crate) fn has_lane_capacity(&self, lane: AdmissionLane, request_bytes: usize) -> bool {
         let state = self.lock_state();
-        let lane_count = state
-            .operations
-            .values()
-            .filter(|record| record.class == OperationClass::Ordinary && record.lane == lane)
-            .count();
+        let limits = &self.inner.limits;
+        let ordinary_room = || {
+            state.lane_count(AdmissionLane::Ordinary) < limits.max_requests
+                && state
+                    .in_flight_request_bytes
+                    .checked_add(request_bytes)
+                    .is_some_and(|total| total <= limits.max_request_bytes)
+        };
         match lane {
-            AdmissionLane::Priority => lane_count < self.inner.limits.max_priority_requests,
-            AdmissionLane::Ordinary => {
-                lane_count < self.inner.limits.max_requests
-                    && state
-                        .in_flight_request_bytes
-                        .checked_add(request_bytes)
-                        .is_some_and(|total| total <= self.inner.limits.max_request_bytes)
+            AdmissionLane::Priority => {
+                state.lane_count(AdmissionLane::Priority) < limits.max_priority_requests
+            }
+            AdmissionLane::Ordinary => ordinary_room(),
+            AdmissionLane::Create => {
+                state.lane_count(AdmissionLane::Create) < create_request_limit(limits.max_requests)
+                    && ordinary_room()
             }
         }
     }
@@ -560,12 +593,8 @@ impl OperationTable {
         if state.operations.contains_key(key) {
             return Err(RequestAdmissionError::DuplicateRequest { key: key.clone() });
         }
-        let lane_count = state
-            .operations
-            .values()
-            .filter(|record| record.class == OperationClass::Ordinary && record.lane == lane)
-            .count();
         if lane == AdmissionLane::Priority {
+            let lane_count = state.lane_count(AdmissionLane::Priority);
             if lane_count >= self.inner.limits.max_priority_requests {
                 return Err(RequestAdmissionError::PriorityCountLimit {
                     current: lane_count,
@@ -575,7 +604,18 @@ impl OperationTable {
             }
             return Ok(());
         }
-        let ordinary_count = lane_count;
+        if lane == AdmissionLane::Create {
+            let create_count = state.lane_count(AdmissionLane::Create);
+            let limit = create_request_limit(self.inner.limits.max_requests);
+            if create_count >= limit {
+                return Err(RequestAdmissionError::CreateCountLimit {
+                    current: create_count,
+                    requested: 1,
+                    limit,
+                });
+            }
+        }
+        let ordinary_count = state.lane_count(AdmissionLane::Ordinary);
         if ordinary_count >= self.inner.limits.max_requests {
             return Err(RequestAdmissionError::CountLimit {
                 current: ordinary_count,
@@ -1007,6 +1047,12 @@ pub(crate) enum RequestAdmissionError {
         requested: usize,
         limit: usize,
     },
+    /// In-flight VM creates reached their share of the ordinary count budget.
+    CreateCountLimit {
+        current: usize,
+        requested: usize,
+        limit: usize,
+    },
     ByteLimit {
         current: usize,
         requested: usize,
@@ -1038,7 +1084,9 @@ impl RequestAdmissionError {
     /// request larger than the whole byte budget can never be admitted.
     pub(crate) fn waits_for_capacity(&self) -> bool {
         match self {
-            Self::CountLimit { .. } | Self::PriorityCountLimit { .. } => true,
+            Self::CountLimit { .. }
+            | Self::PriorityCountLimit { .. }
+            | Self::CreateCountLimit { .. } => true,
             Self::ByteLimit {
                 requested, limit, ..
             } => requested <= limit,
@@ -1050,6 +1098,7 @@ impl RequestAdmissionError {
         match self {
             Self::CountLimit { .. } => "ERR_AGENTOS_IN_FLIGHT_REQUEST_LIMIT",
             Self::PriorityCountLimit { .. } => "ERR_AGENTOS_IN_FLIGHT_PRIORITY_REQUEST_LIMIT",
+            Self::CreateCountLimit { .. } => "ERR_AGENTOS_IN_FLIGHT_CREATE_REQUEST_LIMIT",
             Self::ByteLimit { .. } => "ERR_AGENTOS_IN_FLIGHT_REQUEST_BYTE_LIMIT",
             Self::DuplicateRequest { .. } => "ERR_AGENTOS_DUPLICATE_REQUEST_ID",
             Self::RegistryClosed { .. }
@@ -1061,7 +1110,9 @@ impl RequestAdmissionError {
 
     pub(crate) fn configuration_path(&self) -> Option<&'static str> {
         match self {
-            Self::CountLimit { .. } => Some(IN_FLIGHT_REQUEST_COUNT_PATH),
+            Self::CountLimit { .. } | Self::CreateCountLimit { .. } => {
+                Some(IN_FLIGHT_REQUEST_COUNT_PATH)
+            }
             Self::PriorityCountLimit { .. } => Some(IN_FLIGHT_PRIORITY_REQUEST_COUNT_PATH),
             Self::ByteLimit { .. } => Some(IN_FLIGHT_REQUEST_BYTES_PATH),
             _ => None,
@@ -1088,6 +1139,15 @@ impl fmt::Display for RequestAdmissionError {
             } => write!(
                 formatter,
                 "{}: in-flight priority requests used {current}, requested {requested}, limit {limit}; raise {IN_FLIGHT_PRIORITY_REQUEST_COUNT_PATH}",
+                self.code()
+            ),
+            Self::CreateCountLimit {
+                current,
+                requested,
+                limit,
+            } => write!(
+                formatter,
+                "{}: in-flight VM creates used {current}, requested {requested}, limit {limit} (half of {IN_FLIGHT_REQUEST_COUNT_PATH}); raise {IN_FLIGHT_REQUEST_COUNT_PATH}",
                 self.code()
             ),
             Self::ByteLimit {
