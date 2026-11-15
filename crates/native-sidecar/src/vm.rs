@@ -269,6 +269,9 @@ pub(crate) struct DisposeVmPlan<B> {
     bridge: crate::state::SharedBridge<B>,
     sidecar_requests: crate::state::SharedSidecarRequestClient,
     process_event_broker: ProcessEventBroker,
+    /// Process-scoped runtime. Host-path cleanup runs on it after the VM's
+    /// own admission is closed.
+    process_runtime_context: Option<agentos_runtime::RuntimeContext>,
 }
 
 /// Detached VM teardown payload.
@@ -526,6 +529,7 @@ where
             bridge: self.bridge.clone(),
             sidecar_requests: self.sidecar_requests.clone(),
             process_event_broker: self.process_event_broker.clone(),
+            process_runtime_context: self.runtime_context.clone(),
         })
     }
 
@@ -1612,40 +1616,126 @@ where
 /// Reservation charged to the VM ledger for one control-plane blocking job.
 const CONTROL_PLANE_BLOCKING_JOB_RESERVATION_BYTES: usize = 64 * 1024;
 
+/// Which control-plane admission a blocking job uses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ControlPlaneJob {
+    /// VM create bootstrap. Creates pass a create gate before they wait for
+    /// a worker, so a create flood cannot queue ahead of teardown.
+    Create,
+    /// VM teardown. It waits only for a worker, behind at most one gate's
+    /// worth of creates.
+    Dispose,
+}
+
+/// Process-wide control-plane admission over the fixed blocking workers.
+struct ControlPlanePermits {
+    /// Creates that may hold or wait for a worker at once.
+    create_gate: tokio::sync::Semaphore,
+    /// Blocking workers that control-plane jobs may occupy at once.
+    workers: tokio::sync::Semaphore,
+}
+
+/// A job's result handoff. The job keeps its result when the caller is still
+/// waiting, or cleans it up itself when the caller gave up at the deadline.
+enum ControlPlaneHandoff<T> {
+    Waiting,
+    Done(T),
+    Abandoned,
+}
+
 /// Run synchronous VM lifecycle work (create bootstrap, dispose cleanup) on
 /// the process's fixed blocking executor instead of the protocol router.
 ///
 /// At most half of the blocking workers run control-plane jobs at once.
 /// A create flood then waits here, outside the shared queue, instead of
-/// queueing ahead of guest filesystem work that uses the same workers.
+/// queueing ahead of guest filesystem work that uses the same workers. Only
+/// that many creates wait for a worker at a time, so a dispose waits behind
+/// at most that many creates however large the flood is.
+///
+/// The wait and the job together are bounded by
+/// `runtime.blocking.jobTimeoutMs`. A job that is still running at the
+/// deadline keeps its worker permit until it returns, then passes its result
+/// to `abandoned` because no caller will receive it.
 async fn run_control_plane_blocking<T, F>(
     runtime: &agentos_runtime::RuntimeContext,
+    kind: ControlPlaneJob,
     operation: &'static str,
     job: F,
+    abandoned: fn(T),
 ) -> Result<T, SidecarError>
 where
     T: Send + 'static,
     F: FnOnce() -> T + Send + 'static,
 {
-    static CONTROL_PLANE_PERMITS: std::sync::OnceLock<tokio::sync::Semaphore> =
+    static CONTROL_PLANE_PERMITS: std::sync::OnceLock<ControlPlanePermits> =
         std::sync::OnceLock::new();
     let permits = CONTROL_PLANE_PERMITS.get_or_init(|| {
-        tokio::sync::Semaphore::new((runtime.blocking().worker_count() / 2).max(1))
+        let share = (runtime.blocking().worker_count() / 2).max(1);
+        ControlPlanePermits {
+            create_gate: tokio::sync::Semaphore::new(share),
+            workers: tokio::sync::Semaphore::new(share),
+        }
     });
-    let _permit = permits.acquire().await.map_err(|error| {
+    let timeout = runtime.blocking_job_timeout();
+    let handoff = Arc::new(Mutex::new(ControlPlaneHandoff::Waiting));
+    let job_handoff = Arc::clone(&handoff);
+    let admission_error = |error: tokio::sync::AcquireError| {
         SidecarError::InvalidState(format!(
             "ERR_AGENTOS_CONTROL_PLANE_ADMISSION: {operation} could not wait for a blocking worker: {error}"
         ))
-    })?;
-    runtime
-        .blocking()
-        .run(CONTROL_PLANE_BLOCKING_JOB_RESERVATION_BYTES, job)
-        .await
-        .map_err(|error| {
-            SidecarError::Execution(format!(
-                "ERR_AGENTOS_CONTROL_PLANE_BLOCKING: {operation} could not run on the blocking executor: {error}"
-            ))
-        })
+    };
+    let admitted = tokio::time::timeout(timeout, async {
+        let create_permit = match kind {
+            ControlPlaneJob::Create => {
+                Some(permits.create_gate.acquire().await.map_err(admission_error)?)
+            }
+            ControlPlaneJob::Dispose => None,
+        };
+        let worker_permit = permits.workers.acquire().await.map_err(admission_error)?;
+        // The create gate covers only the wait for a worker.
+        drop(create_permit);
+        runtime
+            .blocking()
+            .run(CONTROL_PLANE_BLOCKING_JOB_RESERVATION_BYTES, move || {
+                // The permit tracks the worker, not the caller, so a job that
+                // outlives its deadline still counts against the share.
+                let _worker_permit = worker_permit;
+                let result = job();
+                let mut handoff = job_handoff
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if matches!(*handoff, ControlPlaneHandoff::Abandoned) {
+                    drop(handoff);
+                    abandoned(result);
+                } else {
+                    *handoff = ControlPlaneHandoff::Done(result);
+                }
+            })
+            .await
+            .map_err(|error| {
+                SidecarError::Execution(format!(
+                    "ERR_AGENTOS_CONTROL_PLANE_BLOCKING: {operation} could not run on the blocking executor: {error}"
+                ))
+            })
+    })
+    .await;
+    let mut handoff = handoff
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    match std::mem::replace(&mut *handoff, ControlPlaneHandoff::Abandoned) {
+        // The job can finish in the same instant the deadline fires.
+        ControlPlaneHandoff::Done(result) => Ok(result),
+        ControlPlaneHandoff::Waiting | ControlPlaneHandoff::Abandoned => match admitted {
+            Ok(Ok(())) => Err(SidecarError::InvalidState(format!(
+                "ERR_AGENTOS_CONTROL_PLANE_BLOCKING: {operation} finished without a result"
+            ))),
+            Ok(Err(error)) => Err(error),
+            Err(_) => Err(SidecarError::Execution(format!(
+                "ERR_AGENTOS_CONTROL_PLANE_TIMEOUT: {operation} did not finish within {}ms; raise runtime.blocking.jobTimeoutMs",
+                timeout.as_millis()
+            ))),
+        },
+    }
 }
 
 /// Owned, `Send` input for the synchronous part of VM creation.
@@ -1990,9 +2080,23 @@ where
                 command_guest_paths,
                 shadow_sync_inventory,
                 unix_socket_host_dir,
-            } = run_control_plane_blocking(&vm_runtime_context, "CreateVm", move || {
-                build_vm_kernel(build)
-            })
+            } = run_control_plane_blocking(
+                &vm_runtime_context,
+                ControlPlaneJob::Create,
+                "CreateVm",
+                move || build_vm_kernel(build),
+                // The create already failed at its deadline; drop the late
+                // kernel and remove the host directories it made.
+                |built| {
+                    if let Ok(built) = built {
+                        cleanup_path(&built.cwd, "abandoned VM create shadow root");
+                        cleanup_path(
+                            &built.unix_socket_host_dir,
+                            "abandoned VM create Unix socket namespace",
+                        );
+                    }
+                },
+            )
             .await??;
             let capabilities = CapabilityRegistry::new(vm_generation, Arc::clone(&vm_resources));
             let pending_stdin_bytes_budget = VmPendingByteBudget::new(
@@ -2126,6 +2230,7 @@ where
             bridge,
             sidecar_requests,
             process_event_broker: _,
+            process_runtime_context,
         } = self.plan;
         let mut events = vec![shared_vm_lifecycle_event(
             &connection_id,
@@ -2177,8 +2282,11 @@ where
         let job_slot = Arc::clone(&slot);
         let teardown_bridge = bridge.clone();
         let teardown_vm_id = vm_id.clone();
-        let offloaded =
-            run_control_plane_blocking(&self.vm.runtime_context, "DisposeVm", move || {
+        let offloaded = run_control_plane_blocking(
+            &self.vm.runtime_context,
+            ControlPlaneJob::Dispose,
+            "DisposeVm",
+            move || {
                 let kernel = job_slot
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -2186,8 +2294,14 @@ where
                 kernel.map(|mut kernel| {
                     finish_vm_teardown_owned(&teardown_bridge, &teardown_vm_id, &mut kernel)
                 })
-            })
-            .await;
+            },
+            |late| {
+                if let Some(Err(error)) = late {
+                    eprintln!("ERR_AGENTOS_VM_TEARDOWN_LATE: teardown finished after its deadline with error={error}");
+                }
+            },
+        )
+        .await;
         let unstarted = slot
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -2229,8 +2343,17 @@ where
             }
         }
 
-        // Removing the shadow root takes time proportional to the files the
-        // VM wrote. Do it off the router, before VM admission closes.
+        self.vm.runtime_context.close_admission();
+        let fairness_retirement_result =
+            retire_vm_fairness(&self.vm.runtime_context, self.vm.generation);
+        if let Err(error) = fairness_retirement_result.as_ref() {
+            eprintln!("ERR_AGENTOS_VM_FAIRNESS_RETIRE: vm_id={vm_id} error={error}");
+        }
+
+        // Remove host paths only after VM admission is closed, so no late VM
+        // task can recreate files under them. Removal takes time proportional
+        // to the files the VM wrote, so it runs off the router on the
+        // process-scoped executor (the VM's own executor is closed now).
         let mut host_paths = vec![(self.vm.cwd.clone(), "disposed VM shadow root")];
         if let Some(staging_root) = self.vm.packages_staging_root.take() {
             host_paths.push((staging_root, "disposed VM package staging root"));
@@ -2239,28 +2362,43 @@ where
             self.vm.unix_socket_host_dir.clone(),
             "disposed VM Unix socket namespace",
         ));
-        let job_paths = host_paths.clone();
-        if let Err(error) =
-            run_control_plane_blocking(&self.vm.runtime_context, "DisposeVm", move || {
-                for (path, label) in &job_paths {
-                    cleanup_path(path, label);
-                }
-            })
-            .await
-        {
+        // A job that started finishes the removal even past its deadline, so
+        // the router removes the paths only when the job never ran.
+        let started = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let offloaded = match process_runtime_context.as_ref() {
+            Some(runtime) => {
+                let job_paths = host_paths.clone();
+                let job_started = Arc::clone(&started);
+                run_control_plane_blocking(
+                    runtime,
+                    ControlPlaneJob::Dispose,
+                    "DisposeVm",
+                    move || {
+                        job_started.store(true, std::sync::atomic::Ordering::Release);
+                        for (path, label) in &job_paths {
+                            cleanup_path(path, label);
+                        }
+                    },
+                    |()| {},
+                )
+                .await
+            }
+            None => Err(SidecarError::InvalidState(String::from(
+                "ERR_AGENTOS_RUNTIME_UNAVAILABLE: no process runtime for host-path cleanup",
+            ))),
+        };
+        if let Err(error) = offloaded.as_ref() {
             eprintln!(
-                "ERR_AGENTOS_VM_TEARDOWN_INLINE: vm_id={vm_id} removing host paths on the router: {error}"
+                "ERR_AGENTOS_VM_TEARDOWN_CLEANUP: vm_id={vm_id} phase=host_paths error={error}"
+            );
+        }
+        if !started.load(std::sync::atomic::Ordering::Acquire) {
+            eprintln!(
+                "ERR_AGENTOS_VM_TEARDOWN_INLINE: vm_id={vm_id} removing host paths on the router"
             );
             for (path, label) in &host_paths {
                 cleanup_path(path, label);
             }
-        }
-
-        self.vm.runtime_context.close_admission();
-        let fairness_retirement_result =
-            retire_vm_fairness(&self.vm.runtime_context, self.vm.generation);
-        if let Err(error) = fairness_retirement_result.as_ref() {
-            eprintln!("ERR_AGENTOS_VM_FAIRNESS_RETIRE: vm_id={vm_id} error={error}");
         }
 
         let (reconciliation, reconciliation_timed_out) = wait_for_vm_reconciliation(

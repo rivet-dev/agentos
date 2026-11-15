@@ -17,6 +17,7 @@ use agentos_client::fs::{
     FilesystemSnapshotExport, RootSnapshotExport, SnapshotExportKind,
 };
 use agentos_client::{AgentOs, ProcessStream, SpawnOptions, StdinInput, Subscription};
+use futures::stream::{FuturesUnordered, StreamExt};
 use tokio::sync::mpsc;
 
 const LARGE_ROOT_FILES: usize = 16_000;
@@ -24,6 +25,10 @@ const ROUND_TRIP_TIMEOUT: Duration = Duration::from_secs(30);
 const READY: &[u8] = b"ready\n";
 
 fn large_root_filesystem() -> RootFilesystemConfig {
+    root_filesystem_with_files(LARGE_ROOT_FILES)
+}
+
+fn root_filesystem_with_files(files: usize) -> RootFilesystemConfig {
     let entry = |path: String, entry_type, mode: &str, content: Option<String>| FilesystemEntry {
         path,
         entry_type,
@@ -40,7 +45,7 @@ fn large_root_filesystem() -> RootFilesystemConfig {
         "0755",
         None,
     )];
-    entries.extend((0..LARGE_ROOT_FILES).map(|index| {
+    entries.extend((0..files).map(|index| {
         entry(
             format!("/data/file-{index}.txt"),
             DirEntryType::File,
@@ -201,4 +206,59 @@ async fn large_vm_create_and_dispose_do_not_stall_another_vms_stdin() {
         String::from_utf8_lossy(&echo.sent)
     );
     echo.vm.shutdown().await.expect("shutdown echo VM");
+}
+
+/// Creates in the flood. Each has a mid-size root so its bootstrap holds a
+/// control-plane worker for a few milliseconds.
+const CREATE_FLOOD_VMS: usize = 64;
+const CREATE_FLOOD_ROOT_FILES: usize = 2_000;
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "saturation: floods one sidecar with VM creates; run in the nightly group"]
+async fn dispose_completes_promptly_during_a_create_flood() {
+    if !common::require_sidecar("dispose_completes_promptly_during_a_create_flood") {
+        return;
+    }
+    const POOL: &str = "lifecycle-isolation-create-flood";
+    let target = common::new_vm_with_sidecar_pool(POOL).await;
+
+    let mut flood = (0..CREATE_FLOOD_VMS)
+        .map(|_| {
+            tokio::spawn(AgentOs::create(AgentOsConfig {
+                root_filesystem: root_filesystem_with_files(CREATE_FLOOD_ROOT_FILES),
+                sidecar: Some(AgentOsSidecarConfig::Shared {
+                    pool: Some(POOL.to_owned()),
+                }),
+                ..AgentOsConfig::default()
+            }))
+        })
+        .collect::<FuturesUnordered<_>>();
+    // One finished create proves the flood reached the sidecar; the rest wait
+    // for control-plane workers while the dispose is sent.
+    let mut created = vec![flood.next().await.expect("flood create task")];
+
+    let started = Instant::now();
+    target
+        .shutdown()
+        .await
+        .expect("dispose VM during a create flood");
+    let dispose_took = started.elapsed();
+    while let Some(result) = flood.next().await {
+        created.push(result);
+    }
+    let flood_took = started.elapsed();
+    eprintln!("dispose took {dispose_took:?}; the rest of the create flood took {flood_took:?}");
+
+    for result in created {
+        result
+            .expect("flood create task")
+            .expect("create flood VM")
+            .shutdown()
+            .await
+            .expect("dispose flood VM");
+    }
+    assert!(
+        dispose_took < flood_took / 4,
+        "a dispose waited {dispose_took:?} behind a create flood that took {flood_took:?}"
+    );
 }
