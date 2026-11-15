@@ -1816,6 +1816,18 @@ where
             )
             .await?;
         }
+        // The `stdin` option is all the input an attached operation outside a
+        // context receives, so end its stdin after writing it. Left open, a
+        // process that reads to end of input runs until the operation times out.
+        if !operation.background && !context_execution && operation.pty.is_none() {
+            self.close_stdin(
+                request,
+                CloseStdinRequest {
+                    process_id: process_id.clone(),
+                },
+            )
+            .await?;
+        }
 
         let descriptor = self
             .vms

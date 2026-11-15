@@ -72,6 +72,8 @@ commands or working directories are invalid input.
 
 A library `process.spawn` keeps stdin open; pass `streamStdin: false` to give
 the process EOF instead.
+A library `process.exec` or `process.execFile` writes the `stdin` option, if
+any, and then gives the process EOF.
 Writing to stdin after it is closed fails with `EBADF`, as on Linux.
 
 Hosted operations take the process handle `{ generation, pid }`; library
