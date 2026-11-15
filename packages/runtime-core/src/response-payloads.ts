@@ -209,6 +209,8 @@ export type LiveResponsePayload =
 	| {
 			type: "vm_disposed";
 			vm_id: string;
+			/** Executions that had finished before the dispose began. */
+			completed_executions: readonly protocol.ExecutionCompletedEvent[];
 	  }
 	| {
 			type: "process_started";
@@ -354,7 +356,11 @@ export function fromGeneratedResponsePayload(
 		case "VmConfigComparedResponse":
 			return { type: "vm_config_compared", equivalent: payload.val.equivalent };
 		case "VmDisposedResponse":
-			return { type: "vm_disposed", vm_id: payload.val.vmId };
+			return {
+				type: "vm_disposed",
+				vm_id: payload.val.vmId,
+				completed_executions: payload.val.completedExecutions,
+			};
 		case "RootFilesystemBootstrappedResponse":
 			return {
 				type: "root_filesystem_bootstrapped",

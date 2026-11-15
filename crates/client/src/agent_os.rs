@@ -1021,7 +1021,8 @@ impl AgentOs {
 
         // Drain the SDK-spawned process registry. Per-process output tasks await
         // a broadcast `Closed` that retained sender clones otherwise prevent.
-        crate::process::drain_process_output_tasks(&self.inner.processes);
+        let pending_language_exits =
+            crate::process::drain_process_output_tasks(&self.inner.processes);
 
         // 2-5. Best-effort drain tracked shell and terminal tasks before the VM is disposed, bounded
         //      by SHELL_DISPOSE_TIMEOUT_MS so late output cannot race a closed transport.
@@ -1087,10 +1088,10 @@ impl AgentOs {
         //      VMs on the same sidecar, so it is only torn down when this was the last VM (matching
         //      the TS lease/shared-sidecar lifecycle); otherwise sibling VMs keep using it.
         // A VM dies with its sidecar process, so a lost transport leaves nothing to dispose.
-        let mut disposal_result = if self.inner.vm_disposed.load(Ordering::SeqCst)
+        let disposal = if self.inner.vm_disposed.load(Ordering::SeqCst)
             || self.transport().is_disconnected()
         {
-            Ok(())
+            Ok(Vec::new())
         } else {
             self.transport()
                 .request_wire(
@@ -1107,6 +1108,11 @@ impl AgentOs {
                 .map_err(ClientError::from)
                 .and_then(|response| vm_dispose_response(&self.inner.vm_id, response))
         };
+        crate::process::settle_language_exits_after_dispose(
+            pending_language_exits,
+            disposal.as_deref(),
+        );
+        let mut disposal_result = disposal.map(|_| ());
         if disposal_result.is_ok() {
             self.inner.vm_disposed.store(true, Ordering::SeqCst);
             // A failed DisposeVm may need host SQLite callbacks on retry.
@@ -2972,9 +2978,15 @@ fn wire_ownership_vm_id(ownership: &wire::OwnershipScope) -> Option<&str> {
     }
 }
 
-fn vm_dispose_response(vm_id: &str, response: wire::ResponsePayload) -> Result<(), ClientError> {
+/// The completions of executions that finished before the dispose began.
+fn vm_dispose_response(
+    vm_id: &str,
+    response: wire::ResponsePayload,
+) -> Result<Vec<wire::ExecutionCompletedEvent>, ClientError> {
     match response {
-        wire::ResponsePayload::VmDisposedResponse(disposed) if disposed.vm_id == vm_id => Ok(()),
+        wire::ResponsePayload::VmDisposedResponse(disposed) if disposed.vm_id == vm_id => {
+            Ok(disposed.completed_executions)
+        }
         wire::ResponsePayload::RejectedResponse(rejected) => Err(rejected_to_error(rejected)),
         other => Err(ClientError::Sidecar(format!(
             "unexpected dispose_vm response: {other:?}"
@@ -3158,7 +3170,8 @@ mod tests {
                 retryable: Some(false),
                 errno: Some("ETIMEDOUT".into()),
             }),
-        );
+        )
+        .map(|_| ());
         retain_shutdown_failure(
             &mut result,
             Err(ClientError::Sidecar("secondary cleanup".into())),
@@ -3185,14 +3198,16 @@ mod tests {
         assert!(vm_dispose_response(
             "vm-ok",
             wire::ResponsePayload::VmDisposedResponse(wire::VmDisposedResponse {
-                vm_id: "vm-ok".into()
+                vm_id: "vm-ok".into(),
+                completed_executions: Vec::new(),
             })
         )
         .is_ok());
         assert!(vm_dispose_response(
             "vm-ok",
             wire::ResponsePayload::VmDisposedResponse(wire::VmDisposedResponse {
-                vm_id: "other-vm".into()
+                vm_id: "other-vm".into(),
+                completed_executions: Vec::new(),
             })
         )
         .is_err());

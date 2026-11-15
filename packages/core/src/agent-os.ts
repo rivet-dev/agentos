@@ -4315,9 +4315,11 @@ export class AgentOs {
 	}
 
 	/**
-	 * Settle every language process after DisposeVm. On success the sidecar
-	 * terminated them, so each reports a signalled exit. On failure their
-	 * termination is unproven, so their waits fail with the disposal error.
+	 * Settle every language process after DisposeVm. A process that finished
+	 * before the dispose was already settled by the completion the dispose
+	 * delivered. On success the sidecar terminated the rest, so each reports a
+	 * signalled exit. On failure their termination is unproven, so their waits
+	 * fail with the disposal error.
 	 */
 	private _settleLanguageProcessesAfterDisposal(failure: Error | null): void {
 		if (!failure) {
@@ -5969,9 +5971,6 @@ export class AgentOs {
 		this._executionOutputHandlers.clear();
 		this._executionCompletedHandlers.clear();
 
-		this._disposeSidecarEventListener();
-		this._disposeSidecarCloseListener();
-
 		// One request tears the VM down: the sidecar's DisposeVm terminates every
 		// process still running in it, so there is no kill per process first.
 		const sidecarLease = this._sidecarLease;
@@ -5987,6 +5986,11 @@ export class AgentOs {
 			errors.push(error);
 			disposalError = error instanceof Error ? error : new Error(String(error));
 		}
+		// The event listener stays until DisposeVm resolves: the dispose
+		// delivers the completion of every execution that finished before it,
+		// so a process that exited just before reports its real exit status.
+		this._disposeSidecarEventListener();
+		this._disposeSidecarCloseListener();
 		this._settleLanguageProcessesAfterDisposal(disposalError);
 		settleDisposal();
 		const hookResults = await Promise.allSettled(hooks.map((hook) => hook()));

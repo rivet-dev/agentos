@@ -825,7 +825,7 @@ where
         self.process_executions
             .retain(|(process_vm_id, _), _| process_vm_id != &vm_id);
         DispatchResult {
-            response: vm_disposed_response(request, vm_id),
+            response: vm_disposed_response(request, vm_id, Vec::new()),
             events: Vec::new(),
         }
     }

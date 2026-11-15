@@ -2818,3 +2818,38 @@ async fn request_concurrency_real_loop_publishes_a_late_sessions_event_while_ear
         })
         .await;
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn request_concurrency_real_loop_rejects_a_previous_protocol_version_at_the_handshake() {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let state = Arc::new(GatedExtensionState::default());
+            let (harness, engine) = ProtocolLoopHarness::build(state, &[], 4, 16 * 1024);
+            let engine_task = tokio::task::spawn_local(run_protocol_engine(engine));
+            // Version 11 is the last protocol without `completedExecutions` in
+            // `VmDisposedResponse`; such a client must fail here, not at dispose.
+            harness.send_request(
+                request_frame(
+                    1,
+                    connection_ownership("client-hint"),
+                    RequestPayload::AuthenticateRequest(wire::AuthenticateRequest {
+                        client_name: String::from("previous protocol client"),
+                        auth_token: String::new(),
+                        protocol_version: 11,
+                        bridge_version: agentos_bridge::bridge_contract().version,
+                    }),
+                ),
+                1,
+            );
+            let response = harness.response().await;
+            let ResponsePayload::RejectedResponse(rejected) = response.payload else {
+                panic!(
+                    "a previous protocol version must be rejected at the handshake: {:?}",
+                    response.payload
+                );
+            };
+            assert_eq!(rejected.code, "protocol_version_mismatch");
+            finish_cleanly(&harness, engine_task).await;
+        })
+        .await;
+}

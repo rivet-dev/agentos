@@ -283,6 +283,9 @@ pub(crate) struct DisposeVmPlan<B> {
 pub(crate) struct PreparedDisposeVm<B> {
     plan: DisposeVmPlan<B>,
     vm: VmState,
+    /// Exit statuses of this VM's root processes whose `Exited` event was
+    /// still queued in the sidecar at detach, keyed by process id.
+    queued_exits: BTreeMap<String, i32>,
 }
 
 /// Teardown result awaiting short central tracking/quarantine finalization.
@@ -292,6 +295,8 @@ pub(crate) struct CompletedDisposeVm {
     session_id: String,
     vm_id: String,
     events: Vec<EventFrame>,
+    /// Executions that had finished before teardown began, for the response.
+    completed_executions: Vec<crate::protocol::ExecutionCompletedEvent>,
     quarantine: Option<QuarantinedVmGeneration>,
     result: Result<(), SidecarError>,
 }
@@ -540,6 +545,7 @@ where
         plan: DisposeVmPlan<B>,
     ) -> Result<PreparedDisposeVm<B>, SidecarError> {
         self.require_owned_vm(&plan.connection_id, &plan.session_id, &plan.vm_id)?;
+        let queued_exits = self.take_queued_vm_exits(&plan.vm_id);
         let cancellation_reason = dispose_cancellation_reason(&plan.reason);
         if let Err(error) = plan.process_event_broker.dispose_vm(
             &plan.connection_id,
@@ -556,12 +562,43 @@ where
             .vms
             .try_remove(&plan.vm_id, "begin owned dispose")?
             .expect("owned VM should exist during dispose detachment");
-        Ok(PreparedDisposeVm { plan, vm })
+        Ok(PreparedDisposeVm {
+            plan,
+            vm,
+            queued_exits,
+        })
+    }
+
+    /// Exit statuses of `vm_id`'s root processes whose `Exited` event waits in
+    /// the sidecar's event queue, for example behind another process's output
+    /// flood. Receiver events move into the pending queue first, within its
+    /// capacity, so an exit still in transit is found too.
+    fn take_queued_vm_exits(&mut self, vm_id: &str) -> BTreeMap<String, i32> {
+        while self.pending_process_event_capacity() > 0 {
+            let Some(receiver) = self.process_event_receiver.as_mut() else {
+                break;
+            };
+            let Ok(envelope) = receiver.try_recv() else {
+                break;
+            };
+            if let Err(error) = self.queue_pending_process_event(envelope) {
+                eprintln!("ERR_AGENTOS_VM_DISPOSE_EXIT_SCAN: vm_id={vm_id} error={error}");
+                break;
+            }
+        }
+        self.pending_process_events
+            .iter()
+            .filter(|envelope| envelope.vm_id == vm_id && envelope.child_path.is_empty())
+            .filter_map(|envelope| match envelope.event {
+                ActiveExecutionEvent::Exited(code) => Some((envelope.process_id.clone(), code)),
+                _ => None,
+            })
+            .collect()
     }
 
     pub(crate) fn complete_dispose_vm(
         &mut self,
-        completed: CompletedDisposeVm,
+        mut completed: CompletedDisposeVm,
     ) -> Result<DispatchResult, SidecarError> {
         let request = completed.request.clone().ok_or_else(|| {
             SidecarError::InvalidState(String::from(
@@ -569,9 +606,10 @@ where
             ))
         })?;
         let vm_id = completed.vm_id.clone();
+        let completed_executions = std::mem::take(&mut completed.completed_executions);
         let events = self.complete_owned_vm_disposal(completed)?;
         Ok(DispatchResult {
-            response: vm_disposed_response(&request, vm_id),
+            response: vm_disposed_response(&request, vm_id, completed_executions),
             events,
         })
     }
@@ -589,6 +627,7 @@ where
             session_id,
             vm_id,
             mut events,
+            completed_executions: _,
             quarantine,
             result,
         } = completed;
@@ -2221,6 +2260,8 @@ where
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
     pub(crate) async fn execute(mut self) -> CompletedDisposeVm {
+        let mut exits_before_dispose = std::mem::take(&mut self.queued_exits);
+        collect_unclaimed_exits(&mut self.vm, &mut exits_before_dispose).await;
         let DisposeVmPlan {
             request,
             connection_id,
@@ -2239,8 +2280,48 @@ where
             VmLifecycleState::Disposing,
         )];
 
-        let terminate_result =
-            terminate_detached_vm_processes::<B>(&bridge, &vm_id, &mut self.vm).await;
+        // An execution can finish just before the dispose while its completion
+        // event is still on the way to the client, or while its exit event
+        // still waits in the sidecar behind other output. Report every
+        // finished execution in the response, captured before termination:
+        // one absent from the list was still running and the dispose
+        // terminated it.
+        let exited_executions = exits_before_dispose
+            .iter()
+            .filter_map(|(process_id, code)| {
+                Some((self.vm.execution_processes.get(process_id)?.clone(), *code))
+            })
+            .collect::<BTreeMap<_, _>>();
+        let completed_executions = self
+            .vm
+            .executions
+            .iter()
+            .filter(|(_, execution)| execution.public && !execution.context)
+            .filter_map(|(execution_id, execution)| {
+                if let Some(result) = execution.result.as_ref() {
+                    return Some(crate::protocol::ExecutionCompletedEvent {
+                        execution_id: execution_id.clone(),
+                        generation: execution.descriptor.generation,
+                        outcome: result.outcome.clone(),
+                        exit_code: result.exit_code,
+                        error: result.error.clone(),
+                    });
+                }
+                let code = *exited_executions.get(execution_id)?;
+                Some(exit_completion(
+                    execution_id,
+                    execution.descriptor.generation,
+                    code,
+                ))
+            })
+            .collect::<Vec<_>>();
+        let terminate_result = terminate_detached_vm_processes::<B>(
+            &bridge,
+            &vm_id,
+            &mut self.vm,
+            exits_before_dispose.keys().cloned().collect(),
+        )
+        .await;
         if let Some(task) = self.vm.execution_retention_wake_task.take() {
             task.abort();
         }
@@ -2476,16 +2557,81 @@ where
             session_id,
             vm_id,
             events: std::mem::take(&mut events),
+            completed_executions,
             quarantine,
             result,
         }
     }
 }
 
+/// Completion for an execution whose process exited with `code` before its
+/// exit event was applied, with the outcome a normal finish would report.
+fn exit_completion(
+    execution_id: &str,
+    generation: u64,
+    code: i32,
+) -> crate::protocol::ExecutionCompletedEvent {
+    let (outcome, error) = if code == 0 {
+        (crate::protocol::ExecutionOutcome::Succeeded, None)
+    } else {
+        (
+            crate::protocol::ExecutionOutcome::Failed,
+            Some(crate::protocol::ExecutionErrorData {
+                code: String::from("execution_failed"),
+                name: String::from("ExecutionError"),
+                message: format!("execution exited with code {code}"),
+                stack: None,
+                details: None,
+            }),
+        )
+    };
+    crate::protocol::ExecutionCompletedEvent {
+        execution_id: execution_id.to_owned(),
+        generation,
+        outcome,
+        exit_code: Some(code),
+        error,
+    }
+}
+
+/// Events a dispose reads from one process's own queue, looking for an exit
+/// the event pump has not claimed yet. Bounded, so a process that is still
+/// writing cannot hold the dispose here.
+const DISPOSE_EXIT_SCAN_EVENTS: usize = 4096;
+
+/// Record root processes that already exited but whose `Exited` event still
+/// waits in their own execution queue. Reads without waiting.
+async fn collect_unclaimed_exits(vm: &mut VmState, exits: &mut BTreeMap<String, i32>) {
+    for (process_id, process) in vm.active_processes.iter_mut() {
+        if exits.contains_key(process_id) {
+            continue;
+        }
+        for _ in 0..DISPOSE_EXIT_SCAN_EVENTS {
+            match process.execution.poll_event(Duration::ZERO).await {
+                Ok(Some(ActiveExecutionEvent::Exited(code))) => {
+                    exits.insert(process_id.clone(), code);
+                    break;
+                }
+                Ok(Some(_)) => {}
+                Ok(None) => break,
+                Err(error) => {
+                    eprintln!(
+                        "ERR_AGENTOS_VM_TEARDOWN_CLEANUP: process_id={process_id} phase=exit_scan error={error}"
+                    );
+                    break;
+                }
+            }
+        }
+    }
+}
+
+/// Terminate a disposed VM's processes. `exited` names processes whose exit
+/// the dispose already observed; they get no signal and no wait.
 async fn terminate_detached_vm_processes<B>(
     bridge: &crate::state::SharedBridge<B>,
     vm_id: &str,
     vm: &mut VmState,
+    mut exited: BTreeSet<String>,
 ) -> Result<(), SidecarError>
 where
     B: NativeSidecarBridge + Send + 'static,
@@ -2493,8 +2639,7 @@ where
 {
     let mut first_error = None;
     let process_ids = vm.active_processes.keys().cloned().collect::<Vec<_>>();
-    let mut exited = BTreeSet::new();
-    for process_id in &process_ids {
+    for process_id in process_ids.iter().filter(|id| !exited.contains(*id)) {
         if let Err(error) =
             NativeSidecar::<B>::kill_process_in_vm(bridge, vm, vm_id, process_id, "SIGTERM")
         {

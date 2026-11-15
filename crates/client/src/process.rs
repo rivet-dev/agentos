@@ -2356,26 +2356,94 @@ pub(crate) fn install_output_callback(
 /// its per-process output-callback tasks. Called from `shutdown` so the output tasks (which would
 /// otherwise await a `Closed` that never fires, see [`install_output_callback`]) cannot outlive the
 /// disposed VM. Mirrors the `pending_shell_exits` / terminal drain in `shutdown`.
-pub(crate) fn drain_process_output_tasks(processes: &SccHashMap<u32, ProcessEntry>) {
+/// A language process still running when its VM shutdown began. It settles
+/// from the `DisposeVm` outcome instead of failing before the dispose.
+pub(crate) struct PendingLanguageExit {
+    execution_id: String,
+    process_id: String,
+    exit_tx: watch::Sender<ProcessOutcome>,
+}
+
+/// Empty the process registry for shutdown and abort its output tasks. A
+/// process whose exit is unobserved fails now, except a language process: it
+/// is returned so [`settle_language_exits_after_dispose`] can report the exit
+/// status the sidecar confirms.
+pub(crate) fn drain_process_output_tasks(
+    processes: &SccHashMap<u32, ProcessEntry>,
+) -> Vec<PendingLanguageExit> {
     let mut tasks = Vec::new();
+    let mut pending_language = Vec::new();
     processes.retain(|_, entry| {
-        entry.exit_tx.send_if_modified(|state| {
-            if !matches!(state, ProcessOutcome::Pending) { return false; }
-            tracing::error!(process_id = %entry.process_id, "VM shutdown before process exit was observed");
-            *state = ProcessOutcome::Failed {
-                error: ClientError::TerminationFailed {
-                    process_id: entry.process_id.clone(),
-                    reason: "VM shutdown before process exit was observed".into(),
-                },
-                rejected: false,
-            };
-            true
-        });
+        let pending = matches!(*entry.exit_tx.borrow(), ProcessOutcome::Pending);
+        match entry.execution_id.clone() {
+            Some(execution_id) if pending => pending_language.push(PendingLanguageExit {
+                execution_id,
+                process_id: entry.process_id.clone(),
+                exit_tx: entry.exit_tx.clone(),
+            }),
+            _ => {
+                entry.exit_tx.send_if_modified(|state| {
+                    if !matches!(state, ProcessOutcome::Pending) { return false; }
+                    tracing::error!(process_id = %entry.process_id, "VM shutdown before process exit was observed");
+                    *state = ProcessOutcome::Failed {
+                        error: ClientError::TerminationFailed {
+                            process_id: entry.process_id.clone(),
+                            reason: "VM shutdown before process exit was observed".into(),
+                        },
+                        rejected: false,
+                    };
+                    true
+                });
+            }
+        }
         tasks.append(&mut entry.output_tasks);
         false
     });
     for task in tasks {
         task.abort();
+    }
+    pending_language
+}
+
+/// Exit status reported for a process terminated by SIGKILL (128 + 9).
+const SIGKILL_EXIT_STATUS: i32 = 137;
+
+/// Settle language processes after `DisposeVm`. On success, an execution in
+/// the response's completions reports its real exit status; any other was
+/// still running, so the dispose killed it and it reports SIGKILL. On failure
+/// termination is unproven, so each wait fails with the disposal error.
+pub(crate) fn settle_language_exits_after_dispose(
+    pending: Vec<PendingLanguageExit>,
+    disposal: std::result::Result<&[wire::ExecutionCompletedEvent], &ClientError>,
+) {
+    for exit in pending {
+        let outcome = match disposal {
+            Ok(completed) => match completed
+                .iter()
+                .find(|completion| completion.execution_id == exit.execution_id)
+            {
+                Some(completion) => {
+                    ProcessOutcome::completion(&exit.process_id, completion.exit_code)
+                }
+                None => ProcessOutcome::Exited(SIGKILL_EXIT_STATUS),
+            },
+            Err(error) => ProcessOutcome::Failed {
+                error: ClientError::TerminationFailed {
+                    process_id: exit.process_id.clone(),
+                    reason: format!(
+                        "VM disposal failed; guest termination is unconfirmed: {error}"
+                    ),
+                },
+                rejected: false,
+            },
+        };
+        exit.exit_tx.send_if_modified(|state| {
+            if !matches!(state, ProcessOutcome::Pending) {
+                return false;
+            }
+            *state = outcome;
+            true
+        });
     }
 }
 
