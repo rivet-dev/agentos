@@ -1064,3 +1064,50 @@ async fn a_process_that_exits_behind_an_output_flood_reports_its_exit_status_on_
         "a process the dispose killed reported {flood_exit:?}"
     );
 }
+
+/// A signal sent while a process is exiting succeeds, as `kill()` on an exiting process does on
+/// Linux, even when the sidecar has already reaped the process before the client sees its exit.
+/// TS `signalProcess` behaves the same way.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_signal_racing_a_process_exit_succeeds() {
+    const TEST: &str = "a_signal_racing_a_process_exit_succeeds";
+    const ITERATIONS: usize = 20;
+    if !common::require_sidecar(TEST) {
+        return;
+    }
+    let os = common::new_vm().await;
+    let result = async {
+        for iteration in 0..ITERATIONS {
+            let process = os.spawn_process(
+                "node",
+                vec!["-e".into(), "process.exit(0)".into()],
+                SpawnOptions::default(),
+            )?;
+            let waiter = {
+                let os = os.clone();
+                tokio::spawn(async move { os.wait_process(process.pid).await })
+            };
+            // Signal until the client observes the exit, so some signals land after the
+            // sidecar reaped the process but before its exit event arrived.
+            let mut signals = 0usize;
+            while !waiter.is_finished() {
+                os.signal_process_awaited(process.pid, "SIGTERM")
+                    .await
+                    .map_err(|error| {
+                        anyhow::anyhow!(
+                            "iteration {iteration}: signal {signals} to an exiting process failed: {error}"
+                        )
+                    })?;
+                signals += 1;
+            }
+            waiter.await??;
+        }
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+    tokio::time::timeout(std::time::Duration::from_secs(10), os.shutdown())
+        .await
+        .expect("bounded VM cleanup")
+        .expect("shutdown VM");
+    result.unwrap();
+}

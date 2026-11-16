@@ -89,6 +89,15 @@ impl ProcessOutcome {
 }
 
 /// The error for stdin written after its process exited, as a pipe write with no reader on Linux.
+/// A rejection meaning the process is gone, as TS `isNoSuchProcessError` matches it.
+fn is_no_such_process_rejection(rejected: &wire::RejectedResponse) -> bool {
+    let message = rejected.message.to_lowercase();
+    rejected.errno.as_deref() == Some("ESRCH")
+        || rejected.message.contains("ESRCH")
+        || message.contains("no such process")
+        || message.contains("has no active process")
+}
+
 fn stdin_has_no_reader(pid: u32) -> ClientError {
     ClientError::Kernel {
         code: String::from("EPIPE"),
@@ -1876,6 +1885,14 @@ impl AgentOs {
             .await?;
         match response {
             wire::ResponsePayload::ProcessKilledResponse(_) => Ok(()),
+            // The sidecar already finished this process, so the signal has nothing to stop; its
+            // exit event is on the way, as kill() on an exiting process succeeds on Linux. TS
+            // `signalProcess` treats the same rejection the same way.
+            wire::ResponsePayload::RejectedResponse(rejected)
+                if is_no_such_process_rejection(&rejected) =>
+            {
+                Ok(())
+            }
             wire::ResponsePayload::RejectedResponse(rejected) => {
                 Err(ClientError::from_rejection(rejected))
             }
