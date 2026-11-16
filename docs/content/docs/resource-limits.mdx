@@ -120,6 +120,13 @@ launch is confirmed, so writes made right after `spawn()` arrive in order. A
 write beyond that fails with a retryable `ERR_AGENTOS_RESOURCE_LIMIT`
 (`process_stdin_queue_entries`); await earlier writes before sending more.
 
+The Rust client fans sidecar events out through a buffer of 4,096 events. If an
+`exec` falls further behind than that, it fails with `ERR_AGENTOS_OUTPUT_LAGGED`
+instead of returning incomplete output; output callbacks and streams log the
+skipped chunks. Recover the output with `read_process_output`. The TypeScript
+client delivers every byte written before a process exits to `onStdout` and
+`onStderr`, including when the host is slow to drain them.
+
 `dispose()` is one request: the sidecar stops the VM's running processes
 (`SIGTERM`, then `SIGKILL`) and then removes the VM. If `dispose()` fails, the
 VM can still be alive. Call `dispose()` again to retry.

@@ -859,7 +859,13 @@ impl AgentOs {
             };
             let (ownership, payload) = match frame {
                 Ok(frame) => frame,
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                // Skipped events may hold this process's output or exit, so the
+                // result would be incomplete: fail with a typed error instead.
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    let message = output_lagged_message(&process_id, skipped);
+                    tracing::warn!("{message}");
+                    return Err(ClientError::Sidecar(message).into());
+                }
                 Err(broadcast::error::RecvError::Closed) => {
                     return Err(sidecar_exited_before_exit(&process_id).into());
                 }
@@ -2345,6 +2351,12 @@ fn prune_string_f64_map(map: &SccHashMap<String, f64>, limit: usize) {
     }
 }
 
+fn output_lagged_message(process_id: &str, skipped: u64) -> String {
+    format!(
+        "ERR_AGENTOS_OUTPUT_LAGGED: process {process_id} output receiver skipped {skipped} events of the client event fan-out, so its output is incomplete; consume events faster or recover with read_process_output"
+    )
+}
+
 /// Drive a caller-supplied output callback from a fresh subscription on the given broadcast channel.
 /// Each chunk delivered to the channel is forwarded to `callback` as raw bytes. The task ends when
 /// the channel closes (process exit), matching the TS handler-set lifetime.
@@ -2362,7 +2374,12 @@ pub(crate) fn install_output_callback(
         loop {
             match rx.recv().await {
                 Ok(chunk) => callback(&chunk),
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    tracing::warn!(
+                        skipped,
+                        "ERR_AGENTOS_OUTPUT_LAGGED: process output callback skipped {skipped} chunks; recover with read_process_output"
+                    );
+                }
                 Err(broadcast::error::RecvError::Closed) => break,
             }
         }

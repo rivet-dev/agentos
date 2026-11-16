@@ -1023,12 +1023,7 @@ export class NativeSidecarKernelProxy {
 				// Rejected admission is not a process exit. Release this non-process's
 				// tracking while retaining the rejection on the returned handle.
 				this.processes.delete(entry.pid);
-				void this.releaseProcessTrackingAfterDrain(entry).catch((error) => {
-					console.error(
-						`[agentOS] rejected process ${entry.pid} cleanup failed`,
-						error,
-					);
-				});
+				this.releaseProcessTracking(entry);
 			}
 		});
 
@@ -2129,6 +2124,11 @@ export class NativeSidecarKernelProxy {
 					}
 					entry.confirmExit(event.payload.exit_code);
 					this.finishProcess(entry, event.payload.exit_code);
+					// The sidecar sends a process's output before its exit on this
+					// ordered lane, and the pump dispatched it above, so nothing for
+					// this process can follow. Release only here: an exit learned
+					// elsewhere (replay) can arrive while output is still queued.
+					this.releaseProcessTracking(entry);
 					continue;
 				}
 
@@ -2171,7 +2171,12 @@ export class NativeSidecarKernelProxy {
 		}
 	}
 
-	/** Internal: replay carries the same authoritative exit proof as a live event. */
+	/**
+	 * Internal: replay carries the same authoritative exit status as a live
+	 * event, so it settles `wait()`. It does not release the process's output
+	 * listeners: replay travels on the response lane and can overtake output
+	 * still queued on the event lane, which the ordered exit event releases.
+	 */
 	reconcileReplayExit(processId: string, exitCode: number): void {
 		const entry = this.trackedProcessesById.get(processId);
 		if (!entry) return;
@@ -2187,32 +2192,20 @@ export class NativeSidecarKernelProxy {
 		entry.exitTime = Date.now();
 		this.updateTrackedProcessSnapshot(entry);
 		entry.wakeWait?.();
-		// Release per-process tracking now that the process has terminated so these
-		// maps/Sets don't grow without bound. Defer the release until trailing
-		// output has drained: `wait()`'s drain and late `process_output` events
-		// still need the entry + its listeners during the drain window. The exited
-		// record lives on in `processes` for listing.
-		void this.releaseProcessTrackingAfterDrain(entry).catch((error) => {
-			console.error(
-				`[agentOS] process ${entry.pid} tracking cleanup failed`,
-				error,
-			);
-		});
 	}
 
-	private async releaseProcessTrackingAfterDrain(
-		entry: TrackedProcessEntry,
-	): Promise<void> {
-		try {
-			await this.drainTrailingProcessOutput(entry);
-		} finally {
-			this.trackedProcesses.delete(entry.pid);
-			this.trackedProcessesById.delete(entry.processId);
-			this.signalRefreshes.delete(entry.pid);
-			this.signalStates.delete(entry.pid);
-			entry.onStdout.clear();
-			entry.onStderr.clear();
-		}
+	/**
+	 * Release per-process tracking once the ordered exit event has been
+	 * dispatched, so these maps/Sets do not grow without bound. The exited
+	 * record lives on in `processes` for listing.
+	 */
+	private releaseProcessTracking(entry: TrackedProcessEntry): void {
+		this.trackedProcesses.delete(entry.pid);
+		this.trackedProcessesById.delete(entry.processId);
+		this.signalRefreshes.delete(entry.pid);
+		this.signalStates.delete(entry.pid);
+		entry.onStdout.clear();
+		entry.onStderr.clear();
 	}
 
 	private waitForTrackedProcess(entry: TrackedProcessEntry): Promise<number> {
