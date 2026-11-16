@@ -1190,7 +1190,9 @@ impl Drop for DetachedMount {
 }
 
 pub struct MountTable {
+    /// Longest path first; equal lengths keep mount order.
     mounts: Vec<MountRegistration>,
+    /// Path to its position in `mounts`, kept in step on every change.
     mount_indices: BTreeMap<String, usize>,
 }
 
@@ -1263,7 +1265,7 @@ impl MountTable {
             if normalized == "/" {
                 return Err(VfsError::new("EINVAL", "cannot mount over root"));
             }
-            if self.mounts.iter().any(|mount| mount.path == normalized) {
+            if self.mount_indices.contains_key(&normalized) {
                 return Err(VfsError::new(
                     "EEXIST",
                     format!("already mounted at {normalized}"),
@@ -1303,7 +1305,7 @@ impl MountTable {
             filesystem
         };
 
-        self.mounts.push(MountRegistration {
+        self.insert_registration(MountRegistration {
             path: normalized,
             plugin_id: options.plugin_id,
             guest_source: options.guest_source,
@@ -1316,10 +1318,36 @@ impl MountTable {
             cached_usage: None,
             filesystem,
         });
-        self.mounts
-            .sort_by_key(|mount| std::cmp::Reverse(mount.path.len()));
-        self.rebuild_mount_indices();
         Ok(())
+    }
+
+    /// Insert where a stable longest-first sort would put it, and shift the
+    /// stored positions in place. A VM configure applies ~150 mounts on the
+    /// sidecar router thread; re-sorting and re-cloning every path per mount
+    /// made that quadratic.
+    fn insert_registration(&mut self, mount: MountRegistration) {
+        let len = mount.path.len();
+        let position = self
+            .mounts
+            .partition_point(|existing| existing.path.len() >= len);
+        for index in self.mount_indices.values_mut() {
+            if *index >= position {
+                *index += 1;
+            }
+        }
+        self.mount_indices.insert(mount.path.clone(), position);
+        self.mounts.insert(position, mount);
+    }
+
+    fn remove_registration(&mut self, position: usize) -> MountRegistration {
+        let mount = self.mounts.remove(position);
+        self.mount_indices.remove(&mount.path);
+        for index in self.mount_indices.values_mut() {
+            if *index > position {
+                *index -= 1;
+            }
+        }
+        mount
     }
 
     pub fn unmount(&mut self, path: &str) -> VfsResult<()> {
@@ -1346,19 +1374,14 @@ impl MountTable {
             ));
         }
 
-        let Some(index) = self
-            .mounts
-            .iter()
-            .position(|mount| mount.path == normalized)
-        else {
+        let Some(index) = self.mount_indices.get(&normalized).copied() else {
             return Err(VfsError::new(
                 "EINVAL",
                 format!("not a mount point: {normalized}"),
             ));
         };
 
-        let mount = self.mounts.remove(index);
-        self.rebuild_mount_indices();
+        let mount = self.remove_registration(index);
         Ok(DetachedMount {
             registration: Some(mount),
         })
@@ -1367,11 +1390,7 @@ impl MountTable {
     /// Restore an exact backend removed by `detach`. No new mountpoint is
     /// materialized, since the backend and its mount metadata already existed.
     pub fn restore_detached(&mut self, mut mount: DetachedMount) -> VfsResult<()> {
-        if self
-            .mounts
-            .iter()
-            .any(|existing| existing.path == mount.path())
-        {
+        if self.mount_indices.contains_key(mount.path()) {
             let path = mount.path().to_owned();
             let cleanup_error = mount.shutdown().err();
             return Err(VfsError::new(
@@ -1384,11 +1403,7 @@ impl MountTable {
                 },
             ));
         }
-        self.mounts
-            .push(mount.registration.take().expect("owned detached mount"));
-        self.mounts
-            .sort_by_key(|mount| std::cmp::Reverse(mount.path.len()));
-        self.rebuild_mount_indices();
+        self.insert_registration(mount.registration.take().expect("owned detached mount"));
         Ok(())
     }
 
@@ -1684,16 +1699,6 @@ impl MountTable {
             "ENOENT",
             format!("no such file or directory, resolve '{full_path}'"),
         ))
-    }
-
-    fn rebuild_mount_indices(&mut self) {
-        self.mount_indices.clear();
-        self.mount_indices.extend(
-            self.mounts
-                .iter()
-                .enumerate()
-                .map(|(index, mount)| (mount.path.clone(), index)),
-        );
     }
 
     fn resolve_writable_index(&self, full_path: &str) -> VfsResult<(usize, String)> {
