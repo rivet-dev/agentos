@@ -1655,23 +1655,49 @@ where
 /// Reservation charged to the VM ledger for one control-plane blocking job.
 const CONTROL_PLANE_BLOCKING_JOB_RESERVATION_BYTES: usize = 64 * 1024;
 
-/// Which control-plane admission a blocking job uses.
+/// Which control-plane admission a blocking job uses. Each kind passes its
+/// own gate before it waits for a worker, so neither kind can fill the
+/// worker queue: a create flood cannot delay teardown, and a dispose burst
+/// cannot delay creates.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ControlPlaneJob {
-    /// VM create bootstrap. Creates pass a create gate before they wait for
-    /// a worker, so a create flood cannot queue ahead of teardown.
+    /// VM create bootstrap.
     Create,
-    /// VM teardown. It waits only for a worker, behind at most one gate's
-    /// worth of creates.
+    /// VM teardown.
     Dispose,
 }
 
 /// Process-wide control-plane admission over the fixed blocking workers.
 struct ControlPlanePermits {
-    /// Creates that may hold or wait for a worker at once.
-    create_gate: tokio::sync::Semaphore,
     /// Blocking workers that control-plane jobs may occupy at once.
     workers: tokio::sync::Semaphore,
+    /// Creates that may hold or wait for a worker at once.
+    create_gate: tokio::sync::Semaphore,
+    /// Dispose jobs that may hold or wait for a worker at once.
+    dispose_gate: tokio::sync::Semaphore,
+}
+
+impl ControlPlanePermits {
+    /// All control-plane admission sizes, in one place. Control-plane jobs
+    /// use at most half of the blocking workers, so guest filesystem work
+    /// keeps the other half. Each kind's gate is as large as that share, so
+    /// the worker queue holds at most `share` creates and `share` disposes,
+    /// and a job of either kind waits behind at most `share` of the other.
+    fn new(blocking_workers: usize) -> Self {
+        let share = (blocking_workers / 2).max(1);
+        Self {
+            workers: tokio::sync::Semaphore::new(share),
+            create_gate: tokio::sync::Semaphore::new(share),
+            dispose_gate: tokio::sync::Semaphore::new(share),
+        }
+    }
+
+    fn gate(&self, kind: ControlPlaneJob) -> &tokio::sync::Semaphore {
+        match kind {
+            ControlPlaneJob::Create => &self.create_gate,
+            ControlPlaneJob::Dispose => &self.dispose_gate,
+        }
+    }
 }
 
 /// A job's result handoff. The job keeps its result when the caller is still
@@ -1687,9 +1713,10 @@ enum ControlPlaneHandoff<T> {
 ///
 /// At most half of the blocking workers run control-plane jobs at once.
 /// A create flood then waits here, outside the shared queue, instead of
-/// queueing ahead of guest filesystem work that uses the same workers. Only
-/// that many creates wait for a worker at a time, so a dispose waits behind
-/// at most that many creates however large the flood is.
+/// queueing ahead of guest filesystem work that uses the same workers. Each
+/// kind passes its own gate first (see [`ControlPlanePermits::new`]), so a
+/// dispose waits behind a bounded number of creates however large a create
+/// flood is, and a create waits behind a bounded number of disposes.
 ///
 /// The wait and the job together are bounded by
 /// `runtime.blocking.jobTimeoutMs`. A job that is still running at the
@@ -1708,13 +1735,8 @@ where
 {
     static CONTROL_PLANE_PERMITS: std::sync::OnceLock<ControlPlanePermits> =
         std::sync::OnceLock::new();
-    let permits = CONTROL_PLANE_PERMITS.get_or_init(|| {
-        let share = (runtime.blocking().worker_count() / 2).max(1);
-        ControlPlanePermits {
-            create_gate: tokio::sync::Semaphore::new(share),
-            workers: tokio::sync::Semaphore::new(share),
-        }
-    });
+    let permits = CONTROL_PLANE_PERMITS
+        .get_or_init(|| ControlPlanePermits::new(runtime.blocking().worker_count()));
     let timeout = runtime.blocking_job_timeout();
     let handoff = Arc::new(Mutex::new(ControlPlaneHandoff::Waiting));
     let job_handoff = Arc::clone(&handoff);
@@ -1724,15 +1746,10 @@ where
         ))
     };
     let admitted = tokio::time::timeout(timeout, async {
-        let create_permit = match kind {
-            ControlPlaneJob::Create => {
-                Some(permits.create_gate.acquire().await.map_err(admission_error)?)
-            }
-            ControlPlaneJob::Dispose => None,
-        };
+        let gate_permit = permits.gate(kind).acquire().await.map_err(admission_error)?;
         let worker_permit = permits.workers.acquire().await.map_err(admission_error)?;
-        // The create gate covers only the wait for a worker.
-        drop(create_permit);
+        // The gate covers only the wait for a worker.
+        drop(gate_permit);
         runtime
             .blocking()
             .run(CONTROL_PLANE_BLOCKING_JOB_RESERVATION_BYTES, move || {
