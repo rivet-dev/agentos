@@ -1,35 +1,214 @@
 ---
 title: "Architecture"
-description: "How Core, the sidecar, kernel, VFS, and executors fit together."
+description: "How the sidecar, kernel, VFS, and guest executors fit together."
 ---
 
-`@rivet-dev/agentos-core` controls the runtime from a trusted Node.js process.
-It may retain host-only state such as host function handlers, mount plugins,
-local package paths, and custom scheduling.
+agentOS runs every VM inside a separate Rust process called the sidecar. The
+sidecar holds a trusted kernel and all untrusted guest code, so guest code and
+its memory never enter your application's process.
 
-## Runtime boundary
+<svg viewBox="0 0 440 374" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="agentOS architecture. The library or the HTTP API connects to the agentOS sidecar process over stdio and a Unix socket. Inside it, the trusted kernel owns processes, the filesystem, networking, and permissions. Untrusted guest code runs in V8 isolates for JavaScript and TypeScript and in WebAssembly for the shell, coreutils, and Python, and reaches the kernel only through syscalls across the security boundary." style="width:100%;max-width:440px;height:auto;display:block;margin:2rem auto;font-family:system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif">
+  <defs>
+    <marker id="architecture-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#2E4034"/></marker>
+  </defs>
 
-The trusted sidecar owns the kernel, VFS, process and socket tables,
-permissions, resource policy, package acquisition and projection, and language
-executors. Untrusted JavaScript, Python, WASM, and third-party package code runs
-on the guest side of that boundary.
+  <rect x="110" y="14" width="220" height="38" rx="7" fill="#ffffff" stroke="#1b1916" stroke-width="1.3"/>
+  <text x="220" y="37" text-anchor="middle" font-size="12" font-weight="600" fill="#1b1916">Library or HTTP API</text>
+  <line x1="220" y1="52" x2="220" y2="85" stroke="#2E4034" stroke-width="1.3" marker-start="url(#architecture-arrow)" marker-end="url(#architecture-arrow)"/>
+  <text x="228" y="72" font-size="10" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" fill="#56524a">stdio + Unix socket</text>
 
-The native sidecar binary uses fd 0 for requests, stdout for
-ordinary events, and inherited fd 3 for responses, callbacks, heartbeats, and
-shutdown control.
+  <g transform="translate(0 42)">
+    <rect x="10" y="44" width="420" height="278" rx="10" fill="#faf8f3" stroke="#2E4034" stroke-width="1.3" stroke-dasharray="6 5"/>
+    <text x="30" y="62" font-size="10" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.14em" fill="#2E4034">AGENTOS SIDECAR PROCESS</text>
+
+    <rect x="30" y="74" width="380" height="88" rx="8" fill="#e7ece7" stroke="#1b1916" stroke-width="1.3"/>
+    <text x="46" y="97" font-size="13" font-weight="600" fill="#1b1916">Kernel</text>
+    <text x="394" y="96" text-anchor="end" font-size="9.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.12em" fill="#2E4034">TRUSTED</text>
+    <g fill="#ffffff" stroke="#1b1916" stroke-width="1.1">
+      <rect x="46" y="110" width="81" height="36" rx="5"/>
+      <rect x="135" y="110" width="81" height="36" rx="5"/>
+      <rect x="224" y="110" width="81" height="36" rx="5"/>
+      <rect x="313" y="110" width="81" height="36" rx="5"/>
+    </g>
+    <g text-anchor="middle" font-size="11" fill="#1b1916">
+      <text x="86.5" y="132">Processes</text>
+      <text x="175.5" y="132">Filesystem</text>
+      <text x="264.5" y="132">Networking</text>
+      <text x="353.5" y="132">Permissions</text>
+    </g>
+
+    <text x="30" y="181" font-size="9.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.12em" fill="#d63e00">SECURITY BOUNDARY</text>
+    <line x1="30" y1="186" x2="410" y2="186" stroke="#d63e00" stroke-width="1.3" stroke-dasharray="4 4"/>
+    <text x="228" y="181" font-size="10" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" fill="#56524a">syscalls</text>
+
+    <rect x="30" y="210" width="380" height="96" rx="8" fill="#ffffff" stroke="#1b1916" stroke-width="1.3"/>
+    <text x="46" y="233" font-size="13" font-weight="600" fill="#1b1916">Guest code</text>
+    <text x="394" y="232" text-anchor="end" font-size="9.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.12em" fill="#d63e00">UNTRUSTED</text>
+    <g fill="#faf8f3" stroke="#1b1916" stroke-width="1.1">
+      <rect x="46" y="244" width="170" height="46" rx="5"/>
+      <rect x="224" y="244" width="170" height="46" rx="5"/>
+    </g>
+    <g text-anchor="middle" font-size="12" font-weight="600" fill="#1b1916">
+      <text x="131" y="263">V8 isolates</text>
+      <text x="309" y="263">WebAssembly</text>
+    </g>
+    <g text-anchor="middle" font-size="10" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" fill="#56524a">
+      <text x="131" y="280">JavaScript, TypeScript</text>
+      <text x="309" y="280">shell, coreutils, Python</text>
+    </g>
+
+    <line x1="220" y1="164" x2="220" y2="208" stroke="#2E4034" stroke-width="1.3" marker-start="url(#architecture-arrow)" marker-end="url(#architecture-arrow)"/>
+  </g>
+</svg>
+
+## Components
+
+| Component | Trust | What it does |
+| --- | --- | --- |
+| Client | Trusted | `@rivet-dev/agentos-core` in your backend, or the hosted `agentOS` actor behind the HTTP API. Starts and controls the sidecar. |
+| Sidecar | Trusted | A Rust process that runs separately from your application and hosts the kernel and every guest executor. |
+| Kernel | Trusted | Owns the process table, the virtual filesystem and its mounts, the socket table, pipes, PTYs, permissions, and resource limits. |
+| Guest executors | Untrusted | V8 isolates run JavaScript and TypeScript. WebAssembly runs the shell, coreutils, Python, and other compiled commands. |
+
+The library starts and owns the sidecar from your backend. When hosted, the
+`agentOS` actor owns the same sidecar and you control it over the
+[HTTP API](/agentos/docs/hosted-api). The client is a thin transport: VM
+defaults, permission policy, package projection, and filesystem setup all live
+in the sidecar, so library and hosted VMs behave the same.
+
+## A virtualized kernel
+
+The entire kernel is virtualized. Every file, process, and network operation a
+guest makes is a syscall into the kernel, which checks it against the VM's
+permissions and limits before acting. Guest processes are entries in the
+kernel's process table, not host processes, and guest sockets are entries in
+its socket table, not host sockets.
+
+<svg viewBox="0 0 640 300" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Life of a command. Your backend runs cat /mnt/code/a.txt. The kernel spawns cat in WebAssembly. The guest calls open on /mnt/code/a.txt as a syscall across the security boundary. The kernel checks the filesystem permission and resolves the /mnt/code mount, then returns a file descriptor. When cat exits, the kernel returns the exit code and stdout to your backend." style="width:100%;max-width:640px;height:auto;display:block;margin:2rem auto;font-family:system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif">
+  <defs>
+    <marker id="architecture-flow-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#2E4034"/></marker>
+  </defs>
+
+  <g fill="#ffffff" stroke="#1b1916" stroke-width="1.3">
+    <rect x="30" y="14" width="140" height="36" rx="7"/>
+    <rect x="470" y="14" width="140" height="36" rx="7"/>
+  </g>
+  <rect x="250" y="14" width="140" height="36" rx="7" fill="#e7ece7" stroke="#1b1916" stroke-width="1.3"/>
+  <g text-anchor="middle" font-size="12" font-weight="600" fill="#1b1916">
+    <text x="100" y="36">Your backend</text>
+    <text x="320" y="36">Kernel</text>
+    <text x="540" y="36">Guest process</text>
+  </g>
+
+  <g stroke="#8a8578" stroke-width="1" stroke-dasharray="3 4">
+    <line x1="100" y1="50" x2="100" y2="288"/>
+    <line x1="320" y1="50" x2="320" y2="288"/>
+    <line x1="540" y1="50" x2="540" y2="288"/>
+  </g>
+
+  <g stroke="#d63e00" stroke-width="1.3" stroke-dasharray="4 4">
+    <line x1="430" y1="58" x2="430" y2="99"/>
+    <line x1="430" y1="118" x2="430" y2="135"/>
+    <line x1="430" y1="154" x2="430" y2="213"/>
+    <line x1="430" y1="232" x2="430" y2="276"/>
+  </g>
+  <text x="430" y="292" text-anchor="middle" font-size="9" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.12em" fill="#d63e00">SECURITY BOUNDARY</text>
+
+  <g stroke="#2E4034" stroke-width="1.3" marker-end="url(#architecture-flow-arrow)">
+    <line x1="102" y1="84" x2="316" y2="84"/>
+    <line x1="322" y1="120" x2="536" y2="120"/>
+    <line x1="538" y1="156" x2="324" y2="156"/>
+    <line x1="322" y1="234" x2="536" y2="234"/>
+    <line x1="318" y1="268" x2="104" y2="268"/>
+  </g>
+
+  <g text-anchor="middle" font-size="10" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" fill="#56524a">
+    <text x="210" y="77">{'exec("cat /mnt/code/a.txt")'}</text>
+    <text x="430" y="113">spawn cat (WebAssembly)</text>
+    <text x="430" y="149">{'open("/mnt/code/a.txt")'}</text>
+    <text x="430" y="227">file descriptor</text>
+    <text x="210" y="261">exit 0, stdout</text>
+  </g>
+
+  <rect x="232" y="172" width="176" height="40" rx="6" fill="#faf8f3" stroke="#1b1916" stroke-width="1.1"/>
+  <g text-anchor="middle" font-size="10.5" fill="#1b1916">
+    <text x="320" y="189">check fs permission</text>
+    <text x="320" y="204">resolve /mnt/code mount</text>
+  </g>
+</svg>
+
+By default the VM behaves like a Docker container with no host mounts and no
+published ports. Guest code can use its virtual filesystem, spawn guest
+subprocesses, and listen on guest sockets, but it can't reach host files,
+processes, or environment variables. Outbound network access is limited to a
+default allowlist. You opt in to more host access with
+[mounts](/agentos/docs/filesystem#mounts),
+[host functions](/agentos/docs/host-functions), and
+[network permissions](/agentos/docs/permissions#network). See the
+[Security Model](/agentos/docs/security-model) for the full trust boundary.
+
+## Guest runtimes
+
+The WebAssembly guest is a Linux-in-WebAssembly environment, a POSIX superset
+of WASI. The kernel supplies real `fork`, `exec`, `wait`, signals, file
+descriptor and socket tables, a shell, and coreutils through host imports, so a
+program written for Linux runs unmodified when it is built for an available
+runtime. See [POSIX Syscalls](/agentos/docs/architecture/posix-syscalls).
+
+JavaScript and TypeScript run in V8 isolates with Node.js-compatible APIs whose
+filesystem, process, and network calls go through the same kernel. See the
+[JavaScript Executor](/agentos/docs/architecture/javascript-executor) and
+[Node.js Compatibility](/agentos/docs/javascript-compatibility).
+
+Software is installed as `.aospkg` packages projected under `/opt/agentos`, with
+commands linked under `/opt/agentos/bin`. See
+[Packages & Command Resolution](/agentos/docs/architecture/packages-and-command-resolution).
+
+## Sidecar transport
+
+The library talks to the sidecar over stdio and a Unix socket. The sidecar
+reads requests from fd 0 and writes ordinary events to stdout. An inherited
+socket on fd 3 carries responses, host callbacks, heartbeats, and shutdown
+control.
+
+The library may keep host-only state the sidecar can't access, such as host
+function handlers, mount plugins, local package paths, and custom scheduling.
 
 ## Durability
 
-The VM database has independent schema owners:
+The default VM root is an ephemeral in-memory overlay over the bundled base
+image. Store the root filesystem in the VM's SQLite database for files that
+must survive VM recreation. See [Persistence](/agentos/docs/persistence).
+
+The VM database has independent schema owners. Each owner advances only its own
+migration ladder.
 
 | Owner | Namespace |
 | --- | --- |
 | Filesystem | `agentos_fs_*` |
 | Core | `agentos_core_*` |
 
-Each owner advances only its own migration ladder. There is no legacy storage
-adoption path.
+## Go deeper
 
-The default VM root is an ephemeral in-memory overlay over the bundled base
-image. Store the root filesystem in the VM's SQLite database for files that
-must survive VM recreation; see [Persistence](/agentos/docs/persistence).
+<CardGroup>
+  <Card title="Processes" href="/agentos/docs/architecture/processes">
+    The virtual process table, spawns, stdio, and PTYs.
+  </Card>
+  <Card title="Filesystem" href="/agentos/docs/architecture/filesystem">
+    The VFS engines, mounts, and escape protection.
+  </Card>
+  <Card title="Networking" href="/agentos/docs/architecture/networking">
+    The socket table, loopback, and egress policy.
+  </Card>
+  <Card title="Limits & Observability" href="/agentos/docs/architecture/limits-and-observability">
+    Bounded resources and typed limit errors.
+  </Card>
+</CardGroup>
+
+## Embedded API
+
+`AgentOs.create()` starts the sidecar and boots a VM. `dispose()` stops it.
+
+<CodeSnippet file="examples/embedded/vm.ts" region="boot" />
+
+Read more in the [embedded API quickstart](/agentos/docs/quickstart-embedded).
