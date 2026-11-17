@@ -45,24 +45,19 @@ Before the Rust sidecar (commit `5a43882`), the JavaScript kernel and `packages/
 - **SharedArrayBuffer RPC** -- Synchronous syscalls from worker threads used `Atomics.wait` + shared memory buffers (same pattern the Pyodide VFS bridge uses today).
 - **Module hijacking** -- `require('net')` returned the kernel-backed socket implementation, not real `node:net`.
 
-The Rust sidecar kernel already has the VFS, process table, pipe manager, PTY manager, and permission system. What's missing is porting the **polyfill layer**. This is a port of proven patterns, not a greenfield design.
+The Rust sidecar kernel has the VFS, process table, pipe manager, PTY manager, and permission system, and the polyfill layer in `packages/build-tools/bridge-src/` routes guest builtins onto them.
 
-### Current reality vs required state
+### Builtin coverage
 
-| Builtin | Required | Current | Gap |
-|---------|----------|---------|-----|
-| `fs` / `fs/promises` | Kernel VFS polyfill | Path-translating wrapper over real `node:fs` | Port: route through kernel VFS via RPC |
-| `child_process` | Kernel process table polyfill | Path-translating wrapper over real `node:child_process` | Port: route through kernel process table |
-| `net` | Kernel socket table polyfill | **No wrapper -- falls through to real `node:net`** | Port: kernel socket table polyfill |
-| `dgram` | Kernel socket table polyfill | **No wrapper -- falls through to real `node:dgram`** | Port: kernel socket table polyfill |
-| `dns` | Kernel DNS resolver polyfill | **No wrapper -- falls through to real `node:dns`** | Port: kernel DNS resolver polyfill |
-| `http` / `https` / `http2` | Built on kernel `net` polyfill | **No wrapper -- falls through to real module** | Port: builds on `net` polyfill |
-| `tls` | Kernel TLS polyfill | Guest-owned polyfill in `node_import_cache.rs` wraps the existing guest `net` transport with host TLS state | Keep client/server entrypoints on guest sockets and avoid direct host `node:tls` listeners/connections |
-| `os` | Kernel-provided values | Guest-owned polyfill in `node_import_cache.rs` virtualizes hostname, CPU, memory, loopback networking, home, and user info | Keep future `os` additions aligned with VM defaults |
-| `vm` | Guest-owned compatibility shim for package loading | Guest-owned compatibility builtin for `Script`, `createContext`, `isContext`, `runInNewContext`, `runInThisContext` | Keep it limited to the compatibility surface; do not fall through to host `node:vm` |
-| `worker_threads` | Guest-owned compatibility shim for package loading | Guest-owned compatibility builtin exposing `isMainThread` plus inert ports; `Worker` construction stays unavailable | Keep it importable for feature detection, but never spawn real threads |
-| `inspector` | Must be denied | **No wrapper -- falls through to real module** | Must stay denied |
-| `v8` | Guest-owned compatibility shim for package loading | Guest-owned compatibility builtin for safe inspection/serialization helpers | Keep it limited to the compatibility surface; do not fall through to host `node:v8` |
+`crates/execution/assets/polyfill-registry.json` is the source of truth. Every builtin falls into one of three groups, and none falls through to a real host module because the guest runs in a V8 isolate with no host Node underneath.
+
+| Group | Builtins | Implementation |
+|-------|----------|----------------|
+| `custom-bridge` | `async_hooks`, `child_process`, `crypto`, `dgram`, `diagnostics_channel`, `dns`, `dns/promises`, `fs`, `fs/promises`, `http`, `http2`, `https`, `module`, `net`, `os`, `perf_hooks`, `process`, `readline`, `sqlite`, `stream/consumers`, `stream/promises`, `stream/web`, `timers/promises`, `tls`, `tty`, `v8`, `vm`, `worker_threads` | Guest-owned modules in `packages/build-tools/bridge-src/builtins/` that call the sidecar over sync RPC. `fs` uses the kernel VFS, `net`/`dgram`/`dns`/`http*`/`tls` use the kernel socket table, and `child_process` uses the kernel process table. `vm`, `v8`, and `worker_threads` are compatibility shims; `Worker` construction stays unavailable. |
+| `node-stdlib-browser` | `assert`, `buffer`, `constants`, `console`, `events`, `path`, `path/posix`, `path/win32`, `punycode`, `querystring`, `sys`, `stream`, `string_decoder`, `timers`, `url`, `util`, `util/types`, `zlib` | Pure-JS implementations with no host access. |
+| `denied` | `cluster`, `domain`, `inspector`, `repl`, `trace_events`, `wasi` | Importing throws `ERR_ACCESS_DENIED`. |
+
+Remaining work is conformance depth inside the bridge modules, not host fall-through. When adding a builtin, put it in one of these groups and keep `normalize_builtin_specifier()` in `javascript.rs` aligned.
 
 ### Loader interception (`node_import_cache.rs`)
 
@@ -80,10 +75,10 @@ The host-support ESM loader hook (`loader.mjs`) is generated from a Rust string 
 
 ### Additional hardening layers (defense-in-depth, NOT primary isolation)
 
-1. **`globalThis.fetch` hardening** -- Replaced with `restrictedFetch` (loopback-only on exempt ports). Does NOT cover `http.request()`, `net.connect()`, or `dgram.createSocket()`.
-2. **Node.js `--permission` flag** -- OS-level backstop for filesystem and child_process only. No network restrictions. This is a safety net, not the isolation boundary.
-3. **Guest env stripping** -- `NODE_OPTIONS`, `LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, `LD_LIBRARY_PATH` stripped before spawn.
-4. **Permissioned Pyodide host launches still need `--allow-worker`.** `python.rs` bootstraps through Node's internal ESM loader worker, so the host process must keep `--allow-worker` enabled even though the guest `node:worker_threads` surface is limited to a compatibility shim and does not permit real worker creation.
+1. **Pyodide `globalThis.fetch` hardening** -- `assets/runners/python-runner.mjs` replaces `fetch` with `restrictedFetch` (loopback-only on exempt ports) and hardens `require`. The runner is itself a V8 execution; this is an extra layer inside the isolate, not a host process flag.
+2. **Hidden control env** -- `AGENTOS_*` and sync-RPC control variables are scrubbed from guest `process.env` and from guest `child_process` spawns.
+
+There are no host Node processes for guest code, so Node's `--permission`, `--allow-wasi`, and `--allow-worker` flags do not apply.
 
 ## Guest `fs` and `fs/promises` Polyfill Rules
 
