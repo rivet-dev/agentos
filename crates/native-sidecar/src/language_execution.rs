@@ -1815,6 +1815,21 @@ where
                 },
             )
             .await?;
+
+            // `exec` and `execFile` receive a complete stdin payload and return
+            // no handle, so the write must end in EOF. Without this close a
+            // command that reads to end of input (`cat`, `tr`, `node` on
+            // `process.stdin`) waits for input that never arrives until the
+            // execution timeout. Spawned processes keep stdin open for
+            // `writeStdin`, and closing a PTY's stdin would tear down the
+            // terminal, so only one-shot pipe-backed executions close here.
+            if !operation.background && operation.pty.is_none() {
+                crate::execution::close_stdin_after_input_owned(
+                    self.vm_input(request),
+                    CloseStdinRequest { process_id },
+                )
+                .await?;
+            }
         }
 
         let descriptor = self

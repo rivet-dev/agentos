@@ -12,6 +12,11 @@ process.
 | Run a shell command line | `v1.process.run({ command: "sh", args: ["-c", line] })` | `process.exec(line)` |
 | Start a long-running process | `v1.process.spawn({ command, args })` returns `{ generation, pid }` | `process.spawn(command, args)` returns `{ pid }` |
 
+A one-shot `process.exec` or `process.execFile` that receives the `stdin`
+option writes those bytes and then closes stdin, so a command that reads to end
+of input (like `cat`) exits instead of waiting for more. `process.spawn` keeps
+stdin open for `writeStdin`.
+
 <CodeGroup>
 
 ```ts Hosted @nocheck

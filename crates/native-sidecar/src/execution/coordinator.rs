@@ -317,28 +317,61 @@ pub(crate) async fn close_stdin_owned(
     input: OwnedVmRouteInput,
     payload: CloseStdinRequest,
 ) -> Result<DispatchResult, SidecarError> {
-    input.vm.try_command("close process stdin", |vm| {
+    close_stdin_with_missing_process(input, payload, false).await
+}
+
+/// Close stdin after a one-shot execution wrote its complete input.
+///
+/// `exec` and `execFile` take a whole stdin payload and return no handle, so
+/// the write has to end in EOF or a command that reads to end of input waits
+/// for a close that never arrives until the execution timeout. The process can
+/// finish on its own before this close lands (a command that ignores stdin, or
+/// one that stops after enough input), and the caller observes the process
+/// exit rather than a stdin error, so a vanished process is not a failure here.
+pub(crate) async fn close_stdin_after_input_owned(
+    input: OwnedVmRouteInput,
+    payload: CloseStdinRequest,
+) -> Result<DispatchResult, SidecarError> {
+    close_stdin_with_missing_process(input, payload, true).await
+}
+
+async fn close_stdin_with_missing_process(
+    input: OwnedVmRouteInput,
+    payload: CloseStdinRequest,
+    tolerate_missing_process: bool,
+) -> Result<DispatchResult, SidecarError> {
+    let process_id = payload.process_id.clone();
+    let closed = input.vm.try_command("close process stdin", |vm| {
         let VmState {
             kernel,
             active_processes,
             ..
         } = vm;
-        let process = active_processes
-            .get_mut(&payload.process_id)
-            .ok_or_else(|| {
-                SidecarError::InvalidState(format!(
-                    "VM {} has no active process {}",
-                    input.vm_id, payload.process_id
-                ))
-            })?;
+        let Some(process) = active_processes.get_mut(&payload.process_id) else {
+            if tolerate_missing_process {
+                return Ok(false);
+            }
+            return Err(SidecarError::InvalidState(format!(
+                "VM {} has no active process {}",
+                input.vm_id, payload.process_id
+            )));
+        };
         process.execution.close_stdin()?;
         close_kernel_process_stdin(kernel, process)?;
         process.host_stdin_closed = true;
-        Ok(())
+        Ok(true)
     })?;
 
+    if !closed {
+        tracing::debug!(
+            vm_id = %input.vm_id,
+            process_id = %process_id,
+            "execution exited before its stdin could be closed"
+        );
+    }
+
     Ok(DispatchResult {
-        response: stdin_closed_response(&input.request, payload.process_id),
+        response: stdin_closed_response(&input.request, process_id),
         events: Vec::new(),
     })
 }

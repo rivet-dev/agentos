@@ -1117,6 +1117,62 @@ fn execution_timeout_is_enforced_by_the_sidecar() {
     dispose_vm_and_close_session_wire(&mut sidecar, &connection_id, &session_id, &vm_id);
 }
 
+#[test]
+fn one_shot_execution_closes_stdin_after_writing_the_whole_input() {
+    let mut sidecar = new_sidecar("language-execution-stdin-eof");
+    let connection_id = authenticate_wire(&mut sidecar, "execution-stdin-eof-connection");
+    let session_id = open_session_wire(&mut sidecar, 2, &connection_id);
+    let cwd = temp_dir("language-execution-stdin-eof-cwd");
+    let (vm_id, _) = create_vm_wire(
+        &mut sidecar,
+        3,
+        &connection_id,
+        &session_id,
+        wire::GuestRuntimeKind::JavaScript,
+        &cwd,
+    );
+    let mut options = process_options(None);
+    options.background = Some(false);
+    options.operation_id = None;
+    options.output.retain_events = Some(false);
+    options.stdin = Some(b"hello from stdin\n".to_vec());
+    options.timeout_ms = Some(5_000);
+    let started = sidecar
+        .dispatch_wire_blocking(wire_request(
+            4,
+            wire_vm(&connection_id, &session_id, &vm_id),
+            wire::RequestPayload::JavaScriptExecutionRequest(wire::JavaScriptExecutionRequest {
+                process: options,
+                source: String::from(
+                    "let data = '';\n\
+                     process.stdin.setEncoding('utf8');\n\
+                     process.stdin.on('data', (chunk) => { data += chunk; });\n\
+                     process.stdin.on('end', () => { process.stdout.write(data); });\n",
+                ),
+                format: Some(wire::JavaScriptModuleFormat::CommonJs),
+                file_path: None,
+                inputs: None,
+            }),
+        ))
+        .expect("start one-shot JavaScript operation with stdin");
+    let execution_id = accepted_execution_id(started);
+    let result = wait_for_execution(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        &execution_id,
+    );
+    assert_eq!(
+        result.outcome,
+        wire::ExecutionOutcome::Succeeded,
+        "a one-shot execution must see EOF after its stdin payload: {result:?}"
+    );
+    assert_eq!(result.stdout, Some(b"hello from stdin\n".to_vec()));
+
+    dispose_vm_and_close_session_wire(&mut sidecar, &connection_id, &session_id, &vm_id);
+}
+
 fn evaluate_in_context(
     sidecar: &mut agentos_native_sidecar::NativeSidecar<support::RecordingBridge>,
     (connection_id, session_id, vm_id): (&str, &str, &str),
