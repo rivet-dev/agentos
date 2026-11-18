@@ -114,6 +114,30 @@ pub fn configure_isolate(isolate: &mut v8::OwnedIsolate) {
 /// background compilation while keeping the trusted thread census bounded.
 const V8_PLATFORM_WORKER_THREADS: u32 = 4;
 
+/// Opt-in env knob for Wasm exnref exception handling (`try_table`,
+/// `throw_ref`), which Rust `panic=unwind` Wasm uses. V8 turns exnref on by
+/// default from 13.7 (Chrome 137, workerd):
+/// https://github.com/v8/v8/blob/33e7739c134d24c94fdda02ab631eefed6bd18df/src/wasm/wasm-feature-flags.h#L131-L135
+/// The pinned V8 13.0 never shipped it and lacks the later exnref fixes, so
+/// guests get it only when the operator opts in. The setting applies to every
+/// VM in the process. The snapshot helper process inherits this environment,
+/// so snapshots are built and restored with the same flags.
+const WASM_EXNREF_ENV: &str = "AGENTOS_V8_WASM_EXNREF";
+
+fn wasm_exnref_enabled() -> bool {
+    match std::env::var_os(WASM_EXNREF_ENV) {
+        None => false,
+        Some(value) if value == "1" => true,
+        Some(value) if value == "0" => false,
+        Some(value) => {
+            tracing::warn!(
+                "ignoring {WASM_EXNREF_ENV}={value:?}: set 1 to enable Wasm exnref or 0 to disable it"
+            );
+            false
+        }
+    }
+}
+
 /// Initialize the V8 platform (once per process).
 /// Safe to call multiple times; only the first call takes effect.
 pub fn init_v8_platform() {
@@ -134,6 +158,10 @@ pub fn init_v8_platform() {
             .spawn(move || {
                 v8::icu::set_common_data_74(&ICU_COMMON_DATA.0)
                     .expect("failed to initialize V8 ICU common data");
+                // V8 reads flags once, before initialization.
+                if wasm_exnref_enabled() {
+                    v8::V8::set_flags_from_string("--experimental-wasm-exnref");
+                }
                 let platform =
                     v8::new_default_platform(V8_PLATFORM_WORKER_THREADS, false).make_shared();
                 v8::V8::initialize_platform(platform);
