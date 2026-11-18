@@ -436,6 +436,9 @@ const ENV_ALLOW: &[&str] = &[
     // Session-phase perf diagnostics toggles (AGENTOS_V8_SESSION_PHASES*),
     // read from operator env. Not guest-reachable.
     "crates/v8-runtime/src/session.rs",
+    // Wasm exnref opt-in (AGENTOS_V8_WASM_EXNREF), read once from operator env
+    // before V8 initializes. Not guest-reachable.
+    "crates/v8-runtime/src/isolate.rs",
 ];
 
 fn fs_class() -> BannedClass {

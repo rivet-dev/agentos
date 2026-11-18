@@ -72,6 +72,12 @@ or implemented in the isolate is denied.</Note>
 - `Uint8Array` has `toHex`, `toBase64`, `fromHex`, `fromBase64`, `setFromHex`,
   and `setFromBase64`, with the `alphabet`, `omitPadding`, and
   `lastChunkHandling` options.
+- WebAssembly exception handling with `exnref` (`try_table`, `throw_ref`) is
+  off by default. Rust code built with `panic=unwind` needs it. agentOS uses
+  V8 13.0, which does not ship this feature as stable. To turn it on, set
+  `AGENTOS_V8_WASM_EXNREF=1` in the environment that starts the sidecar. The
+  setting applies to every VM in that sidecar. Without it, such modules fail
+  with a `CompileError`.
 
 ## `node:sqlite`
 
