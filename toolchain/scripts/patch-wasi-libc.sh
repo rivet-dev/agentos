@@ -246,19 +246,30 @@ fi
 
 # Clean previous build artifacts and sysroot for a reproducible build
 make -C "$WASI_LIBC_SRC_DIR" clean 2>/dev/null || true
-rm -rf "$SYSROOT_DIR"
+if [ -L "$SYSROOT_DIR" ]; then
+    # CI keeps this output in a persistent cache outside the checkout.
+    find "$SYSROOT_DIR/" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+else
+    rm -rf "$SYSROOT_DIR"
+fi
 
 # Build wasi-libc with wasi-sdk's tools, output to our sysroot directory.
 # Build the `libc` target (headers + static libraries) but NOT `finish`, which
 # runs check-symbols and fails because our patches add custom undefined symbols
 # (__host_*) not in the upstream expected-symbols list.
+if [[ "${CARGO_BUILD_JOBS:-}" =~ ^[1-9][0-9]*$ ]]; then
+    WASI_BUILD_JOBS="$CARGO_BUILD_JOBS"
+else
+    # Cargo also accepts relative counts and "default"; preserve the C default.
+    WASI_BUILD_JOBS="$(nproc 2>/dev/null || echo 4)"
+fi
 make -C "$WASI_LIBC_SRC_DIR" \
     CC="$WASI_CC" \
     AR="$WASI_AR" \
     NM="$WASI_NM" \
     SYSROOT="$SYSROOT_DIR" \
     libc \
-    -j"$(nproc 2>/dev/null || echo 4)"
+    -j"$WASI_BUILD_JOBS"
 
 # Install CRT startup files (crt1.o etc.) from the vanilla wasi-sdk sysroot.
 # CRT objects are standard startup routines that don't need our patches.

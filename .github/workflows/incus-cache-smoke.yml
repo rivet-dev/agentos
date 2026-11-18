@@ -2,6 +2,20 @@ name: Incus cache validation
 
 on:
   workflow_dispatch:
+    inputs:
+      full_build:
+        description: Run real Linux builds and verify warm compiler reuse
+        type: boolean
+        default: false
+      cross_build:
+        description: Verify real WASM and Darwin compiler cache reuse
+        type: boolean
+        default: false
+      worker:
+        description: Accepted worker to validate
+        type: choice
+        options: [ci-03, ci-02, ci-04, ci-05, ci-06]
+        default: ci-03
   push:
     branches: [codex/incus-heavy-ci]
     paths:
@@ -17,7 +31,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        slot: [ci-02-runner-01, ci-02-runner-02, ci-02-runner-03]
+        slot: >-
+          ${{ fromJSON(github.event_name == 'workflow_dispatch'
+            && (inputs.worker == 'ci-02'
+              && '["ci-02-runner-01","ci-02-runner-02","ci-02-runner-03"]'
+              || format('["{0}-runner-01","{0}-runner-02","{0}-runner-03","{0}-runner-04"]', inputs.worker))
+            || '["ci-02-runner-01","ci-02-runner-02","ci-02-runner-03","ci-03-runner-01","ci-03-runner-02","ci-03-runner-03","ci-03-runner-04"]') }}
     runs-on: [self-hosted, incus-heavy, '${{ matrix.slot }}']
     timeout-minutes: 15
     steps:
@@ -38,16 +57,47 @@ jobs:
               else:
                   raise SystemExit('Job hook failed to hold cache lock')
           PY
+          gc_output=$(python3 /usr/local/lib/ci/cache-gc.py)
+          test "$gc_output" = 'Active jobs: deferring raw cache GC.'
           cargo init --bin --name cache_probe "$RUNNER_TEMP/cache-probe"
           export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target/probe"
           cargo build --manifest-path "$RUNNER_TEMP/cache-probe/Cargo.toml"
           binary="$CARGO_TARGET_DIR/debug/cache_probe"
           before=$(stat -c %Y "$binary")
           sleep 2
-          cargo build --manifest-path "$RUNNER_TEMP/cache-probe/Cargo.toml" -v 2>&1 | tee "$RUNNER_TEMP/warm.log"
+          cargo build --color never --manifest-path "$RUNNER_TEMP/cache-probe/Cargo.toml" -v 2>&1 | tee "$RUNNER_TEMP/warm.log"
           grep -q 'Fresh cache_probe' "$RUNNER_TEMP/warm.log"
           test "$before" = "$(stat -c %Y "$binary")"
           test -L target
+      - name: Verify WASM compiler cache reuse
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup target add wasm32-wasip1
+          export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target/probe"
+          cargo build --target wasm32-wasip1 --manifest-path "$RUNNER_TEMP/cache-probe/Cargo.toml"
+          binary="$CARGO_TARGET_DIR/wasm32-wasip1/debug/cache_probe.wasm"
+          before=$(stat -c %Y "$binary")
+          sleep 2
+          cargo build --color never --target wasm32-wasip1 \
+            --manifest-path "$RUNNER_TEMP/cache-probe/Cargo.toml" -v 2>&1 | tee "$RUNNER_TEMP/wasm-warm.log"
+          grep -q 'Fresh cache_probe' "$RUNNER_TEMP/wasm-warm.log"
+          test "$before" = "$(stat -c %Y "$binary")"
+      - name: Verify pnpm store offline reuse
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm --version
+          context=$(mktemp -d "$RUNNER_TEMP/pnpm-probe.XXXXXX")
+          cat > "$context/package.json" <<'JSON'
+          {"name":"incus-cache-probe","private":true,"packageManager":"pnpm@10.13.1","dependencies":{"is-number":"7.0.0"}}
+          JSON
+          store=$(pnpm --dir "$context" store path)
+          case "$store" in "$CI_CACHE_ROOT/"*) ;; *) echo "Unexpected store: $store" >&2; exit 1 ;; esac
+          pnpm --dir "$context" install --ignore-scripts
+          rm -rf "$context/node_modules"
+          pnpm --dir "$context" install --offline --frozen-lockfile --ignore-scripts
+          node -e 'if (!require(process.argv[1])(42)) process.exit(1)' "$context/node_modules/is-number"
       - name: Verify shared BuildKit layers and mutable caches
         shell: bash
         run: |
@@ -75,3 +125,179 @@ jobs:
             --build-arg CACHE_ID="$cache_id" --build-arg ITERATION=2 "$context" 2>&1 | tee "$RUNNER_TEMP/docker-warm.log"
           grep -q CACHED "$RUNNER_TEMP/docker-warm.log"
           docker buildx du --builder incus
+
+  linux-capacity:
+    if: github.event_name == 'workflow_dispatch' && inputs.full_build
+    name: Linux build (${{ inputs.worker }}-${{ matrix.slot }})
+    strategy:
+      fail-fast: false
+      matrix:
+        slot: ${{ inputs.worker == 'ci-02' && fromJSON('["01","02","03"]') || fromJSON('["01","02","03","04"]') }}
+    runs-on:
+      - self-hosted
+      - incus-heavy
+      - ${{ format('{0}-runner-{1}', inputs.worker, matrix.slot) }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/ci/incus-cache.sh docker
+      - name: Build real Linux artifacts and verify warm reuse
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Use the release Dockerfile's build steps and export only its artifact.
+          python3 - "$RUNNER_TEMP/linux-artifacts.Dockerfile" <<'PYTHON'
+          import pathlib, sys
+          source = pathlib.Path('docker/build/linux-gnu.Dockerfile')
+          output = pathlib.Path(sys.argv[1])
+          output.write_text(source.read_text() + '\nFROM scratch AS artifacts\nCOPY --from=0 /artifacts/ /\n')
+          pathlib.Path(str(output) + '.dockerignore').write_text(
+              pathlib.Path(str(source) + '.dockerignore').read_text())
+          PYTHON
+          build() {
+            local destination=$1 log=$2
+            docker buildx build --builder incus --progress plain \
+              --file "$RUNNER_TEMP/linux-artifacts.Dockerfile" \
+              --target artifacts --output "type=local,dest=$destination" \
+              --build-arg TARGET=x86_64-unknown-linux-gnu \
+              --build-arg BUILD_PROFILE=debug \
+              --build-arg CACHE_PLATFORM=linux-x64-gnu \
+              --build-arg CACHE_SCOPE="$CI_SLOT" \
+              --build-arg CARGO_BUILD_JOBS="$CARGO_BUILD_JOBS" \
+              . 2>&1 | tee "$log"
+          }
+          start=$(date +%s)
+          build "$RUNNER_TEMP/cold-artifacts" "$RUNNER_TEMP/linux-cold.log"
+          cold_seconds=$(( $(date +%s) - start ))
+          binary="$RUNNER_TEMP/cold-artifacts/agentos-native-sidecar"
+          scripts/ci/check-linux-glibc-floor.sh "$binary"
+          scripts/ci/smoke-linux-artifacts.sh binary "$binary"
+          printf '\nCI cache validation context change.\n' >> README.md
+          start=$(date +%s)
+          build "$RUNNER_TEMP/warm-artifacts" "$RUNNER_TEMP/linux-warm.log"
+          warm_seconds=$(( $(date +%s) - start ))
+          cmp "$binary" "$RUNNER_TEMP/warm-artifacts/agentos-native-sidecar"
+          grep -q Finished "$RUNNER_TEMP/linux-warm.log"
+          # COPY can refresh workspace source timestamps; dependency artifacts
+          # must still survive, and the resulting executable must be identical.
+          python3 - "$RUNNER_TEMP/linux-warm.log" <<'PYTHON'
+          import pathlib, re, sys
+          log = pathlib.Path(sys.argv[1]).read_text()
+          compiled = re.findall(r'^#[0-9]+ [0-9.]+\s+Compiling ([^\n]+)', log, re.M)
+          external = [line for line in compiled if '(/build/' not in line]
+          if external:
+              raise SystemExit('Warm build recompiled external dependencies: ' + ', '.join(external))
+          print(f'Warm build reused dependencies; {len(compiled)} workspace crates rebuilt')
+          PYTHON
+          docker exec incus-buildkit sh -c 'cat /sys/fs/cgroup/memory.peak /sys/fs/cgroup/memory.events'
+          printf '| Runner | Initial seconds | Warm seconds |\n| --- | ---: | ---: |\n| %s | %s | %s |\n' \
+            "$RUNNER_NAME" "$cold_seconds" "$warm_seconds" >> "$GITHUB_STEP_SUMMARY"
+
+  darwin-cache:
+    if: github.event_name == 'workflow_dispatch' && inputs.cross_build
+    name: Darwin cache (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - slot: '01'
+            target: x86_64-apple-darwin
+            clang: x86_64-apple-darwin20.4
+            platform: darwin-x64
+          - slot: '02'
+            target: aarch64-apple-darwin
+            clang: aarch64-apple-darwin20.4
+            platform: darwin-arm64
+    runs-on:
+      - self-hosted
+      - incus-heavy
+      - ${{ format('{0}-runner-{1}', inputs.worker, matrix.slot) }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/ci/incus-cache.sh docker
+      - name: Build real Darwin artifacts and verify warm reuse
+        env:
+          TARGET: ${{ matrix.target }}
+          CLANG: ${{ matrix.clang }}
+          CACHE_PLATFORM: ${{ matrix.platform }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$RUNNER_TEMP/darwin-artifacts.Dockerfile" <<'PYTHON'
+          import pathlib, sys
+          source = pathlib.Path('docker/build/darwin.Dockerfile')
+          output = pathlib.Path(sys.argv[1])
+          output.write_text(source.read_text() + '\nFROM scratch AS artifacts\nCOPY --from=0 /artifacts/ /\n')
+          pathlib.Path(str(output) + '.dockerignore').write_text(
+              pathlib.Path(str(source) + '.dockerignore').read_text())
+          PYTHON
+          build() {
+            docker buildx build --builder incus --progress plain \
+              --file "$RUNNER_TEMP/darwin-artifacts.Dockerfile" --target artifacts \
+              --output "type=local,dest=$RUNNER_TEMP/$1-artifacts" \
+              --build-arg TARGET="$TARGET" --build-arg CLANG="$CLANG" \
+              --build-arg CACHE_PLATFORM="$CACHE_PLATFORM" --build-arg BUILD_PROFILE=debug \
+              --build-arg CACHE_SCOPE="$CI_SLOT" --build-arg CARGO_BUILD_JOBS="$CARGO_BUILD_JOBS" \
+              . 2>&1 | tee "$RUNNER_TEMP/darwin-$1.log"
+          }
+          build initial
+          python3 - "$RUNNER_TEMP/initial-artifacts/agentos-native-sidecar" "$TARGET" <<'PYTHON'
+          import struct, sys
+          with open(sys.argv[1], 'rb') as binary:
+              magic, cpu, _, kind = struct.unpack('<IIII', binary.read(16))
+          expected_cpu = 0x1000007 if sys.argv[2].startswith('x86_64-') else 0x100000c
+          assert (magic, cpu, kind) == (0xfeedfacf, expected_cpu, 2), 'Unexpected Mach-O executable'
+          print('Verified 64-bit Mach-O executable for ' + sys.argv[2])
+          PYTHON
+          printf '\nCI cache validation context change.\n' >> README.md
+          build warm
+          cmp "$RUNNER_TEMP/initial-artifacts/agentos-native-sidecar" "$RUNNER_TEMP/warm-artifacts/agentos-native-sidecar"
+          grep -q Finished "$RUNNER_TEMP/darwin-warm.log"
+          python3 - "$RUNNER_TEMP/darwin-warm.log" <<'PYTHON'
+          import pathlib, re, sys
+          compiled = re.findall(r'^#[0-9]+ [0-9.]+\s+Compiling ([^\n]+)', pathlib.Path(sys.argv[1]).read_text(), re.M)
+          external = [line for line in compiled if '(/build/' not in line]
+          if external:
+              raise SystemExit('Warm build recompiled external dependencies: ' + ', '.join(external))
+          print(f'Warm build reused dependencies; {len(compiled)} workspace crates rebuilt')
+          PYTHON
+
+  wasm-cache:
+    if: github.event_name == 'workflow_dispatch' && inputs.cross_build
+    name: Patched WASM cache
+    runs-on:
+      - self-hosted
+      - incus-heavy
+      - ${{ format('{0}-runner-03', inputs.worker) }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/ci/incus-cache.sh wasm
+      - name: Install pinned WASM Rust toolchain
+        run: rustup toolchain install nightly-2026-03-01 --profile minimal --component rust-src --target wasm32-wasip1
+      - name: Verify real patched Rust and C command cache reuse
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Separate recursive makes must not build the shared sysroot concurrently.
+          build_commands() {
+            make -C toolchain cmd/ls
+            make -C toolchain/c build/curl
+          }
+          build_commands 2>&1 | tee "$RUNNER_TEMP/wasm-initial.log"
+          rust_binary=toolchain/target/wasm32-wasip1/release/ls.wasm
+          c_binary=toolchain/c/build/curl
+          sha256sum "$rust_binary" "$c_binary" > "$RUNNER_TEMP/wasm-before.sha256"
+          CARGO_TERM_VERBOSE=true build_commands 2>&1 | tee "$RUNNER_TEMP/wasm-warm.log"
+          sha256sum -c "$RUNNER_TEMP/wasm-before.sha256"
+          grep -q 'Fresh cmd-ls' "$RUNNER_TEMP/wasm-warm.log"
+          grep -q Finished "$RUNNER_TEMP/wasm-warm.log"
+          if grep -qE '^ *Compiling ' "$RUNNER_TEMP/wasm-warm.log"; then
+            echo 'Warm WASM build unexpectedly recompiled Rust crates' >&2
+            exit 1
+          fi
+          for path in toolchain/target toolchain/vendor toolchain/.cargo toolchain/c/vendor toolchain/c/libs toolchain/c/.cache toolchain/c/build toolchain/c/sysroot; do
+            test -L "$path"
+            case "$(readlink -f "$path")" in "$CI_CACHE_ROOT/"*) ;; *) exit 1 ;; esac
+          done
