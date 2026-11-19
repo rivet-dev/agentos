@@ -2853,3 +2853,79 @@ async fn request_concurrency_real_loop_rejects_a_previous_protocol_version_at_th
         })
         .await;
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn request_concurrency_real_loop_priority_rejection_waits_for_unread_rejection_egress() {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let state = Arc::new(GatedExtensionState::default());
+            let (harness, engine) =
+                ProtocolLoopHarness::build(Arc::clone(&state), &[("conn", &["session"])], 4, 4096);
+            // The host has not read earlier rejections, so rejection egress is full.
+            let mut unread = BTreeSet::new();
+            for request_id in 1000.. {
+                let filler = extension_request(request_id, "conn", "session", "unread");
+                let rejection = ProtocolFrame::ResponseFrame(response_frame(
+                    request_id,
+                    filler.ownership,
+                    ResponsePayload::RejectedResponse(wire::RejectedResponse {
+                        code: String::from("ERR_TEST_UNREAD_REJECTION"),
+                        message: String::from("unread"),
+                        limit_name: None,
+                        configured_limit: None,
+                        current_usage: None,
+                        requested: None,
+                        unit: None,
+                        scope: None,
+                        vm_id: None,
+                        session_generation: None,
+                        capability_id: None,
+                        operation: None,
+                        configuration_path: None,
+                        retryable: None,
+                        errno: None,
+                    }),
+                ));
+                match harness.writer.try_send_rejection(rejection) {
+                    Ok(()) => {
+                        unread.insert(request_id);
+                    }
+                    Err(ProtocolTrySendError::Full(_)) => break,
+                    Err(error) => panic!("unexpected rejection filler failure: {error}"),
+                }
+            }
+            let engine_task = tokio::task::spawn_local(run_protocol_engine(engine));
+            // Two priority-lane requests with one id: the second must be
+            // rejected, which needs rejection egress room.
+            harness.send_request(
+                extension_request(7, "conn", "session", "progress-events:a"),
+                1,
+            );
+            harness.send_request(
+                extension_request(7, "conn", "session", "progress-events:b"),
+                1,
+            );
+            tokio::task::yield_now().await;
+
+            // The host now reads everything. Every request gets a terminal reply
+            // and the sidecar keeps serving.
+            let mut replies_for_7 = 0;
+            while replies_for_7 < 2 || !unread.is_empty() {
+                let response = harness.response().await;
+                if response.request_id == 7 {
+                    replies_for_7 += 1;
+                } else {
+                    assert!(unread.remove(&response.request_id), "{response:?}");
+                }
+            }
+            harness.send_request(extension_request(8, "conn", "session", "after"), 1);
+            let after = harness.response().await;
+            assert_eq!(after.request_id, 8);
+            assert!(
+                !matches!(after.payload, ResponsePayload::RejectedResponse(_)),
+                "the sidecar must still serve requests: {after:?}"
+            );
+            finish_cleanly(&harness, engine_task).await;
+        })
+        .await;
+}
