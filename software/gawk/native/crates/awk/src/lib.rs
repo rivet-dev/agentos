@@ -5,6 +5,7 @@
 use std::ffi::OsString;
 use std::io::{self, BufReader};
 
+use awk_rs::ast::Pattern;
 use awk_rs::{Interpreter, Lexer, Parser};
 
 /// Entry point for awk command.
@@ -106,7 +107,18 @@ fn run_awk(args: &[String]) -> Result<i32, String> {
     let stdout = io::stdout();
     let mut output = stdout.lock();
 
-    let exit_code = if input_files.is_empty() {
+    // POSIX awk runs a program of only BEGIN actions without reading input or
+    // opening operands, so an open stdin cannot keep it waiting.
+    let begin_only = program
+        .rules
+        .iter()
+        .all(|rule| matches!(rule.pattern, Some(Pattern::Begin)));
+
+    let exit_code = if begin_only {
+        interpreter
+            .run(Vec::<io::Empty>::new(), &mut output)
+            .map_err(|e| format!("{}", e))?
+    } else if input_files.is_empty() {
         // Read from stdin
         let stdin = io::stdin();
         let inputs = vec![BufReader::new(stdin.lock())];
