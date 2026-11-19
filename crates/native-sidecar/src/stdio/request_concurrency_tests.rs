@@ -2539,6 +2539,118 @@ async fn request_concurrency_real_loop_disconnect_cleans_up_without_leaks() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn request_concurrency_real_loop_queues_every_dispose_past_the_queue_limit() {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let state = Arc::new(GatedExtensionState::default());
+            // One request in flight per lane, one queued request: a mass
+            // teardown overflows the queue at once.
+            let (harness, engine) = ProtocolLoopHarness::build_with_queue(
+                Arc::clone(&state),
+                &[],
+                1,
+                16 * 1024,
+                1,
+                200,
+            );
+            harness.send_request(
+                request_frame(
+                    30,
+                    connection_ownership("client-hint"),
+                    RequestPayload::AuthenticateRequest(wire::AuthenticateRequest {
+                        client_name: String::from("mass-teardown"),
+                        auth_token: String::new(),
+                        protocol_version: wire::PROTOCOL_VERSION,
+                        bridge_version: agentos_bridge::bridge_contract().version,
+                    }),
+                ),
+                1,
+            );
+            let engine_task = tokio::task::spawn_local(run_protocol_engine(engine));
+            assert_eq!(harness.response().await.request_id, 30);
+            harness.send_request(
+                request_frame(
+                    31,
+                    connection_ownership("conn-1"),
+                    RequestPayload::OpenSessionRequest(wire::OpenSessionRequest {
+                        placement: wire::SidecarPlacement::SidecarPlacementShared(
+                            wire::SidecarPlacementShared { pool: None },
+                        ),
+                        metadata: std::collections::HashMap::new(),
+                    }),
+                ),
+                1,
+            );
+            assert_eq!(harness.response().await.request_id, 31);
+
+            let mut vm_ids = Vec::new();
+            for request_id in 32..36 {
+                harness.send_request(
+                    request_frame(
+                        request_id,
+                        session_ownership("conn-1", "session-1"),
+                        RequestPayload::CreateVmRequest(wire::CreateVmRequest {
+                            runtime: wire::GuestRuntimeKind::JavaScript,
+                            config: String::from("{}"),
+                        }),
+                    ),
+                    1,
+                );
+                let response = harness.response().await;
+                let ResponsePayload::VmCreatedResponse(created) = response.payload else {
+                    panic!("expected VM creation response, got {:?}", response.payload);
+                };
+                vm_ids.push(created.vm_id);
+            }
+
+            // The first dispose waits on a running operation of its VM and
+            // holds the only priority slot; the other three queue behind it.
+            let held = harness
+                .ownership_coordinator
+                .admit(
+                    &RequestOperationMetadata::new(
+                        vm_ownership("conn-1", "session-1", &vm_ids[0]),
+                        "held operation",
+                        VmConcurrencyClass::SharedVm,
+                    ),
+                    crate::request_operations::OperationCancellation::new(),
+                )
+                .await
+                .expect("admit held operation");
+            for (offset, vm_id) in vm_ids.iter().enumerate() {
+                harness.send_request(
+                    request_frame(
+                        40 + offset as i64,
+                        vm_ownership("conn-1", "session-1", vm_id),
+                        RequestPayload::DisposeVmRequest(wire::DisposeVmRequest {
+                            reason: wire::DisposeReason::Requested,
+                        }),
+                    ),
+                    1,
+                );
+            }
+            // Longer than the 200 ms ordinary deadline: teardown must still wait.
+            tokio::time::sleep(Duration::from_millis(400)).await;
+            drop(held);
+
+            let mut disposed = BTreeSet::new();
+            for _ in 0..vm_ids.len() {
+                let response = harness.response().await;
+                assert!(
+                    matches!(response.payload, ResponsePayload::VmDisposedResponse(_)),
+                    "dispose {} must not be rejected: {:?}",
+                    response.request_id,
+                    response.payload
+                );
+                disposed.insert(response.request_id);
+            }
+            assert_eq!(disposed, BTreeSet::from([40, 41, 42, 43]));
+            finish_cleanly(&harness, engine_task).await;
+        })
+        .await;
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn request_concurrency_real_loop_rejects_when_the_queue_is_full_and_when_a_request_waits_too_long(
 ) {
     tokio::task::LocalSet::new()

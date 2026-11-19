@@ -10,6 +10,12 @@
 //! never queues ahead of other VMs' ordinary calls.
 //! A full queue or an expired deadline rejects the request with a typed,
 //! retryable error that names the limit to raise.
+//!
+//! Teardown (dispose, kill, signal, cancel, delete) is exempt from the count
+//! limit: a rejected teardown leaks a VM or a process, and teardown is already
+//! bounded by the VMs and processes that exist, and here by the byte limit.
+//! The priority and create lanes wait at least [`LONG_LANE_DEADLINE`], since a
+//! burst of creates or a mass teardown takes longer than ordinary calls.
 
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -17,13 +23,28 @@ use std::time::Duration;
 use tokio::time::Instant;
 
 use crate::request_operations::AdmissionLane;
-use crate::wire::{self, RequestFrame};
+use crate::wire::{self, RequestFrame, RequestPayload};
 
 const REQUEST_QUEUE_LIMIT_CODE: &str = "ERR_AGENTOS_REQUEST_QUEUE_LIMIT";
 const REQUEST_QUEUE_TIMEOUT_CODE: &str = "ERR_AGENTOS_REQUEST_QUEUE_TIMEOUT";
 const QUEUE_LIMIT_PATH: &str = "runtime.protocol.requestQueueLimit";
 const QUEUE_BYTES_PATH: &str = "runtime.protocol.requestQueueBytes";
 const QUEUE_DEADLINE_PATH: &str = "runtime.protocol.requestQueueDeadlineMs";
+/// Shortest wait for the priority and create lanes. A configured
+/// `requestQueueDeadlineMs` above it applies to every lane.
+const LONG_LANE_DEADLINE: Duration = Duration::from_secs(30);
+
+/// Teardown requests, which the queue count limit never rejects.
+fn is_teardown(payload: &RequestPayload) -> bool {
+    matches!(
+        payload,
+        RequestPayload::DisposeVmRequest(_)
+            | RequestPayload::KillProcessRequest(_)
+            | RequestPayload::SignalExecutionRequest(_)
+            | RequestPayload::CancelExecutionRequest(_)
+            | RequestPayload::DeleteExecutionRequest(_)
+    )
+}
 
 pub(super) struct QueuedRequest {
     pub(super) request: RequestFrame,
@@ -67,6 +88,15 @@ impl RequestQueue {
         }
     }
 
+    fn deadline(&self, lane: AdmissionLane) -> Duration {
+        match lane {
+            AdmissionLane::Ordinary => self.deadline,
+            AdmissionLane::Create | AdmissionLane::Priority => {
+                self.deadline.max(LONG_LANE_DEADLINE)
+            }
+        }
+    }
+
     fn lane_mut(&mut self, lane: AdmissionLane) -> &mut LaneQueue {
         match lane {
             AdmissionLane::Ordinary => &mut self.ordinary,
@@ -98,15 +128,16 @@ impl RequestQueue {
     ) -> Result<(), (RequestFrame, wire::RejectedResponse)> {
         let limit = self.limit;
         let max_bytes = self.max_bytes;
-        let deadline = Instant::now() + self.deadline;
+        let deadline = Instant::now() + self.deadline(lane);
+        let counted = !is_teardown(&request.payload);
         let queue = self.lane_mut(lane);
         let queued = queue.entries.len();
-        if queued >= limit {
+        if counted && queued >= limit {
             let rejection = queue_rejection(
                 lane,
                 REQUEST_QUEUE_LIMIT_CODE,
                 format!(
-                    "{REQUEST_QUEUE_LIMIT_CODE}: {queued} {} requests already wait for in-flight capacity, limit {limit}; retry later (the shipped sidecar fixes this limit)",
+                    "{REQUEST_QUEUE_LIMIT_CODE}: {queued} {} requests already wait for in-flight capacity, limit {limit}; retry later, or raise {QUEUE_LIMIT_PATH} where the sidecar is configured",
                     lane.name()
                 ),
                 "queued requests",
@@ -124,7 +155,7 @@ impl RequestQueue {
                 lane,
                 REQUEST_QUEUE_LIMIT_CODE,
                 format!(
-                    "{REQUEST_QUEUE_LIMIT_CODE}: {} queued {} request bytes plus {bytes} exceed {max_bytes}; retry later (the shipped sidecar fixes this limit)",
+                    "{REQUEST_QUEUE_LIMIT_CODE}: {} queued {} request bytes plus {bytes} exceed {max_bytes}; retry later, or raise {QUEUE_BYTES_PATH} where the sidecar is configured",
                     queue.bytes,
                     lane.name()
                 ),
@@ -208,13 +239,13 @@ impl RequestQueue {
         &mut self,
         now: Instant,
     ) -> Option<(RequestFrame, wire::RejectedResponse)> {
-        let deadline_ms = u64::try_from(self.deadline.as_millis()).unwrap_or(u64::MAX);
         let lane = AdmissionLane::DRAIN_ORDER.into_iter().find(|lane| {
             self.lane(*lane)
                 .entries
                 .front()
                 .is_some_and(|entry| entry.deadline <= now)
         })?;
+        let deadline_ms = u64::try_from(self.deadline(lane).as_millis()).unwrap_or(u64::MAX);
         let queue = self.lane_mut(lane);
         let entry = queue.entries.pop_front()?;
         queue.bytes = queue.bytes.saturating_sub(entry.bytes);
@@ -223,7 +254,7 @@ impl RequestQueue {
             lane,
             REQUEST_QUEUE_TIMEOUT_CODE,
             format!(
-                "{REQUEST_QUEUE_TIMEOUT_CODE}: {} request waited {deadline_ms} ms for in-flight capacity; retry later (the shipped sidecar fixes this deadline)",
+                "{REQUEST_QUEUE_TIMEOUT_CODE}: {} request waited {deadline_ms} ms for in-flight capacity; retry later, or raise {QUEUE_DEADLINE_PATH} where the sidecar is configured",
                 lane.name()
             ),
             "queued request wait",
@@ -236,7 +267,7 @@ impl RequestQueue {
         Some((entry.request, rejection))
     }
 
-    /// When the oldest queued request expires. Lanes are FIFO with one
+    /// When the oldest queued request expires. Each lane is FIFO with one
     /// deadline, so only lane heads matter.
     pub(super) fn next_deadline(&self) -> Option<Instant> {
         [&self.priority, &self.ordinary, &self.create]
