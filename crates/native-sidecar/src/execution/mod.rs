@@ -8,8 +8,8 @@ pub(crate) use self::child_process::{
 mod coordinator;
 use self::coordinator::*;
 pub(crate) use self::coordinator::{
-    close_stdin_owned, guest_kernel_core_error, resize_pty_owned, write_stdin_owned,
-    OwnedVmRouteFuture, OwnedVmRouteInput,
+    close_stdin_if_running_owned, close_stdin_owned, guest_kernel_core_error, resize_pty_owned,
+    write_stdin_owned, OwnedVmRouteFuture, OwnedVmRouteInput,
 };
 mod launch;
 use self::launch::*;

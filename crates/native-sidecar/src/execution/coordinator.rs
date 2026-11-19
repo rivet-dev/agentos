@@ -313,6 +313,40 @@ pub(crate) async fn write_stdin_owned(
     })
 }
 
+/// Ends an attached run's stdin after its input was written. The process can
+/// exit before this lands (it ignored stdin, or stopped reading early); its
+/// caller then observes that exit, so a process that is gone is not an error.
+pub(crate) async fn close_stdin_if_running_owned(
+    input: OwnedVmRouteInput,
+    payload: CloseStdinRequest,
+) -> Result<(), SidecarError> {
+    let closed = input.vm.try_command("close process stdin", |vm| {
+        let VmState {
+            kernel,
+            active_processes,
+            ..
+        } = vm;
+        let Some(process) = active_processes.get_mut(&payload.process_id) else {
+            return Ok(false);
+        };
+        if process.host_stdin_closed {
+            return Ok(true);
+        }
+        process.execution.close_stdin()?;
+        close_kernel_process_stdin(kernel, process)?;
+        process.host_stdin_closed = true;
+        Ok(true)
+    })?;
+    if !closed {
+        tracing::debug!(
+            vm_id = %input.vm_id,
+            process_id = %payload.process_id,
+            "attached run exited before its stdin was closed"
+        );
+    }
+    Ok(())
+}
+
 pub(crate) async fn close_stdin_owned(
     input: OwnedVmRouteInput,
     payload: CloseStdinRequest,
