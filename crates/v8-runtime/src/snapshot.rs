@@ -470,11 +470,14 @@ fn create_snapshot_inner_in_process(
             // its evaluated graph is captured alongside the bridge.
             let result = (|| -> Result<(), String> {
                 let restore_only_names = restore_only_names.as_ref().map_err(Clone::clone)?;
-                // A module snapshot boots an entrypoint that serves requests at once, so its
-                // bridge compiles eagerly too and the first request runs no lazy compile. Plain
-                // bridge snapshots stay lazy (see `run_snapshot_script`).
-                let eager_bridge = matches!(userland, Some(SnapshotUserland::ModuleGraph(_)));
-                run_snapshot_script(scope, bridge_code, "bridge code", eager_bridge)?;
+                // The bridge compiles lazily in every snapshot, module snapshots too. Every
+                // restored isolate keeps its own copy of the snapshot's bytecode, and an eager
+                // bridge costs ~3 MiB per VM, while a request runs few bridge functions.
+                // Measured 2026-11-19 (80 live snapshot-booted VMs, one request each): lazy
+                // bridge 18.3 vs eager 21.2 MiB per VM, first request p50 +2.6 ms, p99 the
+                // same. Graph modules stay eager (`module_snapshot::compile_snapshot_module`):
+                // a lazy graph saves 1.7 MiB more but adds ~6.5 ms to the first request.
+                run_snapshot_script(scope, bridge_code, "bridge code", false)?;
                 if let Some(userland) = &userland {
                     // Some bridge-backed globals (e.g. `process.versions`) are lazy
                     // getters that dispatch a host bridge call on first access. During
