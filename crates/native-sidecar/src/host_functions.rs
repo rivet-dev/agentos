@@ -745,7 +745,9 @@ fn host_function_identifier(name: &str) -> String {
 pub(crate) fn host_function_globals_script(
     host_functions: &BTreeMap<String, RegisterHostCallbacksRequest>,
 ) -> String {
-    const DEFINE_GLOBALS: &str = r#"((groups)=>{const call=(command,name)=>(input={})=>import("node:child_process").then(({execFile})=>new Promise((resolve,reject)=>{execFile(command,[name,"--json",JSON.stringify(input)],{maxBuffer:67108864},(error,stdout,stderr)=>{if(error){reject(new Error(String(stderr||"").trim()||error.message));return;}let reply;try{reply=JSON.parse(String(stdout));}catch(parseError){reject(new Error("host function returned invalid JSON: "+parseError.message));return;}if(!reply||reply.ok!==true){reject(new Error((reply&&reply.error)||"host function failed"));return;}resolve(reply.result);});}));for(const [group,definition] of Object.entries(groups)){if(group in globalThis){console.error("agentos: host function group \""+group+"\" was not defined because globalThis."+group+" already exists");continue;}const functions={};for(const [key,name] of definition.functions)functions[key]=call(definition.command,name);Object.defineProperty(globalThis,group,{value:Object.freeze(functions),enumerable:true});}})"#;
+    // Each group must stay configurable. A guest script that runs after this prelude can then
+    // declare a top-level `const` or `let` with the group's name.
+    const DEFINE_GLOBALS: &str = r#"((groups)=>{const call=(command,name)=>(input={})=>import("node:child_process").then(({execFile})=>new Promise((resolve,reject)=>{execFile(command,[name,"--json",JSON.stringify(input)],{maxBuffer:67108864},(error,stdout,stderr)=>{if(error){reject(new Error(String(stderr||"").trim()||error.message));return;}let reply;try{reply=JSON.parse(String(stdout));}catch(parseError){reject(new Error("host function returned invalid JSON: "+parseError.message));return;}if(!reply||reply.ok!==true){reject(new Error((reply&&reply.error)||"host function failed"));return;}resolve(reply.result);});}));for(const [group,definition] of Object.entries(groups)){if(group in globalThis){console.error("agentos: host function group \""+group+"\" was not defined because globalThis."+group+" already exists");continue;}const functions={};for(const [key,name] of definition.functions)functions[key]=call(definition.command,name);Object.defineProperty(globalThis,group,{value:Object.freeze(functions),enumerable:true,configurable:true});}})"#;
 
     let groups = host_functions
         .values()
@@ -1150,5 +1152,32 @@ mod host_function_globals_tests {
         assert!(script.ends_with(
             r#"({"orderStore":{"command":"agentos-order-store","functions":[["listOrders","list-orders"]]}});"#
         ));
+    }
+
+    #[test]
+    fn a_later_script_can_declare_a_group_name() {
+        let host_functions = BTreeMap::from([(
+            String::from("order-store"),
+            collection("order-store", &["list-orders"]),
+        )]);
+        let prelude = host_function_globals_script(&host_functions);
+        // The prelude and the guest entrypoint are separate scripts, as in a guest Node launch.
+        let program = r#"const vm = require("node:vm");
+vm.runInThisContext(process.argv[1]);
+vm.runInThisContext("const orderStore = 'shadowed'; console.log(orderStore);");
+console.log(typeof globalThis.orderStore.listOrders);"#;
+        let output = std::process::Command::new("node")
+            .args(["-e", program, &prelude])
+            .output()
+            .expect("run node");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "shadowed\nfunction\n"
+        );
     }
 }
