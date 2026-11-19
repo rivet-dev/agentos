@@ -2430,7 +2430,9 @@ async fn run_protocol_engine(engine: ProtocolEngine) -> Result<(), Box<dyn Error
             _ = &mut priority_terminal_changed, if queue_waiting => {}
             _ = tokio::time::sleep_until(queue_deadline.unwrap_or(drain_deadline)), if queue_deadline.is_some() && rejection_room => {}
             _ = &mut rejection_changed, if !rejection_room => {}
-            maybe_control = stdin_control_rx.recv(), if !control_ingress_closed => {
+            // Routing a priority request can produce one rejection too, so it
+            // waits for rejection room like ordinary ingress below.
+            maybe_control = stdin_control_rx.recv(), if !control_ingress_closed && rejection_room => {
                 match maybe_control {
                     Some(frame) => {
                         protocol_try!('protocol, route_protocol_frame(
@@ -3124,6 +3126,11 @@ fn begin_protocol_transport_failure(
     stdin_control_rx: &mut Receiver<AccountedProtocolFrame>,
     shutdown_rx: &mut Receiver<wire::ControlFrame>,
 ) {
+    // Log now: the drain can outlast the host, which kills the sidecar when
+    // its stream ends, and the error returned after the drain is then lost.
+    if drain_state.is_none() {
+        tracing::error!(error = %message, "agentOS sidecar protocol transport failed; draining");
+    }
     // Preserve a healthy control lane for forced terminal outcomes when the
     // failure came from routing or task supervision. Only an observed broker
     // disconnect or physical writer failure proves output itself is unusable.
@@ -5347,7 +5354,10 @@ fn route_progress_request(
 ) -> StdinReaderFlow {
     let reservation = match progress_budget.reserve(encoded_bytes) {
         Ok(reservation) => reservation,
-        Err(error) => return reject_stdin_ingress_frame(frame, error, overload_writer),
+        Err(error) => match wait_for_ingress_room(progress_budget, encoded_bytes) {
+            Some(reservation) => reservation,
+            None => return reject_stdin_ingress_frame(frame, error, overload_writer),
+        },
     };
     match progress_sender.try_send(AccountedProtocolFrame {
         frame,
