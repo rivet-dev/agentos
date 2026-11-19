@@ -706,6 +706,56 @@ fn mount_table_unmount_succeeds_after_children_are_removed() {
 }
 
 #[test]
+fn every_path_reads_its_own_mount_after_mixed_mounts_and_removals() {
+    // Mount order mixes path lengths, so each mount lands between existing
+    // ones; removals then shift the mounts behind them.
+    let paths = [
+        "/opt/agentos/pkgs/b",
+        "/a",
+        "/opt/agentos/bin/ls",
+        "/opt",
+        "/opt/agentos/pkgs/aa",
+        "/data/x",
+        "/opt/agentos/bin/cat",
+        "/data",
+        "/z",
+    ];
+    let marker = |path: &str| format!("mount {path}").into_bytes();
+    let mut table = MountTable::new(MemoryFileSystem::new());
+    for path in paths {
+        let mut filesystem = MemoryFileSystem::new();
+        filesystem
+            .write_file("/id", marker(path))
+            .expect("seed marker");
+        table
+            .mount(path, filesystem, MountOptions::new("memory"))
+            .expect("mount filesystem");
+    }
+
+    let detached = table.detach("/opt/agentos/pkgs/aa").expect("detach leaf");
+    table.unmount("/a").expect("unmount short leaf");
+    table.unmount("/data/x").expect("unmount nested leaf");
+    table.restore_detached(detached).expect("restore leaf");
+    table
+        .unmount("/opt/agentos/bin/ls")
+        .expect("unmount long leaf");
+
+    for path in paths {
+        let read = table.read_file(&format!("{path}/id"));
+        match path {
+            "/a" | "/data/x" | "/opt/agentos/bin/ls" => {
+                assert_eq!(read.expect_err("removed mount").code(), "ENOENT")
+            }
+            _ => assert_eq!(
+                read.expect("own mount"),
+                marker(path),
+                "{path} reads another mount"
+            ),
+        }
+    }
+}
+
+#[test]
 fn mount_table_does_not_alias_paths_that_repeat_the_mount_segment() {
     // Regression: `resolve_index` previously stripped the mount prefix with
     // `trim_start_matches`, which removes *every* leading repetition. For a

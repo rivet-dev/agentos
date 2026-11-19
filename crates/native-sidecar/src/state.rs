@@ -2096,6 +2096,10 @@ pub(crate) struct ActiveProcess {
     /// until the guest unlocks the file or the process exits.
     pub(crate) wasm_flock_fds: BTreeMap<String, u32>,
     pub(crate) pending_execution_events: VecDeque<ActiveExecutionEvent>,
+    /// One event the shared process-event queue had no room for, held like a
+    /// blocked writer's buffer: it is delivered before the queue, and it is
+    /// outside the queue's limits so a large write can drain in chunks.
+    pub(crate) paused_execution_event: Option<crate::execution::PolledExecutionEvent>,
     pub(crate) pending_execution_event_bytes: usize,
     pub(crate) pending_execution_event_count_limit: usize,
     pub(crate) pending_execution_event_bytes_limit: usize,

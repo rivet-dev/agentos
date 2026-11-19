@@ -26,7 +26,7 @@ const generatedAuthOwnership = {
 };
 
 const GENERATED_AUTH_FRAME_HEX =
-	"00166167656e746f732d6e61746976652d736964656361720b0007000000000000000006636f6e6e2d31000e67656e6572617465642d7465737405746f6b656e0b0001000000";
+	"00166167656e746f732d6e61746976652d736964656361720c0007000000000000000006636f6e6e2d31000e67656e6572617465642d7465737405746f6b656e0c0001000000";
 
 const hostCallbackRequest = {
 	frame_type: "sidecar_request" as const,
@@ -300,7 +300,7 @@ describe("protocol frame conversion", () => {
 				type: "authenticate",
 				client_name: "agentos",
 				auth_token: "token",
-				protocol_version: 11,
+				protocol_version: 12,
 				bridge_version: 1,
 			},
 		});
@@ -394,7 +394,7 @@ describe("protocol frame conversion", () => {
 					type: "authenticate",
 					client_name: "agentos",
 					auth_token: "token",
-					protocol_version: 11,
+					protocol_version: 12,
 					bridge_version: 1,
 				},
 			}),

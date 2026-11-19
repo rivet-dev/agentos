@@ -1,17 +1,17 @@
 use agentos_sidecar_protocol::protocol::{
     AuthenticateRequest, AuthenticatedResponse, BoundUdpSnapshotResponse, EventFrame, EventPayload,
-    LayerCreatedResponse, LayerSealedResponse, ListMountsResponse, ListenerSnapshotResponse,
-    MountInfo, OverlayCreatedResponse, OwnershipScope, PackageCommands, PackageLinkedResponse,
-    PackageUnlinkedResponse, ProcessExitedEvent, ProcessKilledResponse, ProcessOutputEvent,
-    ProcessSnapshotEntry, ProcessSnapshotResponse, ProcessStartedResponse, ProjectedCommand,
-    ProtocolSchema, ProvidedCommandsResponse, RejectedResponse, RequestFrame, RequestId,
-    ResponseFrame, ResponsePayload, RootFilesystemBootstrappedResponse, RootFilesystemEntry,
-    RootFilesystemSnapshotResponse, SessionOpenedResponse, SignalHandlerRegistration,
-    SignalStateResponse, SnapshotExportedResponse, SnapshotImportedResponse, SocketStateEntry,
-    StdinClosedResponse, StdinWrittenResponse, StreamChannel, StructuredEvent,
-    VmConfiguredResponse, VmCreatedResponse, VmDisposedResponse, VmLifecycleEvent,
-    VmLifecycleState, ZombieTimerCountResponse, MAX_GUEST_FILESYSTEM_WRITE_FILES_ENTRIES,
-    PROTOCOL_VERSION,
+    ExecutionCompletedEvent, LayerCreatedResponse, LayerSealedResponse, ListMountsResponse,
+    ListenerSnapshotResponse, MountInfo, OverlayCreatedResponse, OwnershipScope, PackageCommands,
+    PackageLinkedResponse, PackageUnlinkedResponse, ProcessExitedEvent, ProcessKilledResponse,
+    ProcessOutputEvent, ProcessSnapshotEntry, ProcessSnapshotResponse, ProcessStartedResponse,
+    ProjectedCommand, ProtocolSchema, ProvidedCommandsResponse, RejectedResponse, RequestFrame,
+    RequestId, ResponseFrame, ResponsePayload, RootFilesystemBootstrappedResponse,
+    RootFilesystemEntry, RootFilesystemSnapshotResponse, SessionOpenedResponse,
+    SignalHandlerRegistration, SignalStateResponse, SnapshotExportedResponse,
+    SnapshotImportedResponse, SocketStateEntry, StdinClosedResponse, StdinWrittenResponse,
+    StreamChannel, StructuredEvent, VmConfiguredResponse, VmCreatedResponse, VmDisposedResponse,
+    VmLifecycleEvent, VmLifecycleState, ZombieTimerCountResponse,
+    MAX_GUEST_FILESYSTEM_WRITE_FILES_ENTRIES, PROTOCOL_VERSION,
 };
 use std::collections::HashMap;
 
@@ -147,10 +147,17 @@ pub fn vm_created_response(request: &RequestFrame, vm_id: String) -> ResponseFra
     )
 }
 
-pub fn vm_disposed_response(request: &RequestFrame, vm_id: String) -> ResponseFrame {
+pub fn vm_disposed_response(
+    request: &RequestFrame,
+    vm_id: String,
+    completed_executions: Vec<ExecutionCompletedEvent>,
+) -> ResponseFrame {
     respond(
         request,
-        ResponsePayload::VmDisposed(VmDisposedResponse { vm_id }),
+        ResponsePayload::VmDisposed(VmDisposedResponse {
+            vm_id,
+            completed_executions,
+        }),
     )
 }
 
@@ -566,7 +573,7 @@ mod tests {
             other => panic!("unexpected response payload: {other:?}"),
         }
 
-        let disposed = vm_disposed_response(&request, String::from("vm-1"));
+        let disposed = vm_disposed_response(&request, String::from("vm-1"), Vec::new());
         assert_eq!(disposed.request_id, request.request_id);
         assert_eq!(disposed.ownership, request.ownership);
         match disposed.payload {

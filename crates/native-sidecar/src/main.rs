@@ -17,6 +17,7 @@ fn main() {
         .with_writer(std::io::stderr)
         .with_max_level(level)
         .init();
+    agentos_v8_runtime::native_heap::configure_native_heap();
     if let Err(error) = run_sidecar(std::env::args().skip(1)) {
         tracing::error!(?error, "agentOS sidecar failed");
         std::process::exit(1);

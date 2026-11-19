@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WarmSessionHint {
-    pub bridge_code: String,
-    pub userland_code: String,
+    pub bridge_code: Arc<str>,
+    pub userland_code: Arc<str>,
     pub heap_limit_mb: Option<u32>,
 }
 
@@ -33,8 +33,8 @@ pub enum RuntimeCommand {
         session_id: String,
     },
     WarmSnapshot {
-        bridge_code: String,
-        userland_code: String,
+        bridge_code: Arc<str>,
+        userland_code: Arc<str>,
     },
     SendToSession {
         session_id: String,
@@ -110,10 +110,13 @@ pub enum SessionMessage {
     Execute {
         mode: u8,
         file_path: String,
-        bridge_code: String,
+        /// Shared, not copied: the bridge source is megabytes and every
+        /// session would otherwise hold its own copy for its whole lifetime.
+        bridge_code: Arc<str>,
         post_restore_script: String,
-        userland_code: String,
+        userland_code: Arc<str>,
         high_resolution_time: bool,
+        runtime_shim: String,
         user_code: String,
         wasm_module_bytes: Option<Arc<Vec<u8>>>,
     },
@@ -212,6 +215,7 @@ impl TryFrom<BinaryFrame> for RuntimeCommand {
                 post_restore_script,
                 userland_code,
                 high_resolution_time,
+                runtime_shim,
                 user_code,
             } => {
                 if mode > 7 {
@@ -225,10 +229,11 @@ impl TryFrom<BinaryFrame> for RuntimeCommand {
                     message: SessionMessage::Execute {
                         mode,
                         file_path,
-                        bridge_code,
+                        bridge_code: bridge_code.into(),
                         post_restore_script,
-                        userland_code,
+                        userland_code: userland_code.into(),
                         high_resolution_time,
+                        runtime_shim,
                         user_code,
                         wasm_module_bytes: None,
                     },
@@ -270,8 +275,8 @@ impl TryFrom<BinaryFrame> for RuntimeCommand {
                 bridge_code,
                 userland_code,
             } => Ok(RuntimeCommand::WarmSnapshot {
-                bridge_code,
-                userland_code,
+                bridge_code: bridge_code.into(),
+                userland_code: userland_code.into(),
             }),
             BinaryFrame::Authenticate { .. } => Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -366,6 +371,7 @@ mod tests {
             post_restore_script: String::new(),
             userland_code: String::new(),
             high_resolution_time: false,
+            runtime_shim: String::new(),
             user_code: String::new(),
         })
         .expect_err("unknown execute mode should be rejected");

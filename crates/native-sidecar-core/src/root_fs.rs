@@ -179,8 +179,78 @@ pub fn build_root_filesystem_with_loaded_snapshot(
         bootstrap_replaces_bundle,
         bootstrap_replaces_cert_pem,
     ));
-    RootFileSystem::from_descriptor_with_import_limits(descriptor, &import_limits)
-        .map_err(|error| SidecarCoreError::new(format!("build root filesystem: {error}")))
+    let mut root =
+        RootFileSystem::from_descriptor_with_import_limits(descriptor, &import_limits)
+            .map_err(|error| SidecarCoreError::new(format!("build root filesystem: {error}")))?;
+    bootstrap_missing_standard_directories(&mut root)?;
+    Ok(root)
+}
+
+/// Standard guest directories every VM root has, as `(path, mode, uid, gid)`.
+/// For an overlay root, layers (base, user lowers, restored snapshots) win:
+/// only missing paths are created, in the upper, before the root is sealed.
+pub const STANDARD_DIRECTORIES: &[(&str, u32, u32, u32)] = &[
+    ("/dev", 0o755, 0, 0),
+    ("/proc", 0o755, 0, 0),
+    ("/tmp", 0o1777, 0, 0),
+    ("/bin", 0o755, 0, 0),
+    ("/lib", 0o755, 0, 0),
+    ("/sbin", 0o755, 0, 0),
+    ("/boot", 0o755, 0, 0),
+    ("/etc", 0o755, 0, 0),
+    ("/root", 0o700, 0, 0),
+    ("/run", 0o755, 0, 0),
+    ("/srv", 0o755, 0, 0),
+    ("/sys", 0o555, 0, 0),
+    ("/opt", 0o755, 0, 0),
+    ("/mnt", 0o755, 0, 0),
+    ("/media", 0o755, 0, 0),
+    ("/home", 0o755, 0, 0),
+    ("/home/agentos", 0o2755, 1000, 1000),
+    ("/workspace", 0o755, 1000, 1000),
+    ("/usr", 0o755, 0, 0),
+    ("/usr/bin", 0o755, 0, 0),
+    ("/usr/games", 0o755, 0, 0),
+    ("/usr/include", 0o755, 0, 0),
+    ("/usr/lib", 0o755, 0, 0),
+    ("/usr/libexec", 0o755, 0, 0),
+    ("/usr/man", 0o755, 0, 0),
+    ("/usr/local", 0o755, 0, 0),
+    ("/usr/local/bin", 0o755, 0, 0),
+    ("/usr/sbin", 0o755, 0, 0),
+    ("/usr/share", 0o755, 0, 0),
+    ("/usr/share/man", 0o755, 0, 0),
+    ("/var", 0o755, 0, 0),
+    ("/var/cache", 0o755, 0, 0),
+    ("/var/empty", 0o555, 0, 0),
+    ("/var/lib", 0o755, 0, 0),
+    ("/var/lock", 0o777, 0, 0),
+    ("/var/log", 0o755, 0, 0),
+    ("/var/run", 0o777, 0, 0),
+    ("/var/spool", 0o755, 0, 0),
+    ("/var/tmp", 0o1777, 0, 0),
+    ("/etc/agentos", 0o755, 0, 0),
+];
+
+fn bootstrap_missing_standard_directories(
+    root: &mut RootFileSystem,
+) -> Result<(), SidecarCoreError> {
+    let missing = STANDARD_DIRECTORIES
+        .iter()
+        .filter(|(path, ..)| root.lstat(path).is_err())
+        .map(|&(path, mode, uid, gid)| FilesystemEntry {
+            mode,
+            uid,
+            gid,
+            ..FilesystemEntry::directory(path)
+        })
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    root.apply_bootstrap_entries(&missing).map_err(|error| {
+        SidecarCoreError::new(format!("bootstrap standard root directories: {error}"))
+    })
 }
 
 pub fn build_root_mount_table(

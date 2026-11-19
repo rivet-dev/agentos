@@ -139,10 +139,11 @@ fn dispatch_execute(
         message: SessionMessage::Execute {
             mode,
             file_path: String::new(),
-            bridge_code: bridge_code.to_owned(),
+            bridge_code: bridge_code.into(),
             post_restore_script: String::new(),
-            userland_code: String::new(),
+            userland_code: "".into(),
             high_resolution_time: false,
+            runtime_shim: String::new(),
             user_code: user_code.to_owned(),
             wasm_module_bytes: None,
         },
@@ -339,8 +340,8 @@ fn assert_warmed_snapshot_bridge_state() -> io::Result<()> {
     let bridge_code = "(function() { globalThis.__snapshotMarker = 'warm'; })();";
 
     runtime.dispatch(RuntimeCommand::WarmSnapshot {
-        bridge_code: bridge_code.to_owned(),
-        userland_code: String::new(),
+        bridge_code: bridge_code.into(),
+        userland_code: "".into(),
     })?;
     dispatch_execute(
         runtime.as_ref(),

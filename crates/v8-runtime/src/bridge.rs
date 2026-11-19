@@ -66,16 +66,24 @@ fn configured_cbor_codec_enabled() -> bool {
 /// Must be identical at snapshot creation and restore time.
 pub fn external_refs() -> &'static v8::ExternalReferences {
     static REFS: OnceLock<v8::ExternalReferences> = OnceLock::new();
-    REFS.get_or_init(|| {
-        v8::ExternalReferences::new(&[
-            v8::ExternalReference {
-                function: sync_bridge_callback.map_fn_to(),
-            },
-            v8::ExternalReference {
-                function: async_bridge_callback.map_fn_to(),
-            },
-        ])
-    })
+    REFS.get_or_init(|| v8::ExternalReferences::new(&base_external_references()))
+}
+
+/// Native callbacks a snapshot heap can reference. Snapshots with shared
+/// sources append their source constants after these.
+pub(crate) fn base_external_references() -> Vec<v8::ExternalReference<'static>> {
+    vec![
+        v8::ExternalReference {
+            function: sync_bridge_callback.map_fn_to(),
+        },
+        v8::ExternalReference {
+            function: async_bridge_callback.map_fn_to(),
+        },
+        // `import.meta.resolve` of a module evaluated into a snapshot.
+        v8::ExternalReference {
+            function: crate::execution::import_meta_resolve_callback.map_fn_to(),
+        },
+    ]
 }
 
 // Minimal delegate for V8 ValueSerializer — throws DataCloneError as a V8 exception
@@ -1782,6 +1790,7 @@ pub fn register_sync_bridge_fns(
     let context = scope.get_current_context();
     let global = context.global(scope);
     let mut data = Vec::with_capacity(methods.len());
+    let apply_wrapper_factory = bridge_apply_wrapper_factory(scope);
 
     for &method_name in methods {
         let boxed = Box::new(SyncBridgeFnData {
@@ -1797,7 +1806,12 @@ pub fn register_sync_bridge_fns(
             .data(external.into())
             .build(scope);
         let func = template.get_function(scope).unwrap();
-        attach_bridge_function_aliases(scope, func, &["applySync", "applySyncPromise"]);
+        attach_bridge_function_aliases(
+            scope,
+            apply_wrapper_factory,
+            func,
+            &["applySync", "applySyncPromise"],
+        );
 
         let key = v8::String::new(scope, method_name).unwrap();
         global.set(scope, key.into(), func.into());
@@ -1918,6 +1932,7 @@ pub fn register_async_bridge_fns(
     let context = scope.get_current_context();
     let global = context.global(scope);
     let mut data = Vec::with_capacity(methods.len());
+    let apply_wrapper_factory = bridge_apply_wrapper_factory(scope);
 
     for &method_name in methods {
         let boxed = Box::new(AsyncBridgeFnData {
@@ -1934,7 +1949,7 @@ pub fn register_async_bridge_fns(
             .data(external.into())
             .build(scope);
         let func = template.get_function(scope).unwrap();
-        attach_bridge_function_aliases(scope, func, &["apply"]);
+        attach_bridge_function_aliases(scope, apply_wrapper_factory, func, &["apply"]);
 
         let key = v8::String::new(scope, method_name).unwrap();
         global.set(scope, key.into(), func.into());
@@ -1945,22 +1960,27 @@ pub fn register_async_bridge_fns(
 
 fn attach_bridge_function_aliases<'s>(
     scope: &mut v8::HandleScope<'s>,
+    factory: Option<v8::Local<'s, v8::Function>>,
     func: v8::Local<'s, v8::Function>,
     aliases: &[&str],
 ) {
+    let Some(factory) = factory else {
+        return;
+    };
     let func_object = func.to_object(scope).unwrap();
     for alias in aliases {
         let key = v8::String::new(scope, alias).unwrap();
-        let Some(wrapper) = build_bridge_apply_wrapper(scope, func) else {
+        let Some(wrapper) = build_bridge_apply_wrapper(scope, factory, func) else {
             continue;
         };
         let _ = func_object.set(scope, key.into(), wrapper.into());
     }
 }
 
-fn build_bridge_apply_wrapper<'s>(
+/// Compile the `apply`-style alias factory once per bridge installation; every
+/// bridge function's aliases are closures from this one factory.
+fn bridge_apply_wrapper_factory<'s>(
     scope: &mut v8::HandleScope<'s>,
-    func: v8::Local<'s, v8::Function>,
 ) -> Option<v8::Local<'s, v8::Function>> {
     let source = v8::String::new(
         scope,
@@ -1968,7 +1988,14 @@ fn build_bridge_apply_wrapper<'s>(
     )?;
     let script = v8::Script::compile(scope, source, None)?;
     let factory = script.run(scope)?;
-    let factory = v8::Local::<v8::Function>::try_from(factory).ok()?;
+    v8::Local::<v8::Function>::try_from(factory).ok()
+}
+
+fn build_bridge_apply_wrapper<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    factory: v8::Local<'s, v8::Function>,
+    func: v8::Local<'s, v8::Function>,
+) -> Option<v8::Local<'s, v8::Function>> {
     let argv = [func.into()];
     let receiver = v8::undefined(scope).into();
     factory

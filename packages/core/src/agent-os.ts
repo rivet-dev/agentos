@@ -678,6 +678,17 @@ export interface AgentOsOptions<
 	 * profiling workloads.
 	 */
 	highResolutionTime?: boolean;
+	/**
+	 * Guest entrypoints that boot from a V8 startup snapshot. For a guest
+	 * `node <entry>` process whose entry is listed, every module the entry
+	 * statically imports is evaluated once per sidecar, not once per process.
+	 * Imported modules must be ES modules on a read-only host mount. Module
+	 * top-level code then runs at snapshot time, so it must not capture
+	 * per-process state such as `process.argv`, `process.env`, the time, or
+	 * random values. See the module snapshots section of the JavaScript
+	 * executor docs.
+	 */
+	snapshotEntrypoints?: string[];
 	/** Durable SQLite storage for VM-owned filesystem and runtime state. */
 	database?: VmSqliteConfig;
 	/** Root filesystem configuration. Defaults to an overlay with the bundled base snapshot as its deepest lower. */
@@ -1258,46 +1269,6 @@ function createKernelBootstrapLower(
 	}
 
 	return entries.length > 1 ? createSnapshotExport(entries) : null;
-}
-
-function buildLiveBootstrapDirectoryEntries(
-	existingPaths: ReadonlySet<string>,
-	config: RootFilesystemConfig | undefined,
-): RootFilesystemEntry[] {
-	const entries: RootFilesystemEntry[] = [];
-	for (const dir of KERNEL_POSIX_BOOTSTRAP_DIRS) {
-		if (existingPaths.has(dir)) {
-			continue;
-		}
-		const seed = findBootstrapSeedEntry(config, dir);
-		entries.push({
-			path: dir,
-			kind: "directory",
-			mode: Number.parseInt(seed?.type === "directory" ? seed.mode : "755", 8),
-			uid: seed?.uid ?? 0,
-			gid: seed?.gid ?? 0,
-			executable: true,
-		});
-	}
-	return entries;
-}
-
-async function bootstrapLiveBootstrapDirectories(
-	client: SidecarProcess,
-	session: AuthenticatedSession,
-	vm: CreatedVm,
-	config: RootFilesystemConfig | undefined,
-): Promise<void> {
-	const existingPaths = new Set(
-		(
-			await client.snapshotRootFilesystem(session, vm, Number.MAX_SAFE_INTEGER)
-		).map((entry) => entry.path),
-	);
-	const entries = buildLiveBootstrapDirectoryEntries(existingPaths, config);
-	if (entries.length === 0) {
-		return;
-	}
-	await client.bootstrapRootFilesystem(session, vm, entries);
 }
 
 function toSnapshotModeString(
@@ -2769,6 +2740,8 @@ export class AgentOs {
 	// No completion event can arrive after the sidecar exits, so its close
 	// rejects every execution still waiting for one.
 	private _pendingCompletionRejects = new Set<(error: Error) => void>();
+	/** Set while dispose() runs; resolves once running processes are settled. */
+	private _vmDisposal: Promise<void> | null = null;
 	private _shells = new Map<string, ShellEntry>();
 	// Value is the recorded exit code (undefined until/unless the exit
 	// resolves) so waitShell can still report it after the entry is dropped.
@@ -3126,7 +3099,8 @@ export class AgentOs {
 					// emulation), matching the prior behavior where Agent OS only
 					// constrained the builtin allow-list.
 					...(options?.allowedNodeBuiltins !== undefined ||
-					options?.highResolutionTime !== undefined
+					options?.highResolutionTime !== undefined ||
+					options?.snapshotEntrypoints !== undefined
 						? {
 								jsRuntime: {
 									platform: "node" as const,
@@ -3136,6 +3110,9 @@ export class AgentOs {
 										: {}),
 									...(options?.highResolutionTime !== undefined
 										? { highResolutionTime: options.highResolutionTime }
+										: {}),
+									...(options?.snapshotEntrypoints !== undefined
+										? { snapshotEntrypoints: options.snapshotEntrypoints }
 										: {}),
 								},
 							}
@@ -3207,15 +3184,6 @@ export class AgentOs {
 					// shared across VMs; disposing this VM must not kill the process.
 					ownsClient: false,
 				});
-				if (options?.rootFilesystem?.type !== "native") {
-					await bootstrapLiveBootstrapDirectories(
-						client,
-						session,
-						nativeVm,
-						options?.rootFilesystem,
-					);
-				}
-
 				kernel = rootBridge as unknown as Kernel;
 				const snapshotClient = client;
 
@@ -3539,14 +3507,14 @@ export class AgentOs {
 			};
 			if (admitted.completed) await reconcileCompletion();
 			else {
-				void admitted.completion
-					.then(reconcileCompletion)
-					.catch((error) =>
-						console.error(
-							"[agentos] failed to reconcile spawned process completion",
-							error,
-						),
+				void admitted.completion.then(reconcileCompletion).catch((error) => {
+					// dispose() settles the exit of every process it terminates.
+					if (this._vmDisposal) return;
+					console.error(
+						"[agentos] failed to reconcile spawned process completion",
+						error,
 					);
+				});
 			}
 			return (
 				this._languageProcesses.get(admitted.pid)?.descriptor ?? descriptor
@@ -4361,6 +4329,38 @@ export class AgentOs {
 		};
 	}
 
+	/**
+	 * Settle every language process after DisposeVm. A process that finished
+	 * before the dispose was already settled by the completion the dispose
+	 * delivered. On success the sidecar terminated the rest, so each reports a
+	 * signalled exit. On failure their termination is unproven, so their waits
+	 * fail with the disposal error.
+	 */
+	private _settleLanguageProcessesAfterDisposal(failure: Error | null): void {
+		if (!failure) {
+			for (const [pid, process] of this._languageProcesses) {
+				if (process.exit) continue;
+				const exit: ProcessExit = {
+					pid,
+					outcome: "signalled",
+					signal: "SIGKILL",
+				};
+				process.exit = exit;
+				process.descriptor = { ...process.descriptor, state: "exited" };
+				for (const handler of process.exitHandlers) handler(exit);
+			}
+		}
+		const pendingError =
+			failure ??
+			new Error(
+				"ERR_AGENTOS_VM_DISPOSED: the VM was disposed before the execution reported completion",
+			);
+		for (const reject of this._pendingCompletionRejects) reject(pendingError);
+		this._pendingCompletionRejects.clear();
+		this._languageProcesses.clear();
+		this._languageProcessIds.clear();
+	}
+
 	/** A completion signal that rejects if the sidecar exits before it resolves. */
 	private _pendingCompletion(): {
 		completion: Promise<void>;
@@ -4656,7 +4656,18 @@ export class AgentOs {
 		const language = this._languageProcesses.get(pid);
 		if (language) {
 			if (language.exit) return language.exit;
-			const result = await this._waitExecutionResult(language.executionId);
+			let result: MappedExecutionResult;
+			try {
+				result = await this._waitExecutionResult(language.executionId);
+			} catch (error) {
+				// Disposal terminates the process in the sidecar and settles its
+				// exit here, so a wait it interrupts reports that exit.
+				if (this._vmDisposal) {
+					await this._vmDisposal;
+					if (language.exit) return language.exit;
+				}
+				throw error;
+			}
 			if (language.exit) return language.exit;
 			const exit: ProcessExit = {
 				pid,
@@ -5427,20 +5438,12 @@ export class AgentOs {
 		];
 	}
 
-	/** Returns all kernel processes across all active runtimes (WASM and Node). */
-	private _listAllProcesses(): KernelProcessInfo[] {
-		if (this.#kernel instanceof NativeSidecarKernelProxy) {
-			return this.#kernel.snapshotProcesses();
-		}
-		return [...this.#kernel.processes.values()];
-	}
-
 	/** Returns processes organized as a tree using ppid relationships. */
 	private async _processTree(): Promise<ProcessTreeNode[]> {
 		const records =
 			this.#kernel instanceof NativeSidecarKernelProxy
-				? this.#kernel.snapshotProcessTopology()
-				: this._listAllProcesses().map((info) => ({
+				? await this.#kernel.snapshotProcessTopology()
+				: [...this.#kernel.processes.values()].map((info) => ({
 						info,
 						key: `kernel:${info.pid}`,
 						parentKey: `kernel:${info.ppid}`,
@@ -5965,58 +5968,46 @@ export class AgentOs {
 	async dispose(): Promise<void> {
 		this._cronManager.dispose();
 		const errors: unknown[] = [];
+		let settleDisposal!: () => void;
+		this._vmDisposal = new Promise<void>((resolve) => {
+			settleDisposal = resolve;
+		});
 
 		for (const entry of this._shells.values()) {
 			entry.handle.kill();
 		}
-		const shellExitPromises = [...this._pendingShellExitPromises];
-		const runningLanguageProcesses = [
-			...this._languageProcesses.entries(),
-		].filter(([, process]) => !process.exit);
-		const languageExitPromises = runningLanguageProcesses.map(
-			([, process]) =>
-				new Promise<void>((resolve) => {
-					const handleExit = () => {
-						process.exitHandlers.delete(handleExit);
-						resolve();
-					};
-					process.exitHandlers.add(handleExit);
-				}),
-		);
-		const languageKillResults = await Promise.allSettled(
-			runningLanguageProcesses.map(([pid]) => this._killProcess(pid)),
-		);
-		errors.push(
-			...languageKillResults.flatMap((result) =>
-				result.status === "rejected" ? [result.reason] : [],
-			),
-		);
 		await waitForTrackedExitPromises(
-			[...shellExitPromises, ...languageExitPromises],
+			[...this._pendingShellExitPromises],
 			VM_DISPOSE_DRAIN_TIMEOUT_MS,
 		);
 
 		this._shells.clear();
 		this._processes.clear();
-		this._languageProcesses.clear();
-		this._languageProcessIds.clear();
 		this._executionOutputHandlers.clear();
 		this._executionCompletedHandlers.clear();
 
-		this._disposeSidecarEventListener();
-		this._disposeSidecarCloseListener();
-
+		// One request tears the VM down: the sidecar's DisposeVm terminates every
+		// process still running in it, so there is no kill per process first.
 		const sidecarLease = this._sidecarLease;
 		this._sidecarLease = null;
 		const disposeVm = sidecarLease
 			? sidecarLease.dispose()
 			: this.#kernel.dispose();
 		const hooks = this._disposeHooks.splice(0);
+		let disposalError: Error | null = null;
 		try {
 			await disposeVm;
 		} catch (error) {
 			errors.push(error);
+			disposalError = error instanceof Error ? error : new Error(String(error));
 		}
+		// The event listener stays until DisposeVm resolves: the dispose
+		// delivers the completion of every execution that finished before it,
+		// so a process that exited just before reports its real exit status.
+		this._disposeSidecarEventListener();
+		this._disposeSidecarCloseListener();
+		this._settleLanguageProcessesAfterDisposal(disposalError);
+		settleDisposal();
 		const hookResults = await Promise.allSettled(hooks.map((hook) => hook()));
 		errors.push(
 			...hookResults.flatMap((result) =>

@@ -313,6 +313,9 @@ const FS_ALLOW: &[&str] = &[
     "crates/native-sidecar/src/package_projection.rs",
     "crates/native-sidecar/src/stdio.rs",
     "crates/native-sidecar/src/state.rs",
+    // Startup reclaim of temp directories left by exited sidecars, plus this
+    // process's liveness lock. Host-only; touches only sidecar-named entries.
+    "crates/native-sidecar/src/temp_reclaim.rs",
     "crates/native-sidecar/src/vm.rs",
     "crates/native-sidecar/src/service.rs",
     "crates/native-sidecar/src/execution/",
@@ -945,7 +948,7 @@ fn protocol_ingress_router_only_registers_and_starts_owned_work() {
         );
     }
     assert!(
-        router.contains("operations.admit(")
+        router.contains("operations.admit_in_lane(")
             && router.contains("progress_requests.admit_owned(")
             && router.contains("schedule_prepared_request("),
         "protocol ingress router must reserve, register, and start independently supervised work"
@@ -1294,7 +1297,7 @@ fn top_level_python_start_uses_the_async_runtime_adapter() {
     );
     assert!(
         compact.contains(
-            "python_engine.bundled_pyodide_dist_path_for_vm_async(&vm_id,&runtime_context).await"
+            "python_engine.bundled_pyodide_paths_for_vm_async(&vm_id,&runtime_context).await"
         ),
         "top-level Pyodide cache materialization must not run synchronously before the async Python start"
     );
@@ -1504,6 +1507,10 @@ fn production_threads_match_the_reviewed_topology_manifest() {
         ),
         (
             "embedded-v8-writer",
+            "crates/v8-runtime/src/embedded_runtime.rs",
+        ),
+        (
+            "constant-v8-session-reaper",
             "crates/v8-runtime/src/embedded_runtime.rs",
         ),
         ("bounded-v8-warm-worker", "crates/v8-runtime/src/session.rs"),

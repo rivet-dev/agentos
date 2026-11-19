@@ -74,7 +74,7 @@ impl<F> MountedEngineFileSystem<F> {
 
 impl<F> MountedFileSystem for MountedEngineFileSystem<F>
 where
-    F: crate::engine::VirtualFileSystem + 'static,
+    F: crate::engine::VirtualFileSystem + Send + 'static,
 {
     fn as_any(&self) -> &dyn Any {
         self

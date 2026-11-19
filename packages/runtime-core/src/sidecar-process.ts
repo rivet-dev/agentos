@@ -361,6 +361,8 @@ export class SidecarProcess {
 	private nonVmRequestHandler: SidecarRequestHandler | null = null;
 	/** One entry per VM this process admitted, so VM admission bounds its size. */
 	private readonly vmRequestHandlers = new Map<string, SidecarRequestHandler>();
+	/** `onEvent` subscribers, which also receive a dispose's completions. */
+	private readonly eventListeners = new Set<(event: EventFrame) => void>();
 
 	private constructor(protocolClient: SidecarProcessTransport) {
 		this.protocolClient = protocolClient;
@@ -428,7 +430,12 @@ export class SidecarProcess {
 	}
 
 	onEvent(handler: (event: EventFrame) => void): () => void {
-		return this.protocolClient.onEvent(handler);
+		this.eventListeners.add(handler);
+		const unsubscribe = this.protocolClient.onEvent(handler);
+		return () => {
+			this.eventListeners.delete(handler);
+			unsubscribe();
+		};
 	}
 
 	/** Runs `handler` once when the sidecar exits or its connection fails. */
@@ -1494,6 +1501,26 @@ export class SidecarProcess {
 			throw new Error(
 				`unexpected dispose_vm response: ${response.payload.type}`,
 			);
+		}
+		// An execution can finish just before the dispose while its completion
+		// event is still on the event lane. The response lists every execution
+		// that had finished; deliver each as the completion event it stands
+		// for, before the dispose resolves. A listener that already saw the
+		// event ignores the repeat.
+		for (const completed of response.payload.completed_executions) {
+			const event: EventFrame = {
+				frame_type: "event",
+				schema: SIDECAR_PROTOCOL_SCHEMA,
+				ownership: response.ownership,
+				payload: { type: "execution_completed", event: completed },
+			};
+			for (const listener of this.eventListeners) {
+				try {
+					listener(event);
+				} catch (error) {
+					console.error("[agentOS] dispose completion listener failed", error);
+				}
+			}
 		}
 	}
 

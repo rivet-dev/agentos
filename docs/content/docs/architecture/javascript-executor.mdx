@@ -46,6 +46,62 @@ Guest V8 execution is deliberately different:
 There is therefore no "Tokio task running a Node.js process." Trusted I/O runs
 as Tokio tasks; untrusted JavaScript runs on a V8 executor thread.
 
+## Process start
+
+Every guest Node process gets its own isolate. Three mechanisms keep that
+cheap without sharing guest state:
+
+- **Warm executors.** The sidecar keeps up to four executor threads with an
+  isolate and a context already restored from the bridge snapshot. A new
+  process claims one and runs in that never-used context.
+- **Module code cache.** When an isolate first compiles an ES module from a
+  read-only host mount or a packed package, before any guest code has run in
+  that isolate, the sidecar compiles every function of the module and keeps
+  the bytecode. The next compile of byte-identical source, in any VM, consumes
+  those bytes instead of parsing again. An isolate in which guest code has run
+  only consumes entries and never records one, because V8 does not check the
+  bytecode inside an entry. Modules a guest can write, inline code, and
+  anything read through the guest filesystem are never cached, so one VM
+  cannot detect from compile timing what another VM loaded. Entries are keyed
+  by the SHA-256 of the exact source text and hold only V8-serialized bytecode
+  (no heap objects). The cache is process-wide, in memory only, and bounded to
+  64 MiB; the oldest entries are evicted first. Modules under 2 KiB are not
+  cached.
+- **Persisted bridge snapshot.** Building the bridge snapshot takes a helper
+  process ~400 ms. The sidecar stores each built snapshot blob under
+  `$XDG_CACHE_HOME/agentos/v8-snapshots` (or `~/.cache/...`), so later sidecar
+  processes load it instead. Files are keyed by a fingerprint of the V8 runtime
+  sources and the bridge, checked with SHA-256 on load, and bounded to 16
+  files. Set `AGENTOS_V8_SNAPSHOT_CACHE_DIR` to another directory, or to `off`
+  to disable it.
+- **Shared sources.** V8 keeps a script's source text for lazy compilation and
+  `Function#toString`. A snapshot compiles the bridge and large userland
+  sources from process-lifetime external strings, whose addresses are in the
+  isolate's external reference table. Every restored isolate then points at
+  the one copy instead of deserializing its own. Isolates also share the
+  snapshot blob instead of copying it.
+- **Module snapshots.** For a `snapshotEntrypoints` entry, the sidecar
+  evaluates the entry's static import graph once in the snapshot helper, with
+  stub bridge functions, and attaches the evaluated module records to the
+  snapshot context. A restored context hands them to the module loader, so an
+  import of one of their paths returns the evaluated instance. Before each
+  launch the sidecar checks the graph against the VM: the entry source, each
+  module file (by host inode, size, mtime, and ctime, then by SHA-256 when they
+  changed), and each import edge. A mismatch starts a rediscovery in the
+  background and the process loads normally. Discovery parses the graph in
+  the sidecar from heap copies of the sources, so only built snapshots hold
+  shared sources. While the graph evaluates, time and random sources throw,
+  so no per-process value is frozen into the snapshot. The helper runs under
+  a wall-clock deadline, a CPU-time cap, and a 1 GiB heap cap, so guest
+  top-level code cannot hold a blocking worker or the snapshot build lock.
+- **Deferred teardown.** An exited process's isolate is destroyed on a single
+  reaper thread, so the exit reaches the client without waiting for heap
+  teardown. The executor keeps its admission slot until teardown finishes.
+
+The per-process `process` setup (argv, env, identity) runs before any guest
+module evaluates, so imported modules see the real `process.argv` and
+`process.env` at their top level, as in Node.
+
 ## One TCP read, end to end
 
 [![Sequence from OS readiness through Tokio, durable readiness, the V8 executor, and the guest JavaScript socket read pump.](/images/architecture/javascript-executor-wakeup-sequence-dark.svg)](/images/architecture/javascript-executor-wakeup-sequence-dark.svg)

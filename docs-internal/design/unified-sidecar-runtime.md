@@ -46,9 +46,12 @@ capabilities. Readiness crosses the boundary as durable coalesced state, not
 one message per packet or chunk.
 
 This migration includes TCP, Unix sockets, listeners, UDP, TLS, HTTP/2,
-signals, embedded V8, standalone WASM, and Python networking adapters. The generic
-one-millisecond V8 platform-work poll is separately tracked because it is not
-part of the socket, bridge, or signal pump.
+signals, embedded V8, standalone WASM, and Python networking adapters. The V8
+platform-work fallback is not part of the socket, bridge, or signal pump: the
+V8 default platform cannot wake the session when a background thread posts a
+foreground task, so the idle wait keeps a timeout. It starts at 1 ms after each
+dispatched session event and backs off exponentially to 250 ms while V8 reports
+no background work, so an idle guest wakes a few times a second at most.
 
 Browser runtime support is intentionally outside this contract. Its source is
 retained for a future design, but browser crates and packages are disabled from

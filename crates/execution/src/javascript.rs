@@ -1,7 +1,5 @@
 use crate::common::stable_hash64;
-use crate::node_import_cache::{
-    NodeImportCache, NodeImportCacheCleanup, NODE_IMPORT_CACHE_ASSET_ROOT_ENV,
-};
+use crate::node_import_cache::NODE_IMPORT_CACHE_ASSET_ROOT_ENV;
 use crate::runtime_support::{
     NODE_COMPILE_CACHE_ENV, NODE_DISABLE_COMPILE_CACHE_ENV, NODE_FROZEN_TIME_ENV,
     NODE_SANDBOX_ROOT_ENV,
@@ -152,7 +150,6 @@ fn record_js_phase_stats(
 
 const DEFAULT_V8_CPU_TIME_LIMIT_MS: u32 = 30_000;
 const DEFAULT_V8_WALL_CLOCK_LIMIT_MS: u32 = 0;
-const DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT_MS: u64 = 30_000;
 const NODE_SYNC_RPC_DEFAULT_DATA_BYTES: usize = 4 * 1024 * 1024;
 const NODE_SYNC_RPC_DEFAULT_WAIT_TIMEOUT_MS: u64 = 30_000;
 const NODE_SYNC_RPC_RESPONSE_QUEUE_CAPACITY: usize = 1;
@@ -452,7 +449,8 @@ pub struct JavascriptExecutionLimits {
     /// JavaScript wall-clock backstop in ms. `None` keeps the engine default;
     /// `Some(0)` disables the wall-clock watchdog.
     pub wall_clock_limit_ms: Option<u32>,
-    /// Timeout for materializing the per-VM Node import cache.
+    /// Accepted for wire compatibility; JavaScript executions no longer
+    /// materialize an import cache, so this limit has no effect.
     pub import_cache_materialize_timeout_ms: Option<u64>,
     /// Maximum live JavaScript timers in this execution. `None` keeps the
     /// engine default. The sidecar supplies the VM-scoped configured value.
@@ -522,6 +520,10 @@ pub struct GuestRuntimeConfig {
     /// keeps the bridge-only snapshot (unchanged behavior). The runtime caches the
     /// snapshot process-wide keyed by sha256(bridge_code + this bundle).
     pub snapshot_userland_code: Option<String>,
+    /// Guest entrypoint paths from `jsRuntime.snapshotEntrypoints`. A guest
+    /// `node <entry>` process for one of them boots from a V8 snapshot with the
+    /// entry's static imports already evaluated.
+    pub snapshot_entrypoints: Vec<String>,
     /// Optional sidecar-owned classic script evaluated in the execution's
     /// context before the entrypoint, including before an ES module entrypoint
     /// links its static imports. The sidecar uses it to define VM-wide guest
@@ -1829,7 +1831,6 @@ pub struct JavascriptExecution {
     pending_sync_rpc: Arc<Mutex<Option<PendingSyncRpcState>>>,
     exited: Arc<AtomicBool>,
     kernel_stdin: Arc<LocalKernelStdinBridge>,
-    _import_cache_guard: Arc<NodeImportCacheCleanup>,
     v8_session: V8SessionHandle,
     /// Fully prepared V8 execute request. Cross-runtime execve prepares the
     /// replacement isolate and its bridge before committing kernel process
@@ -1848,10 +1849,11 @@ pub struct JavascriptExecution {
 struct PreparedJavascriptExecute {
     mode: u8,
     file_path: String,
-    bridge_code: String,
+    bridge_code: Arc<str>,
     post_restore_script: String,
-    userland_code: String,
+    userland_code: Arc<str>,
     high_resolution_time: bool,
+    runtime_shim: String,
     user_code: String,
     wasm_module_bytes: Option<Arc<Vec<u8>>>,
 }
@@ -1899,10 +1901,11 @@ impl JavascriptExecution {
             .execute(
                 2 | u8::from(module),
                 file_path,
+                Arc::from(""),
                 String::new(),
-                String::new(),
-                String::new(),
+                Arc::from(""),
                 false,
+                String::new(),
                 user_code,
                 None,
             )
@@ -1927,6 +1930,7 @@ impl JavascriptExecution {
                 prepared.post_restore_script,
                 prepared.userland_code,
                 prepared.high_resolution_time,
+                prepared.runtime_shim,
                 prepared.user_code,
                 prepared.wasm_module_bytes,
             )
@@ -2354,8 +2358,10 @@ impl Drop for JavascriptExecution {
         // Closing the V8 producer lets the bridge task drain any terminal
         // warning/result and then finish when its per-session lane closes.
         // Aborting the task first would drop the lane while the session thread
-        // was still completing teardown.
-        let _ = self.v8_session.destroy();
+        // was still completing teardown. Isolate teardown is joined on the
+        // session reaper so dropping an exited process does not stall the
+        // caller (the sidecar service loop) for milliseconds.
+        let _ = self.v8_session.destroy_detached();
     }
 }
 
@@ -2455,7 +2461,6 @@ pub struct JavascriptExecutionEngine {
     next_context_id: usize,
     next_execution_id: usize,
     contexts: BTreeMap<String, JavascriptContext>,
-    import_caches: BTreeMap<String, NodeImportCache>,
     v8_host: Option<V8RuntimeHost>,
     event_notify: Option<Arc<Notify>>,
 }
@@ -2467,7 +2472,6 @@ impl Default for JavascriptExecutionEngine {
             next_context_id: 0,
             next_execution_id: 0,
             contexts: BTreeMap::new(),
-            import_caches: BTreeMap::new(),
             v8_host: None,
             event_notify: None,
         }
@@ -2513,15 +2517,8 @@ impl JavascriptExecutionEngine {
         self.event_notify = notify;
     }
 
-    #[doc(hidden)]
-    pub fn set_import_cache_base_dir(&mut self, vm_id: impl Into<String>, base_dir: PathBuf) {
-        self.import_caches
-            .insert(vm_id.into(), NodeImportCache::new_in(base_dir));
-    }
-
     pub fn create_context(&mut self, request: CreateJavascriptContextRequest) -> JavascriptContext {
         self.next_context_id += 1;
-        self.import_caches.entry(request.vm_id.clone()).or_default();
 
         let context = JavascriptContext {
             context_id: format!("js-ctx-{}", self.next_context_id),
@@ -2713,7 +2710,7 @@ impl JavascriptExecutionEngine {
         &mut self,
         request: StartJavascriptExecutionRequest,
         module_reader: Option<Box<dyn ModuleFsReader + Send>>,
-        guest_reader: Option<Box<dyn agentos_v8_runtime::execution::GuestModuleReader>>,
+        mut guest_reader: Option<Box<dyn agentos_v8_runtime::execution::GuestModuleReader>>,
         runtime: RuntimeContext,
         defer_execute: bool,
     ) -> Result<JavascriptExecution, JavascriptExecutionError> {
@@ -2737,18 +2734,6 @@ impl JavascriptExecutionEngine {
         let reactor_work_quantum = javascript_reactor_work_quantum(&request, &runtime)?;
         let bridge_call_timeout = javascript_bridge_call_timeout(&request, &runtime)?;
 
-        let phase_start = Instant::now();
-        // Ensure import cache is materialized (still needed for module resolution)
-        let import_cache = self.import_caches.entry(context.vm_id.clone()).or_default();
-        import_cache
-            .ensure_materialized_with_timeout_and_runtime(
-                &process_runtime,
-                javascript_import_cache_materialize_timeout(&request),
-            )
-            .map_err(JavascriptExecutionError::PrepareImportCache)?;
-        let import_cache_guard = import_cache.cleanup_guard();
-        record_js_start_phase("js_start_import_cache", phase_start.elapsed());
-
         self.next_execution_id += 1;
         let execution_id = format!("exec-{}", self.next_execution_id);
 
@@ -2766,13 +2751,23 @@ impl JavascriptExecutionEngine {
         let heap_limit_mb = javascript_heap_limit_mb(&request);
         let cpu_time_limit_ms = javascript_cpu_time_limit_ms(&request);
         let wall_clock_limit_ms = javascript_wall_clock_limit_ms(&request);
-        let snapshot_userland_code = request
-            .guest_runtime
-            .snapshot_userland_code
-            .clone()
-            .unwrap_or_default();
+        let phase_start_snapshot = Instant::now();
+        let snapshot_userland_code: Arc<str> =
+            match request.guest_runtime.snapshot_userland_code.as_deref() {
+                Some(code) => code.into(),
+                None => module_snapshot_for_launch(
+                    v8_host,
+                    &runtime,
+                    &request,
+                    guest_reader.as_deref_mut(),
+                    heap_limit_mb,
+                )
+                .unwrap_or_default()
+                .into(),
+            };
+        record_js_start_phase("js_start_module_snapshot", phase_start_snapshot.elapsed());
         let warm_hint = Some(WarmSessionHint {
-            bridge_code: V8RuntimeHost::bridge_code().to_owned(),
+            bridge_code: V8RuntimeHost::shared_bridge_code(),
             userland_code: snapshot_userland_code.clone(),
             heap_limit_mb: (heap_limit_mb > 0).then_some(heap_limit_mb),
         });
@@ -2900,8 +2895,7 @@ impl JavascriptExecutionEngine {
         } else {
             build_v8_user_code(&guest_entrypoint, &request.env)
         };
-        let user_code = prepend_v8_runtime_shim(
-            user_code,
+        let runtime_shim = build_v8_runtime_shim(
             &guest_entrypoint,
             &process_argv,
             request.argv0.as_deref(),
@@ -2975,7 +2969,7 @@ impl JavascriptExecutionEngine {
                 | if retain_context { 2 } else { 0 }
                 | if complete_on_settle { 4 } else { 0 },
             file_path: execution_file_path,
-            bridge_code: V8RuntimeHost::bridge_code().to_owned(),
+            bridge_code: V8RuntimeHost::shared_bridge_code(),
             post_restore_script: request
                 .guest_runtime
                 .prelude_script
@@ -2983,6 +2977,7 @@ impl JavascriptExecutionEngine {
                 .unwrap_or_default(),
             userland_code: snapshot_userland_code,
             high_resolution_time: request.guest_runtime.high_resolution_time,
+            runtime_shim,
             user_code,
             wasm_module_bytes: request.wasm_module_bytes.clone(),
         };
@@ -2997,6 +2992,7 @@ impl JavascriptExecutionEngine {
                     prepared_execute.post_restore_script,
                     prepared_execute.userland_code,
                     prepared_execute.high_resolution_time,
+                    prepared_execute.runtime_shim,
                     prepared_execute.user_code,
                     prepared_execute.wasm_module_bytes,
                 )
@@ -3013,7 +3009,6 @@ impl JavascriptExecutionEngine {
             pending_sync_rpc,
             exited,
             kernel_stdin,
-            _import_cache_guard: import_cache_guard,
             v8_session,
             prepared_execute,
             _event_bridge_task: event_bridge_task,
@@ -3026,32 +3021,6 @@ impl JavascriptExecutionEngine {
 
     pub fn dispose_vm(&mut self, vm_id: &str) {
         self.contexts.retain(|_, context| context.vm_id != vm_id);
-        self.import_caches.remove(vm_id);
-    }
-
-    #[doc(hidden)]
-    #[allow(dead_code)]
-    pub fn materialize_import_cache_for_vm(
-        &mut self,
-        vm_id: &str,
-    ) -> Result<&std::path::Path, std::io::Error> {
-        let runtime = self
-            .runtime
-            .as_ref()
-            .ok_or_else(|| std::io::Error::other(
-                "ERR_AGENTOS_RUNTIME_NOT_INJECTED: JavascriptExecutionEngine requires a process RuntimeContext",
-            ))?;
-        let import_cache = self.import_caches.entry(vm_id.to_owned()).or_default();
-        import_cache.ensure_materialized_with_runtime(runtime)?;
-        Ok(import_cache.cache_path())
-    }
-
-    #[doc(hidden)]
-    #[allow(dead_code)]
-    pub fn import_cache_path_for_vm(&self, vm_id: &str) -> Option<&std::path::Path> {
-        self.import_caches
-            .get(vm_id)
-            .map(NodeImportCache::cache_path)
     }
 }
 
@@ -3109,17 +3078,6 @@ fn javascript_heap_limit_mb(request: &StartJavascriptExecutionRequest) -> u32 {
         .v8_heap_limit_mb
         .filter(|value| *value > 0)
         .unwrap_or(0)
-}
-
-fn javascript_import_cache_materialize_timeout(
-    request: &StartJavascriptExecutionRequest,
-) -> Duration {
-    let timeout_ms = request
-        .limits
-        .import_cache_materialize_timeout_ms
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT_MS);
-    Duration::from_millis(timeout_ms)
 }
 
 fn javascript_max_timers(request: &StartJavascriptExecutionRequest) -> usize {
@@ -3315,6 +3273,56 @@ fn build_v8_user_code(entrypoint: &str, env: &BTreeMap<String, String>) -> Strin
             entrypoint
         )
     }
+}
+
+/// The module snapshot token for a guest `node <entry>` launch whose entry the
+/// VM named in `jsRuntime.snapshotEntrypoints`, or `None` to load normally.
+///
+/// Snapshot modules are evaluated against the default Node surface, so a VM
+/// that restricts builtins, module resolution, or the platform, and language
+/// executions that retain their context, never use one.
+fn module_snapshot_for_launch(
+    v8_host: &V8RuntimeHost,
+    runtime: &RuntimeContext,
+    request: &StartJavascriptExecutionRequest,
+    reader: Option<&mut (dyn agentos_v8_runtime::execution::GuestModuleReader + 'static)>,
+    heap_limit_mb: u32,
+) -> Option<String> {
+    let entrypoints = &request.guest_runtime.snapshot_entrypoints;
+    if entrypoints.is_empty() {
+        return None;
+    }
+    let entry = request
+        .env
+        .get(NODE_GUEST_ENTRYPOINT_ENV)
+        .filter(|entry| entrypoints.iter().any(|candidate| candidate == *entry))?;
+    let env_flag = |key: &str| {
+        request
+            .env
+            .get(key)
+            .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+    };
+    if request.env.contains_key("AGENTOS_JS_BUILTIN_ALLOWLIST")
+        || request.env.contains_key("AGENTOS_JS_MODULE_RESOLUTION")
+        || request
+            .env
+            .get("AGENTOS_JS_PLATFORM")
+            .is_some_and(|platform| platform != "node")
+        || env_flag(NODE_RETAIN_CONTEXT_ENV)
+        || env_flag(NODE_COMPLETE_ON_SETTLE_ENV)
+    {
+        return None;
+    }
+    let reader = reader?;
+    if reader.module_format(entry)
+        != Some(agentos_v8_runtime::execution::ResolvedModuleFormat::Module)
+    {
+        return None;
+    }
+    // The entry must come from a read-only host mount too, so guest code can
+    // neither change it nor make the sidecar discover new graphs.
+    let source = strip_javascript_hashbang(&reader.read_module_source(entry)?);
+    v8_host.select_module_snapshot(runtime, entry, &source, reader, heap_limit_mb)
 }
 
 fn host_entrypoint_uses_module_mode(entrypoint: &Path) -> bool {
@@ -3579,8 +3587,10 @@ fn resolve_v8_entrypoint(cwd: &Path, entrypoint: &str) -> String {
 // Keep each injected process/runtime value explicit at this one serialization
 // boundary; grouping them would duplicate the already-typed guest config.
 #[allow(clippy::too_many_arguments)]
-fn prepend_v8_runtime_shim(
-    user_code: String,
+/// The per-process classic script that sets up `process` (argv, env, identity)
+/// before guest code runs. It travels in the Execute frame's `runtime_shim`
+/// field, separate from the guest's own code.
+fn build_v8_runtime_shim(
     entrypoint: &str,
     argv: &[String],
     argv0: Option<&str>,
@@ -3907,8 +3917,7 @@ fn prepend_v8_runtime_shim(
       ].forEach(__dropGlobal);
     }}
   }}
-}})();
-{user_code}"#
+}})();"#
     )
 }
 
@@ -7409,11 +7418,6 @@ mod tests {
             500,
             "wall-clock budget must come from the typed wire limit, not env"
         );
-        assert_eq!(
-            javascript_import_cache_materialize_timeout(&request),
-            std::time::Duration::from_millis(125),
-            "import-cache timeout must come from the typed wire limit, not env"
-        );
         assert_eq!(javascript_max_timers(&request), 321);
         assert_eq!(
             javascript_reactor_work_quantum(
@@ -7497,10 +7501,6 @@ mod tests {
             DEFAULT_V8_WALL_CLOCK_LIMIT_MS
         );
         assert_eq!(javascript_max_timers(&request), MAX_TIMERS_PER_EXECUTION);
-        assert_eq!(
-            javascript_import_cache_materialize_timeout(&request),
-            std::time::Duration::from_millis(DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT_MS)
-        );
     }
 
     #[test]

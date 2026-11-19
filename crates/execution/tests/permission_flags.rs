@@ -250,6 +250,7 @@ export async function loadPyodide() {
     let context = python_engine.create_context(CreatePythonContextRequest {
         vm_id: String::from("vm-python"),
         pyodide_dist_path: pyodide_dir,
+        pyodide_cache_path: None,
     });
 
     let mut execution = python_engine

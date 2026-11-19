@@ -953,3 +953,161 @@ async fn shell_children_of_every_runtime_run_to_completion() {
     assert_eq!(stdout, "42\n2\npython-exit-1\nnested\n");
     assert_eq!(exit_code, 0);
 }
+
+/// Stdin written right after `spawn`, before its `Execute` is acknowledged, reaches the process in
+/// call order. TS queues writes behind the start the same way, so a caller need not await between
+/// starting a process and writing to it.
+#[tokio::test]
+async fn stdin_written_right_after_spawn_arrives_in_order() {
+    const TEST: &str = "stdin_written_right_after_spawn_arrives_in_order";
+    const ITERATIONS: usize = 40;
+    if !common::require_sidecar(TEST) {
+        return;
+    }
+    let os = common::new_vm().await;
+    let result = async {
+        for iteration in 0..ITERATIONS {
+            // The exit status reports what the guest read before EOF.
+            let process = os.spawn_process(
+                "node",
+                vec![
+                    "-e".into(),
+                    "let d = ''; process.stdin.on('data', (c) => (d += c)); \
+                     process.stdin.on('end', () => process.exit(d === 'ab' ? 0 : d === 'ba' ? 2 : d === '' ? 3 : 4))"
+                        .into(),
+                ],
+                SpawnOptions::default(),
+            )?;
+            os.write_process_stdin(process.pid, StdinInput::Text("a".into()))?;
+            os.write_process_stdin(process.pid, StdinInput::Text("b".into()))?;
+            os.close_process_stdin(process.pid)?;
+            let exit = tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                os.wait_process(process.pid),
+            )
+            .await
+            .map_err(|_| anyhow::anyhow!("iteration {iteration}: stdin never reached EOF"))??;
+            anyhow::ensure!(
+                exit == 0,
+                "iteration {iteration}: the process read {} instead of \"ab\"",
+                match exit {
+                    2 => "\"ba\"",
+                    3 => "nothing",
+                    _ => "other bytes",
+                }
+            );
+        }
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+    tokio::time::timeout(std::time::Duration::from_secs(10), os.shutdown())
+        .await
+        .expect("bounded VM cleanup")
+        .expect("shutdown VM");
+    result.unwrap();
+}
+
+/// A language process that exits while another process floods stdout reports its real exit status
+/// when the VM is disposed. Its exit event queues behind the flood on the event lane, so only the
+/// dispose response's list of finished executions can deliver it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_process_that_exits_behind_an_output_flood_reports_its_exit_status_on_shutdown() {
+    const TEST: &str =
+        "a_process_that_exits_behind_an_output_flood_reports_its_exit_status_on_shutdown";
+    if !common::require_sidecar(TEST) {
+        return;
+    }
+    let os = common::new_vm().await;
+    let flood = os
+        .spawn_javascript(
+            "for (let i = 0; i < 50000; i++) console.log('flood ' + i); setInterval(() => {}, 1000)",
+            agentos_client::LanguageSpawnOptions::default(),
+        )
+        .await
+        .expect("spawn the flooding process");
+    let flood_waiter = {
+        let os = os.clone();
+        tokio::spawn(async move { os.wait_process(flood.pid).await })
+    };
+    let exits = os
+        .spawn_javascript(
+            "setTimeout(() => process.exit(3), 100)",
+            agentos_client::LanguageSpawnOptions::default(),
+        )
+        .await
+        .expect("spawn the exiting process");
+    let waiter = {
+        let os = os.clone();
+        tokio::spawn(async move { os.wait_process(exits.pid).await })
+    };
+    // Dispose once the exit is due, before the host drains the flood ahead of it.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    tokio::time::timeout(std::time::Duration::from_secs(30), os.shutdown())
+        .await
+        .expect("bounded VM cleanup")
+        .expect("shutdown VM");
+    let exit = tokio::time::timeout(std::time::Duration::from_secs(10), waiter)
+        .await
+        .expect("the wait settles once the VM is disposed")
+        .expect("wait task");
+    assert!(
+        matches!(exit, Ok(3)),
+        "a process that exited with 3 just before dispose reported {exit:?}"
+    );
+    // The flood was still running, so the dispose killed it: SIGKILL is exit status 137.
+    let flood_exit = tokio::time::timeout(std::time::Duration::from_secs(10), flood_waiter)
+        .await
+        .expect("the flood's wait settles once the VM is disposed")
+        .expect("flood wait task");
+    assert!(
+        matches!(flood_exit, Ok(137)),
+        "a process the dispose killed reported {flood_exit:?}"
+    );
+}
+
+/// A signal sent while a process is exiting succeeds, as `kill()` on an exiting process does on
+/// Linux, even when the sidecar has already reaped the process before the client sees its exit.
+/// TS `signalProcess` behaves the same way.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_signal_racing_a_process_exit_succeeds() {
+    const TEST: &str = "a_signal_racing_a_process_exit_succeeds";
+    const ITERATIONS: usize = 20;
+    if !common::require_sidecar(TEST) {
+        return;
+    }
+    let os = common::new_vm().await;
+    let result = async {
+        for iteration in 0..ITERATIONS {
+            let process = os.spawn_process(
+                "node",
+                vec!["-e".into(), "process.exit(0)".into()],
+                SpawnOptions::default(),
+            )?;
+            let waiter = {
+                let os = os.clone();
+                tokio::spawn(async move { os.wait_process(process.pid).await })
+            };
+            // Signal until the client observes the exit, so some signals land after the
+            // sidecar reaped the process but before its exit event arrived.
+            let mut signals = 0usize;
+            while !waiter.is_finished() {
+                os.signal_process_awaited(process.pid, "SIGTERM")
+                    .await
+                    .map_err(|error| {
+                        anyhow::anyhow!(
+                            "iteration {iteration}: signal {signals} to an exiting process failed: {error}"
+                        )
+                    })?;
+                signals += 1;
+            }
+            waiter.await??;
+        }
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+    tokio::time::timeout(std::time::Duration::from_secs(10), os.shutdown())
+        .await
+        .expect("bounded VM cleanup")
+        .expect("shutdown VM");
+    result.unwrap();
+}

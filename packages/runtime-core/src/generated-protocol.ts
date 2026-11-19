@@ -4387,20 +4387,6 @@ export function writeVmConfigComparedResponse(bc: bare.ByteCursor, x: VmConfigCo
     bare.writeBool(bc, x.equivalent)
 }
 
-export type VmDisposedResponse = {
-    readonly vmId: string
-}
-
-export function readVmDisposedResponse(bc: bare.ByteCursor): VmDisposedResponse {
-    return {
-        vmId: bare.readString(bc),
-    }
-}
-
-export function writeVmDisposedResponse(bc: bare.ByteCursor, x: VmDisposedResponse): void {
-    bare.writeString(bc, x.vmId)
-}
-
 export type RootFilesystemBootstrappedResponse = {
     readonly entryCount: u32
 }
@@ -5978,6 +5964,73 @@ export function writeExecutionOutputPageResponse(bc: bare.ByteCursor, x: Executi
     bare.writeBool(bc, x.truncated)
 }
 
+export type ExecutionCompletedEvent = {
+    readonly executionId: string
+    readonly generation: u64
+    readonly outcome: ExecutionOutcome
+    readonly exitCode: i32 | null
+    readonly error: ExecutionErrorData | null
+}
+
+export function readExecutionCompletedEvent(bc: bare.ByteCursor): ExecutionCompletedEvent {
+    return {
+        executionId: bare.readString(bc),
+        generation: bare.readU64(bc),
+        outcome: readExecutionOutcome(bc),
+        exitCode: read40(bc),
+        error: read49(bc),
+    }
+}
+
+export function writeExecutionCompletedEvent(bc: bare.ByteCursor, x: ExecutionCompletedEvent): void {
+    bare.writeString(bc, x.executionId)
+    bare.writeU64(bc, x.generation)
+    writeExecutionOutcome(bc, x.outcome)
+    write40(bc, x.exitCode)
+    write49(bc, x.error)
+}
+
+function read53(bc: bare.ByteCursor): readonly ExecutionCompletedEvent[] {
+    const len = bare.readUintSafe(bc)
+    if (len === 0) {
+        return []
+    }
+    const result = [readExecutionCompletedEvent(bc)]
+    for (let i = 1; i < len; i++) {
+        result[i] = readExecutionCompletedEvent(bc)
+    }
+    return result
+}
+
+function write53(bc: bare.ByteCursor, x: readonly ExecutionCompletedEvent[]): void {
+    bare.writeUintSafe(bc, x.length)
+    for (let i = 0; i < x.length; i++) {
+        writeExecutionCompletedEvent(bc, x[i])
+    }
+}
+
+/**
+ * `completedExecutions` holds the completion of every public execution that
+ * had already finished when the dispose began. An execution absent from it was
+ * still running, so the dispose terminated it.
+ */
+export type VmDisposedResponse = {
+    readonly vmId: string
+    readonly completedExecutions: readonly ExecutionCompletedEvent[]
+}
+
+export function readVmDisposedResponse(bc: bare.ByteCursor): VmDisposedResponse {
+    return {
+        vmId: bare.readString(bc),
+        completedExecutions: read53(bc),
+    }
+}
+
+export function writeVmDisposedResponse(bc: bare.ByteCursor, x: VmDisposedResponse): void {
+    bare.writeString(bc, x.vmId)
+    write53(bc, x.completedExecutions)
+}
+
 export type ResponsePayload =
     | { readonly tag: "AuthenticatedResponse"; readonly val: AuthenticatedResponse }
     | { readonly tag: "SessionOpenedResponse"; readonly val: SessionOpenedResponse }
@@ -6544,32 +6597,6 @@ export function readProcessExitedEvent(bc: bare.ByteCursor): ProcessExitedEvent 
 export function writeProcessExitedEvent(bc: bare.ByteCursor, x: ProcessExitedEvent): void {
     bare.writeString(bc, x.processId)
     bare.writeI32(bc, x.exitCode)
-}
-
-export type ExecutionCompletedEvent = {
-    readonly executionId: string
-    readonly generation: u64
-    readonly outcome: ExecutionOutcome
-    readonly exitCode: i32 | null
-    readonly error: ExecutionErrorData | null
-}
-
-export function readExecutionCompletedEvent(bc: bare.ByteCursor): ExecutionCompletedEvent {
-    return {
-        executionId: bare.readString(bc),
-        generation: bare.readU64(bc),
-        outcome: readExecutionOutcome(bc),
-        exitCode: read40(bc),
-        error: read49(bc),
-    }
-}
-
-export function writeExecutionCompletedEvent(bc: bare.ByteCursor, x: ExecutionCompletedEvent): void {
-    bare.writeString(bc, x.executionId)
-    bare.writeU64(bc, x.generation)
-    writeExecutionOutcome(bc, x.outcome)
-    write40(bc, x.exitCode)
-    write49(bc, x.error)
 }
 
 export type StructuredEvent = {

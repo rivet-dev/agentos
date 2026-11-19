@@ -705,6 +705,9 @@ where
         max_service_claims: usize,
     ) -> Result<ProcessEventPumpTurn, SidecarError> {
         let mut emitted_any = false;
+        // A split write queues its head while its rest stays paused; count
+        // any growth of the shared queue as progress so the drain wakes.
+        let queued_before = self.pending_process_events.len();
         let mut javascript_services = Vec::new();
         let mut python_services = Vec::new();
         let mut python_socket_completions = Vec::new();
@@ -716,7 +719,13 @@ where
             emitted_any = true;
         }
 
-        for vm_id in self.vm_ids_for_scope(ownership)? {
+        let mut vm_ids = self.vm_ids_for_scope(ownership)?;
+        if !vm_ids.is_empty() {
+            let start = self.process_event_pump_rotation % vm_ids.len();
+            vm_ids.rotate_left(start);
+            self.process_event_pump_rotation = self.process_event_pump_rotation.wrapping_add(1);
+        }
+        for vm_id in vm_ids {
             let work_limit = self.config.runtime.fairness.vm_quantum_operations;
             let Some((connection_id, session_id, process_ids)) = self.vms.get(&vm_id).map(|vm| {
                 vm.kernel.reap_due_zombies();
@@ -788,13 +797,14 @@ where
                         .map(PolledExecutionEvent::unreserved),
                 };
                 let Some(event) = event else { continue };
-                root_source_remains |= self.vms.get(&vm_id).is_some_and(|vm| {
+                let source_remains = self.vms.get(&vm_id).is_some_and(|vm| {
                     vm.active_processes.get(&process_id).is_some_and(|process| {
-                        !process.pending_execution_events.is_empty()
+                        process.has_queued_execution_events()
                             || process.execution.has_pending_events()
                     })
                 });
                 if Self::internal_execution_event(event.event()) {
+                    root_source_remains |= source_remains;
                     let PolledExecutionEvent { event, reservation } = event;
                     match event {
                         ActiveExecutionEvent::JavascriptSyncRpcRequest(request) => {
@@ -897,19 +907,25 @@ where
                     process_id,
                     event,
                 };
-                if let Err(error) = self.check_pending_process_event_capacity(&envelope) {
-                    let Some(mut vm) = self.vms.get_mut(&vm_id) else {
-                        return Err(error);
-                    };
-                    if let Some(process) = vm.active_processes.get_mut(&envelope.process_id) {
-                        process.requeue_pending_execution_event(PolledExecutionEvent {
-                            event: envelope.event,
-                            reservation,
-                        })?;
+                if let ProcessEventOffer::Paused(envelope) =
+                    self.offer_pending_process_event(envelope)?
+                {
+                    let envelope = *envelope;
+                    // The shared queue has no fair room for this VM: keep the
+                    // event at its source. The guest blocks once its bounded
+                    // channel fills, and the next capacity release wakes the
+                    // pump. Never fail the transport for a full queue.
+                    if let Some(mut vm) = self.vms.get_mut(&vm_id) {
+                        if let Some(process) = vm.active_processes.get_mut(&envelope.process_id) {
+                            process.restore_paused_execution_event(PolledExecutionEvent {
+                                event: envelope.event,
+                                reservation,
+                            })?;
+                        }
                     }
-                    return Err(error);
+                    continue;
                 }
-                self.queue_pending_process_event(envelope)?;
+                root_source_remains |= source_remains;
                 drop(reservation);
                 emitted_any = true;
                 work = work.saturating_add(1);
@@ -962,12 +978,32 @@ where
             self.process_event_notify.notify_one();
         }
         self.rearm_kernel_reaper_task()?;
+        emitted_any |= self.pending_process_events.len() > queued_before;
         Ok(ProcessEventPumpTurn {
             emitted_any,
             javascript_services,
             python_services,
             python_socket_completions,
             child_bridge_services,
+        })
+    }
+
+    /// The V8 runtime reports a host-requested termination as this stderr
+    /// line. For a process the sidecar signalled, it is not guest output.
+    fn is_signal_termination_stderr(
+        &self,
+        vm_id: &str,
+        process_id: &str,
+        event: &ActiveExecutionEvent,
+    ) -> bool {
+        matches!(
+            event,
+            ActiveExecutionEvent::Stderr(chunk)
+                if chunk.as_slice() == super::child_process::SYNTHETIC_V8_TERMINATION_STDERR
+        ) && self.vms.get(vm_id).is_some_and(|vm| {
+            vm.active_processes
+                .get(process_id)
+                .is_some_and(|process| process.exit_signal.is_some())
         })
     }
 
@@ -1052,6 +1088,10 @@ where
         };
         if !active {
             log_stale_process_event(&self.bridge, vm_id, process_id, "public event dispatch");
+            return Ok(None);
+        }
+        if self.is_signal_termination_stderr(vm_id, process_id, &event) {
+            // A killed process writes nothing; its exit event carries the signal.
             return Ok(None);
         }
         let ownership = OwnershipScope::vm(&connection_id, &session_id, vm_id);
@@ -1172,6 +1212,7 @@ where
         ownership: &OwnershipScope,
     ) -> Result<bool, SidecarError> {
         let mut emitted_any = false;
+        let queued_before = self.pending_process_events.len();
         self.expire_public_execution_deadlines()?;
 
         if self.drain_runtime_process_event_channel_nowait()? {
@@ -1276,10 +1317,13 @@ where
                             process_id: process_id.clone(),
                             event,
                         };
-                        if let Err(error) = self.check_pending_process_event_capacity(&envelope) {
+                        if let ProcessEventOffer::Paused(envelope) =
+                            self.offer_pending_process_event(envelope)?
+                        {
+                            let envelope = *envelope;
                             if let Some(mut vm) = self.vms.get_mut(&vm_id) {
                                 if let Some(process) = vm.active_processes.get_mut(&process_id) {
-                                    process.requeue_pending_execution_event(
+                                    process.restore_paused_execution_event(
                                         PolledExecutionEvent {
                                             event: envelope.event,
                                             reservation,
@@ -1287,9 +1331,8 @@ where
                                     )?;
                                 }
                             }
-                            return Err(error);
+                            continue;
                         }
-                        self.queue_pending_process_event(envelope)?;
                         drop(reservation);
                     }
                     emitted_any = true;
@@ -1314,6 +1357,7 @@ where
             emitted_any = true;
         }
         self.rearm_kernel_reaper_task()?;
+        emitted_any |= self.pending_process_events.len() > queued_before;
         Ok(emitted_any)
     }
 
@@ -1599,6 +1643,10 @@ where
         };
         if !active {
             log_stale_process_event(&self.bridge, vm_id, process_id, "execution event dispatch");
+            return Ok(None);
+        }
+        if self.is_signal_termination_stderr(vm_id, process_id, &event) {
+            // A killed process writes nothing; its exit event carries the signal.
             return Ok(None);
         }
         let ownership = OwnershipScope::vm(&connection_id, &session_id, vm_id);
@@ -2099,9 +2147,7 @@ mod process_event_channel_tests {
         assert!(sidecar
             .drain_runtime_process_event_channel_nowait()
             .expect("retry staged and later envelopes"));
-        let bytes = sidecar
-            .pending_process_events
-            .drain(..)
+        let bytes = std::iter::from_fn(|| sidecar.pending_process_events.take_next(|_| true))
             .map(|envelope| match envelope.event {
                 ActiveExecutionEvent::Stdout(bytes) => bytes[0],
                 other => panic!("expected stdout, received {other:?}"),
@@ -2166,7 +2212,7 @@ mod process_event_channel_tests {
             Poll::Pending
         ));
 
-        sidecar.pending_process_events.pop_front();
+        sidecar.pending_process_events.take_next(|_| true);
         sidecar.observe_pending_process_event_depth();
         sidecar.rearm_deferred_process_event_after_capacity_release();
         assert!(matches!(

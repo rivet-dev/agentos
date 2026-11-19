@@ -101,8 +101,8 @@ impl EmbeddedV8Runtime {
 
     pub fn pre_warm_workers(
         &self,
-        bridge_code: String,
-        userland_code: String,
+        bridge_code: Arc<str>,
+        userland_code: Arc<str>,
         heap_limit_mb: Option<u32>,
         count: usize,
     ) {
@@ -426,10 +426,11 @@ impl EmbeddedV8SessionHandle {
         &self,
         mode: u8,
         file_path: String,
-        bridge_code: String,
+        bridge_code: Arc<str>,
         post_restore_script: String,
-        userland_code: String,
+        userland_code: Arc<str>,
         high_resolution_time: bool,
+        runtime_shim: String,
         user_code: String,
         wasm_module_bytes: Option<Arc<Vec<u8>>>,
     ) -> io::Result<()> {
@@ -443,6 +444,7 @@ impl EmbeddedV8SessionHandle {
                 post_restore_script,
                 userland_code,
                 high_resolution_time,
+                runtime_shim,
                 user_code,
                 wasm_module_bytes,
             },
@@ -592,9 +594,89 @@ impl EmbeddedV8SessionHandle {
         result
     }
 
+    /// Destroy the session without waiting for its executor thread to finish
+    /// tearing down the isolate. Execution is terminated and the session leaves
+    /// the manager before this returns; its output lane leaves the
+    /// registry at once, so the session ID can be reused; the join runs on the
+    /// session reaper. The executor keeps its slot permit
+    /// until its V8 state is gone, so capacity stays bounded. Callers that must
+    /// observe full quiescence use [`Self::destroy`].
+    pub fn destroy_detached(&self) -> io::Result<()> {
+        let shutdown = self
+            .runtime
+            .session_mgr
+            .lock()
+            .expect("session manager lock poisoned")
+            .begin_destroy_session(&self.session_id)
+            .map_err(other_io_error);
+        // The caller has given up this session's results, and the executor
+        // sends through its own sender, so the ID can be reused at once.
+        match self.output_generation {
+            Some(generation) => {
+                remove_session_output_if_current(
+                    &self.runtime.session_outputs,
+                    &self.session_id,
+                    generation,
+                );
+            }
+            None => self.runtime.unregister_session(&self.session_id),
+        }
+        let finish = move || {
+            if let Ok(shutdown) = shutdown {
+                shutdown.finish();
+            }
+        };
+        submit_session_reap(Box::new(finish));
+        Ok(())
+    }
+
     pub fn session_id(&self) -> &str {
         &self.session_id
     }
+}
+
+type SessionReap = Box<dyn FnOnce() + Send>;
+
+/// Pending session joins the reaper may hold. Each one also holds a V8 executor
+/// slot permit, so the active-executor limit bounds this queue in practice.
+const SESSION_REAPER_QUEUE_CAPACITY: usize = 256;
+
+/// One fixed thread that joins exited session executors off the caller's
+/// thread. Isolate teardown takes milliseconds; joining it inline stalled the
+/// sidecar service loop on every process exit. When the queue is full (or the
+/// reaper could not start), the join runs inline, which is the old behavior.
+fn submit_session_reap(reap: SessionReap) {
+    static REAPER: OnceLock<Option<crossbeam_channel::Sender<SessionReap>>> = OnceLock::new();
+    let sender = REAPER.get_or_init(|| {
+        let (tx, rx) = crossbeam_channel::bounded::<SessionReap>(SESSION_REAPER_QUEUE_CAPACITY);
+        // AGENTOS_THREAD_SITE: constant-v8-session-reaper
+        match thread::Builder::new()
+            .name(String::from("agentos-v8-reaper"))
+            .spawn(move || {
+                for reap in rx {
+                    reap();
+                }
+            }) {
+            Ok(_) => Some(tx),
+            Err(error) => {
+                eprintln!(
+                    "WARN_AGENTOS_V8_SESSION_REAPER_SPAWN_FAILED: {error}; session teardown joins inline"
+                );
+                None
+            }
+        }
+    });
+    let reap = match sender {
+        Some(sender) => match sender.try_send(reap) {
+            Ok(()) => return,
+            Err(
+                crossbeam_channel::TrySendError::Full(reap)
+                | crossbeam_channel::TrySendError::Disconnected(reap),
+            ) => reap,
+        },
+        None => reap,
+    };
+    reap();
 }
 
 // Mode bits: 1 = module, 2 = retained context, 4 = complete on settle.
@@ -986,7 +1068,7 @@ fn dispatch_runtime_command(
         } => snapshot_cache
             .get_or_create_with_userland(
                 &bridge_code,
-                (!userland_code.is_empty()).then_some(userland_code.as_str()),
+                (!userland_code.is_empty()).then_some(&*userland_code),
             )
             .map(|_| ())
             .map_err(other_io_error),

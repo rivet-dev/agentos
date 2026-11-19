@@ -2995,7 +2995,7 @@ pub(super) fn prepare_guest_runtime_env(
         })?,
     );
     // The guest JS host platform drives subtractive global scrubbing in the
-    // per-execution runtime shim (see prepend_v8_runtime_shim).
+    // per-execution runtime shim (see build_v8_runtime_shim).
     env.insert(
         String::from("AGENTOS_JS_PLATFORM"),
         js_runtime_platform_env(vm).to_owned(),
@@ -3126,6 +3126,12 @@ pub(super) fn guest_runtime_identity(
             .as_ref()
             .is_some_and(|cfg| cfg.high_resolution_time.unwrap_or(false)),
         snapshot_userland_code: None,
+        snapshot_entrypoints: vm
+            .configuration
+            .js_runtime
+            .as_ref()
+            .and_then(|cfg| cfg.snapshot_entrypoints.clone())
+            .unwrap_or_default(),
         prelude_script: None,
     }
 }
@@ -5239,15 +5245,13 @@ where
             // other launches on this VM instead of failing with an execution conflict.
             let launch_turn = execution_engines.python_launch_turn().await;
             let mut python_engine = execution_engines.python("start Python execution")?;
-            let pyodide_dist_path = python_engine
-                .bundled_pyodide_dist_path_for_vm_async(&vm_id, &runtime_context)
+            let agentos_execution::PyodidePaths {
+                dist: pyodide_dist_path,
+                cache: pyodide_cache_path,
+            } = python_engine
+                .bundled_pyodide_paths_for_vm_async(&vm_id, &runtime_context)
                 .await
                 .map_err(python_error)?;
-            let pyodide_cache_path = pyodide_dist_path
-                .parent()
-                .and_then(Path::parent)
-                .unwrap_or(pyodide_dist_path.as_path())
-                .join("pyodide-package-cache");
             add_runtime_guest_path_mapping(&mut env, PYTHON_PYODIDE_GUEST_ROOT, &pyodide_dist_path);
             add_runtime_guest_path_mapping(
                 &mut env,
@@ -5275,6 +5279,7 @@ where
             let context = python_engine.create_context(CreatePythonContextRequest {
                 vm_id: vm_id.clone(),
                 pyodide_dist_path,
+                pyodide_cache_path: Some(pyodide_cache_path),
             });
             let execution = python_engine
                 .start_execution_with_runtime_async(

@@ -962,18 +962,18 @@ impl MemoryFileSystem {
             .split('/')
             .filter(|part| !part.is_empty())
             .collect();
-        let mut current = String::from("/");
+        // `candidate` grows one component per step; `parent_len` marks where
+        // the parent prefix ends so symlink targets resolve relative to it.
+        let mut candidate = String::with_capacity(normalized.len());
 
         for (index, component) in components.iter().enumerate() {
-            let candidate = if current == "/" {
-                format!("/{}", component)
-            } else {
-                format!("{current}/{}", component)
-            };
+            let parent_len = candidate.len();
+            candidate.push('/');
+            candidate.push_str(component);
             let is_final = index + 1 == components.len();
             let should_follow = !is_final || follow_final_symlink;
 
-            if let Some(ino) = self.path_index.get(&candidate) {
+            if let Some(ino) = self.path_index.get(candidate.as_str()) {
                 let inode = self
                     .inodes
                     .get(ino)
@@ -984,7 +984,12 @@ impl MemoryFileSystem {
                         let target_path = if target.starts_with('/') {
                             target.clone()
                         } else {
-                            normalize_path(&format!("{}/{}", dirname(&candidate), target))
+                            let parent = if parent_len == 0 {
+                                "/"
+                            } else {
+                                &candidate[..parent_len]
+                            };
+                            normalize_path(&format!("{parent}/{target}"))
                         };
                         let remainder = components[index + 1..].join("/");
                         let next_path = if remainder.is_empty() {
@@ -1004,11 +1009,9 @@ impl MemoryFileSystem {
                     return Err(VfsError::not_directory("stat", &candidate));
                 }
             }
-
-            current = candidate;
         }
 
-        Ok(current)
+        Ok(candidate)
     }
 
     fn resolve_path(&self, path: &str, depth: usize) -> VfsResult<String> {
@@ -2223,6 +2226,11 @@ pub fn validate_path(path: &str) -> VfsResult<()> {
     if path.as_bytes().contains(&0) {
         return Err(VfsError::invalid_input("path contains NUL byte"));
     }
+    // Normalizing never grows a path by more than its leading `/`, so short
+    // paths pass without building the normalized form.
+    if path.len() < MAX_PATH_LENGTH {
+        return Ok(());
+    }
     let normalized = normalize_path(path);
     if normalized.len() > MAX_PATH_LENGTH {
         return Err(VfsError::path_too_long(path));
@@ -2230,9 +2238,20 @@ pub fn validate_path(path: &str) -> VfsResult<()> {
     Ok(())
 }
 
+pub(crate) fn is_normalized_path(path: &str) -> bool {
+    path == "/"
+        || (path.starts_with('/')
+            && path[1..]
+                .split('/')
+                .all(|part| !part.is_empty() && part != "." && part != ".."))
+}
+
 pub fn normalize_path(path: &str) -> String {
     if path.is_empty() {
         return String::from("/");
+    }
+    if is_normalized_path(path) {
+        return path.to_owned();
     }
 
     let candidate = if path.starts_with('/') {

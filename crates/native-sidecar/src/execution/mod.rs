@@ -21,6 +21,7 @@ pub(crate) use self::launch::{
 };
 mod process;
 pub(crate) use self::process::terminate_child_process_tree;
+pub(crate) use self::process::PolledExecutionEvent;
 use self::process::*;
 mod process_events;
 #[cfg(test)]
@@ -127,7 +128,7 @@ use crate::service::{
     audit_fields, dirname, emit_security_audit_event, emit_structured_event_or_stderr,
     javascript_error, kernel_error, log_stale_process_event, normalize_host_path, normalize_path,
     parse_javascript_child_process_spawn_request, path_is_within_root,
-    process_event_queue_overflow_error, python_error, wasm_error,
+    process_event_queue_overflow_error, python_error, wasm_error, ProcessEventOffer,
 };
 use crate::state::{
     async_completion_channel, ActiveCipherSession, ActiveDhSession, ActiveDiffieHellmanSession,

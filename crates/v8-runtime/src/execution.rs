@@ -174,6 +174,7 @@ fn require_esm_sync_callback(
     }
 
     if module.get_status() != v8::ModuleStatus::Evaluated {
+        crate::module_code_cache::guest_code_started();
         let Some(result) = module.evaluate(scope) else {
             return;
         };
@@ -486,7 +487,6 @@ fn run_bridge_cached(
 
 /// Run a short init script (e.g. post-restore config). Compiles and executes
 /// via v8::Script, returning (exit_code, error) on failure. No code caching.
-#[cfg(not(test))]
 pub fn run_init_script(scope: &mut v8::HandleScope, code: &str) -> (i32, Option<ExecutionError>) {
     if code.is_empty() {
         return (0, None);
@@ -553,12 +553,16 @@ pub fn execute_script_with_options(
     bridge_cache: &mut Option<BridgeCodeCache>,
 ) -> (i32, Option<ExecutionError>) {
     if let Some(bridge_ctx) = bridge_ctx {
+        // A classic script reaches modules only through dynamic `import()`;
+        // give it the session reader too, so those imports read read-only
+        // mounts directly and their bytecode can be shared like static ones.
+        let guest_reader = SESSION_GUEST_READER.with(|cell| cell.borrow_mut().take());
         MODULE_RESOLVE_STATE.with(|cell| {
             *cell.borrow_mut() = Some(ModuleResolveState {
                 bridge_ctx: bridge_ctx as *const BridgeCallContext,
                 module_names: HashMap::new(),
                 module_cache: HashMap::new(),
-                guest_reader: None,
+                guest_reader,
             });
         });
     }
@@ -629,6 +633,7 @@ pub fn execute_script_with_options(
                 };
             }
         };
+        crate::module_code_cache::guest_code_started();
         let completion = match script.run(tc) {
             Some(result) => result,
             None => {
@@ -923,6 +928,10 @@ fn build_os_config<'s>(
 pub trait GuestModuleReader: Send {
     /// Read the source for an already-resolved guest module path, or `None` if
     /// the path isn't served by this reader (caller falls back to the bridge IPC).
+    ///
+    /// Security: serve only sources no guest can write (read-only host mounts
+    /// and packed packages). The sidecar shares bytecode compiled from these
+    /// sources across VMs.
     fn read_module_source(&mut self, resolved_guest_path: &str) -> Option<String>;
 
     /// Resolve a module specifier (import mode) to a resolved guest path directly,
@@ -933,6 +942,46 @@ pub trait GuestModuleReader: Send {
         let _ = (specifier, referrer);
         None
     }
+
+    /// Module format for a resolved guest path, skipping the bridge
+    /// `_moduleFormat` round-trip. `None` => fall back to IPC. Answer only when
+    /// the result cannot differ from the bridge resolver's.
+    fn module_format(&mut self, resolved_guest_path: &str) -> Option<ResolvedModuleFormat> {
+        let _ = resolved_guest_path;
+        None
+    }
+
+    /// A reader over the same mounts with a fresh cache, for background module
+    /// snapshot discovery. `None` disables module snapshots for this reader.
+    fn boxed_clone(&self) -> Option<Box<dyn GuestModuleReader>> {
+        None
+    }
+
+    /// An identity of the host file behind a resolved guest path that changes
+    /// whenever its content can change (host root, inode, size, mtime, ctime).
+    /// `None` when unknown; callers then read the content.
+    fn source_identity(&mut self, resolved_guest_path: &str) -> Option<String> {
+        let _ = resolved_guest_path;
+        None
+    }
+}
+
+/// True when the session reader serves `path` (so it lies in a read-only host
+/// mount or a packed package) with exactly `source`, optionally followed by
+/// the `//# sourceURL=<path>` line the execution layer appends to an entry it
+/// read itself. The entry module's code arrives in the Execute frame, so this
+/// proves it is that file's content and not guest-supplied code that only
+/// claims the path.
+fn source_is_from_read_only_host_mount(path: &str, source: &str) -> bool {
+    let source_url_line = format!("\n//# sourceURL={path}");
+    let source = source.strip_suffix(&source_url_line).unwrap_or(source);
+    MODULE_RESOLVE_STATE.with(|cell| {
+        cell.borrow_mut()
+            .as_mut()
+            .and_then(|state| state.guest_reader.as_mut())
+            .and_then(|reader| reader.read_module_source(path))
+            .is_some_and(|mounted| mounted == source)
+    })
 }
 
 /// Install (or clear) the direct module reader for the current session thread.
@@ -1307,6 +1356,30 @@ pub fn execute_module(
     file_path: Option<&str>,
     bridge_cache: &mut Option<BridgeCodeCache>,
 ) -> (i32, Option<Vec<u8>>, Option<ExecutionError>) {
+    execute_module_with_runtime_shim(
+        scope,
+        bridge_ctx,
+        bridge_code,
+        "",
+        user_code,
+        file_path,
+        bridge_cache,
+    )
+}
+
+/// `execute_module`, running `runtime_shim` as a classic script after the
+/// bridge and before the entry module compiles. The shim sets up `process`
+/// for this guest process, so imported modules see it at their top level, as
+/// in Node, and the entry module's own source stays the same across processes.
+pub fn execute_module_with_runtime_shim(
+    scope: &mut v8::HandleScope,
+    bridge_ctx: &BridgeCallContext,
+    bridge_code: &str,
+    runtime_shim: &str,
+    user_code: &str,
+    file_path: Option<&str>,
+    bridge_cache: &mut Option<BridgeCodeCache>,
+) -> (i32, Option<Vec<u8>>, Option<ExecutionError>) {
     clear_pending_module_evaluation();
 
     // Set up thread-local resolve state, taking any reader the session thread
@@ -1330,28 +1403,60 @@ pub fn execute_module(
         }
     }
 
+    // A context restored from a module snapshot carries the graph modules,
+    // already evaluated. Importing one of their paths returns that instance.
+    if let Some(modules) = crate::module_snapshot::take_snapshot_modules(scope) {
+        for (path, global) in modules {
+            let module = v8::Local::new(scope, &global);
+            if !cache_resolved_module(module, global, path, None) {
+                clear_module_state();
+                return (
+                    1,
+                    None,
+                    Some(ExecutionError {
+                        error_type: "Error".into(),
+                        message: "module resolution cache limit exceeded".into(),
+                        stack: String::new(),
+                        code: None,
+                    }),
+                );
+            }
+        }
+    }
+
     install_require_esm_sync_global(scope);
+
+    if !runtime_shim.is_empty() {
+        let (code, err) = run_init_script(scope, runtime_shim);
+        if code != 0 {
+            clear_module_state();
+            return (code, None, err);
+        }
+    }
+    let entry_origin = match file_path {
+        Some(path)
+            if user_code.len() >= crate::module_code_cache::MIN_CACHED_MODULE_SOURCE_BYTES
+                && source_is_from_read_only_host_mount(path, user_code) =>
+        {
+            crate::module_code_cache::ModuleSourceOrigin::ReadOnlyHostMount
+        }
+        _ => crate::module_code_cache::ModuleSourceOrigin::Guest,
+    };
 
     // Compile and evaluate as ES module
     {
         let tc = &mut v8::TryCatch::new(scope);
         let resource_name_str = file_path.unwrap_or("<user_module>");
-        let resource = v8::String::new(tc, resource_name_str).unwrap();
-        let origin = v8::ScriptOrigin::new(
-            tc,
-            resource.into(),
-            0,
-            0,
-            false,
-            -1,
-            None,
-            false,
-            false,
-            true, // is_module
-            None,
-        );
 
-        let effective_user_code = add_esm_runtime_prelude(user_code);
+        // A process entry gets `require` from the runtime shim's
+        // `globalThis.require`, as it did when the shim was prepended to the
+        // entry's source. Injecting a module-scope `require` as well would
+        // collide with an entry that declares its own.
+        let effective_user_code: std::borrow::Cow<'_, str> = if runtime_shim.is_empty() {
+            add_esm_runtime_prelude(user_code).into()
+        } else {
+            user_code.into()
+        };
         let v8_source = match v8::String::new(tc, &effective_user_code) {
             Some(s) => s,
             None => {
@@ -1369,8 +1474,13 @@ pub fn execute_module(
             }
         };
 
-        let mut source = v8::script_compiler::Source::new(v8_source, Some(&origin));
-        let module = match v8::script_compiler::compile_module(tc, &mut source) {
+        let module = match crate::module_code_cache::compile_module_with_code_cache(
+            tc,
+            resource_name_str,
+            &effective_user_code,
+            v8_source,
+            entry_origin,
+        ) {
             Some(m) => m,
             None => {
                 clear_module_state();
@@ -1396,7 +1506,16 @@ pub fn execute_module(
         // Batch-prefetch static imports (BFS) to reduce IPC round-trips.
         // Each level collects uncached specifiers and resolves+loads them in one batch call.
         // The resolve callback then finds everything pre-cached during instantiation.
-        prefetch_module_imports(tc, bridge_ctx, module, resource_name_str);
+        // With a direct session reader there are no round-trips to save, and the
+        // batch would ship every source through CBOR and V8 strings twice.
+        let has_direct_reader = MODULE_RESOLVE_STATE.with(|cell| {
+            cell.borrow()
+                .as_ref()
+                .is_some_and(|state| state.guest_reader.is_some())
+        });
+        if !has_direct_reader {
+            prefetch_module_imports(tc, bridge_ctx, module, resource_name_str);
+        }
 
         // Instantiate (calls resolve callback for each import — mostly cache hits now)
         let inst_result = module.instantiate_module(tc, module_resolve_callback);
@@ -1412,6 +1531,7 @@ pub fn execute_module(
         }
 
         // Evaluate
+        crate::module_code_cache::guest_code_started();
         let eval_result = module.evaluate(tc);
         if eval_result.is_none() {
             clear_module_state();
@@ -1608,29 +1728,18 @@ fn prefetch_module_imports(
                     build_module_source(scope, source_code, resolved_path, module_format);
 
                 // Compile the module
-                let resource = match v8::String::new(scope, resolved_path) {
-                    Some(s) => s,
-                    None => continue,
-                };
-                let origin = v8::ScriptOrigin::new(
-                    scope,
-                    resource.into(),
-                    0,
-                    0,
-                    false,
-                    -1,
-                    None,
-                    false,
-                    false,
-                    true, // is_module
-                    None,
-                );
                 let v8_source = match v8::String::new(scope, &effective_source) {
                     Some(s) => s,
                     None => continue,
                 };
-                let mut compiled = v8::script_compiler::Source::new(v8_source, Some(&origin));
-                let module = match v8::script_compiler::compile_module(scope, &mut compiled) {
+                // Sources fetched over the bridge may be guest-written.
+                let module = match crate::module_code_cache::compile_module_with_code_cache(
+                    scope,
+                    resolved_path,
+                    &effective_source,
+                    v8_source,
+                    crate::module_code_cache::ModuleSourceOrigin::Guest,
+                ) {
                     Some(m) => m,
                     None => continue,
                 };
@@ -1720,34 +1829,37 @@ fn resolve_or_compile_module<'s>(
             .and_then(|state| state.guest_reader.as_mut())
             .and_then(|reader| reader.read_module_source(&resolved_path))
     });
-    let raw_source = match direct_source {
-        Some(source) => source,
-        None => load_module_via_ipc(scope, ctx, &resolved_path)?,
+    // The session reader serves only read-only host mounts and packed
+    // packages; the bridge serves everything else, including guest writes.
+    let (raw_source, source_origin) = match direct_source {
+        Some(source) => (
+            source,
+            crate::module_code_cache::ModuleSourceOrigin::ReadOnlyHostMount,
+        ),
+        None => (
+            load_module_via_ipc(scope, ctx, &resolved_path)?,
+            crate::module_code_cache::ModuleSourceOrigin::Guest,
+        ),
     };
     if let Some(t) = t {
         record_mod(2, t.elapsed().as_nanos() as u64);
     }
     let t = trace.then(Instant::now);
-    let module_format = lookup_module_format_via_ipc(scope, ctx, &resolved_path);
+    let direct_format = MODULE_RESOLVE_STATE.with(|cell| {
+        cell.borrow_mut()
+            .as_mut()
+            .and_then(|state| state.guest_reader.as_mut())
+            .and_then(|reader| reader.module_format(&resolved_path))
+    });
+    let module_format = match direct_format {
+        Some(format) => Some(format),
+        None => lookup_module_format_via_ipc(scope, ctx, &resolved_path),
+    };
     if let Some(t) = t {
         record_mod(3, t.elapsed().as_nanos() as u64);
     }
     let source_code = build_module_source(scope, &raw_source, &resolved_path, module_format);
 
-    let resource = v8::String::new(scope, &resolved_path)?;
-    let origin = v8::ScriptOrigin::new(
-        scope,
-        resource.into(),
-        0,
-        0,
-        false,
-        -1,
-        None,
-        false,
-        false,
-        true,
-        None,
-    );
     let v8_source = match v8::String::new(scope, &source_code) {
         Some(s) => s,
         None => {
@@ -1755,9 +1867,14 @@ fn resolve_or_compile_module<'s>(
             return None;
         }
     };
-    let mut compiled = v8::script_compiler::Source::new(v8_source, Some(&origin));
     let t = trace.then(Instant::now);
-    let module = v8::script_compiler::compile_module(scope, &mut compiled)?;
+    let module = crate::module_code_cache::compile_module_with_code_cache(
+        scope,
+        &resolved_path,
+        &source_code,
+        v8_source,
+        source_origin,
+    )?;
     if let Some(t) = t {
         record_mod(4, t.elapsed().as_nanos() as u64);
     }
@@ -1812,7 +1929,7 @@ fn cache_resolved_module(
     })
 }
 
-fn import_meta_resolve_callback(
+pub(crate) fn import_meta_resolve_callback(
     scope: &mut v8::HandleScope,
     args: v8::FunctionCallbackArguments,
     mut rv: v8::ReturnValue,
@@ -1901,18 +2018,41 @@ pub extern "C" fn import_meta_object_callback(
     });
 
     if let Some((referrer, url)) = module_location {
-        let key = v8::String::new(scope, "url").unwrap();
-        let value = v8::String::new(scope, &url).unwrap();
-        meta.set(scope, key.into(), value.into());
+        set_import_meta_url_and_resolve(scope, meta, &referrer, &url);
+    }
+}
 
-        let data = v8::String::new(scope, &referrer).unwrap();
-        let template = v8::FunctionTemplate::builder(import_meta_resolve_callback)
-            .data(data.into())
-            .build(scope);
-        if let Some(resolve) = template.get_function(scope) {
-            let key = v8::String::new(scope, "resolve").unwrap();
-            meta.set(scope, key.into(), resolve.into());
-        }
+/// Set `import.meta.url` and `import.meta.resolve` for a module at `path`.
+pub(crate) fn set_import_meta_fields(
+    scope: &mut v8::HandleScope,
+    meta: v8::Local<v8::Object>,
+    path: &str,
+) {
+    let url = if path.starts_with('/') {
+        format!("file://{path}")
+    } else {
+        path.to_owned()
+    };
+    set_import_meta_url_and_resolve(scope, meta, path, &url);
+}
+
+fn set_import_meta_url_and_resolve(
+    scope: &mut v8::HandleScope,
+    meta: v8::Local<v8::Object>,
+    referrer: &str,
+    url: &str,
+) {
+    let key = v8::String::new(scope, "url").unwrap();
+    let value = v8::String::new(scope, url).unwrap();
+    meta.set(scope, key.into(), value.into());
+
+    let data = v8::String::new(scope, referrer).unwrap();
+    let template = v8::FunctionTemplate::builder(import_meta_resolve_callback)
+        .data(data.into())
+        .build(scope);
+    if let Some(resolve) = template.get_function(scope) {
+        let key = v8::String::new(scope, "resolve").unwrap();
+        meta.set(scope, key.into(), resolve.into());
     }
 }
 
@@ -1988,6 +2128,7 @@ pub fn dynamic_import_callback<'a>(
         return resolved_promise(tc, namespace);
     }
 
+    crate::module_code_cache::guest_code_started();
     let eval_result = match module.evaluate(tc) {
         Some(result) => result,
         None => {
@@ -2287,7 +2428,7 @@ fn load_module_via_ipc(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ResolvedModuleFormat {
+pub enum ResolvedModuleFormat {
     Module,
     Commonjs,
     Json,
@@ -2390,6 +2531,25 @@ fn build_module_source(
         return build_cjs_esm_shim(scope, raw_source, resolved_path);
     }
     add_esm_runtime_prelude(raw_source)
+}
+
+/// The source `build_module_source` compiles for an ES module, or `None` when
+/// it would compile a JSON or CommonJS shim instead.
+pub(crate) fn esm_module_source_for_snapshot(
+    raw_source: &str,
+    resolved_path: &str,
+    module_format: Option<ResolvedModuleFormat>,
+) -> Option<String> {
+    let raw_source = strip_leading_shebang(raw_source);
+    if resolved_path.to_ascii_lowercase().ends_with(".json")
+        || module_format == Some(ResolvedModuleFormat::Json)
+        || (module_format == Some(ResolvedModuleFormat::Commonjs)
+            && !has_probable_esm_syntax(raw_source))
+        || is_likely_cjs(raw_source, resolved_path, module_format)
+    {
+        return None;
+    }
+    Some(add_esm_runtime_prelude(raw_source))
 }
 
 fn build_json_esm_shim(resolved_path: &str) -> String {

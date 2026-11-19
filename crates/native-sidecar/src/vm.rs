@@ -25,7 +25,7 @@ use crate::service::{
     normalize_path, plugin_error, root_filesystem_error, validate_permissions_policy, vfs_error,
 };
 use crate::state::{
-    BridgeError, KernelSocketReadinessEvent, KernelSocketReadinessRegistry,
+    ActiveExecutionEvent, BridgeError, KernelSocketReadinessEvent, KernelSocketReadinessRegistry,
     KernelSocketReadinessTarget, QuarantinedVmGeneration, VmConfiguration, VmDnsConfig,
     VmExecutionEngines, VmHandle, VmListenPolicy, VmPendingByteBudget, VmQuarantineReason,
     VmReconciliationSnapshot, VmState, DISPOSE_VM_SIGKILL_GRACE, DISPOSE_VM_SIGTERM_GRACE,
@@ -77,53 +77,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-const SHADOW_ROOT_BOOTSTRAP_DIRS: &[(&str, u32)] = &[
-    ("/dev", 0o755),
-    ("/proc", 0o755),
-    ("/tmp", 0o1777),
-    ("/bin", 0o755),
-    ("/lib", 0o755),
-    ("/sbin", 0o755),
-    ("/boot", 0o755),
-    ("/etc", 0o755),
-    ("/root", 0o700),
-    ("/run", 0o755),
-    ("/srv", 0o755),
-    ("/sys", 0o555),
-    ("/opt", 0o755),
-    ("/mnt", 0o755),
-    ("/media", 0o755),
-    ("/home", 0o755),
-    ("/home/agentos", 0o2755),
-    ("/usr", 0o755),
-    ("/usr/bin", 0o755),
-    ("/usr/games", 0o755),
-    ("/usr/include", 0o755),
-    ("/usr/lib", 0o755),
-    ("/usr/libexec", 0o755),
-    ("/usr/man", 0o755),
-    ("/usr/local", 0o755),
-    ("/usr/local/bin", 0o755),
-    ("/usr/sbin", 0o755),
-    ("/usr/share", 0o755),
-    ("/usr/share/man", 0o755),
-    ("/var", 0o755),
-    ("/var/cache", 0o755),
-    ("/var/empty", 0o555),
-    ("/var/lib", 0o755),
-    ("/var/lock", 0o777),
-    ("/var/log", 0o755),
-    ("/var/run", 0o777),
-    ("/var/spool", 0o755),
-    ("/var/tmp", 0o1777),
-    ("/etc/agentos", 0o755),
-    // Non-Alpine default agent working directory (also present in the base
-    // filesystem snapshot); scaffold it here so it exists even when the
-    // default base layer is disabled. It is the default cwd and mount root,
-    // kept separate from $HOME (/home/agentos).
-    ("/workspace", 0o755),
-];
-
 fn random_directory_suffix() -> Result<String, openssl::error::ErrorStack> {
     let mut nonce = [0_u8; 16];
     rand_bytes(&mut nonce)?;
@@ -135,7 +88,11 @@ fn create_vm_unix_socket_host_dir() -> Result<PathBuf, SidecarError> {
         let suffix = random_directory_suffix().map_err(|error| {
             SidecarError::Io(format!("failed to generate Unix socket namespace: {error}"))
         })?;
-        let path = std::env::temp_dir().join(format!("agentos-uds-{suffix}"));
+        let path = std::env::temp_dir().join(format!(
+            "{}{}-{suffix}",
+            crate::temp_reclaim::VM_UNIX_SOCKET_DIR_PID_PREFIX,
+            std::process::id()
+        ));
         let mut builder = fs::DirBuilder::new();
         builder.mode(0o700);
         match builder.create(&path) {
@@ -312,6 +269,9 @@ pub(crate) struct DisposeVmPlan<B> {
     bridge: crate::state::SharedBridge<B>,
     sidecar_requests: crate::state::SharedSidecarRequestClient,
     process_event_broker: ProcessEventBroker,
+    /// Process-scoped runtime. Host-path cleanup runs on it after the VM's
+    /// own admission is closed.
+    process_runtime_context: Option<agentos_runtime::RuntimeContext>,
 }
 
 /// Detached VM teardown payload.
@@ -323,6 +283,9 @@ pub(crate) struct DisposeVmPlan<B> {
 pub(crate) struct PreparedDisposeVm<B> {
     plan: DisposeVmPlan<B>,
     vm: VmState,
+    /// Exit statuses of this VM's root processes whose `Exited` event was
+    /// still queued in the sidecar at detach, keyed by process id.
+    queued_exits: BTreeMap<String, i32>,
 }
 
 /// Teardown result awaiting short central tracking/quarantine finalization.
@@ -332,6 +295,8 @@ pub(crate) struct CompletedDisposeVm {
     session_id: String,
     vm_id: String,
     events: Vec<EventFrame>,
+    /// Executions that had finished before teardown began, for the response.
+    completed_executions: Vec<crate::protocol::ExecutionCompletedEvent>,
     quarantine: Option<QuarantinedVmGeneration>,
     result: Result<(), SidecarError>,
 }
@@ -569,6 +534,7 @@ where
             bridge: self.bridge.clone(),
             sidecar_requests: self.sidecar_requests.clone(),
             process_event_broker: self.process_event_broker.clone(),
+            process_runtime_context: self.runtime_context.clone(),
         })
     }
 
@@ -579,6 +545,7 @@ where
         plan: DisposeVmPlan<B>,
     ) -> Result<PreparedDisposeVm<B>, SidecarError> {
         self.require_owned_vm(&plan.connection_id, &plan.session_id, &plan.vm_id)?;
+        let queued_exits = self.take_queued_vm_exits(&plan.vm_id);
         let cancellation_reason = dispose_cancellation_reason(&plan.reason);
         if let Err(error) = plan.process_event_broker.dispose_vm(
             &plan.connection_id,
@@ -595,12 +562,43 @@ where
             .vms
             .try_remove(&plan.vm_id, "begin owned dispose")?
             .expect("owned VM should exist during dispose detachment");
-        Ok(PreparedDisposeVm { plan, vm })
+        Ok(PreparedDisposeVm {
+            plan,
+            vm,
+            queued_exits,
+        })
+    }
+
+    /// Exit statuses of `vm_id`'s root processes whose `Exited` event waits in
+    /// the sidecar's event queue, for example behind another process's output
+    /// flood. Receiver events move into the pending queue first, within its
+    /// capacity, so an exit still in transit is found too.
+    fn take_queued_vm_exits(&mut self, vm_id: &str) -> BTreeMap<String, i32> {
+        while self.pending_process_event_capacity() > 0 {
+            let Some(receiver) = self.process_event_receiver.as_mut() else {
+                break;
+            };
+            let Ok(envelope) = receiver.try_recv() else {
+                break;
+            };
+            if let Err(error) = self.queue_pending_process_event(envelope) {
+                eprintln!("ERR_AGENTOS_VM_DISPOSE_EXIT_SCAN: vm_id={vm_id} error={error}");
+                break;
+            }
+        }
+        self.pending_process_events
+            .vm_iter(vm_id)
+            .filter(|envelope| envelope.child_path.is_empty())
+            .filter_map(|envelope| match envelope.event {
+                ActiveExecutionEvent::Exited(code) => Some((envelope.process_id.clone(), code)),
+                _ => None,
+            })
+            .collect()
     }
 
     pub(crate) fn complete_dispose_vm(
         &mut self,
-        completed: CompletedDisposeVm,
+        mut completed: CompletedDisposeVm,
     ) -> Result<DispatchResult, SidecarError> {
         let request = completed.request.clone().ok_or_else(|| {
             SidecarError::InvalidState(String::from(
@@ -608,9 +606,10 @@ where
             ))
         })?;
         let vm_id = completed.vm_id.clone();
+        let completed_executions = std::mem::take(&mut completed.completed_executions);
         let events = self.complete_owned_vm_disposal(completed)?;
         Ok(DispatchResult {
-            response: vm_disposed_response(&request, vm_id),
+            response: vm_disposed_response(&request, vm_id, completed_executions),
             events,
         })
     }
@@ -628,6 +627,7 @@ where
             session_id,
             vm_id,
             mut events,
+            completed_executions: _,
             quarantine,
             result,
         } = completed;
@@ -1479,7 +1479,9 @@ where
         vm: &mut VmState,
     ) -> Result<(), SidecarError> {
         let mut first_error = None;
-        let snapshot = if vm.kernel.root_filesystem_mut().is_some() {
+        let snapshot = if self.bridge.persists_filesystem_state()
+            && vm.kernel.root_filesystem_mut().is_some()
+        {
             match vm
                 .kernel
                 .snapshot_root_filesystem()
@@ -1650,6 +1652,379 @@ where
     Ok(())
 }
 
+/// Reservation charged to the VM ledger for one control-plane blocking job.
+const CONTROL_PLANE_BLOCKING_JOB_RESERVATION_BYTES: usize = 64 * 1024;
+
+/// Which control-plane admission a blocking job uses. Each kind passes its
+/// own gate before it waits for a worker, so neither kind can fill the
+/// worker queue: a create flood cannot delay teardown, and a dispose burst
+/// cannot delay creates.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ControlPlaneJob {
+    /// VM create bootstrap.
+    Create,
+    /// VM teardown.
+    Dispose,
+}
+
+/// Process-wide control-plane admission over the fixed blocking workers.
+struct ControlPlanePermits {
+    /// Blocking workers that control-plane jobs may occupy at once.
+    workers: tokio::sync::Semaphore,
+    /// Creates that may hold or wait for a worker at once.
+    create_gate: tokio::sync::Semaphore,
+    /// Dispose jobs that may hold or wait for a worker at once.
+    dispose_gate: tokio::sync::Semaphore,
+}
+
+impl ControlPlanePermits {
+    /// All control-plane admission sizes, in one place. Control-plane jobs
+    /// use at most half of the blocking workers, so guest filesystem work
+    /// keeps the other half. Each kind's gate is as large as that share, so
+    /// the worker queue holds at most `share` creates and `share` disposes,
+    /// and a job of either kind waits behind at most `share` of the other.
+    fn new(blocking_workers: usize) -> Self {
+        let share = (blocking_workers / 2).max(1);
+        Self {
+            workers: tokio::sync::Semaphore::new(share),
+            create_gate: tokio::sync::Semaphore::new(share),
+            dispose_gate: tokio::sync::Semaphore::new(share),
+        }
+    }
+
+    fn gate(&self, kind: ControlPlaneJob) -> &tokio::sync::Semaphore {
+        match kind {
+            ControlPlaneJob::Create => &self.create_gate,
+            ControlPlaneJob::Dispose => &self.dispose_gate,
+        }
+    }
+}
+
+/// A job's result handoff. The job keeps its result when the caller is still
+/// waiting, or cleans it up itself when the caller gave up at the deadline.
+enum ControlPlaneHandoff<T> {
+    Waiting,
+    Done(T),
+    Abandoned,
+}
+
+/// Run synchronous VM lifecycle work (create bootstrap, dispose cleanup) on
+/// the process's fixed blocking executor instead of the protocol router.
+///
+/// At most half of the blocking workers run control-plane jobs at once.
+/// A create flood then waits here, outside the shared queue, instead of
+/// queueing ahead of guest filesystem work that uses the same workers. Each
+/// kind passes its own gate first (see [`ControlPlanePermits::new`]), so a
+/// dispose waits behind a bounded number of creates however large a create
+/// flood is, and a create waits behind a bounded number of disposes.
+///
+/// The wait and the job together are bounded by
+/// `runtime.blocking.jobTimeoutMs`. A job that is still running at the
+/// deadline keeps its worker permit until it returns, then passes its result
+/// to `abandoned` because no caller will receive it.
+async fn run_control_plane_blocking<T, F>(
+    runtime: &agentos_runtime::RuntimeContext,
+    kind: ControlPlaneJob,
+    operation: &'static str,
+    job: F,
+    abandoned: fn(T),
+) -> Result<T, SidecarError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    static CONTROL_PLANE_PERMITS: std::sync::OnceLock<ControlPlanePermits> =
+        std::sync::OnceLock::new();
+    let permits = CONTROL_PLANE_PERMITS
+        .get_or_init(|| ControlPlanePermits::new(runtime.blocking().worker_count()));
+    let timeout = runtime.blocking_job_timeout();
+    let handoff = Arc::new(Mutex::new(ControlPlaneHandoff::Waiting));
+    let job_handoff = Arc::clone(&handoff);
+    let admission_error = |error: tokio::sync::AcquireError| {
+        SidecarError::InvalidState(format!(
+            "ERR_AGENTOS_CONTROL_PLANE_ADMISSION: {operation} could not wait for a blocking worker: {error}"
+        ))
+    };
+    let admitted = tokio::time::timeout(timeout, async {
+        let gate_permit = permits.gate(kind).acquire().await.map_err(admission_error)?;
+        let worker_permit = permits.workers.acquire().await.map_err(admission_error)?;
+        // The gate covers only the wait for a worker.
+        drop(gate_permit);
+        runtime
+            .blocking()
+            .run(CONTROL_PLANE_BLOCKING_JOB_RESERVATION_BYTES, move || {
+                // The permit tracks the worker, not the caller, so a job that
+                // outlives its deadline still counts against the share.
+                let _worker_permit = worker_permit;
+                let result = job();
+                let mut handoff = job_handoff
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if matches!(*handoff, ControlPlaneHandoff::Abandoned) {
+                    drop(handoff);
+                    abandoned(result);
+                } else {
+                    *handoff = ControlPlaneHandoff::Done(result);
+                }
+            })
+            .await
+            .map_err(|error| {
+                SidecarError::Execution(format!(
+                    "ERR_AGENTOS_CONTROL_PLANE_BLOCKING: {operation} could not run on the blocking executor: {error}"
+                ))
+            })
+    })
+    .await;
+    let mut handoff = handoff
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    match std::mem::replace(&mut *handoff, ControlPlaneHandoff::Abandoned) {
+        // The job can finish in the same instant the deadline fires.
+        ControlPlaneHandoff::Done(result) => Ok(result),
+        ControlPlaneHandoff::Waiting | ControlPlaneHandoff::Abandoned => match admitted {
+            Ok(Ok(())) => Err(SidecarError::InvalidState(format!(
+                "ERR_AGENTOS_CONTROL_PLANE_BLOCKING: {operation} finished without a result"
+            ))),
+            Ok(Err(error)) => Err(error),
+            Err(_) => Err(SidecarError::Execution(format!(
+                "ERR_AGENTOS_CONTROL_PLANE_TIMEOUT: {operation} did not finish within {}ms; raise runtime.blocking.jobTimeoutMs",
+                timeout.as_millis()
+            ))),
+        },
+    }
+}
+
+/// Owned, `Send` input for the synchronous part of VM creation.
+struct VmBuildInput<B> {
+    connection_id: String,
+    session_id: String,
+    vm_id: String,
+    create_config: vm_config::CreateVmConfig,
+    root_filesystem: RootFilesystemDescriptor,
+    permissions_policy: agentos_vm_config::PermissionsPolicy,
+    resource_limits: ResourceLimits,
+    max_reactor_capabilities: usize,
+    runtime_context: agentos_runtime::RuntimeContext,
+    dns: VmDnsConfig,
+    dns_resolver: agentos_kernel::dns::SharedDnsResolver,
+    loopback_exempt_ports: BTreeSet<u16>,
+    bridge: crate::state::SharedBridge<B>,
+    sidecar_requests: crate::state::SharedSidecarRequestClient,
+    database: Option<crate::vm_sqlite::SharedVmSqliteDatabase>,
+    vm_resources: Arc<ResourceLedger>,
+}
+
+struct VmBuildOutput {
+    cwd: PathBuf,
+    guest_cwd: String,
+    host_cwd: PathBuf,
+    guest_env: BTreeMap<String, String>,
+    loaded_snapshot: Option<FilesystemSnapshot>,
+    kernel: crate::state::SidecarKernel,
+    kernel_socket_readiness: KernelSocketReadinessRegistry,
+    command_guest_paths: BTreeMap<String, String>,
+    shadow_sync_inventory: BTreeMap<String, crate::state::ShadowSyncInventoryEntry>,
+    unix_socket_host_dir: PathBuf,
+}
+
+/// Synchronous VM bootstrap: shadow root, root mount table, kernel, and
+/// command discovery. Removes the shadow root again if any step fails.
+fn build_vm_kernel<B>(input: VmBuildInput<B>) -> Result<VmBuildOutput, SidecarError>
+where
+    B: NativeSidecarBridge + Send + 'static,
+    BridgeError<B>: fmt::Debug + Send + Sync + 'static,
+{
+    let cwd = create_vm_shadow_root(&input.vm_id)?;
+    let result = build_vm_kernel_in(input, cwd.clone());
+    if result.is_err() {
+        cleanup_path(&cwd, "failed VM create shadow root");
+    }
+    result
+}
+
+fn build_vm_kernel_in<B>(
+    input: VmBuildInput<B>,
+    cwd: PathBuf,
+) -> Result<VmBuildOutput, SidecarError>
+where
+    B: NativeSidecarBridge + Send + 'static,
+    BridgeError<B>: fmt::Debug + Send + Sync + 'static,
+{
+    let VmBuildInput {
+        connection_id,
+        session_id,
+        vm_id,
+        create_config,
+        root_filesystem,
+        permissions_policy,
+        resource_limits,
+        max_reactor_capabilities,
+        runtime_context,
+        dns,
+        dns_resolver,
+        loopback_exempt_ports,
+        bridge,
+        sidecar_requests,
+        database,
+        vm_resources,
+    } = input;
+    let (guest_cwd, host_cwd) = resolve_vm_cwds(create_config.cwd.as_ref(), &cwd)?;
+    fs::create_dir_all(&host_cwd)
+        .map_err(|error| SidecarError::Io(format!("failed to create VM cwd: {error}")))?;
+    bridge.set_vm_permissions(&vm_id, &permissions_policy)?;
+    let permissions = bridge_permissions(bridge.clone(), &vm_id);
+    let configured_env = create_vm_environment(&create_config)?;
+    let mut guest_env = filter_env(&vm_id, &configured_env, &permissions);
+    // Trusted bootstrap uses operator-only kernel paths; guest permission
+    // enforcement remains active throughout creation.
+    let native_root = native_root_plugin_from_config(create_config.native_root.as_ref())?;
+    let loaded_snapshot = if native_root.is_some() {
+        None
+    } else {
+        bridge.with_mut(|bridge| {
+            bridge.load_filesystem_state(LoadFilesystemStateRequest {
+                vm_id: vm_id.clone(),
+            })
+        })?
+    };
+    if native_root.is_none() {
+        materialize_shadow_root_snapshot_entries(
+            &cwd,
+            &root_filesystem,
+            loaded_snapshot.as_ref(),
+            &resource_limits,
+        )?;
+    }
+
+    let mut config = KernelVmConfig::new(vm_id.clone());
+    config.cwd = guest_cwd.clone();
+    config.env = guest_env.clone();
+    if let Some(user) = create_config.user.as_ref() {
+        config.user = agentos_kernel::user::UserConfig {
+            uid: user.uid,
+            gid: user.gid,
+            euid: user.euid,
+            egid: user.egid,
+            username: user.username.clone(),
+            homedir: user.homedir.clone(),
+            shell: user.shell.clone(),
+            gecos: user.gecos.clone(),
+            group_name: user.group_name.clone(),
+            supplementary_gids: user.supplementary_gids.clone().unwrap_or_default(),
+            accounts: user
+                .accounts
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .map(|account| agentos_kernel::user::UserAccount {
+                    uid: account.uid,
+                    gid: account.gid,
+                    username: account.username.clone(),
+                    homedir: account.homedir.clone(),
+                    shell: account.shell.clone(),
+                    gecos: account.gecos.clone().unwrap_or_default(),
+                    supplementary_gids: account.supplementary_gids.clone(),
+                })
+                .collect(),
+            groups: user
+                .groups
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .map(|group| agentos_kernel::user::GroupRecord {
+                    gid: group.gid,
+                    name: group.name.clone(),
+                    members: group.members.clone(),
+                })
+                .collect(),
+        };
+    }
+    config.permissions = permissions;
+    config.dns = agentos_kernel::dns::DnsConfig {
+        name_servers: dns.name_servers.clone(),
+        overrides: dns.overrides.clone(),
+    };
+    config.dns_resolver = dns_resolver;
+    config.loopback_exempt_ports = loopback_exempt_ports;
+    let mount_plugins = build_mount_plugin_registry::<B>()?;
+    let root_mount_table = if let Some(native_root) = native_root.as_ref() {
+        build_native_root_mount_table(
+            &mount_plugins,
+            native_root,
+            &root_filesystem,
+            MountPluginContext {
+                bridge: bridge.clone(),
+                runtime_context: runtime_context.clone(),
+                connection_id: connection_id.clone(),
+                session_id: session_id.clone(),
+                vm_id: vm_id.clone(),
+                sidecar_requests,
+                database: database.clone(),
+                max_pread_bytes: resource_limits.max_pread_bytes,
+            },
+        )?
+    } else {
+        agentos_native_sidecar_core::build_root_mount_table_with_loaded_snapshot(
+            &create_config.root_filesystem,
+            loaded_snapshot.as_ref(),
+            &resource_limits,
+        )
+        .map_err(|error| SidecarError::InvalidState(error.to_string()))?
+    };
+    config.resources = resource_limits;
+    let mut kernel = KernelVm::new(root_mount_table, config);
+    kernel
+        .set_socket_resource_ledger(Arc::clone(&vm_resources))
+        .map_err(kernel_error)?;
+    let kernel_socket_readiness: KernelSocketReadinessRegistry = Arc::new(
+        crate::state::KernelSocketReadinessRegistryState::new(max_reactor_capabilities),
+    );
+    let readiness_targets = Arc::clone(&kernel_socket_readiness);
+    kernel.set_socket_readiness_sink(Some(move |readiness: SocketReadiness| {
+        for target in readiness_targets.targets(readiness.socket_id) {
+            send_kernel_socket_readiness_event(target, readiness);
+        }
+    }));
+    let command_guest_paths = discover_command_guest_paths(&mut kernel)?;
+    refresh_guest_command_path_env(&mut guest_env, &command_guest_paths);
+    let mut execution_commands = default_execution_commands(create_config.defaults_profile());
+    if let Some(bootstrap_commands) = &create_config.bootstrap_commands {
+        execution_commands.extend(bootstrap_commands.iter().cloned());
+    }
+    execution_commands.extend(command_guest_paths.keys().cloned());
+    kernel
+        .register_driver_for_operator(CommandDriver::new(
+            EXECUTION_DRIVER_NAME,
+            execution_commands,
+        ))
+        .map_err(kernel_error)?;
+    if let Some(root) = kernel.root_filesystem_mut() {
+        root.finish_bootstrap();
+    }
+    bridge.set_vm_permissions(&vm_id, &permissions_policy)?;
+    bridge.emit_lifecycle(&vm_id, LifecycleState::Starting)?;
+    bridge.emit_lifecycle(&vm_id, LifecycleState::Ready)?;
+    bridge.emit_log(
+        &vm_id,
+        format!("created VM {vm_id} for session {session_id}"),
+    )?;
+
+    let shadow_sync_inventory = crate::execution::initial_shadow_sync_inventory(&cwd)?;
+    let unix_socket_host_dir = create_vm_unix_socket_host_dir()?;
+    Ok(VmBuildOutput {
+        cwd,
+        guest_cwd,
+        host_cwd,
+        guest_env,
+        loaded_snapshot,
+        kernel,
+        kernel_socket_readiness,
+        command_guest_paths,
+        shadow_sync_inventory,
+        unix_socket_host_dir,
+    })
+}
+
 impl<B> PreparedCreateVm<B>
 where
     B: NativeSidecarBridge + Send + 'static,
@@ -1680,15 +2055,9 @@ where
             process_event_notify,
             extensions,
         } = self;
-        let cwd = create_vm_shadow_root(&vm_id)?;
         let cleanup_bridge = bridge.clone();
         let cleanup_vm_id = vm_id.clone();
-        let cleanup_cwd = cwd.clone();
         let result = async move {
-            let (guest_cwd, host_cwd) = resolve_vm_cwds(create_config.cwd.as_ref(), &cwd)?;
-            fs::create_dir_all(&host_cwd)
-                .map_err(|error| SidecarError::Io(format!("failed to create VM cwd: {error}")))?;
-            let resource_limits = limits.resources.clone();
             let database = match create_config.database.as_ref() {
                 Some(descriptor) => {
                     let database = crate::vm_sqlite::resolve_vm_sqlite(
@@ -1730,150 +2099,62 @@ where
                 }
                 None => None,
             };
+            let defaults_profile = create_config.defaults_profile();
+            let js_runtime = create_config.js_runtime.clone();
+            let root_filesystem_mode = protocol_root_filesystem_mode(root_filesystem.mode);
+            // Filesystem bootstrap and kernel construction are synchronous
+            // and take milliseconds per VM. They run on the bounded blocking
+            // executor so the protocol router keeps serving live VMs' stdin,
+            // events, and bridge replies meanwhile. Only thread-affine state
+            // (`VmState`, execution engines) is assembled back on the router.
+            let build = VmBuildInput {
+                connection_id: connection_id.clone(),
+                session_id: session_id.clone(),
+                vm_id: vm_id.clone(),
+                create_config,
+                root_filesystem,
+                permissions_policy: permissions_policy.clone(),
+                resource_limits: limits.resources.clone(),
+                max_reactor_capabilities: limits.reactor.max_capabilities,
+                runtime_context: vm_runtime_context.clone(),
+                dns: dns.clone(),
+                dns_resolver,
+                loopback_exempt_ports: create_loopback_exempt_ports.clone(),
+                bridge: bridge.clone(),
+                sidecar_requests,
+                database: database.clone(),
+                vm_resources: Arc::clone(&vm_resources),
+            };
+            let VmBuildOutput {
+                cwd,
+                guest_cwd,
+                host_cwd,
+                guest_env,
+                loaded_snapshot,
+                kernel,
+                kernel_socket_readiness,
+                command_guest_paths,
+                shadow_sync_inventory,
+                unix_socket_host_dir,
+            } = run_control_plane_blocking(
+                &vm_runtime_context,
+                ControlPlaneJob::Create,
+                "CreateVm",
+                move || build_vm_kernel(build),
+                // The create already failed at its deadline; drop the late
+                // kernel and remove the host directories it made.
+                |built| {
+                    if let Ok(built) = built {
+                        cleanup_path(&built.cwd, "abandoned VM create shadow root");
+                        cleanup_path(
+                            &built.unix_socket_host_dir,
+                            "abandoned VM create Unix socket namespace",
+                        );
+                    }
+                },
+            )
+            .await??;
             let capabilities = CapabilityRegistry::new(vm_generation, Arc::clone(&vm_resources));
-            bridge.set_vm_permissions(&vm_id, &permissions_policy)?;
-            let permissions = bridge_permissions(bridge.clone(), &vm_id);
-            let configured_env = create_vm_environment(&create_config)?;
-            let mut guest_env = filter_env(&vm_id, &configured_env, &permissions);
-        // Trusted bootstrap uses operator-only kernel paths; guest permission
-        // enforcement remains active throughout creation.
-            let native_root = native_root_plugin_from_config(create_config.native_root.as_ref())?;
-            let loaded_snapshot = if native_root.is_some() {
-                None
-            } else {
-                bridge.with_mut(|bridge| {
-                    bridge.load_filesystem_state(LoadFilesystemStateRequest {
-                        vm_id: vm_id.clone(),
-                    })
-                })?
-            };
-            if native_root.is_none() {
-                materialize_shadow_root_snapshot_entries(
-                    &cwd,
-                    &root_filesystem,
-                    loaded_snapshot.as_ref(),
-                    &resource_limits,
-                )?;
-            }
-
-            let mut config = KernelVmConfig::new(vm_id.clone());
-            config.cwd = guest_cwd.clone();
-            config.env = guest_env.clone();
-            if let Some(user) = create_config.user.as_ref() {
-                config.user = agentos_kernel::user::UserConfig {
-                    uid: user.uid,
-                    gid: user.gid,
-                    euid: user.euid,
-                    egid: user.egid,
-                    username: user.username.clone(),
-                    homedir: user.homedir.clone(),
-                    shell: user.shell.clone(),
-                    gecos: user.gecos.clone(),
-                    group_name: user.group_name.clone(),
-                    supplementary_gids: user.supplementary_gids.clone().unwrap_or_default(),
-                    accounts: user
-                        .accounts
-                        .as_deref()
-                        .unwrap_or_default()
-                        .iter()
-                        .map(|account| agentos_kernel::user::UserAccount {
-                            uid: account.uid,
-                            gid: account.gid,
-                            username: account.username.clone(),
-                            homedir: account.homedir.clone(),
-                            shell: account.shell.clone(),
-                            gecos: account.gecos.clone().unwrap_or_default(),
-                            supplementary_gids: account.supplementary_gids.clone(),
-                        })
-                        .collect(),
-                    groups: user
-                        .groups
-                        .as_deref()
-                        .unwrap_or_default()
-                        .iter()
-                        .map(|group| agentos_kernel::user::GroupRecord {
-                            gid: group.gid,
-                            name: group.name.clone(),
-                            members: group.members.clone(),
-                        })
-                        .collect(),
-                };
-            }
-            config.permissions = permissions;
-            config.dns = agentos_kernel::dns::DnsConfig {
-                name_servers: dns.name_servers.clone(),
-                overrides: dns.overrides.clone(),
-            };
-            config.dns_resolver = dns_resolver;
-            config.loopback_exempt_ports = create_loopback_exempt_ports.clone();
-            let mount_plugins = build_mount_plugin_registry::<B>()?;
-            let root_mount_table = if let Some(native_root) = native_root.as_ref() {
-                build_native_root_mount_table(
-                    &mount_plugins,
-                    native_root,
-                    &root_filesystem,
-                    MountPluginContext {
-                        bridge: bridge.clone(),
-                        runtime_context: vm_runtime_context.clone(),
-                        connection_id: connection_id.clone(),
-                        session_id: session_id.clone(),
-                        vm_id: vm_id.clone(),
-                        sidecar_requests,
-                        database: database.clone(),
-                        max_pread_bytes: resource_limits.max_pread_bytes,
-                    },
-                )?
-            } else {
-                agentos_native_sidecar_core::build_root_mount_table_with_loaded_snapshot(
-                    &create_config.root_filesystem,
-                    loaded_snapshot.as_ref(),
-                    &resource_limits,
-                )
-                .map_err(|error| SidecarError::InvalidState(error.to_string()))?
-            };
-            config.resources = resource_limits;
-            let mut kernel = KernelVm::new(root_mount_table, config);
-            kernel
-                .set_socket_resource_ledger(Arc::clone(&vm_resources))
-                .map_err(kernel_error)?;
-            let kernel_socket_readiness: KernelSocketReadinessRegistry = Arc::new(
-                crate::state::KernelSocketReadinessRegistryState::new(
-                    limits.reactor.max_capabilities,
-                ),
-            );
-            let readiness_targets = Arc::clone(&kernel_socket_readiness);
-            kernel.set_socket_readiness_sink(Some(move |readiness: SocketReadiness| {
-                for target in readiness_targets.targets(readiness.socket_id) {
-                    send_kernel_socket_readiness_event(target, readiness);
-                }
-            }));
-            let command_guest_paths = discover_command_guest_paths(&mut kernel)?;
-            refresh_guest_command_path_env(&mut guest_env, &command_guest_paths);
-            let mut execution_commands =
-                default_execution_commands(create_config.defaults_profile());
-            if let Some(bootstrap_commands) = &create_config.bootstrap_commands {
-                execution_commands.extend(bootstrap_commands.iter().cloned());
-            }
-            execution_commands.extend(command_guest_paths.keys().cloned());
-            kernel
-                .register_driver_for_operator(CommandDriver::new(
-                    EXECUTION_DRIVER_NAME,
-                    execution_commands,
-                ))
-                .map_err(kernel_error)?;
-            if let Some(root) = kernel.root_filesystem_mut() {
-                root.finish_bootstrap();
-            }
-            bridge.set_vm_permissions(&vm_id, &permissions_policy)?;
-            bridge.emit_lifecycle(&vm_id, LifecycleState::Starting)?;
-            bridge.emit_lifecycle(&vm_id, LifecycleState::Ready)?;
-            bridge.emit_log(
-                &vm_id,
-                format!("created VM {vm_id} for session {session_id}"),
-            )?;
-
-            let shadow_sync_inventory = crate::execution::initial_shadow_sync_inventory(&cwd)?;
-            let unix_socket_host_dir = create_vm_unix_socket_host_dir()?;
             let pending_stdin_bytes_budget = VmPendingByteBudget::new(
                 limits.process.pending_stdin_bytes,
                 agentos_bridge::queue_tracker::TrackedLimit::PendingKernelStdinBytes,
@@ -1920,7 +2201,7 @@ where
                 base_guest_env: guest_env.clone(),
                 guest_env,
                 requested_runtime: payload.runtime,
-                root_filesystem_mode: protocol_root_filesystem_mode(root_filesystem.mode),
+                root_filesystem_mode,
                 guest_cwd,
                 cwd,
                 host_cwd,
@@ -1929,9 +2210,9 @@ where
                 host_net_transfer_descriptions: Arc::new(Mutex::new(BTreeMap::new())),
                 loaded_snapshot,
                 configuration: VmConfiguration {
-                    defaults_profile: create_config.defaults_profile(),
+                    defaults_profile,
                     permissions: permissions_policy,
-                    js_runtime: create_config.js_runtime.clone(),
+                    js_runtime,
                     ..VmConfiguration::default()
                 },
                 layers: VmLayerStore::default(),
@@ -1980,7 +2261,6 @@ where
         }
         .await;
         if result.is_err() {
-            cleanup_path(&cleanup_cwd, "failed VM create shadow root");
             if let Err(error) = cleanup_bridge.clear_vm_permissions(&cleanup_vm_id) {
                 eprintln!(
                     "ERR_AGENTOS_VM_CREATE_CLEANUP: vm_id={cleanup_vm_id} phase=permission_reset error={error}"
@@ -1997,6 +2277,8 @@ where
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
     pub(crate) async fn execute(mut self) -> CompletedDisposeVm {
+        let mut exits_before_dispose = std::mem::take(&mut self.queued_exits);
+        collect_unclaimed_exits(&mut self.vm, &mut exits_before_dispose).await;
         let DisposeVmPlan {
             request,
             connection_id,
@@ -2006,6 +2288,7 @@ where
             bridge,
             sidecar_requests,
             process_event_broker: _,
+            process_runtime_context,
         } = self.plan;
         let mut events = vec![shared_vm_lifecycle_event(
             &connection_id,
@@ -2014,8 +2297,48 @@ where
             VmLifecycleState::Disposing,
         )];
 
-        let terminate_result =
-            terminate_detached_vm_processes::<B>(&bridge, &vm_id, &mut self.vm).await;
+        // An execution can finish just before the dispose while its completion
+        // event is still on the way to the client, or while its exit event
+        // still waits in the sidecar behind other output. Report every
+        // finished execution in the response, captured before termination:
+        // one absent from the list was still running and the dispose
+        // terminated it.
+        let exited_executions = exits_before_dispose
+            .iter()
+            .filter_map(|(process_id, code)| {
+                Some((self.vm.execution_processes.get(process_id)?.clone(), *code))
+            })
+            .collect::<BTreeMap<_, _>>();
+        let completed_executions = self
+            .vm
+            .executions
+            .iter()
+            .filter(|(_, execution)| execution.public && !execution.context)
+            .filter_map(|(execution_id, execution)| {
+                if let Some(result) = execution.result.as_ref() {
+                    return Some(crate::protocol::ExecutionCompletedEvent {
+                        execution_id: execution_id.clone(),
+                        generation: execution.descriptor.generation,
+                        outcome: result.outcome.clone(),
+                        exit_code: result.exit_code,
+                        error: result.error.clone(),
+                    });
+                }
+                let code = *exited_executions.get(execution_id)?;
+                Some(exit_completion(
+                    execution_id,
+                    execution.descriptor.generation,
+                    code,
+                ))
+            })
+            .collect::<Vec<_>>();
+        let terminate_result = terminate_detached_vm_processes::<B>(
+            &bridge,
+            &vm_id,
+            &mut self.vm,
+            exits_before_dispose.keys().cloned().collect(),
+        )
+        .await;
         if let Some(task) = self.vm.execution_retention_wake_task.take() {
             task.abort();
         }
@@ -2048,7 +2371,54 @@ where
                 "ERR_AGENTOS_VM_TEARDOWN_CLEANUP: vm_id={vm_id} phase=mount_shutdown error={error}"
             );
         }
-        let mut teardown_result = finish_vm_teardown_owned(&bridge, &vm_id, &mut self.vm);
+        // The final root snapshot, its encoding, and the kernel teardown are
+        // synchronous and scale with the VM's filesystem. Run them, and the
+        // kernel's drop, off the protocol router.
+        // If the executor refuses the job, the kernel is still in `slot` and
+        // is torn down here instead, so teardown is never skipped.
+        let slot = Arc::new(Mutex::new(Some(self.vm.kernel)));
+        let job_slot = Arc::clone(&slot);
+        let teardown_bridge = bridge.clone();
+        let teardown_vm_id = vm_id.clone();
+        let offloaded = run_control_plane_blocking(
+            &self.vm.runtime_context,
+            ControlPlaneJob::Dispose,
+            "DisposeVm",
+            move || {
+                let kernel = job_slot
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .take();
+                kernel.map(|mut kernel| {
+                    finish_vm_teardown_owned(&teardown_bridge, &teardown_vm_id, &mut kernel)
+                })
+            },
+            |late| {
+                if let Some(Err(error)) = late {
+                    eprintln!("ERR_AGENTOS_VM_TEARDOWN_LATE: teardown finished after its deadline with error={error}");
+                }
+            },
+        )
+        .await;
+        let unstarted = slot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        let mut teardown_result = match (offloaded, unstarted) {
+            (Ok(Some(result)), _) => result,
+            (offloaded, Some(mut kernel)) => {
+                if let Err(error) = offloaded {
+                    eprintln!(
+                        "ERR_AGENTOS_VM_TEARDOWN_INLINE: vm_id={vm_id} tearing down on the router: {error}"
+                    );
+                }
+                finish_vm_teardown_owned(&bridge, &vm_id, &mut kernel)
+            }
+            (Ok(None), None) => Err(SidecarError::InvalidState(format!(
+                "ERR_AGENTOS_VM_TEARDOWN_KERNEL_MISSING: vm_id={vm_id} kernel was taken twice"
+            ))),
+            (Err(error), None) => Err(error),
+        };
         let shutdown_deadline = Duration::from_millis(self.vm.limits.reactor.shutdown_deadline_ms);
         let teardown_deadline = tokio::time::Instant::now() + shutdown_deadline;
         let mut sqlite_close_timed_out = false;
@@ -2078,14 +2448,56 @@ where
             eprintln!("ERR_AGENTOS_VM_FAIRNESS_RETIRE: vm_id={vm_id} error={error}");
         }
 
-        cleanup_path(&self.vm.cwd, "disposed VM shadow root");
+        // Remove host paths only after VM admission is closed, so no late VM
+        // task can recreate files under them. Removal takes time proportional
+        // to the files the VM wrote, so it runs off the router on the
+        // process-scoped executor (the VM's own executor is closed now).
+        let mut host_paths = vec![(self.vm.cwd.clone(), "disposed VM shadow root")];
         if let Some(staging_root) = self.vm.packages_staging_root.take() {
-            cleanup_path(&staging_root, "disposed VM package staging root");
+            host_paths.push((staging_root, "disposed VM package staging root"));
         }
-        cleanup_path(
-            &self.vm.unix_socket_host_dir,
+        host_paths.push((
+            self.vm.unix_socket_host_dir.clone(),
             "disposed VM Unix socket namespace",
-        );
+        ));
+        // A job that started finishes the removal even past its deadline, so
+        // the router removes the paths only when the job never ran.
+        let started = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let offloaded = match process_runtime_context.as_ref() {
+            Some(runtime) => {
+                let job_paths = host_paths.clone();
+                let job_started = Arc::clone(&started);
+                run_control_plane_blocking(
+                    runtime,
+                    ControlPlaneJob::Dispose,
+                    "DisposeVm",
+                    move || {
+                        job_started.store(true, std::sync::atomic::Ordering::Release);
+                        for (path, label) in &job_paths {
+                            cleanup_path(path, label);
+                        }
+                    },
+                    |()| {},
+                )
+                .await
+            }
+            None => Err(SidecarError::InvalidState(String::from(
+                "ERR_AGENTOS_RUNTIME_UNAVAILABLE: no process runtime for host-path cleanup",
+            ))),
+        };
+        if let Err(error) = offloaded.as_ref() {
+            eprintln!(
+                "ERR_AGENTOS_VM_TEARDOWN_CLEANUP: vm_id={vm_id} phase=host_paths error={error}"
+            );
+        }
+        if !started.load(std::sync::atomic::Ordering::Acquire) {
+            eprintln!(
+                "ERR_AGENTOS_VM_TEARDOWN_INLINE: vm_id={vm_id} removing host paths on the router"
+            );
+            for (path, label) in &host_paths {
+                cleanup_path(path, label);
+            }
+        }
 
         let (reconciliation, reconciliation_timed_out) = wait_for_vm_reconciliation(
             self.vm.resources.as_ref(),
@@ -2106,7 +2518,8 @@ where
             let teardown_deadline_expired = matches!(&reason, VmQuarantineReason::TeardownDeadline);
             let mut diagnostic = quarantine_diagnostic(
                 &vm_id,
-                &self.vm,
+                self.vm.generation,
+                self.vm.limits.reactor.shutdown_deadline_ms,
                 reconciliation,
                 reason.clone(),
                 capability_admission_error.as_deref(),
@@ -2161,16 +2574,81 @@ where
             session_id,
             vm_id,
             events: std::mem::take(&mut events),
+            completed_executions,
             quarantine,
             result,
         }
     }
 }
 
+/// Completion for an execution whose process exited with `code` before its
+/// exit event was applied, with the outcome a normal finish would report.
+fn exit_completion(
+    execution_id: &str,
+    generation: u64,
+    code: i32,
+) -> crate::protocol::ExecutionCompletedEvent {
+    let (outcome, error) = if code == 0 {
+        (crate::protocol::ExecutionOutcome::Succeeded, None)
+    } else {
+        (
+            crate::protocol::ExecutionOutcome::Failed,
+            Some(crate::protocol::ExecutionErrorData {
+                code: String::from("execution_failed"),
+                name: String::from("ExecutionError"),
+                message: format!("execution exited with code {code}"),
+                stack: None,
+                details: None,
+            }),
+        )
+    };
+    crate::protocol::ExecutionCompletedEvent {
+        execution_id: execution_id.to_owned(),
+        generation,
+        outcome,
+        exit_code: Some(code),
+        error,
+    }
+}
+
+/// Events a dispose reads from one process's own queue, looking for an exit
+/// the event pump has not claimed yet. Bounded, so a process that is still
+/// writing cannot hold the dispose here.
+const DISPOSE_EXIT_SCAN_EVENTS: usize = 4096;
+
+/// Record root processes that already exited but whose `Exited` event still
+/// waits in their own execution queue. Reads without waiting.
+async fn collect_unclaimed_exits(vm: &mut VmState, exits: &mut BTreeMap<String, i32>) {
+    for (process_id, process) in vm.active_processes.iter_mut() {
+        if exits.contains_key(process_id) {
+            continue;
+        }
+        for _ in 0..DISPOSE_EXIT_SCAN_EVENTS {
+            match process.execution.poll_event(Duration::ZERO).await {
+                Ok(Some(ActiveExecutionEvent::Exited(code))) => {
+                    exits.insert(process_id.clone(), code);
+                    break;
+                }
+                Ok(Some(_)) => {}
+                Ok(None) => break,
+                Err(error) => {
+                    eprintln!(
+                        "ERR_AGENTOS_VM_TEARDOWN_CLEANUP: process_id={process_id} phase=exit_scan error={error}"
+                    );
+                    break;
+                }
+            }
+        }
+    }
+}
+
+/// Terminate a disposed VM's processes. `exited` names processes whose exit
+/// the dispose already observed; they get no signal and no wait.
 async fn terminate_detached_vm_processes<B>(
     bridge: &crate::state::SharedBridge<B>,
     vm_id: &str,
     vm: &mut VmState,
+    mut exited: BTreeSet<String>,
 ) -> Result<(), SidecarError>
 where
     B: NativeSidecarBridge + Send + 'static,
@@ -2178,34 +2656,47 @@ where
 {
     let mut first_error = None;
     let process_ids = vm.active_processes.keys().cloned().collect::<Vec<_>>();
-    for process_id in &process_ids {
+    for process_id in process_ids.iter().filter(|id| !exited.contains(*id)) {
         if let Err(error) =
             NativeSidecar::<B>::kill_process_in_vm(bridge, vm, vm_id, process_id, "SIGTERM")
         {
             record_vm_teardown_error(vm_id, "sigterm", error, &mut first_error);
         }
     }
-    if !process_ids.is_empty() {
-        tokio::time::sleep(DISPOSE_VM_SIGTERM_GRACE).await;
-    }
-    for process_id in &process_ids {
+    wait_for_detached_exits(
+        vm,
+        vm_id,
+        &process_ids,
+        &mut exited,
+        DISPOSE_VM_SIGTERM_GRACE,
+    )
+    .await;
+    for process_id in process_ids.iter().filter(|id| !exited.contains(*id)) {
         if let Err(error) =
             NativeSidecar::<B>::kill_process_in_vm(bridge, vm, vm_id, process_id, "SIGKILL")
         {
             record_vm_teardown_error(vm_id, "sigkill", error, &mut first_error);
         }
     }
-    if !process_ids.is_empty() {
-        tokio::time::sleep(DISPOSE_VM_SIGKILL_GRACE).await;
-    }
+    wait_for_detached_exits(
+        vm,
+        vm_id,
+        &process_ids,
+        &mut exited,
+        DISPOSE_VM_SIGKILL_GRACE,
+    )
+    .await;
 
     let kernel_readiness = Arc::clone(&vm.kernel_socket_readiness);
     let unix_address_registry = Arc::clone(&vm.unix_address_registry);
     let remaining = std::mem::take(&mut vm.active_processes);
-    if !remaining.is_empty() {
+    let unconfirmed = remaining
+        .keys()
+        .filter(|process_id| !exited.contains(*process_id))
+        .count();
+    if unconfirmed != 0 {
         eprintln!(
-            "ERR_AGENTOS_VM_FORCED_PROCESS_FINALIZE: vm_id={vm_id} process_count={}",
-            remaining.len()
+            "ERR_AGENTOS_VM_FORCED_PROCESS_FINALIZE: vm_id={vm_id} process_count={unconfirmed}"
         );
     }
     for (process_id, mut process) in remaining {
@@ -2231,19 +2722,60 @@ where
     first_error.map_or(Ok(()), Err)
 }
 
+/// Wait until each listed process reports its exit, or `grace` passes. The
+/// detached VM has no event pump, so teardown reads the exit itself instead of
+/// sleeping out the whole grace. Other events are dropped with the VM.
+async fn wait_for_detached_exits(
+    vm: &mut VmState,
+    vm_id: &str,
+    process_ids: &[String],
+    exited: &mut BTreeSet<String>,
+    grace: Duration,
+) {
+    let deadline = tokio::time::Instant::now() + grace;
+    for process_id in process_ids {
+        if exited.contains(process_id) {
+            continue;
+        }
+        let Some(process) = vm.active_processes.get_mut(process_id) else {
+            continue;
+        };
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return;
+            }
+            match process.execution.poll_event(remaining).await {
+                Ok(Some(ActiveExecutionEvent::Exited(_))) => {
+                    exited.insert(process_id.clone());
+                    break;
+                }
+                Ok(Some(_)) => {}
+                // Timed out, or an execution kind that cannot be awaited.
+                Ok(None) => break,
+                Err(error) => {
+                    eprintln!(
+                        "ERR_AGENTOS_VM_TEARDOWN_CLEANUP: vm_id={vm_id} process_id={process_id} phase=exit_wait error={error}"
+                    );
+                    break;
+                }
+            }
+        }
+    }
+}
+
 fn finish_vm_teardown_owned<B>(
     bridge: &crate::state::SharedBridge<B>,
     vm_id: &str,
-    vm: &mut VmState,
+    kernel: &mut crate::state::SidecarKernel,
 ) -> Result<(), SidecarError>
 where
     B: NativeSidecarBridge + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
     let mut first_error = None;
-    let snapshot = if vm.kernel.root_filesystem_mut().is_some() {
-        match vm
-            .kernel
+    let snapshot = if bridge.persists_filesystem_state() && kernel.root_filesystem_mut().is_some() {
+        match kernel
             .snapshot_root_filesystem()
             .map_err(kernel_error)
             .and_then(|snapshot| encode_root_snapshot(&snapshot).map_err(root_filesystem_error))
@@ -2263,7 +2795,7 @@ where
     if let Err(error) = bridge.emit_lifecycle(vm_id, LifecycleState::Terminated) {
         record_vm_teardown_error(vm_id, "lifecycle", error, &mut first_error);
     }
-    if let Err(error) = vm.kernel.dispose().map_err(kernel_error) {
+    if let Err(error) = kernel.dispose().map_err(kernel_error) {
         record_vm_teardown_error(vm_id, "kernel", error, &mut first_error);
     }
     if let Some(snapshot) = snapshot {
@@ -2284,7 +2816,8 @@ where
 
 fn quarantine_diagnostic(
     vm_id: &str,
-    vm: &VmState,
+    generation: u64,
+    shutdown_deadline_ms: u64,
     reconciliation: VmReconciliationSnapshot,
     reason: VmQuarantineReason,
     capability_admission_error: Option<&str>,
@@ -2293,24 +2826,24 @@ fn quarantine_diagnostic(
     match reason {
         VmQuarantineReason::TeardownDeadline => format!(
             "ERR_AGENTOS_VM_TEARDOWN_DEADLINE: vm_id={vm_id} generation={} active_tasks={} outstanding_capabilities={} ledger_zero={} deadline_ms={}; raise limits.reactor.shutdownDeadlineMs",
-            vm.generation,
+            generation,
             reconciliation.active_tasks,
             reconciliation.outstanding_capabilities,
             reconciliation.ledger_zero,
-            vm.limits.reactor.shutdown_deadline_ms
+            shutdown_deadline_ms
         ),
         VmQuarantineReason::ResourceIntegrity => format!(
             "ERR_AGENTOS_VM_RESOURCE_INTEGRITY: vm_id={vm_id} generation={} accounting integrity failed; generation cannot be reaped",
-            vm.generation
+            generation
         ),
         VmQuarantineReason::CapabilityRegistryIntegrity => format!(
             "ERR_AGENTOS_VM_CAPABILITY_INTEGRITY: vm_id={vm_id} generation={} capability admission could not be closed; generation cannot be reaped; error={}",
-            vm.generation,
+            generation,
             capability_admission_error.unwrap_or("unknown")
         ),
         VmQuarantineReason::FairnessIntegrity => format!(
             "ERR_AGENTOS_VM_FAIRNESS_INTEGRITY: vm_id={vm_id} generation={} fairness membership could not be retired; generation cannot be reaped; error={}",
-            vm.generation,
+            generation,
             fairness_retirement_error
                 .map(ToString::to_string)
                 .unwrap_or_else(|| String::from("unknown"))
@@ -2501,20 +3034,6 @@ where
                     .collect(),
             );
         }
-        let existing_created_mountpoints = vm.package_created_mountpoints.clone();
-        let mut created_mountpoints = BTreeMap::new();
-        for (package_id, paths) in &package_mountpoint_paths {
-            let existing = existing_created_mountpoints.get(package_id);
-            let mut created = BTreeSet::new();
-            for path in paths {
-                if existing.is_some_and(|paths| paths.contains(path))
-                    || !vm.kernel.exists_for_operator(path).map_err(kernel_error)?
-                {
-                    created.insert(path.clone());
-                }
-            }
-            created_mountpoints.insert(package_id.clone(), created);
-        }
         let mut next_guest_env = vm.base_guest_env.clone();
         apply_package_provides_env(
             &mut next_guest_env,
@@ -2533,7 +3052,24 @@ where
             database: vm.database.clone(),
             max_pread_bytes: vm.kernel.resource_limits().max_pread_bytes,
         };
-        reconcile_mounts(&mount_plugins, vm, &effective_mounts, mount_context)?;
+        let newly_created_mountpoints =
+            reconcile_mounts(&mount_plugins, vm, &effective_mounts, mount_context)?;
+        // A package owns a mountpoint it created now or in an earlier configure.
+        let created_mountpoints = package_mountpoint_paths
+            .iter()
+            .map(|(package_id, paths)| {
+                let earlier = vm.package_created_mountpoints.get(package_id);
+                let created = paths
+                    .iter()
+                    .filter(|path| {
+                        newly_created_mountpoints.contains(*path)
+                            || earlier.is_some_and(|earlier| earlier.contains(*path))
+                    })
+                    .cloned()
+                    .collect::<BTreeSet<_>>();
+                (package_id.clone(), created)
+            })
+            .collect::<BTreeMap<_, _>>();
         vm.guest_env = next_guest_env;
 
         vm.command_guest_paths = discover_command_guest_paths(&mut vm.kernel)?;
@@ -3591,14 +4127,11 @@ fn bootstrap_native_root_filesystem(
     filesystem: &mut dyn MountedFileSystem,
     descriptor: &RootFilesystemDescriptor,
 ) -> Result<(), SidecarError> {
-    for (guest_path, mode) in SHADOW_ROOT_BOOTSTRAP_DIRS {
+    for &(guest_path, mode, uid, gid) in agentos_native_sidecar_core::root_fs::STANDARD_DIRECTORIES
+    {
         filesystem.mkdir(guest_path, true).map_err(vfs_error)?;
-        let (uid, gid) = match *guest_path {
-            "/home/agentos" | "/workspace" => (1000, 1000),
-            _ => (0, 0),
-        };
         filesystem.chown(guest_path, uid, gid).map_err(vfs_error)?;
-        filesystem.chmod(guest_path, *mode).map_err(vfs_error)?;
+        filesystem.chmod(guest_path, mode).map_err(vfs_error)?;
     }
 
     seed_native_ca_certificates_bundle(filesystem)?;
@@ -3742,12 +4275,13 @@ fn reconcile_mounts<B>(
     vm: &mut VmState,
     mounts: &[crate::protocol::MountDescriptor],
     context: MountPluginContext<B>,
-) -> Result<(), SidecarError>
+) -> Result<BTreeSet<String>, SidecarError>
 where
     B: NativeSidecarBridge + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
     // Parse and validate the entire desired set before changing the live view.
+    // Returns the mountpoint directories this call had to create.
     let prepared = prepare_mount_descriptors(mount_plugins, mounts)?;
     let mut existing_mounts = vm.configuration.mounts.clone();
     existing_mounts.sort_by_key(|mount| std::cmp::Reverse(mount_path_depth(&mount.guest_path)));
@@ -3810,7 +4344,7 @@ where
     for mount in &mounted {
         emit_mount_audit_event(&context, mount, "security.mount.mounted");
     }
-    Ok(())
+    Ok(created_mountpoints)
 }
 
 fn rollback_mount_reconciliation<B>(
@@ -4579,8 +5113,11 @@ fn create_vm_shadow_root(vm_id: &str) -> Result<PathBuf, SidecarError> {
         let suffix = random_directory_suffix().map_err(|error| {
             SidecarError::Io(format!("failed to generate VM shadow-root name: {error}"))
         })?;
-        let root =
-            std::env::temp_dir().join(format!("agentos-native-sidecar-shadow-{vm_id}-{suffix}"));
+        let root = std::env::temp_dir().join(format!(
+            "{}{}-{vm_id}-{suffix}",
+            crate::temp_reclaim::VM_SHADOW_ROOT_PID_PREFIX,
+            std::process::id()
+        ));
         match fs::create_dir(&root) {
             Ok(()) => return initialize_vm_shadow_root(root),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -4628,7 +5165,7 @@ fn initialize_vm_shadow_root(root: PathBuf) -> Result<PathBuf, SidecarError> {
 }
 
 fn bootstrap_shadow_root(root: &Path) -> Result<(), SidecarError> {
-    for (guest_path, mode) in SHADOW_ROOT_BOOTSTRAP_DIRS {
+    for &(guest_path, mode, ..) in agentos_native_sidecar_core::root_fs::STANDARD_DIRECTORIES {
         let host_path = shadow_path_for_guest(root, guest_path);
         fs::create_dir_all(&host_path).map_err(|error| {
             SidecarError::Io(format!(
@@ -4636,7 +5173,7 @@ fn bootstrap_shadow_root(root: &Path) -> Result<(), SidecarError> {
                 host_path.display()
             ))
         })?;
-        fs::set_permissions(&host_path, fs::Permissions::from_mode(*mode)).map_err(|error| {
+        fs::set_permissions(&host_path, fs::Permissions::from_mode(mode)).map_err(|error| {
             SidecarError::Io(format!(
                 "failed to set shadow directory mode {mode:o} on {}: {error}",
                 host_path.display()

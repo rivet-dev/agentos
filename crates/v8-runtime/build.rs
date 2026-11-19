@@ -144,6 +144,54 @@ fn build_v8_thread_support(manifest_dir: &Path, crate_root: &Path, out_dir: &Pat
         .compile("agentos_v8_thread_support");
 }
 
+/// Fingerprint of everything that shapes a snapshot blob besides its key: the
+/// V8 version, the target, and the sources that define external references,
+/// bridge stub functions, and snapshot creation. Persisted blobs are only
+/// loaded by a build with the same fingerprint.
+fn emit_snapshot_fingerprint(manifest_dir: &Path, v8_version: &str) {
+    use sha2::{Digest, Sha256};
+    fn collect(path: &Path, files: &mut Vec<PathBuf>) {
+        if path.is_dir() {
+            let mut entries: Vec<PathBuf> = fs::read_dir(path)
+                .unwrap_or_else(|error| panic!("failed to read {}: {}", path.display(), error))
+                .map(|entry| entry.expect("directory entry").path())
+                .collect();
+            entries.sort();
+            for entry in entries {
+                collect(&entry, files);
+            }
+        } else if path.is_file() {
+            files.push(path.to_path_buf());
+        }
+    }
+    let mut files = Vec::new();
+    for root in [
+        manifest_dir.join("src"),
+        manifest_dir.join("../bridge/src"),
+        manifest_dir.join("../bridge/bridge-contract.json"),
+    ] {
+        println!("cargo:rerun-if-changed={}", root.display());
+        collect(&root, &mut files);
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(v8_version.as_bytes());
+    hasher.update(env::var("TARGET").unwrap_or_default().as_bytes());
+    for file in files {
+        let relative = file.strip_prefix(manifest_dir).unwrap_or(&file);
+        hasher.update(relative.to_string_lossy().as_bytes());
+        hasher.update(
+            fs::read(&file)
+                .unwrap_or_else(|error| panic!("failed to read {}: {}", file.display(), error)),
+        );
+    }
+    let fingerprint: String = hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    println!("cargo:rustc-env=AGENTOS_V8_RUNTIME_FINGERPRINT={fingerprint}");
+}
+
 fn main() {
     let manifest_dir =
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set"));
@@ -156,6 +204,7 @@ fn main() {
     agentos_build_support::build_v8_bridge(&manifest_dir, &out_dir);
 
     let v8_version = read_v8_version(&lock_path);
+    emit_snapshot_fingerprint(&manifest_dir, &v8_version);
     let v8_crate_root = find_v8_crate_root(&v8_version);
     build_v8_thread_support(&manifest_dir, &v8_crate_root, &out_dir);
     let icu_data = find_v8_icu_data(&v8_crate_root);

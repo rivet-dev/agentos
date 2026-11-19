@@ -1,6 +1,6 @@
 use super::*;
 
-const SYNTHETIC_V8_TERMINATION_STDERR: &[u8] = b"Error: Execution terminated\n";
+pub(super) const SYNTHETIC_V8_TERMINATION_STDERR: &[u8] = b"Error: Execution terminated\n";
 
 type OwnedChildExecutionStart =
     Pin<Box<dyn Future<Output = Result<ActiveExecution, SidecarError>> + 'static>>;
@@ -3412,13 +3412,17 @@ where
                                 process_id: detached_process_id.clone(),
                                 event: ActiveExecutionEvent::Stdout(chunk),
                             };
-                            if let Err(error) = self.check_pending_process_event_capacity(&envelope)
+                            if let ProcessEventOffer::Paused(envelope) =
+                                self.offer_pending_process_event(envelope)?
                             {
+                                let envelope = *envelope;
+                                // No fair room in the shared queue: keep the
+                                // event at its source until capacity frees.
                                 if let Some(mut vm) = self.vms.get_mut(vm_id) {
                                     if let Some(process) =
                                         vm.active_processes.get_mut(&root_process_id)
                                     {
-                                        process.requeue_pending_execution_event(
+                                        process.restore_paused_execution_event(
                                             PolledExecutionEvent {
                                                 event: envelope.event,
                                                 reservation,
@@ -3426,24 +3430,7 @@ where
                                         )?;
                                     }
                                 }
-                                return Err(error);
-                            }
-                            if let Err((error, envelope)) =
-                                self.try_queue_pending_process_event(envelope)
-                            {
-                                if let Some(mut vm) = self.vms.get_mut(vm_id) {
-                                    if let Some(process) =
-                                        vm.active_processes.get_mut(&root_process_id)
-                                    {
-                                        process.requeue_pending_execution_event(
-                                            PolledExecutionEvent {
-                                                event: envelope.event,
-                                                reservation,
-                                            },
-                                        )?;
-                                    }
-                                }
-                                return Err(error);
+                                break;
                             }
                             drop(reservation);
                             emitted_any = true;
@@ -3457,13 +3444,17 @@ where
                                 process_id: detached_process_id.clone(),
                                 event: ActiveExecutionEvent::Stderr(chunk),
                             };
-                            if let Err(error) = self.check_pending_process_event_capacity(&envelope)
+                            if let ProcessEventOffer::Paused(envelope) =
+                                self.offer_pending_process_event(envelope)?
                             {
+                                let envelope = *envelope;
+                                // No fair room in the shared queue: keep the
+                                // event at its source until capacity frees.
                                 if let Some(mut vm) = self.vms.get_mut(vm_id) {
                                     if let Some(process) =
                                         vm.active_processes.get_mut(&root_process_id)
                                     {
-                                        process.requeue_pending_execution_event(
+                                        process.restore_paused_execution_event(
                                             PolledExecutionEvent {
                                                 event: envelope.event,
                                                 reservation,
@@ -3471,24 +3462,7 @@ where
                                         )?;
                                     }
                                 }
-                                return Err(error);
-                            }
-                            if let Err((error, envelope)) =
-                                self.try_queue_pending_process_event(envelope)
-                            {
-                                if let Some(mut vm) = self.vms.get_mut(vm_id) {
-                                    if let Some(process) =
-                                        vm.active_processes.get_mut(&root_process_id)
-                                    {
-                                        process.requeue_pending_execution_event(
-                                            PolledExecutionEvent {
-                                                event: envelope.event,
-                                                reservation,
-                                            },
-                                        )?;
-                                    }
-                                }
-                                return Err(error);
+                                break;
                             }
                             drop(reservation);
                             emitted_any = true;
@@ -3502,13 +3476,17 @@ where
                                 process_id: detached_process_id.clone(),
                                 event: ActiveExecutionEvent::Exited(exit_code),
                             };
-                            if let Err(error) = self.check_pending_process_event_capacity(&envelope)
+                            if let ProcessEventOffer::Paused(envelope) =
+                                self.offer_pending_process_event(envelope)?
                             {
+                                let envelope = *envelope;
+                                // No fair room in the shared queue: keep the
+                                // event at its source until capacity frees.
                                 if let Some(mut vm) = self.vms.get_mut(vm_id) {
                                     if let Some(process) =
                                         vm.active_processes.get_mut(&root_process_id)
                                     {
-                                        process.requeue_pending_execution_event(
+                                        process.restore_paused_execution_event(
                                             PolledExecutionEvent {
                                                 event: envelope.event,
                                                 reservation,
@@ -3516,24 +3494,7 @@ where
                                         )?;
                                     }
                                 }
-                                return Err(error);
-                            }
-                            if let Err((error, envelope)) =
-                                self.try_queue_pending_process_event(envelope)
-                            {
-                                if let Some(mut vm) = self.vms.get_mut(vm_id) {
-                                    if let Some(process) =
-                                        vm.active_processes.get_mut(&root_process_id)
-                                    {
-                                        process.requeue_pending_execution_event(
-                                            PolledExecutionEvent {
-                                                event: envelope.event,
-                                                reservation,
-                                            },
-                                        )?;
-                                    }
-                                }
-                                return Err(error);
+                                break;
                             }
                             drop(reservation);
                             if let Some(mut vm) = self.vms.get_mut(vm_id) {
@@ -3774,7 +3735,10 @@ where
                     break;
                 }
                 if let Some(envelope) = envelope {
-                    if let Err((error, envelope)) = self.try_queue_pending_process_event(envelope) {
+                    if let ProcessEventOffer::Paused(envelope) =
+                        self.offer_pending_process_event(envelope)?
+                    {
+                        let envelope = *envelope;
                         self.requeue_descendant_claimed_event(
                             vm_id,
                             &root_process_id,
@@ -3782,8 +3746,9 @@ where
                             child_process_id,
                             envelope.event,
                             reservation,
+                            true,
                         )?;
-                        return Err(error);
+                        break;
                     }
                 }
                 drop(reservation);
@@ -3857,58 +3822,66 @@ where
                 .and_then(|root| descendant_pending_execution_event_capacity(root, child_path))
         });
 
-        let mut deferred = VecDeque::new();
+        // Only this VM's queue is scanned; other VMs' events are untouched.
         let mut released_public_capacity = false;
-        while let Some(envelope) = self.pending_process_events.pop_front() {
-            if envelope.vm_id == vm_id
-                && envelope.process_id == process_id
+        let mut index = 0usize;
+        while let Some(envelope) = self.pending_process_events.vm_get(vm_id, index) {
+            let targets_child = envelope.process_id == process_id
                 && envelope
                     .child_path
                     .iter()
                     .map(String::as_str)
-                    .eq(child_path.iter().copied())
-            {
-                if matches!(child_capacity, Some(0)) {
-                    self.pending_process_events.push_front(envelope);
-                    while let Some(deferred_envelope) = deferred.pop_back() {
-                        self.pending_process_events.push_front(deferred_envelope);
-                    }
+                    .eq(child_path.iter().copied());
+            if !targets_child {
+                index += 1;
+                continue;
+            }
+            if matches!(child_capacity, Some(0)) {
+                self.observe_pending_process_event_depth();
+                if released_public_capacity {
+                    self.rearm_deferred_process_event_after_capacity_release();
+                }
+                return Err(process_event_queue_overflow_error(
+                    self.config.runtime.protocol.max_process_events,
+                ));
+            }
+            let envelope = self
+                .pending_process_events
+                .vm_remove(vm_id, index)
+                .expect("descendant event index was just read");
+            let outcome = match self.vms.get_mut(vm_id) {
+                Some(mut vm) => match vm
+                    .active_processes
+                    .get_mut(process_id)
+                    .and_then(|root| Self::active_process_by_path_mut(root, child_path))
+                {
+                    Some(child) => child
+                        .try_queue_pending_execution_envelope(envelope)
+                        .map_err(|(error, envelope)| (Some(error), envelope)),
+                    None => Err((None, envelope)),
+                },
+                None => Err((None, envelope)),
+            };
+            match outcome {
+                Ok(()) => {
+                    child_capacity = child_capacity.map(|capacity| capacity - 1);
+                    released_public_capacity = true;
+                }
+                Err((Some(error), envelope)) => {
+                    self.pending_process_events.vm_insert(index, envelope);
                     self.observe_pending_process_event_depth();
                     if released_public_capacity {
                         self.rearm_deferred_process_event_after_capacity_release();
                     }
-                    return Err(process_event_queue_overflow_error(
-                        self.config.runtime.protocol.max_process_events,
-                    ));
+                    return Err(error);
                 }
-                if let Some(mut vm) = self.vms.get_mut(vm_id) {
-                    if let Some(root) = vm.active_processes.get_mut(process_id) {
-                        if let Some(child) = Self::active_process_by_path_mut(root, child_path) {
-                            match child.try_queue_pending_execution_envelope(envelope) {
-                                Ok(()) => {
-                                    child_capacity = child_capacity.map(|capacity| capacity - 1);
-                                    released_public_capacity = true;
-                                    continue;
-                                }
-                                Err((error, envelope)) => {
-                                    self.pending_process_events.push_front(envelope);
-                                    while let Some(deferred_envelope) = deferred.pop_back() {
-                                        self.pending_process_events.push_front(deferred_envelope);
-                                    }
-                                    self.observe_pending_process_event_depth();
-                                    if released_public_capacity {
-                                        self.rearm_deferred_process_event_after_capacity_release();
-                                    }
-                                    return Err(error);
-                                }
-                            }
-                        }
-                    }
+                Err((None, envelope)) => {
+                    // The child is gone: leave the event queued in place.
+                    self.pending_process_events.vm_insert(index, envelope);
+                    index += 1;
                 }
             }
-            deferred.push_back(envelope);
         }
-        self.pending_process_events = deferred;
         self.observe_pending_process_event_depth();
         if released_public_capacity {
             self.rearm_deferred_process_event_after_capacity_release();
@@ -5005,14 +4978,12 @@ where
                     } else {
                         python_file_entrypoint(&resolved.entrypoint)
                     };
-                    let pyodide_dist_path = python_engine
-                        .bundled_pyodide_dist_path_for_vm(vm_id)
+                    let agentos_execution::PyodidePaths {
+                        dist: pyodide_dist_path,
+                        cache: pyodide_cache_path,
+                    } = python_engine
+                        .bundled_pyodide_paths_for_vm(vm_id)
                         .map_err(python_error)?;
-                    let pyodide_cache_path = pyodide_dist_path
-                        .parent()
-                        .and_then(Path::parent)
-                        .unwrap_or(pyodide_dist_path.as_path())
-                        .join("pyodide-package-cache");
                     add_runtime_guest_path_mapping(
                         &mut execution_env,
                         PYTHON_PYODIDE_GUEST_ROOT,
@@ -5044,6 +5015,7 @@ where
                     let context = python_engine.create_context(CreatePythonContextRequest {
                         vm_id: vm_id.to_owned(),
                         pyodide_dist_path,
+                        pyodide_cache_path: Some(pyodide_cache_path),
                     });
                     let context_id = context.context_id;
                     let execution_result = python_engine
@@ -5669,14 +5641,12 @@ where
                 } else {
                     python_file_entrypoint(&resolved.entrypoint)
                 };
-                let pyodide_dist_path = python_engine
-                    .bundled_pyodide_dist_path_for_vm(vm_id)
+                let agentos_execution::PyodidePaths {
+                    dist: pyodide_dist_path,
+                    cache: pyodide_cache_path,
+                } = python_engine
+                    .bundled_pyodide_paths_for_vm(vm_id)
                     .map_err(python_error)?;
-                let pyodide_cache_path = pyodide_dist_path
-                    .parent()
-                    .and_then(Path::parent)
-                    .unwrap_or(pyodide_dist_path.as_path())
-                    .join("pyodide-package-cache");
                 add_runtime_guest_path_mapping(
                     &mut execution_env,
                     PYTHON_PYODIDE_GUEST_ROOT,
@@ -5708,6 +5678,7 @@ where
                 let context = python_engine.create_context(CreatePythonContextRequest {
                     vm_id: vm_id.to_owned(),
                     pyodide_dist_path,
+                    pyodide_cache_path: Some(pyodide_cache_path),
                 });
                 let context_id = context.context_id;
                 let replacement_result =
@@ -6665,18 +6636,13 @@ where
                             let _launch_turn = execution_engines.python_launch_turn().await;
                             let mut python_engine =
                                 execution_engines.python("start nested Python child process")?;
-                            let pyodide_dist_path = python_engine
-                                .bundled_pyodide_dist_path_for_vm_async(
-                                    &start_vm_id,
-                                    &runtime_context,
-                                )
+                            let agentos_execution::PyodidePaths {
+                                dist: pyodide_dist_path,
+                                cache: pyodide_cache_path,
+                            } = python_engine
+                                .bundled_pyodide_paths_for_vm_async(&start_vm_id, &runtime_context)
                                 .await
                                 .map_err(python_error)?;
-                            let pyodide_cache_path = pyodide_dist_path
-                                .parent()
-                                .and_then(Path::parent)
-                                .unwrap_or(pyodide_dist_path.as_path())
-                                .join("pyodide-package-cache");
                             add_runtime_guest_path_mapping(
                                 &mut execution_env,
                                 PYTHON_PYODIDE_GUEST_ROOT,
@@ -6709,6 +6675,7 @@ where
                                 python_engine.create_context(CreatePythonContextRequest {
                                     vm_id: start_vm_id.clone(),
                                     pyodide_dist_path,
+                                    pyodide_cache_path: Some(pyodide_cache_path),
                                 });
                             let context_id = context.context_id;
                             let execution_result = python_engine
@@ -8721,6 +8688,7 @@ where
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn requeue_descendant_claimed_event(
         &mut self,
         vm_id: &str,
@@ -8729,6 +8697,7 @@ where
         child_process_id: &str,
         event: ActiveExecutionEvent,
         reservation: Option<PendingExecutionEventReservation>,
+        paused: bool,
     ) -> Result<(), SidecarError> {
         let mut vm = self
             .vms
@@ -8744,7 +8713,12 @@ where
                 child_path.push(child_process_id);
                 javascript_child_process_gone_error(process_id, &child_path)
             })?;
-        child.requeue_pending_execution_event(PolledExecutionEvent { event, reservation })
+        let polled = PolledExecutionEvent { event, reservation };
+        if paused {
+            child.restore_paused_execution_event(polled)
+        } else {
+            child.requeue_pending_execution_event(polled)
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -8945,6 +8919,7 @@ where
                                 child_process_id,
                                 ActiveExecutionEvent::Stdout(chunk),
                                 reservation,
+                                false,
                             )?;
                             return Ok(Value::Null);
                         }
@@ -8977,6 +8952,7 @@ where
                                 child_process_id,
                                 ActiveExecutionEvent::Stderr(chunk),
                                 reservation,
+                                false,
                             )?;
                             return Ok(Value::Null);
                         }
@@ -9015,7 +8991,7 @@ where
                             }
                             child.queue_pending_polled_execution_event(next)?;
                         }
-                        if !child.pending_execution_events.is_empty() {
+                        if child.has_queued_execution_events() {
                             // Preserve Node ordering: output and signal-state
                             // events already queued for the child must be
                             // observed before its terminal exit. Requeueing the
@@ -9053,6 +9029,7 @@ where
                                 child_process_id,
                                 ActiveExecutionEvent::Exited(exit_code),
                                 reservation,
+                                false,
                             )?;
                             return Ok(Value::Null);
                         }
@@ -9120,6 +9097,7 @@ where
                                 child_process_id,
                                 envelope.event,
                                 reservation.take(),
+                                false,
                             )?;
                             return Err(error);
                         }
@@ -12438,7 +12416,7 @@ console.log("relay-ready");
 
                 let blocker = sidecar
                     .pending_process_events
-                    .pop_front()
+                    .take_next(|_| true)
                     .expect("remove capacity blocker");
                 assert_eq!(blocker.process_id, "capacity-blocker");
                 sidecar.observe_pending_process_event_depth();
@@ -12472,7 +12450,7 @@ console.log("relay-ready");
 
                 let stdout = sidecar
                     .pending_process_events
-                    .pop_front()
+                    .take_next(|_| true)
                     .expect("remove ordered detached stdout");
                 assert!(matches!(stdout.event, ActiveExecutionEvent::Stdout(_)));
                 sidecar.observe_pending_process_event_depth();

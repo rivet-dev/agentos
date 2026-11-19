@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 use support::{
@@ -287,8 +287,17 @@ fn collect_vm_lifecycle_states(
 }
 
 fn spawn_sidecar_binary() -> (Child, ChildStdin, ChildStdout, UnixStream) {
+    spawn_sidecar_binary_with_tmpdir(None)
+}
+
+fn spawn_sidecar_binary_with_tmpdir(
+    tmpdir: Option<&Path>,
+) -> (Child, ChildStdin, ChildStdout, UnixStream) {
     let (control, child_control) = UnixStream::pair().expect("create control socketpair");
     let mut command = Command::new(env!("CARGO_BIN_EXE_agentos-native-sidecar"));
+    if let Some(tmpdir) = tmpdir {
+        command.env("TMPDIR", tmpdir);
+    }
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -378,9 +387,11 @@ fn closing_either_required_ingress_stream_is_terminal() {
 #[test]
 fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
     let temp = temp_dir("stdio-binary");
+    let sidecar_tmpdir = temp_dir("stdio-binary-tmpdir");
     write_script(&temp);
 
-    let (mut child, mut stdin, mut stdout, mut control) = spawn_sidecar_binary();
+    let (mut child, mut stdin, mut stdout, mut control) =
+        spawn_sidecar_binary_with_tmpdir(Some(&sidecar_tmpdir));
     let codec = WireFrameCodec::default();
     let mut buffered_events = Vec::new();
 
@@ -816,6 +827,12 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
     );
     assert_eq!(stderr_text, "");
     assert_eq!(exit_code, 0);
+    // JavaScript executions need no materialized import cache on disk.
+    let import_cache_entries = agentos_temp_entries(&sidecar_tmpdir)
+        .into_iter()
+        .filter(|name| name.starts_with("agentos-node-import-cache"))
+        .collect::<Vec<_>>();
+    assert_eq!(import_cache_entries, Vec::<String>::new());
 
     send_request(
         &mut stdin,
@@ -1274,4 +1291,270 @@ fn native_sidecar_binary_supports_js_bridge_host_filesystem_access() {
     send_shutdown(&mut control, &codec, "stdio bridge test complete");
     let status = child.wait().expect("wait for sidecar child");
     assert!(status.success(), "sidecar binary exited with {status}");
+}
+
+fn agentos_temp_entries(tmpdir: &Path) -> Vec<String> {
+    let mut names = fs::read_dir(tmpdir)
+        .expect("list sidecar TMPDIR")
+        .map(|entry| {
+            entry
+                .expect("TMPDIR entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .filter(|name| {
+            name.starts_with("agentos-") && name != "agentos-native-sidecar-compile-cache"
+        })
+        .collect::<Vec<_>>();
+    names.sort();
+    names
+}
+
+fn create_javascript_vm(
+    stdin: &mut ChildStdin,
+    control: &mut UnixStream,
+    codec: &WireFrameCodec,
+    cwd: &Path,
+) {
+    let mut events = Vec::new();
+    send_request(
+        stdin,
+        codec,
+        wire_request(
+            1,
+            wire_connection("client-hint"),
+            RequestPayload::AuthenticateRequest(AuthenticateRequest {
+                client_name: String::from("stdio-test"),
+                auth_token: String::from("stdio-test-token"),
+                protocol_version: wire::PROTOCOL_VERSION,
+                bridge_version: agentos_bridge::bridge_contract().version,
+            }),
+        ),
+    );
+    let connection_id = match recv_response(control, codec, 1, &mut events).payload {
+        ResponsePayload::AuthenticatedResponse(response) => response.connection_id,
+        other => panic!("unexpected authenticate response: {other:?}"),
+    };
+    send_request(
+        stdin,
+        codec,
+        wire_request(
+            2,
+            wire_connection(&connection_id),
+            RequestPayload::OpenSessionRequest(OpenSessionRequest {
+                placement: SidecarPlacement::SidecarPlacementShared(SidecarPlacementShared {
+                    pool: None,
+                }),
+                metadata: HashMap::new(),
+            }),
+        ),
+    );
+    let session_id = match recv_response(control, codec, 2, &mut events).payload {
+        ResponsePayload::SessionOpenedResponse(response) => response.session_id,
+        other => panic!("unexpected open-session response: {other:?}"),
+    };
+    send_request(
+        stdin,
+        codec,
+        wire_request(
+            3,
+            wire_session(&connection_id, &session_id),
+            RequestPayload::CreateVmRequest(CreateVmRequest::legacy_test_config(
+                GuestRuntimeKind::JavaScript,
+                HashMap::from([(String::from("cwd"), cwd.to_string_lossy().into_owned())]),
+                root_filesystem_descriptor(),
+                Some(wire_permissions_allow_all()),
+            )),
+        ),
+    );
+    match recv_response(control, codec, 3, &mut events).payload {
+        ResponsePayload::VmCreatedResponse(_) => {}
+        other => panic!("unexpected create-vm response: {other:?}"),
+    }
+}
+
+#[test]
+fn restarted_sidecar_reclaims_temp_dirs_left_by_a_killed_sidecar() {
+    let tmpdir = temp_dir("stdio-binary-reclaim");
+    let cwd = temp_dir("stdio-binary-reclaim-cwd");
+    let codec = WireFrameCodec::default();
+
+    let (mut killed, mut stdin, _stdout, mut control) =
+        spawn_sidecar_binary_with_tmpdir(Some(&tmpdir));
+    create_javascript_vm(&mut stdin, &mut control, &codec, &cwd);
+    let killed_pid = killed.id();
+    killed.kill().expect("SIGKILL sidecar with a live VM");
+    killed.wait().expect("reap killed sidecar");
+
+    // A killed sidecar leaves its VM directories, and possibly an import cache.
+    let import_cache_root = tmpdir.join(format!("agentos-node-import-cache-roots-{killed_pid}"));
+    fs::create_dir_all(import_cache_root.join("agentos-node-import-cache-shared-pyodide"))
+        .expect("seed killed sidecar import cache");
+    let leaked = agentos_temp_entries(&tmpdir);
+    assert!(
+        leaked.len() >= 3,
+        "the killed sidecar should leave its VM and cache directories: {leaked:?}"
+    );
+    // State of a sidecar that is still running must survive the sweep.
+    let live_root = tmpdir.join(format!("agentos-uds-p{}-live", std::process::id()));
+    fs::create_dir(&live_root).expect("seed live sidecar socket dir");
+    // A sidecar in another PID namespace: its PID names no process here, but it
+    // holds its liveness lock, so its directories must survive too.
+    let foreign_pid = exited_pid();
+    let foreign_lock = nix::fcntl::Flock::lock(
+        fs::File::create(tmpdir.join(format!("agentos-sidecar-pid{foreign_pid}-liveness.lock")))
+            .expect("create foreign liveness lock"),
+        nix::fcntl::FlockArg::LockSharedNonblock,
+    )
+    .expect("hold foreign liveness lock");
+    let foreign_root = tmpdir.join(format!("agentos-uds-p{foreign_pid}-foreign"));
+    fs::create_dir(&foreign_root).expect("seed foreign sidecar socket dir");
+    // A sidecar without a liveness file, such as an older one in another PID
+    // namespace. Its PID names no process here, which proves nothing, so its
+    // directories must survive.
+    let lockless_root = tmpdir.join(format!("agentos-uds-p{}-lockless", exited_pid()));
+    fs::create_dir(&lockless_root).expect("seed lockless sidecar socket dir");
+
+    let (mut restarted, _restarted_stdin, _restarted_stdout, mut restarted_control) =
+        spawn_sidecar_binary_with_tmpdir(Some(&tmpdir));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while leaked.iter().any(|name| tmpdir.join(name).exists()) {
+        assert!(
+            Instant::now() < deadline,
+            "restarted sidecar did not reclaim {:?}",
+            agentos_temp_entries(&tmpdir)
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        live_root.is_dir(),
+        "a live sidecar's directory must not be reclaimed"
+    );
+    assert!(
+        foreign_root.is_dir(),
+        "a sidecar holding its liveness lock must keep its directories"
+    );
+    assert!(
+        lockless_root.is_dir(),
+        "a sidecar without a liveness file must keep its directories"
+    );
+    drop(foreign_lock);
+
+    // A clean shutdown leaves nothing of the restarted sidecar behind.
+    send_shutdown(&mut restarted_control, &codec, "reclaim test complete");
+    let status = wait_for_child(&mut restarted);
+    assert!(status.success(), "restarted sidecar exited with {status}");
+    let live_name = live_root
+        .file_name()
+        .expect("live root name")
+        .to_string_lossy()
+        .into_owned();
+    let file_name = |path: &Path| {
+        path.file_name()
+            .expect("entry name")
+            .to_string_lossy()
+            .into_owned()
+    };
+    let mut expected = vec![
+        format!("agentos-sidecar-pid{foreign_pid}-liveness.lock"),
+        live_name,
+        file_name(&foreign_root),
+        file_name(&lockless_root),
+    ];
+    expected.sort();
+    assert_eq!(agentos_temp_entries(&tmpdir), expected);
+
+    fs::remove_dir_all(&tmpdir).expect("remove test TMPDIR");
+    fs::remove_dir_all(&cwd).expect("remove test cwd");
+}
+
+/// A PID that named a process here a moment ago and names none now.
+fn exited_pid() -> u32 {
+    let mut exited = Command::new("true")
+        .spawn()
+        .expect("spawn short-lived process");
+    let pid = exited.id();
+    exited.wait().expect("reap short-lived process");
+    pid
+}
+
+fn wait_until_removed(tmpdir: &Path, paths: &[&Path]) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while paths.iter().any(|path| path.exists()) {
+        assert!(
+            Instant::now() < deadline,
+            "sidecar did not reclaim {paths:?}; left {:?}",
+            agentos_temp_entries(tmpdir)
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
+fn same_pid_sidecar_in_another_pid_namespace_keeps_its_dirs_after_the_first_exits() {
+    let tmpdir = temp_dir("stdio-binary-same-pid");
+    let cwd = temp_dir("stdio-binary-same-pid-cwd");
+    let codec = WireFrameCodec::default();
+
+    let (mut first, mut stdin, _stdout, mut control) =
+        spawn_sidecar_binary_with_tmpdir(Some(&tmpdir));
+    create_javascript_vm(&mut stdin, &mut control, &codec, &cwd);
+    let shared_pid = first.id();
+    let first_entries = agentos_temp_entries(&tmpdir);
+
+    // A sidecar in another PID namespace that got the same PID registers its
+    // liveness on the same file while the first one runs.
+    let peer_lock = nix::fcntl::Flock::lock(
+        fs::File::open(tmpdir.join(format!("agentos-sidecar-pid{shared_pid}-liveness.lock")))
+            .expect("open the shared liveness file"),
+        nix::fcntl::FlockArg::LockSharedNonblock,
+    )
+    .expect("a same-PID peer can hold the liveness lock while the first sidecar runs");
+    let peer_root = tmpdir.join(format!("agentos-uds-p{shared_pid}-peer"));
+    fs::create_dir(&peer_root).expect("seed peer socket dir");
+
+    first.kill().expect("SIGKILL the first sidecar");
+    first.wait().expect("reap the first sidecar");
+
+    // An exited sidecar whose lock is free: the sweep must reclaim it, which
+    // shows the sweep ran.
+    let gone_pid = exited_pid();
+    let gone_lock = tmpdir.join(format!("agentos-sidecar-pid{gone_pid}-liveness.lock"));
+    fs::File::create(&gone_lock).expect("seed released liveness lock");
+    let gone_root = tmpdir.join(format!("agentos-uds-p{gone_pid}-gone"));
+    fs::create_dir(&gone_root).expect("seed exited sidecar socket dir");
+
+    let (mut sweeper, _sweeper_stdin, _sweeper_stdout, mut sweeper_control) =
+        spawn_sidecar_binary_with_tmpdir(Some(&tmpdir));
+    wait_until_removed(&tmpdir, &[&gone_root, &gone_lock]);
+    for name in &first_entries {
+        assert!(
+            tmpdir.join(name).exists(),
+            "the same-PID peer still runs, so {name} must survive; left {:?}",
+            agentos_temp_entries(&tmpdir)
+        );
+    }
+    assert!(peer_root.is_dir(), "the peer's own directory must survive");
+    send_shutdown(&mut sweeper_control, &codec, "same-pid sweep complete");
+    assert!(wait_for_child(&mut sweeper).success());
+
+    // Once the peer exits too, the next sidecar reclaims everything of that PID.
+    drop(peer_lock);
+    let (mut reclaimer, _reclaimer_stdin, _reclaimer_stdout, mut reclaimer_control) =
+        spawn_sidecar_binary_with_tmpdir(Some(&tmpdir));
+    let leaked = first_entries
+        .iter()
+        .map(|name| tmpdir.join(name))
+        .chain(std::iter::once(peer_root.clone()))
+        .collect::<Vec<_>>();
+    wait_until_removed(
+        &tmpdir,
+        &leaked.iter().map(PathBuf::as_path).collect::<Vec<_>>(),
+    );
+    send_shutdown(&mut reclaimer_control, &codec, "same-pid reclaim complete");
+    assert!(wait_for_child(&mut reclaimer).success());
+
+    fs::remove_dir_all(&tmpdir).expect("remove test TMPDIR");
+    fs::remove_dir_all(&cwd).expect("remove test cwd");
 }

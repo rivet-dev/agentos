@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::error::Error;
 use std::fmt;
 use std::ops::{BitOr, BitOrAssign};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
 use std::time::Duration;
 use web_time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -312,6 +312,20 @@ pub struct ProcessTable {
     inner: Arc<ProcessTableInner>,
 }
 
+/// A non-owning reference to a [`ProcessTable`]. Callbacks that the table
+/// itself keeps alive (directly or through `on_process_exit`) must hold this
+/// instead of a clone, or the table and everything it reaches never drop.
+#[derive(Clone)]
+pub(crate) struct WeakProcessTable {
+    inner: Weak<ProcessTableInner>,
+}
+
+impl WeakProcessTable {
+    pub(crate) fn upgrade(&self) -> Option<ProcessTable> {
+        self.inner.upgrade().map(|inner| ProcessTable { inner })
+    }
+}
+
 struct ProcessTableInner {
     state: Mutex<ProcessTableState>,
     waiters: Condvar,
@@ -391,6 +405,12 @@ impl Default for ProcessTable {
 impl ProcessTable {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub(crate) fn downgrade(&self) -> WeakProcessTable {
+        WeakProcessTable {
+            inner: Arc::downgrade(&self.inner),
+        }
     }
 
     pub fn with_zombie_ttl(zombie_ttl: Duration) -> Self {
