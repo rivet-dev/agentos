@@ -105,15 +105,19 @@ other VMs' calls. A create above that cap waits in its queue, where the queue
 limits below apply (`ERR_AGENTOS_IN_FLIGHT_CREATE_REQUEST_LIMIT` names the cap
 internally and is not returned to callers). These limits are not configurable.
 
-The sidecar queues requests above a limit, in arrival order, with a separate
-queue for priority requests. Up to 256 requests (64 MiB) wait in each queue,
-each for at most 5 seconds. A request that finds the queue full fails with
+The sidecar queues requests above a limit, in arrival order, with separate
+queues for ordinary requests, VM creates, and priority requests. Up to 256
+requests (64 MiB) wait in each queue. An ordinary request waits at most 5
+seconds; a VM create or a priority request waits at most 30 seconds, since a
+burst of creates or a mass teardown takes longer. Teardown (VM dispose, process
+kill and signal, execution cancel and delete) never fails because the queue
+holds 256 requests: a rejected teardown would leak a VM or a process, and
+teardown is already bounded by the VMs and processes that exist and by the
+64 MiB limit. A request that finds the queue full fails with
 `ERR_AGENTOS_REQUEST_QUEUE_LIMIT`, and a request that waits too long fails with
 `ERR_AGENTOS_REQUEST_QUEUE_TIMEOUT`. Both errors are retryable (`EAGAIN`) and
-name the limit in `configuration_path`. The queue size, bytes, and 5-second
-deadline are fixed in the shipped sidecar; no client option changes them. The
-limits are sized so that overload surfaces within seconds: at a typical
-VM-creation rate, a longer queue only holds requests that would time out.
+name the limit in `configuration_path`. The queue size, bytes, and deadlines
+are fixed in the shipped sidecar; no client option changes them.
 
 Each client holds up to 1024 stdin writes per process until the process's
 launch is confirmed, so writes made right after `spawn()` arrive in order. A
