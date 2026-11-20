@@ -691,7 +691,7 @@ fn npm_workspace_symlink_resolves_to_package_inside_project_root() {
         &fixture,
         "@workspace-test/lib",
         "/root/packages/app/src/index.js",
-        "/root/node_modules/@workspace-test/lib/src/index.js",
+        "/root/packages/lib/src/index.js",
     );
 }
 
@@ -1048,13 +1048,13 @@ fn faithful_pnpm_symlink_layout_resolves_via_realpath_walk() {
 
     // Importer is the top-level symlink path. The standard ancestor walk finds
     // `dep` via pnpm's sibling symlink in consumer's store dir (which points at
-    // dep@2.0.0) — no `.pnpm` store scan involved. The resolver returns that
-    // symlink path; its realpath is dep@2.0.0's entry (the correct version, not
-    // the alphabetically-earlier aaa-other dep@1).
+    // dep@2.0.0) — no `.pnpm` store scan involved. Like Node, the resolver
+    // returns the realpath: dep@2.0.0's entry (the correct version, not the
+    // alphabetically-earlier aaa-other dep@1).
     assert_import(
         &fixture,
         "dep",
         "/root/node_modules/consumer/index.mjs",
-        "/root/node_modules/.pnpm/consumer@1.0.0/node_modules/dep/index.mjs",
+        "/root/node_modules/.pnpm/dep@2.0.0/node_modules/dep/index.mjs",
     );
 }

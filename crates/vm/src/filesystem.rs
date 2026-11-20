@@ -2097,7 +2097,8 @@ mod tests {
 
         // Importer is the top-level symlink path. The ancestor walk finds `dep`
         // via pnpm's sibling symlink in consumer's store dir (pointing at
-        // dep@2.0.0) — no `.pnpm` scan. Resolution reads entirely through the VFS.
+        // dep@2.0.0) — no `.pnpm` scan. Resolution reads entirely through the VFS
+        // and, as in Node, returns the realpath.
         let resolved = resolver
             .resolve_module(
                 "dep",
@@ -2107,7 +2108,7 @@ mod tests {
             .expect("resolve dep through kernel VFS");
         assert_eq!(
             resolved.as_deref(),
-            Some("/root/node_modules/.pnpm/consumer@1.0.0/node_modules/dep/index.mjs"),
+            Some("/root/node_modules/.pnpm/dep@2.0.0/node_modules/dep/index.mjs"),
             "must resolve dep@2.0.0 via the sibling symlink, not the aaa-other decoy",
         );
 
@@ -2198,7 +2199,7 @@ mod tests {
             .expect("resolve dep through host-dir module reader");
         assert_eq!(
             resolved.as_deref(),
-            Some("/root/node_modules/.pnpm/consumer@1.0.0/node_modules/dep/index.mjs"),
+            Some("/root/node_modules/.pnpm/dep@2.0.0/node_modules/dep/index.mjs"),
             "reader must resolve dep@2.0.0 via the sibling symlink, not the aaa-other decoy",
         );
 
