@@ -56,7 +56,7 @@ jobs:
           node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile --filter=publish
+      - run: pnpm install --frozen-lockfile --filter=publish --filter=@rivet-dev/agentos-toolchain
       - id: ctx
         name: Resolve publish context
         run: pnpm --filter=publish exec tsx src/ci/bin.ts context-output
@@ -260,7 +260,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
-      - run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos...'
+      - run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos...' --filter @rivet-dev/agentos-build-tools
       - uses: actions/download-artifact@v4
         with:
           name: wasm-commands
@@ -404,7 +404,7 @@ jobs:
           node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile --filter=publish
+      - run: pnpm install --frozen-lockfile --filter=publish --filter=@rivet-dev/agentos-toolchain
       - uses: actions/download-artifact@v4
         with:
           pattern: sidecar-*
