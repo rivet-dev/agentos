@@ -1693,6 +1693,13 @@
 		"wired": "DriverConfig.max_blocking_job_bytes"
 	},
 	{
+		"name": "DEFAULT_MAX_ACTIVE_VM_EXECUTORS",
+		"path": "crates/driver-tokio/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured process-wide runtime admission or lifecycle bound.",
+		"wired": "DriverConfig.max_active_vm_executors"
+	},
+	{
 		"name": "DEFAULT_MAX_BLOCKING_JOBS",
 		"path": "crates/driver-tokio/src/lib.rs",
 		"class": "policy",
