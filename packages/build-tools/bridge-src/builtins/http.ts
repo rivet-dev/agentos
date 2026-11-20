@@ -4084,6 +4084,47 @@ var ServerResponseBridge = class {
 		});
 		return this;
 	}
+	appendHeader(name, value) {
+		if (this.headersSent) {
+			throw createErrorWithCode(
+				"Cannot append headers after they are sent to the client",
+				"ERR_HTTP_HEADERS_SENT",
+			);
+		}
+		const lower = validateHeaderName(name).toLowerCase();
+		validateHeaderValue(lower, value);
+		const existing = this._headers.get(lower);
+		if (existing === void 0) {
+			return this.setHeader(name, value);
+		}
+		this._headers.set(lower, [
+			...(Array.isArray(existing) ? existing : [existing]),
+			...(Array.isArray(value) ? value : [value]),
+		]);
+		return this;
+	}
+	// Node's OutgoingMessage hook: middleware (compression, Next.js) calls it
+	// from end()/write() overrides to flush the status line and headers.
+	_implicitHeader() {
+		if (!this.headersSent) this.writeHead(this.statusCode);
+	}
+	writeEarlyHints(hints, callback) {
+		if (!hints || typeof hints !== "object") {
+			throw createTypeErrorWithCode(
+				`The "hints" argument must be of type object. Received ${formatReceivedType(hints)}`,
+				"ERR_INVALID_ARG_TYPE",
+			);
+		}
+		const headers = /* @__PURE__ */ Object.create(null);
+		for (const [key, value] of Object.entries(hints)) {
+			headers[key] =
+				key.toLowerCase() === "link" && Array.isArray(value)
+					? value.join(", ")
+					: value;
+		}
+		this.writeHead(103, headers);
+		if (typeof callback === "function") queueMicrotask(callback);
+	}
 	getHeader(name) {
 		if (typeof name !== "string") {
 			throw createTypeErrorWithCode(
@@ -5929,6 +5970,13 @@ function ServerResponseCallable() {
 
 ServerResponseCallable.prototype = ServerResponseBridge.prototype;
 
+// Node's ServerResponse extends OutgoingMessage. Expose the base so
+// `res instanceof http.OutgoingMessage` and prototype patches on it work.
+function OutgoingMessage() {
+	ServerResponseCallable.call(this);
+}
+Object.setPrototypeOf(ServerResponseBridge.prototype, OutgoingMessage.prototype);
+
 function createHttpModule(protocol) {
 	const defaultProtocol = protocol === "https" ? "https:" : "http:";
 	const moduleAgent = new Agent({
@@ -6056,6 +6104,7 @@ function createHttpModule(protocol) {
 		globalAgent: moduleAgent,
 		Server: ServerCallable,
 		ServerResponse: ServerResponseCallable,
+		OutgoingMessage,
 		IncomingMessage,
 		ClientRequest,
 		validateHeaderName,
