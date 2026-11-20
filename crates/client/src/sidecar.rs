@@ -191,6 +191,9 @@ pub struct AgentOsSidecarBlockingConfig {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentOsSidecarExecutorConfig {
+    /// Sidecar-wide ceiling for live guest executors (one per live guest
+    /// process). `None` uses the sidecar default of 4,096. Over the limit,
+    /// starts fail with `ERR_AGENTOS_VM_EXECUTOR_LIMIT`.
     pub max_active_vms: Option<u64>,
 }
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, serde::Deserialize)]

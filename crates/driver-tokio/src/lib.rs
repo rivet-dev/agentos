@@ -527,9 +527,15 @@ impl DriverResourceConfig {
     }
 }
 
-// Waiting guest parents retain their executor permits, so nested process
-// workflows need a finite admission floor independent of trusted worker count.
-const MIN_DEFAULT_VM_EXECUTORS: usize = 8;
+// Default process-wide bound for active guest executors (one per live guest
+// process; waiting parents keep their permits). It must not scale with CPU
+// count: an idle VM holds an executor but uses almost no CPU, and 0.4.9 ran 672
+// VMs per sidecar on a 16-vCPU node. 4,096 gives that density about 6x
+// headroom for nested processes and stays near 40 GiB at ~10 MiB per VM, so
+// host memory, not this limit, caps a sidecar first. Admission warns at 80%
+// and fails with ERR_AGENTOS_VM_EXECUTOR_LIMIT naming
+// `runtime.executor.maxActiveVms`.
+pub const DEFAULT_MAX_ACTIVE_VM_EXECUTORS: usize = 4096;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DriverConfig {
@@ -556,7 +562,7 @@ impl Default for DriverConfig {
             .unwrap_or(1);
         Self {
             worker_threads: available.clamp(1, 4),
-            max_active_vm_executors: available.max(MIN_DEFAULT_VM_EXECUTORS),
+            max_active_vm_executors: DEFAULT_MAX_ACTIVE_VM_EXECUTORS,
             vm_executor_teardown_timeout_ms: DEFAULT_VM_EXECUTOR_TEARDOWN_TIMEOUT_MS,
             blocking_worker_threads: available.clamp(1, 4),
             max_blocking_jobs: DEFAULT_MAX_BLOCKING_JOBS,
