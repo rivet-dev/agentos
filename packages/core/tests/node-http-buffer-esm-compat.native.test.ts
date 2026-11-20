@@ -11,6 +11,25 @@ afterEach(async () => {
 const decode = (bytes: Uint8Array | string | undefined) =>
 	typeof bytes === "string" ? bytes : Buffer.from(bytes ?? []).toString();
 
+async function runGuestModule(source: string): Promise<unknown> {
+	vm = await AgentOs.create({ defaultSoftware: false });
+	await vm.writeFile("/tmp/probe.mjs", source);
+	let stdout = "";
+	let stderr = "";
+	const child = await vm.process.spawn("node", ["/tmp/probe.mjs"], {
+		timeoutMs: 10_000,
+		onStdout: (chunk) => {
+			stdout += decode(chunk);
+		},
+		onStderr: (chunk) => {
+			stderr += decode(chunk);
+		},
+	});
+	const exit = await vm.process.wait(child.pid);
+	expect(exit.exitCode, stderr).toBe(0);
+	return JSON.parse(stdout);
+}
+
 // Next.js and its bundled `compression` middleware use these OutgoingMessage
 // APIs on every response.
 const serverSource = `
@@ -58,4 +77,31 @@ test("a guest ServerResponse appends headers and flushes them through _implicitH
 	expect(response.headers.get("x-late")).toBeNull();
 	expect(await response.text()).toBe("body:ERR_HTTP_HEADERS_SENT");
 	expect(stderr).toBe("");
+});
+
+test("guest Buffer search methods accept Uint8Array needles, including offset views", async () => {
+	const result = await runGuestModule(`
+const haystack = Buffer.from("abcabc");
+const backing = new Uint8Array([0, 98, 99, 0]);
+let invalid = null;
+try { haystack.indexOf({}); } catch (error) { invalid = error.name; }
+console.log(JSON.stringify({
+	indexOf: haystack.indexOf(new Uint8Array([98, 99])),
+	fromOffset: haystack.indexOf(new Uint8Array([98]), 2),
+	view: haystack.indexOf(new Uint8Array(backing.buffer, 1, 2)),
+	lastIndexOf: haystack.lastIndexOf(new Uint8Array([98])),
+	includes: haystack.includes(new Uint8Array([99, 97])),
+	missing: haystack.indexOf(new Uint8Array([122])),
+	invalid,
+}));
+`);
+	expect(result).toEqual({
+		indexOf: 1,
+		fromOffset: 4,
+		view: 1,
+		lastIndexOf: 4,
+		includes: true,
+		missing: -1,
+		invalid: "TypeError",
+	});
 });

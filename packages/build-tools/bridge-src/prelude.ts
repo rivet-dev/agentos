@@ -124,6 +124,25 @@ function installBase64UrlBufferEncoding(BufferCtor) {
 	BufferCtor.__agentOSBase64UrlPatched = true;
 }
 installBase64UrlBufferEncoding(EarlyBufferGlobal);
+// The stdlib `buffer` package only accepts a Buffer needle in indexOf,
+// lastIndexOf and includes; Node accepts any Uint8Array.
+function installUint8ArrayNeedleSearch(BufferCtor) {
+	if (typeof BufferCtor !== "function" || !BufferCtor.prototype) return;
+	for (const method of ["indexOf", "lastIndexOf", "includes"]) {
+		const original = BufferCtor.prototype[method];
+		if (typeof original !== "function") continue;
+		BufferCtor.prototype[method] = {
+			[method](value, byteOffset, encoding) {
+				const needle =
+					value instanceof Uint8Array && !BufferCtor.isBuffer(value)
+						? BufferCtor.from(value.buffer, value.byteOffset, value.byteLength)
+						: value;
+				return original.call(this, needle, byteOffset, encoding);
+			},
+		}[method];
+	}
+}
+installUint8ArrayNeedleSearch(EarlyBufferGlobal);
 // Node accepts every genuine Uint8Array (including foreign-realm views) here.
 // The vendored browser Buffer implementation still accepts only Buffer.
 if (typeof EarlyBufferGlobal === "function") {
