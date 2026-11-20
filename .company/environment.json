@@ -1,0 +1,18 @@
+{
+	"$schema": "https://api.thecompany.company/schemas/v1/environment.json",
+	"scripts": {
+		"install": {
+			"command": "set -euo pipefail\nexport DEBIAN_FRONTEND=noninteractive\nsudo apt-get update -y\nsudo apt-get install -y --no-install-recommends ca-certificates curl gnupg xz-utils binutils sccache build-essential pkg-config libssl-dev make git\ncurl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -\nsudo apt-get install -y --no-install-recommends nodejs\nsudo corepack enable\ncurl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --component rustfmt,clippy\nsudo ln -sf \"$HOME\"/.cargo/bin/* /usr/local/bin/\nrustup toolchain install nightly --component rust-src --target wasm32-wasip1\npnpm install --frozen-lockfile\ncargo fetch --locked",
+			"timeout": 3600
+		},
+		"prepare": {
+			"command": "set -euo pipefail\npnpm install --frozen-lockfile\ncargo fetch --locked",
+			"timeout": 900
+		}
+	},
+	"env": {
+		"COREPACK_ENABLE_DOWNLOAD_PROMPT": "0",
+		"CARGO_NET_GIT_FETCH_WITH_CLI": "true",
+		"AGENTOS_SKIP_NATIVE_META_BUILD": "1"
+	}
+}
