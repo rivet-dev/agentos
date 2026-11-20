@@ -2,7 +2,7 @@
 +++ b/Cargo.toml
 @@ -157,6 +157,9 @@
  [dependencies.brush-parser]
- version = "^0.3.0"
+ version = "^0.4.0"
  
 +[target.'cfg(target_os = "wasi")'.dependencies.wasi-ext]
 +version = "0.1.0"
@@ -23,15 +23,15 @@
  mod exit;
 --- a/src/factory.rs
 +++ b/src/factory.rs
-@@ -47,7 +47,7 @@
-     m.insert(".".into(), builtin::<dot::DotCommand>().special());
+@@ -52,7 +52,7 @@
+     m.insert(".".into(), builtin::<dot::DotCommand, SE>().special());
      #[cfg(feature = "builtin.eval")]
-     m.insert("eval".into(), builtin::<eval::EvalCommand>().special());
+     m.insert("eval".into(), builtin::<eval::EvalCommand, SE>().special());
 -    #[cfg(all(feature = "builtin.exec", unix))]
 +    #[cfg(all(feature = "builtin.exec", any(unix, target_os = "wasi")))]
-     m.insert("exec".into(), builtin::<exec::ExecCommand>().special());
+     m.insert("exec".into(), builtin::<exec::ExecCommand, SE>().special());
      #[cfg(feature = "builtin.exit")]
-     m.insert("exit".into(), builtin::<exit::ExitCommand>().special());
+     m.insert("exit".into(), builtin::<exit::ExitCommand, SE>().special());
 --- a/src/exec.rs
 +++ b/src/exec.rs
 @@ -1,7 +1,16 @@
@@ -53,7 +53,7 @@
  
  /// Exec the provided command.
  #[derive(Parser)]
-@@ -47,16 +56,119 @@
+@@ -64,16 +73,112 @@
              argv0 = Cow::Owned(std::format!("-{argv0}"));
          }
  
@@ -98,14 +98,7 @@
 +                ) {
 +                    continue;
 +                }
-+                let source_fd = match &file {
-+                    brush_core::openfiles::OpenFile::Stdin(file) => file.as_raw_fd(),
-+                    brush_core::openfiles::OpenFile::Stdout(file) => file.as_raw_fd(),
-+                    brush_core::openfiles::OpenFile::Stderr(file) => file.as_raw_fd(),
-+                    brush_core::openfiles::OpenFile::File(file) => file.as_raw_fd(),
-+                    brush_core::openfiles::OpenFile::PipeReader(file) => file.as_raw_fd(),
-+                    brush_core::openfiles::OpenFile::PipeWriter(file) => file.as_raw_fd(),
-+                };
++                let source_fd = file.try_borrow_as_fd()?.as_raw_fd();
 +                let target_fd = u32::try_from(target_fd).map_err(|_| {
 +                    ErrorKind::from(std::io::Error::from_raw_os_error(
 +                        wasi_ext::ERRNO_BADF as i32,
@@ -131,7 +124,7 @@
 +            }
 +            let mut envp = Vec::new();
 +            if !self.empty_environment {
-+                for (key, value) in context.shell.env.iter_exported() {
++                for (key, value) in context.shell.env().iter_exported() {
 +                    if !value.value().is_set() {
 +                        continue;
 +                    }

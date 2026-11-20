@@ -8,15 +8,15 @@
 +            Self::remove_all_handlers(&mut context, signal.parse()?)?;
              Ok(ExecutionResult::success())
          } else if self.args[0] == "-" {
-             // Alternatively, "-" as the first argument indicates that the next
-             // argument is a signal name and we need to remove the handlers for that signal.
-             let signal = self.args[1].as_str();
--            Self::remove_all_handlers(&mut context, signal.parse()?);
-+            Self::remove_all_handlers(&mut context, signal.parse()?)?;
+             // "-" as the first argument indicates that the remaining
+             // arguments are signal names and we need to remove the handlers for them.
+             for signal in &self.args[1..] {
+-                Self::remove_all_handlers(&mut context, signal.parse()?);
++                Self::remove_all_handlers(&mut context, signal.parse()?)?;
+             }
              Ok(ExecutionResult::success())
          } else {
-             let handler = &self.args[0];
-@@ -57,7 +57,7 @@
+@@ -58,7 +58,7 @@
                  signal_types.push(signal.parse()?);
              }
  
@@ -25,36 +25,39 @@
              Ok(ExecutionResult::success())
          }
      }
-@@ -83,20 +83,54 @@
-         Ok(())
-     }
- 
--    fn remove_all_handlers(context: &mut brush_core::ExecutionContext<'_>, signal: TrapSignal) {
-+    fn remove_all_handlers(
-+        context: &mut brush_core::ExecutionContext<'_>,
-+        signal: TrapSignal,
+@@ -91,26 +91,57 @@
+     fn remove_all_handlers(
+         context: &mut brush_core::ExecutionContext<'_, impl brush_core::ShellExtensions>,
+         signal: TrapSignal,
+-    ) {
 +    ) -> Result<(), brush_core::Error> {
 +        if !context.shell.is_subshell() {
 +            set_trap_disposition(signal, None)?;
 +        }
-         context.shell.traps.remove_handlers(signal);
+         context.shell.traps_mut().remove_handlers(signal);
 +        Ok(())
      }
  
      fn register_handler(
-         context: &mut brush_core::ExecutionContext<'_>,
+         context: &mut brush_core::ExecutionContext<'_, impl brush_core::ShellExtensions>,
          signals: Vec<TrapSignal>,
          handler: &str,
 -    ) {
 +    ) -> Result<(), brush_core::Error> {
+         // Our new source context is relative to the current position.
+         // TODO(source-info): Provide the location of the specific token that makes up
+         // `self.args[0]`.
+         let source_info = context.shell.call_stack().current_pos_as_source_info();
+ 
          for signal in signals {
 +            if !context.shell.is_subshell() {
 +                set_trap_disposition(signal, Some(handler))?;
 +            }
-             context
-                 .shell
-                 .traps
-                 .register_handler(signal, handler.to_owned());
+             context.shell.traps_mut().register_handler(
+                 signal,
+                 handler.to_owned(),
+                 source_info.clone(),
+             );
          }
 +        Ok(())
      }

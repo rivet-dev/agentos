@@ -1,33 +1,41 @@
-Pass Brush's non-stdio redirections through the patched WASI Command surface.
-
-Each OpenFile is already a distinct owned clone by the time it reaches the
-command builder, so the child receives the same persistent descriptors that a
-native Linux shell passes across spawn.
-
 --- a/src/openfiles.rs
 +++ b/src/openfiles.rs
-@@ -65,7 +65,7 @@ impl OpenFile {
+@@ -20,12 +20,12 @@
+ 
+     /// Converts the stream into an `OwnedFd`. Returns an error if the operation
+     /// is not supported or if it fails.
+-    #[cfg(unix)]
++    #[cfg(any(unix, target_os = "wasi"))]
+     fn try_clone_to_owned(&self) -> Result<std::os::fd::OwnedFd, error::Error>;
+ 
+     /// Borrows the stream as a `BorrowedFd`. Returns an error if the operation
+     /// is not supported or if it fails.
+-    #[cfg(unix)]
++    #[cfg(any(unix, target_os = "wasi"))]
+     fn try_borrow_as_fd(&self) -> Result<std::os::fd::BorrowedFd<'_>, error::Error>;
+ }
+ 
+@@ -134,7 +134,7 @@
      }
  
      /// Converts the open file into an `OwnedFd`.
 -    #[cfg(unix)]
 +    #[cfg(any(unix, target_os = "wasi"))]
-     pub(crate) fn into_owned_fd(self) -> Result<std::os::fd::OwnedFd, error::Error> {
+     pub(crate) fn try_clone_to_owned(self) -> Result<std::os::fd::OwnedFd, error::Error> {
          use std::os::fd::AsFd as _;
  
-@@ -99,7 +99,7 @@ impl OpenFile {
-     }
- }
+@@ -154,7 +154,7 @@
+     /// # Errors
+     ///
+     /// Returns an error if the operation is not supported for the underlying file type.
+-    #[cfg(unix)]
++    #[cfg(any(unix, target_os = "wasi"))]
+     pub fn try_borrow_as_fd(&self) -> Result<std::os::fd::BorrowedFd<'_>, error::Error> {
+         use std::os::fd::AsFd as _;
  
--#[cfg(unix)]
-+#[cfg(any(unix, target_os = "wasi"))]
- impl std::os::fd::AsFd for OpenFile {
-     fn as_fd(&self) -> std::os::fd::BorrowedFd<'_> {
-         match self {
 --- a/src/sys/stubs/commands.rs
 +++ b/src/sys/stubs/commands.rs
-@@ -67,9 +67,20 @@ impl CommandFdInjectionExt for std::process::Command {
-     fn inject_fds(
+@@ -68,6 +68,17 @@
          &mut self,
          mut open_files: impl Iterator<Item = (ShellFd, openfiles::OpenFile)>,
      ) -> Result<(), error::Error> {
@@ -36,7 +44,7 @@ native Linux shell passes across spawn.
 +            use std::os::wasi::process::CommandExt as _;
 +
 +            for (child_fd, open_file) in open_files {
-+                self.fd_mapping(open_file.into_owned_fd()?, child_fd)?;
++                self.fd_mapping(open_file.try_clone_to_owned()?, child_fd)?;
 +            }
 +            return Ok(());
 +        }
@@ -45,5 +53,20 @@ native Linux shell passes across spawn.
          if open_files.next().is_some() {
              return Err(error::ErrorKind::NotSupportedOnThisPlatform("fd redirections").into());
          }
+--- a/src/ioutils.rs
++++ b/src/ioutils.rs
+@@ -42,12 +42,12 @@
+         Box::new(self.clone())
+     }
  
-         Ok(())
+-    #[cfg(unix)]
++    #[cfg(any(unix, target_os = "wasi"))]
+     fn try_clone_to_owned(&self) -> Result<std::os::fd::OwnedFd, crate::error::Error> {
+         Err(crate::error::ErrorKind::CannotConvertToNativeFd.into())
+     }
+ 
+-    #[cfg(unix)]
++    #[cfg(any(unix, target_os = "wasi"))]
+     fn try_borrow_as_fd(&self) -> Result<std::os::fd::BorrowedFd<'_>, crate::error::Error> {
+         Err(crate::error::ErrorKind::CannotConvertToNativeFd.into())
+     }

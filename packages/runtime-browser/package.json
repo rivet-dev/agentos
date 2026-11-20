@@ -88,7 +88,7 @@
 		"@playwright/test": "^1.54.2",
 		"@types/node": "^22.10.2",
 		"typescript": "^5.7.2",
-		"vitest": "^2.1.8"
+		"vitest": "^4.1.12"
 	},
 	"description": "Browser driver primitives for agentos."
 }
