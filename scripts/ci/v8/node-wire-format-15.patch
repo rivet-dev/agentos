@@ -1,0 +1,117 @@
+diff --git a/include/v8-value-serializer.h b/include/v8-value-serializer.h
+--- a/include/v8-value-serializer.h
++++ b/include/v8-value-serializer.h
+@@ -172,6 +172,14 @@
+   void WriteHeader();
+
+   /**
++   * Starts a standalone Node.js wire-format-15 stream. Use once, in place of
++   * WriteHeader(), before writing values. Rejects native buffer fields which
++   * do not fit uint32_t, immutable ArrayBuffers, and shared ArrayBuffers.
++   * Host object data remains the responsibility of the delegate.
++   */
++  void WriteHeaderForNodeWireFormat15();
++
++  /**
+    * Serializes a JavaScript value into the buffer.
+    */
+   V8_WARN_UNUSED_RESULT Maybe<bool> WriteValue(Local<Context> context,
+diff --git a/src/objects/value-serializer.h b/src/objects/value-serializer.h
+--- a/src/objects/value-serializer.h
++++ b/src/objects/value-serializer.h
+@@ -69,6 +69,7 @@
+    * Writes out a header, which includes the format version.
+    */
+   void WriteHeader();
++  void WriteHeaderForNodeWireFormat15();
+
+   /*
+    * Serializes a V8 object into the buffer.
+@@ -197,6 +198,7 @@
+   bool has_custom_host_objects_ = false;
+   bool treat_array_buffer_views_as_host_objects_ = false;
+   bool out_of_memory_ = false;
++  bool write_node_wire_format_15_ = false;
+   Zone zone_;
+
+   // To avoid extra lookups in the identity map, ID+1 is actually stored in the
+diff --git a/src/api/api.cc b/src/api/api.cc
+--- a/src/api/api.cc
++++ b/src/api/api.cc
+@@ -3735,6 +3735,10 @@
+
+ void ValueSerializer::WriteHeader() { private_->serializer.WriteHeader(); }
+
++void ValueSerializer::WriteHeaderForNodeWireFormat15() {
++  private_->serializer.WriteHeaderForNodeWireFormat15();
++}
++
+ void ValueSerializer::SetTreatArrayBufferViewsAsHostObjects(bool mode) {
+   private_->serializer.SetTreatArrayBufferViewsAsHostObjects(mode);
+ }
+diff --git a/src/objects/value-serializer.cc b/src/objects/value-serializer.cc
+--- a/src/objects/value-serializer.cc
++++ b/src/objects/value-serializer.cc
+@@ -340,7 +340,12 @@
+
+ void ValueSerializer::WriteHeader() {
+   WriteTag(SerializationTag::kVersion);
+-  WriteVarint(kLatestVersion);
++  WriteVarint(write_node_wire_format_15_ ? uint32_t{15} : kLatestVersion);
++}
++
++void ValueSerializer::WriteHeaderForNodeWireFormat15() {
++  write_node_wire_format_15_ = true;
++  WriteHeader();
+ }
+
+ void ValueSerializer::SetTreatArrayBufferViewsAsHostObjects(bool mode) {
+@@ -1009,6 +1014,12 @@
+
+ Maybe<bool> ValueSerializer::WriteJSArrayBuffer(
+     DirectHandle<JSArrayBuffer> array_buffer) {
++  // Node's standalone streams cannot transfer shared memory out-of-band.
++  // Its v15 reader also predates both immutable ArrayBuffer tags.
++  if (write_node_wire_format_15_ &&
++      (array_buffer->is_shared() || array_buffer->is_immutable())) {
++    return ThrowDataCloneError(MessageTemplate::kDataCloneError, array_buffer);
++  }
+   if (array_buffer->is_shared()) {
+     if (!delegate_) {
+       return ThrowDataCloneError(MessageTemplate::kDataCloneError,
+@@ -1076,9 +1087,14 @@
+
+   ResizableFlag is_resizable = array_buffer->is_resizable_by_js();
+   if (is_resizable) {
++    const size_t max_byte_length = array_buffer->max_byte_length();
++    if (write_node_wire_format_15_ &&
++        max_byte_length > std::numeric_limits<uint32_t>::max()) {
++      return ThrowDataCloneError(MessageTemplate::kDataCloneError, array_buffer);
++    }
+     WriteTag(SerializationTag::kResizableArrayBuffer);
+     WriteVarint<size_t>(byte_length);
+-    WriteVarint<size_t>(array_buffer->max_byte_length());
++    WriteVarint<size_t>(max_byte_length);
+     WriteRawBytes(array_buffer->backing_store(), byte_length);
+     return ThrowIfOutOfMemory();
+   }
+@@ -1145,9 +1161,17 @@
+
+     tag = ArrayBufferViewTag::kDataView;
+   }
++  const size_t offset = view->byte_offset();
++  const size_t length = view->byte_length();
++  if (write_node_wire_format_15_ &&
++      (offset > std::numeric_limits<uint32_t>::max() ||
++       length > std::numeric_limits<uint32_t>::max())) {
++    return ThrowDataCloneError(MessageTemplate::kDataCloneError,
++                               direct_handle(view, isolate_));
++  }
+   WriteVarint(static_cast<uint8_t>(tag));
+-  WriteVarint<size_t>(view->byte_offset());
+-  WriteVarint<size_t>(view->byte_length());
++  WriteVarint<size_t>(offset);
++  WriteVarint<size_t>(length);
+   uint32_t flags =
+       JSArrayBufferViewIsLengthTracking::encode(view->is_length_tracking()) |
+       JSArrayBufferViewIsBackedByRab::encode(view->is_backed_by_rab());

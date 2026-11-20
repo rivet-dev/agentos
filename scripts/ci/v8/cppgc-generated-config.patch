@@ -1,0 +1,20 @@
+diff --git a/src/heap/cppgc-internal/gc-info.cc b/src/heap/cppgc-internal/gc-info.cc
+index adbcfafc64..031b37cbd7 100644
+--- a/src/heap/cppgc-internal/gc-info.cc
++++ b/src/heap/cppgc-internal/gc-info.cc
+@@ -1,12 +1,13 @@
+-#if !defined(CPPGC_ENABLE_OBJECT_SECTION_GCINFO)
+ // Copyright 2020 the V8 project authors. All rights reserved.
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
++#include "include/v8config.h"
++
++#if !defined(CPPGC_ENABLE_OBJECT_SECTION_GCINFO)
+ #include "include/cppgc/internal/gc-info.h"
+ 
+ #include "include/cppgc/internal/name-trait.h"
+-#include "include/v8config.h"
+ #include "src/heap/cppgc-internal/gc-info-table.h"
+ 
+ namespace cppgc::internal {
