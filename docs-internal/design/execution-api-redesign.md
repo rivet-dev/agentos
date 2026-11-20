@@ -334,14 +334,19 @@ There is no `vm.executions.*` after this change.
 
 ---
 
-## Transport compliance (must hold)
+## Actor / RivetKit compliance (must hold)
 
 - All handles are **ids**: `contextId` (string), `pid` (number). Descriptors and
   results are JSON-serializable. **No object handles cross the wire** — this
   satisfies core's "reference resources by ID, no object references in the public
   API" invariant.
 - Any `ctx.execute()`-style sugar, if ever added, must be a **thin client-side
-  wrapper** over `contextId`; it can never be the canonical transport surface.
+  wrapper** over `contextId`; it can never be the canonical/actor surface.
+- New method paths (`createContext`, `contexts.*`, `typescript.*`, `*.spawn*`,
+  new `process.*` controls) must be **mirrored as actor actions** with dotted
+  wire names and registered as reserved in `packages/agentos/src/actor.ts`, same
+  treatment `javascript.execute` gets today. Callbacks become `processOutput` /
+  `processExit` events.
 - **TS and Rust clients change in lockstep and stay behaviorally identical.**
 
 ---
@@ -363,6 +368,8 @@ There is no `vm.executions.*` after this change.
   `detached`, rename `executionId → contextId`, add process/context messages).
 - `packages/core/type-tests/nested-api.ts` — update to the new nesting.
 - `packages/core/tests/public-api-exports.test.ts` — keep the entrypoint truthful.
+- `packages/agentos/src/actor.ts` — register the new reserved action names and
+  events; drop the removed ones.
 
 **Rust (sidecar, same-version lockstep):**
 - `crates/native-sidecar/*` and `crates/agentos-sidecar/*` — wire fields,

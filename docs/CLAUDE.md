@@ -56,8 +56,9 @@ the website's icon package.
 ## Code
 
 - **Never inline a fenced TypeScript block.** Real examples live in `examples/`
-  and are embedded with `<CodeSnippet>`, so they are type-checked and cannot rot.
-  A snippet that fails to compile fails the website build.
+  and are embedded with `<CodeSnippet>`. Run the owning example's type check
+  when its code or dependencies change. The website renders the real example
+  source but does not type-check it; a successful site build is not compile proof.
 - Snippet paths are relative to **this repo's root**, so the same path works both
   here and on rivet.dev:
   ```mdx

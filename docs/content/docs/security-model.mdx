@@ -8,11 +8,11 @@ skill: true
 agentOS is in beta and is still undergoing security review.
 </Warning>
 
-agentOS runs untrusted guest code on behalf of a trusted host application. The
-security boundary sits between the trusted kernel and the untrusted guest. Every
-file, process, and network operation a guest makes is a syscall into the
-kernel, which enforces the VM's permissions and limits. Host resources are
-unreachable unless you grant them.
+agentOS runs untrusted guest code on behalf of a trusted client. Each VM has a
+kernel-owned filesystem, process table, socket table, pipes, PTYs, permission
+policy, and language runtimes. Guest JavaScript executes in V8; WASM and Python
+use their managed executors. Guest operations reach the host only through the
+sidecar's policy-enforcing interfaces.
 
 <svg viewBox="0 0 640 398" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="agentOS trust model. Your trusted application holds configuration, credentials, and host function handlers, and controls the agentOS sidecar over stdio and a Unix socket or over HTTP. Inside the sidecar, the trusted kernel enforces permissions and limits and owns the filesystem and socket tables. Below a security boundary, untrusted guest code runs in V8 isolates, WebAssembly, and third-party packages, and reaches the kernel only through syscalls. Host resources are off by default: host directories are reachable only through mounts, the internet and DNS only through network rules, and your backend only through host functions." style="width:100%;max-width:640px;height:auto;display:block;margin:2rem auto;font-family:system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif">
   <defs>
@@ -95,17 +95,18 @@ unreachable unless you grant them.
   <text x="450" y="262" font-size="9.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.12em" fill="#d63e00">OFF BY DEFAULT</text>
 </svg>
 
+
 ## Trust boundary
 
 | Component | Trust | Responsibility |
 | --- | --- | --- |
-| Host application | Trusted, except for submitted guest code and data | Chooses configuration, permissions, software sources, host functions, mounts, and credentials |
+| Client | Trusted, except for submitted guest code and data | Chooses configuration, permissions, software URLs, and credentials |
 | Sidecar, kernel, and VFS | Trusted enforcement point | Applies limits and permissions; owns processes, filesystems, sockets, and mounts |
 | Executor | Untrusted | Runs guest JavaScript, Python, WASM, and third-party code |
 
 The security boundary is **sidecar/runtime to executor**. A guest bypassing an
 applied permission, mount boundary, egress rule, or resource limit is in scope.
-A trusted host deliberately choosing a permissive configuration or unsafe
+A trusted client deliberately choosing a permissive configuration or unsafe
 credential is not a runtime escape.
 
 The sidecar runs in its own process, separate from your application. Guest code
@@ -114,8 +115,7 @@ and its memory never enter your application's process.
 ## What a VM can reach by default
 
 A new VM behaves like a Docker container with no host mounts and no published
-ports. Everything inside the VM works. Apart from a short allowlist of model
-provider APIs, nothing crosses the VM boundary until you grant it.
+ports. Everything inside the VM works. Nothing crosses the VM boundary until you grant it.
 
 | Resource | Default | How to grant access |
 | --- | --- | --- |
@@ -125,7 +125,7 @@ provider APIs, nothing crosses the VM boundary until you grant it.
 | Host files | Unreachable | [Mounts](/agentos/docs/filesystem#mounts), or copy files in |
 | Host environment variables | Unreachable | The `environment` option |
 | Host processes | Unreachable | None. Guest processes never become host processes. |
-| Outbound network and DNS | Only `api.anthropic.com`, `api.openai.com`, `generativelanguage.googleapis.com`, and `openrouter.ai` | [Network permissions](/agentos/docs/permissions#network). `network: "deny"` removes the allowlist too. |
+| Outbound network and DNS | Denied | [Network permissions](/agentos/docs/permissions#network). |
 | Your backend and credentials | Unreachable | [Host functions](/agentos/docs/host-functions) you register, library only. Restrict them with the `hostFunction` scope. |
 
 ## Deny by default
@@ -164,18 +164,18 @@ filesystem descriptors are resolved through a fixed registry, and software
 installation accepts only remote HTTPS `.aospkg` sources. It cannot receive:
 
 - a host filesystem path or host-directory mount;
-- a host function callback, closure, or arbitrary host object;
+- a host-function callback, closure, or arbitrary host object;
 - a custom filesystem or software resolver;
 - an unregistered actor implementation or lifecycle hook.
 
-Use [scoped JWTs](/docs/jwt) to give an untrusted client access to exactly one
-hosted VM.
+Embedded Core runs inside a trusted application process and may explicitly
+configure host functions, host-backed mounts, and local software paths. Those are
+embedded capabilities, not actor capabilities.
 
 ## Isolation guarantees
 
-- Guest processes are kernel-managed and never become host processes. All
-  guest JavaScript, Python, and WebAssembly runs inside V8, never in a host
-  Node.js process.
+- Guest processes are kernel-managed and never become host processes. Guest JavaScript runs inside V8; Python and WebAssembly use
+  their configured executors, never a host Node.js process.
 - Guest Node.js builtins such as `fs`, `net`, and `child_process` are
   implemented on the kernel. Guest code never reaches a real host builtin, and
   denied builtins throw `ERR_ACCESS_DENIED`.
@@ -196,9 +196,9 @@ hosted VM.
 
 ## Operator responsibilities
 
-- Authenticate and authorize users before they can reach a VM.
-- Keep object-store credentials and package-download settings out of
-  configuration that guest code or untrusted users can read.
+- Authenticate and authorize clients before they receive an actor connection.
+- Keep object-store credentials and operator package-download settings outside
+  actor-readable durable configuration.
 - Choose permissions and resource limits for the workload.
 - Treat software URLs and config as trusted control-plane input, while treating
   the downloaded bytes and executed code as hostile.

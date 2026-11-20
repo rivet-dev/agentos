@@ -697,6 +697,31 @@ impl AgentOs {
         self.kernel_read_file(path).await
     }
 
+    /// Read at most `length` bytes without allocating the complete file. Kernel
+    /// pread quotas still apply. Mirrors TS `filesystem.readFileRange`.
+    pub async fn read_file_range(&self, path: &str, offset: u64, length: u64) -> Result<Vec<u8>> {
+        Self::assert_safe_absolute_path(path)?;
+        if offset > 9_007_199_254_740_991 || length > 9_007_199_254_740_991 {
+            return Err(ClientError::InvalidConfig(
+                "readFileRange offset and length must be non-negative safe integers".into(),
+            )
+            .into());
+        }
+        let mut request = Self::fs_request(GuestFilesystemOperation::Pread, path);
+        request.offset = Some(offset);
+        request.len = Some(length);
+        let result = self.guest_fs_call(request).await?;
+        let content = result
+            .content
+            .with_context(|| format!("sidecar returned no file content for {path}"))?;
+        match result.encoding {
+            Some(RootFilesystemEntryEncoding::Base64) => BASE64
+                .decode(content.as_bytes())
+                .context("decoding base64 file content"),
+            Some(RootFilesystemEntryEncoding::Utf8) | None => Ok(content.into_bytes()),
+        }
+    }
+
     /// Write a file. Writable-path guard; does NOT auto-create parents; `Text` -> UTF-8.
     pub async fn write_file(&self, path: &str, content: impl Into<FileContent>) -> Result<()> {
         Self::assert_writable_absolute_path(path)?;
@@ -735,6 +760,14 @@ impl AgentOs {
 
         let request_bytes = self.transport().max_frame_bytes();
         let max_entries = self.transport().max_write_files_entries();
+        if max_entries == 0 {
+            for (index, _) in pending {
+                results[index].success = false;
+                results[index].error =
+                    Some("write-files limits were not negotiated by this connection".into());
+            }
+            return results;
+        }
         let mut pending = pending.into_iter().peekable();
         while pending.peek().is_some() {
             let mut indexes = Vec::new();
@@ -1052,6 +1085,43 @@ impl AgentOs {
     }
 
     async fn reconfigure_dynamic_mounts(&self) -> Result<()> {
+        let ports = self.inner().configured_loopback_exempt_ports.lock().clone();
+        self.reconfigure_with_permissions(None, ports).await
+    }
+
+    /// Replace the trusted owner's complete policy. Omitted scopes use sidecar
+    /// defaults. Already authorized streams retain their capabilities.
+    pub async fn configure_permissions(
+        &self,
+        permissions: crate::config::Permissions,
+        loopback_exempt_ports: Option<Vec<u16>>,
+    ) -> Result<()> {
+        let _configuration=self.inner().vm_configuration_operation.try_lock().map_err(|_|ClientError::InvalidConfig("another VM configuration mutation is already in progress; retry after it completes".into()))?;
+        let ports = loopback_exempt_ports
+            .unwrap_or_else(|| self.inner().configured_loopback_exempt_ports.lock().clone());
+        if ports.len() > 65535 || ports.contains(&0) {
+            return Err(ClientError::InvalidConfig(
+                "loopbackExemptPorts must contain at most65535 ports from1 through65535".into(),
+            )
+            .into());
+        }
+        let config = crate::config::AgentOsConfig {
+            permissions: Some(permissions),
+            ..Default::default()
+        };
+        let policy = crate::agent_os::permissions_policy_config(&config)
+            .map(agentos_sidecar_client::wire::permissions_policy_config_to_wire);
+        self.reconfigure_with_permissions(policy, ports.clone())
+            .await?;
+        *self.inner().configured_loopback_exempt_ports.lock() = ports;
+        Ok(())
+    }
+
+    async fn reconfigure_with_permissions(
+        &self,
+        permissions: Option<wire::PermissionsPolicy>,
+        ports: Vec<u16>,
+    ) -> Result<()> {
         let inner = self.inner();
         let config = &inner.config;
         let mounts = inner.dynamic_mounts.lock().clone();
@@ -1064,12 +1134,12 @@ impl AgentOs {
                     software: Vec::new(),
                     // Dynamic mount reconfiguration must retain the VM policy
                     // resolved at creation, not reconstruct it in the client.
-                    permissions: None,
+                    permissions,
                     module_access_cwd: None,
                     instructions: Vec::new(),
                     projected_modules: Vec::new(),
                     command_permissions: std::collections::HashMap::new(),
-                    loopback_exempt_ports: config.loopback_exempt_ports.clone(),
+                    loopback_exempt_ports: ports,
                     packages: crate::agent_os::build_package_descriptors(config),
                     packages_mount_at: config.packages_mount_at.clone().unwrap_or_default(),
                     bootstrap_commands: Vec::new(),

@@ -1,0 +1,59 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AgentOS Tests <tests@agentos.invalid>
+Date: Thu, 9 Jul 2026 21:24:00 -0700
+Subject: [PATCH 8/8] fstests: resolve only agentos bootstrap tools globally
+
+Per-test tools are checked by their upstream require gates. Resolve only the
+commands needed by check/common startup in the AgentOS VM and leave every other
+program variable unset, avoiding hundreds of guest command lookups.
+
+diff --git a/common/config b/common/config
+index 0383bfa6..d18d5894 100644
+--- a/common/config
++++ b/common/config
+@@ -112,6 +112,35 @@ if [ "$FSTYP" = "agentos" ]; then
+ 	}
+ fi
+ 
++if [ "$FSTYP" = "agentos" ]; then
++	export MKFS_PROG= MOUNT_PROG= UMOUNT_PROG=
++	export FSSTRESS_PROG="$here/ltp/fsstress"
++	export FSX_PROG="$here/ltp/fsx"
++	export PERL_PROG=
++	export BC_PROG="$(builtin type -P bc)"
++	export XFS_IO_PROG="$(builtin type -P xfs_io)"
++	export AWK_PROG="$(builtin type -P awk)"
++	export SED_PROG="$(builtin type -P sed)"
++	export ATTR_PROG="$(builtin type -P attr)"
++	export GETFATTR_PROG="$(builtin type -P getfattr)"
++	export SETFATTR_PROG="$(builtin type -P setfattr)"
++	export CHACL_PROG="$(builtin type -P chacl)"
++	agentos_df()
++	{
++		"$(builtin type -P df)" -T -P "$@"
++	}
++	export DF_PROG=agentos_df
++	export TIMEOUT_PROG="$(builtin type -P timeout)"
++	export PYTHON3_PROG=/bin/python3
++	export PS_ALL_FLAGS=-ef
++	export UDEV_SETTLE_PROG="sleep 1"
++	export UDEVADM_PROG= UDEV_WAIT_PROG=
++	export LOGGER_PROG=:
++	export MODPROBE_REMOVE_PATIENT=
++	export MODPROBE_PATIENT_RM_TIMEOUT_SECONDS=50
++	export MKFS_NFS_PROG=false MKFS_AFS_PROG=false MKFS_CIFS_PROG=false
++	export MKFS_OVERLAY_PROG=false
++else
+ # Handle mkfs.$fstyp which does (or does not) require -f to overwrite
+ set_mkfs_prog_path_with_opts()
+ {
+@@ -352,6 +379,7 @@ export E2FSCK_PROG=$(type -P e2fsck)
+ export TUNE2FS_PROG=$(type -P tune2fs)
+ export FSCK_OVERLAY_PROG=$(type -P fsck.overlay)
+ export MKFS_BCACHEFS_PROG=$(set_mkfs_prog_path_with_opts bcachefs)
++fi
+ 
+ # SELinux adds extra xattrs which can mess up our expected output.
+ # So, mount with a context, and they won't be created.
+-- 
+2.47.3

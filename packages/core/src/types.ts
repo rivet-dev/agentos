@@ -63,6 +63,14 @@ export type {
 	NodeModulesMountConfig,
 } from "./host-dir-mount.js";
 export type {
+	HostFunction,
+	HostFunctionCollection,
+	HostFunctionCollections,
+	HostFunctionExample,
+	HostFunctionSchemas,
+	ResolvedHostFunctions,
+} from "./host-functions.js";
+export type {
 	CodeEvaluationResult,
 	CodeExecutionResult,
 	ContextDescriptor,
@@ -91,14 +99,6 @@ export type {
 	TypeScriptFileExecutionOptions,
 } from "./language-execution.js";
 export type {
-	HostFunction,
-	HostFunctionCollection,
-	HostFunctionCollections,
-	HostFunctionExample,
-	HostFunctionSchemas,
-	ResolvedHostFunctions,
-} from "@rivet-dev/agentos-runtime-core/host-functions";
-export type {
 	FilesystemSnapshotExport,
 	LayerHandle,
 	LayerStore,
@@ -115,11 +115,6 @@ export type {
 	SoftwareRoot,
 	UrlSoftwareRef,
 } from "./packages.js";
-export type {
-	ResolvedRegistrySoftware,
-	ResolveRegistrySoftwareOptions,
-	SoftwareRegistryOptions,
-} from "./software-registry.js";
 export type {
 	ChildProcessPermissions,
 	ConnectTerminalOptions,
@@ -159,3 +154,8 @@ export type {
 	AgentOsSandboxProviderOptions,
 	SandboxMountPluginConfig,
 } from "./sandbox.js";
+export type {
+	ResolvedRegistrySoftware,
+	ResolveRegistrySoftwareOptions,
+	SoftwareRegistryOptions,
+} from "./software-registry.js";

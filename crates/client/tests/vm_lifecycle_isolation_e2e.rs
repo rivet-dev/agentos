@@ -1,6 +1,6 @@
 //! VM lifecycle work must not stall live processes in other VMs.
 //!
-//! Both VMs share one real `agentos-native-sidecar`. One VM has a large root
+//! Both VMs share one real `agentos-sidecar`. One VM has a large root
 //! filesystem, so its create (shadow-root materialization, mount table) and
 //! dispose (final root snapshot, kernel teardown) take a long time. A process
 //! in the other VM echoes stdin the whole time and must keep answering.
@@ -92,7 +92,7 @@ impl Echo {
     async fn start(pool: &str) -> Self {
         let vm = common::new_vm_with_sidecar_pool(pool).await;
         let handle = vm
-            .spawn_process(
+            .spawn(
                 "node",
                 vec![
                     String::from("-e"),
@@ -129,7 +129,7 @@ impl Echo {
         let token = format!("<{}>", self.next_token).into_bytes();
         let started = Instant::now();
         self.vm
-            .write_process_stdin_awaited(self.pid, StdinInput::Bytes(token.clone()))
+            .write_process_stdin(self.pid, StdinInput::Bytes(token.clone()))
             .await
             .expect("write echo stdin");
         self.sent.extend_from_slice(&token);

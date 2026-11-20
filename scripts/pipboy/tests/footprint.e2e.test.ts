@@ -121,16 +121,16 @@ async function packedSide(
 	dependencies: Record<string, string>,
 ): Promise<string> {
 	const dir = mkdtempSync(join(tmpdir(), "pipboy-side-"));
-	const file = "rivet-dev-agentos-core-0.0.0-pipboy.tgz";
+	const file = "rivet-dev-agentos-0.0.0-pipboy.tgz";
 	writeFileSync(
 		join(dir, file),
-		await packFixture("@rivet-dev/agentos-core", "0.0.0-pipboy", dependencies),
+		await packFixture("@rivet-dev/agentos", "0.0.0-pipboy", dependencies),
 	);
 	writeFileSync(
 		join(dir, "manifest.json"),
 		JSON.stringify({
 			version: "0.0.0-pipboy",
-			tarballs: { "@rivet-dev/agentos-core": file },
+			tarballs: { "@rivet-dev/agentos": file },
 		}),
 	);
 	return dir;
@@ -182,22 +182,23 @@ describe("footprint", () => {
 	test("fails when the PR itself pushes a package over its budget, and names the dependency", async () => {
 		await registry.publish("dep", "0.2.1", {}, 1 * MB);
 		await registry.publish("heavy", "1.0.0", {}, 600 * MB);
-		await registry.publish("@rivet-dev/agentos-core", "1.0.0", { dep: "^0.2.1" }, 5 * MB);
+		await registry.publish("@rivet-dev/agentos", "1.0.0", { dep: "^0.2.1" }, 5 * MB);
 
 		const base = await packedSide({ dep: "^0.2.1" });
 		const pr = await packedSide({ dep: "^0.2.1", heavy: "1.0.0" });
 		const result = await footprint(registry, pr, base);
 
 		expect(result.exitCode).not.toBe(0);
+		expect(result.output).toContain("Native binary provenance");
 		expect(result.output).toContain("over its");
 		expect(result.output).toContain("`heavy@1.0.0`");
-		expect(result.output).toContain("`@rivet-dev/agentos-core › heavy`");
+		expect(result.output).toContain("`@rivet-dev/agentos › heavy`");
 	}, 120_000);
 
 	test("reports registry drift without failing an unchanged PR, and traces it to the floating 0.x range", async () => {
 		await registry.publish("dep", "0.2.1", {}, 1 * MB);
 		await registry.publish("heavy", "1.0.0", {}, 600 * MB);
-		await registry.publish("@rivet-dev/agentos-core", "1.0.0", { dep: "^0.2.1" }, 5 * MB);
+		await registry.publish("@rivet-dev/agentos", "1.0.0", { dep: "^0.2.1" }, 5 * MB);
 		// September 2026: a patch inside `^0.2.1` starts pulling in a huge package.
 		await registry.publish("dep", "0.2.20", { heavy: "1.0.0" }, 1 * MB);
 
@@ -206,7 +207,7 @@ describe("footprint", () => {
 
 		expect(result.exitCode).toBe(0);
 		expect(result.output).toContain("Registry drift");
-		expect(result.output).toContain("`@rivet-dev/agentos-core › dep › heavy`");
+		expect(result.output).toContain("`@rivet-dev/agentos › dep › heavy`");
 		expect(result.output).toContain("`dep@^0.2.1`");
 		expect(result.output).toContain("`0.2.20`");
 	}, 120_000);

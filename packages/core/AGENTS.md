@@ -1,15 +1,15 @@
 # agentOS Core package
 
-`@rivet-dev/agentos-core` is the embedded TypeScript API for VM lifecycle,
+`@rivet-dev/agentos` is the embedded TypeScript API for VM lifecycle,
 filesystem, processes, terminals, language execution, networking, software,
-cron commands, permissions, limits, and trusted host bindings. Agents, durable
+cron commands, permissions, limits, and trusted host functions. Agents, durable
 agent sessions, and ACP are not part of Core.
 
 ## Security boundary
 
 All untrusted guest code executes inside the kernel. Guest filesystem,
 networking, and process operations must go through the sidecar/runtime; never
-route them to host APIs. Trusted embedded callers may configure host bindings
+route them to host APIs. Trusted embedded callers may configure host functions
 and host-backed mounts. Hosted actor policy is stricter and is implemented
 outside this package.
 
@@ -24,10 +24,10 @@ outside this package.
 - Filesystem and process methods should remain thin mirrors of the Rust Core
   contract.
 - Cron expression parsing and command scheduling remain in TypeScript Core.
-  Managed services may provide their own durable scheduler.
-- Host bindings convert Zod to JSON Schema, validate calls and results, and run
+  The hosted Rust actor uses RivetKit scheduling instead.
+- Host functions convert Zod to JSON Schema, validate calls and results, and run
   trusted local callbacks. Schema conversion is fail-closed.
-- Binding invocations require explicit binding permissions in addition to any
+- Host function invocations require explicit host-function permissions in addition to any
   filesystem or child-process permissions used by the guest command.
 - The native framed transport retains connection and ownership-session scopes.
   Those are transport lifetimes, not the removed public agent-session API.
@@ -57,7 +57,7 @@ outside this package.
 - Permission-focused tests must pass an explicit policy.
 - Long-lived event waits must be abortable and should not use multi-hour timeout
   sentinels.
-- Keep host-binding coverage after any transport, permission, or lifecycle
+- Keep host-function coverage after any transport, permission, or lifecycle
   change.
 - Registry command binaries are generated artifacts; use the repository
   toolchain recipes when a test needs them.

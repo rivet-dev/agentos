@@ -1,9 +1,13 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/index.js";
-import { EVALUATED_IN, runNode, waitForSnapshotBoot } from "./helpers/module-snapshot.js";
+import {
+	EVALUATED_IN,
+	runNode,
+	waitForSnapshotBoot,
+} from "./helpers/module-snapshot.js";
 
 // A guest `node <entry>` process for a snapshot entrypoint boots with the
 // entry's imports evaluated once, in a V8 startup snapshot. These tests drive
@@ -70,14 +74,22 @@ describe("module snapshots", () => {
 				{
 					path: "/opt/app",
 					readOnly: true,
-					plugin: { id: "host_dir", config: { hostPath: hostDir, readOnly: true } },
+					plugin: {
+						id: "host_dir",
+						config: { hostPath: hostDir, readOnly: true },
+					},
 				},
 			],
 		});
 
 	beforeAll(async () => {
 		hostDir = mkdtempSync(join(tmpdir(), "agentos-module-snapshot-"));
-		writeFileSync(join(hostDir, "state.mjs"), "export const state = { count: 0 };\n");
+		// The guest UID needs search permission on the mounted directory.
+		chmodSync(hostDir, 0o755);
+		writeFileSync(
+			join(hostDir, "state.mjs"),
+			"export const state = { count: 0 };\n",
+		);
 		writeFileSync(join(hostDir, "lib.mjs"), libSource("v1"));
 		writeFileSync(
 			join(hostDir, "entry.mjs"),
@@ -96,7 +108,10 @@ describe("module snapshots", () => {
 	test("a snapshot-booted process sees its own argv, env, cwd, and randomness", async () => {
 		await waitForSnapshot(first);
 
-		const one = await runEntry(first, ["a", "b"], { env: { FOO: "one" }, cwd: "/tmp" });
+		const one = await runEntry(first, ["a", "b"], {
+			env: { FOO: "one" },
+			cwd: "/tmp",
+		});
 		const two = await runEntry(first, ["c"], { env: { FOO: "two" }, cwd: "/" });
 
 		expect(one).toMatchObject({
@@ -136,9 +151,15 @@ describe("module snapshots", () => {
 		// Both VMs boot from the one snapshot, yet each process starts from its
 		// own copy of the module state.
 		for (const report of reports) {
-			expect(report).toMatchObject({ count: 1, version: "v1", evaluatedIn: "snapshot" });
+			expect(report).toMatchObject({
+				count: 1,
+				version: "v1",
+				evaluatedIn: "snapshot",
+			});
 		}
-		expect(new Set(reports.map((report) => report.random)).size).toBe(reports.length);
+		expect(new Set(reports.map((report) => report.random)).size).toBe(
+			reports.length,
+		);
 	}, 90_000);
 
 	test("changing an imported module on the host takes effect on the next process", async () => {

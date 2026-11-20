@@ -1,5 +1,9 @@
 import { exposeCustomGlobal } from "../global-exposure.js";
-import { getAsyncContextFrame, kAsyncContextFrame, runInAsyncContextFrame } from "./async-context.js";
+import {
+	getAsyncContextFrame,
+	kAsyncContextFrame,
+	runInAsyncContextFrame,
+} from "./async-context.js";
 import { Response } from "./fetch.js";
 import { _fdGetPath, _fs, decodeBridgeJson } from "./fs.js";
 import {
@@ -2331,7 +2335,7 @@ function pollRetainedHttp2Handle(kind, id, isActive, poll, onError) {
 				hitDrainLimit = false;
 				let i = 0;
 				for (; i < 64 && isActive(); i++) {
-					let event;
+					let event: ReturnType<typeof poll>;
 					try {
 						event = poll();
 					} catch (error) {

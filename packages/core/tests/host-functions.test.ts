@@ -1,9 +1,9 @@
+import { describe, expect, test } from "vitest";
+import { z } from "zod";
 import {
 	HostFunctionSchemaConversionError,
 	zodToJsonSchema,
-} from "@rivet-dev/agentos-runtime-core/host-functions-zod";
-import { describe, expect, test } from "vitest";
-import { z } from "zod";
+} from "../src/host-functions-zod.js";
 import {
 	hostFunctionCommandName,
 	hostFunctionDescription,

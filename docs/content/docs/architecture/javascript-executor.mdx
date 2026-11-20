@@ -39,9 +39,17 @@ Guest V8 execution is deliberately different:
   the only non-V8 platform thread that enters that isolate.
 - Synchronous guest JavaScript or a synchronous bridge wait can block that
   executor, but cannot occupy a Tokio worker or another VM's executor.
-- Operators can cap active executor threads separately from socket and task
-  counts with `runtime.executor.maxActiveVms`. Executor admission is uncapped
-  by default and is not derived from the sidecar's reported CPU count.
+- Executor admission is bounded by default to 4,096 live guest executors per
+  sidecar process, independent of CPU count, because idle VMs hold an executor
+  but use almost no CPU. A warning is logged at 80% of the limit, and a start
+  over it fails with `ERR_AGENTOS_VM_EXECUTOR_LIMIT`. Waiting guest parents retain
+  their slots while their children run. Operators can set an explicit positive
+  limit with `runtime.executor.maxActiveVms`, separately from socket and task
+  counts.
+- The admission limit does not preallocate guest threads or isolates. Trusted
+  worker pools and the warm-isolate pool keep their independent bounds. A
+  higher limit permits more concurrent guest memory use; it does not reserve
+  that memory up front.
 
 There is therefore no "Tokio task running a Node.js process." Trusted I/O runs
 as Tokio tasks; untrusted JavaScript runs on a V8 executor thread.
@@ -51,22 +59,15 @@ as Tokio tasks; untrusted JavaScript runs on a V8 executor thread.
 Every guest Node process gets its own isolate. Three mechanisms keep that
 cheap without sharing guest state:
 
-- **Warm executors.** The sidecar keeps up to four executor threads with an
-  isolate and a context already restored from the bridge snapshot. A new
+- **Warm executors.** The sidecar normally keeps two executor threads with an
+  isolate and a context already restored from the bridge snapshot.
+  `AGENTOS_V8_WARM_ISOLATES` selects the requested count, with at most four
+  parked workers process-wide. A new
   process claims one and runs in that never-used context.
-- **Module code cache.** When an isolate first compiles an ES module from a
-  read-only host mount or a packed package, before any guest code has run in
-  that isolate, the sidecar compiles every function of the module and keeps
-  the bytecode. The next compile of byte-identical source, in any VM, consumes
-  those bytes instead of parsing again. An isolate in which guest code has run
-  only consumes entries and never records one, because V8 does not check the
-  bytecode inside an entry. Modules a guest can write, inline code, and
-  anything read through the guest filesystem are never cached, so one VM
-  cannot detect from compile timing what another VM loaded. Entries are keyed
-  by the SHA-256 of the exact source text and hold only V8-serialized bytecode
-  (no heap objects). The cache is process-wide, in memory only, and bounded to
-  64 MiB; the oldest entries are evicted first. Modules under 2 KiB are not
-  cached.
+- **Module loading and permissions.** Ordinary module loads use the live
+  kernel-authorized filesystem path. They do not share a process-wide module
+  bytecode cache. Opt-in module snapshots can share compiled module graphs
+  after the sidecar checks the launching process's access to every source.
 - **Persisted bridge snapshot.** Building the bridge snapshot takes a helper
   process ~400 ms. The sidecar stores each built snapshot blob under
   `$XDG_CACHE_HOME/agentos/v8-snapshots` (or `~/.cache/...`), so later sidecar
@@ -85,18 +86,18 @@ cheap without sharing guest state:
   stub bridge functions, and attaches the evaluated module records to the
   snapshot context. A restored context hands them to the module loader, so an
   import of one of their paths returns the evaluated instance. Before each
-  launch the sidecar checks the graph against the VM: the entry source, each
-  module file (by host inode, size, mtime, and ctime, then by SHA-256 when they
-  changed), and each import edge. A mismatch starts a rediscovery in the
-  background and the process loads normally. Discovery parses the graph in
-  the sidecar from heap copies of the sources, so only built snapshots hold
-  shared sources. While the graph evaluates, time and random sources throw,
+  launch the sidecar captures a bounded graph through the launching process's
+  kernel-authorized resolver and read operations. Sources must remain on
+  read-only mounts, and the graph is checked by exact source digests and import
+  edges. Ineligible graphs load normally through the live filesystem. Only
+  immutable captured sources reach the snapshot helper; the helper never reads
+  host files directly. While the graph evaluates, time and random sources throw,
   so no per-process value is frozen into the snapshot. The helper runs under
   a wall-clock deadline, a CPU-time cap, and a 1 GiB heap cap, so guest
   top-level code cannot hold a blocking worker or the snapshot build lock.
-- **Deferred teardown.** An exited process's isolate is destroyed on a single
-  reaper thread, so the exit reaches the client without waiting for heap
-  teardown. The executor keeps its admission slot until teardown finishes.
+- **Bounded teardown.** Executor retirement retains its admission slot until
+  teardown finishes. A timed-out termination keeps the execution generation
+  quarantined instead of returning an unconfirmed isolate to service.
 
 The per-process `process` setup (argv, env, identity) runs before any guest
 module evaluates, so imported modules see the real `process.argv` and
@@ -319,18 +320,18 @@ preserve Node behavior across that security boundary.
 
 The main pieces are:
 
-- `crates/runtime/src/readiness.rs`: revisioned `ReadyState`, wake epochs, and
+- `crates/driver-tokio/src/readiness.rs`: revisioned `ReadyState`, wake epochs, and
   interest gating.
-- `crates/v8-runtime/src/session.rs`: the executor's bounded selector,
+- `crates/executor-v8-runtime/src/session.rs`: the executor's bounded selector,
   readiness batching, dispatch, acknowledgement, and executor admission.
-- `crates/v8-runtime/src/stream.rs`: the Rust-to-V8
+- `crates/executor-v8-runtime/src/stream.rs`: the Rust-to-V8
   `_agentOSReadyDispatch()` call.
 - `packages/build-tools/bridge-src/builtins/readiness.ts`: the guest capability
   target map.
 - `packages/build-tools/bridge-src/builtins/net.ts`: `NetSocket`, the
   readiness-driven read pump, `Duplex` backpressure, liveness, and ordered
   writes.
-- `crates/native-sidecar/src/execution/network/`: sidecar-owned network tasks,
+- `crates/vm/src/execution/network/`: sidecar-owned network tasks,
   bounded completion state, and transport operations.
 
 ## See also
@@ -343,3 +344,12 @@ The main pieces are:
   resource classes, queue bounds, warnings, and typed overload failures.
 - [Security Model](/agentos/docs/security-model): why the sidecar owns capabilities and
   the executor is untrusted.
+
+## Embedded API
+
+Configure module snapshots on the VM that runs the application:
+
+<CodeSnippet file="examples/embedded/snapshot-entrypoints.ts" title="Module snapshots" />
+
+Read more in the
+[embedded API quickstart](/agentos/docs/quickstart-embedded).

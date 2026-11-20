@@ -5,7 +5,7 @@ import type { AgentOs } from "../../src/index.js";
 // of `process.env` keeps the value it saw then. Every test process sets
 // `LIVE_ENV`, so a module that exports `evaluatedIn` tells whether the process
 // evaluated it or booted with it already evaluated.
-export const LIVE_ENV = "AGENTOS_TEST_LIVE";
+export const LIVE_ENV = "MODULE_SNAPSHOT_TEST_LIVE";
 export const EVALUATED_IN = `export const evaluatedIn = process.env.${LIVE_ENV} === undefined ? "snapshot" : "live";\n`;
 
 export interface EvaluatedIn {
@@ -32,7 +32,10 @@ export async function runNode<T>(
 		},
 	});
 	const exit = await vm.process.wait(pid);
-	expect({ exitCode: exit.exitCode, stderr }).toEqual({ exitCode: 0, stderr: "" });
+	expect({ exitCode: exit.exitCode, stderr }).toEqual({
+		exitCode: 0,
+		stderr: "",
+	});
 	return JSON.parse(stdout) as T;
 }
 

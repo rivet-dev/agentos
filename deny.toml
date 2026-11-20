@@ -1,6 +1,15 @@
 # cargo-deny configuration. The Pip-Boy hygiene check runs it on every PR
 # that changes Rust and fails only on findings the PR adds.
 
+# These are maintenance notices, not known vulnerability exceptions. Both
+# dependencies are owned by the optional hosted actor's pinned RivetKit stack.
+# Keep the exceptions scoped to these IDs; new vulnerability advisories still fail.
+[advisories]
+ignore = [
+    { id = "RUSTSEC-2026-0555", reason = "Unmaintained chrono-tz is required by RivetKit cron scheduling and has no patched release. Remove when RivetKit migrates its timezone dependency." },
+    { id = "RUSTSEC-2021-0127", reason = "Unmaintained serde_cbor is required by the RivetKit client wire codec and has no patched release. Remove when RivetKit ships a wire-compatible codec migration." },
+]
+
 [licenses]
 # The same license policy as rivet-dev/rivet.
 allow = [
@@ -26,6 +35,12 @@ unused-allowed-license = "allow"
 [[licenses.exceptions]]
 name = "ring"
 allow = ["OpenSSL"]
+
+# The WASI ABI fixture generator uses witx 0.9.1, which pins this wast release.
+[[licenses.exceptions]]
+name = "wast"
+version = "=35.0.2"
+allow = ["Apache-2.0 WITH LLVM-exception"]
 
 # ring 0.16 ships its license only as a file cargo-deny can't detect.
 [[licenses.clarify]]

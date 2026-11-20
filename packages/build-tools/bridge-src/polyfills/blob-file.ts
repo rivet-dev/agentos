@@ -1,8 +1,8 @@
 import { Blob as UpstreamBlob } from "fetch-blob";
 import { File as UpstreamFile } from "fetch-blob/file.js";
+import { guestBridgeLimits } from "../guest-bridge-limits.js";
 
 const MAX_BLOB_PARTS = 1024;
-const MAX_BLOB_BYTES = 64 * 1024 * 1024;
 
 function blobPartSize(part) {
 	if (part instanceof UpstreamBlob) return part.size;
@@ -16,6 +16,7 @@ function normalizeBlobParts(parts) {
 	if (parts == null || typeof parts[Symbol.iterator] !== "function") {
 		throw new TypeError("Blob parts must be an iterable");
 	}
+	const maxBytes = guestBridgeLimits().maxBlobBytes;
 	const normalized = [];
 	let totalBytes = 0;
 	for (const part of parts) {
@@ -27,14 +28,19 @@ function normalizeBlobParts(parts) {
 			throw error;
 		}
 		totalBytes += blobPartSize(part);
-		if (!Number.isSafeInteger(totalBytes) || totalBytes > MAX_BLOB_BYTES) {
+		if (!Number.isSafeInteger(totalBytes) || totalBytes > maxBytes) {
 			const error = new RangeError(
-				`Blob byte limit ${MAX_BLOB_BYTES} exceeded; this runtime limit cannot be raised by guest code`,
+				`Blob byte limit ${maxBytes} exceeded by ${totalBytes}; raise limits.jsRuntime.maxBlobBytes when creating the VM`,
 			);
 			error.code = "ERR_BLOB_SIZE_LIMIT";
 			throw error;
 		}
 		normalized.push(part);
+	}
+	if (totalBytes >= maxBytes * 0.8) {
+		console.warn(
+			`limits.jsRuntime.maxBlobBytes approaching limit: observed=${totalBytes} maximum=${maxBytes}; raise this limit when creating the VM`,
+		);
 	}
 	return normalized;
 }
@@ -69,11 +75,4 @@ class File extends UpstreamFile {
 	}
 }
 
-export {
-	Blob,
-	File,
-	MAX_BLOB_BYTES,
-	MAX_BLOB_PARTS,
-	normalizeBlobOptions,
-	normalizeBlobParts,
-};
+export { Blob, File, MAX_BLOB_PARTS, normalizeBlobOptions, normalizeBlobParts };

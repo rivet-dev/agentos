@@ -439,17 +439,20 @@ char *if_indextoname(unsigned int index, char *name) {
 		errno = EFAULT;
 		return NULL;
 	}
-	if (index != 1) {
+	if (index == 1) memcpy(name, "lo", 3);
+	else if (index == 2) memcpy(name, "eth0", 5);
+	else {
 		errno = ENXIO;
 		return NULL;
 	}
-	memcpy(name, "lo", 3);
 	return name;
 }
 
 unsigned int if_nametoindex(const char *name) {
 	if (name != NULL && strcmp(name, "lo") == 0)
 		return 1;
+	if (name != NULL && strcmp(name, "eth0") == 0)
+		return 2;
 	errno = ENODEV;
 	return 0;
 }
@@ -458,13 +461,17 @@ struct if_nameindex *if_nameindex(void) {
 	struct if_nameindex *indexes;
 	char *name;
 
-	indexes = calloc(2, sizeof(*indexes) + 3);
+	/* Fixed guest identities; these names never enumerate host interfaces. */
+	indexes = calloc(1, 3 * sizeof(*indexes) + 8);
 	if (indexes == NULL)
 		return NULL;
-	name = (char *)(indexes + 2);
+	name = (char *)(indexes + 3);
 	memcpy(name, "lo", 3);
+	memcpy(name + 3, "eth0", 5);
 	indexes[0].if_index = 1;
 	indexes[0].if_name = name;
+	indexes[1].if_index = 2;
+	indexes[1].if_name = name + 3;
 	return indexes;
 }
 

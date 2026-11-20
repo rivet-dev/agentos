@@ -1,4 +1,4 @@
-import { AgentOs } from "@rivet-dev/agentos-core";
+import { AgentOs } from "@rivet-dev/agentos";
 
 // The default bundle (sh, coreutils, and the standard CLI tools) is installed
 // first, then the packages listed here. Registry packages resolve from this

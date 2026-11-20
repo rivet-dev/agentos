@@ -124,7 +124,13 @@ describe("AgentOs _processes leak (H5)", () => {
 				language: "javascript";
 				startedAtMs: number;
 			};
-			exit?: { pid: number; outcome: "signalled"; signal: "SIGKILL" };
+			exit?: {
+				pid: number;
+				outcome: "signalled";
+				exitCode: number;
+				exitSignal: number;
+				signal: "SIGKILL";
+			};
 			outputHandlers: Set<(event: unknown) => void>;
 			exitHandlers: Set<(event: unknown) => void>;
 		};
@@ -156,6 +162,8 @@ describe("AgentOs _processes leak (H5)", () => {
 		expect(observedExit).toEqual({
 			pid: 303,
 			outcome: "signalled",
+			exitCode: 137,
+			exitSignal: 9,
 			signal: "SIGKILL",
 		});
 		expect(internals._languageProcesses.size).toBe(0);

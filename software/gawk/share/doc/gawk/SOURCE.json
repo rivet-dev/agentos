@@ -1,0 +1,20 @@
+{
+	"name": "GNU awk",
+	"version": "5.4.1",
+	"license": "GPL-3.0-or-later",
+	"homepage": "https://www.gnu.org/software/gawk/",
+	"sourceArchive": "https://ftp.gnu.org/gnu/gawk/gawk-5.4.1.tar.xz",
+	"sha256": "07f6f7342b7febe4313fc2c2542ad93d64fe20ad8717200109f105a826f5fd37",
+	"signature": "https://ftp.gnu.org/gnu/gawk/gawk-5.4.1.tar.xz.sig",
+	"signingKeyFingerprint": "D1967C63788713177D861ED7DF597815937EC0D2",
+	"sourceModifications": ["toolchain/c/patches/gawk/0001-posix-spawn.patch"],
+	"integrationSource": "https://github.com/rivet-dev/agentos",
+	"buildScript": "toolchain/c/scripts/build-gawk-upstream.sh",
+	"buildOptions": [
+		"--disable-nls",
+		"--disable-mpfr",
+		"--disable-pma",
+		"--disable-extensions"
+	],
+	"licenseSha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+}

@@ -1,4 +1,4 @@
-//! Filesystem e2e against a real `agentos-native-sidecar`. Filesystem ops go straight through the kernel
+//! Filesystem e2e against a real `agentos-sidecar`. Filesystem ops go straight through the kernel
 //! VFS (no V8/WASM), so this is a clean, client-focused surface.
 //!
 //! One VM, many assertions (quality over quantity): text + binary round-trips, batch (never-rejects),
@@ -147,9 +147,10 @@ async fn filesystem_surface_round_trips() {
 /// entry is written, results keep input order, and a batch larger than one frame still writes all.
 #[tokio::test]
 async fn write_files_isolates_failed_entries_and_spans_frames() {
-    if !common::require_sidecar("write_files_isolates_failed_entries_and_spans_frames") {
-        return;
-    }
+    assert!(
+        common::sidecar_available(),
+        "write-files proof requires an explicitly qualified real sidecar"
+    );
     let os = common::new_vm_with_sidecar_pool("fs-write-files").await;
     let entry = |path: &str, content: FileContent| BatchWriteEntry {
         path: path.to_string(),
@@ -206,6 +207,25 @@ async fn write_files_isolates_failed_entries_and_spans_frames() {
         os.read_file("/tmp/wf/last.txt").await.expect("read"),
         b"last"
     );
+
+    let many: Vec<_> = (0..20)
+        .map(|index| {
+            entry(
+                &format!("/tmp/entry-cap/{index}"),
+                FileContent::Text(format!("entry-{index}")),
+            )
+        })
+        .collect();
+    let many_results = os.write_files(many).await;
+    assert_eq!(many_results.len(), 20);
+    for (index, result) in many_results.iter().enumerate() {
+        assert_eq!(result.path, format!("/tmp/entry-cap/{index}"));
+        assert!(result.success, "{result:?}");
+        assert_eq!(
+            os.read_file(&result.path).await.expect("read split entry"),
+            format!("entry-{index}").as_bytes()
+        );
+    }
 
     // Five 4 MiB files: together they exceed one 16 MiB frame.
     let big: Vec<Vec<u8>> = (0..5u32)

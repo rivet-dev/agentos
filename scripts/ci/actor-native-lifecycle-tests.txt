@@ -1,0 +1,6 @@
+runtime::tests::cancelled_created_vm_publication_keeps_pending_owner: test
+runtime::tests::cancelled_creation_waiter_leaves_vm_owned_until_stop_confirms_shutdown: test
+runtime::tests::cancelled_shutdown_preserves_actual_state_owner_for_retry: test
+runtime::tests::dropping_unregistered_actor_controller_reaps_completed_vm: test
+
+4 tests, 0 benchmarks

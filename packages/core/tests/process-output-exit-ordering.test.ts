@@ -1,54 +1,79 @@
-import { afterEach, expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
-
-const vms: AgentOs[] = [];
-
-afterEach(async () => {
-	await Promise.all(vms.splice(0).map((vm) => vm.dispose()));
-});
+import type { SidecarProcess } from "../src/sidecar/process-client.js";
 
 test("every byte written before exit reaches onStdout when the host learns the exit early", async () => {
 	const vm = await AgentOs.create();
-	vms.push(vm);
-	const chunk = 16 * 1024;
-	const count = 2048;
-	let received = 0;
-	const { pid } = await vm.process.spawn(
-		"node",
-		[
-			"-e",
-			`const b = Buffer.alloc(${chunk}, 120); for (let i = 0; i < ${count}; i++) process.stdout.write(b);`,
-		],
-		{
-			output: { retainEvents: true },
-			// A slow consumer: the host takes a while to drain queued output.
-			onStdout: (bytes) => {
-				received += bytes.length;
-				const until = performance.now() + 0.3;
-				while (performance.now() < until) {}
+	const { _sidecarClient: client, _sidecarVm } = vm as unknown as {
+		_sidecarClient: SidecarProcess;
+		_sidecarVm: { vmId: string };
+	};
+	const ready = Promise.withResolvers<void>();
+	const releaseOutput = Promise.withResolvers<void>();
+	const expected = Buffer.alloc(32 * 1024, 120);
+	const chunks: Uint8Array[] = [];
+	let holdOutput = false;
+	let readyOutput = "";
+	const nextEvent = client.waitForEvent.bind(client);
+	const waitForEvent = vi
+		.spyOn(client, "waitForEvent")
+		.mockImplementation(async (...args) => {
+			const event = await nextEvent(...args);
+			if (
+				holdOutput &&
+				event.ownership.scope === "vm" &&
+				event.ownership.vm_id === _sidecarVm.vmId &&
+				event.payload.type === "process_output"
+			) {
+				await releaseOutput.promise;
+			}
+			return event;
+		});
+	try {
+		const { pid } = await vm.process.spawn(
+			"node",
+			[
+				"-e",
+				`process.stdin.once('end', () => process.stdout.write(Buffer.alloc(${expected.length}, 120)));
+process.stdin.resume();
+process.stdout.write('ready');`,
+			],
+			{
+				streamStdin: true,
+				output: { retainEvents: true },
+				onStdout: (bytes) => {
+					if (holdOutput) {
+						chunks.push(bytes);
+					} else {
+						readyOutput += Buffer.from(bytes).toString();
+						if (readyOutput === "ready") ready.resolve();
+					}
+				},
 			},
-		},
-	);
-	// The host stays busy while the guest writes everything and exits, so the
-	// output waits in the event lane. Replay answers on the response lane, so
-	// it reports the exit while that output is still queued. Poll until it does
-	// instead of guessing how long a slow machine needs.
-	const busy = new Int32Array(new SharedArrayBuffer(4));
-	let exitCode: number | null = null;
-	const exitDeadline = Date.now() + 30_000;
-	while (exitCode === null && Date.now() < exitDeadline) {
-		Atomics.wait(busy, 0, 0, 100);
-		exitCode = (await vm.process.readOutput(pid, { maxEvents: 1 })).exitCode;
-	}
-	expect(exitCode).toBe(0);
-	// The case under test: the exit is known before all output is delivered.
-	expect(received).toBeLessThan(chunk * count);
-	expect(await vm.process.wait(pid)).toMatchObject({ outcome: "exited", exitCode: 0 });
+		);
+		await ready.promise;
+		// Pause only the application event pump. The response lane must still
+		// report the exit even though the output callback has not run.
+		holdOutput = true;
+		await vm.process.closeStdin(pid);
+		await vi.waitFor(
+			async () => {
+				const page = await vm.process.readOutput(pid, { maxEvents: 1 });
+				expect(page.exitCode).toBe(0);
+			},
+			{ timeout: 5_000 },
+		);
+		expect(chunks).toHaveLength(0);
+		expect(await vm.process.wait(pid)).toMatchObject({
+			outcome: "exited",
+			exitCode: 0,
+		});
 
-	// Like a pipe reader on Linux, the listener gets every byte, none dropped.
-	const deadline = Date.now() + 20_000;
-	while (received < chunk * count && Date.now() < deadline) {
-		await new Promise((resolve) => setTimeout(resolve, 50));
+		releaseOutput.resolve();
+		await vi.waitFor(() => expect(Buffer.concat(chunks)).toEqual(expected));
+	} finally {
+		releaseOutput.resolve();
+		waitForEvent.mockRestore();
+		await vm.dispose();
 	}
-	expect(received).toBe(chunk * count);
-}, 90_000);
+}, 20_000);

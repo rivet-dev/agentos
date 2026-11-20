@@ -1,15 +1,17 @@
-import type { ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
 import type { AgentOs } from "../../src/index.js";
+import type { StdioSidecarProcess } from "../../src/process.js";
 
 // Reaches into internals only to find the sidecar process; the behavior under
 // test is the memory the OS reports for it.
 export function sidecarPid(vm: AgentOs): number {
 	const child = (
 		vm as unknown as {
-			_sidecarClient: { protocolClient: { child: ChildProcess } };
+			_sidecarClient: {
+				protocolClient: { sidecarProcess: StdioSidecarProcess };
+			};
 		}
-	)._sidecarClient.protocolClient.child;
+	)._sidecarClient.protocolClient.sidecarProcess.child;
 	if (child.pid === undefined) throw new Error("sidecar process has no pid");
 	return child.pid;
 }

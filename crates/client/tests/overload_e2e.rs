@@ -1,4 +1,4 @@
-//! Overload e2e against a real `agentos-native-sidecar`: a request spike far beyond the sidecar's
+//! Overload e2e against a real `agentos-sidecar`: a request spike far beyond the sidecar's
 //! in-flight limit waits in the sidecar request queue, fails only with typed retryable errors, and
 //! never stops another VM on the same sidecar from being disposed.
 

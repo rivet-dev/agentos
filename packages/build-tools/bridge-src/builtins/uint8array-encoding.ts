@@ -1,3 +1,7 @@
+import { createBridgeSyncFacade } from "./fs.js";
+
+const nativeEncoding = createBridgeSyncFacade("uint8array.encode");
+
 // `Uint8Array` hex and base64 methods from tc39/proposal-arraybuffer-base64.
 // V8 130 has no native version, so the guest gets this one. A later V8 with
 // native methods keeps its own: `defineMissingMethods` skips them.
@@ -145,6 +149,8 @@ function flatten(string) {
 }
 
 function encodeHex(bytes, length) {
+	if (length >= 65536)
+		return nativeEncoding.applySyncPromise(void 0, [bytes, 0, false, length]);
 	const storage = new ArrayBuffer(
 		length * 2 < ENCODE_CHUNK_CHARS ? length * 2 : ENCODE_CHUNK_CHARS,
 	);
@@ -164,6 +170,13 @@ function encodeHex(bytes, length) {
 }
 
 function encodeBase64(bytes, length, codes, omitPadding) {
+	if (length >= 65536)
+		return nativeEncoding.applySyncPromise(void 0, [
+			bytes,
+			codes === BASE64URL_CODES ? 2 : 1,
+			omitPadding,
+			length,
+		]);
 	const fullChunksEnd = length - (length % 3);
 	const paddedLength = ((length + 2 - ((length + 2) % 3)) / 3) * 4;
 	const storage = new ArrayBuffer(

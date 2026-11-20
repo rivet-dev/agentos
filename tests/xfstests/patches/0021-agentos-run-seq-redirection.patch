@@ -1,0 +1,46 @@
+From: AgentOS xfstests port
+Subject: [PATCH] fstests: redirect AgentOS test output inside _run_seq
+
+Brush stalls before entering a shell function when the caller attaches the
+xfstests result redirection to that function invocation.  Pass the output path
+into _run_seq on AgentOS and attach it to the external test process instead.
+This preserves the captured output and comparison behavior without changing
+the test command or assertions.
+
+diff --git a/check b/check
+index a493a9f..7999a85 100755
+--- a/check
++++ b/check
+@@ -714,7 +714,8 @@ function _adjust_oom_score() {
+ # systemd doesn't automatically remove transient scopes that fail to terminate
+ # when systemd tells them to terminate (e.g. programs stuck in D state when
+ # systemd sends SIGKILL), so we use reset-failed to tear down the scope.
+ _run_seq() {
++	local output_path="$1"
+ 	local seq_path="./$seq"
+ 	if [ "$FSTYP" = "agentos" ]; then
+ 		seq_path="$seq"
+@@ -737,6 +738,10 @@ _run_seq() {
+ 		systemctl stop "${unit}" &> /dev/null
+ 		return "${res}"
+ 	else
++		if [ "$FSTYP" = "agentos" ] && [ -n "$output_path" ]; then
++			"${cmd[@]}" >"$output_path" 2>&1
++			return $?
++		fi
+ 		"${cmd[@]}"
+ 	fi
+ }
+@@ -974,7 +979,11 @@ function run_section()
+ 		(echo 1 > $DEBUGFS_MNT/clear_warn_once) > /dev/null 2>&1
+ 
+ 		test_start_time="$(date +"%F %T")"
+-		if [ "$DUMP_OUTPUT" = true ]; then
++		if [ "$FSTYP" = "agentos" ]; then
++			_run_seq "$tmp.out"
++			sts=$?
++			[ "$DUMP_OUTPUT" = true ] && cat "$tmp.out"
++		elif [ "$DUMP_OUTPUT" = true ]; then
+ 			_run_seq 2>&1 | tee $tmp.out
+ 			# Because $? would get tee's return code
+ 			sts=${PIPESTATUS[0]}

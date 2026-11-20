@@ -27,7 +27,8 @@ const ROOT_ENTRIES = [
 // `path:mode:uid:gid` for directories whose mode or owner is not 0755 root.
 const STANDARD_DIRECTORY_MODES = [
 	"/tmp:1777:0:0",
-	"/root:700:0:0",
+	// Compatibility node_modules projection permits traversal, not listing.
+	"/root:711:0:0",
 	"/home/agentos:2755:1000:1000",
 	"/workspace:755:1000:1000",
 	"/sys:555:0:0",
@@ -59,7 +60,10 @@ async function runGuest(vm: AgentOs, code: string): Promise<string> {
 		},
 	});
 	const exit = await vm.process.wait(pid);
-	expect({ exitCode: exit.exitCode, stderr }).toEqual({ exitCode: 0, stderr: "" });
+	expect({ exitCode: exit.exitCode, stderr }).toEqual({
+		exitCode: 0,
+		stderr: "",
+	});
 	return stdout;
 }
 
@@ -68,7 +72,9 @@ async function hostModes(vm: AgentOs): Promise<string[]> {
 		STANDARD_DIRECTORY_MODES.map(async (entry) => {
 			const path = entry.split(":")[0];
 			const stat = await vm.stat(path);
-			return [path, (stat.mode & 0o7777).toString(8), stat.uid, stat.gid].join(":");
+			return [path, (stat.mode & 0o7777).toString(8), stat.uid, stat.gid].join(
+				":",
+			);
 		}),
 	);
 }
@@ -76,7 +82,10 @@ async function hostModes(vm: AgentOs): Promise<string[]> {
 describe("root filesystem layout", () => {
 	const vms: AgentOs[] = [];
 	const create = async (options?: Parameters<typeof AgentOs.create>[0]) => {
-		const vm = await AgentOs.create({ permissions: { network: "deny" }, ...options });
+		const vm = await AgentOs.create({
+			permissions: { network: "deny" },
+			...options,
+		});
 		vms.push(vm);
 		return vm;
 	};
@@ -100,7 +109,9 @@ describe("root filesystem layout", () => {
 	}, 60_000);
 
 	test("a VM without the default base layer still gets every standard directory", async () => {
-		const vm = await create({ rootFilesystem: { disableDefaultBaseLayer: true } });
+		const vm = await create({
+			rootFilesystem: { disableDefaultBaseLayer: true },
+		});
 
 		const root = [...(await vm.readdir("/"))].sort();
 		expect(root).toEqual(expect.arrayContaining(ROOT_ENTRIES));
@@ -118,16 +129,22 @@ describe("root filesystem layout", () => {
 		expect(homeEntries).toContain("agentos");
 		expect(await vm.readdir("/home")).toEqual(homeEntries);
 		const varEntries = [...(await vm.readdir("/var"))].sort();
-		expect(varEntries).toEqual(expect.arrayContaining(["cache", "lib", "log", "tmp"]));
+		expect(varEntries).toEqual(
+			expect.arrayContaining(["cache", "lib", "log", "tmp"]),
+		);
 		expect([...(await vm.readdir("/var"))].sort()).toEqual(varEntries);
 
 		await vm.remove(lowerFile);
 		expect(await vm.exists(lowerFile)).toBe(false);
-		expect(await vm.readdir("/etc")).not.toContain(lowerFile.slice("/etc/".length));
+		expect(await vm.readdir("/etc")).not.toContain(
+			lowerFile.slice("/etc/".length),
+		);
 		await expect(vm.readFile(lowerFile)).rejects.toThrow("ENOENT");
 
 		await vm.writeFile(lowerFile, "recreated");
-		expect(new TextDecoder().decode(await vm.readFile(lowerFile))).toBe("recreated");
+		expect(new TextDecoder().decode(await vm.readFile(lowerFile))).toBe(
+			"recreated",
+		);
 		await vm.remove(lowerFile);
 		expect(await vm.exists(lowerFile)).toBe(false);
 

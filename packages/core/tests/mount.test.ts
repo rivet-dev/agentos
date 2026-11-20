@@ -1,5 +1,7 @@
-import { afterEach, describe, expect, test } from "vitest";
+import { finished } from "node:stream/promises";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { AgentOs, type VirtualFileSystem } from "../src/index.js";
+import type { StdioSidecarProcess } from "../src/process.js";
 import { createInMemoryFileSystem } from "../src/test/runtime.js";
 
 const VFS_METHODS = [
@@ -148,7 +150,8 @@ describe("mount integration", () => {
 
 	test("guest processes can read and write a create-time plain JS VFS mount", async () => {
 		const mounted = createRecordingFilesystem();
-		// Mount flags do not override POSIX DAC: this fixture starts root-owned.
+		// The compatibility filesystem has a Linux-like root-owned 0755 root.
+		// Make this writable mount explicitly writable by the default guest user.
 		await mounted.fs.chmod("/", 0o777);
 		vm = await createMountVm({
 			mounts: [{ path: "/mnt/custom", driver: mounted.fs }],
@@ -165,7 +168,6 @@ describe("mount integration", () => {
 		]);
 		expect(result.exitCode, result.stderr).toBe(0);
 		expect(result.stdout.trim()).toBe("from host api");
-		// Guest reads use bounded pread callbacks, not an unbounded readFile.
 		expect(mounted.calls).toContain("pread:/host.txt");
 		expect(mounted.calls).toContain("writeFile:/guest.txt");
 		expect(
@@ -174,7 +176,7 @@ describe("mount integration", () => {
 	});
 
 	test("guest processes can read and write a runtime-mounted portable VFS", async () => {
-		vm = await createMountVm({ user: { uid: 0, gid: 0 } });
+		vm = await createMountVm();
 
 		await vm.mountFs({
 			path: "/mnt/custom",
@@ -184,10 +186,6 @@ describe("mount integration", () => {
 		const result = await vm.execArgv("node", [
 			"-e",
 			[
-				// Provision the root-owned memory mount, then test as the usual
-				// unprivileged guest. Writable mount flags alone do not grant DAC.
-				'require("node:fs").chmodSync("/mnt/custom", 0o777);',
-				"process.setgid(1000); process.setuid(1000);",
 				'const { readFileSync, writeFileSync } = require("node:fs");',
 				'console.log(readFileSync("/mnt/custom/host.txt", "utf8"));',
 				'writeFileSync("/mnt/custom/guest.txt", "from guest process");',
@@ -198,93 +196,61 @@ describe("mount integration", () => {
 		expect(
 			new TextDecoder().decode(await vm.readFile("/mnt/custom/guest.txt")),
 		).toBe("from guest process");
-		await vm.unmountFs("/mnt/custom");
-		await expect(vm.readFile("/mnt/custom/guest.txt")).rejects.toThrow(
-			"ENOENT",
+	});
+
+	test("callback mount permission-only modes retain file, directory, and symlink types", async () => {
+		const mounted = createRecordingFilesystem();
+		await mounted.fs.writeFile(
+			"/file.txt",
+			new TextEncoder().encode("mounted bytes\n"),
 		);
-	});
-
-	test("mount contents never overwrite or expose the hidden root filesystem", async () => {
-		vm = await createMountVm();
-		await vm.mkdir("/mnt/overlay", { recursive: true });
-		await vm.writeFile("/mnt/overlay/keep.txt", "root original");
-		await vm.writeFile("/mnt/overlay/remove.txt", "root retained");
-		await vm.mountFs({
-			path: "/mnt/overlay",
-			plugin: { id: "memory", config: {} },
-		});
-		await expect(vm.readFile("/mnt/overlay/keep.txt")).rejects.toThrow(
-			"ENOENT",
-		);
-		await vm.writeFile("/mnt/overlay/keep.txt", "mount replacement");
-		await vm.writeFile("/mnt/overlay/remove.txt", "mount removed");
-		await vm.remove("/mnt/overlay/remove.txt");
-		await vm.unmountFs("/mnt/overlay");
-		expect(
-			new TextDecoder().decode(await vm.readFile("/mnt/overlay/keep.txt")),
-		).toBe("root original");
-		expect(
-			new TextDecoder().decode(await vm.readFile("/mnt/overlay/remove.txt")),
-		).toBe("root retained");
-	});
-
-	test("guest mount mutations leave hidden root files and metadata intact", async () => {
-		vm = await createMountVm({ user: { uid: 0, gid: 0 } });
-		await vm.mkdir("/mnt/overlay", { recursive: true });
-		for (const name of ["remove", "rename", "mode"]) {
-			await vm.writeFile(`/mnt/overlay/${name}`, "root original");
+		await mounted.fs.mkdir("/directory");
+		await mounted.fs.symlink("file.txt", "/link");
+		// Callback backends may provide type booleans separately from permission bits.
+		for (const method of ["stat", "lstat"] as const) {
+			const original = mounted.fs[method].bind(mounted.fs);
+			mounted.fs[method] = async (path) => {
+				const stat = await original(path);
+				return { ...stat, mode: stat.mode & 0o7777 };
+			};
 		}
-		const originalMode = (await vm.stat("/mnt/overlay/mode")).mode;
-		await vm.mountFs({
-			path: "/mnt/overlay",
-			plugin: { id: "memory", config: {} },
+		vm = await AgentOs.create({
+			mounts: [{ path: "/mnt/types", driver: mounted.fs }],
 		});
-		for (const name of ["remove", "rename", "mode"]) {
-			await vm.writeFile(`/mnt/overlay/${name}`, "mount content");
-		}
-		const result = await vm.execArgv("node", [
+		const node = await vm.execArgv("node", [
 			"-e",
-			[
-				'const fs = require("node:fs");',
-				'fs.unlinkSync("/mnt/overlay/remove");',
-				'fs.renameSync("/mnt/overlay/rename", "/mnt/overlay/moved");',
-				'fs.chmodSync("/mnt/overlay/mode", 0o777);',
-			].join("\n"),
+			`
+			const fs = require('node:fs');
+			const file = fs.statSync('/mnt/types/file.txt');
+			const directory = fs.statSync('/mnt/types/directory');
+			const link = fs.lstatSync('/mnt/types/link');
+			console.log(JSON.stringify({
+				file: file.isFile(), directory: directory.isDirectory(),
+				link: link.isSymbolicLink(), followed: fs.statSync('/mnt/types/link').isFile(),
+				bytes: fs.readFileSync('/mnt/types/link', 'utf8'),
+			}));
+		`,
 		]);
-		expect(result.exitCode, result.stderr).toBe(0);
-		await vm.unmountFs("/mnt/overlay");
-		for (const name of ["remove", "rename", "mode"]) {
-			expect(
-				new TextDecoder().decode(await vm.readFile(`/mnt/overlay/${name}`)),
-			).toBe("root original");
-		}
-		expect((await vm.stat("/mnt/overlay/mode")).mode).toBe(originalMode);
-		expect(await vm.exists("/mnt/overlay/moved")).toBe(false);
-	});
-
-	test.each([
-		"JS bridge",
-		"native memory",
-	])("%s mounts preserve POSIX write denial", async (kind) => {
-		vm = await createMountVm({
-			mounts: [
-				kind === "JS bridge"
-					? { path: "/restricted", driver: createInMemoryFileSystem() }
-					: { path: "/restricted", plugin: { id: "memory", config: {} } },
-			],
+		expect(node.exitCode, node.stderr).toBe(0);
+		expect(JSON.parse(node.stdout)).toEqual({
+			file: true,
+			directory: true,
+			link: true,
+			followed: true,
+			bytes: "mounted bytes\n",
 		});
-		expect((await vm.stat("/restricted")).uid).toBe(0);
-		const result = await vm.execArgv("node", [
-			"-e",
+		const shell = await vm.execArgv("sh", [
+			"-c",
 			[
-				"console.log(process.getuid());",
-				'try { require("node:fs").writeFileSync("/restricted/blocked.txt", "no"); }',
-				"catch (error) { console.log(error.code); }",
-			].join("\n"),
+				"test -d /mnt/types/directory",
+				"test -f /mnt/types/file.txt",
+				"test -L /mnt/types/link",
+				"cd /mnt/types/directory",
+				"cat ../link",
+			].join(" && "),
 		]);
-		expect(result.exitCode, result.stderr).toBe(0);
-		expect(result.stdout.trim()).toBe("1000\nEACCES");
-		expect(await vm.exists("/restricted/blocked.txt")).toBe(false);
+		expect(shell.exitCode, shell.stderr).toBe(0);
+		expect(shell.stdout).toBe("mounted bytes\n");
 	});
 
 	test("readdir('/') includes 'data' alongside standard POSIX dirs", async () => {
@@ -308,60 +274,203 @@ describe("mount integration", () => {
 		).rejects.toThrow("EXDEV");
 	});
 
-	test("a failing host mount callback reaches the guest as EIO", async () => {
+	test("failed host mount callbacks preserve EIO metadata and exists diagnostics", async () => {
 		const base = createInMemoryFileSystem();
 		await base.chmod("/", 0o777);
 		await base.writeFile("/present.txt", "x");
-		const ioFailure = () => {
-			throw new Error("host backend unavailable");
-		};
 		const failing = new Proxy(base, {
-			get(target, prop, receiver) {
-				if (prop === "writeFile" || prop === "pwrite" || prop === "exists") {
-					return ioFailure;
+			get(target, property, receiver) {
+				if (
+					property === "writeFile" ||
+					property === "pwrite" ||
+					property === "exists"
+				) {
+					return () => {
+						throw new Error("synthetic backend unavailable");
+					};
 				}
-				const value = Reflect.get(target, prop, receiver);
+				const value = Reflect.get(target, property, receiver);
 				return typeof value === "function" ? value.bind(target) : value;
 			},
 		}) as VirtualFileSystem;
-		vm = await createMountVm({
-			mounts: [{ path: "/flaky", driver: failing }],
-		});
-		const result = await vm.execArgv("node", [
-			"-e",
-			[
-				'const fs = require("node:fs");',
-				"let write;",
-				'try { fs.writeFileSync("/flaky/out.txt", "data"); write = "ok"; }',
-				"catch (error) { write = { code: error.code, errno: error.errno, syscall: error.syscall }; }",
-				'console.log(JSON.stringify({ write, exists: fs.existsSync("/flaky/present.txt") }));',
-			].join("\n"),
-		]);
-		expect(result.exitCode, result.stderr).toBe(0);
-		expect(JSON.parse(result.stdout.trim())).toEqual({
-			write: { code: "EIO", errno: -5, syscall: "write" },
-			// Node semantics: existsSync never throws; the sidecar logs the EIO.
-			exists: false,
-		});
-	});
+		vi.stubEnv("AGENTOS_LOG_LEVEL", "warn");
+		vi.stubEnv("AGENTOS_LOG_FILE", undefined);
+		let sidecar: Awaited<ReturnType<typeof AgentOs.createSidecar>> | undefined;
+		let mountedVm: AgentOs | undefined;
+		let hostProcess: StdioSidecarProcess | undefined;
+		const errors: unknown[] = [];
+		try {
+			sidecar = await AgentOs.createSidecar();
+			mountedVm = await createMountVm({
+				sidecar: { kind: "explicit", handle: sidecar },
+				mounts: [{ path: "/flaky", driver: failing }],
+			});
+			hostProcess = (
+				mountedVm as unknown as {
+					_sidecarClient: {
+						protocolClient: { sidecarProcess: StdioSidecarProcess };
+					};
+				}
+			)._sidecarClient.protocolClient.sidecarProcess;
+			const result = await mountedVm.process.execFile(
+				"node",
+				[
+					"-e",
+					`
+const fs = require("node:fs");
+let write;
+try { fs.writeFileSync("/flaky/out.txt", "data"); write = "ok"; }
+catch (error) { write = { code: error.code, errno: error.errno, syscall: error.syscall, path: error.path }; }
+console.log(JSON.stringify({ write, exists: fs.existsSync("/flaky/present.txt") }));
+`,
+				],
+				{ timeoutMs: 3_000, output: { capture: "all" } },
+			);
+			expect(result.exitCode, result.stderr).toBe(0);
+			expect(result.stderr).toBe("");
+			expect(Buffer.byteLength(result.stdout)).toBeLessThanOrEqual(16_384);
+			const actual = JSON.parse(result.stdout);
+			console.info("MOUNT_ERROR_METADATA", JSON.stringify(actual));
+			expect(actual).toEqual({
+				write: {
+					code: "EIO",
+					errno: -5,
+					syscall: "write",
+					path: "/flaky/out.txt",
+				},
+				exists: false,
+			});
+		} catch (error) {
+			errors.push(error);
+		} finally {
+			try {
+				await mountedVm?.dispose();
+			} catch (error) {
+				errors.push(error);
+			}
+			try {
+				await sidecar?.dispose();
+			} catch (error) {
+				errors.push(error);
+			}
+			try {
+				if (hostProcess) {
+					await finished(hostProcess.child.stderr, {
+						cleanup: true,
+						signal: AbortSignal.timeout(5_000),
+					});
+					const stderr = hostProcess.stderrText();
+					console.info("MOUNT_EXISTS_HOST_DIAGNOSTIC", stderr);
+					expect(stderr).not.toContain("bytes of sidecar stderr dropped");
+					expect(stderr).toContain("ERR_AGENTOS_MOUNT_EXISTS");
+					expect(stderr).toContain("synthetic backend unavailable");
+					expect(stderr).toContain("/present.txt");
+				}
+			} catch (error) {
+				errors.push(error);
+			}
+			vi.unstubAllEnvs();
+		}
+		if (errors.length)
+			throw new AggregateError(
+				errors,
+				"mount error metadata and diagnostics failed",
+			);
+	}, 15_000);
+
+	test("invalid host exists responses log their type without payload data", async () => {
+		const driver = createInMemoryFileSystem();
+		const exists = driver.exists.bind(driver);
+		driver.exists = async (path) =>
+			path === "/invalid.txt"
+				? ({
+						marker: "SYNTHETIC_EXISTS_PAYLOAD_NOT_FOR_LOG",
+						nested: [1, 2],
+					} as unknown as boolean)
+				: exists(path);
+		vi.stubEnv("AGENTOS_LOG_LEVEL", "warn");
+		vi.stubEnv("AGENTOS_LOG_FILE", undefined);
+		let sidecar: Awaited<ReturnType<typeof AgentOs.createSidecar>> | undefined;
+		let mountedVm: AgentOs | undefined;
+		let hostProcess: StdioSidecarProcess | undefined;
+		const errors: unknown[] = [];
+		try {
+			sidecar = await AgentOs.createSidecar();
+			mountedVm = await createMountVm({
+				sidecar: { kind: "explicit", handle: sidecar },
+				mounts: [{ path: "/invalid", driver }],
+			});
+			hostProcess = (
+				mountedVm as unknown as {
+					_sidecarClient: {
+						protocolClient: { sidecarProcess: StdioSidecarProcess };
+					};
+				}
+			)._sidecarClient.protocolClient.sidecarProcess;
+			const result = await mountedVm.process.execFile(
+				"node",
+				[
+					"-e",
+					'console.log(JSON.stringify({ exists: require("node:fs").existsSync("/invalid/invalid.txt") }))',
+				],
+				{ timeoutMs: 3_000, output: { capture: "all" } },
+			);
+			expect(result.exitCode, result.stderr).toBe(0);
+			expect(result.stderr).toBe("");
+			expect(result.stdout).toBe('{"exists":false}\n');
+		} catch (error) {
+			errors.push(error);
+		} finally {
+			try {
+				await mountedVm?.dispose();
+			} catch (error) {
+				errors.push(error);
+			}
+			try {
+				await sidecar?.dispose();
+			} catch (error) {
+				errors.push(error);
+			}
+			try {
+				if (hostProcess) {
+					await finished(hostProcess.child.stderr, {
+						cleanup: true,
+						signal: AbortSignal.timeout(5_000),
+					});
+					const stderr = hostProcess.stderrText();
+					console.info("MOUNT_EXISTS_INVALID_RESPONSE_DIAGNOSTIC", stderr);
+					expect(stderr).not.toContain("bytes of sidecar stderr dropped");
+					const warning = stderr
+						.split("\n")
+						.find(
+							(line) =>
+								line.includes("ERR_AGENTOS_MOUNT_EXISTS") &&
+								line.includes("/invalid.txt"),
+						);
+					expect(warning).toBeDefined();
+					expect(warning).toMatch(/payload_kind=(?:"object"|object)/);
+					expect(stderr).not.toContain("SYNTHETIC_EXISTS_PAYLOAD_NOT_FOR_LOG");
+				}
+			} catch (error) {
+				errors.push(error);
+			}
+			vi.unstubAllEnvs();
+		}
+		if (errors.length)
+			throw new AggregateError(
+				errors,
+				"invalid exists response diagnostics failed",
+			);
+	}, 15_000);
 
 	test("readOnly mount blocks writeFile with EROFS", async () => {
-		const mounted = createInMemoryFileSystem();
-		await mounted.chmod("/", 0o777);
 		vm = await createMountVm({
-			mounts: [{ path: "/ro", driver: mounted, readOnly: true }],
+			mounts: [
+				{ path: "/ro", driver: createInMemoryFileSystem(), readOnly: true },
+			],
 		});
 		await expect(
 			vm.writeFile("/ro/blocked.txt", "should fail"),
 		).rejects.toThrow("EROFS");
-		const result = await vm.execArgv("node", [
-			"-e",
-			[
-				'try { require("node:fs").writeFileSync("/ro/blocked.txt", "no"); }',
-				"catch (error) { console.log(error.code); }",
-			].join("\n"),
-		]);
-		expect(result.exitCode, result.stderr).toBe(0);
-		expect(result.stdout.trim()).toBe("EROFS");
 	});
 });

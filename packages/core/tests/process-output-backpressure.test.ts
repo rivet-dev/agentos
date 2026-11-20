@@ -12,7 +12,9 @@ const LINES = 20_000;
 // Writes 0..lines-1, one line per write, as fast as the guest can.
 const floodGuest = (lines: number) =>
 	`for (let i = 0; i < ${lines}; i++) process.stdout.write(i + "\\n");`;
-const expectedFlood = Array.from({ length: LINES }, (_, i) => `${i}\n`).join("");
+const expectedFlood = Array.from({ length: LINES }, (_, i) => `${i}\n`).join(
+	"",
+);
 
 async function startFlood(lines = LINES) {
 	const vm = await AgentOs.create();
@@ -74,7 +76,8 @@ test("guests flooding stdout cannot stall or disconnect another VM", async () =>
 	const floods = await Promise.all(Array.from({ length: 8 }, startFlood));
 
 	const latencies: number[] = [];
-	for (let i = 0; i < 20; i++) latencies.push(await echo.roundTrip(`ping-${i}`));
+	for (let i = 0; i < 20; i++)
+		latencies.push(await echo.roundTrip(`ping-${i}`));
 	await echo.vm.process.closeStdin(echo.pid);
 	const echoExit = echo.vm.process.wait(echo.pid);
 
@@ -138,7 +141,9 @@ test("disposing a flooding VM resumes another VM's paused output", async () => {
 
 test("one write larger than the VM's event budget drains in chunks", async () => {
 	const budget = 16 * 1024;
-	const vm = await AgentOs.create({ limits: { process: { pendingEventBytes: budget } } });
+	const vm = await AgentOs.create({
+		limits: { process: { pendingEventBytes: budget } },
+	});
 	vms.push(vm);
 	const size = 16 * budget;
 	let received = Buffer.alloc(0);
@@ -153,6 +158,9 @@ test("one write larger than the VM's event budget drains in chunks", async () =>
 	);
 	// Like a large write to a full pipe on Linux: the writer is not failed;
 	// its data arrives whole and in order.
-	expect(await vm.process.wait(pid)).toMatchObject({ outcome: "exited", exitCode: 0 });
+	expect(await vm.process.wait(pid)).toMatchObject({
+		outcome: "exited",
+		exitCode: 0,
+	});
 	expect(received.equals(Buffer.alloc(size, "abcdefgh"))).toBe(true);
 }, 60_000);

@@ -29,7 +29,21 @@ describe("issue-1872: guest processes can use writable host_dir mounts", () => {
 	});
 
 	test("shell redirects, cat, and tar work into and out of the mount", async () => {
+		const directory = fs.statSync(hostDir);
+		const existing = fs.statSync(path.join(hostDir, "existing.txt"));
+		const { uid, gid } = directory;
+		const ownership = {
+			directory: { uid, gid, mode: (directory.mode & 0o7777).toString(8) },
+			existing: {
+				uid: existing.uid,
+				gid: existing.gid,
+				mode: (existing.mode & 0o7777).toString(8),
+			},
+			configuredGuest: { uid, gid },
+		};
 		const guest = await AgentOs.create({
+			// Preserve the private host modes and use the actual mount owner's identity.
+			user: { uid, gid },
 			mounts: [
 				{
 					path: "/mnt",
@@ -39,17 +53,20 @@ describe("issue-1872: guest processes can use writable host_dir mounts", () => {
 		});
 		vm = guest;
 
+		const workDir = "/tmp/host-dir-probe";
 		const run = async (command: string) => {
 			const result = await guest.exec(command, {
-				cwd: "/workspace",
+				cwd: "/tmp",
 				timeoutMs: 60_000,
 			});
 			expect(
 				result.exitCode,
-				`${command}\nstdout=${result.stdout}\nstderr=${result.stderr}`,
+				`${command}\nownership=${JSON.stringify(ownership)}\nstdout=${result.stdout}\nstderr=${result.stderr}`,
 			).toBe(0);
 			return result;
 		};
+
+		await run(`mkdir -p ${workDir}`);
 
 		// Read an existing host file from the guest.
 		expect((await run("cat /mnt/existing.txt")).stdout).toBe(
@@ -69,16 +86,16 @@ describe("issue-1872: guest processes can use writable host_dir mounts", () => {
 		// List the mount root, then tar reading FROM the mount into the guest
 		// filesystem.
 		expect((await run("ls /mnt")).stdout).toContain("new.txt");
-		await run("tar -cf /workspace/probe.tar -C /mnt .");
-		expect((await run("tar -tf /workspace/probe.tar")).stdout).toContain(
+		await run(`tar -cf ${workDir}/probe.tar -C /mnt .`);
+		expect((await run(`tar -tf ${workDir}/probe.tar`)).stdout).toContain(
 			"new.txt",
 		);
 
 		// tar writing INTO the mount (the agentos-apps pack step).
 		await run(
-			"sh -c 'mkdir -p /workspace/app && echo app > /workspace/app/index.js'",
+			`sh -c 'mkdir -p ${workDir}/app && echo app > ${workDir}/app/index.js'`,
 		);
-		await run("tar -cf /mnt/out.tar -C /workspace/app .");
+		await run(`tar -cf /mnt/out.tar -C ${workDir}/app .`);
 		expect(fs.statSync(path.join(hostDir, "out.tar")).size).toBeGreaterThan(0);
 	}, 120_000);
 });

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
@@ -37,6 +37,8 @@ function writeGraph(name: string, source: string): void {
 
 beforeAll(async () => {
 	hostDir = mkdtempSync(join(tmpdir(), "agentos-module-snapshot-sources-"));
+	// The guest UID needs search permission on the mounted directory.
+	chmodSync(hostDir, 0o755);
 	const names: string[] = [];
 	for (let index = 0; index < LARGE_GRAPHS; index += 1) {
 		// Distinct content per graph, so no two share a source.
@@ -58,7 +60,10 @@ beforeAll(async () => {
 			{
 				path: "/opt/app",
 				readOnly: true,
-				plugin: { id: "host_dir", config: { hostPath: hostDir, readOnly: true } },
+				plugin: {
+					id: "host_dir",
+					config: { hostPath: hostDir, readOnly: true },
+				},
 			},
 		],
 	});

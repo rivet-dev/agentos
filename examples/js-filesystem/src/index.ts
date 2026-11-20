@@ -1,7 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 // docs:start virtual-filesystem
-import { AgentOs, createHostDirBackend } from "@rivet-dev/agentos-core";
+import { AgentOs, createHostDirBackend } from "@rivet-dev/agentos";
 
 // Boot a fully virtualized VM. The guest filesystem lives entirely inside the
 // kernel - writes never touch the host disk.

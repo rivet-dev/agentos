@@ -129,10 +129,13 @@ describe("bounded Core output replay", () => {
 			{},
 		]) as AgentOs;
 		const internals = vm as unknown as {
-			_pendingShellExitPromises: Set<Promise<number>>;
+			_pendingShellExitPromises: Map<string, Promise<number>>;
 		};
 		for (let index = 0; index < 1024; index++)
-			internals._pendingShellExitPromises.add(new Promise(() => {}));
+			internals._pendingShellExitPromises.set(
+				`pending-${index}`,
+				new Promise(() => {}),
+			);
 		expect(() => vm.terminal.open()).toThrow("terminal limit 1024");
 		internals._pendingShellExitPromises.clear();
 		const shell = vm.terminal.open();

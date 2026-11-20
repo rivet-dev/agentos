@@ -1,4 +1,4 @@
-//! Port-based virtual networking (`fetch`).
+//! Port-based VM-local HTTP and TCP networking.
 //!
 //! Ported from `packages/core/src/agent-os.ts` `fetch`. Dispatches to a guest server on `port`
 //! inside the kernel, never the host. The request URL host is discarded (only `pathname`+`search`
@@ -82,6 +82,92 @@ pub struct HttpStreamChunk {
     pub done: bool,
 }
 
+/// Trusted connection to a TCP listener inside one VM. Host sockets are never used.
+/// Await operations in each direction and explicitly close the connection when finished.
+pub struct GuestConnection<'vm> {
+    vm: &'vm AgentOs,
+    port: u16,
+    stream_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GuestConnectionChunk {
+    pub body: Vec<u8>,
+    pub done: bool,
+}
+
+impl GuestConnection<'_> {
+    /// Read up to `max_bytes`, clamped to 1 through 65536 as in the TypeScript client.
+    pub async fn read(&self, max_bytes: u32) -> Result<GuestConnectionChunk> {
+        let max_bytes = max_bytes.clamp(1, 65536);
+        let json = self.call("socket-read", None, Some(max_bytes)).await?;
+        let chunk =
+            decode_fetch_stream_chunk(&json, max_bytes as usize, self.vm.fetch_buffer_limit())?;
+        Ok(GuestConnectionChunk {
+            body: chunk.body,
+            done: chunk.done,
+        })
+    }
+
+    /// Write all bytes with bounded 64 KiB messages and backpressure.
+    pub async fn write(&self, bytes: &[u8]) -> Result<()> {
+        #[derive(Deserialize)]
+        struct Written {
+            written: usize,
+        }
+        let mut offset = 0;
+        while offset < bytes.len() {
+            let chunk = &bytes[offset..offset + (bytes.len() - offset).min(65536)];
+            let json = self
+                .call("socket-write", Some(BASE64.encode(chunk)), None)
+                .await?;
+            let reply: Written =
+                serde_json::from_str(&json).context("parsing guest connection write")?;
+            if reply.written == 0 || reply.written > chunk.len() {
+                return Err(ClientError::Sidecar(
+                    "invalid guest connection write acknowledgement".into(),
+                )
+                .into());
+            }
+            offset += reply.written;
+        }
+        Ok(())
+    }
+
+    /// Half-close the write direction; buffered replies remain readable.
+    pub async fn end(&self) -> Result<()> {
+        self.call("socket-end", None, None).await?;
+        Ok(())
+    }
+
+    /// Close both directions. Repeated close is harmless.
+    pub async fn close(&self) -> Result<()> {
+        self.call("socket-close", None, None).await?;
+        Ok(())
+    }
+
+    async fn call(
+        &self,
+        operation: &str,
+        body_base64: Option<String>,
+        max_bytes: Option<u32>,
+    ) -> Result<String> {
+        self.vm
+            .vm_fetch_response(wire::VmFetchRequest {
+                port: self.port,
+                method: "GET".into(),
+                path: "/".into(),
+                headers_json: "{}".into(),
+                body: None,
+                body_base64,
+                stream_operation: Some(operation.into()),
+                stream_id: Some(self.stream_id.clone()),
+                max_bytes,
+            })
+            .await
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct VmFetchStreamHeadPayload {
@@ -108,6 +194,39 @@ struct PreparedHttpRequest {
 }
 
 impl AgentOs {
+    /// Connect to a VM-local TCP listener, never a host listener.
+    /// The connection survives its server process long enough to drain buffered data.
+    pub async fn network_connect(&self, port: u16) -> Result<GuestConnection<'_>> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Opened {
+            stream_id: String,
+        }
+        let json = self
+            .vm_fetch_response(wire::VmFetchRequest {
+                port,
+                method: "GET".into(),
+                path: "/".into(),
+                headers_json: "{}".into(),
+                body: None,
+                body_base64: None,
+                stream_operation: Some("socket-open".into()),
+                stream_id: None,
+                max_bytes: None,
+            })
+            .await?;
+        let opened: Opened =
+            serde_json::from_str(&json).context("parsing guest connection open")?;
+        if opened.stream_id.is_empty() {
+            return Err(ClientError::Sidecar("guest connection id cannot be empty".into()).into());
+        }
+        Ok(GuestConnection {
+            vm: self,
+            port,
+            stream_id: opened.stream_id,
+        })
+    }
+
     /// Fetch from a guest server listening on `port` inside the VM.
     ///
     /// `path` is derived from the request URI's `pathname`+`search`; the host is ignored. The body
@@ -232,19 +351,11 @@ impl AgentOs {
                 max_bytes: Some(max_bytes),
             })
             .await?;
-        let payload: VmFetchStreamChunkPayload =
-            serde_json::from_str(&response_json).context("parsing vm_fetch stream chunk")?;
-        ensure_fetch_base64_body_within_limit(
-            &payload.body,
-            usize::try_from(max_bytes).unwrap_or(usize::MAX),
-        )?;
-        let body = BASE64
-            .decode(payload.body.as_bytes())
-            .context("decoding vm_fetch stream chunk")?;
-        Ok(HttpStreamChunk {
-            body,
-            done: payload.done,
-        })
+        decode_fetch_stream_chunk(
+            &response_json,
+            max_bytes as usize,
+            self.fetch_buffer_limit(),
+        )
     }
 
     /// Cancels an existing guest HTTP response stream.
@@ -378,6 +489,51 @@ fn prepare_http_request(request: HttpRequest, buffer_limit: usize) -> Result<Pre
     })
 }
 
+fn decode_fetch_stream_chunk(
+    response_json: &str,
+    max_bytes: usize,
+    buffer_limit: usize,
+) -> Result<HttpStreamChunk> {
+    ensure_fetch_component_within_limit(
+        "fetch stream response json",
+        response_json.len(),
+        buffer_limit,
+    )?;
+    let payload: VmFetchStreamChunkPayload =
+        serde_json::from_str(response_json).context("parsing vm_fetch stream chunk")?;
+    ensure_fetch_component_within_limit(
+        "fetch response body base64",
+        payload.body.len(),
+        buffer_limit,
+    )?;
+    // STANDARD requires canonical padding. Account for it before allocating so a
+    // max_bytes-sized payload is accepted without allocating Base64's upper bound.
+    if !payload.body.len().is_multiple_of(4) {
+        return Err(
+            ClientError::Sidecar(String::from("invalid base64 fetch stream body length")).into(),
+        );
+    }
+    let padding = payload
+        .body
+        .bytes()
+        .rev()
+        .take(2)
+        .take_while(|b| *b == b'=')
+        .count();
+    // Division first keeps this multiplication within usize for every input size.
+    let decoded_len = (payload.body.len() / 4 * 3).saturating_sub(padding);
+    ensure_fetch_component_within_limit("fetch stream response body", decoded_len, max_bytes)?;
+    let mut body = vec![0; decoded_len];
+    let written = BASE64
+        .decode_slice(payload.body.as_bytes(), &mut body)
+        .context("decoding vm_fetch stream chunk")?;
+    body.truncate(written);
+    Ok(HttpStreamChunk {
+        body,
+        done: payload.done,
+    })
+}
+
 fn ensure_fetch_component_within_limit(
     component: &str,
     size: usize,
@@ -421,6 +577,7 @@ fn base64_decoded_upper_bound(encoded_len: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    include!("../tests/support/fetch_stream_bounds.rs");
     use super::{
         base64_decoded_upper_bound, ensure_fetch_base64_body_within_limit,
         ensure_fetch_component_within_limit, ensure_fetch_request_payload_within_limit,

@@ -29,19 +29,29 @@ async function startGuest(code: string) {
 }
 
 // Resolves with the milliseconds from SIGKILL to the observed exit.
-async function sigkill({ vm, pid, exited }: Awaited<ReturnType<typeof startGuest>>) {
+async function sigkill({
+	vm,
+	pid,
+	exited,
+}: Awaited<ReturnType<typeof startGuest>>) {
 	const killed = performance.now();
 	await vm.process.signal(pid, "SIGKILL");
-	expect(await exited).toMatchObject({ outcome: "signalled", signal: "SIGKILL" });
+	expect(await exited).toMatchObject({
+		outcome: "signalled",
+		signal: "SIGKILL",
+	});
 	return performance.now() - killed;
 }
 
-const busyGuest = "process.stdout.write('up\\n'); setTimeout(() => { for (;;) {} }, 0);";
+const busyGuest =
+	"process.stdout.write('up\\n'); setTimeout(() => { for (;;) {} }, 0);";
 const streamingGuest =
 	"process.stdout.write('up\\n'); setInterval(() => { for (let i = 0; i < 20; i++) process.stdout.write('line\\n'); }, 1);";
 
 test("a SIGKILLed busy guest exits promptly while other VMs stream output", async () => {
-	const busy = await Promise.all(Array.from({ length: 8 }, () => startGuest(busyGuest)));
+	const busy = await Promise.all(
+		Array.from({ length: 8 }, () => startGuest(busyGuest)),
+	);
 	const streaming = await Promise.all(
 		Array.from({ length: 8 }, () => startGuest(streamingGuest)),
 	);

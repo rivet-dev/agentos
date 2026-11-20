@@ -2,9 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import vm from "node:vm";
 import { build } from "esbuild";
+import { createRequire } from "node:module";
+import { withOwnedEsbuild } from "./with-owned-esbuild.mjs";
+const require = createRequire(import.meta.url);
 
 test("TTY detection retries after bootstrap and refreshes the window size", async () => {
-	const result = await build({
+	const result = await withOwnedEsbuild(require.resolve("esbuild"), () => build({
 		bundle: true,
 		format: "iife",
 		stdin: {
@@ -15,7 +18,7 @@ test("TTY detection retries after bootstrap and refreshes the window size", asyn
 			resolveDir: new URL("../", import.meta.url).pathname,
 		},
 		write: false,
-	});
+	}));
 	const context = vm.createContext({});
 	vm.runInContext(result.outputFiles[0].text, context);
 	const resolve = () =>

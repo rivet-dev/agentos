@@ -1,9 +1,20 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	mkdirSync,
+	mkdtempSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { AgentOs } from "../src/index.js";
-import { EVALUATED_IN, type EvaluatedIn, runNode, waitForSnapshotBoot } from "./helpers/module-snapshot.js";
+import {
+	EVALUATED_IN,
+	type EvaluatedIn,
+	runNode,
+	waitForSnapshotBoot,
+} from "./helpers/module-snapshot.js";
 
 // A process reuses a module snapshot only while the snapshot's imports still
 // resolve to the same files. These host changes alter what an import resolves
@@ -31,8 +42,14 @@ const depModule = (version: string) =>
 
 beforeAll(async () => {
 	hostDir = mkdtempSync(join(tmpdir(), "agentos-module-snapshot-resolution-"));
+	// The guest UID needs search permission on the mounted directory.
+	chmodSync(hostDir, 0o755);
 	writePackage(join(hostDir, "node_modules", "dep"), {
-		"package.json": JSON.stringify({ name: "dep", type: "module", exports: "./a.mjs" }),
+		"package.json": JSON.stringify({
+			name: "dep",
+			type: "module",
+			exports: "./a.mjs",
+		}),
 		"a.mjs": depModule("exports-a"),
 		"b.mjs": depModule("exports-b"),
 	});
@@ -47,7 +64,10 @@ beforeAll(async () => {
 			{
 				path: "/opt/app",
 				readOnly: true,
-				plugin: { id: "host_dir", config: { hostPath: hostDir, readOnly: true } },
+				plugin: {
+					id: "host_dir",
+					config: { hostPath: hostDir, readOnly: true },
+				},
 			},
 		],
 	});
@@ -71,7 +91,11 @@ test("an import that resolves to another file after a host change loads that fil
 
 	// A closer node_modules now shadows the package.
 	writePackage(join(hostDir, "src", "node_modules", "dep"), {
-		"package.json": JSON.stringify({ name: "dep", type: "module", exports: "./index.mjs" }),
+		"package.json": JSON.stringify({
+			name: "dep",
+			type: "module",
+			exports: "./index.mjs",
+		}),
 		"index.mjs": depModule("shadow"),
 	});
 	expect((await runEntry()).version).toBe("shadow");

@@ -4,7 +4,7 @@
 	"version": "0.3.0-rc.2",
 	"type": "module",
 	"license": "Apache-2.0",
-	"description": "Build-essential WASM command set for agentos VMs (common + git + curl)",
+	"description": "Build-essential WASM command set for agentOS VMs (common + git + ssh + curl)",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
 	"files": [
@@ -21,18 +21,21 @@
 	"scripts": {
 		"build": "tsc",
 		"check-types": "tsc --noEmit",
-		"test": "vitest run test/ --passWithNoTests"
+		"test": "vitest run test/*.test.ts --passWithNoTests",
+		"test:nightly": "vitest run test/*.nightly.test.ts --passWithNoTests"
 	},
 	"dependencies": {
 		"@agentos-software/common": "workspace:*",
 		"@agentos-software/curl": "workspace:*",
-		"@agentos-software/git": "workspace:*"
+		"@agentos-software/git": "workspace:*",
+		"@agentos-software/ssh": "workspace:*"
 	},
 	"devDependencies": {
 		"@agentos-software/manifest": "workspace:*",
+		"@rivet-dev/agentos": "workspace:*",
+		"@rivet-dev/agentos-test-harness": "workspace:*",
 		"@types/node": "^22.10.2",
 		"typescript": "^5.9.2",
-		"@rivet-dev/agentos-test-harness": "workspace:*",
 		"vitest": "^2.1.9"
 	}
 }

@@ -1,4 +1,4 @@
-import { AgentOs } from "@rivet-dev/agentos-core";
+import { AgentOs } from "@rivet-dev/agentos";
 
 // The runtime bundle lives on the host and is mounted read-only. Its thin
 // entry (`main.mjs`) imports the runtime and starts it; everything it imports

@@ -49,11 +49,11 @@ if should_build; then
   # Benchmarks must run against an optimized sidecar. The debug build is several
   # times slower and inflates cold-start and memory numbers.
   echo "=== Building release sidecar ===" >&2
-  cargo build --release -p agentos-native-sidecar >&2
+  cargo build --release -p agentos-sidecar >&2
   if [[ -n "${CARGO_TARGET_DIR:-}" ]]; then
-    export AGENTOS_SIDECAR_BIN="$CARGO_TARGET_DIR/release/agentos-native-sidecar"
+    export AGENTOS_SIDECAR_BIN="$CARGO_TARGET_DIR/release/agentos-sidecar"
   else
-    export AGENTOS_SIDECAR_BIN="$REPO_ROOT/target/release/agentos-native-sidecar"
+    export AGENTOS_SIDECAR_BIN="$REPO_ROOT/target/release/agentos-sidecar"
   fi
   echo "Using sidecar: $AGENTOS_SIDECAR_BIN" >&2
 else

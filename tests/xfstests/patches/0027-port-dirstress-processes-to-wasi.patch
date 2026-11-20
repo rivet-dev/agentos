@@ -1,0 +1,228 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AgentOS Tests <tests@agentos.invalid>
+Date: Wed, 15 Jul 2026 17:35:00 -0700
+Subject: [PATCH] fstests: port dirstress process workers to WASI
+
+WASM processes cannot resume a forked linear-memory continuation. Preserve
+dirstress's process and shared-directory topology by spawning the same helper
+once per worker. A ready pipe and one start pipe per worker hold the original
+workload until every process has entered its assigned stress directory.
+---
+ src/dirstress.c | 158 +++++++++++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 156 insertions(+), 2 deletions(-)
+
+diff --git a/src/dirstress.c b/src/dirstress.c
+index ec28d643..e9506244 100644
+--- a/src/dirstress.c
++++ b/src/dirstress.c
+@@ -17,6 +17,7 @@ int pid;
+ 
+ int checkflag=0;
+ int create_only=0;
++int worker_dirnum=-1;
+ 
+ #define MKNOD_DEV 0
+ 
+@@ -25,6 +26,28 @@ static int create_entries(int nfiles);
+ static int scramble_entries(int	nfiles);
+ static int remove_entries(int nfiles);
+ 
++#ifdef __wasi__
++static int
++wait_for_start(void)
++{
++	char token;
++
++	if (write(STDOUT_FILENO, "r", 1) != 1) {
++		perror("write ready token");
++		return 1;
++	}
++	if (dup2(STDERR_FILENO, STDOUT_FILENO) < 0) {
++		perror("restore worker stdout");
++		return 1;
++	}
++	if (read(STDIN_FILENO, &token, 1) != 1) {
++		perror("read start token");
++		return 1;
++	}
++	return 0;
++}
++#endif
++
+ int
+ main(
+ 	int	argc,
+@@ -52,7 +75,7 @@ main(
+ 	nprocs_per_dir = 1;
+ 	keep = 0;
+         verbose = 0;
+-	while ((c = getopt(argc, argv, "d:p:f:s:n:kvcC")) != EOF) {
++	while ((c = getopt(argc, argv, "d:p:f:s:n:kvcCW:")) != EOF) {
+ 		switch(c) {
+ 			case 'p':
+ 				nprocs = atoi(optarg);
+@@ -84,6 +107,11 @@ main(
+ 			case 'C':
+ 				create_only++;
+ 				break;
++#ifdef __wasi__
++			case 'W':
++				worker_dirnum = atoi(optarg);
++				break;
++#endif
+ 		}
+ 	}
+ 	if (errflg || (dirname == NULL)) {
+@@ -92,9 +120,129 @@ main(
+ 		exit(0); 
+ 	}
+ 
+-	printf("** [%d] Using seed %ld\n", pid, seed);
+ 	srandom(seed);
++#ifdef __wasi__
++	if (worker_dirnum >= 0) {
++		return dirstress(dirname, worker_dirnum / nprocs_per_dir,
++				 nfiles, keep,
++				 nprocs_per_dir);
++	}
++#endif
++	printf("** [%d] Using seed %ld\n", pid, seed);
++
++#ifdef __wasi__
++	{
++		pid_t *children;
++		int spawned = 0;
++		int spawn_failed = 0;
++		int (*start_pipes)[2];
++		int ready_pipe[2];
++		char ready_token;
+ 
++		if (pipe(ready_pipe)) {
++			perror("pipe");
++			exit(1);
++		}
++		start_pipes = calloc(nprocs, sizeof(*start_pipes));
++		if (start_pipes == NULL) {
++			perror("calloc");
++			exit(1);
++		}
++		for (i = 0; i < nprocs; i++) {
++			if (pipe(start_pipes[i])) {
++				perror("pipe");
++				exit(1);
++			}
++		}
++		children = calloc(nprocs, sizeof(*children));
++		if (children == NULL) {
++			perror("calloc");
++			exit(1);
++		}
++		for (i = 0; i < nprocs; i++) {
++			char files_arg[32], per_dir_arg[32], seed_arg[32];
++			char worker_arg[32];
++			char *child_argv[24];
++			posix_spawn_file_actions_t actions;
++			int arg = 0;
++			int error;
++
++			snprintf(files_arg, sizeof(files_arg), "%d", nfiles);
++			snprintf(per_dir_arg, sizeof(per_dir_arg), "%d",
++				 nprocs_per_dir);
++			snprintf(seed_arg, sizeof(seed_arg), "%ld", seed);
++			snprintf(worker_arg, sizeof(worker_arg), "%d", i);
++			child_argv[arg++] = argv[0];
++			child_argv[arg++] = "-d";
++			child_argv[arg++] = dirname;
++			child_argv[arg++] = "-f";
++			child_argv[arg++] = files_arg;
++			child_argv[arg++] = "-n";
++			child_argv[arg++] = per_dir_arg;
++			child_argv[arg++] = "-s";
++			child_argv[arg++] = seed_arg;
++			if (keep)
++				child_argv[arg++] = "-k";
++			if (verbose)
++				child_argv[arg++] = "-v";
++			if (checkflag)
++				child_argv[arg++] = "-c";
++			if (create_only)
++				child_argv[arg++] = "-C";
++			child_argv[arg++] = "-W";
++			child_argv[arg++] = worker_arg;
++			child_argv[arg] = NULL;
++			posix_spawn_file_actions_init(&actions);
++			posix_spawn_file_actions_adddup2(&actions, start_pipes[i][0],
++						 STDIN_FILENO);
++			posix_spawn_file_actions_adddup2(&actions, ready_pipe[1],
++						 STDOUT_FILENO);
++			error = posix_spawnp(&children[spawned], argv[0], &actions,
++					     NULL, child_argv, environ);
++			posix_spawn_file_actions_destroy(&actions);
++			if (error != 0) {
++				errno = error;
++				perror("posix_spawnp");
++				spawn_failed = 1;
++				break;
++			}
++			spawned++;
++		}
++		for (i = 0; i < nprocs; i++)
++			close(start_pipes[i][0]);
++		close(ready_pipe[1]);
++		for (i = 0; i < spawned; i++) {
++			if (read(ready_pipe[0], &ready_token, 1) != 1) {
++				perror("read ready token");
++				spawn_failed = 1;
++				break;
++			}
++		}
++		close(ready_pipe[0]);
++		for (i = 0; i < spawned; i++) {
++			if (write(start_pipes[i][1], "x", 1) != 1) {
++				perror("write start token");
++				spawn_failed = 1;
++			}
++			close(start_pipes[i][1]);
++		}
++		for (i = spawned; i < nprocs; i++)
++			close(start_pipes[i][1]);
++		istatus = spawn_failed;
++		for (i = 0; i < spawned; i++) {
++			if (waitpid(children[i], &status, 0) < 0) {
++				perror("waitpid");
++				istatus++;
++			} else if (WIFEXITED(status)) {
++				istatus += WEXITSTATUS(status);
++			} else {
++				istatus++;
++			}
++		}
++		free(start_pipes);
++		free(children);
++	}
++#else
+ 	for (i = 0; i < nprocs; i++) {
+                 if (verbose) fprintf(stderr,"** [%d] fork\n", pid);
+ 		childpid = fork();
+@@ -120,6 +268,7 @@ main(
+ 	while (wait(&status) != -1)
+             istatus+=status/256;
+         
++#endif
+ 	printf("INFO: Dirstress complete\n");
+         if (verbose) fprintf(stderr,"** [%d] parent exit %d\n", pid, istatus);
+ 	return istatus;
+@@ -169,6 +318,11 @@ dirstress(
+ 		return 1;
+ 	}
+ 
++#ifdef __wasi__
++	if (wait_for_start())
++		return 1;
++#endif
++
+         r=1; /* assume failure */
+         if (verbose) fprintf(stderr,"** [%d] create entries\n", pid);
+ 	if (create_entries(nfiles)) {
+-- 
+2.43.0

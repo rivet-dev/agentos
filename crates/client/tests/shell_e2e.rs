@@ -1,4 +1,4 @@
-//! Shell / PTY e2e against a real `agentos-native-sidecar`.
+//! Shell / PTY e2e against a real `agentos-sidecar`.
 //!
 //! `open_shell` spawns a PTY-backed process through the real sidecar. The ordered-stream assertion
 //! uses guest Node so stdout and stderr remain distinct wire channels; separate package coverage

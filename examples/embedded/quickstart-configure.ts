@@ -1,10 +1,13 @@
 import { resolve } from "node:path";
-import { AgentOs } from "@rivet-dev/agentos-core";
+import { AgentOs } from "@rivet-dev/agentos";
 
 const vm = await AgentOs.create({
 	// Store the root filesystem in SQLite so files survive VM recreation.
 	database: { type: "sqlite_file", path: resolve("agentos.sqlite") },
-	rootFilesystem: { type: "native", plugin: { id: "chunked_sqlite", config: {} } },
+	rootFilesystem: {
+		type: "native",
+		plugin: { id: "chunked_sqlite", config: {} },
+	},
 
 	// Attach a host directory (read-only) and an S3 bucket.
 	mounts: [
@@ -15,7 +18,10 @@ const vm = await AgentOs.create({
 		},
 		{
 			path: "/mnt/data",
-			plugin: { id: "chunked_s3", config: { bucket: "my-bucket", region: "us-east-1" } },
+			plugin: {
+				id: "chunked_s3",
+				config: { bucket: "my-bucket", region: "us-east-1" },
+			},
 		},
 	],
 
@@ -37,7 +43,9 @@ const vm = await AgentOs.create({
 	},
 
 	// Cap processes and filesystem size.
-	limits: { resources: { maxProcesses: 64, maxFilesystemBytes: 256 * 1024 * 1024 } },
+	limits: {
+		resources: { maxProcesses: 64, maxFilesystemBytes: 256 * 1024 * 1024 },
+	},
 });
 
 await vm.dispose();

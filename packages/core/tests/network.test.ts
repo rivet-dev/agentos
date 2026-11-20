@@ -1,5 +1,12 @@
+import { finished } from "node:stream/promises";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { AgentOs } from "../src/index.js";
+import { AgentOs, type AgentOsSidecar } from "../src/index.js";
+import type { StdioSidecarProcess } from "../src/process.js";
+import type {
+	AuthenticatedSession,
+	CreatedVm,
+	SidecarProcess,
+} from "../src/sidecar-process.js";
 
 const LISTENER_SCRIPT = `
 const net = require("net");
@@ -36,13 +43,54 @@ server.listen(0, "127.0.0.1", () => {
 
 describe("networking", () => {
 	let vm: AgentOs;
+	let sidecar: AgentOsSidecar | undefined;
+	let hostProcess: StdioSidecarProcess | undefined;
 
 	beforeEach(async () => {
-		vm = await AgentOs.create();
+		sidecar = undefined;
+		hostProcess = undefined;
+		sidecar = await AgentOs.createSidecar();
+		vm = await AgentOs.create({
+			sidecar: { kind: "explicit", handle: sidecar },
+		});
+		hostProcess = (
+			vm as unknown as {
+				_sidecarClient: {
+					protocolClient: { sidecarProcess: StdioSidecarProcess };
+				};
+			}
+		)._sidecarClient.protocolClient.sidecarProcess;
 	});
 
 	afterEach(async () => {
-		await vm.dispose();
+		const errors: unknown[] = [];
+		try {
+			if (hostProcess) await vm.dispose();
+		} catch (error) {
+			errors.push(error);
+		}
+		try {
+			await sidecar?.dispose();
+		} catch (error) {
+			errors.push(error);
+		}
+		try {
+			if (hostProcess) {
+				// Process exit may precede pipe EOF; observe all bounded host diagnostics.
+				await finished(hostProcess.child.stderr, {
+					cleanup: true,
+					signal: AbortSignal.timeout(5_000),
+				});
+				const stderr = hostProcess.stderrText();
+				expect(stderr).not.toContain("bytes of sidecar stderr dropped");
+				expect(stderr).not.toContain("ERR_AGENTOS_");
+			}
+		} catch (error) {
+			errors.push(error);
+		}
+		if (errors.length === 1) throw errors[0];
+		if (errors.length > 1)
+			throw new AggregateError(errors, "network sidecar retirement failed");
 	});
 
 	test("starts a guest TCP listener", async () => {
@@ -78,6 +126,18 @@ describe("networking", () => {
 	});
 
 	test("delivers a socket write larger than the VM socket buffer to an in-VM reader", async () => {
+		// The owning sidecar ledger observes retirement before VM disposal.
+		const internal = vm as unknown as {
+			_sidecarClient: SidecarProcess;
+			_sidecarSession: AuthenticatedSession;
+			_sidecarVm: CreatedVm;
+		};
+		const snapshot = () =>
+			internal._sidecarClient.getResourceSnapshot(
+				internal._sidecarSession,
+				internal._sidecarVm,
+			);
+		const before = await snapshot();
 		const result = await vm.javascript.execute(LARGE_WRITE_SCRIPT, {
 			cwd: "/",
 			output: { capture: "all" },
@@ -88,5 +148,24 @@ describe("networking", () => {
 			receivedBytes: 6 * 1024 * 1024,
 			intact: true,
 		});
+		const after = await snapshot();
+		for (const key of [
+			"runningProcesses",
+			"stoppedProcesses",
+			"fdTables",
+			"openFds",
+			"pipes",
+			"pipeBufferedBytes",
+			"sockets",
+			"socketListeners",
+			"socketConnections",
+			"socketBufferedBytes",
+			"socketDatagramQueueLen",
+		] as const) {
+			expect(
+				after[key],
+				`process exit must retire ${key} before VM disposal`,
+			).toBe(before[key]);
+		}
 	}, 30_000);
 });

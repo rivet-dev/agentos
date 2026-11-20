@@ -1,0 +1,12 @@
+[package]
+name = "agentos-bindgen-export"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+agentos-actor = { workspace = true, features = ["contract"] }
+anyhow = "1"
+serde_json = "1"
+

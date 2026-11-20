@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>agentos real browser terminal — R3 xterm gate</title>
+		<style>
+			html,
+			body {
+				margin: 0;
+				min-height: 100%;
+				background: #0f1115;
+				color: #e8edf2;
+				font-family: system-ui, sans-serif;
+			}
+			#status {
+				height: 24px;
+				padding: 6px 10px;
+				font-size: 12px;
+				color: #9fb0c3;
+			}
+			#terminal {
+				width: 100vw;
+				height: calc(100vh - 36px);
+				background: #101214;
+			}
+		</style>
+	</head>
+	<body>
+		<div id="status">loading</div>
+		<div id="terminal" aria-label="Real Agent OS terminal"></div>
+		<script type="module" src="/real-terminal.bundle.js"></script>
+	</body>
+</html>

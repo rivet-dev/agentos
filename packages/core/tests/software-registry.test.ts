@@ -242,7 +242,7 @@ describe("resolveRegistrySoftware", () => {
 		);
 		await expect(
 			resolveRegistrySoftware("zzzzzz", { registry: { url: registry.url } }),
-		).rejects.toThrow("browse https://rivet.dev/agentos/docs/registry");
+		).rejects.toThrow("browse https://agentos-sdk.dev/agentos/docs/software");
 	});
 
 	it("reports a release that does not exist", async () => {

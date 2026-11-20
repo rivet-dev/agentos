@@ -27,7 +27,7 @@ Sockets are **already real** and are not the problem. The patched wasi-libc
 sysroot implements `socket()/connect()/getaddrinfo()/send()/recv()` over
 `host_net` WASM imports (`toolchain/std-patches/wasi-libc/0008-sockets.patch`,
 `0023-host-net-read-write-sockets.patch`; Rust mirror `toolchain/crates/wasi-ext`).
-The runner forwards them to the sidecar socket table (`crates/execution/assets/
+The runner forwards them to the sidecar socket table (`crates/executor-v8-runtime/assets/
 runners/wasm-runner.mjs`). So curl/wget/git already do their own DNS, TCP and HTTP
 byte-for-byte. **Only TLS and decompression are shimmed or missing.**
 
@@ -75,7 +75,7 @@ philosophy the rest of the toolchain follows. Keep the host `net.socket_upgrade_
 path only for the **Node/JS runtime**, which is a separate surface.
 
 > Note: the current sidecar TLS path uses `rustls_native_certs` = the **host
-> machine's** trust store (`crates/native-sidecar/src/execution.rs`). That is a
+> machine's** trust store (`crates/vm/src/execution.rs`). That is a
 > latent hermeticity bug even for the JS runtime — it should read the VM's
 > `/etc/ssl` bundle instead. Tracked here; fix alongside.
 
@@ -85,7 +85,7 @@ path only for the **Node/JS runtime**, which is a separate surface.
   `ca-certificates` produces) at **`/etc/ssl/certs/ca-certificates.crt`**, with the
   conventional `/etc/ssl/cert.pem` symlink. A `ca-certificates` registry package
   owns the payload; VM bootstrap links it into the standard tree (the bootstrap
-  already seeds `/etc` in the shadow root — `crates/native-sidecar/src/vm.rs`).
+  already seeds `/etc` in the shadow root — `crates/vm/src/vm.rs`).
 - This one file at that one path is what makes the **whole class** of TLS tools
   "just work": curl's compile-time `CURL_CA_BUNDLE` default, OpenSSL's `OPENSSLDIR`
   (`/usr/lib/ssl` → `/etc/ssl/certs`), apt, python, wget — all resolve there on
@@ -95,12 +95,13 @@ path only for the **Node/JS runtime**, which is a separate surface.
 ## Per-tool implementation plan (completed)
 
 ### curl
-1. Vendor + build **mbedTLS 3.6** for `wasm32-wasip1` in `toolchain/c/Makefile`
-   (same pattern as the existing zlib target).
-2. In `toolchain/c/scripts/build-curl-upstream.sh`: drop `--without-ssl` and the
-   `USE_WASI_TLS` injection; add `--with-mbedtls`, `--with-zlib`, `--with-brotli`,
-   `--with-zstd`, `--with-ca-bundle=/etc/ssl/certs/ca-certificates.crt`; retire the
-   `wasi_tls.c/h` + `vtls.c` overlay.
+1. Build the pinned upstream curl release through
+   `toolchain/c/scripts/build-curl-protocols.sh`, called by `toolchain/c/Makefile`.
+   It uses OpenSSL, nghttp2, nghttp3/ngtcp2 and libssh2, plus zlib/brotli/zstd,
+   with `/etc/ssl/certs/ca-certificates.crt` as the default CA bundle.
+2. Verify source checksums before extraction, then publish a complete immutable
+   generation atomically. The curl command and Git's libcurl use that same
+   generation; failed downloads or builds preserve the previous generation.
 3. Tests: assert **exit 60** + real verify message on self-signed without `-k`;
    `--cacert` acceptance of a test CA; `--compressed` gzip/br/zstd round-trips.
 

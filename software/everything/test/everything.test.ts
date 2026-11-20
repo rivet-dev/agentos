@@ -12,6 +12,7 @@ import everything, {
 	findutils,
 	gawk,
 	git,
+	ssh,
 	grep,
 	gzip,
 	jq,
@@ -43,6 +44,7 @@ const expectedMembers = [
 	duckdb,
 	envsubst,
 	git,
+	ssh,
 	sqlite3,
 	vim,
 	zip,
@@ -70,6 +72,8 @@ describe("everything meta-package", () => {
 	it("exports every command package descriptor once", () => {
 		expect(everything).toEqual(expectedMembers);
 		expect(new Set(everything).size).toBe(everything.length);
+		expect(everything).toContain(git);
+		expect(everything).toContain(ssh);
 		for (const descriptor of everything) {
 			expect(descriptor).toEqual({
 				packagePath: expect.stringMatching(/\/package\.aospkg$/),
