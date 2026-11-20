@@ -577,9 +577,30 @@ pub struct ExecOptions {
     pub on_stdout: Option<OutputCallback>,
     pub on_stderr: Option<OutputCallback>,
     pub capture_stdio: Option<bool>,
+    /// Combined host-captured stdout and stderr bytes. Defaults to 16 MiB.
+    pub max_captured_output_bytes: Option<usize>,
     pub file_path: Option<String>,
+    /// Native execution requires the CPU limit to be configured on the VM.
     pub cpu_time_limit_ms: Option<f64>,
+    /// Off preserves the VM clock policy. Freeze is unsupported by native execution.
     pub timing_mitigation: Option<TimingMitigation>,
+}
+
+fn check_execution_options(options: &ExecOptions) -> std::result::Result<(), ClientError> {
+    let message = if options.cpu_time_limit_ms.is_some() {
+        "Per-run cpu_time_limit_ms is unsupported by the native sidecar. Configure VM limits.js_runtime.cpu_time_limit_ms or limits.wasm.active_cpu_time_limit_ms."
+    } else if options
+        .timing_mitigation
+        .is_some_and(|mode| mode != TimingMitigation::Off)
+    {
+        "Per-run timing_mitigation is unsupported by the native sidecar. Configure VM-level high_resolution_time to control clock precision."
+    } else {
+        return Ok(());
+    };
+    Err(ClientError::Kernel {
+        code: "ERR_AGENTOS_UNSUPPORTED_EXECUTION_OPTION".into(),
+        message: message.into(),
+    })
 }
 
 impl Default for ExecOptions {
@@ -593,6 +614,7 @@ impl Default for ExecOptions {
             on_stdout: None,
             on_stderr: None,
             capture_stdio: None,
+            max_captured_output_bytes: None,
             file_path: None,
             cpu_time_limit_ms: None,
             timing_mitigation: None,
@@ -825,6 +847,17 @@ impl AgentOs {
         args: &[String],
         mut options: ExecOptions,
     ) -> Result<ExecResult> {
+        check_execution_options(&options)?;
+        let capture_limit = options
+            .max_captured_output_bytes
+            .unwrap_or(EXEC_OUTPUT_CAPTURE_LIMIT_BYTES);
+        if capture_limit == 0 {
+            return Err(ClientError::Kernel {
+                code: "EINVAL".into(),
+                message: "max_captured_output_bytes must be positive".into(),
+            }
+            .into());
+        }
         // The deadline covers launch, stdin delivery, and execution. Cleanup has its own bounded
         // confirmation window; it must not silently consume an unbounded slice of the actor's
         // action deadline.
@@ -990,6 +1023,7 @@ impl AgentOs {
                                     &mut stdout,
                                     &output.chunk,
                                     &mut captured_output_bytes,
+                                    capture_limit,
                                     "stdout",
                                 ) {
                                     Ok(()) => {}
@@ -1012,6 +1046,7 @@ impl AgentOs {
                                     &mut stderr,
                                     &output.chunk,
                                     &mut captured_output_bytes,
+                                    capture_limit,
                                     "stderr",
                                 ) {
                                     Ok(()) => {}
@@ -2491,23 +2526,39 @@ fn append_exec_output(
     buffer: &mut Vec<u8>,
     chunk: &[u8],
     captured_output_bytes: &mut usize,
+    limit: usize,
     channel: &str,
 ) -> std::result::Result<(), ClientError> {
-    let next_total = captured_output_bytes
-        .checked_add(chunk.len())
-        .ok_or_else(|| exec_output_limit_error(channel, usize::MAX))?;
-    if next_total > EXEC_OUTPUT_CAPTURE_LIMIT_BYTES {
-        return Err(exec_output_limit_error(channel, next_total));
+    let next_total = captured_output_bytes.saturating_add(chunk.len());
+    if chunk.len() > limit.saturating_sub(*captured_output_bytes) {
+        return Err(ClientError::ResourceLimit {
+            code: "ERR_AGENTOS_CAPTURED_OUTPUT_LIMIT".into(),
+            message: format!(
+                "exec {channel} capture is {next_total} bytes, limit is {limit}; raise max_captured_output_bytes",
+            ),
+            details: Box::new(ResourceLimitDetails {
+                limit_name: Some("max_captured_output_bytes".into()),
+                configuration_path: Some("max_captured_output_bytes".into()),
+                configured_limit: Some(limit as u64),
+                current_usage: Some(*captured_output_bytes as u64),
+                requested: Some(next_total as u64),
+                unit: Some("bytes".into()),
+                operation: Some("process.exec".into()),
+                ..Default::default()
+            }),
+        });
+    }
+    let warning_threshold = limit - limit / 5;
+    if *captured_output_bytes < warning_threshold && next_total >= warning_threshold {
+        tracing::warn!(
+            next_total,
+            limit,
+            "captured output near limit; raise max_captured_output_bytes"
+        );
     }
     buffer.extend_from_slice(chunk);
     *captured_output_bytes = next_total;
     Ok(())
-}
-
-fn exec_output_limit_error(channel: &str, size: usize) -> ClientError {
-    ClientError::Sidecar(format!(
-        "exec {channel} capture is {size} bytes, limit is {EXEC_OUTPUT_CAPTURE_LIMIT_BYTES}"
-    ))
 }
 
 fn exited_pids_to_prune(mut entries: Vec<(u32, bool, i64)>, target_len: usize) -> Vec<u32> {
@@ -2695,9 +2746,12 @@ mod tests {
     use super::{
         append_exec_output, drain_process_output_tasks, exited_pids_to_prune,
         install_output_callback, process_registry_limit_error, prune_string_f64_map, ExecOptions,
-        OutputCallback, DEFAULT_EXEC_CWD, EXEC_OUTPUT_CAPTURE_LIMIT_BYTES, PROCESS_REGISTRY_LIMIT,
+        OutputCallback, DEFAULT_EXEC_CWD, PROCESS_REGISTRY_LIMIT,
     };
-    use super::{confirm_exec_exit, wire, ClientError, EventPayload};
+    use super::{
+        check_execution_options, confirm_exec_exit, wire, ClientError, EventPayload,
+        TimingMitigation,
+    };
     use crate::agent_os::ProcessEntry;
     use scc::HashMap as SccHashMap;
     use tokio::sync::{broadcast, watch};
@@ -3177,22 +3231,50 @@ mod tests {
     }
 
     #[test]
-    fn append_exec_output_rejects_capture_over_limit() {
-        let mut buffer = vec![0u8; EXEC_OUTPUT_CAPTURE_LIMIT_BYTES - 1];
-        let mut captured = buffer.len();
+    fn exec_options_reject_unsupported_cpu_and_timing_overrides() {
+        assert!(check_execution_options(&ExecOptions::default()).is_ok());
+        assert!(check_execution_options(&ExecOptions {
+            timing_mitigation: Some(TimingMitigation::Off),
+            ..Default::default()
+        })
+        .is_ok());
+        for options in [
+            ExecOptions {
+                timing_mitigation: Some(TimingMitigation::Freeze),
+                ..Default::default()
+            },
+            ExecOptions {
+                cpu_time_limit_ms: Some(10.0),
+                ..Default::default()
+            },
+        ] {
+            let error = check_execution_options(&options).unwrap_err();
+            assert!(
+                matches!(error, ClientError::Kernel { code, .. } if code == "ERR_AGENTOS_UNSUPPORTED_EXECUTION_OPTION")
+            );
+        }
+    }
 
-        append_exec_output(&mut buffer, &[1], &mut captured, "stdout")
-            .expect("chunk at limit should fit");
-        assert_eq!(captured, EXEC_OUTPUT_CAPTURE_LIMIT_BYTES);
-
-        let error = append_exec_output(&mut buffer, &[2], &mut captured, "stdout")
-            .expect_err("chunk over limit should fail");
-        assert!(
-            error.to_string().contains("exec stdout capture is"),
-            "unexpected error: {error}"
-        );
-        assert_eq!(captured, EXEC_OUTPUT_CAPTURE_LIMIT_BYTES);
-        assert_eq!(buffer.len(), EXEC_OUTPUT_CAPTURE_LIMIT_BYTES);
+    #[test]
+    fn append_exec_output_rejects_capture_over_combined_limit() {
+        let mut stdout = vec![1];
+        let mut stderr = Vec::new();
+        let mut captured = stdout.len();
+        append_exec_output(&mut stderr, &[2], &mut captured, 2, "stderr")
+            .expect("chunk at combined limit should fit");
+        let error = append_exec_output(&mut stdout, &[3], &mut captured, 2, "stdout")
+            .expect_err("chunk over combined limit should fail");
+        match error {
+            ClientError::ResourceLimit { code, details, .. } => {
+                assert_eq!(code, "ERR_AGENTOS_CAPTURED_OUTPUT_LIMIT");
+                assert_eq!(details.configured_limit, Some(2));
+                assert_eq!(details.requested, Some(3));
+            }
+            error => panic!("unexpected error: {error}"),
+        }
+        assert_eq!(captured, 2);
+        assert_eq!(stdout, [1]);
+        assert_eq!(stderr, [2]);
     }
 
     #[test]

@@ -95,3 +95,19 @@ test("archived browser packages are outside publication discovery", () => {
 	assert(!names.includes("@rivet-dev/agentos-runtime-browser"));
 	assert(!names.includes("@rivet-dev/agentos-playground"));
 });
+
+test("the platform override governs workspace discovery and the meta package", () => {
+	const old = process.env.SIDECAR_PLATFORMS;
+	try {
+		process.env.SIDECAR_PLATFORMS = "linux-x64-gnu";
+		const packages = discoverPackages(repoRoot);
+		assert.deepEqual(buildMetaPlatformMap(packages).get("@rivet-dev/agentos-sidecar"), [
+			"@rivet-dev/agentos-sidecar-linux-x64-gnu",
+		]);
+		process.env.SIDECAR_PLATFORMS = "linux-x64-gnu unknown-architecture";
+		assert.throws(() => discoverPackages(repoRoot), /Unknown or unavailable SIDECAR_PLATFORMS/);
+	} finally {
+		if (old === undefined) delete process.env.SIDECAR_PLATFORMS;
+		else process.env.SIDECAR_PLATFORMS = old;
+	}
+});

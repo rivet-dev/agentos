@@ -87,7 +87,7 @@ thread_local! {
 }
 
 /// Creates an isolate that matches the session isolate's startup snapshot.
-pub type PristineIsolateFactory = Arc<dyn Fn() -> v8::OwnedIsolate + Send + Sync>;
+pub type PristineIsolateFactory = Arc<dyn Fn() -> crate::isolate::GuestIsolate + Send + Sync>;
 
 /// Set (or clear) how record jobs from this session thread build their
 /// isolate. Call whenever the session installs an isolate.
@@ -192,7 +192,7 @@ fn compile_and_record_pristine(
     crate::isolate::prepare_current_thread();
     let mut isolate = crate::owned_microtasks::SessionIsolate::new(factory());
     let result = {
-        let scope = &mut v8::HandleScope::new(&mut *isolate);
+        v8::scope!(scope, &mut *isolate);
         let context = v8::Context::new(scope, Default::default());
         let scope = &mut v8::ContextScope::new(scope, context);
         let resource = v8::String::new(scope, resource_name).ok_or("resource name too large")?;
@@ -328,7 +328,7 @@ pub fn module_code_cache() -> &'static ModuleCodeCache {
 /// `v8_source` must be the V8 string for `source`; callers create it so they
 /// keep their own error reporting for sources V8 cannot represent.
 pub fn compile_module_with_code_cache<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     resource_name: &str,
     source: &str,
     v8_source: v8::Local<'s, v8::String>,

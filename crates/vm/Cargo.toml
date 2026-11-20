@@ -215,7 +215,7 @@ tar = "0.4"
 tempfile = "3"
 vbare.workspace = true
 wat = "1.0"
-v8 = "130"
+v8 = { workspace = true }
 
 [[test]]
 name = "bidirectional_frames"
@@ -231,7 +231,7 @@ required-features = ["runtime"]
 
 [[test]]
 name = "builtin_conformance"
-required-features = ["runtime"]
+required-features = ["runtime", "node-v8"]
 
 [[test]]
 name = "connection_auth"

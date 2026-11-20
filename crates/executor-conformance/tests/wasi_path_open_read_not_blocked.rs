@@ -126,8 +126,8 @@ fn writable_wasm_preopens_include_create_file_right() {
     let runner = read_source("assets/runners/wasm-runner.mjs");
 
     assert!(
-        runner.contains("const WASI_RIGHT_PATH_CREATE_FILE = 1n << 12n;"),
-        "WASI PATH_CREATE_FILE must use preview1 bit 12"
+        runner.contains("const WASI_RIGHT_PATH_CREATE_FILE = 1n << 10n;"),
+        "WASI PATH_CREATE_FILE must use preview1 bit 10"
     );
     let rights_start = runner
         .find("const READ_WRITE_PREOPEN_RIGHTS_BASE =")

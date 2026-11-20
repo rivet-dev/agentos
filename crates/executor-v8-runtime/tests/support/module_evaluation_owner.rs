@@ -4,7 +4,7 @@ fn module_evaluation_transfer_controls() {
     for rejected_first in [false, true] {
         let mut isolate = isolate::create_isolate(None);
         let context = isolate::create_context(&mut isolate);
-        let scope = &mut v8::HandleScope::new(&mut isolate);
+        v8::scope!(scope, &mut *isolate);
         let context = v8::Local::new(scope, &context);
         let scope = &mut v8::ContextScope::new(scope, context);
         let resolver = v8::PromiseResolver::new(scope).unwrap();
@@ -33,7 +33,7 @@ fn module_evaluation_transfer_controls() {
     {
         let mut isolate = isolate::create_isolate(None);
         let context = isolate::create_context(&mut isolate);
-        let scope = &mut v8::HandleScope::new(&mut isolate);
+        v8::scope!(scope, &mut *isolate);
         let context = v8::Local::new(scope, &context);
         let scope = &mut v8::ContextScope::new(scope, context);
         let resolver = v8::PromiseResolver::new(scope).unwrap();
@@ -58,7 +58,7 @@ fn module_evaluation_transfer_controls() {
     for other_overflow in [false, true] {
         let mut isolate = isolate::create_isolate(None);
         let context = isolate::create_context(&mut isolate);
-        let scope = &mut v8::HandleScope::new(&mut isolate);
+        v8::scope!(scope, &mut *isolate);
         let context = v8::Local::new(scope, &context);
         let scope = &mut v8::ContextScope::new(scope, context);
         let reason = v8::String::new(scope, "bounded safeguard").unwrap();

@@ -15,35 +15,15 @@ export interface MemorySample {
 	pipes: number;
 }
 
-export function findSidecarPid(): number | null {
-	return findSidecarPids()[0] ?? null;
-}
-
-export function findSidecarPids(): number[] {
-	const pids: number[] = [];
-	for (const pid of readdirSync("/proc")) {
-		if (!/^\d+$/.test(pid)) continue;
-		try {
-			const comm = readFileSync(`/proc/${pid}/comm`, "utf8").trim();
-			if (comm === "agentos-sidecar") {
-				pids.push(Number(pid));
-			}
-		} catch {
-			// Process exited while scanning.
-		}
-	}
-	return pids.sort((a, b) => a - b);
-}
-
 export function readRssBytes(pid: number | null): number {
-	if (pid === null) return 0;
-	try {
-		const status = readFileSync(`/proc/${pid}/status`, "utf8");
-		const match = status.match(/^VmRSS:\s+(\d+)\s+kB/m);
-		return match ? Number(match[1]) * 1024 : 0;
-	} catch {
-		return 0;
+	if (pid === null || !Number.isSafeInteger(pid) || pid <= 0) {
+		throw new Error("Benchmark VM has no owned sidecar PID");
 	}
+	const bytes = readStatusBytes(pid, "VmRSS");
+	if (!Number.isSafeInteger(bytes) || bytes <= 0) {
+		throw new Error(`Invalid VmRSS measurement for benchmark sidecar ${pid}`);
+	}
+	return bytes;
 }
 
 export interface ProcessMemorySnapshot {
@@ -392,7 +372,7 @@ export async function sampleMemory(
 	return {
 		cycle,
 		guestHeapRss,
-		sidecarRss: readRssBytes(findSidecarPid()),
+		sidecarRss: readRssBytes(vm.sidecarPid()),
 		runningProcesses: resource.runningProcesses,
 		stoppedProcesses: resource.stoppedProcesses,
 		exitedProcesses: resource.exitedProcesses,
@@ -431,6 +411,14 @@ async function sampleGuestHeap(vm: BenchVm): Promise<number> {
 		},
 	});
 	const code = await vm.waitProcess(proc.pid);
-	if (code !== 0) return 0;
-	return Number(stdout.trim() || 0);
+	const bytes = Number(stdout.trim());
+	if (
+		code !== 0 ||
+		!/^\d+$/.test(stdout.trim()) ||
+		!Number.isSafeInteger(bytes) ||
+		bytes <= 0
+	) {
+		throw new Error(`Guest heap measurement failed (exit ${code})`);
+	}
+	return bytes;
 }

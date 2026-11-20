@@ -26,7 +26,7 @@ import {
 	dispatchCustomEmitterListeners,
 	isProcessExitError,
 } from "./process.js";
-import { setImmediate } from "./timers.js";
+import { drainHttpRequestTimers, setImmediate } from "./timers.js";
 import { TLSSocket, tlsConnect } from "./tls.js";
 import { UndiciClient, undiciRequest } from "./undici.js";
 
@@ -4983,100 +4983,13 @@ async function dispatchServerRequest(serverId, requestJson) {
 	const outgoing = new ServerResponseBridge();
 	incoming.socket = outgoing.socket;
 	incoming.connection = outgoing.socket;
-	const pendingImmediates = [];
-	const pendingTimers = [];
-	const trackedTimers = /* @__PURE__ */ new Map();
-	let consumedTimerCount = 0;
-	let consumedImmediateCount = 0;
 	try {
 		try {
-			const originalSetImmediate = globalThis.setImmediate;
-			const originalSetTimeout = globalThis.setTimeout;
-			const originalClearTimeout = globalThis.clearTimeout;
-			if (typeof originalSetImmediate === "function") {
-				globalThis.setImmediate = (callback, ...args) => {
-					const pending = new Promise<void>((resolve) => {
-						queueMicrotask(() => {
-							try {
-								callback(...args);
-							} finally {
-								resolve();
-							}
-						});
-					});
-					pendingImmediates.push(pending);
-					return 0;
-				};
-			}
-			if (typeof originalSetTimeout === "function") {
-				globalThis.setTimeout = (callback, delay, ...args) => {
-					if (typeof callback !== "function") {
-						return originalSetTimeout(callback, delay, ...args);
-					}
-					const normalizedDelay =
-						typeof delay === "number" && Number.isFinite(delay)
-							? Math.max(0, delay)
-							: 0;
-					if (normalizedDelay > 1e3) {
-						return originalSetTimeout(callback, normalizedDelay, ...args);
-					}
-					let resolvePending: () => void;
-					const pending = new Promise<void>((resolve) => {
-						resolvePending = resolve;
-					});
-					let handle: ReturnType<typeof originalSetTimeout>;
-					handle = originalSetTimeout(() => {
-						trackedTimers.delete(handle);
-						try {
-							callback(...args);
-						} finally {
-							resolvePending();
-						}
-					}, normalizedDelay);
-					trackedTimers.set(handle, resolvePending);
-					pendingTimers.push(pending);
-					return handle;
-				};
-			}
-			if (typeof originalClearTimeout === "function") {
-				globalThis.clearTimeout = (handle) => {
-					if (handle != null) {
-						const resolvePending = trackedTimers.get(handle);
-						if (resolvePending) {
-							trackedTimers.delete(handle);
-							resolvePending();
-						}
-					}
-					return originalClearTimeout(handle);
-				};
-			}
-			try {
-				const listenerResult = listener(incoming, outgoing);
+			await drainHttpRequestTimers(() => {
+				const result = listener(incoming, outgoing);
 				incoming._markBodyReady();
-				await Promise.resolve(listenerResult);
-				while (
-					consumedTimerCount < pendingTimers.length ||
-					consumedImmediateCount < pendingImmediates.length
-				) {
-					const pending = [
-						...pendingTimers.slice(consumedTimerCount),
-						...pendingImmediates.slice(consumedImmediateCount),
-					];
-					consumedTimerCount = pendingTimers.length;
-					consumedImmediateCount = pendingImmediates.length;
-					await Promise.allSettled(pending);
-				}
-			} finally {
-				if (typeof originalSetImmediate === "function") {
-					globalThis.setImmediate = originalSetImmediate;
-				}
-				if (typeof originalSetTimeout === "function") {
-					globalThis.setTimeout = originalSetTimeout;
-				}
-				if (typeof originalClearTimeout === "function") {
-					globalThis.clearTimeout = originalClearTimeout;
-				}
-			}
+				return result;
+			});
 		} catch (err) {
 			outgoing.statusCode = 500;
 			try {
@@ -5089,7 +5002,6 @@ async function dispatchServerRequest(serverId, requestJson) {
 			outgoing.end();
 		}
 		await outgoing.waitForClose();
-		await Promise.allSettled([...pendingTimers, ...pendingImmediates]);
 		return JSON.stringify(outgoing.serialize());
 	} finally {
 		server._endRequestDispatch();
@@ -5168,101 +5080,14 @@ async function dispatchLoopbackServerRequest(serverOrId, requestInput) {
 	const outgoing = new ServerResponseBridge();
 	incoming.socket = outgoing.socket;
 	incoming.connection = outgoing.socket;
-	const pendingImmediates = [];
-	const pendingTimers = [];
-	const trackedTimers = /* @__PURE__ */ new Map();
-	let consumedTimerCount = 0;
-	let consumedImmediateCount = 0;
 	server._beginRequestDispatch();
 	try {
 		try {
-			const originalSetImmediate = globalThis.setImmediate;
-			const originalSetTimeout = globalThis.setTimeout;
-			const originalClearTimeout = globalThis.clearTimeout;
-			if (typeof originalSetImmediate === "function") {
-				globalThis.setImmediate = (callback, ...args) => {
-					const pending = new Promise<void>((resolve) => {
-						queueMicrotask(() => {
-							try {
-								callback(...args);
-							} finally {
-								resolve();
-							}
-						});
-					});
-					pendingImmediates.push(pending);
-					return 0;
-				};
-			}
-			if (typeof originalSetTimeout === "function") {
-				globalThis.setTimeout = (callback, delay, ...args) => {
-					if (typeof callback !== "function") {
-						return originalSetTimeout(callback, delay, ...args);
-					}
-					const normalizedDelay =
-						typeof delay === "number" && Number.isFinite(delay)
-							? Math.max(0, delay)
-							: 0;
-					if (normalizedDelay > 1e3) {
-						return originalSetTimeout(callback, normalizedDelay, ...args);
-					}
-					let resolvePending: () => void;
-					const pending = new Promise<void>((resolve) => {
-						resolvePending = resolve;
-					});
-					let handle: ReturnType<typeof originalSetTimeout>;
-					handle = originalSetTimeout(() => {
-						trackedTimers.delete(handle);
-						try {
-							callback(...args);
-						} finally {
-							resolvePending();
-						}
-					}, normalizedDelay);
-					trackedTimers.set(handle, resolvePending);
-					pendingTimers.push(pending);
-					return handle;
-				};
-			}
-			if (typeof originalClearTimeout === "function") {
-				globalThis.clearTimeout = (handle) => {
-					if (handle != null) {
-						const resolvePending = trackedTimers.get(handle);
-						if (resolvePending) {
-							trackedTimers.delete(handle);
-							resolvePending();
-						}
-					}
-					return originalClearTimeout(handle);
-				};
-			}
-			try {
-				const listenerResult = server._requestListener(incoming, outgoing);
+			await drainHttpRequestTimers(() => {
+				const result = server._requestListener(incoming, outgoing);
 				incoming._markBodyReady();
-				await Promise.resolve(listenerResult);
-				while (
-					consumedTimerCount < pendingTimers.length ||
-					consumedImmediateCount < pendingImmediates.length
-				) {
-					const pending = [
-						...pendingTimers.slice(consumedTimerCount),
-						...pendingImmediates.slice(consumedImmediateCount),
-					];
-					consumedTimerCount = pendingTimers.length;
-					consumedImmediateCount = pendingImmediates.length;
-					await Promise.allSettled(pending);
-				}
-			} finally {
-				if (typeof originalSetImmediate === "function") {
-					globalThis.setImmediate = originalSetImmediate;
-				}
-				if (typeof originalSetTimeout === "function") {
-					globalThis.setTimeout = originalSetTimeout;
-				}
-				if (typeof originalClearTimeout === "function") {
-					globalThis.clearTimeout = originalClearTimeout;
-				}
-			}
+				return result;
+			});
 		} catch (err) {
 			outgoing.statusCode = 500;
 			try {
@@ -5275,7 +5100,6 @@ async function dispatchLoopbackServerRequest(serverOrId, requestInput) {
 			outgoing.end();
 		}
 		await outgoing.waitForClose();
-		await Promise.allSettled([...pendingTimers, ...pendingImmediates]);
 		let aborted = false;
 		return {
 			responseJson: JSON.stringify(outgoing.serialize()),

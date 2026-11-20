@@ -114,6 +114,18 @@ pub struct ProcessSpawnHostNetworkDescriptor {
     pub metadata: Value,
 }
 
+/// Tiers at which the prepared WebAssembly module's imports and signatures
+/// passed linker validation. This is a compatibility constraint, never a
+/// permission grant. The kernel selects the actual tier at exec commit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ExecImportTiers {
+    pub isolated: bool,
+    pub read_only: bool,
+    pub read_write: bool,
+    pub full: bool,
+}
+
 /// Runtime-neutral process launch options shared by V8, Wasmtime, and Python
 /// adapters. These fields describe Linux process semantics and sidecar
 /// runtime selection; they do not contain engine handles or guest memory.
@@ -125,6 +137,12 @@ pub struct ProcessLaunchOptions {
     pub cloexec_fds: Vec<u32>,
     #[serde(rename = "localReplacement", default)]
     pub local_replacement: bool,
+    #[serde(
+        rename = "validatedImportTiers",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub validated_import_tiers: Option<ExecImportTiers>,
     /// Kernel signal-thread identity whose mask survives exec; omitted means main.
     #[serde(rename = "execSignalThreadId", default)]
     pub exec_signal_thread_id: Option<u32>,

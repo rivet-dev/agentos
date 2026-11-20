@@ -1,7 +1,7 @@
 // Invoked by the existing consolidated native owner controls.
 use super::*;
 
-fn run(scope: &mut v8::HandleScope, source: &str) -> Option<v8::Global<v8::Value>> {
+fn run(scope: &mut v8::PinScope<'_, '_>, source: &str) -> Option<v8::Global<v8::Value>> {
     let source = v8::String::new(scope, source).unwrap();
     let script = v8::Script::compile(scope, source, None).unwrap();
     script.run(scope).map(|value| v8::Global::new(scope, value))
@@ -14,7 +14,7 @@ fn native_child_exit_control() {
     let root = create_root(isolate).unwrap();
     let _call = crate::terminal_callback::begin_call(isolate, 1);
     {
-        let scope = &mut v8::HandleScope::new(&mut *isolate);
+        v8::scope!(scope, &mut *isolate);
         let context = v8::Local::new(scope, &root);
         let scope = &mut v8::ContextScope::new(scope, context);
         crate::terminal_callback::install(scope).unwrap();
@@ -28,7 +28,7 @@ fn native_child_exit_control() {
             &bridge,
             &["_vmCreateContext", "_vmRunInContext"],
         );
-        let tc = &mut v8::TryCatch::new(scope);
+        v8::tc_scope!(tc, scope);
         assert!(run(tc, "globalThis.box={stop:__agentOsRequestProcessExit,shared:{continued:false}};globalThis.childId=_vmCreateContext(box);try{_vmRunInContext(childId, 'stop(9);shared.continued=true', {}, box);globalThis.BAD_PARENT=true}catch{globalThis.BAD_CATCH=true}finally{globalThis.BAD_FINALLY=true}").is_none());
         assert!(tc.has_terminated());
         assert_eq!(crate::terminal_callback::result(tc).unwrap().0, 9);
@@ -38,7 +38,7 @@ fn native_child_exit_control() {
     isolate.cancel_terminate_execution();
     crate::terminal_callback::acknowledge_stop(isolate);
     {
-        let scope = &mut v8::HandleScope::new(&mut *isolate);
+        v8::scope!(scope, &mut *isolate);
         let context = v8::Local::new(scope, &root);
         let scope = &mut v8::ContextScope::new(scope, context);
         let value = run(scope, "typeof BAD_PARENT==='undefined' && typeof BAD_CATCH==='undefined' && typeof BAD_FINALLY==='undefined' && box.shared.continued===false").unwrap();
@@ -48,11 +48,11 @@ fn native_child_exit_control() {
 
 // Exercise the real owner rather than manually sweeping a test registry.
 fn registry_lifecycle_eval(
-    isolate: &mut v8::OwnedIsolate,
+    isolate: &mut v8::Isolate,
     root: &v8::Global<v8::Context>,
     source: &str,
 ) -> bool {
-    let scope = &mut v8::HandleScope::new(isolate);
+    v8::scope!(scope, isolate);
     let context = v8::Local::new(scope, root);
     let scope = &mut v8::ContextScope::new(scope, context);
     let bridge = crate::host_call::BridgeCallContext::new(
@@ -130,7 +130,29 @@ fn registry_owner_retirement_controls() {
     }
 }
 
+fn detached_context_has_no_job_queue() {
+    let mut owner = SessionIsolate::new(crate::isolate::create_isolate(None));
+    let root = create_root(&mut owner).unwrap();
+    {
+        v8::scope!(scope, &mut *owner);
+        let context = v8::Local::new(scope, &root);
+        let scope = &mut v8::ContextScope::new(scope, context);
+        crate::next_ticks::begin_entry(scope, true);
+        context.detach_global();
+        assert!(context.get_microtask_queue().is_none());
+        let error = crate::next_ticks::scheduled(scope).unwrap_err();
+        assert!(error.starts_with("ERR_AGENTOS_DETACHED_CONTEXT"));
+        checkpoint(scope);
+    }
+    // Queue replacement and session teardown must both tolerate a detached
+    // context that is still reachable through an embedder handle.
+    discard_failed_call(&mut owner);
+    drop(root);
+    drop(owner);
+}
+
 pub(crate) fn retained_family_controls() {
+    detached_context_has_no_job_queue();
     registry_owner_retirement_controls();
     native_child_exit_control();
     for restored in [false, true] {
@@ -155,7 +177,7 @@ pub(crate) fn retained_family_controls() {
                     let _call =
                         crate::terminal_callback::begin_call(isolate, (index * 2 + 1) as u64);
                     {
-                        let scope = &mut v8::HandleScope::new(&mut *isolate);
+                        v8::scope!(scope, &mut *isolate);
                         let context = v8::Local::new(scope, root);
                         let scope = &mut v8::ContextScope::new(scope, context);
                         if !restored {
@@ -206,7 +228,7 @@ pub(crate) fn retained_family_controls() {
                 {
                     let _call =
                         crate::terminal_callback::begin_call(isolate, (index * 2 + 2) as u64);
-                    let scope = &mut v8::HandleScope::new(&mut *isolate);
+                    v8::scope!(scope, &mut *isolate);
                     let context = v8::Local::new(scope, root);
                     let scope = &mut v8::ContextScope::new(scope, context);
                     assert!(run(
@@ -231,7 +253,7 @@ pub(crate) fn retained_family_controls() {
     let isolate = &mut *owner;
     let root = create_root(isolate).unwrap();
     for _ in 0..4096 {
-        let scope = &mut v8::HandleScope::new(&mut *isolate);
+        v8::scope!(scope, &mut *isolate);
         let context = v8::Local::new(scope, &root);
         let scope = &mut v8::ContextScope::new(scope, context);
         for _ in 0..3 {

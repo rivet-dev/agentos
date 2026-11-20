@@ -13,6 +13,10 @@ import type {
 	MountConfigJsonValue,
 	NativeMountPluginDescriptor,
 } from "./descriptors.js";
+import {
+	checkExecutionCpuLimit,
+	checkExecutionTimingMitigation,
+} from "./execution-options.js";
 import type { ReactorLimitsConfig } from "./generated/ReactorLimitsConfig.js";
 import * as executionProtocol from "./generated-protocol.js";
 import {
@@ -3332,6 +3336,8 @@ export class AgentOs {
 		command: string,
 		options?: KernelExecOptions,
 	): Promise<KernelExecResult> {
+		checkExecutionCpuLimit(options?.cpuTimeLimitMs);
+		checkExecutionTimingMitigation(options?.timingMitigation);
 		return this.#kernel.exec(command, options);
 	}
 
@@ -3341,6 +3347,8 @@ export class AgentOs {
 		args: readonly string[] = [],
 		options?: KernelExecOptions,
 	): Promise<KernelExecResult> {
+		checkExecutionCpuLimit(options?.cpuTimeLimitMs);
+		checkExecutionTimingMitigation(options?.timingMitigation);
 		const kernel = this.#kernel as unknown as {
 			execArgv(
 				command: string,

@@ -47,3 +47,86 @@ test("NODE_OPTIONS runs a quoted CommonJS preload before the entry module", asyn
 		"42\n",
 	);
 }, 15000);
+
+test("CommonJS file and preload preserve the builtin gate", async () => {
+	const vm = await AgentOs.create({
+		defaultSoftware: false,
+		allowedNodeBuiltins: ["path"],
+		environment: { NODE_OPTIONS: "--require /tmp/gated-preload.cjs" },
+	});
+	try {
+		await vm.filesystem.writeFile(
+			"/tmp/gated-preload.cjs",
+			`const requireFrom = globalThis.__agentOsGuestCreateRequire(__filename);
+			let denied;
+			try { requireFrom("node:module"); } catch (error) { denied = error.code; }
+			globalThis.preloadResult = [
+				denied,
+				Reflect.set(globalThis, "__agentOsGuestCreateRequire", () => () => null),
+				typeof globalThis._moduleModule
+			];`,
+		);
+		await vm.filesystem.writeFile(
+			"/tmp/gated-main.cjs",
+			`console.log(JSON.stringify([
+				globalThis.preloadResult,
+				require("node:path").basename(__filename),
+				require.main === module,
+				process.mainModule === module
+			]));`,
+		);
+		const result = await vm.process.execFile("node", ["/tmp/gated-main.cjs"], {
+			timeoutMs: 3_000,
+			output: { capture: "all" },
+		});
+		expect(result.exitCode, result.stderr).toBe(0);
+		expect(JSON.parse(result.stdout)).toEqual([
+			["ERR_ACCESS_DENIED", false, "undefined"],
+			"gated-main.cjs",
+			true,
+			true,
+		]);
+	} finally {
+		await vm.dispose();
+	}
+}, 10_000);
+
+test("CommonJS retained calls preserve the builtin gate and context", async () => {
+	const vm = await AgentOs.create({
+		defaultSoftware: false,
+		allowedNodeBuiltins: ["path"],
+	});
+	try {
+		await vm.createContext("gated-commonjs");
+		for (const count of [1, 2]) {
+			const result = await vm.javascript.execute(
+				`{
+					let denied;
+					try { require("node:module"); } catch (error) { denied = error.code; }
+					globalThis.gatedCount = (globalThis.gatedCount ?? 0) + 1;
+					console.log(JSON.stringify([
+						denied,
+						typeof globalThis._moduleModule,
+						require("node:path").basename("/tmp/gated-main.cjs"),
+						globalThis.gatedCount
+					]));
+				}`,
+				{
+					contextId: "gated-commonjs",
+					format: "commonjs",
+					timeoutMs: 2_000,
+					output: { capture: "all" },
+				},
+			);
+			expect(result.outcome, JSON.stringify(result)).toBe("succeeded");
+			expect(JSON.parse(result.stdout ?? "")).toEqual([
+				"ERR_ACCESS_DENIED",
+				"undefined",
+				"gated-main.cjs",
+				count,
+			]);
+		}
+	} finally {
+		await vm.dispose();
+	}
+}, 10_000);

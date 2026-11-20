@@ -825,6 +825,7 @@ struct LocalBridgeState {
     next_timer_id: u64,
     timers: Arc<Mutex<HashMap<u64, LocalTimerEntry>>>,
     kernel_stdin: Arc<LocalKernelStdinBridge>,
+    pending_stdin_read: Option<LocalStdinRead>,
     forward_kernel_stdin_rpc: bool,
     kernel_stdio: bool,
     v8_session: Option<V8SessionHandle>,
@@ -861,6 +862,7 @@ impl Default for LocalBridgeState {
             next_timer_id: 0,
             timers: Arc::new(Mutex::new(HashMap::new())),
             kernel_stdin: Arc::new(LocalKernelStdinBridge::default()),
+            pending_stdin_read: None,
             forward_kernel_stdin_rpc: false,
             kernel_stdio: false,
             v8_session: None,
@@ -888,6 +890,7 @@ impl Drop for LocalBridgeState {
     /// finds its entry gone and suppresses its callback via `timer_should_fire`,
     /// so a destroyed session's timers do not fire after the fact.
     fn drop(&mut self) {
+        self.kernel_stdin.close();
         if let Some(wheel) = JAVASCRIPT_TIMER_WHEEL.get() {
             wheel.cancel_registry(&self.timers);
         }
@@ -901,12 +904,23 @@ impl Drop for LocalBridgeState {
 struct LocalKernelStdinBridge {
     state: Mutex<LocalKernelStdinState>,
     ready: Condvar,
+    async_ready: Notify,
 }
 
 #[derive(Debug, Default)]
 struct LocalKernelStdinState {
     bytes: VecDeque<u8>,
     closed: bool,
+    generation: u64,
+}
+
+#[derive(Clone, Copy)]
+struct LocalStdinRead {
+    call_id: u64,
+    generation: u64,
+    max_bytes: usize,
+    deadline: Option<time::Instant>,
+    python_raw: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -4063,7 +4077,11 @@ impl JavascriptExecutionEngine {
             build_v8_user_code(&guest_entrypoint, &request.env)
         };
         let runtime_shim = build_v8_runtime_shim(
-            &guest_entrypoint,
+            RuntimeEntrypoint {
+                path: &guest_entrypoint,
+                commonjs_main: !use_module_mode
+                    && !matches!(guest_entrypoint.as_str(), "-e" | "--eval"),
+            },
             &process_argv,
             request.argv0.as_deref(),
             translator.guest_cwd(),
@@ -4512,11 +4530,7 @@ fn build_v8_user_code(entrypoint: &str, env: &BTreeMap<String, String>) -> Strin
     } else {
         // Module entrypoint - load it as Node's main CommonJS module so
         // require.main, module.parent, and process.mainModule are coherent.
-        format!(
-            "_moduleModule._load({}, null, true);\n//# sourceURL={}",
-            serde_json::to_string(entrypoint).unwrap_or_else(|_| format!("\"{}\"", entrypoint)),
-            entrypoint
-        )
+        format!("globalThis.__agentOsRunCommonJsMain();\n//# sourceURL={entrypoint}")
     }
 }
 
@@ -4847,11 +4861,16 @@ fn resolve_v8_entrypoint(cwd: &Path, entrypoint: &str) -> String {
 // Keep each injected process/runtime value explicit at this one serialization
 // boundary; grouping them would duplicate the already-typed guest config.
 #[allow(clippy::too_many_arguments)]
+struct RuntimeEntrypoint<'a> {
+    path: &'a str,
+    commonjs_main: bool,
+}
+
 /// The per-process classic script that sets up `process` (argv, env, identity)
 /// before guest code runs. It travels in the Execute frame's `runtime_shim`
 /// field, separate from the guest's own code.
 fn build_v8_runtime_shim(
-    entrypoint: &str,
+    entrypoint: RuntimeEntrypoint<'_>,
     argv: &[String],
     argv0: Option<&str>,
     cwd: &str,
@@ -4868,7 +4887,7 @@ fn build_v8_runtime_shim(
     let argv0_json = serde_json::to_string(&argv0.unwrap_or("node"))
         .unwrap_or_else(|_| String::from("\"node\""));
     let entry_json =
-        serde_json::to_string(entrypoint).unwrap_or_else(|_| String::from("\"/<entry>\""));
+        serde_json::to_string(entrypoint.path).unwrap_or_else(|_| String::from("\"/<entry>\""));
     let cwd_json = serde_json::to_string(cwd).unwrap_or_else(|_| String::from("\"/\""));
     let env_json = serde_json::to_string(env).unwrap_or_else(|_| String::from("{}"));
     // Virtual process identity object. `Option` fields serialize to `null`, which
@@ -4903,6 +4922,7 @@ fn build_v8_runtime_shim(
     .to_string();
     let high_resolution_time = guest_runtime.high_resolution_time;
     let kernel_ipc = guest_runtime.kernel_ipc;
+    let run_commonjs_main = entrypoint.commonjs_main;
 
     format!(
         r#"(function () {{
@@ -4916,6 +4936,9 @@ fn build_v8_runtime_shim(
   const nextArgv = {argv_json};
   const nextArgv0 = {argv0_json};
   const entryFile = {entry_json};
+  const createRequire = globalThis.__agentOsGuestCreateRequire;
+  const mainLoader = {run_commonjs_main} ? globalThis._moduleModule : undefined;
+  const requireFrom = globalThis._requireFrom;
   const nextCwd = {cwd_json};
   const nextEnv = {env_json};
   const nextHighResolutionTime = {high_resolution_time};
@@ -4989,7 +5012,7 @@ fn build_v8_runtime_shim(
       const originalProcessBinding = process.binding.bind(process);
       let constantsBinding = null;
       try {{
-        const bindingRequire = globalThis._moduleModule?.createRequire?.(
+        const bindingRequire = createRequire?.(
           nextCwd === "/"
             ? "/__agentos_runtime__.js"
             : `${{nextCwd.replace(/\/+$/, "")}}/__agentos_runtime__.js`,
@@ -5094,7 +5117,7 @@ fn build_v8_runtime_shim(
 
   if (
     typeof globalThis.require === "undefined" &&
-    typeof globalThis._moduleModule?.createRequire === "function"
+    typeof createRequire === "function"
   ) {{
     const requireEntryFile =
       entryFile === "-e" || entryFile === "--eval"
@@ -5103,7 +5126,23 @@ fn build_v8_runtime_shim(
           : `${{nextCwd.replace(/\/+$/, "")}}/__agentos_eval__.js`
         : entryFile;
     globalThis.require =
-      globalThis._moduleModule.createRequire(requireEntryFile);
+      createRequire(requireEntryFile);
+  }}
+
+  // Install the builtin allow-list gate consulted by the bridge's
+  // rejectRestrictedBuiltinRequest (covers require + ESM builtin loads). Present
+  // for non-node platforms (empty => deny all) and node + explicit allow-list;
+  // absent => unrestricted (node default).
+  {{
+    const __builtinAllowRaw = nextEnv.AGENTOS_JS_BUILTIN_ALLOWLIST;
+    if (typeof __builtinAllowRaw === "string") {{
+      let __allowList = [];
+      try {{ __allowList = JSON.parse(__builtinAllowRaw); }} catch (_e) {{ __allowList = []; }}
+      if (typeof globalThis.__agentOSInitJsRuntime === "function") {{
+        globalThis.__agentOSInitJsRuntime(Array.isArray(__allowList) ? __allowList : []);
+      }}
+      try {{ delete globalThis.__agentOSInitJsRuntime; }} catch (_e) {{}}
+    }}
   }}
 
   if (typeof globalThis.require === "function") {{
@@ -5140,33 +5179,35 @@ fn build_v8_runtime_shim(
         ? "/__agentos_preload__.js"
         : `${{nextCwd.replace(/\/+$/, "")}}/__agentos_preload__.js`;
     const preloadRequire =
-      typeof globalThis._moduleModule?.createRequire === "function"
-        ? globalThis._moduleModule.createRequire(preloadBase)
+      typeof createRequire === "function"
+        ? createRequire(preloadBase)
         : globalThis.require;
     for (const preloadModule of preloadModules) {{
       preloadRequire(preloadModule);
     }}
   }}
 
+  if ({run_commonjs_main}) {{
+    let mainLoaded = false;
+    Object.defineProperty(globalThis, "__agentOsRunCommonJsMain", {{
+      configurable: true,
+      enumerable: false,
+      writable: false,
+      value: () => {{
+        if (mainLoaded) return;
+        mainLoaded = true;
+        delete globalThis.__agentOsRunCommonJsMain;
+        if (mainLoader) return mainLoader._load(entryFile, null, true);
+        // The builtin gate may already have removed the public module alias.
+        return requireFrom(entryFile, "/", true);
+      }},
+    }});
+  }}
+
   // jsRuntime platform tiering: the guest JS host surface is baked into the
   // shared V8 snapshot, so non-node platforms are produced by subtractively
   // scrubbing baked globals here, per execution.
   const __jsPlatform = nextEnv.AGENTOS_JS_PLATFORM || "node";
-  // Install the builtin allow-list gate consulted by the bridge's
-  // rejectRestrictedBuiltinRequest (covers require + ESM builtin loads). Present
-  // for non-node platforms (empty => deny all) and node + explicit allow-list;
-  // absent => unrestricted (node default).
-  {{
-    const __builtinAllowRaw = nextEnv.AGENTOS_JS_BUILTIN_ALLOWLIST;
-    if (typeof __builtinAllowRaw === "string") {{
-      let __allowList = [];
-      try {{ __allowList = JSON.parse(__builtinAllowRaw); }} catch (_e) {{ __allowList = []; }}
-      if (typeof globalThis.__agentOSInitJsRuntime === "function") {{
-        globalThis.__agentOSInitJsRuntime(Array.isArray(__allowList) ? __allowList : []);
-      }}
-      try {{ delete globalThis.__agentOSInitJsRuntime; }} catch (_e) {{}}
-    }}
-  }}
   if (__jsPlatform !== "node") {{
     const __dropGlobal = (name) => {{
       try {{ delete globalThis[name]; }} catch (_e) {{}}
@@ -5228,6 +5269,32 @@ fn build_v8_runtime_shim(
     )
 }
 
+fn send_local_bridge_reply(
+    session: &V8SessionHandle,
+    call_id: u64,
+    reply: Result<Value, HostServiceError>,
+) -> bool {
+    let encoded = match reply {
+        Ok(value) => v8_runtime::json_to_cbor_payload(&value)
+            .map(|payload| (0, payload))
+            .map_err(|error| error.to_string()),
+        Err(error) => encode_host_service_error_payload(&error)
+            .map(|payload| (1, payload))
+            .map_err(|error| error.to_string()),
+    };
+    let (status, payload) = match encoded {
+        Ok(encoded) => encoded,
+        Err(error) => {
+            terminate_session_after_bridge_encoding_failure(session, call_id, &error);
+            return false;
+        }
+    };
+    if let Err(error) = session.send_bridge_response(call_id, status, payload) {
+        eprintln!("INFO_AGENTOS_STALE_BRIDGE_COMPLETION: call_id={call_id} error={error}");
+    }
+    true
+}
+
 /// Spawn a supervised task on the process runtime that converts V8 BinaryFrame
 /// messages into JavascriptExecutionEvent values for the sidecar event loop.
 ///
@@ -5257,7 +5324,18 @@ fn spawn_v8_event_bridge(
             loop {
                 let local_bridge = bridge_state.as_mut().expect("active event bridge owns local state");
                 let frame_recv_start = Instant::now();
-                let Ok(frame) = frame_receiver.recv_async().await else {
+                let pending_read = local_bridge.pending_stdin_read;
+                let frame_result = tokio::select! {
+                    frame = frame_receiver.recv_async() => frame,
+                    (call_id, reply) = local_bridge.kernel_stdin.wait_for_pending_read(pending_read) => {
+                        local_bridge.pending_stdin_read = None;
+                        if !send_local_bridge_reply(&v8_session, call_id, reply) {
+                            break;
+                        }
+                        continue;
+                    }
+                };
+                let Ok(frame) = frame_result else {
                     break;
                 };
                 let frame_recv_wait = frame_recv_start.elapsed();
@@ -5328,43 +5406,13 @@ fn spawn_v8_event_bridge(
                             if let Some(response) =
                                 local_bridge.handle_internal_bridge_call(call_id, &method, &args)
                             {
-                                let encoded = match response {
-                                    LocalBridgeCallResult::Immediate(response) => {
-                                        match v8_runtime::json_to_cbor_payload(&response) {
-                                            Ok(payload) => (0, payload),
-                                            Err(error) => {
-                                                terminate_session_after_bridge_encoding_failure(
-                                                    &v8_session,
-                                                    call_id,
-                                                    &error.to_string(),
-                                                );
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    LocalBridgeCallResult::Error(error) => {
-                                        match encode_host_service_error_payload(&error) {
-                                            Ok(payload) => (1, payload),
-                                            Err(error) => {
-                                                terminate_session_after_bridge_encoding_failure(
-                                                    &v8_session,
-                                                    call_id,
-                                                    &error.to_string(),
-                                                );
-                                                break;
-                                            }
-                                        }
-                                    }
+                                let response = match response {
+                                    LocalBridgeCallResult::Immediate(value) => Ok(value),
+                                    LocalBridgeCallResult::Error(error) => Err(error),
                                     LocalBridgeCallResult::Deferred => continue,
                                 };
-                                if let Err(error) = v8_session.send_bridge_response(
-                                    call_id,
-                                    encoded.0,
-                                    encoded.1,
-                                ) {
-                                    eprintln!(
-                                        "INFO_AGENTOS_STALE_BRIDGE_COMPLETION: call_id={call_id} error={error}"
-                                    );
+                                if !send_local_bridge_reply(&v8_session, call_id, response) {
+                                    break;
                                 }
                                 continue;
                             }
@@ -5960,8 +6008,24 @@ impl LocalBridgeState {
                 self.handle_polyfill_dispatch(args),
             )),
             "_cryptoRandomFill" => {
-                let size = args.first().and_then(Value::as_u64).unwrap_or(16) as usize;
-                let mut bytes = vec![0u8; size];
+                // This host primitive supplies one Web Crypto entropy chunk.
+                // Validate at the trust boundary: guests can call it directly,
+                // bypassing the JavaScript getRandomValues size check.
+                let size = match args.first().and_then(Value::as_u64) {
+                    Some(size) if size <= 65_536 => size as usize,
+                    _ => return Some(LocalBridgeCallResult::Error(HostServiceError::new(
+                        "ERR_OUT_OF_RANGE",
+                        "_cryptoRandomFill requires an integer byte count from 0 through 65536; request larger random values in chunks",
+                    ))),
+                };
+                let mut bytes = Vec::new();
+                if bytes.try_reserve_exact(size).is_err() {
+                    return Some(LocalBridgeCallResult::Error(HostServiceError::new(
+                        "ENOMEM",
+                        "unable to allocate the requested entropy chunk",
+                    )));
+                }
+                bytes.resize(size, 0);
                 if let Err(error) = getrandom(&mut bytes) {
                     return Some(LocalBridgeCallResult::Error(HostServiceError::new(
                         "ERR_AGENTOS_ENTROPY_UNAVAILABLE",
@@ -6009,12 +6073,9 @@ impl LocalBridgeState {
                 Some(LocalBridgeCallResult::Immediate(Value::Bool(false)))
             }
             "_kernelStdinRead" | "_kernelStdinReadRaw" if self.forward_kernel_stdin_rpc => None,
-            "_kernelStdinRead" | "_kernelStdinReadRaw" => Some(LocalBridgeCallResult::Immediate(
-                self.kernel_stdin.read(args),
-            )),
-            "_pythonStdinRead" => Some(LocalBridgeCallResult::Immediate(
-                self.kernel_stdin.read_python_raw(args),
-            )),
+            "_kernelStdinRead" | "_kernelStdinReadRaw" | "_pythonStdinRead" => {
+                Some(self.begin_stdin_read(call_id, args, method == "_pythonStdinRead"))
+            }
             "_scheduleTimer" => {
                 self.schedule_bridge_timer_response(call_id, timer_delay_ms(args.first()));
                 Some(LocalBridgeCallResult::Deferred)
@@ -7136,11 +7197,90 @@ fn hex_digit(byte: u8) -> Option<u8> {
     }
 }
 
+impl LocalBridgeState {
+    fn begin_stdin_read(
+        &mut self,
+        call_id: u64,
+        args: &[Value],
+        python_raw: bool,
+    ) -> LocalBridgeCallResult {
+        if self.pending_stdin_read.is_some() {
+            return LocalBridgeCallResult::Error(HostServiceError::new(
+                "EBUSY",
+                "a local stdin read is already pending",
+            ));
+        }
+        let mut state = self
+            .kernel_stdin
+            .state
+            .lock()
+            .expect("kernel stdin state poisoned");
+        let timeout = if !python_raw && args.get(1).is_some_and(Value::is_null) {
+            None
+        } else {
+            let millis = args.get(1).and_then(Value::as_u64).unwrap_or(100);
+            if millis > MAX_TIMER_DELAY_MS {
+                return LocalBridgeCallResult::Error(HostServiceError::new(
+                    "EINVAL",
+                    format!("local stdin timeout exceeds {MAX_TIMER_DELAY_MS} milliseconds"),
+                ));
+            }
+            Some(millis)
+        };
+        let read = LocalStdinRead {
+            call_id,
+            generation: state.generation,
+            max_bytes: stdin_read_max_bytes(args),
+            deadline: timeout.map(|millis| time::Instant::now() + Duration::from_millis(millis)),
+            python_raw,
+        };
+        if let Some(value) = state.take_readable(read.max_bytes, python_raw) {
+            return LocalBridgeCallResult::Immediate(value);
+        }
+        if timeout == Some(0) {
+            return LocalBridgeCallResult::Immediate(Value::Null);
+        }
+        self.pending_stdin_read = Some(read);
+        LocalBridgeCallResult::Deferred
+    }
+}
+
+fn stdin_read_max_bytes(args: &[Value]) -> usize {
+    args.first()
+        .and_then(Value::as_u64)
+        .map(|value| value.clamp(1, 64 * 1024) as usize)
+        .unwrap_or(64 * 1024)
+}
+
+impl LocalKernelStdinState {
+    fn take_readable(&mut self, max_bytes: usize, python_raw: bool) -> Option<Value> {
+        if !self.bytes.is_empty() {
+            let read_len = self.bytes.len().min(max_bytes);
+            let bytes = self.bytes.drain(..read_len).collect::<Vec<_>>();
+            let data = v8_runtime::base64_encode_pub(&bytes);
+            return Some(if python_raw {
+                Value::String(data)
+            } else {
+                json!({"dataBase64": data})
+            });
+        }
+        self.closed.then(|| {
+            if python_raw {
+                json!("__AGENTOS_PYTHON_STDIN_DONE__")
+            } else {
+                json!({"done": true})
+            }
+        })
+    }
+}
+
 impl LocalKernelStdinBridge {
     fn reset(&self) {
         let mut state = self.state.lock().expect("kernel stdin state poisoned");
         state.bytes.clear();
         state.closed = false;
+        state.generation = state.generation.wrapping_add(1);
+        self.async_ready.notify_waiters();
     }
 
     fn write(&self, chunk: &[u8]) -> Result<(), JavascriptExecutionError> {
@@ -7163,6 +7303,7 @@ impl LocalKernelStdinBridge {
 
         state.bytes.extend(chunk.iter().copied());
         self.ready.notify_all();
+        self.async_ready.notify_waiters();
         Ok(())
     }
 
@@ -7170,14 +7311,12 @@ impl LocalKernelStdinBridge {
         let mut state = self.state.lock().expect("kernel stdin state poisoned");
         state.closed = true;
         self.ready.notify_all();
+        self.async_ready.notify_waiters();
     }
 
+    // Synchronous compatibility entrypoints are called outside the Tokio bridge.
     fn read(&self, args: &[Value]) -> Value {
-        let max_bytes = args
-            .first()
-            .and_then(Value::as_u64)
-            .map(|value| value.clamp(1, 64 * 1024) as usize)
-            .unwrap_or(64 * 1024);
+        let max_bytes = stdin_read_max_bytes(args);
         let deadline = if args.get(1).is_some_and(Value::is_null) {
             None
         } else {
@@ -7205,53 +7344,45 @@ impl LocalKernelStdinBridge {
             }
         }
 
-        if !state.bytes.is_empty() {
-            let read_len = state.bytes.len().min(max_bytes);
-            let bytes = state.bytes.drain(..read_len).collect::<Vec<_>>();
-            return json!({
-                "dataBase64": v8_runtime::base64_encode_pub(&bytes),
-            });
-        }
-
-        json!({
-            "done": true,
-        })
+        state
+            .take_readable(max_bytes, false)
+            .expect("stdin became readable")
     }
 
-    fn read_python_raw(&self, args: &[Value]) -> Value {
-        const PYTHON_STDIN_DONE_SENTINEL: &str = "__AGENTOS_PYTHON_STDIN_DONE__";
-
-        let max_bytes = args
-            .first()
-            .and_then(Value::as_u64)
-            .map(|value| value.clamp(1, 64 * 1024) as usize)
-            .unwrap_or(64 * 1024);
-        let timeout = Duration::from_millis(args.get(1).and_then(Value::as_u64).unwrap_or(100));
-        let deadline = Instant::now() + timeout;
-        let mut state = self.state.lock().expect("kernel stdin state poisoned");
-
-        while state.bytes.is_empty() && !state.closed {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                return Value::Null;
+    async fn wait_for_pending_read(
+        &self,
+        read: Option<LocalStdinRead>,
+    ) -> (u64, Result<Value, HostServiceError>) {
+        let Some(read) = read else {
+            return std::future::pending().await;
+        };
+        loop {
+            // Register before inspecting the level state. A wake between the
+            // state check and parking cannot leave the read stranded.
+            let ready = self.async_ready.notified();
+            tokio::pin!(ready);
+            ready.as_mut().enable();
+            {
+                let mut state = self.state.lock().expect("kernel stdin state poisoned");
+                if state.generation != read.generation {
+                    let error = HostServiceError::new("ECANCELED", "local stdin read reset");
+                    return (read.call_id, Err(error));
+                }
+                if let Some(value) = state.take_readable(read.max_bytes, read.python_raw) {
+                    return (read.call_id, Ok(value));
+                }
             }
-            let (next_state, wait_result) = self
-                .ready
-                .wait_timeout(state, remaining)
-                .expect("kernel stdin wait poisoned");
-            state = next_state;
-            if wait_result.timed_out() && state.bytes.is_empty() && !state.closed {
-                return Value::Null;
+            if let Some(deadline) = read.deadline {
+                if deadline <= time::Instant::now() {
+                    return (read.call_id, Ok(Value::Null));
+                }
+                // Recheck readiness once the deadline wakes, preserving data
+                // that became readable concurrently with the timeout.
+                let _ = time::timeout_at(deadline, ready).await;
+            } else {
+                ready.await;
             }
         }
-
-        if !state.bytes.is_empty() {
-            let read_len = state.bytes.len().min(max_bytes);
-            let bytes = state.bytes.drain(..read_len).collect::<Vec<_>>();
-            return Value::String(v8_runtime::base64_encode_pub(&bytes));
-        }
-
-        Value::String(String::from(PYTHON_STDIN_DONE_SENTINEL))
     }
 }
 
@@ -9839,27 +9970,128 @@ mod tests {
     }
 
     #[test]
-    fn kernel_stdin_bridge_null_timeout_waits_for_readiness_without_polling() {
-        let bridge = Arc::new(LocalKernelStdinBridge::default());
-        let reader = Arc::clone(&bridge);
-        let (sender, receiver) = std::sync::mpsc::channel();
-        // AGENTOS_THREAD_SITE: test-only-stdin-readiness
-        let thread = std::thread::spawn(move || {
-            sender
-                .send(reader.read(&[json!(64), Value::Null]))
-                .expect("publish stdin result");
-        });
+    fn crypto_entropy_native_boundary_rejects_invalid_sizes() {
+        let mut bridge = LocalBridgeState::default();
+        for value in [
+            json!(-1),
+            json!(1.5),
+            Value::Null,
+            json!(65537),
+            json!(u64::MAX),
+        ] {
+            assert!(
+                matches!(bridge.handle_internal_bridge_call(1, "_cryptoRandomFill", &[value]),
+                Some(LocalBridgeCallResult::Error(error)) if error.code == "ERR_OUT_OF_RANGE")
+            );
+        }
+        for size in [0, 16, 65536] {
+            match bridge.handle_internal_bridge_call(1, "_cryptoRandomFill", &[json!(size)]) {
+                Some(LocalBridgeCallResult::Immediate(Value::String(value))) => {
+                    assert_eq!(
+                        v8_runtime::base64_decode_pub(&value)
+                            .expect("valid entropy base64")
+                            .len(),
+                        size
+                    );
+                }
+                _ => panic!("expected bounded entropy output"),
+            }
+        }
+    }
 
-        assert!(receiver.recv_timeout(Duration::from_millis(20)).is_err());
-        bridge.write(b"ready").expect("make stdin readable");
-        let value = receiver
-            .recv_timeout(Duration::from_secs(1))
-            .expect("readiness should wake the parked read");
-        assert_eq!(
-            value["dataBase64"],
-            Value::String(v8_runtime::base64_encode_pub(b"ready"))
-        );
-        thread.join().expect("stdin reader exits");
+    #[test]
+    fn local_stdin_read_keeps_single_worker_responsive() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("build current-thread test runtime")
+            .block_on(async {
+                let mut bridge = LocalBridgeState::default();
+                let args = [json!(64), json!(500)];
+                assert!(matches!(bridge.begin_stdin_read(1, &args, false), LocalBridgeCallResult::Deferred));
+                assert!(matches!(
+                    bridge.begin_stdin_read(2, &args, false),
+                    LocalBridgeCallResult::Error(error) if error.code == "EBUSY"
+                ));
+
+                let pending = bridge.pending_stdin_read;
+                let stdin = &bridge.kernel_stdin;
+                // Poll the pending read first. When it yields, the same worker
+                // can complete an unrelated event before any stdin data arrives.
+                tokio::select! {
+                    biased;
+                    reply = stdin.wait_for_pending_read(pending) => panic!("read completed early: {reply:?}"),
+                    () = tokio::task::yield_now() => {}
+                }
+                let write = async {
+                    tokio::task::yield_now().await;
+                    stdin.write(b"ready").expect("make stdin readable");
+                };
+                let ((id, value), ()) = time::timeout(
+                    Duration::from_secs(1),
+                    async { tokio::join!(stdin.wait_for_pending_read(pending), write) },
+                )
+                .await
+                .expect("stdin readiness wakes the pending read");
+                assert_eq!(id, 1);
+                assert_eq!(value.expect("read succeeds")["dataBase64"], json!("cmVhZHk="));
+            });
+    }
+
+    #[test]
+    fn local_stdin_read_closes_and_resets_without_consuming_new_input() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("build current-thread test runtime")
+            .block_on(async {
+                let mut bridge = LocalBridgeState::default();
+                let args = [json!(64), json!(1_000)];
+                assert!(matches!(
+                    bridge.begin_stdin_read(1, &args, true),
+                    LocalBridgeCallResult::Deferred
+                ));
+                let pending = bridge.pending_stdin_read.take();
+                let stdin = Arc::clone(&bridge.kernel_stdin);
+                let close = async {
+                    tokio::task::yield_now().await;
+                    stdin.close();
+                };
+                let ((_, value), ()) = time::timeout(Duration::from_secs(1), async {
+                    tokio::join!(stdin.wait_for_pending_read(pending), close)
+                })
+                .await
+                .expect("stdin close wakes the pending read");
+                assert_eq!(
+                    value.expect("read returns EOF"),
+                    json!("__AGENTOS_PYTHON_STDIN_DONE__")
+                );
+
+                stdin.reset();
+                assert!(matches!(
+                    bridge.begin_stdin_read(2, &args, false),
+                    LocalBridgeCallResult::Deferred
+                ));
+                let pending = bridge.pending_stdin_read.take();
+                stdin.reset();
+                stdin.write(b"new").expect("write input for next execution");
+                let (id, value) =
+                    time::timeout(Duration::from_secs(1), stdin.wait_for_pending_read(pending))
+                        .await
+                        .expect("reset cancels the pending read");
+                assert_eq!(id, 2);
+                assert_eq!(value.expect_err("reset cancels the read").code, "ECANCELED");
+                assert!(matches!(
+                    bridge.begin_stdin_read(3, &args, true),
+                    LocalBridgeCallResult::Immediate(value) if value == json!("bmV3")
+                ));
+
+                drop(bridge);
+                assert!(matches!(
+                    stdin.write(b"x"),
+                    Err(JavascriptExecutionError::StdinClosed)
+                ));
+            });
     }
 
     #[test]

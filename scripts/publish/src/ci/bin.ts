@@ -21,16 +21,22 @@ import {
 	releaseUserAgent,
 } from "../lib/artifacts.js";
 import {
+	canPromoteLatest,
 	resolveContext,
+	validatePublishSha,
+	validatePublishVersion,
 	writeContextToGithubOutput,
 	type Trigger,
 } from "../lib/context.js";
 import { createGhRelease, tagAndPush } from "../lib/git.js";
 import { scoped } from "../lib/logger.js";
-import { publishAll } from "../lib/npm.js";
+import { publishPackages } from "../lib/npm.js";
+import { preparePackedNpm } from "../lib/packed-npm.ts";
+import { assertDiscoverySanity, discoverPackages } from "../lib/packages.js";
 import { copyPrefix, uploadDir } from "../lib/r2.js";
 import { stageSoftwareArtifacts } from "../lib/software-artifacts.js";
 import {
+	assertPublishableV8Source,
 	discoverRustCrates,
 	STANDALONE_RUST_CRATE_MANIFESTS,
 } from "../lib/rust-crates.js";
@@ -134,6 +140,7 @@ program
 		if (opts.latest !== undefined) overrides.latest = opts.latest === "true";
 		if (opts.branch) overrides.branch = opts.branch;
 		const ctx = await resolveContext(overrides);
+		if (ctx.trigger === "release") assertPublishableV8Source(ctx.repoRoot);
 		log.info(
 			`resolved: trigger=${ctx.trigger} version=${ctx.version} npm_tag=${ctx.npmTag} sha=${ctx.sha} latest=${ctx.latest}${ctx.branch !== undefined ? ` branch=${ctx.branch}` : ""}`,
 		);
@@ -159,7 +166,7 @@ program
 	.action(async (opts) => {
 		const repoRoot = findRepoRoot();
 		const ctx = await resolveContext();
-		const version = opts.version ?? ctx.version;
+		const version = validatePublishVersion(opts.version ?? ctx.version);
 		await bumpPackageJsons(repoRoot, version, {
 			dryRun: !!opts.dryRun,
 			versionOnly: !!opts.versionOnly,
@@ -190,13 +197,27 @@ program
 				releaseMode = ctx.trigger === "release";
 			}
 		}
-		await publishAll(repoRoot, {
+		const packages = discoverPackages(repoRoot);
+		assertDiscoverySanity(packages);
+		await publishPackages(packages, {
 			tag,
 			parallel: Number(opts.parallel),
 			retries: Number(opts.retries),
 			releaseMode,
 			dryRun: !!opts.dryRun,
 		});
+	});
+
+program
+	.command("prepare-packed-npm")
+	.description("Pack publishable npm packages for the credential-scoped publish job")
+	.requiredOption("--version <version>", "Expected packed version")
+	.requiredOption("--output <dir>", "New artifact directory")
+	.action(async (opts) => {
+		const root = findRepoRoot();
+		const packages = discoverPackages(root);
+		assertDiscoverySanity(packages);
+		await preparePackedNpm(packages, validatePublishVersion(opts.version), opts.output);
 	});
 
 // ---------------------------------------------------------------------------
@@ -211,7 +232,7 @@ program
 	.option("--allow-dirty", "Pass --allow-dirty to cargo publish")
 	.action(async (opts) => {
 		const repoRoot = findRepoRoot();
-		const version = opts.version ?? (await resolveContext()).version;
+		const version = validatePublishVersion(opts.version ?? (await resolveContext()).version);
 		const crates = discoverRustCrates(repoRoot);
 		const waitSeconds = Number(opts.waitSeconds);
 		if (!Number.isFinite(waitSeconds) || waitSeconds <= 0) {
@@ -238,6 +259,7 @@ program
 			return;
 		}
 
+		assertPublishableV8Source(repoRoot);
 		if (!process.env.CARGO_REGISTRY_TOKEN) {
 			throw new Error("CARGO_REGISTRY_TOKEN must be set to publish crates");
 		}
@@ -282,10 +304,10 @@ program
 	.command("upload-r2")
 	.description("Upload an artifact directory to R2")
 	.requiredOption("--source <dir>", "Local directory to upload")
-	.option("--sha <sha>", "Short sha (defaults to resolved context)")
+	.option("--sha <sha>", "Full source commit SHA (defaults to resolved context)")
 	.option("--name <name>", "R2 sub-path name", "sidecar")
 	.action(async (opts) => {
-		const sha = opts.sha ?? (await resolveContext()).sha;
+		const sha = validatePublishSha(opts.sha ?? (await resolveContext()).sha);
 		const prefix = releaseArtifactPrefix({ ref: sha, name: opts.name });
 		await uploadDir(opts.source, prefix);
 	});
@@ -296,15 +318,16 @@ program
 program
 	.command("copy-r2")
 	.description("Copy R2 artifacts from {sha} to {version} (+latest)")
-	.option("--sha <sha>", "Source sha (defaults to resolved context)")
+	.option("--sha <sha>", "Full source commit SHA (defaults to resolved context)")
 	.option("--version <version>", "Target version (defaults to resolved context)")
 	.option("--latest <bool>", "Also copy to /latest/ (defaults to resolved context)")
 	.option("--name <name>", "R2 sub-path name", "sidecar")
 	.action(async (opts) => {
 		const ctx = await resolveContext();
-		const sha: string = opts.sha ?? ctx.sha;
-		const version: string = opts.version ?? ctx.version;
-		const latest = opts.latest !== undefined ? opts.latest === "true" : ctx.latest;
+		const sha = validatePublishSha(opts.sha ?? ctx.sha);
+		const version = validatePublishVersion(opts.version ?? ctx.version);
+		const latest = canPromoteLatest(version) &&
+			(opts.latest !== undefined ? opts.latest === "true" : ctx.latest);
 		const source = releaseArtifactPrefix({ ref: sha, name: opts.name });
 		await copyPrefix(
 			source,
@@ -326,7 +349,7 @@ program
 	.description("Create and force-push v{version} tag")
 	.option("--version <version>", "Version (defaults to resolved context)")
 	.action(async (opts) => {
-		const version = opts.version ?? (await resolveContext()).version;
+		const version = validatePublishVersion(opts.version ?? (await resolveContext()).version);
 		await tagAndPush(version);
 	});
 
@@ -338,7 +361,7 @@ program
 	.description("Create or update GitHub release")
 	.option("--version <version>", "Version (defaults to resolved context)")
 	.action(async (opts) => {
-		const version = opts.version ?? (await resolveContext()).version;
+		const version = validatePublishVersion(opts.version ?? (await resolveContext()).version);
 		await createGhRelease(version);
 	});
 

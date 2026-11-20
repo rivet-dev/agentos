@@ -80,7 +80,7 @@ impl BridgeCodeCache {
 /// Must be called within a ContextScope.
 #[cfg(test)]
 pub fn inject_globals(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     process_config: &ProcessConfig,
     os_config: &OsConfig,
 ) {
@@ -106,7 +106,10 @@ pub fn inject_globals(
     // its initialization (whatwg-url/webidl-conversions uses it).
 }
 
-pub fn install_high_resolution_time_global(scope: &mut v8::HandleScope, origin: *const Instant) {
+pub fn install_high_resolution_time_global(
+    scope: &mut v8::PinScope<'_, '_>,
+    origin: *const Instant,
+) {
     let context = scope.get_current_context();
     let global = context.global(scope);
     let external = v8::External::new(scope, origin as *mut c_void);
@@ -121,7 +124,7 @@ pub fn install_high_resolution_time_global(scope: &mut v8::HandleScope, origin: 
     global.define_own_property(scope, key.into(), func.into(), attr);
 }
 
-pub fn install_require_esm_sync_global(scope: &mut v8::HandleScope) {
+pub fn install_require_esm_sync_global(scope: &mut v8::PinScope<'_, '_>) {
     let context = scope.get_current_context();
     let global = context.global(scope);
     let template = v8::FunctionTemplate::builder(require_esm_sync_callback).build(scope);
@@ -136,7 +139,7 @@ pub fn install_require_esm_sync_global(scope: &mut v8::HandleScope) {
 /// Compile stdin source as a real V8 ES module after the guest stdin pipe has
 /// reached EOF. This uses the same resolver and module state as file entrypoints;
 /// source is read through the guest fs bridge before this callback is invoked.
-fn install_stdin_module_global(scope: &mut v8::HandleScope, file_path: &str) {
+fn install_stdin_module_global(scope: &mut v8::PinScope<'_, '_>, file_path: &str) {
     let context = scope.get_current_context();
     let global = context.global(scope);
     let Some(path) = v8::String::new(scope, file_path) else {
@@ -154,7 +157,7 @@ fn install_stdin_module_global(scope: &mut v8::HandleScope, file_path: &str) {
 }
 
 fn execute_stdin_module_callback(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     args: v8::FunctionCallbackArguments,
     mut rv: v8::ReturnValue,
 ) {
@@ -217,7 +220,7 @@ fn execute_stdin_module_callback(
 }
 
 fn require_esm_sync_callback(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     args: v8::FunctionCallbackArguments,
     mut rv: v8::ReturnValue,
 ) {
@@ -309,7 +312,7 @@ fn require_esm_sync_callback(
 }
 
 fn high_resolution_time_callback(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     args: v8::FunctionCallbackArguments,
     mut rv: v8::ReturnValue,
 ) {
@@ -335,7 +338,7 @@ fn high_resolution_time_callback(
 /// Deserializes into V8, extracts processConfig and osConfig, freezes them,
 /// and sets them as non-writable, non-configurable global properties.
 pub fn inject_globals_from_payload(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     payload: &[u8],
 ) -> Result<(), ExecutionError> {
     let context = scope.get_current_context();
@@ -378,7 +381,7 @@ pub fn inject_globals_from_payload(
 }
 
 fn required_object_property<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     obj: v8::Local<'s, v8::Object>,
     name: &str,
 ) -> Result<(v8::Local<'s, v8::Value>, v8::Local<'s, v8::Object>), ExecutionError> {
@@ -386,7 +389,7 @@ fn required_object_property<'s>(
 }
 
 fn required_object_property_with_label<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     obj: v8::Local<'s, v8::Object>,
     name: &str,
     error_label: &str,
@@ -411,7 +414,7 @@ fn required_object_property_with_label<'s>(
     Ok((value, object))
 }
 
-fn is_plain_config_object(scope: &mut v8::HandleScope, object: v8::Local<v8::Object>) -> bool {
+fn is_plain_config_object(scope: &mut v8::PinScope<'_, '_>, object: v8::Local<v8::Object>) -> bool {
     let Some(prototype) = object.get_prototype(scope) else {
         return false;
     };
@@ -430,7 +433,7 @@ fn is_plain_config_object(scope: &mut v8::HandleScope, object: v8::Local<v8::Obj
 }
 
 fn freeze_config_object(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     object: v8::Local<v8::Object>,
     label: &str,
 ) -> Result<(), ExecutionError> {
@@ -459,7 +462,7 @@ fn invalid_globals_payload_error(message: impl Into<String>) -> ExecutionError {
 /// Creates its own TryCatch scope internally so the caller's scope is released.
 /// Returns (exit_code, error) — exit code 0 on success.
 pub(crate) fn run_bridge_cached(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     bridge_code: &str,
     cache: &mut Option<BridgeCodeCache>,
 ) -> (i32, Option<ExecutionError>) {
@@ -475,7 +478,7 @@ pub(crate) fn run_bridge_cached(
             }),
         );
     }
-    let tc = &mut v8::TryCatch::new(scope);
+    v8::tc_scope!(tc, scope);
 
     let v8_source = match v8::String::new(tc, bridge_code) {
         Some(s) => s,
@@ -595,11 +598,14 @@ pub(crate) fn run_bridge_cached(
 
 /// Run a short init script (e.g. post-restore config). Compiles and executes
 /// via v8::Script, returning (exit_code, error) on failure. No code caching.
-pub fn run_init_script(scope: &mut v8::HandleScope, code: &str) -> (i32, Option<ExecutionError>) {
+pub fn run_init_script(
+    scope: &mut v8::PinScope<'_, '_>,
+    code: &str,
+) -> (i32, Option<ExecutionError>) {
     if code.is_empty() {
         return (0, None);
     }
-    let tc = &mut v8::TryCatch::new(scope);
+    v8::tc_scope!(tc, scope);
     let source = match v8::String::new(tc, code) {
         Some(s) => s,
         None => {
@@ -631,8 +637,8 @@ pub fn run_init_script(scope: &mut v8::HandleScope, code: &str) -> (i32, Option<
     crate::next_ticks::begin_entry(tc, false);
     let result = {
         let mut storage = std::pin::pin!(MicrotaskSuppressionStorage::new());
-        let mut explicit = ExplicitMicrotaskScope::new(tc, storage.as_mut());
-        script.run(&mut explicit)
+        let explicit = ExplicitMicrotaskScope::new(tc, storage.as_mut());
+        script.run(&explicit)
     };
     if result.is_none() {
         return match tc.exception() {
@@ -653,7 +659,7 @@ pub fn run_init_script(scope: &mut v8::HandleScope, code: &str) -> (i32, Option<
 /// via v8::Script. Returns (exit_code, error) — exit code 0 on success, 1 on error.
 /// The `bridge_cache` parameter enables code caching for repeated bridge compilations.
 pub fn execute_script(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     bridge_code: &str,
     user_code: &str,
     bridge_cache: &mut Option<BridgeCodeCache>,
@@ -662,7 +668,7 @@ pub fn execute_script(
 }
 
 pub fn execute_script_with_options(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     bridge_ctx: Option<&BridgeCallContext>,
     bridge_code: &str,
     user_code: &str,
@@ -704,7 +710,7 @@ pub fn execute_script_with_options(
 
     // Run user code
     {
-        let tc = &mut v8::TryCatch::new(scope);
+        v8::tc_scope!(tc, scope);
         let source = match v8::String::new(tc, user_code) {
             Some(s) => s,
             None => {
@@ -761,8 +767,8 @@ pub fn execute_script_with_options(
         crate::next_ticks::begin_entry(tc, false);
         let script_result = {
             let mut suppression_storage = std::pin::pin!(MicrotaskSuppressionStorage::new());
-            let mut run_scope = ExplicitMicrotaskScope::new(tc, suppression_storage.as_mut());
-            script.run(&mut run_scope)
+            let run_scope = ExplicitMicrotaskScope::new(tc, suppression_storage.as_mut());
+            script.run(&run_scope)
         };
         let completion = match script_result {
             Some(result) => result,
@@ -861,7 +867,7 @@ enum GuestExceptionOutcome {
 }
 
 fn route_entry_exception(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     exception: v8::Local<v8::Value>,
     origin: &str,
 ) -> GuestExceptionOutcome {
@@ -873,7 +879,7 @@ fn route_entry_exception(
     if extract_process_exit_code(scope, exception).is_some() {
         return terminal(exception_to_result(scope, exception));
     }
-    let tc = &mut v8::TryCatch::new(scope);
+    v8::tc_scope!(tc, scope);
     let global = tc.get_current_context().global(tc);
     let Some(key) = v8::String::new(tc, "_dispatchUncaughtException") else {
         return terminal(exception_to_result(tc, exception));
@@ -913,7 +919,7 @@ fn route_entry_exception(
 /// ProcessExitError is detected by sentinel property, not by regex matching on the
 /// error message or constructor name.
 pub fn extract_process_exit_code(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     exception: v8::Local<v8::Value>,
 ) -> Option<i32> {
     if !exception.is_object() {
@@ -937,7 +943,7 @@ pub fn extract_process_exit_code(
     }
 }
 
-pub(crate) fn extract_global_process_exit_code(scope: &mut v8::HandleScope) -> Option<i32> {
+pub(crate) fn extract_global_process_exit_code(scope: &mut v8::PinScope<'_, '_>) -> Option<i32> {
     let context = scope.get_current_context();
     let global = context.global(scope);
     let process_key = v8::String::new(scope, "process")?;
@@ -958,7 +964,7 @@ pub(crate) fn extract_global_process_exit_code(scope: &mut v8::HandleScope) -> O
     }
 }
 
-pub(crate) fn global_process_exit_requested(scope: &mut v8::HandleScope) -> bool {
+pub(crate) fn global_process_exit_requested(scope: &mut v8::PinScope<'_, '_>) -> bool {
     let context = scope.get_current_context();
     let global = context.global(scope);
     let Some(key) = v8::String::new(scope, "_processExitRequested") else {
@@ -982,11 +988,11 @@ pub(crate) fn global_process_exit_requested(scope: &mut v8::HandleScope) -> bool
 /// Node process bridge retain normal completion and warm isolate ownership.
 #[cfg_attr(test, allow(dead_code))]
 pub(crate) fn finalize_natural_process_exit(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
 ) -> Result<bool, (i32, ExecutionError)> {
     let mut suppression_storage = std::pin::pin!(MicrotaskSuppressionStorage::new());
     let mut explicit = ExplicitMicrotaskScope::new(scope, suppression_storage.as_mut());
-    let tc = &mut v8::TryCatch::new(&mut *explicit);
+    v8::tc_scope!(tc, &mut *explicit);
     let failure = || {
         (
             1,
@@ -1073,7 +1079,7 @@ pub(crate) enum TerminalExceptionKind {
 /// For ProcessExitError (detected via _isProcessExit sentinel), returns the error's exit code.
 /// For other errors, returns exit code 1.
 pub(crate) fn exception_to_result(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     exception: v8::Local<v8::Value>,
 ) -> (i32, ExecutionError) {
     classify_terminal_exception(scope, exception).1
@@ -1082,7 +1088,7 @@ pub(crate) fn exception_to_result(
 // Preserve the kind from the same sentinel reads that determine the outcome.
 // A legacy message-based exit-code fallback is not an explicit process exit.
 pub(crate) fn classify_terminal_exception(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     exception: v8::Local<v8::Value>,
 ) -> (TerminalExceptionKind, (i32, ExecutionError)) {
     if let Some(exit_code) = extract_process_exit_code(scope, exception) {
@@ -1135,7 +1141,7 @@ fn parse_process_exit_code_from_error(error: &ExecutionError) -> Option<i32> {
 /// Reads constructor.name for error type, .message for the message,
 /// .stack for the stack trace, and optional .code for Node-style error codes.
 pub(crate) fn extract_error_info(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     exception: v8::Local<v8::Value>,
 ) -> ExecutionError {
     if scope.is_execution_terminating() {
@@ -1218,7 +1224,7 @@ pub(crate) fn extract_error_info(
 /// Build the _processConfig JS object: { cwd, env, timing_mitigation, frozen_time_ms, high_resolution_time }
 #[cfg(test)]
 fn build_process_config<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     config: &ProcessConfig,
 ) -> v8::Local<'s, v8::Object> {
     let obj = v8::Object::new(scope);
@@ -1263,7 +1269,7 @@ fn build_process_config<'s>(
 /// Build the _osConfig JS object: { homedir, tmpdir, platform, arch }
 #[cfg(test)]
 fn build_os_config<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     config: &OsConfig,
 ) -> v8::Local<'s, v8::Object> {
     let obj = v8::Object::new(scope);
@@ -1456,7 +1462,7 @@ pub fn has_pending_script_evaluation() -> bool {
     PENDING_SCRIPT_EVALUATION.with(|cell| cell.borrow().is_some())
 }
 
-pub fn pending_module_evaluation_needs_wait(scope: &mut v8::HandleScope) -> bool {
+pub fn pending_module_evaluation_needs_wait(scope: &mut v8::PinScope<'_, '_>) -> bool {
     PENDING_MODULE_EVALUATION.with(|cell| {
         let borrow = cell.borrow();
         let Some(pending) = borrow.as_ref() else {
@@ -1467,7 +1473,7 @@ pub fn pending_module_evaluation_needs_wait(scope: &mut v8::HandleScope) -> bool
     })
 }
 
-pub fn pending_script_evaluation_needs_wait(scope: &mut v8::HandleScope) -> bool {
+pub fn pending_script_evaluation_needs_wait(scope: &mut v8::PinScope<'_, '_>) -> bool {
     PENDING_SCRIPT_EVALUATION.with(|cell| {
         let borrow = cell.borrow();
         let Some(pending) = borrow.as_ref() else {
@@ -1479,7 +1485,7 @@ pub fn pending_script_evaluation_needs_wait(scope: &mut v8::HandleScope) -> bool
 }
 
 fn set_pending_module_evaluation(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     module: v8::Local<v8::Module>,
     promise: v8::Local<v8::Promise>,
 ) {
@@ -1491,7 +1497,10 @@ fn set_pending_module_evaluation(
     });
 }
 
-pub fn set_pending_script_evaluation(scope: &mut v8::HandleScope, promise: v8::Local<v8::Promise>) {
+pub fn set_pending_script_evaluation(
+    scope: &mut v8::PinScope<'_, '_>,
+    promise: v8::Local<v8::Promise>,
+) {
     PENDING_SCRIPT_EVALUATION.with(|cell| {
         *cell.borrow_mut() = Some(PendingScriptEvaluation {
             promise: v8::Global::new(scope, promise),
@@ -1567,7 +1576,7 @@ impl MicrotaskSuppressionStorage {
 unsafe extern "C" {
     fn agentos_v8_suppress_microtasks_begin(
         storage: *mut std::ffi::c_void,
-        isolate: *mut v8::Isolate,
+        isolate: v8::UnsafeRawIsolatePtr,
     );
     fn agentos_v8_suppress_microtasks_end(storage: *mut std::ffi::c_void);
 }
@@ -1592,23 +1601,23 @@ pub(crate) fn collect_without_microtasks(isolate: &mut v8::Isolate) {
     unsafe {
         agentos_v8_suppress_microtasks_begin(
             storage.as_mut().get_unchecked_mut() as *mut _ as *mut std::ffi::c_void,
-            isolate,
+            isolate.as_raw_isolate_ptr(),
         );
     }
     let _guard = Guard(storage.as_mut());
     isolate.low_memory_notification();
 }
 
-pub(crate) struct ExplicitMicrotaskScope<'a, 's> {
-    scope: &'a mut v8::HandleScope<'s>,
+pub(crate) struct ExplicitMicrotaskScope<'a, 's, 'i> {
+    scope: &'a mut v8::PinScope<'s, 'i>,
     previous: v8::MicrotasksPolicy,
     storage: std::pin::Pin<&'a mut MicrotaskSuppressionStorage>,
     native_suppression: bool,
 }
 
-impl<'a, 's> ExplicitMicrotaskScope<'a, 's> {
+impl<'a, 's, 'i> ExplicitMicrotaskScope<'a, 's, 'i> {
     pub(crate) fn new(
-        scope: &'a mut v8::HandleScope<'s>,
+        scope: &'a mut v8::PinScope<'s, 'i>,
         mut storage: std::pin::Pin<&'a mut MicrotaskSuppressionStorage>,
     ) -> Self {
         let previous = scope.get_microtasks_policy();
@@ -1620,7 +1629,7 @@ impl<'a, 's> ExplicitMicrotaskScope<'a, 's> {
             unsafe {
                 agentos_v8_suppress_microtasks_begin(
                     storage.as_mut().get_unchecked_mut() as *mut _ as *mut std::ffi::c_void,
-                    &mut ***scope,
+                    scope.as_raw_isolate_ptr(),
                 );
             }
         }
@@ -1633,18 +1642,18 @@ impl<'a, 's> ExplicitMicrotaskScope<'a, 's> {
         }
     }
 }
-impl<'a, 's> std::ops::Deref for ExplicitMicrotaskScope<'a, 's> {
-    type Target = v8::HandleScope<'s>;
+impl<'a, 's, 'i> std::ops::Deref for ExplicitMicrotaskScope<'a, 's, 'i> {
+    type Target = v8::PinScope<'s, 'i>;
     fn deref(&self) -> &Self::Target {
         &*self.scope
     }
 }
-impl<'a, 's> std::ops::DerefMut for ExplicitMicrotaskScope<'a, 's> {
+impl<'a, 's, 'i> std::ops::DerefMut for ExplicitMicrotaskScope<'a, 's, 'i> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut *self.scope
     }
 }
-impl Drop for ExplicitMicrotaskScope<'_, '_> {
+impl Drop for ExplicitMicrotaskScope<'_, '_, '_> {
     fn drop(&mut self) {
         if self.native_suppression {
             unsafe {
@@ -1658,7 +1667,7 @@ impl Drop for ExplicitMicrotaskScope<'_, '_> {
 }
 
 pub(crate) fn take_unhandled_promise_rejection(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
 ) -> Option<(i32, ExecutionError)> {
     if let Some(result) = crate::terminal_callback::result(scope) {
         return Some(result);
@@ -1668,7 +1677,7 @@ pub(crate) fn take_unhandled_promise_rejection(
     drain_promise_rejections(&mut checkpoint_scope)
 }
 
-fn drain_promise_rejections(scope: &mut v8::HandleScope) -> Option<(i32, ExecutionError)> {
+fn drain_promise_rejections(scope: &mut v8::PinScope<'_, '_>) -> Option<(i32, ExecutionError)> {
     if !scope
         .get_slot_mut::<crate::isolate::PromiseRejectState>()?
         .begin_drain()
@@ -1734,7 +1743,7 @@ fn drain_promise_rejections(scope: &mut v8::HandleScope) -> Option<(i32, Executi
             state.finish_drain();
             return None;
         }
-        let tc = &mut v8::TryCatch::new(scope);
+        v8::tc_scope!(tc, scope);
         crate::owned_microtasks::checkpoint(tc);
         handled_effects_need_checkpoint = false;
         if let Some(exception) = tc.exception() {
@@ -1747,7 +1756,7 @@ fn drain_promise_rejections(scope: &mut v8::HandleScope) -> Option<(i32, Executi
 }
 
 fn dispatch_promise_rejection(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     event: crate::isolate::PendingPromiseRejection,
 ) -> PromiseRejectionDispatchOutcome {
     use crate::isolate::PendingPromiseRejection;
@@ -1762,7 +1771,7 @@ fn dispatch_promise_rejection(
             },
         ))
     };
-    let tc = &mut v8::TryCatch::new(scope);
+    v8::tc_scope!(tc, scope);
     let (name, reason, promise, frame, unhandled) = match event {
         PendingPromiseRejection::Unhandled {
             promise,
@@ -1844,10 +1853,10 @@ fn dispatch_promise_rejection(
 }
 
 pub fn finalize_pending_script_evaluation(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
 ) -> Option<(i32, Option<ExecutionError>)> {
     let pending = PENDING_SCRIPT_EVALUATION.with(|cell| cell.borrow_mut().take())?;
-    let tc = &mut v8::TryCatch::new(scope);
+    v8::tc_scope!(tc, scope);
     let promise = v8::Local::new(tc, &pending.promise);
 
     crate::owned_microtasks::checkpoint(tc);
@@ -1881,7 +1890,7 @@ pub fn finalize_pending_script_evaluation(
 
 /// Cancel the timers and close the handles a settle-complete call left behind.
 /// The bridge owns both, so a context without the bridge has nothing to release.
-pub fn release_leftover_handles(scope: &mut v8::HandleScope) -> Result<(), ExecutionError> {
+pub fn release_leftover_handles(scope: &mut v8::PinScope<'_, '_>) -> Result<(), ExecutionError> {
     let interrupted = || ExecutionError {
         error_type: "Error".into(),
         message: "context handle cleanup was interrupted".into(),
@@ -1895,7 +1904,7 @@ pub fn release_leftover_handles(scope: &mut v8::HandleScope) -> Result<(), Execu
     // throwing closer. Successful cleanup retains its explicit checkpoint.
     let mut suppression_storage = std::pin::pin!(MicrotaskSuppressionStorage::new());
     let mut explicit = ExplicitMicrotaskScope::new(scope, suppression_storage.as_mut());
-    let tc = &mut v8::TryCatch::new(&mut *explicit);
+    v8::tc_scope!(tc, &mut *explicit);
     let context = tc.get_current_context();
     let global = context.global(tc);
     let Some(key) = v8::String::new(tc, "_releaseLeftoverHandles") else {
@@ -1934,7 +1943,7 @@ pub fn release_leftover_handles(scope: &mut v8::HandleScope) -> Result<(), Execu
 /// Report a failure that happened after a settle-complete call's result was
 /// fixed. It goes to the call's stderr (sidecar stderr when the bridge is
 /// absent) instead of changing the call's outcome.
-pub fn report_after_call_failure(scope: &mut v8::HandleScope, error: &ExecutionError) {
+pub fn report_after_call_failure(scope: &mut v8::PinScope<'_, '_>, error: &ExecutionError) {
     let detail = if error.stack.is_empty() {
         format!("{}: {}", error.error_type, error.message)
     } else {
@@ -1946,13 +1955,13 @@ pub fn report_after_call_failure(scope: &mut v8::HandleScope, error: &ExecutionE
     }
 }
 
-fn write_guest_stderr(scope: &mut v8::HandleScope, message: &str) -> bool {
+fn write_guest_stderr(scope: &mut v8::PinScope<'_, '_>, message: &str) -> bool {
     if scope.is_execution_terminating() {
         return false;
     }
     let mut suppression_storage = std::pin::pin!(MicrotaskSuppressionStorage::new());
     let mut explicit = ExplicitMicrotaskScope::new(scope, suppression_storage.as_mut());
-    let tc = &mut v8::TryCatch::new(&mut *explicit);
+    v8::tc_scope!(tc, &mut *explicit);
     let global = tc.get_current_context().global(tc);
     let (Some(error_key), Some(apply_key), Some(text)) = (
         v8::String::new(tc, "_error"),
@@ -1982,7 +1991,7 @@ fn write_guest_stderr(scope: &mut v8::HandleScope, message: &str) -> bool {
 }
 
 fn serialize_module_exports(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     module: v8::Local<v8::Module>,
 ) -> Result<Vec<u8>, ExecutionError> {
     // Serialize module namespace (exports)
@@ -2036,14 +2045,14 @@ fn serialize_module_exports(
 // it reports through uncaughtException with the rejection origin, without an
 // ordinary unhandledRejection event or serialization of incomplete exports.
 fn module_entry_exception_result(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     exception: v8::Local<v8::Value>,
 ) -> (i32, Option<Vec<u8>>, Option<ExecutionError>) {
     match route_entry_exception(scope, exception, "unhandledRejection") {
         GuestExceptionOutcome::Handled => {
             // Consuming the entry failure does not consume work created by its
             // handler. Match the CJS boundary's ordinary post-handler drain.
-            let tc = &mut v8::TryCatch::new(scope);
+            v8::tc_scope!(tc, scope);
             crate::owned_microtasks::checkpoint(tc);
             if let Some(exception) = tc.exception() {
                 let (code, error) = exception_to_result(tc, exception);
@@ -2064,10 +2073,10 @@ fn module_entry_exception_result(
 
 #[cfg_attr(test, allow(dead_code))]
 pub fn finalize_pending_module_evaluation(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
 ) -> Option<(i32, Option<Vec<u8>>, Option<ExecutionError>)> {
     let pending = PENDING_MODULE_EVALUATION.with(|cell| cell.borrow_mut().take())?;
-    let tc = &mut v8::TryCatch::new(scope);
+    v8::tc_scope!(tc, scope);
     let module = v8::Local::new(tc, &pending.module);
     let promise = v8::Local::new(tc, &pending.promise);
 
@@ -2126,7 +2135,7 @@ pub fn finalize_pending_module_evaluation(
 /// Returns (exit_code, serialized_exports, error).
 /// The `bridge_cache` parameter enables code caching for repeated bridge compilations.
 pub fn execute_module(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     bridge_ctx: &BridgeCallContext,
     bridge_code: &str,
     user_code: &str,
@@ -2146,7 +2155,7 @@ pub fn execute_module(
 
 /// Execute an ES module after any process-specific runtime setup.
 pub(crate) fn execute_module_in_context(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     bridge_ctx: &BridgeCallContext,
     bridge_code: &str,
     runtime_initialized: bool,
@@ -2212,7 +2221,7 @@ pub(crate) fn execute_module_in_context(
 
     // Compile and evaluate as ES module
     {
-        let tc = &mut v8::TryCatch::new(scope);
+        v8::tc_scope!(tc, scope);
         let resource_name_str = file_path.unwrap_or("<user_module>");
 
         // A process entry gets `require` from the runtime shim's
@@ -2302,8 +2311,8 @@ pub(crate) fn execute_module_in_context(
         crate::next_ticks::begin_entry(tc, true);
         let eval_result = {
             let mut storage = std::pin::pin!(MicrotaskSuppressionStorage::new());
-            let mut explicit = ExplicitMicrotaskScope::new(tc, storage.as_mut());
-            module.evaluate(&mut explicit)
+            let explicit = ExplicitMicrotaskScope::new(tc, storage.as_mut());
+            module.evaluate(&explicit)
         };
         if eval_result.is_none() {
             clear_module_state();
@@ -2416,7 +2425,7 @@ pub(crate) fn execute_module_in_context(
 /// Returns a list of (specifier, referrer_name) pairs for all imports
 /// that are not already in the module cache.
 fn extract_uncached_imports(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     module: v8::Local<v8::Module>,
     referrer_name: &str,
 ) -> Vec<(String, String)> {
@@ -2451,7 +2460,7 @@ fn extract_uncached_imports(
 /// for any newly discovered imports. Falls back silently if the host doesn't
 /// support batch resolution (the resolve callback handles individual resolution).
 fn prefetch_module_imports(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     bridge_ctx: &BridgeCallContext,
     root_module: v8::Local<v8::Module>,
     root_name: &str,
@@ -2556,7 +2565,7 @@ fn prefetch_module_imports(
 }
 
 fn resolve_or_compile_module<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     specifier_str: &str,
     referrer_name: &str,
 ) -> Option<v8::Local<'s, v8::Module>> {
@@ -2716,7 +2725,7 @@ fn cache_resolved_module(
 }
 
 pub(crate) fn import_meta_resolve_callback(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     args: v8::FunctionCallbackArguments,
     mut rv: v8::ReturnValue,
 ) {
@@ -2780,7 +2789,7 @@ pub extern "C" fn import_meta_object_callback(
     module: v8::Local<v8::Module>,
     meta: v8::Local<v8::Object>,
 ) {
-    let scope = &mut unsafe { v8::CallbackScope::new(context) };
+    v8::callback_scope!(unsafe scope, context);
 
     // Look up the module's resource name from MODULE_RESOLVE_STATE.module_names
     // which maps identity_hash → resource_name.
@@ -2810,7 +2819,7 @@ pub extern "C" fn import_meta_object_callback(
 
 /// Set `import.meta.url` and `import.meta.resolve` for a module at `path`.
 pub(crate) fn set_import_meta_fields(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     meta: v8::Local<v8::Object>,
     path: &str,
 ) {
@@ -2823,7 +2832,7 @@ pub(crate) fn set_import_meta_fields(
 }
 
 fn set_import_meta_url_and_resolve(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     meta: v8::Local<v8::Object>,
     referrer: &str,
     url: &str,
@@ -2844,7 +2853,7 @@ fn set_import_meta_url_and_resolve(
 
 #[cfg_attr(test, allow(dead_code))]
 fn dynamic_import_namespace_callback(
-    _scope: &mut v8::HandleScope,
+    _scope: &mut v8::PinScope<'_, '_>,
     args: v8::FunctionCallbackArguments,
     mut rv: v8::ReturnValue,
 ) {
@@ -2853,7 +2862,7 @@ fn dynamic_import_namespace_callback(
 
 #[cfg_attr(test, allow(dead_code))]
 fn dynamic_import_reject_callback(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     args: v8::FunctionCallbackArguments,
     mut rv: v8::ReturnValue,
 ) {
@@ -2864,13 +2873,13 @@ fn dynamic_import_reject_callback(
 
 #[cfg_attr(test, allow(dead_code))]
 pub fn dynamic_import_callback<'a>(
-    scope: &mut v8::HandleScope<'a>,
+    scope: &mut v8::PinScope<'a, '_>,
     _host_defined_options: v8::Local<'a, v8::Data>,
     resource_name: v8::Local<'a, v8::Value>,
     specifier: v8::Local<'a, v8::String>,
     _import_attributes: v8::Local<'a, v8::FixedArray>,
 ) -> Option<v8::Local<'a, v8::Promise>> {
-    let tc = &mut v8::TryCatch::new(scope);
+    v8::tc_scope!(tc, scope);
 
     let specifier_str = specifier.to_rust_string_lossy(tc);
     let referrer_name = resolve_dynamic_import_referrer_name(tc, resource_name);
@@ -2947,7 +2956,7 @@ pub fn dynamic_import_callback<'a>(
 }
 
 fn resolve_dynamic_import_referrer_name(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     resource_name: v8::Local<v8::Value>,
 ) -> String {
     let candidate = resource_name.to_rust_string_lossy(scope);
@@ -2986,7 +2995,7 @@ fn resolve_dynamic_import_referrer_name(
 
 #[cfg_attr(test, allow(dead_code))]
 fn resolved_promise<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     value: v8::Local<'s, v8::Value>,
 ) -> Option<v8::Local<'s, v8::Promise>> {
     let resolver = v8::PromiseResolver::new(scope)?;
@@ -2996,7 +3005,7 @@ fn resolved_promise<'s>(
 
 #[cfg_attr(test, allow(dead_code))]
 fn rejected_promise<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     reason: v8::Local<'s, v8::Value>,
 ) -> Option<v8::Local<'s, v8::Promise>> {
     let resolver = v8::PromiseResolver::new(scope)?;
@@ -3010,7 +3019,7 @@ fn rejected_promise<'s>(
 /// {resolved, source} results (null entries for unresolvable modules).
 /// Returns None if the host doesn't support batch resolution or on IPC error.
 fn batch_resolve_via_ipc(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     ctx: &BridgeCallContext,
     batch: &[(String, String)],
 ) -> Option<Vec<Option<(String, String)>>> {
@@ -3081,7 +3090,7 @@ fn module_resolve_callback<'a>(
     referrer: v8::Local<'a, v8::Module>,
 ) -> Option<v8::Local<'a, v8::Module>> {
     // SAFETY: CallbackScope can be constructed from Local<Context> within a V8 callback
-    let scope = &mut unsafe { v8::CallbackScope::new(context) };
+    v8::callback_scope!(unsafe scope, context);
 
     let specifier_str = specifier.to_rust_string_lossy(scope);
     let referrer_hash = referrer.get_identity_hash();
@@ -3097,7 +3106,7 @@ fn module_resolve_callback<'a>(
 
 /// Send _resolveModule(specifier, referrer_path) via sync-blocking IPC.
 fn resolve_module_via_ipc(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     ctx: &BridgeCallContext,
     specifier: &str,
     referrer: &str,
@@ -3171,7 +3180,7 @@ const MODULE_SOURCE_CHUNK_BYTES: usize = 64 * 1024;
 const MAX_MODULE_SOURCE_BYTES: usize = 64 * 1024 * 1024;
 
 fn load_module_via_ipc(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     ctx: &BridgeCallContext,
     resolved_path: &str,
 ) -> Option<(String, Option<agentos_resource_accounting::Reservation>)> {
@@ -3271,7 +3280,7 @@ pub enum ResolvedModuleFormat {
 }
 
 fn lookup_module_format_via_ipc(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     ctx: &BridgeCallContext,
     resolved_path: &str,
 ) -> Option<ResolvedModuleFormat> {
@@ -3316,13 +3325,13 @@ fn lookup_module_format_via_ipc(
 }
 
 /// Throw a V8 exception for module resolution errors.
-fn throw_module_error(scope: &mut v8::HandleScope, message: &str) {
+fn throw_module_error(scope: &mut v8::PinScope<'_, '_>, message: &str) {
     let msg = v8::String::new(scope, message).unwrap();
     let exc = v8::Exception::error(scope, msg);
     scope.throw_exception(exc);
 }
 
-fn throw_module_error_with_code(scope: &mut v8::HandleScope, message: &str, code: &str) {
+fn throw_module_error_with_code(scope: &mut v8::PinScope<'_, '_>, message: &str, code: &str) {
     let message = v8::String::new(scope, message).unwrap();
     let exception = v8::Exception::error(scope, message);
     if let Ok(object) = v8::Local::<v8::Object>::try_from(exception) {
@@ -3350,7 +3359,7 @@ fn strip_leading_shebang(source: &str) -> &str {
 }
 
 fn build_module_source(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     raw_source: impl Into<String>,
     resolved_path: &str,
     module_format: Option<ResolvedModuleFormat>,
@@ -3398,7 +3407,7 @@ fn build_json_esm_shim(resolved_path: &str) -> String {
 }
 
 fn build_cjs_esm_shim(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     raw_source: &str,
     resolved_path: &str,
 ) -> String {
@@ -3443,7 +3452,7 @@ fn build_cjs_esm_shim(
 /// for a path somehow re-enters extraction for the same path, the inner call
 /// returns an empty list instead of recursing.
 fn extract_runtime_cjs_export_names(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     resolved_path: &str,
 ) -> Vec<String> {
     let already_in_progress = CJS_RUNTIME_EXTRACTION_IN_PROGRESS.with(|cell| {
@@ -3461,10 +3470,10 @@ fn extract_runtime_cjs_export_names(
 }
 
 fn extract_runtime_cjs_export_names_inner(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     resolved_path: &str,
 ) -> Vec<String> {
-    let tc = &mut v8::TryCatch::new(scope);
+    v8::tc_scope!(tc, scope);
     let context = tc.get_current_context();
     let global = context.global(tc);
 
@@ -4278,7 +4287,7 @@ fn add_esm_runtime_prelude(source: impl Into<String>) -> String {
         && !source_declares_identifier(&source, "require")
     {
         prelude
-            .push_str("const require = globalThis._moduleModule.createRequire(import.meta.url);\n");
+            .push_str("const require = globalThis.__agentOsGuestCreateRequire(import.meta.url);\n");
     }
 
     if !prelude.is_empty() {
@@ -4598,7 +4607,7 @@ mod tests {
     fn esm_runtime_prelude_injects_require_when_it_is_only_called() {
         let source = "const fs = require(\"node:fs\");";
         assert!(add_esm_runtime_prelude(source).starts_with(
-            "const require = globalThis._moduleModule.createRequire(import.meta.url);\n"
+            "const require = globalThis.__agentOsGuestCreateRequire(import.meta.url);\n"
         ));
     }
 
@@ -4680,12 +4689,8 @@ export const file = new File([], "empty.txt");
     }
 
     /// Helper: serialize a V8 string value for test BridgeResponse payloads
-    fn v8_serialize_str(
-        iso: &mut v8::OwnedIsolate,
-        ctx: &v8::Global<v8::Context>,
-        s: &str,
-    ) -> Vec<u8> {
-        let scope = &mut v8::HandleScope::new(iso);
+    fn v8_serialize_str(iso: &mut v8::Isolate, ctx: &v8::Global<v8::Context>, s: &str) -> Vec<u8> {
+        v8::scope!(scope, iso);
         let local = v8::Local::new(scope, ctx);
         let scope = &mut v8::ContextScope::new(scope, local);
         let val = v8::String::new(scope, s).unwrap();
@@ -4693,12 +4698,8 @@ export const file = new File([], "empty.txt");
     }
 
     /// Helper: serialize a V8 integer value for test BridgeResponse payloads
-    fn v8_serialize_int(
-        iso: &mut v8::OwnedIsolate,
-        ctx: &v8::Global<v8::Context>,
-        n: i64,
-    ) -> Vec<u8> {
-        let scope = &mut v8::HandleScope::new(iso);
+    fn v8_serialize_int(iso: &mut v8::Isolate, ctx: &v8::Global<v8::Context>, n: i64) -> Vec<u8> {
+        v8::scope!(scope, iso);
         let local = v8::Local::new(scope, ctx);
         let scope = &mut v8::ContextScope::new(scope, local);
         let val = v8::Number::new(scope, n as f64);
@@ -4706,8 +4707,8 @@ export const file = new File([], "empty.txt");
     }
 
     /// Helper: serialize a V8 null value for test BridgeResponse payloads
-    fn v8_serialize_null(iso: &mut v8::OwnedIsolate, ctx: &v8::Global<v8::Context>) -> Vec<u8> {
-        let scope = &mut v8::HandleScope::new(iso);
+    fn v8_serialize_null(iso: &mut v8::Isolate, ctx: &v8::Global<v8::Context>) -> Vec<u8> {
+        v8::scope!(scope, iso);
         let local = v8::Local::new(scope, ctx);
         let scope = &mut v8::ContextScope::new(scope, local);
         let val = v8::null(scope);
@@ -4716,11 +4717,11 @@ export const file = new File([], "empty.txt");
 
     /// Helper: serialize a V8 object (from JS expression) for test BridgeResponse payloads
     fn v8_serialize_eval(
-        iso: &mut v8::OwnedIsolate,
+        iso: &mut v8::Isolate,
         ctx: &v8::Global<v8::Context>,
         expr: &str,
     ) -> Vec<u8> {
-        let scope = &mut v8::HandleScope::new(iso);
+        v8::scope!(scope, iso);
         let local = v8::Local::new(scope, ctx);
         let scope = &mut v8::ContextScope::new(scope, local);
         let source = v8::String::new(scope, expr).unwrap();
@@ -4730,12 +4731,8 @@ export const file = new File([], "empty.txt");
     }
 
     /// Enter a context, run JS, return the string result.
-    fn eval(
-        isolate: &mut v8::OwnedIsolate,
-        context: &v8::Global<v8::Context>,
-        code: &str,
-    ) -> String {
-        let scope = &mut v8::HandleScope::new(isolate);
+    fn eval(isolate: &mut v8::Isolate, context: &v8::Global<v8::Context>, code: &str) -> String {
+        v8::scope!(scope, isolate);
         let local = v8::Local::new(scope, context);
         let scope = &mut v8::ContextScope::new(scope, local);
         let source = v8::String::new(scope, code).unwrap();
@@ -4745,12 +4742,8 @@ export const file = new File([], "empty.txt");
     }
 
     /// Enter a context, run JS, return true if the result is truthy.
-    fn eval_bool(
-        isolate: &mut v8::OwnedIsolate,
-        context: &v8::Global<v8::Context>,
-        code: &str,
-    ) -> bool {
-        let scope = &mut v8::HandleScope::new(isolate);
+    fn eval_bool(isolate: &mut v8::Isolate, context: &v8::Global<v8::Context>, code: &str) -> bool {
+        v8::scope!(scope, isolate);
         let local = v8::Local::new(scope, context);
         let scope = &mut v8::ContextScope::new(scope, local);
         let source = v8::String::new(scope, code).unwrap();
@@ -4761,14 +4754,14 @@ export const file = new File([], "empty.txt");
 
     /// Enter a context, run JS, return true if an exception was thrown.
     fn eval_throws(
-        isolate: &mut v8::OwnedIsolate,
+        isolate: &mut v8::Isolate,
         context: &v8::Global<v8::Context>,
         code: &str,
     ) -> bool {
-        let scope = &mut v8::HandleScope::new(isolate);
+        v8::scope!(scope, isolate);
         let local = v8::Local::new(scope, context);
         let scope = &mut v8::ContextScope::new(scope, local);
-        let tc = &mut v8::TryCatch::new(scope);
+        v8::tc_scope!(tc, scope);
         let source = v8::String::new(tc, code).unwrap();
         if let Some(script) = v8::Script::compile(tc, source, None) {
             script.run(tc);
@@ -4816,7 +4809,7 @@ export const file = new File([], "empty.txt");
             let mut isolate = isolate::create_isolate(None);
             let context = isolate::create_context(&mut isolate);
             let (code, error) = {
-                let scope = &mut v8::HandleScope::new(&mut isolate);
+                v8::scope!(scope, &mut *isolate);
                 let ctx = v8::Local::new(scope, &context);
                 let scope = &mut v8::ContextScope::new(scope, ctx);
                 execute_script(
@@ -4841,7 +4834,7 @@ export const file = new File([], "empty.txt");
             let mut isolate = isolate::create_isolate(None);
             let context = isolate::create_context(&mut isolate);
             let (code, error) = {
-                let scope = &mut v8::HandleScope::new(&mut isolate);
+                v8::scope!(scope, &mut *isolate);
                 let ctx = v8::Local::new(scope, &context);
                 let scope = &mut v8::ContextScope::new(scope, ctx);
                 execute_script(
@@ -4895,7 +4888,7 @@ export const file = new File([], "empty.txt");
 
             // Inject globals
             {
-                let scope = &mut v8::HandleScope::new(&mut isolate);
+                v8::scope!(scope, &mut *isolate);
                 let ctx = v8::Local::new(scope, &context);
                 let scope = &mut v8::ContextScope::new(scope, ctx);
                 inject_globals(scope, &process_config, &os_config);
@@ -4956,7 +4949,7 @@ export const file = new File([], "empty.txt");
             );
 
             let err = {
-                let scope = &mut v8::HandleScope::new(&mut isolate);
+                v8::scope!(scope, &mut *isolate);
                 let ctx = v8::Local::new(scope, &context);
                 let scope = &mut v8::ContextScope::new(scope, ctx);
                 inject_globals_from_payload(scope, &payload).expect_err("missing osConfig")
@@ -4999,7 +4992,7 @@ export const file = new File([], "empty.txt");
             );
 
             let err = {
-                let scope = &mut v8::HandleScope::new(&mut isolate);
+                v8::scope!(scope, &mut *isolate);
                 let ctx = v8::Local::new(scope, &context);
                 let scope = &mut v8::ContextScope::new(scope, ctx);
                 inject_globals_from_payload(scope, &payload).expect_err("primitive processConfig")
@@ -5042,7 +5035,7 @@ export const file = new File([], "empty.txt");
             );
 
             let err = {
-                let scope = &mut v8::HandleScope::new(&mut isolate);
+                v8::scope!(scope, &mut *isolate);
                 let ctx = v8::Local::new(scope, &context);
                 let scope = &mut v8::ContextScope::new(scope, ctx);
                 inject_globals_from_payload(scope, &payload).expect_err("primitive env")
@@ -5084,7 +5077,7 @@ export const file = new File([], "empty.txt");
             );
 
             let err = {
-                let scope = &mut v8::HandleScope::new(&mut isolate);
+                v8::scope!(scope, &mut *isolate);
                 let ctx = v8::Local::new(scope, &context);
                 let scope = &mut v8::ContextScope::new(scope, ctx);
                 inject_globals_from_payload(scope, &payload).expect_err("missing env")
@@ -5127,7 +5120,7 @@ export const file = new File([], "empty.txt");
             );
 
             let err = {
-                let scope = &mut v8::HandleScope::new(&mut isolate);
+                v8::scope!(scope, &mut *isolate);
                 let ctx = v8::Local::new(scope, &context);
                 let scope = &mut v8::ContextScope::new(scope, ctx);
                 inject_globals_from_payload(scope, &payload).expect_err("typed array env")
@@ -5171,7 +5164,7 @@ export const file = new File([], "empty.txt");
             );
 
             {
-                let scope = &mut v8::HandleScope::new(&mut isolate);
+                v8::scope!(scope, &mut *isolate);
                 let ctx = v8::Local::new(scope, &context);
                 let scope = &mut v8::ContextScope::new(scope, ctx);
                 inject_globals_from_payload(scope, &payload).expect("valid globals payload");
@@ -5209,7 +5202,7 @@ export const file = new File([], "empty.txt");
             };
 
             {
-                let scope = &mut v8::HandleScope::new(&mut isolate);
+                v8::scope!(scope, &mut *isolate);
                 let ctx = v8::Local::new(scope, &context);
                 let scope = &mut v8::ContextScope::new(scope, ctx);
                 inject_globals(scope, &process_config, &os_config);
@@ -5245,7 +5238,7 @@ export const file = new File([], "empty.txt");
             };
 
             {
-                let scope = &mut v8::HandleScope::new(&mut isolate);
+                v8::scope!(scope, &mut *isolate);
                 let ctx = v8::Local::new(scope, &context);
                 let scope = &mut v8::ContextScope::new(scope, ctx);
                 inject_globals(scope, &process_config, &os_config);
@@ -5322,7 +5315,7 @@ export const file = new File([], "empty.txt");
             };
 
             {
-                let scope = &mut v8::HandleScope::new(&mut isolate);
+                v8::scope!(scope, &mut *isolate);
                 let ctx = v8::Local::new(scope, &context);
                 let scope = &mut v8::ContextScope::new(scope, ctx);
                 inject_globals(scope, &process_config, &os_config);
@@ -5361,7 +5354,7 @@ export const file = new File([], "empty.txt");
             };
 
             {
-                let scope = &mut v8::HandleScope::new(&mut isolate);
+                v8::scope!(scope, &mut *isolate);
                 let ctx = v8::Local::new(scope, &context);
                 let scope = &mut v8::ContextScope::new(scope, ctx);
                 inject_globals(scope, &process_config, &os_config);
@@ -5489,7 +5482,7 @@ export const file = new File([], "empty.txt");
 
             let _fn_store;
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 _fn_store = bridge::register_sync_bridge_fns(
@@ -5549,7 +5542,7 @@ export const file = new File([], "empty.txt");
 
             let _fn_store;
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 _fn_store = bridge::register_sync_bridge_fns(
@@ -5608,7 +5601,7 @@ export const file = new File([], "empty.txt");
 
             let _fn_store;
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 _fn_store = bridge::register_sync_bridge_fns(
@@ -5647,7 +5640,7 @@ export const file = new File([], "empty.txt");
 
             let _fn_store;
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 _fn_store = bridge::register_sync_bridge_fns(
@@ -5675,7 +5668,7 @@ export const file = new File([], "empty.txt");
 
             let _fn_store;
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 _fn_store = bridge::register_async_bridge_fns(
@@ -5712,7 +5705,7 @@ export const file = new File([], "empty.txt");
             let result_v8 = v8_serialize_str(&mut iso, &ctx, "async result");
 
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 bridge::resolve_pending_promise(scope, &pending, 1, 0, Some(result_v8)).unwrap();
@@ -5722,7 +5715,7 @@ export const file = new File([], "empty.txt");
 
             // Verify promise is fulfilled with correct value
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 let source = v8::String::new(scope, "_promise").unwrap();
@@ -5751,7 +5744,7 @@ export const file = new File([], "empty.txt");
 
             let _fn_store;
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 _fn_store = bridge::register_async_bridge_fns(
@@ -5767,7 +5760,7 @@ export const file = new File([], "empty.txt");
 
             // Reject the promise
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 bridge::resolve_pending_promise(
@@ -5808,7 +5801,7 @@ export const file = new File([], "empty.txt");
 
             // Verify promise is rejected with error
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 let source = v8::String::new(scope, "_promise").unwrap();
@@ -5846,7 +5839,7 @@ export const file = new File([], "empty.txt");
             );
             assert_eq!(pending.len(), 1);
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 bridge::resolve_pending_promise(
@@ -5859,7 +5852,7 @@ export const file = new File([], "empty.txt");
                 .unwrap();
             }
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 let source = v8::String::new(scope, "_spoofedErrorPromise").unwrap();
@@ -5895,7 +5888,7 @@ export const file = new File([], "empty.txt");
 
             let _fn_store;
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 _fn_store = bridge::register_async_bridge_fns(
@@ -5916,7 +5909,7 @@ export const file = new File([], "empty.txt");
             // Resolve in reverse order (p2 first, then p1)
             let r2 = v8_serialize_str(&mut iso, &ctx, "dns-result");
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 bridge::resolve_pending_promise(scope, &pending, 2, 0, Some(r2)).unwrap();
@@ -5925,7 +5918,7 @@ export const file = new File([], "empty.txt");
 
             let r1 = v8_serialize_str(&mut iso, &ctx, "fetch-result");
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 bridge::resolve_pending_promise(scope, &pending, 1, 0, Some(r1)).unwrap();
@@ -5934,7 +5927,7 @@ export const file = new File([], "empty.txt");
 
             // Verify both promises fulfilled correctly
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
 
@@ -5974,7 +5967,7 @@ export const file = new File([], "empty.txt");
 
             let _fn_store;
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 _fn_store = bridge::register_async_bridge_fns(
@@ -5989,7 +5982,7 @@ export const file = new File([], "empty.txt");
 
             // Resolve with None (null result)
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 bridge::resolve_pending_promise(scope, &pending, 1, 0, None).unwrap();
@@ -5997,7 +5990,7 @@ export const file = new File([], "empty.txt");
 
             // Promise should be fulfilled with undefined
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 let source = v8::String::new(scope, "_promise").unwrap();
@@ -6023,7 +6016,7 @@ export const file = new File([], "empty.txt");
 
             let _fn_store;
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 _fn_store = bridge::register_async_bridge_fns(
@@ -6046,7 +6039,7 @@ export const file = new File([], "empty.txt");
 
             // Resolve the promise (microtasks flushed inside resolve_pending_promise)
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 bridge::resolve_pending_promise(scope, &pending, 1, 0, None).unwrap();
@@ -6062,7 +6055,7 @@ export const file = new File([], "empty.txt");
             let ctx = isolate::create_context(&mut iso);
 
             let (code, error) = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 execute_script(scope, "", "var x = 1 + 2;", &mut None)
@@ -6082,7 +6075,7 @@ export const file = new File([], "empty.txt");
             let bridge = "(function() { globalThis._bridgeReady = true; })()";
             let user = "var _sawBridge = _bridgeReady;";
             let (code, error) = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 execute_script(scope, bridge, user, &mut None)
@@ -6100,7 +6093,7 @@ export const file = new File([], "empty.txt");
             let ctx = isolate::create_context(&mut iso);
 
             let (code, error) = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 execute_script(
@@ -6123,7 +6116,7 @@ export const file = new File([], "empty.txt");
             let ctx = isolate::create_context(&mut iso);
 
             let (code, error) = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 execute_script(scope, "", "var x = {;", &mut None)
@@ -6141,7 +6134,7 @@ export const file = new File([], "empty.txt");
             let ctx = isolate::create_context(&mut iso);
 
             let (code, error) = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 execute_script(scope, "", "null.foo", &mut None)
@@ -6160,7 +6153,7 @@ export const file = new File([], "empty.txt");
             let ctx = isolate::create_context(&mut iso);
 
             let (code, error) = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 execute_script(scope, "function {", "var x = 1;", &mut None)
@@ -6179,7 +6172,7 @@ export const file = new File([], "empty.txt");
             let ctx = isolate::create_context(&mut iso);
 
             let (code, error) = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 execute_script(scope, "", "'hello'", &mut None)
@@ -6195,7 +6188,7 @@ export const file = new File([], "empty.txt");
             let ctx = isolate::create_context(&mut iso);
 
             let (code, error) = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 execute_script(
@@ -6219,7 +6212,7 @@ export const file = new File([], "empty.txt");
             let ctx = isolate::create_context(&mut iso);
 
             let (code, error) = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 execute_script(scope, "", "throw 'raw string error';", &mut None)
@@ -6246,7 +6239,7 @@ export const file = new File([], "empty.txt");
 
             let user_code = "export const x = 42;\nexport const msg = 'hello';";
             let (code, exports, error) = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 execute_module(scope, &bridge_ctx, "", user_code, None, &mut None)
@@ -6256,7 +6249,7 @@ export const file = new File([], "empty.txt");
             assert!(error.is_none());
             let exports = exports.unwrap();
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 let val = crate::bridge::deserialize_v8_value(scope, &exports).unwrap();
@@ -6291,7 +6284,7 @@ export const file = new File([], "empty.txt");
                 "test-session".into(),
             );
             let (code, exports, error) = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 execute_module(
@@ -6329,7 +6322,7 @@ export const file = new File([], "empty.txt");
                 export default result;
             "#;
             let (code, exports, error) = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 execute_module(scope, &bridge_ctx, bridge_code, user_code, None, &mut None)
@@ -6339,7 +6332,7 @@ export const file = new File([], "empty.txt");
             assert!(error.is_none());
             let exports = exports.unwrap();
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 let val = crate::bridge::deserialize_v8_value(scope, &exports).unwrap();
@@ -6375,7 +6368,7 @@ export const file = new File([], "empty.txt");
             );
 
             let (code, exports, error) = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 execute_module(
@@ -6392,7 +6385,7 @@ export const file = new File([], "empty.txt");
             assert!(error.is_none());
             let exports = exports.unwrap();
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 let val = crate::bridge::deserialize_v8_value(scope, &exports).unwrap();
@@ -6420,7 +6413,7 @@ export const file = new File([], "empty.txt");
             );
 
             let (code, _exports, error) = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 execute_module(
@@ -6450,7 +6443,7 @@ export const file = new File([], "empty.txt");
             );
 
             let (code, _exports, error) = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 execute_module(
@@ -6482,7 +6475,7 @@ export const file = new File([], "empty.txt");
             let bridge = "(function() { globalThis._bridgeReady = true; })()";
             let user = "export const saw = _bridgeReady;";
             let (code, exports, error) = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 execute_module(scope, &bridge_ctx, bridge, user, None, &mut None)
@@ -6492,7 +6485,7 @@ export const file = new File([], "empty.txt");
             assert!(error.is_none());
             let exports = exports.unwrap();
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 let val = crate::bridge::deserialize_v8_value(scope, &exports).unwrap();
@@ -6567,7 +6560,7 @@ export const file = new File([], "empty.txt");
             let user_code =
                 "import { dep_val } from './dep.mjs';\nexport const result = dep_val + 1;";
             let (code, exports, error) = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 execute_module(
@@ -6584,7 +6577,7 @@ export const file = new File([], "empty.txt");
             assert!(error.is_none());
             let exports = exports.unwrap();
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 let val = crate::bridge::deserialize_v8_value(scope, &exports).unwrap();
@@ -6616,7 +6609,7 @@ export const file = new File([], "empty.txt");
             // Register async bridge function
             let _fn_store;
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 _fn_store = bridge::register_async_bridge_fns(
@@ -6653,7 +6646,7 @@ export const file = new File([], "empty.txt");
 
             // Run event loop
             let completed = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 crate::session::run_event_loop(scope, &rx, &pending, None, None, None)
@@ -6711,7 +6704,7 @@ export const file = new File([], "empty.txt");
             ))
             .unwrap();
             let completed = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 crate::session::run_event_loop(scope, &rx, &pending, None, None, None)
@@ -6741,7 +6734,7 @@ export const file = new File([], "empty.txt");
 
             let _fn_store;
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 _fn_store = bridge::register_async_bridge_fns(
@@ -6791,7 +6784,7 @@ export const file = new File([], "empty.txt");
             .unwrap();
 
             let completed = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 crate::session::run_event_loop(scope, &rx, &pending, None, None, None)
@@ -6820,7 +6813,7 @@ export const file = new File([], "empty.txt");
 
             let _fn_store;
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 _fn_store = bridge::register_async_bridge_fns(
@@ -6842,7 +6835,7 @@ export const file = new File([], "empty.txt");
             .unwrap();
 
             let completed = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 crate::session::run_event_loop(scope, &rx, &pending, None, None, None)
@@ -6873,7 +6866,7 @@ export const file = new File([], "empty.txt");
 
             let _fn_store;
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 _fn_store = bridge::register_async_bridge_fns(
@@ -6892,7 +6885,7 @@ export const file = new File([], "empty.txt");
             tx.send(crate::session::SessionCommand::Shutdown).unwrap();
 
             let completed = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 crate::session::run_event_loop(scope, &rx, &pending, None, None, None)
@@ -6914,7 +6907,7 @@ export const file = new File([], "empty.txt");
 
             // No pending promises — event loop should exit immediately
             let completed = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 crate::session::run_event_loop(scope, &rx, &pending, None, None, None)
@@ -6940,7 +6933,7 @@ export const file = new File([], "empty.txt");
 
             let _fn_store;
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 _fn_store = bridge::register_async_bridge_fns(
@@ -6994,7 +6987,7 @@ export const file = new File([], "empty.txt");
             .unwrap();
 
             let completed = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 crate::session::run_event_loop(scope, &rx, &pending, None, None, None)
@@ -7032,7 +7025,7 @@ export const file = new File([], "empty.txt");
 
             let _fn_store;
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 _fn_store = bridge::register_async_bridge_fns(
@@ -7067,7 +7060,7 @@ export const file = new File([], "empty.txt");
             .unwrap();
 
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 crate::session::run_event_loop(scope, &rx, &pending, None, None, None);
@@ -7091,7 +7084,7 @@ export const file = new File([], "empty.txt");
 
             let _fn_store;
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 _fn_store = bridge::register_async_bridge_fns(
@@ -7155,7 +7148,7 @@ export const file = new File([], "empty.txt");
             .unwrap();
 
             let completed = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 crate::session::run_event_loop(scope, &rx, &pending, None, None, None)
@@ -7186,7 +7179,7 @@ export const file = new File([], "empty.txt");
 
             let _fn_store;
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 _fn_store = bridge::register_async_bridge_fns(
@@ -7239,7 +7232,7 @@ export const file = new File([], "empty.txt");
             .unwrap();
 
             let completed = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 crate::session::run_event_loop(scope, &rx, &pending, None, None, None)
@@ -7269,7 +7262,7 @@ export const file = new File([], "empty.txt");
 
             let _fn_store;
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 _fn_store = bridge::register_async_bridge_fns(
@@ -7319,7 +7312,7 @@ export const file = new File([], "empty.txt");
             .unwrap();
 
             let completed = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 crate::session::run_event_loop(scope, &rx, &pending, None, None, None)
@@ -7347,7 +7340,7 @@ export const file = new File([], "empty.txt");
 
             let _fn_store;
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 _fn_store = bridge::register_async_bridge_fns(
@@ -7392,7 +7385,7 @@ export const file = new File([], "empty.txt");
 
             // Should not crash even without dispatch function registered
             let completed = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 crate::session::run_event_loop(scope, &rx, &pending, None, None, None)
@@ -7418,7 +7411,7 @@ export const file = new File([], "empty.txt");
 
             let _fn_store;
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 _fn_store = bridge::register_async_bridge_fns(
@@ -7469,7 +7462,7 @@ export const file = new File([], "empty.txt");
             .unwrap();
 
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 crate::session::run_event_loop(scope, &rx, &pending, None, None, None);
@@ -7501,7 +7494,7 @@ export const file = new File([], "empty.txt");
 
             // Run an infinite loop — timeout should terminate it
             let (code, error) = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 execute_script(scope, "", "while(true) {}", &mut None)
@@ -7529,7 +7522,7 @@ export const file = new File([], "empty.txt");
                     .expect("timeout guard should start");
 
             let (code, error) = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 execute_script(scope, "", "1 + 1", &mut None)
@@ -7573,7 +7566,7 @@ export const file = new File([], "empty.txt");
             );
             let _async_store;
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 _async_store = bridge::register_async_bridge_fns(
@@ -7586,7 +7579,7 @@ export const file = new File([], "empty.txt");
 
             // Execute code that calls async bridge function (creates a pending promise)
             let (_code, _error) = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 execute_script(scope, "", "_slowFn('never-responds')", &mut None)
@@ -7602,7 +7595,7 @@ export const file = new File([], "empty.txt");
             // Run event loop — it should be terminated by the timeout
             // (no messages on cmd_rx, so it blocks until abort_rx fires)
             let completed = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 crate::session::run_event_loop(
@@ -7645,7 +7638,7 @@ export const file = new File([], "empty.txt");
             let mut iso = isolate::create_isolate(None);
             let ctx = isolate::create_context(&mut iso);
 
-            let scope = &mut v8::HandleScope::new(&mut iso);
+            v8::scope!(scope, &mut *iso);
             let local = v8::Local::new(scope, &ctx);
             let scope = &mut v8::ContextScope::new(scope, local);
 
@@ -7674,7 +7667,7 @@ export const file = new File([], "empty.txt");
             let mut iso = isolate::create_isolate(None);
             let ctx = isolate::create_context(&mut iso);
 
-            let scope = &mut v8::HandleScope::new(&mut iso);
+            v8::scope!(scope, &mut *iso);
             let local = v8::Local::new(scope, &ctx);
             let scope = &mut v8::ContextScope::new(scope, local);
 
@@ -7698,7 +7691,7 @@ export const file = new File([], "empty.txt");
             let mut iso = isolate::create_isolate(None);
             let ctx = isolate::create_context(&mut iso);
 
-            let scope = &mut v8::HandleScope::new(&mut iso);
+            v8::scope!(scope, &mut *iso);
             let local = v8::Local::new(scope, &ctx);
             let scope = &mut v8::ContextScope::new(scope, local);
 
@@ -7717,7 +7710,7 @@ export const file = new File([], "empty.txt");
             let mut iso = isolate::create_isolate(None);
             let ctx = isolate::create_context(&mut iso);
 
-            let scope = &mut v8::HandleScope::new(&mut iso);
+            v8::scope!(scope, &mut *iso);
             let local = v8::Local::new(scope, &ctx);
             let scope = &mut v8::ContextScope::new(scope, local);
 
@@ -7745,7 +7738,7 @@ export const file = new File([], "empty.txt");
             let mut iso = isolate::create_isolate(None);
             let ctx = isolate::create_context(&mut iso);
 
-            let scope = &mut v8::HandleScope::new(&mut iso);
+            v8::scope!(scope, &mut *iso);
             let local = v8::Local::new(scope, &ctx);
             let scope = &mut v8::ContextScope::new(scope, local);
 
@@ -7774,7 +7767,7 @@ export const file = new File([], "empty.txt");
             let mut iso = isolate::create_isolate(None);
             let ctx = isolate::create_context(&mut iso);
 
-            let scope = &mut v8::HandleScope::new(&mut iso);
+            v8::scope!(scope, &mut *iso);
             let local = v8::Local::new(scope, &ctx);
             let scope = &mut v8::ContextScope::new(scope, local);
 
@@ -7796,7 +7789,7 @@ export const file = new File([], "empty.txt");
             let mut iso = isolate::create_isolate(None);
             let ctx = isolate::create_context(&mut iso);
 
-            let scope = &mut v8::HandleScope::new(&mut iso);
+            v8::scope!(scope, &mut *iso);
             let local = v8::Local::new(scope, &ctx);
             let scope = &mut v8::ContextScope::new(scope, local);
 
@@ -7821,7 +7814,7 @@ export const file = new File([], "empty.txt");
             let mut iso = isolate::create_isolate(None);
             let ctx = isolate::create_context(&mut iso);
 
-            let scope = &mut v8::HandleScope::new(&mut iso);
+            v8::scope!(scope, &mut *iso);
             let local = v8::Local::new(scope, &ctx);
             let scope = &mut v8::ContextScope::new(scope, local);
             execute_script(
@@ -7841,7 +7834,7 @@ export const file = new File([], "empty.txt");
             let mut iso = isolate::create_isolate(None);
             let ctx = isolate::create_context(&mut iso);
 
-            let scope = &mut v8::HandleScope::new(&mut iso);
+            v8::scope!(scope, &mut *iso);
             let local = v8::Local::new(scope, &ctx);
             let scope = &mut v8::ContextScope::new(scope, local);
             execute_script(
@@ -7866,7 +7859,7 @@ export const file = new File([], "empty.txt");
             let mut iso = isolate::create_isolate(None);
             let ctx = isolate::create_context(&mut iso);
 
-            let scope = &mut v8::HandleScope::new(&mut iso);
+            v8::scope!(scope, &mut *iso);
             let local = v8::Local::new(scope, &ctx);
             let scope = &mut v8::ContextScope::new(scope, local);
 
@@ -7901,7 +7894,7 @@ export const file = new File([], "empty.txt");
 
             let mut iso = isolate::create_isolate(None);
             let ctx = isolate::create_context(&mut iso);
-            let scope = &mut v8::HandleScope::new(&mut iso);
+            v8::scope!(scope, &mut *iso);
             let local = v8::Local::new(scope, &ctx);
             let scope = &mut v8::ContextScope::new(scope, local);
 
@@ -7957,7 +7950,7 @@ export const file = new File([], "empty.txt");
 
             let mut iso = isolate::create_isolate(None);
             let ctx = isolate::create_context(&mut iso);
-            let scope = &mut v8::HandleScope::new(&mut iso);
+            v8::scope!(scope, &mut *iso);
             let local = v8::Local::new(scope, &ctx);
             let scope = &mut v8::ContextScope::new(scope, local);
 
@@ -7991,7 +7984,7 @@ export const file = new File([], "empty.txt");
 
             let mut iso = isolate::create_isolate(None);
             let ctx = isolate::create_context(&mut iso);
-            let scope = &mut v8::HandleScope::new(&mut iso);
+            v8::scope!(scope, &mut *iso);
             let local = v8::Local::new(scope, &ctx);
             let scope = &mut v8::ContextScope::new(scope, local);
 
@@ -8046,7 +8039,7 @@ export const file = new File([], "empty.txt");
 
             let mut iso = isolate::create_isolate(None);
             let ctx = isolate::create_context(&mut iso);
-            let scope = &mut v8::HandleScope::new(&mut iso);
+            v8::scope!(scope, &mut *iso);
             let local = v8::Local::new(scope, &ctx);
             let scope = &mut v8::ContextScope::new(scope, local);
 
@@ -8096,7 +8089,7 @@ export const file = new File([], "empty.txt");
 
             let mut iso = isolate::create_isolate(None);
             let ctx = isolate::create_context(&mut iso);
-            let scope = &mut v8::HandleScope::new(&mut iso);
+            v8::scope!(scope, &mut *iso);
             let local = v8::Local::new(scope, &ctx);
             let scope = &mut v8::ContextScope::new(scope, local);
 
@@ -8133,7 +8126,7 @@ export const file = new File([], "empty.txt");
 
             let mut iso = isolate::create_isolate(None);
             let ctx = isolate::create_context(&mut iso);
-            let scope = &mut v8::HandleScope::new(&mut iso);
+            v8::scope!(scope, &mut *iso);
             let local = v8::Local::new(scope, &ctx);
             let scope = &mut v8::ContextScope::new(scope, local);
 
@@ -8193,7 +8186,7 @@ export const file = new File([], "empty.txt");
 
             let mut iso = isolate::create_isolate(None);
             let ctx = isolate::create_context(&mut iso);
-            let scope = &mut v8::HandleScope::new(&mut iso);
+            v8::scope!(scope, &mut *iso);
             let local = v8::Local::new(scope, &ctx);
             let scope = &mut v8::ContextScope::new(scope, local);
 
@@ -8258,7 +8251,7 @@ export const file = new File([], "empty.txt");
 
             let mut iso = isolate::create_isolate(None);
             let ctx = isolate::create_context(&mut iso);
-            let scope = &mut v8::HandleScope::new(&mut iso);
+            v8::scope!(scope, &mut *iso);
             let local = v8::Local::new(scope, &ctx);
             let scope = &mut v8::ContextScope::new(scope, local);
 
@@ -8308,7 +8301,7 @@ export const file = new File([], "empty.txt");
 
             let bridge = "(function() { globalThis._cached = 'yes'; })()";
             let (code, error) = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 execute_script(scope, bridge, "var _saw = _cached;", &mut cache)
@@ -8335,7 +8328,7 @@ export const file = new File([], "empty.txt");
             {
                 let ctx = isolate::create_context(&mut iso);
                 let (code, _) = {
-                    let scope = &mut v8::HandleScope::new(&mut iso);
+                    v8::scope!(scope, &mut *iso);
                     let local = v8::Local::new(scope, &ctx);
                     let scope = &mut v8::ContextScope::new(scope, local);
                     execute_script(scope, bridge, "", &mut cache)
@@ -8350,7 +8343,7 @@ export const file = new File([], "empty.txt");
             {
                 let ctx = isolate::create_context(&mut iso);
                 let (code, _) = {
-                    let scope = &mut v8::HandleScope::new(&mut iso);
+                    v8::scope!(scope, &mut *iso);
                     let local = v8::Local::new(scope, &ctx);
                     let scope = &mut v8::ContextScope::new(scope, local);
                     execute_script(scope, bridge, "", &mut cache)
@@ -8377,7 +8370,7 @@ export const file = new File([], "empty.txt");
             {
                 let ctx = isolate::create_context(&mut iso);
                 let (code, _) = {
-                    let scope = &mut v8::HandleScope::new(&mut iso);
+                    v8::scope!(scope, &mut *iso);
                     let local = v8::Local::new(scope, &ctx);
                     let scope = &mut v8::ContextScope::new(scope, local);
                     execute_script(
@@ -8397,7 +8390,7 @@ export const file = new File([], "empty.txt");
             {
                 let ctx = isolate::create_context(&mut iso);
                 let (code, _) = {
-                    let scope = &mut v8::HandleScope::new(&mut iso);
+                    v8::scope!(scope, &mut *iso);
                     let local = v8::Local::new(scope, &ctx);
                     let scope = &mut v8::ContextScope::new(scope, local);
                     execute_script(
@@ -8433,7 +8426,7 @@ export const file = new File([], "empty.txt");
             {
                 let ctx = isolate::create_context(&mut iso);
                 let (code, _, _) = {
-                    let scope = &mut v8::HandleScope::new(&mut iso);
+                    v8::scope!(scope, &mut *iso);
                     let local = v8::Local::new(scope, &ctx);
                     let scope = &mut v8::ContextScope::new(scope, local);
                     execute_module(
@@ -8453,7 +8446,7 @@ export const file = new File([], "empty.txt");
             {
                 let ctx = isolate::create_context(&mut iso);
                 let (code, exports, _) = {
-                    let scope = &mut v8::HandleScope::new(&mut iso);
+                    v8::scope!(scope, &mut *iso);
                     let local = v8::Local::new(scope, &ctx);
                     let scope = &mut v8::ContextScope::new(scope, local);
                     execute_module(
@@ -8478,7 +8471,7 @@ export const file = new File([], "empty.txt");
             let mut cache: Option<BridgeCodeCache> = None;
 
             let (code, _) = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 execute_script(scope, "", "var x = 1;", &mut cache)
@@ -8544,7 +8537,7 @@ export const file = new File([], "empty.txt");
 
             let user_code = "import { a } from './a.mjs';\nimport { b } from './b.mjs';\nexport const sum = a + b;";
             let (code, exports, error) = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 execute_module(
@@ -8561,7 +8554,7 @@ export const file = new File([], "empty.txt");
             assert!(error.is_none());
             let exports = exports.unwrap();
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 let val = crate::bridge::deserialize_v8_value(scope, &exports).unwrap();
@@ -8678,7 +8671,7 @@ export const file = new File([], "empty.txt");
 
             let user_code = "import { val } from './dep.mjs';\nexport const result = val;";
             let (code, exports, error) = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 execute_module(
@@ -8695,7 +8688,7 @@ export const file = new File([], "empty.txt");
             assert!(error.is_none());
             let exports = exports.unwrap();
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 let val = crate::bridge::deserialize_v8_value(scope, &exports).unwrap();
@@ -8780,7 +8773,7 @@ export const file = new File([], "empty.txt");
 
             let user_code = "import { a } from './a.mjs';\nexport const result = a;";
             let (code, exports, error) = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 execute_module(
@@ -8797,7 +8790,7 @@ export const file = new File([], "empty.txt");
             assert!(error.is_none());
             let exports = exports.unwrap();
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 let val = crate::bridge::deserialize_v8_value(scope, &exports).unwrap();
@@ -8827,7 +8820,7 @@ export const file = new File([], "empty.txt");
 
             let user_code = "export const x = 42;";
             let (code, _exports, error) = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 execute_module(scope, &bridge_ctx, "", user_code, None, &mut None)
@@ -8848,7 +8841,7 @@ export const file = new File([], "empty.txt");
         {
             let mut iso = isolate::create_isolate(None);
             let ctx = isolate::create_context(&mut iso);
-            let scope = &mut v8::HandleScope::new(&mut iso);
+            v8::scope!(scope, &mut *iso);
             let local = v8::Local::new(scope, &ctx);
             let scope = &mut v8::ContextScope::new(scope, local);
 
@@ -8897,7 +8890,7 @@ export const file = new File([], "empty.txt");
         {
             let mut iso = isolate::create_isolate(None);
             let ctx = isolate::create_context(&mut iso);
-            let scope = &mut v8::HandleScope::new(&mut iso);
+            v8::scope!(scope, &mut *iso);
             let local = v8::Local::new(scope, &ctx);
             let scope = &mut v8::ContextScope::new(scope, local);
 
@@ -9018,7 +9011,7 @@ export const file = new File([], "empty.txt");
             );
 
             let results = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 batch_resolve_via_ipc(
@@ -9057,7 +9050,7 @@ export const file = new File([], "empty.txt");
                 "test-session".into(),
             );
             let capped_result = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 batch_resolve_via_ipc(
@@ -9230,7 +9223,7 @@ export const file = new File([], "empty.txt");
 
             let mut iso = isolate::create_isolate(None);
             let ctx = isolate::create_context(&mut iso);
-            let scope = &mut v8::HandleScope::new(&mut iso);
+            v8::scope!(scope, &mut *iso);
             let local = v8::Local::new(scope, &ctx);
             let scope = &mut v8::ContextScope::new(scope, local);
             let shim =
@@ -9245,7 +9238,7 @@ export const file = new File([], "empty.txt");
         {
             let mut iso = isolate::create_isolate(None);
             let ctx = isolate::create_context(&mut iso);
-            let scope = &mut v8::HandleScope::new(&mut iso);
+            v8::scope!(scope, &mut *iso);
             let local = v8::Local::new(scope, &ctx);
             let scope = &mut v8::ContextScope::new(scope, local);
 
@@ -9269,7 +9262,7 @@ export const file = new File([], "empty.txt");
         {
             let mut iso = isolate::create_isolate(None);
             let ctx = isolate::create_context(&mut iso);
-            let scope = &mut v8::HandleScope::new(&mut iso);
+            v8::scope!(scope, &mut *iso);
             let local = v8::Local::new(scope, &ctx);
             let scope = &mut v8::ContextScope::new(scope, local);
 
@@ -9313,7 +9306,7 @@ export const file = new File([], "empty.txt");
         {
             let mut iso = isolate::create_isolate(None);
             let ctx = isolate::create_context(&mut iso);
-            let scope = &mut v8::HandleScope::new(&mut iso);
+            v8::scope!(scope, &mut *iso);
             let local = v8::Local::new(scope, &ctx);
             let scope = &mut v8::ContextScope::new(scope, local);
 
@@ -9357,7 +9350,7 @@ export const file = new File([], "empty.txt");
         {
             let mut iso = isolate::create_isolate(None);
             let ctx = isolate::create_context(&mut iso);
-            let scope = &mut v8::HandleScope::new(&mut iso);
+            v8::scope!(scope, &mut *iso);
             let local = v8::Local::new(scope, &ctx);
             let scope = &mut v8::ContextScope::new(scope, local);
 
@@ -9450,7 +9443,7 @@ export const file = new File([], "empty.txt");
                 export const ready = true;
             "#;
             let (code, exports, error) = {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
                 execute_module(
@@ -9468,10 +9461,10 @@ export const file = new File([], "empty.txt");
             assert!(exports.is_some());
 
             {
-                let scope = &mut v8::HandleScope::new(&mut iso);
+                v8::scope!(scope, &mut *iso);
                 let local = v8::Local::new(scope, &ctx);
                 let scope = &mut v8::ContextScope::new(scope, local);
-                let tc = &mut v8::TryCatch::new(scope);
+                v8::tc_scope!(tc, scope);
                 let source = v8::String::new(
                     tc,
                     "globalThis.__depPromise = globalThis.loadDep().then((value) => { globalThis.__depValue = value; return value; });",

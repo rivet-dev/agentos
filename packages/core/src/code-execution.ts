@@ -1,3 +1,7 @@
+import { HostTextOutputCapture } from "./host-output-capture.js";
+
+export { CapturedOutputLimitError } from "./host-output-capture.js";
+
 export interface CodeExecutionSpawnOptions {
 	cwd?: string;
 	env?: Record<string, string>;
@@ -35,6 +39,8 @@ export interface CodeExecutionOptions {
 	argv?: string[];
 	stdin?: string | Uint8Array;
 	timeoutMs?: number;
+	/** Combined stdout/stderr capture limit in bytes. Defaults to 16 MiB. */
+	maxCapturedOutputBytes?: number;
 	signal?: AbortSignal;
 	onStdout?: (chunk: string) => void;
 	onStderr?: (chunk: string) => void;
@@ -110,11 +116,8 @@ export function spawnCodeProcess(
 		throw new RangeError("timeoutMs must be a finite, non-negative number");
 	}
 
+	const capture = new HostTextOutputCapture(options.maxCapturedOutputBytes);
 	const { pid } = vm.spawn(command, args, toSpawnOptions(options));
-	const stdoutDecoder = new TextDecoder();
-	const stderrDecoder = new TextDecoder();
-	let stdout = "";
-	let stderr = "";
 	let callbackError: unknown;
 	let aborted = false;
 	let finalized = false;
@@ -122,15 +125,9 @@ export function spawnCodeProcess(
 
 	const unsubscribeOutput = vm.onProcessOutput(pid, (event) => {
 		try {
-			if (event.stream === "stdout") {
-				const text = stdoutDecoder.decode(event.data, { stream: true });
-				stdout += text;
-				options.onStdout?.(text);
-			} else {
-				const text = stderrDecoder.decode(event.data, { stream: true });
-				stderr += text;
-				options.onStderr?.(text);
-			}
+			const text = capture.append(event.stream, event.data);
+			if (event.stream === "stdout") options.onStdout?.(text);
+			else options.onStderr?.(text);
 		} catch (error) {
 			callbackError ??= error;
 			vm.killProcess(pid);
@@ -153,8 +150,6 @@ export function spawnCodeProcess(
 		unsubscribeOutput();
 		options.signal?.removeEventListener("abort", abort);
 		if (timeout !== undefined) clearTimeout(timeout);
-		stdout += stdoutDecoder.decode();
-		stderr += stderrDecoder.decode();
 		await options.onComplete?.();
 	};
 
@@ -180,8 +175,7 @@ export function spawnCodeProcess(
 			return {
 				success: exitCode === 0,
 				exitCode,
-				stdout,
-				stderr,
+				...capture.finish(),
 			};
 		})();
 		return waitPromise;

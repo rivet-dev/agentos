@@ -16,8 +16,8 @@ fn userland(marker: u32) -> String {
     format!("globalThis.probe = function marker{marker}() {{ /* {padding} */ return {marker}; }};")
 }
 
-fn probe_text(isolate: &mut v8::OwnedIsolate) -> String {
-    let scope = &mut v8::HandleScope::new(isolate);
+fn probe_text(isolate: &mut v8::Isolate) -> String {
+    v8::scope!(scope, isolate);
     let context = v8::Context::new(scope, Default::default());
     let scope = &mut v8::ContextScope::new(scope, context);
     let code = v8::String::new(scope, "probe.toString()").unwrap();

@@ -14,7 +14,7 @@ use crate::execution::{ExplicitMicrotaskScope, MicrotaskSuppressionStorage};
 /// - "net_socket" → _netSocketDispatch
 /// - "signal" → __agentOsWasmSignalDispatch or _signalDispatch
 /// - "timer" → _timerDispatch
-pub fn dispatch_stream_event(scope: &mut v8::HandleScope, event_type: &str, payload: &[u8]) {
+pub fn dispatch_stream_event(scope: &mut v8::PinScope<'_, '_>, event_type: &str, payload: &[u8]) {
     let mut storage = std::pin::pin!(MicrotaskSuppressionStorage::new());
     let mut explicit = ExplicitMicrotaskScope::new(scope, storage.as_mut());
     let scope = &mut *explicit;
@@ -46,7 +46,7 @@ pub fn dispatch_stream_event(scope: &mut v8::HandleScope, event_type: &str, payl
                 let event_str = v8::String::new(scope, event_type).unwrap();
                 let payload_val = if !payload.is_empty() {
                     let maybe_v8_payload = {
-                        let tc = &mut v8::TryCatch::new(scope);
+                        v8::tc_scope!(tc, scope);
                         crate::bridge::deserialize_v8_value(tc, payload).ok()
                     };
                     match maybe_v8_payload {
@@ -74,7 +74,7 @@ pub fn dispatch_stream_event(scope: &mut v8::HandleScope, event_type: &str, payl
 }
 
 pub fn dispatch_signal_event(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     signal_name: &str,
     signal: i32,
     delivery_token: u64,
@@ -99,13 +99,13 @@ pub fn dispatch_signal_event(
     dispatch_stream_value(scope, "signal", payload.into());
 }
 
-pub fn dispatch_timer_event(scope: &mut v8::HandleScope, timer_id: u64) {
+pub fn dispatch_timer_event(scope: &mut v8::PinScope<'_, '_>, timer_id: u64) {
     let timer_id = v8::Number::new(scope, timer_id as f64);
     dispatch_stream_value(scope, "timer", timer_id.into());
 }
 
 fn dispatch_stream_value(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     event_type: &str,
     payload: v8::Local<v8::Value>,
 ) {
@@ -150,7 +150,7 @@ pub enum ReadinessDispatch {
 }
 
 pub fn dispatch_readiness(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     capability_id: u64,
     capability_generation: u64,
     flags: agentos_driver_tokio::readiness::ReadyFlags,

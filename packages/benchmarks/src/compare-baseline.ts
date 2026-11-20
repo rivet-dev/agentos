@@ -37,6 +37,11 @@ export function compareMatrixBaseline(
 		tinyCurrentFloorMs: number;
 	},
 ): MatrixComparison[] {
+	if (!Number.isFinite(options.threshold) || options.threshold <= 0) {
+		throw new RangeError(
+			"Benchmark threshold must be a finite positive number",
+		);
+	}
 	const currentByKey = new Map(currentRows.map((row) => [row.key, row]));
 	const baselineByKey = new Map(baseline.rows.map((row) => [row.key, row]));
 	return gateRows.map((gate) => {
@@ -44,22 +49,32 @@ export function compareMatrixBaseline(
 		const base = baselineByKey.get(gate.key);
 		const currentMetric = current ? laneMetric(current, gate.lane) : undefined;
 		const baselineMetric = base ? laneMetric(base, gate.lane) : undefined;
-		if (!base || !baselineMetric) {
+		if (
+			!base ||
+			!baselineMetric ||
+			!Number.isFinite(baselineMetric.p50Ms) ||
+			baselineMetric.p50Ms <= 0
+		) {
 			return {
 				key: gate.key,
 				lane: gate.lane,
 				currentP50Ms: currentMetric?.p50Ms,
 				status: "missing-baseline",
-				reason: "baseline has no p50 for this row/lane",
+				reason: "baseline has no valid positive p50 for this row/lane",
 			};
 		}
-		if (!current || !currentMetric) {
+		if (
+			!current ||
+			!currentMetric ||
+			!Number.isFinite(currentMetric.p50Ms) ||
+			currentMetric.p50Ms < 0
+		) {
 			return {
 				key: gate.key,
 				lane: gate.lane,
 				baselineP50Ms: baselineMetric.p50Ms,
 				status: "missing-current",
-				reason: "current run has no p50 for this row/lane",
+				reason: "current run has no valid p50 for this row/lane",
 			};
 		}
 		const ratio = round(currentMetric.p50Ms / baselineMetric.p50Ms, 2);

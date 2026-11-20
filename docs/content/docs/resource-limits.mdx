@@ -189,6 +189,19 @@ skipped chunks. Recover the output with `read_process_output`. The TypeScript
 client delivers every byte written before a process exits to `onStdout` and
 `onStderr`, including when the host is slow to drain them.
 
+The host captures up to 16 MiB of combined stdout and stderr per call.
+If output exceeds that budget, the call fails with
+`ERR_AGENTOS_CAPTURED_OUTPUT_LIMIT`. Set `maxCapturedOutputBytes` in
+TypeScript or `ExecOptions.max_captured_output_bytes` in Rust to raise it.
+For larger output without retaining it in memory, spawn the process and stream
+its output.
+
+Native execution rejects per-run CPU overrides and requests for the legacy
+`freeze` timing mode with `ERR_AGENTOS_UNSUPPORTED_EXECUTION_OPTION`.
+Configure CPU time at VM creation. Set VM-level `highResolutionTime` in
+TypeScript or `high_resolution_time` in Rust to control clock precision.
+The legacy `off` option preserves the VM clock policy.
+
 `dispose()` is one request: the sidecar stops the VM's running processes
 (`SIGTERM`, then `SIGKILL`) and then removes the VM. If `dispose()` fails, the
 VM can still be alive. A failed disposal is retained because repeating a partially completed teardown

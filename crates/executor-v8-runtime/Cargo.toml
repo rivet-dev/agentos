@@ -18,15 +18,13 @@ exclude = [
 [features]
 test-support = []
 wasm-exnref = []
-obscura-embedding = ["dep:deno_core"]
 
 [dependencies]
 agentos-vm-host-interface = { workspace = true }
 agentos-executor-contract = { workspace = true }
 agentos-resource-accounting = { workspace = true }
 agentos-driver-tokio = { workspace = true }
-v8 = "130"
-deno_core = { version = "=0.336.0", optional = true }
+v8 = { workspace = true }
 crossbeam-channel = "0.5"
 flume = { version = "0.11", features = ["async"] }
 getrandom = "0.2"

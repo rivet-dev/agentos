@@ -665,14 +665,14 @@ fn remember_verified_sources(graph: &ModuleSnapshotGraph, identities: Vec<String
 }
 
 fn with_parse_scope<T>(
-    f: impl FnOnce(&mut v8::HandleScope) -> Result<T, String>,
+    f: impl FnOnce(&mut v8::PinScope<'_, '_>) -> Result<T, String>,
 ) -> Result<T, String> {
     crate::isolate::init_v8_platform();
     crate::isolate::prepare_current_thread();
     let mut isolate = Some(crate::isolate::create_isolate(None));
     let result = {
-        let isolate = isolate.as_mut().expect("parse isolate");
-        let scope = &mut v8::HandleScope::new(isolate);
+        let isolate: &mut v8::Isolate = isolate.as_mut().expect("parse isolate");
+        v8::scope!(scope, isolate);
         let context = v8::Context::new(scope, Default::default());
         let scope = &mut v8::ContextScope::new(scope, context);
         f(scope)
@@ -687,12 +687,12 @@ fn with_parse_scope<T>(
 /// build. Discovery runs in the sidecar, so it compiles from a heap copy that
 /// its parse isolate frees, and lazily: it only reads import requests.
 fn compile_snapshot_module<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     path: &str,
     source: &str,
     for_snapshot: bool,
 ) -> Result<v8::Local<'s, v8::Module>, String> {
-    let tc = &mut v8::TryCatch::new(scope);
+    v8::tc_scope!(tc, scope);
     let v8_source = if for_snapshot {
         crate::shared_source::snapshot_source_string(tc, source)
             .map_err(|error| graph_error(format!("{path}: {error}")))?
@@ -741,12 +741,12 @@ fn compile_snapshot_module<'s>(
 }
 
 fn module_specifiers(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     path: &str,
     source: &str,
 ) -> Result<Vec<String>, String> {
     // Each module's source and record become garbage once its requests are read.
-    let scope = &mut v8::HandleScope::new(scope);
+    v8::scope!(scope, scope);
     let module = compile_snapshot_module(scope, path, source, false)?;
     let requests = module.get_module_requests();
     let mut specifiers = Vec::with_capacity(requests.length());
@@ -781,7 +781,7 @@ fn build_resolve_callback<'a>(
     _import_attributes: v8::Local<'a, v8::FixedArray>,
     referrer: v8::Local<'a, v8::Module>,
 ) -> Option<v8::Local<'a, v8::Module>> {
-    let scope = &mut unsafe { v8::CallbackScope::new(context) };
+    v8::callback_scope!(unsafe scope, context);
     let specifier = specifier.to_rust_string_lossy(scope);
     let target = BUILD_STATE.with(|cell| {
         let state = cell.borrow();
@@ -815,7 +815,7 @@ extern "C" fn build_import_meta_callback(
     module: v8::Local<v8::Module>,
     meta: v8::Local<v8::Object>,
 ) {
-    let scope = &mut unsafe { v8::CallbackScope::new(context) };
+    v8::callback_scope!(unsafe scope, context);
     let path = BUILD_STATE.with(|cell| {
         let state = cell.borrow();
         let state = state.as_ref()?;
@@ -831,7 +831,7 @@ extern "C" fn build_import_meta_callback(
 }
 
 fn build_dynamic_import_callback<'a>(
-    scope: &mut v8::HandleScope<'a>,
+    scope: &mut v8::PinScope<'a, '_>,
     _host_defined_options: v8::Local<'a, v8::Data>,
     _resource_name: v8::Local<'a, v8::Value>,
     specifier: v8::Local<'a, v8::String>,
@@ -947,8 +947,10 @@ const SNAPSHOT_BUILD_GUARDS: &str = r#"(() => {
 })()"#;
 
 /// Install [`SNAPSHOT_BUILD_GUARDS`] and return the function that removes them.
-fn install_build_guards(scope: &mut v8::HandleScope) -> Result<v8::Global<v8::Function>, String> {
-    let tc = &mut v8::TryCatch::new(scope);
+fn install_build_guards(
+    scope: &mut v8::PinScope<'_, '_>,
+) -> Result<v8::Global<v8::Function>, String> {
+    v8::tc_scope!(tc, scope);
     let source = v8::String::new(tc, SNAPSHOT_BUILD_GUARDS).expect("static script");
     let remove = v8::Script::compile(tc, source, None)
         .and_then(|script| script.run(tc))
@@ -963,10 +965,10 @@ fn install_build_guards(scope: &mut v8::HandleScope) -> Result<v8::Global<v8::Fu
 }
 
 fn remove_build_guards(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     remove: v8::Global<v8::Function>,
 ) -> Result<(), String> {
-    let tc = &mut v8::TryCatch::new(scope);
+    v8::tc_scope!(tc, scope);
     let remove = v8::Local::new(tc, remove);
     let receiver = v8::undefined(tc).into();
     if remove.call(tc, receiver, &[]).is_none() {
@@ -979,7 +981,7 @@ fn remove_build_guards(
 /// Compile, link, and evaluate `graph` in the snapshot creator context, then
 /// attach the evaluated modules as context data for restore.
 pub(crate) fn evaluate_module_graph_for_snapshot(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     graph: &ModuleSnapshotGraph,
 ) -> Result<(), String> {
     scope.set_host_initialize_import_meta_object_callback(build_import_meta_callback);
@@ -1031,11 +1033,11 @@ pub(crate) fn evaluate_module_graph_for_snapshot(
 }
 
 fn evaluate_roots(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     graph: &ModuleSnapshotGraph,
     modules: &[v8::Global<v8::Module>],
 ) -> Result<(), String> {
-    let tc = &mut v8::TryCatch::new(scope);
+    v8::tc_scope!(tc, scope);
     for (specifier, index) in &graph.entry_requests {
         let module = v8::Local::new(tc, &modules[*index]);
         let path = &graph.modules[*index].path;
@@ -1080,7 +1082,10 @@ fn evaluate_roots(
     Ok(())
 }
 
-fn exception_text(tc: &mut v8::TryCatch<v8::HandleScope>, fallback: &str) -> String {
+fn exception_text(
+    tc: &mut v8::PinnedRef<'_, v8::TryCatch<'_, '_, v8::HandleScope<'_>>>,
+    fallback: &str,
+) -> String {
     match tc.exception() {
         Some(exception) => value_text(tc, exception),
         None => fallback.to_owned(),
@@ -1088,7 +1093,7 @@ fn exception_text(tc: &mut v8::TryCatch<v8::HandleScope>, fallback: &str) -> Str
 }
 
 /// An exception with the module and line it came from.
-fn value_text(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>) -> String {
+fn value_text(scope: &mut v8::PinScope<'_, '_>, value: v8::Local<v8::Value>) -> String {
     if let Ok(object) = v8::Local::<v8::Object>::try_from(value) {
         let key = v8::String::new(scope, "stack").unwrap();
         if let Some(stack) = object
@@ -1119,7 +1124,7 @@ fn value_text(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>) -> Strin
 /// Timers the graph left pending at module top level. A snapshot cannot carry
 /// a pending timer, so a count that cannot be read fails the snapshot instead
 /// of passing it.
-fn pending_timer_count(scope: &mut v8::HandleScope) -> Result<u32, String> {
+fn pending_timer_count(scope: &mut v8::PinScope<'_, '_>) -> Result<u32, String> {
     let context = scope.get_current_context();
     let global = context.global(scope);
     let key = v8::String::new(scope, "_getPendingTimerCount")
@@ -1149,7 +1154,7 @@ fn pending_timer_count(scope: &mut v8::HandleScope) -> Result<u32, String> {
 /// snapshot. Returns `None` for any other context. V8 hands context data out
 /// once, so call this once per context.
 pub(crate) fn take_snapshot_modules(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
 ) -> Option<Vec<(String, v8::Global<v8::Module>)>> {
     let paths = scope
         .get_context_data_from_snapshot_once::<v8::Array>(MODULE_PATHS_DATA_INDEX)

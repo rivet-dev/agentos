@@ -18,7 +18,7 @@ const DELIVERY_PRIVATE: &str = "agentos.native.terminal.entry";
 struct DeliveryKey(Rc<v8::Global<v8::Private>>);
 
 fn private_delivery_key<'s>(
-    scope: &mut v8::HandleScope<'s, ()>,
+    scope: &mut v8::PinScope<'s, '_, ()>,
 ) -> Option<v8::Local<'s, v8::Private>> {
     let name = v8::String::new(scope, DELIVERY_PRIVATE)?;
     Some(v8::Private::for_api(scope, Some(name)))
@@ -134,7 +134,7 @@ impl TerminalInput {
 }
 
 pub(crate) fn request_process_exit(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     args: v8::FunctionCallbackArguments,
     _return_value: v8::ReturnValue,
 ) {
@@ -160,19 +160,19 @@ pub(crate) fn request_process_exit(
 }
 
 pub(crate) fn report_terminal_callback(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     args: v8::FunctionCallbackArguments,
     _return_value: v8::ReturnValue,
 ) {
     record_terminal(scope, args.get(0), TerminalInput::Callback);
 }
 
-pub(crate) fn record_exception(scope: &mut v8::HandleScope, original: v8::Local<v8::Value>) {
+pub(crate) fn record_exception(scope: &mut v8::PinScope<'_, '_>, original: v8::Local<v8::Value>) {
     record_terminal(scope, original, TerminalInput::Callback);
 }
 
 fn record_terminal(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     original: v8::Local<v8::Value>,
     input: TerminalInput,
 ) {
@@ -222,7 +222,7 @@ fn record_terminal(
     };
     // No mutable state borrow crosses this guest-observable classifier.
     let (kind, result, error_disposition) = {
-        let tc = &mut v8::TryCatch::new(scope);
+        v8::tc_scope!(tc, scope);
         let classified = match input {
             TerminalInput::Callback => classify_terminal_exception(tc, original),
             TerminalInput::ProcessExit { code, diagnostic } => (
@@ -284,7 +284,7 @@ fn record_terminal(
     deliver_terminal_stop(scope);
 }
 
-fn initialize_delivery_key_in_scope(scope: &mut v8::HandleScope<'_, ()>) -> Result<(), String> {
+fn initialize_delivery_key_in_scope(scope: &mut v8::PinScope<'_, '_, ()>) -> Result<(), String> {
     if scope.get_slot::<DeliveryKey>().is_none() {
         let key = private_delivery_key(scope).ok_or("terminal private key allocation failed")?;
         let key = DeliveryKey(Rc::new(v8::Global::new(scope, key)));
@@ -297,7 +297,7 @@ fn initialize_delivery_key_in_scope(scope: &mut v8::HandleScope<'_, ()>) -> Resu
 // the scope-preserving helper: reopening from Isolate tries to activate its root.
 pub(crate) fn initialize_delivery_key(isolate: &mut v8::Isolate) {
     if isolate.get_slot::<DeliveryKey>().is_none() {
-        let scope = &mut v8::HandleScope::new(&mut *isolate);
+        v8::scope!(scope, &mut *isolate);
         initialize_delivery_key_in_scope(scope)
             .expect("terminal private key initialized before guest entry");
     }
@@ -309,7 +309,7 @@ pub(crate) fn release_delivery_key(isolate: &mut v8::Isolate) {
     drop(isolate.remove_slot::<DeliveryKey>());
 }
 
-pub(crate) fn validate_delivery(scope: &mut v8::HandleScope) -> Result<(), String> {
+pub(crate) fn validate_delivery(scope: &mut v8::PinScope<'_, '_>) -> Result<(), String> {
     let key = scope
         .get_slot::<DeliveryKey>()
         .map(|key| key.0.clone())
@@ -328,13 +328,13 @@ pub(crate) fn validate_delivery(scope: &mut v8::HandleScope) -> Result<(), Strin
 // Only a real JavaScript entry has the interrupt stack check needed to make
 // the recorded native stop uncatchable before this callback returns. The trusted
 // function is precompiled at context setup, not stored in FunctionTemplate data.
-fn deliver_terminal_stop(scope: &mut v8::HandleScope) {
+fn deliver_terminal_stop(scope: &mut v8::PinScope<'_, '_>) {
     if scope.is_execution_terminating() {
         return;
     }
     let mut suppression_storage = std::pin::pin!(MicrotaskSuppressionStorage::new());
     let mut explicit = ExplicitMicrotaskScope::new(scope, suppression_storage.as_mut());
-    let tc = &mut v8::TryCatch::new(&mut *explicit);
+    v8::tc_scope!(tc, &mut *explicit);
     let key = tc.get_slot::<DeliveryKey>().map(|key| key.0.clone());
     let barrier = key.and_then(|key| {
         let key = v8::Local::new(tc, &*key);
@@ -378,7 +378,7 @@ fn deliver_terminal_stop(scope: &mut v8::HandleScope) {
 
 /// Install before bridge evaluation for both fresh and snapshot-created realms.
 /// The bridge captures/deletes this native hook; snapshots use bridge::external_refs.
-pub(crate) fn install(scope: &mut v8::HandleScope) -> Result<(), String> {
+pub(crate) fn install(scope: &mut v8::PinScope<'_, '_>) -> Result<(), String> {
     initialize_delivery_key_in_scope(scope)?;
     if scope.get_slot::<TerminalCallbackOwner>().is_none() {
         scope.set_slot(TerminalCallbackOwner::default());

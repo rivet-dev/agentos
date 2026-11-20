@@ -9,7 +9,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::host_call::{record_sync_bridge_host_phase, BridgeCallRegistry, CallIdRouter};
-use crate::ipc_binary::BinaryFrame;
+use crate::ipc_binary::{BinaryFrame, ExecutionErrorBin};
 #[cfg(test)]
 use crate::runtime_protocol::RuntimeEvent;
 use crate::runtime_protocol::{
@@ -55,6 +55,7 @@ impl EmbeddedV8Runtime {
         max_concurrency: Option<usize>,
         runtime: agentos_driver_tokio::DriverHandle,
     ) -> io::Result<Self> {
+        isolate::validate_v8_feature_configuration()?;
         bridge::init_codec();
         bridge::acquire_embedded_cbor_codec();
         isolate::init_v8_platform();
@@ -812,6 +813,7 @@ pub fn spawn_embedded_runtime_ipc(
     max_concurrency: Option<usize>,
     runtime: agentos_driver_tokio::DriverHandle,
 ) -> io::Result<(UnixStream, EmbeddedRuntimeHandle)> {
+    isolate::validate_v8_feature_configuration()?;
     bridge::init_codec();
     bridge::acquire_embedded_cbor_codec();
     isolate::init_v8_platform();
@@ -876,7 +878,7 @@ fn run_embedded_runtime(
     // AGENTOS_THREAD_SITE: embedded-v8-writer
     let writer_handle = match thread::Builder::new()
         .name(format!("v8-ipc-writer-{connection_id}"))
-        .spawn(move || ipc_writer_thread(event_rx, writer_stream))
+        .spawn(move || ipc_writer_thread(event_rx, writer_stream, connection_id))
     {
         Ok(handle) => handle,
         Err(error) => {
@@ -904,21 +906,51 @@ fn run_embedded_runtime(
 fn ipc_writer_thread(
     rx: crossbeam_channel::Receiver<RuntimeEventEnvelope>,
     mut writer: UnixStream,
+    connection_id: u64,
 ) {
-    while let Ok(envelope) = rx.recv() {
-        let frame: BinaryFrame = envelope.event.into();
-        let bytes = match crate::ipc_binary::frame_to_bytes(&frame) {
-            Ok(bytes) => bytes,
-            Err(error) => {
-                eprintln!("embedded V8 runtime writer encode error: {error}");
-                break;
-            }
-        };
-        if let Err(error) = writer.write_all(&bytes) {
-            eprintln!("embedded V8 runtime writer error: {error}");
+    for envelope in rx {
+        let frame = BinaryFrame::from(envelope.event);
+        let result = encode_runtime_event(frame).and_then(|bytes| writer.write_all(&bytes));
+        if let Err(error) = result {
+            eprintln!("embedded V8 runtime writer error on connection {connection_id}: {error}");
             break;
         }
     }
+
+    // Closing this descriptor leaves the dispatcher clone connected. Shut down
+    // both directions to wake its read loop and retire the connection's sessions.
+    if let Err(error) = writer.shutdown(Shutdown::Both) {
+        eprintln!("embedded V8 runtime writer shutdown on connection {connection_id}: {error}");
+    }
+}
+
+fn encode_runtime_event(mut frame: BinaryFrame) -> io::Result<Vec<u8>> {
+    let encode_error = match crate::ipc_binary::frame_to_bytes(&frame) {
+        Ok(bytes) => return Ok(bytes),
+        Err(error) => error,
+    };
+
+    // A terminal result can still complete its execution if the guest's
+    // result is too large for the wire. Other frames have no error substitute.
+    if let BinaryFrame::ExecutionResult {
+        exit_code,
+        exports,
+        error,
+        ..
+    } = &mut frame
+    {
+        *exit_code = 1;
+        *exports = None;
+        *error = Some(ExecutionErrorBin {
+            error_type: "Error".to_owned(),
+            message: format!("Execution result exceeds the IPC framing limit: {encode_error}"),
+            stack: String::new(),
+            code: "ERR_AGENTOS_EXECUTION_RESULT_FRAME".to_owned(),
+        });
+        return crate::ipc_binary::frame_to_bytes(&frame);
+    }
+
+    Err(encode_error)
 }
 
 fn handle_connection(
@@ -1261,6 +1293,69 @@ mod tests {
             session_id: String::from("aggregate-test"),
             channel: 0,
             message: message.to_owned(),
+        }
+    }
+
+    #[test]
+    fn ipc_writer_shuts_down_both_sides_on_unencodable_event() {
+        use std::io::Read;
+
+        let (mut host, mut dispatcher) = UnixStream::pair().expect("create IPC sockets");
+        let writer = dispatcher.try_clone().expect("clone dispatcher socket");
+        let (sender, receiver) = crossbeam_channel::bounded(1);
+        sender
+            .send(runtime_envelope(
+                1,
+                RuntimeEvent::BridgeCall {
+                    session_id: "session".to_owned(),
+                    call_id: 1,
+                    method: "m".repeat(usize::from(u16::MAX) + 1),
+                    payload: Vec::new(),
+                },
+            ))
+            .expect("queue frame");
+
+        let writer_thread = thread::spawn(move || ipc_writer_thread(receiver, writer, 1));
+        for endpoint in [&mut host, &mut dispatcher] {
+            endpoint
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .expect("set bounded read timeout");
+            assert_eq!(endpoint.read(&mut [0]).expect("connection EOF"), 0);
+        }
+        writer_thread
+            .join()
+            .expect("writer exits after failed frame");
+    }
+
+    #[test]
+    fn unencodable_execution_result_keeps_a_typed_terminal_response() {
+        let frame = BinaryFrame::from(RuntimeEvent::ExecutionResult {
+            session_id: "session".to_owned(),
+            exit_code: 1,
+            exports: None,
+            error: Some(ExecutionErrorBin {
+                error_type: "Error".to_owned(),
+                message: "m".repeat(usize::from(u16::MAX) + 1),
+                stack: String::new(),
+                code: String::new(),
+            }),
+            limit_exceeded: None,
+            context_invalidated: true,
+        });
+        let bytes = encode_runtime_event(frame).expect("encode terminal fallback");
+        let result = crate::ipc_binary::read_frame(&mut bytes.as_slice()).expect("read fallback");
+        match result {
+            BinaryFrame::ExecutionResult {
+                session_id,
+                exit_code: 1,
+                error: Some(error),
+                context_invalidated: true,
+                ..
+            } => {
+                assert_eq!(session_id, "session");
+                assert_eq!(error.code, "ERR_AGENTOS_EXECUTION_RESULT_FRAME");
+            }
+            other => panic!("unexpected terminal frame: {other:?}"),
         }
     }
 

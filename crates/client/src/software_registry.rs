@@ -409,11 +409,7 @@ pub async fn resolve_registry_software(
                 "agentOS software manifest {manifest_url} lists {name} at an invalid path: {error}"
             ))
         })?;
-    if url.scheme() != "https" && url.scheme() != "http" {
-        return Err(ClientError::PackageDownload(format!(
-            "agentOS software manifest {manifest_url} lists {name} at a non-http(s) URL: {url}"
-        )));
-    }
+    ensure_secure_registry_url(&url, "artifact URL")?;
     Ok(ResolvedRegistrySoftware {
         name: name.to_string(),
         version,

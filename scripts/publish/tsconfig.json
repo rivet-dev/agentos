@@ -6,6 +6,7 @@
 		"moduleResolution": "NodeNext",
 		"strict": true,
 		"noEmit": true,
+		"allowImportingTsExtensions": true,
 		"esModuleInterop": true,
 		"skipLibCheck": true,
 		"resolveJsonModule": true,

@@ -5,145 +5,95 @@ use std::path::{Path, PathBuf};
 mod build_assets;
 mod build_bridge;
 
-fn cargo_home() -> PathBuf {
-    if let Some(home) = env::var_os("CARGO_HOME") {
-        return PathBuf::from(home);
-    }
+// This is the exact rusty_v8 binding plus the product's backported V8 tree.
+// An upstream package with the same Rust version can have different V8 headers.
+const RUSTY_V8_REV: &str = "548adfd54db42c670e0f3fd42211c3af109c0a73";
+const V8_TREE: &str = "91306fc87da850ec8b222f0030b37d2da90a6dea";
+const ICU_REV: &str = "2a51536dfb3b448bdf3dae70c782ea2879c90904";
+const HEADER_SHA256: &str = "3ab78300ff42414d7706891bf101ae9fa18ca1b5eaec27d38ff56a08bad1b6ac";
+const ICU_SHA256: &str = "e1ed8f674bb8449731b79cae956042da59f9ecbd37c8d3f86586a22b4836e5b2";
 
-    let home = env::var_os("HOME").expect("HOME must be set when CARGO_HOME is unset");
-    PathBuf::from(home).join(".cargo")
+fn required_file(path: &Path) -> Vec<u8> {
+    fs::read(path).unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()))
 }
 
-fn read_v8_version(lock_path: &Path) -> String {
-    let lock = fs::read_to_string(lock_path)
-        .unwrap_or_else(|error| panic!("failed to read {}: {}", lock_path.display(), error));
-
-    let mut in_v8_package = false;
-    for line in lock.lines() {
-        match line.trim() {
-            "[[package]]" => in_v8_package = false,
-            "name = \"v8\"" => in_v8_package = true,
-            _ if in_v8_package && line.trim_start().starts_with("version = \"") => {
-                let version = line
-                    .trim()
-                    .trim_start_matches("version = \"")
-                    .trim_end_matches('"');
-                return version.to_owned();
-            }
-            _ => {}
+fn v8_source_root() -> PathBuf {
+    println!("cargo:rerun-if-env-changed=AGENTOS_RUSTY_V8_SOURCE");
+    println!("cargo:rerun-if-env-changed=RUSTY_V8_ARCHIVE");
+    if let Some(root) = env::var_os("AGENTOS_RUSTY_V8_SOURCE") {
+        return root.into();
+    }
+    if let Some(archive) = env::var_os("RUSTY_V8_ARCHIVE").map(PathBuf::from) {
+        if archive.is_file() {
+            return archive
+                .parent()
+                .expect("archive parent directory")
+                .to_owned();
         }
     }
-
-    panic!("failed to locate v8 version in {}", lock_path.display());
+    panic!("set AGENTOS_RUSTY_V8_SOURCE to the prepared agentOS V8 source or pass the local matched bundle archive via RUSTY_V8_ARCHIVE");
 }
 
-fn find_v8_crate_root(v8_version: &str) -> PathBuf {
-    let registry_src = cargo_home().join("registry").join("src");
-    let entries = fs::read_dir(&registry_src).unwrap_or_else(|error| {
-        panic!(
-            "failed to read cargo registry src {}: {}",
-            registry_src.display(),
-            error
-        )
+fn header_paths(dir: &Path, files: &mut Vec<PathBuf>) {
+    for entry in
+        fs::read_dir(dir).unwrap_or_else(|error| panic!("cannot read {}: {error}", dir.display()))
+    {
+        let path = entry.expect("V8 header directory entry").path();
+        if path.is_dir() {
+            header_paths(&path, files);
+        } else if path.extension().is_some_and(|extension| extension == "h") {
+            files.push(path);
+        }
+    }
+}
+
+fn verify_v8_headers(include: &Path) {
+    use sha2::{Digest, Sha256};
+    let mut files = Vec::new();
+    header_paths(include, &mut files);
+    files.sort_by_cached_key(|path| {
+        path.strip_prefix(include)
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/")
     });
-
-    for entry in entries {
-        let entry = entry
-            .unwrap_or_else(|error| panic!("failed to inspect cargo registry entry: {}", error));
-        let crate_root = entry.path().join(format!("v8-{}", v8_version));
-        if crate_root.is_dir() {
-            return crate_root;
-        }
+    let mut digest = Sha256::new();
+    for file in files {
+        let relative = file
+            .strip_prefix(include)
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/");
+        digest.update(relative.as_bytes());
+        digest.update([0]);
+        digest.update(Sha256::digest(required_file(&file)));
     }
-
-    panic!(
-        "failed to locate v8-{} under {}",
-        v8_version,
-        registry_src.display(),
+    assert_eq!(
+        format!("{:x}", digest.finalize()),
+        HEADER_SHA256,
+        "public V8 headers in {} do not match engine tree {V8_TREE}",
+        include.display()
     );
 }
 
-fn find_v8_icu_data(crate_root: &Path) -> PathBuf {
-    for relative in [
-        Path::new("third_party/icu/common/icudtl.dat"),
-        Path::new("third_party/icu/flutter_desktop/icudtl.dat"),
-        Path::new("third_party/icu/chromecast_video/icudtl.dat"),
-    ] {
-        let candidate = crate_root.join(relative);
-        if candidate.exists() {
-            return candidate;
-        }
-    }
-
-    panic!("failed to locate ICU data under {}", crate_root.display(),);
-}
-
-fn prepare_v8_include_overlay(crate_root: &Path, out_dir: &Path) -> PathBuf {
-    const OLD_ITERATOR_ALIAS: &str = "using iterator_concept = Iterator::iterator_concept;";
-    const FIXED_ITERATOR_ALIAS: &str =
-        "using iterator_concept = typename Iterator::iterator_concept;";
-
-    let source_include = crate_root.join("v8/include");
-    let overlay_include = out_dir.join("v8-include");
-    fs::create_dir_all(&overlay_include).unwrap_or_else(|error| {
-        panic!(
-            "failed to create V8 include overlay {}: {}",
-            overlay_include.display(),
-            error,
-        )
-    });
-
-    let sandbox_header = source_include.join("v8-sandbox.h");
-    fs::copy(&sandbox_header, overlay_include.join("v8-sandbox.h")).unwrap_or_else(|error| {
-        panic!(
-            "failed to copy V8 sandbox header {}: {}",
-            sandbox_header.display(),
-            error,
-        )
-    });
-
-    let internal_header = source_include.join("v8-internal.h");
-    let internal = fs::read_to_string(&internal_header).unwrap_or_else(|error| {
-        panic!(
-            "failed to read V8 internal header {}: {}",
-            internal_header.display(),
-            error,
-        )
-    });
-    let patched = if internal.contains(FIXED_ITERATOR_ALIAS) {
-        internal
-    } else if internal.matches(OLD_ITERATOR_ALIAS).count() == 1 {
-        internal.replacen(OLD_ITERATOR_ALIAS, FIXED_ITERATOR_ALIAS, 1)
-    } else {
-        panic!(
-            "V8 iterator alias in {} did not match the expected declaration",
-            internal_header.display(),
-        );
-    };
-    fs::write(overlay_include.join("v8-internal.h"), patched).unwrap_or_else(|error| {
-        panic!(
-            "failed to write patched V8 internal header overlay: {}",
-            error,
-        )
-    });
-
-    println!("cargo:rerun-if-changed={}", sandbox_header.display());
-    println!("cargo:rerun-if-changed={}", internal_header.display());
-    overlay_include
-}
-
-fn build_v8_thread_support(manifest_dir: &Path, crate_root: &Path, out_dir: &Path) {
+fn build_v8_thread_support(manifest_dir: &Path, include: &Path, gn_include: &Path) {
     let source = manifest_dir.join("src/v8_thread_support.cc");
-    let include = crate_root.join("v8/include");
-    let overlay_include = prepare_v8_include_overlay(crate_root, out_dir);
+    let serializer = manifest_dir.join("src/v8_bounded_serializer.cc");
+    let allocator = manifest_dir.join("src/v8_array_buffer_allocator.cc");
     println!("cargo:rerun-if-changed={}", source.display());
+    println!("cargo:rerun-if-changed={}", serializer.display());
+    println!("cargo:rerun-if-changed={}", allocator.display());
     cc::Build::new()
         .cpp(true)
-        .std("c++20")
+        .std("c++23")
+        .flag_if_supported("-fno-rtti")
         .warnings(false)
-        .include(overlay_include)
+        .define("V8_GN_HEADER", None)
+        .include(gn_include)
         .include(include)
         .file(source)
+        .file(serializer)
+        .file(allocator)
         .compile("agentos_v8_thread_support");
 }
 
@@ -151,7 +101,7 @@ fn build_v8_thread_support(manifest_dir: &Path, crate_root: &Path, out_dir: &Pat
 /// V8 version, the target, and the sources that define external references,
 /// bridge stub functions, and snapshot creation. Persisted blobs are only
 /// loaded by a build with the same fingerprint.
-fn emit_snapshot_fingerprint(manifest_dir: &Path, v8_version: &str) {
+fn emit_snapshot_fingerprint(manifest_dir: &Path, gn_header: &[u8]) {
     use sha2::{Digest, Sha256};
     fn collect(path: &Path, files: &mut Vec<PathBuf>) {
         if path.is_dir() {
@@ -177,7 +127,10 @@ fn emit_snapshot_fingerprint(manifest_dir: &Path, v8_version: &str) {
         collect(&root, &mut files);
     }
     let mut hasher = Sha256::new();
-    hasher.update(v8_version.as_bytes());
+    for pin in [RUSTY_V8_REV, V8_TREE, ICU_REV, HEADER_SHA256, ICU_SHA256] {
+        hasher.update(pin.as_bytes());
+    }
+    hasher.update(gn_header);
     hasher.update(env::var("TARGET").unwrap_or_default().as_bytes());
     for file in files {
         let relative = file.strip_prefix(manifest_dir).unwrap_or(&file);
@@ -198,28 +151,35 @@ fn emit_snapshot_fingerprint(manifest_dir: &Path, v8_version: &str) {
 fn main() {
     let manifest_dir =
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set"));
-    let lock_path = manifest_dir.join("Cargo.lock");
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR must be set"));
 
-    println!("cargo:rerun-if-changed={}", lock_path.display());
     println!("cargo:rerun-if-changed=build.rs");
 
     build_bridge::build_v8_bridge(&manifest_dir, &out_dir);
     build_assets::stage_executor_assets();
 
-    let v8_version = read_v8_version(&lock_path);
-    emit_snapshot_fingerprint(&manifest_dir, &v8_version);
-    let v8_crate_root = find_v8_crate_root(&v8_version);
-    build_v8_thread_support(&manifest_dir, &v8_crate_root, &out_dir);
-    let icu_data = find_v8_icu_data(&v8_crate_root);
-    let dest_path = out_dir.join("icudtl.dat");
+    let root = v8_source_root();
+    let include = root.join("v8/include");
+    println!("cargo:rerun-if-changed={}", include.display());
+    verify_v8_headers(&include);
+    println!("cargo:rerun-if-env-changed=AGENTOS_RUSTY_V8_GN_INCLUDE");
+    let gn_include = env::var_os("AGENTOS_RUSTY_V8_GN_INCLUDE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join("generated"));
+    let gn_header = gn_include.join("v8-gn.h");
+    println!("cargo:rerun-if-changed={}", gn_header.display());
+    emit_snapshot_fingerprint(&manifest_dir, &required_file(&gn_header));
+    build_v8_thread_support(&manifest_dir, &include, &gn_include);
 
-    fs::copy(&icu_data, &dest_path).unwrap_or_else(|error| {
-        panic!(
-            "failed to copy ICU data from {} to {}: {}",
-            icu_data.display(),
-            dest_path.display(),
-            error,
-        )
-    });
+    let icu_data = root.join("third_party/icu/common/icudtl.dat");
+    println!("cargo:rerun-if-changed={}", icu_data.display());
+    let icu_bytes = required_file(&icu_data);
+    use sha2::{Digest, Sha256};
+    assert_eq!(
+        format!("{:x}", Sha256::digest(&icu_bytes)),
+        ICU_SHA256,
+        "ICU common data in {} does not match ICU revision {ICU_REV}",
+        icu_data.display()
+    );
+    fs::write(out_dir.join("icudtl.dat"), icu_bytes).expect("stage pinned ICU common data");
 }

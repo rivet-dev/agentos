@@ -1,6 +1,7 @@
 import { exposeCustomGlobal } from "../global-exposure.js";
 import { bridgeDispatchSync } from "../transport.js";
 import {
+	builtinAsyncHooksModule,
 	getAsyncContextFrame,
 	runInAsyncContextFrame,
 } from "./async-context.js";
@@ -399,6 +400,8 @@ function timerDispatch(_eventType, payload) {
 		}
 		return;
 	} finally {
+		entry.complete?.();
+		entry.complete = undefined;
 		entry.handle._firing = false;
 		_firingTimer = previousFiring;
 	}
@@ -410,6 +413,50 @@ function timerDispatch(_eventType, payload) {
 		armKernelTimer(timerId);
 	}
 	checkTimerDrain();
+}
+
+// Legacy HTTP dispatch waits for short, request-owned callback continuations.
+const httpRequestTimers = new builtinAsyncHooksModule.AsyncLocalStorage();
+const MAX_HTTP_REQUEST_TIMERS = 1024;
+
+export async function drainHttpRequestTimers(listener) {
+	const tracker = { pending: new Set<Promise<void>>(), active: true };
+	try {
+		await httpRequestTimers.run(tracker, listener);
+		while (tracker.pending.size > 0) {
+			await Promise.allSettled(tracker.pending);
+		}
+	} finally {
+		tracker.active = false;
+		tracker.pending.clear();
+	}
+}
+
+function trackHttpRequestTimer() {
+	const tracker = httpRequestTimers.getStore();
+	if (!tracker?.active) return undefined;
+	if (tracker.pending.size >= MAX_HTTP_REQUEST_TIMERS) {
+		throw Object.assign(
+			new RangeError("HTTP pending request timer limit (1024) exceeded"),
+			{
+				code: "ERR_AGENTOS_HTTP_REQUEST_TIMER_LIMIT",
+			},
+		);
+	}
+	if (tracker.pending.size === Math.floor(MAX_HTTP_REQUEST_TIMERS * 0.8)) {
+		console.warn(
+			"HTTP request timer tracking approaches its pending timer limit",
+		);
+	}
+	let resolve: () => void;
+	const pending = new Promise<void>((done) => {
+		resolve = done;
+	});
+	tracker.pending.add(pending);
+	return () => {
+		tracker.pending.delete(pending);
+		resolve();
+	};
 }
 
 function createTimer(callback, delay, args, repeat) {
@@ -433,7 +480,23 @@ function createTimer(callback, delay, args, repeat) {
 		args,
 		repeat,
 		delay: actualDelay,
+		complete: undefined,
 	};
+	if (!repeat && actualDelay <= 1000) {
+		try {
+			entry.complete = trackHttpRequestTimer();
+		} catch (error) {
+			try {
+				bridgeDispatchSync(TIMER_DISPATCH.clear, id);
+			} catch (cleanupError) {
+				throw new AggregateError(
+					[error, cleanupError],
+					"Timer admission failed",
+				);
+			}
+			throw error;
+		}
+	}
 	handle._entry = entry;
 	_timerEntries.set(id, entry);
 	_timerHandles.set(id, handle);
@@ -456,6 +519,7 @@ function clearTimeout2(timer) {
 		bridgeDispatchSync(TIMER_DISPATCH.clear, handle._kernelId);
 		handle._destroyed = true;
 		handle._cleared = true;
+		handle._entry?.complete?.();
 		handle._entry = void 0;
 		_timerEntries.delete(handle._kernelId);
 		_timerHandles.delete(handle._id);
@@ -497,6 +561,8 @@ function _drainImmediates() {
 				throw outcome.rethrow;
 			}
 			return;
+		} finally {
+			entry.complete?.();
 		}
 		if (typeof _exited !== "undefined" && _exited) {
 			checkTimerDrain();
@@ -523,6 +589,7 @@ function setImmediate(callback, ...args) {
 		asyncContextFrame: getAsyncContextFrame(),
 		args,
 		repeat: false,
+		complete: trackHttpRequestTimer(),
 	});
 	return handle;
 }
@@ -534,6 +601,7 @@ function clearImmediate(timer) {
 	if (entry) {
 		entry.handle._destroyed = true;
 		_immediateEntries.delete(id);
+		entry.complete?.();
 		checkTimerDrain();
 		return;
 	}

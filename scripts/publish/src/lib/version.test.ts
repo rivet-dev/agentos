@@ -255,6 +255,13 @@ test("bumpPackageJsons rejects unpublished registry software runtime dependencie
 			version: "0.0.1",
 		});
 
+		for (const platform of DEFAULT_SIDECAR_PLATFORMS) {
+			await writeJson(repoRoot, `packages/sidecar/npm/${platform}/package.json`, {
+				name: `@rivet-dev/agentos-sidecar-${platform}`,
+				version: "0.0.1",
+			});
+		}
+
 		await assert.rejects(
 			bumpPackageJsons(repoRoot, "0.0.0-preview.abc1234", {
 				repository: "rivet-dev/agentos",

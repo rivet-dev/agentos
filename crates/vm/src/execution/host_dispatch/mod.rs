@@ -60,11 +60,12 @@ use agentos_vm_kernel::fd_table::{
     WASI_RIGHT_FD_ALLOCATE, WASI_RIGHT_FD_DATASYNC, WASI_RIGHT_FD_FDSTAT_SET_FLAGS,
     WASI_RIGHT_FD_FILESTAT_GET, WASI_RIGHT_FD_FILESTAT_SET_SIZE, WASI_RIGHT_FD_FILESTAT_SET_TIMES,
     WASI_RIGHT_FD_READ, WASI_RIGHT_FD_READDIR, WASI_RIGHT_FD_SEEK, WASI_RIGHT_FD_SYNC,
-    WASI_RIGHT_FD_WRITE, WASI_RIGHT_PATH_CREATE_DIRECTORY, WASI_RIGHT_PATH_FILESTAT_GET,
-    WASI_RIGHT_PATH_FILESTAT_SET_SIZE, WASI_RIGHT_PATH_FILESTAT_SET_TIMES,
-    WASI_RIGHT_PATH_LINK_SOURCE, WASI_RIGHT_PATH_LINK_TARGET, WASI_RIGHT_PATH_OPEN,
-    WASI_RIGHT_PATH_READLINK, WASI_RIGHT_PATH_REMOVE_DIRECTORY, WASI_RIGHT_PATH_RENAME_SOURCE,
-    WASI_RIGHT_PATH_RENAME_TARGET, WASI_RIGHT_PATH_SYMLINK, WASI_RIGHT_PATH_UNLINK_FILE,
+    WASI_RIGHT_FD_WRITE, WASI_RIGHT_PATH_CREATE_DIRECTORY, WASI_RIGHT_PATH_CREATE_FILE,
+    WASI_RIGHT_PATH_FILESTAT_GET, WASI_RIGHT_PATH_FILESTAT_SET_SIZE,
+    WASI_RIGHT_PATH_FILESTAT_SET_TIMES, WASI_RIGHT_PATH_LINK_SOURCE, WASI_RIGHT_PATH_LINK_TARGET,
+    WASI_RIGHT_PATH_OPEN, WASI_RIGHT_PATH_READLINK, WASI_RIGHT_PATH_REMOVE_DIRECTORY,
+    WASI_RIGHT_PATH_RENAME_SOURCE, WASI_RIGHT_PATH_RENAME_TARGET, WASI_RIGHT_PATH_SYMLINK,
+    WASI_RIGHT_PATH_UNLINK_FILE,
 };
 use agentos_vm_kernel::kernel::KernelError;
 
@@ -226,6 +227,7 @@ fn filesystem_operation_is_read_only_mutation(operation: &FilesystemOperation) -
                             | WASI_RIGHT_FD_FILESTAT_SET_SIZE
                             | WASI_RIGHT_FD_FILESTAT_SET_TIMES
                             | WASI_RIGHT_PATH_CREATE_DIRECTORY
+                            | WASI_RIGHT_PATH_CREATE_FILE
                             | WASI_RIGHT_PATH_FILESTAT_SET_SIZE
                             | WASI_RIGHT_PATH_FILESTAT_SET_TIMES
                             | WASI_RIGHT_PATH_LINK_SOURCE
@@ -3489,17 +3491,16 @@ where
                 if !reply.claim().map_err(VmError::from)? {
                     return Ok(None);
                 }
-                let local_replacement = request.options.local_replacement;
                 let result = if fd_image_commit {
                     sidecar.commit_wasm_fd_process_image(vm_id, process_id, &[], request)
                 } else {
                     sidecar.exec_process_image(vm_id, process_id, &[], request)
                 };
                 match result {
-                    Ok(()) if local_replacement => reply
-                        .succeed_json(json!({ "committed": true }))
+                    Ok(Some(tier)) => reply
+                        .succeed_json(json!({ "committed": true, "permissionTier": tier }))
                         .map_err(VmError::from)?,
-                    Ok(()) => reply.dismiss_claimed().map_err(VmError::from)?,
+                    Ok(None) => reply.dismiss_claimed().map_err(VmError::from)?,
                     Err(error) => reply
                         .fail(host_service_error(&error))
                         .map_err(VmError::from)?,

@@ -2735,22 +2735,36 @@ impl ActiveExecutionEvent {
             | Self::Common(ExecutionEvent::Exited(_)) => 4 * 1024,
             Self::Common(ExecutionEvent::Warning(error))
             | Self::Common(ExecutionEvent::RuntimeFault(error)) => {
-                std::mem::size_of::<Self>().saturating_add(error.encoded_bytes())
+                std::mem::size_of::<Self>().saturating_add(error.heap_bytes())
             }
             Self::Common(_) => 4 * 1024,
             Self::Stdout(bytes)
             | Self::Stderr(bytes)
             | Self::RoutedStdout(bytes)
             | Self::RoutedStderr(bytes) => std::mem::size_of::<Self>().saturating_add(bytes.len()),
-            // Internal RPC events are serviced eagerly rather than retained;
-            // account a conservative fixed envelope if briefly deferred. The
-            // wire payload is independently frame-bounded.
             Self::ManagedWriteRecheck(pending) => {
                 std::mem::size_of::<Self>().saturating_add(pending.bytes.len())
             }
-            Self::HostRpcRequest(_)
-            | Self::HostCallCompletion(_)
-            | Self::DeferredPosixPollWake
+            Self::HostRpcRequest(call) => {
+                std::mem::size_of::<Self>().saturating_add(call.request.heap_bytes())
+            }
+            Self::HostCallCompletion(completion) => {
+                let heap = match &completion.result {
+                    Ok(value) => agentos_executor_contract::json_heap_bytes(value),
+                    Err(error) => error
+                        .code
+                        .capacity()
+                        .saturating_add(error.message.capacity())
+                        .saturating_add(
+                            error
+                                .details
+                                .as_ref()
+                                .map_or(0, agentos_executor_contract::json_heap_bytes),
+                        ),
+                };
+                std::mem::size_of::<Self>().saturating_add(heap)
+            }
+            Self::DeferredPosixPollWake
             | Self::ManagedStreamReadRecheck(_)
             | Self::ManagedUdpPollRecheck(_) => 4 * 1024,
             Self::SignalState { .. } | Self::Exited(_) => std::mem::size_of::<Self>(),
@@ -3936,32 +3950,11 @@ fn route_compatibility_host_call(
     max_reply_bytes: usize,
     host: Option<&ProcessHostCapabilitySet>,
 ) -> Result<Option<ActiveExecutionEvent>, VmError> {
-    #[derive(Serialize)]
-    struct CompatibilityRequestCharge<'a> {
-        method: &'a str,
-        args: &'a [Value],
-    }
-
     let reply = call.reply.clone();
     let admission = match host
         .map(|host| {
-            let raw_bytes = call
-                .request
-                .raw_bytes_args
-                .values()
-                .try_fold(0usize, |total, bytes| total.checked_add(bytes.len()))
-                .ok_or_else(|| {
-                    HostServiceError::new(
-                        "EOVERFLOW",
-                        "compatibility host-call raw payload size overflowed",
-                    )
-                })?;
-            host.admit_json_request(
-                &CompatibilityRequestCharge {
-                    method: &call.request.method,
-                    args: &call.request.args,
-                },
-                raw_bytes,
+            host.admit_request(
+                std::mem::size_of::<ExecutionHostCall>().saturating_add(call.request.heap_bytes()),
             )
         })
         .transpose()

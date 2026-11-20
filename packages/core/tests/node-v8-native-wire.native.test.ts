@@ -8,6 +8,7 @@ test("node:v8 preserves graphs and exchanges native serialization with Node.js",
 		date: new Date(1234),
 		map: new Map([["key", 3n]]),
 		bytes: Buffer.from([7, 8]),
+		half: new Float16Array([1.5]),
 	}).toString("base64");
 	const source = `
 import {serialize,deserialize} from 'node:v8';
@@ -16,13 +17,13 @@ import {createRequire} from 'node:module';
 const cjs=createRequire(import.meta.url)('node:v8');
 const backing=Buffer.from('private-prefix:visible:private-suffix');
 const visible=backing.subarray(15,22);
-const child={value:3};const input={left:child,right:child,map:new Map([['key',3n]]),set:new Set([4]),date:new Date(1234),bytes:Buffer.from([7,8]),view:new Uint16Array([500,600]),regexp:/a+/gi,negative:-0,missing:undefined};input.self=input;
+const child={value:3};const input={left:child,right:child,map:new Map([['key',3n]]),set:new Set([4]),date:new Date(1234),bytes:Buffer.from([7,8]),half:new Float16Array([1.5]),view:new Uint16Array([500,600]),regexp:/a+/gi,negative:-0,missing:undefined};input.self=input;
 const bytes=serialize(input), copy=deserialize(bytes);
 const host=deserialize(Buffer.from(${JSON.stringify(fixture)},'base64'));
 const foreign=deserialize(serialize(runInNewContext('({date:new Date(1234),view:new Uint16Array([500,600])})')));
 const error=fn=>{try{fn();return null;}catch(e){return e.name;}};
 console.log(JSON.stringify({
- summary:{sameExports:cjs.serialize===serialize&&cjs.deserialize===deserialize,viewPrivacy:!serialize(visible).includes(Buffer.from('private-')),cycle:copy.self===copy,alias:copy.left===copy.right,map:copy.map.get('key').toString(),set:copy.set.has(4),date:copy.date.getTime(),buffer:Buffer.isBuffer(copy.bytes),bytes:[...copy.bytes],view:[...copy.view],viewType:copy.view.constructor.name,regexp:copy.regexp.toString(),negative:Object.is(copy.negative,-0),missing:'missing' in copy&&copy.missing===undefined,host:[host.date.getTime(),host.map.get('key').toString(),Buffer.isBuffer(host.bytes),[...host.bytes]],foreign:[foreign.date.getTime(),[...foreign.view]],rejected:[error(()=>serialize(()=>0)),error(()=>deserialize(Buffer.from([1,2,3])))]},
+ summary:{sameExports:cjs.serialize===serialize&&cjs.deserialize===deserialize,viewPrivacy:!serialize(visible).includes(Buffer.from('private-')),cycle:copy.self===copy,alias:copy.left===copy.right,map:copy.map.get('key').toString(),set:copy.set.has(4),date:copy.date.getTime(),buffer:Buffer.isBuffer(copy.bytes),bytes:[...copy.bytes],view:[...copy.view],viewType:copy.view.constructor.name,regexp:copy.regexp.toString(),negative:Object.is(copy.negative,-0),missing:'missing' in copy&&copy.missing===undefined,half:[host.half.constructor.name,host.half[0],copy.half[0]],host:[host.date.getTime(),host.map.get('key').toString(),Buffer.isBuffer(host.bytes),[...host.bytes]],foreign:[foreign.date.getTime(),[...foreign.view]],rejected:[error(()=>serialize(()=>0)),error(()=>deserialize(Buffer.from([1,2,3])))]},
  bytes:bytes.toString('base64')
 }));`;
 	const host = spawnSync(
@@ -64,6 +65,8 @@ console.log(JSON.stringify({
 		expect(decoded.date.getTime()).toBe(1234);
 		expect(Buffer.isBuffer(decoded.bytes)).toBe(true);
 		expect(decoded.map.get("key")).toBe(3n);
+		expect(decoded.half).toBeInstanceOf(Float16Array);
+		expect(decoded.half[0]).toBe(1.5);
 	} finally {
 		try {
 			await vm?.dispose();

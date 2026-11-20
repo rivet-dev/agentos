@@ -2,7 +2,6 @@ import {
 	exposeCustomGlobal,
 	exposeMutableRuntimeStateGlobal,
 } from "../global-exposure.js";
-import { defineGlobal } from "../polyfills/index.js";
 import {
 	builtinModules,
 	loadBuiltinModule,
@@ -140,10 +139,8 @@ function createRequire(filename) {
 	const filepath = _parseFileUrl(String(filename));
 	const dirname = _pathDirname(filepath);
 	const resolve = createRequireResolve(dirname);
-	const rejectRestrictedBuiltin = function (_request) {};
 	const requireFn = function (request) {
-		rejectRestrictedBuiltin(request);
-		return _requireFrom(request, dirname);
+		return requireFrom(request, dirname);
 	};
 	requireFn.resolve = resolve;
 	return attachRequireMetadata(requireFn);
@@ -155,7 +152,10 @@ function createRequire(filename) {
 // module wrapper, and resolution still flows through _requireFrom with the same
 // permission checks — and the namespaced name avoids changing `typeof require` for
 // guest code that branches on CJS-vs-ESM.
-defineGlobal("__agentOsGuestCreateRequire", createRequire);
+Object.defineProperty(globalThis, "__agentOsGuestCreateRequire", {
+	enumerable: true,
+	value: createRequire,
+});
 var Module = class _Module {
 	id;
 	path;

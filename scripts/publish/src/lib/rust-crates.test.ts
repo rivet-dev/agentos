@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { discoverRustCrates, RUST_CRATES } from "./rust-crates.js";
+import { assertPublishableV8Source, discoverRustCrates, RUST_CRATES } from "./rust-crates.js";
 
 function withFixture(fn: (root: string) => void) {
 	const root = mkdtempSync(join(tmpdir(), "publish-rust-crates-"));
@@ -147,4 +147,24 @@ test("hosted crates publish before their actual manifest dependents", () => {
 			assert(dependencyIndex < index, `${dependency} must publish before ${name}`);
 		}
 	}
+});
+
+test("real crate releases require every locked V8 dependency to resolve through crates.io", () => {
+	withFixture((root) => {
+		const registry = '[[package]]\nname = "v8"\nversion = "1.0.0"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n';
+		write(root, "Cargo.lock", registry);
+		const sha256 = "a".repeat(64);
+		const pins = Object.fromEntries([
+			"x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu",
+			"x86_64-apple-darwin", "aarch64-apple-darwin",
+		].map((target) => [target, sha256]));
+		write(root, "scripts/ci/v8/archives.json", JSON.stringify({ ...pins, "x86_64-apple-darwin": { sha256, artifactId: 123 } }));
+		assert.throws(() => assertPublishableV8Source(root), /durable V8 archive SHA-256/);
+		write(root, "scripts/ci/v8/archives.json", JSON.stringify(pins));
+		assert.doesNotThrow(() => assertPublishableV8Source(root));
+		for (const source of ['', 'source = "git+https://example.org/engine#abc"\n']) {
+			write(root, "Cargo.lock", registry + '[[package]]\nname = "v8"\nversion = "2.0.0"\n' + source);
+			assert.throws(() => assertPublishableV8Source(root), /outside the agentOS workspace/);
+		}
+	});
 });

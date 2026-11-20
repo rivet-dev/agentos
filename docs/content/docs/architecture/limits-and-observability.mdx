@@ -51,6 +51,13 @@ host-function callback output, reject the crossing event with an error naming
 `limits.process.pendingEventCount` or `limits.process.pendingEventBytes`. No
 path silently drops data or crashes the sidecar.
 
+For queued executor host calls, `limits.process.pendingEventBytes` charges
+the request envelope, raw buffers and storage for decoded JSON strings, arrays
+and object entries. A small configured budget can reject a single valid request
+even when its compact JSON fits. For example, an array of small numbers needs
+one in-memory value slot per number. The separate
+`limits.reactor.maxBridgeResponseBytes` bounds the encoded reply.
+
 All VMs on one sidecar share its queue of process events waiting for the host.
 Guest stdout and stderr may fill at most seven eighths of that queue
 (`runtime.protocol.maxProcessEvents`); the rest is kept for exits and other

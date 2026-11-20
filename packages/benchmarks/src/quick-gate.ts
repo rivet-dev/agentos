@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import {
 	baselinePathForEnvironment,
@@ -95,17 +94,21 @@ class GateExitError extends Error {
 
 async function main(): Promise<void> {
 	const baselinePath = baselinePathForEnvironment();
-	if (process.env.GITHUB_ACTIONS === "true" && !existsSync(baselinePath)) {
-		console.error(
-			`BENCH GATE SKIPPED: ${baselinePath} is missing. Run the nightly benchmark, download its candidate baseline-ci.json artifact, commit it, and PR gates will enforce from then on.`,
-		);
-		return;
-	}
 	const baseline = loadMatrixBaseline(baselinePath);
 	if (!baseline) {
 		throw new GateExitError(
 			2,
 			`BENCH GATE REFUSED: missing baseline ${baselinePath}. Regenerate with pnpm --dir packages/benchmarks bench:baseline.`,
+		);
+	}
+
+	const threshold = Number(
+		process.env.BENCH_GATE_THRESHOLD ?? GATE_DEFAULTS.threshold,
+	);
+	if (!Number.isFinite(threshold) || threshold <= 0) {
+		throw new GateExitError(
+			2,
+			"BENCH_GATE_THRESHOLD must be a finite positive number",
 		);
 	}
 
@@ -118,6 +121,17 @@ async function main(): Promise<void> {
 		);
 	}
 
+	if (
+		baseline.kind !==
+			(process.env.GITHUB_ACTIONS === "true" ? "ci" : "local") ||
+		baseline.engine.cold !== (process.env.BENCH_COLD === "1") ||
+		baseline.engine.sharedVm !== (process.env.BENCH_SHARED_VM === "1")
+	) {
+		throw new GateExitError(
+			2,
+			"Benchmark baseline does not match the run environment or VM mode",
+		);
+	}
 	const gateRows = selectedGateRows();
 	process.env.BENCH_OP_FILTER = gateRows.map((row) => row.key).join(",");
 	process.env.BENCH_ITERATIONS ??= String(GATE_DEFAULTS.iterations);
@@ -125,12 +139,23 @@ async function main(): Promise<void> {
 	process.env.BENCH_REQUIRED_WASM_COMMANDS ??=
 		requiredWasmCommands(gateRows).join(",");
 
+	for (const [key, minimum] of [
+		["BENCH_ITERATIONS", 1],
+		["BENCH_WARMUP", 0],
+	] as const) {
+		const value = Number(process.env[key]);
+		if (
+			!/^\d+$/.test(process.env[key] ?? "") ||
+			!Number.isSafeInteger(value) ||
+			value < minimum
+		) {
+			throw new GateExitError(2, `${key} must be a safe integer >= ${minimum}`);
+		}
+	}
+
 	const { runLatencyMatrix } = await import("./run-all.js");
 	const matrix = await runLatencyMatrix();
 	const currentRows = matrix.results.map(baselineRowFromLatency);
-	const threshold = Number(
-		process.env.BENCH_GATE_THRESHOLD ?? GATE_DEFAULTS.threshold,
-	);
 	const comparisons = compareMatrixBaseline(currentRows, baseline, gateRows, {
 		threshold,
 		tinyBaselineFloorMs: GATE_DEFAULTS.tinyBaselineFloorMs,
@@ -168,18 +193,31 @@ async function main(): Promise<void> {
 function selectedGateRows(): GateRow[] {
 	const override = process.env.BENCH_GATE_ROWS;
 	if (!override) return GATE_DEFAULTS.rows;
-	return override
+	const rows = override
 		.split(",")
 		.map((entry) => entry.trim())
 		.filter(Boolean)
 		.map((entry) => {
-			const [key, lane] = entry.split(":");
+			const [key, lane, extra] = entry.split(":");
+			if (
+				!key ||
+				extra !== undefined ||
+				(lane !== undefined &&
+					!["native", "node", "guest", "wasm", "hostCmd", "vmCmd"].includes(
+						lane,
+					))
+			) {
+				throw new GateExitError(2, `Invalid BENCH_GATE_ROWS entry ${entry}`);
+			}
 			const configured = GATE_DEFAULTS.rows.find((row) => row.key === key);
 			return {
 				key,
 				lane: (lane ?? configured?.lane ?? "guest") as GateLane,
 			};
 		});
+	if (rows.length === 0)
+		throw new GateExitError(2, "BENCH_GATE_ROWS selected no comparisons");
+	return rows;
 }
 
 function requiredWasmCommands(gateRows: GateRow[]): string[] {

@@ -139,12 +139,12 @@ const SNAPSHOT_VERSIONS_PREP: &str = r#"
 /// descriptive error (with the V8 exception message) on failure. `label`
 /// identifies the phase (e.g. "bridge code" / "userland code") in error text.
 fn run_snapshot_script(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     code: &str,
     label: &str,
     eager_compile: bool,
 ) -> Result<(), String> {
-    let try_catch = &mut v8::TryCatch::new(scope);
+    v8::tc_scope!(let try_catch, scope);
     let source = crate::shared_source::snapshot_source_string(try_catch, code)
         .map_err(|error| format!("failed to create V8 string for {label}: {error}"))?;
     // NOTE(perf, measured 2026-07-02): EagerCompile moves cost into the snapshot
@@ -253,7 +253,7 @@ const RESTORE_BUILTIN_ROOTS: &str = r#"(() => {
     ];
 })()"#;
 
-fn builtin_roots<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Array>, String> {
+fn builtin_roots<'s>(scope: &mut v8::PinScope<'s, '_>) -> Result<v8::Local<'s, v8::Array>, String> {
     let source = v8::String::new(scope, RESTORE_BUILTIN_ROOTS).expect("static script");
     v8::Script::compile(scope, source, None)
         .and_then(|script| script.run(scope))
@@ -262,7 +262,7 @@ fn builtin_roots<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8
 }
 
 fn own_string_keys(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     roots: v8::Local<v8::Array>,
 ) -> Vec<HashSet<String>> {
     (0..roots.length())
@@ -298,7 +298,7 @@ fn builtin_property_names_of_restored_context() -> Result<Vec<HashSet<String>>, 
     let mut isolate =
         crate::owned_microtasks::SessionIsolate::new(crate::isolate::create_isolate(None));
     let names = {
-        let scope = &mut v8::HandleScope::new(&mut *isolate);
+        v8::scope!(let scope, &mut *isolate);
         let context = v8::Context::new(scope, Default::default());
         let scope = &mut v8::ContextScope::new(scope, context);
         builtin_roots(scope).map(|roots| own_string_keys(scope, roots))
@@ -311,7 +311,7 @@ fn builtin_property_names_of_restored_context() -> Result<Vec<HashSet<String>>, 
 /// names V8 adds on restore that it lacks. Call before any script runs, so a
 /// script that replaces a global does not change which objects are checked.
 fn restore_only_builtin_names(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     restored: &[HashSet<String>],
 ) -> Result<(v8::Global<v8::Array>, Vec<HashSet<String>>), String> {
     let roots = builtin_roots(scope)?;
@@ -330,7 +330,7 @@ fn restore_only_builtin_names(
 /// keeps it; later lookups get the native builtin, as in a process where the
 /// builtin existed before userland ran.
 fn remove_restore_only_builtins(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     roots: &v8::Global<v8::Array>,
     names: &[HashSet<String>],
 ) -> Result<(), String> {
@@ -432,10 +432,9 @@ fn create_snapshot_inner_in_process(
         .map(SnapshotUserland::sources)
         .unwrap_or_default();
     let sources = snapshot_sources(bridge_code, &userland_sources)?;
-    // SAFETY: `sources` owns the table and outlives the creator isolate, which
-    // `create_blob` consumes before this function returns.
-    let refs: &'static v8::ExternalReferences =
-        unsafe { &*(sources.refs() as *const v8::ExternalReferences) };
+    // The creator owns its small table copy. Source text remains owned by
+    // `sources` through create_blob, including on initialization failure.
+    let refs = std::borrow::Cow::Owned(sources.refs().to_vec());
     // Builtins V8 adds to a context only when it restores one; userland must
     // not leave its own definitions of them in the snapshot.
     let restored_names = match userland {
@@ -448,7 +447,7 @@ fn create_snapshot_inner_in_process(
         let mut isolate = v8::Isolate::snapshot_creator(Some(refs), Some(params));
         crate::isolate::install_native_terminal_stack(&mut isolate, terminal_stack);
         let bridge_result = {
-            let scope = &mut v8::HandleScope::new(&mut isolate);
+            v8::scope!(let scope, &mut *isolate);
             let context = v8::Context::new(scope, Default::default());
             let scope = &mut v8::ContextScope::new(scope, context);
             // Errors are returned after `create_blob`: a snapshot creator must
@@ -1000,7 +999,7 @@ fn read_u64_from_slice(input: &[u8]) -> Result<(u64, &[u8]), String> {
 /// Properties are set as READ_ONLY (not DONT_DELETE) so they remain
 /// configurable — inject_globals_from_payload can redefine them with
 /// READ_ONLY | DONT_DELETE after restore.
-pub(crate) fn inject_snapshot_defaults(scope: &mut v8::HandleScope) -> Result<(), String> {
+pub(crate) fn inject_snapshot_defaults(scope: &mut v8::PinScope<'_, '_>) -> Result<(), String> {
     let context = scope.get_current_context();
     let global = context.global(scope);
 
@@ -1108,63 +1107,34 @@ fn snapshot_sources(
     crate::shared_source::snapshot_sources(&shareable).map(Arc::new)
 }
 
-/// The external reference table of a snapshot, owned by its isolate. It
-/// also holds the snapshot's shared sources, so every isolate restored from
-/// the snapshot keeps the source text it reads alive.
-struct RestoreRefs(Arc<crate::shared_source::SnapshotSources>);
-
-impl std::ops::Deref for RestoreRefs {
-    type Target = [isize];
-    fn deref(&self) -> &Self::Target {
-        self.0.refs()
-    }
-}
-
-impl std::borrow::Borrow<[isize]> for RestoreRefs {
-    fn borrow(&self) -> &[isize] {
-        self.0.refs()
-    }
-}
-
 /// Create a V8 isolate restored from a snapshot blob whose external
 /// references are the base table (`bridge::external_refs()`). Only valid for a
 /// snapshot without shared sources (every source under
 /// `shared_source::MIN_SHARED_SOURCE_BYTES`); everything else restores through
 /// [`create_isolate_from_cached_snapshot`].
 #[cfg(any(test, feature = "test-support"))]
-pub fn create_isolate_from_snapshot<B>(blob: B, heap_limit_mb: Option<u32>) -> v8::OwnedIsolate
-where
-    B: std::ops::Deref<Target = [u8]> + std::borrow::Borrow<[u8]> + 'static,
-{
-    create_isolate_with_refs(blob, &**crate::bridge::external_refs(), heap_limit_mb)
-}
-
-/// Create a V8 isolate restored from a cached snapshot, sharing its bytes and
-/// its shared sources with every other isolate restored from it.
-pub fn create_isolate_from_cached_snapshot(
-    blob: &SnapshotBlob,
+pub fn create_isolate_from_snapshot(
+    bytes: impl Into<Arc<[u8]>>,
     heap_limit_mb: Option<u32>,
-) -> v8::OwnedIsolate {
-    create_isolate_with_refs(
-        Arc::clone(&blob.bytes),
-        RestoreRefs(Arc::clone(&blob.sources)),
+) -> crate::isolate::GuestIsolate {
+    let sources = snapshot_sources("", &[]).expect("empty snapshot source table");
+    create_isolate_from_cached_snapshot(
+        &SnapshotBlob {
+            bytes: bytes.into(),
+            sources,
+        },
         heap_limit_mb,
     )
 }
 
-fn create_isolate_with_refs<B, R>(blob: B, refs: R, heap_limit_mb: Option<u32>) -> v8::OwnedIsolate
-where
-    B: std::ops::Deref<Target = [u8]> + std::borrow::Borrow<[u8]> + 'static,
-    R: std::ops::Deref<Target = [isize]> + std::borrow::Borrow<[isize]> + 'static,
-{
-    init_v8_platform();
+/// Restore a guest isolate sharing the backing bytes and external strings
+/// of this snapshot with other live isolates.
+pub fn create_isolate_from_cached_snapshot(
+    blob: &SnapshotBlob,
+    heap_limit_mb: Option<u32>,
+) -> crate::isolate::GuestIsolate {
     crate::isolate::prepare_current_thread();
-
-    // Same heap and ArrayBuffer caps and OOM guard as the fresh-isolate path, so
-    // a snapshot-restored isolate is never unbounded (F-003).
-    crate::isolate::create_guest_isolate(heap_limit_mb, |params| {
-        params.snapshot_blob(blob).external_references(refs)
-    })
+    crate::isolate::create_guest_isolate(heap_limit_mb, Some(blob.clone()))
 }
 
 /// A factory for never-run isolates restored from `blob`, for module code
@@ -1177,9 +1147,8 @@ pub fn pristine_isolate_factory(
 
 pub type SnapshotCacheKey = [u8; 32];
 
-/// A cached snapshot. rusty_v8 keeps the blob alive for each isolate's
-/// lifetime, so isolates share one allocation instead of a blob-sized copy
-/// each.
+/// A cached snapshot. Each restored native isolate's shared allocator retains
+/// the same startup bytes and external reference table through disposal.
 #[derive(Clone)]
 pub struct SnapshotBlob {
     bytes: Arc<[u8]>,
@@ -1188,6 +1157,23 @@ pub struct SnapshotBlob {
 }
 
 impl SnapshotBlob {
+    /// The owner must retain this blob, or a clone, until V8 disposal completes.
+    pub(crate) unsafe fn apply_to_create_params(
+        &self,
+        params: v8::CreateParams,
+    ) -> v8::CreateParams {
+        // The allocator owns this blob through native disposal. The Arc bytes
+        // and the sentinel-terminated boxed table cannot move or be mutated.
+        let bytes: &'static [u8] =
+            unsafe { std::slice::from_raw_parts(self.bytes.as_ptr(), self.bytes.len()) };
+        let table = self.sources.refs();
+        let refs: &'static [v8::ExternalReference] =
+            unsafe { std::slice::from_raw_parts(table.as_ptr(), table.len()) };
+        params
+            .snapshot_blob(bytes.into())
+            .external_references(std::borrow::Cow::Borrowed(refs))
+    }
+
     /// Whether both handles share one blob allocation.
     pub fn ptr_eq(left: &Self, right: &Self) -> bool {
         Arc::ptr_eq(&left.bytes, &right.bytes)
@@ -1432,8 +1418,8 @@ fn compute_snapshot_cache_key(bridge_code: &str, userland_code: Option<&str>) ->
 #[doc(hidden)]
 #[cfg(any(test, feature = "test-support"))]
 pub fn run_snapshot_consolidated_checks() {
-    fn eval(isolate: &mut v8::OwnedIsolate, code: &str) -> String {
-        let scope = &mut v8::HandleScope::new(isolate);
+    fn eval(isolate: &mut v8::Isolate, code: &str) -> String {
+        v8::scope!(let scope, isolate);
         let context = v8::Context::new(scope, Default::default());
         let scope = &mut v8::ContextScope::new(scope, context);
         let source = v8::String::new(scope, code).unwrap();
@@ -1613,7 +1599,7 @@ pub fn run_snapshot_consolidated_checks() {
         let blob = create_snapshot(bridge_code).expect("snapshot creation");
         let mut isolate = create_isolate_from_snapshot(blob, None);
 
-        let scope = &mut v8::HandleScope::new(&mut isolate);
+        v8::scope!(let scope, &mut *isolate);
         let context = v8::Context::new(scope, Default::default());
         let scope = &mut v8::ContextScope::new(scope, context);
 
@@ -1659,7 +1645,7 @@ pub fn run_snapshot_consolidated_checks() {
                 2,
                 "isolate must share the cached allocation instead of copying it"
             );
-            let scope = &mut v8::HandleScope::new(&mut isolate);
+            v8::scope!(let scope, &mut *isolate);
             let context = v8::Context::new(scope, Default::default());
             let scope = &mut v8::ContextScope::new(scope, context);
 
@@ -1689,7 +1675,7 @@ pub fn run_snapshot_consolidated_checks() {
                 2,
                 "isolate must share the cached allocation instead of copying it"
             );
-            let scope = &mut v8::HandleScope::new(&mut isolate);
+            v8::scope!(let scope, &mut *isolate);
             let context = v8::Context::new(scope, Default::default());
             let scope = &mut v8::ContextScope::new(scope, context);
 
@@ -1750,7 +1736,7 @@ pub fn run_snapshot_consolidated_checks() {
         );
         let pending = PendingPromises::new();
 
-        let scope = &mut v8::HandleScope::new(&mut isolate);
+        v8::scope!(let scope, &mut *isolate);
         let context = v8::Context::new(scope, Default::default());
         let scope = &mut v8::ContextScope::new(scope, context);
 
@@ -1798,7 +1784,7 @@ pub fn run_snapshot_consolidated_checks() {
         let blob = create_snapshot(bridge_code).expect("snapshot creation");
         let mut isolate = create_isolate_from_snapshot(blob, None);
 
-        let scope = &mut v8::HandleScope::new(&mut isolate);
+        v8::scope!(let scope, &mut *isolate);
         let context = v8::Context::new(scope, Default::default());
         let scope = &mut v8::ContextScope::new(scope, context);
 
@@ -1840,10 +1826,12 @@ pub fn run_snapshot_consolidated_checks() {
     {
         use crate::bridge::register_stub_bridge_fns;
 
-        let mut snapshot_isolate =
-            v8::Isolate::snapshot_creator(Some(crate::bridge::external_refs()), None);
+        let mut snapshot_isolate = v8::Isolate::snapshot_creator(
+            Some(std::borrow::Cow::Borrowed(crate::bridge::external_refs())),
+            None,
+        );
         {
-            let scope = &mut v8::HandleScope::new(&mut snapshot_isolate);
+            v8::scope!(let scope, &mut snapshot_isolate);
             let context = v8::Context::new(scope, Default::default());
             let scope = &mut v8::ContextScope::new(scope, context);
 
@@ -2039,7 +2027,7 @@ pub fn run_snapshot_consolidated_checks() {
         // Restore and verify default context has the bridge infrastructure
         let blob_bytes: Vec<u8> = blob.to_vec();
         let mut isolate = create_isolate_from_snapshot(blob_bytes, None);
-        let scope = &mut v8::HandleScope::new(&mut isolate);
+        v8::scope!(let scope, &mut *isolate);
         let context = v8::Context::new(scope, Default::default());
         let scope = &mut v8::ContextScope::new(scope, context);
 
@@ -2137,7 +2125,7 @@ pub fn run_snapshot_consolidated_checks() {
         let pending = PendingPromises::new();
 
         // Restore context and replace bridge functions
-        let scope = &mut v8::HandleScope::new(&mut isolate);
+        v8::scope!(let scope, &mut *isolate);
         let context = v8::Context::new(scope, Default::default());
         let scope = &mut v8::ContextScope::new(scope, context);
 
@@ -2191,7 +2179,7 @@ pub fn run_snapshot_consolidated_checks() {
         let blob = create_snapshot(bridge_code).expect("snapshot creation");
         let mut isolate = create_isolate_from_snapshot(blob, None);
 
-        let scope = &mut v8::HandleScope::new(&mut isolate);
+        v8::scope!(let scope, &mut *isolate);
         let context = v8::Context::new(scope, Default::default());
         let scope = &mut v8::ContextScope::new(scope, context);
 
@@ -2246,7 +2234,7 @@ pub fn run_snapshot_consolidated_checks() {
         let blob = create_snapshot(bridge_code).expect("snapshot creation");
         let mut isolate = create_isolate_from_snapshot(blob, None);
 
-        let scope = &mut v8::HandleScope::new(&mut isolate);
+        v8::scope!(let scope, &mut *isolate);
         let context = v8::Context::new(scope, Default::default());
         let scope = &mut v8::ContextScope::new(scope, context);
 
@@ -2283,7 +2271,7 @@ pub fn run_snapshot_consolidated_checks() {
             .expect("snapshot creation");
         let mut isolate = create_isolate_from_cached_snapshot(&blob, None);
 
-        let scope = &mut v8::HandleScope::new(&mut isolate);
+        v8::scope!(let scope, &mut *isolate);
         let context = v8::Context::new(scope, Default::default());
         let scope = &mut v8::ContextScope::new(scope, context);
 
@@ -2324,7 +2312,7 @@ pub fn run_snapshot_consolidated_checks() {
             for throwing_spawn in [false, true] {
                 let mut isolate = create_isolate_from_cached_snapshot(&blob, None);
                 isolate.set_microtasks_policy(v8::MicrotasksPolicy::Explicit);
-                let scope = &mut v8::HandleScope::new(&mut isolate);
+                v8::scope!(let scope, &mut *isolate);
                 let context = v8::Context::new(scope, Default::default());
                 let scope = &mut v8::ContextScope::new(scope, context);
                 let setup = r#"
@@ -2406,11 +2394,8 @@ pub fn run_snapshot_consolidated_checks() {
                 let setup = setup
                     .replace("EARLY_FLAG", if early { "true" } else { "false" })
                     .replace("THROW_FLAG", if throwing_spawn { "true" } else { "false" });
-                fn run_child_schedule(
-                    scope: &mut v8::ContextScope<v8::HandleScope>,
-                    code: &str,
-                ) -> String {
-                    let tc = &mut v8::TryCatch::new(scope);
+                fn run_child_schedule(scope: &mut v8::PinScope<'_, '_>, code: &str) -> String {
+                    v8::tc_scope!(let tc, scope);
                     let source = v8::String::new(tc, code).unwrap();
                     let script = v8::Script::compile(tc, source, None)
                         .expect("compile child schedule control");
@@ -2531,7 +2516,7 @@ pub fn run_snapshot_consolidated_checks() {
         // Restore A: set a session-specific global
         {
             let mut isolate = create_isolate_from_snapshot(blob_bytes.clone(), None);
-            let scope = &mut v8::HandleScope::new(&mut isolate);
+            v8::scope!(let scope, &mut *isolate);
             let context = v8::Context::new(scope, Default::default());
             let scope = &mut v8::ContextScope::new(scope, context);
 
@@ -2550,7 +2535,7 @@ pub fn run_snapshot_consolidated_checks() {
         // Restore B: session A's state should not be visible
         {
             let mut isolate = create_isolate_from_snapshot(blob_bytes.clone(), None);
-            let scope = &mut v8::HandleScope::new(&mut isolate);
+            v8::scope!(let scope, &mut *isolate);
             let context = v8::Context::new(scope, Default::default());
             let scope = &mut v8::ContextScope::new(scope, context);
 
@@ -2578,7 +2563,7 @@ pub fn run_snapshot_consolidated_checks() {
         // Evaluate a string in a fresh context on a restored isolate. Unlike the
         // function-level `eval`, this takes an existing ContextScope so successive
         // checks observe globals set by earlier scripts in the SAME context.
-        fn run_in(scope: &mut v8::ContextScope<v8::HandleScope>, code: &str) -> String {
+        fn run_in(scope: &mut v8::PinScope<'_, '_>, code: &str) -> String {
             let source = v8::String::new(scope, code).unwrap();
             let script = v8::Script::compile(scope, source, None).unwrap();
             let result = script.run(scope).unwrap();
@@ -2609,7 +2594,7 @@ pub fn run_snapshot_consolidated_checks() {
         // context. The userland top-level must NOT run again here.
         {
             let mut isolate = create_isolate_from_snapshot(blob_bytes.clone(), None);
-            let scope = &mut v8::HandleScope::new(&mut isolate);
+            v8::scope!(let scope, &mut *isolate);
             let context = v8::Context::new(scope, Default::default());
             let scope = &mut v8::ContextScope::new(scope, context);
 
@@ -2637,7 +2622,7 @@ pub fn run_snapshot_consolidated_checks() {
         // captured userland state but NOT session A's mutation (isolation).
         {
             let mut isolate = create_isolate_from_snapshot(blob_bytes.clone(), None);
-            let scope = &mut v8::HandleScope::new(&mut isolate);
+            v8::scope!(let scope, &mut *isolate);
             let context = v8::Context::new(scope, Default::default());
             let scope = &mut v8::ContextScope::new(scope, context);
 
@@ -2699,7 +2684,7 @@ pub fn run_snapshot_consolidated_checks() {
         .expect("build thread join");
 
         let mut isolate = create_isolate_from_snapshot(blob_bytes, None);
-        let scope = &mut v8::HandleScope::new(&mut isolate);
+        v8::scope!(let scope, &mut *isolate);
         let context = v8::Context::new(scope, Default::default());
         let scope = &mut v8::ContextScope::new(scope, context);
         let check = v8::String::new(scope, "String(globalThis.__xt.f())").unwrap();
@@ -2726,7 +2711,7 @@ pub fn run_snapshot_consolidated_checks() {
         // Session A: mutate a global, the captured SDK object, AND a built-in prototype.
         {
             let mut isolate = create_isolate_from_snapshot(blob_bytes.clone(), None);
-            let scope = &mut v8::HandleScope::new(&mut isolate);
+            v8::scope!(let scope, &mut *isolate);
             let context = v8::Context::new(scope, Default::default());
             let scope = &mut v8::ContextScope::new(scope, context);
             let src = v8::String::new(
@@ -2743,7 +2728,7 @@ pub fn run_snapshot_consolidated_checks() {
         // snapshot state but NONE of session A's mutations.
         {
             let mut isolate = create_isolate_from_snapshot(blob_bytes.clone(), None);
-            let scope = &mut v8::HandleScope::new(&mut isolate);
+            v8::scope!(let scope, &mut *isolate);
             let context = v8::Context::new(scope, Default::default());
             let scope = &mut v8::ContextScope::new(scope, context);
             let check = v8::String::new(
@@ -2801,7 +2786,7 @@ pub fn run_snapshot_consolidated_checks() {
             .expect("userland snapshot with a lazy process.versions getter");
 
         let mut isolate = create_isolate_from_snapshot(blob, None);
-        let scope = &mut v8::HandleScope::new(&mut isolate);
+        v8::scope!(let scope, &mut *isolate);
         let context = v8::Context::new(scope, Default::default());
         let scope = &mut v8::ContextScope::new(scope, context);
 

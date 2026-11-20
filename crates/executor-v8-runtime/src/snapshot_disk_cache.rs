@@ -60,7 +60,7 @@ pub(crate) fn cache_dir() -> Option<PathBuf> {
 fn file_key(key: &SnapshotCacheKey) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(BUILD_FINGERPRINT.as_bytes());
-    hasher.update([u8::from(crate::isolate::wasm_exnref_enabled())]);
+    hasher.update(v8::V8::get_version().as_bytes());
     hasher.update(key);
     hasher.finalize().into()
 }

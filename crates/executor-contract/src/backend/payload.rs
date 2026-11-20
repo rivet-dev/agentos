@@ -2,6 +2,7 @@ use super::HostServiceError;
 use serde::Serialize;
 use std::fmt;
 use std::io;
+use std::mem::{size_of, size_of_val};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -120,9 +121,39 @@ impl PayloadLimit {
         Ok(())
     }
 
+    /// Measure compact wire bytes, stopping at the configured limit without
+    /// allocating the encoding. This does not measure an owned value's heap.
     pub fn admit_json<T: Serialize + ?Sized>(&self, value: &T) -> Result<usize, HostServiceError> {
+        self.measure_json(value, serde_json::ser::CompactFormatter, 0)
+    }
+
+    /// Charge inline adapter data, out-of-band bytes and JSON collection slots
+    /// as well as their contents. Tiny retained-byte budgets may therefore
+    /// reject even a request whose compact wire representation fits.
+    pub(super) fn admit_retained_json<T: Serialize + ?Sized>(
+        &self,
+        value: &T,
+        additional_raw_bytes: usize,
+    ) -> Result<usize, HostServiceError> {
+        let base = size_of_val(value).saturating_add(additional_raw_bytes);
+        self.measure_json(value, RetainedJsonFormatter, base)
+    }
+
+    fn measure_json<T: Serialize + ?Sized, F: serde_json::ser::Formatter>(
+        &self,
+        value: &T,
+        formatter: F,
+        base: usize,
+    ) -> Result<usize, HostServiceError> {
+        if base > self.maximum() {
+            self.admit(base)?;
+        }
         let mut writer = LimitedCountingWriter::new(self.inner.maximum);
-        match serde_json::to_writer(&mut writer, value) {
+        writer.observed = base;
+        match value.serialize(&mut serde_json::Serializer::with_formatter(
+            &mut writer,
+            formatter,
+        )) {
             Ok(()) => {
                 self.admit(writer.observed)?;
                 Ok(writer.observed)
@@ -159,6 +190,32 @@ impl PayloadLimit {
         } else if observed.saturating_mul(100) < self.inner.maximum.saturating_mul(REARM_PERCENT) {
             self.inner.warning_active.store(false, Ordering::Release);
         }
+    }
+}
+
+// This formatter is used exclusively with a counting writer. Padding charges
+// collection slots without allocating them or creating another copy of the JSON.
+struct RetainedJsonFormatter;
+
+impl serde_json::ser::Formatter for RetainedJsonFormatter {
+    fn begin_array_value<W: io::Write + ?Sized>(
+        &mut self,
+        writer: &mut W,
+        _first: bool,
+    ) -> io::Result<()> {
+        writer.write_all(&[0; size_of::<serde_json::Value>() * 2 + 1])
+    }
+
+    fn begin_object_key<W: io::Write + ?Sized>(
+        &mut self,
+        writer: &mut W,
+        first: bool,
+    ) -> io::Result<()> {
+        const SLOT: usize = size_of::<(String, serde_json::Value, usize)>();
+        if first {
+            writer.write_all(&[0; 11 * SLOT])?;
+        }
+        writer.write_all(&[0; 3 * SLOT + 1])
     }
 }
 
@@ -237,6 +294,29 @@ mod tests {
             error.details.expect("details")["limitName"],
             "maxReplyBytes"
         );
+    }
+
+    #[test]
+    fn retained_json_accounts_for_slots_and_warns_in_retained_bytes() {
+        let value = [0u8; 4];
+        let warnings = Arc::new(RecordingWarnings::default());
+        let measured = PayloadLimit::with_warning_hook("pendingEventBytes", 4096, None)
+            .unwrap()
+            .admit_retained_json(&value, 5)
+            .unwrap();
+        let retained =
+            PayloadLimit::with_warning_hook("pendingEventBytes", measured, Some(warnings.clone()))
+                .unwrap();
+        let wire = PayloadLimit::with_warning_hook("maxBridgeResponseBytes", 9, None).unwrap();
+        assert_eq!(wire.admit_json(&value).unwrap(), 9);
+        assert!(measured >= value.len() * size_of::<serde_json::Value>() + 5);
+        assert_eq!(retained.admit_retained_json(&value, 5).unwrap(), measured);
+        assert_eq!(warnings.0.lock().unwrap()[0].observed, measured);
+        assert_eq!(
+            retained.admit_retained_json(&value, 6).unwrap_err().code,
+            "E2BIG"
+        );
+        assert_eq!(warnings.0.lock().unwrap().len(), 1);
     }
 
     #[test]
