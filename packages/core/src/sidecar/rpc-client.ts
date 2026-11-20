@@ -835,6 +835,8 @@ export class SidecarKernelProxy {
 			return runAndCapture(
 				this.spawn(parsedCommand[0], parsedCommand.slice(1), {
 					...options,
+					// runAndCapture writes the stdin option; spawn must not queue it too.
+					stdin: undefined,
 					cwd: effectiveCwd,
 					onStdout: (chunk) => {
 						stdoutChunks.push(chunk);
@@ -849,6 +851,7 @@ export class SidecarKernelProxy {
 		}
 		const proc = this.spawn("sh", ["-c", command], {
 			...options,
+			stdin: undefined,
 			cwd: effectiveCwd,
 			onStdout: (chunk) => {
 				stdoutChunks.push(chunk);
@@ -911,6 +914,8 @@ export class SidecarKernelProxy {
 		return runAndCapture(
 			this.spawn(command, [...args], {
 				...options,
+				// runAndCapture writes the stdin option; spawn must not queue it too.
+				stdin: undefined,
 				cwd: effectiveCwd,
 				onStdout: (chunk) => {
 					stdoutChunks.push(chunk);
