@@ -8392,7 +8392,14 @@ fn builtin_named_exports(module_name: &str) -> &'static [&'static str] {
             "unescape",
             "unescapeBuffer",
         ],
-        "punycode" => &["decode", "encode", "toASCII", "toUnicode", "ucs2", "version"],
+        "punycode" => &[
+            "decode",
+            "encode",
+            "toASCII",
+            "toUnicode",
+            "ucs2",
+            "version",
+        ],
         "dgram" => &["Socket", "createSocket"],
         "domain" => &["Domain", "active", "create", "createDomain"],
         "cluster" => &[
@@ -8410,7 +8417,15 @@ fn builtin_named_exports(module_name: &str) -> &'static [&'static str] {
             "setupPrimary",
             "workers",
         ],
-        "inspector" => &["Network", "Session", "close", "console", "open", "url", "waitForDebugger"],
+        "inspector" => &[
+            "Network",
+            "Session",
+            "close",
+            "console",
+            "open",
+            "url",
+            "waitForDebugger",
+        ],
         "repl" => &[
             "REPLServer",
             "REPL_MODE_SLOPPY",
@@ -9326,21 +9341,72 @@ mod tests {
         // wrapper exports, so a builtin without a named-export list breaks
         // every named import of it.
         const NODE_BUILTINS: &[&str] = &[
-            "assert", "assert/strict", "async_hooks", "buffer", "child_process", "cluster",
-            "console", "constants", "crypto", "dgram", "diagnostics_channel", "dns",
-            "dns/promises", "domain", "events", "fs", "fs/promises", "http", "http2", "https",
-            "inspector", "module", "net", "os", "path", "path/posix", "path/win32",
-            "perf_hooks", "process", "punycode", "querystring", "readline",
-            "readline/promises", "repl", "sqlite", "stream", "stream/consumers",
-            "stream/promises", "stream/web", "string_decoder", "sys", "timers",
-            "timers/promises", "tls", "trace_events", "tty", "url", "util", "util/types",
-            "v8", "vm", "wasi", "worker_threads", "zlib",
+            "assert",
+            "assert/strict",
+            "async_hooks",
+            "buffer",
+            "child_process",
+            "cluster",
+            "console",
+            "constants",
+            "crypto",
+            "dgram",
+            "diagnostics_channel",
+            "dns",
+            "dns/promises",
+            "domain",
+            "events",
+            "fs",
+            "fs/promises",
+            "http",
+            "http2",
+            "https",
+            "inspector",
+            "module",
+            "net",
+            "os",
+            "path",
+            "path/posix",
+            "path/win32",
+            "perf_hooks",
+            "process",
+            "punycode",
+            "querystring",
+            "readline",
+            "readline/promises",
+            "repl",
+            "sqlite",
+            "stream",
+            "stream/consumers",
+            "stream/promises",
+            "stream/web",
+            "string_decoder",
+            "sys",
+            "timers",
+            "timers/promises",
+            "tls",
+            "trace_events",
+            "tty",
+            "url",
+            "util",
+            "util/types",
+            "v8",
+            "vm",
+            "wasi",
+            "worker_threads",
+            "zlib",
         ];
         for name in NODE_BUILTINS {
-            assert!(normalize_builtin_specifier(name).is_some(), "{name} not a builtin");
+            assert!(
+                normalize_builtin_specifier(name).is_some(),
+                "{name} not a builtin"
+            );
             let source = build_builtin_module_wrapper(name);
             assert!(
-                source.contains("export const ") || source.contains("export {") || source.contains("export function ") || source.contains("export class "),
+                source.contains("export const ")
+                    || source.contains("export {")
+                    || source.contains("export function ")
+                    || source.contains("export class "),
                 "node:{name} ESM wrapper has no named exports:\n{source}"
             );
         }

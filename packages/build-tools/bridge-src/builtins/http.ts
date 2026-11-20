@@ -5975,7 +5975,10 @@ ServerResponseCallable.prototype = ServerResponseBridge.prototype;
 function OutgoingMessage() {
 	ServerResponseCallable.call(this);
 }
-Object.setPrototypeOf(ServerResponseBridge.prototype, OutgoingMessage.prototype);
+Object.setPrototypeOf(
+	ServerResponseBridge.prototype,
+	OutgoingMessage.prototype,
+);
 
 function createHttpModule(protocol) {
 	const defaultProtocol = protocol === "https" ? "https:" : "http:";

@@ -19,7 +19,10 @@ fn default_config_admits_measured_density_and_rejects_past_its_bound() {
             Ok(permit) => live.push(permit),
             Err(error) => break error,
         }
-        assert!(live.len() <= 1 << 20, "default executor admission is unbounded");
+        assert!(
+            live.len() <= 1 << 20,
+            "default executor admission is unbounded"
+        );
     };
 
     assert!(
@@ -39,5 +42,7 @@ fn default_config_admits_measured_density_and_rejects_past_its_bound() {
 
     // A VM that exits frees its slot for the next start.
     live.pop();
-    admission.try_acquire().expect("freed slot admits the next VM");
+    admission
+        .try_acquire()
+        .expect("freed slot admits the next VM");
 }
