@@ -215,13 +215,21 @@ impl CpuBudgetGuard {
         // separately by `warn_limit_exhausted`).
         let cpu_gauge = register_limit(TrackedLimit::V8CpuTimeMs, budget_ms as usize);
 
+        let warn_at_ms = budget_ms
+            .saturating_mul(agentos_resource_accounting::queue_tracker::WARN_FILL_PERCENT as u64)
+            / 100;
         let handle = spawn_timer(runtime, owner, async move {
-            let start = tokio::time::Instant::now() + CPU_BUDGET_POLL_INTERVAL;
-            let mut ticker = tokio::time::interval_at(start, CPU_BUDGET_POLL_INTERVAL);
-            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut used = 0u64;
             loop {
-                ticker.tick().await;
-                let used = cpu_clock
+                // One thread's CPU clock advances no faster than wall time, so
+                // neither the warning point nor the budget can be reached
+                // before this delay. A VM parked on I/O uses almost no CPU, so
+                // it wakes about once per budget instead of every 50 ms.
+                let next_edge_ms = if used < warn_at_ms { warn_at_ms } else { budget_ms };
+                let delay = Duration::from_millis(next_edge_ms.saturating_sub(used))
+                    .max(CPU_BUDGET_POLL_INTERVAL);
+                tokio::time::sleep(delay).await;
+                used = cpu_clock
                     .elapsed_ms()
                     .unwrap_or(baseline_ms)
                     .saturating_sub(baseline_ms);
